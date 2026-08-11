@@ -3040,10 +3040,19 @@ fn a_rows_content_stretches_with_the_cell_without_waiting_for_a_reload() {
     // reloading sooner: it put `NSViewWidthSizable` on the cell's whole subtree
     // and let AppKit stretch the content live.
     //
-    // So: resize the CELL alone — no reload, no tick, nothing facet does — and
-    // the content must already have followed.
+    // The mask is gone — it shrank fixed-size views too, see
+    // `a_narrowed_cell_re_lays_its_row_out_rather_than_shrinking_every_view` —
+    // and the cell's own resize hook re-runs flex instead. This claim is
+    // unchanged by that and is the reason the hook has to be synchronous:
+    // resize the CELL alone — no reload, no tick, nothing facet does — and the
+    // content must already have followed.
+    //
+    // The column width is stated because a headless table's frame is zero, and
+    // a cell 1pt wide taken 100pt narrower is a NEGATIVE width — a number
+    // AppKit's springs were happy to divide and nothing should be asserted on.
     var n: core::Node = rp_list(3 as usize, false);
     let v: *u8 = views::create(0 as *u8, #addr_of(n));
+    recycler::set_column_width(v, 300.0f64);
     let cell: *u8 = recycler::view_for_row(v, 0 as i64);
     assert cell != (0 as *u8);
     let cf: rt::Rect = { ak::View::from_raw(cell).frame() };
@@ -3120,6 +3129,427 @@ fn a_tree_table_keeps_the_automatic_style_and_a_zero_intercell_gap() {
     return;
 }
 
+// A row that STATES a height lays its content out in that height.
+fn tall_row(n: *tree::TreeNode, ctx: *u8) -> flex::Node {
+    var b: core::Builder = core::Builder::new();
+    b.add(box_view::box(color: vocab::Color::rgba(0.5f64, 0.5f64, 0.5f64))
+        .width(15.0f64).height(15.0f64));
+    b.add(label::label("main.cplus", font_size: 14.0f64,
+                       text_align: vocab::TextAlign::Start)
+        .grow(1.0f64).shrink(1.0f64));
+    var row: core::Node = ui::hstack(b).align(flex::Align::Center).gap(6.0f64);
+    row.set_padding_edge(flex::Edge::Horizontal, 4.0f64);
+    return row;
+}
+
+#[test]
+fn a_stated_row_height_is_the_height_the_content_is_laid_out_IN() {
+    backend::install();
+    // The row was laid out at WIDTH ONLY, so its height came from its content
+    // and the cell was set to that — a 15pt icon-and-name inside a 34pt row,
+    // pinned to the top of it. AppKit centres what IT draws in the FULL row,
+    // the disclosure triangle most visibly, so the triangle sat in the middle
+    // while the icon and the name sat on the ceiling. A row that stated a
+    // comfortable height got no benefit from stating one.
+    var root: tree::TreeNode = tree::TreeNode::new("root", id: "root");
+    let _a: status::Status = root.add_child(tree::TreeNode::new("main.cplus", id: "f"));
+    var t: core::Node = tree::tree(root, key: "va", row: tall_row, row_height: 34.0f64);
+    let tp: *core::Node = #addr_of(t);
+    let v: *u8 = views::create(0 as *u8, tp);
+    core::set_view(tp, v, views::view_release);
+    views::apply(0 as *u8, tp);
+    assert recycler::tree_height_of_row(v, 0 as i64) == 34.0f64;
+
+    let cell: *u8 = recycler::tree_view_for_row(v, 0 as i64);
+    assert cell != (0 as *u8);
+    // The cell is the ROW, not the content.
+    assert { ak::View::from_raw(cell).frame().h } == 34.0f64;
+
+    // And `align(Center)` centres in it: (34 - 15) / 2.
+    let subs: vec::Vec[ak::View] = ak::View::from_raw(cell).subviews();
+    assert subs.count() == (2 as usize);
+    match subs.at_ptr(0 as usize) {
+        option::Option[*ak::View]::Some(sv) => {
+            let f: rt::Rect = { (*sv).frame() };
+            assert f.h == 15.0f64;
+            assert f.y > 5.0f64;
+            assert f.y < 12.0f64;
+        }
+        option::Option[*ak::View]::None => { assert false; }
+    }
+    return;
+}
+
+#[test]
+fn the_selection_write_back_stands_down_while_facet_is_applying() {
+    backend::install();
+    // `reloadData` CLEARS the selection, and AppKit reports that clear like any
+    // other selection change — so the reload's own side effect wrote
+    // `selected = ""` into the model, destroying the record needed to put the
+    // selection back afterwards. The expansion write-back has stood down
+    // during an apply since it was written; the selection one never did.
+    //
+    // Posed directly: `reloadData` headlessly does not clear the selection at
+    // all (no window, no display cycle), so a test that merely reloads passes
+    // whether the guard is there or not — measured, after it fooled me once.
+    var root: tree::TreeNode = tree::TreeNode::new("root", id: "root");
+    let _a: status::Status = root.add_child(tree::TreeNode::new("alpha", id: "alpha"));
+    let _b: status::Status = root.add_child(tree::TreeNode::new("beta", id: "beta"));
+    var t: core::Node = tree::tree(root, key: "sel", row: rp_tree_row);
+    let tp: *core::Node = #addr_of(t);
+    let v: *u8 = views::create(0 as *u8, tp);
+    core::set_view(tp, v, views::view_release);
+    core::touch(tp, tree::P_ROOT);
+    views::apply(0 as *u8, tp);
+    let ov: *u8 = recycler::table_of(v);
+
+    let set: *u8 = { rt::msg_id_u64(rt::get_class(#str_ptr("NSIndexSet\0")),
+                                    rt::sel(#str_ptr("indexSetWithIndex:\0")), 1 as u64) };
+    { msg_void_id_i8_t(ov, rt::sel(#str_ptr("selectRowIndexes:byExtendingSelection:\0")),
+                       set, 0 as i8) };
+    recycler::tree_clear_selection_as_a_reload_would(v, false);
+    // Not applying: this IS the user, and the model follows them.
+    match tree::find("sel", within: tp) {
+        option::Option[tree::Tree]::Some(h) => { assert h.selected() == ""; }
+        option::Option[tree::Tree]::None => { assert false; }
+    }
+
+    // Select again, then do the same thing WHILE APPLYING.
+    { msg_void_id_i8_t(ov, rt::sel(#str_ptr("selectRowIndexes:byExtendingSelection:\0")),
+                       set, 0 as i8) };
+    match tree::find("sel", within: tp) {
+        option::Option[tree::Tree]::Some(h) => { assert h.selected() == "beta"; }
+        option::Option[tree::Tree]::None => { assert false; }
+    }
+    recycler::tree_clear_selection_as_a_reload_would(v, true);
+    // The model REMEMBERS. That memory is what `select_by_id` restores from
+    // after the reload; without it there is nothing to restore and the user
+    // loses the highlight to a reload they did not cause.
+    match tree::find("sel", within: tp) {
+        option::Option[tree::Tree]::Some(h) => { assert h.selected() == "beta"; }
+        option::Option[tree::Tree]::None => { assert false; }
+    }
+    return;
+}
+
+#[test]
+fn expanding_a_folder_YOURSELF_does_not_reload_the_tree_out_from_under_you() {
+    backend::install();
+    // AppKit expands the item and THEN tells us, and the write-back that
+    // records it dirties `P_EXPANDED` exactly like an application calling
+    // `expand()` would. Reloading on that re-vends every row and takes the
+    // SELECTION and the keyboard focus with them — press right-arrow to open a
+    // folder and the highlight vanishes and the tree stops answering the arrows.
+    //
+    // There is nothing to apply: the outline view is already in the state the
+    // model now describes. The whole effect of the fix is a reload that does
+    // NOT happen, which is why this counts them.
+    var root: tree::TreeNode = tree::TreeNode::new("root", id: "root");
+    var branch: tree::TreeNode = tree::TreeNode::new("src", id: "src", is_branch: true);
+    let _c: status::Status = branch.add_child(tree::TreeNode::new("main.cplus", id: "m"));
+    let _b: status::Status = root.add_child(branch);
+    var t: core::Node = tree::tree(root, key: "kx", row: rp_tree_row);
+    let tp: *core::Node = #addr_of(t);
+    let v: *u8 = views::create(0 as *u8, tp);
+    core::set_view(tp, v, views::view_release);
+    views::apply(0 as *u8, tp);
+
+    // THE USER opens it: AppKit expanded already, the model is recording.
+    recycler::reset_tree_reloads();
+    recycler::tree_notify_expanded(v, 0 as i64);
+    core::clear_dirty(tp);
+    core::touch(tp, tree::P_EXPANDED);
+    views::apply(0 as *u8, tp);
+    assert recycler::tree_reloads() == (0 as i64);
+
+    // THE APPLICATION expands: nothing has been applied yet, so this one must
+    // reload. Same dirty bit, opposite origin — which is the distinction that
+    // did not exist before.
+    match tree::find("kx", within: tp) {
+        option::Option[tree::Tree]::Some(h) => { let _e: tree::Tree = h.expand("src"); }
+        option::Option[tree::Tree]::None => { assert false; }
+    }
+    core::clear_dirty(tp);
+    core::touch(tp, tree::P_EXPANDED);
+    views::apply(0 as *u8, tp);
+    assert recycler::tree_reloads() == (1 as i64);
+    return;
+}
+
+#[test]
+fn a_reused_cell_shows_ONE_row_not_the_old_one_underneath() {
+    backend::install();
+    // Tearing the old row down releases the views its node owned, but a
+    // released view whose SUPERVIEW still retains it does not go anywhere —
+    // and the cell is that superview. The previous row's labels stayed and the
+    // new row's were added on top: "SKILL.md" and "main.cplus" drawn through
+    // each other in one row.
+    RL_BUILDS = 0 as i64;
+    var n: core::Node = rl_list(5 as usize, 0 as i64);
+    let v: *u8 = views::create(0 as *u8, #addr_of(n));
+    let cell: *u8 = recycler::make_cell(v);
+    assert cell != (0 as *u8);
+
+    // No bind, so every fill REBUILDS into the same cell — the shape that
+    // doubled.
+    recycler::fill_into(v, cell, 0 as i64);
+    let after_first: usize = ak::View::from_raw(cell).subviews().count();
+    assert after_first > (0 as usize);
+
+    recycler::fill_into(v, cell, 1 as i64);
+    assert ak::View::from_raw(cell).subviews().count() == after_first;
+    recycler::fill_into(v, cell, 2 as i64);
+    assert ak::View::from_raw(cell).subviews().count() == after_first;
+    // Rebuilt each time — this is the path, not the bind one.
+    assert RL_BUILDS == (3 as i64);
+    views::view_release(v);
+    return;
+}
+
+#[test]
+fn a_width_change_records_the_width_and_does_not_reload() {
+    backend::install();
+    // TWO CLAIMS, and the second one replaced a reload.
+    //
+    // `last_width` starts at 0, so the FIRST notification always compared as a
+    // change — for rows that had just been vended at that very width. Nothing
+    // is owed: record it and move on.
+    //
+    // And a REAL change no longer reloads either. It used to, because nothing
+    // else re-laid a materialized row out at a new width; `FacetRowCell` now
+    // does that from its own resize hook, in AppKit's own tiling pass. The
+    // reload was costing the user their selection — `reloadData` invalidates
+    // the rows, and until AppKit rebuilds them at the next display there is no
+    // selected row and no highlight. Measured on one divider drag: 98 reloads,
+    // each restoring the selection and each losing it again.
+    var root: tree::TreeNode = tree::TreeNode::new("root", id: "root");
+    let _a: status::Status = root.add_child(tree::TreeNode::new("alpha", id: "alpha"));
+    var t: core::Node = tree::tree(root, key: "fw", row: rp_tree_row);
+    let tp: *core::Node = #addr_of(t);
+    let v: *u8 = views::create(0 as *u8, tp);
+    core::set_view(tp, v, views::view_release);
+    views::apply(0 as *u8, tp);
+
+    recycler::reset_tree_reloads();
+    recycler::set_column_width(v, 400.0f64);
+    recycler::tree_notify_resized(v);
+    assert recycler::tree_last_width_of(v) == 400.0f64;
+    assert recycler::tree_reloads() == (0 as i64);
+
+    // A real change is taken up — and costs no reload.
+    recycler::set_column_width(v, 250.0f64);
+    recycler::tree_notify_resized(v);
+    assert recycler::tree_last_width_of(v) == 250.0f64;
+    assert recycler::tree_reloads() == (0 as i64);
+
+    // Nor does a second one, however many the drag delivers.
+    recycler::set_column_width(v, 180.0f64);
+    recycler::tree_notify_resized(v);
+    assert recycler::tree_last_width_of(v) == 180.0f64;
+    assert recycler::tree_reloads() == (0 as i64);
+
+    // A ROOT change is a different question and still reloads: the model is
+    // new, so the rows genuinely are.
+    match tree::from(tp) {
+        option::Option[tree::Tree]::Some(handle) => {
+            var fresh: tree::TreeNode = tree::TreeNode::new("root", id: "root");
+            let _n: status::Status = fresh.add_child(tree::TreeNode::new("beta", id: "beta"));
+            let _r: tree::Tree = handle.set_root(fresh);
+        }
+        option::Option[tree::Tree]::None => { assert false; }
+    }
+    views::apply(0 as *u8, tp);
+    assert recycler::tree_reloads() > (0 as i64);
+    return;
+}
+
+#[test]
+fn a_resize_arriving_inside_the_tables_own_delegate_does_not_re_enter_it() {
+    backend::install();
+    // AppKit resizes its columns WHILE vending and measuring rows, so the
+    // frame-change notification arrives during a callback we are already
+    // inside. Reloading there re-enters the table:
+    //
+    //     WARNING: Application performed a reentrant operation in its
+    //     NSTableView delegate. This warning will become an assert in the
+    //     future.
+    //
+    // On screen it was rows drawn twice and a stuttering first expand.
+    // Skipping is correct rather than merely safe: the table is laying out at
+    // that width right now and every row it vends is already placed at it.
+    var root: tree::TreeNode = tree::TreeNode::new("root", id: "root");
+    let _a: status::Status = root.add_child(tree::TreeNode::new("alpha", id: "alpha"));
+    var t: core::Node = tree::tree(root, key: "reent", row: rp_tree_row);
+    let tp: *core::Node = #addr_of(t);
+    let v: *u8 = views::create(0 as *u8, tp);
+    core::set_view(tp, v, views::view_release);
+    views::apply(0 as *u8, tp);
+
+    recycler::set_column_width(v, 400.0f64);
+    recycler::tree_notify_resized(v);
+    assert recycler::tree_last_width_of(v) == 400.0f64;
+
+    // The same notification, arriving from inside a delegate callback, is
+    // ignored — the width is left for whoever is not already in the table.
+    recycler::set_column_width(v, 250.0f64);
+    recycler::tree_notify_resized_in_delegate(v);
+    assert recycler::tree_last_width_of(v) == 400.0f64;
+
+    // Outside one, it is taken up as before.
+    recycler::tree_notify_resized(v);
+    assert recycler::tree_last_width_of(v) == 250.0f64;
+    return;
+}
+
+// ---- an outline view has to RECOGNISE its own items -------------------------
+//
+// AppKit identifies an outline item by the OBJECT: selection, expansion,
+// `rowForItem:` and its row rebuild all key on the pointers the data source
+// hands back. `box_item` minted a fresh NSObject per
+// `outlineView:child:ofItem:`, so no two answers were ever the same item and
+// the outline view could not recognise anything it had been told.
+//
+// It surfaced as the selection disappearing on a splitter drag, in one
+// direction, which is three removes from the cause. Traced in a live window:
+//
+//     tree reload#98: keep=b rows=6 sel=2      the reload restores it
+//     tree reload:done:            sel=2       still there
+//     tree vend:enter:             sel=-1      gone, before the next vend
+//
+// The re-select worked every time; AppKit dropped it afterwards, rebuilding
+// rows out of items it had never seen. The next reload put it back, which is
+// what made it look like a direction — a drag that ends on a clear leaves the
+// highlight off.
+
+fn identity_tree() -> core::Node {
+    var root: tree::TreeNode = tree::TreeNode::new("root", id: "root");
+    var branch: tree::TreeNode = tree::TreeNode::new("branch", id: "br", is_branch: true);
+    let _k: status::Status = branch.add_child(tree::TreeNode::new("kid", id: "br/kid"));
+    let _b: status::Status = root.add_child(branch);
+    let _a: status::Status = root.add_child(tree::TreeNode::new("alpha", id: "alpha"));
+    let _c: status::Status = root.add_child(tree::TreeNode::new("beta", id: "beta"));
+    return tree::tree(root, key: "ident", row: rp_tree_row);
+}
+
+#[test]
+fn the_same_node_is_always_the_same_outline_item() {
+    backend::install();
+    var t: core::Node = identity_tree();
+    let tp: *core::Node = #addr_of(t);
+    let v: *u8 = views::create(0 as *u8, tp);
+    core::set_view(tp, v, views::view_release);
+    views::apply(0 as *u8, tp);
+
+    // The same (parent, index) asked twice — one node, one item.
+    let first: *u8 = recycler::tree_child_of_root(v, 1 as i64);
+    let again: *u8 = recycler::tree_child_of_root(v, 1 as i64);
+    assert first != (0 as *u8);
+    assert first == again;
+    // And a different index is a different item, so this is identity and not a
+    // single box handed to everyone.
+    let other: *u8 = recycler::tree_child_of_root(v, 2 as i64);
+    assert other != (0 as *u8);
+    assert other != first;
+    return;
+}
+
+#[test]
+fn a_reload_does_not_cost_the_tree_its_items() {
+    backend::install();
+    var t: core::Node = identity_tree();
+    let tp: *core::Node = #addr_of(t);
+    let v: *u8 = views::create(0 as *u8, tp);
+    core::set_view(tp, v, views::view_release);
+    views::apply(0 as *u8, tp);
+    let before: *u8 = recycler::tree_child_of_root(v, 1 as i64);
+    // A width change is the reload the splitter drag causes, several times a
+    // second. The items must survive it, or AppKit is rebuilding its rows from
+    // strangers every time.
+    recycler::set_column_width(v, 400.0f64);
+    recycler::tree_notify_resized(v);
+    recycler::set_column_width(v, 250.0f64);
+    recycler::tree_notify_resized(v);
+    let after: *u8 = recycler::tree_child_of_root(v, 1 as i64);
+    assert after == before;
+    return;
+}
+
+#[test]
+fn a_tree_re_places_its_rows_when_its_width_changes() {
+    backend::install();
+    // A tree had NO resize path — the list observed its own frame and re-placed
+    // its rows, the tree observed nothing. So a materialized tree row was never
+    // re-laid out for a width change, and `autoresize_subtree`'s springs were
+    // the only thing tracking it. Springs share a delta in PROPORTION to current
+    // widths, so a subtree crushed to ~zero has no proportion left and never
+    // grows back: labels truncate, clip to slivers, then vanish, inside cells
+    // that are full width again. Only a re-vend healed it, which for a tree
+    // meant an fs event or a tab flip.
+    var root: tree::TreeNode = tree::TreeNode::new("root", id: "root");
+    let _a: status::Status = root.add_child(tree::TreeNode::new("alpha", id: "alpha"));
+    var t: core::Node = tree::tree(root, key: "twr", row: rp_tree_row);
+    let tp: *core::Node = #addr_of(t);
+    let v: *u8 = views::create(0 as *u8, tp);
+    core::set_view(tp, v, views::view_release);
+    views::apply(0 as *u8, tp);
+
+    recycler::set_column_width(v, 400.0f64);
+    recycler::tree_notify_resized(v);
+    assert recycler::tree_last_width_of(v) == 400.0f64;
+
+    // A new width is taken up.
+    recycler::set_column_width(v, 250.0f64);
+    recycler::tree_notify_resized(v);
+    assert recycler::tree_last_width_of(v) == 250.0f64;
+    // And the row content was placed at it, not left at the width it was
+    // vended with.
+    let cell: *u8 = recycler::tree_view_for_row(v, 0 as i64);
+    assert cell != (0 as *u8);
+    assert { ak::View::from_raw(cell).frame().w } == 250.0f64;
+
+    // An unchanged width does nothing — this is the only coalescing the tree
+    // has, because its reload cannot be deferred (below).
+    recycler::tree_notify_resized(v);
+    assert recycler::tree_last_width_of(v) == 250.0f64;
+    return;
+}
+
+#[test]
+fn a_trees_reload_is_synchronous_because_its_data_source_reads_the_node() {
+    backend::install();
+    // WHY THE TREE DOES NOT DEFER ITS RELOAD TO THE TICK, written down because
+    // making it match the list is the obvious "cleanup" and it crashes.
+    //
+    // A tree's data source dereferences its facet NODE to answer every
+    // `numberOfChildrenOfItem:`; a list's only reads a count off its source. A
+    // tree reload queued for a later tick therefore runs after that node may be
+    // gone, and AppKit walks the model into freed memory:
+    //
+    //     recycler.tree_props_of
+    //     -[NSOutlineView _expandItemEntry:expandChildren:startLevel:]
+    //     -[NSOutlineView _uncachedNumberOfRows]
+    //     -[NSOutlineView reloadData]
+    //
+    // Run from the notification the node is live, and `layout_enclosing_scroll`
+    // is what makes the early read safe — it forces AppKit's deferred column
+    // tiling, which is the only thing the tick was buying.
+    var root: tree::TreeNode = tree::TreeNode::new("root", id: "root");
+    let _a: status::Status = root.add_child(tree::TreeNode::new("beta", id: "beta"));
+    var t: core::Node = tree::tree(root, key: "tsync", row: rp_tree_row);
+    let tp: *core::Node = #addr_of(t);
+    let v: *u8 = views::create(0 as *u8, tp);
+    core::set_view(tp, v, views::view_release);
+    views::apply(0 as *u8, tp);
+
+    let pending_before: usize = scheduler::pending_reload_count();
+    recycler::set_column_width(v, 300.0f64);
+    recycler::tree_notify_resized(v);
+    // Done already, with nothing left for a tick that could outlive the node.
+    assert recycler::tree_last_width_of(v) == 300.0f64;
+    assert scheduler::pending_reload_count() == pending_before;
+    return;
+}
+
 #[test]
 fn a_realised_list_rows_content_is_placed_not_left_at_the_origin() {
     backend::install();
@@ -3129,6 +3559,212 @@ fn a_realised_list_rows_content_is_placed_not_left_at_the_origin() {
     assert cell != (0 as *u8);
     assert_row_content_is_placed(cell);
     views::view_release(v);
+    return;
+}
+
+// ---- a cell that arrives narrower than the row was laid out for -------------
+//
+// A row is laid out at the COLUMN's width, because before AppKit has framed a
+// cell there is no other width to ask for — and then AppKit frames the cell at
+// something else. An outline view always does: an indented row's cell is inset
+// by its level, so it arrives NARROWER than the row was built for. Measured on
+// the Files tree: laid out at 432, framed at 423.
+//
+// That 9pt used to go to autoresizing, which is per-SUBVIEW arithmetic: with
+// fixed margins each flexible subview absorbs the WHOLE delta, so every view in
+// the row lost 9pt of width, not the row. A name label with slack loses 9 of
+// 397 invisibly. A 21pt icon loses 9 of 21 and draws as half a glyph — which is
+// what the Files tree showed, in a frame every dump agreed was 21x19, because
+// 21 was the LAYOUT's answer and 12 was the view's.
+//
+// The row shape here is the one that makes the difference legible: a
+// fixed-width leading element and a growing label. A re-layout keeps the fixed
+// element at 40 and takes the delta out of the label. Springs take it out of
+// both.
+
+fn fw_row(i: usize, ctx: *u8) -> core::Node {
+    var b: core::Builder = core::Builder::new();
+    b.add(label::label("icon", key: "lead").width(40.0f64));
+    b.add(label::label("a name", key: "name").grow(1.0f64));
+    return core::row(b, key: "");
+}
+
+fn fw_tree_row(n: *tree::TreeNode, ctx: *u8) -> core::Node {
+    return fw_row(0 as usize, 0 as *u8);
+}
+
+fn fw_list(count: usize) -> core::Node {
+    var n: core::Node = list::list(key: "fw");
+    let p: *core::Node = #addr_of(n);
+    match list::find("fw", within: p) {
+        option::Option[list::List]::Some(x) => {
+            let a: list::List = x.set_row(fw_row);
+            let _b: list::List = a.set_count(count);
+        }
+        option::Option[list::List]::None => { assert false; }
+    }
+    return n;
+}
+
+// The frame of subview `i` of a placed row: 0 is the fixed lead, 1 the growing
+// label. A missing one answers a zero rect, which fails every assertion below.
+fn fw_frame(cell: *u8, i: usize) -> rt::Rect {
+    let subs: vec::Vec[ak::View] = ak::View::from_raw(cell).subviews();
+    match subs.at_ptr(i) {
+        option::Option[*ak::View]::Some(sv) => { return { (*sv).frame() }; }
+        option::Option[*ak::View]::None => { }
+    }
+    return rt::Rect { x: 0.0f64, y: 0.0f64, w: 0.0f64, h: 0.0f64 };
+}
+
+fn fw_sub_count(cell: *u8) -> usize {
+    return { ak::View::from_raw(cell).subviews().count() };
+}
+
+// `w` off the cell, the way AppKit takes it: the frame is set on the cell and
+// nothing else is told.
+fn narrow_cell(cell: *u8, to: f64) {
+    let was: rt::Rect = { ak::View::from_raw(cell).frame() };
+    { msg_void_rect_of(cell, rt::sel(#str_ptr("setFrame:\0")),
+                       rt::Rect { x: was.x, y: was.y, w: to, h: was.h }) };
+    return;
+}
+
+#[link_name = "objc_msgSend"]
+extern fn msg_void_rect_of(recv: *u8, sel: *u8, r: rt::Rect);
+
+#[test]
+fn a_narrowed_cell_re_lays_its_row_out_rather_than_shrinking_every_view() {
+    backend::install();
+    var n: core::Node = fw_list(3 as usize);
+    let v: *u8 = views::create(0 as *u8, #addr_of(n));
+    recycler::set_column_width(v, 200.0f64);
+    let cell: *u8 = recycler::view_for_row(v, 0 as i64);
+    assert cell != (0 as *u8);
+    assert { ak::View::from_raw(cell).frame().w } == 200.0f64;
+    assert fw_sub_count(cell) == (2 as usize);
+    assert fw_frame(cell, 0 as usize).w == 40.0f64;
+
+    // AppKit frames the cell 9pt narrower than the row was laid out for.
+    narrow_cell(cell, 191.0f64);
+
+    assert fw_sub_count(cell) == (2 as usize);
+    // The whole claim. Springs leave 31 here.
+    assert fw_frame(cell, 0 as usize).w == 40.0f64;
+    assert fw_frame(cell, 0 as usize).x == 0.0f64;
+    // The delta lands where the layout says it goes: on the one node that
+    // grows, which still starts flush against the fixed one.
+    assert fw_frame(cell, 1 as usize).x == 40.0f64;
+    assert fw_frame(cell, 1 as usize).w == 151.0f64;
+    views::view_release(v);
+    return;
+}
+
+// The tree is where this actually bit: indentation is why an outline cell is
+// narrower than its column at all.
+#[test]
+fn a_narrowed_tree_cell_re_lays_its_row_out_too() {
+    backend::install();
+    var root: tree::TreeNode = tree::TreeNode::new("root", id: "root");
+    let _a: status::Status = root.add_child(tree::TreeNode::new("alpha", id: "alpha"));
+    var t: core::Node = tree::tree(root, key: "fwt", row: fw_tree_row);
+    let tp: *core::Node = #addr_of(t);
+    let v: *u8 = views::create(0 as *u8, tp);
+    core::set_view(tp, v, views::view_release);
+    views::apply(0 as *u8, tp);
+    recycler::set_column_width(v, 200.0f64);
+
+    let cell: *u8 = recycler::tree_view_for_row(v, 0 as i64);
+    assert cell != (0 as *u8);
+    narrow_cell(cell, 191.0f64);
+    assert fw_sub_count(cell) == (2 as usize);
+    assert fw_frame(cell, 0 as usize).w == 40.0f64;
+    assert fw_frame(cell, 1 as usize).w == 151.0f64;
+    return;
+}
+
+// A WIDER cell is the same question from the other side — a divider dragged
+// out. The fixed element must not grow with it.
+#[test]
+fn a_widened_cell_gives_the_extra_width_to_what_grows() {
+    backend::install();
+    var n: core::Node = fw_list(3 as usize);
+    let v: *u8 = views::create(0 as *u8, #addr_of(n));
+    recycler::set_column_width(v, 200.0f64);
+    let cell: *u8 = recycler::view_for_row(v, 0 as i64);
+    assert cell != (0 as *u8);
+    narrow_cell(cell, 320.0f64);
+    assert fw_frame(cell, 0 as usize).w == 40.0f64;
+    assert fw_frame(cell, 1 as usize).w == 280.0f64;
+    views::view_release(v);
+    return;
+}
+
+// NEGATIVE: a cell with no row in it is resized by AppKit like any other view —
+// the hook has nothing to place and must say so rather than dereference a node
+// that is not there.
+#[test]
+fn resizing_a_cell_that_holds_no_row_does_nothing() {
+    backend::install();
+    var n: core::Node = fw_list(3 as usize);
+    let v: *u8 = views::create(0 as *u8, #addr_of(n));
+    recycler::set_column_width(v, 200.0f64);
+    let cell: *u8 = recycler::make_cell(v);
+    assert cell != (0 as *u8);
+    narrow_cell(cell, 120.0f64);
+    assert { ak::View::from_raw(cell).frame().w } == 120.0f64;
+    assert { ak::View::from_raw(cell).subviews().count() } == (0 as usize);
+    views::view_release(v);
+    return;
+}
+
+// ---- the expand that drifted ------------------------------------------------
+//
+// Expanding a folder slid the rows below it into place over about a quarter of
+// a second. What moves is AppKit's own NSTableRowView — measured in a live
+// window, sampling every 50ms: `animationKeys` = 1 on every row after the
+// expanded item, its presentation frame 202pt from its model frame, decaying
+// 202 -> 124 -> 61 -> 15 over four samples. Nothing facet places moves.
+//
+// So the fix is NSAnimationContext, not CATransaction, and the grouping has to
+// span the expansion: AppKit starts the animation between `WillExpand` and
+// `DidExpand`, which is the only pair that brackets it.
+//
+// A HEADLESS TEST CANNOT SEE THE ANIMATION — there is no run loop pass, no
+// window and no Core Animation. What it can hold is the part that goes wrong
+// silently: the grouping must be balanced, and a `Did` that this file never
+// opened must not pop somebody else's context off a process-wide stack. The
+// motion itself was verified on screen, in `examples/icon_probe`.
+
+#[test]
+fn an_expansion_is_bracketed_by_a_grouping_and_gives_it_back() {
+    backend::install();
+    assert recycler::held_row_animations() == (0 as i64);
+    recycler::tree_will_expand_imp(0 as *u8, 0 as *u8, 0 as *u8);
+    // Held ACROSS the expansion, which is where AppKit starts the row slide.
+    assert recycler::held_row_animations() == (1 as i64);
+    recycler::tree_did_expand_imp(0 as *u8, 0 as *u8, 0 as *u8);
+    assert recycler::held_row_animations() == (0 as i64);
+
+    // Collapse moves rows too, and is the same pair.
+    recycler::tree_will_collapse_imp(0 as *u8, 0 as *u8, 0 as *u8);
+    assert recycler::held_row_animations() == (1 as i64);
+    recycler::tree_did_collapse_imp(0 as *u8, 0 as *u8, 0 as *u8);
+    assert recycler::held_row_animations() == (0 as i64);
+    return;
+}
+
+// NEGATIVE: NSAnimationContext's stack is process-wide. An `endGrouping` for a
+// grouping this file never began pops whatever the application had open, and
+// the next animation anywhere in the process inherits a duration from here.
+#[test]
+fn a_did_expand_with_no_will_does_not_pop_a_grouping_this_file_never_opened() {
+    backend::install();
+    assert recycler::held_row_animations() == (0 as i64);
+    recycler::tree_did_expand_imp(0 as *u8, 0 as *u8, 0 as *u8);
+    assert recycler::held_row_animations() == (0 as i64);
+    recycler::tree_did_collapse_imp(0 as *u8, 0 as *u8, 0 as *u8);
+    assert recycler::held_row_animations() == (0 as i64);
     return;
 }
 
@@ -8870,6 +9506,134 @@ fn a_bundled_symbol_puts_its_codepoint_in_the_label() {
     // is NOT the decimal codepoint rendered as text.
     assert got.view() != "";
     assert got.view() != "59826";
+    views::view_release(v);
+    return;
+}
+
+// ---- `size:` has to reach the GLYPH -----------------------------------------
+//
+// `imageWithSystemSymbolName:` answers an image configured for the BODY text
+// style, and setting the label's font changes the box, not the glyph. So
+// `size:` did nothing at all to a System symbol: measured, `folder` came back
+// 18x14 whether the node asked for 11pt or 15pt — the same image twice.
+//
+// It read as working because nobody compared two sizes side by side, and it
+// surfaced as something else entirely: iris's PROJECT FILES header asks for an
+// 11pt folder in a `.width(16)` box, got the bigger default glyph, and the box
+// cut it.
+//
+// The assertion is on the ATTACHMENT's image, which is the glyph itself —
+// fitting size is no good here, because the label's font moves it too and would
+// pass with the configuration ablated.
+
+fn symbol_attachment_image_size(v: *u8) -> rt::Size {
+    let att_str: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("attributedStringValue\0"))) };
+    if att_str == (0 as *u8) { return rt::Size { w: 0.0f64, h: 0.0f64 }; }
+    if { rt::msg_i64(att_str, rt::sel(#str_ptr("length\0"))) } < (1 as i64) {
+        return rt::Size { w: 0.0f64, h: 0.0f64 };
+    }
+    let att: *u8 = { msg_attribute_at(att_str, rt::sel(#str_ptr("attribute:atIndex:effectiveRange:\0")),
+                                      bridge::nsstring("NSAttachment"), 0 as u64, 0 as *u8) };
+    if att == (0 as *u8) { return rt::Size { w: 0.0f64, h: 0.0f64 }; }
+    let img: *u8 = { rt::msg_id(att, rt::sel(#str_ptr("image\0"))) };
+    if img == (0 as *u8) { return rt::Size { w: 0.0f64, h: 0.0f64 }; }
+    return { msg_size_of(img, rt::sel(#str_ptr("size\0"))) };
+}
+
+#[link_name = "objc_msgSend"]
+extern fn msg_attribute_at(recv: *u8, sel: *u8, a: *u8, b: u64, c: *u8) -> *u8;
+
+fn symbol_glyph_size(name: str, key: str, pt: f64) -> rt::Size {
+    var n: core::Node = symbol::system_symbol(name, key: key, size: pt);
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    assert v != (0 as *u8);
+    let s: rt::Size = symbol_attachment_image_size(v);
+    views::view_release(v);
+    return s;
+}
+
+#[test]
+fn a_system_symbols_size_reaches_the_glyph_not_just_the_box() {
+    backend::install();
+    let small: rt::Size = symbol_glyph_size("folder", "s11", 11.0f64);
+    let big: rt::Size = symbol_glyph_size("folder", "s24", 24.0f64);
+    // There IS a glyph in there — a zero would make the rest vacuous.
+    assert small.w > 0.0f64;
+    assert big.w > 0.0f64;
+    // The whole claim: two sizes, two glyphs. Unconfigured, these are the same
+    // image and both of these are equalities.
+    assert big.w > small.w;
+    assert big.h > small.h;
+    // And it tracks the number rather than merely differing: twice the point
+    // size is close to twice the glyph, well inside a symbol's own rounding.
+    let s2: rt::Size = symbol_glyph_size("folder", "s22", 22.0f64);
+    assert s2.h > small.h * 1.6f64;
+    assert s2.h < small.h * 2.4f64;
+    return;
+}
+
+// A STATED BOX SCALES THE GLYPH RATHER THAN CUTTING IT.
+//
+// `symbol(...).width(16)` meant "a 16pt window onto whatever glyph you were
+// going to draw", and a window onto a bigger glyph is a cut — which on screen
+// reads as a rendering fault, not as a size. It is also the only way to line
+// text up after a column of icons, since glyph widths differ by symbol, so the
+// shape is common and the trap is easy to hit.
+#[test]
+fn a_symbol_given_a_box_smaller_than_its_glyph_is_scaled_into_it() {
+    backend::install();
+    var n: core::Node = symbol::system_symbol("folder", key: "boxed", size: 24.0f64)
+        .width(16.0f64);
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    assert v != (0 as *u8);
+    // It FITS: the label's own fitting width is inside the box it was given, so
+    // nothing is left outside the frame to be cut off.
+    let fit: rt::Size = { msg_size_of(v, rt::sel(#str_ptr("fittingSize\0"))) };
+    assert fit.w <= 16.0f64;
+    // And it is still a glyph, not a glyph scaled to nothing.
+    let glyph: rt::Size = symbol_attachment_image_size(v);
+    assert glyph.w > 1.0f64;
+    assert glyph.h > 1.0f64;
+    // Strictly smaller than the same symbol with no box, which is the scaling.
+    let unboxed: rt::Size = symbol_glyph_size("folder", "unboxed", 24.0f64);
+    assert glyph.w < unboxed.w;
+    views::view_release(v);
+    return;
+}
+
+// NEGATIVE: a box BIGGER than the glyph is a bound, not a target. `size` is the
+// size; a 12pt icon in a 40pt slot is a 12pt icon with space around it.
+#[test]
+fn a_box_bigger_than_the_glyph_does_not_grow_it() {
+    backend::install();
+    var n: core::Node = symbol::system_symbol("folder", key: "roomy", size: 12.0f64)
+        .width(40.0f64);
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    assert v != (0 as *u8);
+    let glyph: rt::Size = symbol_attachment_image_size(v);
+    let plain: rt::Size = symbol_glyph_size("folder", "plain12", 12.0f64);
+    assert glyph.w == plain.w;
+    assert glyph.h == plain.h;
+    views::view_release(v);
+    return;
+}
+
+#[test]
+fn a_symbol_with_no_size_keeps_the_systems_own_glyph() {
+    backend::install();
+    // `size` defaults to 16 in the props, so "no size" means the default is
+    // what gets configured — not that the configuration is skipped. The value
+    // being real is the assertion; which number it is belongs to facet.
+    var n: core::Node = symbol::system_symbol("folder", key: "sdef");
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    assert v != (0 as *u8);
+    let s: rt::Size = symbol_attachment_image_size(v);
+    assert s.w > 0.0f64;
+    assert s.h > 0.0f64;
     views::view_release(v);
     return;
 }

@@ -1668,7 +1668,12 @@ fn apply_symbol(v: *u8, n: *core::Node, dirty: u64) {
             var want: text::Text = text::from_str(name);
             if { (*p).fill } >= 0.5f64 { let _a: status::Status = want.append(".fill"); }
             match symbol_image(want.view(), name) {
-                option::Option[ak::Image]::Some(img) => { set_symbol_image(f, img); }
+                // The stated box, if the node has one. It is a STYLE value, not
+                // a layout result, so it is readable here — no pass has run yet.
+                option::Option[ak::Image]::Some(img) => {
+                    set_symbol_image(f, img, pt, stated_points({ (*n).style.width }),
+                                     stated_points({ (*n).style.height }));
+                }
                 // A name the machine does not have leaves the field empty
                 // rather than showing the name as text, which would read as a
                 // rendering bug rather than a missing glyph.
@@ -1708,14 +1713,106 @@ fn symbol_image(filled: str, plain: str) -> option::Option[ak::Image] {
     return ak::Image::image_with_system_symbol_name(plain, "");
 }
 
+// SIZE HAS TO REACH THE GLYPH.
+//
+// `imageWithSystemSymbolName:` answers an image configured for the BODY text
+// style, and nothing here was changing it — so `size:` did nothing at all to a
+// System symbol. Measured: `folder` came back 18x14 whether the node asked for
+// 11pt or 15pt, identical images, and the only thing `size` moved was the
+// LABEL's font, which changes the box around the glyph and not the glyph.
+//
+// Two symptoms, both reported as something else. A row of icons at `size: 15`
+// drew at whatever the body style is, so `size` looked like it worked only
+// because nobody compared two. And an icon given a box for the size it ASKED
+// for — the PROJECT FILES header, `size: 11` in a `.width(16)` — was cut by
+// that box, because the glyph inside it was still the bigger default one.
+//
+// `configurationWithPointSize:weight:` is the axis that answers. Weight is
+// regular (`NSFontWeightRegular` is 0.0); `symbol` has no weight prop, and
+// inventing one from `fill` would be two verbs on one axis.
+//
+// The sizing happens HERE rather than in a `-> ak::Image` helper because a
+// by-value `ak::Image` param borrows: handing the caller's image back out of
+// one would be a second owner (E0337). Both images live exactly as long as this
+// call, and the attachment retains whichever is used.
+
 // A symbol lands in a LABEL, so the image is an attachment in its attributed
 // string. That is what keeps the shared band and the frame walk treating it
 // like any other leaf — the alternative, an NSImageView, would need its own
 // case in every one of them.
-fn set_symbol_image(f: ak::TextField, img: ak::Image) {
+fn set_symbol_image(f: ak::TextField, img: ak::Image, pt: f64,
+                    box_w: f64 = 0.0f64, box_h: f64 = 0.0f64) {
+    if (pt > 0.0f64) == false {
+        attach_symbol_image(f, img.raw());
+        return;
+    }
+    // A STATED BOX SCALES THE GLYPH; IT NEVER CUTS IT.
+    //
+    // `symbol(...).width(16)` used to mean "draw the glyph you were going to
+    // draw, in a 16pt window onto it" — which is a cut, and reads on screen as
+    // a rendering fault rather than as a size. iris's PROJECT FILES header is
+    // exactly that shape and showed exactly that.
+    //
+    // The size that fits is FOUND, not calculated. A label's fitting size is
+    // its glyph plus insets that come from the FONT, so the arithmetic has no
+    // closed form worth trusting (measured: +2pt at 11pt, +7pt at 15pt). One
+    // ratio and a re-measure converges immediately, and three passes is a
+    // ceiling nothing has been seen to need — a symbol asked to fit a box it
+    // cannot is left at 1pt rather than at zero, which is visible.
+    var use_pt: f64 = pt;
+    var pass: i64 = 0 as i64;
+    while pass < (3 as i64) {
+        apply_symbol_at(f, img, use_pt);
+        if (box_w > 0.0f64) == false && (box_h > 0.0f64) == false { return; }
+        let fit: rt::Size = { msg_size_of_field(f.raw(), rt::sel(#str_ptr("fittingSize\0"))) };
+        var ratio: f64 = 1.0f64;
+        if box_w > 0.0f64 && fit.w > box_w && fit.w > 0.0f64 { ratio = box_w / fit.w; }
+        if box_h > 0.0f64 && fit.h > box_h && fit.h > 0.0f64 {
+            let r: f64 = box_h / fit.h;
+            if r < ratio { ratio = r; }
+        }
+        // Fits. A glyph is never grown into a box bigger than it asked for:
+        // `size` is the size, and a box is a bound.
+        if ratio >= 0.999f64 { return; }
+        use_pt = use_pt * ratio;
+        if use_pt < 1.0f64 { use_pt = 1.0f64; }
+        pass = pass + (1 as i64);
+    }
+    return;
+}
+
+// The label, carrying `img` at `pt`: the font that sets the line box, and the
+// glyph configured to the same point size.
+fn apply_symbol_at(f: ak::TextField, img: ak::Image, pt: f64) {
+    f.as_control().set_font(ak::Font::system_font_of_size(pt));
+    match img.image_with_symbol_configuration(
+              ak::ImageSymbolConfiguration::configuration_with_point_size(pt, 0.0f64)) {
+        option::Option[ak::Image]::Some(sized) => { attach_symbol_image(f, sized.raw()); return; }
+        // A configuration the system declines leaves the image as it came,
+        // which is what every caller got before this existed.
+        option::Option[ak::Image]::None => { }
+    }
+    attach_symbol_image(f, img.raw());
+    return;
+}
+
+// A length the node STATED in points. A percent cannot be resolved without a
+// parent, and Auto/Undefined is the ordinary case — both answer 0, which reads
+// as "no box" everywhere this is used.
+fn stated_points(v: flex::StyleLength) -> f64 {
+    return match { v.unit } {
+        flex::Unit::Point => { v.value }
+        _ => 0.0f64
+    };
+}
+
+#[link_name = "objc_msgSend"]
+extern fn msg_size_of_field(recv: *u8, sel: *u8) -> rt::Size;
+
+fn attach_symbol_image(f: ak::TextField, img: *u8) {
     let att: *u8 = { rt::alloc_init(#str_ptr("NSTextAttachment\0")) };
     if att == (0 as *u8) { return; }
-    { rt::msg_void_id(att, rt::sel(#str_ptr("setImage:\0")), img.raw()) };
+    { rt::msg_void_id(att, rt::sel(#str_ptr("setImage:\0")), img) };
     let s: *u8 = { rt::msg_id_id(rt::get_class(#str_ptr("NSAttributedString\0")),
                                  rt::sel(#str_ptr("attributedStringWithAttachment:\0")), att) };
     { rt::release(att) };

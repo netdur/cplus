@@ -37,6 +37,8 @@
 // on this file rather than a note nobody wrote down.
 
 import "stdlib/option" as option;
+import "stdlib/env" as env;
+import "stdlib/io" as io;
 import "stdlib/text" as text;
 import "stdlib/vec" as vec;
 import "stdlib/box" as box;
@@ -226,6 +228,24 @@ fn source_of(tv: *u8) -> *RowSource {
     return { synth::get_associated(tv, source_key()) as *RowSource };
 }
 
+// FINISH APPKIT'S LAYOUT BEFORE MEASURING. The column is what rows are measured
+// against, and a layer-backed table tiles its columns in ITS layout pass —
+// deferred to the Core Animation commit, which runs after the tick, and during
+// a live divider drag may not run between events at all. Read without forcing
+// it, the column still answers the width the LAST pass tiled (measured on a
+// drag: table already 471 while the column said 100), and every row is laid out
+// one resize behind, or never.
+//
+// Headless — where nothing defers — this is a no-op, which is why the suite's
+// simulated widths stay authoritative.
+fn layout_enclosing_scroll(tv: *u8) {
+    if tv == (0 as *u8) { return; }
+    var host: *u8 = { rt::msg_id(tv, rt::sel(#str_ptr("enclosingScrollView\0"))) };
+    if host == (0 as *u8) { host = tv; }
+    { rt::msg_void(host, rt::sel(#str_ptr("layoutSubtreeIfNeeded\0"))) };
+    return;
+}
+
 // The width a CELL gets — the COLUMN's, not the table's frame.
 //
 // This one is a bug, not a detail. Modern NSTableView styles inset cells
@@ -386,11 +406,72 @@ fn view_for_row_imp(self_obj: *u8, cmd: *u8, tv: *u8, col: *u8, row: i64) -> *u8
 
 // A cell of our own, tagged so the table will offer it back.
 fn new_cell(identity: str, w: f64) -> *u8 {
-    let cell: *u8 = rt::retain(akx::new_flipped_view(
-        rt::Rect { x: 0.0f64, y: 0.0f64, w: w, h: 1.0f64 }).raw());
+    let cell: *u8 = rt::retain(new_row_cell(rt::Rect { x: 0.0f64, y: 0.0f64, w: w, h: 1.0f64 }));
     if cell == (0 as *u8) { return 0 as *u8; }
     { rt::msg_void_id(cell, rt::sel(#str_ptr("setIdentifier:\0")), bridge::nsstring(identity)) };
     return rt::autorelease(cell);
+}
+
+// ---- the cell class, and why a row needs one ---------------------------------
+//
+// A CELL IS NOT THE WIDTH IT WAS LAID OUT AT. Rows are laid out at the COLUMN's
+// width, because that is the only width there is to ask for before AppKit has a
+// cell to answer about — and then AppKit frames the cell at something else. In
+// an outline view it always does: an indented row's cell is inset by its level's
+// indentation plus the disclosure column, so the cell arrives NARROWER than the
+// row was built for. Measured on the Files tree: laid out at 432, framed at 423.
+//
+// That 9pt used to be absorbed by autoresizing, which is the wrong arithmetic
+// for it. `NSViewWidthSizable` is per-subview and the margins around each one
+// were fixed, so AppKit took the FULL delta out of EVERY subview's width —
+// every one of them, independently, whatever it was. A name label losing 9pt of
+// its 397 is invisible. A 21pt icon losing 9pt is cut in half, which is exactly
+// what the Files tree showed: a document glyph with its right side missing, in a
+// frame that measured 21x19 everywhere anyone looked, because 21 is what the
+// LAYOUT said and 12 is what the VIEW got.
+//
+// So the cell re-places its content when its size changes. `resizeSubviewsWith-
+// OldSize:` is AppKit's own hook for exactly this question, it runs INSIDE
+// `setFrameSize:` — synchronously, during a live divider drag, where no facet
+// tick is running — and re-running flex at the real width answers it the way the
+// row was written rather than by dividing a remainder. Super is deliberately not
+// called: the masks it would apply are the arithmetic being replaced.
+fn row_cell_class() -> *u8 {
+    let existing: *u8 = rt::get_class(#str_ptr("FacetRowCell\0"));
+    if existing != (0 as *u8) { return existing; }
+    let cls: *u8 = synth::allocate_class_pair(akx::flipped_view_class(),
+                                              #str_ptr("FacetRowCell\0"), 0 as usize);
+    add_method_v_1size(cls, rt::sel(#str_ptr("resizeSubviewsWithOldSize:\0")),
+                       cell_resize_imp, #str_ptr("v@:{CGSize=dd}\0"));
+    synth::register_class_pair(cls);
+    return cls;
+}
+
+#[link_name = "class_addMethod"]
+extern fn add_method_v_1size(cls: *u8, sel: *u8, imp: fn(*u8, *u8, rt::Size),
+                             types: *u8) -> i8;
+
+fn new_row_cell(frame: rt::Rect) -> *u8 {
+    let alloced: *u8 = { rt::msg_id(row_cell_class(), rt::sel(#str_ptr("alloc\0"))) };
+    if alloced == (0 as *u8) { return 0 as *u8; }
+    return rt::autorelease({ rt::msg_id_rect(alloced, rt::sel(#str_ptr("initWithFrame:\0")), frame) });
+}
+
+// `place_row` frames the cell itself, which re-enters this hook. One flag,
+// because a row placing itself is not a resize to answer.
+static PLACING_ROW: bool = false;
+
+fn cell_resize_imp(self_obj: *u8, cmd: *u8, old: rt::Size) {
+    if PLACING_ROW { return; }
+    let np: *core::Node = { synth::get_associated(self_obj, cell_node_key()) as *core::Node };
+    if np == (0 as *core::Node) { return; }
+    let f: rt::Rect = { rt::msg_rect(self_obj, rt::sel(#str_ptr("frame\0"))) };
+    if f.w < 1.0f64 || f.h < 1.0f64 { return; }
+    // Width only. A height change moves the row, it does not re-wrap it — and
+    // the height the table gives a cell is the height it asked us for.
+    if f.w == old.w { return; }
+    place_row_content(self_obj, np, f.w, f.h);
+    return;
 }
 
 // Put row `row` into `cell`, whether or not the cell already holds one.
@@ -416,7 +497,7 @@ fn fill_cell(s: *RowSource, cell: *u8, row: i64, w: f64) {
         mount::sync_from(existing);
         // The row's own size can change with its data, so it is re-laid out
         // and re-placed — the cheap half of what a rebuild did.
-        let _h: f64 = place_row(cell, existing, w);
+        let _h: f64 = place_row(cell, existing, w, row_h: { (*s).fixed_height });
         return;
     }
     if existing != (0 as *core::Node) { release_cell_row(cell); }
@@ -425,6 +506,7 @@ fn fill_cell(s: *RowSource, cell: *u8, row: i64, w: f64) {
     match box::new::[core::Node](node) {
         option::Option[box::Box[core::Node]]::Some(b) => {
             let np: *core::Node = { b.into_raw() } as *core::Node;
+            empty_cell(cell);
             // The CELL is the host. A row's root is usually a bare container —
             // nothing keys it, nothing gives it gestures — so it is not backed
             // and its children pass straight through into the cell, exactly as
@@ -435,11 +517,42 @@ fn fill_cell(s: *RowSource, cell: *u8, row: i64, w: f64) {
             // data of whichever row happened to build its cell.
             bind_into(s, row, np);
             mount::sync_from(np);
-            let _h: f64 = place_row(cell, np, w);
+            let _h: f64 = place_row(cell, np, w, row_h: { (*s).fixed_height });
             synth::set_associated(cell, cell_node_key(), np as *u8);
         }
         option::Option[box::Box[core::Node]]::None => { }
     }
+    return;
+}
+
+// NO IMPLICIT ANIMATION WHILE A ROW IS PLACED.
+//
+// The views in a cell are layer-backed, and setting a layer-backed view's frame
+// inside a run loop pass can animate it — Core Animation's implicit actions, on
+// by default. A row is placed, not moved, so they are turned off for the walk.
+// `CATransaction` begin/commit with actions disabled is the switch, the same
+// one `compose` uses when a control must NOT slide.
+//
+// WHAT THIS IS NOT. It was written for the expand that showed its rows drifting
+// into position, and it does not fix that — measured, not argued: with these
+// two functions neutered, a live window sampled every 50ms across a user's
+// expand reports exactly the same motion, and every animating object is an
+// NSTableRowView. Nothing in a cell moves either way. That symptom is AppKit's
+// own row animation and is held off by `hold_row_animation`.
+//
+// It stays because the claim in its first paragraph is still true and cheap to
+// keep true — two msgsends per placement — not because it was ever seen to
+// change anything on screen.
+fn without_implicit_animation_begin() {
+    let cls: *u8 = rt::get_class(#str_ptr("CATransaction\0"));
+    { rt::msg_void_id(cls, rt::sel(#str_ptr("begin\0")), 0 as *u8) };
+    { rt::msg_void_i8(cls, rt::sel(#str_ptr("setDisableActions:\0")), 1 as i8) };
+    return;
+}
+
+fn without_implicit_animation_end() {
+    let cls: *u8 = rt::get_class(#str_ptr("CATransaction\0"));
+    { rt::msg_void_id(cls, rt::sel(#str_ptr("commit\0")), 0 as *u8) };
     return;
 }
 
@@ -458,10 +571,33 @@ fn fill_cell(s: *RowSource, cell: *u8, row: i64, w: f64) {
 // HEIGHT was right all along (`height_imp` lays out an unrealised copy), so the
 // table reserved exactly the right space and drew the whole row into the
 // top-left corner of it.
-fn place_row(cell: *u8, np: *core::Node, w: f64, floor_h: f64 = 1.0f64) -> f64 {
-    { (*np).calculate_layout(width: w) };
+fn place_row(cell: *u8, np: *core::Node, w: f64, floor_h: f64 = 1.0f64,
+             row_h: f64 = 0.0f64) -> f64 {
+    // LAY THE ROW OUT AT THE ROW'S HEIGHT, not at its content's.
+    //
+    // `row_h` is what the delegate told AppKit this row is — a stated
+    // `row_height`. The row was laid out at WIDTH ONLY, so its height came from
+    // its content, and the cell was set to that: a 15pt icon-and-name inside a
+    // 34pt row, pinned to the top of it. AppKit centres what IT draws in the
+    // full row — the disclosure triangle most visibly — so the triangle sat in
+    // the middle while the icon and the name sat on the ceiling, and a row that
+    // stated a comfortable height got no benefit from it.
+    //
+    // Given the row's real height the root fills it, and a row that says
+    // `align(Center)` centres its content in the row the user actually sees.
+    // Unstated, `row_h` is 0 and the height still comes from the content, which
+    // is also exactly what AppKit was told — so nothing changes there.
+    if row_h >= 1.0f64 { { (*np).calculate_layout(width: w, height: row_h) }; }
+    else { { (*np).calculate_layout(width: w) }; }
     var h: f64 = { (*np).frame().height };
     if h < 1.0f64 { h = floor_h; }
+    if row_h >= 1.0f64 { h = row_h; }
+    // The cell is framed HERE and re-placed at whatever size AppKit gives it
+    // afterwards, by the cell's own resize hook — so the flag holds across both
+    // `setFrame:`s below, which would otherwise re-enter that hook to redo the
+    // work this line is already doing.
+    PLACING_ROW = true;
+    without_implicit_animation_begin();
     // Before the cell is framed, and reading the LAYOUT frames rather than the
     // views', so the order against the two `setFrame:`s below does not matter.
     geometry::reposition(np);
@@ -469,9 +605,27 @@ fn place_row(cell: *u8, np: *core::Node, w: f64, floor_h: f64 = 1.0f64) -> f64 {
                     rt::Rect { x: 0.0f64, y: 0.0f64, w: w, h: h }) };
     let rv: *u8 = core::view_of(np);
     if rv != (0 as *u8) { geometry_place(rv, w, h); }
-    // Last, so it covers every view the walk above just placed.
-    autoresize_subtree(cell);
+    // The CELL follows the column's width; what is INSIDE it is placed by the
+    // resize hook that follows from that, not by a mask. See `row_cell_class`.
+    cell_follows_width(cell);
+    without_implicit_animation_end();
+    PLACING_ROW = false;
     return h;
+}
+
+// Re-place a row's content at a size the cell already has — the resize hook's
+// half of `place_row`, which must not touch the cell's own frame because it
+// runs inside `setFrameSize:`.
+fn place_row_content(cell: *u8, np: *core::Node, w: f64, h: f64) {
+    PLACING_ROW = true;
+    without_implicit_animation_begin();
+    { (*np).calculate_layout(width: w, height: h) };
+    geometry::reposition(np);
+    let rv: *u8 = core::view_of(np);
+    if rv != (0 as *u8) { geometry_place(rv, w, h); }
+    without_implicit_animation_end();
+    PLACING_ROW = false;
+    return;
 }
 
 fn has_bind(s: *RowSource) -> bool {
@@ -504,7 +658,7 @@ fn bind_into(s: *RowSource, row: i64, into: *core::Node) {
     return;
 }
 
-// LET APPKIT STRETCH THE CONTENT, in the same pass it resizes the cell.
+// THE CELL FOLLOWS THE COLUMN'S WIDTH — and nothing else does.
 //
 // A width change does NOT reach a row through facet. NSTableView tiles its
 // columns inside AppKit's own layout, and the cell views are resized there —
@@ -515,28 +669,26 @@ fn bind_into(s: *RowSource, row: i64, into: *core::Node) {
 // up one frame later. Moving the reload earlier or later in the tick cannot fix
 // that, because the tick is not the clock the resize arrives on.
 //
-// `vendor/facet_appkit.old` did not have this problem and did not solve it with
-// a reload: `list_autoresize_subtree` put `NSViewWidthSizable` on the cell and
-// everything under it, so AppKit stretched the content with the cell, live. The
-// reload then only had to fix what autoresizing cannot — heights, and text that
-// re-wraps at the new width.
+// `vendor/facet_appkit.old` solved that with `list_autoresize_subtree`:
+// `NSViewWidthSizable` on the cell AND everything under it, so AppKit stretched
+// the content live. This package copied it, and the copy carried a bug the old
+// one had too — see `row_cell_class`. Autoresizing is per-subview arithmetic,
+// so a cell that arrives 9pt narrower than the row was laid out for takes 9pt
+// off EVERY flexible subview's width, not 9pt off the row: fine for a label
+// with slack, and half of a 21pt icon.
+//
+// The mask stays on the CELL, which is the one view the claim above is actually
+// about — it must follow the column while AppKit is the only thing running.
+// What is inside it is re-laid out by flex from the cell's resize hook, which
+// is the same moment and the right arithmetic.
 //
 // WIDTH ONLY. The vertical mask stays off: heights are ours, they come from the
 // flex pass, and letting AppKit stretch them would fight the frames `reposition`
-// just set. The margins stay fixed and the width absorbs the change, which is
-// exactly what a card inset from the row's edges wants.
-fn autoresize_subtree(v: *u8) {
+// just set.
+fn cell_follows_width(v: *u8) {
     if v == (0 as *u8) { return; }
     { rt::msg_void_u64(v, rt::sel(#str_ptr("setAutoresizingMask:\0")),
                        ak::autoresizing_mask_options_n_s_view_width_sizable) };
-    let subs: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("subviews\0"))) };
-    if subs == (0 as *u8) { return; }
-    let n: u64 = { rt::msg_u64(subs, rt::sel(#str_ptr("count\0"))) };
-    var i: u64 = 0 as u64;
-    while i < n {
-        autoresize_subtree({ rt::msg_id_u64(subs, rt::sel(#str_ptr("objectAtIndex:\0")), i) });
-        i = i +% (1 as u64);
-    }
     return;
 }
 
@@ -554,6 +706,38 @@ fn geometry_place(v: *u8, w: f64, h: f64) {
 }
 
 // Tear down whatever row this cell is currently showing.
+// EMPTY THE CELL BEFORE PUTTING A ROW IN IT.
+//
+// Tearing the old row down releases the views its node owned — but a released
+// view whose SUPERVIEW still retains it does not go anywhere, and the cell is
+// that superview. So the previous row's labels stayed in the cell and the new
+// row's were added on top: "SKILL.md" and "main.cplus" drawn through each
+// other in one row, which is what a recycled cell looks like when only half of
+// it was recycled.
+//
+// Done here rather than inside the teardown because it must hold however the
+// cell arrived — reused by AppKit, rebuilt after a bind was refused, or handed
+// over with content nobody recorded. A cell about to receive a row has no
+// business holding anything, and on an empty one this costs one message.
+fn empty_cell(cell: *u8) {
+    if cell == (0 as *u8) { return; }
+    let subs: *u8 = { rt::msg_id(cell, rt::sel(#str_ptr("subviews\0"))) };
+    if subs == (0 as *u8) { return; }
+    // Count first, then take index 0 each time: `removeFromSuperview` mutates
+    // the array being read, so an index walk skips every other view.
+    var n: u64 = { rt::msg_u64(subs, rt::sel(#str_ptr("count\0"))) };
+    while n > (0 as u64) {
+        let live: *u8 = { rt::msg_id(cell, rt::sel(#str_ptr("subviews\0"))) };
+        if live == (0 as *u8) { return; }
+        if { rt::msg_u64(live, rt::sel(#str_ptr("count\0"))) } == (0 as u64) { return; }
+        let sv: *u8 = { rt::msg_id_u64(live, rt::sel(#str_ptr("objectAtIndex:\0")), 0 as u64) };
+        if sv == (0 as *u8) { return; }
+        { rt::msg_void(sv, rt::sel(#str_ptr("removeFromSuperview\0"))) };
+        n = n -% (1 as u64);
+    }
+    return;
+}
+
 fn release_cell_row(cell: *u8) {
     let np: *core::Node = { synth::get_associated(cell, cell_node_key()) as *core::Node };
     if np == (0 as *core::Node) { return; }
@@ -1119,9 +1303,7 @@ fn reload_job(ctx: *u8) {
     // one resize behind, or never. `layoutSubtreeIfNeeded` runs the deferred
     // pass NOW, insets and all; headless — where nothing defers — it is a
     // no-op, which is why the suite's simulated widths stay authoritative.
-    var host: *u8 = { rt::msg_id(tv, rt::sel(#str_ptr("enclosingScrollView\0"))) };
-    if host == (0 as *u8) { host = tv; }
-    { rt::msg_void(host, rt::sel(#str_ptr("layoutSubtreeIfNeeded\0"))) };
+    layout_enclosing_scroll(tv);
     let w: f64 = column_width(tv);
     let dbg: bool = scheduler::debug_on();
     // A height change moves the viewport, not the rows — nothing re-wraps.
@@ -1193,6 +1375,97 @@ fn row_added(v: *u8, rowview: *u8, row: i64) {
     if tv == (0 as *u8) { return; }
     row_added_imp(0 as *u8, 0 as *u8, tv, rowview, row);
     return;
+}
+
+// Drive the tree's frame-change path, the way the observer does.
+fn tree_height_of_row(v: *u8, row: i64) -> f64 {
+    let ov: *u8 = table_of(v);
+    if ov == (0 as *u8) { return 0.0f64; }
+    let item: *u8 = { rt::msg_id_i64(ov, rt::sel(#str_ptr("itemAtRow:\0")), row) };
+    if item == (0 as *u8) { return 0.0f64; }
+    return tree_height_imp(0 as *u8, 0 as *u8, ov, item);
+}
+
+// Drive the DidExpand notification the way AppKit does, for an item by row.
+// Drive what a reload does to the selection: clear it, then let AppKit report
+// the clear. `reloadData` headlessly does not clear at all (no window, no
+// display cycle), so the real sequence has to be posed directly.
+fn tree_clear_selection_as_a_reload_would(v: *u8, syncing: bool) {
+    let ov: *u8 = table_of(v);
+    if ov == (0 as *u8) { return; }
+    let s: *TreeSource = tree_source_of(ov);
+    if s == (0 as *TreeSource) { return; }
+    { (*s).syncing = syncing };
+    { rt::msg_void(ov, rt::sel(#str_ptr("deselectAll:\0"))) };
+    tree_selection_changed_from(ov);
+    { (*s).syncing = false };
+    return;
+}
+
+fn tree_selection_changed_from(ov: *u8) {
+    let s: *TreeSource = tree_source_of(ov);
+    if s == (0 as *TreeSource) { return; }
+    if { (*s).syncing } { return; }
+    let p: *tree::TreeProps = tree_props_of({ (*s).node });
+    if p == (0 as *tree::TreeProps) { return; }
+    let row: i64 = { rt::msg_i64(ov, rt::sel(#str_ptr("selectedRow\0"))) };
+    if row < (0 as i64) { { (*p).selected = text::new() }; return; }
+    let item: *u8 = { rt::msg_id_i64(ov, rt::sel(#str_ptr("itemAtRow:\0")), row) };
+    let tn: *tree::TreeNode = unbox_item(item);
+    if tn != (0 as *tree::TreeNode) {
+        { (*p).selected = text::from_str({ (*tn).id.view() }) };
+    }
+    return;
+}
+
+fn tree_notify_expanded(v: *u8, row: i64) {
+    let ov: *u8 = table_of(v);
+    if ov == (0 as *u8) { return; }
+    let s: *TreeSource = tree_source_of(ov);
+    if s == (0 as *TreeSource) { return; }
+    let item: *u8 = { rt::msg_id_i64(ov, rt::sel(#str_ptr("itemAtRow:\0")), row) };
+    if item == (0 as *u8) { return; }
+    // AppKit has already expanded it before it tells anyone.
+    { (*s).syncing = true };
+    { rt::msg_void_id(ov, rt::sel(#str_ptr("expandItem:\0")), item) };
+    { (*s).syncing = false };
+    let tn: *tree::TreeNode = unbox_item(item);
+    if tn == (0 as *tree::TreeNode) { return; }
+    { (*s).expanded_by_user = true };
+    match tree::from({ (*s).node }) {
+        option::Option[tree::Tree]::Some(t) => {
+            let _e: tree::Tree = t.expand({ (*tn).id.view() });
+        }
+        option::Option[tree::Tree]::None => { }
+    }
+    return;
+}
+
+// The same notification, posed as AppKit posts it from inside a delegate call.
+fn tree_notify_resized_in_delegate(v: *u8) {
+    let ov: *u8 = table_of(v);
+    if ov == (0 as *u8) { return; }
+    let s: *TreeSource = tree_source_of(ov);
+    if s == (0 as *TreeSource) { return; }
+    { (*s).in_delegate = true };
+    on_tree_resized(s as *u8);
+    { (*s).in_delegate = false };
+    return;
+}
+
+fn tree_notify_resized(v: *u8) {
+    let ov: *u8 = table_of(v);
+    if ov == (0 as *u8) { return; }
+    let s: *TreeSource = tree_source_of(ov);
+    if s == (0 as *TreeSource) { return; }
+    on_tree_resized(s as *u8);
+    return;
+}
+
+fn tree_last_width_of(v: *u8) -> f64 {
+    let s: *TreeSource = tree_source_of(table_of(v));
+    if s == (0 as *TreeSource) { return 0.0f64; }
+    return { (*s).last_width };
 }
 
 fn column_width_of(v: *u8) -> f64 {
@@ -1277,6 +1550,26 @@ fn item_node_key() -> *u8 { return { 29035 as *u8 }; }
 struct TreeSource {
     opaque node: *core::Node,      // the facet tree node, for props
     opaque outline: *u8,
+    // The width the rows in hand were laid out at. A tree had NO resize path at
+    // all — the list observed its own frame and re-placed its rows, the tree
+    // observed nothing — so a materialized tree row was never re-laid out for a
+    // width change, and `autoresize_subtree`'s springs were the only thing
+    // tracking it. Springs distribute a delta in PROPORTION to current widths,
+    // so a subtree squeezed to ~zero has no proportion left and never grows
+    // back: labels truncate, clip to slivers, then vanish, inside cells that
+    // are full width again. Only a re-vend healed it, which for a tree meant an
+    // fs event or a tab flip.
+    last_width: f64,
+    // True while AppKit is inside one of OUR delegate callbacks. A resize that
+    // arrives then must not reload: re-entering the table from inside its own
+    // delegate is what AppKit warns about ("Application performed a reentrant
+    // operation in its NSTableView delegate"), and it shows as rows drawn
+    // twice and a stuttering expand.
+    in_delegate: bool,
+    // Set when an expansion arrived FROM AppKit — the user clicked a triangle
+    // or pressed the arrow key — so the model write that records it does not
+    // come back around as a reload. See `apply_recycling_tree`.
+    expanded_by_user: bool,
     // True while `sync_expansion` is APPLYING the model to the outline view.
     // AppKit answers each `expandItem:` with a DidExpand notification, and the
     // write-back must not rewrite the model from its own application — for a
@@ -1306,13 +1599,76 @@ fn props_for(ov: *u8) -> *tree::TreeProps {
 // objects. So each one is carried by a box: an NSObject with the pointer on an
 // associated key. Made on demand and autoreleased; the outline view retains
 // what it keeps.
-fn box_item(node: *tree::TreeNode) -> *u8 {
+// ONE BOX PER NODE, FOR THE LIFE OF THE TREE.
+//
+// An outline view identifies items by the OBJECT: selection, expansion,
+// `rowForItem:` and its row rebuild are all keyed on the pointers the data
+// source hands back. This minted a fresh NSObject on every
+// `outlineView:child:ofItem:` — so no two answers were ever the same item, and
+// AppKit could not recognise anything it had been told a moment earlier.
+//
+// It presented as the selection vanishing on a splitter drag, one direction
+// only. The trace says why, and it is not where anyone was looking:
+//
+//     tree reload#98: keep=b rows=6 sel=2     the reload restores it
+//     tree reload:done:            sel=2      still there
+//     tree vend:enter:             sel=-1     gone, before the next vend
+//
+// The re-select was working every time. AppKit was dropping it afterwards,
+// while rebuilding rows out of items it had never seen before — and the next
+// reload put it back, which is why widening "fixed" it and why it looked like a
+// direction. A drag that ends on a clear leaves the highlight off.
+//
+// The map is keyed by the node's ADDRESS, which the model guarantees is stable
+// from insertion until removal (`tree.cplus`, "who owns the model"). It hangs
+// off the outline view, so it dies with it, and it is emptied whenever the root
+// is replaced — see `apply_tree`.
+fn item_map_key() -> *u8 { return { 29036 as *u8 }; }
+
+fn item_map(ov: *u8) -> *u8 {
+    if ov == (0 as *u8) { return 0 as *u8; }
+    let existing: *u8 = { synth::get_associated(ov, item_map_key()) };
+    if existing != (0 as *u8) { return existing; }
+    let map: *u8 = { rt::alloc_init(#str_ptr("NSMutableDictionary\0")) };
+    if map == (0 as *u8) { return 0 as *u8; }
+    synth::retain_associated(ov, item_map_key(), map);
+    { rt::release(map) };
+    return { synth::get_associated(ov, item_map_key()) };
+}
+
+fn forget_items(ov: *u8) {
+    let map: *u8 = { synth::get_associated(ov, item_map_key()) };
+    if map == (0 as *u8) { return; }
+    { rt::msg_void(map, rt::sel(#str_ptr("removeAllObjects\0"))) };
+    return;
+}
+
+fn box_item(ov: *u8, node: *tree::TreeNode) -> *u8 {
     if node == (0 as *tree::TreeNode) { return 0 as *u8; }
+    let map: *u8 = item_map(ov);
+    // No map is no worse than this function has ever been: a fresh box still
+    // names the right node, it is only AppKit's memory of it that suffers.
+    let key: *u8 = { msg_id_ptr(rt::get_class(#str_ptr("NSValue\0")),
+                                    rt::sel(#str_ptr("valueWithPointer:\0")), node as *u8) };
+    if map != (0 as *u8) && key != (0 as *u8) {
+        let hit: *u8 = { rt::msg_id_id(map, rt::sel(#str_ptr("objectForKey:\0")), key) };
+        if hit != (0 as *u8) { return hit; }
+    }
     let obj: *u8 = { rt::alloc_init(#str_ptr("NSObject\0")) };
     if obj == (0 as *u8) { return 0 as *u8; }
     synth::set_associated(obj, item_node_key(), node as *u8);
+    if map != (0 as *u8) && key != (0 as *u8) {
+        // The map owns it, which is what makes the box outlive the call that
+        // made it — an autoreleased one could not be handed back later.
+        { rt::msg_void_id_id(map, rt::sel(#str_ptr("setObject:forKey:\0")), obj, key) };
+        { rt::release(obj) };
+        return obj;
+    }
     return rt::autorelease(obj);
 }
+
+#[link_name = "objc_msgSend"]
+extern fn msg_id_ptr(recv: *u8, sel: *u8, p: *u8) -> *u8;
 
 fn unbox_item(item: *u8) -> *tree::TreeNode {
     if item == (0 as *u8) { return 0 as *tree::TreeNode; }
@@ -1338,7 +1694,7 @@ fn tree_child_imp(self_obj: *u8, cmd: *u8, ov: *u8, index: i64, item: *u8) -> *u
     let n: *tree::TreeNode = item_or_root(ov, item);
     if n == (0 as *tree::TreeNode) { return 0 as *u8; }
     return match { (*n).child_ptr(index as usize) } {
-        option::Option[*tree::TreeNode]::Some(c) => box_item(c),
+        option::Option[*tree::TreeNode]::Some(c) => box_item(ov, c),
         option::Option[*tree::TreeNode]::None => 0 as *u8,
     };
 }
@@ -1358,6 +1714,14 @@ fn outline_default_row_height(ov: *u8) -> f64 {
 }
 
 fn tree_height_imp(self_obj: *u8, cmd: *u8, ov: *u8, item: *u8) -> f64 {
+    let ds: *TreeSource = tree_source_of(ov);
+    if ds != (0 as *TreeSource) { { (*ds).in_delegate = true }; }
+    let h: f64 = tree_height_body(ov, item);
+    if ds != (0 as *TreeSource) { { (*ds).in_delegate = false }; }
+    return h;
+}
+
+fn tree_height_body(ov: *u8, item: *u8) -> f64 {
     let p: *tree::TreeProps = props_for(ov);
     if p == (0 as *tree::TreeProps) { return outline_default_row_height(ov); }
     let fh: f64 = { (*p).row_height };
@@ -1379,6 +1743,101 @@ fn tree_height_imp(self_obj: *u8, cmd: *u8, ov: *u8, item: *u8) -> f64 {
 
 // The application's row builder, or a plain label of the node's own text when
 // it gave none — a tree with no builder still shows its shape.
+// The height this tree STATES for every row, or 0 for "measure it". Only a
+// stated height can differ from what the content measures, which is the only
+// case where a row has spare space to align within.
+// How many times the tree has reloaded. The user-expansion fix is invisible
+// otherwise: its whole effect is a reload that does NOT happen.
+static TREE_RELOADS: i64 = 0 as i64;
+fn tree_reloads() -> i64 { return TREE_RELOADS; }
+fn reset_tree_reloads() { TREE_RELOADS = 0 as i64; return; }
+
+// ---- tree focus trace (FACET_DEBUG_TREE=1) ----------------------------------
+//
+// The Files tree loses first responder on the FIRST expand and not on collapse,
+// and three readings of the code guessed wrong. Expand VENDS new cells and
+// collapse does not, so the trace follows the vend: who the window's first
+// responder is before and after each step that could move it.
+//
+// Env-gated and free when off, same precedent as FACET_DEBUG_DRAG.
+static TDBG_READ: bool = false;
+static TDBG_ON: bool = false;
+
+fn tree_debug_on() -> bool {
+    if !TDBG_READ { TDBG_READ = true; TDBG_ON = env::has_var("FACET_DEBUG_TREE"); }
+    return TDBG_ON;
+}
+
+// The window's first responder, as a class name — enough to see focus move off
+// the outline view and onto the window (which is what a C_BLUR does) or onto a
+// freshly vended control.
+fn tree_responder(ov: *u8) -> str {
+    if ov == (0 as *u8) { return "<no view>"; }
+    let win: *u8 = { rt::msg_id(ov, rt::sel(#str_ptr("window\0"))) };
+    if win == (0 as *u8) { return "<no window>"; }
+    let fr: *u8 = { rt::msg_id(win, rt::sel(#str_ptr("firstResponder\0"))) };
+    if fr == (0 as *u8) { return "<none>"; }
+    if fr == win { return "WINDOW"; }
+    if fr == ov { return "outlineview"; }
+    // Not naming the class: `class_name` answers a C string and the point here
+    // is only WHICH of the three it is. Focus landing on the window is a blur;
+    // landing off the outline view at all is the bug.
+    return "other";
+}
+
+// Every subview of a vended cell, with its frame. The icon reads as cut on
+// screen and measures correctly in the suite, so the answer has to come from
+// the running app.
+fn tree_dump_cell(cell: *u8) {
+    if cell == (0 as *u8) { return; }
+    let cf: rt::Rect = { rt::msg_rect(cell, rt::sel(#str_ptr("frame\0"))) };
+    let cx: i64 = cf.x as i64; let cw: i64 = cf.w as i64; let ch: i64 = cf.h as i64;
+    io::eprintln("tree cell: x=${cx} w=${cw} h=${ch}");
+    let arr: *u8 = { rt::msg_id(cell, rt::sel(#str_ptr("subviews\0"))) };
+    if arr == (0 as *u8) { return; }
+    let n: u64 = { rt::msg_u64(arr, rt::sel(#str_ptr("count\0"))) };
+    var i: u64 = 0 as u64;
+    while i < n {
+        let sv: *u8 = { rt::msg_id_u64(arr, rt::sel(#str_ptr("objectAtIndex:\0")), i) };
+        let f: rt::Rect = { rt::msg_rect(sv, rt::sel(#str_ptr("frame\0"))) };
+        let x: i64 = f.x as i64; let y: i64 = f.y as i64;
+        let w2: i64 = f.w as i64; let h2: i64 = f.h as i64;
+        let idx: i64 = i as i64;
+        io::eprintln("tree   sub ${idx}: x=${x} y=${y} w=${w2} h=${h2}");
+        i = i +% (1 as u64);
+    }
+    return;
+}
+
+// What a reload did to the selection: what it meant to keep, how many rows it
+// had to look through, and where it landed. `keep` non-empty with `sel` -1 is
+// the failure being hunted.
+fn tree_reload_trace(ov: *u8, keep: str) {
+    if !tree_debug_on() { return; }
+    let rows: i64 = { rt::msg_i64(ov, rt::sel(#str_ptr("numberOfRows\0"))) };
+    let sel: i64 = { rt::msg_i64(ov, rt::sel(#str_ptr("selectedRow\0"))) };
+    let n: i64 = TREE_RELOADS;
+    let who: i64 = ov as i64;
+    io::eprintln("tree reload#${n}: ov=${who} keep=${keep} rows=${rows} sel=${sel}");
+    return;
+}
+
+fn tree_trace(ov: *u8, where_: str) {
+    if !tree_debug_on() { return; }
+    let who: str = tree_responder(ov);
+    let rows: i64 = { rt::msg_i64(ov, rt::sel(#str_ptr("numberOfRows\0"))) };
+    let sel: i64 = { rt::msg_i64(ov, rt::sel(#str_ptr("selectedRow\0"))) };
+    io::eprintln("tree ${where_}: responder=${who} rows=${rows} sel=${sel}");
+    return;
+}
+
+fn stated_tree_row_height(p: *tree::TreeProps) -> f64 {
+    if p == (0 as *tree::TreeProps) { return 0.0f64; }
+    let h: f64 = { (*p).row_height };
+    if h >= 1.0f64 { return h; }
+    return 0.0f64;
+}
+
 fn tree_row_node(n: *tree::TreeNode, p: *tree::TreeProps) -> core::Node {
     let f: fn(*tree::TreeNode, *u8) -> flex::Node = { (*p).row };
     // Against `no_row`, not against null — see controls::build_tree_row.
@@ -1387,6 +1846,16 @@ fn tree_row_node(n: *tree::TreeNode, p: *tree::TreeProps) -> core::Node {
 }
 
 fn tree_view_for_item_imp(self_obj: *u8, cmd: *u8, ov: *u8, col: *u8, item: *u8) -> *u8 {
+    tree_trace(ov, "vend:enter");
+    let ds: *TreeSource = tree_source_of(ov);
+    if ds != (0 as *TreeSource) { { (*ds).in_delegate = true }; }
+    let out: *u8 = tree_view_for_item_body(ov, item);
+    if tree_debug_on() { tree_dump_cell(out); }
+    if ds != (0 as *TreeSource) { { (*ds).in_delegate = false }; }
+    return out;
+}
+
+fn tree_view_for_item_body(ov: *u8, item: *u8) -> *u8 {
     let p: *tree::TreeProps = props_for(ov);
     if p == (0 as *tree::TreeProps) { return 0 as *u8; }
     let n: *tree::TreeNode = unbox_item(item);
@@ -1397,8 +1866,10 @@ fn tree_view_for_item_imp(self_obj: *u8, cmd: *u8, ov: *u8, col: *u8, item: *u8)
                                     bridge::nsstring("facet.item"), 0 as i64) };
     var fresh: bool = false;
     if cell == (0 as *u8) {
-        cell = rt::retain(akx::new_flipped_view(
-            rt::Rect { x: 0.0f64, y: 0.0f64, w: w, h: 1.0f64 }).raw());
+        // A `FacetRowCell`, like the list's — an outline cell is the one that
+        // MUST re-place itself, because indentation is why its width differs
+        // from the column's in the first place.
+        cell = rt::retain(new_row_cell(rt::Rect { x: 0.0f64, y: 0.0f64, w: w, h: 1.0f64 }));
         if cell == (0 as *u8) { return 0 as *u8; }
         { rt::msg_void_id(cell, rt::sel(#str_ptr("setIdentifier:\0")),
                           bridge::nsstring("facet.item")) };
@@ -1413,7 +1884,8 @@ fn tree_view_for_item_imp(self_obj: *u8, cmd: *u8, ov: *u8, col: *u8, item: *u8)
         if existing != (0 as *core::Node) {
             tree_bind_into(p, n, existing);
             mount::sync_from(existing);
-            let _bh: f64 = place_row(cell, existing, w, outline_default_row_height(ov));
+            let _bh: f64 = place_row(cell, existing, w, outline_default_row_height(ov),
+                                     row_h: stated_tree_row_height(p));
             return cell;
         }
     }
@@ -1428,10 +1900,12 @@ fn tree_view_for_item_imp(self_obj: *u8, cmd: *u8, ov: *u8, col: *u8, item: *u8)
     match box::new::[core::Node](node) {
         option::Option[box::Box[core::Node]]::Some(b) => {
             let np: *core::Node = { b.into_raw() } as *core::Node;
+            empty_cell(cell);
             let _rv: *u8 = mount::realise(np, cell);
             tree_bind_into(p, n, np);
             mount::sync_from(np);
-            let _h: f64 = place_row(cell, np, w, outline_default_row_height(ov));
+            let _h: f64 = place_row(cell, np, w, outline_default_row_height(ov),
+                                    row_h: stated_tree_row_height(p));
             synth::set_associated(cell, cell_node_key(), np as *u8);
         }
         option::Option[box::Box[core::Node]]::None => { }
@@ -1476,6 +1950,27 @@ fn tree_agent_class() -> *u8 {
                             tree_did_expand_imp, #str_ptr("v@:@\0"));
     synth::add_method_v_1id(cls, rt::sel(#str_ptr("outlineViewItemDidCollapse:\0")),
                             tree_did_collapse_imp, #str_ptr("v@:@\0"));
+    // The WILL half is here for the animation, not the model — see
+    // `hold_row_animation`. Nothing about expansion state is read or written
+    // before AppKit has done it.
+    synth::add_method_v_1id(cls, rt::sel(#str_ptr("outlineViewItemWillExpand:\0")),
+                            tree_will_expand_imp, #str_ptr("v@:@\0"));
+    synth::add_method_v_1id(cls, rt::sel(#str_ptr("outlineViewItemWillCollapse:\0")),
+                            tree_will_collapse_imp, #str_ptr("v@:@\0"));
+    // NO ROW-HIGHLIGHT SUPPRESSION HERE, deliberately, and it is not an
+    // oversight to be tidied up into matching the list.
+    //
+    // A LIST row in iris is a card that draws its own selected state, so the
+    // platform's full-row blue behind it is a second answer to the same
+    // question. A TREE row is a name and an icon that draw no such thing, so
+    // the platform's highlight IS the feedback — take it away and nothing says
+    // which row is selected.
+    //
+    // Which means the two are a CHOICE the contract cannot currently express:
+    // `selection_mode` says whether a row can be picked, and nothing says
+    // whether the platform should draw it. Hard-coding opposite answers per
+    // control is what is happening here, and it is the wrong shape — a
+    // `selection_highlight` word beside `selection_mode` is the right one.
     synth::register_class_pair(cls);
     return cls;
 }
@@ -1525,6 +2020,11 @@ fn tree_expansion_changed(note: *u8, now_expanded: bool) {
     let n: *core::Node = { (*s).node };
     match tree::from(n) {
         option::Option[tree::Tree]::Some(t) => {
+            // The outline view has ALREADY done this; the model is only
+            // recording it. Say so, or `apply` reloads to "apply" a change
+            // that is already applied — and takes the selection with it.
+            tree_trace(ov, "write-back:expand");
+            { (*s).expanded_by_user = true };
             let id: str = { (*tn).id.view() };
             if now_expanded {
                 let _e: tree::Tree = t.expand(id);
@@ -1537,13 +2037,81 @@ fn tree_expansion_changed(note: *u8, now_expanded: bool) {
     return;
 }
 
+// ---- a row is PLACED, not moved ----------------------------------------------
+//
+// Expanding a folder slid the rows below it into their new positions over about
+// a quarter of a second. Measured in a live window, sampling every 50ms: the
+// animating object is the NSTableRowView of each row AFTER the expanded item —
+// `animationKeys` = 1, and its presentation frame 200pt from its model frame,
+// decaying 202 -> 124 -> 61 -> 15 across four samples. Nothing facet places
+// moves at all.
+//
+// That is why disabling Core Animation's implicit actions did not touch it, and
+// the ablation says so plainly: with `without_implicit_animation_*` neutered,
+// the same expand produces the same measurements. Those guards are still right
+// for what they guard — a frame `place_row` writes is a placement — but they
+// were never what this symptom was about.
+//
+// The row animation is AppKit's own, run for the user's disclosure click, and
+// NSAnimationContext is what governs it: a zero-duration grouping opened before
+// the expansion and closed after it. It has to be a GROUPING rather than a
+// property set, because the animation is started inside AppKit's own handling
+// between the two notifications, and `WillExpand`/`DidExpand` are the only pair
+// that bracket it.
+//
+// The DEPTH COUNTER is not defensive dressing. An unbalanced `endGrouping`
+// pops a context this code never pushed, and NSAnimationContext's stack is
+// process-wide: the next animation anyone runs would inherit a duration from
+// here. Only a grouping this file opened is closed.
+static ANIM_HELD: i64 = 0 as i64;
+
+fn hold_row_animation() {
+    let cls: *u8 = rt::get_class(#str_ptr("NSAnimationContext\0"));
+    if cls == (0 as *u8) { return; }
+    { rt::msg_void(cls, rt::sel(#str_ptr("beginGrouping\0"))) };
+    let ctx: *u8 = { rt::msg_id(cls, rt::sel(#str_ptr("currentContext\0"))) };
+    if ctx != (0 as *u8) {
+        { rt::msg_void_f64(ctx, rt::sel(#str_ptr("setDuration:\0")), 0.0f64) };
+    }
+    ANIM_HELD = ANIM_HELD + (1 as i64);
+    return;
+}
+
+fn release_row_animation() {
+    if ANIM_HELD <= (0 as i64) { return; }
+    let cls: *u8 = rt::get_class(#str_ptr("NSAnimationContext\0"));
+    if cls == (0 as *u8) { return; }
+    ANIM_HELD = ANIM_HELD - (1 as i64);
+    { rt::msg_void(cls, rt::sel(#str_ptr("endGrouping\0"))) };
+    return;
+}
+
+// For the suite: a grouping opened here must always be closed, whichever
+// notification pair ran.
+fn held_row_animations() -> i64 { return ANIM_HELD; }
+
+fn tree_will_expand_imp(self_obj: *u8, cmd: *u8, note: *u8) {
+    hold_row_animation();
+    return;
+}
+
+fn tree_will_collapse_imp(self_obj: *u8, cmd: *u8, note: *u8) {
+    hold_row_animation();
+    return;
+}
+
 fn tree_did_expand_imp(self_obj: *u8, cmd: *u8, note: *u8) {
+    // The write-back, and any reload it causes, happen INSIDE the grouping —
+    // so a reload triggered by the width change an expansion brings on (the
+    // scroller appearing narrows the column) cannot animate either.
     tree_expansion_changed(note, true);
+    release_row_animation();
     return;
 }
 
 fn tree_did_collapse_imp(self_obj: *u8, cmd: *u8, note: *u8) {
     tree_expansion_changed(note, false);
+    release_row_animation();
     return;
 }
 
@@ -1552,6 +2120,20 @@ fn tree_selection_changed_imp(self_obj: *u8, cmd: *u8, note: *u8) {
     if ov == (0 as *u8) { return; }
     let s: *TreeSource = tree_source_of(ov);
     if s == (0 as *TreeSource) { return; }
+    if tree_debug_on() {
+        let row: i64 = { rt::msg_i64(ov, rt::sel(#str_ptr("selectedRow\0"))) };
+        var sync: i64 = 0 as i64;
+        if { (*s).syncing } { sync = 1 as i64; }
+        let n: i64 = TREE_RELOADS;
+        io::eprintln("tree selection-changed: row=${row} syncing=${sync} reloads=${n}");
+    }
+    // STAND DOWN WHILE FACET IS APPLYING, the same guard the expansion
+    // write-back has had. `reloadData` CLEARS the selection, and AppKit reports
+    // that clear like any other — so the reload's own side effect was writing
+    // `selected = ""` into the model, destroying the very record needed to put
+    // the selection back. `select_by_id` then restored nothing, and the user
+    // lost the highlight to a reload they did not cause.
+    if { (*s).syncing } { return; }
     let n: *core::Node = { (*s).node };
     let p: *tree::TreeProps = tree_props_of(n);
     if p == (0 as *tree::TreeProps) { return; }
@@ -1653,10 +2235,18 @@ fn apply_recycling_tree(v: *u8, n: *core::Node, dirty: u64) {
     if ov == (0 as *u8) { return; }
     var s: *TreeSource = tree_source_of(ov);
     if s == (0 as *TreeSource) {
-        match box::new::[TreeSource](TreeSource { node: n, outline: ov, syncing: false }) {
+        match box::new::[TreeSource](TreeSource { node: n, outline: ov,
+                                                 last_width: 0.0f64,
+                                                 in_delegate: false,
+                                                 expanded_by_user: false,
+                                                 syncing: false }) {
             option::Option[box::Box[TreeSource]]::Some(b) => {
                 s = { b.into_raw() } as *TreeSource;
                 synth::set_associated(ov, tree_source_key(), s as *u8);
+                // The resize pass, the same one the list has had. Observed once,
+                // for the life of the outline view.
+                let _obs: u64 = akx::observe_frame(ak::View::from_raw(ov),
+                                                   on_tree_resized, s as *u8);
             }
             option::Option[box::Box[TreeSource]]::None => { return; }
         }
@@ -1665,9 +2255,31 @@ fn apply_recycling_tree(v: *u8, n: *core::Node, dirty: u64) {
     // The model, the builder and the expansion set all change WHICH rows exist,
     // so any of them reloads. An outline view keeps its own expansion state, so
     // the reload is followed by re-applying facet's — the model is facet's.
-    if (dirty & (tree::P_ROOT | tree::P_ROW | tree::P_EXPANDED)) != (0 as u64) {
-        { rt::msg_void(ov, rt::sel(#str_ptr("reloadData\0"))) };
-        sync_expansion(ov);
+    if tree_debug_on() {
+        let d: u64 = dirty;
+        io::eprintln("tree apply: dirty=${d}");
+        tree_trace(ov, "apply:enter");
+    }
+    // A NEW ROOT IS A NEW MODEL. The boxes name node addresses in the old one,
+    // so they are dropped before the reload that will ask for fresh ones —
+    // otherwise the map grows for the life of the view and hands AppKit an item
+    // for a node that no longer exists.
+    if (dirty & tree::P_ROOT) != (0 as u64) { forget_items(ov); }
+    var reload: bool = (dirty & (tree::P_ROOT | tree::P_ROW)) != (0 as u64);
+    if (dirty & tree::P_EXPANDED) != (0 as u64) {
+        // AN EXPANSION THE USER PERFORMED IS ALREADY APPLIED. AppKit expanded
+        // the item and then told us, and the write-back that records it dirties
+        // `P_EXPANDED` exactly like an application calling `expand()` would.
+        // Reloading on it re-vends every row, which takes the SELECTION with
+        // them: press right-arrow to open a folder and the highlight vanishes
+        // and the tree stops answering the keyboard. Nothing to apply — the
+        // outline view is already in the state the model now describes.
+        if { (*s).expanded_by_user } { { (*s).expanded_by_user = false }; }
+        else { reload = true; }
+    }
+    if reload {
+        reload_tree_keeping_selection(s, ov);
+        tree_trace(ov, "apply:after-reload");
     }
     // After the rows exist, or there is nothing to find the identity among.
     if (dirty & (tree::P_SELECTED | tree::P_ROOT)) != (0 as u64) {
@@ -1676,6 +2288,148 @@ fn apply_recycling_tree(v: *u8, n: *core::Node, dirty: u64) {
     }
     return;
 }
+
+// A TREE RE-PLACES ITS ROWS WHEN ITS WIDTH CHANGES, exactly as a list does.
+//
+// It had no resize path at all, which is why the crush showed up here and not
+// in the Saves timeline: not "the timeline reloads more often", but "the list
+// has a width path and the tree had none". `autoresize_subtree` was standing in
+// as the only tracking, and a spring cannot recover from zero — a subtree
+// squeezed to ~zero has no proportion left to grow back by.
+//
+// `place_row` recomputes from the flex tree and keeps no memory of a crushed
+// frame, so ANY re-place heals one.
+//
+// SYNCHRONOUS, NOT DEFERRED TO THE TICK — and that is the whole difference from
+// the list, which defers. A tree's data source DEREFERENCES ITS FACET NODE
+// (`tree_props_of((*s).node)` answers every `numberOfChildrenOfItem:`), while a
+// list's only reads a count off the source. So a tree reload queued for a later
+// tick can run after that node is gone, and AppKit walks the model straight
+// into freed memory:
+//
+//     recycler.tree_props_of
+//     -[NSOutlineView _expandItemEntry:expandChildren:startLevel:]
+//     -[NSOutlineView _uncachedNumberOfRows]
+//     -[NSOutlineView reloadData]
+//
+// Running it here, inside the frame-change notification, the view is live and
+// so is the node that owns it. `layout_enclosing_scroll` is what makes that
+// safe to do early: it forces AppKit's deferred column tiling NOW, so the width
+// read on this line is the one the outline view really has, and the reason the
+// list needed the tick does not apply.
+//
+// Coalescing is `last_width` alone: many notifications, one reload per width
+// the tree has actually been given.
+// RELOAD THE TREE WITHOUT LOSING THE USER'S ROW.
+//
+// `reloadData` clears the selection, and AppKit reports that clear like any
+// other selection change — so without the `syncing` bracket the write-back
+// writes `selected = ""` into the model, destroying the record needed to put it
+// back. Both callers reload for reasons the user did not ask for (a width
+// change, a new root), so neither should cost them the row they were on.
+//
+// This existed only on the apply path. The RESIZE path reloaded bare, which is
+// why the first expand of a session lost the highlight and later ones did not:
+// expanding changes the row count, the scroll view re-tiles, the frame
+// notification fires, and that first width comparison is against a `last_width`
+// still at its initial 0 — so it reads as a change and reloads. The second
+// expand compares equal and never reloads at all.
+// NOT DIRECTLY TESTABLE HEADLESSLY, and worth saying so where it lives: a
+// windowless NSOutlineView does not clear its selection on `reloadData` at all,
+// so a test that reloads and checks the selection survived passes whether the
+// bracket below is here or not (measured — it fooled me once). The guard it
+// depends on IS pinned, by
+// `the_selection_write_back_stands_down_while_facet_is_applying`, which poses
+// the clear-and-report directly instead of hoping AppKit performs it.
+fn reload_tree_keeping_selection(s: *TreeSource, ov: *u8) {
+    TREE_RELOADS = TREE_RELOADS + (1 as i64);
+    { (*s).expanded_by_user = false };
+    let pn: *tree::TreeProps = tree_props_of({ (*s).node });
+    var keep: text::Text = text::new();
+    if pn != (0 as *tree::TreeProps) { keep = text::from_str({ (*pn).selected.view() }); }
+    // WITHOUT IMPLICIT ANIMATION. A reload re-vends every visible row, and the
+    // views it makes are layer-backed — so each one's first frame animates in
+    // from wherever Core Animation thinks it was. Expanding a folder changes
+    // the column width as a side effect (rows appear, the scroller re-tiles:
+    // measured 466 -> 479), which reloads, which made the whole tree drift into
+    // place. The second expand compares widths equal, never reloads, and was
+    // always smooth — which is why this only ever showed the first time.
+    without_implicit_animation_begin();
+    { (*s).syncing = true };
+    { rt::msg_void(ov, rt::sel(#str_ptr("reloadData\0"))) };
+    { (*s).syncing = false };
+    sync_expansion(ov);
+    { (*s).syncing = true };
+    select_by_id(ov, keep.view());
+    { (*s).syncing = false };
+    without_implicit_animation_end();
+    tree_reload_trace(ov, keep.view());
+    tree_trace(ov, "reload:done");
+    return;
+}
+
+fn on_tree_resized(ctx: *u8) {
+    let s: *TreeSource = { ctx as *TreeSource };
+    if s == (0 as *TreeSource) { return; }
+    let ov: *u8 = { (*s).outline };
+    if ov == (0 as *u8) { return; }
+    // NOT FROM INSIDE THE TABLE'S OWN DELEGATE. AppKit resizes its columns
+    // while vending and measuring rows, so this notification arrives DURING a
+    // callback we are already in — and `layoutSubtreeIfNeeded` + `reloadData`
+    // there re-enter the table, which AppKit warns about and which draws rows
+    // twice and stutters the expand that triggered it.
+    //
+    // Skipping is correct, not merely safe: the table is laying out at the
+    // width in question right now, and every row it vends in this pass is
+    // already being placed at it. Nothing is owed.
+    if { (*s).in_delegate } { return; }
+    layout_enclosing_scroll(ov);
+    let w: f64 = column_width(ov);
+    // A height change moves the viewport, not the rows — nothing re-wraps.
+    if w == { (*s).last_width } { return; }
+    // First observation: record the width, do not treat it as a change. The
+    // rows in hand were vended at it.
+    let first: bool = { (*s).last_width } <= 0.0f64;
+    { (*s).last_width = w };
+    if first { return; }
+    // A WIDTH CHANGE IS NOT A RELOAD.
+    //
+    // It used to be one, because nothing else re-laid a materialized row out at
+    // a new width. `FacetRowCell` does now: AppKit resizes the cells when it
+    // tiles the column, and each one re-runs flex from its own resize hook,
+    // synchronously, in that same pass. By the time this notification arrives
+    // every visible row has already been placed at `w`.
+    //
+    // Reloading anyway cost the user their selection. `reloadData` invalidates
+    // the outline view's rows, and until it rebuilds them — which it defers to
+    // the next display — `selectedRow` is -1 and no highlight is drawn. Traced
+    // in a live window, one divider drag: 98 reloads, each one restoring the
+    // selection and each one having it dropped again before the next vend, with
+    // AppKit never reporting a selection change at all. Drag one way, let go
+    // while the tree is in that state, and the blue row is simply gone until
+    // something else reloads it back.
+    //
+    // HEIGHTS ARE THE EXCEPTION, and only when the application did not state
+    // one: a measured row can re-wrap at a new width and be a different height.
+    // `noteHeightOfRowsWithIndexesChanged:` re-asks for those without
+    // discarding a single row — the selection, the expansion and the vended
+    // cells all survive it.
+    let p: *tree::TreeProps = props_for(ov);
+    if stated_tree_row_height(p) >= 1.0f64 { return; }
+    let rows: i64 = { rt::msg_i64(ov, rt::sel(#str_ptr("numberOfRows\0"))) };
+    if rows <= (0 as i64) { return; }
+    let all: *u8 = { msg_id_range(rt::get_class(#str_ptr("NSIndexSet\0")),
+                                  rt::sel(#str_ptr("indexSetWithIndexesInRange:\0")),
+                                  rt::Range { location: 0 as u64, length: rows as u64 }) };
+    if all == (0 as *u8) { return; }
+    { (*s).syncing = true };
+    { rt::msg_void_id(ov, rt::sel(#str_ptr("noteHeightOfRowsWithIndexesChanged:\0")), all) };
+    { (*s).syncing = false };
+    return;
+}
+
+#[link_name = "objc_msgSend"]
+extern fn msg_id_range(recv: *u8, sel: *u8, r: rt::Range) -> *u8;
 
 // facet's expanded set is the model; AppKit's per-item state follows it.
 // Walked from the root, because expanding a node only matters once its parent
@@ -1725,6 +2479,15 @@ fn find_item(ov: *u8, n: *tree::TreeNode) -> *u8 {
         i = i + (1 as i64);
     }
     return 0 as *u8;
+}
+
+// The box the data source answers for root child `i` — the suite's way to ask
+// whether an outline view recognises its own items, which needs no drag and no
+// window.
+fn tree_child_of_root(v: *u8, i: i64) -> *u8 {
+    let ov: *u8 = table_of(v);
+    if ov == (0 as *u8) { return 0 as *u8; }
+    return tree_child_imp(0 as *u8, 0 as *u8, ov, i, 0 as *u8);
 }
 
 // How many rows the outline view is showing — the suite's window into a tree
