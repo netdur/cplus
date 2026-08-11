@@ -19,6 +19,9 @@ fn no_bind(index: usize, row: *flex::Node, ctx: *u8) { return; }
 // The two halves of a group, absent until an application names them.
 // A group with no size holds no rows, so an ungrouped sequence and a
 // grouped one that was never described render the same.
+// Zero means "no answer" — the measure pass builds the row instead,
+// which is what every list did before this could be stated.
+fn no_row_height_of(row: usize, ctx: *u8) -> f64 { return 0.0f64; }
 fn no_group_size(group: usize, ctx: *u8) -> usize { return 0 as usize; }
 fn no_group_header(group: usize, ctx: *u8) -> flex::Node { return flex::Node::new(); }
 
@@ -614,6 +617,8 @@ struct CollectionProps {
     row: fn(usize, *u8) -> flex::Node,    // facet — builds row `i`
     opaque row_ctx: *u8,
     bind: fn(usize, *flex::Node, *u8),    // facet — writes row `i` INTO an existing row, for recycling
+    row_height_of: fn(usize, *u8) -> f64,    // facet — the height of row `i`, answered WITHOUT building it
+    opaque row_height_of_ctx: *u8,
     group_count: i64,    // facet — how many groups, when is_grouped
     group_size: fn(usize, *u8) -> usize,    // facet — how many rows group `g` holds
     opaque group_size_ctx: *u8,
@@ -636,6 +641,8 @@ impl CollectionProps {
             row: no_row,
             row_ctx: 0 as *u8,
             bind: no_bind,
+            row_height_of: no_row_height_of,
+            row_height_of_ctx: 0 as *u8,
             group_count: 0 as i64,
             group_size: no_group_size,
             group_size_ctx: 0 as *u8,
@@ -1078,6 +1085,8 @@ struct ListProps {
     row: fn(usize, *u8) -> flex::Node,    // facet — builds row `i`
     opaque row_ctx: *u8,
     bind: fn(usize, *flex::Node, *u8),    // facet — writes row `i` INTO an existing row, for recycling
+    row_height_of: fn(usize, *u8) -> f64,    // facet — the height of row `i`, answered WITHOUT building it
+    opaque row_height_of_ctx: *u8,
     group_count: i64,    // facet — how many groups, when is_grouped
     group_size: fn(usize, *u8) -> usize,    // facet — how many rows group `g` holds
     opaque group_size_ctx: *u8,
@@ -1120,6 +1129,8 @@ impl ListProps {
             row: no_row,
             row_ctx: 0 as *u8,
             bind: no_bind,
+            row_height_of: no_row_height_of,
+            row_height_of_ctx: 0 as *u8,
             group_count: 0 as i64,
             group_size: no_group_size,
             group_size_ctx: 0 as *u8,

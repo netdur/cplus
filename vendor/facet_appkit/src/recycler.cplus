@@ -52,6 +52,7 @@ import "./controls" as controls;
 import "./paint" as paint;
 import "./compose" as compose;
 import "./geometry" as geometry;
+import "./scheduler" as scheduler;
 import "objc/runtime" as rt;
 import "objc/synthesis" as synth;
 import "objc/bridge" as bridge;
@@ -120,7 +121,7 @@ struct RowSource {
     // So a reload is SCHEDULED and the token kept, and the next frame cancels
     // the one before it: the list re-measures once, when the drag settles.
     last_width: f64,
-    pending_reload: u64,
+
     // Was the viewport at the bottom when this resize began? Read BEFORE the
     // reload changes the geometry, and re-pinned after — the chat behaviour,
     // and the one that is invisible until it is missing.
@@ -137,6 +138,10 @@ struct RowSource {
     // `row` is untouched and every table index is translated on the way in.
     // `groups == 0` means ungrouped and the translation is the identity.
     groups: i64,
+    // The height of a row WITHOUT building it. `no_row_height_of` (or a 0
+    // answer) means "build and measure", which is what every list did before.
+    row_height_of: fn(usize, *u8) -> f64,
+    opaque row_height_of_ctx: *u8,
     group_size: fn(usize, *u8) -> usize,
     opaque group_size_ctx: *u8,
     group_header: fn(usize, *u8) -> core::Node,
@@ -305,6 +310,34 @@ fn height_imp(self_obj: *u8, cmd: *u8, tv: *u8, row: i64) -> f64 {
         }
     }
 
+    // ASK BEFORE BUILDING. An application that states the extents its rows
+    // stack knows its heights as arithmetic, and building a subtree to
+    // rediscover them is the expensive half of a resize: this delegate is
+    // asked for EVERY row whenever the width changes, so an uneven list
+    // measured by building rebuilds the whole model on every frame of a drag.
+    // A 0 answer means "I cannot compute this one", and it falls through to
+    // the build below — so a partial answer is a legal answer.
+    let hof: fn(usize, *u8) -> f64 = { (*s).row_height_of };
+    if hof != props::no_row_height_of && row >= (0 as i64) {
+        // THE DATA INDEX, not the table row — `row_height_of(i)` means the same
+        // `i` that `row(i)` means, and a grouped table's table rows are offset
+        // by the headers above them. A HEADER has no data index and is built
+        // and measured as before: it comes from `group_header`, there is one
+        // per group, and they are not what makes a resize expensive.
+        let at: i64 = resolve_row(s, row);
+        if at >= (0 as i64) {
+            let stated: f64 = hof(at as usize, { (*s).row_height_of_ctx });
+            if stated >= 1.0f64 {
+                // Cached against the TABLE row, which is what the delegate is
+                // asked about.
+                let idx: usize = row as usize;
+                while { (*hp).count() } <= idx { append_zero(hp); }
+                set_height(hp, idx, stated);
+                return stated;
+            }
+        }
+    }
+
     // Measuring means building the row and laying it out. No views: this is a
     // pure flex measurement, so nothing is realised and nothing has to be torn
     // down afterwards.
@@ -436,6 +469,8 @@ fn place_row(cell: *u8, np: *core::Node, w: f64, floor_h: f64 = 1.0f64) -> f64 {
                     rt::Rect { x: 0.0f64, y: 0.0f64, w: w, h: h }) };
     let rv: *u8 = core::view_of(np);
     if rv != (0 as *u8) { geometry_place(rv, w, h); }
+    // Last, so it covers every view the walk above just placed.
+    autoresize_subtree(cell);
     return h;
 }
 
@@ -466,6 +501,42 @@ fn bind_into(s: *RowSource, row: i64, into: *core::Node) {
     let at: i64 = resolve_row(s, row);
     if at < (0 as i64) { return; }
     f(at as usize, into, { (*s).row_ctx });
+    return;
+}
+
+// LET APPKIT STRETCH THE CONTENT, in the same pass it resizes the cell.
+//
+// A width change does NOT reach a row through facet. NSTableView tiles its
+// columns inside AppKit's own layout, and the cell views are resized there —
+// nowhere near facet's tick. So a row that waits for a reload to learn its new
+// width is always a frame behind whatever the pane is doing: drag a divider and
+// the pane takes the new width while the cards inside keep the old one, clipped
+// off the right edge on the way out and short of it on the way back, catching
+// up one frame later. Moving the reload earlier or later in the tick cannot fix
+// that, because the tick is not the clock the resize arrives on.
+//
+// `vendor/facet_appkit.old` did not have this problem and did not solve it with
+// a reload: `list_autoresize_subtree` put `NSViewWidthSizable` on the cell and
+// everything under it, so AppKit stretched the content with the cell, live. The
+// reload then only had to fix what autoresizing cannot — heights, and text that
+// re-wraps at the new width.
+//
+// WIDTH ONLY. The vertical mask stays off: heights are ours, they come from the
+// flex pass, and letting AppKit stretch them would fight the frames `reposition`
+// just set. The margins stay fixed and the width absorbs the change, which is
+// exactly what a card inset from the row's edges wants.
+fn autoresize_subtree(v: *u8) {
+    if v == (0 as *u8) { return; }
+    { rt::msg_void_u64(v, rt::sel(#str_ptr("setAutoresizingMask:\0")),
+                       ak::autoresizing_mask_options_n_s_view_width_sizable) };
+    let subs: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("subviews\0"))) };
+    if subs == (0 as *u8) { return; }
+    let n: u64 = { rt::msg_u64(subs, rt::sel(#str_ptr("count\0"))) };
+    var i: u64 = 0 as u64;
+    while i < n {
+        autoresize_subtree({ rt::msg_id_u64(subs, rt::sel(#str_ptr("objectAtIndex:\0")), i) });
+        i = i +% (1 as u64);
+    }
     return;
 }
 
@@ -566,7 +637,30 @@ fn selection_changed_imp(self_obj: *u8, cmd: *u8, note: *u8) {
     return;
 }
 
+// A FACET ROW DRAWS ITSELF, so the platform must not draw a selection behind
+// it — a full-row blue flash under an inset card, in the platform's colours,
+// one layer above the card's own.
+//
+// It is suppressed HERE, on the row view, and not by turning the table's
+// `selectionHighlightStyle` off. Those look like the same switch and are not:
+// the table's style governs selection BEHAVIOUR as well as its drawing, and
+// selection is the only way a table row is clicked at all — NSTableView owns
+// the mouse inside its rows, so a `.gesture(on_click:)` in a row is never
+// delivered to. Turning it off at the table risks taking the click with the
+// blue, and no headless test can tell you whether it did: an NSTableView with
+// no window runs its tracking loop against an empty event queue and selects
+// nothing either way (measured — the control with the highlight ON fails the
+// same test). `NSTableRowView` carries the same property for its own drawing
+// only, which is exactly the half we want gone.
+fn suppress_row_highlight(rowview: *u8) {
+    if rowview == (0 as *u8) { return; }
+    { rt::msg_void_i64(rowview, rt::sel(#str_ptr("setSelectionHighlightStyle:\0")),
+                       0 as i64 - (1 as i64)) };
+    return;
+}
+
 fn row_added_imp(self_obj: *u8, cmd: *u8, tv: *u8, rowview: *u8, row: i64) {
+    suppress_row_highlight(rowview);
     let n: *core::Node = list_node_of(tv);
     if n == (0 as *core::Node) { return; }
     let p: *props::ListProps = props_of_list(n);
@@ -606,7 +700,30 @@ fn create_recycling_list(n: *core::Node) -> *u8 {
     // list that added chrome of its own would be lying about what it holds.
     { rt::msg_void_id(tv, rt::sel(#str_ptr("setHeaderView:\0")), 0 as *u8) };
     { rt::msg_void_i64(tv, rt::sel(#str_ptr("setColumnAutoresizingStyle:\0")), 1 as i64) };
-    { rt::msg_void_i64(tv, rt::sel(#str_ptr("setStyle:\0")), 0 as i64) };   // NSTableViewStylePlain
+    // INTERCELL SPACING IS ZERO, and it is not a detail. AppKit's default is
+    // {3, 2}: three points of HORIZONTAL inset, so the cell a row is drawn into
+    // is narrower than the column that `column_width` reports. Laying the row
+    // out at the column's width then draws it wider than the cell it sits in,
+    // and the right edge of a card is what falls off. `facet_appkit.old` zeroed
+    // it (`set_intercell_spacing({0,0})`) and the new backend did not carry it
+    // across.
+    { rt::msg_void_size(tv, rt::sel(#str_ptr("setIntercellSpacing:\0")),
+                        rt::Size { w: 0.0f64, h: 0.0f64 }) };
+
+    // 0 is AUTOMATIC — not Plain, which a comment here once claimed — and
+    // automatic is DELIBERATE, tried both ways. An explicit style (FullWidth,
+    // what `facet_appkit.old` used) makes the table tile at create: reloadData
+    // runs the height pass immediately, `heightOfRow:` builds every row, and a
+    // list of ten thousand pays for all of them before it is even in a window
+    // — eight contract tests (`a_list_asks_for_no_rows_until_the_table_asks_
+    // for_them` and friends) went red. Automatic cannot resolve until the
+    // table joins a hierarchy, so the height pass waits for the first real
+    // layout, which is the lazy create the contract promises. The width cost
+    // of automatic — the resolved style insets the cells — is already paid
+    // for where it matters: `column_width` reads the COLUMN, which AppKit
+    // narrows by exactly those insets, so rows are laid out at the width the
+    // cell really gets.
+    { rt::msg_void_i64(tv, rt::sel(#str_ptr("setStyle:\0")), 0 as i64) };   // NSTableViewStyleAutomatic
     { rt::msg_void_i64(tv, rt::sel(#str_ptr("setSelectionHighlightStyle:\0")),
                        0 as i64 - (1 as i64)) };                            // None
 
@@ -619,6 +736,7 @@ fn create_recycling_list(n: *core::Node) -> *u8 {
         synth::retain_associated(tv, agent_pin_key(), agent);
         rt::release(agent);
     }
+    debug_track(tv);
     scroll.set_document_view(ak::View::from_raw(tv));
     rt::release(tv);
     return rt::retain(scroll.as_view().raw());
@@ -672,7 +790,6 @@ fn apply_recycling_list(v: *u8, n: *core::Node, dirty: u64) {
             heights: vec::new::[f64](),
             heights_width: 0.0f64,
             last_width: 0.0f64,
-            pending_reload: 0 as u64,
             follow_tail: false,
             table: tv,
             node: n,
@@ -680,6 +797,8 @@ fn apply_recycling_list(v: *u8, n: *core::Node, dirty: u64) {
             groups: 0 as i64,
             group_size: props::no_group_size,
             group_header: props::no_group_header,
+            row_height_of: props::no_row_height_of,
+            row_height_of_ctx: 0 as *u8,
             group_size_ctx: 0 as *u8,
             group_header_ctx: 0 as *u8,
         }) {
@@ -728,6 +847,8 @@ fn apply_recycling_list(v: *u8, n: *core::Node, dirty: u64) {
         || dirty == paint::all_bits() {
         if { (*p).is_grouped } { { (*s).groups = { (*p).group_count } }; }
         else { { (*s).groups = 0 as i64 }; }
+        { (*s).row_height_of = { (*p).row_height_of } };
+        { (*s).row_height_of_ctx = { (*p).row_height_of_ctx } };
         { (*s).group_size = { (*p).group_size } };
         { (*s).group_header = { (*p).group_header } };
         { (*s).group_size_ctx = { (*p).group_size_ctx } };
@@ -823,9 +944,13 @@ fn apply_selection_mode(tv: *u8, m: vocab::SelectionMode) {
     };
     { rt::msg_void_i8(tv, rt::sel(#str_ptr("setAllowsMultipleSelection:\0")), multi as i8) };
     { rt::msg_void_i8(tv, rt::sel(#str_ptr("setAllowsEmptySelection:\0")), true as i8) };
-    // A selection nothing draws is one the user cannot see. The create body
-    // turns highlighting OFF because a facet row draws itself; a list that DOES
-    // select has to turn it back on.
+    // THE TABLE'S OWN STYLE IS LEFT ALONE — selection BEHAVIOUR is what this
+    // sets, and taking a row's ability to be picked would take its click with
+    // it (NSTableView owns the mouse in its rows, so selection is the only way
+    // a row is clicked at all). What a facet row does not want is the platform
+    // DRAWING that selection, and that is suppressed one layer down, on the row
+    // view — see `row_added_imp`. The two are separable there and are not
+    // separable here.
     // NSTableViewSelectionHighlightStyleRegular = 1, None = -1.
     var hl: i64 = 0 as i64 - (1 as i64);
     if selectable { hl = 1 as i64; }
@@ -843,6 +968,72 @@ fn apply_separator(tv: *u8, sep: vocab::Separator, c: vocab::Color) {
     { rt::msg_void_u64(tv, rt::sel(#str_ptr("setGridStyleMask:\0")), shown) };
     if c.is_set() {
         { rt::msg_void_id(tv, rt::sel(#str_ptr("setGridColor:\0")), paint::ns_color(c).raw()) };
+    }
+    return;
+}
+
+// ---- drag debug (FACET_DEBUG_DRAG=1) -----------------------------------------
+// The dump half of the scheduler's drag trace: one line per tracked list with
+// every width on the chain from the pane host down to the first row's
+// innermost content. The lag shows up as the column where the number stops
+// following. Tables are tracked at create and never removed — diagnostic
+// only, run it on a screen whose lists stay mounted.
+
+extern fn printf(fmt: *u8, ...) -> i32;
+
+#[link_name = "objc_msgSend"]
+extern fn msg_id_i64_i8(recv: *u8, sel: *u8, a: i64, b: i8) -> *u8;
+
+static DBG_TABLES: vec::Vec[*u8] = #zero::[vec::Vec[*u8]]();
+
+fn debug_track(tv: *u8) {
+    if !scheduler::debug_on() { return; }
+    let reg: *vec::Vec[*u8] = { #addr_of(DBG_TABLES) };
+    let _s: status::Status = { (*reg).append(tv) };
+    { printf(#str_ptr("[dragdbg] tracking list table %p (%llu tracked)\n\0"),
+             tv, { (*reg).count() } as u64) };
+    return;
+}
+
+fn dbg_w(v: *u8) -> f64 {
+    if v == (0 as *u8) { return 0.0f64 - 1.0f64; }
+    return { rt::msg_rect(v, rt::sel(#str_ptr("frame\0"))) }.w;
+}
+
+fn dbg_first_subview(v: *u8) -> *u8 {
+    if v == (0 as *u8) { return 0 as *u8; }
+    let subs: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("subviews\0"))) };
+    if subs == (0 as *u8) { return 0 as *u8; }
+    if { rt::msg_u64(subs, rt::sel(#str_ptr("count\0"))) } == (0 as u64) { return 0 as *u8; }
+    return { rt::msg_id_u64(subs, rt::sel(#str_ptr("objectAtIndex:\0")), 0 as u64) };
+}
+
+fn debug_dump(tag: str) {
+    let reg: *vec::Vec[*u8] = { #addr_of(DBG_TABLES) };
+    var i: usize = 0 as usize;
+    while i < { (*reg).count() } {
+        match { (*reg).at(i) } {
+            option::Option[*u8]::Some(tv) => {
+                let scr: *u8 = { rt::msg_id(tv, rt::sel(#str_ptr("enclosingScrollView\0"))) };
+                var pane: *u8 = 0 as *u8;
+                var clip: *u8 = 0 as *u8;
+                if scr != (0 as *u8) {
+                    pane = { rt::msg_id(scr, rt::sel(#str_ptr("superview\0"))) };
+                    clip = { rt::msg_id(scr, rt::sel(#str_ptr("contentView\0"))) };
+                }
+                // Row 0's realised chain: NSTableRowView -> our cell -> content.
+                let rv: *u8 = { msg_id_i64_i8(tv, rt::sel(#str_ptr("rowViewAtRow:makeIfNecessary:\0")),
+                                              0 as i64, 0 as i8) };
+                let cell: *u8 = dbg_first_subview(rv);
+                let inner: *u8 = dbg_first_subview(cell);
+                { printf(#str_ptr("[dragdbg c%llu] %-11.*s t%llu pane=%.1f scroll=%.1f clip=%.1f table=%.1f col=%.1f row0=%.1f cell=%.1f inner=%.1f\n\0"),
+                         scheduler::debug_cycle(), #str_len(tag) as i32, #str_ptr(tag), i as u64,
+                         dbg_w(pane), dbg_w(scr), dbg_w(clip), dbg_w(tv), column_width(tv),
+                         dbg_w(rv), dbg_w(cell), dbg_w(inner)) };
+            }
+            option::Option[*u8]::None => { }
+        }
+        i = i +% (1 as usize);
     }
     return;
 }
@@ -874,30 +1065,78 @@ fn scroll_to_bottom(tv: *u8) {
 fn on_table_resized(ctx: *u8) {
     let s: *RowSource = { ctx as *RowSource };
     if s == (0 as *RowSource) { return; }
-    let tv: *u8 = { (*s).table };
-    if tv == (0 as *u8) { return; }
-    let w: f64 = column_width(tv);
-    if w == { (*s).last_width } { return; }
-    { (*s).last_width = w };
-    // Whether we were at the bottom is read NOW, before anything moves. A
-    // narrower width re-wraps rows taller, so the content grows under the
-    // viewport and "at the bottom" stops being true by the time the reload
-    // has run.
-    { (*s).follow_tail = is_near_bottom(tv) };
-    // Coalesce: the frame changes on every frame of a drag, and each change
-    // would otherwise re-measure the whole list.
-    let pending: u64 = { (*s).pending_reload };
-    if pending != (0 as u64) { akx::cancel_after(pending); }
-    { (*s).pending_reload = akx::after(0.1f64, resize_settled, ctx) };
+    if { (*s).table } == (0 as *u8) { return; }
+    if scheduler::debug_on() {
+        scheduler::debug_mark_active();
+        let dtv: *u8 = { (*s).table };
+        { printf(#str_ptr("[dragdbg c%llu] resize-note table=%.1f col=%.1f (reload queued)\n\0"),
+                 scheduler::debug_cycle(), dbg_w(dtv), column_width(dtv)) };
+    }
+    // THE WIDTH IS NOT READ HERE, and that is the point. This runs from
+    // `NSViewFrameDidChangeNotification` on the TABLE, while the thing we
+    // measure against is the COLUMN — and whether AppKit has re-tiled its
+    // columns by the time it posts that notification is an ordering we do not
+    // own. Reading the column here can answer the width it had BEFORE the
+    // resize, which compares equal to `last_width`, returns early, and drops
+    // the resize on the floor: the rows then keep a width the table no longer
+    // has, and nothing ever corrects it because the next notification carries
+    // the same stale answer.
+    //
+    // The tick has no such problem. It runs at `kCFRunLoopBeforeWaiting`,
+    // after AppKit has finished laying itself out, so the column width read
+    // there is the one the table actually has.
+    scheduler::defer_reload(reload_job, ctx);
     return;
 }
 
-fn resize_settled(ctx: *u8) {
+// LIVE, ON THE TICK. This used to coalesce onto a 0.1s `performSelector:` —
+// which fires only in the DEFAULT run-loop mode, so during an event-tracking
+// drag it did not fire at all: rows kept their old width under a moving
+// divider and snapped when you let go.
+//
+// The tick is the right clock. It is a CFRunLoopObserver at
+// `kCFRunLoopBeforeWaiting` registered in COMMON modes, so it fires DURING the
+// drag, once per pass, batching every other facet write with this one. The
+// layout engine is built for exactly that: flex keeps a cross-call incremental
+// cache, so re-laying out at a new width costs the part that moved.
+//
+// What has to be coalesced is `reloadData`, which asks `heightOfRow:` for
+// EVERY row: one call for a `row_height` list, one for a UNIFORM list, and one
+// per row for `uneven_rows` — unless the application states its heights
+// (`set_row_height_of`), which answers without building anything.
+fn reload_job(ctx: *u8) {
     let s: *RowSource = { ctx as *RowSource };
     if s == (0 as *RowSource) { return; }
-    { (*s).pending_reload = 0 as u64 };
     let tv: *u8 = { (*s).table };
     if tv == (0 as *u8) { return; }
+    // FINISH APPKIT'S LAYOUT BEFORE MEASURING. The column is what rows are
+    // measured against, and a layer-backed table tiles its columns in ITS
+    // layout pass — deferred to the Core Animation commit, which runs after
+    // this job (the tick sorts before the commit), and during a live divider
+    // drag may not run between events at all. Read without forcing it, the
+    // column still answers the width the LAST pass tiled (measured on a drag:
+    // table already 471 while the column said 100), and every row is laid out
+    // one resize behind, or never. `layoutSubtreeIfNeeded` runs the deferred
+    // pass NOW, insets and all; headless — where nothing defers — it is a
+    // no-op, which is why the suite's simulated widths stay authoritative.
+    var host: *u8 = { rt::msg_id(tv, rt::sel(#str_ptr("enclosingScrollView\0"))) };
+    if host == (0 as *u8) { host = tv; }
+    { rt::msg_void(host, rt::sel(#str_ptr("layoutSubtreeIfNeeded\0"))) };
+    let w: f64 = column_width(tv);
+    let dbg: bool = scheduler::debug_on();
+    // A height change moves the viewport, not the rows — nothing re-wraps.
+    if w == { (*s).last_width } {
+        if dbg { { printf(#str_ptr("[dragdbg c%llu] reload skipped: col=%.1f unchanged\n\0"),
+                          scheduler::debug_cycle(), w) }; }
+        return;
+    }
+    if dbg { { printf(#str_ptr("[dragdbg c%llu] reload at col=%.1f (was %.1f)\n\0"),
+                      scheduler::debug_cycle(), w, { (*s).last_width }) }; }
+    { (*s).last_width = w };
+    // Whether we were at the bottom is read BEFORE anything moves: a narrower
+    // width re-wraps rows taller, so the content grows under the viewport and
+    // "at the bottom" stops being true by the time the reload has run.
+    { (*s).follow_tail = is_near_bottom(tv) };
     // The measurements belonged to the old width.
     { (*s).heights.remove_all() };
     { (*s).heights_width = 0.0f64 };
@@ -905,6 +1144,8 @@ fn resize_settled(ctx: *u8) {
     if { (*s).follow_tail } { scroll_to_bottom(tv); }
     return;
 }
+
+
 
 fn props_of_list(n: *core::Node) -> *props::ListProps {
     let d: *core::Data = core::node_data(n);
@@ -915,6 +1156,51 @@ fn props_of_list(n: *core::Node) -> *props::ListProps {
 
 // How many rows the source is answering for — the suite's window into a table
 // it cannot scroll.
+// The frame notification ALONE — no column change first. The suite's way to
+// reproduce AppKit posting `NSViewFrameDidChangeNotification` before it has
+// re-tiled its columns.
+fn notify_resized(v: *u8) {
+    let tv: *u8 = table_of(v);
+    if tv == (0 as *u8) { return; }
+    let s: *RowSource = source_of(tv);
+    if s == (0 as *RowSource) { return; }
+    on_table_resized(s as *u8);
+    return;
+}
+
+// Set the column width WITHOUT notifying — the other half of that ordering.
+fn set_column_width(v: *u8, w: f64) {
+    let tv: *u8 = table_of(v);
+    if tv == (0 as *u8) { return; }
+    let cols: *u8 = { rt::msg_id(tv, rt::sel(#str_ptr("tableColumns\0"))) };
+    if cols == (0 as *u8) { return; }
+    let n: u64 = { rt::msg_u64(cols, rt::sel(#str_ptr("count\0"))) };
+    if n == (0 as u64) { return; }
+    let c0: *u8 = { rt::msg_id_u64(cols, rt::sel(#str_ptr("objectAtIndex:\0")), 0 as u64) };
+    if c0 != (0 as *u8) { { rt::msg_void_f64(c0, rt::sel(#str_ptr("setWidth:\0")), w) }; }
+    return;
+}
+
+fn heights_width_of(v: *u8) -> f64 {
+    let s: *RowSource = source_of(table_of(v));
+    if s == (0 as *RowSource) { return 0.0f64; }
+    return { (*s).heights_width };
+}
+
+// Drive the delegate's row-added hook, the way AppKit does.
+fn row_added(v: *u8, rowview: *u8, row: i64) {
+    let tv: *u8 = table_of(v);
+    if tv == (0 as *u8) { return; }
+    row_added_imp(0 as *u8, 0 as *u8, tv, rowview, row);
+    return;
+}
+
+fn column_width_of(v: *u8) -> f64 {
+    let tv: *u8 = table_of(v);
+    if tv == (0 as *u8) { return 0.0f64; }
+    return column_width(tv);
+}
+
 fn row_count_of(v: *u8) -> i64 {
     let s: *RowSource = source_of(table_of(v));
     if s == (0 as *RowSource) { return 0 as i64; }
@@ -1336,7 +1622,19 @@ fn create_recycling_tree(n: *core::Node) -> *u8 {
     }
     { rt::msg_void_id(ov, rt::sel(#str_ptr("setHeaderView:\0")), 0 as *u8) };
     { rt::msg_void_i64(ov, rt::sel(#str_ptr("setColumnAutoresizingStyle:\0")), 1 as i64) };
-    { rt::msg_void_i64(ov, rt::sel(#str_ptr("setStyle:\0")), 0 as i64) };
+    // INTERCELL SPACING IS ZERO, and it is not a detail. AppKit's default is
+    // {3, 2}: three points of HORIZONTAL inset, so the cell a row is drawn into
+    // is narrower than the column that `column_width` reports. Laying the row
+    // out at the column's width then draws it wider than the cell it sits in,
+    // and the right edge of a card is what falls off. `facet_appkit.old` zeroed
+    // it (`set_intercell_spacing({0,0})`) and the new backend did not carry it
+    // across.
+    { rt::msg_void_size(ov, rt::sel(#str_ptr("setIntercellSpacing:\0")),
+                        rt::Size { w: 0.0f64, h: 0.0f64 }) };
+
+    // AUTOMATIC (0), deliberately — an explicit style tiles at create and
+    // builds every row for the height pass. The list's comment has the story.
+    { rt::msg_void_i64(ov, rt::sel(#str_ptr("setStyle:\0")), 0 as i64) };   // NSTableViewStyleAutomatic
 
     let agent: *u8 = synth::alloc_init_class(tree_agent_class());
     if agent != (0 as *u8) {

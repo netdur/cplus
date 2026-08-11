@@ -412,6 +412,29 @@ impl List {
         return this;
     }
 
+    // THE HEIGHT OF ROW `at`, WITHOUT BUILDING IT.
+    //
+    // `row_height` is one number for every row. This is one per row, and
+    // it exists because the only other way to learn a row's height is to
+    // BUILD the row and lay it out. A recycling table asks for the height
+    // of EVERY row whenever its width changes — that is how it knows its
+    // own extent — so an `uneven_rows` list measured by building rebuilds
+    // the entire model on every frame of a live drag.
+    //
+    // An application that states the extents its rows stack already knows
+    // the answer as arithmetic. This is where it says so. Answer 0 for a
+    // row you cannot compute and that row is built and measured as before,
+    // so a partial answer is a legal answer.
+    fn set_row_height_of(this, f: fn(usize, *u8) -> f64,
+                         row_height_of_ctx: *u8 = 0 as *u8) -> List {
+        let p: *props::ListProps = this._props();
+        if p == (0 as *props::ListProps) { return this; }
+        { (*p).row_height_of = f };
+        { (*p).row_height_of_ctx = row_height_of_ctx };
+        core::touch(this._p, P_ROW);
+        return this;
+    }
+
     // Write row `at` into `row`. Inert when no bind was named.
     fn bind_row(this, at: usize, row: *core::Node) {
         let p: *props::ListProps = this._props();

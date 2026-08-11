@@ -14,6 +14,17 @@
 // writes from one event lands as one visual update, and a hundred writes in a
 // loop cost one tick rather than a hundred.
 //
+// AND THE TICK MUST RUN BEFORE THAT COMMIT. Core Animation's own observer sits
+// at order 2,000,000, and what it commits is what this frame SHOWS. The tick
+// used to run at INT32_MAX — "last, after AppKit's own observers" — which put
+// every facet write AFTER the commit: correct in memory, drawn one frame late.
+// During a live divider drag that was visible as the seam this file already
+// describes once at the drain level — the pane took its new width in AppKit's
+// pass while everything facet lays out inside it caught up a frame later,
+// cards clipping on the way out and leaving a gap on the way back. Same bug,
+// one level up: fixing the drain order inside the tick could never fix the
+// tick itself missing the frame.
+//
 // `schedule` therefore does almost nothing: raise a flag, nudge the loop. The
 // observer does the work.
 //
@@ -32,6 +43,7 @@
 import "stdlib/vec" as vec;
 import "stdlib/option" as option;
 import "stdlib/status" as status;
+import "stdlib/env" as env;
 import "flex_layout/flex_layout" as flex;
 import "facet/facet" as core;
 import "facet/mount" as mount;
@@ -99,7 +111,12 @@ struct ObserverContext {
 
 static SYNC_PENDING: bool = false;
 static OBSERVER_INSTALLED: bool = false;
+static OBSERVER_HANDLE: *u8 = #zero::[*u8]();
 static TICKS: u64 = 0 as u64;
+
+// Core Animation's commit observer sits at this order; ours must sort below it
+// or every tick's writes are drawn one frame late (see the header).
+fn ca_commit_order() -> i64 { return 2000000 as i64; }
 
 // Renderer.schedule. Called from core::touch on every unbatched write, so it
 // must stay this cheap.
@@ -122,8 +139,51 @@ fn tick() {
     if !SYNC_PENDING { return; }
     SYNC_PENDING = false;
     TICKS = TICKS +% (1 as u64);
+    let dbg: bool = debug_active();
+    if dbg { { printf(#str_ptr("[dragdbg c%llu] tick begin\n\0"), DBG_CYCLE) }; }
     mount::sync();
     layout_all_windows();
+    if dbg { debug_dump("tick.layout"); }
+    // AFTER the layout pass, and that ordering is the whole thing.
+    //
+    // A table learns it was resized from `NSViewFrameDidChangeNotification`,
+    // which AppKit posts SYNCHRONOUSLY from `setFrame:` — and the call that
+    // sets that frame is the layout pass immediately above. So the resize is
+    // discovered DURING layout, and a reload drained before it would always be
+    // servicing the PREVIOUS pass's resize.
+    //
+    // Draining first cost exactly one tick of lag, and it was visible: drag a
+    // divider and the pane took its new width while the rows inside kept the
+    // old one, catching up a frame later. Cards clipped on the right on the way
+    // out and left a gap on the way back, every frame of the drag.
+    //
+    // A reload lays its own rows out (`place_row` measures and positions the
+    // subtree it fills), so nothing needs a second window pass behind it.
+    drain_reload_jobs();
+    if dbg { debug_dump("tick.drain"); { printf(#str_ptr("[dragdbg c%llu] tick end\n\0"), DBG_CYCLE) }; }
+    return;
+}
+
+// A live divider drag is serviced HERE, synchronously — not by the observer.
+// Measured on a real drag (FACET_DEBUG_DRAG, 2026-08-11): while the mouse
+// streams events the run loop never reaches `kCFRunLoopBeforeWaiting` —
+// dozens of recorded drag moves, zero ticks, the cycle counter frozen —
+// because AppKit draws a tracking drag synchronously at end-of-event. An
+// observer at ANY order cannot run mid-drag; the pre-commit order matters
+// only for work that reaches a frame's commit at all. The old backend never
+// had the problem for exactly this reason: it reflowed pane content straight
+// from `splitViewDidResizeSubviews:`. Window resizes in THIS backend already
+// do the same (`layout_window` is called directly from `windowDidResize`);
+// the split was the only live resize still left to the tick.
+//
+// The settle runs FIRST. The delegate has just recorded the dragged position
+// into the props, and the frame walk sizes panes from FLEX — un-settled, the
+// walk would reproduce the pre-drag division for one pass and snap the
+// divider back under the pointer.
+fn service_split_drag() {
+    resettle_splits();
+    SYNC_PENDING = true;
+    tick();
     return;
 }
 
@@ -148,13 +208,97 @@ fn install_sync_tick() {
         0 as *u8,
         cf_before_waiting(),
         1 as i8,                 // repeats
-        2147483647 as i64,       // order: last, after AppKit's own observers
+        // As late as possible while still sorting BEFORE Core Animation's
+        // commit at 2,000,000 — after AppKit's housekeeping, inside the frame.
+        ca_commit_order() - (1000 as i64),
         before_waiting,
         #addr_of(cx) as *u8,
     ) };
     if obs == (0 as *u8) { return; }
     { CFRunLoopAddObserver(rl, obs, common_modes()) };
+    OBSERVER_HANDLE = obs;
     OBSERVER_INSTALLED = true;
+    install_debug_fence(rl);
+    return;
+}
+
+// The installed tick observer's order, read back off the REAL observer — for
+// the test that pins the before-the-commit ordering. -1 until installed.
+extern fn CFRunLoopObserverGetOrder(observer: *u8) -> i64;
+
+fn observer_order() -> i64 {
+    if OBSERVER_HANDLE == (0 as *u8) { return 0 as i64 - (1 as i64); }
+    return { CFRunLoopObserverGetOrder(OBSERVER_HANDLE) };
+}
+
+// ---- drag debug (FACET_DEBUG_DRAG=1) -----------------------------------------
+// A per-cycle trace of the width chain during a divider drag: who resized,
+// when the tick ran, what the tables measured, and — from a fence observer at
+// order 2,000,001, right AFTER Core Animation's commit — what the frame that
+// was just drawn actually held. Diagnostic only; every print is behind the
+// env gate, and the fence observer is only installed when the gate is set.
+//
+// The dump itself lives in `recycler` (it knows the tables); it is registered
+// as a fn-pointer for the same no-cycle reason `settle_split` is.
+
+extern fn printf(fmt: *u8, ...) -> i32;
+
+static DBG_READ: bool = false;
+static DBG_ON: bool = false;
+static DBG_ACTIVE: i64 = 0 as i64;
+static DBG_CYCLE: u64 = 0 as u64;
+static DBG_DUMP_FN: fn(str) = #zero::[fn(str)]();
+
+fn debug_on() -> bool {
+    if !DBG_READ { DBG_READ = true; DBG_ON = env::has_var("FACET_DEBUG_DRAG"); }
+    return DBG_ON;
+}
+
+// Something on the drag chain happened: keep the trace talking for the next
+// few cycles, so the catch-up frame — the lag itself — is in the log too.
+fn debug_mark_active() { DBG_ACTIVE = 4 as i64; return; }
+fn debug_active() -> bool { return debug_on() && DBG_ACTIVE > (0 as i64); }
+fn debug_cycle() -> u64 { return DBG_CYCLE; }
+fn set_debug_dump_fn(f: fn(str)) { DBG_DUMP_FN = f; return; }
+
+fn debug_dump(tag: str) {
+    let f: fn(str) = DBG_DUMP_FN;
+    if f != (0 as fn(str)) { f(tag); }
+    return;
+}
+
+// Order 2,000,001: what the dump prints from here is what this frame SHOWS.
+fn commit_fence(observer: *u8, activity: u64, info: *u8) {
+    DBG_CYCLE = DBG_CYCLE +% (1 as u64);
+    if DBG_ACTIVE <= (0 as i64) { return; }
+    DBG_ACTIVE = DBG_ACTIVE - (1 as i64);
+    { printf(#str_ptr("[dragdbg c%llu] ---- post-commit: the frame just drawn ----\n\0"),
+             DBG_CYCLE) };
+    debug_dump("commit+");
+    return;
+}
+
+fn install_debug_fence(rl: *u8) {
+    if !debug_on() { return; }
+    { printf(#str_ptr("[dragdbg] tick observer at order %lld; CA commits at %lld; fence at %lld\n\0"),
+             observer_order(), ca_commit_order(), ca_commit_order() + (1 as i64)) };
+    var cx: ObserverContext = ObserverContext {
+        version: 0 as i64,
+        info: 0 as *u8,
+        retain: 0 as *u8,
+        release: 0 as *u8,
+        copy_description: 0 as *u8,
+    };
+    let fence: *u8 = { CFRunLoopObserverCreate(
+        0 as *u8,
+        cf_before_waiting(),
+        1 as i8,
+        ca_commit_order() + (1 as i64),
+        commit_fence,
+        #addr_of(cx) as *u8,
+    ) };
+    if fence == (0 as *u8) { return; }
+    { CFRunLoopAddObserver(rl, fence, common_modes()) };
     return;
 }
 
@@ -289,6 +433,68 @@ fn drain_place_jobs() {
     }
     return;
 }
+
+// ---- deferred RELOADS --------------------------------------------------------
+//
+// A table whose width changed needs `reloadData`, and that is the expensive
+// half of a resize: it asks `heightOfRow:` for every row. A live drag delivers
+// a frame change MANY times per displayed frame, so doing it inline meant the
+// same list re-measured several times for one thing the user sees — which is
+// what made a panel of cards struggle while the divider moved smoothly.
+//
+// So it is a JOB on the tick, like `defer_place`: the run-loop observer already
+// batches every other write at `kCFRunLoopBeforeWaiting`, and it is registered
+// in COMMON modes, so it fires during an event-tracking drag rather than after
+// it. That is the difference from the 0.1s `performSelector:` this replaced —
+// that one fires only in the DEFAULT mode, so it could not run mid-drag at all.
+//
+// DEDUPED ON THE TARGET: fifty frame changes between two ticks are one reload.
+struct ReloadJob {
+    f: fn(*u8),
+    opaque p: *u8,
+}
+
+static RELOAD_JOBS: vec::Vec[ReloadJob] = #zero::[vec::Vec[ReloadJob]]();
+
+fn defer_reload(f: fn(*u8), p: *u8) {
+    if p == (0 as *u8) { return; }
+    let jobs: *vec::Vec[ReloadJob] = { #addr_of(RELOAD_JOBS) };
+    var i: usize = 0 as usize;
+    while i < { (*jobs).count() } {
+        match { (*jobs).at_ptr(i) } {
+            option::Option[*ReloadJob]::Some(j) => {
+                // Already queued for this tick — one reload, not fifty.
+                if { (*j).p } == p { return; }
+            }
+            option::Option[*ReloadJob]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    let _s: status::Status = { (*jobs).append(ReloadJob { f: f, p: p }) };
+    schedule(0 as *u8);
+    return;
+}
+
+fn drain_reload_jobs() {
+    let jobs: *vec::Vec[ReloadJob] = { #addr_of(RELOAD_JOBS) };
+    if debug_on() && { (*jobs).count() } > (0 as usize) {
+        { printf(#str_ptr("[dragdbg c%llu] drain: %llu reload job(s)\n\0"),
+                 DBG_CYCLE, { (*jobs).count() } as u64) };
+    }
+    while { (*jobs).count() } > (0 as usize) {
+        let last: usize = { (*jobs).count() } -% (1 as usize);
+        match { (*jobs).swap_remove(last) } {
+            option::Option[ReloadJob]::Some(job) => {
+                let f: fn(*u8) = { job.f };
+                if f != (0 as fn(*u8)) { f({ job.p }); }
+            }
+            option::Option[ReloadJob]::None => { }
+        }
+    }
+    return;
+}
+
+fn pending_reload_count() -> usize { return { RELOAD_JOBS.count() }; }
 
 fn layout_window(root: *core::Node) {
     let win: *u8 = app::window_native(root);

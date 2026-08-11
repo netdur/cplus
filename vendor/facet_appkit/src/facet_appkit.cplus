@@ -36,6 +36,7 @@ import "./views" as views;
 import "./input" as input;
 import "./scheduler" as scheduler;
 import "./controls" as controls;
+import "./recycler" as recycler;
 import "./geometry" as geometry;
 import "./window" as window;
 
@@ -68,6 +69,9 @@ fn install() {
     // The scheduler settles every registered split after each layout walk; it
     // learns HOW from here, so it needs to know nothing about splits.
     scheduler::set_split_settle_fn(controls::settle_split);
+    // The drag-debug dump (FACET_DEBUG_DRAG=1) — same fn-pointer shape, same
+    // no-cycle reason.
+    scheduler::set_debug_dump_fn(recycler::debug_dump);
     component::install_sender_readers(input::sender_readers());
     theme::set_is_dark_fn(window::is_dark);
     theme::set_theme_changed_fn(theme_changed);

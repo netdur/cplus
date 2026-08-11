@@ -2047,6 +2047,18 @@ ROW_SOURCE_FIELDS = [
     ("opaque row_ctx", "*u8", "0 as *u8", None),
     ("bind", "fn(usize, *flex::Node, *u8)", "no_bind",
      "facet — writes row `i` INTO an existing row, for recycling"),
+    # A row's height WITHOUT building it. `row_height` is one number for every
+    # row; this is one per row, and it exists because the alternative is to
+    # build. A recycling table asks for the height of EVERY row whenever its
+    # width changes — that is how it knows its own extent — so an uneven list
+    # measured by building re-builds the whole model on every frame of a drag.
+    # An application that states the extents its rows stack (a card of a stated
+    # head, a stated line, N stated file rows) already knows the answer as
+    # arithmetic, and had no way to say it. Only the recycling controls consult
+    # it; a collection materialises its children and reads their real frames.
+    ("row_height_of", "fn(usize, *u8) -> f64", "no_row_height_of",
+     "facet — the height of row `i`, answered WITHOUT building it"),
+    ("opaque row_height_of_ctx", "*u8", "0 as *u8", None),
     # `IsGrouped` had a carrier for the SWITCH and nothing for what it switches
     # on: the ledger's grouped ItemsSource is a list of lists, which Stage 1 dropped
     # as MODEL along with the flat one. The imperative replacement follows the
@@ -2186,6 +2198,9 @@ def emit_props(rows_by_control, by_type):
            "// The two halves of a group, absent until an application names them.\n"
            "// A group with no size holds no rows, so an ungrouped sequence and a\n"
            "// grouped one that was never described render the same.\n"
+           "// Zero means \"no answer\" — the measure pass builds the row instead,\n"
+           "// which is what every list did before this could be stated.\n"
+           "fn no_row_height_of(row: usize, ctx: *u8) -> f64 { return 0.0f64; }\n"
            "fn no_group_size(group: usize, ctx: *u8) -> usize { return 0 as usize; }\n"
            "fn no_group_header(group: usize, ctx: *u8) -> flex::Node "
            "{ return flex::Node::new(); }\n",
@@ -2792,6 +2807,27 @@ def emit_control(row_type, merged):
         o.append(f"        if p == (0 as *props::{props}) {{ return this; }}\n")
         o.append("        { (*p).bind = f };\n")
         o.append("        { (*p).row_ctx = ctx };\n")
+        o.append("        core::touch(this._p, P_ROW);\n")
+        o.append("        return this;\n    }\n")
+        o.append("\n    // THE HEIGHT OF ROW `at`, WITHOUT BUILDING IT.\n")
+        o.append("    //\n")
+        o.append("    // `row_height` is one number for every row. This is one per row, and\n")
+        o.append("    // it exists because the only other way to learn a row\'s height is to\n")
+        o.append("    // BUILD the row and lay it out. A recycling table asks for the height\n")
+        o.append("    // of EVERY row whenever its width changes — that is how it knows its\n")
+        o.append("    // own extent — so an `uneven_rows` list measured by building rebuilds\n")
+        o.append("    // the entire model on every frame of a live drag.\n")
+        o.append("    //\n")
+        o.append("    // An application that states the extents its rows stack already knows\n")
+        o.append("    // the answer as arithmetic. This is where it says so. Answer 0 for a\n")
+        o.append("    // row you cannot compute and that row is built and measured as before,\n")
+        o.append("    // so a partial answer is a legal answer.\n")
+        o.append(f"    fn set_row_height_of(this, f: fn(usize, *u8) -> f64,\n")
+        o.append(f"                         row_height_of_ctx: *u8 = 0 as *u8) -> {cur} {{\n")
+        o.append(f"        let p: *props::{props} = this._props();\n")
+        o.append(f"        if p == (0 as *props::{props}) {{ return this; }}\n")
+        o.append("        { (*p).row_height_of = f };\n")
+        o.append("        { (*p).row_height_of_ctx = row_height_of_ctx };\n")
         o.append("        core::touch(this._p, P_ROW);\n")
         o.append("        return this;\n    }\n")
         o.append("\n    // Write row `at` into `row`. Inert when no bind was named.\n")

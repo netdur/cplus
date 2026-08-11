@@ -62,6 +62,9 @@ import "objc/synthesis" as synth;
 import "appkit/appkit" as ak;
 import "appkit/appkit_ext" as akx;
 import "./paint" as paint;
+import "./scheduler" as scheduler;
+
+extern fn printf(fmt: *u8, ...) -> i32;
 
 // ---- associated keys ---------------------------------------------------------
 // facet_appkit owns 29000 and up, in one block per file:
@@ -837,6 +840,12 @@ fn split_resized_imp(self_obj: *u8, cmd: *u8, note: *u8) {
             // `paint::is_asserting` for why this cannot be decided from the
             // geometry, or from `constrainSplitPosition:`.
             let dragging: bool = !paint::is_asserting();
+            if scheduler::debug_on() {
+                scheduler::debug_mark_active();
+                { printf(#str_ptr("[dragdbg c%llu] split-resize pane0=%.1f prop=%.1f extent=%.1f settled=%d dragging=%d moved=%d\n\0"),
+                         scheduler::debug_cycle(), at, { (*p).position }, extent,
+                         settled as i32, dragging as i32, moved as i32) };
+            }
             // Recording is for a MOVE, not for every notification. The write
             // used to be unconditional and only the relayout was gated, which
             // is how the half-point drift got in: nothing had moved, but the
@@ -847,7 +856,19 @@ fn split_resized_imp(self_obj: *u8, cmd: *u8, note: *u8) {
                 // inside a pane keeps the frames facet's last walk gave it, so
                 // narrowing leaves the old content standing where it was — the
                 // seam. Ask for a pass so the contents follow the pane.
+                if scheduler::debug_on() {
+                    { printf(#str_ptr("[dragdbg c%llu] split-resize -> recorded %.1f, servicing synchronously\n\0"),
+                             scheduler::debug_cycle(), at) };
+                }
                 core::relayout(n);
+                // SYNCHRONOUSLY — the observer cannot do it. While the mouse
+                // streams drag events the run loop never reaches
+                // `kCFRunLoopBeforeWaiting` (measured: dozens of recorded
+                // moves, zero ticks), yet AppKit draws each event's pane
+                // resize at end-of-event. Content that waits for the observer
+                // waits until the mouse pauses. `windowDidResize` already
+                // services its resize inline for the same reason.
+                scheduler::service_split_drag();
             }
         }
     }

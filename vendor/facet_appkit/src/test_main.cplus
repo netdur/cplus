@@ -2890,6 +2890,236 @@ fn assert_row_content_is_placed(cell: *u8) {
     return;
 }
 
+// ---- a row's height, stated rather than built ---------------------------------
+
+static SH_BUILDS: i64 = 0 as i64;
+static SH_ASKED: i64 = 0 as i64;
+
+fn sh_row(i: usize, ctx: *u8) -> core::Node {
+    SH_BUILDS = SH_BUILDS + (1 as i64);
+    var b: core::Builder = core::Builder::new();
+    b.add(label::label("row", key: ""));
+    return core::column(b, key: "");
+}
+
+// Every extent stated, so the answer is arithmetic — the shape a real list has
+// when its rows are cards of stated parts.
+fn sh_height(i: usize, ctx: *u8) -> f64 {
+    SH_ASKED = SH_ASKED + (1 as i64);
+    if (i % (2 as usize)) == (0 as usize) { return 40.0f64; }
+    return 24.0f64;
+}
+
+// A row this app cannot compute: 0 means "build it", and that is legal.
+fn sh_height_partial(i: usize, ctx: *u8) -> f64 {
+    if i == (3 as usize) { return 0.0f64; }
+    return 40.0f64;
+}
+
+fn sh_list(count: usize, f: fn(usize, *u8) -> f64, f_ctx: *u8 = 0 as *u8) -> core::Node {
+    var n: core::Node = list::list(key: "sh", uneven_rows: true);
+    let p: *core::Node = #addr_of(n);
+    match list::find("sh", within: p) {
+        option::Option[list::List]::Some(x) => {
+            let a: list::List = x.set_row(sh_row);
+            let b: list::List = a.set_count(count);
+            let _c: list::List = b.set_row_height_of(f, row_height_of_ctx: f_ctx);
+        }
+        option::Option[list::List]::None => { assert false; }
+    }
+    return n;
+}
+
+#[test]
+fn a_stated_row_height_is_answered_without_building_the_row() {
+    backend::install();
+    // The whole point. A recycling table asks for the height of EVERY row when
+    // its width changes, and measuring by BUILDING meant an uneven list
+    // rebuilt its entire model on every frame of a live drag. An application
+    // that states the extents its rows stack already knows the answer.
+    SH_BUILDS = 0 as i64;
+    SH_ASKED = 0 as i64;
+    var n: core::Node = sh_list(50 as usize, sh_height);
+    let v: *u8 = views::create(0 as *u8, #addr_of(n));
+
+    assert recycler::height_of_row(v, 0 as i64) == 40.0f64;
+    assert recycler::height_of_row(v, 1 as i64) == 24.0f64;
+    assert recycler::height_of_row(v, 8 as i64) == 40.0f64;
+    // Asked three times, built ZERO.
+    assert SH_ASKED == (3 as i64);
+    assert SH_BUILDS == (0 as i64);
+    views::view_release(v);
+    return;
+}
+
+#[test]
+fn a_row_the_app_cannot_state_falls_back_to_being_built() {
+    backend::install();
+    // 0 means "no answer", not "zero tall". A partial answer is a legal
+    // answer, so an app can state the rows it knows and leave the rest.
+    SH_BUILDS = 0 as i64;
+    var n: core::Node = sh_list(10 as usize, sh_height_partial);
+    let v: *u8 = views::create(0 as *u8, #addr_of(n));
+    assert recycler::height_of_row(v, 0 as i64) == 40.0f64;
+    assert SH_BUILDS == (0 as i64);
+    // Row 3 answers 0, so it is built and measured the old way.
+    let h3: f64 = recycler::height_of_row(v, 3 as i64);
+    assert h3 > 0.0f64;
+    assert SH_BUILDS == (1 as i64);
+    views::view_release(v);
+    return;
+}
+
+#[test]
+fn a_grouped_lists_stated_height_is_asked_about_the_DATA_index() {
+    backend::install();
+    // `row_height_of(i)` means the same `i` that `row(i)` means. A grouped
+    // table's table rows are offset by the headers above them, and handing the
+    // raw table row to the application is the same defect the bind had.
+    // Groups of 2 and 3 over 5 items:
+    //   0 header | 1 data0 | 2 data1 | 3 header | 4 data2 | 5 data3 | 6 data4
+    SH_BUILDS = 0 as i64;
+    var l: core::Node = list::list(key: "shg", uneven_rows: true, grouped: true);
+    let p: *core::Node = #addr_of(l);
+    match list::find("shg", within: p) {
+        option::Option[list::List]::Some(x) => {
+            let a: list::List = x.set_row(sh_row);
+            let b: list::List = a.set_count(5 as usize);
+            let c: list::List = b.set_group_count(2 as usize);
+            let d: list::List = c.set_group_size(g_size);
+            let e: list::List = d.set_group_header(g_header);
+            let _f: list::List = e.set_row_height_of(sh_height);
+        }
+        option::Option[list::List]::None => { assert false; }
+    }
+    let v: *u8 = views::create(0 as *u8, p);
+    core::set_view(p, v, views::view_release);
+    // Table row 1 is DATA 0 -> 40. Table row 2 is DATA 1 -> 24.
+    assert recycler::height_of_row(v, 1 as i64) == 40.0f64;
+    assert recycler::height_of_row(v, 2 as i64) == 24.0f64;
+    // Table row 4 is DATA 2 -> 40, not table-row 4's answer (24).
+    assert recycler::height_of_row(v, 4 as i64) == 40.0f64;
+    // None of that built a row.
+    assert SH_BUILDS == (0 as i64);
+    // A HEADER has no data index, so it is built and measured as before.
+    let hh: f64 = recycler::height_of_row(v, 0 as i64);
+    assert hh > 0.0f64;
+    return;
+}
+
+#[test]
+fn a_list_with_no_stated_height_still_measures_by_building() {
+    backend::install();
+    // The default is unchanged: no callback means build and measure, which is
+    // what every list did before this could be said.
+    SH_BUILDS = 0 as i64;
+    var n: core::Node = list::list(key: "sh2", uneven_rows: true);
+    let p: *core::Node = #addr_of(n);
+    match list::find("sh2", within: p) {
+        option::Option[list::List]::Some(x) => {
+            let a: list::List = x.set_row(sh_row);
+            let _b: list::List = a.set_count(10 as usize);
+        }
+        option::Option[list::List]::None => { assert false; }
+    }
+    let v: *u8 = views::create(0 as *u8, p);
+    let _h: f64 = recycler::height_of_row(v, 0 as i64);
+    assert SH_BUILDS == (1 as i64);
+    views::view_release(v);
+    return;
+}
+
+#[test]
+fn a_rows_content_stretches_with_the_cell_without_waiting_for_a_reload() {
+    backend::install();
+    // A width change reaches a row through AppKit tiling its columns, inside
+    // AppKit's own layout — not on facet's tick. A row that waits for a reload
+    // to learn its width is therefore a frame behind the pane it sits in, which
+    // is visible as cards clipped off the right on the way out and short of it
+    // on the way back. `vendor/facet_appkit.old` never had that, and not by
+    // reloading sooner: it put `NSViewWidthSizable` on the cell's whole subtree
+    // and let AppKit stretch the content live.
+    //
+    // So: resize the CELL alone — no reload, no tick, nothing facet does — and
+    // the content must already have followed.
+    var n: core::Node = rp_list(3 as usize, false);
+    let v: *u8 = views::create(0 as *u8, #addr_of(n));
+    let cell: *u8 = recycler::view_for_row(v, 0 as i64);
+    assert cell != (0 as *u8);
+    let cf: rt::Rect = { ak::View::from_raw(cell).frame() };
+    let subs: vec::Vec[ak::View] = ak::View::from_raw(cell).subviews();
+    assert subs.count() > (0 as usize);
+    var before: f64 = 0.0f64;
+    match subs.at_ptr(0 as usize) {
+        option::Option[*ak::View]::Some(sv) => { before = { (*sv).frame().w }; }
+        option::Option[*ak::View]::None => { assert false; }
+    }
+    assert before > 0.0f64;
+
+    // AppKit resizes the cell. Nothing else happens — no reloadData, no tick.
+    ak::View::from_raw(cell).set_frame(rt::Rect { x: 0.0f64, y: 0.0f64,
+                                                  w: cf.w - 100.0f64, h: cf.h });
+
+    match subs.at_ptr(0 as usize) {
+        option::Option[*ak::View]::Some(sv) => {
+            let after: f64 = { (*sv).frame().w };
+            // Narrower by exactly what the cell lost: the margins are fixed and
+            // the width absorbs the change.
+            assert after == before - 100.0f64;
+        }
+        option::Option[*ak::View]::None => { assert false; }
+    }
+    views::view_release(v);
+    return;
+}
+
+#[test]
+fn a_list_table_keeps_the_automatic_style_and_a_zero_intercell_gap() {
+    backend::install();
+    // Two numbers on the table are load-bearing and each has pulled once.
+    //
+    // The intercell gap defaults to {3, 2}: three points of horizontal inset,
+    // so the cell a row is drawn into is narrower than the column the row was
+    // laid out against, and the right edge of a card is what falls off.
+    //
+    // The style must stay AUTOMATIC (0). FullWidth — the old backend's choice,
+    // and once written here as "Plain" — makes the table tile at create:
+    // reloadData runs the height pass immediately, `heightOfRow:` builds every
+    // row, and the lazy create that `a_list_asks_for_no_rows_until_the_table_
+    // asks_for_them` pins is gone. The insets a resolved automatic style adds
+    // are compensated where rows are measured: `column_width` reads the
+    // COLUMN, which AppKit narrows by exactly those insets.
+    var n: core::Node = rp_list(3 as usize, false);
+    let v: *u8 = views::create(0 as *u8, #addr_of(n));
+    let tv: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("documentView\0"))) };
+    assert tv != (0 as *u8);
+    assert { rt::msg_i64(tv, rt::sel(#str_ptr("style\0"))) } == (0 as i64);   // Automatic
+    let sp: rt::Size = { rt::msg_size(tv, rt::sel(#str_ptr("intercellSpacing\0"))) };
+    assert { sp.w } == 0.0f64;
+    assert { sp.h } == 0.0f64;
+    views::view_release(v);
+    return;
+}
+
+#[test]
+fn a_tree_table_keeps_the_automatic_style_and_a_zero_intercell_gap() {
+    backend::install();
+    // The outline view is configured by a separate create path, so the list
+    // being right proves nothing about it — same pins, same reason.
+    var root: tree::TreeNode = tree::TreeNode::new("root", id: "root");
+    let _a: status::Status = root.add_child(tree::TreeNode::new("leaf", id: "leaf"));
+    var t: core::Node = tree::tree(root, key: "fwt", row: rp_tree_row);
+    let v: *u8 = views::create(0 as *u8, #addr_of(t));
+    let ov: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("documentView\0"))) };
+    assert ov != (0 as *u8);
+    assert { rt::msg_i64(ov, rt::sel(#str_ptr("style\0"))) } == (0 as i64);   // Automatic
+    let sp: rt::Size = { rt::msg_size(ov, rt::sel(#str_ptr("intercellSpacing\0"))) };
+    assert { sp.w } == 0.0f64;
+    assert { sp.h } == 0.0f64;
+    views::view_release(v);
+    return;
+}
+
 #[test]
 fn a_realised_list_rows_content_is_placed_not_left_at_the_origin() {
     backend::install();
@@ -3129,38 +3359,188 @@ fn a_list_without_a_bind_still_works_the_old_way() {
 }
 
 #[test]
-fn a_resize_coalesces_into_one_reload_instead_of_one_per_frame() {
+fn a_resize_discovered_during_layout_is_serviced_in_the_SAME_tick() {
     backend::install();
-    // Step 3. A live drag changes the width on every frame, and every change
-    // invalidates every measurement — reloading on each one re-measures the
-    // whole list dozens of times a second. So a reload is SCHEDULED and the
-    // next frame cancels the one before it.
+    // A table learns it was resized from `NSViewFrameDidChangeNotification`,
+    // which AppKit posts SYNCHRONOUSLY from `setFrame:` — and in a facet app
+    // the call that sets that frame is the tick's OWN layout pass, because the
+    // width came from the flex tree (a divider moved, a pane grew). So the
+    // resize is discovered DURING layout.
+    //
+    // Draining reloads BEFORE layout therefore serviced only the PREVIOUS
+    // pass's resize: exactly one tick of lag, and visible — the pane took its
+    // new width while the rows inside kept the old one and caught up a frame
+    // later, clipping on the way out and leaving a gap on the way back.
+    //
+    // The width here is changed on the NODE, not on the window, so the frame
+    // move can only come from the layout pass.
+    var b: core::Builder = core::Builder::new();
+    b.add(rl_list(30 as usize, 0 as i64));
+    var root: core::Node = core::column(b, key: "host").align(flex::Align::Stretch);
+    let rp: *core::Node = #addr_of(root);
+    let win: *u8 = window::open_window(rp, screen::Chrome::new(title: "resize",
+                                                               width: 500.0f64,
+                                                               height: 300.0f64));
+    assert win != (0 as *u8);
+
+    let lp: *core::Node = match core::child_of(rp, 0 as usize) {
+        option::Option[*core::Node]::Some(c) => c,
+        option::Option[*core::Node]::None => 0 as *core::Node,
+    };
+    assert lp != (0 as *core::Node);
+    { (*lp).set_width(flex::StyleLength::points(400.0f64)) };
+    scheduler::tick();
+    let v: *u8 = core::view_of(lp);
+    assert v != (0 as *u8);
+    let w1: f64 = recycler::column_width_of(v);
+    assert w1 > 0.0f64;
+
+    // The width changes in the FLEX TREE. Nothing has moved a native frame yet
+    // — the layout pass inside the next tick is what will.
+    { (*lp).set_width(flex::StyleLength::points(260.0f64)) };
+    core::touch_all(lp);
+    scheduler::tick();
+
+    // ONE tick. The rows were measured at the width the table has NOW.
+    let w2: f64 = recycler::column_width_of(v);
+    assert w2 != w1;
+    assert recycler::heights_width_of(v) == w2;
+    assert scheduler::pending_reload_count() == (0 as usize);
+    app::close_window(rp);
+    return;
+}
+
+#[test]
+fn a_frame_notification_that_arrives_before_the_column_retiles_is_not_lost() {
+    backend::install();
+    // The resize arrives as `NSViewFrameDidChangeNotification` on the TABLE,
+    // and the width we measure against belongs to the COLUMN. Whether AppKit
+    // has re-tiled its columns by the time it posts that notification is not
+    // an ordering facet owns.
+    //
+    // Reading the column IN the notification therefore risked answering the
+    // width it had BEFORE the resize — which compares equal to the last width,
+    // returns early, and drops the resize on the floor. Rows then keep a width
+    // the table no longer has, and no later notification rescues it because
+    // each one carries the same stale answer. Reading it on the TICK, after
+    // AppKit has finished, cannot go wrong that way.
+    var n: core::Node = rl_list(20 as usize, 0 as i64);
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    core::set_view(p, v, views::view_release);
+    recycler::resize_to(v, 400.0f64);
+    scheduler::tick();
+    assert recycler::column_width_of(v) == 400.0f64;
+
+    // The notification lands FIRST, while the column still reads 400.
+    recycler::notify_resized(v);
+    // AppKit tiles afterwards.
+    recycler::set_column_width(v, 250.0f64);
+    // The tick reads the width that is true NOW.
+    scheduler::tick();
+
+    assert recycler::column_width_of(v) == 250.0f64;
+    // And the heights in hand were measured at it, not at the width the
+    // notification saw.
+    assert recycler::heights_width_of(v) == 250.0f64;
+    views::view_release(v);
+    return;
+}
+
+static SD_RUNS: i64 = 0 as i64;
+fn sd_job(p: *u8) { SD_RUNS = SD_RUNS + (1 as i64); return; }
+
+#[test]
+fn a_recorded_drag_is_serviced_synchronously_not_left_to_the_observer() {
+    backend::install();
+    // Measured on a live drag (FACET_DEBUG_DRAG): while the mouse streams
+    // events the run loop never reaches `kCFRunLoopBeforeWaiting` — dozens of
+    // recorded drag moves, zero ticks, the debug cycle counter frozen — so an
+    // observer at ANY order cannot service a drag; AppKit draws each event's
+    // pane resize synchronously at end-of-event. The split delegate therefore
+    // services the layout inline through `service_split_drag`, the same way
+    // `windowDidResize` already calls `layout_window` directly. This pins the
+    // verb: one call runs a full tick — including the queued reloads — with
+    // no observer involved.
+    SD_RUNS = 0 as i64;
+    scheduler::defer_reload(sd_job, 7 as *u8);
+    let before: u64 = scheduler::ticks();
+    scheduler::service_split_drag();
+    assert SD_RUNS == (1 as i64);
+    assert scheduler::pending_reload_count() == (0 as usize);
+    assert scheduler::ticks() == before + (1 as u64);
+    return;
+}
+
+#[test]
+fn the_tick_observer_sorts_before_core_animations_commit() {
+    backend::install();
+    // `kCFRunLoopBeforeWaiting` is also where Core Animation commits, at order
+    // 2,000,000 — and the commit is what the frame SHOWS. An observer order
+    // above it runs after the commit, so every write the tick makes is correct
+    // in memory and drawn one frame late. A divider drag shows that as the
+    // pane taking its new width in AppKit's own pass while everything facet
+    // lays out inside it — the cards — catches up a frame behind, clipping on
+    // the way out and gapping on the way back. The order is asserted off the
+    // REAL installed observer, not the constant that asked for it.
+    scheduler::install_sync_tick();
+    let order: i64 = scheduler::observer_order();
+    assert order >= (0 as i64);
+    assert order < (2000000 as i64);
+    return;
+}
+
+#[test]
+fn a_drag_coalesces_its_reloads_onto_the_tick_rather_than_reloading_inline() {
+    backend::install();
+    // A drag used to defer onto a 0.1s `performSelector:`, which fires only in
+    // the DEFAULT run-loop mode — so during an event-tracking drag it did not
+    // fire at all and nothing re-laid out until the divider stopped.
+    //
+    // Now the reload is a job on the TICK: a CFRunLoopObserver at
+    // `kCFRunLoopBeforeWaiting` in COMMON modes, so it runs DURING the drag,
+    // once per pass. Many frame changes between two ticks collapse to ONE
+    // reload — which is the whole point, because `reloadData` asks
+    // `heightOfRow:` for every row.
     RL_BUILDS = 0 as i64;
     var n: core::Node = rl_list(200 as usize, 0 as i64);
     let v: *u8 = views::create(0 as *u8, #addr_of(n));
-    let pending_before: usize = akx::after_pending_count();
+    scheduler::tick();
+    let pending_timers: usize = akx::after_pending_count();
 
-    // Three frames of a drag.
+    // Three frames of a drag, between ticks.
     recycler::resize_to(v, 300.0f64);
     recycler::resize_to(v, 280.0f64);
     recycler::resize_to(v, 260.0f64);
-    // ONE reload is outstanding, not three: each frame cancelled the last.
-    assert akx::after_pending_count() == (pending_before + (1 as usize));
+
+    // ONE reload queued, not three — and no TIMER, which is what made the old
+    // one invisible mid-drag.
+    assert scheduler::pending_reload_count() == (1 as usize);
+    assert akx::after_pending_count() == pending_timers;
+
+    // The tick runs it, and leaves nothing behind.
+    scheduler::tick();
+    assert scheduler::pending_reload_count() == (0 as usize);
+    // Measured at the width the table is at NOW.
+    assert recycler::height_of_row(v, 0 as i64) > 0.0f64;
     views::view_release(v);
     return;
 }
 
 #[test]
-fn a_resize_that_does_not_change_the_width_schedules_nothing() {
+fn a_resize_that_does_not_change_the_width_does_no_work() {
     backend::install();
     // A height change moves the viewport, not the rows — nothing re-wraps, so
-    // nothing needs re-measuring.
+    // nothing needs re-measuring. This guard is what keeps a live relayout from
+    // running on frames that changed nothing horizontally, and it matters more
+    // now that the relayout is immediate.
+    RL_BUILDS = 0 as i64;
     var n: core::Node = rl_list(50 as usize, 0 as i64);
     let v: *u8 = views::create(0 as *u8, #addr_of(n));
     recycler::resize_to(v, 400.0f64);
-    let after_first: usize = akx::after_pending_count();
+    let builds_after_first: i64 = RL_BUILDS;
     recycler::resize_to(v, 400.0f64);
-    assert akx::after_pending_count() == after_first;
+    assert RL_BUILDS == builds_after_first;
     views::view_release(v);
     return;
 }
@@ -4056,7 +4436,48 @@ fn a_multi_select_list_says_so_to_the_table() {
     views::apply(0 as *u8, lp);
     let tv: *u8 = recycler::table_of(v);
     assert { rt::msg_i8(tv, rt::sel(#str_ptr("allowsMultipleSelection\0"))) } != (0 as i8);
+    // The TABLE's style is untouched: it governs selection BEHAVIOUR too, and
+    // selection is the only way a table row is clicked. What a facet row does
+    // not want — the platform DRAWING that selection — is suppressed on the
+    // row view instead. See `a_row_view_never_draws_the_platforms_selection`.
     assert { rt::msg_i64(tv, rt::sel(#str_ptr("selectionHighlightStyle\0"))) } == (1 as i64);
+    return;
+}
+
+#[test]
+fn a_row_view_never_draws_the_platforms_selection() {
+    backend::install();
+    // A facet row draws itself, so the platform must not draw a selection
+    // behind it: a full-row blue flash under an inset card, in the platform's
+    // colours, one layer above the card's own. AppKit hands us each row view as
+    // it makes it, and the row view carries the same property for its OWN
+    // drawing — which is the half we want gone, without touching whether the
+    // row can be picked.
+    var l: core::Node = rl_list(5 as usize, 30 as i64);
+    let lp: *core::Node = #addr_of(l);
+    match list::find("rl", within: lp) {
+        option::Option[list::List]::Some(x) => {
+            let _s: list::List = x.set_selection_mode(vocab::SelectionMode::Single);
+        }
+        option::Option[list::List]::None => { assert false; }
+    }
+    let v: *u8 = views::create(0 as *u8, lp);
+    core::set_view(lp, v, views::view_release);
+    core::clear_dirty(lp);
+    core::touch(lp, list::P_SELECTION_MODE);
+    views::apply(0 as *u8, lp);
+    let tv: *u8 = recycler::table_of(v);
+    // The table still says it selects — the click depends on that.
+    assert { rt::msg_i64(tv, rt::sel(#str_ptr("selectionHighlightStyle\0"))) } == (1 as i64);
+
+    // The row view AppKit just made draws nothing.
+    // NSTableViewSelectionHighlightStyleNone = -1.
+    let rv: *u8 = { rt::alloc_init(#str_ptr("NSTableRowView\0")) };
+    assert rv != (0 as *u8);
+    recycler::row_added(v, rv, 0 as i64);
+    assert { rt::msg_i64(rv, rt::sel(#str_ptr("selectionHighlightStyle\0"))) }
+        == (0 as i64 - (1 as i64));
+    rt::release(rv);
     return;
 }
 
