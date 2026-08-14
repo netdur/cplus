@@ -3,13 +3,13 @@
 User-facing changes per release, newest first. The changelog starts at v0.0.14;
 earlier history lives in each version's archived plan.
 
-## v0.0.27 — unreleased
+## v0.0.27 — 2026-08-14
 
-> Component lifecycle and asynchrony. facet components gain a runtime-fired
-> lifecycle; services move slow reads off the main thread; async/await becomes
-> usable inside UI apps, with tasks resuming on the main thread through the
-> platform run loop. The enabling language change: a generic function
-> instantiation is now a first-class fn-pointer value.
+> From v0.0.26 (~677 commits, 2026-07-02 → 2026-08-11). Three strands: the
+> language and memory model close enough for real C ABI and safe views;
+> facet grows into a full app surface (lifecycle, async, theme, ownership,
+> layout); and the binding/tooling stack reaches Linux (GObject/GTK), layout
+> (flex_layout), data (sqlite), and live tooling (inspector).
 
 ### Standard library
 - **`stdlib/slice`** — checked sub-views over `T[]`: `sub` returns
@@ -577,6 +577,99 @@ by its *shape*, not a method-name allowlist, through every form it can leak:
   adaptive pairs, theme roles) re-resolve their layer backgrounds, borders,
   gradients, and theme text colors IN PLACE on an appearance flip or
   `set_theme` — no rebuild, no relayout.
+
+### Layout — `vendor/flex_layout`
+- **Pure-C+ Flexbox + CSS Grid engine** (Yoga-parity): grow/shrink/basis,
+  justify/align, min/max, percent sizes, absolute placement, measure
+  callbacks. UI-kit-agnostic; 167 tests, ASan-clean. The Yoga C++ sources
+  were dropped once the port stood alone.
+- **`@flex` DSL** — declarative layout blocks (`row { box().grow(1.0) }`)
+  as a contextual builder, with a worked app-shell demo.
+
+### Bindings & new vendor packages
+- **`cpc-bindgen --gobject`** — GIR-driven GObject Introspection path (the
+  Linux analog of `--framework`): functions, enums, class graph, signals,
+  boxed records, out-params, upcasts, whole-package mode, cross-namespace
+  `--use`.
+- **`cpc-bindgen --cpackage`** — pkg-config C package driver (Windows ABI
+  hardening, dependency records, anonymous-union shims). Regenerated
+  cblas/cuda and the Win32 path through it.
+- **Generated GObject/GTK stack** replaces hand-made GTK/Adwaita: glib,
+  gobject, gio, cairo, pango, gdk, gtk4, adwaita, and peers — all
+  cross-linked via `--use`.
+- **`vendor/quartzcore`** — auto-generated Core Animation binding so
+  `NSView.layer()` is a real `CALayer`, not a methodless stub.
+- **`vendor/sqlite` + `sqlite_ffi`** — idiomatic SQLite package over a raw
+  bindgen base.
+- **ObjC block signatures** — block argument and return types are part of
+  the signature (no more “probably an 8-byte integer”); AppKit regen
+  fixes 43 block callbacks.
+- **`#[repr(C)] union`, packed structs, bitfields** land in the language
+  so bindgen can describe C headers without lying (see Language above).
+
+### facet — surface completion (post–Stage 3)
+- **RTL** reaches the flex engine (not only the native view flip); shared
+  band goes responsive.
+- **Collection as grid** — `set_columns(n)` arranges items inside the
+  collection, not only as a vertical list.
+- **`text_button`** — text-only button (link-style decoration, toggle,
+  border described separately from draw).
+- **Live-tree verbs** that were never control-specific; band reaches
+  flex constraints, absolute placement, bare `Node`, `mount::find`, nav
+  params.
+- **`mount::remove(key)`** — keyed delete matching create/update; owned
+  collections namable at construction.
+- **Splits** — panes report applied division; divider is one number flex
+  owns; stylable; window buttons / traffic lights / window-drag fixed.
+- **Nested scroll** — axis forwarding for nested scrolls; horizontal
+  content can exceed its viewport.
+- **One context per handler** across gestures, tree, pickers, list/
+  collection (ctx last); typed index in the item slot.
+- **Focus / blur / is_focused**; menu items can grey out, rename, find;
+  shared-band background, shadow, clip; per-edge padding; adopt a native
+  view as a node.
+- **Appearance / theme paint** — light/dark, derived ink, and the
+  appearance-flip repaint path actually run (hook was written onto the
+  wrong Application record).
+- **facet_gtk** freezes the contract as a second backend filling the
+  same vtable; web/hybrid_web adopted onto webkit; titlebar
+  leading/trailing slots.
+- **Resources** — REST verbs (get/post/put/delete) over a shared store,
+  async off the main thread, change notifications to watchers.
+
+### facet_appkit — correctness pass
+- Tree rows: measure after realise; place without stretch/animate/reload;
+  grouped bind/height; Escape exits a text field.
+- List: live drag keeps up without blue flash; tab order is document
+  order; text area editor fills its box; predicted text is not rewritten.
+- Drag sources begin sessions and keep payload across the pool; gesture
+  views answer `performClick:`; “call super” skips classes carrying our
+  own imp.
+- `is_enabled` reaches every kind; collapsed panes restore; tree reports
+  expansion; drag has ends; zero measurement is not a size.
+
+### Agent surface & tooling
+- **`vendor/inspector`** — live inspector for the mounted facet tree
+  (declared vs computed props, structural edit, highlight overlay).
+  Separate from the agent surface on purpose.
+- **`agent_inapp`** — same verbs as MCP, in-process (no transport, no
+  auth — the binary already trusts itself).
+- Agent **click** splits permission from capability; control **parts**
+  (e.g. search-field magnifier/cancel) are addressable; text writes and
+  sheets reach the app.
+- Compiler lints **W0824 / W0825** — declare that a handler takes (or
+  refuses) a bound method / ctx slot at the declaration, not only at the
+  call site.
+- **`cpc test --asan`**, **`--release`**, **`--timings`**; many
+  borrowck/sema/codegen soundness fixes (match consumes scrutinee when
+  it binds a name; raw-pointer assignment drops old value; noalias and
+  TBAA fixes under -O2/+).
+
+### Docs & process
+- Vendor tutorial / guide / ref layout across packages; facet and
+  facet_appkit docs closed Stage 4 / audit.
+- Repo working notes (`CLAUDE.md`): local `cpc`, symbol graph over grep,
+  generated-source map, AppKit “check the old tree first”.
 
 ## v0.0.26 — 2026-07-02
 
