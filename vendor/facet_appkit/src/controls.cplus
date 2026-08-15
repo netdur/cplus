@@ -1261,7 +1261,8 @@ fn apply_progress(v: *u8, n: *core::Node, dirty: u64) {
     // `animate_progress` is a COMMAND — "slide to the current progress over
     // `animate_duration`" — not a flag. NSProgressIndicator has no animated
     // setter, so the animation is the ANIMATOR PROXY's, which is AppKit's own
-    // way of saying the same thing and gets the timing curve for free.
+    // way of saying the same thing. Easing maps onto CAMediaTimingFunction the
+    // same way the shared-band animate_* path does.
     if (dirty & progress::P_ANIMATE_PROGRESS) != (0 as u64) {
         let secs: f64 = { (*p).animate_duration.seconds };
         if secs <= 0.0f64 {
@@ -1272,6 +1273,10 @@ fn apply_progress(v: *u8, n: *core::Node, dirty: u64) {
             let ctx: *u8 = { rt::msg_id(cls, rt::sel(#str_ptr("currentContext\0"))) };
             if ctx != (0 as *u8) {
                 { msg_void_f64(ctx, rt::sel(#str_ptr("setDuration:\0")), secs) };
+                let tf: *u8 = paint::timing_function_of({ (*p).animate_easing });
+                if tf != (0 as *u8) {
+                    { rt::msg_void_id(ctx, rt::sel(#str_ptr("setTimingFunction:\0")), tf) };
+                }
             }
             let anim: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("animator\0"))) };
             if anim != (0 as *u8) {

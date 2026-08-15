@@ -11,6 +11,7 @@ import "stdlib/option" as option;
 import "stdlib/status" as status;
 import "stdlib/box" as box;
 import "stdlib/vec" as vec;
+import "stdlib/io" as io;
 import "./props" as props;
 import "./vocabulary" as vocab;
 
@@ -556,6 +557,9 @@ fn clear_dirty(n: *Node) {
     let d: *Data = { (*n).data() };
     if d == (0 as *Data) { return; }
     { (*d).dirty = 0 as u64 };
+    // The node has been applied, so any `set_*` recorded on it has reached the
+    // view: it is no longer a dead snap for the next `animate_*` to name.
+    { (*d).common.animate_channels = { (*d).common.animate_channels } & ~props::SNAP_ANY };
     return;
 }
 
@@ -584,6 +588,9 @@ fn set_opacity(n: *Node, v: f64) {
     let d: *Data = ensure_data(n);
     if d == (0 as *Data) { return; }
     { (*d).common.opacity = v };
+    // A snap cancels the channel's pending interpolate so apply does not
+    // animate a write that asked to set.
+    _snap_channel(d, n, props::ANIM_OPACITY, props::SNAP_OPACITY);
     touch(n, props::C_OPACITY);
     return;
 }
@@ -809,6 +816,7 @@ fn set_rotation(n: *Node, v: f64) {
     let d: *Data = ensure_data(n);
     if d == (0 as *Data) { return; }
     { (*d).common.rotation = v };
+    _snap_channel(d, n, props::ANIM_TRANSFORM, props::SNAP_TRANSFORM);
     touch(n, props::C_TRANSFORM);
     return;
 }
@@ -823,6 +831,7 @@ fn set_rotation_x(n: *Node, v: f64) {
     let d: *Data = ensure_data(n);
     if d == (0 as *Data) { return; }
     { (*d).common.rotation_x = v };
+    _snap_channel(d, n, props::ANIM_TRANSFORM, props::SNAP_TRANSFORM);
     touch(n, props::C_TRANSFORM);
     return;
 }
@@ -837,6 +846,7 @@ fn set_rotation_y(n: *Node, v: f64) {
     let d: *Data = ensure_data(n);
     if d == (0 as *Data) { return; }
     { (*d).common.rotation_y = v };
+    _snap_channel(d, n, props::ANIM_TRANSFORM, props::SNAP_TRANSFORM);
     touch(n, props::C_TRANSFORM);
     return;
 }
@@ -851,6 +861,7 @@ fn set_scale(n: *Node, v: f64) {
     let d: *Data = ensure_data(n);
     if d == (0 as *Data) { return; }
     { (*d).common.scale = v };
+    _snap_channel(d, n, props::ANIM_TRANSFORM, props::SNAP_TRANSFORM);
     touch(n, props::C_TRANSFORM);
     return;
 }
@@ -865,6 +876,7 @@ fn set_scale_x(n: *Node, v: f64) {
     let d: *Data = ensure_data(n);
     if d == (0 as *Data) { return; }
     { (*d).common.scale_x = v };
+    _snap_channel(d, n, props::ANIM_TRANSFORM, props::SNAP_TRANSFORM);
     touch(n, props::C_TRANSFORM);
     return;
 }
@@ -879,6 +891,7 @@ fn set_scale_y(n: *Node, v: f64) {
     let d: *Data = ensure_data(n);
     if d == (0 as *Data) { return; }
     { (*d).common.scale_y = v };
+    _snap_channel(d, n, props::ANIM_TRANSFORM, props::SNAP_TRANSFORM);
     touch(n, props::C_TRANSFORM);
     return;
 }
@@ -893,6 +906,7 @@ fn set_translation_x(n: *Node, v: f64) {
     let d: *Data = ensure_data(n);
     if d == (0 as *Data) { return; }
     { (*d).common.translation_x = v };
+    _snap_channel(d, n, props::ANIM_TRANSFORM, props::SNAP_TRANSFORM);
     touch(n, props::C_TRANSFORM);
     return;
 }
@@ -907,6 +921,7 @@ fn set_translation_y(n: *Node, v: f64) {
     let d: *Data = ensure_data(n);
     if d == (0 as *Data) { return; }
     { (*d).common.translation_y = v };
+    _snap_channel(d, n, props::ANIM_TRANSFORM, props::SNAP_TRANSFORM);
     touch(n, props::C_TRANSFORM);
     return;
 }
@@ -1617,6 +1632,172 @@ fn set_native(n: *Node, v: *u8) {
 fn focus(n: *Node) { touch(n, props::C_FOCUS); return; }
 fn blur(n: *Node) { touch(n, props::C_BLUR); return; }
 
+// ---- animate_* --------------------------------------------------------------
+// MAUI ViewExtensions.*To: end values land in the real shared-band fields so
+// reads/agent/find stay true; C_ANIMATE asks the backend to interpolate rather
+// than snap. Timing is one pair (duration, easing) for the channels OR'd into
+// animate_channels — concurrent animate_* before the next tick share the last
+// timing write, which is the same rule as stacking animator calls.
+//
+// TWO CHANNELS: opacity, and the transform AS A UNIT. `props::ANIM_TRANSFORM`
+// says why the nine transform numbers cannot have nine of their own.
+//
+// ONE FIELD, ONE APPLY. `set_opacity(0); animate_opacity(1)` in the SAME tick
+// is not a fade-in: both write `opacity`, the second wins, and the backend
+// interpolates from wherever the view already was to a value it is already at.
+// The start value has to reach the view in an EARLIER apply — set it at build
+// time, or from `on_attach`, and animate after. `_arm_animate` says so out
+// loud rather than leaving it a silent no-op.
+
+// A `set_*` on an animatable band does two things beyond the write: it cancels
+// any pending animation of that band, and — only when the node is already
+// BACKED — records that the view has a value coming which it has not seen yet.
+//
+// The backed gate is the whole accuracy of the record. A set at BUILD time
+// lands on a node with no view, and `create` reads the current field values on
+// its way past, so that set IS applied — it is the entrance pattern, not a
+// mistake, and warning about it would fire on the one spelling that works.
+fn _snap_channel(d: *Data, n: *Node, anim: u32, snap: u32) {
+    var ch: u32 = { (*d).common.animate_channels } & ~anim;
+    if view_of(n) != (0 as *u8) { ch = ch | snap; }
+    { (*d).common.animate_channels = ch };
+    return;
+}
+
+fn _arm_animate(n: *Node, channel: u32, duration: vocab::Duration, easing: vocab::Easing) {
+    let d: *Data = ensure_data(n);
+    if d == (0 as *Data) { return; }
+    warn_if_snap_is_dead(n, channel);
+    { (*d).common.animate_duration = duration };
+    { (*d).common.animate_easing = easing };
+    { (*d).common.animate_channels = { (*d).common.animate_channels } | channel };
+    touch(n, props::C_ANIMATE);
+    return;
+}
+
+// A `set_*` on this channel is still pending in this tick, so the value it
+// wrote is about to be overwritten by the animate's end value and will never
+// reach the view. There is no legitimate spelling of that pair — the set is
+// unconditionally dead — so it is named rather than dropped. Silent was the
+// worst part: the app writes the obvious fade-in, sees nothing move, and has
+// nothing to go on.
+fn warn_if_snap_is_dead(n: *Node, channel: u32) {
+    let d: *Data = node_data(n);
+    if d == (0 as *Data) { return; }
+    // The SNAP bits, not the dirty word: `touch_all` raises C_OPACITY and
+    // C_TRANSFORM on a node nobody set, and warning there would be a lie.
+    let pending: u32 = { (*d).common.animate_channels };
+    if channel == props::ANIM_OPACITY && (pending & props::SNAP_OPACITY) != (0u32) {
+        io::eprintln("facet animate_opacity: a set_opacity in this same tick is dead — both write `opacity`, and the animation starts from what the view already shows. Set the start value a tick earlier (at build, or from on_attach) and animate after.");
+        return;
+    }
+    if channel == props::ANIM_TRANSFORM && (pending & props::SNAP_TRANSFORM) != (0u32) {
+        io::eprintln("facet animate_*: a set_scale/rotation/translation in this same tick is dead — both write the transform, and the animation starts from what the view already shows. Set the start value a tick earlier (at build, or from on_attach) and animate after.");
+        return;
+    }
+    return;
+}
+
+fn animate_opacity(n: *Node, to: f64, duration: vocab::Duration, easing: vocab::Easing) {
+    let d: *Data = ensure_data(n);
+    if d == (0 as *Data) { return; }
+    { (*d).common.opacity = to };
+    _arm_animate(n, props::ANIM_OPACITY, duration, easing);
+    return;
+}
+
+fn animate_scale(n: *Node, to: f64, duration: vocab::Duration, easing: vocab::Easing) {
+    let d: *Data = ensure_data(n);
+    if d == (0 as *Data) { return; }
+    { (*d).common.scale = to };
+    _arm_animate(n, props::ANIM_TRANSFORM, duration, easing);
+    return;
+}
+
+fn animate_scale_x(n: *Node, to: f64, duration: vocab::Duration, easing: vocab::Easing) {
+    let d: *Data = ensure_data(n);
+    if d == (0 as *Data) { return; }
+    { (*d).common.scale_x = to };
+    _arm_animate(n, props::ANIM_TRANSFORM, duration, easing);
+    return;
+}
+
+fn animate_scale_y(n: *Node, to: f64, duration: vocab::Duration, easing: vocab::Easing) {
+    let d: *Data = ensure_data(n);
+    if d == (0 as *Data) { return; }
+    { (*d).common.scale_y = to };
+    _arm_animate(n, props::ANIM_TRANSFORM, duration, easing);
+    return;
+}
+
+fn animate_rotation(n: *Node, to: f64, duration: vocab::Duration, easing: vocab::Easing) {
+    let d: *Data = ensure_data(n);
+    if d == (0 as *Data) { return; }
+    { (*d).common.rotation = to };
+    _arm_animate(n, props::ANIM_TRANSFORM, duration, easing);
+    return;
+}
+
+fn animate_rotation_x(n: *Node, to: f64, duration: vocab::Duration, easing: vocab::Easing) {
+    let d: *Data = ensure_data(n);
+    if d == (0 as *Data) { return; }
+    { (*d).common.rotation_x = to };
+    _arm_animate(n, props::ANIM_TRANSFORM, duration, easing);
+    return;
+}
+
+fn animate_rotation_y(n: *Node, to: f64, duration: vocab::Duration, easing: vocab::Easing) {
+    let d: *Data = ensure_data(n);
+    if d == (0 as *Data) { return; }
+    { (*d).common.rotation_y = to };
+    _arm_animate(n, props::ANIM_TRANSFORM, duration, easing);
+    return;
+}
+
+fn animate_translation(n: *Node, x: f64, y: f64, duration: vocab::Duration, easing: vocab::Easing) {
+    let d: *Data = ensure_data(n);
+    if d == (0 as *Data) { return; }
+    { (*d).common.translation_x = x };
+    { (*d).common.translation_y = y };
+    _arm_animate(n, props::ANIM_TRANSFORM, duration, easing);
+    return;
+}
+
+// Abort in-flight motion. End values stay in the model; the backend snaps
+// presentation to them (freeze-at-presentation is not v1).
+fn cancel_animations(n: *Node) {
+    let d: *Data = ensure_data(n);
+    if d == (0 as *Data) { return; }
+    { (*d).common.animate_channels = 0u32 };
+    touch(n, props::C_CANCEL_ANIMATIONS);
+    return;
+}
+
+fn animate_duration_of(n: *Node) -> vocab::Duration {
+    let d: *Data = node_data(n);
+    if d == (0 as *Data) { return vocab::Duration::animation(); }
+    return { (*d).common.animate_duration };
+}
+
+fn animate_easing_of(n: *Node) -> vocab::Easing {
+    let d: *Data = node_data(n);
+    if d == (0 as *Data) { return vocab::Easing::SinInOut; }
+    return { (*d).common.animate_easing };
+}
+
+fn animate_channels_of(n: *Node) -> u32 {
+    let d: *Data = node_data(n);
+    if d == (0 as *Data) { return 0u32; }
+    return { (*d).common.animate_channels };
+}
+
+fn clear_animate_channels(n: *Node) {
+    let d: *Data = node_data(n);
+    if d == (0 as *Data) { return; }
+    { (*d).common.animate_channels = 0u32 };
+    return;
+}
+
 // Invalidate this subtree's cached layout. flex recomputes on the next pass,
 // and C_LAYOUT is what asks for that pass to happen — without it the
 // invalidation sat in the tree until some unrelated write woke the backend.
@@ -1777,6 +1958,55 @@ impl flex::Node {
     fn set_wrap(ref this, v: flex::Wrap) { set_wrap(#addr_of(this), v); return; }
     fn focus(ref this) { focus(#addr_of(this)); return; }
     fn blur(ref this) { blur(#addr_of(this)); return; }
+    fn animate_opacity(ref this, to: f64,
+                       duration: vocab::Duration = vocab::Duration::animation(),
+                       easing: vocab::Easing = vocab::Easing::SinInOut) {
+        animate_opacity(#addr_of(this), to, duration, easing);
+        return;
+    }
+    fn animate_scale(ref this, to: f64,
+                     duration: vocab::Duration = vocab::Duration::animation(),
+                     easing: vocab::Easing = vocab::Easing::SinInOut) {
+        animate_scale(#addr_of(this), to, duration, easing);
+        return;
+    }
+    fn animate_scale_x(ref this, to: f64,
+                       duration: vocab::Duration = vocab::Duration::animation(),
+                       easing: vocab::Easing = vocab::Easing::SinInOut) {
+        animate_scale_x(#addr_of(this), to, duration, easing);
+        return;
+    }
+    fn animate_scale_y(ref this, to: f64,
+                       duration: vocab::Duration = vocab::Duration::animation(),
+                       easing: vocab::Easing = vocab::Easing::SinInOut) {
+        animate_scale_y(#addr_of(this), to, duration, easing);
+        return;
+    }
+    fn animate_rotation(ref this, to: f64,
+                        duration: vocab::Duration = vocab::Duration::animation(),
+                        easing: vocab::Easing = vocab::Easing::SinInOut) {
+        animate_rotation(#addr_of(this), to, duration, easing);
+        return;
+    }
+    fn animate_rotation_x(ref this, to: f64,
+                          duration: vocab::Duration = vocab::Duration::animation(),
+                          easing: vocab::Easing = vocab::Easing::SinInOut) {
+        animate_rotation_x(#addr_of(this), to, duration, easing);
+        return;
+    }
+    fn animate_rotation_y(ref this, to: f64,
+                          duration: vocab::Duration = vocab::Duration::animation(),
+                          easing: vocab::Easing = vocab::Easing::SinInOut) {
+        animate_rotation_y(#addr_of(this), to, duration, easing);
+        return;
+    }
+    fn animate_translation(ref this, x: f64, y: f64,
+                           duration: vocab::Duration = vocab::Duration::animation(),
+                           easing: vocab::Easing = vocab::Easing::SinInOut) {
+        animate_translation(#addr_of(this), x, y, duration, easing);
+        return;
+    }
+    fn cancel_animations(ref this) { cancel_animations(#addr_of(this)); return; }
     fn relayout(ref this) { relayout(#addr_of(this)); return; }
     fn measure(this, width: f64, height: f64) -> vocab::Size { return measure(#addr_of(this), width, height); }
     fn begin_updates(ref this) { begin_updates(#addr_of(this)); return; }
@@ -1937,6 +2167,8 @@ fn touch_all_re_reads_every_fact_and_issues_no_verb() {
     assert (d & props::C_FOCUS) == (0 as u64);
     assert (d & props::C_BLUR) == (0 as u64);
     assert (d & props::C_FLUSH) == (0 as u64);
+    assert (d & props::C_ANIMATE) == (0 as u64);
+    assert (d & props::C_CANCEL_ANIMATIONS) == (0 as u64);
     assert (d & props::C_COMMANDS) == (0 as u64);
 
     // Every fact — the point of the verb is still to re-read everything else.

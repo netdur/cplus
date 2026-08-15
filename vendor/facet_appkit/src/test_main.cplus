@@ -11448,3 +11448,316 @@ fn an_app_that_serves_no_agent_pays_a_null_check() {
     views::view_release(v);
     return;
 }
+
+// ---- animate_* ---------------------------------------------------------------
+//
+// These exist because the first cut of the transform path drove the LAYER's
+// `animator` proxy. `animator` is `NSAnimatablePropertyContainer` — NSView and
+// NSWindow adopt it, CALayer does not — so `-[CALayer animator]` raised
+// `NSInvalidArgumentException` and every transform animation killed the
+// process on its first apply. Nothing in either suite touched the apply path,
+// so nothing caught it. Creating a view and applying is what this file already
+// does everywhere else; it just had not been pointed here.
+
+// Float comparison for matrix and alpha reads: CA round-trips through f32 in
+// places, so an exact `==` is the wrong question.
+fn approx(a: f64, b: f64) -> bool {
+    let d: f64 = a - b;
+    if d < 0.0f64 { return -d < 0.000001f64; }
+    return d < 0.000001f64;
+}
+
+// Is a CA animation installed on this view's layer under `key`? Answers false
+// for a view with no layer, which is the untransformed-node case.
+fn layer_is_animating(v: *u8, key: str) -> bool {
+    let view: ak::View = ak::View::from_raw(v);
+    if !view.wants_layer() { return false; }
+    let l: *u8 = { view.layer().raw() };
+    let a: *u8 = { rt::msg_id_id(l, rt::sel(#str_ptr("animationForKey:\0")),
+                                 bridge::nsstring(key)) };
+    return a != (0 as *u8);
+}
+
+// The layer's MODEL transform. 1.0 when the view never took a layer.
+fn layer_m11(v: *u8) -> f64 {
+    let view: ak::View = ak::View::from_raw(v);
+    if !view.wants_layer() { return 1.0f64; }
+    return { view.layer().transform().m11 };
+}
+
+#[test]
+fn animating_a_transform_channel_installs_an_animation_and_does_not_raise() {
+    var n: core::Node = label::label("hi", key: "a");
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    core::set_view(p, v, views::view_release);
+    core::clear_dirty(p);
+
+    core::animate_scale(p, 1.5f64, vocab::Duration::animation(), vocab::Easing::SinInOut);
+    views::apply(0 as *u8, p);
+
+    // Reaching this line at all is half the test: the proxy version aborted.
+    assert layer_is_animating(v, "transform");
+    // The MODEL carries the end state — the animation is presentation only, so
+    // what the layer settles on when it is removed must already be the target.
+    assert approx(layer_m11(v), 1.5f64);
+    // The command is consumed: the channels are cleared so the next apply does
+    // not re-arm the same motion.
+    assert core::animate_channels_of(p) == (0u32);
+    return;
+}
+
+#[test]
+fn animating_opacity_installs_an_animation_rather_than_snapping() {
+    var n: core::Node = label::label("hi", key: "o");
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    core::set_view(p, v, views::view_release);
+    // Layer-backed so the question can be asked at all; the opacity path drives
+    // the VIEW's animator, which is a real NSAnimatablePropertyContainer.
+    { ak::View::from_raw(v).set_wants_layer(true) };
+    core::clear_dirty(p);
+
+    core::animate_opacity(p, 0.25f64, vocab::Duration::animation(), vocab::Easing::SinInOut);
+    views::apply(0 as *u8, p);
+
+    assert layer_is_animating(v, "opacity");
+    assert approx({ ak::View::from_raw(v).alpha_value() }, 0.25f64);
+    return;
+}
+
+#[test]
+fn a_blanket_touch_in_the_same_tick_does_not_wipe_the_animation() {
+    // `core::touch_all` raises every STATE bit, so the C_OPACITY / C_TRANSFORM
+    // snaps run right after the animate in the same `apply_common`. They write
+    // the same end value the animation is already aiming at, which is why an
+    // explicit from/to animation survives it — and why the transform path must
+    // stay explicit rather than going back to an implicit one.
+    var n: core::Node = label::label("hi", key: "t");
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    core::set_view(p, v, views::view_release);
+    core::clear_dirty(p);
+
+    core::animate_scale(p, 1.5f64, vocab::Duration::animation(), vocab::Easing::SinInOut);
+    core::touch_all(p);
+    views::apply(0 as *u8, p);
+
+    assert layer_is_animating(v, "transform");
+    assert approx(layer_m11(v), 1.5f64);
+    return;
+}
+
+#[test]
+fn a_transform_that_returns_to_identity_resets_the_layer() {
+    // The early return in `apply_transform` used to be keyed on the property
+    // VALUES, so identity meant "do nothing" — and a view that had been scaled
+    // kept the old matrix forever. Measured: m11 stayed 2 after set_scale(1.0).
+    var n: core::Node = label::label("hi", key: "i");
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    core::set_view(p, v, views::view_release);
+
+    core::set_scale(p, 2.0f64);
+    views::apply(0 as *u8, p);
+    assert approx(layer_m11(v), 2.0f64);
+
+    core::set_scale(p, 1.0f64);
+    views::apply(0 as *u8, p);
+    assert approx(layer_m11(v), 1.0f64);
+    return;
+}
+
+#[test]
+fn an_untransformed_node_still_takes_no_layer() {
+    // The other half of the same guard: the reset must not cost a layer to a
+    // tree that transforms nothing. That was the whole point of the early
+    // return, and the fix keeps it by asking the VIEW, not the values.
+    var n: core::Node = label::label("hi", key: "p");
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    core::set_view(p, v, views::view_release);
+    core::touch_all(p);
+    views::apply(0 as *u8, p);
+    assert !{ ak::View::from_raw(v).wants_layer() };
+    return;
+}
+
+#[test]
+fn cancel_animations_snaps_presentation_to_the_model() {
+    var n: core::Node = label::label("hi", key: "c");
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    core::set_view(p, v, views::view_release);
+
+    core::set_scale(p, 2.0f64);
+    views::apply(0 as *u8, p);
+    core::animate_scale(p, 1.0f64, vocab::Duration::animation(), vocab::Easing::SinInOut);
+    views::apply(0 as *u8, p);
+    assert layer_is_animating(v, "transform");
+
+    core::cancel_animations(p);
+    views::apply(0 as *u8, p);
+    assert !layer_is_animating(v, "transform");
+    assert approx(layer_m11(v), 1.0f64);
+    assert core::animate_channels_of(p) == (0u32);
+    return;
+}
+
+#[test]
+fn a_zero_duration_animate_snaps_and_installs_nothing() {
+    // The negative: `duration: 0` is a snap by another name. It must not leave
+    // a zero-length animation on the layer, and it must still reach identity.
+    var n: core::Node = label::label("hi", key: "z");
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    core::set_view(p, v, views::view_release);
+
+    core::set_scale(p, 2.0f64);
+    views::apply(0 as *u8, p);
+    core::animate_scale(p, 1.0f64, vocab::Duration::zero(), vocab::Easing::Linear);
+    views::apply(0 as *u8, p);
+
+    assert !layer_is_animating(v, "transform");
+    assert approx(layer_m11(v), 1.0f64);
+    assert core::animate_channels_of(p) == (0u32);
+    return;
+}
+
+// The `fromValue` of the CA animation installed under `key`, or -1 when there
+// is no animation and -2 when it carries no explicit start.
+fn animation_from_value(v: *u8, key: str) -> f64 {
+    let view: ak::View = ak::View::from_raw(v);
+    if !view.wants_layer() { return -1.0f64; }
+    let l: *u8 = { view.layer().raw() };
+    let a: *u8 = { rt::msg_id_id(l, rt::sel(#str_ptr("animationForKey:\0")),
+                                 bridge::nsstring(key)) };
+    if a == (0 as *u8) { return -1.0f64; }
+    let fv: *u8 = { rt::msg_id(a, rt::sel(#str_ptr("fromValue\0"))) };
+    if fv == (0 as *u8) { return -2.0f64; }
+    return { rt::msg_f64(fv, rt::sel(#str_ptr("doubleValue\0"))) };
+}
+
+#[test]
+fn a_start_value_applied_a_tick_earlier_is_where_the_animation_begins() {
+    // The working fade-in, and the reason the same-tick spelling is documented
+    // as dead rather than fixed: the start value only has to reach the VIEW
+    // first. One apply for the 0, one for the animation, and the installed
+    // animation carries fromValue = 0.
+    var n: core::Node = label::label("hi", key: "f");
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    core::set_view(p, v, views::view_release);
+    { ak::View::from_raw(v).set_wants_layer(true) };
+
+    core::set_opacity(p, 0.0f64);
+    views::apply(0 as *u8, p);
+    assert approx({ ak::View::from_raw(v).alpha_value() }, 0.0f64);
+
+    core::animate_opacity(p, 1.0f64, vocab::Duration::animation(), vocab::Easing::SinInOut);
+    views::apply(0 as *u8, p);
+    assert approx(animation_from_value(v, "opacity"), 0.0f64);
+    assert approx({ ak::View::from_raw(v).alpha_value() }, 1.0f64);
+    return;
+}
+
+#[test]
+fn a_start_value_set_in_the_same_tick_never_reaches_the_view() {
+    // The negative, measured rather than assumed: set + animate in ONE tick
+    // installs NO animation, because the view's alpha was never moved to the
+    // start and the animator is asked to travel from 1.0 to 1.0. facet warns on
+    // stderr when this pair is written; this is what it is warning about.
+    var n: core::Node = label::label("hi", key: "g");
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    core::set_view(p, v, views::view_release);
+    { ak::View::from_raw(v).set_wants_layer(true) };
+    core::clear_dirty(p);
+
+    core::set_opacity(p, 0.0f64);
+    core::animate_opacity(p, 1.0f64, vocab::Duration::animation(), vocab::Easing::SinInOut);
+    views::apply(0 as *u8, p);
+
+    assert approx(animation_from_value(v, "opacity"), -1.0f64);
+    assert approx({ ak::View::from_raw(v).alpha_value() }, 1.0f64);
+    return;
+}
+
+#[test]
+fn the_transform_animates_as_one_unit() {
+    // The channel collapse, at the backend: two transform verbs in a tick are
+    // one animation over one matrix, not two.
+    var n: core::Node = label::label("hi", key: "u");
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    core::set_view(p, v, views::view_release);
+    core::clear_dirty(p);
+
+    core::animate_scale(p, 1.5f64, vocab::Duration::animation(), vocab::Easing::Linear);
+    core::animate_rotation(p, 90.0f64, vocab::Duration::animation(), vocab::Easing::Linear);
+    assert core::animate_channels_of(p) == props::ANIM_TRANSFORM;
+    views::apply(0 as *u8, p);
+
+    assert layer_is_animating(v, "transform");
+    // Both ended up in the one matrix: m11 = scale * cos(90) = 0 for a 90°
+    // rotation, which is the composed answer and not either verb alone.
+    assert approx(layer_m11(v), 0.0f64);
+    return;
+}
+
+#[test]
+fn a_full_turn_is_the_same_matrix_and_so_animates_nothing() {
+    // Why the gallery's flourish turns 180 and not 360. A transform animation
+    // travels between two matrices, and 360° composes to the identity rotation
+    // — so a whole revolution asks the layer to travel from where it is to
+    // where it is. Pinned as a MEASUREMENT, because the API happily accepts the
+    // value and the only symptom is a card that does not turn.
+    var n: core::Node = label::label("hi", key: "spin");
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    core::set_view(p, v, views::view_release);
+
+    core::set_scale(p, 1.35f64);
+    core::set_rotation(p, 0.0f64);
+    views::apply(0 as *u8, p);
+    let at_zero: f64 = layer_m11(v);
+
+    core::set_rotation(p, 360.0f64);
+    views::apply(0 as *u8, p);
+    assert approx(layer_m11(v), at_zero);
+
+    // ...and a half turn genuinely moves, which is what makes the demo visible.
+    core::set_rotation(p, 180.0f64);
+    views::apply(0 as *u8, p);
+    assert approx(layer_m11(v), 0.0f64 - at_zero);
+    return;
+}
+
+#[test]
+fn a_transform_leaves_the_view_where_layout_put_it() {
+    // An NSView's backing layer anchors at (0,0) with position = the frame
+    // origin. facet's default anchor is the centre, and writing that onto the
+    // layer without moving position slid every transformed view up and left by
+    // half its size — on screen, a card that jumps out of its slot the first
+    // time anything scales it.
+    var n: core::Node = label::label("hi", key: "anch");
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    core::set_view(p, v, views::view_release);
+    let view: ak::View = ak::View::from_raw(v);
+    view.set_frame(rt::Rect { x: 40.0f64, y: 60.0f64, w: 150.0f64, h: 72.0f64 });
+
+    core::set_scale(p, 1.4f64);
+    views::apply(0 as *u8, p);
+
+    let l: quartz::Layer = view.layer();
+    let a: rt::Point = l.anchor_point();
+    let pos: rt::Point = l.position();
+    assert approx(a.x, 0.5f64);
+    assert approx(a.y, 0.5f64);
+    // The anchor sits at the centre now, so position must be the centre too —
+    // which is what leaves the layer's frame origin at (40, 60).
+    assert approx(pos.x, 115.0f64);
+    assert approx(pos.y, 96.0f64);
+    return;
+}

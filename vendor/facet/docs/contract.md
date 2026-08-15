@@ -329,7 +329,7 @@ shared band every element carries.
 |---|---|---|
 | `set_progress` / `progress()` | f64 | ProgressBar.Progress |
 | `set_progress_color` / `progress_color()` | Color | ProgressBar.ProgressColor |
-| `animate_progress(to:, duration:)` | command | ProgressBar.ProgressTo |
+| `animate_progress(to:, duration:, easing:)` | command | ProgressBar.ProgressTo |
 
 ## radio — the ledger RadioButton
 
@@ -703,6 +703,15 @@ type exists.
 | `set_wrap(v:)` | the cursor, so writes chain |
 | `focus()` | the cursor, so writes chain |
 | `blur()` | the cursor, so writes chain |
+| `animate_opacity(to:)` | the cursor, so writes chain |
+| `animate_scale(to:)` | the cursor, so writes chain |
+| `animate_scale_x(to:)` | the cursor, so writes chain |
+| `animate_scale_y(to:)` | the cursor, so writes chain |
+| `animate_rotation(to:)` | the cursor, so writes chain |
+| `animate_rotation_x(to:)` | the cursor, so writes chain |
+| `animate_rotation_y(to:)` | the cursor, so writes chain |
+| `animate_translation(x:)` | the cursor, so writes chain |
+| `cancel_animations()` | the cursor, so writes chain |
 | `relayout()` | the cursor, so writes chain |
 | `measure(width:)` | vocab::Size |
 | `begin_updates()` | the cursor, so writes chain |

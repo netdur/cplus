@@ -633,7 +633,29 @@ struct Date { year: i64, month: i64, day: i64 }
 impl Date { fn zero() -> Date { return Date { year: 0 as i64, month: 0 as i64, day: 0 as i64 }; } }
 
 struct Duration { seconds: f64 }
-impl Duration { fn zero() -> Duration { return Duration { seconds: 0.0f64 }; } }
+impl Duration {
+    fn zero() -> Duration { return Duration { seconds: 0.0f64 }; }
+    // MAUI's default basic-animation length (250 ms).
+    fn animation() -> Duration { return Duration { seconds: 0.25f64 }; }
+    fn of_seconds(s: f64) -> Duration { return Duration { seconds: s }; }
+}
+
+// Timing curve for animate_* commands. Named for what it is (not EasingCurve /
+// EasingMode). Presets match MAUI's Easing surface; a backend maps them as
+// best it can and records the gaps.
+enum Easing {
+    Linear,
+    SinIn,
+    SinOut,
+    SinInOut,
+    CubicIn,
+    CubicOut,
+    CubicInOut,
+    BounceIn,
+    BounceOut,
+    SpringIn,
+    SpringOut,
+}
 
 // A live window. Opaque until a backend mounts one.
 struct WindowRef { opaque _w: *u8 }

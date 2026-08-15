@@ -177,6 +177,62 @@ first is claiming a platform limit that does not exist.
 ```no-carrier
 ```
 
+### Animation easing is approximate
+
+Shared-band `animate_*` and `progress.animate_progress` take `vocab::Easing`.
+AppKit's `NSAnimationContext` only understands `CAMediaTimingFunction` names
+(`linear`, `easeIn`, `easeOut`, `easeInEaseOut`). Mapping:
+
+| Easing | CA name |
+|---|---|
+| `Linear` | `linear` |
+| `SinIn` / `CubicIn` / `BounceIn` / `SpringIn` | `easeIn` |
+| `SinOut` / `CubicOut` / `BounceOut` / `SpringOut` | `easeOut` |
+| `SinInOut` / `CubicInOut` | `easeInEaseOut` |
+
+Bounce and Spring are not true bounce/spring curves on this backend — they ride
+the nearest media function. A future pass that needs real spring would drive a
+portable ticker rather than Core Animation's timing.
+
+Two mechanisms carry the motion, because AppKit has two. Opacity uses the
+VIEW's animator proxy inside an `NSAnimationContext` grouping. The transform
+uses an explicit `CABasicAnimation` on the layer with both `fromValue` and
+`toValue` set: `animator` is `NSAnimatablePropertyContainer`, which NSView
+adopts and **CALayer does not**, and a view-backed layer has implicit actions
+disabled, so neither the proxy nor a bare property store animates it.
+
+`cancel_animations` snaps presentation to the model end values (freeze-at-
+presentation is not implemented).
+
+### The anchor point is compensated, not just written
+
+facet's `anchor_x` / `anchor_y` default to the centre. An NSView's backing layer
+starts at anchor `(0,0)` with `position` = the view's frame origin — the
+opposite of UIKit — and a CALayer puts its anchor point AT `position`. So the
+anchor cannot be written on its own: `position` moves with it, or the view
+slides up and left by half its size the first time anything transforms it.
+`set_anchor_keeping_place` does the compensation; a later `setFrame:` stays
+consistent because CALayer recomputes `position` from whatever anchor it has.
+
+### A full turn does not animate
+
+`animate_rotation(n, 360.0)` plays nothing. The animation interpolates between
+two `CATransform3D` values, and the matrix for a whole revolution is the matrix
+for no rotation at all — measured, rotation 0 and rotation 360 both give
+`m11 = scale, m12 = 0`. There is no path between them, so the layer sits still
+while any scale or translation in the same tick animates around it.
+
+Anything short of a revolution is fine (180° reads as a half turn). A real spin
+wants a `transform.rotation.z` keyPath animation with a scalar `toValue`, or a
+keyframe through intermediate angles — neither of which composes with the
+one-matrix channel this backend animates, so neither is v1.
+
+The nine transform numbers arrive as ONE channel and leave as one matrix — this
+backend rebuilds `CATransform3D` from all of them, so `animate_scale` and
+`animate_rotation` in the same tick are one animation over the composed result.
+Interpolating one transform number while snapping another is not something
+AppKit can be asked for, and facet does not pretend otherwise.
+
 ### What a scroll implies
 
 Four verbs and three handlers were recorded as needing a carrier facet does not

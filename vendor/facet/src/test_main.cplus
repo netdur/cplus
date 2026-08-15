@@ -865,13 +865,204 @@ fn animate_progress_writes_both_halves() {
     match progress::find("p", within: #addr_of(root)) {
         option::Option[progress::Progress]::Some(x) => {
             let _a: progress::Progress =
-                x.animate_progress(to: 0.75f64, duration: vocab::Duration { seconds: 0.3f64 });
+                x.animate_progress(to: 0.75f64,
+                                   duration: vocab::Duration { seconds: 0.3f64 },
+                                   easing: vocab::Easing::CubicOut);
             assert approx(x.progress(), 0.75f64);
         }
         option::Option[progress::Progress]::None => { assert false; }
     }
     let d: *facet::Data = root.data();
     assert ({ (*d).dirty } & progress::P_ANIMATE_PROGRESS) == progress::P_ANIMATE_PROGRESS;
+    let p: *props::ProgressProps = { (*d).props } as *props::ProgressProps;
+    assert approx({ (*p).animate_duration.seconds }, 0.3f64);
+    assert match { (*p).animate_easing } {
+        vocab::Easing::CubicOut => true,
+        _ => false,
+    };
+    return;
+}
+
+#[test]
+fn animate_opacity_writes_end_state_and_command_bit() {
+    var root: facet::Node = label::label("hi", key: "l");
+    let n: *facet::Node = #addr_of(root);
+    facet::clear_dirty(n);
+    facet::animate_opacity(n, 0.0f64, vocab::Duration::animation(), vocab::Easing::SinIn);
+    assert approx(facet::opacity(n), 0.0f64);
+    assert (facet::dirty_of(n) & props::C_ANIMATE) == props::C_ANIMATE;
+    // Command only — not the snap bit, or apply would jump then animate end→end.
+    assert (facet::dirty_of(n) & props::C_OPACITY) == (0 as u64);
+    assert (facet::animate_channels_of(n) & props::ANIM_OPACITY) == props::ANIM_OPACITY;
+    assert approx(facet::animate_duration_of(n).seconds, 0.25f64);
+    return;
+}
+
+#[test]
+fn animate_scale_and_translation_arm_transform_channels() {
+    var root: facet::Node = label::label("hi", key: "l");
+    let n: *facet::Node = #addr_of(root);
+    facet::clear_dirty(n);
+    facet::animate_scale(n, 1.5f64, vocab::Duration::of_seconds(0.4f64), vocab::Easing::Linear);
+    facet::animate_translation(n, 10.0f64, -4.0f64,
+                               vocab::Duration::of_seconds(0.4f64), vocab::Easing::Linear);
+    assert approx(facet::scale(n), 1.5f64);
+    assert approx(facet::translation_x(n), 10.0f64);
+    assert approx(facet::translation_y(n), -4.0f64);
+    // ONE channel for the whole transform: a backend rebuilds the matrix from
+    // all nine numbers, so it cannot interpolate one and snap another.
+    let ch: u32 = facet::animate_channels_of(n);
+    assert (ch & props::ANIM_TRANSFORM) == props::ANIM_TRANSFORM;
+    assert (ch & props::ANIM_OPACITY) == (0u32);
+    assert (facet::dirty_of(n) & props::C_ANIMATE) == props::C_ANIMATE;
+    assert (facet::dirty_of(n) & props::C_TRANSFORM) == (0 as u64);
+    return;
+}
+
+#[test]
+fn every_transform_verb_arms_the_one_transform_channel() {
+    // The nine transform numbers are one matrix, so they are one channel. A
+    // per-number mask promised granularity no backend could deliver: the target
+    // matrix carries every number, so animating the rotation animates whatever
+    // else moved with it.
+    var root: facet::Node = label::label("hi", key: "l");
+    let n: *facet::Node = #addr_of(root);
+    let d: vocab::Duration = vocab::Duration::animation();
+    let e: vocab::Easing = vocab::Easing::Linear;
+
+    facet::clear_dirty(n);
+    facet::animate_rotation(n, 90.0f64, d, e);
+    assert facet::animate_channels_of(n) == props::ANIM_TRANSFORM;
+    facet::clear_dirty(n);
+    facet::clear_animate_channels(n);
+
+    facet::animate_scale_x(n, 2.0f64, d, e);
+    assert facet::animate_channels_of(n) == props::ANIM_TRANSFORM;
+    facet::clear_dirty(n);
+    facet::clear_animate_channels(n);
+
+    facet::animate_translation(n, 1.0f64, 2.0f64, d, e);
+    assert facet::animate_channels_of(n) == props::ANIM_TRANSFORM;
+    // Opacity is the other channel and is NOT swept up by a transform verb.
+    assert (facet::animate_channels_of(n) & props::ANIM_OPACITY) == (0u32);
+    return;
+}
+
+#[test]
+fn a_snap_to_any_transform_number_cancels_the_pending_transform_animation() {
+    // The deliberate consequence of one channel: the transform animates as a
+    // unit, so snapping any part of it cancels the whole pending animation
+    // rather than leaving a half-interpolated matrix.
+    var root: facet::Node = label::label("hi", key: "l");
+    let n: *facet::Node = #addr_of(root);
+    facet::animate_rotation(n, 90.0f64, vocab::Duration::animation(), vocab::Easing::Linear);
+    assert (facet::animate_channels_of(n) & props::ANIM_TRANSFORM) == props::ANIM_TRANSFORM;
+    facet::set_scale(n, 2.0f64);
+    assert (facet::animate_channels_of(n) & props::ANIM_TRANSFORM) == (0u32);
+    // ...and the rotation's end value stays in the model, because a cancelled
+    // animation is still a write. Reads and the agent see 90.
+    assert approx(facet::rotation(n), 90.0f64);
+    return;
+}
+
+// A stand-in for "this node is mounted": the SNAP record is only kept for a
+// node that already has a view, because a set at BUILD time is read by the
+// backend's `create` on its way past and needs no record.
+fn no_release(p: *u8) { return; }
+
+#[test]
+fn a_build_time_set_is_not_a_dead_snap() {
+    // The entrance pattern, and the reason the SNAP record is gated on the
+    // node being backed: hidden at build, animated once it is up. Warning here
+    // would fire on the one spelling that works.
+    var root: facet::Node = label::label("hi", key: "l");
+    let n: *facet::Node = #addr_of(root);
+    facet::set_opacity(n, 0.0f64);
+    assert (facet::animate_channels_of(n) & props::SNAP_OPACITY) == (0u32);
+    facet::set_view(n, 99 as *u8, no_release);
+    facet::animate_opacity(n, 1.0f64, vocab::Duration::animation(), vocab::Easing::SinOut);
+    assert (facet::animate_channels_of(n) & props::ANIM_OPACITY) == props::ANIM_OPACITY;
+    return;
+}
+
+#[test]
+fn a_set_in_the_same_tick_as_an_animate_is_dead() {
+    // ONE FIELD, ONE APPLY. The obvious fade-in — set the start, animate to the
+    // end — does not work in a single tick: both write `opacity`, the animate
+    // wins, and the backend interpolates from what the view already shows to a
+    // value it is already at. Measured on the AppKit path: NO animation is
+    // installed at all.
+    //
+    // This test pins the rule rather than the wish. The working spelling is one
+    // tick earlier for the start value; `a_start_value_applied_a_tick_earlier_
+    // is_where_the_animation_begins` in facet_appkit is the other half.
+    //
+    // `animate_opacity` prints a line to stderr here, on purpose: the snap is
+    // unconditionally dead and silence is what made this cost an afternoon.
+    var root: facet::Node = label::label("hi", key: "l");
+    let n: *facet::Node = #addr_of(root);
+    facet::set_view(n, 99 as *u8, no_release);
+    facet::set_opacity(n, 0.0f64);
+    facet::animate_opacity(n, 1.0f64, vocab::Duration::animation(), vocab::Easing::SinInOut);
+    assert approx(facet::opacity(n), 1.0f64);
+    return;
+}
+
+#[test]
+fn a_blanket_touch_is_not_a_dead_snap() {
+    // The other side of the warning: `touch_all` raises C_OPACITY on a node
+    // nobody set, and an animate after it is completely legitimate — measured,
+    // the animation survives the re-read. The SNAP record exists precisely so
+    // this case stays quiet; keying the warning on the dirty word would make it
+    // a lie on every viewless-child update.
+    var root: facet::Node = label::label("hi", key: "l");
+    let n: *facet::Node = #addr_of(root);
+    facet::clear_dirty(n);
+    facet::clear_animate_channels(n);
+    facet::touch_all(n);
+    assert (facet::dirty_of(n) & props::C_OPACITY) == props::C_OPACITY;
+    // No SNAP record, so nothing to warn about.
+    assert (facet::animate_channels_of(n) & props::SNAP_OPACITY) == (0u32);
+    facet::animate_opacity(n, 0.5f64, vocab::Duration::animation(), vocab::Easing::SinInOut);
+    assert (facet::animate_channels_of(n) & props::ANIM_OPACITY) == props::ANIM_OPACITY;
+    return;
+}
+
+#[test]
+fn applying_a_node_retires_its_pending_snap() {
+    // The SNAP record means "a set the view has not seen". `clear_dirty` is the
+    // backend saying it has now seen it, so a later animate is clean.
+    var root: facet::Node = label::label("hi", key: "l");
+    let n: *facet::Node = #addr_of(root);
+    facet::set_view(n, 99 as *u8, no_release);
+    facet::set_opacity(n, 0.0f64);
+    assert (facet::animate_channels_of(n) & props::SNAP_OPACITY) == props::SNAP_OPACITY;
+    facet::clear_dirty(n);
+    assert (facet::animate_channels_of(n) & props::SNAP_OPACITY) == (0u32);
+    return;
+}
+
+#[test]
+fn set_opacity_clears_pending_animate_channel() {
+    var root: facet::Node = label::label("hi", key: "l");
+    let n: *facet::Node = #addr_of(root);
+    facet::animate_opacity(n, 0.0f64, vocab::Duration::animation(), vocab::Easing::SinInOut);
+    facet::set_opacity(n, 0.5f64);
+    assert approx(facet::opacity(n), 0.5f64);
+    assert (facet::animate_channels_of(n) & props::ANIM_OPACITY) == (0u32);
+    assert (facet::dirty_of(n) & props::C_OPACITY) == props::C_OPACITY;
+    return;
+}
+
+#[test]
+fn cancel_animations_is_a_command() {
+    var root: facet::Node = label::label("hi", key: "l");
+    let n: *facet::Node = #addr_of(root);
+    facet::animate_opacity(n, 0.0f64, vocab::Duration::animation(), vocab::Easing::SinInOut);
+    facet::clear_dirty(n);
+    facet::cancel_animations(n);
+    assert facet::animate_channels_of(n) == (0u32);
+    assert (facet::dirty_of(n) & props::C_CANCEL_ANIMATIONS) == props::C_CANCEL_ANIMATIONS;
     return;
 }
 
@@ -3393,25 +3584,27 @@ fn shared_bits_are_pairwise_disjoint() {
         | props::C_INPUT_TRANSPARENT | props::C_FLOW_DIRECTION | props::C_TRANSFORM
         | props::C_FOCUS | props::C_BLUR | props::C_FLUSH | props::C_HANDLERS
         | props::C_LAYOUT | props::C_SAFE_AREA | facet::C_GESTURES
-        | props::C_SEMANTICS | props::C_TOOLTIP | props::C_CORNER_RADIUS;
+        | props::C_SEMANTICS | props::C_TOOLTIP | props::C_CORNER_RADIUS
+        | props::C_AGENT | props::C_ANIMATE | props::C_CANCEL_ANIMATIONS;
     let summed: u64 = props::C_OPACITY +% props::C_BACKGROUND_COLOR +% props::C_BACKGROUND
         +% props::C_SHADOW +% props::C_CLIP +% props::C_IS_ENABLED +% props::C_IS_VISIBLE
         +% props::C_INPUT_TRANSPARENT +% props::C_FLOW_DIRECTION +% props::C_TRANSFORM
         +% props::C_FOCUS +% props::C_BLUR +% props::C_FLUSH +% props::C_HANDLERS
         +% props::C_LAYOUT +% props::C_SAFE_AREA +% facet::C_GESTURES
-        +% props::C_SEMANTICS +% props::C_TOOLTIP +% props::C_CORNER_RADIUS;
+        +% props::C_SEMANTICS +% props::C_TOOLTIP +% props::C_CORNER_RADIUS
+        +% props::C_AGENT +% props::C_ANIMATE +% props::C_CANCEL_ANIMATIONS;
     assert ored == summed;
-    // Twenty bits, so twenty ones. A new shared bit must be added here — and
-    // C_SEMANTICS and C_TOOLTIP show what happens when it is not: both were
-    // declared, neither was listed, and the guard that exists to catch a
-    // collision was silently not watching two of the bits it guards.
-    assert count_bits(ored) == (20 as u64);
+    // Twenty-three bits, so twenty-three ones. A new shared bit must be added
+    // here — and C_SEMANTICS / C_TOOLTIP / C_AGENT show what happens when it
+    // is not: declared, unlisted, and the collision guard was not watching.
+    assert count_bits(ored) == (23 as u64);
 
     // The two masks are built from these bits and must stay consistent with
     // them: every command is a real bit, and state is exactly the rest.
     assert (props::C_COMMANDS & props::C_ALL_STATE) == (0 as u64);
     assert (props::C_COMMANDS | props::C_ALL_STATE) == 18446744073709551615u64;
-    assert props::C_COMMANDS == (props::C_FOCUS | props::C_BLUR | props::C_FLUSH);
+    assert props::C_COMMANDS == (props::C_FOCUS | props::C_BLUR | props::C_FLUSH
+        | props::C_ANIMATE | props::C_CANCEL_ANIMATIONS);
     return;
 }
 
@@ -3435,7 +3628,9 @@ fn no_shared_bit_reaches_into_the_per_control_space() {
         | props::C_SHADOW | props::C_CLIP | props::C_IS_ENABLED | props::C_IS_VISIBLE
         | props::C_INPUT_TRANSPARENT | props::C_FLOW_DIRECTION | props::C_TRANSFORM
         | props::C_FOCUS | props::C_BLUR | props::C_FLUSH | props::C_HANDLERS
-        | props::C_LAYOUT | props::C_SAFE_AREA | facet::C_GESTURES;
+        | props::C_LAYOUT | props::C_SAFE_AREA | facet::C_GESTURES
+        | props::C_SEMANTICS | props::C_TOOLTIP | props::C_CORNER_RADIUS
+        | props::C_AGENT | props::C_ANIMATE | props::C_CANCEL_ANIMATIONS;
     let per_control_space: u64 = 8388607u64;   // bits 0..22
     assert (shared & per_control_space) == (0 as u64);
     return;

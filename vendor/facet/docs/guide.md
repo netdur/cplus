@@ -72,8 +72,63 @@ The low bits are the control's own (`P_*`, per module). The high bits are the
 shared band (`C_*`): opacity, background, shadow, clip, transform, focus,
 layout, and the handler set.
 
-Two bits are commands rather than state: `C_FOCUS` and `C_BLUR` are acted on
-and cleared. `C_LAYOUT` means re-run the layout pass rather than re-read props.
+Command bits are acted on and cleared: `C_FOCUS`, `C_BLUR`, `C_ANIMATE`,
+`C_CANCEL_ANIMATIONS`, and the batch flush. `C_LAYOUT` means re-run the layout
+pass rather than re-read props.
+
+### Animation
+
+`set_opacity` / `set_scale` / `set_rotation` / `set_translation_*` **snap**.
+To interpolate, use the matching command:
+
+```cplus
+match label::find("banner") {
+    option::Option[label::Label]::Some(l) => {
+        let _l: label::Label = l.animate_opacity(to: 0.0f64);
+    }
+    option::Option[label::Label]::None => { }
+}
+```
+
+End values land in the real props (so `opacity()` / `scale()` stay true for
+reads and the agent). Timing defaults to 250 ms and `Easing::SinInOut`; pass
+`duration:` and `easing:` to override. `cancel_animations()` aborts in-flight
+motion and snaps presentation to the model. Progress has the same shape as
+`animate_progress(to:, duration:, easing:)`.
+
+**The transform animates as a unit.** Scale, rotation and translation are one
+matrix — the backend rebuilds all nine numbers together, so it cannot
+interpolate the rotation while snapping the scale. Two transform verbs in one
+tick are one animation over the composed result, and a `set_*` on any transform
+number cancels a pending transform animation outright.
+
+**The start value has to reach the view a tick earlier.** There is one field per
+property and one apply per tick, so this is *not* a fade-in:
+
+```cplus
+n.set_opacity(0.0f64);            // dead: overwritten below, never applied
+n.animate_opacity(to: 1.0f64);    // animates from what the view already shows
+```
+
+Both writes land in `opacity`, the second wins, and the animation travels from
+1.0 to 1.0 — nothing moves. facet prints a line to stderr when it sees the pair,
+because the failure is otherwise silent. Set the start where it gets its own
+apply — at build time, or from `on_attach` — and animate after. To re-run it
+later, separate the two with a TIMER (`services::after`): a main-queue hop
+(`services::run_on_main`) is drained in the same run-loop turn as the click that
+scheduled it, ahead of the sync that applies dirty nodes, so the snap and the
+animate can still collapse into one apply.
+
+```cplus
+label("hi", key: "banner", opacity: 0.0f64)     // applied at mount
+    .on_attach(fade_in)                          // animates on the next tick
+
+fn fade_in(n: *core::Node) {
+    core::animate_opacity(n, 1.0f64, vocab::Duration::of_seconds(0.4f64),
+                          vocab::Easing::SinOut);
+    return;
+}
+```
 
 ## Components, screens, and the app
 

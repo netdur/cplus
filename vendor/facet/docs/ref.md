@@ -26,6 +26,11 @@ the tree, the runtime, the seams, and how to reach a control once it is built.
 
 Declared on every node. Full list with types in `contract.md`.
 
+Two rules the shape does not show, both in `guide.md`: the transform animates as
+a UNIT (one matrix, so a `set_*` on any of its numbers cancels a pending
+transform animation), and the start value must reach the view in an EARLIER
+apply — `set_opacity(0)` and `animate_opacity(1)` in one tick are not a fade-in.
+
 | | |
 |---|---|
 | `set_opacity` `set_background_color` `set_background` | paint |
@@ -36,6 +41,14 @@ Declared on every node. Full list with types in `contract.md`.
 | `set_z_index` | paint order among siblings |
 | `set_on_focus` `set_on_blur` `set_on_attach` `set_on_detach` | lifecycle |
 | `focus(n)` `blur(n)` | commands |
+| `animate_opacity` `animate_scale` `animate_scale_x` `animate_scale_y` | animate to end state |
+| `animate_rotation` `animate_rotation_x` `animate_rotation_y` | animate to end state |
+| `animate_translation(x:, y:)` `cancel_animations` | animate / abort |
+
+`set_*` on opacity and the transform band **snaps**. `animate_*` writes the
+same end values and asks the backend to interpolate over `duration` (default
+`Duration::animation()` = 250 ms) with `easing` (default `SinInOut`). Full list
+in `contract.md`.
 
 Layout modifiers (`set_grow`, `set_width`, `set_padding`, `set_gap`,
 `set_justify`, `set_align`, `set_wrap`, and the percent forms) forward to

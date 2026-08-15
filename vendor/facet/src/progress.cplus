@@ -95,11 +95,12 @@ impl Progress {
     }
 
     // ProgressBar.ProgressTo
-    fn animate_progress(this, to: f64, duration: vocab::Duration) -> Progress {
+    fn animate_progress(this, to: f64, duration: vocab::Duration = vocab::Duration::animation(), easing: vocab::Easing = vocab::Easing::SinInOut) -> Progress {
         let p: *props::ProgressProps = this._props();
         if p == (0 as *props::ProgressProps) { return this; }
         { (*p).progress = to };
         { (*p).animate_duration = duration };
+        { (*p).animate_easing = easing };
         core::touch(this._p, P_ANIMATE_PROGRESS);
         return this;
     }
@@ -194,6 +195,15 @@ impl Progress {
     fn set_wrap(this, v: flex::Wrap) -> Progress { core::set_wrap(this._p, v); return this; }
     fn focus(this) -> Progress { core::focus(this._p); return this; }
     fn blur(this) -> Progress { core::blur(this._p); return this; }
+    fn animate_opacity(this, to: f64, duration: vocab::Duration = vocab::Duration::animation(), easing: vocab::Easing = vocab::Easing::SinInOut) -> Progress { core::animate_opacity(this._p, to, duration, easing); return this; }
+    fn animate_scale(this, to: f64, duration: vocab::Duration = vocab::Duration::animation(), easing: vocab::Easing = vocab::Easing::SinInOut) -> Progress { core::animate_scale(this._p, to, duration, easing); return this; }
+    fn animate_scale_x(this, to: f64, duration: vocab::Duration = vocab::Duration::animation(), easing: vocab::Easing = vocab::Easing::SinInOut) -> Progress { core::animate_scale_x(this._p, to, duration, easing); return this; }
+    fn animate_scale_y(this, to: f64, duration: vocab::Duration = vocab::Duration::animation(), easing: vocab::Easing = vocab::Easing::SinInOut) -> Progress { core::animate_scale_y(this._p, to, duration, easing); return this; }
+    fn animate_rotation(this, to: f64, duration: vocab::Duration = vocab::Duration::animation(), easing: vocab::Easing = vocab::Easing::SinInOut) -> Progress { core::animate_rotation(this._p, to, duration, easing); return this; }
+    fn animate_rotation_x(this, to: f64, duration: vocab::Duration = vocab::Duration::animation(), easing: vocab::Easing = vocab::Easing::SinInOut) -> Progress { core::animate_rotation_x(this._p, to, duration, easing); return this; }
+    fn animate_rotation_y(this, to: f64, duration: vocab::Duration = vocab::Duration::animation(), easing: vocab::Easing = vocab::Easing::SinInOut) -> Progress { core::animate_rotation_y(this._p, to, duration, easing); return this; }
+    fn animate_translation(this, x: f64, y: f64, duration: vocab::Duration = vocab::Duration::animation(), easing: vocab::Easing = vocab::Easing::SinInOut) -> Progress { core::animate_translation(this._p, x, y, duration, easing); return this; }
+    fn cancel_animations(this) -> Progress { core::cancel_animations(this._p); return this; }
     fn relayout(this) -> Progress { core::relayout(this._p); return this; }
     fn measure(this, width: f64, height: f64) -> vocab::Size { return core::measure(this._p, width, height); }
     fn begin_updates(this) -> Progress { core::begin_updates(this._p); return this; }

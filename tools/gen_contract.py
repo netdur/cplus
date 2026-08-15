@@ -111,6 +111,7 @@ TYPES = {
     "Drawable": ("vocab::Drawable", "vocab::Drawable::none()", None),
     "Date":  ("vocab::Date", "vocab::Date::zero()", None),
     "Duration": ("vocab::Duration", "vocab::Duration::zero()", None),
+    "Easing": ("vocab::Easing", "vocab::Easing::SinInOut", None),
     "Window": ("vocab::WindowRef", "vocab::WindowRef::none()", None),
     "Dashes": ("vocab::Dashes", "vocab::Dashes::none()", None),
     "Shortcut": ("vocab::Shortcut", "vocab::Shortcut::none()", None),
@@ -502,9 +503,21 @@ COMMANDS = {
         "params": [], "extra": [], "writes": [],
     },
     "animate_progress": {
-        "params": [("to", "f64"), ("duration", "Duration")],
-        "extra":  [("animate_duration", "Duration")],
-        "writes": [("progress", "to"), ("animate_duration", "duration")],
+        # Optional default as a third tuple element: duration 250ms, MAUI's default.
+        "params": [
+            ("to", "f64"),
+            ("duration", "Duration", "vocab::Duration::animation()"),
+            ("easing", "Easing", "vocab::Easing::SinInOut"),
+        ],
+        "extra":  [
+            ("animate_duration", "Duration"),
+            ("animate_easing", "Easing"),
+        ],
+        "writes": [
+            ("progress", "to"),
+            ("animate_duration", "duration"),
+            ("animate_easing", "easing"),
+        ],
     },
 }
 
@@ -958,7 +971,29 @@ struct Date { year: i64, month: i64, day: i64 }
 impl Date { fn zero() -> Date { return Date { year: 0 as i64, month: 0 as i64, day: 0 as i64 }; } }
 
 struct Duration { seconds: f64 }
-impl Duration { fn zero() -> Duration { return Duration { seconds: 0.0f64 }; } }
+impl Duration {
+    fn zero() -> Duration { return Duration { seconds: 0.0f64 }; }
+    // MAUI's default basic-animation length (250 ms).
+    fn animation() -> Duration { return Duration { seconds: 0.25f64 }; }
+    fn of_seconds(s: f64) -> Duration { return Duration { seconds: s }; }
+}
+
+// Timing curve for animate_* commands. Named for what it is (not EasingCurve /
+// EasingMode). Presets match MAUI's Easing surface; a backend maps them as
+// best it can and records the gaps.
+enum Easing {
+    Linear,
+    SinIn,
+    SinOut,
+    SinInOut,
+    CubicIn,
+    CubicOut,
+    CubicInOut,
+    BounceIn,
+    BounceOut,
+    SpringIn,
+    SpringOut,
+}
 
 // A live window. Opaque until a backend mounts one.
 struct WindowRef { opaque _w: *u8 }
@@ -2011,6 +2046,12 @@ struct CommonProps {
     scale: f64, scale_x: f64, scale_y: f64,
     translation_x: f64, translation_y: f64,
     anchor_x: f64, anchor_y: f64,
+    // Timing for the next animate_* command. End values live in the fields
+    // above; channels says WHICH of them to interpolate rather than snap.
+    // Cleared by the backend after apply, and by cancel_animations.
+    animate_duration: vocab::Duration,
+    animate_easing: vocab::Easing,
+    animate_channels: u32,
     // The shared-band handlers (Stage 3): focus/blur fired by the backend,
     // attach/detach fired by the mount walk (post-walk, M4). fn + ctx pairs,
     // the same shape as every control event.
@@ -2044,6 +2085,9 @@ impl CommonProps {
             scale: 1.0f64, scale_x: 1.0f64, scale_y: 1.0f64,
             translation_x: 0.0f64, translation_y: 0.0f64,
             anchor_x: 0.5f64, anchor_y: 0.5f64,
+            animate_duration: vocab::Duration::animation(),
+            animate_easing: vocab::Easing::SinInOut,
+            animate_channels: 0u32,
             on_focus: no_handler, on_focus_ctx: 0 as *u8,
             on_blur: no_handler, on_blur_ctx: 0 as *u8,
             on_attach: no_handler, on_attach_ctx: 0 as *u8,
@@ -2051,6 +2095,34 @@ impl CommonProps {
         };
     }
 }
+
+// Which shared-band fields an animate_* command will interpolate. One mask on
+// the common props rather than one dirty bit per channel — the command is one
+// verb (C_ANIMATE) and the mask is its argument.
+//
+// TWO CHANNELS, NOT NINE. The nine transform numbers are one matrix, exactly
+// as `C_TRANSFORM` is one dirty bit for the same reason: a backend rebuilds the
+// whole matrix from all nine, so it cannot interpolate the rotation while
+// snapping the scale. A per-number mask would have promised granularity that
+// nothing downstream could deliver — and it did, briefly: `set_scale_x` cleared
+// only its own bit, so a `set_scale_x` + `animate_rotation` pair animated the
+// scale too, because the target matrix carries both.
+//
+// So the transform animates AS A UNIT. Any `set_*` on a transform number
+// cancels a pending transform animation; any `animate_*` on one arms it.
+const ANIM_OPACITY: u32 = 1u32;
+const ANIM_TRANSFORM: u32 = 2u32;
+
+// High half of the same word, and NOT channels — nothing interpolates them. A
+// `set_*` records here that it has written a value the view has not seen yet,
+// so `animate_*` can tell a DEAD snap (a set in this same tick, whose value it
+// is about to overwrite in the shared field — the silent no-op behind every
+// hand-written fade-in) from a blanket `touch_all`, which raises the same dirty
+// bit and is not a mistake. Cleared by `clear_dirty`: once the node is applied,
+// the set has reached the view and there is nothing left to warn about.
+const SNAP_OPACITY: u32 = 65536u32;
+const SNAP_TRANSFORM: u32 = 131072u32;
+const SNAP_ANY: u32 = 196608u32;
 
 // Common bits live at the top of the word; per-control bits start at 0.
 const C_OPACITY: u64 = 281474976710656u64;
@@ -2067,6 +2139,12 @@ const C_TRANSFORM: u64 = 144115188075855872u64;
 const C_FOCUS: u64 = 288230376151711744u64;
 const C_BLUR: u64 = 576460752303423488u64;
 const C_FLUSH: u64 = 1152921504606846976u64;
+// 2^42 / 2^41 — the animation band grows downward with the rest of the shared
+// common bits. C_ANIMATE means "interpolate the channels named on common to
+// the end values already written there"; C_CANCEL_ANIMATIONS aborts in-flight
+// motion and snaps presentation to the model (end values).
+const C_ANIMATE: u64 = 4398046511104u64;
+const C_CANCEL_ANIMATIONS: u64 = 2199023255552u64;
 // One bit for the four shared-band handler pairs — a live handler swap is
 // rare enough that the backend re-reads all four.
 const C_HANDLERS: u64 = 2305843009213693952u64;
@@ -2123,8 +2201,9 @@ const C_CORNER_RADIUS: u64 = 17592186044416u64;
 const C_AGENT: u64 = 8796093022208u64;
 
 // ---- state versus commands ---------------------------------------------------
-// C_FOCUS, C_BLUR and C_FLUSH are VERBS: the backend performs them and clears
-// the bit. Every other bit is a fact the backend re-reads.
+// C_FOCUS, C_BLUR, C_FLUSH, C_ANIMATE and C_CANCEL_ANIMATIONS are VERBS: the
+// backend performs them and clears the bit. Every other bit is a fact the
+// backend re-reads.
 //
 // The distinction matters because two places raise a blanket "this node,
 // whole": `core::touch_all` (the sync walk, when a VIEWLESS child changed and
@@ -2137,9 +2216,9 @@ const C_AGENT: u64 = 8796093022208u64;
 // Live, that is a caret that vanishes mid-word. Writing to a `span` — viewless
 // by construction — makes its label re-apply whole, and typing anywhere in the
 // window loses focus on the next keystroke that updates one.
-const C_COMMANDS: u64 = 2017612633061982208u64;         // C_FOCUS | C_BLUR | C_FLUSH
+const C_COMMANDS: u64 = 2017619230131748864u64;         // FOCUS|BLUR|FLUSH|ANIMATE|CANCEL
 // Every bit a blanket touch may raise: all of them except the verbs.
-const C_ALL_STATE: u64 = 16429131440647569407u64;
+const C_ALL_STATE: u64 = 16429124843577802751u64;
 '''
 
 
@@ -2598,6 +2677,41 @@ SHARED_FORWARDS = [
     # -- commands
     ("focus", "", "core::focus(this._p)", None),
     ("blur", "", "core::blur(this._p)", None),
+    # animate_* — MAUI ViewExtensions.*To, named for facet's property words.
+    # Defaults: duration = Duration::animation() (250 ms), easing = SinInOut.
+    ("animate_opacity",
+     "to: f64, duration: vocab::Duration = vocab::Duration::animation(), "
+     "easing: vocab::Easing = vocab::Easing::SinInOut",
+     "core::animate_opacity(this._p, to, duration, easing)", None),
+    ("animate_scale",
+     "to: f64, duration: vocab::Duration = vocab::Duration::animation(), "
+     "easing: vocab::Easing = vocab::Easing::SinInOut",
+     "core::animate_scale(this._p, to, duration, easing)", None),
+    ("animate_scale_x",
+     "to: f64, duration: vocab::Duration = vocab::Duration::animation(), "
+     "easing: vocab::Easing = vocab::Easing::SinInOut",
+     "core::animate_scale_x(this._p, to, duration, easing)", None),
+    ("animate_scale_y",
+     "to: f64, duration: vocab::Duration = vocab::Duration::animation(), "
+     "easing: vocab::Easing = vocab::Easing::SinInOut",
+     "core::animate_scale_y(this._p, to, duration, easing)", None),
+    ("animate_rotation",
+     "to: f64, duration: vocab::Duration = vocab::Duration::animation(), "
+     "easing: vocab::Easing = vocab::Easing::SinInOut",
+     "core::animate_rotation(this._p, to, duration, easing)", None),
+    ("animate_rotation_x",
+     "to: f64, duration: vocab::Duration = vocab::Duration::animation(), "
+     "easing: vocab::Easing = vocab::Easing::SinInOut",
+     "core::animate_rotation_x(this._p, to, duration, easing)", None),
+    ("animate_rotation_y",
+     "to: f64, duration: vocab::Duration = vocab::Duration::animation(), "
+     "easing: vocab::Easing = vocab::Easing::SinInOut",
+     "core::animate_rotation_y(this._p, to, duration, easing)", None),
+    ("animate_translation",
+     "x: f64, y: f64, duration: vocab::Duration = vocab::Duration::animation(), "
+     "easing: vocab::Easing = vocab::Easing::SinInOut",
+     "core::animate_translation(this._p, x, y, duration, easing)", None),
+    ("cancel_animations", "", "core::cancel_animations(this._p)", None),
     ("relayout", "", "core::relayout(this._p)", None),
     ("measure", "width: f64, height: f64", "return core::measure(this._p, width, height)", "vocab::Size"),
     ("begin_updates", "", "core::begin_updates(this._p)", None),
@@ -2914,8 +3028,16 @@ def emit_control(row_type, merged):
         # `str` is the PARAMETER type and `text::Text` is the field it lands
         # in — the same split every setter makes. No command took a string
         # until `eval`, which is why this read `cplus_type` alone.
-        args = "".join(f", {n}: {'str' if t == 'str' else (cplus_type(t) or t)}"
-                       for n, t in spec["params"])
+        # A param is (name, type) or (name, type, default) for a defaulted arg.
+        args = ""
+        for item in spec["params"]:
+            n = item[0]
+            t = item[1]
+            ty = "str" if t == "str" else (cplus_type(t) or t)
+            if len(item) >= 3:
+                args += f", {n}: {ty} = {item[2]}"
+            else:
+                args += f", {n}: {ty}"
         o.append(f"\n    // {src}.{member}\n")
         o.append(f"    fn {verb}(this{args}) -> {cur} {{\n")
         o.append(f"        let p: *props::{props} = this._props();\n")
@@ -3679,7 +3801,7 @@ def emit_manifest(rows_by_control):
                          f"| {src}.{member} |\n")
                 total += 1
             elif kind == "command":
-                args = ", ".join(f"{n}:" for n, _t in COMMANDS[name]["params"])
+                args = ", ".join(f"{item[0]}:" for item in COMMANDS[name]["params"])
                 o.append(f"| `{name}({args})` | command | {src}.{member} |\n")
                 total += 1
             elif kind == "event":

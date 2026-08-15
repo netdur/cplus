@@ -90,6 +90,12 @@ struct CommonProps {
     scale: f64, scale_x: f64, scale_y: f64,
     translation_x: f64, translation_y: f64,
     anchor_x: f64, anchor_y: f64,
+    // Timing for the next animate_* command. End values live in the fields
+    // above; channels says WHICH of them to interpolate rather than snap.
+    // Cleared by the backend after apply, and by cancel_animations.
+    animate_duration: vocab::Duration,
+    animate_easing: vocab::Easing,
+    animate_channels: u32,
     // The shared-band handlers (Stage 3): focus/blur fired by the backend,
     // attach/detach fired by the mount walk (post-walk, M4). fn + ctx pairs,
     // the same shape as every control event.
@@ -123,6 +129,9 @@ impl CommonProps {
             scale: 1.0f64, scale_x: 1.0f64, scale_y: 1.0f64,
             translation_x: 0.0f64, translation_y: 0.0f64,
             anchor_x: 0.5f64, anchor_y: 0.5f64,
+            animate_duration: vocab::Duration::animation(),
+            animate_easing: vocab::Easing::SinInOut,
+            animate_channels: 0u32,
             on_focus: no_handler, on_focus_ctx: 0 as *u8,
             on_blur: no_handler, on_blur_ctx: 0 as *u8,
             on_attach: no_handler, on_attach_ctx: 0 as *u8,
@@ -130,6 +139,34 @@ impl CommonProps {
         };
     }
 }
+
+// Which shared-band fields an animate_* command will interpolate. One mask on
+// the common props rather than one dirty bit per channel — the command is one
+// verb (C_ANIMATE) and the mask is its argument.
+//
+// TWO CHANNELS, NOT NINE. The nine transform numbers are one matrix, exactly
+// as `C_TRANSFORM` is one dirty bit for the same reason: a backend rebuilds the
+// whole matrix from all nine, so it cannot interpolate the rotation while
+// snapping the scale. A per-number mask would have promised granularity that
+// nothing downstream could deliver — and it did, briefly: `set_scale_x` cleared
+// only its own bit, so a `set_scale_x` + `animate_rotation` pair animated the
+// scale too, because the target matrix carries both.
+//
+// So the transform animates AS A UNIT. Any `set_*` on a transform number
+// cancels a pending transform animation; any `animate_*` on one arms it.
+const ANIM_OPACITY: u32 = 1u32;
+const ANIM_TRANSFORM: u32 = 2u32;
+
+// High half of the same word, and NOT channels — nothing interpolates them. A
+// `set_*` records here that it has written a value the view has not seen yet,
+// so `animate_*` can tell a DEAD snap (a set in this same tick, whose value it
+// is about to overwrite in the shared field — the silent no-op behind every
+// hand-written fade-in) from a blanket `touch_all`, which raises the same dirty
+// bit and is not a mistake. Cleared by `clear_dirty`: once the node is applied,
+// the set has reached the view and there is nothing left to warn about.
+const SNAP_OPACITY: u32 = 65536u32;
+const SNAP_TRANSFORM: u32 = 131072u32;
+const SNAP_ANY: u32 = 196608u32;
 
 // Common bits live at the top of the word; per-control bits start at 0.
 const C_OPACITY: u64 = 281474976710656u64;
@@ -146,6 +183,12 @@ const C_TRANSFORM: u64 = 144115188075855872u64;
 const C_FOCUS: u64 = 288230376151711744u64;
 const C_BLUR: u64 = 576460752303423488u64;
 const C_FLUSH: u64 = 1152921504606846976u64;
+// 2^42 / 2^41 — the animation band grows downward with the rest of the shared
+// common bits. C_ANIMATE means "interpolate the channels named on common to
+// the end values already written there"; C_CANCEL_ANIMATIONS aborts in-flight
+// motion and snaps presentation to the model (end values).
+const C_ANIMATE: u64 = 4398046511104u64;
+const C_CANCEL_ANIMATIONS: u64 = 2199023255552u64;
 // One bit for the four shared-band handler pairs — a live handler swap is
 // rare enough that the backend re-reads all four.
 const C_HANDLERS: u64 = 2305843009213693952u64;
@@ -202,8 +245,9 @@ const C_CORNER_RADIUS: u64 = 17592186044416u64;
 const C_AGENT: u64 = 8796093022208u64;
 
 // ---- state versus commands ---------------------------------------------------
-// C_FOCUS, C_BLUR and C_FLUSH are VERBS: the backend performs them and clears
-// the bit. Every other bit is a fact the backend re-reads.
+// C_FOCUS, C_BLUR, C_FLUSH, C_ANIMATE and C_CANCEL_ANIMATIONS are VERBS: the
+// backend performs them and clears the bit. Every other bit is a fact the
+// backend re-reads.
 //
 // The distinction matters because two places raise a blanket "this node,
 // whole": `core::touch_all` (the sync walk, when a VIEWLESS child changed and
@@ -216,9 +260,9 @@ const C_AGENT: u64 = 8796093022208u64;
 // Live, that is a caret that vanishes mid-word. Writing to a `span` — viewless
 // by construction — makes its label re-apply whole, and typing anywhere in the
 // window loses focus on the next keystroke that updates one.
-const C_COMMANDS: u64 = 2017612633061982208u64;         // C_FOCUS | C_BLUR | C_FLUSH
+const C_COMMANDS: u64 = 2017619230131748864u64;         // FOCUS|BLUR|FLUSH|ANIMATE|CANCEL
 // Every bit a blanket touch may raise: all of them except the verbs.
-const C_ALL_STATE: u64 = 16429131440647569407u64;
+const C_ALL_STATE: u64 = 16429124843577802751u64;
 
 // ---- GroupableItemsView — shared by every control the ledger derives from it 
 
@@ -1368,6 +1412,7 @@ struct ProgressProps {
     progress: f64,    // ProgressBar.Progress
     progress_color: vocab::Color,    // ProgressBar.ProgressColor
     animate_duration: vocab::Duration,    // ProgressBar.ProgressTo, the argument of animate_progress()
+    animate_easing: vocab::Easing,    // ProgressBar.ProgressTo, the argument of animate_progress()
 }
 
 impl ProgressProps {
@@ -1376,6 +1421,7 @@ impl ProgressProps {
             progress: 0.0f64,
             progress_color: vocab::Color::clear(),
             animate_duration: vocab::Duration::zero(),
+            animate_easing: vocab::Easing::SinInOut,
         };
     }
 }

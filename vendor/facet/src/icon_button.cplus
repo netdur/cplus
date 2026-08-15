@@ -341,6 +341,15 @@ impl IconButton {
     fn set_wrap(this, v: flex::Wrap) -> IconButton { core::set_wrap(this._p, v); return this; }
     fn focus(this) -> IconButton { core::focus(this._p); return this; }
     fn blur(this) -> IconButton { core::blur(this._p); return this; }
+    fn animate_opacity(this, to: f64, duration: vocab::Duration = vocab::Duration::animation(), easing: vocab::Easing = vocab::Easing::SinInOut) -> IconButton { core::animate_opacity(this._p, to, duration, easing); return this; }
+    fn animate_scale(this, to: f64, duration: vocab::Duration = vocab::Duration::animation(), easing: vocab::Easing = vocab::Easing::SinInOut) -> IconButton { core::animate_scale(this._p, to, duration, easing); return this; }
+    fn animate_scale_x(this, to: f64, duration: vocab::Duration = vocab::Duration::animation(), easing: vocab::Easing = vocab::Easing::SinInOut) -> IconButton { core::animate_scale_x(this._p, to, duration, easing); return this; }
+    fn animate_scale_y(this, to: f64, duration: vocab::Duration = vocab::Duration::animation(), easing: vocab::Easing = vocab::Easing::SinInOut) -> IconButton { core::animate_scale_y(this._p, to, duration, easing); return this; }
+    fn animate_rotation(this, to: f64, duration: vocab::Duration = vocab::Duration::animation(), easing: vocab::Easing = vocab::Easing::SinInOut) -> IconButton { core::animate_rotation(this._p, to, duration, easing); return this; }
+    fn animate_rotation_x(this, to: f64, duration: vocab::Duration = vocab::Duration::animation(), easing: vocab::Easing = vocab::Easing::SinInOut) -> IconButton { core::animate_rotation_x(this._p, to, duration, easing); return this; }
+    fn animate_rotation_y(this, to: f64, duration: vocab::Duration = vocab::Duration::animation(), easing: vocab::Easing = vocab::Easing::SinInOut) -> IconButton { core::animate_rotation_y(this._p, to, duration, easing); return this; }
+    fn animate_translation(this, x: f64, y: f64, duration: vocab::Duration = vocab::Duration::animation(), easing: vocab::Easing = vocab::Easing::SinInOut) -> IconButton { core::animate_translation(this._p, x, y, duration, easing); return this; }
+    fn cancel_animations(this) -> IconButton { core::cancel_animations(this._p); return this; }
     fn relayout(this) -> IconButton { core::relayout(this._p); return this; }
     fn measure(this, width: f64, height: f64) -> vocab::Size { return core::measure(this._p, width, height); }
     fn begin_updates(this) -> IconButton { core::begin_updates(this._p); return this; }

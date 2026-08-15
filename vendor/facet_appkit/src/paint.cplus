@@ -691,6 +691,19 @@ fn apply_common(v: *u8, n: *core::Node, dirty: u64) {
     if (dirty & props::C_IS_VISIBLE) != (0 as u64) {
         view.set_hidden(core::is_hidden(n));
     }
+    // Cancel first: abort in-flight CA actions, then snap model values (end
+    // state already sits on common). Freeze-at-presentation is not v1.
+    if (dirty & props::C_CANCEL_ANIMATIONS) != (0 as u64) {
+        cancel_view_animations(view);
+        view.set_alpha_value(core::opacity(n));
+        apply_transform(view, n);
+        core::clear_animate_channels(n);
+    }
+    // Animate before snap: C_ANIMATE alone carries the channels; set_* would
+    // have raised C_OPACITY / C_TRANSFORM and cleared those channels.
+    if (dirty & props::C_ANIMATE) != (0 as u64) {
+        apply_animate(view, n);
+    }
     if (dirty & props::C_OPACITY) != (0 as u64) {
         view.set_alpha_value(core::opacity(n));
     }
@@ -1123,10 +1136,60 @@ fn transform_identity() -> quartz::Transform3D {
     };
 }
 
+// A CALayer places its ANCHOR POINT at `position`, so moving the anchor moves
+// the layer unless `position` moves with it.
+//
+// An NSView's backing layer starts at anchor (0,0) with position = the view's
+// frame origin — measured, not assumed; UIKit's (0.5,0.5) default is the other
+// platform. So writing facet's anchor straight onto the layer slid every
+// transformed view up and left by half its size, and the first scale threw a
+// card clean out of its slot. Compensating keeps the layer exactly where layout
+// put it, and a later `setFrame:` stays consistent because CALayer recomputes
+// position from the anchor it now has.
+fn set_anchor_keeping_place(l: quartz::Layer, ax: f64, ay: f64) {
+    let old: rt::Point = l.anchor_point();
+    if old.x == ax && old.y == ay { return; }
+    let b: rt::Rect = l.bounds();
+    let p: rt::Point = l.position();
+    l.set_anchor_point(rt::Point { x: ax, y: ay });
+    l.set_position(rt::Point {
+        x: p.x + ((ax - old.x) * b.w),
+        y: p.y + ((ay - old.y) * b.h),
+    });
+    return;
+}
+
 // The nine transform numbers become one CATransform3D on the layer. facet
 // gives them one dirty bit for exactly this reason: the backend rebuilds the
 // whole transform anyway, so nine bits would buy it nothing.
 fn apply_transform(view: ak::View, n: *core::Node) {
+    // Identity is decided from the property values, NOT from a rebuilt matrix.
+    // Create passes C_TRANSFORM with all-ones dirty, so this path runs for
+    // every view; calling CATransform3D* just to discover identity would be
+    // waste, and any ABI surprise would stamp a non-identity matrix onto a
+    // tree that never asked for a transform (measured: default tree rows
+    // collapsed from 28pt to 18pt).
+    if transform_is_identity_of(n) {
+        // A node that has NEVER transformed stays layer-free: that is the
+        // whole of the passthrough rule, and the early return above is what
+        // keeps it. But a node that HAD a transform and went back to identity
+        // already has a layer holding the old matrix, and returning here left
+        // it there — `set_scale(2.0)` then `set_scale(1.0)` measured m11 = 2
+        // on both reads, and `cancel_animations` (whose entire job is to snap
+        // presentation to the model) inherited the same hole. So the guard is
+        // the LAYER, not the values.
+        if !view.wants_layer() { return; }
+        view.layer().set_transform(transform_identity());
+        return;
+    }
+    view.set_wants_layer(true);
+    let l: quartz::Layer = view.layer();
+    set_anchor_keeping_place(l, core::anchor_x(n), core::anchor_y(n));
+    l.set_transform(transform_of(n));
+    return;
+}
+
+fn transform_is_identity_of(n: *core::Node) -> bool {
     let rot: f64 = core::rotation(n);
     let rx: f64 = core::rotation_x(n);
     let ry: f64 = core::rotation_y(n);
@@ -1134,22 +1197,179 @@ fn apply_transform(view: ak::View, n: *core::Node) {
     let sy: f64 = core::scale(n) * core::scale_y(n);
     let tx: f64 = core::translation_x(n);
     let ty: f64 = core::translation_y(n);
-    let is_identity: bool = rot == 0.0f64 && rx == 0.0f64 && ry == 0.0f64
+    return rot == 0.0f64 && rx == 0.0f64 && ry == 0.0f64
         && sx == 1.0f64 && sy == 1.0f64 && tx == 0.0f64 && ty == 0.0f64;
-    // An untransformed node stays layer-free: a tree that transforms nothing
-    // should pay for no layers.
-    if is_identity { return; }
-    view.set_wants_layer(true);
-    let l: quartz::Layer = view.layer();
-    l.set_anchor_point(rt::Point { x: core::anchor_x(n), y: core::anchor_y(n) });
+}
+
+fn transform_of(n: *core::Node) -> quartz::Transform3D {
+    let rot: f64 = core::rotation(n);
+    let rx: f64 = core::rotation_x(n);
+    let ry: f64 = core::rotation_y(n);
+    let sx: f64 = core::scale(n) * core::scale_x(n);
+    let sy: f64 = core::scale(n) * core::scale_y(n);
+    let tx: f64 = core::translation_x(n);
+    let ty: f64 = core::translation_y(n);
     var m: quartz::Transform3D = transform_identity();
     m = { CATransform3DTranslate(m, tx, ty, 0.0f64) };
     if rot != 0.0f64 { m = { CATransform3DRotate(m, radians(rot), 0.0f64, 0.0f64, 1.0f64) }; }
     if rx != 0.0f64 { m = { CATransform3DRotate(m, radians(rx), 1.0f64, 0.0f64, 0.0f64) }; }
     if ry != 0.0f64 { m = { CATransform3DRotate(m, radians(ry), 0.0f64, 1.0f64, 0.0f64) }; }
     m = { CATransform3DScale(m, sx, sy, 1.0f64) };
-    l.set_transform(m);
-    return;
+    return m;
 }
 
 fn radians(degrees: f64) -> f64 { return degrees * 3.14159265358979323846f64 / 180.0f64; }
+
+// ---- animate_* --------------------------------------------------------------
+// Duration and easing come from common; channels say which end values to drive.
+// End values are already on the model, so a cancel can snap without a second
+// write.
+//
+// TWO MECHANISMS, because AppKit has two. Opacity goes through the VIEW's
+// animator proxy inside an NSAnimationContext grouping — `animator` is
+// `NSAnimatablePropertyContainer`, which NSView adopts. The transform goes
+// through an explicit CABasicAnimation on the layer, because CALayer adopts
+// nothing of the kind and `-[CALayer animator]` is an unrecognized selector
+// that RAISES (see `animate_layer_transform`).
+
+fn apply_animate(view: ak::View, n: *core::Node) {
+    // Masked to the CHANNELS: the same word's high bits are the pending-snap
+    // record the model warns from, and interpolate nothing.
+    let channels: u32 = core::animate_channels_of(n)
+        & (props::ANIM_OPACITY | props::ANIM_TRANSFORM);
+    if channels == (0u32) { return; }
+    let secs: f64 = core::animate_duration_of(n).seconds;
+    if secs <= 0.0f64 {
+        if (channels & props::ANIM_OPACITY) != (0u32) {
+            view.set_alpha_value(core::opacity(n));
+        }
+        if (channels & props::ANIM_TRANSFORM) != (0u32) {
+            apply_transform(view, n);
+        }
+        core::clear_animate_channels(n);
+        return;
+    }
+    let cls: *u8 = rt::get_class(#str_ptr("NSAnimationContext\0"));
+    { rt::msg_void(cls, rt::sel(#str_ptr("beginGrouping\0"))) };
+    let ctx: *u8 = { rt::msg_id(cls, rt::sel(#str_ptr("currentContext\0"))) };
+    if ctx != (0 as *u8) {
+        { rt::msg_void_f64(ctx, rt::sel(#str_ptr("setDuration:\0")), secs) };
+        // timingFunction is best-effort: CAMediaTimingFunction names only.
+        // Bounce/Spring fall to easeIn/easeOut; MANIFEST records the gap.
+        let tf: *u8 = timing_function_of(core::animate_easing_of(n));
+        if tf != (0 as *u8) {
+            { rt::msg_void_id(ctx, rt::sel(#str_ptr("setTimingFunction:\0")), tf) };
+        }
+    }
+    if (channels & props::ANIM_OPACITY) != (0u32) {
+        let anim: *u8 = { rt::msg_id(view.raw(), rt::sel(#str_ptr("animator\0"))) };
+        if anim != (0 as *u8) {
+            { rt::msg_void_f64(anim, rt::sel(#str_ptr("setAlphaValue:\0")), core::opacity(n)) };
+        }
+    }
+    if (channels & props::ANIM_TRANSFORM) != (0u32) {
+        view.set_wants_layer(true);
+        let l: quartz::Layer = view.layer();
+        set_anchor_keeping_place(l, core::anchor_x(n), core::anchor_y(n));
+        animate_layer_transform(l, transform_of(n), secs, core::animate_easing_of(n));
+    }
+    { rt::msg_void(cls, rt::sel(#str_ptr("endGrouping\0"))) };
+    core::clear_animate_channels(n);
+    return;
+}
+
+// Interpolate a layer's transform to `to` over `secs`, with an EXPLICIT
+// CABasicAnimation.
+//
+// Not the animator proxy, which is what this was written as first: `animator`
+// is `NSAnimatablePropertyContainer`, an AppKit protocol that NSView and
+// NSWindow adopt and CALayer does not. `-[CALayer animator]` is an unrecognized
+// selector, and the message send RAISES — the null-check-and-fall-back the
+// first version had never got a turn. Every transform animation took the
+// process down with `NSInvalidArgumentException` on its first apply.
+//
+// The from-value is explicit too. A view-backed layer has its implicit actions
+// disabled, so an animation with no `fromValue` interpolates from the model
+// value — which the store below has already moved to the end state, i.e. from
+// nowhere. `presentationLayer` is read first so a re-target mid-flight starts
+// from where the layer actually IS rather than from where the last animation
+// was aiming; it is nil for a layer in no tree, and the model value is the
+// right answer there.
+fn animate_layer_transform(l: quartz::Layer, to: quartz::Transform3D, secs: f64,
+                           easing: vocab::Easing) {
+    var from: quartz::Transform3D = l.transform();
+    let pres: *u8 = { rt::msg_id(l.raw(), rt::sel(#str_ptr("presentationLayer\0"))) };
+    if pres != (0 as *u8) {
+        let pl: quartz::Layer = quartz::Layer::from_raw(pres);
+        from = pl.transform();
+    }
+    // Model first: the animation is presentation only, and what the layer
+    // settles on when it is removed is whatever the model holds.
+    l.set_transform(to);
+    let cls: *u8 = rt::get_class(#str_ptr("CABasicAnimation\0"));
+    if cls == (0 as *u8) { return; }
+    let a: *u8 = { rt::msg_id_id(cls, rt::sel(#str_ptr("animationWithKeyPath:\0")),
+                                 bridge::nsstring("transform")) };
+    if a == (0 as *u8) { return; }
+    { rt::msg_void_id(a, rt::sel(#str_ptr("setFromValue:\0")), nsvalue_transform(from)) };
+    { rt::msg_void_id(a, rt::sel(#str_ptr("setToValue:\0")), nsvalue_transform(to)) };
+    { rt::msg_void_f64(a, rt::sel(#str_ptr("setDuration:\0")), secs) };
+    let tf: *u8 = timing_function_of(easing);
+    if tf != (0 as *u8) {
+        { rt::msg_void_id(a, rt::sel(#str_ptr("setTimingFunction:\0")), tf) };
+    }
+    { rt::msg_void_id_id(l.raw(), rt::sel(#str_ptr("addAnimation:forKey:\0")),
+                         a, bridge::nsstring("transform")) };
+    return;
+}
+
+fn nsvalue_transform(m: quartz::Transform3D) -> *u8 {
+    return { msg_id_transform(rt::get_class(#str_ptr("NSValue\0")),
+                              rt::sel(#str_ptr("valueWithCATransform3D:\0")), m) };
+}
+
+fn cancel_view_animations(view: ak::View) {
+    // Remove every CA action on the view's layer. The subsequent snap writes
+    // put presentation on the model values.
+    if view.wants_layer() {
+        let l: quartz::Layer = view.layer();
+        { rt::msg_void(l.raw(), rt::sel(#str_ptr("removeAllAnimations\0"))) };
+    }
+    // Zero-duration grouping settles any NSAnimationContext-driven motion the
+    // way hold_row_animation does for structural jumps.
+    let cls: *u8 = rt::get_class(#str_ptr("NSAnimationContext\0"));
+    { rt::msg_void(cls, rt::sel(#str_ptr("beginGrouping\0"))) };
+    let ctx: *u8 = { rt::msg_id(cls, rt::sel(#str_ptr("currentContext\0"))) };
+    if ctx != (0 as *u8) {
+        { rt::msg_void_f64(ctx, rt::sel(#str_ptr("setDuration:\0")), 0.0f64) };
+    }
+    { rt::msg_void(cls, rt::sel(#str_ptr("endGrouping\0"))) };
+    return;
+}
+
+// Map facet's Easing to a CAMediaTimingFunction name. MAUI's Bounce/Spring are
+// not named CA media functions — they fall to easeIn/easeOut.
+fn timing_function_of(e: vocab::Easing) -> *u8 {
+    let name: str = match e {
+        vocab::Easing::Linear => "linear",
+        vocab::Easing::SinIn => "easeIn",
+        vocab::Easing::SinOut => "easeOut",
+        vocab::Easing::SinInOut => "easeInEaseOut",
+        vocab::Easing::CubicIn => "easeIn",
+        vocab::Easing::CubicOut => "easeOut",
+        vocab::Easing::CubicInOut => "easeInEaseOut",
+        vocab::Easing::BounceIn => "easeIn",
+        vocab::Easing::BounceOut => "easeOut",
+        vocab::Easing::SpringIn => "easeIn",
+        vocab::Easing::SpringOut => "easeOut",
+    };
+    let cls: *u8 = rt::get_class(#str_ptr("CAMediaTimingFunction\0"));
+    if cls == (0 as *u8) { return 0 as *u8; }
+    return { rt::msg_id_id(cls, rt::sel(#str_ptr("functionWithName:\0")),
+                           bridge::nsstring(name)) };
+}
+
+// `+[NSValue valueWithCATransform3D:]` — CATransform3D by value, id back.
+// quartzcore binds the same shape for `Layer::set_transform`.
+#[link_name = "objc_msgSend"]
+extern fn msg_id_transform(recv: *u8, sel: *u8, t: quartz::Transform3D) -> *u8;
