@@ -10,6 +10,7 @@ import "stdlib/string_map" as string_map;
 import "stdlib/string_set" as string_set;
 import "stdlib/status" as status;
 import "objc/synthesis" as synth;
+import "quartzcore/quartzcore" as quartzcore;
 
 // `NSAttributedStringEnumerationOptions` (NS_OPTIONS) — bitfield; combine with `|`.
 const n_s_attributed_string_enumeration_options_n_s_attributed_string_enumeration_reverse: u64 = 2 as u64;
@@ -15824,8 +15825,8 @@ impl View {
         rt::msg_void_i64(this._obj, rt::sel(#str_ptr("setTag:\0")), tag);
     }
 
-    fn layer(this) -> CALayer {
-        return CALayer::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("layer\0"))));
+    fn layer(this) -> quartzcore::Layer {
+        return quartzcore::Layer::from_raw(rt::msg_id(this._obj, rt::sel(#str_ptr("layer\0"))));
     }
 
     fn can_become_focused(this) -> bool {
@@ -17525,12 +17526,12 @@ impl Screen {
 
     fn from_raw(ptr: *u8) -> Screen { return Screen { _obj: ptr }; }
 
-    fn display_link_with_target(this, target: *u8, selector: *u8) -> option::Option[CADisplayLink] {
+    fn display_link_with_target(this, target: *u8, selector: *u8) -> option::Option[quartzcore::DisplayLink] {
         let obj: *u8 = rt::msg_id_id_id(this._obj, rt::sel(#str_ptr("displayLinkWithTarget:selector:\0")), target, selector);
         if obj == { 0 as *u8 } {
-            return option::Option[CADisplayLink]::None;
+            return option::Option[quartzcore::DisplayLink]::None;
         }
-        return option::some(CADisplayLink::from_raw(obj));
+        return option::some(quartzcore::DisplayLink::from_raw(obj));
     }
 
     fn screens() -> vec::Vec[Screen] {
@@ -23367,18 +23368,6 @@ impl MotionEffect {
     fn drop(ref this) {
         rt::release(this._obj);
     }
-}
-
-// `CALayer` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
-struct CALayer {
-    opaque _obj: *u8,
-}
-
-impl CALayer {
-    fn raw(this) -> *u8 { return this._obj; }
-
-    fn from_raw(ptr: *u8) -> CALayer { return CALayer { _obj: ptr }; }
-
 }
 
 // `UIKeyboardLayoutGuide` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
@@ -43343,9 +43332,6 @@ impl HoverEffectLayer {
 
     fn from_raw(ptr: *u8) -> HoverEffectLayer { return HoverEffectLayer { _obj: rt::retain(ptr) }; }
 
-    // Upcast to `CALayer` (superclass). Safe typed reinterpret.
-    fn as_c_a_layer(this) -> CALayer { return CALayer::from_raw(this._obj); }
-
     fn new(container_view: View, style: HoverStyle) -> HoverEffectLayer {
         let cls: *u8 = rt::get_class(#str_ptr("UIHoverEffectLayer\0"));
         let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
@@ -45241,21 +45227,6 @@ impl PopoverBackgroundView {
 
 }
 
-// `CAGradientLayer` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
-struct CAGradientLayer {
-    opaque _obj: *u8,
-}
-
-impl CAGradientLayer {
-    fn raw(this) -> *u8 { return this._obj; }
-
-    fn from_raw(ptr: *u8) -> CAGradientLayer { return CAGradientLayer { _obj: ptr }; }
-
-    // Upcast to `CALayer` (superclass). Safe typed reinterpret.
-    fn as_c_a_layer(this) -> CALayer { return CALayer::from_raw(this._obj); }
-
-}
-
 // `UIProgressView` (Foundation/ObjC). Owned via alloc/init; `drop` releases the +1.
 struct ProgressView {
     _obj: *u8,
@@ -45444,18 +45415,6 @@ impl ScreenMode {
     fn pixel_aspect_ratio(this) -> f64 {
         return rt::msg_f64(this._obj, rt::sel(#str_ptr("pixelAspectRatio\0")));
     }
-
-}
-
-// `CADisplayLink` (Foundation/ObjC). Non-owning handle (factory/singleton); `opaque`, no drop.
-struct CADisplayLink {
-    opaque _obj: *u8,
-}
-
-impl CADisplayLink {
-    fn raw(this) -> *u8 { return this._obj; }
-
-    fn from_raw(ptr: *u8) -> CADisplayLink { return CADisplayLink { _obj: ptr }; }
 
 }
 

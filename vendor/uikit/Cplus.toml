@@ -4,7 +4,7 @@
 # sdk       = "26.5"
 # generator = "cpc-bindgen 0.0.27"
 # headers   = 9
-# reproduce = "cpc-bindgen --framework UIKit --prefix UI --sdk iphoneos --merge --overrides overrides.json"
+# reproduce = "cpc-bindgen --framework UIKit --prefix UI --sdk iphoneos --merge --use CA=quartzcore --overrides overrides.json"
 
 [package]
 name    = "uikit"
@@ -14,6 +14,7 @@ edition = "2026"
 [dependencies]
 stdlib = "*"
 objc   = "*"
+quartzcore = "*"
 
 [link]
 frameworks = ["UIKit"]
