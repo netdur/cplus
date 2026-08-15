@@ -2,7 +2,7 @@
 #
 # framework = "UIKit"
 # sdk       = "26.5"
-# generator = "cpc-bindgen 0.0.26"
+# generator = "cpc-bindgen 0.0.27"
 # headers   = 9
 # reproduce = "cpc-bindgen --framework UIKit --prefix UI --sdk iphoneos --merge --overrides overrides.json"
 
