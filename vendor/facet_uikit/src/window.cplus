@@ -46,6 +46,23 @@ type Chrome = screen::Chrome;
 static PENDING_ROOT: *core::Node = 0 as *core::Node;
 static WINDOW: *u8 = 0 as *u8;
 
+// What to run once the tree is LIVE.
+//
+// The facade cannot fire `on_attach` itself: on macOS the mount happens inside
+// `open_window`, so the call after it is looking at a live tree — here the
+// mount happens at LAUNCH, inside a callback the facade has already returned
+// past. Firing it early is not a subtle ordering nicety; measured in the
+// simulator, `mount::find` answered None and the app came up with its shell and
+// no content at all.
+static LAUNCHED_FN: fn(*u8) = 0 as fn(*u8);
+static LAUNCHED_CTX: *u8 = 0 as *u8;
+
+fn set_launched(f: fn(*u8), ctx: *u8) {
+    LAUNCHED_FN = f;
+    LAUNCHED_CTX = ctx;
+    return;
+}
+
 fn default_should_close(ctx: *u8) -> bool { return true; }
 fn default_will_close(ctx: *u8) { return; }
 
@@ -86,6 +103,13 @@ fn attach_root(win: *u8, root: *core::Node) {
     // The root's own view was inserted nowhere by the mount walk — the facade
     // puts it in the window, which is here.
     if mounted { add_root_views(ui::View::from_raw(content), root); }
+    // THE SAFE AREA IS NOT KNOWN UNTIL UIKIT HAS LAID THE VIEW OUT. Measured in
+    // the simulator: read inside `didFinishLaunchingWithOptions:` the insets are
+    // all zero, and the app drew its first row underneath the status bar and the
+    // clock. `layoutIfNeeded` forces the pass that fills them in, so the first
+    // facet layout below sees the real numbers rather than a screen with no
+    // notch in it.
+    ui::View::from_raw(content).layout_if_needed();
     // A first layout, now: UIKit lays out on the next turn of the loop and the
     // tree would otherwise sit at its mount-time size (zero) for one frame.
     scheduler::tick_now();
@@ -153,8 +177,15 @@ fn imp_did_finish_launching(self_obj: *u8, cmd: *u8, application: *u8, options: 
         { rt::release(vc) };
     }
     WINDOW = w;
-    if PENDING_ROOT != (0 as *core::Node) { attach_root(w, PENDING_ROOT); }
+    // VISIBLE FIRST, THEN MOUNTED. A window that is not key has no laid-out
+    // view, so its safe-area insets read as zero and its bounds are whatever
+    // the frame said — both of which the first facet layout depends on.
     { rt::msg_void(w, rt::sel(#str_ptr("makeKeyAndVisible\0"))) };
+    if PENDING_ROOT != (0 as *core::Node) { attach_root(w, PENDING_ROOT); }
+    // NOW the tree is live, so `on_attach` can find what it was written to
+    // find. This is the seam the facade hangs its lifecycle on.
+    let f: fn(*u8) = LAUNCHED_FN;
+    if f != (0 as fn(*u8)) { f(LAUNCHED_CTX); }
     return 1 as i8;
 }
 

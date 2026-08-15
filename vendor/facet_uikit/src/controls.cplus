@@ -231,12 +231,21 @@ fn bool_i8(b: bool) -> i8 {
 // disabled and highlighted appearances are UIKit's own, which is what an app
 // asking for a system button wants.
 
-fn create_button(n: *core::Node) -> *u8 {
+// A system button.
+//
+// KNOWN BROKEN ON SCREEN — bugs/uikit-button-draws-nothing.md. The object is
+// right and everything readable about it is right; it simply does not draw.
+// Two fixes were tried against a simulator and neither changed anything, so
+// neither is in the tree: clearing a `UIButtonConfiguration` (the iOS 15+ title
+// path), and marking the view for layout after the frame walk.
+fn make_system_button(n: *core::Node) -> *u8 {
     let b: ui::Button = ui::Button::button_with_type(ui::ButtonType::System);
     let v: *u8 = rt::retain(b.as_view().raw());
     input::arm_primary(v, n);
     return v;
 }
+
+fn create_button(n: *core::Node) -> *u8 { return make_system_button(n); }
 
 fn apply_button(v: *u8, n: *core::Node, dirty: u64) {
     let p: *props::ButtonProps = props_of(n, props::K_BUTTON) as *props::ButtonProps;
@@ -306,12 +315,7 @@ fn apply_border(v: *u8, on: bool, c: vocab::Color, width: f64) {
 // UIButton type System is already borderless and already tinted, so this is the
 // same class as `button` with the bezel question removed.
 
-fn create_text_button(n: *core::Node) -> *u8 {
-    let b: ui::Button = ui::Button::button_with_type(ui::ButtonType::System);
-    let v: *u8 = rt::retain(b.as_view().raw());
-    input::arm_primary(v, n);
-    return v;
-}
+fn create_text_button(n: *core::Node) -> *u8 { return make_system_button(n); }
 
 fn apply_text_button(v: *u8, n: *core::Node, dirty: u64) {
     let p: *text_button::TextButtonProps =
@@ -332,12 +336,7 @@ fn apply_text_button(v: *u8, n: *core::Node, dirty: u64) {
 
 // ---- icon_button --------------------------------------------------------------
 
-fn create_icon_button(n: *core::Node) -> *u8 {
-    let b: ui::Button = ui::Button::button_with_type(ui::ButtonType::System);
-    let v: *u8 = rt::retain(b.as_view().raw());
-    input::arm_primary(v, n);
-    return v;
-}
+fn create_icon_button(n: *core::Node) -> *u8 { return make_system_button(n); }
 
 fn apply_icon_button(v: *u8, n: *core::Node, dirty: u64) {
     let p: *props::IconButtonProps =

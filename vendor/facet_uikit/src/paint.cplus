@@ -439,9 +439,26 @@ fn largest_corner(c: vocab::Corners) -> f64 {
 // the same colour flattened to a CGColor on the layer would not. The AppKit
 // backend has to use the layer because NSView has no such property, and it pays
 // for that with a repaint walk on every appearance change.
+// AND `opaque` IS PART OF THE BACKGROUND, not a separate verb.
+//
+// A UIView that claims to be opaque promises to fill every pixel of its
+// bounds. With no background colour it fills them with nothing, and nothing is
+// drawn as BLACK. It costs a plain container nothing — a view with no `drawRect:`
+// draws no pixels either way — so the lie is invisible until a view that DOES
+// draw inherits it.
+//
+// Measured in the simulator: every UILabel came up as a solid black bar with
+// its text on top, and `isOpaque` read YES with `backgroundColor` nil and
+// `layer.backgroundColor` NULL. Nothing had painted the black; the label had
+// promised to and had nothing to paint with.
+//
+// So the flag tracks the colour. Cleared with the background, and left to UIKit
+// when a colour IS set — it derives `opaque` from that colour's alpha, which is
+// the answer facet cannot compute for a dynamic or semantic colour anyway.
 fn apply_background(view: ui::View, c: vocab::Color) {
     if c.is_set() == false {
         { rt::msg_void_id(view.raw(), rt::sel(#str_ptr("setBackgroundColor:\0")), 0 as *u8) };
+        { rt::msg_void_i8(view.raw(), rt::sel(#str_ptr("setOpaque:\0")), 0 as i8) };
         return;
     }
     { rt::msg_void_id(view.raw(), rt::sel(#str_ptr("setBackgroundColor:\0")),

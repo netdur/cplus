@@ -187,6 +187,24 @@ fn run[W: Window](take window: W) {
 fn default_should_close(ctx: *u8) -> bool { return true; }
 fn default_will_close(ctx: *u8) { return; }
 
+// `on_attach` FIRES AT LAUNCH, NOT HERE.
+//
+// The macOS facade calls it straight after `open_window`, and that is correct
+// there because the mount happened inside that call. On iOS `open_window` only
+// RECORDS — the window does not exist until `UIApplicationMain` reaches the
+// launch hook — so the same line would run against a tree nothing has mounted.
+// Measured in the simulator: `mount::find` answered None, and the app came up
+// with its shell and no content at all.
+//
+// So the component's address and a monomorphised trampoline go to the host,
+// which fires them once the tree is live. The address is stable because the
+// frame that owns it never unwinds.
+fn attach_trampoline[C: component::Component + component::Lifecycle](ctx: *u8) {
+    let p: *C = ctx as *C;
+    { (*p).on_attach() };
+    return;
+}
+
 // A component that owns its own lifetime.
 //
 // DOES NOT RETURN, so the `-> C` in the signature is a shape shared with the
@@ -208,7 +226,7 @@ fn run_component[C: component::Component + component::Lifecycle](
     let _w: *u8 = host::open_window(
         #addr_of(root), screen::Chrome::new(title: title, width: width, height: height));
     nav::set_close_fn(close_current);
-    owned.on_attach();
+    host::set_launched(attach_trampoline::[C], #addr_of(owned) as *u8);
     host::run_loop();   // does not return
     // Unreachable in a running app, and `owned` is returned rather than
     // rebuilt so the SHAPE matches the macOS facade exactly — an application
@@ -230,7 +248,7 @@ fn run_screen[S: component::Component + component::Lifecycle + screen::Screen](
     var root: Node = owned.build();
     let _w: *u8 = host::open_window(#addr_of(root), c);
     nav::set_close_fn(close_current);
-    owned.on_attach();
+    host::set_launched(attach_trampoline::[S], #addr_of(owned) as *u8);
     host::run_loop();   // does not return
     return owned;
 }
@@ -484,12 +502,17 @@ impl App {
         if sock != "" { agent_serve_once(sock); }
         let launch: fn(*u8) = this.on_launch_fn;
         launch(this.hook_ctx);
-        if !show_route(initial) {
+        // The route resolves NOW — a bad route name should fail before the
+        // process is handed to UIKit — but the screen is shown at LAUNCH, for
+        // the same reason `on_attach` is fired there.
+        if { (*(#addr_of(this) as *App)).route_factory(initial) } == (0 as fn() -> screen::ScreenBox) {
             nav::clear_hooks();
             app::release_current();
             this.application.host = 0 as *u8;
             return status::Status::InvalidInput;
         }
+        PENDING_ROUTE = text::from_str(initial);
+        host::set_launched(show_pending, 0 as *u8);
         host::run_loop();   // does not return
         return status::Status::Ok;
     }
@@ -503,6 +526,13 @@ impl App {
 
 static CURRENT_APP: *u8 = 0 as *u8;
 static CURRENT_SB: *u8 = 0 as *u8;
+static PENDING_ROUTE: text::Text = #zero::[text::Text]();
+
+// The launch hook for an App: show the initial screen once the window exists.
+fn show_pending(ctx: *u8) {
+    let _ok: bool = show_route(PENDING_ROUTE.view());
+    return;
+}
 
 fn show_route(route: str) -> bool {
     if CURRENT_APP == (0 as *u8) { return false; }
