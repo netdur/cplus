@@ -46,6 +46,35 @@ fn lookup(this, id: str) -> Option[usize]
 fn contains / nearest_exposed_ancestor
 ```
 
+### tiers
+
+```cplus
+fn tier_open() / tier_protected() / tier_private() -> u32
+fn stricter_tier(a: u32, b: u32) -> u32
+fn read_caps_for_tier(t: u32) -> u32
+fn act_caps_for_tier(t: u32) -> u32
+
+// pinned-policy vocabulary, as a backend reads it off a native widget
+fn policy_none() / policy_protected() / policy_private() / policy_exclude() -> u32
+fn policy_key() -> *u8
+fn pack_policy(p: u32) -> *u8
+fn unpack_policy(packed: *u8) -> u32
+```
+
+On `Registry`:
+
+```cplus
+fn set_tier(ref this, node: usize, tier: u32)
+fn declared_tier(this, node: usize) -> u32     // this node's own
+fn tier_of(this, node: usize) -> u32           // strictest along the ancestor chain
+fn is_sensitive(this, node: usize) -> bool
+fn set_policy(ref this, node: usize, policy: u32)
+fn can_read_value(this, grant: Grant, node: usize) -> bool
+fn can_act(this, grant: Grant, node: usize) -> bool
+fn describe(this, grant: Grant) -> Vec[NodeView]
+fn set_content_name(ref this, node: usize, name: str)   // refused at a non-Open tier
+```
+
 ### `NodeView`
 
 `id`, `role`, `name`, `parent`, `enabled`, `actionable` (describe output).
@@ -56,17 +85,40 @@ fn contains / nearest_exposed_ancestor
 
 ```cplus
 enum Channel { InApp, External }
-enum Decision { Allow, Reject }
-struct Request { channel: Channel }
+
+// capability bits
+fn cap_read() / cap_act() -> u32
+fn cap_read_protected() / cap_act_protected() -> u32
+fn cap_read_private() / cap_act_private() -> u32
+fn cap_edit_tree() -> u32
+
+struct Grant { bits: u32 }
+fn has(this, caps: u32) -> bool        // conjunction over the WHOLE mask
+fn is_empty(this) -> bool
+fn with(this, cap: u32) -> Grant
+fn without(this, cap: u32) -> Grant
+
+// convenience grants — none of these reaches Private
+fn nothing() -> Grant
+fn reader() -> Grant                   // read
+fn operator() -> Grant                 // read | act
+fn protected_reader() -> Grant         // + read_protected
+fn protected_operator() -> Grant       // + act_protected
+
+struct Request { channel: Channel, token: str }
 fn request(channel: Channel) -> Request
+fn request_with_token(channel: Channel, token: str) -> Request
 
-struct AuthGate { policy: fn(Request) -> Decision }
+struct AuthGate { policy: fn(Request) -> Grant }
 fn deny_all() -> AuthGate
-fn serve(policy: fn(Request) -> Decision) -> AuthGate
-fn check(this, req: Request) -> Decision
+fn serve(policy: fn(Request) -> Grant) -> AuthGate
+fn check(this, req: Request) -> Grant
 
-fn decision_eq / channel_eq
+fn grant_eq / channel_eq
 ```
+
+`token` is opaque to the core — a JWT, a session id, whatever the transport
+received. Verify it in your own policy and return the Grant its claims describe.
 
 ---
 
@@ -76,19 +128,27 @@ fn decision_eq / channel_eq
 enum Outcome {
     Allowed, NotFound, NotExposed, NotActionable,
     VersionConflict, Stale,
+    NeedsGrant,    // a wider grant opens this — ask the user, then retry
+    Forbidden,     // Private tier, or no edit_tree — stop
 }
 fn outcome_eq / outcome_index
+fn refusal_for_tier(t: u32) -> Outcome
 
-fn authorize_action(reg: Registry, node: usize) -> Outcome
-fn authorize_read(reg: Registry, node: usize) -> Outcome
+fn authorize_read(reg: Registry, grant: Grant, node: usize) -> Outcome
+fn authorize_value_read(reg: Registry, grant: Grant, node: usize) -> Outcome
+fn authorize_action(reg: Registry, grant: Grant, node: usize) -> Outcome
+fn authorize_tree_edit(grant: Grant) -> Outcome
 
 struct TextVersions { /* HashMap[usize, u64] */ }
 fn new_text_versions() -> TextVersions
 fn version_of(this, node: usize) -> u64
 fn bump(ref this, node: usize)
 
-fn authorize_text_write(reg, versions, node, base_version: u64) -> Outcome
+fn authorize_text_write(reg, grant, versions, node, base_version: u64) -> Outcome
 ```
+
+`authorize_read` answers "may this agent know the node exists" — a gated node
+still says yes. `authorize_value_read` is the one door for reading content.
 
 ---
 

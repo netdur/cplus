@@ -45,6 +45,15 @@ struct MenuItem {
     menu: text::Text,
     title: text::Text,
     key: text::Text,
+    // ⇧ / ⌥ ON TOP of the ⌘ a bare `key:` always meant. Two bools rather than
+    // a `vocab::KeyModifiers`, because that enum is a single choice — it can
+    // say Shift OR Cmd, and a menu shortcut is ⌘-based by platform rule, so
+    // what an item needs to say is "⌘ plus these". Named `alt` (vocabulary's
+    // own word for ⌥), and not `option` — that is a module alias here.
+    // Without these, five editor commands shipped with NO shortcut rather
+    // than fight over the bare ⌘ chords already taken.
+    shift: bool,
+    alt: bool,
     action: u32,
     // Answered when the MENU OPENS, from the same ctx the click receives, so an
     // item reflects live state without anything being rebuilt — the platform
@@ -94,11 +103,19 @@ impl MenuItem {
         title_of: fn(*u8) -> text::Text = 0 as fn(*u8) -> text::Text,
         title_of_ctx: *u8 = 0 as *u8,
         is_separator: bool = false,
+        // LAST, not beside `key` where they read best: positional callers
+        // exist (`add_command("File", "Close Window", "w", sc_click)`), and
+        // every handler above needs its ctx slot ADJACENT — there is nowhere
+        // in the middle a new parameter can go.
+        shift: bool = false,
+        alt: bool = false,
     ) -> MenuItem {
         return MenuItem {
             menu: text::from_str(menu),
             title: text::from_str(title),
             key: text::from_str(key),
+            shift: shift,
+            alt: alt,
             action: action,
             is_enabled: is_enabled,
             enabled_ctx: is_enabled_ctx,
@@ -136,8 +153,10 @@ fn app_menu(title: str) -> AppMenu {
 }
 
 impl AppMenu {
-    fn add_item(ref this, menu: str, title: str, key: str, action: u32) {
-        this.items.append(MenuItem::new(menu, title, key: key, action: action));
+    fn add_item(ref this, menu: str, title: str, key: str, action: u32,
+                shift: bool = false, alt: bool = false) {
+        this.items.append(MenuItem::new(menu, title, key: key, shift: shift, alt: alt,
+                                        action: action));
         return;
     }
 
@@ -158,8 +177,13 @@ impl AppMenu {
         is_enabled_ctx: *u8 = 0 as *u8,
         title_of: fn(*u8) -> text::Text = 0 as fn(*u8) -> text::Text,
         title_of_ctx: *u8 = 0 as *u8,
+        // Last, same reason as MenuItem::new: positional callers and the
+        // handler/ctx adjacency rule both forbid the middle.
+        shift: bool = false,
+        alt: bool = false,
     ) {
-        this.items.append(MenuItem::new(menu, title, key: key, action: menu_action_none(),
+        this.items.append(MenuItem::new(menu, title, key: key, shift: shift, alt: alt,
+                                        action: menu_action_none(),
                                         on_click: on_click, ctx: ctx,
                                         is_enabled: is_enabled, is_enabled_ctx: is_enabled_ctx,
                                         title_of: title_of, title_of_ctx: title_of_ctx));
@@ -172,14 +196,26 @@ impl AppMenu {
         return;
     }
 
-    // Drop every item holding key equivalent `k` (ignoring keyless items).
-    fn remove_key(ref this, k: str) {
+    // Drop every item in `menu` holding the CHORD `k`+`shift`+`alt` (keyless
+    // items are ignored).
+    //
+    // The whole chord, and only within one menu. It compared the letter alone
+    // when a MenuItem could only ever be ⌘+letter, and stayed that way when
+    // `shift:`/`alt:` arrived — so a screen asking for ⇧⌘C deleted the app's
+    // ⌘C, and a Go item deleted a File one. Nothing said a word: the merge
+    // succeeded, the menu was simply four commands shorter than it was
+    // written. Two items may share a letter now; they may not share a chord in
+    // the same menu, which is the rule AppKit itself enforces.
+    fn remove_chord(ref this, menu: str, k: str, shift: bool, alt: bool) {
         if #str_len(k) == (0 as usize) { return; }
         var i: usize = 0 as usize;
         while i < this.items.count() {
             var hit: bool = false;
             match this.items.at_ptr(i) {
-                option::Option[*MenuItem]::Some(p) => { hit = { (*p).key.equals(k) }; }
+                option::Option[*MenuItem]::Some(p) => {
+                    hit = { (*p).key.equals(k) } && { (*p).shift } == shift
+                        && { (*p).alt } == alt && { (*p).menu.equals(menu) };
+                }
                 option::Option[*MenuItem]::None => { }
             }
             if hit {
@@ -197,10 +233,10 @@ impl AppMenu {
     // appended to their groups. Override would force every screen to redeclare
     // Edit's whole undo/cut/copy/paste/select-all/find family.
     //
-    // On a key-equivalent collision the SCREEN wins — two items cannot share a
-    // key equivalent, and the mounted screen is the more specific context. Key
-    // uniqueness is therefore required only WITHIN one built menu: `New Project
-    // ⌘N` on the launcher and `New File ⌘N` in the workspace never coexist.
+    // On a CHORD collision the SCREEN wins — two items in one menu cannot share
+    // a key equivalent, and the mounted screen is the more specific context.
+    // Uniqueness is required only WITHIN one built menu: `New Project ⌘N` on
+    // the launcher and `New File ⌘N` in the workspace never coexist.
     fn extend(ref this, take items: vec::Vec[MenuItem]) {
         var src: vec::Vec[MenuItem] = items;
         loop {
@@ -208,7 +244,8 @@ impl AppMenu {
             match src.remove(at: 0 as usize) {
                 option::Option[MenuItem]::Some(it) => {
                     let k: text::Text = it.key.clone();
-                    this.remove_key(k.view());
+                    let m: text::Text = it.menu.clone();
+                    this.remove_chord(m.view(), k.view(), it.shift, it.alt);
                     this.items.append(it);
                 }
                 option::Option[MenuItem]::None => { break; }
@@ -509,6 +546,108 @@ fn menu_extend_is_additive_and_screen_wins_on_key() {
     assert sep;                 // the rule came through
     assert close_tab;           // the screen's item is present
     assert !close_window;       // and it EVICTED the base item sharing ⌘W
+    return;
+}
+
+#[test]
+fn menu_extend_evicts_by_chord_and_only_inside_one_menu() {
+    // The item-eater. `extend` dropped every item holding the incoming
+    // LETTER, which was right while ⌘+letter was all a MenuItem could be and
+    // wrong the moment `shift:`/`alt:` made ⇧⌘C and ⌘C two different chords.
+    // A code editor asking for the obvious five (⇧⌘O, ⇧⌘C, ⇧⌥⌘F …) silently
+    // deleted four working commands from the live menu: it compiled, the
+    // suites stayed green, and the only way to see it was to read the NSMenu
+    // back item by item.
+    var base: AppMenu = empty_app_menu();
+    base.add_item("Edit", "Copy", "c", menu_action_copy());
+    base.add_command("File", "Find", "f", sc_click);
+    base.add_command("File", "Open Project", "o", sc_click);
+
+    var mine: vec::Vec[MenuItem] = vec::new::[MenuItem]();
+    // ⇧⌘C — a DIFFERENT chord from the base's ⌘C.
+    mine.append(MenuItem::new("Go", "Show Callers", key: "c", on_click: sc_click,
+                              shift: true));
+    // ⌘F, but in another menu — same letter, same modifiers, different group.
+    mine.append(MenuItem::new("Go", "Go Forward", key: "f", on_click: sc_click));
+    // ⌥⌘O — the base's Open Project is plain ⌘O and must survive.
+    mine.append(MenuItem::new("Go", "Go to Symbol", key: "o", on_click: sc_click,
+                              alt: true));
+
+    base.extend(mine);
+
+    var copy: bool = false;
+    var find: bool = false;
+    var open_project: bool = false;
+    var callers: bool = false;
+    var forward: bool = false;
+    var symbol: bool = false;
+    var i: usize = 0 as usize;
+    while i < base.items.count() {
+        match base.items.at_ptr(i) {
+            option::Option[*MenuItem]::Some(p) => {
+                if { (*p).title.equals("Copy") } { copy = true; }
+                if { (*p).title.equals("Find") } { find = true; }
+                if { (*p).title.equals("Open Project") } { open_project = true; }
+                if { (*p).title.equals("Show Callers") } { callers = true; }
+                if { (*p).title.equals("Go Forward") } { forward = true; }
+                if { (*p).title.equals("Go to Symbol") } { symbol = true; }
+            }
+            option::Option[*MenuItem]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    // Nothing was eaten: three different chords, and one different menu.
+    assert copy;
+    assert find;
+    assert open_project;
+    assert callers;
+    assert forward;
+    assert symbol;
+    assert base.items.count() == (6 as usize);
+    return;
+}
+
+#[test]
+fn menu_extend_still_evicts_the_same_chord_in_the_same_menu() {
+    // The other half of the rule: one menu cannot hold two items with the same
+    // key equivalent, and the mounted screen is the more specific context.
+    var base: AppMenu = empty_app_menu();
+    base.add_command("File", "Find", "f", sc_click);
+    base.add_command("File", "Find Next", key: "g", on_click: sc_click);
+
+    var mine: vec::Vec[MenuItem] = vec::new::[MenuItem]();
+    mine.append(MenuItem::new("File", "Find in Project", key: "f",
+                              on_click: sc_click));
+    // ⇧⌘G asked for by spelling the key "G" is NOT how AppKit reads a capital
+    // — it is `key: "g", shift: true`, and that is a different chord from the
+    // base's ⌘G, which therefore stays.
+    mine.append(MenuItem::new("File", "Find Previous", key: "g",
+                              on_click: sc_click, shift: true));
+
+    base.extend(mine);
+
+    var find: bool = false;
+    var find_next: bool = false;
+    var in_project: bool = false;
+    var previous: bool = false;
+    var i: usize = 0 as usize;
+    while i < base.items.count() {
+        match base.items.at_ptr(i) {
+            option::Option[*MenuItem]::Some(p) => {
+                if { (*p).title.equals("Find") } { find = true; }
+                if { (*p).title.equals("Find Next") } { find_next = true; }
+                if { (*p).title.equals("Find in Project") } { in_project = true; }
+                if { (*p).title.equals("Find Previous") } { previous = true; }
+            }
+            option::Option[*MenuItem]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    assert !find;               // ⌘F was taken by the screen's own ⌘F
+    assert in_project;
+    assert find_next;           // ⌘G survives ⇧⌘G
+    assert previous;
+    assert base.items.count() == (3 as usize);
     return;
 }
 

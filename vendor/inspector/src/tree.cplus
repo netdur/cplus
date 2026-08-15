@@ -192,6 +192,12 @@ fn row_of(
         is_visible: core::is_visible(n),
         dirty: core::dirty_of(n),
         child_count: core::child_count_of(n),
+        agent_tier: match core::agent(n) {
+            vocab::Agent::Open => 0 as u32,
+            vocab::Agent::Protected => 1 as u32,
+            vocab::Agent::Private => 2 as u32,
+            vocab::Agent::Hidden => 3 as u32,
+        },
         is_inspector: mine,
     };
 }

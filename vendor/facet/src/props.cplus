@@ -22,6 +22,12 @@ fn no_bind(index: usize, row: *flex::Node, ctx: *u8) { return; }
 // Zero means "no answer" — the measure pass builds the row instead,
 // which is what every list did before this could be stated.
 fn no_row_height_of(row: usize, ctx: *u8) -> f64 { return 0.0f64; }
+// Every row the same SHAPE, which is what one reuse pool means and
+// what a list without kinds has always promised.
+fn no_row_kind(row: usize, ctx: *u8) -> usize { return 0 as usize; }
+// Every row of a chooser pickable, which is what a chooser that says
+// nothing about its items means.
+fn every_item_enabled(item: usize, ctx: *u8) -> bool { return true; }
 fn no_group_size(group: usize, ctx: *u8) -> usize { return 0 as usize; }
 fn no_group_header(group: usize, ctx: *u8) -> flex::Node { return flex::Node::new(); }
 
@@ -63,6 +69,16 @@ struct CommonProps {
     accessibility_label: text::Text,
     accessibility_hint: text::Text,
     heading_level: i64,
+    // WHAT AN AGENT MAY DO WITH THIS NODE'S CONTENT (vocab::Agent). On the
+    // shared band and not on text_field, because the thing a developer marks
+    // is usually the BOX: one declaration covers the card field, the CVC and
+    // the label that quotes the last four digits. It inherits downward and the
+    // strictest wins, so a Private field inside a Protected box stays Private.
+    //
+    // Next to the accessibility rows on purpose — they are the same family.
+    // Both answer "what is this node, to someone not looking at it", and the
+    // agent surface reads both.
+    agent: vocab::Agent,
     // The hover text. On the shared band because any node can want one, which
     // is exactly why the ledger models it as an attached property.
     tooltip: text::Text,
@@ -97,6 +113,7 @@ impl CommonProps {
             accessibility_label: text::new(),
             accessibility_hint: text::new(),
             heading_level: 0 as i64,
+            agent: vocab::Agent::Open,
             tooltip: text::new(),
             is_enabled: true,
             is_visible: true,
@@ -177,6 +194,12 @@ const C_SEMANTICS: u64 = 70368744177664u64;
 const C_TOOLTIP: u64 = 35184372088832u64;
 // The band keeps growing downward from bit 47; this is 2^44.
 const C_CORNER_RADIUS: u64 = 17592186044416u64;
+// 2^43. Its own bit rather than riding C_SEMANTICS: the accessibility rows are
+// re-read together and cost three ObjC sets, while this one pins an integer and
+// is the only bit whose value a security boundary depends on. A backend that
+// re-read it as a side effect of a label change would be a backend where the
+// pin's timing is decided somewhere else.
+const C_AGENT: u64 = 8796093022208u64;
 
 // ---- state versus commands ---------------------------------------------------
 // C_FOCUS, C_BLUR and C_FLUSH are VERBS: the backend performs them and clears
@@ -619,6 +642,8 @@ struct CollectionProps {
     bind: fn(usize, *flex::Node, *u8),    // facet — writes row `i` INTO an existing row, for recycling
     row_height_of: fn(usize, *u8) -> f64,    // facet — the height of row `i`, answered WITHOUT building it
     opaque row_height_of_ctx: *u8,
+    row_kind: fn(usize, *u8) -> usize,    // facet — which SHAPE row `i` has, so cells pool per shape
+    opaque row_kind_ctx: *u8,
     group_count: i64,    // facet — how many groups, when is_grouped
     group_size: fn(usize, *u8) -> usize,    // facet — how many rows group `g` holds
     opaque group_size_ctx: *u8,
@@ -627,6 +652,10 @@ struct CollectionProps {
     selected_index: i64,    // facet — which row is selected, or -1 for none
     reorder_from: i64,    // facet — the row a completed reorder moved, or -1
     reorder_to: i64,    // facet — where it moved to, or -1
+    invalidate_lo: i64,    // facet — first data row of the pending invalidation, or -1
+    invalidate_hi: i64,    // facet — last data row of the pending invalidation, or -1
+    splice_at: i64,    // facet — first data row of the pending insert/remove, or -1
+    splice_count: i64,    // facet — rows inserted (positive) or removed (negative) at `splice_at`
 }
 
 impl CollectionProps {
@@ -643,6 +672,8 @@ impl CollectionProps {
             bind: no_bind,
             row_height_of: no_row_height_of,
             row_height_of_ctx: 0 as *u8,
+            row_kind: no_row_kind,
+            row_kind_ctx: 0 as *u8,
             group_count: 0 as i64,
             group_size: no_group_size,
             group_size_ctx: 0 as *u8,
@@ -651,6 +682,10 @@ impl CollectionProps {
             selected_index: -1 as i64,
             reorder_from: -1 as i64,
             reorder_to: -1 as i64,
+            invalidate_lo: -1 as i64,
+            invalidate_hi: -1 as i64,
+            splice_at: -1 as i64,
+            splice_count: 0 as i64,
         };
     }
 }
@@ -728,6 +763,9 @@ struct TextAreaProps {
     vertical_align: vocab::TextAlign,    // Editor.VerticalTextAlignment
     on_submit: fn(*u8, *u8),    // Editor.Completed
     opaque on_submit_ctx: *u8,
+    style_runs: vocab::StyleRuns,    // facet — how to draw RANGES of the text that is already there
+    on_selection_changed: fn(*u8, *u8),    // facet — the caret moved or the selection changed
+    opaque on_selection_changed_ctx: *u8,
 }
 
 impl TextAreaProps {
@@ -735,10 +773,13 @@ impl TextAreaProps {
         return TextAreaProps {
             input_view: InputViewProps::new(),
             auto_size: vocab::AutoSize::Disabled,
-            text_align: vocab::TextAlign::Center,
+            text_align: vocab::TextAlign::Start,
             vertical_align: vocab::TextAlign::Center,
             on_submit: no_handler,
             on_submit_ctx: 0 as *u8,
+            style_runs: vocab::StyleRuns::new(),
+            on_selection_changed: no_handler,
+            on_selection_changed_ctx: 0 as *u8,
         };
     }
 }
@@ -769,7 +810,7 @@ impl TextFieldProps {
         return TextFieldProps {
             input_view: InputViewProps::new(),
             clear_button: vocab::ClearButton::Never,
-            text_align: vocab::TextAlign::Center,
+            text_align: vocab::TextAlign::Start,
             is_secure: false,
             return_key: vocab::ReturnKey::Default,
             vertical_align: vocab::TextAlign::Center,
@@ -1031,7 +1072,7 @@ impl LabelProps {
             font_family: text::new(),
             font_size: 0.0f64,
             formatted_text: vocab::Spans::new(),
-            text_align: vocab::TextAlign::Center,
+            text_align: vocab::TextAlign::Start,
             line_break: vocab::LineBreak::TailTruncation,
             line_height: 0.0f64,
             max_lines: 0 as i64,
@@ -1087,6 +1128,8 @@ struct ListProps {
     bind: fn(usize, *flex::Node, *u8),    // facet — writes row `i` INTO an existing row, for recycling
     row_height_of: fn(usize, *u8) -> f64,    // facet — the height of row `i`, answered WITHOUT building it
     opaque row_height_of_ctx: *u8,
+    row_kind: fn(usize, *u8) -> usize,    // facet — which SHAPE row `i` has, so cells pool per shape
+    opaque row_kind_ctx: *u8,
     group_count: i64,    // facet — how many groups, when is_grouped
     group_size: fn(usize, *u8) -> usize,    // facet — how many rows group `g` holds
     opaque group_size_ctx: *u8,
@@ -1095,6 +1138,10 @@ struct ListProps {
     selected_index: i64,    // facet — which row is selected, or -1 for none
     reorder_from: i64,    // facet — the row a completed reorder moved, or -1
     reorder_to: i64,    // facet — where it moved to, or -1
+    invalidate_lo: i64,    // facet — first data row of the pending invalidation, or -1
+    invalidate_hi: i64,    // facet — last data row of the pending invalidation, or -1
+    splice_at: i64,    // facet — first data row of the pending insert/remove, or -1
+    splice_count: i64,    // facet — rows inserted (positive) or removed (negative) at `splice_at`
 }
 
 impl ListProps {
@@ -1131,6 +1178,8 @@ impl ListProps {
             bind: no_bind,
             row_height_of: no_row_height_of,
             row_height_of_ctx: 0 as *u8,
+            row_kind: no_row_kind,
+            row_kind_ctx: 0 as *u8,
             group_count: 0 as i64,
             group_size: no_group_size,
             group_size_ctx: 0 as *u8,
@@ -1139,6 +1188,10 @@ impl ListProps {
             selected_index: -1 as i64,
             reorder_from: -1 as i64,
             reorder_to: -1 as i64,
+            invalidate_lo: -1 as i64,
+            invalidate_hi: -1 as i64,
+            splice_at: -1 as i64,
+            splice_count: 0 as i64,
         };
     }
 }
@@ -1266,6 +1319,9 @@ struct PopupProps {
     opaque on_opened_ctx: *u8,
     on_selected_index_changed: fn(*u8, *u8),    // Picker.SelectedIndexChanged
     opaque on_selected_index_changed_ctx: *u8,
+    label: text::Text,    // facet — what the BUTTON reads, whatever is selected
+    item_enabled: fn(usize, *u8) -> bool,    // facet — may item `i` be picked? a header answers false
+    opaque item_enabled_ctx: *u8,
 }
 
 impl PopupProps {
@@ -1277,7 +1333,7 @@ impl PopupProps {
             font_scales: true,
             font_family: text::new(),
             font_size: 0.0f64,
-            text_align: vocab::TextAlign::Center,
+            text_align: vocab::TextAlign::Start,
             is_open: false,
             selected_index: 0 as i64,
             text_color: vocab::Color::clear(),
@@ -1291,6 +1347,9 @@ impl PopupProps {
             on_opened_ctx: 0 as *u8,
             on_selected_index_changed: no_handler,
             on_selected_index_changed_ctx: 0 as *u8,
+            label: text::new(),
+            item_enabled: every_item_enabled,
+            item_enabled_ctx: 0 as *u8,
         };
     }
 }
@@ -1467,7 +1526,7 @@ impl SearchFieldProps {
         return SearchFieldProps {
             input_view: InputViewProps::new(),
             cancel_button_color: vocab::Color::clear(),
-            text_align: vocab::TextAlign::Center,
+            text_align: vocab::TextAlign::Start,
             return_key: vocab::ReturnKey::Default,
             search_icon_color: vocab::Color::clear(),
             vertical_align: vocab::TextAlign::Center,

@@ -1176,6 +1176,39 @@ fn accessibility_label(n: *Node) -> str {
     return { (*d).common.accessibility_label.view() };
 }
 
+// ---- what an agent may do with this node's content ---------------------------
+//
+// The other half of "what this node is, for anyone not looking at it", and the
+// half with a security boundary on it. A node's EXISTENCE and its CONTENT are
+// separate grants: `Protected` and `Private` both stay in the agent's tree,
+// named, navigable and reported as present — and hand over no value without a
+// grant carrying the matching capability. `Hidden` takes the subtree out of the
+// agent's world altogether.
+//
+// Declared here and INHERITED downward by agent_core, strictest-wins, so the
+// thing a developer marks is usually the box rather than each field. The leak
+// is never the field you remembered; it is the "Card ending 4242" label beside
+// it, which is a plain label nobody thinks to mark.
+//
+// This writes a FACT on the node. The pin that carries it to the platform
+// happens at mount, through the same install seam every other agent hookup
+// uses — see `runtime::AgentHooks`. An app that never serves an agent pays a
+// stored enum and nothing else.
+fn set_agent(n: *Node, v: vocab::Agent) {
+    let d: *Data = ensure_data(n);
+    if d == (0 as *Data) { return; }
+    { (*d).common.agent = v };
+    touch(n, props::C_AGENT);
+    return;
+}
+
+fn agent(n: *Node) -> vocab::Agent {
+    if n == (0 as *Node) { return vocab::Agent::Open; }
+    let d: *Data = { (*n).data() };
+    if d == (0 as *Data) { return vocab::Agent::Open; }
+    return { (*d).common.agent };
+}
+
 fn set_accessibility_hint(n: *Node, v: str) {
     let d: *Data = ensure_data(n);
     if d == (0 as *Data) { return; }
@@ -1717,6 +1750,8 @@ impl flex::Node {
     fn accessibility_label(this) -> str { return accessibility_label(#addr_of(this)); }
     fn set_accessibility_hint(ref this, v: str) { set_accessibility_hint(#addr_of(this), v); return; }
     fn accessibility_hint(this) -> str { return accessibility_hint(#addr_of(this)); }
+    fn set_agent(ref this, v: vocab::Agent) { set_agent(#addr_of(this), v); return; }
+    fn agent(this) -> vocab::Agent { return agent(#addr_of(this)); }
     fn set_heading_level(ref this, v: i64) { set_heading_level(#addr_of(this), v); return; }
     fn heading_level(this) -> i64 { return heading_level(#addr_of(this)); }
     fn set_tooltip(ref this, v: str) { set_tooltip(#addr_of(this), v); return; }

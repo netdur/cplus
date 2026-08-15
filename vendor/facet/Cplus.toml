@@ -15,6 +15,17 @@ stdlib      = "*"
 flex_layout = "*"
 events      = "*"
 
+# The agent stack, for `agent.cplus` alone. Listed for the same reason
+# facet_appkit is: `test_main.cplus` imports `./agent`, so facet's own suite
+# COMPILES it. Before this, nothing in the repo did — the module's translation
+# from `vocab::Agent` to agent_core's policy was live code that no build ever
+# type-checked, and a wrong arm there is a card number readable by every agent
+# that connects. An app that never imports facet/agent still links none of it.
+agent_core  = "*"
+agent_mcp   = "*"
+agent_inapp = "*"
+json        = "*"
+
 # The per-platform backends the runtime facades import. `runtime.cplus` is the
 # neutral base; the resolver's platform override picks `runtime_macos.cplus`
 # beside it on a macOS target, and that file — the only place in facet that
@@ -27,6 +38,7 @@ events      = "*"
 
 [macos.dependencies]
 facet_appkit = "*"
+agent_appkit = "*"
 # facet_appkit's own transitive deps, listed here because the resolver
 # validates every import in the build against ONE flat set taken from the
 # consuming manifest — it does not read a dependency's own. Mechanical, not

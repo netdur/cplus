@@ -53,6 +53,7 @@ import "stdlib/status" as status;
 import "flex_layout/flex_layout" as flex;
 import "json/json" as json;
 import "agent_mcp/agent_mcp" as bridge;
+import "agent_core/auth" as auth;
 import "facet/vocabulary" as vocab;
 import "./inspector" as insp;
 import "./tree" as tree;
@@ -608,10 +609,20 @@ fn do_describe(id: f64) -> json::Value {
     return do_answering(id, new_call(OP_DESCRIBE));
 }
 
-fn do_inspect(id: f64, params: json::Value) -> json::Value {
+fn do_inspect(id: f64, params: json::Value, grant: auth::Grant) -> json::Value {
     if !params.has("node") { return missing_param(id, "inspector.inspect", "node"); }
     var c: Call = new_call(OP_INSPECT);
     c.node = as_usize(obj_get(params, "node"), 0 as usize);
+    // `inspect` answers a node WHOLE, control props included, so it is a
+    // content read whenever the node carries a tier — there is no per-property
+    // request to narrow. Structure alone is still available through `describe`,
+    // which is why refusing here does not blind a developer's tooling.
+    let tier: u32 = effective_tier(c.node);
+    if tier != (0 as u32) {
+        if !grant.has(content_caps(tier)) {
+            return refused(id, "inspector: this node's contents are behind a tier this grant does not carry");
+        }
+    }
     return do_answering(id, c);
 }
 
@@ -741,19 +752,108 @@ fn do_journal(id: f64) -> json::Value {
     return do_answering(id, new_call(OP_JOURNAL));
 }
 
+// ---- what each verb costs -------------------------------------------------------
+//
+// The inspector's verbs are not one kind of thing, and treating them as one is
+// what made this namespace a way around the agent surface. They split three
+// ways:
+//
+//   reading STRUCTURE      describe, vocabulary, journal — `read`.
+//   reading CONTENT        inspect, when the property asked for is the node's
+//                          own text or value. Costs whatever the node's TIER
+//                          costs, exactly as `get_text` does on the agent
+//                          surface. `inspector.inspect(node, "text")` on a card
+//                          field was a complete bypass: same value, same
+//                          process, different socket name.
+//   REWRITING THE UI       set, reset, insert, remove, reparent, undo — and
+//                          `edit_tree`, which nothing else implies. An agent
+//                          that may click every button and read every field
+//                          still may not rebuild the interface.
+//
+// `highlight` sits with the reads: it draws a developer overlay, changes no
+// application state, and reveals nothing the tree did not already say.
+
+// The properties whose value IS the user's data. Everything else the inspector
+// answers (geometry, style, dirty bits, kind) describes the UI rather than what
+// is in it, and is a structure read.
+fn is_content_property(prop: str) -> bool {
+    if prop == "text" { return true; }
+    if prop == "title" { return true; }
+    if prop == "value" { return true; }
+    if prop == "placeholder" { return true; }
+    return false;
+}
+
+// The effective tier of a snapshot row: the strictest along its parent chain.
+// Same rule agent_core applies, over the only parent chain this module has.
+// Bounded by the snapshot length so a malformed listing cannot loop.
+fn effective_tier(index: usize) -> u32 {
+    var worst: u32 = 0 as u32;
+    var cur: option::Option[usize] = option::Option[usize]::Some(index);
+    var steps: usize = 0 as usize;
+    loop {
+        if steps > SNAPSHOT.count() { return worst; }
+        steps = steps +% (1 as usize);
+        match cur {
+            option::Option[usize]::Some(i) => {
+                match SNAPSHOT.at_ptr(i) {
+                    option::Option[*insp::Node]::Some(p) => {
+                        let t: u32 = { (*p).agent_tier };
+                        if t > worst { worst = t; }
+                        cur = { (*p).parent };
+                    }
+                    option::Option[*insp::Node]::None => { return worst; }
+                }
+            }
+            option::Option[usize]::None => { return worst; }
+        }
+    }
+}
+
+// The capabilities a content read costs at a tier. `Hidden` (3) is not a tier
+// but an exclusion, and there is no grant for it — a node the application took
+// out of the agent's world does not answer its contents to one.
+fn content_caps(tier: u32) -> u32 {
+    if tier == (1 as u32) { return auth::cap_read() | auth::cap_read_protected(); }
+    if tier == (2 as u32) { return auth::cap_read() | auth::cap_read_private(); }
+    if tier == (3 as u32) { return auth::cap_read() | auth::cap_read_private() | auth::cap_edit_tree(); }
+    return auth::cap_read();
+}
+
+fn refused(id: f64, what: str) -> json::Value {
+    let msg: text::Text = "${what}";
+    return err_response(id, - 32002 as f64, msg.view());
+}
+
 // ---- the handler ---------------------------------------------------------------
 
 // Registered into `agent_mcp` by `arm`. The bridge has already run the consent
 // gate and matched the prefix; this only has to say which verb.
-fn handle(method: str, params: json::Value, id: f64) -> json::Value {
+fn handle(method: str, params: json::Value, id: f64, grant: auth::Grant) -> json::Value {
     // Disarmed mid-session, or armed by something that then dropped its
     // backend. Refused rather than run against a zeroed vtable, whose fn
     // pointers are null.
     if !ARMED {
         return err_response(id, - 32601 as f64, "inspector namespace is not armed");
     }
+    // Reading the tree at all.
+    if !grant.has(auth::cap_read()) {
+        return refused(id, "inspector: this grant carries no read capability");
+    }
+    // Rewriting it. Checked once, here, rather than in each `do_` body: a verb
+    // added later gets the rule by being in this list, and a verb that forgot
+    // to ask would be a hole with no symptom.
+    let mutates: bool = method == "inspector.set" || method == "inspector.reset"
+        || method == "inspector.insert" || method == "inspector.remove"
+        || method == "inspector.reparent" || method == "inspector.undo";
+    if mutates {
+        if !grant.has(auth::cap_edit_tree()) {
+            return refused(id, "inspector: rewriting the tree needs the edit_tree capability");
+        }
+    }
+
     if method == "inspector.describe" { return do_describe(id); }
-    if method == "inspector.inspect" { return do_inspect(id, params); }
+    if method == "inspector.inspect" { return do_inspect(id, params, grant); }
     if method == "inspector.set" { return do_set(id, params); }
     if method == "inspector.reset" { return do_reset(id, params); }
     if method == "inspector.insert" { return do_insert(id, params); }

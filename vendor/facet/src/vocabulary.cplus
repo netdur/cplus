@@ -7,6 +7,14 @@ import "stdlib/vec" as vec;
 import "stdlib/option" as option;
 import "stdlib/status" as status;
 
+// hand (authored: no manifest source)
+enum Agent {
+    Open,
+    Protected,
+    Private,
+    Hidden,
+}
+
 // AppTheme (authored: no manifest source)
 enum Appearance {
     Unspecified,
@@ -510,6 +518,69 @@ impl Spans {
         };
     }
     fn is_empty(this) -> bool { return this._runs.count() == (0 as usize); }
+}
+
+// ---- styling text that is ALREADY THERE --------------------------------------
+// `Spans` is a formatted STRING: each run carries its own text, and writing one
+// replaces the surface's content. That is right for a label and useless for an
+// editor, where the text is the user's — re-setting it would move the caret,
+// break the undo stack, and re-run every observer on every keystroke.
+//
+// A StyleRun names a RANGE of the text already in the control and says how to
+// draw it. That is the shape syntax highlighting has: lex the buffer, hand back
+// the runs, keep the buffer. Offsets are in BYTES of the control's own text,
+// counted the way `str` counts — a backend that indexes in UTF-16 (AppKit) or
+// code points converts on the way in, once, where it knows the encoding.
+//
+// Nothing here carries text, so a run cannot disagree with the buffer: the
+// worst a stale run can do is style the wrong columns until the next write.
+struct StyleRun {
+    start: usize,
+    length: usize,
+    color: Color,
+    background_color: Color,
+    font_weight: FontWeight,
+    is_italic: bool,
+    decoration: TextDecoration,
+}
+
+impl StyleRun {
+    fn of(start: usize,
+          length: usize,
+          color: Color = Color::clear(),
+          background_color: Color = Color::clear(),
+          font_weight: FontWeight = FontWeight::Default,
+          italic: bool = false,
+          decoration: TextDecoration = TextDecoration::None) -> StyleRun {
+        return StyleRun {
+            start: start, length: length,
+            color: color, background_color: background_color,
+            font_weight: font_weight, is_italic: italic, decoration: decoration,
+        };
+    }
+    fn end(this) -> usize { return this.start +% this.length; }
+    fn is_empty(this) -> bool { return this.length == (0 as usize); }
+}
+
+// The runs over one text surface. Owned, like `Spans`, and read one run at a
+// time for the same reason: `-> ref T` does not parse.
+struct StyleRuns { _runs: vec::Vec[StyleRun] }
+impl StyleRuns {
+    fn new() -> StyleRuns { return StyleRuns { _runs: vec::new::[StyleRun]() }; }
+    fn add(ref this, take run: StyleRun) -> status::Status { return this._runs.append(run); }
+    // The common case, without naming the record: one coloured range.
+    fn add_color(ref this, start: usize, length: usize, color: Color) -> status::Status {
+        return this._runs.append(StyleRun::of(start, length, color: color));
+    }
+    fn count(this) -> usize { return this._runs.count(); }
+    fn at(this, index: usize) -> *StyleRun {
+        return match this._runs.at_ptr(index) {
+            option::Option[*StyleRun]::Some(p) => p,
+            option::Option[*StyleRun]::None => 0 as *StyleRun,
+        };
+    }
+    fn is_empty(this) -> bool { return this._runs.count() == (0 as usize); }
+    fn clear(ref this) { this._runs.remove_all(); return; }
 }
 
 // A stroke dash pattern: on/off run lengths. Fixed at eight, which is more

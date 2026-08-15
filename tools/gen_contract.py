@@ -219,8 +219,13 @@ def cplus_type(t):
 # `TextAlign` is deliberately NOT here. One enum serves two properties with
 # different the ledger defaults — HorizontalTextAlignment is Start, VerticalText
 # Alignment is Center — so a per-TYPE zero cannot be right for both. The zero
-# stays `Center` (right for the vertical half) and the backend treats it as
-# "not asked for" on the horizontal half, which is what it means there.
+# stays `Center` (right for the vertical half); the horizontal half gets the
+# ledger's Start through ENUM_MEMBER_DEFAULT below. (This note used to claim
+# the backend reads Center as "not asked for" on the horizontal half. No
+# backend ever did, and none could — Center-as-unset would make real
+# centering unsayable — so every label was born Center: invisible while
+# content-sized, and the moment one grew its text floated to the middle and
+# read as a layout bug in whatever contained it.)
 ENUM_ZERO = {
     "TextFormat": "Text",         # Label.TextType
     "ImageFit": "AspectFit",      # Image.Aspect
@@ -259,10 +264,27 @@ BOOL_TRUE = {
 BOOL_TRUE_MEMBERS = {"FontAutoScalingEnabled"}
 
 
+# The per-MEMBER half ENUM_ZERO cannot express: one enum, two properties, two
+# documented defaults. Keyed by the ledger member name, so every control that
+# adopts the member (Label, Entry, Editor, Picker, SearchBar) moves together
+# and `vertical_align` (VerticalTextAlignment) keeps the zero.
+ENUM_MEMBER_DEFAULT = {
+    "HorizontalTextAlignment": "Start",
+}
+
+
 def default_of(t, src="", member=""):
     """The zero for a field, which for a bool is not always `false`."""
     if t == "bool" and ((src, member) in BOOL_TRUE or member in BOOL_TRUE_MEMBERS):
         return "true"
+    if t in ENUM_BY_FACET:
+        want = ENUM_MEMBER_DEFAULT.get(member)
+        if want is not None:
+            if want not in ENUM_BY_FACET[t][0]:
+                raise SystemExit(
+                    f"ENUM_MEMBER_DEFAULT names {t}::{want} for {member}, "
+                    f"which is not a member: {ENUM_BY_FACET[t][0]}")
+            return "vocab::" + t + "::" + want
     return zero_of(t)
 
 
@@ -294,6 +316,30 @@ HAND_ENUMS = {
     "Keyboard": ["Default", "Plain", "Chat", "Email", "Numeric", "Telephone", "Url", "Text"],
     "SafeArea": ["Default", "None", "Container", "Content", "All"],
     "ContentLayout": ["ImageLeft", "ImageTop", "ImageRight", "ImageBottom"],
+    # WHAT AN AGENT MAY DO WITH THIS NODE'S CONTENT. Not in either manifest —
+    # the ledger predates agents — and authored here because the agent surface
+    # (agent_core::identity) is the authority for what the values MEAN.
+    #
+    #   Open       the default. Whatever exposure already allowed.
+    #   Protected  visible and named, and its VALUE needs a grant carrying
+    #              read_protected / act_protected. The card number: there is a
+    #              grant that opens it, and an app that wants autofill mints one
+    #              after the user approves.
+    #   Private    visible and named, and its value needs read_private /
+    #              act_private — bits an application declares and NEVER MINTS.
+    #              The CVC.
+    #   Hidden     not in the agent's world at all. The assistant's OWN panel,
+    #              which is not the application's content.
+    #
+    # Protected and Private are both VISIBLE: the assistant can say "the card
+    # number is still blank" because it knows the field is there and what it is
+    # called. It just has no digits. That is the whole difference between this
+    # and leaving the field unkeyed.
+    #
+    # INHERITED, strictest-wins: declaring it on a payment box covers every
+    # field, label and summary line inside it. The leak is never the field you
+    # remembered — it is the "Card ending 4242" label beside it.
+    "Agent": ["Open", "Protected", "Private", "Hidden"],
 }
 
 MANIFESTS = [
@@ -797,6 +843,69 @@ impl Spans {
         };
     }
     fn is_empty(this) -> bool { return this._runs.count() == (0 as usize); }
+}
+
+// ---- styling text that is ALREADY THERE --------------------------------------
+// `Spans` is a formatted STRING: each run carries its own text, and writing one
+// replaces the surface's content. That is right for a label and useless for an
+// editor, where the text is the user's — re-setting it would move the caret,
+// break the undo stack, and re-run every observer on every keystroke.
+//
+// A StyleRun names a RANGE of the text already in the control and says how to
+// draw it. That is the shape syntax highlighting has: lex the buffer, hand back
+// the runs, keep the buffer. Offsets are in BYTES of the control's own text,
+// counted the way `str` counts — a backend that indexes in UTF-16 (AppKit) or
+// code points converts on the way in, once, where it knows the encoding.
+//
+// Nothing here carries text, so a run cannot disagree with the buffer: the
+// worst a stale run can do is style the wrong columns until the next write.
+struct StyleRun {
+    start: usize,
+    length: usize,
+    color: Color,
+    background_color: Color,
+    font_weight: FontWeight,
+    is_italic: bool,
+    decoration: TextDecoration,
+}
+
+impl StyleRun {
+    fn of(start: usize,
+          length: usize,
+          color: Color = Color::clear(),
+          background_color: Color = Color::clear(),
+          font_weight: FontWeight = FontWeight::Default,
+          italic: bool = false,
+          decoration: TextDecoration = TextDecoration::None) -> StyleRun {
+        return StyleRun {
+            start: start, length: length,
+            color: color, background_color: background_color,
+            font_weight: font_weight, is_italic: italic, decoration: decoration,
+        };
+    }
+    fn end(this) -> usize { return this.start +% this.length; }
+    fn is_empty(this) -> bool { return this.length == (0 as usize); }
+}
+
+// The runs over one text surface. Owned, like `Spans`, and read one run at a
+// time for the same reason: `-> ref T` does not parse.
+struct StyleRuns { _runs: vec::Vec[StyleRun] }
+impl StyleRuns {
+    fn new() -> StyleRuns { return StyleRuns { _runs: vec::new::[StyleRun]() }; }
+    fn add(ref this, take run: StyleRun) -> status::Status { return this._runs.append(run); }
+    // The common case, without naming the record: one coloured range.
+    fn add_color(ref this, start: usize, length: usize, color: Color) -> status::Status {
+        return this._runs.append(StyleRun::of(start, length, color: color));
+    }
+    fn count(this) -> usize { return this._runs.count(); }
+    fn at(this, index: usize) -> *StyleRun {
+        return match this._runs.at_ptr(index) {
+            option::Option[*StyleRun]::Some(p) => p,
+            option::Option[*StyleRun]::None => 0 as *StyleRun,
+        };
+    }
+    fn is_empty(this) -> bool { return this._runs.count() == (0 as usize); }
+    fn clear(ref this) { this._runs.remove_all(); return; }
 }
 
 // A stroke dash pattern: on/off run lengths. Fixed at eight, which is more
@@ -1881,6 +1990,16 @@ struct CommonProps {
     accessibility_label: text::Text,
     accessibility_hint: text::Text,
     heading_level: i64,
+    // WHAT AN AGENT MAY DO WITH THIS NODE'S CONTENT (vocab::Agent). On the
+    // shared band and not on text_field, because the thing a developer marks
+    // is usually the BOX: one declaration covers the card field, the CVC and
+    // the label that quotes the last four digits. It inherits downward and the
+    // strictest wins, so a Private field inside a Protected box stays Private.
+    //
+    // Next to the accessibility rows on purpose — they are the same family.
+    // Both answer "what is this node, to someone not looking at it", and the
+    // agent surface reads both.
+    agent: vocab::Agent,
     // The hover text. On the shared band because any node can want one, which
     // is exactly why the ledger models it as an attached property.
     tooltip: text::Text,
@@ -1915,6 +2034,7 @@ impl CommonProps {
             accessibility_label: text::new(),
             accessibility_hint: text::new(),
             heading_level: 0 as i64,
+            agent: vocab::Agent::Open,
             tooltip: text::new(),
             is_enabled: true,
             is_visible: true,
@@ -1995,6 +2115,12 @@ const C_SEMANTICS: u64 = 70368744177664u64;
 const C_TOOLTIP: u64 = 35184372088832u64;
 // The band keeps growing downward from bit 47; this is 2^44.
 const C_CORNER_RADIUS: u64 = 17592186044416u64;
+// 2^43. Its own bit rather than riding C_SEMANTICS: the accessibility rows are
+// re-read together and cost three ObjC sets, while this one pins an integer and
+// is the only bit whose value a security boundary depends on. A backend that
+// re-read it as a side effect of a label change would be a backend where the
+// pin's timing is decided somewhere else.
+const C_AGENT: u64 = 8796093022208u64;
 
 // ---- state versus commands ---------------------------------------------------
 // C_FOCUS, C_BLUR and C_FLUSH are VERBS: the backend performs them and clears
@@ -2059,6 +2185,16 @@ ROW_SOURCE_FIELDS = [
     ("row_height_of", "fn(usize, *u8) -> f64", "no_row_height_of",
      "facet — the height of row `i`, answered WITHOUT building it"),
     ("opaque row_height_of_ctx", "*u8", "0 as *u8", None),
+    # WHICH SHAPE row `i` has. A recycling backend vends cells from a pool and
+    # hands back whatever scrolled off, so a `bind` — which writes into an
+    # EXISTING subtree — is sound only while every row has the same shape. That
+    # is the promise `set_row_bind` documents, and it is why a transcript of
+    # user bubbles, agent bubbles and tool cards could not state a bind at all:
+    # a wrong-shape cell would take the right-shape data and nothing would say
+    # so. One pool per kind makes the promise hold WITHIN each pool.
+    ("row_kind", "fn(usize, *u8) -> usize", "no_row_kind",
+     "facet — which SHAPE row `i` has, so cells pool per shape"),
+    ("opaque row_kind_ctx", "*u8", "0 as *u8", None),
     # `IsGrouped` had a carrier for the SWITCH and nothing for what it switches
     # on: the ledger's grouped ItemsSource is a list of lists, which Stage 1 dropped
     # as MODEL along with the flat one. The imperative replacement follows the
@@ -2088,6 +2224,32 @@ ROW_SOURCE_FIELDS = [
      "facet — the row a completed reorder moved, or -1"),
     ("reorder_to", "i64", "-1 as i64",
      "facet — where it moved to, or -1"),
+    # A row changed IN PLACE — same count, same sequence, new content. Without
+    # this the only way to say it is a row/count write, which a recycling
+    # backend answers by discarding every measured height and every vended cell
+    # it has. Pending invalidations coalesce to ONE data-indexed span
+    # (min..max) per flush; -1 means nothing is pending. Only the recycling
+    # controls consult it, like `row_height_of`.
+    ("invalidate_lo", "i64", "-1 as i64",
+     "facet — first data row of the pending invalidation, or -1"),
+    ("invalidate_hi", "i64", "-1 as i64",
+     "facet — last data row of the pending invalidation, or -1"),
+    # THE SEQUENCE GREW (or shrank) — the one thing `count` could not say.
+    # A count write is a NEW sequence: the backend throws every measured height
+    # away with it, so appending one row re-asked the height of every row that
+    # was already there and already measured. A transcript pays for that answer
+    # in text measurement, which is the most expensive question it answers, and
+    # the bill grows with the conversation.
+    #
+    # ONE pending splice per flush, because two arbitrary splices cannot be
+    # composed into one and a queue would be a second model of the sequence.
+    # A second splice that cannot merge into the pending one raises P_COUNT
+    # instead — the full reload, which is what every count write did anyway, so
+    # the fallback is never worse than not having the verb.
+    ("splice_at", "i64", "-1 as i64",
+     "facet — first data row of the pending insert/remove, or -1"),
+    ("splice_count", "i64", "0 as i64",
+     "facet — rows inserted (positive) or removed (negative) at `splice_at`"),
 ]
 
 
@@ -2123,6 +2285,53 @@ TAB_SOURCE_FIELDS = [
     ("selected_index", "i64", "0 as i64", "facet — which tab is showing"),
     ("on_tab_changed", "fn(*u8, *u8)", "no_handler", "facet — the user picked another tab"),
     ("opaque on_tab_changed_ctx", "*u8", "0 as *u8", None),
+]
+
+# A CHOOSER SAYS WHAT IT IS SEPARATELY FROM WHAT IT SHOWS.
+#
+# NSPopUpButton has no label of its own — it displays the selected item — and
+# `title` follows that faithfully by BEING an item (disabled, at the top,
+# visible exactly while the selection is empty). So the collapsed control and
+# the open row were one string, and three things a chooser normally does became
+# unsayable: a SHORT collapsed label over RICH rows ("iPhone 17 Pro" in a 74pt
+# toolbar, "iPhone 17 Pro — iOS 27.0" in the menu); SECTION HEADERS, which have
+# to be rows and were therefore selectable rows, caught and bounced back by the
+# selection handler; and a row that is PRESENT BUT NOT PICKABLE, which is what a
+# paired-but-locked device is — hiding it reads as "we cannot see your phone".
+#
+# Two writes answer all three. `label` is what the BUTTON reads, independent of
+# the selection (NSPopUpButtonCell's own `usesItemFromMenu`/`menuItem`), and
+# `item_enabled` is asked per row — a header is a row that answers false, and so
+# is a locked device. The third, a separator, needs no field: an empty item is
+# one, which is what a menu has always meant by an empty title.
+# SYNTAX HIGHLIGHTING IS THE ONE THING A CODE EDITOR EXISTS FOR, and it could
+# not be expressed portably at all: `formatted_text` replaces the content, which
+# an editor cannot do (the text is the user's, and re-setting it moves the caret
+# and breaks undo), and nothing else styled a RANGE. iris reaches the NSTextView
+# through `native()` and paints runs itself — which works, is precedented, and
+# makes the core feature of the editor macOS-only.
+#
+# The second half is the caret: `on_text_changed` fires for text and nothing
+# fires for the SELECTION, so "Ln 4, Col 9" is a 4×/sec poll of a control that
+# knows the answer exactly.
+EDITOR_TIER = ("text_area",)
+
+EDITOR_TIER_FIELDS = [
+    ("style_runs", "vocab::StyleRuns", "vocab::StyleRuns::new()",
+     "facet — how to draw RANGES of the text that is already there"),
+    ("on_selection_changed", "fn(*u8, *u8)", "no_handler",
+     "facet — the caret moved or the selection changed"),
+    ("opaque on_selection_changed_ctx", "*u8", "0 as *u8", None),
+]
+
+PICKER_LABEL = ("popup",)
+
+PICKER_LABEL_FIELDS = [
+    ("label", "text::Text", "text::new()",
+     "facet — what the BUTTON reads, whatever is selected"),
+    ("item_enabled", "fn(usize, *u8) -> bool", "every_item_enabled",
+     "facet — may item `i` be picked? a header answers false"),
+    ("opaque item_enabled_ctx", "*u8", "0 as *u8", None),
 ]
 
 
@@ -2201,6 +2410,12 @@ def emit_props(rows_by_control, by_type):
            "// Zero means \"no answer\" — the measure pass builds the row instead,\n"
            "// which is what every list did before this could be stated.\n"
            "fn no_row_height_of(row: usize, ctx: *u8) -> f64 { return 0.0f64; }\n"
+           "// Every row the same SHAPE, which is what one reuse pool means and\n"
+           "// what a list without kinds has always promised.\n"
+           "fn no_row_kind(row: usize, ctx: *u8) -> usize { return 0 as usize; }\n"
+           "// Every row of a chooser pickable, which is what a chooser that says\n"
+           "// nothing about its items means.\n"
+           "fn every_item_enabled(item: usize, ctx: *u8) -> bool { return true; }\n"
            "fn no_group_size(group: usize, ctx: *u8) -> usize { return 0 as usize; }\n"
            "fn no_group_header(group: usize, ctx: *u8) -> flex::Node "
            "{ return flex::Node::new(); }\n",
@@ -2231,6 +2446,16 @@ def emit_props(rows_by_control, by_type):
                 inits.append(f"            {f.replace('opaque ', '')}: {zero},\n")
         if mod in TAB_SOURCE:
             for f, t, zero, why in TAB_SOURCE_FIELDS:
+                fields.append(f"    {f}: {t},"
+                              + (f"    // {why}\n" if why else "\n"))
+                inits.append(f"            {f.replace('opaque ', '')}: {zero},\n")
+        if mod in PICKER_LABEL:
+            for f, t, zero, why in PICKER_LABEL_FIELDS:
+                fields.append(f"    {f}: {t},"
+                              + (f"    // {why}\n" if why else "\n"))
+                inits.append(f"            {f.replace('opaque ', '')}: {zero},\n")
+        if mod in EDITOR_TIER:
+            for f, t, zero, why in EDITOR_TIER_FIELDS:
                 fields.append(f"    {f}: {t},"
                               + (f"    // {why}\n" if why else "\n"))
                 inits.append(f"            {f.replace('opaque ', '')}: {zero},\n")
@@ -2308,6 +2533,9 @@ SHARED_FORWARDS = [
     ("input_transparent", "", "return core::input_transparent(this._p)", "bool"),
     ("set_flow_direction", "v: vocab::FlowDirection", "core::set_flow_direction(this._p, v)", None),
     ("flow_direction", "", "return core::flow_direction(this._p)", "vocab::FlowDirection"),
+    # -- what an agent may do with this node's content
+    ("set_agent", "v: vocab::Agent", "core::set_agent(this._p, v)", None),
+    ("agent", "", "return core::agent(this._p)", "vocab::Agent"),
     # -- the transform band, whole
     ("set_rotation", "v: f64", "core::set_rotation(this._p, v)", None),
     ("rotation", "", "return core::rotation(this._p)", "f64"),
@@ -2511,9 +2739,12 @@ def emit_control(row_type, merged):
     bits = ([f.upper() for f, _t, _m, _s, _p in writes]
             + [f.upper() for f, _t, _m, _s, _p in owned]
             + [v.upper() for v, _m, _s, _b in commands]
-            + (["COUNT", "ROW", "GROUP_COUNT", "GROUP", "SELECTED_INDEX", "REORDER"]
+            + (["COUNT", "ROW", "GROUP_COUNT", "GROUP", "SELECTED_INDEX", "REORDER",
+                "INVALIDATE_ROW", "SPLICE_ROWS"]
                if mod in ROW_SOURCE else [])
             + (["SELECTED_INDEX"] if mod in TAB_SOURCE else [])
+            + (["LABEL", "ITEM_ENABLED"] if mod in PICKER_LABEL else [])
+            + (["STYLE_RUNS"] if mod in EDITOR_TIER else [])
             + (["TOGGLES", "ON", "BORDERED"] if mod in BUTTONS else []))
     for i, b in enumerate(bits):
         o.append(f"const P_{b}: u64 = {1 << i}u64;\n")
@@ -2714,6 +2945,104 @@ def emit_control(row_type, merged):
         o.append(f"        if p == (0 as *props::{props}) {{ return 0 as i64; }}\n")
         o.append("        return { (*p).selected_index };\n    }\n")
 
+    # ---- facet's own: styling the text that is already there, and the caret
+    if mod in EDITOR_TIER:
+        o.append("\n    // HOW TO DRAW RANGES OF THE TEXT THAT IS ALREADY THERE.\n")
+        o.append("    //\n")
+        o.append("    // `formatted_text` is a formatted STRING — each run carries its own\n")
+        o.append("    // text, so writing one replaces the content. An editor cannot do\n")
+        o.append("    // that: the text is the user's, and re-setting it moves the caret and\n")
+        o.append("    // breaks undo. A StyleRun names a RANGE instead, which is the shape\n")
+        o.append("    // syntax highlighting has — lex the buffer, hand back the runs, keep\n")
+        o.append("    // the buffer.\n")
+        o.append("    //\n")
+        o.append("    // Offsets are BYTES of this control's own text. Runs outside it are\n")
+        o.append("    // clipped rather than refused: a lexer that ran one keystroke behind\n")
+        o.append("    // is stale, not wrong, and the next write fixes it.\n")
+        o.append(f"    fn set_style_runs(this, take v: vocab::StyleRuns) -> {cur} {{\n")
+        o.append(f"        let p: *props::{props} = this._props();\n")
+        o.append(f"        if p == (0 as *props::{props}) {{ return this; }}\n")
+        o.append("        { (*p).style_runs = v };\n")
+        o.append("        core::touch(this._p, P_STYLE_RUNS);\n")
+        o.append("        return this;\n    }\n")
+        o.append("\n    // Back to one colour for everything, which is what an editor with no\n")
+        o.append("    // lexer looks like.\n")
+        o.append(f"    fn clear_style_runs(this) -> {cur} {{\n")
+        o.append(f"        let p: *props::{props} = this._props();\n")
+        o.append(f"        if p == (0 as *props::{props}) {{ return this; }}\n")
+        o.append("        { (*p).style_runs.clear() };\n")
+        o.append("        core::touch(this._p, P_STYLE_RUNS);\n")
+        o.append("        return this;\n    }\n")
+        o.append("\n    fn style_run_count(this) -> usize {\n")
+        o.append(f"        let p: *props::{props} = this._props();\n")
+        o.append(f"        if p == (0 as *props::{props}) {{ return 0 as usize; }}\n")
+        o.append("        return { (*p).style_runs.count() };\n    }\n")
+        o.append("\n    // One run, borrowed in place — the same read `Spans` answers with,\n")
+        o.append("    // and for the same reason: `-> ref T` does not parse.\n")
+        o.append("    fn style_run_at(this, index: usize) -> *vocab::StyleRun {\n")
+        o.append(f"        let p: *props::{props} = this._props();\n")
+        o.append(f"        if p == (0 as *props::{props}) {{ return 0 as *vocab::StyleRun; }}\n")
+        o.append("        return { (*p).style_runs.at(index) };\n    }\n")
+        o.append("\n    // THE CARET MOVED. `on_text_changed` fires for text and nothing fired\n")
+        o.append("    // for the selection, so a status line showing `Ln 4, Col 9` had to\n")
+        o.append("    // POLL a control that knows the answer exactly. Read the position\n")
+        o.append("    // with `cursor_position()` / `selection_length()` inside the handler.\n")
+        o.append(f"    fn set_on_selection_changed(this, f: fn(*u8, *u8),\n")
+        o.append(f"                                on_selection_changed_ctx: *u8 = 0 as *u8) -> {cur} {{\n")
+        o.append(f"        let p: *props::{props} = this._props();\n")
+        o.append(f"        if p == (0 as *props::{props}) {{ return this; }}\n")
+        o.append("        { (*p).on_selection_changed = f };\n")
+        o.append("        { (*p).on_selection_changed_ctx = on_selection_changed_ctx };\n")
+        o.append("        core::touch(this._p, props::C_HANDLERS);\n")
+        o.append("        return this;\n    }\n")
+
+    # ---- facet's own: a chooser says what it IS, separately from what it SHOWS
+    if mod in PICKER_LABEL:
+        o.append("\n    // WHAT THE BUTTON READS, whatever is selected.\n")
+        o.append("    //\n")
+        o.append("    // `title` is a prompt and therefore an ITEM — it shows exactly while\n")
+        o.append("    // nothing is chosen, because that is what NSPopUpButton can do with a\n")
+        o.append("    // string it was given. This is the other question: a collapsed control\n")
+        o.append("    // that reads SHORT over rows that read RICH. A run destination wants\n")
+        o.append("    // `iPhone 17 Pro` in a 74pt toolbar and `iPhone 17 Pro — iOS 27.0` in\n")
+        o.append("    // the menu, and before this it got whichever one it wrote, in both.\n")
+        o.append("    //\n")
+        o.append("    // Empty (the default) means the ledger's own behaviour: the button\n")
+        o.append("    // reads the selected item.\n")
+        o.append(f"    fn set_label(this, v: str) -> {cur} {{\n")
+        o.append(f"        let p: *props::{props} = this._props();\n")
+        o.append(f"        if p == (0 as *props::{props}) {{ return this; }}\n")
+        o.append("        { (*p).label = text::from_str(v) };\n")
+        o.append("        core::touch(this._p, P_LABEL);\n")
+        o.append("        return this;\n    }\n")
+        o.append("\n    fn label(this) -> str {\n")
+        o.append(f"        let p: *props::{props} = this._props();\n")
+        o.append(f"        if p == (0 as *props::{props}) {{ return \"\"; }}\n")
+        o.append("        return { (*p).label.view() };\n    }\n")
+        o.append("\n    // MAY ITEM `i` BE PICKED? Asked per item, every time the rows are\n")
+        o.append("    // built — so a SECTION HEADER is a row that answers false, and so is\n")
+        o.append("    // a device that is present but locked. Both had to be selectable rows\n")
+        o.append("    // that the selection handler caught and put back, which works and\n")
+        o.append("    // reads as a control fighting the user.\n")
+        o.append("    //\n")
+        o.append("    // A SEPARATOR needs no verb: an item with an empty title is one, which\n")
+        o.append("    // is what an empty title has always meant in a menu.\n")
+        o.append(f"    fn set_item_enabled(this, f: fn(usize, *u8) -> bool,\n")
+        o.append(f"                        item_enabled_ctx: *u8 = 0 as *u8) -> {cur} {{\n")
+        o.append(f"        let p: *props::{props} = this._props();\n")
+        o.append(f"        if p == (0 as *props::{props}) {{ return this; }}\n")
+        o.append("        { (*p).item_enabled = f };\n")
+        o.append("        { (*p).item_enabled_ctx = item_enabled_ctx };\n")
+        o.append("        core::touch(this._p, P_ITEM_ENABLED);\n")
+        o.append("        return this;\n    }\n")
+        o.append("\n    // Whether item `at` may be picked — true whenever nothing was said.\n")
+        o.append("    fn is_item_enabled(this, at: usize) -> bool {\n")
+        o.append(f"        let p: *props::{props} = this._props();\n")
+        o.append(f"        if p == (0 as *props::{props}) {{ return true; }}\n")
+        o.append("        let f: fn(usize, *u8) -> bool = { (*p).item_enabled };\n")
+        o.append("        if f == props::every_item_enabled { return true; }\n")
+        o.append("        return f(at, { (*p).item_enabled_ctx });\n    }\n")
+
     # ---- facet's own: toggling, and a border that switches without forgetting
     if mod in BUTTONS:
         o.append("\n    // facet's own words. The ledger has no button that FLIPS — its toggle is a\n")
@@ -2829,6 +3158,146 @@ def emit_control(row_type, merged):
         o.append("        { (*p).row_height_of = f };\n")
         o.append("        { (*p).row_height_of_ctx = row_height_of_ctx };\n")
         o.append("        core::touch(this._p, P_ROW);\n")
+        o.append("        return this;\n    }\n")
+        o.append("\n    // ROW `at` CHANGED IN PLACE — same count, same sequence, new content.\n")
+        o.append("    // Without this the only way to say it is a row/count write, and a\n")
+        o.append("    // recycling backend answers one of those by discarding every measured\n")
+        o.append("    // height and every vended cell it has — a streaming transcript re-drew\n")
+        o.append("    // every visible row on every token. Invalidations coalesce to ONE\n")
+        o.append("    // span (min..max) per flush, which is what a backend can act on\n")
+        o.append("    // cheaply: a row between two edits costs a height re-ask, not a\n")
+        o.append("    // rebuild. Only the recycling controls consult it, like\n")
+        o.append("    // `row_height_of`.\n")
+        o.append(f"    fn invalidate_row(this, at: usize) -> {cur} {{\n")
+        o.append(f"        let p: *props::{props} = this._props();\n")
+        o.append(f"        if p == (0 as *props::{props}) {{ return this; }}\n")
+        o.append("        let i: i64 = at as i64;\n")
+        o.append("        if { (*p).invalidate_lo } < (0 as i64) || i < { (*p).invalidate_lo } {\n")
+        o.append("            { (*p).invalidate_lo = i };\n")
+        o.append("        }\n")
+        o.append("        if i > { (*p).invalidate_hi } { { (*p).invalidate_hi = i }; }\n")
+        o.append("        core::touch(this._p, P_INVALIDATE_ROW);\n")
+        o.append("        return this;\n    }\n")
+        o.append("\n    // The bulk form: rows `from .. from+count-1` changed in place.\n")
+        o.append(f"    fn invalidate_rows(this, from: usize, count: usize) -> {cur} {{\n")
+        o.append(f"        let p: *props::{props} = this._props();\n")
+        o.append(f"        if p == (0 as *props::{props}) {{ return this; }}\n")
+        o.append("        if count == (0 as usize) { return this; }\n")
+        o.append("        let lo: i64 = from as i64;\n")
+        o.append("        let hi: i64 = lo +% (count as i64) -% (1 as i64);\n")
+        o.append("        if { (*p).invalidate_lo } < (0 as i64) || lo < { (*p).invalidate_lo } {\n")
+        o.append("            { (*p).invalidate_lo = lo };\n")
+        o.append("        }\n")
+        o.append("        if hi > { (*p).invalidate_hi } { { (*p).invalidate_hi = hi }; }\n")
+        o.append("        core::touch(this._p, P_INVALIDATE_ROW);\n")
+        o.append("        return this;\n    }\n")
+        o.append("\n    // WHICH SHAPE ROW `i` HAS — a small number, one per kind of row.\n")
+        o.append("    //\n")
+        o.append("    // A recycling backend vends a cell from a pool and hands back whatever\n")
+        o.append("    // last scrolled off, so `bind` — which writes into an EXISTING subtree\n")
+        o.append("    // — is sound only while every row has the same shape. A transcript of\n")
+        o.append("    // user bubbles, agent bubbles and tool cards is three shapes, so it\n")
+        o.append("    // could not state a bind at all: a wrong-shape cell would take the\n")
+        o.append("    // right-shape data and nothing would say so.\n")
+        o.append("    //\n")
+        o.append("    // Naming a kind gives each shape its OWN pool, and the bind promise\n")
+        o.append("    // holds within each one. Answer the same number for rows the builder\n")
+        o.append("    // builds the same way; the numbers themselves mean nothing beyond\n")
+        o.append("    // `equal shape` and need not be dense. Unset, every row is kind 0,\n")
+        o.append("    // which is the one pool a list has always had.\n")
+        o.append(f"    fn set_row_kind(this, f: fn(usize, *u8) -> usize,\n")
+        o.append(f"                    row_kind_ctx: *u8 = 0 as *u8) -> {cur} {{\n")
+        o.append(f"        let p: *props::{props} = this._props();\n")
+        o.append(f"        if p == (0 as *props::{props}) {{ return this; }}\n")
+        o.append("        { (*p).row_kind = f };\n")
+        o.append("        { (*p).row_kind_ctx = row_kind_ctx };\n")
+        o.append("        core::touch(this._p, P_ROW);\n")
+        o.append("        return this;\n    }\n")
+        o.append("\n    // The kind of row `at` — 0 whenever no kind was named.\n")
+        o.append("    fn row_kind_of(this, at: usize) -> usize {\n")
+        o.append(f"        let p: *props::{props} = this._props();\n")
+        o.append(f"        if p == (0 as *props::{props}) {{ return 0 as usize; }}\n")
+        o.append("        let f: fn(usize, *u8) -> usize = { (*p).row_kind };\n")
+        o.append("        if f == props::no_row_kind { return 0 as usize; }\n")
+        o.append("        return f(at, { (*p).row_kind_ctx });\n    }\n")
+        o.append("\n    // THE SEQUENCE GREW: rows `at .. at+count-1` are NEW, and every row\n")
+        o.append("    // already there is the row it was, at the height it was measured at.\n")
+        o.append("    //\n")
+        o.append("    // `set_count` cannot say that. A count write is a new sequence and a\n")
+        o.append("    // recycling backend answers it by discarding every measured height it\n")
+        o.append("    // holds, so appending one row re-asks the height of the whole list —\n")
+        o.append("    // and a list that states its heights is measuring text to answer, which\n")
+        o.append("    // is the most expensive question a transcript answers. This is the\n")
+        o.append("    // NSTableView `insertRowsAtIndexes:` shape, said in the contract's own\n")
+        o.append("    // words: it moves `count` itself, so a caller states the splice and not\n")
+        o.append("    // the total.\n")
+        o.append("    //\n")
+        o.append("    // ONE pending splice per flush. A second one that cannot merge into it\n")
+        o.append("    // (an append after an append can; an insert at the head after an append\n")
+        o.append("    // cannot) falls back to the reload a count write always was, so the\n")
+        o.append("    // worst case is what the caller had before.\n")
+        o.append(f"    fn insert_rows(this, at: usize, count: usize) -> {cur} {{\n")
+        o.append(f"        let p: *props::{props} = this._props();\n")
+        o.append(f"        if p == (0 as *props::{props}) {{ return this; }}\n")
+        o.append("        if count == (0 as usize) { return this; }\n")
+        o.append("        let a: i64 = at as i64;\n")
+        o.append("        let m: i64 = count as i64;\n")
+        o.append("        let n: i64 = { (*p).count };\n")
+        o.append("        // Past the end is not a splice anyone can act on.\n")
+        o.append("        if a < (0 as i64) || a > n { return this._resequence(n +% m); }\n")
+        o.append("        { (*p).count = n +% m };\n")
+        o.append("        let pa: i64 = { (*p).splice_at };\n")
+        o.append("        let pc: i64 = { (*p).splice_count };\n")
+        o.append("        if pa < (0 as i64) {\n")
+        o.append("            { (*p).splice_at = a };\n")
+        o.append("            { (*p).splice_count = m };\n")
+        o.append("        } else if pc > (0 as i64) && a >= pa && a <= pa +% pc {\n")
+        o.append("            // Inside (or at either end of) the run already pending: every\n")
+        o.append("            // row in it is new, so a longer run says the same thing.\n")
+        o.append("            { (*p).splice_count = pc +% m };\n")
+        o.append("        } else {\n")
+        o.append("            return this._resequence({ (*p).count });\n")
+        o.append("        }\n")
+        o.append("        core::touch(this._p, P_SPLICE_ROWS);\n")
+        o.append("        return this;\n    }\n")
+        o.append("\n    // The other direction: rows `at .. at+count-1` are GONE, and the rows\n")
+        o.append("    // either side of the hole are unchanged.\n")
+        o.append(f"    fn remove_rows(this, at: usize, count: usize) -> {cur} {{\n")
+        o.append(f"        let p: *props::{props} = this._props();\n")
+        o.append(f"        if p == (0 as *props::{props}) {{ return this; }}\n")
+        o.append("        if count == (0 as usize) { return this; }\n")
+        o.append("        let a: i64 = at as i64;\n")
+        o.append("        let m: i64 = count as i64;\n")
+        o.append("        let n: i64 = { (*p).count };\n")
+        o.append("        if a < (0 as i64) || a +% m > n { return this._resequence(n); }\n")
+        o.append("        { (*p).count = n -% m };\n")
+        o.append("        let pa: i64 = { (*p).splice_at };\n")
+        o.append("        let pc: i64 = { (*p).splice_count };\n")
+        o.append("        if pa < (0 as i64) {\n")
+        o.append("            { (*p).splice_at = a };\n")
+        o.append("            { (*p).splice_count = 0 as i64 -% m };\n")
+        o.append("        } else if pc < (0 as i64) && a == pa {\n")
+        o.append("            // Removing from the same place again: the hole gets deeper.\n")
+        o.append("            { (*p).splice_count = pc -% m };\n")
+        o.append("        } else if pc < (0 as i64) && a +% m == pa {\n")
+        o.append("            // ...or the rows immediately before it, which is one hole too.\n")
+        o.append("            { (*p).splice_at = a };\n")
+        o.append("            { (*p).splice_count = pc -% m };\n")
+        o.append("        } else {\n")
+        o.append("            return this._resequence({ (*p).count });\n")
+        o.append("        }\n")
+        o.append("        core::touch(this._p, P_SPLICE_ROWS);\n")
+        o.append("        return this;\n    }\n")
+        o.append("\n    // The fallback both splices share: state the new length as a WHOLE\n")
+        o.append("    // sequence and forget the pending splice. Correct always, and the\n")
+        o.append("    // only thing a caller could have said before these verbs existed.\n")
+        o.append(f"    fn _resequence(this, n: i64) -> {cur} {{\n")
+        o.append(f"        let p: *props::{props} = this._props();\n")
+        o.append(f"        if p == (0 as *props::{props}) {{ return this; }}\n")
+        o.append("        { (*p).count = n };\n")
+        o.append("        { (*p).splice_at = -1 as i64 };\n")
+        o.append("        { (*p).splice_count = 0 as i64 };\n")
+        o.append("        core::touch(this._p, P_COUNT);\n")
         o.append("        return this;\n    }\n")
         o.append("\n    // Write row `at` into `row`. Inert when no bind was named.\n")
         o.append("    fn bind_row(this, at: usize, row: *core::Node) {\n")
@@ -2986,13 +3455,23 @@ def emit_control(row_type, merged):
     o.append(f"fn find(key: str, within: *core::Node = 0 as *core::Node) -> option::Option[{cur}] {{\n")
     o.append("    if within != (0 as *core::Node) {\n")
     o.append("        return match core::find_in(within, key) {\n")
-    o.append(f"            option::Option[*core::Node]::Some(p) => from(p),\n")
+    o.append(f"            option::Option[*core::Node]::Some(p) => {{ _report_kind(key, p); from(p) }}\n")
     o.append(f"            option::Option[*core::Node]::None => option::Option[{cur}]::None,\n")
     o.append("        };\n    }\n")
     o.append("    return match mount::find_node(key) {\n")
-    o.append(f"        option::Option[*core::Node]::Some(p) => from(p),\n")
+    o.append(f"        option::Option[*core::Node]::Some(p) => {{ _report_kind(key, p); from(p) }}\n")
     o.append(f"        option::Option[*core::Node]::None => option::Option[{cur}]::None,\n")
-    o.append("    };\n}\n")
+    o.append("    };\n}\n\n")
+    o.append("// The debug posture's third distinction (FACET_DEBUG_FIND=1): the key\n")
+    o.append("// RESOLVED, and `from` is about to answer None anyway because the node is\n")
+    o.append("// another control. `_`-private; costs one flag read when the posture is off.\n")
+    o.append("fn _report_kind(key: str, p: *core::Node) {\n")
+    o.append("    if !mount::find_debugging() { return; }\n")
+    o.append("    if p == (0 as *core::Node) { return; }\n")
+    o.append("    let d: *core::Data = { (*p).data() };\n")
+    o.append(f"    if d == (0 as *core::Data) || {{ (*d).kind }} != props::K_{up} {{\n")
+    o.append(f"        mount::debug_find_wrong_kind(key, \"{mod}\");\n")
+    o.append("    }\n    return;\n}\n")
     return "".join(o)
 
 
@@ -3092,11 +3571,14 @@ fn tree(
     row_ctx: *u8 = 0 as *u8,
     on_select: fn(*m_tree::TreeNode, *u8) = m_tree::no_select,
     on_select_ctx: *u8 = 0 as *u8,
+    row_id: fn(*m_tree::TreeNode, *u8) -> text::Text = m_tree::no_row_id,
+    row_id_ctx: *u8 = 0 as *u8,
     ctx: *u8 = 0 as *u8,
     row_height: f64 = 0.0f64,
 ) -> core::Node {
     return m_tree::tree(root, key: key, row: row, row_ctx: row_ctx,
                         on_select: on_select, on_select_ctx: on_select_ctx,
+                        row_id: row_id, row_id_ctx: row_id_ctx,
                         ctx: ctx, row_height: row_height);
 }
 
@@ -3120,6 +3602,7 @@ def emit_elements(rows_by_control):
          "// resolve there); this module exists so a bare element name inside\n",
          "// an `@` block resolves in one context.\n\n",
          'import "flex_layout/flex_layout" as flex;\n',
+         'import "stdlib/text" as text;\n',
          'import "./facet" as core;\n',
          'import "./props" as props;\n',
          'import "./vocabulary" as vocab;\n',
@@ -3560,7 +4043,7 @@ def check(rows_by_control, by_type):
                 for k in [row_kind(band, fn, note)]
                 if k and (k[0] == "owned" or k[0] == "command"
                           or (k[0] == "prop" and band == "writes")))
-        n += 6 if MODULE[row_type] in ROW_SOURCE else 0
+        n += 7 if MODULE[row_type] in ROW_SOURCE else 0
         n += 1 if MODULE[row_type] in TAB_SOURCE else 0
         if n > 48:
             problems.append(f"{MODULE[row_type]}: {n} dirty bits, and props::C_* owns "

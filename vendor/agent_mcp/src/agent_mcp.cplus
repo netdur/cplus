@@ -78,12 +78,32 @@ fn role_to_str(role: identity::Role) -> str {
     return "group";
 }
 
+// The declared tier, as the word a model reads. `open` never reaches the wire
+// (the field is omitted), so it is not in the vocabulary an agent has to learn.
+fn tier_to_str(t: u32) -> str {
+    if t == identity::tier_protected() { return "protected"; }
+    if t == identity::tier_private() { return "private"; }
+    return "open";
+}
+
 fn outcome_to_str(o: surface::Outcome) -> str {
     if surface::outcome_eq(o, surface::Outcome::Allowed) { return "allowed"; }
     if surface::outcome_eq(o, surface::Outcome::NotFound) { return "not_found"; }
     if surface::outcome_eq(o, surface::Outcome::NotExposed) { return "not_exposed"; }
     if surface::outcome_eq(o, surface::Outcome::NotActionable) { return "not_actionable"; }
     if surface::outcome_eq(o, surface::Outcome::Stale) { return "stale"; }
+    // Their own words, not folded into `not_actionable`. The fall-through
+    // below is why these arms are explicit: a new outcome that forgets one is
+    // reported as a version conflict, which tells an agent to re-read and try
+    // again — the exact loop a refusal on a card field must not start.
+    //
+    // And the two are not interchangeable. `needs_grant` means a wider grant
+    // exists and asking the user is the right next move; `forbidden` means the
+    // application declared this tier and does not mint the bit. An agent told
+    // the wrong one either nags for a permission that is never coming, or
+    // abandons work one approval would have unblocked.
+    if surface::outcome_eq(o, surface::Outcome::NeedsGrant) { return "needs_grant"; }
+    if surface::outcome_eq(o, surface::Outcome::Forbidden) { return "forbidden"; }
     return "version_conflict";
 }
 
@@ -142,6 +162,16 @@ fn node_to_json(p: *backend::UiNode, with_geometry: bool) -> json::Value {
     }
     m.append(member("hidden", jbool({ (*p).is_hidden })));
     m.append(member("text", jstr({ (*p).text })));
+    // ON THE WIRE ONLY WHEN GATED, and then both fields — the ones here that
+    // exist to be READ BY A MODEL rather than by a test. `text: ""` on its own
+    // says "this field is empty, go and fill it in". With `tier` and
+    // `readable` it says which of three things is true, and each has a
+    // different correct next move: read it, ask the user for permission, or
+    // leave it alone and say so.
+    if { (*p).tier } != identity::tier_open() {
+        m.append(member("tier", jstr(tier_to_str({ (*p).tier }))));
+        m.append(member("readable", jbool({ (*p).readable })));
+    }
     // The accessibility label, under the same "absent when there is nothing to
     // say" rule as `description`: omitted when empty, and omitted when it only
     // repeats `text` — which is the whole of the lean view, where the name IS
@@ -208,6 +238,38 @@ fn hit_test_result(take h: surface::HitTest) -> json::Value {
     return json::Value::Object(m);
 }
 
+// `read_runs`' result: the outcome, whether the backend can answer at all, and
+// one entry per stretch of uniform attributes. A run's colour is omitted rather
+// than sent empty — a run with no colour of its own draws in the control's, and
+// "" would read as a colour nobody set.
+fn runs_result(take r: surface::Runs) -> json::Value {
+    var m: vec::Vec[json::Member] = vec::new::[json::Member]();
+    m.append(member("outcome", jstr(outcome_to_str(r.outcome))));
+    m.append(member("supported", jbool(r.supported)));
+    var arr: vec::Vec[json::Value] = vec::new::[json::Value]();
+    var i: usize = 0 as usize;
+    while i < r.runs.count() {
+        match r.runs.at_ptr(i) {
+            option::Option[*surface::TextRun]::Some(run) => {
+                var e: vec::Vec[json::Member] = vec::new::[json::Member]();
+                e.append(member("start", jnum({ (*run).start } as f64)));
+                e.append(member("length", jnum({ (*run).length } as f64)));
+                if { (*run).color.view() } != "" {
+                    e.append(member("color", jstr({ (*run).color.view() })));
+                }
+                if { (*run).is_bold } { e.append(member("bold", jbool(true))); }
+                if { (*run).is_italic } { e.append(member("italic", jbool(true))); }
+                if { (*run).is_underlined } { e.append(member("underlined", jbool(true))); }
+                arr.append(json::Value::Object(e));
+            }
+            option::Option[*surface::TextRun]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    m.append(member("runs", json::Value::Array(arr)));
+    return json::Value::Object(m);
+}
+
 // ---- JSON-RPC envelopes -----------------------------------------------------
 
 fn ok_response(id: f64, take result: json::Value) -> json::Value {
@@ -265,15 +327,15 @@ fn err_response(id: f64, code: f64, msg: str) -> json::Value {
 // a process that never calls `arm_extension` answers "method not found" to
 // every extension method. The consent gate still runs FIRST and covers both:
 // arming grants no path around it.
-static EXT_HANDLER: fn(str, json::Value, f64) -> json::Value =
-    #zero::[fn(str, json::Value, f64) -> json::Value]();
+static EXT_HANDLER: fn(str, json::Value, f64, auth::Grant) -> json::Value =
+    #zero::[fn(str, json::Value, f64, auth::Grant) -> json::Value]();
 // Owned, not a `str`. A borrowed {ptr,len} in a static is sound for a literal
 // and a use-after-free for anything computed, and a caller composing a prefix
 // is not a mistake this module should be able to punish.
 static EXT_PREFIX: text::Text = #zero::[text::Text]();
 static EXT_ARMED: bool = false;
 
-fn arm_extension(prefix: str, h: fn(str, json::Value, f64) -> json::Value) {
+fn arm_extension(prefix: str, h: fn(str, json::Value, f64, auth::Grant) -> json::Value) {
     EXT_PREFIX = text::from_str(prefix);
     EXT_HANDLER = h;
     EXT_ARMED = true;
@@ -284,7 +346,7 @@ fn arm_extension(prefix: str, h: fn(str, json::Value, f64) -> json::Value) {
 // undone by a stray re-arm of the flag alone.
 fn disarm_extension() {
     EXT_ARMED = false;
-    EXT_HANDLER = #zero::[fn(str, json::Value, f64) -> json::Value]();
+    EXT_HANDLER = #zero::[fn(str, json::Value, f64, auth::Grant) -> json::Value]();
     EXT_PREFIX = text::new();
     return;
 }
@@ -293,10 +355,26 @@ fn extension_armed() -> bool { return EXT_ARMED; }
 
 fn is_extension_method(method: str) -> bool {
     if !EXT_ARMED { return false; }
-    if EXT_HANDLER == (0 as fn(str, json::Value, f64) -> json::Value) { return false; }
+    if EXT_HANDLER == (0 as fn(str, json::Value, f64, auth::Grant) -> json::Value) { return false; }
     let p: str = { EXT_PREFIX.view() };
     if p == "" { return false; }
     return text::from_str(method).has_prefix(p);
+}
+
+// The credential this request carried, or "" when it carried none. A `token`
+// member on `params`, uninterpreted here — the core never reads a token, it
+// only hands it to the application's policy, which is the code that knows
+// whether it is a JWT, a session id or a shared secret.
+//
+// On `params` rather than a connection handshake, because a credential that is
+// presented once per connection cannot expire during one. See `dispatch`.
+// OWNED, not a view. `obj_get` hands back a value the caller owns, so a `str`
+// borrowed out of it dangles the moment the expression ends — the token then
+// reads as empty garbage and every policy silently sees an anonymous caller.
+// The caller keeps this Text alive across its `gate.check`.
+fn token_of(params: json::Value) -> text::Text {
+    if !params.has("token") { return text::new(); }
+    return val_as_text(obj_get(params, "token"));
 }
 
 // ---- the dispatch -----------------------------------------------------------
@@ -317,16 +395,34 @@ fn dispatch(
     params: json::Value,
     id: f64,
 ) -> json::Value {
-    if auth::decision_eq(gate.check(auth::request(auth::Channel::External)), auth::Decision::Reject) {
+    // MINT THE GRANT ONCE PER REQUEST, from the credential this request
+    // carried. Per request rather than per connection: a credential can expire
+    // mid-session and a policy that re-reads it is the only version where that
+    // means anything. The grant is then threaded down as a parameter — see
+    // `backend::Backend` for why it is never stored on the surface.
+    let token: text::Text = token_of(params);
+    let grant: auth::Grant = gate.check(
+        auth::request_with_token(auth::Channel::External, { token.view() }));
+    // An empty grant can do nothing at all, so it is refused here rather than
+    // one verb at a time. Every other refusal is per node and per tier, and
+    // says which.
+    if grant.is_empty() {
         return err_response(id, - 32001 as f64, "consent denied");
     }
 
     // After the gate, before the surface. An extension namespace is a second
     // capability model over the same transport, and it is behind consent like
     // everything else — arming opens a namespace, not a bypass.
+    //
+    // THE GRANT GOES WITH IT. An extension that only learned "consent was not
+    // empty" would be a namespace where every credential is equal — which for
+    // the inspector meant any agent that could read a label could also rewrite
+    // the tree and read a card field through `inspect`, straight past the
+    // tiers. A namespace is a place to put verbs, not a place to escape the
+    // capability they cost.
     if is_extension_method(method) {
-        let h: fn(str, json::Value, f64) -> json::Value = EXT_HANDLER;
-        return h(method, params, id);
+        let h: fn(str, json::Value, f64, auth::Grant) -> json::Value = EXT_HANDLER;
+        return h(method, params, id, grant);
     }
 
     if method == "describe_ui" {
@@ -335,26 +431,52 @@ fn dispatch(
         // "full" is the whole walked tree incl. auto-keyed structural nodes.
         let mode: text::Text = val_as_text(obj_get(params, "mode"));
         if { mode.view() } == "full" {
-            return ok_response(id, describe_to_json((vt.describe)(surf), true));
+            return ok_response(id, describe_to_json((vt.describe)(surf, grant), true));
         }
-        return ok_response(id, describe_to_json((vt.describe_exposed)(surf), false));
+        return ok_response(id, describe_to_json((vt.describe_exposed)(surf, grant), false));
     }
     if method == "click" {
         if !params.has("id") { return missing_param(id, "click", "id"); }
         let target: text::Text = val_as_text(obj_get(params, "id"));
-        let o: surface::Outcome = (vt.click)(surf, { target });
+        let o: surface::Outcome = (vt.click)(surf, grant, { target });
         return ok_response(id, outcome_result(o));
     }
     if method == "hit_test" {
         if !params.has("id") { return missing_param(id, "hit_test", "id"); }
         let target: text::Text = val_as_text(obj_get(params, "id"));
-        let h: surface::HitTest = (vt.hit_test)(surf, { target });
+        let h: surface::HitTest = (vt.hit_test)(surf, grant, { target });
         return ok_response(id, hit_test_result(h));
+    }
+    // PLACE THE CARET, in BYTES of the control's own text. `length` defaults to
+    // 0 — an insertion point, which is what "place the caret" means; a non-zero
+    // length selects.
+    if method == "set_caret" {
+        if !params.has("id") { return missing_param(id, "set_caret", "id"); }
+        if !params.has("at") { return missing_param(id, "set_caret", "at"); }
+        let target: text::Text = val_as_text(obj_get(params, "id"));
+        let at: u64 = val_as_number(obj_get(params, "at")) as u64;
+        let len: u64 = val_as_number(obj_get(params, "length")) as u64;
+        let o: surface::Outcome = (vt.set_caret)(surf, grant, { target }, at, len);
+        return ok_response(id, outcome_result(o));
+    }
+    // READ BACK WHAT IS DRAWN — one run per stretch of uniform attributes.
+    if method == "read_runs" {
+        if !params.has("id") { return missing_param(id, "read_runs", "id"); }
+        let target: text::Text = val_as_text(obj_get(params, "id"));
+        let r: surface::Runs = (vt.read_runs)(surf, grant, { target });
+        return ok_response(id, runs_result(r));
+    }
+    // INVOKE A MENU ITEM, addressed `Menu/Item` by the titles as built.
+    if method == "invoke_menu" {
+        if !params.has("path") { return missing_param(id, "invoke_menu", "path"); }
+        let path: text::Text = val_as_text(obj_get(params, "path"));
+        let o: surface::Outcome = (vt.invoke_menu)(surf, grant, { path });
+        return ok_response(id, outcome_result(o));
     }
     if method == "scroll_to" {
         if !params.has("id") { return missing_param(id, "scroll_to", "id"); }
         let target: text::Text = val_as_text(obj_get(params, "id"));
-        let o: surface::Outcome = (vt.navigate)(surf, { target });
+        let o: surface::Outcome = (vt.navigate)(surf, grant, { target });
         return ok_response(id, outcome_result(o));
     }
     if method == "set_text" {
@@ -363,7 +485,7 @@ fn dispatch(
         let target: text::Text = val_as_text(obj_get(params, "id"));
         let value: text::Text = val_as_text(obj_get(params, "value"));
         let base: u64 = val_as_number(obj_get(params, "base_version")) as u64;
-        let o: surface::Outcome = (vt.set_text)(surf, { target }, { value }, base);
+        let o: surface::Outcome = (vt.set_text)(surf, grant, { target }, { value }, base);
         return ok_response(id, outcome_result(o));
     }
     if method == "poll_event" {
@@ -576,7 +698,7 @@ fn serve_fd(
     surf: *u8,
     vt: backend::Backend,
     ref sub: events::Subscriber,
-    policy: fn(auth::Request) -> auth::Decision,
+    policy: fn(auth::Request) -> auth::Grant,
     fd: i32,
 ) -> i32 {
     var buf: [u8; 8192] = [0 as u8; 8192];
@@ -612,7 +734,7 @@ fn serve_uds(
     surf: *u8,
     vt: backend::Backend,
     ref sub: events::Subscriber,
-    policy: fn(auth::Request) -> auth::Decision,
+    policy: fn(auth::Request) -> auth::Grant,
     path: str,
 ) -> i32 {
     let fd: i32 = bind_uds(path);
@@ -652,32 +774,69 @@ fn fake_node(id: str) -> backend::UiNode {
         text: text::new(),
         name: text::from_str("Do the thing"),
         description: text::from_str("does the thing"),
+        tier: identity::tier_open(),
+        readable: true,
         actionable: true,
         clickable: true,
         parent: option::Option[usize]::None,
     };
 }
 
-fn fake_describe_full(p: *u8) -> vec::Vec[backend::UiNode] {
+// The same node with its content declared sensitive: present, named, and with
+// nothing to say about what is in it.
+fn fake_secret_node(id: str, grant: auth::Grant) -> backend::UiNode {
+    let may_read: bool = grant.has(auth::cap_read() | auth::cap_read_protected());
+    return backend::UiNode {
+        id: text::from_str(id),
+        role: identity::Role::Input,
+        class_name: text::new(),
+        frame: backend::Rect { x: 0.0f64, y: 0.0f64, w: 200.0f64, h: 24.0f64 },
+        is_hidden: false,
+        text: if may_read { text::from_str("4242424242424242") } else { text::new() },
+        name: text::from_str("Card number"),
+        description: text::new(),
+        tier: identity::tier_protected(),
+        readable: may_read,
+        actionable: grant.has(auth::cap_act() | auth::cap_act_protected()),
+        clickable: false,
+        parent: option::Option[usize]::None,
+    };
+}
+
+fn fake_describe_full(p: *u8, grant: auth::Grant) -> vec::Vec[backend::UiNode] {
     var out: vec::Vec[backend::UiNode] = vec::new::[backend::UiNode]();
     out.append(fake_node("exposed-node"));
     out.append(fake_node("structural-node"));
+    out.append(fake_secret_node("payment:card", grant));
     return out;
 }
 
-fn fake_describe_exposed(p: *u8) -> vec::Vec[backend::UiNode] {
+fn fake_describe_exposed(p: *u8, grant: auth::Grant) -> vec::Vec[backend::UiNode] {
     var out: vec::Vec[backend::UiNode] = vec::new::[backend::UiNode]();
     out.append(fake_node("exposed-node"));
+    // A gated node is EXPOSED. It belongs in the curated view — that is the
+    // whole difference between this and simply not tagging the field.
+    out.append(fake_secret_node("payment:card", grant));
     return out;
 }
 
-fn fake_click(p: *u8, id: str) -> surface::Outcome { return surface::Outcome::Allowed; }
-fn fake_set_text(p: *u8, id: str, v: str, base: u64) -> surface::Outcome { return surface::Outcome::Allowed; }
-fn fake_nav(p: *u8, id: str) -> surface::Outcome { return surface::Outcome::Allowed; }
+fn fake_click(p: *u8, grant: auth::Grant, id: str) -> surface::Outcome { return surface::Outcome::Allowed; }
+fn fake_set_text(p: *u8, grant: auth::Grant, id: str, v: str, base: u64) -> surface::Outcome {
+    if id == "payment:card" {
+        if grant.has(auth::cap_act() | auth::cap_act_protected()) { return surface::Outcome::Allowed; }
+        return surface::Outcome::NeedsGrant;
+    }
+    if id == "payment:cvc" {
+        if grant.has(auth::cap_act() | auth::cap_act_private()) { return surface::Outcome::Allowed; }
+        return surface::Outcome::Forbidden;
+    }
+    return surface::Outcome::Allowed;
+}
+fn fake_nav(p: *u8, grant: auth::Grant, id: str) -> surface::Outcome { return surface::Outcome::Allowed; }
 
 // Three shapes the wire has to carry distinctly: reachable, covered by an
 // EXPOSED node (named), and covered by one that is not (fact without identity).
-fn fake_hit_test(p: *u8, id: str) -> surface::HitTest {
+fn fake_hit_test(p: *u8, grant: auth::Grant, id: str) -> surface::HitTest {
     if id == "buried" {
         return surface::HitTest {
             outcome: surface::Outcome::Allowed, supported: true,
@@ -696,6 +855,39 @@ fn fake_hit_test(p: *u8, id: str) -> surface::HitTest {
     };
 }
 
+fn fake_set_caret(p: *u8, grant: auth::Grant, id: str, at: u64, length: u64) -> surface::Outcome {
+    if id == "label" { return surface::Outcome::NotActionable; }
+    return surface::Outcome::Allowed;
+}
+
+// Two runs and a gap: one coloured and bold, one carrying nothing of its own.
+fn fake_read_runs(p: *u8, grant: auth::Grant, id: str) -> surface::Runs {
+    if id == "not-text" { return surface::runs_refused(surface::Outcome::Allowed, false); }
+    if id == "payment:card" {
+        if !grant.has(auth::cap_read() | auth::cap_read_protected()) {
+            return surface::runs_refused(surface::Outcome::NeedsGrant, true);
+        }
+    }
+    var runs: vec::Vec[surface::TextRun] = vec::new::[surface::TextRun]();
+    runs.append(surface::TextRun {
+        start: 0 as u64, length: 3 as u64, color: text::from_str("#ff0000"),
+        is_bold: true, is_italic: false, is_underlined: false,
+    });
+    runs.append(surface::TextRun {
+        start: 3 as u64, length: 4 as u64, color: text::new(),
+        is_bold: false, is_italic: false, is_underlined: false,
+    });
+    return surface::Runs {
+        outcome: surface::Outcome::Allowed, supported: true, runs: runs,
+    };
+}
+
+fn fake_invoke_menu(p: *u8, grant: auth::Grant, path: str) -> surface::Outcome {
+    if path == "File/Save" { return surface::Outcome::Allowed; }
+    if path == "File/Greyed" { return surface::Outcome::NotActionable; }
+    return surface::Outcome::NotFound;
+}
+
 fn fake_backend() -> backend::Backend {
     return backend::Backend {
         describe: fake_describe_full,
@@ -704,10 +896,19 @@ fn fake_backend() -> backend::Backend {
         set_text: fake_set_text,
         navigate: fake_nav,
         hit_test: fake_hit_test,
+        set_caret: fake_set_caret,
+        read_runs: fake_read_runs,
+        invoke_menu: fake_invoke_menu,
     };
 }
 
-fn allow_all(req: auth::Request) -> auth::Decision { return auth::Decision::Allow; }
+fn allow_all(req: auth::Request) -> auth::Grant { return auth::operator(); }
+
+// The grant an app mints once the user has approved autofill.
+fn allow_protected(req: auth::Request) -> auth::Grant { return auth::protected_operator(); }
+
+// Nothing at all — an un-served surface, or a caller the policy does not know.
+fn allow_nothing(req: auth::Request) -> auth::Grant { return auth::nothing(); }
 
 #[test]
 fn describe_ui_mode_selects_the_view() {
@@ -726,6 +927,79 @@ fn describe_ui_mode_selects_the_view() {
     let r3: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(allow_all), "{\"method\":\"describe_ui\",\"params\":{\"mode\":\"full\"},\"id\":3}");
     assert r3.contains("exposed-node");
     assert r3.contains("structural-node");
+}
+
+#[test]
+fn the_three_verbs_that_turn_i_believe_into_i_checked() {
+    // Every one of these is a place the surface could not reach, and every one
+    // is exactly where unverified work had to be handed over: no verb placed a
+    // CARET, so a symbol command could not be aimed; none read back ATTRIBUTED
+    // RUNS, so "did the syntax colour land" needed a probe compiled into the
+    // app four separate times; and none invoked a MENU ITEM, so every key
+    // equivalent rested on a link nothing here could drive.
+    var sub: events::Subscriber = events::subscriber(events::everything(), 4 as usize);
+    let surf: *u8 = #addr_of(FAKE_SURF) as *u8;
+
+    let caret: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(allow_all),
+        "{\"method\":\"set_caret\",\"params\":{\"id\":\"editor\",\"at\":12},\"id\":1}");
+    assert caret.contains("allowed");
+    // A control whose drive is not text refuses rather than no-ops.
+    let refused: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(allow_all),
+        "{\"method\":\"set_caret\",\"params\":{\"id\":\"label\",\"at\":0},\"id\":2}");
+    assert refused.contains("not_actionable");
+
+    let runs: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(allow_all),
+        "{\"method\":\"read_runs\",\"params\":{\"id\":\"editor\"},\"id\":3}");
+    assert runs.contains("#ff0000");
+    assert runs.contains("\"bold\":true");
+    assert runs.contains("\"supported\":true");
+    // A run with no colour of its own omits the key rather than sending "",
+    // which would read as a colour nobody set.
+    assert runs.contains("\"color\":\"\"") == false;
+
+    let menu: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(allow_all),
+        "{\"method\":\"invoke_menu\",\"params\":{\"path\":\"File/Save\"},\"id\":4}");
+    assert menu.contains("allowed");
+    // A greyed item is NOT actionable, and a missing one is not found — the
+    // same two words a node gets.
+    let greyed: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(allow_all),
+        "{\"method\":\"invoke_menu\",\"params\":{\"path\":\"File/Greyed\"},\"id\":5}");
+    assert greyed.contains("not_actionable");
+    let nope: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(allow_all),
+        "{\"method\":\"invoke_menu\",\"params\":{\"path\":\"File/Nope\"},\"id\":6}");
+    assert nope.contains("not_found");
+}
+
+#[test]
+fn a_backend_that_cannot_answer_says_so_rather_than_guessing() {
+    // `supported: false` is the honest answer, and it is a different answer
+    // from "no runs" — the distinction the `clickable` field was added to make.
+    var sub: events::Subscriber = events::subscriber(events::everything(), 4 as usize);
+    let surf: *u8 = #addr_of(FAKE_SURF) as *u8;
+    let r: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(allow_all),
+        "{\"method\":\"read_runs\",\"params\":{\"id\":\"not-text\"},\"id\":1}");
+    assert r.contains("\"supported\":false");
+    assert r.contains("\"runs\":[]");
+}
+
+// NEGATIVE: both new verbs name the parameter they are missing, because a
+// driver that sends the wrong one otherwise gets a clean-looking sweep in which
+// nothing happened. `click` taking `id` and not `key`, and `set_text` taking
+// `value` and not `text`, each cost a full round of measuring an app that was
+// not responding to anything.
+#[test]
+fn the_new_verbs_name_the_parameter_they_are_missing() {
+    var sub: events::Subscriber = events::subscriber(events::everything(), 4 as usize);
+    let surf: *u8 = #addr_of(FAKE_SURF) as *u8;
+    let a: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(allow_all),
+        "{\"method\":\"set_caret\",\"params\":{\"id\":\"editor\"},\"id\":1}");
+    assert a.contains("at");
+    let b: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(allow_all),
+        "{\"method\":\"invoke_menu\",\"params\":{},\"id\":2}");
+    assert b.contains("path");
+    let c: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(allow_all),
+        "{\"method\":\"read_runs\",\"params\":{},\"id\":3}");
+    assert c.contains("id");
 }
 
 #[test]
@@ -883,11 +1157,14 @@ fn every_verb_that_takes_a_target_requires_one() {
 // can tell "routed here" from "answered by the surface".
 static EXT_CALLS: i32 = 0;
 
-fn fake_extension(method: str, params: json::Value, id: f64) -> json::Value {
+fn fake_extension(method: str, params: json::Value, id: f64, grant: auth::Grant) -> json::Value {
     EXT_CALLS = EXT_CALLS + 1;
     var m: vec::Vec[json::Member] = vec::new::[json::Member]();
     m.append(member("from", jstr("extension")));
     m.append(member("method", jstr(method)));
+    // Echoed so a test can assert the namespace was told WHO is asking, not
+    // merely that someone was admitted.
+    m.append(member("may_edit_tree", jbool(grant.has(auth::cap_edit_tree()))));
     return ok_response(id, json::Value::Object(m));
 }
 
@@ -1120,5 +1397,154 @@ fn a_live_server_keeps_its_socket_against_a_second_bind() {
     unlink_bound_socket();
     assert path_exists(path) == false;
     { close(live); }
+    return;
+}
+
+#[test]
+fn a_gated_node_is_on_the_wire_with_its_name_and_no_value() {
+    // The two halves of the ask, both asserted here: the model LEARNS the card
+    // field exists (id, role, name, position in the tree) and CANNOT read it.
+    var sub: events::Subscriber = events::subscriber(events::everything(), 4 as usize);
+    let surf: *u8 = #addr_of(FAKE_SURF) as *u8;
+    let r: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(allow_all),
+        "{\"method\":\"describe_ui\",\"id\":1}");
+    assert r.contains("payment:card");           // it is there
+    assert r.contains("Card number");            // and it says what it is
+    assert r.contains("\"tier\":\"protected\""); // and which gate it is behind
+    assert r.contains("\"readable\":false");     // and that this agent is outside it
+    assert r.contains("4242") == false;
+    return;
+}
+
+#[test]
+fn the_grant_the_policy_returns_is_what_reaches_the_backend() {
+    // The seam the whole model rests on: the policy's answer is threaded into
+    // the verb, so the SAME request against the SAME surface answers differently
+    // for two credentials. If this ever stops holding, every tier above it is
+    // decoration.
+    var sub: events::Subscriber = events::subscriber(events::everything(), 4 as usize);
+    let surf: *u8 = #addr_of(FAKE_SURF) as *u8;
+    let plain: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(allow_all),
+        "{\"method\":\"describe_ui\",\"id\":1}");
+    assert plain.contains("\"readable\":false");
+    assert plain.contains("4242") == false;
+
+    let approved: text::Text = handle_request(surf, fake_backend(), sub,
+        auth::serve(allow_protected), "{\"method\":\"describe_ui\",\"id\":2}");
+    assert approved.contains("\"readable\":true");
+    assert approved.contains("4242424242424242");
+    // The DECLARATION does not change with the grant — the field is still a
+    // protected one, it is just one this agent may now read.
+    assert approved.contains("\"tier\":\"protected\"");
+    return;
+}
+
+#[test]
+fn ask_and_stop_are_different_words_on_the_wire() {
+    // `not_actionable` means "not right now" and an agent retries it;
+    // `version_conflict` means "re-read and try again", which is worse. A
+    // refusal on a card field has to be legible as either "ask the user" or
+    // "this is never coming", or the model spends its turn arguing with a form.
+    var sub: events::Subscriber = events::subscriber(events::everything(), 4 as usize);
+    let surf: *u8 = #addr_of(FAKE_SURF) as *u8;
+    let card: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(allow_all),
+        "{\"method\":\"set_text\",\"params\":{\"id\":\"payment:card\",\"value\":\"4242424242424242\"},\"id\":1}");
+    assert card.contains("needs_grant");
+    assert card.contains("version_conflict") == false;
+    // The CVC is Private: the app declares the tier and never mints the bit,
+    // so even the widest grant it hands out gets `forbidden`.
+    let cvc: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(allow_protected),
+        "{\"method\":\"set_text\",\"params\":{\"id\":\"payment:cvc\",\"value\":\"999\"},\"id\":2}");
+    assert cvc.contains("forbidden");
+    assert cvc.contains("needs_grant") == false;
+    // The attribute-run read is a content read too — a length is a leak.
+    let runs: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(allow_all),
+        "{\"method\":\"read_runs\",\"params\":{\"id\":\"payment:card\"},\"id\":3}");
+    assert runs.contains("needs_grant");
+    return;
+}
+
+#[test]
+fn the_full_view_is_not_a_way_around_a_tier() {
+    // `mode: full` is a parameter the agent chooses. A gate that only held in
+    // the curated view would hold exactly until a model tried the other one.
+    var sub: events::Subscriber = events::subscriber(events::everything(), 4 as usize);
+    let surf: *u8 = #addr_of(FAKE_SURF) as *u8;
+    let r: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(allow_all),
+        "{\"method\":\"describe_ui\",\"params\":{\"mode\":\"full\"},\"id\":1}");
+    assert r.contains("payment:card");
+    assert r.contains("\"tier\":\"protected\"");
+    assert r.contains("4242") == false;
+    return;
+}
+
+#[test]
+fn an_empty_grant_is_refused_once_rather_than_per_verb() {
+    // A policy that returns nothing has said the caller is not an agent of
+    // this application at all. That is a connection-level answer, not
+    // seventeen per-node ones.
+    var sub: events::Subscriber = events::subscriber(events::everything(), 4 as usize);
+    let surf: *u8 = #addr_of(FAKE_SURF) as *u8;
+    let r: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(allow_nothing),
+        "{\"method\":\"describe_ui\",\"id\":1}");
+    assert r.contains("consent denied");
+    assert r.contains("exposed-node") == false;
+    return;
+}
+
+// A policy shaped like real middleware: verify the credential in your own code
+// (here, a string compare standing in for a signature check), then say what its
+// claims amount to.
+fn token_policy(req: auth::Request) -> auth::Grant {
+    if req.token == "autofill-approved" { return auth::protected_operator(); }
+    if req.token == "session-abc" { return auth::operator(); }
+    return auth::nothing();
+}
+
+#[test]
+fn the_request_carries_a_credential_the_policy_can_read() {
+    // agent_core deliberately never parses a token — no crypto, no clock, no
+    // identity provider. It carries the bytes to the developer's policy and
+    // takes back a Grant. This is the seam a JWT middleware plugs into.
+    var sub: events::Subscriber = events::subscriber(events::everything(), 4 as usize);
+    let surf: *u8 = #addr_of(FAKE_SURF) as *u8;
+    let none: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(token_policy),
+        "{\"method\":\"describe_ui\",\"id\":1}");
+    assert none.contains("consent denied");
+
+    let session: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(token_policy),
+        "{\"method\":\"describe_ui\",\"params\":{\"token\":\"session-abc\"},\"id\":2}");
+    assert session.contains("exposed-node");
+    assert session.contains("4242") == false;
+
+    let approved: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(token_policy),
+        "{\"method\":\"describe_ui\",\"params\":{\"token\":\"autofill-approved\"},\"id\":3}");
+    assert approved.contains("4242424242424242");
+    return;
+}
+
+fn allow_builder(req: auth::Request) -> auth::Grant {
+    return auth::operator().with(auth::cap_edit_tree());
+}
+
+#[test]
+fn an_extension_namespace_is_told_which_capabilities_the_caller_has() {
+    // The inspector rides this hook, and its verbs REWRITE THE UI — insert,
+    // remove, reparent, set any property. A namespace that only learned
+    // "consent was not empty" would make every credential equal inside it, so
+    // an agent granted a look at the app could rebuild it.
+    disarm_extension();
+    var sub: events::Subscriber = events::subscriber(events::everything(), 4 as usize);
+    let surf: *u8 = #addr_of(FAKE_SURF) as *u8;
+    arm_extension("inspector.", fake_extension);
+
+    let plain: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(allow_all),
+        "{\"method\":\"inspector.describe\",\"id\":1}");
+    assert plain.contains("\"may_edit_tree\":false");
+
+    let builder: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(allow_builder),
+        "{\"method\":\"inspector.describe\",\"id\":2}");
+    assert builder.contains("\"may_edit_tree\":true");
+    disarm_extension();
     return;
 }

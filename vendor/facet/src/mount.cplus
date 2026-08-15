@@ -40,6 +40,8 @@
 import "stdlib/vec" as vec;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
+import "stdlib/env" as env;
+import "stdlib/io" as io;
 import "flex_layout/flex_layout" as flex;
 import "./facet" as core;
 import "./props" as props;
@@ -125,6 +127,34 @@ fn mounted_root() -> *core::Node {
     return app::newest_window_root();
 }
 
+// ---- the find debug posture ---------------------------------------------
+// `find(key)` answers None for "nothing mounted yet", "no such key" and (one
+// module up, in every typed find) "wrong control kind" — and the idiomatic
+// handling is `None => { }`. So a typo'd key, a call that ran before mount
+// and a cursor of the wrong type all produce the same thing: nothing,
+// quietly, forever — the worst possible shape for an agent, because the code
+// still reads as correct and there is nothing to bisect. Under
+// FACET_DEBUG_FIND=1 a miss says WHICH of the three it was, one stderr line
+// each. Off by default: a miss is a legal answer (a screen probing for an
+// optional pane), not a fault.
+
+static FIND_DBG_READ: bool = false;
+static FIND_DBG_ON: bool = false;
+
+fn find_debugging() -> bool {
+    if !FIND_DBG_READ { FIND_DBG_READ = true; FIND_DBG_ON = env::has_var("FACET_DEBUG_FIND"); }
+    return FIND_DBG_ON;
+}
+
+// The typed finds report their wrong-kind miss here: the node EXISTS, the
+// cursor asked it to be another control. `wanted` is the module's own name.
+fn debug_find_wrong_kind(key: str, wanted: str) {
+    if !find_debugging() { return; }
+    let m: text::Text = "facet find(\"${key}\"): the node exists but is not a ${wanted} — the typed cursor answered None";
+    io::eprintln(m.view());
+    return;
+}
+
 // The DOM rule (user decision, 2026-08-04): a bare `find(key)` resolves like
 // getElementById — the running app's windows in OPEN order, each tree in
 // document order, FIRST match wins. Two windows sharing a key is legal;
@@ -141,6 +171,15 @@ fn find_node(key: str) -> option::Option[*core::Node] {
             }
         }
         i = i +% (1 as usize);
+    }
+    if find_debugging() {
+        if n == (0 as usize) {
+            let m0: text::Text = "facet find(\"${key}\"): nothing is mounted yet — the call ran before any window opened";
+            io::eprintln(m0.view());
+        } else {
+            let m1: text::Text = "facet find(\"${key}\"): no node with this key in any mounted window";
+            io::eprintln(m1.view());
+        }
     }
     return option::Option[*core::Node]::None;
 }

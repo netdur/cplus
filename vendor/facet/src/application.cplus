@@ -114,6 +114,28 @@ static AGENT_ATTACH_FN: fn(*u8) = #zero::[fn(*u8)]();
 
 fn set_agent_attach_fn(f: fn(*u8)) { AGENT_ATTACH_FN = f; return; }
 
+// The agent SENSITIVITY pin: `paint` calls this for every node carrying a
+// non-default `agent` prop, and it is inert in an app that never served — so
+// the prop costs a stored enum and one null check, and the agent packages stay
+// out of the build. Same shape as the attach hook above, for the same reason.
+//
+// Typed on FACET'S OWN vocabulary, not agent_core's. The alternative was a
+// bare u32 for the tier, which would have put the enum-to-policy mapping in
+// facet_appkit as well as facet/agent — two copies of a table whose whole job
+// is deciding what a card field is worth. One translation, in the one module
+// that already depends on both sides.
+static AGENT_PIN_FN: fn(*u8, vocab::Agent) = #zero::[fn(*u8, vocab::Agent)]();
+
+fn set_agent_pin_fn(f: fn(*u8, vocab::Agent)) { AGENT_PIN_FN = f; return; }
+
+// Pin a node's declared tier onto its platform view. Inert when no agent is
+// serving, which is every app that never called `agent::enable()`.
+fn agent_pin(view: *u8, a: vocab::Agent) {
+    let f: fn(*u8, vocab::Agent) = AGENT_PIN_FN;
+    if f != (0 as fn(*u8, vocab::Agent)) { f(view, a); }
+    return;
+}
+
 static ACTIVATE_FN: fn(*u8) = #zero::[fn(*u8)]();
 fn set_activate_fn(f: fn(*u8)) { ACTIVATE_FN = f; return; }
 

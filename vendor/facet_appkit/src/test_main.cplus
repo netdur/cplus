@@ -303,6 +303,77 @@ fn a_dynamic_colour_is_wrapped_once_and_a_static_one_never() {
     return;
 }
 
+#[link_name = "objc_msgSend"]
+extern fn dyn_msg_id_id(recv: *u8, sel: *u8, a: *u8) -> *u8;
+#[link_name = "objc_msgSend"]
+extern fn dyn_msg_void_id_id_range(recv: *u8, sel: *u8, a: *u8, b: *u8, r: rt::Range);
+#[link_name = "objc_msgSend"]
+extern fn dyn_msg_id_id_u64_ptr_range(recv: *u8, sel: *u8, a: *u8, i: u64,
+                                      out: *rt::Range, r: rt::Range) -> *u8;
+
+#[test]
+fn two_dynamic_colours_are_not_equal_just_for_sharing_a_kind() {
+    app::reset_default_for_tests();
+    theme::set_theme(theme::Theme::new());
+    // Named NSColors compare BY NAME. Every facet wrapper used to be created
+    // as "facet.dynamic", so any two of them were `isEqual:` whatever their
+    // providers answered — invisible to a view (a view holds ONE colour),
+    // fatal inside an attributed string (below).
+    let a: ak::Color = paint::ns_color(vocab::Color::adaptive(
+        light: vocab::Color::rgba(1.0f64, 0.0f64, 0.0f64, 1.0f64),
+        dark:  vocab::Color::rgba(0.8f64, 0.1f64, 0.1f64, 1.0f64)));
+    let b: ak::Color = paint::ns_color(vocab::Color::adaptive(
+        light: vocab::Color::rgba(0.0f64, 0.0f64, 1.0f64, 1.0f64),
+        dark:  vocab::Color::rgba(0.1f64, 0.1f64, 0.8f64, 1.0f64)));
+    assert { rt::msg_i8_id(a.raw(), rt::sel(#str_ptr("isEqual:\0")), b.raw()) } == (0 as i8);
+    // And a colour is still equal to ITSELF — distinctness, not noise.
+    assert { rt::msg_i8_id(a.raw(), rt::sel(#str_ptr("isEqual:\0")), a.raw()) } != (0 as i8);
+    app::reset_default_for_tests();
+    return;
+}
+
+#[test]
+fn distinct_dynamic_colours_keep_their_runs_in_an_attributed_string() {
+    app::reset_default_for_tests();
+    theme::set_theme(theme::Theme::new());
+    // The measured failure shape: an NSAttributedString COALESCES adjacent
+    // runs whose attribute values are `isEqual:`, so ten syntax colours
+    // sharing one catalog name merged into one flat run and the file drew in
+    // whichever was written first. Two colours on {0,3} and {3,3} must read
+    // back as two runs, not one spanning {0,6}.
+    let red: ak::Color = paint::ns_color(vocab::Color::adaptive(
+        light: vocab::Color::rgba(1.0f64, 0.0f64, 0.0f64, 1.0f64),
+        dark:  vocab::Color::rgba(0.8f64, 0.1f64, 0.1f64, 1.0f64)));
+    let blue: ak::Color = paint::ns_color(vocab::Color::adaptive(
+        light: vocab::Color::rgba(0.0f64, 0.0f64, 1.0f64, 1.0f64),
+        dark:  vocab::Color::rgba(0.1f64, 0.1f64, 0.8f64, 1.0f64)));
+    let alloc: *u8 = { rt::msg_id(rt::get_class(#str_ptr("NSMutableAttributedString\0")),
+                                  rt::sel(#str_ptr("alloc\0"))) };
+    let s: *u8 = { dyn_msg_id_id(alloc, rt::sel(#str_ptr("initWithString:\0")),
+                                 bridge::nsstring("abcdef")) };
+    assert s != (0 as *u8);
+    let key: *u8 = bridge::nsstring("NSColor");   // NSForegroundColorAttributeName
+    { dyn_msg_void_id_id_range(s, rt::sel(#str_ptr("addAttribute:value:range:\0")),
+                               key, red.raw(),
+                               rt::Range { location: 0 as u64, length: 3 as u64 }) };
+    { dyn_msg_void_id_id_range(s, rt::sel(#str_ptr("addAttribute:value:range:\0")),
+                               key, blue.raw(),
+                               rt::Range { location: 3 as u64, length: 3 as u64 }) };
+    var eff: rt::Range = rt::Range { location: 0 as u64, length: 0 as u64 };
+    let got: *u8 = { dyn_msg_id_id_u64_ptr_range(
+        s, rt::sel(#str_ptr("attribute:atIndex:longestEffectiveRange:inRange:\0")),
+        key, 0 as u64, #addr_of(eff),
+        rt::Range { location: 0 as u64, length: 6 as u64 }) };
+    assert got != (0 as *u8);
+    // The run STOPS where the colour changes. Before the per-entry name this
+    // read back {0,6}: one run, first writer wins, and nothing said anything.
+    assert eff.location == (0 as u64);
+    assert eff.length == (3 as u64);
+    rt::release(s);
+    app::reset_default_for_tests();
+    return;
+}
+
 #[test]
 fn a_plain_button_keeps_its_bezel_instead_of_being_layer_backed() {
     app::reset_default_for_tests();
@@ -872,6 +943,66 @@ fn open_window_refuses_a_null_root_and_close_is_inert() {
     // Closing nothing is a no-op, not a trap — the alloc-failure path.
     window::close_window(0 as *u8);
     backend::uninstall();
+    return;
+}
+
+// ---- a menu item says ⇧/⌥ on top of its ⌘ -----------------------------------
+//
+// `key:` alone always meant ⌘, and every bare ⌘ letter in an editor is taken —
+// five commands shipped with NO shortcut rather than fight over them. `shift:`
+// and `alt:` ADD to the ⌘; Command stays in the mask, or the item would become
+// a bare-letter shortcut that fires while the user types.
+
+#[test]
+fn a_menu_items_shift_and_alt_reach_the_key_equivalent_mask() {
+    backend::install();
+    var it: screen::MenuItem = screen::MenuItem::new("Go", "Find References",
+                                                     key: "f", shift: true, alt: true);
+    assert it.shift;
+    assert it.alt;
+    let raw: *u8 = window::new_menu_item(#addr_of(it));
+    assert raw != (0 as *u8);
+    let mi: ak::MenuItem = ak::MenuItem::from_raw(raw);
+    assert mi.key_equivalent().view() == "f";
+    // Command | Shift | Option.
+    assert mi.key_equivalent_modifier_mask() == (1703936 as u64);
+    return;
+}
+
+#[test]
+fn a_menu_item_without_modifiers_keeps_the_plain_command_mask() {
+    backend::install();
+    // The negative half: a bare `key:` stays exactly what it always was —
+    // AppKit's own Command default, untouched by this code path.
+    var it: screen::MenuItem = screen::MenuItem::new("File", "Save", key: "s");
+    assert it.shift == false;
+    assert it.alt == false;
+    let raw: *u8 = window::new_menu_item(#addr_of(it));
+    assert raw != (0 as *u8);
+    let mi: ak::MenuItem = ak::MenuItem::from_raw(raw);
+    assert mi.key_equivalent_modifier_mask() == (1048576 as u64);   // Command alone
+    return;
+}
+
+#[test]
+fn add_command_carries_the_modifiers_through() {
+    var m: screen::AppMenu = screen::app_menu("probe");
+    m.add_command("Go", "Show Callers", key: "c", shift: true);
+    m.add_item("Go", "Go to Symbol", "g", 0 as u32, alt: true);
+    match m.items.at_ptr(0 as usize) {
+        option::Option[*screen::MenuItem]::Some(it) => {
+            assert { (*it).shift };
+            assert { (*it).alt } == false;
+        }
+        option::Option[*screen::MenuItem]::None => { assert false; }
+    }
+    match m.items.at_ptr(1 as usize) {
+        option::Option[*screen::MenuItem]::Some(it) => {
+            assert { (*it).shift } == false;
+            assert { (*it).alt };
+        }
+        option::Option[*screen::MenuItem]::None => { assert false; }
+    }
     return;
 }
 
@@ -3029,6 +3160,529 @@ fn a_list_with_no_stated_height_still_measures_by_building() {
     return;
 }
 
+// ---- a list write pays for what it changed, and no more ---------------------
+//
+// The apply body wiped the height cache and reloaded the table on EVERY dirty
+// bit — gated on nothing — so a selection write alone discarded every measured
+// height and every vended cell, and a streaming transcript re-shaped and
+// re-drew every visible row on every token. Three fixes live together here:
+// the stated-height copy that only arrived under a GROUP bit, the reload that
+// now runs only for sequence writes, and `invalidate_row` for the one write
+// neither covers — a row that changed in place.
+
+static IV_BUMP: f64 = 0.0f64;
+
+fn iv_height(i: usize, ctx: *u8) -> f64 {
+    SH_ASKED = SH_ASKED + (1 as i64);
+    if (i % (2 as usize)) == (0 as usize) { return 40.0f64 + IV_BUMP; }
+    return 24.0f64 + IV_BUMP;
+}
+
+fn iv_list(count: usize) -> core::Node {
+    var n: core::Node = list::list(key: "iv", uneven_rows: true);
+    let p: *core::Node = #addr_of(n);
+    match list::find("iv", within: p) {
+        option::Option[list::List]::Some(x) => {
+            let a: list::List = x.set_row(sh_row);
+            let b: list::List = a.set_count(count);
+            let _c: list::List = b.set_row_height_of(iv_height);
+        }
+        option::Option[list::List]::None => { assert false; }
+    }
+    return n;
+}
+
+fn iv_ask_all(v: *u8, rows: i64) {
+    var r: i64 = 0 as i64;
+    while r < rows {
+        let _h: f64 = recycler::height_of_row(v, r);
+        r = r + (1 as i64);
+    }
+    return;
+}
+
+#[test]
+fn a_stated_height_written_post_mount_arrives_without_a_group_write() {
+    backend::install();
+    // `set_row_height_of` raises P_ROW, and the recycler copied the field into
+    // its RowSource only under the GROUP bits — so the post-mount write, the
+    // only pattern a cursor-configured list has, was silently dropped unless a
+    // group write happened to ride along. The workaround in the wild was a
+    // no-op `set_grouped(false)` written beside the height, to open a gate
+    // whose own comment only ever talked about groups.
+    SH_BUILDS = 0 as i64;
+    SH_ASKED = 0 as i64;
+    IV_BUMP = 0.0f64;
+    var n: core::Node = list::list(key: "pm", uneven_rows: true);
+    let p: *core::Node = #addr_of(n);
+    match list::find("pm", within: p) {
+        option::Option[list::List]::Some(x) => {
+            let a: list::List = x.set_row(sh_row);
+            let _b: list::List = a.set_count(10 as usize);
+        }
+        option::Option[list::List]::None => { assert false; }
+    }
+    let v: *u8 = views::create(0 as *u8, p);
+    core::set_view(p, v, views::view_release);
+    core::clear_dirty(p);
+    match list::find("pm", within: p) {
+        option::Option[list::List]::Some(x) => {
+            let _h: list::List = x.set_row_height_of(iv_height);
+        }
+        option::Option[list::List]::None => { assert false; }
+    }
+    views::apply(0 as *u8, p);
+    // The stated answer, not the built-and-floored one — and stated without
+    // ever building a row.
+    assert recycler::height_of_row(v, 0 as i64) == 40.0f64;
+    assert SH_ASKED == (1 as i64);
+    assert SH_BUILDS == (0 as i64);
+    return;
+}
+
+#[test]
+fn a_selection_write_alone_keeps_every_measured_height() {
+    backend::install();
+    SH_BUILDS = 0 as i64;
+    SH_ASKED = 0 as i64;
+    IV_BUMP = 0.0f64;
+    var n: core::Node = iv_list(10 as usize);
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    core::set_view(p, v, views::view_release);
+    let _h0: f64 = recycler::height_of_row(v, 0 as i64);
+    assert SH_ASKED == (1 as i64);
+    assert recycler::heights_width_of(v) > 0.0f64;
+    core::clear_dirty(p);
+    match list::find("iv", within: p) {
+        option::Option[list::List]::Some(x) => {
+            let _s: list::List = x.set_selected_index(3 as i64);
+        }
+        option::Option[list::List]::None => { assert false; }
+    }
+    views::apply(0 as *u8, p);
+    // Neither wiped nor re-asked: the cache and its width survive, and the
+    // next question is answered from it.
+    //
+    // Counted around the QUESTION rather than from the top of the test.
+    // Selecting a row is something AppKit may answer by asking that row's own
+    // height — whether it does depends on whether the real table has laid
+    // itself out yet, which made a `SH_ASKED == 1` here fail about one run in
+    // three. What this test is about is row 0's measurement surviving, and
+    // that is exactly what a delta of zero across the re-ask says.
+    assert recycler::heights_width_of(v) > 0.0f64;
+    let asked_before: i64 = SH_ASKED;
+    assert recycler::height_of_row(v, 0 as i64) == 40.0f64;
+    assert SH_ASKED == asked_before;
+    return;
+}
+
+#[test]
+fn a_count_write_still_discards_the_old_measurements() {
+    backend::install();
+    // The gate is on SEQUENCE writes, not on writing at all: after a count
+    // change the measurements belong to the old sequence, exactly as before.
+    SH_BUILDS = 0 as i64;
+    SH_ASKED = 0 as i64;
+    IV_BUMP = 0.0f64;
+    var n: core::Node = iv_list(10 as usize);
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    core::set_view(p, v, views::view_release);
+    let _h0: f64 = recycler::height_of_row(v, 0 as i64);
+    assert recycler::heights_width_of(v) > 0.0f64;
+    core::clear_dirty(p);
+    match list::find("iv", within: p) {
+        option::Option[list::List]::Some(x) => {
+            let _c: list::List = x.set_count(11 as usize);
+        }
+        option::Option[list::List]::None => { assert false; }
+    }
+    views::apply(0 as *u8, p);
+    assert recycler::heights_width_of(v) == 0.0f64;
+    return;
+}
+
+fn rk_kind(i: usize, ctx: *u8) -> usize {
+    if (i % (3 as usize)) == (0 as usize) { return 0 as usize; }
+    if (i % (3 as usize)) == (1 as usize) { return 1 as usize; }
+    return 7 as usize;                       // kinds need not be dense
+}
+
+#[test]
+fn rows_of_different_kinds_are_vended_from_different_pools() {
+    backend::install();
+    // The bind promise. One identity for every row means `makeViewWithIdentifier:`
+    // can hand a bubble's cell to a tool card, and a bind writes the card's data
+    // into the bubble's subtree with nothing to say so — which is why a
+    // transcript of three shapes could not state a bind at all.
+    SH_BUILDS = 0 as i64;
+    SH_ASKED = 0 as i64;
+    IV_BUMP = 0.0f64;
+    var n: core::Node = list::list(key: "rk", uneven_rows: true);
+    let p: *core::Node = #addr_of(n);
+    match list::find("rk", within: p) {
+        option::Option[list::List]::Some(x) => {
+            let a: list::List = x.set_row(sh_row);
+            let b: list::List = a.set_count(6 as usize);
+            let c: list::List = b.set_row_height_of(iv_height);
+            let _d: list::List = c.set_row_kind(rk_kind);
+        }
+        option::Option[list::List]::None => { assert false; }
+    }
+    let v: *u8 = views::create(0 as *u8, p);
+    core::set_view(p, v, views::view_release);
+    // Same shape, same pool; different shape, different pool.
+    assert recycler::identity_of_row(v, 0 as i64) == "facet.row";
+    assert recycler::identity_of_row(v, 3 as i64) == "facet.row";
+    assert recycler::identity_of_row(v, 1 as i64) == "facet.row.1";
+    assert recycler::identity_of_row(v, 4 as i64) == "facet.row.1";
+    assert recycler::identity_of_row(v, 2 as i64) == "facet.row.7";
+    return;
+}
+
+#[test]
+fn a_list_that_names_no_kind_keeps_the_one_pool_it_always_had() {
+    backend::install();
+    SH_BUILDS = 0 as i64;
+    SH_ASKED = 0 as i64;
+    IV_BUMP = 0.0f64;
+    var n: core::Node = iv_list(4 as usize);
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    core::set_view(p, v, views::view_release);
+    assert recycler::identity_of_row(v, 0 as i64) == "facet.row";
+    assert recycler::identity_of_row(v, 3 as i64) == "facet.row";
+    return;
+}
+
+#[test]
+fn a_group_header_is_its_own_shape_and_its_own_pool() {
+    backend::install();
+    // A header is built by `group_header` and a row by `row` — two shapes that
+    // shared one pool for as long as grouping has existed.
+    SH_BUILDS = 0 as i64;
+    SH_ASKED = 0 as i64;
+    IV_BUMP = 0.0f64;
+    var n: core::Node = list::list(key: "rkg", uneven_rows: true, grouped: true);
+    let p: *core::Node = #addr_of(n);
+    match list::find("rkg", within: p) {
+        option::Option[list::List]::Some(x) => {
+            let a: list::List = x.set_row(sh_row);
+            let b: list::List = a.set_count(5 as usize);
+            let c: list::List = b.set_group_count(2 as usize);
+            let d: list::List = c.set_group_size(g_size);
+            let e: list::List = d.set_group_header(g_header);
+            let _f: list::List = e.set_row_height_of(iv_height);
+        }
+        option::Option[list::List]::None => { assert false; }
+    }
+    let v: *u8 = views::create(0 as *u8, p);
+    core::set_view(p, v, views::view_release);
+    // 0 header | 1 data0 | 2 data1 | 3 header | 4 data2 ...
+    assert recycler::identity_of_row(v, 0 as i64) == "facet.row.header";
+    assert recycler::identity_of_row(v, 3 as i64) == "facet.row.header";
+    assert recycler::identity_of_row(v, 1 as i64) == "facet.row";
+    assert recycler::identity_of_row(v, 4 as i64) == "facet.row";
+    return;
+}
+
+#[test]
+fn an_append_keeps_every_height_the_list_had_already_measured() {
+    backend::install();
+    // The transcript write. `set_count` says NEW SEQUENCE and costs every
+    // measured height; `insert_rows` says the sequence GREW, and the rows
+    // above the splice are the rows they were, at the heights they were
+    // measured at. The stale answers below are the proof they were not
+    // re-asked: the oracle would answer 6 more now.
+    SH_BUILDS = 0 as i64;
+    SH_ASKED = 0 as i64;
+    IV_BUMP = 0.0f64;
+    var n: core::Node = iv_list(5 as usize);
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    core::set_view(p, v, views::view_release);
+    iv_ask_all(v, 5 as i64);
+    assert SH_ASKED == (5 as i64);
+    IV_BUMP = 6.0f64;
+    core::clear_dirty(p);
+    match list::find("iv", within: p) {
+        option::Option[list::List]::Some(x) => {
+            let _i: list::List = x.insert_rows(at: 5 as usize, count: 2 as usize);
+        }
+        option::Option[list::List]::None => { assert false; }
+    }
+    views::apply(0 as *u8, p);
+    // The cache and the width it was taken at both survive.
+    assert recycler::heights_width_of(v) > 0.0f64;
+    // The old rows answer their OLD numbers, without asking again. (Counted
+    // around the questions rather than from the top: a real table may service
+    // the insert by asking for the new rows itself, which is the table doing
+    // its job and not this list re-measuring.)
+    let asked: i64 = SH_ASKED;
+    assert recycler::height_of_row(v, 0 as i64) == 40.0f64;
+    assert recycler::height_of_row(v, 4 as i64) == 40.0f64;
+    assert SH_ASKED == asked;
+    // The two new rows are the ones that get measured — with the new content.
+    assert recycler::height_of_row(v, 5 as i64) == 30.0f64;
+    assert recycler::height_of_row(v, 6 as i64) == 46.0f64;
+    assert SH_BUILDS == (0 as i64);
+    return;
+}
+
+#[test]
+fn an_insert_in_the_middle_shifts_the_cache_with_the_rows() {
+    backend::install();
+    // A splice is not just a count: row 1's measurement belongs to whatever
+    // row 1 becomes. Inserting one row at 1 moves every old measurement down
+    // by one, and the new row alone is unmeasured.
+    SH_BUILDS = 0 as i64;
+    SH_ASKED = 0 as i64;
+    IV_BUMP = 0.0f64;
+    var n: core::Node = iv_list(4 as usize);
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    core::set_view(p, v, views::view_release);
+    iv_ask_all(v, 4 as i64);            // cache: 40 24 40 24
+    IV_BUMP = 6.0f64;
+    core::clear_dirty(p);
+    match list::find("iv", within: p) {
+        option::Option[list::List]::Some(x) => {
+            let _i: list::List = x.insert_rows(at: 1 as usize, count: 1 as usize);
+        }
+        option::Option[list::List]::None => { assert false; }
+    }
+    views::apply(0 as *u8, p);
+    assert recycler::height_of_row(v, 0 as i64) == 40.0f64;   // untouched
+    assert recycler::height_of_row(v, 1 as i64) == 30.0f64;   // the new row
+    // Old row 1 (24) now sits at index 2, where a fresh ask would answer 46.
+    assert recycler::height_of_row(v, 2 as i64) == 24.0f64;
+    assert recycler::height_of_row(v, 3 as i64) == 40.0f64;
+    assert recycler::height_of_row(v, 4 as i64) == 24.0f64;
+    return;
+}
+
+#[test]
+fn a_removal_drops_exactly_those_rows_measurements() {
+    backend::install();
+    SH_BUILDS = 0 as i64;
+    SH_ASKED = 0 as i64;
+    IV_BUMP = 0.0f64;
+    var n: core::Node = iv_list(5 as usize);
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    core::set_view(p, v, views::view_release);
+    iv_ask_all(v, 5 as i64);            // cache: 40 24 40 24 40
+    IV_BUMP = 6.0f64;
+    core::clear_dirty(p);
+    match list::find("iv", within: p) {
+        option::Option[list::List]::Some(x) => {
+            let _r: list::List = x.remove_rows(at: 1 as usize, count: 2 as usize);
+        }
+        option::Option[list::List]::None => { assert false; }
+    }
+    views::apply(0 as *u8, p);
+    let asked: i64 = SH_ASKED;
+    assert recycler::height_of_row(v, 0 as i64) == 40.0f64;
+    // What was row 3 is row 1 now, and it kept ITS number (24), not row 1's.
+    assert recycler::height_of_row(v, 1 as i64) == 24.0f64;
+    assert recycler::height_of_row(v, 2 as i64) == 40.0f64;
+    assert SH_ASKED == asked;
+    return;
+}
+
+// NEGATIVE: a grouped list takes the reload. The splice is data-indexed and
+// the translation reads `group_size`, which the application has already moved
+// to describe the NEW sequence — so there is no honest way to ask where the
+// old rows were.
+#[test]
+fn a_grouped_splice_reloads_rather_than_guessing_the_table_rows() {
+    backend::install();
+    SH_BUILDS = 0 as i64;
+    SH_ASKED = 0 as i64;
+    IV_BUMP = 0.0f64;
+    var n: core::Node = list::list(key: "spg", uneven_rows: true, grouped: true);
+    let p: *core::Node = #addr_of(n);
+    match list::find("spg", within: p) {
+        option::Option[list::List]::Some(x) => {
+            let a: list::List = x.set_row(sh_row);
+            let b: list::List = a.set_count(5 as usize);
+            let c: list::List = b.set_group_count(2 as usize);
+            let d: list::List = c.set_group_size(g_size);
+            let e: list::List = d.set_group_header(g_header);
+            let _f: list::List = e.set_row_height_of(iv_height);
+        }
+        option::Option[list::List]::None => { assert false; }
+    }
+    let v: *u8 = views::create(0 as *u8, p);
+    core::set_view(p, v, views::view_release);
+    let _h: f64 = recycler::height_of_row(v, 1 as i64);
+    assert recycler::heights_width_of(v) > 0.0f64;
+    core::clear_dirty(p);
+    match list::find("spg", within: p) {
+        option::Option[list::List]::Some(x) => {
+            let _i: list::List = x.insert_rows(at: 5 as usize, count: 1 as usize);
+        }
+        option::Option[list::List]::None => { assert false; }
+    }
+    views::apply(0 as *u8, p);
+    // The reload took the measurements with it, exactly as a count write does.
+    assert recycler::heights_width_of(v) == 0.0f64;
+    return;
+}
+
+#[test]
+fn invalidate_row_re_asks_that_row_and_keeps_the_rest() {
+    backend::install();
+    // The streaming write: same count, same sequence, ONE row's content
+    // changed. The old contract had no way to say it, so an 87-row transcript
+    // re-measured all 87 of itself on every token.
+    SH_BUILDS = 0 as i64;
+    SH_ASKED = 0 as i64;
+    IV_BUMP = 0.0f64;
+    var n: core::Node = iv_list(5 as usize);
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    core::set_view(p, v, views::view_release);
+    iv_ask_all(v, 5 as i64);
+    assert SH_ASKED == (5 as i64);
+    // The content of row 2 changes...
+    IV_BUMP = 6.0f64;
+    core::clear_dirty(p);
+    match list::find("iv", within: p) {
+        option::Option[list::List]::Some(x) => {
+            let _i: list::List = x.invalidate_row(2 as usize);
+        }
+        option::Option[list::List]::None => { assert false; }
+    }
+    views::apply(0 as *u8, p);
+    // ...and row 2 alone answers the new height. Its neighbours answer from
+    // the cache — the stale number is the proof they were not re-asked.
+    assert recycler::height_of_row(v, 2 as i64) == 46.0f64;
+    assert recycler::height_of_row(v, 1 as i64) == 24.0f64;
+    assert recycler::height_of_row(v, 0 as i64) == 40.0f64;
+    assert recycler::height_of_row(v, 4 as i64) == 40.0f64;
+    assert SH_BUILDS == (0 as i64);
+    return;
+}
+
+#[test]
+fn two_invalidations_coalesce_to_the_span_between_them() {
+    backend::install();
+    // Pending invalidations merge to min..max, which is what a backend can
+    // act on cheaply — a row between two edits costs a height re-ask, not a
+    // rebuild. So row 2, named by NEITHER call, re-asks too.
+    SH_BUILDS = 0 as i64;
+    SH_ASKED = 0 as i64;
+    IV_BUMP = 0.0f64;
+    var n: core::Node = iv_list(5 as usize);
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    core::set_view(p, v, views::view_release);
+    iv_ask_all(v, 5 as i64);
+    IV_BUMP = 6.0f64;
+    core::clear_dirty(p);
+    match list::find("iv", within: p) {
+        option::Option[list::List]::Some(x) => {
+            let a: list::List = x.invalidate_row(1 as usize);
+            let _b: list::List = a.invalidate_row(3 as usize);
+        }
+        option::Option[list::List]::None => { assert false; }
+    }
+    views::apply(0 as *u8, p);
+    assert recycler::height_of_row(v, 1 as i64) == 30.0f64;
+    assert recycler::height_of_row(v, 2 as i64) == 46.0f64;
+    assert recycler::height_of_row(v, 3 as i64) == 30.0f64;
+    // The rows outside the span kept their cache.
+    assert recycler::height_of_row(v, 0 as i64) == 40.0f64;
+    assert recycler::height_of_row(v, 4 as i64) == 40.0f64;
+    return;
+}
+
+// NEGATIVE: rows the list does not have are nothing to act on. A span reaching
+// past the count is clamped to the rows that exist; one starting past it does
+// nothing at all — a count can have shrunk under a pending invalidation.
+#[test]
+fn an_invalidation_past_the_count_is_clamped_or_inert() {
+    backend::install();
+    SH_BUILDS = 0 as i64;
+    SH_ASKED = 0 as i64;
+    IV_BUMP = 0.0f64;
+    var n: core::Node = iv_list(5 as usize);
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    core::set_view(p, v, views::view_release);
+    iv_ask_all(v, 5 as i64);
+    IV_BUMP = 6.0f64;
+    core::clear_dirty(p);
+    match list::find("iv", within: p) {
+        option::Option[list::List]::Some(x) => {
+            let _s: list::List = x.invalidate_rows(from: 3 as usize, count: 50 as usize);
+        }
+        option::Option[list::List]::None => { assert false; }
+    }
+    views::apply(0 as *u8, p);
+    // Clamped: 3 and 4 re-ask, 2 keeps its cache.
+    assert recycler::height_of_row(v, 3 as i64) == 30.0f64;
+    assert recycler::height_of_row(v, 4 as i64) == 46.0f64;
+    assert recycler::height_of_row(v, 2 as i64) == 40.0f64;
+    // Wholly past the count: inert, and nothing to crash on.
+    core::clear_dirty(p);
+    match list::find("iv", within: p) {
+        option::Option[list::List]::Some(x) => {
+            let _i: list::List = x.invalidate_row(99 as usize);
+        }
+        option::Option[list::List]::None => { assert false; }
+    }
+    views::apply(0 as *u8, p);
+    assert recycler::height_of_row(v, 0 as i64) == 40.0f64;
+    return;
+}
+
+#[test]
+fn a_grouped_invalidation_lands_on_the_table_rows_of_its_data_span() {
+    backend::install();
+    // The span is DATA-indexed — the same `i` that `row(i)` means. Groups of
+    // 2 and 3 over 5 items, so data 2 sits one header past its own number:
+    //   0 header | 1 data0 | 2 data1 | 3 header | 4 data2 | 5 data3 | 6 data4
+    SH_BUILDS = 0 as i64;
+    SH_ASKED = 0 as i64;
+    IV_BUMP = 0.0f64;
+    var l: core::Node = list::list(key: "ivg", uneven_rows: true, grouped: true);
+    let p: *core::Node = #addr_of(l);
+    match list::find("ivg", within: p) {
+        option::Option[list::List]::Some(x) => {
+            let a: list::List = x.set_row(sh_row);
+            let b: list::List = a.set_count(5 as usize);
+            let c: list::List = b.set_group_count(2 as usize);
+            let d: list::List = c.set_group_size(g_size);
+            let e: list::List = d.set_group_header(g_header);
+            let _f: list::List = e.set_row_height_of(iv_height);
+        }
+        option::Option[list::List]::None => { assert false; }
+    }
+    let v: *u8 = views::create(0 as *u8, p);
+    core::set_view(p, v, views::view_release);
+    assert recycler::height_of_row(v, 1 as i64) == 40.0f64;
+    assert recycler::height_of_row(v, 4 as i64) == 40.0f64;
+    assert recycler::height_of_row(v, 5 as i64) == 24.0f64;
+    IV_BUMP = 6.0f64;
+    core::clear_dirty(p);
+    match list::find("ivg", within: p) {
+        option::Option[list::List]::Some(x) => {
+            let _i: list::List = x.invalidate_row(2 as usize);
+        }
+        option::Option[list::List]::None => { assert false; }
+    }
+    views::apply(0 as *u8, p);
+    // Table row 4 — data 2 — re-asked; its neighbours in DATA space kept
+    // their cache.
+    assert recycler::height_of_row(v, 4 as i64) == 46.0f64;
+    assert recycler::height_of_row(v, 1 as i64) == 40.0f64;
+    assert recycler::height_of_row(v, 5 as i64) == 24.0f64;
+    return;
+}
+
 #[test]
 fn a_rows_content_stretches_with_the_cell_without_waiting_for_a_reload() {
     backend::install();
@@ -3398,6 +4052,143 @@ fn a_resize_arriving_inside_the_tables_own_delegate_does_not_re_enter_it() {
     // Outside one, it is taken up as before.
     recycler::tree_notify_resized(v);
     assert recycler::tree_last_width_of(v) == 250.0f64;
+    return;
+}
+
+// ---- a tree row has a NAME on the agent surface -----------------------------
+//
+// The "a tree row cannot be named" gap: a tree row is the one control an
+// application cannot key.
+// The row a builder returns is CONTENT, mounted inside a cell the recycler owns,
+// so no application key lands on the row itself — `describe_ui` showed nothing
+// under `files:tree` and the Files pane could not be driven at all. The old
+// pre-recycler tree took `row_id` and tagged each cell with it; this is that,
+// carried forward.
+
+fn ri_row_id(n: *tree::TreeNode, ctx: *u8) -> text::Text {
+    return text::from_str("row:${{ (*n).id_of() }}");
+}
+
+fn ri_tree(with_id: bool) -> core::Node {
+    var root: tree::TreeNode = tree::TreeNode::new("root", id: "root");
+    var branch: tree::TreeNode = tree::TreeNode::new("src", id: "src", is_branch: true);
+    let _k: status::Status = branch.add_child(tree::TreeNode::new("main.cplus", id: "src/main"));
+    let _b: status::Status = root.add_child(branch);
+    let _a: status::Status = root.add_child(tree::TreeNode::new("SKILL.md", id: "skill"));
+    if with_id {
+        return tree::tree(root, key: "ri", row: rp_tree_row, row_id: ri_row_id);
+    }
+    return tree::tree(root, key: "ri", row: rp_tree_row);
+}
+
+// NOT a `mount(with_id) -> *u8` helper, however much these five tests want
+// one: the node is dropped when such a helper returns, and the data source
+// dereferences it on every question the outline view asks. Each test holds its
+// own tree for as long as it looks at it.
+fn cell_identifier(cell: *u8) -> text::Text {
+    return ak::Accessibility::from_raw(cell).accessibility_identifier();
+}
+
+#[test]
+fn a_tree_row_carries_the_id_the_application_gave_it() {
+    backend::install();
+    var t: core::Node = ri_tree(true);
+    let tp: *core::Node = #addr_of(t);
+    let v: *u8 = views::create(0 as *u8, tp);
+    core::set_view(tp, v, views::view_release);
+    views::apply(0 as *u8, tp);
+    recycler::set_column_width(v, 300.0f64);
+    let cell: *u8 = recycler::tree_view_for_row(v, 0 as i64);
+    assert cell != (0 as *u8);
+    // Row 0 is `src` — the id is the application's, not the label and not the
+    // row number, so it survives the tree being rebuilt in a different order.
+    assert cell_identifier(cell).view() == "row:src";
+    let second: *u8 = recycler::tree_view_for_row(v, 1 as i64);
+    assert second != (0 as *u8);
+    assert cell_identifier(second).view() == "row:skill";
+    return;
+}
+
+#[test]
+fn a_recycled_cell_is_re_tagged_with_the_row_it_now_shows() {
+    backend::install();
+    // The failure this prevents is silent and it is the whole reason the tag
+    // happens on every vend: an id written once names the item that built the
+    // cell, and every reuse after that points the agent at the wrong row.
+    var t: core::Node = ri_tree(true);
+    let tp: *core::Node = #addr_of(t);
+    let v: *u8 = views::create(0 as *u8, tp);
+    core::set_view(tp, v, views::view_release);
+    views::apply(0 as *u8, tp);
+    recycler::set_column_width(v, 300.0f64);
+    let cell: *u8 = recycler::tree_view_for_row(v, 0 as i64);
+    assert cell != (0 as *u8);
+    assert cell_identifier(cell).view() == "row:src";
+    recycler::tree_fill_into(v, cell, 1 as i64);
+    assert cell_identifier(cell).view() == "row:skill";
+    return;
+}
+
+// NEGATIVE: a tree that names no rows tags none. An id nobody chose is worse
+// than no id — the agent surface would carry a name the application cannot
+// predict and did not ask to expose.
+#[test]
+fn a_tree_with_no_row_id_leaves_its_rows_untagged() {
+    backend::install();
+    var t: core::Node = ri_tree(false);
+    let tp: *core::Node = #addr_of(t);
+    let v: *u8 = views::create(0 as *u8, tp);
+    core::set_view(tp, v, views::view_release);
+    views::apply(0 as *u8, tp);
+    recycler::set_column_width(v, 300.0f64);
+    let cell: *u8 = recycler::tree_view_for_row(v, 0 as i64);
+    assert cell != (0 as *u8);
+    assert cell_identifier(cell).view() == "";
+    return;
+}
+
+// ---- and a click, which for a row is two different things -------------------
+
+#[test]
+fn clicking_a_leaf_row_selects_it() {
+    backend::install();
+    var t: core::Node = ri_tree(true);
+    let tp: *core::Node = #addr_of(t);
+    let v: *u8 = views::create(0 as *u8, tp);
+    core::set_view(tp, v, views::view_release);
+    views::apply(0 as *u8, tp);
+    recycler::set_column_width(v, 300.0f64);
+    // Row 1 is the leaf `SKILL.md`.
+    let cell: *u8 = recycler::tree_view_for_row(v, 1 as i64);
+    assert cell != (0 as *u8);
+    assert recycler::tree_selected_row_of(v) == (-1 as i64);
+    recycler::perform_click_on(cell);
+    assert recycler::tree_selected_row_of(v) == (1 as i64);
+    return;
+}
+
+#[test]
+fn clicking_an_expandable_row_toggles_it_instead() {
+    backend::install();
+    // Selection is the only click a leaf row has, but a BRANCH already has one
+    // that means something else — and an agent that could only ever select
+    // could never open a folder to reach what is inside it.
+    var t: core::Node = ri_tree(true);
+    let tp: *core::Node = #addr_of(t);
+    let v: *u8 = views::create(0 as *u8, tp);
+    core::set_view(tp, v, views::view_release);
+    views::apply(0 as *u8, tp);
+    recycler::set_column_width(v, 300.0f64);
+    let cell: *u8 = recycler::tree_view_for_row(v, 0 as i64);
+    assert cell != (0 as *u8);
+    assert recycler::tree_rows_of(v) == (2 as i64);
+    recycler::perform_click_on(cell);
+    // Opened: the child is a row now, and the row was NOT selected.
+    assert recycler::tree_rows_of(v) == (3 as i64);
+    assert recycler::tree_selected_row_of(v) == (-1 as i64);
+    // And it closes again.
+    recycler::perform_click_on(cell);
+    assert recycler::tree_rows_of(v) == (2 as i64);
     return;
 }
 
@@ -4912,6 +5703,173 @@ fn the_editor_band_styles_existing_text_and_what_is_typed_next() {
     return;
 }
 
+// The colour a run actually landed with, read back off the storage.
+fn run_color_at(tv: *u8, at: u64) -> *u8 {
+    let storage: *u8 = { rt::msg_id(tv, rt::sel(#str_ptr("textStorage\0"))) };
+    let a: ak::AttributedString = ak::AttributedString::from_raw(storage);
+    let len: u64 = { rt::msg_u64(storage, rt::sel(#str_ptr("length\0"))) };
+    return match a.attribute_at_index("NSColor", at, 0 as *u8,
+                                      rt::Range { location: 0 as u64, length: len }) {
+        option::Option[*u8]::Some(c) => c,
+        option::Option[*u8]::None => 0 as *u8,
+    };
+}
+
+#[test]
+fn style_runs_colour_ranges_of_the_text_that_is_already_there() {
+    // Syntax highlighting, said portably. `formatted_text` replaces the
+    // content, which an editor cannot do — the text is the user's, and
+    // re-setting it moves the caret and breaks undo. A StyleRun names a RANGE
+    // instead, which is the shape a lexer's answer has.
+    backend::install();
+    var n: core::Node = text_area::text_area(key: "sr", text: "let x = 1;");
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    core::set_view(p, v, views::view_release);
+    let tv: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("documentView\0"))) };
+
+    var runs: vocab::StyleRuns = vocab::StyleRuns::new();
+    let _a: status::Status = runs.add_color(0 as usize, 3 as usize,
+                                            vocab::Color::rgba(1.0f64, 0.0f64, 0.0f64));
+    let _b: status::Status = runs.add_color(8 as usize, 1 as usize,
+                                            vocab::Color::rgba(0.0f64, 0.0f64, 1.0f64));
+    match text_area::find("sr", within: p) {
+        option::Option[text_area::TextArea]::Some(h) => {
+            let _s: text_area::TextArea = h.set_style_runs(runs);
+        }
+        option::Option[text_area::TextArea]::None => { assert false; }
+    }
+    views::apply(0 as *u8, p);
+
+    // Three distinct runs: the keyword, the default band between them, the
+    // literal. Distinct POINTERS are not enough — two catalog colours sharing
+    // a name are `isEqual:`, and an attributed string coalesces equal runs,
+    // which is what once drew ten syntax colours as one.
+    let kw: *u8 = run_color_at(tv, 0 as u64);
+    let mid: *u8 = run_color_at(tv, 5 as u64);
+    let lit: *u8 = run_color_at(tv, 8 as u64);
+    assert kw != (0 as *u8);
+    assert lit != (0 as *u8);
+    assert { rt::msg_i8_id(kw, rt::sel(#str_ptr("isEqual:\0")), lit) } == (0 as i8);
+    assert { rt::msg_i8_id(kw, rt::sel(#str_ptr("isEqual:\0")), mid) } == (0 as i8);
+
+    // And clearing them puts the whole file back to one colour.
+    match text_area::find("sr", within: p) {
+        option::Option[text_area::TextArea]::Some(h) => {
+            let _c: text_area::TextArea = h.clear_style_runs();
+        }
+        option::Option[text_area::TextArea]::None => { assert false; }
+    }
+    views::apply(0 as *u8, p);
+    let after: *u8 = run_color_at(tv, 0 as u64);
+    let after_mid: *u8 = run_color_at(tv, 5 as u64);
+    if after != (0 as *u8) && after_mid != (0 as *u8) {
+        assert { rt::msg_i8_id(after, rt::sel(#str_ptr("isEqual:\0")), after_mid) } != (0 as i8);
+    }
+    return;
+}
+
+#[test]
+fn a_style_run_is_counted_in_BYTES_and_lands_on_the_characters_it_names() {
+    // The offsets are BYTES of the control's own text; an NSTextStorage indexes
+    // in UTF-16 units. They disagree on exactly the characters a code editor is
+    // full of — one emoji shifts every run after it, and nothing downstream
+    // would say so.
+    backend::install();
+    // "🙂" is 4 bytes and TWO utf-16 units; "ab" follows it.
+    var n: core::Node = text_area::text_area(key: "sr2", text: "🙂ab");
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    core::set_view(p, v, views::view_release);
+    let tv: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("documentView\0"))) };
+    var runs: vocab::StyleRuns = vocab::StyleRuns::new();
+    // Byte 4..5 is "a" — utf-16 index 2.
+    let _a: status::Status = runs.add_color(4 as usize, 1 as usize,
+                                            vocab::Color::rgba(1.0f64, 0.0f64, 0.0f64));
+    match text_area::find("sr2", within: p) {
+        option::Option[text_area::TextArea]::Some(h) => {
+            let _s: text_area::TextArea = h.set_style_runs(runs);
+        }
+        option::Option[text_area::TextArea]::None => { assert false; }
+    }
+    views::apply(0 as *u8, p);
+    let emoji: *u8 = run_color_at(tv, 0 as u64);
+    let a_col: *u8 = run_color_at(tv, 2 as u64);
+    let b_col: *u8 = run_color_at(tv, 3 as u64);
+    assert a_col != (0 as *u8);
+    // The emoji and the "b" either side kept the band's colour; only "a" moved.
+    assert { rt::msg_i8_id(a_col, rt::sel(#str_ptr("isEqual:\0")), emoji) } == (0 as i8);
+    assert { rt::msg_i8_id(a_col, rt::sel(#str_ptr("isEqual:\0")), b_col) } == (0 as i8);
+    return;
+}
+
+// NEGATIVE: a lexer that ran one keystroke behind names rows past the end. That
+// is stale, not wrong — the next write fixes it — so it clips rather than traps.
+#[test]
+fn style_runs_past_the_end_of_the_text_are_clipped() {
+    backend::install();
+    var n: core::Node = text_area::text_area(key: "sr3", text: "abc");
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    core::set_view(p, v, views::view_release);
+    var runs: vocab::StyleRuns = vocab::StyleRuns::new();
+    let _a: status::Status = runs.add_color(1 as usize, 99 as usize,
+                                            vocab::Color::rgba(1.0f64, 0.0f64, 0.0f64));
+    let _b: status::Status = runs.add_color(50 as usize, 2 as usize,
+                                            vocab::Color::rgba(0.0f64, 1.0f64, 0.0f64));
+    match text_area::find("sr3", within: p) {
+        option::Option[text_area::TextArea]::Some(h) => {
+            let _s: text_area::TextArea = h.set_style_runs(runs);
+        }
+        option::Option[text_area::TextArea]::None => { assert false; }
+    }
+    views::apply(0 as *u8, p);
+    let tv: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("documentView\0"))) };
+    assert run_color_at(tv, 2 as u64) != (0 as *u8);
+    return;
+}
+
+static SEL_FIRED: i64 = 0 as i64;
+static SEL_AT: i64 = -1 as i64;
+
+fn on_caret_moved(sender: *u8, ctx: *u8) {
+    SEL_FIRED = SEL_FIRED + (1 as i64);
+    let n: *core::Node = ctx as *core::Node;
+    if n == (0 as *core::Node) { return; }
+    match text_area::find("sel", within: n) {
+        option::Option[text_area::TextArea]::Some(h) => { SEL_AT = h.cursor_position(); }
+        option::Option[text_area::TextArea]::None => { }
+    }
+    return;
+}
+
+#[test]
+fn the_caret_moving_is_an_event_rather_than_something_to_poll() {
+    // `on_text_changed` fires for text and nothing fired for the SELECTION, so
+    // a status line showing `Ln 4, Col 9` was a 4x/sec poll of a control that
+    // knows the answer exactly.
+    backend::install();
+    SEL_FIRED = 0 as i64;
+    SEL_AT = -1 as i64;
+    var n: core::Node = text_area::text_area(key: "sel", text: "hello world");
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    core::set_view(p, v, views::view_release);
+    match text_area::find("sel", within: p) {
+        option::Option[text_area::TextArea]::Some(h) => {
+            let _e: text_area::TextArea = h.set_on_selection_changed(on_caret_moved, p as *u8);
+        }
+        option::Option[text_area::TextArea]::None => { assert false; }
+    }
+    let tv: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("documentView\0"))) };
+    let ed: ak::Text = ak::Text::from_raw(tv);
+    ed.set_selected_range(rt::Range { location: 6 as u64, length: 0 as u64 });
+    assert SEL_FIRED > (0 as i64);
+    // ...and the handler reads where the caret IS, which is the whole point.
+    assert SEL_AT == (6 as i64);
+    return;
+}
+
 #[test]
 fn a_text_areas_editor_can_always_grow_past_its_box() {
     // BOTH kinds are vertically resizable, and that is not what `auto_size`
@@ -6295,6 +7253,116 @@ fn selected_title(b: ak::PopUpButton) -> text::Text {
     return match b.item_at_index(b.index_of_selected_item()) {
         option::Option[ak::MenuItem]::Some(it) => text::from_str(it.title().view()),
         option::Option[ak::MenuItem]::None => text::new(),
+    };
+}
+
+// A destination list: two sections, a locked device, and a rule between them.
+fn dest_enabled(i: usize, ctx: *u8) -> bool {
+    if i == (0 as usize) { return false; }        // "iOS — Device", a header
+    if i == (2 as usize) { return false; }        // paired, locked
+    return true;
+}
+
+fn set_dest_items(p: *core::Node) {
+    let d: *core::Data = core::node_data(p);
+    let pp: *props::PopupProps = { (*d).props } as *props::PopupProps;
+    let items: *vocab::TextList = { #addr_of((*pp).items) };
+    let _a: status::Status = { (*items).add("iOS — Device") };
+    let _b: status::Status = { (*items).add("iPhone 17 Pro — iOS 27.0") };
+    let _c: status::Status = { (*items).add("iPhone 15 (locked)") };
+    let _d: status::Status = { (*items).add("") };            // a separator
+    let _e: status::Status = { (*items).add("iOS — Simulator") };
+    return;
+}
+
+#[test]
+fn a_chooser_says_what_it_IS_separately_from_what_it_SHOWS() {
+    // NSPopUpButton displays the selected item, so the collapsed control and
+    // the open row were one string: a 74pt toolbar had to read whatever the
+    // menu read. `label` is the cell's own title, and it survives a selection.
+    backend::install();
+    var n: core::Node = popup::popup("", key: "dst", selected_index: 1 as i64);
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    core::set_view(p, v, views::view_release);
+    set_dest_items(p);
+    core::clear_dirty(p);
+    core::touch(p, popup::P_ITEMS);
+    views::apply(0 as *u8, p);
+    let b: ak::PopUpButton = ak::PopUpButton::from_raw(v);
+    let cell: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("cell\0"))) };
+    let pc: ak::PopUpButtonCell = ak::PopUpButtonCell::from_raw(cell);
+    // Nothing said: the button reads its selection, exactly as before.
+    assert pc.uses_item_from_menu();
+
+    match popup::find("dst", within: p) {
+        option::Option[popup::Popup]::Some(h) => {
+            let _l: popup::Popup = h.set_label("iPhone 17 Pro");
+        }
+        option::Option[popup::Popup]::None => { assert false; }
+    }
+    views::apply(0 as *u8, p);
+    assert pc.uses_item_from_menu() == false;
+    match pc.as_menu_item_cell().menu_item() {
+        option::Option[ak::MenuItem]::Some(it) => {
+            assert it.title().view() == "iPhone 17 Pro";
+        }
+        option::Option[ak::MenuItem]::None => { assert false; }
+    }
+    // ...while the ROW keeps the long form.
+    assert selected_title(b) == "iPhone 17 Pro — iOS 27.0";
+
+    // And clearing it hands the answer back to the selection.
+    match popup::find("dst", within: p) {
+        option::Option[popup::Popup]::Some(h) => {
+            let _l: popup::Popup = h.set_label("");
+        }
+        option::Option[popup::Popup]::None => { assert false; }
+    }
+    views::apply(0 as *u8, p);
+    assert pc.uses_item_from_menu();
+    return;
+}
+
+#[test]
+fn a_row_can_be_present_and_not_pickable_and_an_empty_one_is_a_rule() {
+    // The two halves of a grouped chooser: a SECTION HEADER is a row that
+    // cannot be picked, and so is a device that is paired but locked — hiding
+    // it reads as "we cannot see your phone". Both had to be selectable rows
+    // that `on_selected_index_changed` caught and put back.
+    backend::install();
+    var n: core::Node = popup::popup("", key: "dst2");
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    core::set_view(p, v, views::view_release);
+    set_dest_items(p);
+    match popup::find("dst2", within: p) {
+        option::Option[popup::Popup]::Some(h) => {
+            let _e: popup::Popup = h.set_item_enabled(dest_enabled);
+        }
+        option::Option[popup::Popup]::None => { assert false; }
+    }
+    core::clear_dirty(p);
+    core::touch(p, popup::P_ITEMS | popup::P_ITEM_ENABLED);
+    views::apply(0 as *u8, p);
+    let b: ak::PopUpButton = ak::PopUpButton::from_raw(v);
+    assert b.number_of_items() == (5 as i64);
+    assert popup_item_enabled(b, 0 as i64) == false;   // the header
+    assert popup_item_enabled(b, 1 as i64);            // a real destination
+    assert popup_item_enabled(b, 2 as i64) == false;   // present, locked
+    // The empty title is a separator, which is what an empty title means in
+    // every other menu facet builds.
+    match b.item_at_index(3 as i64) {
+        option::Option[ak::MenuItem]::Some(it) => { assert it.is_separator_item(); }
+        option::Option[ak::MenuItem]::None => { assert false; }
+    }
+    return;
+}
+
+fn popup_item_enabled(b: ak::PopUpButton, i: i64) -> bool {
+    return match b.item_at_index(i) {
+        option::Option[ak::MenuItem]::Some(it) => it.is_enabled(),
+        option::Option[ak::MenuItem]::None => false,
     };
 }
 
@@ -10285,6 +11353,98 @@ fn the_shared_band_writes_semantics_and_a_tooltip_onto_the_view() {
     let tip: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("toolTip\0"))) };
     assert bridge::to_text(tip).view() == "⌘S";
 
+    views::view_release(v);
+    return;
+}
+
+// ---- the agent tier reaches the platform view --------------------------------
+
+// A stand-in for facet/agent's real pin. facet_appkit cannot import the agent
+// packages — that is the whole reason the seam exists — so the test installs
+// its own and asserts what the seam CARRIES.
+static PINNED_VIEW: *u8 = 0 as *u8;
+static PINNED_TIER: i32 = -1;
+static PIN_CALLS: i32 = 0;
+
+fn record_pin(view: *u8, a: vocab::Agent) {
+    PINNED_VIEW = view;
+    PIN_CALLS = PIN_CALLS + 1;
+    PINNED_TIER = match a {
+        vocab::Agent::Open => 0,
+        vocab::Agent::Protected => 1,
+        vocab::Agent::Private => 2,
+        vocab::Agent::Hidden => 3,
+    };
+    return;
+}
+
+#[test]
+fn a_declared_agent_tier_is_pinned_onto_the_view_at_mount() {
+    // The link between "a developer wrote `.set_agent(Private)`" and "the agent
+    // surface refuses to read this field". Every other link in that chain is
+    // asserted in agent_core and agent_appkit; this is the one that crosses out
+    // of facet, and it was the one with no test.
+    PINNED_VIEW = 0 as *u8;
+    PINNED_TIER = -1;
+    PIN_CALLS = 0;
+    app::set_agent_pin_fn(record_pin);
+
+    var n: core::Node = text_field::text_field("", key: "cvc");
+    let p: *core::Node = #addr_of(n);
+    core::set_agent(p, vocab::Agent::Private);
+    let v: *u8 = views::create(0 as *u8, p);
+    assert v != (0 as *u8);
+    assert PIN_CALLS == 1;
+    assert PINNED_VIEW == v;
+    assert PINNED_TIER == 2;
+
+    views::view_release(v);
+    app::set_agent_pin_fn(0 as fn(*u8, vocab::Agent));
+    return;
+}
+
+#[test]
+fn clearing_the_tier_pins_open_rather_than_going_quiet() {
+    // The failure this guards: applying the bit only when the tier is
+    // non-default. Then un-marking a field is a no-op, the old pin survives on
+    // a reused view, and a form stays gated in the mock and open in the app
+    // that fixed it — or worse, the other way round.
+    PINNED_TIER = -1;
+    PIN_CALLS = 0;
+    app::set_agent_pin_fn(record_pin);
+
+    var n: core::Node = text_field::text_field("", key: "email");
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    assert v != (0 as *u8);
+    // A create configures the node WHOLE, so an undeclared node pins Open.
+    assert PIN_CALLS == 1;
+    assert PINNED_TIER == 0;
+
+    // Declare it, then clear it: both are writes the platform must see.
+    core::set_agent(p, vocab::Agent::Protected);
+    views::configure(v, p, props::C_AGENT);
+    assert PINNED_TIER == 1;
+    core::set_agent(p, vocab::Agent::Open);
+    views::configure(v, p, props::C_AGENT);
+    assert PINNED_TIER == 0;
+    assert PIN_CALLS == 3;
+
+    views::view_release(v);
+    app::set_agent_pin_fn(0 as fn(*u8, vocab::Agent));
+    return;
+}
+
+#[test]
+fn an_app_that_serves_no_agent_pays_a_null_check() {
+    // The seam's own rule: an unregistered hook is inert, not a trap. Every
+    // facet app that never called `agent::enable()` mounts through this line.
+    app::set_agent_pin_fn(0 as fn(*u8, vocab::Agent));
+    var n: core::Node = text_field::text_field("", key: "plain");
+    let p: *core::Node = #addr_of(n);
+    core::set_agent(p, vocab::Agent::Private);
+    let v: *u8 = views::create(0 as *u8, p);
+    assert v != (0 as *u8);
     views::view_release(v);
     return;
 }

@@ -36,30 +36,58 @@ reg.set_name(btn, "OK");
 // hide from agent: reg.set_exposed(btn, false);
 ```
 
-## Auth gate (all-or-none per channel)
+## Declare what an agent may have
+
+A node's existence and its content are separate questions. Both tiers stay
+VISIBLE — named, navigable, reported as present — and hand over no value
+without the matching capability. Inherited downward, strictest wins, so mark
+the container.
 
 ```cplus
-fn allow_inapp(req: auth::Request) -> auth::Decision {
+reg.set_tier(payment_box, identity::tier_protected());  // the card number
+reg.set_tier(cvc, identity::tier_private());            // the three digits
+reg.set_excluded(assistant_panel, true);                // not app content at all
+```
+
+## Auth gate (a capability set)
+
+```cplus
+fn my_policy(req: auth::Request) -> auth::Grant {
+    // req.token is opaque — verify a JWT here in your own code, then say
+    // what its claims amount to.
     return match req.channel {
-        auth::Channel::InApp => auth::Decision::Allow,
-        auth::Channel::External => auth::Decision::Reject,
+        auth::Channel::InApp => auth::operator(),
+        auth::Channel::External => {
+            if req.token == "" { auth::nothing() } else { auth::reader() }
+        }
     };
 }
 
-let closed: auth::AuthGate = auth::deny_all();
-let open: auth::AuthGate = auth::serve(allow_inapp);
-let d: auth::Decision = open.check(auth::request(auth::Channel::External));
+let closed: auth::AuthGate = auth::deny_all();       // grants nothing
+let served: auth::AuthGate = auth::serve(my_policy);
+let g: auth::Grant = served.check(
+    auth::request_with_token(auth::Channel::External, tok));
 ```
 
-## Authorize actions
+`operator()` reads and drives the app and opens no tier. Once the user approves
+autofill, mint `auth::protected_operator()`. **Nothing bundled reaches Private**
+— that takes `.with(auth::cap_read_private())`, typed on purpose, which is how
+"the CVC is never readable" stays true as an app grows.
+
+## Authorize
 
 ```cplus
-let o: surface::Outcome = surface::authorize_action(reg, btn);
-// Allowed | NotFound | NotExposed | NotActionable | …
+let o: surface::Outcome = surface::authorize_action(reg, grant, btn);
+// Allowed | NotFound | NotExposed | NotActionable | NeedsGrant | Forbidden
+
+// reading a node's CONTENT is its own door
+let r: surface::Outcome = surface::authorize_value_read(reg, grant, card);
+// NeedsGrant  -> ask the user for permission, then retry
+// Forbidden   -> stop; this app does not mint the bit
 
 let versions: surface::TextVersions = surface::new_text_versions();
 let tw: surface::Outcome =
-    surface::authorize_text_write(reg, versions, field_id, base_version);
+    surface::authorize_text_write(reg, grant, versions, field_id, base_version);
 // on Allowed: backend applies edit, then versions.bump(field_id)
 ```
 

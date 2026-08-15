@@ -652,6 +652,8 @@ type exists.
 | `input_transparent()` | bool |
 | `set_flow_direction(v:)` | the cursor, so writes chain |
 | `flow_direction()` | vocab::FlowDirection |
+| `set_agent(v:)` | the cursor, so writes chain |
+| `agent()` | vocab::Agent |
 | `set_rotation(v:)` | the cursor, so writes chain |
 | `rotation()` | f64 |
 | `set_rotation_x(v:)` | the cursor, so writes chain |

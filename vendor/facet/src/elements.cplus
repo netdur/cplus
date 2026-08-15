@@ -7,6 +7,7 @@
 // an `@` block resolves in one context.
 
 import "flex_layout/flex_layout" as flex;
+import "stdlib/text" as text;
 import "./facet" as core;
 import "./props" as props;
 import "./vocabulary" as vocab;
@@ -143,11 +144,14 @@ fn tree(
     row_ctx: *u8 = 0 as *u8,
     on_select: fn(*m_tree::TreeNode, *u8) = m_tree::no_select,
     on_select_ctx: *u8 = 0 as *u8,
+    row_id: fn(*m_tree::TreeNode, *u8) -> text::Text = m_tree::no_row_id,
+    row_id_ctx: *u8 = 0 as *u8,
     ctx: *u8 = 0 as *u8,
     row_height: f64 = 0.0f64,
 ) -> core::Node {
     return m_tree::tree(root, key: key, row: row, row_ctx: row_ctx,
                         on_select: on_select, on_select_ctx: on_select_ctx,
+                        row_id: row_id, row_id_ctx: row_id_ctx,
                         ctx: ctx, row_height: row_height);
 }
 
@@ -171,7 +175,7 @@ fn label(
     font_scales: bool = true,
     font_family: str = "",
     font_size: f64 = 0.0f64,
-    text_align: vocab::TextAlign = vocab::TextAlign::Center,
+    text_align: vocab::TextAlign = vocab::TextAlign::Start,
     line_break: vocab::LineBreak = vocab::LineBreak::TailTruncation,
     line_height: f64 = 0.0f64,
     max_lines: i64 = 0 as i64,
@@ -264,7 +268,7 @@ fn text_field(
     text: str,
     key: str = "",
     clear_button: vocab::ClearButton = vocab::ClearButton::Never,
-    text_align: vocab::TextAlign = vocab::TextAlign::Center,
+    text_align: vocab::TextAlign = vocab::TextAlign::Start,
     secure: bool = false,
     return_key: vocab::ReturnKey = vocab::ReturnKey::Default,
     vertical_align: vocab::TextAlign = vocab::TextAlign::Center,
@@ -326,7 +330,7 @@ fn text_area(
     text: str,
     key: str = "",
     auto_size: vocab::AutoSize = vocab::AutoSize::Disabled,
-    text_align: vocab::TextAlign = vocab::TextAlign::Center,
+    text_align: vocab::TextAlign = vocab::TextAlign::Start,
     vertical_align: vocab::TextAlign = vocab::TextAlign::Center,
     character_spacing: f64 = 0.0f64,
     cursor_position: i64 = 0 as i64,
@@ -384,7 +388,7 @@ fn search_field(
     text: str,
     key: str = "",
     cancel_button_color: vocab::Color = vocab::Color::clear(),
-    text_align: vocab::TextAlign = vocab::TextAlign::Center,
+    text_align: vocab::TextAlign = vocab::TextAlign::Start,
     return_key: vocab::ReturnKey = vocab::ReturnKey::Default,
     search_icon_color: vocab::Color = vocab::Color::clear(),
     vertical_align: vocab::TextAlign = vocab::TextAlign::Center,
@@ -451,7 +455,7 @@ fn popup(
     font_scales: bool = true,
     font_family: str = "",
     font_size: f64 = 0.0f64,
-    text_align: vocab::TextAlign = vocab::TextAlign::Center,
+    text_align: vocab::TextAlign = vocab::TextAlign::Start,
     open: bool = false,
     selected_index: i64 = 0 as i64,
     text_color: vocab::Color = vocab::Color::clear(),

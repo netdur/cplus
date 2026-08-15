@@ -324,6 +324,8 @@ impl DatePicker {
     fn input_transparent(this) -> bool { return core::input_transparent(this._p); }
     fn set_flow_direction(this, v: vocab::FlowDirection) -> DatePicker { core::set_flow_direction(this._p, v); return this; }
     fn flow_direction(this) -> vocab::FlowDirection { return core::flow_direction(this._p); }
+    fn set_agent(this, v: vocab::Agent) -> DatePicker { core::set_agent(this._p, v); return this; }
+    fn agent(this) -> vocab::Agent { return core::agent(this._p); }
     fn set_rotation(this, v: f64) -> DatePicker { core::set_rotation(this._p, v); return this; }
     fn rotation(this) -> f64 { return core::rotation(this._p); }
     fn set_rotation_x(this, v: f64) -> DatePicker { core::set_rotation_x(this._p, v); return this; }
@@ -405,12 +407,25 @@ fn from(p: *core::Node) -> option::Option[DatePicker] {
 fn find(key: str, within: *core::Node = 0 as *core::Node) -> option::Option[DatePicker] {
     if within != (0 as *core::Node) {
         return match core::find_in(within, key) {
-            option::Option[*core::Node]::Some(p) => from(p),
+            option::Option[*core::Node]::Some(p) => { _report_kind(key, p); from(p) }
             option::Option[*core::Node]::None => option::Option[DatePicker]::None,
         };
     }
     return match mount::find_node(key) {
-        option::Option[*core::Node]::Some(p) => from(p),
+        option::Option[*core::Node]::Some(p) => { _report_kind(key, p); from(p) }
         option::Option[*core::Node]::None => option::Option[DatePicker]::None,
     };
+}
+
+// The debug posture's third distinction (FACET_DEBUG_FIND=1): the key
+// RESOLVED, and `from` is about to answer None anyway because the node is
+// another control. `_`-private; costs one flag read when the posture is off.
+fn _report_kind(key: str, p: *core::Node) {
+    if !mount::find_debugging() { return; }
+    if p == (0 as *core::Node) { return; }
+    let d: *core::Data = { (*p).data() };
+    if d == (0 as *core::Data) || { (*d).kind } != props::K_DATE_PICKER {
+        mount::debug_find_wrong_kind(key, "date_picker");
+    }
+    return;
 }

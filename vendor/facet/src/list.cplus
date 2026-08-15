@@ -38,6 +38,8 @@ const P_GROUP_COUNT: u64 = 131072u64;
 const P_GROUP: u64 = 262144u64;
 const P_SELECTED_INDEX: u64 = 524288u64;
 const P_REORDER: u64 = 1048576u64;
+const P_INVALIDATE_ROW: u64 = 2097152u64;
+const P_SPLICE_ROWS: u64 = 4194304u64;
 
 // ---- build -------------------------------------------------------------
 // Typed by the parameter list: a verb another control owns is not a
@@ -435,6 +437,160 @@ impl List {
         return this;
     }
 
+    // ROW `at` CHANGED IN PLACE — same count, same sequence, new content.
+    // Without this the only way to say it is a row/count write, and a
+    // recycling backend answers one of those by discarding every measured
+    // height and every vended cell it has — a streaming transcript re-drew
+    // every visible row on every token. Invalidations coalesce to ONE
+    // span (min..max) per flush, which is what a backend can act on
+    // cheaply: a row between two edits costs a height re-ask, not a
+    // rebuild. Only the recycling controls consult it, like
+    // `row_height_of`.
+    fn invalidate_row(this, at: usize) -> List {
+        let p: *props::ListProps = this._props();
+        if p == (0 as *props::ListProps) { return this; }
+        let i: i64 = at as i64;
+        if { (*p).invalidate_lo } < (0 as i64) || i < { (*p).invalidate_lo } {
+            { (*p).invalidate_lo = i };
+        }
+        if i > { (*p).invalidate_hi } { { (*p).invalidate_hi = i }; }
+        core::touch(this._p, P_INVALIDATE_ROW);
+        return this;
+    }
+
+    // The bulk form: rows `from .. from+count-1` changed in place.
+    fn invalidate_rows(this, from: usize, count: usize) -> List {
+        let p: *props::ListProps = this._props();
+        if p == (0 as *props::ListProps) { return this; }
+        if count == (0 as usize) { return this; }
+        let lo: i64 = from as i64;
+        let hi: i64 = lo +% (count as i64) -% (1 as i64);
+        if { (*p).invalidate_lo } < (0 as i64) || lo < { (*p).invalidate_lo } {
+            { (*p).invalidate_lo = lo };
+        }
+        if hi > { (*p).invalidate_hi } { { (*p).invalidate_hi = hi }; }
+        core::touch(this._p, P_INVALIDATE_ROW);
+        return this;
+    }
+
+    // WHICH SHAPE ROW `i` HAS — a small number, one per kind of row.
+    //
+    // A recycling backend vends a cell from a pool and hands back whatever
+    // last scrolled off, so `bind` — which writes into an EXISTING subtree
+    // — is sound only while every row has the same shape. A transcript of
+    // user bubbles, agent bubbles and tool cards is three shapes, so it
+    // could not state a bind at all: a wrong-shape cell would take the
+    // right-shape data and nothing would say so.
+    //
+    // Naming a kind gives each shape its OWN pool, and the bind promise
+    // holds within each one. Answer the same number for rows the builder
+    // builds the same way; the numbers themselves mean nothing beyond
+    // `equal shape` and need not be dense. Unset, every row is kind 0,
+    // which is the one pool a list has always had.
+    fn set_row_kind(this, f: fn(usize, *u8) -> usize,
+                    row_kind_ctx: *u8 = 0 as *u8) -> List {
+        let p: *props::ListProps = this._props();
+        if p == (0 as *props::ListProps) { return this; }
+        { (*p).row_kind = f };
+        { (*p).row_kind_ctx = row_kind_ctx };
+        core::touch(this._p, P_ROW);
+        return this;
+    }
+
+    // The kind of row `at` — 0 whenever no kind was named.
+    fn row_kind_of(this, at: usize) -> usize {
+        let p: *props::ListProps = this._props();
+        if p == (0 as *props::ListProps) { return 0 as usize; }
+        let f: fn(usize, *u8) -> usize = { (*p).row_kind };
+        if f == props::no_row_kind { return 0 as usize; }
+        return f(at, { (*p).row_kind_ctx });
+    }
+
+    // THE SEQUENCE GREW: rows `at .. at+count-1` are NEW, and every row
+    // already there is the row it was, at the height it was measured at.
+    //
+    // `set_count` cannot say that. A count write is a new sequence and a
+    // recycling backend answers it by discarding every measured height it
+    // holds, so appending one row re-asks the height of the whole list —
+    // and a list that states its heights is measuring text to answer, which
+    // is the most expensive question a transcript answers. This is the
+    // NSTableView `insertRowsAtIndexes:` shape, said in the contract's own
+    // words: it moves `count` itself, so a caller states the splice and not
+    // the total.
+    //
+    // ONE pending splice per flush. A second one that cannot merge into it
+    // (an append after an append can; an insert at the head after an append
+    // cannot) falls back to the reload a count write always was, so the
+    // worst case is what the caller had before.
+    fn insert_rows(this, at: usize, count: usize) -> List {
+        let p: *props::ListProps = this._props();
+        if p == (0 as *props::ListProps) { return this; }
+        if count == (0 as usize) { return this; }
+        let a: i64 = at as i64;
+        let m: i64 = count as i64;
+        let n: i64 = { (*p).count };
+        // Past the end is not a splice anyone can act on.
+        if a < (0 as i64) || a > n { return this._resequence(n +% m); }
+        { (*p).count = n +% m };
+        let pa: i64 = { (*p).splice_at };
+        let pc: i64 = { (*p).splice_count };
+        if pa < (0 as i64) {
+            { (*p).splice_at = a };
+            { (*p).splice_count = m };
+        } else if pc > (0 as i64) && a >= pa && a <= pa +% pc {
+            // Inside (or at either end of) the run already pending: every
+            // row in it is new, so a longer run says the same thing.
+            { (*p).splice_count = pc +% m };
+        } else {
+            return this._resequence({ (*p).count });
+        }
+        core::touch(this._p, P_SPLICE_ROWS);
+        return this;
+    }
+
+    // The other direction: rows `at .. at+count-1` are GONE, and the rows
+    // either side of the hole are unchanged.
+    fn remove_rows(this, at: usize, count: usize) -> List {
+        let p: *props::ListProps = this._props();
+        if p == (0 as *props::ListProps) { return this; }
+        if count == (0 as usize) { return this; }
+        let a: i64 = at as i64;
+        let m: i64 = count as i64;
+        let n: i64 = { (*p).count };
+        if a < (0 as i64) || a +% m > n { return this._resequence(n); }
+        { (*p).count = n -% m };
+        let pa: i64 = { (*p).splice_at };
+        let pc: i64 = { (*p).splice_count };
+        if pa < (0 as i64) {
+            { (*p).splice_at = a };
+            { (*p).splice_count = 0 as i64 -% m };
+        } else if pc < (0 as i64) && a == pa {
+            // Removing from the same place again: the hole gets deeper.
+            { (*p).splice_count = pc -% m };
+        } else if pc < (0 as i64) && a +% m == pa {
+            // ...or the rows immediately before it, which is one hole too.
+            { (*p).splice_at = a };
+            { (*p).splice_count = pc -% m };
+        } else {
+            return this._resequence({ (*p).count });
+        }
+        core::touch(this._p, P_SPLICE_ROWS);
+        return this;
+    }
+
+    // The fallback both splices share: state the new length as a WHOLE
+    // sequence and forget the pending splice. Correct always, and the
+    // only thing a caller could have said before these verbs existed.
+    fn _resequence(this, n: i64) -> List {
+        let p: *props::ListProps = this._props();
+        if p == (0 as *props::ListProps) { return this; }
+        { (*p).count = n };
+        { (*p).splice_at = -1 as i64 };
+        { (*p).splice_count = 0 as i64 };
+        core::touch(this._p, P_COUNT);
+        return this;
+    }
+
     // Write row `at` into `row`. Inert when no bind was named.
     fn bind_row(this, at: usize, row: *core::Node) {
         let p: *props::ListProps = this._props();
@@ -615,6 +771,8 @@ impl List {
     fn input_transparent(this) -> bool { return core::input_transparent(this._p); }
     fn set_flow_direction(this, v: vocab::FlowDirection) -> List { core::set_flow_direction(this._p, v); return this; }
     fn flow_direction(this) -> vocab::FlowDirection { return core::flow_direction(this._p); }
+    fn set_agent(this, v: vocab::Agent) -> List { core::set_agent(this._p, v); return this; }
+    fn agent(this) -> vocab::Agent { return core::agent(this._p); }
     fn set_rotation(this, v: f64) -> List { core::set_rotation(this._p, v); return this; }
     fn rotation(this) -> f64 { return core::rotation(this._p); }
     fn set_rotation_x(this, v: f64) -> List { core::set_rotation_x(this._p, v); return this; }
@@ -696,12 +854,25 @@ fn from(p: *core::Node) -> option::Option[List] {
 fn find(key: str, within: *core::Node = 0 as *core::Node) -> option::Option[List] {
     if within != (0 as *core::Node) {
         return match core::find_in(within, key) {
-            option::Option[*core::Node]::Some(p) => from(p),
+            option::Option[*core::Node]::Some(p) => { _report_kind(key, p); from(p) }
             option::Option[*core::Node]::None => option::Option[List]::None,
         };
     }
     return match mount::find_node(key) {
-        option::Option[*core::Node]::Some(p) => from(p),
+        option::Option[*core::Node]::Some(p) => { _report_kind(key, p); from(p) }
         option::Option[*core::Node]::None => option::Option[List]::None,
     };
+}
+
+// The debug posture's third distinction (FACET_DEBUG_FIND=1): the key
+// RESOLVED, and `from` is about to answer None anyway because the node is
+// another control. `_`-private; costs one flag read when the posture is off.
+fn _report_kind(key: str, p: *core::Node) {
+    if !mount::find_debugging() { return; }
+    if p == (0 as *core::Node) { return; }
+    let d: *core::Data = { (*p).data() };
+    if d == (0 as *core::Data) || { (*d).kind } != props::K_LIST {
+        mount::debug_find_wrong_kind(key, "list");
+    }
+    return;
 }

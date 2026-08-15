@@ -31,6 +31,8 @@ const P_TITLE: u64 = 1024u64;
 const P_TITLE_COLOR: u64 = 2048u64;
 const P_VERTICAL_ALIGN: u64 = 4096u64;
 const P_ITEMS: u64 = 8192u64;
+const P_LABEL: u64 = 16384u64;
+const P_ITEM_ENABLED: u64 = 32768u64;
 
 // ---- build -------------------------------------------------------------
 // Typed by the parameter list: a verb another control owns is not a
@@ -45,7 +47,7 @@ fn popup(
     font_scales: bool = true,
     font_family: str = "",
     font_size: f64 = 0.0f64,
-    text_align: vocab::TextAlign = vocab::TextAlign::Center,
+    text_align: vocab::TextAlign = vocab::TextAlign::Start,
     open: bool = false,
     selected_index: i64 = 0 as i64,
     text_color: vocab::Color = vocab::Color::clear(),
@@ -266,7 +268,7 @@ impl Popup {
 
     fn text_align(this) -> vocab::TextAlign {
         let p: *props::PopupProps = this._props();
-        if p == (0 as *props::PopupProps) { return vocab::TextAlign::Center; }
+        if p == (0 as *props::PopupProps) { return vocab::TextAlign::Start; }
         return { (*p).text_align };
     }
 
@@ -328,6 +330,58 @@ impl Popup {
         return { (*p).items.at(at) };
     }
 
+    // WHAT THE BUTTON READS, whatever is selected.
+    //
+    // `title` is a prompt and therefore an ITEM — it shows exactly while
+    // nothing is chosen, because that is what NSPopUpButton can do with a
+    // string it was given. This is the other question: a collapsed control
+    // that reads SHORT over rows that read RICH. A run destination wants
+    // `iPhone 17 Pro` in a 74pt toolbar and `iPhone 17 Pro — iOS 27.0` in
+    // the menu, and before this it got whichever one it wrote, in both.
+    //
+    // Empty (the default) means the ledger's own behaviour: the button
+    // reads the selected item.
+    fn set_label(this, v: str) -> Popup {
+        let p: *props::PopupProps = this._props();
+        if p == (0 as *props::PopupProps) { return this; }
+        { (*p).label = text::from_str(v) };
+        core::touch(this._p, P_LABEL);
+        return this;
+    }
+
+    fn label(this) -> str {
+        let p: *props::PopupProps = this._props();
+        if p == (0 as *props::PopupProps) { return ""; }
+        return { (*p).label.view() };
+    }
+
+    // MAY ITEM `i` BE PICKED? Asked per item, every time the rows are
+    // built — so a SECTION HEADER is a row that answers false, and so is
+    // a device that is present but locked. Both had to be selectable rows
+    // that the selection handler caught and put back, which works and
+    // reads as a control fighting the user.
+    //
+    // A SEPARATOR needs no verb: an item with an empty title is one, which
+    // is what an empty title has always meant in a menu.
+    fn set_item_enabled(this, f: fn(usize, *u8) -> bool,
+                        item_enabled_ctx: *u8 = 0 as *u8) -> Popup {
+        let p: *props::PopupProps = this._props();
+        if p == (0 as *props::PopupProps) { return this; }
+        { (*p).item_enabled = f };
+        { (*p).item_enabled_ctx = item_enabled_ctx };
+        core::touch(this._p, P_ITEM_ENABLED);
+        return this;
+    }
+
+    // Whether item `at` may be picked — true whenever nothing was said.
+    fn is_item_enabled(this, at: usize) -> bool {
+        let p: *props::PopupProps = this._props();
+        if p == (0 as *props::PopupProps) { return true; }
+        let f: fn(usize, *u8) -> bool = { (*p).item_enabled };
+        if f == props::every_item_enabled { return true; }
+        return f(at, { (*p).item_enabled_ctx });
+    }
+
     // The flex node this cursor points at. The DOM division, and the
     // reason facet declares no layout verb of its own:
     //
@@ -367,6 +421,8 @@ impl Popup {
     fn input_transparent(this) -> bool { return core::input_transparent(this._p); }
     fn set_flow_direction(this, v: vocab::FlowDirection) -> Popup { core::set_flow_direction(this._p, v); return this; }
     fn flow_direction(this) -> vocab::FlowDirection { return core::flow_direction(this._p); }
+    fn set_agent(this, v: vocab::Agent) -> Popup { core::set_agent(this._p, v); return this; }
+    fn agent(this) -> vocab::Agent { return core::agent(this._p); }
     fn set_rotation(this, v: f64) -> Popup { core::set_rotation(this._p, v); return this; }
     fn rotation(this) -> f64 { return core::rotation(this._p); }
     fn set_rotation_x(this, v: f64) -> Popup { core::set_rotation_x(this._p, v); return this; }
@@ -448,12 +504,25 @@ fn from(p: *core::Node) -> option::Option[Popup] {
 fn find(key: str, within: *core::Node = 0 as *core::Node) -> option::Option[Popup] {
     if within != (0 as *core::Node) {
         return match core::find_in(within, key) {
-            option::Option[*core::Node]::Some(p) => from(p),
+            option::Option[*core::Node]::Some(p) => { _report_kind(key, p); from(p) }
             option::Option[*core::Node]::None => option::Option[Popup]::None,
         };
     }
     return match mount::find_node(key) {
-        option::Option[*core::Node]::Some(p) => from(p),
+        option::Option[*core::Node]::Some(p) => { _report_kind(key, p); from(p) }
         option::Option[*core::Node]::None => option::Option[Popup]::None,
     };
+}
+
+// The debug posture's third distinction (FACET_DEBUG_FIND=1): the key
+// RESOLVED, and `from` is about to answer None anyway because the node is
+// another control. `_`-private; costs one flag read when the posture is off.
+fn _report_kind(key: str, p: *core::Node) {
+    if !mount::find_debugging() { return; }
+    if p == (0 as *core::Node) { return; }
+    let d: *core::Data = { (*p).data() };
+    if d == (0 as *core::Data) || { (*d).kind } != props::K_POPUP {
+        mount::debug_find_wrong_kind(key, "popup");
+    }
+    return;
 }

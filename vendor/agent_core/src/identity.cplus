@@ -47,6 +47,7 @@ import "stdlib/option" as option;
 import "stdlib/result" as result;
 import "stdlib/hash_map" as hash_map;
 import "stdlib/text" as text;
+import "./auth" as auth;
 
 extern fn snprintf(s: *u8, size: usize, format: *u8, ...) -> i32;
 
@@ -137,10 +138,110 @@ fn drive_for_role(r: Role) -> u32 {
     };
 }
 
+// ---- the sensitivity tier (layer 1b) ----------------------------------------
+//
+// EXPOSURE IS NOT THE ONLY QUESTION. It answers "may the agent see this node",
+// and until now that was the only thing an application could say — with the
+// consequence that a payment form had exactly two settings: invisible to the
+// assistant, or its card number in the assistant's context window. Both are
+// wrong. An assistant that cannot see the field cannot say "the card number is
+// still empty"; an assistant that can see it has read the number.
+//
+// So a node's EXISTENCE and its CONTENT are separate questions, and the answer
+// to the second one is a tier the app declares, checked against the
+// capabilities the agent's grant carries (`auth::Grant`):
+//
+//   Open       the node is whatever exposure says. `read` / `act`.
+//   Protected  visible, named, and its value needs `read_protected` /
+//              `act_protected`. The card number: there IS a grant that opens
+//              it, and an app that wants autofill mints one.
+//   Private    visible, named, and its value needs `read_private` /
+//              `act_private` — bits an application is expected to declare and
+//              NEVER MINT. The CVC. "Never" is a policy held in one place
+//              where grants are built, not a wall welded into the language.
+//   Excluded   not in the agent's world at all (`set_excluded`). The
+//              assistant's own panel — which is not the app's content.
+//
+// Both tiers are VISIBLE. That is the half that makes this worth having over
+// "leave the field out": an assistant can say "the card number is still blank"
+// because it knows the field is there, what it is called, and that it is not
+// its own to fill. It just cannot have the digits.
+//
+// Strictest wins, and the tier INHERITS DOWNWARD: marking the payment box
+// covers every field, label and summary line inside it without enumerating
+// them. Inheritance is the whole point — a secret leaks through the node
+// nobody remembered to name, and the "Card ending 4242" label beside the field
+// is exactly that node.
+//
+// The affordance ceiling (`set_observe_only`) deliberately does NOT inherit:
+// every container is a drive_none Group, so an inheriting ceiling would make
+// each button inside one unclickable. Sensitivity is the opposite case — a
+// secret's container is a secret — which is why this is its own axis rather
+// than another value of that one.
+fn tier_open() -> u32 { return 0 as u32; }
+fn tier_protected() -> u32 { return 1 as u32; }
+fn tier_private() -> u32 { return 2 as u32; }
+
+// The strictness order, used to resolve a node's tier against its ancestors'.
+fn stricter_tier(a: u32, b: u32) -> u32 {
+    if a > b { return a; }
+    return b;
+}
+
+// THE MAPPING FROM A TIER TO WHAT IT COSTS. One place, so a verb can never
+// invent its own answer to "which bits does this node need".
+//
+// Every read needs `read` and every action needs `act`, whatever the tier — so
+// there is no grant that opens a protected field while being unable to open an
+// ordinary one, and a mis-built grant fails closed rather than sideways.
+fn read_caps_for_tier(t: u32) -> u32 {
+    if t == tier_protected() { return auth::cap_read() | auth::cap_read_protected(); }
+    if t == tier_private() { return auth::cap_read() | auth::cap_read_private(); }
+    return auth::cap_read();
+}
+
+fn act_caps_for_tier(t: u32) -> u32 {
+    if t == tier_protected() { return auth::cap_act() | auth::cap_act_protected(); }
+    if t == tier_private() { return auth::cap_act() | auth::cap_act_private(); }
+    return auth::cap_act();
+}
+
+// The pinned-policy vocabulary a backend reads off a native widget. The tiers
+// plus exclusion, which is not a tier (it removes the node rather than gating
+// its content) but travels on the same wire.
+fn policy_none() -> u32 { return 0 as u32; }
+fn policy_protected() -> u32 { return 1 as u32; }
+fn policy_private() -> u32 { return 2 as u32; }
+fn policy_exclude() -> u32 { return 3 as u32; }
+
 // Stable key used as the associated-object / set_data key across backends.
 // Integer cast (not a static address) so every package agrees without sharing
 // a single-object symbol. Distinct from facet_appkit's tree pin keys (28692+).
 fn affordance_key() -> *u8 { return { 28701 as *u8 }; }
+
+// The declared sensitivity, pinned on a native widget the same way the
+// affordance is. Its OWN key rather than spare bits in the affordance word:
+// the two are written by different parties (a framework declares affordance
+// when it builds a control; an application declares sensitivity about its own
+// data), and a read-modify-write shared word means whichever writes second
+// erases the other. A missing key reads as `policy_none`.
+fn policy_key() -> *u8 { return { 28702 as *u8 }; }
+
+// NUL-terminated string key for GObject `g_object_set_data` (GTK).
+fn policy_gobject_key() -> *u8 { return { #str_ptr("cplus-agent-policy\0") }; }
+
+// Same non-null-integer trick as the affordance: bit 0 is the marker so the
+// stored value is never null, bits 1..8 carry the policy.
+fn pack_policy(p: u32) -> *u8 {
+    let v: usize = (1 as usize) | (((p as usize) & (0xFF as usize)) << 1);
+    return v as *u8;
+}
+
+fn unpack_policy(packed: *u8) -> u32 {
+    if packed == (0 as *u8) { return policy_none(); }
+    if ((packed as usize) & (1 as usize)) != (1 as usize) { return policy_none(); }
+    return (((packed as usize) >> 1) & (0xFF as usize)) as u32;
+}
 
 // NUL-terminated string key for GObject `g_object_set_data` (GTK). Same
 // semantic slot as `affordance_key`; GObject keys are C strings, not addresses.
@@ -181,6 +282,18 @@ struct NodeView {
     parent: option::Option[usize],
     enabled: bool,
     actionable: bool,
+    // WHAT THE APP DECLARED about this node's content: `tier_open`,
+    // `tier_protected`, `tier_private`. A property of the UI, the same for
+    // every agent.
+    tier: u32,
+    // WHAT THIS GRANT MAY DO with it. `readable` is false on a node whose tier
+    // outranks the grant — and then a backend leaves `text` empty. Both on the
+    // wire, because they answer different questions: an agent that sees
+    // `tier: protected, readable: false` knows to ASK for elevation, while one
+    // that sees `tier: private` knows not to bother. `text: ""` alone says
+    // neither — it reads as "this field is empty, go and fill it in", which is
+    // a lie in the shape of a fact and a model acts on it.
+    readable: bool,
 }
 
 // `parent/tag#index` as an owned string. snprintf truncates rather than
@@ -236,6 +349,12 @@ struct Registry {
     // thing. A subtree that is not the application's content is not content for
     // an external agent either.
     excluded: vec::Vec[bool],
+    // Per-node declared tier (`tier_open` / `tier_protected` / `tier_private`).
+    // The node's EFFECTIVE tier is the strictest along its ancestor chain, so
+    // marking the payment box covers the card field, the CVC and the "ending
+    // 4242" label without naming any of them. The leak is never the field you
+    // remembered.
+    tiers: vec::Vec[u32],
     index: hash_map::HashMap[str, usize],
     sibling_counts: hash_map::HashMap[usize, usize],
 }
@@ -253,6 +372,7 @@ fn new() -> Registry {
         actionable: vec::new::[bool](),
         exposed: vec::new::[bool](),
         excluded: vec::new::[bool](),
+        tiers: vec::new::[u32](),
         index: hash_map::new::[str, usize](),
         sibling_counts: hash_map::new::[usize, usize](),
     };
@@ -357,6 +477,31 @@ impl Registry {
         return;
     }
 
+    // Set the name from the WIDGET'S OWN CONTENT — a button's title, a field's
+    // string value — which every backend walk falls back to when the developer
+    // wrote no accessibility label. Refused on a redacted node.
+    //
+    // A separate door from `set_name` because the two names have different
+    // provenance and only one of them is a secret: "Card number" is a label
+    // the developer wrote, "4242424242424242" is the user's data wearing the
+    // label's slot. A single setter cannot tell them apart, and this leak —
+    // the field's value arriving in the model's context as the node's NAME —
+    // is exactly what the one-setter version shipped.
+    //
+    // Call `set_policy`/`set_redacted` BEFORE this during a walk; the guard
+    // reads the flag that is already there.
+    fn set_content_name(ref this, node: usize, name: str) {
+        assert this.is_valid(node);
+        // Whatever the tier, and regardless of any grant: a registry is built
+        // once and then answers every agent that connects. A sensitive value
+        // stored as a NAME would be handed to the next grant that has `read`,
+        // because names are identity, not content. A grant-holder gets the
+        // value through the live `text` read, which is checked per request.
+        if this.is_sensitive(node) { return; }
+        this.names.set(text::from_str(name), node);
+        return;
+    }
+
     // The accessible name, as a view into registry-owned storage ("" if unset).
     fn name_of(this, node: usize) -> str {
         assert this.is_valid(node);
@@ -406,8 +551,11 @@ impl Registry {
         return;
     }
 
-    // Whether the agent may act on this node (the affordance ceiling). A node is
-    // agent-actionable only if it is both enabled and not observe-only.
+    // Whether the agent may act on this node AS FAR AS THE WIDGET IS CONCERNED
+    // (the affordance ceiling): enabled, and not observe-only. Deliberately
+    // grant-free — this is a property of the UI, the same for every agent, and
+    // the registry is built once and then answers many grants. What a
+    // particular agent may do is `can_act` below, which is this AND the tier.
     fn is_agent_actionable(this, node: usize) -> bool {
         assert this.is_valid(node);
         let ceiling: bool = match this.actionable.at_ptr(node) {
@@ -415,6 +563,81 @@ impl Registry {
             option::Option[*bool]::None => false,
         };
         return ceiling && this.is_enabled(node);
+    }
+
+    // --- sensitivity (layer 1b) ------------------------------------------
+
+    // Declare this node's tier. Inherited by everything under it.
+    fn set_tier(ref this, node: usize, tier: u32) {
+        assert this.is_valid(node);
+        this.tiers.set(tier, node);
+        return;
+    }
+
+    // The node's own declared tier, ignoring its ancestors.
+    fn declared_tier(this, node: usize) -> u32 {
+        assert this.is_valid(node);
+        return match this.tiers.at_ptr(node) {
+            option::Option[*u32]::Some(p) => { *p },
+            option::Option[*u32]::None => tier_open(),
+        };
+    }
+
+    // The tier that ACTUALLY applies: the strictest along the ancestor chain.
+    // Walks up, so marking a payment box covers every field in it — including
+    // the label that quotes the last four digits, which is the node a developer
+    // enumerating fields by hand always forgets.
+    fn tier_of(this, node: usize) -> u32 {
+        var worst: u32 = tier_open();
+        var cur: option::Option[usize] = option::Option[usize]::Some(node);
+        loop {
+            match cur {
+                option::Option[usize]::Some(i) => {
+                    worst = stricter_tier(worst, this.declared_tier(i));
+                    cur = this.parent_of(i);
+                }
+                option::Option[usize]::None => { return worst; }
+            }
+        }
+    }
+
+    // Is this node's content gated at all — i.e. does reading it need more than
+    // the ordinary `read` capability?
+    fn is_sensitive(this, node: usize) -> bool {
+        return this.tier_of(node) != tier_open();
+    }
+
+    // Apply a declared policy (`policy_none` / `policy_protected` /
+    // `policy_private` / `policy_exclude`) — the form a backend reads off a
+    // native widget. One door, so a backend never has to know which of the two
+    // mechanisms (tier vs exclusion) a policy value means.
+    fn set_policy(ref this, node: usize, policy: u32) {
+        assert this.is_valid(node);
+        if policy == policy_protected() { this.set_tier(node, tier_protected()); return; }
+        if policy == policy_private() { this.set_tier(node, tier_private()); return; }
+        if policy == policy_exclude() { this.set_excluded(node, true); return; }
+        return;
+    }
+
+    // --- what a PARTICULAR grant may do -----------------------------------
+    //
+    // The two questions every verb asks. Both fold exposure, the tier and the
+    // grant into one answer, so no caller can consult a part and get a
+    // different story — the reason exclusion folds into `is_exposed`.
+
+    // May this grant read this node's CONTENT?
+    fn can_read_value(this, grant: auth::Grant, node: usize) -> bool {
+        assert this.is_valid(node);
+        if !this.is_exposed(node) { return false; }
+        return grant.has(read_caps_for_tier(this.tier_of(node)));
+    }
+
+    // May this grant ACT on this node — the widget's ceiling and the tier?
+    fn can_act(this, grant: auth::Grant, node: usize) -> bool {
+        assert this.is_valid(node);
+        if !this.is_exposed(node) { return false; }
+        if !this.is_agent_actionable(node) { return false; }
+        return grant.has(act_caps_for_tier(this.tier_of(node)));
     }
 
     // --- exposure (plan.agent-core.md §6, layer 1) ----------------------
@@ -473,12 +696,12 @@ impl Registry {
     // tree. Only exposed nodes appear; each node's `parent` is its nearest
     // exposed ancestor, so unexposed intermediates collapse and the tree stays
     // connected. NodeId order means parents precede children.
-    fn describe(this) -> vec::Vec[NodeView] {
+    fn describe(this, grant: auth::Grant) -> vec::Vec[NodeView] {
         var out: vec::Vec[NodeView] = vec::new::[NodeView]();
         let n: usize = this.ids.count();
         var i: usize = 0 as usize;
         while i < n {
-            if this.is_exposed(i) {
+            if this.is_exposed(i) && grant.has(auth::cap_read()) {
                 out.append(NodeView {
                     id: text::from_str(this.id_view(i)),
                     role: this.role_of(i),
@@ -486,7 +709,13 @@ impl Registry {
                     description: text::from_str(this.description_of(i)),
                     parent: this.nearest_exposed_ancestor(i),
                     enabled: this.is_enabled(i),
-                    actionable: this.is_agent_actionable(i),
+                    // `actionable` is what THIS grant may do, not what the
+                    // widget could take. A model uses it as its tool list, so
+                    // reporting the ceiling alone would advertise a write into
+                    // a card field that every attempt then refuses.
+                    actionable: this.can_act(grant, i),
+                    tier: this.tier_of(i),
+                    readable: this.can_read_value(grant, i),
                 });
             }
             i = i +% (1 as usize);
@@ -535,6 +764,7 @@ impl Registry {
         this.actionable.append(true);
         this.exposed.append(exposed);
         this.excluded.append(false);
+        this.tiers.append(tier_open());
         return node_id;
     }
 
@@ -788,7 +1018,7 @@ fn test_describe_lists_every_node_with_fields() {
     let root: usize = r.root();
     let btn: usize = r.add_child(root, option::Option[str]::Some("btn_login"), Role::Button);
     r.set_name(btn, "Log In");
-    let v: vec::Vec[NodeView] = r.describe();
+    let v: vec::Vec[NodeView] = r.describe(auth::operator());
     assert v.count() == r.count();
     // NodeId order: index 0 = app root, index `btn` = the button.
     match v.at_ptr(btn) {
@@ -814,7 +1044,7 @@ fn test_describe_reflects_ceiling() {
     let root: usize = r.root();
     let b: usize = r.add_child(root, option::Option[str]::Some("danger"), Role::Button);
     r.set_observe_only(b);
-    let v: vec::Vec[NodeView] = r.describe();
+    let v: vec::Vec[NodeView] = r.describe(auth::operator());
     match v.at_ptr(b) {
         option::Option[*NodeView]::Some(p) => {
             assert { (*p).enabled };
@@ -838,7 +1068,7 @@ fn test_describe_drop_no_double_free() {
         r.set_exposed(c, true);
         i = i +% (1 as usize);
     }
-    let v: vec::Vec[NodeView] = r.describe();
+    let v: vec::Vec[NodeView] = r.describe(auth::operator());
     assert v.count() == (17 as usize);
     // v and r both drop at scope exit; no buffer freed twice.
 }
@@ -863,7 +1093,7 @@ fn test_describe_prunes_unexposed_and_reparents() {
     // root -> group (auto, hidden) -> btn (tagged, exposed)
     let group: usize = r.add_child(root, none_str(), Role::Group);
     let btn: usize = r.add_child(group, option::Option[str]::Some("btn"), Role::Button);
-    let v: vec::Vec[NodeView] = r.describe();
+    let v: vec::Vec[NodeView] = r.describe(auth::operator());
     // Only root + btn are visible; the auto group is pruned.
     assert v.count() == (2 as usize);
     // btn re-parents to the nearest exposed ancestor (root), not the hidden group.
@@ -898,7 +1128,7 @@ fn test_set_exposed_opts_auto_node_in() {
     r.set_exposed(row, true);
     assert r.is_exposed(row);
     // describe now includes root + list + row.
-    let v: vec::Vec[NodeView] = r.describe();
+    let v: vec::Vec[NodeView] = r.describe(auth::operator());
     assert v.count() == (3 as usize);
 }
 
@@ -909,7 +1139,7 @@ fn test_set_exposed_can_hide_tagged_node() {
     let secret: usize = r.add_child(root, option::Option[str]::Some("secret"), Role::Text);
     assert r.is_exposed(secret);
     r.set_exposed(secret, false);
-    let v: vec::Vec[NodeView] = r.describe();
+    let v: vec::Vec[NodeView] = r.describe(auth::operator());
     // Only the root remains visible.
     assert v.count() == (1 as usize);
 }
@@ -957,7 +1187,7 @@ fn describe_carries_name_and_description() {
     let n: usize = r.add_child(r.root(), option::Option[str]::Some("launcher:new"), Role::Button);
     r.set_name(n, "New Project");
     r.set_description(n, "opens the New Project wizard");
-    let views: vec::Vec[NodeView] = r.describe();
+    let views: vec::Vec[NodeView] = r.describe(auth::operator());
     // root + the exposed button
     assert views.count() == (2 as usize);
     let ok: bool = match views.at_ptr(1 as usize) {
@@ -1006,7 +1236,7 @@ fn an_excluded_subtree_hides_its_keyed_children_too() {
     assert r.is_exposed(app_btn);
 
     // And it is not in the described tree.
-    let views: vec::Vec[NodeView] = r.describe();
+    let views: vec::Vec[NodeView] = r.describe(auth::operator());
     var saw_send: bool = false;
     var saw_app: bool = false;
     var i: usize = 0 as usize;
@@ -1022,5 +1252,144 @@ fn an_excluded_subtree_hides_its_keyed_children_too() {
     }
     assert saw_send == false;
     assert saw_app;
+    return;
+}
+
+#[test]
+fn a_protected_node_is_still_described_with_its_label() {
+    // The half that is easy to get wrong by being too strict: hiding the node
+    // is what we ALREADY had, and it is what makes an assistant useless. The
+    // node stays in the curated tree with id, role and dev-authored name; the
+    // tier and `readable` are what tell the model why it has no value and
+    // whether asking would help.
+    var r: Registry = new();
+    let box_n: usize = r.add_child(r.root(), option::Option[str]::Some("payment"), Role::Group);
+    let card: usize = r.add_child(box_n, option::Option[str]::Some("payment:card"), Role::Input);
+    r.set_name(card, "Card number");
+    r.set_tier(box_n, tier_protected());
+
+    let views: vec::Vec[NodeView] = r.describe(auth::operator());
+    var seen: bool = false;
+    var i: usize = 0 as usize;
+    while i < views.count() {
+        match views.at_ptr(i) {
+            option::Option[*NodeView]::Some(n) => {
+                if { (*n).id.view() } == "payment:card" {
+                    seen = true;
+                    assert { (*n).tier } == tier_protected();   // inherited from the box
+                    assert !{ (*n).readable };
+                    assert !{ (*n).actionable };
+                    assert { (*n).name.view() } == "Card number";   // the LABEL survives
+                }
+            }
+            option::Option[*NodeView]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    assert seen;
+    return;
+}
+
+#[test]
+fn the_same_tree_answers_two_grants_differently() {
+    // One registry, built once, serving two agents. `actionable`/`readable`
+    // are per-grant answers and must not be baked in at walk time — an agent's
+    // tool list is exactly this, and a shared cached answer would hand one
+    // agent the other's permissions.
+    var r: Registry = new();
+    let card: usize = r.add_child(r.root(), option::Option[str]::Some("card"), Role::Input);
+    r.set_tier(card, tier_protected());
+
+    let plain: vec::Vec[NodeView] = r.describe(auth::operator());
+    let approved: vec::Vec[NodeView] = r.describe(auth::protected_operator());
+    match plain.at_ptr(1 as usize) {
+        option::Option[*NodeView]::Some(n) => {
+            assert !{ (*n).readable };
+            assert !{ (*n).actionable };
+        }
+        option::Option[*NodeView]::None => { assert false; }
+    };
+    match approved.at_ptr(1 as usize) {
+        option::Option[*NodeView]::Some(n) => {
+            assert { (*n).readable };
+            assert { (*n).actionable };
+            assert { (*n).tier } == tier_protected();   // the DECLARATION is unchanged
+        }
+        option::Option[*NodeView]::None => { assert false; }
+    };
+    return;
+}
+
+#[test]
+fn a_content_name_never_lands_on_a_sensitive_node() {
+    // The leak that shipped: a walk with no accessibility label falls back to
+    // the widget's own string, and a card field's own string is the number.
+    // `set_content_name` is the door that fallback goes through, and it is shut
+    // for BOTH tiers — a registry is built once and answers every grant, so a
+    // value stored as a name would reach the next agent with plain `read`.
+    var r: Registry = new();
+    let card: usize = r.add_child(r.root(), option::Option[str]::Some("card"), Role::Input);
+    let cvc: usize = r.add_child(r.root(), option::Option[str]::Some("cvc"), Role::Input);
+    r.set_tier(card, tier_protected());
+    r.set_tier(cvc, tier_private());
+    r.set_content_name(card, "4242424242424242");
+    r.set_content_name(cvc, "311");
+    assert r.name_of(card) == "";
+    assert r.name_of(cvc) == "";
+    // The dev-authored label is a different door and stays open.
+    r.set_name(card, "Card number");
+    assert r.name_of(card) == "Card number";
+    return;
+}
+
+#[test]
+fn policy_values_round_trip_through_a_pinned_word() {
+    // The backends pin this on a native widget as a non-null integer.
+    assert unpack_policy(pack_policy(policy_none())) == policy_none();
+    assert unpack_policy(pack_policy(policy_protected())) == policy_protected();
+    assert unpack_policy(pack_policy(policy_private())) == policy_private();
+    assert unpack_policy(pack_policy(policy_exclude())) == policy_exclude();
+    assert pack_policy(policy_none()) != (0 as *u8);
+    // An unpinned widget (null) and a foreign pointer both read as "no policy",
+    // never as a tier that silently blinds the agent — nor as one that opens a
+    // field the app meant to close.
+    assert unpack_policy(0 as *u8) == policy_none();
+    assert unpack_policy(8 as *u8) == policy_none();
+    return;
+}
+
+#[test]
+fn set_policy_routes_to_the_right_mechanism() {
+    var r: Registry = new();
+    let a: usize = r.add_child(r.root(), option::Option[str]::Some("a"), Role::Input);
+    let b: usize = r.add_child(r.root(), option::Option[str]::Some("b"), Role::Input);
+    let c: usize = r.add_child(r.root(), option::Option[str]::Some("c"), Role::Input);
+    let d: usize = r.add_child(r.root(), option::Option[str]::Some("d"), Role::Input);
+    r.set_policy(a, policy_protected());
+    r.set_policy(b, policy_private());
+    r.set_policy(c, policy_exclude());
+    r.set_policy(d, policy_none());
+    assert r.tier_of(a) == tier_protected();
+    assert r.is_exposed(a);        // a tier does NOT hide
+    assert r.tier_of(b) == tier_private();
+    assert r.is_exposed(b);
+    assert !r.is_exposed(c);       // exclusion does
+    assert r.tier_of(d) == tier_open();
+    return;
+}
+
+#[test]
+fn tier_capabilities_are_distinct_per_tier() {
+    // The mapping every verb shares. Protected costs the protected bits and
+    // private costs the private ones; neither is a superset of the other, so
+    // an autofill approval cannot become CVC access by implication.
+    assert read_caps_for_tier(tier_open()) == auth::cap_read();
+    assert read_caps_for_tier(tier_protected()) == (auth::cap_read() | auth::cap_read_protected());
+    assert read_caps_for_tier(tier_private()) == (auth::cap_read() | auth::cap_read_private());
+    assert act_caps_for_tier(tier_open()) == auth::cap_act();
+    assert act_caps_for_tier(tier_protected()) == (auth::cap_act() | auth::cap_act_protected());
+    assert act_caps_for_tier(tier_private()) == (auth::cap_act() | auth::cap_act_private());
+    assert stricter_tier(tier_open(), tier_private()) == tier_private();
+    assert stricter_tier(tier_private(), tier_protected()) == tier_private();
     return;
 }

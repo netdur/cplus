@@ -54,6 +54,7 @@ const P_ROW: u64 = 2u64;
 const P_ROW_HEIGHT: u64 = 4u64;
 const P_SELECTED: u64 = 8u64;
 const P_EXPANDED: u64 = 16u64;
+const P_ROW_ID: u64 = 32u64;
 
 // ---- the model ---------------------------------------------------------------
 
@@ -179,6 +180,9 @@ fn no_row(node: *TreeNode, ctx: *u8) -> flex::Node { return flex::Node::new(); }
 // that made `row`'s own fallback dead code until 2026-08-04.
 fn no_bind(node: *TreeNode, ctx: *u8, row: *flex::Node) { return; }
 fn no_select(node: *TreeNode, ctx: *u8) { return; }
+// The absent row id. Compared by NAME like `no_row` and `no_bind` — an
+// untagged row is the default, and a default has to be a real function.
+fn no_row_id(node: *TreeNode, ctx: *u8) -> text::Text { return text::new(); }
 
 // A handler's own context, or the set-wide one when it has none. Resolved once
 // at the write, so every stored slot is final and the read never chooses.
@@ -209,6 +213,22 @@ struct TreeProps {
     opaque row_ctx: *u8,
     opaque bind_ctx: *u8,
     opaque on_select_ctx: *u8,
+    // THE ROW'S NAME ON THE AGENT SURFACE.
+    //
+    // Every control an agent can address needs a key, and a tree row has
+    // nowhere to put one: the row a builder returns is CONTENT, mounted inside
+    // a cell the backend makes and owns, so nothing the application writes ever
+    // names the row itself. A list is different only by accident — its rows
+    // carry app-keyed controls INSIDE them, so the application's own keys reach
+    // the surface.
+    //
+    // Answering a Text rather than taking a str because an identity is
+    // COMPUTED, per item, the same reasoning `TreeNode.id` records.
+    //
+    // Unset means untagged, which is what every tree did before this: the rows
+    // are invisible to `describe_ui` and cannot be clicked over the socket.
+    row_id: fn(*TreeNode, *u8) -> text::Text,
+    opaque row_id_ctx: *u8,
     row_height: f64,             // 0 = let the backend measure
     selected: text::Text,        // "" = nothing selected
     expanded: vocab::TextList,
@@ -225,6 +245,8 @@ impl TreeProps {
             row_ctx: 0 as *u8,
             bind_ctx: 0 as *u8,
             on_select_ctx: 0 as *u8,
+            row_id: no_row_id,
+            row_id_ctx: 0 as *u8,
             row_height: 0.0f64,
             selected: text::new(),
             expanded: vocab::TextList::new(),
@@ -247,6 +269,8 @@ fn tree(
     row_ctx: *u8 = 0 as *u8,
     on_select: fn(*TreeNode, *u8) = no_select,
     on_select_ctx: *u8 = 0 as *u8,
+    row_id: fn(*TreeNode, *u8) -> text::Text = no_row_id,
+    row_id_ctx: *u8 = 0 as *u8,
     ctx: *u8 = 0 as *u8,
     row_height: f64 = 0.0f64,
 ) -> core::Node {
@@ -258,6 +282,8 @@ fn tree(
     p.row_ctx = _ctx_or(row_ctx, ctx);
     p.bind_ctx = ctx;
     p.on_select_ctx = _ctx_or(on_select_ctx, ctx);
+    p.row_id = row_id;
+    p.row_id_ctx = _ctx_or(row_id_ctx, ctx);
     p.row_height = row_height;
     return match box::new::[TreeProps](p) {
         option::Option[box::Box[TreeProps]]::Some(b) =>
@@ -318,6 +344,27 @@ impl Tree {
         { (*p).row_ctx = _ctx_or(ctx, { (*p).ctx }) };
         core::touch(this._p, P_ROW);
         return this;
+    }
+
+    // Name the rows for the agent surface. One context slot of its own, like
+    // every other handler here — `set_row(f, ctx:)` and this writing the same
+    // field would silently retarget whichever was set first.
+    fn set_row_id(this, f: fn(*TreeNode, *u8) -> text::Text, row_id_ctx: *u8 = 0 as *u8) -> Tree {
+        let p: *TreeProps = this._props();
+        if p == (0 as *TreeProps) { return this; }
+        { (*p).row_id = f };
+        { (*p).row_id_ctx = _ctx_or(row_id_ctx, { (*p).ctx }) };
+        core::touch(this._p, P_ROW_ID);
+        return this;
+    }
+
+    // The id this tree would give `node`'s row, or "" when it names none.
+    fn row_id_of(this, node: *TreeNode) -> text::Text {
+        let p: *TreeProps = this._props();
+        if p == (0 as *TreeProps) { return text::new(); }
+        let f: fn(*TreeNode, *u8) -> text::Text = { (*p).row_id };
+        if f == no_row_id { return text::new(); }
+        return f(node, { (*p).row_id_ctx });
     }
 
     fn build_row(this, node: *TreeNode) -> flex::Node {

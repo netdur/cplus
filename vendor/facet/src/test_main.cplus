@@ -67,6 +67,9 @@ import "./component" as component;
 import "./screen" as screen;
 import "./theme" as theme;
 import "./runtime" as runtime;
+// Compiled so its tests run: the vocab -> policy translation is the one arm in
+// facet whose wrong answer is a leak rather than a bug.
+import "./agent" as _;
 import "./mount" as mount;
 import "./application" as app;
 
@@ -471,6 +474,139 @@ fn boolean_readers_assert_and_setters_do_not() {
     return;
 }
 
+// ---- styling text that is already there -------------------------------------
+
+#[test]
+fn style_runs_name_ranges_and_carry_no_text_of_their_own() {
+    // `formatted_text` is a formatted STRING and writing one replaces the
+    // content — which an editor cannot do, because the text is the user's. A
+    // StyleRun names a RANGE of what is already there, so a stale run can
+    // style the wrong columns and can never disagree with the buffer.
+    var root: facet::Node = text_area::text_area("let x = 1;", key: "e");
+    let p: *facet::Node = #addr_of(root);
+    var runs: vocab::StyleRuns = vocab::StyleRuns::new();
+    let _a: status::Status = runs.add_color(0 as usize, 3 as usize, vocab::Color::text());
+    let _b: status::Status = runs.add(vocab::StyleRun::of(8 as usize, 1 as usize,
+                                                          color: vocab::Color::link(),
+                                                          italic: true));
+    match text_area::find("e", within: p) {
+        option::Option[text_area::TextArea]::Some(h) => {
+            let _s: text_area::TextArea = h.set_style_runs(runs);
+            assert h.style_run_count() == (2 as usize);
+            let r0: *vocab::StyleRun = h.style_run_at(0 as usize);
+            assert { (*r0).start } == (0 as usize);
+            assert { (*r0).end() } == (3 as usize);
+            let r1: *vocab::StyleRun = h.style_run_at(1 as usize);
+            assert { (*r1).is_italic };
+            // The text is untouched — that is the whole difference from
+            // `formatted_text`.
+            assert h.text() == "let x = 1;";
+            let _c: text_area::TextArea = h.clear_style_runs();
+            assert h.style_run_count() == (0 as usize);
+            assert h.text() == "let x = 1;";
+        }
+        option::Option[text_area::TextArea]::None => { assert false; }
+    }
+    return;
+}
+
+// ---- the sequence grew: insert_rows / remove_rows ---------------------------
+
+#[test]
+fn a_splice_moves_the_count_itself_and_records_one_span() {
+    // The caller states the SPLICE, not the total — `set_count` is the write
+    // that says "new sequence", and saying it is what threw every measured
+    // height away.
+    var root: facet::Node = list::list(key: "l");
+    let p: *facet::Node = #addr_of(root);
+    match list::find("l", within: p) {
+        option::Option[list::List]::Some(x) => {
+            let a: list::List = x.set_count(10 as usize);
+            facet::clear_dirty(p);
+            let b: list::List = a.insert_rows(at: 10 as usize, count: 2 as usize);
+            assert b.count() == (12 as usize);
+            assert (facet::dirty_of(p) & list::P_SPLICE_ROWS) != (0 as u64);
+            // and NOT the sequence write, which is the whole point
+            assert (facet::dirty_of(p) & list::P_COUNT) == (0 as u64);
+        }
+        option::Option[list::List]::None => { assert false; }
+    }
+    // The other direction, on its own list — a remove that arrives while an
+    // insert is still pending is two spans, and two spans are a reload.
+    var other: facet::Node = list::list(key: "r");
+    let q: *facet::Node = #addr_of(other);
+    match list::find("r", within: q) {
+        option::Option[list::List]::Some(y) => {
+            let a: list::List = y.set_count(10 as usize);
+            facet::clear_dirty(q);
+            let b: list::List = a.remove_rows(at: 0 as usize, count: 3 as usize);
+            assert b.count() == (7 as usize);
+            assert (facet::dirty_of(q) & list::P_SPLICE_ROWS) != (0 as u64);
+            assert (facet::dirty_of(q) & list::P_COUNT) == (0 as u64);
+        }
+        option::Option[list::List]::None => { assert false; }
+    }
+    return;
+}
+
+#[test]
+fn appends_coalesce_and_an_unmergeable_splice_falls_back_to_the_count() {
+    // A turn appends a message, a tool card, its result and the next message
+    // before anything flushes — four splices, one run, and the run is what the
+    // backend can act on. Anything that is not one run says so by raising
+    // P_COUNT: the full reload, which is exactly what the caller had before
+    // these verbs existed, so the fallback is never worse.
+    var root: facet::Node = list::list(key: "l");
+    let p: *facet::Node = #addr_of(root);
+    match list::find("l", within: p) {
+        option::Option[list::List]::Some(x) => {
+            let a: list::List = x.set_count(5 as usize);
+            facet::clear_dirty(p);
+            let b: list::List = a.insert_rows(at: 5 as usize, count: 1 as usize);
+            let c: list::List = b.insert_rows(at: 6 as usize, count: 1 as usize);
+            assert c.count() == (7 as usize);
+            assert (facet::dirty_of(p) & list::P_COUNT) == (0 as u64);
+
+            // An insert at the HEAD cannot join a run at the tail.
+            let d: list::List = c.insert_rows(at: 0 as usize, count: 1 as usize);
+            assert d.count() == (8 as usize);
+            assert (facet::dirty_of(p) & list::P_COUNT) != (0 as u64);
+        }
+        option::Option[list::List]::None => { assert false; }
+    }
+    return;
+}
+
+// NEGATIVE: a splice naming rows the list does not have states the length it
+// can be sure of and reloads, rather than describing a sequence nobody has.
+#[test]
+fn a_splice_outside_the_sequence_resequences_instead() {
+    var root: facet::Node = list::list(key: "l");
+    let p: *facet::Node = #addr_of(root);
+    match list::find("l", within: p) {
+        option::Option[list::List]::Some(x) => {
+            let a: list::List = x.set_count(4 as usize);
+            facet::clear_dirty(p);
+            let b: list::List = a.insert_rows(at: 99 as usize, count: 2 as usize);
+            assert b.count() == (6 as usize);
+            assert (facet::dirty_of(p) & list::P_COUNT) != (0 as u64);
+
+            facet::clear_dirty(p);
+            let c: list::List = b.remove_rows(at: 4 as usize, count: 99 as usize);
+            assert c.count() == (6 as usize);       // nothing was removed
+            assert (facet::dirty_of(p) & list::P_COUNT) != (0 as u64);
+
+            // A zero-row splice is not a write at all.
+            facet::clear_dirty(p);
+            let d: list::List = c.insert_rows(at: 1 as usize, count: 0 as usize);
+            assert d.count() == (6 as usize);
+            assert facet::dirty_of(p) == (0 as u64);
+        }
+        option::Option[list::List]::None => { assert false; }
+    }
+    return;
+}
+
 // ---- slots: a subtree is a child, not a property ---------------------------
 
 #[test]
@@ -577,6 +713,66 @@ fn scroll_to_records_the_index_and_its_bit() {
     }
     let d: *facet::Data = root.data();
     assert ({ (*d).dirty } & list::P_SCROLL_TO) == list::P_SCROLL_TO;
+    return;
+}
+
+#[test]
+fn a_labels_horizontal_alignment_defaults_to_start_and_vertical_to_center() {
+    // One enum, two properties, two documented defaults: the ledger's
+    // HorizontalTextAlignment is Start, its VerticalTextAlignment is Center.
+    // TextAlign's zero (Center, an alphabetical accident) used to serve both,
+    // so every label was born horizontally centred — invisible while
+    // content-sized, and the moment one grew (`.grow(1)` to fill a row) its
+    // text floated to the middle and read as a layout bug in the container.
+    // A human caught it in the Problems drawer; nothing else could have.
+    var root: facet::Node = label::label("hi", key: "al");
+    match label::find("al", within: #addr_of(root)) {
+        option::Option[label::Label]::Some(x) => {
+            assert x.text_align() == vocab::TextAlign::Start;
+            assert x.vertical_align() == vocab::TextAlign::Center;
+        }
+        option::Option[label::Label]::None => { assert false; }
+    }
+    return;
+}
+
+#[test]
+fn a_typed_find_on_another_controls_key_answers_none_quietly() {
+    // The wrong-kind miss: the key RESOLVES, the cursor asked the node to be
+    // another control. Still None — and with FACET_DEBUG_FIND unset (the
+    // suite's posture) the report hook stays silent, which is what this pins:
+    // the debug seam costs a flag read and changes no answer.
+    var root: facet::Node = list::list(key: "k");
+    match label::find("k", within: #addr_of(root)) {
+        option::Option[label::Label]::Some(_x) => { assert false; }
+        option::Option[label::Label]::None => { }
+    }
+    // The right cursor still narrows.
+    match list::find("k", within: #addr_of(root)) {
+        option::Option[list::List]::Some(_x) => { }
+        option::Option[list::List]::None => { assert false; }
+    }
+    return;
+}
+
+#[test]
+fn invalidate_row_coalesces_to_one_span_and_its_bit() {
+    // Three invalidations, one pending span: min..max is what a backend can
+    // act on cheaply, and -1/-1 is how "nothing pending" reads.
+    var root: facet::Node = list::list(key: "l");
+    match list::find("l", within: #addr_of(root)) {
+        option::Option[list::List]::Some(x) => {
+            let a: list::List = x.invalidate_row(5 as usize);
+            let b: list::List = a.invalidate_row(2 as usize);
+            let _c: list::List = b.invalidate_rows(from: 4 as usize, count: 4 as usize);
+        }
+        option::Option[list::List]::None => { assert false; }
+    }
+    let d: *facet::Data = root.data();
+    assert ({ (*d).dirty } & list::P_INVALIDATE_ROW) == list::P_INVALIDATE_ROW;
+    let p: *props::ListProps = { (*d).props } as *props::ListProps;
+    assert { (*p).invalidate_lo } == (2 as i64);
+    assert { (*p).invalidate_hi } == (7 as i64);
     return;
 }
 

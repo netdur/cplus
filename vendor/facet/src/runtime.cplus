@@ -369,6 +369,8 @@ fn register_screen(route: str, factory: fn() -> screen::ScreenBox) -> bool {
 struct AgentHooks {
     attach_window: fn(*u8),
     serve_once: fn(str),
+    // Pin a node's declared `agent` tier onto its platform view at mount.
+    pin_policy: fn(*u8, vocab::Agent),
 }
 
 static AGENT: AgentHooks = #zero::[AgentHooks]();
@@ -378,6 +380,7 @@ fn install_agent(take h: AgentHooks) {
     // Mirrored into application, where a backend can reach it without
     // importing runtime — dialogs' sheet is the caller that needs it.
     app::set_agent_attach_fn(AGENT.attach_window);
+    app::set_agent_pin_fn(AGENT.pin_policy);
     return;
 }
 

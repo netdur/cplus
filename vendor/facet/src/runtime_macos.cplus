@@ -784,6 +784,8 @@ fn register_screen(route: str, factory: fn() -> screen::ScreenBox) -> bool {
 struct AgentHooks {
     attach_window: fn(*u8),
     serve_once: fn(str),
+    // Pin a node's declared `agent` tier onto its platform view at mount.
+    pin_policy: fn(*u8, vocab::Agent),
 }
 
 static AGENT: AgentHooks = #zero::[AgentHooks]();
@@ -923,8 +925,10 @@ fn window_frame_is_zero_with_no_window_up() {
 fn the_agent_hooks_default_to_saying_so() {
     // Registered by facet/agent; unregistered, serving says why instead of
     // silently serving nothing.
-    install_agent(AgentHooks { attach_window: 0 as fn(*u8), serve_once: 0 as fn(str) });
+    install_agent(AgentHooks { attach_window: 0 as fn(*u8), serve_once: 0 as fn(str),
+                               pin_policy: 0 as fn(*u8, vocab::Agent) });
     agent_attach_window(0 as *u8);             // inert, not a trap
     agent_serve_once("/tmp/probe.sock");       // prints the reason
+    app::agent_pin(0 as *u8, vocab::Agent::Private);   // and the pin is inert too
     return;
 }

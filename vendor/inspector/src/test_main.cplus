@@ -2146,13 +2146,25 @@ fn the_local_backend_routes_every_structural_verb_to_the_tree() {
 // including the prefix routing and the consent gate, not just this package's
 // half of it.
 
+// The grant a DEVELOPER TOOL runs under: it rewrites the tree, which is
+// `edit_tree` and is carried by nothing else. An IDE minting this is saying so
+// out loud; an agent that merely drives the app never gets it.
+fn dev_tool(req: aauth::Request) -> aauth::Grant {
+    return aauth::operator().with(aauth::cap_edit_tree());
+}
+
 // A request line for the inspector namespace, dispatched through the agent
 // bridge exactly as the socket server does.
 fn rpc(line: str) -> text::Text {
+    return rpc_as(dev_tool, line);
+}
+
+// The same, under a stated policy — for the tests that are about WHO is asking.
+fn rpc_as(policy: fn(aauth::Request) -> aauth::Grant, line: str) -> text::Text {
     var sub: aevents::Subscriber = aevents::subscriber(aevents::everything(), 4 as usize);
     let surf: *u8 = 0 as *u8;
     return bridge::handle_request(surf, bridge::fake_backend(), sub,
-                                  aauth::serve(bridge::allow_all), line);
+                                  aauth::serve(policy), line);
 }
 
 // A window with something to address, described once so the wire indices exist.
@@ -2523,4 +2535,117 @@ fn a_theme_token_crosses_the_wire_as_a_name_and_a_literal_as_channels() {
 
 fn main() -> i32 {
     return 0;
+}
+
+
+// ---- the inspector is not a way around the agent tiers -----------------------
+
+// A payment form the way a developer writes one: the box declares the tier and
+// the fields inherit it.
+//
+// Returns the root rather than opening the window itself. `open_window` keeps a
+// POINTER, so a helper that opened one and then returned would leave the app
+// holding the address of a node it had just dropped — which is a segfault a few
+// tests later, in whatever ran next. The caller owns the root for the length of
+// its own test.
+fn payment_root() -> core::Node {
+    var fields: core::Builder = core::Builder::new();
+    fields.add(ui::text_field("4242424242424242", key: "card"));
+    fields.add(ui::text_field("311", key: "cvc"));
+    var box_n: core::Node = ui::column(fields, key: "payment");
+    core::set_agent(#addr_of(box_n), vocab::Agent::Protected);
+    var body: core::Builder = core::Builder::new();
+    body.add(box_n);
+    body.add(ui::text_field("ada@example.com", key: "email"));
+    return ui::column(body, key: "root");
+}
+
+fn plain_agent(req: aauth::Request) -> aauth::Grant { return aauth::operator(); }
+fn approved_agent(req: aauth::Request) -> aauth::Grant { return aauth::protected_operator(); }
+
+#[test]
+fn inspect_does_not_hand_over_a_gated_nodes_contents() {
+    // THE BYPASS THIS CLOSES. `inspector.inspect` read a text field's live
+    // value straight off the control — same value, same process, different
+    // socket name — while the agent surface beside it refused the same read. A
+    // second namespace is a place to put verbs, not a place to escape what
+    // they cost.
+    wire_ready();
+    var root: core::Node = payment_root();
+    app::open_window(#addr_of(root));
+    let _d: text::Text = rpc("{\"method\":\"inspector.describe\",\"id\":1}");
+
+    // 0 root, 1 payment box, 2 card, 3 cvc, 4 email.
+    let card: text::Text =
+        rpc_as(plain_agent, "{\"method\":\"inspector.inspect\",\"params\":{\"node\":2},\"id\":2}");
+    assert card.contains("behind a tier");
+    assert card.contains("4242") == false;
+    // INHERITED from the box, which is the declaration a developer actually
+    // writes — the field itself says nothing.
+    let box_r: text::Text =
+        rpc_as(plain_agent, "{\"method\":\"inspector.inspect\",\"params\":{\"node\":1},\"id\":3}");
+    assert box_r.contains("behind a tier");
+    return;
+}
+
+#[test]
+fn the_grant_that_opens_the_field_opens_it_here_too() {
+    // Not a wall: the same approval that lets an agent autofill the card
+    // through the agent surface lets a tool inspect it. One capability model,
+    // two namespaces — which is the point of folding this in rather than
+    // bolting a second gate onto it.
+    wire_ready();
+    var root: core::Node = payment_root();
+    app::open_window(#addr_of(root));
+    let _d: text::Text = rpc("{\"method\":\"inspector.describe\",\"id\":1}");
+
+    let allowed: text::Text =
+        rpc_as(approved_agent, "{\"method\":\"inspector.inspect\",\"params\":{\"node\":2},\"id\":2}");
+    assert allowed.contains("behind a tier") == false;
+    assert allowed.contains("\"declared\"");
+    return;
+}
+
+#[test]
+fn an_ungated_neighbour_is_untouched() {
+    // A tier that quietly blinds the rest of the tree is a tier nobody turns
+    // on. The email field outside the box reads exactly as it always did.
+    wire_ready();
+    var root: core::Node = payment_root();
+    app::open_window(#addr_of(root));
+    let _d: text::Text = rpc("{\"method\":\"inspector.describe\",\"id\":1}");
+
+    let email: text::Text =
+        rpc_as(plain_agent, "{\"method\":\"inspector.inspect\",\"params\":{\"node\":4},\"id\":2}");
+    assert email.contains("behind a tier") == false;
+    assert email.contains("\"declared\"");
+    return;
+}
+
+#[test]
+fn rewriting_the_tree_costs_a_capability_nothing_else_carries() {
+    // `edit_tree` is not a stronger `act`. An agent that may click every button
+    // and read every field still may not rebuild the interface — and every
+    // structural verb asks, so one added later gets the rule by being listed.
+    wire_ready();
+    var root: core::Node = payment_root();
+    app::open_window(#addr_of(root));
+    let _d: text::Text = rpc("{\"method\":\"inspector.describe\",\"id\":1}");
+
+    let set_r: text::Text = rpc_as(plain_agent,
+        "{\"method\":\"inspector.set\",\"params\":{\"node\":4,\"property\":\"opacity\",\"value\":0.5},\"id\":2}");
+    assert set_r.contains("edit_tree");
+    let rm: text::Text = rpc_as(plain_agent,
+        "{\"method\":\"inspector.remove\",\"params\":{\"node\":4},\"id\":3}");
+    assert rm.contains("edit_tree");
+    let undo: text::Text = rpc_as(plain_agent, "{\"method\":\"inspector.undo\",\"id\":4}");
+    assert undo.contains("edit_tree");
+    // Reading the STRUCTURE is not rewriting it, and stays open.
+    let d: text::Text = rpc_as(plain_agent, "{\"method\":\"inspector.describe\",\"id\":5}");
+    assert d.contains("\"key\":\"payment\"");
+    // The developer tool that says so out loud still works.
+    let ok: text::Text = rpc(
+        "{\"method\":\"inspector.set\",\"params\":{\"node\":4,\"property\":\"opacity\",\"value\":0.5},\"id\":6}");
+    assert ok.contains("edit_tree") == false;
+    return;
 }

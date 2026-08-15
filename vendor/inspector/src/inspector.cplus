@@ -309,6 +309,13 @@ struct Node {
     is_visible: bool,
     dirty: u64,
     child_count: usize,
+    // WHAT AN AGENT MAY DO WITH THIS NODE'S CONTENT, as declared on the facet
+    // node (`vocab::Agent` as its ordinal: 0 Open, 1 Protected, 2 Private,
+    // 3 Hidden). Carried in the snapshot rather than re-read on demand because
+    // the effective tier is INHERITED, and this listing's parent indices are
+    // the only parent chain the inspector has — a facet node cannot be walked
+    // upward.
+    agent_tier: u32,
     // True for the inspector UI's own subtree. An embedded inspector is part
     // of the tree it is inspecting, and a tool that lists itself as something
     // to edit invites the developer to restyle the panel they are reading.

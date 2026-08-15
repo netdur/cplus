@@ -2,18 +2,72 @@
 //
 // The agent-surface authorization gate (plan.agent-core.md §5, §6 layer 3).
 //
-// Authorization is all-or-none per agent: the policy makes a single grant
-// decision per channel, not a per-operation adjudication. Once admitted, the
-// agent operates within what exposure (layer 1, `identity::set_exposed`) and the
-// node ceiling (layer 2, `identity::set_observe_only`) already allow — the gate
-// adds nothing per node and nothing separate for events.
+// AUTHORIZATION IS A CAPABILITY SET, NOT A YES/NO. The gate used to make one
+// all-or-none admission decision per channel, which meant an application had
+// exactly two things it could say about an agent — in, or out — and every
+// question of "may it read the card number" had to be answered by leaving the
+// field out of the tree entirely.
 //
-// The policy is supplied as code (a function pointer): enabling the surface is
-// supplying the policy, so there is no "armed" flag — a gate either has a policy
-// or is default-deny. "Ask the user", persisted consent, and tokens live in a
-// consumer-side helper that calls the gate and returns Allow/Reject; the core
-// gate stays a pure predicate that never blocks and never prompts.
+// A grant is a set of bits. The policy is still supplied as code (a function
+// pointer): enabling the surface is supplying the policy, so there is no
+// "armed" flag — a gate either has a policy or is default-deny. What changed is
+// what the policy returns.
+//
+// ---- the bits ---------------------------------------------------------------
+//
+//   read              see structure and read ordinary values
+//   act               click, type, invoke — on ordinary nodes
+//   read_protected    read the value of a node the app declared Protected
+//   act_protected     act on one
+//   read_private      read the value of a node the app declared Private
+//   act_private       act on one
+//   edit_tree         change the UI's STRUCTURE — insert, remove, reparent,
+//                     set arbitrary properties. Not a stronger version of
+//                     `act`; a different kind of power altogether. `act` does
+//                     what a person could do through the interface. This
+//                     rebuilds the interface.
+//
+// Reads and actions are INDEPENDENT of each other and MONOTONE within a tier:
+// acting on a Protected node needs `act` AND `act_protected`, so there is no
+// grant that can touch a protected field without being able to touch an
+// ordinary one. A "blind operator" (act without read) is coherent and allowed;
+// a "protected-only reader" is not, and cannot be built by accident.
+//
+// ---- Protected vs Private ---------------------------------------------------
+//
+// Both tiers are visible: an agent with `read` sees that the node is there,
+// what it is called, and which tier it is in. Neither hands over a value
+// without the matching bit. The difference is entirely in what an application
+// is expected to do with the grants:
+//
+//   Protected  the card number. There IS a grant that opens it, and an app that
+//              wants autofill mints one — after whatever the app considers
+//              consent. An agent refused here gets `NeedsGrant`, which is a
+//              thing it can act on: ask the user for permission and retry.
+//
+//   Private    the CVC. The bits exist, and the developer NEVER MINTS THEM.
+//              That is the design: "never" is a policy the application holds,
+//              stated once where grants are built, rather than a wall welded
+//              into the language that no future product need can get past. An
+//              agent refused here gets `Forbidden`, which is a thing it must
+//              not retry.
+//
+// Which is why the convenience constructors below stop at Protected. Reaching
+// Private takes a deliberate `with_capability` call on a named bit; nothing in
+// this file hands it out as part of a bundle, so it cannot arrive by upgrade.
+//
+// ---- what this file does NOT do ---------------------------------------------
+//
+// It does not parse JWTs, talk to an identity provider, prompt, persist, or
+// block. `Request` carries the credential the transport happened to receive
+// (an opaque `str` — a JWT, a session id, whatever the app chose) and the
+// policy is the developer's own function. That seam is deliberate: token
+// verification needs crypto and an expiry clock, and a core that reaches for
+// either becomes a core that cannot be unit-tested or ported. An app writing
+// JWT middleware verifies the signature in its own code and returns the Grant
+// the claims describe.
 
+// Where the agent is talking from.
 enum Channel {
     // The in-app assistant: the user clicked the help icon and is present.
     InApp,
@@ -21,65 +75,144 @@ enum Channel {
     External,
 }
 
-enum Decision {
-    Allow,
-    Reject,
+// ---- capability bits --------------------------------------------------------
+//
+// Functions rather than consts so they are usable in every position C+ allows a
+// call, and so the numeric values stay in exactly one place.
+
+fn cap_read() -> u32 { return 1 as u32; }
+fn cap_act() -> u32 { return 2 as u32; }
+fn cap_read_protected() -> u32 { return 4 as u32; }
+fn cap_act_protected() -> u32 { return 8 as u32; }
+fn cap_read_private() -> u32 { return 16 as u32; }
+fn cap_act_private() -> u32 { return 32 as u32; }
+fn cap_edit_tree() -> u32 { return 64 as u32; }
+
+// The capability set an agent is operating under. Copy — it is a bitset, and it
+// is passed by value through every authorization call rather than stored
+// anywhere, so there is no ambient "current grant" for a later call to inherit
+// by accident.
+struct Grant {
+    bits: u32,
 }
 
-// What the policy decides over. Deliberately coarse (the grant is per agent /
-// channel, not per node or per op); a field can be added without changing the
-// gate's shape.
+// The closed grant: nothing at all. What an un-served surface answers, and what
+// a policy returns to refuse.
+fn nothing() -> Grant {
+    return Grant { bits: 0 as u32 };
+}
+
+fn with_capability(g: Grant, cap: u32) -> Grant {
+    return Grant { bits: g.bits | cap };
+}
+
+fn without_capability(g: Grant, cap: u32) -> Grant {
+    return Grant { bits: g.bits & (~cap) };
+}
+
+// ---- the convenience grants -------------------------------------------------
+//
+// They stop at Protected on purpose. A bundle that reached Private would put
+// the CVC one refactor away from being readable, and the whole point of the
+// tier is that arriving there is a thing a developer typed.
+
+// See the app and read ordinary values. Nothing else.
+fn reader() -> Grant {
+    return Grant { bits: cap_read() };
+}
+
+// Drive the app: read, click, type. The ordinary assistant.
+fn operator() -> Grant {
+    return Grant { bits: cap_read() | cap_act() };
+}
+
+// An operator that may also read protected values — the autofill case where
+// the agent needs to SEE the card number (to check it, to summarize it) but the
+// app has not decided it may change one.
+fn protected_reader() -> Grant {
+    return Grant { bits: cap_read() | cap_act() | cap_read_protected() };
+}
+
+// Full protected access: read and write the card field. What an app mints after
+// the user has said yes to autofill.
+fn protected_operator() -> Grant {
+    return Grant {
+        bits: cap_read() | cap_act() | cap_read_protected() | cap_act_protected(),
+    };
+}
+
+impl Grant {
+    // Does this grant carry every bit in `caps`? (A mask, so a caller can ask
+    // for a conjunction in one call.)
+    fn has(this, caps: u32) -> bool {
+        return (this.bits & caps) == caps;
+    }
+
+    // Nothing is possible under this grant. The transports use it to refuse a
+    // connection outright rather than answering every verb with a denial.
+    fn is_empty(this) -> bool {
+        return this.bits == (0 as u32);
+    }
+
+    fn with(this, cap: u32) -> Grant {
+        return with_capability(this, cap);
+    }
+
+    fn without(this, cap: u32) -> Grant {
+        return without_capability(this, cap);
+    }
+}
+
+fn grant_eq(a: Grant, b: Grant) -> bool {
+    return a.bits == b.bits;
+}
+
+// What the policy decides over. `token` is whatever credential the transport
+// received, uninterpreted — "" when there was none. The core never reads it;
+// it exists so a developer's policy can.
 struct Request {
     channel: Channel,
+    token: str,
 }
 
 fn request(channel: Channel) -> Request {
-    return Request { channel: channel };
+    return Request { channel: channel, token: "" };
+}
+
+fn request_with_token(channel: Channel, token: str) -> Request {
+    return Request { channel: channel, token: token };
 }
 
 // The gate holds the developer's policy. A function pointer, not a closure
-// (C+ has no closures, and the grant needs no captured state — per-channel
-// behaviour comes from the `Request`).
+// (C+ has no closures, and the grant needs no captured state — per-channel and
+// per-token behaviour comes from the `Request`).
 struct AuthGate {
-    policy: fn(Request) -> Decision,
+    policy: fn(Request) -> Grant,
 }
 
-// The default-deny policy: reject everything. `deny_all` installs it so an
+// The default-deny policy: no capabilities, ever. `deny_all` installs it so an
 // un-served surface is closed, with no null/optional in the gate.
-fn reject_always(req: Request) -> Decision {
-    return Decision::Reject;
+fn grant_nothing(req: Request) -> Grant {
+    return nothing();
 }
 
 // A closed gate: nothing is admitted until `serve` supplies a real policy.
 fn deny_all() -> AuthGate {
-    let p: fn(Request) -> Decision = reject_always;
+    let p: fn(Request) -> Grant = grant_nothing;
     return AuthGate { policy: p };
 }
 
 // Arm the gate with a policy. This is how the surface is enabled (§8): you
 // cannot turn it on without supplying the decision function.
-fn serve(policy: fn(Request) -> Decision) -> AuthGate {
+fn serve(policy: fn(Request) -> Grant) -> AuthGate {
     return AuthGate { policy: policy };
 }
 
 impl AuthGate {
-    // The single grant check. Pure: no I/O, no prompt, never blocks.
-    fn check(this, req: Request) -> Decision {
+    // The single grant lookup. Pure: no I/O, no prompt, never blocks.
+    fn check(this, req: Request) -> Grant {
         return (this.policy)(req);
     }
-}
-
-fn decision_eq(a: Decision, b: Decision) -> bool {
-    return match a {
-        Decision::Allow => match b {
-            Decision::Allow => true,
-            Decision::Reject => false,
-        },
-        Decision::Reject => match b {
-            Decision::Allow => false,
-            Decision::Reject => true,
-        },
-    };
 }
 
 fn channel_eq(a: Channel, b: Channel) -> bool {
@@ -99,34 +232,94 @@ fn channel_eq(a: Channel, b: Channel) -> bool {
 // Tests
 // ====================================================================
 
-// A representative policy: trust the in-app assistant, reject external agents.
-// (A real consumer would route External through the consent helper.)
-fn inapp_only(req: Request) -> Decision {
+// A representative policy, and the shape a JWT middleware takes: verify the
+// credential in your own code, then say what its claims amount to. The in-app
+// assistant drives the app; an external agent gets to look unless it presented
+// a token this app recognises.
+fn representative_policy(req: Request) -> Grant {
     return match req.channel {
-        Channel::InApp => Decision::Allow,
-        Channel::External => Decision::Reject,
+        Channel::InApp => operator(),
+        Channel::External => {
+            if req.token == "autofill-approved" {
+                protected_operator()
+            } else if req.token == "" {
+                nothing()
+            } else {
+                reader()
+            }
+        }
     };
 }
 
 #[test]
-fn test_default_deny_rejects_every_channel() {
+fn test_default_deny_grants_nothing_on_every_channel() {
     let gate: AuthGate = deny_all();
-    assert decision_eq(gate.check(request(Channel::InApp)), Decision::Reject);
-    assert decision_eq(gate.check(request(Channel::External)), Decision::Reject);
+    assert gate.check(request(Channel::InApp)).is_empty();
+    assert gate.check(request(Channel::External)).is_empty();
 }
 
 #[test]
-fn test_served_policy_decides_per_channel() {
-    let p: fn(Request) -> Decision = inapp_only;
-    let gate: AuthGate = serve(p);
-    assert decision_eq(gate.check(request(Channel::InApp)), Decision::Allow);
-    assert decision_eq(gate.check(request(Channel::External)), Decision::Reject);
+fn a_policy_reads_the_token_the_transport_carried() {
+    let gate: AuthGate = serve(representative_policy);
+    // No credential: the external channel gets nothing at all, and the
+    // transport can refuse the connection rather than answer every verb.
+    assert gate.check(request(Channel::External)).is_empty();
+    // An unrecognised credential still means something — it is a caller the
+    // app knows about, at the lowest tier.
+    let looker: Grant = gate.check(request_with_token(Channel::External, "whoever"));
+    assert looker.has(cap_read());
+    assert !looker.has(cap_act());
+    // The one the app minted after the user approved autofill.
+    let filler: Grant = gate.check(request_with_token(Channel::External, "autofill-approved"));
+    assert filler.has(cap_read() | cap_act() | cap_read_protected() | cap_act_protected());
 }
 
 #[test]
-fn test_decision_and_channel_eq() {
-    assert decision_eq(Decision::Allow, Decision::Allow);
-    assert (decision_eq(Decision::Allow, Decision::Reject)) == false;
+fn no_bundled_grant_reaches_private() {
+    // The load-bearing property of this file. A developer sets the CVC Private
+    // and then never mints private access — so nothing that is handed out as a
+    // BUNDLE may contain it, or "never" would be one convenience call away.
+    let priv_caps: u32 = cap_read_private() | cap_act_private();
+    assert !nothing().has(cap_read_private());
+    assert !reader().has(cap_read_private());
+    assert !operator().has(cap_read_private());
+    assert !protected_reader().has(cap_read_private());
+    assert !protected_operator().has(cap_read_private());
+    assert !protected_operator().has(cap_act_private());
+    assert (protected_operator().bits & priv_caps) == (0 as u32);
+    // Nor does any of them carry the power to rewrite the UI.
+    assert !protected_operator().has(cap_edit_tree());
+    // Reaching it takes naming the bit, which is exactly one grep away from
+    // anyone auditing an application.
+    let deliberate: Grant = protected_operator().with(cap_read_private());
+    assert deliberate.has(cap_read_private());
+}
+
+#[test]
+fn has_is_a_conjunction_over_the_whole_mask() {
+    let g: Grant = operator();
+    assert g.has(cap_read());
+    assert g.has(cap_act());
+    assert g.has(cap_read() | cap_act());
+    // Every bit in the mask, not any: half a mask is not a match.
+    assert !g.has(cap_read() | cap_read_protected());
+}
+
+#[test]
+fn capability_bits_are_distinct_and_removable() {
+    // Seven bits, no collisions — a mis-numbered pair would silently make one
+    // capability grant another.
+    let all: u32 = cap_read() | cap_act() | cap_read_protected() | cap_act_protected()
+                 | cap_read_private() | cap_act_private() | cap_edit_tree();
+    assert all == (127 as u32);
+    let g: Grant = Grant { bits: all };
+    assert g.without(cap_edit_tree()).has(cap_act_private());
+    assert !g.without(cap_edit_tree()).has(cap_edit_tree());
+    assert grant_eq(nothing().with(cap_read()), reader());
+}
+
+#[test]
+fn test_channel_eq() {
     assert channel_eq(Channel::InApp, Channel::InApp);
     assert (channel_eq(Channel::InApp, Channel::External)) == false;
 }

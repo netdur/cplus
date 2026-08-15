@@ -13,6 +13,7 @@ import "facet/facet" as core;
 import "facet/props" as props;
 import "facet/vocabulary" as vocab;
 import "facet/theme" as theme;
+import "facet/application" as app;
 import "objc/runtime" as rt;
 import "objc/bridge" as bridge;
 import "objc/synthesis" as synth;
@@ -289,7 +290,15 @@ fn dyn_wrapper(c: vocab::Color) -> *u8 {
     let idx: usize = DYN_CACHE.count();
     let _s: status::Status = DYN_CACHE.append(DynEntry { key: c, color: 0 as *u8 });
     let p: fn(*u8, *u8) -> *u8 = dyn_provider;
-    let raw: *u8 = akx::dynamic_color("facet.dynamic", p, { (idx +% (1 as usize)) as *u8 });
+    // ONE NAME PER ENTRY. Named NSColors compare by name: two catalog colours
+    // called "facet.dynamic" are `isEqual:` whatever their providers answer,
+    // which no view ever notices (a view holds ONE colour) and which is fatal
+    // inside an NSAttributedString — the storage coalesces adjacent runs whose
+    // attribute values are equal, so ten distinct syntax colours merged into
+    // one flat run. `dynamic_color`'s own contract says to keep the name
+    // distinct per provider; the index that already keys the provider is that.
+    let name: text::Text = "facet.dynamic.${idx}";
+    let raw: *u8 = akx::dynamic_color(name.view(), p, { (idx +% (1 as usize)) as *u8 });
     match DYN_CACHE.at_ptr(idx) {
         option::Option[*DynEntry]::Some(e) => { { (*e).color = raw }; }
         option::Option[*DynEntry]::None => { }
@@ -653,6 +662,21 @@ fn apply_semantics(v: *u8, n: *core::Node) {
 fn apply_common(v: *u8, n: *core::Node, dirty: u64) {
     let view: ak::View = ak::View::from_raw(v);
     if (dirty & props::C_SEMANTICS) != (0 as u64) { apply_semantics(v, n); }
+    // WHAT AN AGENT MAY DO WITH THIS NODE'S CONTENT. Pinned on the view rather
+    // than held in facet, because the agent surface walks the PLATFORM tree —
+    // it never sees a facet node — and because a pin survives a re-render that
+    // replaces the view's contents but not the view.
+    //
+    // Through `app::agent_pin`, which is inert unless the app called
+    // `agent::enable()`. So this line costs one null check in an app that
+    // serves no agent, and facet_appkit still names none of the agent packages.
+    //
+    // Unconditional rather than "only when non-Open": a node whose tier is
+    // CLEARED has to have its pin cleared too, and `Open` is exactly the value
+    // that says so. Skipping the default would make un-marking a field a
+    // no-op — the failure that leaves a card number gated in the mock and open
+    // in the app that fixed it.
+    if (dirty & props::C_AGENT) != (0 as u64) { app::agent_pin(v, core::agent(n)); }
     // The hover text. `toolTip` is on NSView itself, so any node can have one.
     if (dirty & props::C_TOOLTIP) != (0 as u64) {
         let t: str = core::tooltip(n);

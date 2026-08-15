@@ -29,6 +29,7 @@ import "objc/runtime" as rt;
 import "objc/bridge" as bridge;
 import "agent_core/identity" as identity;
 import "agent_core/surface" as surface;
+import "agent_core/auth" as auth;
 import "agent_core/events" as events;
 import "agent_core/backend" as mcpb;
 
@@ -274,6 +275,69 @@ fn get_agent_id(view: *u8) -> option::Option[text::Text] {
 // native class. Storage: associated-object ASSIGN of a packed non-null integer
 // under agent_core::affordance_key() — same key facet_appkit writes.
 
+// ---- declared sensitivity ---------------------------------------------------
+//
+// What the application says about this subtree's CONTENT, pinned on the view
+// the same way the affordance is. `identity::policy_none` (or no pin at all)
+// is the default: an unmarked widget behaves exactly as it did before.
+//
+// ASSIGN, not RETAIN: the value is an integer wearing a pointer, like the
+// affordance word beside it.
+fn set_agent_policy(view: *u8, policy: u32) {
+    if is_null(view) { return; }
+    rt::set_associated_object(view, identity::policy_key(),
+                              identity::pack_policy(policy), 0 as usize);
+    return;
+}
+
+// The pinned policy, or `policy_none` when the view was never marked.
+fn get_agent_policy(view: *u8) -> u32 {
+    if is_null(view) { return identity::policy_none(); }
+    return identity::unpack_policy(rt::get_associated_object(view, identity::policy_key()));
+}
+
+// THE ONE THE DEVELOPER SHOULD NOT HAVE TO ASK FOR.
+//
+// An NSSecureTextField is a control whose entire reason to exist is that its
+// contents must not be seen — it will not even draw them. Reading its
+// `stringValue` and handing the result to a language model is the same defect
+// as printing it to the log, and it is what this package did: the probe in
+// test_main showed a card number arriving in the curated describe as the
+// node's NAME.
+//
+// So the platform's own declaration is honoured without an opt-in, and it lands
+// on PRIVATE — the tier whose bits an application is expected to declare and
+// never mint. Protected would have been the softer choice and it is the wrong
+// one: protected means "there is a grant that opens this", and an
+// NSSecureTextField is the platform saying these contents are not to be shown
+// at all. An app that genuinely wants password autofill declares
+// `policy_protected()` on that field and has then said so on purpose, which is
+// the same rule as everywhere else here — an explicit statement beats an
+// inference, in both directions.
+fn is_secure_by_class(view: *u8) -> bool {
+    if is_kind(view, #str_ptr("NSSecureTextField\0")) { return true; }
+    // The field may be plain while its CELL is secure — `setEchosBullets:` on
+    // an NSSecureTextFieldCell is how a plain field is turned into one, and
+    // the field's own class does not change.
+    if responds_to(view, #str_ptr("cell\0")) {
+        let c: *u8 = rt::msg_id(view, rt::sel(#str_ptr("cell\0")));
+        if !is_null(c) {
+            if is_kind(c, #str_ptr("NSSecureTextFieldCell\0")) { return true; }
+        }
+    }
+    return false;
+}
+
+// The policy that actually applies to a view: the explicit pin when there is
+// one, else the platform's own signal.
+fn effective_policy(view: *u8) -> u32 {
+    if is_null(view) { return identity::policy_none(); }
+    let pinned: *u8 = rt::get_associated_object(view, identity::policy_key());
+    if !is_null(pinned) { return identity::unpack_policy(pinned); }
+    if is_secure_by_class(view) { return identity::policy_private(); }
+    return identity::policy_none();
+}
+
 // Record the declared affordance. `drive` defaults from the role when you only
 // care about classification (the common case).
 fn set_affordance(view: *u8, role: identity::Role) {
@@ -331,6 +395,12 @@ struct AppKitNode {
     frame: rt::Rect,
     is_hidden: bool,
     text: text::Text,
+    // Empty `text` means one of three very different things — the field has
+    // nothing in it, the application declared its contents gated, or this
+    // grant is short of the bits. `tier` is the declaration, `readable` is
+    // what this caller may do with it.
+    tier: u32,
+    readable: bool,
     name: text::Text,
     actionable: bool,
     clickable: bool,
@@ -384,6 +454,231 @@ fn text_target(v: *u8) -> *u8 {
     if is_null(doc) { return v; }
     if is_kind(doc, #str_ptr("NSTextView\0")) { return doc; }
     return v;
+}
+
+// ---- the caret, the runs, and the menu ---------------------------------------
+
+fn responds(obj: *u8, selector_name: *u8) -> bool { return responds_to(obj, selector_name); }
+
+// What the control currently holds, whichever kind it is.
+fn native_string_of(tv: *u8) -> text::Text {
+    if is_null(tv) { return text::new(); }
+    let sel_name: *u8 = if is_kind(tv, #str_ptr("NSTextView\0")) {
+        #str_ptr("string\0")
+    } else {
+        #str_ptr("stringValue\0")
+    };
+    if !responds_to(tv, sel_name) { return text::new(); }
+    return bridge::to_text({ rt::msg_id(tv, rt::sel(sel_name)) });
+}
+
+// BYTES IN, UTF-16 UNITS OUT — the same conversion facet's own span band does,
+// and for the same reason: the two disagree on exactly the characters a code
+// editor is full of, and a caret placed by the wrong index lands in the wrong
+// column with nothing to say so.
+fn utf16_range_of(s: str, start_b: usize, len_b: usize) -> rt::Range {
+    let bytes: *u8 = #str_ptr(s);
+    let total: usize = #str_len(s);
+    var b: usize = 0 as usize;
+    var u: u64 = 0 as u64;
+    var loc: u64 = 0 as u64;
+    var have_loc: bool = false;
+    let end_b: usize = start_b +% len_b;
+    while b < total {
+        if have_loc == false && b >= start_b { loc = u; have_loc = true; }
+        if b >= end_b {
+            if have_loc == false { return rt::Range { location: u, length: 0 as u64 }; }
+            return rt::Range { location: loc, length: u -% loc };
+        }
+        let c: u8 = { *(bytes + b) };
+        var step: usize = 1 as usize;
+        var wide: u64 = 1 as u64;
+        if c >= (0xF0 as u8) { step = 4 as usize; wide = 2 as u64; }
+        else if c >= (0xE0 as u8) { step = 3 as usize; }
+        else if c >= (0xC0 as u8) { step = 2 as usize; }
+        b = b +% step;
+        u = u +% wide;
+    }
+    if have_loc == false { return rt::Range { location: u, length: 0 as u64 }; }
+    return rt::Range { location: loc, length: u -% loc };
+}
+
+// The reverse: a UTF-16 offset back to the BYTE the wire speaks in.
+fn byte_offset_of(s: str, unit: u64) -> u64 {
+    let bytes: *u8 = #str_ptr(s);
+    let total: usize = #str_len(s);
+    var b: usize = 0 as usize;
+    var u: u64 = 0 as u64;
+    while b < total {
+        if u >= unit { return b as u64; }
+        let c: u8 = { *(bytes + b) };
+        var step: usize = 1 as usize;
+        var wide: u64 = 1 as u64;
+        if c >= (0xF0 as u8) { step = 4 as usize; wide = 2 as u64; }
+        else if c >= (0xE0 as u8) { step = 3 as usize; }
+        else if c >= (0xC0 as u8) { step = 2 as usize; }
+        b = b +% step;
+        u = u +% wide;
+    }
+    return total as u64;
+}
+
+// A selection is an NSRange — a struct, which `performSelectorOnMainThread:`
+// cannot carry as its `id` argument. Off-main callers go through a registered
+// no-argument method that reads the range from a static, the same trick
+// `scroll_visible_on_main` uses for a rect.
+static CARET_RANGE: rt::Range = rt::Range { location: 0 as u64, length: 0 as u64 };
+static CARET_METHOD_REGISTERED: bool = false;
+
+fn cplus_set_caret_self(view: *u8, _cmd: *u8, _sender: *u8) {
+    rt::msg_void_range(view, rt::sel(#str_ptr("setSelectedRange:\0")), CARET_RANGE);
+    return;
+}
+
+fn ensure_caret_method() {
+    if CARET_METHOD_REGISTERED { return; }
+    let cls: *u8 = rt::get_class(#str_ptr("NSTextView\0"));
+    if !is_null(cls) {
+        let _ok: i8 = add_method_caret(cls, rt::sel(#str_ptr("cplusSetCaretSelf:\0")),
+                                       cplus_set_caret_self, #str_ptr("v@:@\0"));
+    }
+    CARET_METHOD_REGISTERED = true;
+    return;
+}
+
+#[link_name = "class_addMethod"]
+extern fn add_method_caret(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8), types: *u8) -> i8;
+
+fn set_selected_range_on_main(tv: *u8, r: rt::Range) {
+    if on_main_thread() {
+        rt::msg_void_range(tv, rt::sel(#str_ptr("setSelectedRange:\0")), r);
+        return;
+    }
+    CARET_RANGE = r;
+    ensure_caret_method();
+    rt::msg_void_id_id_i8(
+        tv,
+        rt::sel(#str_ptr("performSelectorOnMainThread:withObject:waitUntilDone:\0")),
+        rt::sel(#str_ptr("cplusSetCaretSelf:\0")),
+        null(),
+        1 as i8,
+    );
+    return;
+}
+
+// The attributed store behind a TEXT control, or null when this is not one.
+//
+// The class check is not decoration: every NSControl answers
+// `attributedStringValue`, so a button would report runs — a plausible answer
+// to a question nobody asked, which is the shape of bug the `supported` flag
+// exists to prevent. An NSTextView keeps a real storage; a text field's value
+// is the attributed string it draws.
+fn attributed_storage_of(tv: *u8) -> *u8 {
+    if is_null(tv) { return null(); }
+    if is_kind(tv, #str_ptr("NSTextView\0")) {
+        return { rt::msg_id(tv, rt::sel(#str_ptr("textStorage\0"))) };
+    }
+    if is_kind(tv, #str_ptr("NSTextField\0")) {
+        return { rt::msg_id(tv, rt::sel(#str_ptr("attributedStringValue\0"))) };
+    }
+    return null();
+}
+
+// One run per stretch of uniform attributes, which is what
+// `attributesAtIndex:effectiveRange:` walks. Colours come out as `#rrggbb`
+// because an agent compares strings and cannot dereference an NSColor.
+fn walk_runs(storage: *u8) -> vec::Vec[surface::TextRun] {
+    var out: vec::Vec[surface::TextRun] = vec::new::[surface::TextRun]();
+    let units: u64 = { rt::msg_u64(storage, rt::sel(#str_ptr("length\0"))) };
+    if units == (0 as u64) { return out; }
+    let whole: text::Text = bridge::to_text({ rt::msg_id(storage, rt::sel(#str_ptr("string\0"))) });
+    let src: str = whole;
+    var at: u64 = 0 as u64;
+    // Bounded by the length: a malformed effective range would otherwise spin.
+    var seen: u64 = 0 as u64;
+    while at < units && seen <= units {
+        seen = seen +% (1 as u64);
+        var eff: rt::Range = rt::Range { location: at, length: 0 as u64 };
+        let attrs: *u8 = { msg_id_u64_rangep(storage,
+                                             rt::sel(#str_ptr("attributesAtIndex:effectiveRange:\0")),
+                                             at, #addr_of(eff)) };
+        if eff.length == (0 as u64) { eff.length = units -% at; }
+        let start_b: u64 = byte_offset_of(src, at);
+        let end_b: u64 = byte_offset_of(src, at +% eff.length);
+        out.append(surface::TextRun {
+            start: start_b,
+            length: end_b -% start_b,
+            color: run_color_hex(attrs),
+            is_bold: run_has_trait(attrs, 2 as u64),        // NSBoldFontMask
+            is_italic: run_has_trait(attrs, 1 as u64),      // NSItalicFontMask
+            is_underlined: has_attribute(attrs, "NSUnderline"),
+        });
+        at = at +% eff.length;
+    }
+    return out;
+}
+
+#[link_name = "objc_msgSend"]
+extern fn msg_id_u64_rangep(recv: *u8, sel: *u8, i: u64, r: *rt::Range) -> *u8;
+
+fn has_attribute(attrs: *u8, key: str) -> bool {
+    if is_null(attrs) { return false; }
+    return !is_null({ rt::msg_id_id(attrs, rt::sel(#str_ptr("objectForKey:\0")),
+                                    bridge::nsstring(key)) });
+}
+
+// `#rrggbb`, converted through the device RGB space so a catalog or dynamic
+// colour answers the components it is CURRENTLY drawing with — which is the
+// whole question being asked.
+fn run_color_hex(attrs: *u8) -> text::Text {
+    if is_null(attrs) { return text::new(); }
+    let c: *u8 = { rt::msg_id_id(attrs, rt::sel(#str_ptr("objectForKey:\0")),
+                                 bridge::nsstring("NSColor")) };
+    if is_null(c) { return text::new(); }
+    let space: *u8 = { rt::msg_id(rt::get_class(#str_ptr("NSColorSpace\0")),
+                                  rt::sel(#str_ptr("deviceRGBColorSpace\0"))) };
+    var rgb: *u8 = c;
+    if !is_null(space) && responds_to(c, #str_ptr("colorUsingColorSpace:\0")) {
+        let conv: *u8 = { rt::msg_id_id(c, rt::sel(#str_ptr("colorUsingColorSpace:\0")), space) };
+        if !is_null(conv) { rgb = conv; }
+    }
+    if !responds_to(rgb, #str_ptr("redComponent\0")) { return text::new(); }
+    let r: f64 = { rt::msg_f64(rgb, rt::sel(#str_ptr("redComponent\0"))) };
+    let g: f64 = { rt::msg_f64(rgb, rt::sel(#str_ptr("greenComponent\0"))) };
+    let b: f64 = { rt::msg_f64(rgb, rt::sel(#str_ptr("blueComponent\0"))) };
+    return "#${hex_byte(r)}${hex_byte(g)}${hex_byte(b)}";
+}
+
+fn hex_byte(v: f64) -> text::Text {
+    var n: i64 = (v * 255.0f64 + 0.5f64) as i64;
+    if n < (0 as i64) { n = 0 as i64; }
+    if n > (255 as i64) { n = 255 as i64; }
+    return "${hex_digit(n / (16 as i64))}${hex_digit(n % (16 as i64))}";
+}
+
+fn hex_digit(n: i64) -> text::Text {
+    let digits: text::Text = "0123456789abcdef".to_text();
+    var i: usize = n as usize;
+    if n < (0 as i64) { i = 0 as usize; }
+    if n > (15 as i64) { i = 15 as usize; }
+    // `slice` yields a view of the local `digits`; copy it into the owned
+    // return.
+    return match digits.slice(i, i +% (1 as usize)) {
+        option::Option[str]::Some(d) => d.to_text(),
+        option::Option[str]::None => text::new(),
+    };
+}
+
+fn run_has_trait(attrs: *u8, mask: u64) -> bool {
+    if is_null(attrs) { return false; }
+    let f: *u8 = { rt::msg_id_id(attrs, rt::sel(#str_ptr("objectForKey:\0")),
+                                 bridge::nsstring("NSFont")) };
+    if is_null(f) { return false; }
+    let mgr: *u8 = { rt::msg_id(rt::get_class(#str_ptr("NSFontManager\0")),
+                                rt::sel(#str_ptr("sharedFontManager\0"))) };
+    if is_null(mgr) { return false; }
+    let traits: u64 = { rt::msg_u64_id(mgr, rt::sel(#str_ptr("traitsOfFont:\0")), f) };
+    return (traits & mask) != (0 as u64);
 }
 
 // Map an AppKit view to the curated agent-core role vocabulary by native type.
@@ -705,13 +1000,32 @@ fn walk(ref reg: identity::Registry, ref views: vec::Vec[ViewRef], view: *u8, pa
         }
     };
     reg.set_enabled(reg_node, live_enabled(view));
+    // SENSITIVITY FIRST. Everything below reads content off the widget, and
+    // the registry's guards (`set_content_name`, `is_agent_actionable`) answer
+    // against the flag that is already set — so the declaration has to land
+    // before the first read, not after it.
+    reg.set_policy(reg_node, effective_policy(view));
     // The agent-facing NAME: the accessibility label when the dev set one
     // (facet .accessibility_label — the override channel, essential for
     // icon-only controls), else the widget's own title/text. The exposed
     // describe is the agent's tool list; a tool needs a human name.
-    var nm: text::Text = view_a11y_string(view, "accessibilityLabel\0");
-    if nm.is_empty() { nm = node_text(view, role); }
-    if nm.is_empty() == false { reg.set_name(reg_node, { nm.view() }); }
+    //
+    // The two go through DIFFERENT doors. A label is what the developer chose
+    // to call this node and is safe at any tier ("Card number" is not a card
+    // number); the fallback is the widget's own content, and on a secure field
+    // that content is the secret. `set_content_name` drops it; a plain
+    // `set_name` for both is how the number reached the model as a name.
+    let label: text::Text = view_a11y_string(view, "accessibilityLabel\0");
+    if label.is_empty() == false {
+        reg.set_name(reg_node, { label.view() });
+    } else if !reg.is_sensitive(reg_node) {
+        // Not read at all on a gated node. `set_content_name` would drop it
+        // anyway — that guard is the one a future backend cannot get around —
+        // but a secret that was never pulled out of the widget is a secret
+        // that was never in a buffer to begin with.
+        let own: text::Text = node_text(view, role);
+        if own.is_empty() == false { reg.set_content_name(reg_node, { own.view() }); }
+    }
     // The intent DESCRIPTION rides the accessibility help/hint channel
     // (facet .accessibility_hint) — dev-authored, no widget fallback.
     let ds: text::Text = view_a11y_string(view, "accessibilityHelp\0");
@@ -806,9 +1120,9 @@ fn open(window: *u8) -> Surface {
 }
 
 // Convenience: the read-only snapshot of a window in one call.
-fn describe(window: *u8) -> vec::Vec[AppKitNode] {
+fn describe(window: *u8, grant: auth::Grant) -> vec::Vec[AppKitNode] {
     let s: Surface = open(window);
-    return s.describe();
+    return s.describe(grant);
 }
 
 impl Surface {
@@ -851,7 +1165,7 @@ impl Surface {
     // Live describe_ui snapshot. Reads each node's current frame / hidden / text
     // from its view, so it reflects state *now* (e.g. after a `set_text`). The
     // synthetic app root (NodeId 0) is omitted; snapshot index = NodeId - 1.
-    fn describe(this) -> vec::Vec[AppKitNode] {
+    fn describe(this, grant: auth::Grant) -> vec::Vec[AppKitNode] {
         var out: vec::Vec[AppKitNode] = vec::new::[AppKitNode]();
         let total: usize = this.reg.count();
         var node: usize = 1 as usize;
@@ -868,13 +1182,24 @@ impl Surface {
                 }
                 option::Option[usize]::None => option::Option[usize]::None,
             };
+            // Per-GRANT, not per-node: the same window answers two agents
+            // differently, and the value is read off the widget only for the
+            // one entitled to it.
+            let may_read: bool = this.reg.can_read_value(grant, node);
             out.append(AppKitNode {
                 id: text::from_str(this.reg.resolved_id(node)),
                 role: role,
                 class_name: class_name_text(view),
                 frame: rt::msg_rect(view, rt::sel(#str_ptr("frame\0"))),
                 is_hidden: live_hidden(view),
-                text: node_text(view, role),
+                // The FULL view is the diagnostic one — frames, classes, the
+                // platform's own answer — and it is still not a way around the
+                // declaration. `mode: full` is an agent-reachable parameter, so
+                // a gate that only held in the curated view would hold until
+                // the model tried the other one.
+                text: if may_read { node_text(view, role) } else { text::new() },
+                tier: this.reg.tier_of(node),
+                readable: may_read,
                 // The walk already read the accessibility label into the
                 // registry's name (falling back to the widget's own title), so
                 // the full view reports the same name the curated one does —
@@ -882,7 +1207,11 @@ impl Surface {
                 // in a grandchild, and every icon button, say nothing without
                 // it.
                 name: text::from_str(this.reg.name_of(node)),
-                actionable: this.reg.is_exposed(node) && this.reg.is_agent_actionable(node),
+                // What THIS grant may do, not what the widget could take. A
+                // model reads this as its tool list; reporting the ceiling
+                // alone advertises a write into a card field that every
+                // attempt then refuses.
+                actionable: this.reg.can_act(grant, node),
                 clickable: view_clickable(view, this.part_of(node)),
                 parent: parent,
             });
@@ -961,10 +1290,10 @@ impl Surface {
     // WRITE: click a control. Authorized via the core (exposed + actionable);
     // on `Allowed`, sends `performClick:` to the backing view. A view that
     // left the live UI since `open` (re-render, removal) reports `Stale`.
-    fn click(this, id: str) -> surface::Outcome {
+    fn click(this, grant: auth::Grant, id: str) -> surface::Outcome {
         match this.reg.lookup(id) {
             option::Option[usize]::Some(node) => {
-                let oc: surface::Outcome = surface::authorize_action(this.reg, node);
+                let oc: surface::Outcome = surface::authorize_action(this.reg, grant, node);
                 if !surface::outcome_eq(oc, surface::Outcome::Allowed) {
                     return oc;
                 }
@@ -1024,10 +1353,10 @@ impl Surface {
     // blindness cost a release once — a single human click on a `.draggable()`
     // box double-released an NSDraggingItem, and 105 scripted cycles could not
     // reproduce it because `click` never enters the path that crashes.
-    fn hit_test(this, id: str) -> surface::HitTest {
+    fn hit_test(this, grant: auth::Grant, id: str) -> surface::HitTest {
         match this.reg.lookup(id) {
             option::Option[usize]::Some(node) => {
-                let oc: surface::Outcome = surface::authorize_read(this.reg, node);
+                let oc: surface::Outcome = surface::authorize_read(this.reg, grant, node);
                 if !surface::outcome_eq(oc, surface::Outcome::Allowed) {
                     return surface::hit_test_refused(oc, true);
                 }
@@ -1082,11 +1411,11 @@ impl Surface {
     // the version the agent last read (`text_version`); a racing edit yields
     // `VersionConflict`. On `Allowed`, sends the class-appropriate setter then
     // bumps.
-    fn set_text(ref this, id: str, value: str, base_version: u64) -> surface::Outcome {
+    fn set_text(ref this, grant: auth::Grant, id: str, value: str, base_version: u64) -> surface::Outcome {
         match this.reg.lookup(id) {
             option::Option[usize]::Some(node) => {
                 let oc: surface::Outcome =
-                    surface::authorize_text_write(this.reg, this.versions, node, base_version);
+                    surface::authorize_text_write(this.reg, grant, this.versions, node, base_version);
                 if !surface::outcome_eq(oc, surface::Outcome::Allowed) {
                     return oc;
                 }
@@ -1130,12 +1459,81 @@ impl Surface {
         return surface::Outcome::NotFound;
     }
 
-    // READ/NAV: scroll a node's bounds into view. Authorized via `authorize_read`
-    // (exposure required; the affordance ceiling does not apply to navigation).
-    fn scroll_to(this, id: str) -> surface::Outcome {
+    // PLACE THE CARET, in BYTES of the control's own text.
+    //
+    // Authorized exactly like `set_text`, minus the version check: this moves
+    // an insertion point rather than replacing a value, so there is nothing to
+    // race — but it is still a WRITE to a control an agent may not be allowed
+    // to drive, so it takes the action gate rather than the read one.
+    fn set_caret(ref this, grant: auth::Grant, id: str, at: u64, length: u64) -> surface::Outcome {
         match this.reg.lookup(id) {
             option::Option[usize]::Some(node) => {
-                let oc: surface::Outcome = surface::authorize_read(this.reg, node);
+                let oc: surface::Outcome = surface::authorize_action(this.reg, grant, node);
+                if !surface::outcome_eq(oc, surface::Outcome::Allowed) { return oc; }
+                let v: *u8 = this.view_of(node);
+                if is_detached(v) { return surface::Outcome::Stale; }
+                match get_declared_drive(v) {
+                    option::Option[u32]::Some(d) => {
+                        if d != identity::drive_text() { return surface::Outcome::NotActionable; }
+                    }
+                    option::Option[u32]::None => { }
+                }
+                let tv: *u8 = text_target(v);
+                if !responds(tv, #str_ptr("setSelectedRange:\0")) {
+                    return surface::Outcome::NotActionable;
+                }
+                // The offsets are BYTES and NSText counts UTF-16 units. A caret
+                // placed by an index that means something else is worse than no
+                // caret verb at all: it lands in the wrong column silently.
+                let s: text::Text = native_string_of(tv);
+                let r: rt::Range = utf16_range_of({ s.view() }, at as usize, length as usize);
+                set_selected_range_on_main(tv, r);
+                return surface::Outcome::Allowed;
+            }
+            option::Option[usize]::None => {}
+        }
+        return surface::Outcome::NotFound;
+    }
+
+    // READ BACK WHAT THE CONTROL IS DRAWING — one run per stretch of uniform
+    // attributes. A CONTENT read, so `authorize_value_read`: the runs describe
+    // the value's own shape, and a gated field that answers "one run, sixteen
+    // characters, no colour" has told an agent the length of the card number.
+    // Blanking `text` and leaving this open is the shape of leak that makes a
+    // gate feel like one without being one.
+    fn read_runs(this, grant: auth::Grant, id: str) -> surface::Runs {
+        match this.reg.lookup(id) {
+            option::Option[usize]::Some(node) => {
+                let oc: surface::Outcome = surface::authorize_value_read(this.reg, grant, node);
+                if !surface::outcome_eq(oc, surface::Outcome::Allowed) {
+                    return surface::runs_refused(oc, true);
+                }
+                let v: *u8 = this.view_of(node);
+                if is_detached(v) { return surface::runs_refused(surface::Outcome::Stale, true); }
+                let tv: *u8 = text_target(v);
+                let storage: *u8 = attributed_storage_of(tv);
+                if storage == (0 as *u8) {
+                    // Not a text control, or one with no attribute model —
+                    // which is a different answer from "no runs".
+                    return surface::runs_refused(surface::Outcome::Allowed, false);
+                }
+                return surface::Runs {
+                    outcome: surface::Outcome::Allowed,
+                    supported: true,
+                    runs: walk_runs(storage),
+                };
+            }
+            option::Option[usize]::None => {}
+        }
+        return surface::runs_refused(surface::Outcome::NotFound, true);
+    }
+
+    // READ/NAV: scroll a node's bounds into view. Authorized via `authorize_read`
+    // (exposure required; the affordance ceiling does not apply to navigation).
+    fn scroll_to(this, grant: auth::Grant, id: str) -> surface::Outcome {
+        match this.reg.lookup(id) {
+            option::Option[usize]::Some(node) => {
+                let oc: surface::Outcome = surface::authorize_read(this.reg, grant, node);
                 if !surface::outcome_eq(oc, surface::Outcome::Allowed) {
                     return oc;
                 }
@@ -1168,10 +1566,10 @@ fn ctext(s: str) -> text::Text {
 // describe → the neutral node list. Converts AppKit's f64 `rt::Rect` frame to
 // the neutral `Rect`, reading each owned node through a pointer and cloning its
 // `Text`s (never moving them out of the Vec, which would double-free).
-fn mcp_describe(p: *u8) -> vec::Vec[mcpb::UiNode] {
+fn mcp_describe(p: *u8, grant: auth::Grant) -> vec::Vec[mcpb::UiNode] {
     refresh_surface(p);
     let s: *Surface = { p as *Surface };
-    let local: vec::Vec[AppKitNode] = (*s).describe();
+    let local: vec::Vec[AppKitNode] = (*s).describe(grant);
     var out: vec::Vec[mcpb::UiNode] = vec::new::[mcpb::UiNode]();
     var i: usize = 0 as usize;
     while i < local.count() {
@@ -1191,6 +1589,8 @@ fn mcp_describe(p: *u8) -> vec::Vec[mcpb::UiNode] {
                     text: ctext((*n).text.view()),
                     name: ctext((*n).name.view()),
                     description: text::new(),
+                    tier: { (*n).tier },
+                    readable: { (*n).readable },
                     actionable: { (*n).actionable },
                     clickable: { (*n).clickable },
                     parent: { (*n).parent },
@@ -1203,31 +1603,31 @@ fn mcp_describe(p: *u8) -> vec::Vec[mcpb::UiNode] {
     return out;
 }
 
-fn mcp_click(p: *u8, id: str) -> surface::Outcome {
+fn mcp_click(p: *u8, grant: auth::Grant, id: str) -> surface::Outcome {
     refresh_surface(p);
     let s: *Surface = { p as *Surface };
-    return (*s).click(id);
+    return (*s).click(grant, id);
 }
 
-fn mcp_set_text(p: *u8, id: str, value: str, base: u64) -> surface::Outcome {
+fn mcp_set_text(p: *u8, grant: auth::Grant, id: str, value: str, base: u64) -> surface::Outcome {
     refresh_surface(p);
     let s: *Surface = { p as *Surface };
-    return (*s).set_text(id, value, base);
+    return (*s).set_text(grant, id, value, base);
 }
 
 // AppKit's navigate is scroll-into-view (Win32/GTK focus instead).
-fn mcp_navigate(p: *u8, id: str) -> surface::Outcome {
+fn mcp_navigate(p: *u8, grant: auth::Grant, id: str) -> surface::Outcome {
     refresh_surface(p);
     let s: *Surface = { p as *Surface };
-    return (*s).scroll_to(id);
+    return (*s).scroll_to(grant, id);
 }
 
 // Refreshes first like every other verb: "is this covered" is a question about
 // the tree as it is NOW, and a stale snapshot would answer about the old one.
-fn mcp_hit_test(p: *u8, id: str) -> surface::HitTest {
+fn mcp_hit_test(p: *u8, grant: auth::Grant, id: str) -> surface::HitTest {
     refresh_surface(p);
     let s: *Surface = { p as *Surface };
-    return (*s).hit_test(id);
+    return (*s).hit_test(grant, id);
 }
 
 // The vtable agent_mcp drives an AppKit surface through. Pass the surface as
@@ -1492,10 +1892,10 @@ fn refresh_surface(p: *u8) {
 // auto-keyed chrome is pruned; frames and classes are omitted so the agent's
 // context stays small. describe_ui's DEFAULT view ("full" opts into
 // mcp_describe above).
-fn mcp_describe_exposed(p: *u8) -> vec::Vec[mcpb::UiNode] {
+fn mcp_describe_exposed(p: *u8, grant: auth::Grant) -> vec::Vec[mcpb::UiNode] {
     refresh_surface(p);
     let s: *Surface = { p as *Surface };
-    let views: vec::Vec[identity::NodeView] = { (*s).reg.describe() };
+    let views: vec::Vec[identity::NodeView] = { (*s).reg.describe(grant) };
     var out: vec::Vec[mcpb::UiNode] = vec::new::[mcpb::UiNode]();
     var i: usize = 0 as usize;
     while i < views.count() {
@@ -1519,15 +1919,32 @@ fn mcp_describe_exposed(p: *u8) -> vec::Vec[mcpb::UiNode] {
                     }
                     option::Option[usize]::None => { }
                 }
+                // In the lean view the NAME is the text — with one exception,
+                // and it is the whole reason the grant is threaded down here.
+                // A gated node's value is never stored in the registry (a
+                // registry is built once and answers every agent), so for the
+                // one caller that IS entitled to it the value has to be read
+                // off the live widget now. Without this, an approved autofill
+                // agent asks for the card number and is told the field is
+                // empty — the exact lie this tier exists to stop, arriving
+                // from the other side.
+                var shown: text::Text = text::from_str({ (*n).name.view() });
+                if { (*n).tier } != identity::tier_open() {
+                    if { (*n).readable } {
+                        if !is_null(live) { shown = node_text(live, { (*n).role }); }
+                    }
+                }
                 out.append(mcpb::UiNode {
                     id: text::from_str({ (*n).id.view() }),
                     role: { (*n).role },
                     class_name: text::new(),
                     frame: mcpb::Rect { x: 0.0f64, y: 0.0f64, w: 0.0f64, h: 0.0f64 },
                     is_hidden: if is_null(live) { false } else { live_hidden(live) },
-                    text: text::from_str({ (*n).name.view() }),
+                    text: shown,
                     name: text::from_str({ (*n).name.view() }),
                     description: text::from_str({ (*n).description.view() }),
+                    tier: { (*n).tier },
+                    readable: { (*n).readable },
                     actionable: { (*n).actionable },
                     clickable: view_clickable(live, part),
                     parent: { (*n).parent },
@@ -1540,6 +1957,116 @@ fn mcp_describe_exposed(p: *u8) -> vec::Vec[mcpb::UiNode] {
     return out;
 }
 
+fn mcp_set_caret(p: *u8, grant: auth::Grant, id: str, at: u64, length: u64) -> surface::Outcome {
+    refresh_surface(p);
+    let s: *Surface = { p as *Surface };
+    return (*s).set_caret(grant, id, at, length);
+}
+
+fn mcp_read_runs(p: *u8, grant: auth::Grant, id: str) -> surface::Runs {
+    refresh_surface(p);
+    let s: *Surface = { p as *Surface };
+    return (*s).read_runs(grant, id);
+}
+
+// INVOKE A MENU ITEM, addressed `Menu/Item` by the titles as built.
+//
+// A menu item is not in the registry — it is not a view, has no frame and
+// cannot be walked to — so the consent model cannot gate it the way it gates a
+// node. What gates it instead is that the application DECLARED it: a menu item
+// exists because the app wrote one, it is visible to anyone using the app, and
+// the answer to a disabled one is `NotActionable` — the same word a node gets.
+// `performActionForItemAtIndex:` is AppKit's own "the user picked this",
+// validation and all; nothing here synthesizes a click at a coordinate.
+fn mcp_invoke_menu(p: *u8, grant: auth::Grant, path: str) -> surface::Outcome {
+    let app: *u8 = { rt::msg_id(rt::get_class(#str_ptr("NSApplication\0")),
+                                rt::sel(#str_ptr("sharedApplication\0"))) };
+    if is_null(app) { return surface::Outcome::NotFound; }
+    let root: *u8 = { rt::msg_id(app, rt::sel(#str_ptr("mainMenu\0"))) };
+    if is_null(root) { return surface::Outcome::NotFound; }
+    let cut: usize = match path.find("/") {
+        option::Option[usize]::Some(i) => i,
+        option::Option[usize]::None => { return surface::Outcome::NotFound; }
+    };
+    let menu_title: str = match path.slice(0 as usize, cut) {
+        option::Option[str]::Some(s) => s,
+        option::Option[str]::None => { return surface::Outcome::NotFound; }
+    };
+    let item_title: str = match path.slice(cut +% (1 as usize), #str_len(path)) {
+        option::Option[str]::Some(s) => s,
+        option::Option[str]::None => { return surface::Outcome::NotFound; }
+    };
+    let menu: *u8 = submenu_titled(root, menu_title);
+    if is_null(menu) { return surface::Outcome::NotFound; }
+    let idx: i64 = { rt::msg_i64_id(menu, rt::sel(#str_ptr("indexOfItemWithTitle:\0")),
+                                    bridge::nsstring(item_title)) };
+    if idx < (0 as i64) { return surface::Outcome::NotFound; }
+    let item: *u8 = { rt::msg_id_i64(menu, rt::sel(#str_ptr("itemAtIndex:\0")), idx) };
+    if is_null(item) { return surface::Outcome::NotFound; }
+    // An item is enabled by its own flag AND, for an autoenabling menu, by
+    // whatever validates it — `update` is what a menu does before it opens, so
+    // asking after it is asking the question the user's click would ask.
+    { rt::msg_void(menu, rt::sel(#str_ptr("update\0"))) };
+    if { rt::msg_i8(item, rt::sel(#str_ptr("isEnabled\0"))) } == (0 as i8) {
+        return surface::Outcome::NotActionable;
+    }
+    perform_menu_action_on_main(menu, idx);
+    return surface::Outcome::Allowed;
+}
+
+// The submenu under a top-level title. The title lives on the ITEM; the menu
+// hanging off it is what holds the commands.
+fn submenu_titled(root: *u8, title: str) -> *u8 {
+    let n: i64 = { rt::msg_i64(root, rt::sel(#str_ptr("numberOfItems\0"))) };
+    var i: i64 = 0 as i64;
+    while i < n {
+        let it: *u8 = { rt::msg_id_i64(root, rt::sel(#str_ptr("itemAtIndex:\0")), i) };
+        if !is_null(it) {
+            let t: text::Text = bridge::to_text({ rt::msg_id(it, rt::sel(#str_ptr("title\0"))) });
+            if { t.view() } == title {
+                let sub: *u8 = { rt::msg_id(it, rt::sel(#str_ptr("submenu\0"))) };
+                if !is_null(sub) { return sub; }
+            }
+        }
+        i = i +% (1 as i64);
+    }
+    return null();
+}
+
+// `performActionForItemAtIndex:` takes an index, not an object, so the main-
+// thread hop carries it in a static the same way the caret's range does.
+static MENU_INDEX: i64 = 0;
+static MENU_METHOD_REGISTERED: bool = false;
+
+fn cplus_perform_menu_index(menu: *u8, _cmd: *u8, _sender: *u8) {
+    rt::msg_void_i64(menu, rt::sel(#str_ptr("performActionForItemAtIndex:\0")), MENU_INDEX);
+    return;
+}
+
+fn perform_menu_action_on_main(menu: *u8, idx: i64) {
+    if on_main_thread() {
+        rt::msg_void_i64(menu, rt::sel(#str_ptr("performActionForItemAtIndex:\0")), idx);
+        return;
+    }
+    MENU_INDEX = idx;
+    if !MENU_METHOD_REGISTERED {
+        let cls: *u8 = rt::get_class(#str_ptr("NSMenu\0"));
+        if !is_null(cls) {
+            let _ok: i8 = add_method_caret(cls, rt::sel(#str_ptr("cplusPerformMenuIndex:\0")),
+                                           cplus_perform_menu_index, #str_ptr("v@:@\0"));
+        }
+        MENU_METHOD_REGISTERED = true;
+    }
+    rt::msg_void_id_id_i8(
+        menu,
+        rt::sel(#str_ptr("performSelectorOnMainThread:withObject:waitUntilDone:\0")),
+        rt::sel(#str_ptr("cplusPerformMenuIndex:\0")),
+        null(),
+        1 as i8,
+    );
+    return;
+}
+
 fn mcp_backend() -> mcpb::Backend {
     return mcpb::Backend {
         describe: mcp_describe,
@@ -1548,5 +2075,8 @@ fn mcp_backend() -> mcpb::Backend {
         set_text: mcp_set_text,
         navigate: mcp_navigate,
         hit_test: mcp_hit_test,
+        set_caret: mcp_set_caret,
+        read_runs: mcp_read_runs,
+        invoke_menu: mcp_invoke_menu,
     };
 }

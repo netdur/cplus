@@ -18,6 +18,7 @@ import "stdlib/text" as text;
 import "stdlib/option" as option;
 import "./identity" as identity;
 import "./surface" as surface;
+import "./auth" as auth;
 
 // Neutral geometry. f64 absorbs every backend's frame losslessly: AppKit's
 // `rt::Rect` is already f64, Win32's integer rect widens, GTK's f32 widens.
@@ -59,11 +60,32 @@ struct UiNode {
     // and for which this flag is the whole of what it knows — had to spend a
     // click on each to find out. See `actionable` above for the other half.
     clickable: bool,
+    // SENSITIVITY, in two fields because they answer two questions.
+    //
+    // `tier` is what the APPLICATION declared (open / protected / private) and
+    // is the same for every agent. `readable` is what THIS GRANT may do with
+    // it; when it is false a backend leaves `text` empty.
+    //
+    // Both on the wire. `text: ""` on its own reads as "this field is empty,
+    // go and fill it in" — a lie in the shape of a fact, and a model acts on
+    // it. With the pair, an agent seeing protected+unreadable knows to ask the
+    // user for permission, and one seeing private knows not to bother.
+    tier: u32,
+    readable: bool,
     parent: option::Option[usize],
 }
 
 // The backend vtable. Every fn takes the type-erased surface pointer as its
-// first argument (the implementor casts `*u8` back to its `Surface`). The
+// first argument (the implementor casts `*u8` back to its `Surface`) and the
+// caller's `auth::Grant` as its second.
+//
+// THE GRANT IS A PARAMETER, NOT STATE. It is a Copy bitset passed down every
+// call rather than stashed on the surface, so there is no ambient "current
+// permissions" for a later call to inherit, no window between a connection
+// dropping and its authority being cleared, and no way for two agents sharing
+// one surface to pick up each other's authority. The cost is a wider signature
+// on nine functions; the alternative costs a class of bug that does not
+// announce itself. The
 // operations every agent consumer needs:
 //   describe  -> the live snapshot (read path)
 //   click     -> authorized activation
@@ -72,16 +94,16 @@ struct UiNode {
 // `Backend` is Copy (all fields are fn-pointers), so it passes by value
 // freely through the dispatch/serve call chain.
 struct Backend {
-    describe: fn(*u8) -> vec::Vec[UiNode],
+    describe: fn(*u8, auth::Grant) -> vec::Vec[UiNode],
     // The CURATED snapshot: only developer-exposed nodes, lean fields (id,
     // role, name-as-text, actionable, parent re-parented to the nearest
     // exposed ancestor) — identity::Registry.describe() over the wire. The
     // MCP client picks per request (describe_ui mode param); "exposed" is
     // the default view, `describe` above is the opt-in full tree.
-    describe_exposed: fn(*u8) -> vec::Vec[UiNode],
-    click: fn(*u8, str) -> surface::Outcome,
-    set_text: fn(*u8, str, str, u64) -> surface::Outcome,
-    navigate: fn(*u8, str) -> surface::Outcome,
+    describe_exposed: fn(*u8, auth::Grant) -> vec::Vec[UiNode],
+    click: fn(*u8, auth::Grant, str) -> surface::Outcome,
+    set_text: fn(*u8, auth::Grant, str, str, u64) -> surface::Outcome,
+    navigate: fn(*u8, auth::Grant, str) -> surface::Outcome,
     // Is this node what a pointer at its own centre would reach, or is
     // something on top of it? An INSPECTION, not a gesture — it synthesizes no
     // event and cannot act. Backends that cannot hit-test report
@@ -108,9 +130,56 @@ struct Backend {
     // what is at a node's own centre. Inspection is allowed; actuation is what
     // is not.
     //
-    // And whatever is added here, ADDRESS BY ID, NEVER BY POINT. Every verb
+    // ---- and whatever is added here, it pays for what it takes --------------
+    //
+    // Three rules, in the same register as the one above, because each of them
+    // was learned from something that had already shipped:
+    //
+    //   A verb that reads a node's CONTENT goes through
+    //   `surface::authorize_value_read`. Not `authorize_read` — that one
+    //   answers "may this agent know the node exists", which every gated node
+    //   still answers yes to. `read_runs` shipped on the wrong one, and a
+    //   redacted field that reports "one run, sixteen characters" has told an
+    //   agent the length of a card number.
+    //
+    //   A verb that changes the UI's STRUCTURE goes through
+    //   `surface::authorize_tree_edit`. Not `authorize_action`: `act` does what
+    //   a person could do through the interface as built, and rebuilding the
+    //   interface is a different kind of power that nothing else implies.
+    //
+    //   A verb that returns PIXELS — a screenshot, a thumbnail, a rendered
+    //   snapshot — blacks out every non-Open node's frame, or it does not land.
+    //   There is no such verb today. When there is, it will be the first one
+    //   that can leak a card number without ever reading a string, and no
+    //   authorization check in this file would see it happen.
+    //
+    // And ADDRESS BY ID, NEVER BY POINT. Every verb
     // authorizes a NODE — exposure, and for actions the affordance ceiling. A
     // verb taking coordinates authorizes nothing, and would let an agent reach
     // unexposed UI by pixel: a hole in the consent model, not a convenience.
-    hit_test: fn(*u8, str) -> surface::HitTest,
+    hit_test: fn(*u8, auth::Grant, str) -> surface::HitTest,
+    // ---- the three that turn "I believe" into "I checked" -------------------
+    // Every one of these is a verb the surface could not reach, and every one
+    // of them is exactly where unverified work had to be handed over.
+    //
+    // PLACE THE CARET. `set_text` writes a whole value; a symbol command, a
+    // go-to-line, an insertion at a point — none of them could be AIMED, so
+    // every editor command that acts at the caret rested on a caret nothing
+    // here could put anywhere. Offsets are BYTES of the control's own text.
+    set_caret: fn(*u8, auth::Grant, str, u64, u64) -> surface::Outcome,
+    // READ BACK WHAT IS DRAWN. `text` says what the control holds and nothing
+    // said how it is drawn, so "did the syntax colour land" needed a probe
+    // compiled into the app four separate times.
+    read_runs: fn(*u8, auth::Grant, str) -> surface::Runs,
+    // INVOKE A MENU ITEM, addressed as `Menu/Item` — the titles as built, which
+    // is what a user reads and what the application wrote. Every key equivalent
+    // (⌘F, ⌘G and five Go/Edit commands) rested on the menu click reaching
+    // `events::emit`, the one link nothing here could drive.
+    //
+    // This is not a gesture verb and not an exception to the rule above it: a
+    // menu item is an ACTION with a name, the same thing `click` fires on a
+    // button, and it is addressed by that name rather than by a point. What it
+    // will not do is open menus for exploration — the item either exists and is
+    // enabled, or the answer is NotFound / NotActionable.
+    invoke_menu: fn(*u8, auth::Grant, str) -> surface::Outcome,
 }

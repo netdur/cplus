@@ -67,6 +67,7 @@ const P_BORDERED: u64 = 8192u64;
 const P_BORDER_COLOR: u64 = 16384u64;
 const P_BORDER_WIDTH: u64 = 32768u64;
 const P_CORNER_RADIUS: u64 = 65536u64;
+const P_TEXT_ALIGN: u64 = 131072u64;
 
 struct TextButtonProps {
     title: text::Text,
@@ -82,6 +83,9 @@ struct TextButtonProps {
     // Underline is the point of the link posture, so it is a first-class
     // parameter here rather than something to reach for a label to get.
     text_decoration: vocab::TextDecoration,
+    // Horizontal title alignment inside the control bounds. Default Center
+    // matches NSButton; a full-width sidebar row wants Start.
+    text_align: vocab::TextAlign,
     // ---- toggling -----------------------------------------------------------
     // `toggles` makes a click FLIP rather than fire-and-forget: AppKit's own
     // PushOnPushOff type holds the state, so `is_on` is read off the control
@@ -117,6 +121,7 @@ impl TextButtonProps {
             text_transform: vocab::TextTransform::None,
             line_break: vocab::LineBreak::TailTruncation,
             text_decoration: vocab::TextDecoration::None,
+            text_align: vocab::TextAlign::Center,
             toggles: false,
             on: false,
             bordered: false,
@@ -150,6 +155,7 @@ fn text_button(
     text_transform: vocab::TextTransform = vocab::TextTransform::None,
     line_break: vocab::LineBreak = vocab::LineBreak::TailTruncation,
     text_decoration: vocab::TextDecoration = vocab::TextDecoration::None,
+    text_align: vocab::TextAlign = vocab::TextAlign::Center,
     toggles: bool = false,
     on: bool = false,
     bordered: bool = false,
@@ -171,6 +177,7 @@ fn text_button(
     p.text_transform = text_transform;
     p.line_break = line_break;
     p.text_decoration = text_decoration;
+    p.text_align = text_align;
     p.toggles = toggles;
     p.on = on;
     p.bordered = bordered;
@@ -274,6 +281,20 @@ impl TextButton {
         let p: *TextButtonProps = this._props();
         if p == (0 as *TextButtonProps) { return vocab::TextDecoration::None; }
         return { (*p).text_decoration };
+    }
+
+    fn set_text_align(this, v: vocab::TextAlign) -> TextButton {
+        let p: *TextButtonProps = this._props();
+        if p == (0 as *TextButtonProps) { return this; }
+        { (*p).text_align = v };
+        core::touch(this._p, P_TEXT_ALIGN);
+        return this;
+    }
+
+    fn text_align(this) -> vocab::TextAlign {
+        let p: *TextButtonProps = this._props();
+        if p == (0 as *TextButtonProps) { return vocab::TextAlign::Center; }
+        return { (*p).text_align };
     }
 
     fn set_text_transform(this, v: vocab::TextTransform) -> TextButton {

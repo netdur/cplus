@@ -5,30 +5,33 @@
 // transport-free consumer of `agent_core::backend::Backend`, driving the same
 // vtable `agent_mcp` drives.
 //
-// IT IS MCP MINUS THE TRANSPORT AND MINUS THE AUTHORIZATION. Nothing more, and
-// nothing less:
+// IT IS MCP MINUS THE TRANSPORT. Nothing more, and nothing less:
 //
 //   minus the transport   no socket, no JSON-RPC, no PID discovery, and no
 //                         parameter validation — the arguments are typed, so
 //                         the compiler does what `missing_param` does there.
-//   minus the auth        MCP checks a channel because a socket is a boundary
-//                         between trust domains: any process that can reach it
-//                         can drive the app. In-process there is no such
-//                         boundary. This code was compiled into the binary by
-//                         the same developer who wrote the handlers, and it
-//                         already has the whole address space — a policy check
-//                         in front of `click` asks permission from itself.
-//                         Whoever could fail it could call the handler direct.
-//   nothing else          same verbs, same defaults, same backend.
+//   nothing else          same verbs, same defaults, same backend, SAME GRANT.
 //
-// So the caller is not what is untrusted here. The untrusted input is the
-// MODEL'S OUTPUT — tokens from a provider, shaped by whatever text the app fed
-// it, including content the user never wrote. That is not something admission
-// can check, and the thing that does constrain it is the surface itself: an
-// agent driving this vtable HAS NO HANDS. It can only do what a person could do
-// through the interface, through the same handlers and the same validation. If
-// an action should be out of reach, do not expose the control; the UI is the
-// capability boundary, and it is a structural one rather than a declared list.
+// It used to be minus the authorization too, and the argument for that was
+// sound as far as it went: a socket is a boundary between trust domains and
+// in-process there is no such boundary, so a policy check in front of `click`
+// asks permission from itself — whoever could fail it could call the handler
+// direct.
+//
+// What that argument gets right is that THE CALLER IS NOT WHAT IS UNTRUSTED.
+// What it missed is that a grant was never about the caller. The untrusted
+// input is the MODEL'S OUTPUT — tokens from a provider, shaped by whatever
+// text the app fed it, including content the user never wrote. A grant is the
+// developer bounding what that output can reach, in the same process, on
+// purpose. An embedded assistant that cannot see the card number is not being
+// distrusted as code; it is being kept out of a position where a prompt
+// injection can read one.
+//
+// So a Session carries a Grant, and the honest default is the ordinary
+// `operator()` — everything the surface exposed, and nothing behind a tier.
+// The rest of the constraint is still structural and still the strongest part:
+// an agent driving this vtable HAS NO HANDS. If an action should be out of
+// reach, do not expose the control.
 //
 // The model/provider loop stays above this package. It turns provider tool
 // calls into these typed operations and sends their typed outcomes back.
@@ -37,6 +40,7 @@
 
 import "stdlib/vec" as vec;
 import "stdlib/option" as option;
+import "agent_core/auth" as auth;
 import "agent_core/backend" as backend;
 import "agent_core/events" as events;
 import "agent_core/surface" as surface;
@@ -48,16 +52,30 @@ import "agent_core/surface" as surface;
 struct Session {
     opaque surf: *u8,
     vt: backend::Backend,
+    // What this assistant may reach. Fixed for the session's life: widening it
+    // is opening a NEW session with the wider grant, so a permission the user
+    // approved for one task cannot quietly outlive it.
+    grant: auth::Grant,
     // The event queue this session drains, so `poll_event` answers the same
     // thing MCP's does. One per session: a subscriber is a ring, and sharing
     // one between consumers would let each steal the other's events.
     sub: events::Subscriber,
 }
 
+// The ordinary embedded assistant: reads and drives the app, and gets nothing
+// from a node the application put behind a tier.
 fn open(surf: *u8, vt: backend::Backend) -> Session {
+    return open_with_grant(surf, vt, auth::operator());
+}
+
+// A session with a specific grant — what an app opens after the user has
+// approved something wider (autofill), and what it opens for a task that
+// should be able to look and not touch.
+fn open_with_grant(surf: *u8, vt: backend::Backend, grant: auth::Grant) -> Session {
     return Session {
         surf: surf,
         vt: vt,
+        grant: grant,
         sub: events::subscriber(events::everything(), 64 as usize),
     };
 }
@@ -70,24 +88,24 @@ impl Session {
     // one view that reports what the platform actually did rather than what
     // the framework believes; it is not for a model's prompt.
     fn describe_ui(this, full: bool = false) -> vec::Vec[backend::UiNode] {
-        if full { return (this.vt.describe)(this.surf); }
-        return (this.vt.describe_exposed)(this.surf);
+        if full { return (this.vt.describe)(this.surf, this.grant); }
+        return (this.vt.describe_exposed)(this.surf, this.grant);
     }
 
     fn click(this, id: str) -> surface::Outcome {
-        return (this.vt.click)(this.surf, id);
+        return (this.vt.click)(this.surf, this.grant, id);
     }
 
     fn set_text(this, id: str, value: str, base_version: u64 = 0 as u64) -> surface::Outcome {
-        return (this.vt.set_text)(this.surf, id, value, base_version);
+        return (this.vt.set_text)(this.surf, this.grant, id, value, base_version);
     }
 
     fn scroll_to(this, id: str) -> surface::Outcome {
-        return (this.vt.navigate)(this.surf, id);
+        return (this.vt.navigate)(this.surf, this.grant, id);
     }
 
     fn hit_test(this, id: str) -> surface::HitTest {
-        return (this.vt.hit_test)(this.surf, id);
+        return (this.vt.hit_test)(this.surf, this.grant, id);
     }
 
     // The verb that drifted. MCP had it and this package did not, which is the

@@ -101,19 +101,68 @@ a hook family outside these is drift.
 | `Scheduler` | run_on_main, after, cancel_after, observe_size, cancel |
 | `KeyReader` | reading a key event |
 | `SenderReaders` | resolving a handler's sender back to a node |
-| `AgentHooks` | serving and attaching the agent surface |
+| `AgentHooks` | serving the agent surface, attaching a window, pinning a node's agent tier |
 
 Plus two slots: `theme::set_is_dark_fn` and `theme::set_theme_changed_fn`.
 
 A zero field keeps the portable no-op, so a partially implemented backend is
 degraded rather than broken.
 
-An embedded assistant uses `facet/agent::in_app(policy)`. This opens a typed
+An embedded assistant uses `facet/agent::in_app()`. This opens a typed
 in-process session over the same attached surface; it does not connect to the
 application's MCP socket. The provider loop feeds `describe_ui()` to the model,
 maps model tool calls to session methods, returns each `Outcome`, and repeats
-until the model answers the user. Leave the assistant's own chat controls
-unkeyed if they should not appear in the curated tree.
+until the model answers the user.
+
+The session carries a capability grant — `auth::operator()` by default, which
+reads and drives the app and opens no tier. `in_app_with_grant(g)` opens a wider
+one, and it is a NEW session rather than a widened one so a permission the user
+approved for a task does not outlive it.
+
+Mark the assistant's own panel `.set_agent(Agent::Hidden)` rather than leaving
+it unkeyed: keys are load-bearing for your own `find()`, and `Hidden` takes the
+whole subtree out of the agent's world by marking its root.
+
+## What an agent may have: `.set_agent(...)`
+
+The shared band carries one more fact about a node — what an agent may do with
+its **content**. It is separate from exposure, which only answers whether the
+agent knows the node exists.
+
+```cplus
+var box_n: core::Node = ui::column(fields, key: "payment");
+core::set_agent(#addr_of(box_n), vocab::Agent::Protected);
+```
+
+| Value | In the agent's tree | Its value |
+|---|---|---|
+| `Agent::Open` | yes (default) | readable |
+| `Agent::Protected` | **yes, named** | needs a grant carrying `read_protected` / `act_protected` |
+| `Agent::Private` | **yes, named** | needs `read_private` / `act_private` — bits an app declares and never mints |
+| `Agent::Hidden` | no | — |
+
+Protected and Private are both **visible**, and that is the point: an assistant
+can say "the card number is still blank" because it knows the field is there and
+what it is called. It just has no digits. A field left unkeyed says nothing at
+all, and costs you the address your own code needs.
+
+Protected is the card number — there *is* a grant that opens it, and an app that
+wants autofill mints `auth::protected_operator()` after the user approves.
+Private is the CVC: you declare the tier and never mint the bit.
+
+**It inherits, strictest wins.** Mark the box, not each field: the leak is never
+the field you remembered, it is the "Card ending 4242" label beside it. A
+`Private` field inside a `Protected` box stays Private.
+
+Two things worth knowing:
+
+- A `text_field(secure: true)` becomes an `NSSecureTextField`, which the agent
+  surface treats as **Private with no declaration at all**. Say
+  `.set_agent(Agent::Open)` if you actually want an assistant to read one.
+- Give a gated field an `.accessibility_label`. The agent surface names a node
+  from that label, falling back to the widget's own content — and that fallback
+  is blocked at any non-Open tier, so an unlabelled card field tells a model
+  only its key and role.
 
 `Renderer.schedule` is asked to coalesce: a hundred writes in a loop should
 cost one sync, not a hundred. The backend decides how, on its own loop.
