@@ -1,0 +1,394 @@
+// stdlib/crypto.cplus — SHA-2 digests, HMAC and a CSPRNG, over the platform's
+// own implementation.
+//
+// THIS IS THE macOS/BSD VARIANT, the same way `netsys.cplus` is: the base file
+// speaks to Darwin and a `_linux` / `_windows` shadow takes over on those
+// targets through the resolver's platform override. Neither shadow is written
+// yet, so this module is macOS-only today — stated here rather than discovered
+// at link time on a Linux CI box.
+//
+// ---- why the platform's and not our own ----------------------------------
+//
+// Because a hand-written SHA-256 is a liability with no upside here. The
+// algorithm is easy to get subtly wrong, the bugs are silent (a wrong digest
+// is still 32 plausible bytes), and the thing that finds them is a test suite
+// nobody runs against an implementation nobody reviews. CommonCrypto lives in
+// libSystem — already linked into every binary on this platform, no `-l` flag,
+// no dependency to vendor — and it is what Apple's own TLS stack calls.
+//
+// The usual argument for rolling one is performance, and it does not apply:
+// the caller this exists for verifies a JWT, which is one HMAC over a few
+// hundred bytes per request. Hardware SHA extensions are not the constraint.
+//
+// ---- what this is for ----------------------------------------------------
+//
+// Verifying credentials. `agent_core::auth` takes an opaque token and hands it
+// to the application's policy; a policy that wants to check an HS256 JWT needs
+// exactly `hmac_sha256` plus a constant-time compare, and both are here.
+//
+// It is NOT a general crypto library. There is no public-key work, no cipher,
+// no key derivation. Those want a real library and a real review; this is the
+// small, boring corner that a credential check actually needs.
+//
+// ---- constant time -------------------------------------------------------
+//
+// `Digest::equals` and `bytes_equal` do not stop at the first differing byte.
+// Comparing a computed MAC against a supplied one with an early-exit compare
+// leaks, through timing, how many leading bytes matched — which is enough to
+// forge a signature one byte at a time. Use them, not a byte loop of your own,
+// anywhere a secret is on one side of the comparison.
+
+import "./option" as option;
+import "./text" as text;
+
+// CommonCrypto, from libSystem. `CC_LONG` is `uint32_t`; the digest functions
+// write into a caller-supplied buffer and return it.
+extern fn CC_SHA256(data: *u8, len: u32, md: *u8) -> *u8;
+extern fn CC_SHA512(data: *u8, len: u32, md: *u8) -> *u8;
+extern fn CCHmac(algorithm: u32, key: *u8, key_len: usize,
+                 data: *u8, data_len: usize, mac_out: *u8);
+// CCRNGStatus, `kCCSuccess` == 0. Seeded and maintained by the kernel.
+extern fn CCRandomGenerateBytes(bytes: *u8, count: usize) -> i32;
+
+// `CCHmacAlgorithm`. Only the two this module exposes are named; the rest of
+// the enum is MD5/SHA1/SHA224/SHA384, and nothing here should encourage them.
+fn hmac_alg_sha256() -> u32 { return 2 as u32; }
+fn hmac_alg_sha512() -> u32 { return 4 as u32; }
+
+// ---- Digest ------------------------------------------------------------------
+
+// A SHA-256 digest: 32 bytes, Copy, no allocation.
+//
+// One fixed size rather than a length-carrying buffer, because a digest whose
+// length is a runtime value is a digest someone compares against one of a
+// different length and calls equal. SHA-512 answers `Digest512`.
+struct Digest {
+    _bytes: [u8; 32],
+}
+
+// A SHA-512 digest: 64 bytes.
+struct Digest512 {
+    _bytes: [u8; 64],
+}
+
+fn zero_digest() -> Digest {
+    return Digest { _bytes: [0u8; 32] };
+}
+
+fn zero_digest512() -> Digest512 {
+    return Digest512 { _bytes: [0u8; 64] };
+}
+
+// Byte-at-index, or 0 past the end. Bounds-checked rather than trusting the
+// caller: a digest is often indexed in a loop written against the wrong length.
+fn digest_byte(d: Digest, at: usize) -> u8 {
+    if at >= (32 as usize) { return 0 as u8; }
+    return { *(((#addr_of(d._bytes) as usize) +% at) as *u8) };
+}
+
+fn digest512_byte(d: Digest512, at: usize) -> u8 {
+    if at >= (64 as usize) { return 0 as u8; }
+    return { *(((#addr_of(d._bytes) as usize) +% at) as *u8) };
+}
+
+fn hex_digit(v: u8) -> u8 {
+    if v < (10 as u8) { return ('0' as u8) +% v; }
+    return ('a' as u8) +% (v -% (10 as u8));
+}
+
+// Lowercase hex, the form every wire protocol and test vector prints.
+fn hex_of_bytes(p: *u8, n: usize) -> text::Text {
+    var out: text::Text = text::new();
+    var i: usize = 0 as usize;
+    while i < n {
+        let b: u8 = { *(((p as usize) +% i) as *u8) };
+        var pair: [u8; 2] = [0u8; 2];
+        { *(#addr_of(pair) as *u8) = hex_digit(b >> (4 as u8)) };
+        { *(((#addr_of(pair) as usize) +% (1 as usize)) as *u8) = hex_digit(b & (0x0F as u8)) };
+        out = out.appending({ #str_from_raw_parts(#addr_of(pair) as *u8, 2 as usize) });
+        i = i +% (1 as usize);
+    }
+    return out;
+}
+
+// CONSTANT TIME over `n` bytes: every byte is read and folded, and the result
+// is one comparison at the end. No early exit, so the duration says nothing
+// about how far the two buffers agreed.
+//
+// The accumulator is the whole trick — `diff |= a ^ b` is 0 only when every
+// pair matched, and the loop cannot be short-circuited by the optimizer
+// because each iteration feeds the next.
+fn bytes_equal(a: *u8, b: *u8, n: usize) -> bool {
+    var diff: u8 = 0 as u8;
+    var i: usize = 0 as usize;
+    while i < n {
+        let x: u8 = { *(((a as usize) +% i) as *u8) };
+        let y: u8 = { *(((b as usize) +% i) as *u8) };
+        diff = diff | (x ^ y);
+        i = i +% (1 as usize);
+    }
+    return diff == (0 as u8);
+}
+
+impl Digest {
+    // Lowercase hex, 64 characters.
+    fn hex(this) -> text::Text {
+        return hex_of_bytes(#addr_of(this._bytes) as *u8, 32 as usize);
+    }
+
+    fn byte(this, at: usize) -> u8 {
+        return digest_byte(this, at);
+    }
+
+    fn count(this) -> usize { return 32 as usize; }
+
+    // CONSTANT TIME. This is the comparison a signature check must use — see
+    // the header. A `==` over bytes that stops early tells an attacker how
+    // many leading bytes of a forged MAC were right.
+    fn equals(this, other: Digest) -> bool {
+        return bytes_equal(#addr_of(this._bytes) as *u8,
+                           #addr_of(other._bytes) as *u8, 32 as usize);
+    }
+}
+
+impl Digest512 {
+    fn hex(this) -> text::Text {
+        return hex_of_bytes(#addr_of(this._bytes) as *u8, 64 as usize);
+    }
+
+    fn byte(this, at: usize) -> u8 {
+        return digest512_byte(this, at);
+    }
+
+    fn count(this) -> usize { return 64 as usize; }
+
+    fn equals(this, other: Digest512) -> bool {
+        return bytes_equal(#addr_of(this._bytes) as *u8,
+                           #addr_of(other._bytes) as *u8, 64 as usize);
+    }
+}
+
+// ---- hashing -----------------------------------------------------------------
+
+// SHA-256 of a byte range.
+fn sha256_bytes(p: *u8, n: usize) -> Digest {
+    var d: Digest = zero_digest();
+    let _r: *u8 = { CC_SHA256(p, n as u32, #addr_of(d._bytes) as *u8) };
+    return d;
+}
+
+// SHA-256 of a string's bytes (no NUL, no normalization — the bytes as they
+// are, which is what every test vector and wire format means).
+fn sha256(data: str) -> Digest {
+    return sha256_bytes({ #str_ptr(data) }, { #str_len(data) });
+}
+
+fn sha512_bytes(p: *u8, n: usize) -> Digest512 {
+    var d: Digest512 = zero_digest512();
+    let _r: *u8 = { CC_SHA512(p, n as u32, #addr_of(d._bytes) as *u8) };
+    return d;
+}
+
+fn sha512(data: str) -> Digest512 {
+    return sha512_bytes({ #str_ptr(data) }, { #str_len(data) });
+}
+
+// ---- HMAC --------------------------------------------------------------------
+
+// HMAC-SHA256 over byte ranges. The key is used as given: CommonCrypto applies
+// RFC 2104's own rules (a key longer than the block is hashed first, a shorter
+// one is zero-padded), so there is no length a caller has to pre-arrange.
+fn hmac_sha256_bytes(key: *u8, key_len: usize, msg: *u8, msg_len: usize) -> Digest {
+    var d: Digest = zero_digest();
+    { CCHmac(hmac_alg_sha256(), key, key_len, msg, msg_len, #addr_of(d._bytes) as *u8) };
+    return d;
+}
+
+// HMAC-SHA256 of a string message under a string key — the JWT HS256 shape.
+fn hmac_sha256(key: str, msg: str) -> Digest {
+    return hmac_sha256_bytes({ #str_ptr(key) }, { #str_len(key) },
+                             { #str_ptr(msg) }, { #str_len(msg) });
+}
+
+fn hmac_sha512_bytes(key: *u8, key_len: usize, msg: *u8, msg_len: usize) -> Digest512 {
+    var d: Digest512 = zero_digest512();
+    { CCHmac(hmac_alg_sha512(), key, key_len, msg, msg_len, #addr_of(d._bytes) as *u8) };
+    return d;
+}
+
+fn hmac_sha512(key: str, msg: str) -> Digest512 {
+    return hmac_sha512_bytes({ #str_ptr(key) }, { #str_len(key) },
+                             { #str_ptr(msg) }, { #str_len(msg) });
+}
+
+// ---- randomness --------------------------------------------------------------
+
+// Fill `n` bytes from the system CSPRNG. `false` means the call failed and the
+// buffer is NOT usable — checked rather than ignored, because a silently
+// unfilled buffer is a token everyone can guess.
+//
+// This is the kernel's generator, not `rand()`. Use it for session ids, nonces
+// and anything a person must not be able to predict.
+fn random_bytes(p: *u8, n: usize) -> bool {
+    return { CCRandomGenerateBytes(p, n) } == (0 as i32);
+}
+
+// `n` random bytes as lowercase hex (2n characters), or None if the generator
+// failed. Capped at 64 bytes per call — a token longer than that is a smell,
+// and the fixed buffer is what keeps this allocation-free.
+fn random_hex(n: usize) -> option::Option[text::Text] {
+    if n > (64 as usize) { return option::Option[text::Text]::None; }
+    var buf: [u8; 64] = [0u8; 64];
+    if !random_bytes(#addr_of(buf) as *u8, n) {
+        return option::Option[text::Text]::None;
+    }
+    return option::Option[text::Text]::Some(hex_of_bytes(#addr_of(buf) as *u8, n));
+}
+
+// ====================================================================
+// Tests
+//
+// Against PUBLISHED VECTORS, not against this module's own output. A digest
+// test that hashes something and compares it to what the code produced today
+// proves only that the code is deterministic.
+// ====================================================================
+
+#[test]
+fn sha256_matches_the_fips_180_4_vectors() {
+    // FIPS 180-4 / NIST CSRC examples.
+    assert sha256("abc").hex().view()
+        == "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
+    assert sha256("").hex().view()
+        == "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+    assert sha256("abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq").hex().view()
+        == "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1";
+    return;
+}
+
+#[test]
+fn sha512_matches_the_fips_180_4_vectors() {
+    assert sha512("abc").hex().view()
+        == "ddaf35a193617abacc417349ae20413112e6fa4e89a97ea20a9eeee64b55d39a2192992a274fc1a836ba3c23a3feebbd454d4423643ce80e2a9ac94fa54ca49f";
+    return;
+}
+
+#[test]
+fn hmac_sha256_matches_the_rfc_4231_vectors() {
+    // RFC 4231 case 2: key "Jefe", data "what do ya want for nothing?".
+    assert hmac_sha256("Jefe", "what do ya want for nothing?").hex().view()
+        == "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843";
+    return;
+}
+
+#[test]
+fn hmac_sha256_handles_a_key_longer_than_the_block() {
+    // RFC 4231 case 6: a 131-byte key, which HMAC must hash down first. The
+    // point is that a caller never has to pre-arrange a key length.
+    var key: [u8; 131] = [0xaau8; 131];
+    let data: str = "Test Using Larger Than Block-Size Key - Hash Key First";
+    let d: Digest = hmac_sha256_bytes(#addr_of(key) as *u8, 131 as usize,
+                                      { #str_ptr(data) }, { #str_len(data) });
+    assert d.hex().view()
+        == "60e431591ee0b67f0d8a26aacbf5b77f8e0bc6213728c5140546040f0ee37f54";
+    return;
+}
+
+#[test]
+fn hmac_is_not_the_hash_of_key_and_message_concatenated() {
+    // The mistake this module exists to prevent someone hand-rolling. A
+    // length-extension-vulnerable `sha256(key + msg)` is not HMAC, and the two
+    // must not agree by accident.
+    let h: Digest = hmac_sha256("key", "message");
+    let naive: Digest = sha256("keymessage");
+    assert !h.equals(naive);
+    return;
+}
+
+#[test]
+fn a_digest_compares_equal_only_to_the_same_bytes() {
+    let a: Digest = sha256("abc");
+    let b: Digest = sha256("abc");
+    let c: Digest = sha256("abd");
+    assert a.equals(b);
+    assert !a.equals(c);
+    // And the comparison is over the WHOLE digest: two that share every byte
+    // but the last must not compare equal.
+    assert !sha256("").equals(sha256("a"));
+    return;
+}
+
+#[test]
+fn the_constant_time_compare_answers_correctly_at_every_position() {
+    // Timing is not testable here; correctness is, and a compare written to
+    // avoid an early exit is exactly the one most likely to get its accumulator
+    // wrong. Differ at the first byte, the last, and the middle.
+    var a: [u8; 4] = [1u8, 2u8, 3u8, 4u8];
+    var same: [u8; 4] = [1u8, 2u8, 3u8, 4u8];
+    var first: [u8; 4] = [9u8, 2u8, 3u8, 4u8];
+    var last: [u8; 4] = [1u8, 2u8, 3u8, 9u8];
+    var mid: [u8; 4] = [1u8, 9u8, 3u8, 4u8];
+    let n: usize = 4 as usize;
+    assert bytes_equal(#addr_of(a) as *u8, #addr_of(same) as *u8, n);
+    assert !bytes_equal(#addr_of(a) as *u8, #addr_of(first) as *u8, n);
+    assert !bytes_equal(#addr_of(a) as *u8, #addr_of(last) as *u8, n);
+    assert !bytes_equal(#addr_of(a) as *u8, #addr_of(mid) as *u8, n);
+    // Zero bytes compare equal — the degenerate case a `while` loop gets right
+    // and an off-by-one does not.
+    assert bytes_equal(#addr_of(a) as *u8, #addr_of(first) as *u8, 0 as usize);
+    return;
+}
+
+#[test]
+fn digest_bytes_are_readable_and_bounds_checked() {
+    let d: Digest = sha256("abc");
+    assert d.count() == (32 as usize);
+    assert d.byte(0 as usize) == (0xba as u8);
+    assert d.byte(31 as usize) == (0xad as u8);
+    // Past the end answers 0 rather than reading off the struct.
+    assert d.byte(32 as usize) == (0 as u8);
+    assert d.byte(9999 as usize) == (0 as u8);
+    return;
+}
+
+#[test]
+fn random_bytes_fills_the_buffer_and_does_not_repeat() {
+    var a: [u8; 32] = [0u8; 32];
+    var b: [u8; 32] = [0u8; 32];
+    assert random_bytes(#addr_of(a) as *u8, 32 as usize);
+    assert random_bytes(#addr_of(b) as *u8, 32 as usize);
+    // Two 32-byte draws colliding has probability 2^-256; a match means the
+    // generator did not run, which is the failure worth catching.
+    assert !bytes_equal(#addr_of(a) as *u8, #addr_of(b) as *u8, 32 as usize);
+    // And it wrote something: an all-zero 32-byte draw is the other shape of
+    // "did not run".
+    var zeros: [u8; 32] = [0u8; 32];
+    assert !bytes_equal(#addr_of(a) as *u8, #addr_of(zeros) as *u8, 32 as usize);
+    return;
+}
+
+#[test]
+fn random_hex_is_the_right_length_and_refuses_past_its_buffer() {
+    match random_hex(16 as usize) {
+        option::Option[text::Text]::Some(t) => { assert t.count() == (32 as usize); }
+        option::Option[text::Text]::None => { assert false; }
+    };
+    match random_hex(0 as usize) {
+        option::Option[text::Text]::Some(t) => { assert t.count() == (0 as usize); }
+        option::Option[text::Text]::None => { assert false; }
+    };
+    // Over the fixed buffer: None, never a short read or a smashed stack.
+    match random_hex(65 as usize) {
+        option::Option[text::Text]::Some(_) => { assert false; }
+        option::Option[text::Text]::None => { }
+    };
+    return;
+}
+
+#[test]
+fn hex_is_lowercase_and_zero_padded() {
+    // A byte under 0x10 must print two characters. Single-digit output is the
+    // classic hex bug and it silently shortens a digest.
+    var buf: [u8; 3] = [0x00u8, 0x0fu8, 0xffu8];
+    assert hex_of_bytes(#addr_of(buf) as *u8, 3 as usize).view() == "000fff";
+    return;
+}

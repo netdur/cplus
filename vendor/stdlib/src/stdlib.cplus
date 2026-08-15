@@ -41,5 +41,6 @@ import "./process" as process;
 import "./pty" as pty;
 import "./fs" as fs;
 import "./bundle" as bundle;
+import "./crypto" as crypto;
 import "./netsys" as netsys;
 import "./net" as net;

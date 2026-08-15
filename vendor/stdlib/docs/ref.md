@@ -709,6 +709,50 @@ Async timer primitives built on the reactor / futures (see
 
 ---
 
+## crypto
+
+SHA-2 digests, HMAC and the system CSPRNG, over CommonCrypto (libSystem — no
+link flag, no vendored dependency). **macOS/BSD only today**: this is the base
+variant, and a `crypto_linux` / `crypto_windows` shadow would take over on
+those targets the way `netsys_linux` does. Neither is written yet.
+
+```cplus
+import "stdlib/crypto" as crypto;
+
+let d: crypto::Digest = crypto::sha256("abc");
+d.hex()                      // "ba7816bf8f01cfea…"  (64 chars, lowercase)
+d.byte(0 as usize)           // bounds-checked; 0 past the end
+d.count()                    // 32
+
+let mac: crypto::Digest = crypto::hmac_sha256(secret, signing_input);
+mac.equals(supplied)         // CONSTANT TIME — see below
+```
+
+| | |
+|---|---|
+| `sha256(data: str) -> Digest` | 32 bytes |
+| `sha256_bytes(p: *u8, n: usize) -> Digest` | |
+| `sha512(data: str) -> Digest512` | 64 bytes |
+| `sha512_bytes(p: *u8, n: usize) -> Digest512` | |
+| `hmac_sha256(key: str, msg: str) -> Digest` | the JWT HS256 shape |
+| `hmac_sha256_bytes(key, klen, msg, mlen) -> Digest` | any key length; RFC 2104 rules applied by the platform |
+| `hmac_sha512(…) -> Digest512` | |
+| `bytes_equal(a: *u8, b: *u8, n: usize) -> bool` | constant time |
+| `random_bytes(p: *u8, n: usize) -> bool` | kernel CSPRNG; `false` = buffer NOT usable |
+| `random_hex(n: usize) -> Option[Text]` | ≤ 64 bytes per call |
+
+`Digest::equals` and `bytes_equal` **do not stop at the first differing byte**.
+Comparing a computed MAC against a supplied one with an early-exit compare
+leaks, through timing, how many leading bytes matched — enough to forge a
+signature one byte at a time. Use them, not a byte loop of your own, wherever a
+secret is on one side of the comparison.
+
+Not a general crypto library: no public-key work, no ciphers, no KDFs. Those
+want a real library and a real review. This is the corner a credential check
+needs.
+
+---
+
 ## marker
 
 Documentation anchor for blessed marker interfaces `Send` and `Sync`.
