@@ -1,0 +1,279 @@
+// facet_uikit input — how a touch reaches a facet handler.
+//
+// ONE SYNTHESIZED CLASS, not one per kind. facet_appkit subclasses each view it
+// creates, because AppKit delivers input by overriding `mouseDown:` on the view
+// itself — there is nowhere else for it to land. UIKit delivers it by
+// target/action and by gesture recognizers, both of which take a SEPARATE
+// target object, so one shared singleton can serve every control in the process
+// and no view has its class moved.
+//
+// That difference is worth stating because it removes a whole family of
+// problems the AppKit backend has to manage: no reclassing, no "arm after the
+// kind body because arming moves the class", no per-kind subclass registry.
+//
+// THE NODE IS FOUND FROM THE SENDER, through an associated object on the view.
+// The alternative — a target per node — would allocate an object per control
+// and leak one per teardown, since target/action does not retain and there is
+// no hook that fires when it lets go.
+
+import "facet/facet" as core;
+import "facet/props" as props;
+import "facet/gestures" as gestures;
+import "facet/component" as component;
+import "objc/runtime" as rt;
+import "objc/synthesis" as synth;
+import "uikit/uikit" as ui;
+
+// The associated-object key the node pointer rides on. A plain address, unique
+// by being this module's own.
+fn node_key() -> *u8 { return 41001 as *u8; }
+
+// Bind a node to its view, so an action can find its way back. Refreshed on
+// every arm: a re-attached node has a new address.
+fn bind_node(v: *u8, n: *core::Node) {
+    if v == (0 as *u8) { return; }
+    synth::set_associated(v, node_key(), n as *u8);
+    return;
+}
+
+fn node_of(v: *u8) -> *core::Node {
+    if v == (0 as *u8) { return 0 as *core::Node; }
+    return { synth::get_associated(v, node_key()) } as *core::Node;
+}
+
+// ---- the shared target -------------------------------------------------------
+
+static TARGET_CLASS: *u8 = 0 as *u8;
+static TARGET: *u8 = 0 as *u8;
+
+// UIControlEvents, built arithmetically. An integer literal wraps through i32
+// before `as`, so a mask written as one big number is a different number by the
+// time it lands — the standing rule in this language, and these are the sort of
+// constants it was written for.
+fn event_touch_up_inside() -> u64 { return (1 as u64) * (64 as u64); }        // 1 << 6
+fn event_value_changed() -> u64 { return (1 as u64) * (4096 as u64); }        // 1 << 12
+fn event_editing_changed() -> u64 { return (1 as u64) * (65536 as u64); }     // 1 << 16
+fn event_editing_did_end() -> u64 { return (1 as u64) * (262144 as u64); }    // 1 << 18
+fn event_editing_did_end_on_exit() -> u64 { return (1 as u64) * (524288 as u64); } // 1 << 19
+
+// The three actions, one per thing that can happen to a control. They are
+// separate selectors rather than one with a switch, because the sender does not
+// say WHICH event brought it — `addTarget:action:forControlEvents:` is where
+// that was decided, and re-deriving it from the control's state afterwards is a
+// guess.
+fn imp_primary(self_obj: *u8, cmd: *u8, sender: *u8) {
+    let n: *core::Node = node_of(sender);
+    if n == (0 as *core::Node) { return; }
+    fire_primary(n, sender);
+    return;
+}
+
+fn imp_value_changed(self_obj: *u8, cmd: *u8, sender: *u8) {
+    let n: *core::Node = node_of(sender);
+    if n == (0 as *core::Node) { return; }
+    read_back(n, sender);
+    fire_value_changed(n, sender);
+    return;
+}
+
+fn imp_editing_changed(self_obj: *u8, cmd: *u8, sender: *u8) {
+    let n: *core::Node = node_of(sender);
+    if n == (0 as *core::Node) { return; }
+    read_back(n, sender);
+    return;
+}
+
+// The tap recogniser's action. `sender` is the RECOGNISER, not the view, so the
+// node is found through the view it is attached to.
+fn imp_tap(self_obj: *u8, cmd: *u8, recogniser: *u8) {
+    if recogniser == (0 as *u8) { return; }
+    let v: *u8 = { rt::msg_id(recogniser, rt::sel(#str_ptr("view\0"))) };
+    let n: *core::Node = node_of(v);
+    if n == (0 as *core::Node) { return; }
+    let _fired: bool = gestures::fire_click(n);
+    return;
+}
+
+fn target_class() -> *u8 {
+    if TARGET_CLASS != (0 as *u8) { return TARGET_CLASS; }
+    let existing: *u8 = rt::get_class(#str_ptr("FacetUIKitTarget\0"));
+    if existing != (0 as *u8) {
+        TARGET_CLASS = existing;
+        return TARGET_CLASS;
+    }
+    let base: *u8 = rt::get_class(#str_ptr("NSObject\0"));
+    let cls: *u8 = { synth::allocate_class_pair(base, #str_ptr("FacetUIKitTarget\0"), 0 as usize) };
+    if cls == (0 as *u8) { return 0 as *u8; }
+    let _a: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("facetPrimary:\0")),
+                                         imp_primary, #str_ptr("v@:@\0"));
+    let _b: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("facetValueChanged:\0")),
+                                         imp_value_changed, #str_ptr("v@:@\0"));
+    let _c: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("facetEditingChanged:\0")),
+                                         imp_editing_changed, #str_ptr("v@:@\0"));
+    let _d: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("facetTap:\0")),
+                                         imp_tap, #str_ptr("v@:@\0"));
+    { synth::register_class_pair(cls) };
+    TARGET_CLASS = cls;
+    return TARGET_CLASS;
+}
+
+// The one instance every control points at. Never released: it lives as long as
+// the process, and target/action holds it unretained — so an owner that could
+// drop it would be a dangling target on every control at once.
+fn target() -> *u8 {
+    if TARGET != (0 as *u8) { return TARGET; }
+    let cls: *u8 = target_class();
+    if cls == (0 as *u8) { return 0 as *u8; }
+    TARGET = { synth::alloc_init_class(cls) };
+    return TARGET;
+}
+
+// ---- arming ------------------------------------------------------------------
+
+fn add_target(v: *u8, sel_name: *u8, events: u64) {
+    let t: *u8 = target();
+    if t == (0 as *u8) { return; }
+    { msg_void_id_sel_u64(v, rt::sel(#str_ptr("addTarget:action:forControlEvents:\0")),
+                          t, rt::sel(sel_name), events) };
+    return;
+}
+
+// A control whose PRIMARY action is a tap: a button, an icon button.
+fn arm_primary(v: *u8, n: *core::Node) {
+    bind_node(v, n);
+    add_target(v, #str_ptr("facetPrimary:\0"), event_touch_up_inside());
+    return;
+}
+
+// A control that carries a VALUE: a switch, a slider, a stepper, a segmented
+// control, a page control, a date picker.
+fn arm_value(v: *u8, n: *core::Node) {
+    bind_node(v, n);
+    add_target(v, #str_ptr("facetValueChanged:\0"), event_value_changed());
+    return;
+}
+
+// A text field. Three events, because a field has three different moments an
+// app cares about and UIKit names all three: every keystroke, the return key,
+// and the end of editing.
+fn arm_text_field(v: *u8, n: *core::Node) {
+    bind_node(v, n);
+    add_target(v, #str_ptr("facetEditingChanged:\0"), event_editing_changed());
+    add_target(v, #str_ptr("facetPrimary:\0"), event_editing_did_end_on_exit());
+    add_target(v, #str_ptr("facetEditingChanged:\0"), event_editing_did_end());
+    return;
+}
+
+// A plain view that wants clicks. UIKit has no "mouseDown on any view", so the
+// tap is a recogniser — which is also why an unkeyed container with a handler
+// has to get a view at all (`views::wants_view` says so).
+fn arm_tap(v: *u8, n: *core::Node) {
+    if v == (0 as *u8) { return; }
+    bind_node(v, n);
+    if !gestures::has_gestures(n) { return; }
+    // Idempotent: `apply` re-arms on every C_GESTURES write, and a second
+    // recogniser would fire the handler twice per tap.
+    if { synth::get_associated(v, tap_key()) } != (0 as *u8) { return; }
+    let t: *u8 = target();
+    if t == (0 as *u8) { return; }
+    let cls: *u8 = rt::get_class(#str_ptr("UITapGestureRecognizer\0"));
+    if cls == (0 as *u8) { return; }
+    let alloced: *u8 = { rt::msg_id(cls, rt::sel(#str_ptr("alloc\0"))) };
+    if alloced == (0 as *u8) { return; }
+    let g: *u8 = { msg_id_id_sel(alloced, rt::sel(#str_ptr("initWithTarget:action:\0")),
+                                 t, rt::sel(#str_ptr("facetTap:\0"))) };
+    if g == (0 as *u8) { return; }
+    ui::View::from_raw(v).set_user_interaction_enabled(true);
+    { rt::msg_void_id(v, rt::sel(#str_ptr("addGestureRecognizer:\0")), g) };
+    synth::set_associated(v, tap_key(), g);
+    { rt::release(g) };
+    return;
+}
+
+fn tap_key() -> *u8 { return 41002 as *u8; }
+
+// ---- firing back into facet --------------------------------------------------
+
+// A button's own `on_click` when it has one, and the gesture band's otherwise.
+// A control kind carries its handler in its PROPS — the shared gesture band is
+// what a plain view uses — so both are asked, in that order.
+fn fire_primary(n: *core::Node, sender: *u8) {
+    let kind: u32 = core::kind_of(n);
+    let d: *core::Data = core::node_data(n);
+    if d == (0 as *core::Data) { return; }
+    let p: *u8 = { (*d).props };
+    if p != (0 as *u8) {
+        if kind == props::K_BUTTON {
+            let bp: *props::ButtonProps = p as *props::ButtonProps;
+            let h: fn(*u8, *u8) = { (*bp).on_click };
+            if h != (0 as fn(*u8, *u8)) { h(sender, { (*bp).on_click_ctx }); return; }
+        }
+    }
+    let _fired: bool = gestures::fire_click(n);
+    return;
+}
+
+fn fire_value_changed(n: *core::Node, sender: *u8) {
+    let kind: u32 = core::kind_of(n);
+    let d: *core::Data = core::node_data(n);
+    if d == (0 as *core::Data) { return; }
+    let p: *u8 = { (*d).props };
+    if p == (0 as *u8) { return; }
+    if kind == props::K_TOGGLE {
+        let tp: *props::ToggleProps = p as *props::ToggleProps;
+        let h: fn(*u8, *u8) = { (*tp).on_toggled };
+        if h != (0 as fn(*u8, *u8)) { h(sender, { (*tp).on_toggled_ctx }); }
+        return;
+    }
+    if kind == props::K_SLIDER {
+        let sp: *props::SliderProps = p as *props::SliderProps;
+        let h: fn(*u8, *u8) = { (*sp).on_value_changed };
+        if h != (0 as fn(*u8, *u8)) { h(sender, { (*sp).on_value_changed_ctx }); }
+        return;
+    }
+    if kind == props::K_STEPPER {
+        let sp: *props::StepperProps = p as *props::StepperProps;
+        let h: fn(*u8, *u8) = { (*sp).on_value_changed };
+        if h != (0 as fn(*u8, *u8)) { h(sender, { (*sp).on_value_changed_ctx }); }
+        return;
+    }
+    return;
+}
+
+// THE WRITE-BACK. A control the user moved holds the truth, and facet's props
+// hold what the app last said — so the value has to travel back before any
+// handler runs, or the handler reads the OLD number and the app's model and its
+// screen disagree from the first interaction onwards.
+//
+// Written straight into the props rather than through the `set_*` verb, and
+// deliberately: the verb would raise the control's dirty bit and the next sync
+// would write the value back onto the control that just produced it. The AppKit
+// backend has the same rule, for the same reason.
+fn read_back(n: *core::Node, sender: *u8) {
+    let kind: u32 = core::kind_of(n);
+    let d: *core::Data = core::node_data(n);
+    if d == (0 as *core::Data) { return; }
+    let p: *u8 = { (*d).props };
+    if p == (0 as *u8) { return; }
+    if kind == props::K_TOGGLE {
+        let tp: *props::ToggleProps = p as *props::ToggleProps;
+        { (*tp).on = ui::Switch::from_raw(sender).is_on() };
+        return;
+    }
+    if kind == props::K_SLIDER {
+        let sp: *props::SliderProps = p as *props::SliderProps;
+        { (*sp).value = ui::Slider::from_raw(sender).value() as f64 };
+        return;
+    }
+    if kind == props::K_STEPPER {
+        let sp: *props::StepperProps = p as *props::StepperProps;
+        { (*sp).value = ui::Stepper::from_raw(sender).value() };
+        return;
+    }
+    return;
+}
+
+#[link_name = "objc_msgSend"]
+extern fn msg_void_id_sel_u64(recv: *u8, sel: *u8, target: *u8, action: *u8, events: u64);
+#[link_name = "objc_msgSend"]
+extern fn msg_id_id_sel(recv: *u8, sel: *u8, target: *u8, action: *u8) -> *u8;

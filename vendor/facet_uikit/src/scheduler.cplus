@@ -1,0 +1,328 @@
+// facet_uikit scheduler — the platform's scheduling primitives, and the sync
+// tick that drives the whole seam.
+//
+// ---- the tick ----------------------------------------------------------------
+//
+// M5: `core::touch` requests a sync through the hook `mount::install`
+// registers; the BACKEND coalesces those requests on its run loop and calls
+// `mount::sync()`. facet has no loop of its own, so "coalesce" has to mean
+// something the platform already does.
+//
+// It is a CFRunLoopObserver at kCFRunLoopBeforeWaiting: the moment the loop has
+// finished everything it had and is about to sleep. That is the flush point
+// Core Animation itself commits on, so a batch of writes from one event lands
+// as one visual update, and a hundred writes in a loop cost one tick rather
+// than a hundred.
+//
+// AND THE TICK MUST RUN BEFORE THAT COMMIT. Core Animation's own observer sits
+// at order 2,000,000 on both platforms, and what it commits is what this frame
+// SHOWS. An observer ordered after it is correct in memory and drawn one frame
+// late. facet_appkit learned that the expensive way during a live drag; the
+// order is copied from there deliberately rather than rediscovered.
+//
+// CoreFoundation is the same framework on iOS, so this file is the one part of
+// the backend that is a near-verbatim port — which is the point of writing it
+// against CF rather than against AppKit's own loop.
+//
+// ---- what the tick does, in order --------------------------------------------
+//
+//   1. mount::sync()      per-node applies — the dirty word says what changed
+//   2. the layout pass    per window: calculate_layout at the root view's size,
+//                         then the frame walk (geometry.cplus)
+//
+// That order matters: an apply can change what a node MEASURES (a label's new
+// text), and the layout pass right after it is what re-flows to fit.
+
+import "stdlib/option" as option;
+import "flex_layout/flex_layout" as flex;
+import "facet/facet" as core;
+import "facet/mount" as mount;
+import "facet/services" as services;
+import "facet/application" as app;
+import "facet/vocabulary" as vocab;
+import "objc/runtime" as rt;
+import "uikit/uikit" as ui;
+import "./geometry" as geometry;
+
+// ---- CoreFoundation run loop -------------------------------------------------
+
+extern fn CFRunLoopGetMain() -> *u8;
+extern fn CFRunLoopWakeUp(rl: *u8);
+extern fn CFRunLoopAddObserver(rl: *u8, observer: *u8, mode: *u8);
+extern fn CFRunLoopObserverCreate(
+    allocator: *u8,
+    activities: u64,
+    repeats: i8,
+    order: i64,
+    callout: fn(*u8, u64, *u8),
+    context: *u8,
+) -> *u8;
+
+// The loop is about to sleep: everything queued has been handled.
+fn cf_before_waiting() -> u64 { return 32 as u64; }
+
+// kCFRunLoopCommonModes, the REAL constant, read through dlsym — an equal
+// CFString is not the same pointer, and the run loop compares by identity for
+// the common-modes set.
+extern fn dlsym(handle: *u8, symbol: *u8) -> *u8;
+
+// RTLD_DEFAULT is -2 on Darwin, built through usize so the literal
+// does not wrap through i32 on the way.
+fn rtld_default() -> *u8 { return { ((0 as usize) -% (2 as usize)) as *u8 }; }
+
+fn common_modes() -> *u8 {
+    let p: *u8 = { dlsym(rtld_default(), #str_ptr("kCFRunLoopCommonModes\0")) };
+    if p == (0 as *u8) { return 0 as *u8; }
+    return { (*(p as **u8)) };
+}
+
+// Below Core Animation's own observer (2,000,000), so a tick's writes are in
+// the transaction this frame commits.
+fn tick_order() -> i64 { return 1999000 as i64; }
+
+static OBSERVER_INSTALLED: bool = false;
+static SYNC_PENDING: bool = false;
+static TICKS: u64 = 0 as u64;
+
+fn install_sync_tick() {
+    if OBSERVER_INSTALLED { return; }
+    let rl: *u8 = { CFRunLoopGetMain() };
+    if rl == (0 as *u8) { return; }
+    let obs: *u8 = { CFRunLoopObserverCreate(0 as *u8, cf_before_waiting(), 1 as i8,
+                                             tick_order(), before_waiting, 0 as *u8) };
+    if obs == (0 as *u8) { return; }
+    let modes: *u8 = common_modes();
+    if modes == (0 as *u8) { return; }
+    { CFRunLoopAddObserver(rl, obs, modes) };
+    OBSERVER_INSTALLED = true;
+    return;
+}
+
+// `schedule` does almost nothing: raise a flag, nudge the loop. The observer
+// does the work.
+fn schedule(ctx: *u8) {
+    SYNC_PENDING = true;
+    if OBSERVER_INSTALLED {
+        let rl: *u8 = { CFRunLoopGetMain() };
+        if rl != (0 as *u8) { { CFRunLoopWakeUp(rl) }; }
+    }
+    return;
+}
+
+fn before_waiting(observer: *u8, activity: u64, info: *u8) {
+    tick();
+    return;
+}
+
+// The tick itself, factored out so a suite can drive it without a run loop.
+fn tick() {
+    if !SYNC_PENDING { return; }
+    SYNC_PENDING = false;
+    TICKS = TICKS +% (1 as u64);
+    mount::sync();
+    layout_all_windows();
+    return;
+}
+
+fn ticks() -> u64 { return TICKS; }
+
+// ---- the layout pass ----------------------------------------------------------
+
+fn layout_all_windows() {
+    var i: usize = 0 as usize;
+    let n: usize = app::window_count();
+    while i < n {
+        let root: *core::Node = app::window_root(i);
+        if root != (0 as *core::Node) { layout_window(root); }
+        i = i +% (1 as usize);
+    }
+    return;
+}
+
+// A window's content view is its root view controller's view.
+//
+// THE SAFE AREA IS A PROPERTY HERE, not a computation. `safeAreaInsets` is on
+// UIView itself and is the notch, the home indicator and the status bar all
+// answered together — where the AppKit backend has to work out what a titlebar
+// is doing. It is also the band that MATTERS on this platform: a phone screen
+// with content under the notch is broken in a way a Mac window is not.
+fn layout_window(root: *core::Node) {
+    let win: *u8 = app::window_native(root);
+    if win == (0 as *u8) { return; }
+    let content: *u8 = content_view_of(win);
+    if content == (0 as *u8) { return; }
+    let cv: ui::View = ui::View::from_raw(content);
+    let f: rt::Rect = cv.bounds();
+    let ins: ui::EdgeInsets = safe_insets(cv, root);
+    let w: f64 = f.w - ins.left - ins.right;
+    let h: f64 = f.h - ins.top - ins.bottom;
+    geometry::relayout_root(root, w, h, geometry::screen_scale());
+    // The root's own view fills the safe box: mount inserted it nowhere (the
+    // facade did), so the frame walk never sizes it.
+    let rv: *u8 = core::view_of(root);
+    if rv != (0 as *u8) {
+        geometry::set_view_frame(rv, rt::Rect { x: ins.left, y: ins.top, w: w, h: h });
+        return;
+    }
+    // A pass-through root has no view of its own, so the facade put its topmost
+    // BACKED descendants in the window instead — and those are the views the
+    // inset has to move, or a DSL-authored screen ignores the safe area that a
+    // keyed one honours.
+    if ins.left != 0.0f64 || ins.top != 0.0f64 {
+        offset_root_views(root, ins.left, ins.top);
+    }
+    return;
+}
+
+fn content_view_of(win: *u8) -> *u8 {
+    let vc: *u8 = { rt::msg_id(win, rt::sel(#str_ptr("rootViewController\0"))) };
+    if vc == (0 as *u8) { return 0 as *u8; }
+    return { rt::msg_id(vc, rt::sel(#str_ptr("view\0"))) };
+}
+
+// `SafeArea::None` is the only answer that opts out, and it is the one that
+// gets the whole screen — a full-bleed photo, which is a real thing to ask for.
+// `honours_safe_area` is facet's own reduction of the five-way enum to that one
+// question, so this backend and facet_appkit cannot disagree about what
+// `Container` means.
+fn safe_insets(cv: ui::View, root: *core::Node) -> ui::EdgeInsets {
+    if !core::honours_safe_area(root) {
+        return ui::EdgeInsets { top: 0.0f64, left: 0.0f64, bottom: 0.0f64, right: 0.0f64 };
+    }
+    return cv.safe_area_insets();
+}
+
+// The topmost backed descendants of a viewless root, nudged by the inset.
+fn offset_root_views(n: *core::Node, dx: f64, dy: f64) {
+    var i: usize = 0 as usize;
+    let count: usize = core::child_count_of(n);
+    while i < count {
+        match core::child_of(n, i) {
+            option::Option[*core::Node]::Some(c) => {
+                let v: *u8 = core::view_of(c);
+                if v != (0 as *u8) {
+                    let f: rt::Rect = ui::View::from_raw(v).frame();
+                    geometry::set_view_frame(v, rt::Rect { x: f.x + dx, y: f.y + dy,
+                                                           w: f.w, h: f.h });
+                } else {
+                    offset_root_views(c, dx, dy);
+                }
+            }
+            option::Option[*core::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return;
+}
+
+// ---- the scheduler seam --------------------------------------------------------
+
+extern fn dispatch_async_f(queue: *u8, ctx: *u8, work: fn(*u8));
+extern fn dispatch_after_f(when: u64, queue: *u8, ctx: *u8, work: fn(*u8));
+extern fn dispatch_time(base: u64, delta: i64) -> u64;
+
+// `dispatch_get_main_queue()` is a macro over a libdispatch global, so there is
+// no function to call — the queue is read out of the symbol.
+fn main_dispatch_queue() -> *u8 {
+    return { dlsym(rtld_default(), #str_ptr("_dispatch_main_q\0")) };
+}
+
+fn run_on_main(work: fn(*u8), ctx: *u8) {
+    { dispatch_async_f(main_dispatch_queue(), ctx, work) };
+    return;
+}
+
+// ---- after / cancel_after -------------------------------------------------------
+//
+// `dispatch_after` cannot be recalled once armed, so a cancel has to be a flag
+// the trampoline reads when it fires. The slot table is that flag, and the
+// handle facet holds is an index into it — which is also why a handle is
+// index+1: zero is the "no handle" value the seam already uses for a failure.
+//
+// A fixed table rather than a growing vector: a timer slot is reused as soon as
+// its timer has fired, so the table's size is the number of timers IN FLIGHT,
+// and a UI with more than 256 of those has a different problem.
+
+struct Slot {
+    used: bool,
+    cancelled: bool,
+    work: fn(*u8),
+    opaque ctx: *u8,
+}
+
+static SLOTS: [Slot; 256] = #zero::[[Slot; 256]]();
+
+fn slot_alloc(work: fn(*u8), ctx: *u8) -> u64 {
+    var i: usize = 0 as usize;
+    while i < (256 as usize) {
+        if SLOTS[i].used == false {
+            SLOTS[i].used = true;
+            SLOTS[i].cancelled = false;
+            SLOTS[i].work = work;
+            SLOTS[i].ctx = ctx;
+            return (i as u64) +% (1 as u64);
+        }
+        i = i +% (1 as usize);
+    }
+    return 0 as u64;
+}
+
+fn slot_fire(ctx: *u8) {
+    let id: u64 = ctx as u64;
+    if id == (0 as u64) { return; }
+    let i: usize = (id -% (1 as u64)) as usize;
+    if i >= (256 as usize) { return; }
+    if SLOTS[i].used == false { return; }
+    let cancelled: bool = SLOTS[i].cancelled;
+    let work: fn(*u8) = SLOTS[i].work;
+    let arg: *u8 = SLOTS[i].ctx;
+    // Free the slot BEFORE the callback: a callback that re-arms (a debounce
+    // does) must be able to take this slot back, and a cancel arriving during
+    // the callback must find nothing to cancel.
+    SLOTS[i].used = false;
+    SLOTS[i].cancelled = false;
+    if cancelled { return; }
+    if work != (0 as fn(*u8)) { work(arg); }
+    return;
+}
+
+fn after(secs: f64, work: fn(*u8), ctx: *u8) -> u64 {
+    let id: u64 = slot_alloc(work, ctx);
+    if id == (0 as u64) { return 0 as u64; }
+    let nanos: i64 = (secs * 1000000000.0f64) as i64;
+    let when: u64 = { dispatch_time(0 as u64, nanos) };
+    { dispatch_after_f(when, main_dispatch_queue(), id as *u8, slot_fire) };
+    return id;
+}
+
+fn cancel_after(id: u64) {
+    if id == (0 as u64) { return; }
+    let i: usize = (id -% (1 as u64)) as usize;
+    if i >= (256 as usize) { return; }
+    if SLOTS[i].used == false { return; }
+    SLOTS[i].cancelled = true;
+    return;
+}
+
+// NOT BUILT. AppKit posts `NSViewFrameDidChangeNotification` and the AppKit
+// backend rides it; UIKit has no such notification — a view learns it was
+// resized in `layoutSubviews`, which means a synthesized subclass overriding it
+// and calling back. That is real work and it is not in this pass, so the seam
+// answers "no handle" rather than a handle that never fires: a caller can tell
+// the difference, and a silently dead observer is the failure this whole
+// package is written to avoid.
+fn observe_size(n: *core::Node, cb: fn(*u8), ctx: *u8) -> u64 {
+    return 0 as u64;
+}
+
+fn cancel_observe_size(id: u64) { return; }
+
+fn scheduler() -> services::Scheduler {
+    return services::Scheduler {
+        run_on_main: run_on_main,
+        after: after,
+        cancel_after: cancel_after,
+        observe_size: observe_size,
+        cancel_observe_size: cancel_observe_size,
+    };
+}

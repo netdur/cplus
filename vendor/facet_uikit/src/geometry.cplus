@@ -1,0 +1,262 @@
+// facet_uikit geometry — the layout pass, and the frame walk that follows it.
+//
+// facet holds zero layout code and the Renderer has no geometry verb: the
+// backend owns this. flex computes the frames; this module puts them on the
+// UIViews. It is a port of facet_appkit/geometry.cplus and keeps that file's
+// three earned properties — nothing is rebuilt, flex's incremental cache gets
+// hits, and the walk prunes itself on `layout_changed()`.
+//
+// ---- what UIKit takes OUT of the AppKit version -----------------------------
+//
+// THE FLIP. AppKit's default view is bottom-left origin, which is why that
+// backend creates a flipped subclass for every node and says so in three
+// places. A UIView's frame is top-left, y-down, natively — flex's own space.
+// The math below is therefore the SAME math as facet_appkit's, and it is the
+// same because that backend already flipped its views, not because UIKit
+// behaves like AppKit. If a later port grows `parent.height - ...` here, it was
+// copied rather than read.
+//
+// THE DOCUMENT VIEW. An NSScrollView scrolls a separate document view, which
+// is why the AppKit walk has `size_scroll_content` and three special cases
+// under it. A UIScrollView scrolls its OWN subviews and is told how far by
+// `contentSize` — so the children of a facet `scroll` are its direct subviews
+// and the only extra work is one property write per pass.
+
+import "stdlib/option" as option;
+import "flex_layout/flex_layout" as flex;
+import "facet/facet" as core;
+import "objc/runtime" as rt;
+import "uikit/uikit" as ui;
+
+type Node = flex::Node;
+
+// setFrame: straight down objc_msgSend, deliberately.
+//
+// `ui::View::from_raw` is a plain non-owning handle here (UIKit's generated
+// View does not retain), but the walk is still the one hot path in this
+// package, so it speaks to the runtime directly and every cold path uses the
+// typed wrapper like normal code.
+fn set_view_frame(v: *u8, r: rt::Rect) {
+    { rt::msg_void_rect(v, rt::sel(#str_ptr("setFrame:\0")), r) };
+    return;
+}
+
+// Lay `root` out at the host's size, then push the frames onto the views.
+// `scale` is the screen scale (2.0 / 3.0 on iOS): snapping frames to the device
+// pixel grid keeps text crisp AND keeps the numbers bit-stable pass to pass,
+// which is what lets the layout cache report a hit at an unchanged size.
+fn relayout_root(root: *core::Node, width: f64, height: f64, scale: f64) {
+    if root == (0 as *core::Node) { return; }
+    { (*root).calculate_layout(width: width, height: height) };
+    if scale > 0.0f64 { { (*root).round_to_pixel(scale) }; }
+    reposition(root);
+    return;
+}
+
+// Walk an already-mounted tree and set every EXISTING view's frame from the
+// layout just computed. Nothing is created, added or removed — `mount` must
+// have run on this tree, so each backed node already owns its view.
+//
+// The root's OWN view is not touched: the window host sized it when it made the
+// root view, and it fills that view by construction.
+fn reposition(root: *core::Node) {
+    if root == (0 as *core::Node) { return; }
+    // The engine's verdict for the whole tree: false means every frame below is
+    // bit-identical to the previous pass, so nothing is walked.
+    if { (*root).layout_changed() } == false { return; }
+    reposition_children(root, { (*root).frame() });
+    return;
+}
+
+// Siblings, in the order they should PAINT.
+//
+// UIKit paints subviews back-to-front in array order, exactly as AppKit does,
+// so ordering IS the implementation of `z_index`. Applied after the frames are
+// placed, where both the nodes and their views are in hand — `insert` has only
+// the view and could not ask a node for its z.
+//
+// A stable pass: only siblings whose z differs move, so equal z keeps tree
+// order. Skipped entirely when every sibling is 0, the ordinary case.
+fn apply_z_order(node: *core::Node) {
+    let count: usize = core::child_count_of(node);
+    if count < (2 as usize) { return; }
+    var any: bool = false;
+    var i0: usize = 0 as usize;
+    while i0 < count {
+        match core::child_of(node, i0) {
+            option::Option[*core::Node]::Some(c) => {
+                if core::z_index(c) != (0 as i64) { any = true; }
+            }
+            option::Option[*core::Node]::None => { }
+        }
+        i0 = i0 +% (1 as usize);
+    }
+    if !any { return; }
+    // `bringSubviewToFront:` in ascending z leaves the highest z frontmost.
+    // UIKit's own verb for it, where AppKit needs `addSubview:` on an existing
+    // subview to mean the same move.
+    var pass: i64 = min_z_of(node, count);
+    let top: i64 = max_z_of(node, count);
+    while pass <= top {
+        var j: usize = 0 as usize;
+        while j < count {
+            match core::child_of(node, j) {
+                option::Option[*core::Node]::Some(c) => {
+                    if core::z_index(c) == pass {
+                        let cv: *u8 = core::view_of(c);
+                        if cv != (0 as *u8) {
+                            match ui::View::from_raw(cv).superview() {
+                                option::Option[ui::View]::Some(sup) => {
+                                    sup.bring_subview_to_front(ui::View::from_raw(cv));
+                                }
+                                option::Option[ui::View]::None => { }
+                            }
+                        }
+                    }
+                }
+                option::Option[*core::Node]::None => { }
+            }
+            j = j +% (1 as usize);
+        }
+        pass = pass + (1 as i64);
+    }
+    return;
+}
+
+fn min_z_of(node: *core::Node, count: usize) -> i64 {
+    var lo: i64 = 0 as i64;
+    var i: usize = 0 as usize;
+    while i < count {
+        match core::child_of(node, i) {
+            option::Option[*core::Node]::Some(c) => {
+                let z: i64 = core::z_index(c);
+                if z < lo { lo = z; }
+            }
+            option::Option[*core::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return lo;
+}
+
+fn max_z_of(node: *core::Node, count: usize) -> i64 {
+    var hi: i64 = 0 as i64;
+    var i: usize = 0 as usize;
+    while i < count {
+        match core::child_of(node, i) {
+            option::Option[*core::Node]::Some(c) => {
+                let z: i64 = core::z_index(c);
+                if z > hi { hi = z; }
+            }
+            option::Option[*core::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return hi;
+}
+
+// `host_abs` is the absolute frame of the node whose VIEW the children of
+// `node` hang from. For a backed node that is its own frame; a pass-through
+// node hands its host straight down, which is how a pure-layout column inside a
+// scroll view places its children in the scroll view itself.
+fn reposition_children(node: *core::Node, host_abs: flex::Frame) {
+    apply_z_order(node);
+    var i: usize = 0 as usize;
+    let count: usize = core::child_count_of(node);
+    while i < count {
+        match core::child_of(node, i) {
+            option::Option[*core::Node]::Some(c) => {
+                let cf: flex::Frame = { (*c).frame() };
+                let v: *u8 = core::view_of(c);
+                // `Display::None` takes the node out of LAYOUT — flex gives it a
+                // zero frame — but a UIView does not clip to its bounds by
+                // default, so its subviews would go on drawing at the frames they
+                // last had. Collapsed space, visible content. The view carries it.
+                if v != (0 as *u8) {
+                    ui::View::from_raw(v).set_hidden(core::is_hidden(c));
+                    // Host-relative, top-left.
+                    set_view_frame(v, rt::Rect {
+                        x: cf.left - host_abs.left,
+                        y: cf.top - host_abs.top,
+                        w: cf.width,
+                        h: cf.height,
+                    });
+                    // Its descendants' frames are relative to IT. A cache-skipped
+                    // child means every absolute frame under it is unchanged, so
+                    // the views already sit exactly there.
+                    if { (*c).layout_changed() } { reposition_children(c, cf); }
+                } else {
+                    // Unbacked: its children hang from the SAME host, placed
+                    // against that host's frame — mirroring the mount walk's
+                    // pass-through, where their views were inserted into this host.
+                    if { (*c).layout_changed() } { reposition_children(c, host_abs); }
+                }
+            }
+            option::Option[*core::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    // A scroll view has to be told how far it scrolls. The union of what was
+    // placed, floored at the viewport so a short page does not scroll at all.
+    size_scroll_content(node, host_abs);
+    return;
+}
+
+fn size_scroll_content(node: *core::Node, host_abs: flex::Frame) {
+    let v: *u8 = core::view_of(node);
+    if v == (0 as *u8) { return; }
+    if !is_kind_of(v, #str_ptr("UIScrollView\0")) { return; }
+    // A table or collection view IS a scroll view, and one told what its content
+    // size is is a list fighting its own data source.
+    if is_kind_of(v, #str_ptr("UITableView\0")) { return; }
+    if is_kind_of(v, #str_ptr("UICollectionView\0")) { return; }
+    // A UITextView is a scroll view too, and its content size is the text's —
+    // owned by the layout manager, not by us.
+    if is_kind_of(v, #str_ptr("UITextView\0")) { return; }
+    let sv: ui::ScrollView = ui::ScrollView::from_raw(v);
+    var w: f64 = 0.0f64;
+    var h: f64 = 0.0f64;
+    var i: usize = 0 as usize;
+    let count: usize = core::child_count_of(node);
+    while i < count {
+        match core::child_of(node, i) {
+            option::Option[*core::Node]::Some(c) => {
+                let cf: flex::Frame = { (*c).frame() };
+                let right: f64 = (cf.left - host_abs.left) + cf.width;
+                let bottom: f64 = (cf.top - host_abs.top) + cf.height;
+                if right > w { w = right; }
+                if bottom > h { h = bottom; }
+            }
+            option::Option[*core::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    let port: rt::Rect = sv.as_view().bounds();
+    if w < port.w { w = port.w; }
+    if h < port.h { h = port.h; }
+    let was: rt::Size = sv.content_size();
+    if was.w == w && was.h == h { return; }
+    sv.set_content_size(rt::Size { w: w, h: h });
+    return;
+}
+
+// Local rather than views::, which imports this file — the whole question is
+// three lines and a dependency edge is not worth saving them.
+fn is_kind_of(obj: *u8, class_name: *u8) -> bool {
+    if obj == (0 as *u8) { return false; }
+    return { rt::msg_i8_id(obj, rt::sel(#str_ptr("isKindOfClass:\0")), rt::get_class(class_name)) } != (0 as i8);
+}
+
+// The scale of the screen a view is on (2.0 / 3.0 on iOS).
+//
+// `UIScreen.mainScreen` rather than a walk up to the window: a view that is not
+// in a window yet has no screen, and the main screen is the right answer for
+// the overwhelmingly common single-screen case. 1.0 when even that is missing —
+// rounding to whole points is always safe, it is only less crisp.
+fn screen_scale() -> f64 {
+    let s: ui::Screen = ui::Screen::main_screen();
+    if s.raw() == (0 as *u8) { return 1.0f64; }
+    let sc: f64 = s.scale();
+    if sc > 0.0f64 { return sc; }
+    return 1.0f64;
+}

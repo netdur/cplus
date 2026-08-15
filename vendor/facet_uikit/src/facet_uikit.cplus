@@ -1,0 +1,136 @@
+// facet_uikit — facet's UIKit backend.
+//
+// For each thing facet declares, this package either implements it with what
+// UIKit offers or states plainly that UIKit cannot. MANIFEST.md holds every
+// "cannot" and, separately, every "not yet" — the two are never allowed to blur
+// together. It holds nothing else: no second vocabulary, no side door that
+// looks portable. A developer may still drop beneath facet and use UIKit
+// directly; that is a deliberate, visible choice made in the application, not
+// something this package offers as a shortcut.
+//
+// This file is the whole registration surface: `install()`, and nothing else a
+// backend could smuggle a hook through.
+//
+//   mount::install(Renderer)                 create / apply / insert / remove / schedule
+//   services::install_scheduler(Scheduler)   run_on_main / after / observe_size
+//   theme::set_is_dark_fn                    the system appearance read
+//   theme::set_theme_changed_fn              repaint the running app's chrome
+//
+// Not yet filled, and deliberately NOT half-filled — zero fields keep facet's
+// portable no-op, which is honest, where a struct with three of five slots
+// would look installed and behave randomly:
+//   gestures::install_key_reader             there is no hardware key band on a
+//                                            phone; a keyboard event arrives
+//                                            through UIKey, which is a different
+//                                            shape and not yet read
+//   component::install_sender_readers        input.cplus binds nodes to views but
+//                                            does not yet answer facet's sender
+//                                            questions
+//   runtime::install_agent                   the agent surface
+
+import "stdlib/option" as option;
+import "facet/facet" as core;
+import "facet/props" as props;
+import "facet/mount" as mount;
+import "facet/services" as services;
+import "facet/theme" as theme;
+import "facet/application" as app;
+import "objc/runtime" as rt;
+import "./views" as views;
+import "./scheduler" as scheduler;
+
+fn renderer() -> mount::Renderer {
+    return mount::Renderer {
+        ctx: 0 as *u8,
+        create: views::create,
+        view_release: views::view_release,
+        apply: views::apply,
+        insert: views::insert,
+        remove: views::remove,
+        schedule: scheduler::schedule,
+    };
+}
+
+// Install the backend. Idempotent: a facade doing belt-and-braces registration
+// must not double-arm the run loop observer.
+static INSTALLED: bool = false;
+
+fn install() {
+    if INSTALLED { return; }
+    INSTALLED = true;
+    // mount::install also arms M5 (touch -> schedule) and M6 (this thread
+    // becomes THE UI thread; every tree write asserts it).
+    mount::install(renderer());
+    services::install_scheduler(scheduler::scheduler());
+    theme::set_is_dark_fn(is_dark);
+    theme::set_theme_changed_fn(theme_changed);
+    scheduler::install_sync_tick();
+    return;
+}
+
+fn installed() -> bool { return INSTALLED; }
+
+// Tests and teardown: back to facet's portable no-backend posture. The run loop
+// observer stays armed — it is inert with nothing pending, and CFRunLoop offers
+// no clean way to take one back out mid-process.
+fn uninstall() {
+    mount::uninstall();
+    services::uninstall_scheduler();
+    theme::set_is_dark_fn(0 as fn() -> bool);
+    theme::set_theme_changed_fn(0 as fn());
+    INSTALLED = false;
+    return;
+}
+
+// ---- appearance ---------------------------------------------------------------
+
+// The system's light/dark answer. `UITraitCollection.currentTraitCollection` is
+// the process-wide current one, which is what a question with no view in hand
+// can be asked.
+fn is_dark() -> bool {
+    let cls: *u8 = rt::get_class(#str_ptr("UITraitCollection\0"));
+    if cls == (0 as *u8) { return false; }
+    let tc: *u8 = { rt::msg_id(cls, rt::sel(#str_ptr("currentTraitCollection\0"))) };
+    if tc == (0 as *u8) { return false; }
+    return { rt::msg_i64(tc, rt::sel(#str_ptr("userInterfaceStyle\0"))) } == (2 as i64);
+}
+
+// ---- theme changed -------------------------------------------------------------
+// A palette swap or an appearance flip.
+//
+// SMALLER THAN THE APPKIT VERSION, AND FOR A REASON WORTH KEEPING. Most colours
+// on this backend are UIColor semantic objects written to `view.backgroundColor`
+// — they re-resolve themselves when the trait collection changes, so an
+// appearance flip needs no help at all. What does NOT follow on its own is a
+// colour facet flattened: an `adaptive` literal pair (token 254), and anything
+// that reached a CGColor (a gradient stop, a border, a shadow).
+//
+// Marking the paint bits routes the repaint through the ordinary sync, so there
+// is one code path for "the colour changed", whatever changed it. It stays
+// whole-tree rather than clever: a theme swap is a rare event, and a partial
+// walk here would be a second copy of "which props are colours".
+fn theme_changed() {
+    var i: usize = 0 as usize;
+    let n: usize = app::window_count();
+    while i < n {
+        let r: *core::Node = app::window_root(i);
+        if r != (0 as *core::Node) { repaint_walk(r); }
+        i = i +% (1 as usize);
+    }
+    return;
+}
+
+fn repaint_walk(n: *core::Node) {
+    core::touch(n, props::C_BACKGROUND_COLOR | props::C_BACKGROUND
+                   | props::C_SHADOW | props::C_CORNER_RADIUS);
+    var i: usize = 0 as usize;
+    let count: usize = core::child_count_of(n);
+    while i < count {
+        match core::child_of(n, i) {
+            option::Option[*core::Node]::Some(c) => { repaint_walk(c); }
+            option::Option[*core::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return;
+}

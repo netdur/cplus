@@ -1,0 +1,38 @@
+[package]
+name    = "facet_uikit"
+version = "0.0.1"
+edition = "2026"
+
+# facet_uikit — facet's UIKit backend, the iOS counterpart of facet_appkit.
+#
+# It reads facet's contract and implements it with UIKit, or states plainly
+# that UIKit cannot (MANIFEST.md holds every "cannot" and every "not yet").
+# Nothing else lives here: no second vocabulary, no side door that looks
+# portable.
+#
+# The registration surface is the same one facet_appkit fills, and no wider:
+#   mount::install(Renderer)                 create / apply / insert / remove / schedule
+#   services::install_scheduler(Scheduler)   run_on_main / after / observe_size
+#   theme::set_is_dark_fn                    the system appearance read
+#   theme::set_theme_changed_fn              repaint the running app's chrome
+# A hook family appearing outside those is drift by definition.
+#
+# STATUS: compiles for `--target ios-arm64` (and the simulator); NOT run.
+# Nothing here has been on a device or in a simulator — see README.md.
+
+# A staticlib, not a program: an iOS target stops at object emission and Xcode
+# owns the final link, so `[[bin]]` is not a thing this package can be. That is
+# also why the structural tests live inside `views.cplus` rather than in a test
+# root — a `[[bin]]` test target would be the only code here the iOS build never
+# compiled.
+[lib]
+crate-type = "staticlib"
+path = "src/facet_uikit.cplus"
+
+[dependencies]
+stdlib      = "*"
+objc        = "*"
+quartzcore  = "*"
+uikit       = "*"
+flex_layout = "*"
+facet       = "*"

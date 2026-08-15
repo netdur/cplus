@@ -1,0 +1,1005 @@
+// facet_uikit controls — one body per kind.
+//
+// Each `create_<kind>` returns a view at +1; each `apply_<kind>` re-reads the
+// props the dirty word names. `create` calls its `apply` with an all-ones word,
+// so a control cannot be correct on mount and wrong on its first update — the
+// same rule facet_appkit is built on.
+//
+// The bodies read facet's typed props directly. `props_of` answers null when
+// the node's kind does not match, which is the guard every body opens with:
+// reinterpreting one control's props as another's is the one mistake in this
+// file that would not be caught by the compiler.
+
+import "stdlib/option" as option;
+import "stdlib/text" as text;
+import "facet/facet" as core;
+import "facet/props" as props;
+import "facet/vocabulary" as vocab;
+import "facet/label" as label;
+import "facet/button" as button;
+import "facet/toggle" as toggle;
+import "facet/checkbox" as checkbox;
+import "facet/radio" as radio;
+import "facet/slider" as slider;
+import "facet/progress" as progress;
+import "facet/spinner" as spinner;
+import "facet/stepper" as stepper;
+import "facet/image" as image;
+import "facet/scroll" as scroll;
+import "facet/box" as box_props;
+import "facet/bordered" as bordered;
+import "facet/text_field" as text_field;
+import "facet/text_area" as text_area;
+import "facet/search_field" as search_field;
+import "facet/popup" as popup;
+import "facet/tabs" as tabs;
+import "facet/page_dots" as page_dots;
+import "facet/date_picker" as date_picker;
+import "facet/time_picker" as time_picker;
+import "facet/refreshable" as refreshable;
+import "facet/symbol" as symbol;
+import "facet/text_button" as text_button;
+import "facet/split" as split;
+import "facet/tree" as tree;
+import "facet/window_chrome" as chrome;
+import "objc/runtime" as rt;
+import "objc/bridge" as bridge;
+import "objc/synthesis" as synth;
+import "quartzcore/quartzcore" as quartz;
+import "uikit/uikit" as ui;
+import "./paint" as paint;
+import "./input" as input;
+
+fn props_of(n: *core::Node, kind: u32) -> *u8 {
+    let d: *core::Data = core::node_data(n);
+    if d == (0 as *core::Data) { return 0 as *u8; }
+    if { (*d).kind } != kind { return 0 as *u8; }
+    return { (*d).props };
+}
+
+// ---- the kind ledger ---------------------------------------------------------
+// Three lists, and the whole honesty of this package is in keeping them apart.
+//
+//   non-view kinds     not rectangles at all — read as nodes by their parent
+//   decided_absent     iOS has no such thing; MANIFEST.md says what to use
+//   not_yet_built      iOS HAS an answer and this pass did not write it
+//
+// A kind in the second list is finished. A kind in the third is a debt, and it
+// warns once on stderr when it is mounted so the debt is audible rather than a
+// rectangle that silently does nothing.
+
+fn menu_kind(kind: u32) -> bool {
+    return kind == props::K_MENU_ITEM || kind == props::K_CONTEXT_MENU
+        || kind == props::K_CONTEXT_MENU_ITEM;
+}
+
+// The menu-bar tier. On macOS these are objects the application owns rather
+// than rectangles; on iOS they mostly do not exist at all, but the ANSWER to
+// "does this occupy space in the tree" is the same no, so the classification is
+// shared and only MANIFEST.md differs.
+fn menu_bar_kind(kind: u32) -> bool {
+    return kind == props::K_MENU || kind == props::K_TOOLBAR_ITEM;
+}
+
+fn span_kind(kind: u32) -> bool { return kind == props::K_SPAN; }
+
+fn swipe_kind(kind: u32) -> bool { return kind == props::K_SWIPE_ITEM; }
+
+// DECIDED, NOT MISSING. Every entry here is a thing iOS does not have, and
+// MANIFEST.md carries the reason and the alternative for each one.
+fn decided_absent(kind: u32) -> bool {
+    // A window's close/minimise/zoom buttons. An iOS window is the screen.
+    if kind == chrome::K_WINDOW_BUTTONS { return true; }
+    // A draggable split divider is a pointer idiom. UISplitViewController is a
+    // navigation container with a fixed sidebar, not a resizable pane pair, so
+    // rendering the two panes stacked is the honest answer rather than pretending
+    // at a divider nothing can drag.
+    if kind == split::K_SPLIT { return true; }
+    // The menu bar. There is none.
+    if menu_bar_kind(kind) { return true; }
+    return false;
+}
+
+// NOT YET BUILT — a real UIKit answer exists and this pass did not reach it.
+// Each renders its content through a plain backing view, so a screen containing
+// one is not blank, and each warns once.
+fn not_yet_built(kind: u32) -> bool {
+    // The recycling tier: UITableView / UICollectionView with a data source.
+    // facet_appkit's recycler is 2,900 lines and this is the single largest
+    // piece of work left in this package.
+    if kind == props::K_LIST || kind == props::K_COLLECTION { return true; }
+    if kind == props::K_TABLE || kind == tree::K_TREE { return true; }
+    if kind == props::K_CAROUSEL { return true; }
+    // WKWebView is the same class on both platforms; the work is the navigation
+    // delegate and the message handler, not the view.
+    if kind == props::K_WEB || kind == props::K_HYBRID_WEB { return true; }
+    // A drawn surface needs a UIView subclass with `drawRect:` and the display
+    // list walked into a CGContext — facet_appkit's drawing.cplus, ported.
+    if kind == props::K_CANVAS { return true; }
+    // Swipe actions belong to a table row on iOS, so this one waits for the
+    // recycling tier above rather than being independent of it.
+    if kind == props::K_SWIPEABLE { return true; }
+    return false;
+}
+
+// The pass-through: a node whose own behaviour is not built yet still lays its
+// children out and still draws its shared band. Nothing is dropped; the kind's
+// own verbs are what is missing.
+fn create_passthrough(n: *core::Node) -> *u8 {
+    let v: ui::View = ui::View::new_with_frame(zero_rect());
+    return rt::retain(v.raw());
+}
+
+fn zero_rect() -> rt::Rect {
+    return rt::Rect { x: 0.0f64, y: 0.0f64, w: 0.0f64, h: 0.0f64 };
+}
+
+// ---- label -------------------------------------------------------------------
+// UILabel, which IS a label class — where AppKit has to put an NSTextField into
+// a label posture. `numberOfLines` 0 means unbounded, which is facet's `0` too.
+
+fn create_label(n: *core::Node) -> *u8 {
+    let l: ui::Label = ui::Label::new_with_frame(zero_rect());
+    l.set_number_of_lines(0 as i64);
+    return rt::retain(l.as_view().raw());
+}
+
+fn apply_label(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *props::LabelProps = props_of(n, props::K_LABEL) as *props::LabelProps;
+    if p == (0 as *props::LabelProps) { return; }
+    let l: ui::Label = ui::Label::from_raw(v);
+    if (dirty & (label::P_TEXT | label::P_TEXT_TRANSFORM)) != (0 as u64) {
+        l.set_text(transformed({ (*p).text.view() }, { (*p).text_transform }).view());
+    }
+    if (dirty & label::P_TEXT_COLOR) != (0 as u64) {
+        let c: vocab::Color = { (*p).text_color };
+        if c.is_set() { l.set_text_color(paint::ui_color(c)); }
+    }
+    if (dirty & (label::P_FONT_SIZE | label::P_FONT_WEIGHT | label::P_FONT_FAMILY
+                 | label::P_IS_ITALIC | label::P_FONT_SCALES)) != (0 as u64) {
+        match paint::ui_font({ (*p).font_size }, { (*p).font_weight },
+                             { (*p).font_family.view() }, { (*p).is_italic },
+                             { (*p).font_scales }) {
+            option::Option[ui::Font]::Some(f) => {
+                l.set_font(f);
+                // Dynamic Type only follows the user's setting if the label is
+                // told to adjust. Asked for exactly when facet asked for
+                // scaling, so a fixed size stays fixed.
+                { rt::msg_void_i8(v, rt::sel(#str_ptr("setAdjustsFontForContentSizeCategory:\0")),
+                                  bool_i8({ (*p).font_scales })) };
+            }
+            option::Option[ui::Font]::None => { }
+        }
+    }
+    if (dirty & label::P_TEXT_ALIGN) != (0 as u64) {
+        l.set_text_alignment(text_align_of({ (*p).text_align }));
+    }
+    if (dirty & (label::P_MAX_LINES | label::P_LINE_BREAK)) != (0 as u64) {
+        l.set_number_of_lines({ (*p).max_lines });
+        l.set_line_break_mode(line_break_of({ (*p).line_break }));
+    }
+    return;
+}
+
+// NSTextAlignment and NSLineBreakMode are Foundation's, shared by both
+// platforms — so these two tables are the ones a reader can check against the
+// AppKit backend and expect to match.
+//
+// `Start` maps to Natural rather than Left, deliberately: Natural is the one
+// that follows the writing direction, which is what "start" means. `End` has no
+// such twin — Foundation offers no "natural trailing" — so it is Right, and an
+// RTL layout gets a trailing alignment that does not mirror. MANIFEST.md
+// records that; it is the same gap on macOS.
+fn text_align_of(a: vocab::TextAlign) -> ui::NSTextAlignment {
+    return match a {
+        vocab::TextAlign::Start => ui::NSTextAlignment::Natural,
+        vocab::TextAlign::Center => ui::NSTextAlignment::Center,
+        vocab::TextAlign::End => ui::NSTextAlignment::Right,
+        vocab::TextAlign::Justify => ui::NSTextAlignment::Justified,
+    };
+}
+
+fn line_break_of(b: vocab::LineBreak) -> ui::NSLineBreakMode {
+    return match b {
+        vocab::LineBreak::WordWrap => ui::NSLineBreakMode::NSLineBreakByWordWrapping,
+        vocab::LineBreak::CharacterWrap => ui::NSLineBreakMode::NSLineBreakByCharWrapping,
+        vocab::LineBreak::NoWrap => ui::NSLineBreakMode::NSLineBreakByClipping,
+        vocab::LineBreak::HeadTruncation => ui::NSLineBreakMode::NSLineBreakByTruncatingHead,
+        vocab::LineBreak::TailTruncation => ui::NSLineBreakMode::NSLineBreakByTruncatingTail,
+        vocab::LineBreak::MiddleTruncation => ui::NSLineBreakMode::NSLineBreakByTruncatingMiddle,
+    };
+}
+
+fn transformed(s: str, t: vocab::TextTransform) -> text::Text {
+    return match t {
+        vocab::TextTransform::None => text::from_str(s),
+        vocab::TextTransform::Default => text::from_str(s),
+        vocab::TextTransform::Lowercase => text::from_str(s).lowercased(),
+        vocab::TextTransform::Uppercase => text::from_str(s).uppercased(),
+    };
+}
+
+fn bool_i8(b: bool) -> i8 {
+    if b { return 1 as i8; }
+    return 0 as i8;
+}
+
+// ---- button ------------------------------------------------------------------
+// UIButton, type System (1) — the ordinary tinted iOS button.
+//
+// A UIButton's title is PER STATE, so every write goes to state Normal (0). The
+// disabled and highlighted appearances are UIKit's own, which is what an app
+// asking for a system button wants.
+
+fn create_button(n: *core::Node) -> *u8 {
+    let b: ui::Button = ui::Button::button_with_type(ui::ButtonType::System);
+    let v: *u8 = rt::retain(b.as_view().raw());
+    input::arm_primary(v, n);
+    return v;
+}
+
+fn apply_button(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *props::ButtonProps = props_of(n, props::K_BUTTON) as *props::ButtonProps;
+    if p == (0 as *props::ButtonProps) { return; }
+    let b: ui::Button = ui::Button::from_raw(v);
+    if (dirty & (button::P_TITLE | button::P_TEXT_TRANSFORM)) != (0 as u64) {
+        b.set_title(transformed({ (*p).title.view() }, { (*p).text_transform }).view(), 0 as u64);
+    }
+    if (dirty & button::P_TEXT_COLOR) != (0 as u64) {
+        let c: vocab::Color = { (*p).text_color };
+        if c.is_set() { b.set_title_color(paint::ui_color(c), 0 as u64); }
+    }
+    if (dirty & (button::P_FONT_SIZE | button::P_FONT_WEIGHT | button::P_FONT_FAMILY
+                 | button::P_IS_ITALIC | button::P_FONT_SCALES)) != (0 as u64) {
+        match paint::ui_font({ (*p).font_size }, { (*p).font_weight },
+                             { (*p).font_family.view() }, { (*p).is_italic },
+                             { (*p).font_scales }) {
+            option::Option[ui::Font]::Some(f) => { b.set_font(f); }
+            option::Option[ui::Font]::None => { }
+        }
+    }
+    // The described border, drawn on the layer. `bordered` is separate from the
+    // width so switching it off does not forget it.
+    if (dirty & (button::P_BORDER_COLOR | button::P_BORDER_WIDTH | button::P_BORDERED)) != (0 as u64) {
+        apply_border(v, { (*p).bordered }, { (*p).border_color }, { (*p).border_width });
+    }
+    if (dirty & button::P_CORNER_RADIUS) != (0 as u64) {
+        let r: vocab::Corners = { (*p).corner_radius };
+        b.as_view().layer().set_corner_radius(paint::largest_corner(r));
+    }
+    // `toggles` is a push-on/push-off posture. UIButton has `isSelected`, which
+    // is the state the title and image can be set for — so the flip is real
+    // state rather than a redraw facet has to drive.
+    if (dirty & (button::P_TOGGLES | button::P_ON)) != (0 as u64) {
+        if { (*p).toggles } {
+            { rt::msg_void_i8(v, rt::sel(#str_ptr("setSelected:\0")), bool_i8({ (*p).on })) };
+        }
+    }
+    if (dirty & props::C_IS_ENABLED) != (0 as u64) {
+        { rt::msg_void_i8(v, rt::sel(#str_ptr("setEnabled:\0")), bool_i8(core::is_enabled(n))) };
+    }
+    return;
+}
+
+// A border is two layer properties, and it is written in one place because four
+// kinds describe one — button, icon_button, bordered, box.
+//
+// `on` is separate from the width so switching the border off does not forget
+// how wide it was: facet keeps both, and a backend that collapsed them would
+// lose the width on the first toggle.
+fn apply_border(v: *u8, on: bool, c: vocab::Color, width: f64) {
+    let l: quartz::Layer = ui::View::from_raw(v).layer();
+    if !on || width <= 0.0f64 {
+        l.set_border_width(0.0f64);
+        return;
+    }
+    l.set_border_width(width);
+    if c.is_set() {
+        { rt::msg_void_id(l.raw(), rt::sel(#str_ptr("setBorderColor:\0")),
+                          paint::ui_color(c).c_g_color()) };
+    }
+    return;
+}
+
+// ---- text_button --------------------------------------------------------------
+// The link posture: a borderless button whose title carries the accent colour.
+// UIButton type System is already borderless and already tinted, so this is the
+// same class as `button` with the bezel question removed.
+
+fn create_text_button(n: *core::Node) -> *u8 {
+    let b: ui::Button = ui::Button::button_with_type(ui::ButtonType::System);
+    let v: *u8 = rt::retain(b.as_view().raw());
+    input::arm_primary(v, n);
+    return v;
+}
+
+fn apply_text_button(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *text_button::TextButtonProps =
+        props_of(n, text_button::K_TEXT_BUTTON) as *text_button::TextButtonProps;
+    if p == (0 as *text_button::TextButtonProps) { return; }
+    let b: ui::Button = ui::Button::from_raw(v);
+    b.set_title(transformed({ (*p).title.view() }, { (*p).text_transform }).view(), 0 as u64);
+    let c: vocab::Color = { (*p).text_color };
+    if c.is_set() { b.set_title_color(paint::ui_color(c), 0 as u64); }
+    match paint::ui_font({ (*p).font_size }, { (*p).font_weight },
+                         { (*p).font_family.view() }, { (*p).is_italic },
+                         { (*p).font_scales }) {
+        option::Option[ui::Font]::Some(f) => { b.set_font(f); }
+        option::Option[ui::Font]::None => { }
+    }
+    return;
+}
+
+// ---- icon_button --------------------------------------------------------------
+
+fn create_icon_button(n: *core::Node) -> *u8 {
+    let b: ui::Button = ui::Button::button_with_type(ui::ButtonType::System);
+    let v: *u8 = rt::retain(b.as_view().raw());
+    input::arm_primary(v, n);
+    return v;
+}
+
+fn apply_icon_button(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *props::IconButtonProps =
+        props_of(n, props::K_ICON_BUTTON) as *props::IconButtonProps;
+    if p == (0 as *props::IconButtonProps) { return; }
+    let b: ui::Button = ui::Button::from_raw(v);
+    // The source is a bundle image name, and on iOS an SF Symbol name is the
+    // other thing it can plausibly be — `imageNamed:` first, the symbol
+    // fallback second, which is the order that keeps an app's own asset
+    // winning over a system icon of the same name.
+    let src: str = { (*p).source.view() };
+    if src != "" {
+        match image_named(src) {
+            option::Option[ui::Image]::Some(img) => { b.set_image(img, 0 as u64); }
+            option::Option[ui::Image]::None => {
+                match symbol_image(src, 0.0f64) {
+                    option::Option[ui::Image]::Some(img) => { b.set_image(img, 0 as u64); }
+                    option::Option[ui::Image]::None => { }
+                }
+            }
+        }
+    }
+    if (dirty & props::C_IS_ENABLED) != (0 as u64) {
+        { rt::msg_void_i8(v, rt::sel(#str_ptr("setEnabled:\0")), bool_i8(core::is_enabled(n))) };
+    }
+    return;
+}
+
+// ---- image + symbol ------------------------------------------------------------
+
+fn image_named(name: str) -> option::Option[ui::Image] {
+    let cls: *u8 = rt::get_class(#str_ptr("UIImage\0"));
+    let img: *u8 = { rt::msg_id_id(cls, rt::sel(#str_ptr("imageNamed:\0")),
+                                   bridge::nsstring(name)) };
+    if img == (0 as *u8) { return option::Option[ui::Image]::None; }
+    return option::some(ui::Image::from_raw(img));
+}
+
+// SF Symbols. The one place iOS is plainly ahead: `systemImageNamed:` is the
+// whole implementation, where facet_appkit has to check the OS version and fall
+// back to a bundled icon font.
+fn symbol_image(name: str, size: f64) -> option::Option[ui::Image] {
+    let cls: *u8 = rt::get_class(#str_ptr("UIImage\0"));
+    let img: *u8 = { rt::msg_id_id(cls, rt::sel(#str_ptr("systemImageNamed:\0")),
+                                   bridge::nsstring(name)) };
+    if img == (0 as *u8) { return option::Option[ui::Image]::None; }
+    return option::some(ui::Image::from_raw(img));
+}
+
+fn create_image(n: *core::Node) -> *u8 {
+    // `ImageView::new` takes the image, and a facet image starts empty — so the
+    // class is allocated directly. `alloc_init` answers +1, which is exactly
+    // what `create` owes its caller.
+    return { rt::alloc_init(#str_ptr("UIImageView\0")) };
+}
+
+fn apply_image(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *props::ImageProps = props_of(n, props::K_IMAGE) as *props::ImageProps;
+    if p == (0 as *props::ImageProps) { return; }
+    let iv: ui::ImageView = ui::ImageView::from_raw(v);
+    if (dirty & image::P_SOURCE) != (0 as u64) {
+        match image_named({ (*p).source.view() }) {
+            option::Option[ui::Image]::Some(img) => { iv.set_image(img); }
+            option::Option[ui::Image]::None => { }
+        }
+    }
+    if (dirty & image::P_FIT) != (0 as u64) {
+        iv.as_view().set_content_mode(content_mode_of({ (*p).fit }));
+    }
+    return;
+}
+
+fn content_mode_of(f: vocab::ImageFit) -> ui::ViewContentMode {
+    return match f {
+        vocab::ImageFit::Fill => ui::ViewContentMode::ScaleToFill,
+        vocab::ImageFit::AspectFit => ui::ViewContentMode::ScaleAspectFit,
+        vocab::ImageFit::AspectFill => ui::ViewContentMode::ScaleAspectFill,
+        vocab::ImageFit::Center => ui::ViewContentMode::Center,
+    };
+}
+
+fn create_symbol(n: *core::Node) -> *u8 {
+    let v: *u8 = { rt::alloc_init(#str_ptr("UIImageView\0")) };
+    if v == (0 as *u8) { return v; }
+    ui::ImageView::from_raw(v).as_view().set_content_mode(ui::ViewContentMode::ScaleAspectFit);
+    return v;
+}
+
+fn apply_symbol(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *symbol::SymbolProps = props_of(n, symbol::K_SYMBOL) as *symbol::SymbolProps;
+    if p == (0 as *symbol::SymbolProps) { return; }
+    let iv: ui::ImageView = ui::ImageView::from_raw(v);
+    let name: str = { (*p).name.view() };
+    if name != "" {
+        match symbol_image(name, { (*p).size }) {
+            option::Option[ui::Image]::Some(img) => { iv.set_image(img); }
+            option::Option[ui::Image]::None => { }
+        }
+    }
+    let c: vocab::Color = { (*p).color };
+    if c.is_set() { iv.set_tint_color(paint::ui_color(c)); }
+    return;
+}
+
+// ---- scroll --------------------------------------------------------------------
+// A UIScrollView scrolls its OWN subviews — there is no document view — so the
+// children facet inserts are the content, and geometry.cplus sizes it.
+
+fn create_scroll(n: *core::Node) -> *u8 {
+    let s: ui::ScrollView = ui::ScrollView::new_with_frame(zero_rect());
+    return rt::retain(s.as_view().raw());
+}
+
+fn apply_scroll(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *props::ScrollProps = props_of(n, props::K_SCROLL) as *props::ScrollProps;
+    if p == (0 as *props::ScrollProps) { return; }
+    let s: ui::ScrollView = ui::ScrollView::from_raw(v);
+    if (dirty & (scroll::P_VERTICAL_SCROLL_BARS | scroll::P_HORIZONTAL_SCROLL_BARS)) != (0 as u64) {
+        s.set_shows_vertical_scroll_indicator(bars_shown({ (*p).vertical_scroll_bars }));
+        s.set_shows_horizontal_scroll_indicator(bars_shown({ (*p).horizontal_scroll_bars }));
+    }
+    if (dirty & (scroll::P_SCROLL_X | scroll::P_SCROLL_Y)) != (0 as u64) {
+        s.set_content_offset(rt::Point { x: { (*p).scroll_x }, y: { (*p).scroll_y } });
+    }
+    return;
+}
+
+// `Default` means the platform decides, and on iOS the platform shows
+// indicators — they fade on their own, so there is nothing to hide from.
+fn bars_shown(b: vocab::ScrollBars) -> bool {
+    return match b {
+        vocab::ScrollBars::Default => true,
+        vocab::ScrollBars::Always => true,
+        vocab::ScrollBars::Never => false,
+    };
+}
+
+// ---- box + bordered -------------------------------------------------------------
+
+fn create_box(n: *core::Node) -> *u8 {
+    let v: ui::View = ui::View::new_with_frame(zero_rect());
+    return rt::retain(v.raw());
+}
+
+fn apply_box(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *props::BoxProps = props_of(n, props::K_BOX) as *props::BoxProps;
+    if p == (0 as *props::BoxProps) { return; }
+    if (dirty & box_props::P_COLOR) != (0 as u64) {
+        paint::apply_background(ui::View::from_raw(v), { (*p).color });
+    }
+    if (dirty & box_props::P_CORNER_RADIUS) != (0 as u64) {
+        ui::View::from_raw(v).layer().set_corner_radius(paint::largest_corner({ (*p).corner_radius }));
+    }
+    return;
+}
+
+fn create_bordered(n: *core::Node) -> *u8 {
+    let v: ui::View = ui::View::new_with_frame(zero_rect());
+    return rt::retain(v.raw());
+}
+
+// The ledger's Border: a stroke around content. A layer border is one colour
+// and one width, so a DASHED or non-rectangular stroke is not expressible this
+// way — those ride `stroke_shape` and want a CAShapeLayer, which is the same
+// piece of work the canvas tier needs. MANIFEST.md records it.
+fn apply_bordered(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *props::BorderedProps = props_of(n, props::K_BORDERED) as *props::BorderedProps;
+    if p == (0 as *props::BorderedProps) { return; }
+    let l = ui::View::from_raw(v).layer();
+    let w: f64 = { (*p).stroke_width };
+    l.set_border_width(w);
+    let b: vocab::Brush = { (*p).stroke };
+    if b.start.is_set() && w > 0.0f64 {
+        { rt::msg_void_id(l.raw(), rt::sel(#str_ptr("setBorderColor:\0")),
+                          paint::ui_color(b.start).c_g_color()) };
+    }
+    let sh: vocab::Shape = { (*p).stroke_shape };
+    if sh.kind == (2 as i64) {
+        l.set_corner_radius(paint::largest_corner({ sh.corners }));
+    }
+    return;
+}
+
+// ---- toggle / checkbox / radio ---------------------------------------------------
+
+fn create_toggle(n: *core::Node) -> *u8 {
+    let s: ui::Switch = ui::Switch::new(zero_rect());
+    let v: *u8 = rt::retain(s.as_view().raw());
+    input::arm_value(v, n);
+    return v;
+}
+
+fn apply_toggle(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *props::ToggleProps = props_of(n, props::K_TOGGLE) as *props::ToggleProps;
+    if p == (0 as *props::ToggleProps) { return; }
+    let s: ui::Switch = ui::Switch::from_raw(v);
+    if (dirty & toggle::P_ON) != (0 as u64) { s.set_on({ (*p).on }); }
+    if (dirty & toggle::P_ON_COLOR) != (0 as u64) {
+        let c: vocab::Color = { (*p).on_color };
+        if c.is_set() { s.set_on_tint_color(paint::ui_color(c)); }
+    }
+    if (dirty & toggle::P_THUMB_COLOR) != (0 as u64) {
+        let c: vocab::Color = { (*p).thumb_color };
+        if c.is_set() { s.set_thumb_tint_color(paint::ui_color(c)); }
+    }
+    return;
+}
+
+// APPROXIMATED, and named as such. iOS has no checkbox and no radio button —
+// the platform's answer is a table row with a checkmark accessory, which is a
+// LIST idiom and not a control that can stand in a row of its own.
+//
+// A UISwitch is the closest control that carries the same two-state meaning and
+// the same handler shape. It reads differently from a checkbox and MANIFEST.md
+// says so; the alternative — drawing a checkbox by hand — invents a control iOS
+// users do not have.
+fn create_checkbox(n: *core::Node) -> *u8 {
+    let s: ui::Switch = ui::Switch::new(zero_rect());
+    let v: *u8 = rt::retain(s.as_view().raw());
+    input::arm_value(v, n);
+    return v;
+}
+
+fn apply_checkbox(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *props::CheckboxProps = props_of(n, props::K_CHECKBOX) as *props::CheckboxProps;
+    if p == (0 as *props::CheckboxProps) { return; }
+    let s: ui::Switch = ui::Switch::from_raw(v);
+    if (dirty & checkbox::P_ON) != (0 as u64) { s.set_on({ (*p).on }); }
+    let c: vocab::Color = { (*p).color };
+    if c.is_set() { s.set_on_tint_color(paint::ui_color(c)); }
+    return;
+}
+
+fn create_radio(n: *core::Node) -> *u8 {
+    let s: ui::Switch = ui::Switch::new(zero_rect());
+    let v: *u8 = rt::retain(s.as_view().raw());
+    input::arm_value(v, n);
+    return v;
+}
+
+fn apply_radio(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *props::RadioProps = props_of(n, props::K_RADIO) as *props::RadioProps;
+    if p == (0 as *props::RadioProps) { return; }
+    let s: ui::Switch = ui::Switch::from_raw(v);
+    if (dirty & radio::P_ON) != (0 as u64) { s.set_on({ (*p).on }); }
+    return;
+}
+
+// ---- slider / progress / spinner / stepper -----------------------------------------
+
+fn create_slider(n: *core::Node) -> *u8 {
+    let s: ui::Slider = ui::Slider::new_with_frame(zero_rect());
+    let v: *u8 = rt::retain(s.as_view().raw());
+    input::arm_value(v, n);
+    return v;
+}
+
+// UISlider carries f32 where facet carries f64 — the one control whose numbers
+// are narrower than the model's. Widened on the way out, narrowed on the way in
+// (input.cplus does the read-back), and the precision loss is real but below
+// what a finger can express.
+fn apply_slider(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *props::SliderProps = props_of(n, props::K_SLIDER) as *props::SliderProps;
+    if p == (0 as *props::SliderProps) { return; }
+    let s: ui::Slider = ui::Slider::from_raw(v);
+    if (dirty & slider::P_MINIMUM) != (0 as u64) { s.set_minimum_value({ (*p).minimum } as f32); }
+    if (dirty & slider::P_MAXIMUM) != (0 as u64) { s.set_maximum_value({ (*p).maximum } as f32); }
+    if (dirty & slider::P_VALUE) != (0 as u64) { s.set_value({ (*p).value } as f32); }
+    if (dirty & slider::P_MINIMUM_TRACK_COLOR) != (0 as u64) {
+        let c: vocab::Color = { (*p).minimum_track_color };
+        if c.is_set() { s.set_minimum_track_tint_color(paint::ui_color(c)); }
+    }
+    if (dirty & slider::P_MAXIMUM_TRACK_COLOR) != (0 as u64) {
+        let c: vocab::Color = { (*p).maximum_track_color };
+        if c.is_set() { s.set_maximum_track_tint_color(paint::ui_color(c)); }
+    }
+    if (dirty & slider::P_THUMB_COLOR) != (0 as u64) {
+        let c: vocab::Color = { (*p).thumb_color };
+        if c.is_set() { s.set_thumb_tint_color(paint::ui_color(c)); }
+    }
+    return;
+}
+
+fn create_progress(n: *core::Node) -> *u8 {
+    // Style 0 = Default, the thin bar.
+    let pv: ui::ProgressView = ui::ProgressView::new_with_progress_view_style(ui::ProgressViewStyle::Default);
+    return rt::retain(pv.as_view().raw());
+}
+
+fn apply_progress(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *props::ProgressProps = props_of(n, props::K_PROGRESS) as *props::ProgressProps;
+    if p == (0 as *props::ProgressProps) { return; }
+    let pv: ui::ProgressView = ui::ProgressView::from_raw(v);
+    if (dirty & progress::P_PROGRESS) != (0 as u64) {
+        pv.set_progress({ (*p).progress } as f32);
+    }
+    if (dirty & progress::P_PROGRESS_COLOR) != (0 as u64) {
+        let c: vocab::Color = { (*p).progress_color };
+        if c.is_set() { pv.set_progress_tint_color(paint::ui_color(c)); }
+    }
+    // `animate_progress` is a COMMAND — slide to the current progress — and
+    // UIProgressView has the animated setter outright, where AppKit needs the
+    // animator proxy. Easing is NOT expressible here: `setProgress:animated:`
+    // takes a flag, not a curve. MANIFEST.md records it.
+    if (dirty & progress::P_ANIMATE_PROGRESS) != (0 as u64) {
+        pv.set_progress_animated({ (*p).progress } as f32, true);
+    }
+    return;
+}
+
+fn create_spinner(n: *core::Node) -> *u8 {
+    let a: ui::ActivityIndicatorView = ui::ActivityIndicatorView::new_with_frame(zero_rect());
+    a.set_hides_when_stopped(true);
+    return rt::retain(a.as_view().raw());
+}
+
+fn apply_spinner(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *props::SpinnerProps = props_of(n, props::K_SPINNER) as *props::SpinnerProps;
+    if p == (0 as *props::SpinnerProps) { return; }
+    let a: ui::ActivityIndicatorView = ui::ActivityIndicatorView::from_raw(v);
+    if (dirty & spinner::P_IS_RUNNING) != (0 as u64) {
+        if { (*p).is_running } { a.start_animating(); } else { a.stop_animating(); }
+    }
+    if (dirty & spinner::P_COLOR) != (0 as u64) {
+        let c: vocab::Color = { (*p).color };
+        if c.is_set() { a.set_color(paint::ui_color(c)); }
+    }
+    return;
+}
+
+fn create_stepper(n: *core::Node) -> *u8 {
+    let s: ui::Stepper = ui::Stepper::new_with_frame(zero_rect());
+    let v: *u8 = rt::retain(s.as_view().raw());
+    input::arm_value(v, n);
+    return v;
+}
+
+fn apply_stepper(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *props::StepperProps = props_of(n, props::K_STEPPER) as *props::StepperProps;
+    if p == (0 as *props::StepperProps) { return; }
+    let s: ui::Stepper = ui::Stepper::from_raw(v);
+    if (dirty & stepper::P_MINIMUM) != (0 as u64) { s.set_minimum_value({ (*p).minimum }); }
+    if (dirty & stepper::P_MAXIMUM) != (0 as u64) { s.set_maximum_value({ (*p).maximum }); }
+    if (dirty & stepper::P_INCREMENT) != (0 as u64) { s.set_step_value({ (*p).increment }); }
+    if (dirty & stepper::P_VALUE) != (0 as u64) { s.set_value({ (*p).value }); }
+    return;
+}
+
+// ---- text_field / search_field / text_area --------------------------------------
+
+fn create_text_field(n: *core::Node) -> *u8 {
+    let f: ui::TextField = ui::TextField::new_with_frame(zero_rect());
+    // The one border an iOS user reads as "type here".
+    f.set_border_style(ui::TextBorderStyle::RoundedRect);
+    let v: *u8 = rt::retain(f.as_view().raw());
+    input::arm_text_field(v, n);
+    return v;
+}
+
+fn apply_text_field(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *props::TextFieldProps = props_of(n, props::K_TEXT_FIELD) as *props::TextFieldProps;
+    if p == (0 as *props::TextFieldProps) { return; }
+    let f: ui::TextField = ui::TextField::from_raw(v);
+    let iv: *props::InputViewProps = { #addr_of((*p).input_view) };
+    apply_input_common_field(f, iv, dirty);
+    if (dirty & text_field::P_IS_SECURE) != (0 as u64) {
+        // A property, not a class. This is the one control where UIKit is
+        // simpler in a way that removes a whole mechanism: AppKit needs
+        // NSSecureTextField and a live RECLASS to move between the two, and
+        // `views::reclass` exists in that backend for this single prop.
+        { rt::msg_void_i8(v, rt::sel(#str_ptr("setSecureTextEntry:\0")),
+                          bool_i8({ (*p).is_secure })) };
+    }
+    if (dirty & text_field::P_TEXT_ALIGN) != (0 as u64) {
+        f.set_text_alignment(text_align_of({ (*p).text_align }));
+    }
+    if (dirty & text_field::P_CLEAR_BUTTON) != (0 as u64) {
+        f.set_clear_button_mode(clear_mode_of({ (*p).clear_button }));
+    }
+    if (dirty & text_field::P_RETURN_KEY) != (0 as u64) {
+        { rt::msg_void_i64(v, rt::sel(#str_ptr("setReturnKeyType:\0")),
+                           ui::return_key_type_raw(return_key_of({ (*p).return_key }))) };
+    }
+    return;
+}
+
+fn apply_input_common_field(f: ui::TextField, iv: *props::InputViewProps, dirty: u64) {
+    f.set_text({ (*iv).text.view() });
+    f.set_placeholder({ (*iv).placeholder.view() });
+    let c: vocab::Color = { (*iv).text_color };
+    if c.is_set() { f.set_text_color(paint::ui_color(c)); }
+    match paint::ui_font({ (*iv).font_size }, { (*iv).font_weight },
+                         { (*iv).font_family.view() }, { (*iv).is_italic },
+                         { (*iv).font_scales }) {
+        option::Option[ui::Font]::Some(font) => { f.set_font(font); }
+        option::Option[ui::Font]::None => { }
+    }
+    { rt::msg_void_i8(f.as_view().raw(), rt::sel(#str_ptr("setEnabled:\0")),
+                      bool_i8({ (*iv).is_read_only } == false)) };
+    // `keyboardType` and `returnKeyType` reach a UITextField through
+    // UITextInputTraits, a PROTOCOL — so the generated binding carries the enum
+    // but puts no setter on the class. The enum's own raw converter plus one
+    // msgSend is the whole gap.
+    { rt::msg_void_i64(f.as_view().raw(), rt::sel(#str_ptr("setKeyboardType:\0")),
+                       ui::keyboard_type_raw(keyboard_of({ (*iv).keyboard }))) };
+    return;
+}
+
+fn clear_mode_of(c: vocab::ClearButton) -> ui::TextFieldViewMode {
+    return match c {
+        vocab::ClearButton::Never => ui::TextFieldViewMode::Never,
+        vocab::ClearButton::WhileEditing => ui::TextFieldViewMode::WhileEditing,
+    };
+}
+
+// THE BAND THAT ONLY EXISTS ON THIS PLATFORM. facet declares a keyboard per
+// input because a phone has one, and the AppKit backend can do nothing with the
+// verb at all — it is one property here, and it is the clearest case in the
+// package of facet's vocabulary being wider than any single platform.
+fn keyboard_of(k: vocab::Keyboard) -> ui::KeyboardType {
+    return match k {
+        vocab::Keyboard::Default => ui::KeyboardType::Default,
+        vocab::Keyboard::Plain => ui::KeyboardType::ASCIICapable,
+        vocab::Keyboard::Text => ui::KeyboardType::Default,
+        vocab::Keyboard::Chat => ui::KeyboardType::Default,
+        vocab::Keyboard::Url => ui::KeyboardType::URL,
+        vocab::Keyboard::Email => ui::KeyboardType::EmailAddress,
+        vocab::Keyboard::Telephone => ui::KeyboardType::PhonePad,
+        vocab::Keyboard::Numeric => ui::KeyboardType::DecimalPad,
+    };
+}
+
+fn return_key_of(r: vocab::ReturnKey) -> ui::ReturnKeyType {
+    return match r {
+        vocab::ReturnKey::Default => ui::ReturnKeyType::UIReturnKeyDefault,
+        vocab::ReturnKey::Go => ui::ReturnKeyType::UIReturnKeyGo,
+        vocab::ReturnKey::Next => ui::ReturnKeyType::UIReturnKeyNext,
+        vocab::ReturnKey::Search => ui::ReturnKeyType::UIReturnKeySearch,
+        vocab::ReturnKey::Send => ui::ReturnKeyType::UIReturnKeySend,
+        vocab::ReturnKey::Done => ui::ReturnKeyType::UIReturnKeyDone,
+    };
+}
+
+fn create_search_field(n: *core::Node) -> *u8 {
+    // UISearchTextField is a UITextField, so it takes the same body — where a
+    // UISearchBar is a whole chrome element with its own layout.
+    let cls: *u8 = rt::get_class(#str_ptr("UISearchTextField\0"));
+    if cls == (0 as *u8) { return create_text_field(n); }
+    let f: *u8 = { synth::alloc_init_class(cls) };
+    if f == (0 as *u8) { return create_text_field(n); }
+    input::arm_text_field(f, n);
+    return f;
+}
+
+fn apply_search_field(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *props::SearchFieldProps =
+        props_of(n, props::K_SEARCH_FIELD) as *props::SearchFieldProps;
+    if p == (0 as *props::SearchFieldProps) { return; }
+    let f: ui::TextField = ui::TextField::from_raw(v);
+    apply_input_common_field(f, { #addr_of((*p).input_view) }, dirty);
+    if (dirty & search_field::P_TEXT_ALIGN) != (0 as u64) {
+        f.set_text_alignment(text_align_of({ (*p).text_align }));
+    }
+    return;
+}
+
+fn create_text_area(n: *core::Node) -> *u8 {
+    // `TextView::new` takes a frame AND a text container; the plain designated
+    // initialiser is what a default editor wants, so the class is allocated
+    // directly (+1, which is what `create` owes).
+    let v: *u8 = { rt::alloc_init(#str_ptr("UITextView\0")) };
+    if v == (0 as *u8) { return v; }
+    // A UITextView is not a UIControl, so it has no target/action: its changes
+    // arrive through UITextViewDelegate. NOT WIRED YET — typing works and the
+    // text is not read back, which MANIFEST.md records as the gap it is.
+    input::bind_node(v, n);
+    return v;
+}
+
+fn apply_text_area(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *props::TextAreaProps = props_of(n, props::K_TEXT_AREA) as *props::TextAreaProps;
+    if p == (0 as *props::TextAreaProps) { return; }
+    let t: ui::TextView = ui::TextView::from_raw(v);
+    let iv: *props::InputViewProps = { #addr_of((*p).input_view) };
+    t.set_text({ (*iv).text.view() });
+    t.set_editable({ (*iv).is_read_only } == false);
+    let c: vocab::Color = { (*iv).text_color };
+    if c.is_set() { t.set_text_color(paint::ui_color(c)); }
+    match paint::ui_font({ (*iv).font_size }, { (*iv).font_weight },
+                         { (*iv).font_family.view() }, { (*iv).is_italic },
+                         { (*iv).font_scales }) {
+        option::Option[ui::Font]::Some(font) => { t.set_font(font); }
+        option::Option[ui::Font]::None => { }
+    }
+    if (dirty & text_area::P_TEXT_ALIGN) != (0 as u64) {
+        t.set_text_alignment(text_align_of({ (*p).text_align }));
+    }
+    return;
+}
+
+// ---- popup + tabs ----------------------------------------------------------------
+
+// A dropdown. iOS has no NSPopUpButton; the modern answer is a UIButton with a
+// UIMenu, which needs UIAction objects built from blocks — the same block
+// machinery the web tier waits on. Until then a UISegmentedControl carries the
+// same list and the same selected index, visibly differently, and MANIFEST.md
+// says so rather than leaving a reader to discover it.
+fn create_popup(n: *core::Node) -> *u8 {
+    let s: ui::SegmentedControl = ui::SegmentedControl::new(zero_rect());
+    let v: *u8 = rt::retain(s.as_view().raw());
+    input::arm_value(v, n);
+    return v;
+}
+
+fn apply_popup(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *props::PopupProps = props_of(n, props::K_POPUP) as *props::PopupProps;
+    if p == (0 as *props::PopupProps) { return; }
+    let s: ui::SegmentedControl = ui::SegmentedControl::from_raw(v);
+    if (dirty & popup::P_ITEMS) != (0 as u64) {
+        s.remove_all_segments();
+        let items: *vocab::TextList = { #addr_of((*p).items) };
+        var i: usize = 0 as usize;
+        let count: usize = { (*items).count() };
+        while i < count {
+            s.insert_segment_with_title({ (*items).at(i) }, i as u64, false);
+            i = i +% (1 as usize);
+        }
+    }
+    if (dirty & popup::P_SELECTED_INDEX) != (0 as u64) {
+        s.set_selected_segment_index({ (*p).selected_index });
+    }
+    return;
+}
+
+// facet's `tabs` is a strip plus panes. UISegmentedControl is the strip; the
+// panes are the node's children, shown and hidden by the selected index — which
+// is what `apply_tabs` does rather than adopting UITabBarController, a whole
+// view-controller container that would own the window rather than a rectangle.
+fn create_tabs(n: *core::Node) -> *u8 {
+    let s: ui::SegmentedControl = ui::SegmentedControl::new(zero_rect());
+    let v: *u8 = rt::retain(s.as_view().raw());
+    input::arm_value(v, n);
+    return v;
+}
+
+fn apply_tabs(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *props::TabsProps = props_of(n, props::K_TABS) as *props::TabsProps;
+    if p == (0 as *props::TabsProps) { return; }
+    let s: ui::SegmentedControl = ui::SegmentedControl::from_raw(v);
+    if (dirty & tabs::P_SELECTED_INDEX) != (0 as u64) {
+        s.set_selected_segment_index({ (*p).selected_index });
+    }
+    let c: vocab::Color = { (*p).selected_tab_color };
+    if c.is_set() { s.set_selected_segment_tint_color(paint::ui_color(c)); }
+    return;
+}
+
+// ---- page_dots -------------------------------------------------------------------
+// UIPageControl IS this control, where AppKit has none and facet_appkit draws
+// the dots itself into sublayers.
+
+fn create_page_dots(n: *core::Node) -> *u8 {
+    let pc: ui::PageControl = ui::PageControl::new_with_frame(zero_rect());
+    let v: *u8 = rt::retain(pc.as_view().raw());
+    input::arm_value(v, n);
+    return v;
+}
+
+fn apply_page_dots(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *props::PageDotsProps = props_of(n, props::K_PAGE_DOTS) as *props::PageDotsProps;
+    if p == (0 as *props::PageDotsProps) { return; }
+    let pc: ui::PageControl = ui::PageControl::from_raw(v);
+    if (dirty & page_dots::P_COUNT) != (0 as u64) { pc.set_number_of_pages({ (*p).count }); }
+    if (dirty & page_dots::P_POSITION) != (0 as u64) { pc.set_current_page({ (*p).position }); }
+    if (dirty & page_dots::P_HIDES_SINGLE) != (0 as u64) {
+        pc.set_hides_for_single_page({ (*p).hides_single });
+    }
+    if (dirty & page_dots::P_DOT_COLOR) != (0 as u64) {
+        let c: vocab::Color = { (*p).dot_color };
+        if c.is_set() { pc.set_page_indicator_tint_color(paint::ui_color(c)); }
+    }
+    if (dirty & page_dots::P_SELECTED_DOT_COLOR) != (0 as u64) {
+        let c: vocab::Color = { (*p).selected_dot_color };
+        if c.is_set() { pc.set_current_page_indicator_tint_color(paint::ui_color(c)); }
+    }
+    return;
+}
+
+// ---- date / time picker -----------------------------------------------------------
+// One class for both, told which by `datePickerMode` — 1 date, 0 time.
+
+fn create_date_picker(n: *core::Node) -> *u8 {
+    let d: ui::DatePicker = ui::DatePicker::new_with_frame(zero_rect());
+    let v: *u8 = rt::retain(d.as_view().raw());
+    ui::DatePicker::from_raw(v).set_date_picker_mode(ui::DatePickerMode::Date);
+    input::arm_value(v, n);
+    return v;
+}
+
+fn apply_date_picker(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *props::DatePickerProps =
+        props_of(n, props::K_DATE_PICKER) as *props::DatePickerProps;
+    if p == (0 as *props::DatePickerProps) { return; }
+    // The DATE itself needs an NSDate built from facet's y/m/d through
+    // NSDateComponents, which is Foundation work this pass did not reach —
+    // MANIFEST.md lists it. The picker renders and is usable; it opens on today
+    // rather than on the stated date.
+    return;
+}
+
+fn create_time_picker(n: *core::Node) -> *u8 {
+    let d: ui::DatePicker = ui::DatePicker::new_with_frame(zero_rect());
+    let v: *u8 = rt::retain(d.as_view().raw());
+    ui::DatePicker::from_raw(v).set_date_picker_mode(ui::DatePickerMode::Time);
+    input::arm_value(v, n);
+    return v;
+}
+
+fn apply_time_picker(v: *u8, n: *core::Node, dirty: u64) {
+    return;
+}
+
+// ---- refreshable -------------------------------------------------------------------
+// Pull to refresh. THE ONE KIND THAT IS MORE NATIVE HERE THAN ANYWHERE:
+// UIRefreshControl is the platform's own gesture, and facet_appkit has to build
+// the whole affordance by hand because macOS has no such idiom.
+//
+// It attaches to a UIScrollView, so this kind's view IS one — the content
+// scrolls, which is what a pull-to-refresh surface has to do anyway.
+
+fn create_refreshable(n: *core::Node) -> *u8 {
+    let s: ui::ScrollView = ui::ScrollView::new_with_frame(zero_rect());
+    let v: *u8 = rt::retain(s.as_view().raw());
+    let rc: *u8 = { rt::alloc_init(#str_ptr("UIRefreshControl\0")) };
+    if rc != (0 as *u8) {
+        input::bind_node(rc, n);
+        input::arm_value(rc, n);
+        { rt::msg_void_id(v, rt::sel(#str_ptr("setRefreshControl:\0")), rc) };
+        { rt::release(rc) };
+    }
+    return v;
+}
+
+fn apply_refreshable(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *props::RefreshableProps =
+        props_of(n, props::K_REFRESHABLE) as *props::RefreshableProps;
+    if p == (0 as *props::RefreshableProps) { return; }
+    let rc: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("refreshControl\0"))) };
+    if rc == (0 as *u8) { return; }
+    if (dirty & refreshable::P_IS_REFRESHING) != (0 as u64) {
+        if { (*p).is_refreshing } {
+            { rt::msg_void(rc, rt::sel(#str_ptr("beginRefreshing\0"))) };
+        } else {
+            { rt::msg_void(rc, rt::sel(#str_ptr("endRefreshing\0"))) };
+        }
+    }
+    if (dirty & refreshable::P_REFRESH_COLOR) != (0 as u64) {
+        let c: vocab::Color = { (*p).refresh_color };
+        if c.is_set() {
+            { rt::msg_void_id(rc, rt::sel(#str_ptr("setTintColor:\0")),
+                              paint::ui_color(c).raw()) };
+        }
+    }
+    return;
+}
