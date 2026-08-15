@@ -3,10 +3,13 @@
 The phone-shaped gallery — `examples/facet_gallery`'s counterpart on iOS, and
 the app to point at a simulator when `facet_uikit` is run for the first time.
 
-> **Nothing here has run.** The package compiles to a real iOS static library
-> for both the device and the simulator. It has never been launched, so
-> everything below the build step is a recipe, not a report. When it does run,
-> the things most likely to be wrong are listed at the bottom.
+> **It runs.** Launched on an iPhone 17 Pro simulator (iOS 26.4, arm64) on
+> 2026-08-16. Labels, slider, progress, stepper, switch, the segmented picker,
+> card surfaces, the safe area, scrolling and the value write-back are all
+> correct on screen. **A `button` draws nothing** — that one is open, and
+> `bugs/uikit-button-draws-nothing.md` has every measurement.
+>
+> Never on a device.
 
 ## Build
 
@@ -78,25 +81,48 @@ Measured here, before the fix: `frame 402x1137` on an 874pt screen, with
 It is not an iOS bug — the same rule applies on macOS. A phone just runs out of
 screen sooner.
 
-## What to watch for on the first run
+## Run it from the command line, without Xcode
 
-In rough order of how likely each is to be the thing that breaks:
+Faster than the GUI, and how everything above was verified:
 
-1. **The app does not start at all.** `run_loop` calls `UIApplicationMain` with
-   `argc 0` / `argv NULL`, which is untested. Everything else depends on this.
-2. **A blank window.** The mount happens in the launch hook and the first
-   layout is forced there (`scheduler::tick_now`); if the tree is mounted but
-   unsized, that call or the frame walk is where to look.
-3. **Content under the notch.** The safe-area inset is read from the root view
-   controller's view and applied by the layout pass.
-4. **Controls at zero size.** `sizeThatFits:` is asked with the available width;
-   a control answering zero is floored, and a control answering something absurd
-   is not.
-5. **A tap that does nothing.** One shared target object serves every control;
-   if one kind is dead, check that its `create_*` armed the right event.
-6. **The dark-mode flip does nothing.** Known and recorded: UIKit has no
-   application-level appearance hook, so nothing fires the repaint walk yet.
-   Semantic colours still follow on their own; a gradient or a border will not.
+```
+cd examples/facet_gallery_ios
+cpc build --target ios-arm64-simulator
+
+xcrun -sdk iphonesimulator clang -arch arm64 -mios-simulator-version-min=14.0 \
+  -I target/ios-arm64-simulator/debug \
+  ios/main.m target/ios-arm64-simulator/debug/libfacet_gallery_ios.a \
+  -framework UIKit -framework QuartzCore -framework Foundation \
+  -framework CoreGraphics -lobjc -o Gallery.app/Gallery
+# Gallery.app also needs the Info.plist from the Xcode recipe above.
+
+xcrun simctl boot "iPhone 17 Pro"
+xcrun simctl install booted Gallery.app
+xcrun simctl launch --console-pty booted dev.cplus.facetgalleryios
+xcrun simctl io booted screenshot shot.png
+```
+
+`--console-pty` carries `io::eprintln`, which is how a live view was
+interrogated from `on_attach` while the app ran. `open -a Simulator` puts the
+device on screen; without it the whole loop is headless.
+
+## What was wrong on the first run, and what is still open
+
+Four bugs, all found by running and none by reading:
+
+1. **No content at all** — `on_attach` fired before the tree was mounted. Fixed:
+   the host has a launch seam the facade hangs the lifecycle on.
+2. **Content under the status bar** — `safeAreaInsets` reads zero inside
+   `didFinishLaunching`. Fixed: key and visible first, then a forced layout.
+3. **Every label a black bar** — `isOpaque` YES with no background colour. Fixed:
+   `opaque` is cleared with the background.
+4. **Nothing scrolled** — the flex trap above.
+
+Still open: **a `button` draws nothing.** Everything readable about it is right.
+`bugs/uikit-button-draws-nothing.md`.
+
+Not yet exercised at all: the dark-mode flip (known unwired — UIKit has no
+application-level appearance hook), and every kind on the Gaps page.
 
 `vendor/facet_uikit/MANIFEST.md` is the authority on what is unfinished, and it
 keeps "iOS cannot" and "not built yet" strictly apart.
