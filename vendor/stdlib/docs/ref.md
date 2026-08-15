@@ -709,6 +709,39 @@ Async timer primitives built on the reactor / futures (see
 
 ---
 
+## base64
+
+base64 and base64url, both directions (RFC 4648 §4 and §5).
+
+```cplus
+import "stdlib/base64" as base64;
+
+base64::encode("foobar")          // "Zm9vYmFy"     (padded)
+base64::encode_url(json_src)      // unpadded — the JWT form
+base64::decode(s)                 // Option[Vec[u8]]
+base64::decode_url(s)             // Option[Vec[u8]] — accepts padded AND unpadded
+base64::decode_url_text(s)        // Option[Text], for a segment known to be text
+```
+
+| | |
+|---|---|
+| `encode` / `encode_bytes` | standard alphabet, `=`-padded |
+| `encode_url` / `encode_url_bytes` | url-safe alphabet, **no padding** |
+| `decode` / `decode_url` | `Option[Vec[u8]]`; None on anything malformed |
+| `decode_url_text` | `Option[Text]`; validates base64, not UTF-8 |
+
+**Decoding is strict.** A character outside the alphabet is a failure, not a
+character to skip — a lenient decoder is one where two different inputs produce
+the same bytes, which breaks anything that signs the encoded form. Refused:
+non-alphabet bytes (including whitespace and newlines, so strip them yourself
+for wrapped MIME), a length that cannot occur, and padding anywhere but the end.
+
+Both decoders accept padded and unpadded input, because that is a genuine
+difference between producers rather than malleability — the padding carries no
+information.
+
+---
+
 ## crypto
 
 SHA-2 digests, HMAC and the system CSPRNG, over CommonCrypto (libSystem — no

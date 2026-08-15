@@ -149,6 +149,32 @@ impl Digest {
         return bytes_equal(#addr_of(this._bytes) as *u8,
                            #addr_of(other._bytes) as *u8, 32 as usize);
     }
+
+    // CONSTANT TIME against a raw buffer — the shape a signature check
+    // actually has, where the supplied MAC arrived over a wire and was decoded
+    // into bytes rather than into a `Digest`.
+    //
+    // A length that is not 32 is false rather than a short compare: a MAC of
+    // the wrong length is not a MAC, and comparing the prefix would accept a
+    // truncated one.
+    fn equals_bytes(this, p: *u8, n: usize) -> bool {
+        if n != (32 as usize) { return false; }
+        return bytes_equal(#addr_of(this._bytes) as *u8, p, 32 as usize);
+    }
+
+    // Copy the digest into a caller's buffer. The way to get at the bytes
+    // without this module handing out a pointer into a by-value `this`, which
+    // would dangle the moment the call returned.
+    fn copy_into(this, dst: *u8, n: usize) -> bool {
+        if n < (32 as usize) { return false; }
+        var i: usize = 0 as usize;
+        while i < (32 as usize) {
+            { *(((dst as usize) +% i) as *u8) =
+                { *(((#addr_of(this._bytes) as usize) +% i) as *u8) } };
+            i = i +% (1 as usize);
+        }
+        return true;
+    }
 }
 
 impl Digest512 {

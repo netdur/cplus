@@ -1,0 +1,17 @@
+[package]
+name    = "agent_jwt"
+version = "0.0.1"
+edition = "2026"
+
+# HS256 JWT verification for an agent surface's authorization policy. Depends
+# on agent_core only for the Grant it helps an application build; the
+# verification itself names nothing about agents.
+
+[[bin]]
+name = "agent_jwt_tests"
+path = "src/test_main.cplus"
+
+[dependencies]
+stdlib     = "*"
+json       = "*"
+agent_core = "*"

@@ -1,0 +1,373 @@
+// stdlib/base64.cplus — base64 and base64url, both directions.
+//
+// Two alphabets over one implementation. They differ in two characters and in
+// whether the output is padded, and every codebase that ships only the first
+// one eventually grows a second, subtly different copy for the second.
+//
+//   standard (RFC 4648 §4)  …+/ and '=' padding. MIME, data: URLs, HTTP Basic.
+//   url-safe (RFC 4648 §5)  …-_ and, here, NO padding. JWT, and anything that
+//                           travels in a path segment or a query string.
+//
+// ---- decoding is strict, on purpose ---------------------------------------
+//
+// A lenient decoder — one that skips characters it does not recognise — is a
+// decoder where two different inputs produce the same bytes. That is a real
+// problem wherever the encoded form is itself the thing being checked: a
+// signature over `eyJhbGc…` means nothing if `eyJ hbGc…` and `eyJ!hbGc…`
+// decode to it as well. So a character outside the alphabet is a failure, not
+// a character to skip, and every failure answers None rather than a
+// best-effort prefix.
+//
+// Both decoders accept padded AND unpadded input, because that is a real
+// difference between producers rather than a malleability: the padding carries
+// no information (the byte count is implied by the character count), and
+// rejecting a padded JWT segment would refuse tokens that are otherwise
+// perfectly well formed.
+//
+// What is refused: a length that cannot occur (one leftover character encodes
+// nothing), padding anywhere but the end, and any non-alphabet byte including
+// whitespace and newlines. A caller wanting to decode wrapped MIME strips the
+// newlines first, deliberately.
+
+import "./option" as option;
+import "./text" as text;
+import "./vec" as vec;
+import "./status" as status;
+
+fn standard_alphabet() -> str {
+    return "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+}
+
+fn url_alphabet() -> str {
+    return "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+}
+
+// The 6-bit value of an encoded character, or -1 when it is not in `url`'s
+// alphabet. A table would be faster; this is a signature check on a few hundred
+// bytes, and the ranges are what a reader can verify against RFC 4648.
+fn value_of(c: u8, url: bool) -> i32 {
+    if c >= ('A' as u8) && c <= ('Z' as u8) { return (c -% ('A' as u8)) as i32; }
+    if c >= ('a' as u8) && c <= ('z' as u8) { return ((c -% ('a' as u8)) as i32) + 26; }
+    if c >= ('0' as u8) && c <= ('9' as u8) { return ((c -% ('0' as u8)) as i32) + 52; }
+    if url {
+        if c == ('-' as u8) { return 62; }
+        if c == ('_' as u8) { return 63; }
+        return 0 - 1;
+    }
+    if c == ('+' as u8) { return 62; }
+    if c == ('/' as u8) { return 63; }
+    return 0 - 1;
+}
+
+fn char_at(s: str, i: usize) -> u8 {
+    return { *(((#str_ptr(s) as usize) +% i) as *u8) };
+}
+
+fn alphabet_char(alpha: str, v: i32) -> u8 {
+    return char_at(alpha, v as usize);
+}
+
+// ---- encoding ----------------------------------------------------------------
+
+// The shared encoder. `pad` writes '=' to a multiple of four; url-safe output
+// here never does (see the header).
+fn encode_with(p: *u8, n: usize, alpha: str, pad: bool) -> text::Text {
+    var out: text::Text = text::new();
+    var i: usize = 0 as usize;
+    while (i +% (3 as usize)) <= n {
+        let b0: u32 = { *(((p as usize) +% i) as *u8) } as u32;
+        let b1: u32 = { *(((p as usize) +% i +% (1 as usize)) as *u8) } as u32;
+        let b2: u32 = { *(((p as usize) +% i +% (2 as usize)) as *u8) } as u32;
+        var quad: [u8; 4] = [0u8; 4];
+        { *(#addr_of(quad) as *u8) = alphabet_char(alpha, (b0 >> (2 as u32)) as i32) };
+        { *(((#addr_of(quad) as usize) +% (1 as usize)) as *u8) =
+            alphabet_char(alpha, (((b0 & (0x03 as u32)) << (4 as u32)) | (b1 >> (4 as u32))) as i32) };
+        { *(((#addr_of(quad) as usize) +% (2 as usize)) as *u8) =
+            alphabet_char(alpha, (((b1 & (0x0F as u32)) << (2 as u32)) | (b2 >> (6 as u32))) as i32) };
+        { *(((#addr_of(quad) as usize) +% (3 as usize)) as *u8) =
+            alphabet_char(alpha, (b2 & (0x3F as u32)) as i32) };
+        out = out.appending({ #str_from_raw_parts(#addr_of(quad) as *u8, 4 as usize) });
+        i = i +% (3 as usize);
+    }
+
+    let left: usize = n -% i;
+    if left == (1 as usize) {
+        let b0: u32 = { *(((p as usize) +% i) as *u8) } as u32;
+        var tail: [u8; 4] = [0u8; 4];
+        { *(#addr_of(tail) as *u8) = alphabet_char(alpha, (b0 >> (2 as u32)) as i32) };
+        { *(((#addr_of(tail) as usize) +% (1 as usize)) as *u8) =
+            alphabet_char(alpha, ((b0 & (0x03 as u32)) << (4 as u32)) as i32) };
+        { *(((#addr_of(tail) as usize) +% (2 as usize)) as *u8) = '=' as u8 };
+        { *(((#addr_of(tail) as usize) +% (3 as usize)) as *u8) = '=' as u8 };
+        let take_n: usize = if pad { 4 as usize } else { 2 as usize };
+        out = out.appending({ #str_from_raw_parts(#addr_of(tail) as *u8, take_n) });
+    }
+    if left == (2 as usize) {
+        let b0: u32 = { *(((p as usize) +% i) as *u8) } as u32;
+        let b1: u32 = { *(((p as usize) +% i +% (1 as usize)) as *u8) } as u32;
+        var tail: [u8; 4] = [0u8; 4];
+        { *(#addr_of(tail) as *u8) = alphabet_char(alpha, (b0 >> (2 as u32)) as i32) };
+        { *(((#addr_of(tail) as usize) +% (1 as usize)) as *u8) =
+            alphabet_char(alpha, (((b0 & (0x03 as u32)) << (4 as u32)) | (b1 >> (4 as u32))) as i32) };
+        { *(((#addr_of(tail) as usize) +% (2 as usize)) as *u8) =
+            alphabet_char(alpha, ((b1 & (0x0F as u32)) << (2 as u32)) as i32) };
+        { *(((#addr_of(tail) as usize) +% (3 as usize)) as *u8) = '=' as u8 };
+        let take_n: usize = if pad { 4 as usize } else { 3 as usize };
+        out = out.appending({ #str_from_raw_parts(#addr_of(tail) as *u8, take_n) });
+    }
+    return out;
+}
+
+// Standard base64, padded.
+fn encode(data: str) -> text::Text {
+    return encode_with({ #str_ptr(data) }, { #str_len(data) }, standard_alphabet(), true);
+}
+
+fn encode_bytes(p: *u8, n: usize) -> text::Text {
+    return encode_with(p, n, standard_alphabet(), true);
+}
+
+// base64url, UNPADDED — the JWT form.
+fn encode_url(data: str) -> text::Text {
+    return encode_with({ #str_ptr(data) }, { #str_len(data) }, url_alphabet(), false);
+}
+
+fn encode_url_bytes(p: *u8, n: usize) -> text::Text {
+    return encode_with(p, n, url_alphabet(), false);
+}
+
+// ---- decoding ----------------------------------------------------------------
+
+// The shared decoder. None on any malformed input — see the header for why
+// this refuses rather than skips.
+fn decode_with(s: str, url: bool) -> option::Option[vec::Vec[u8]] {
+    var out: vec::Vec[u8] = vec::new::[u8]();
+    let n_raw: usize = { #str_len(s) };
+
+    // Trailing padding, counted and then ignored. Only ever at the end and
+    // never more than two: '=' elsewhere means a concatenation of two encoded
+    // values, which decodes to something neither producer wrote.
+    var n: usize = n_raw;
+    var pads: usize = 0 as usize;
+    loop {
+        if n == (0 as usize) { break; }
+        if char_at(s, n -% (1 as usize)) != ('=' as u8) { break; }
+        if pads == (2 as usize) { return option::Option[vec::Vec[u8]]::None; }
+        pads = pads +% (1 as usize);
+        n = n -% (1 as usize);
+    }
+    if pads > (0 as usize) {
+        // Padding is only meaningful on a 4-aligned encoding.
+        if (n_raw % (4 as usize)) != (0 as usize) { return option::Option[vec::Vec[u8]]::None; }
+    }
+
+    // One leftover character encodes no byte, so this length cannot be produced
+    // by any encoder.
+    if (n % (4 as usize)) == (1 as usize) { return option::Option[vec::Vec[u8]]::None; }
+
+    var acc: u32 = 0 as u32;
+    var bits: i32 = 0;
+    var i: usize = 0 as usize;
+    while i < n {
+        let v: i32 = value_of(char_at(s, i), url);
+        if v < 0 { return option::Option[vec::Vec[u8]]::None; }
+        acc = (acc << (6 as u32)) | (v as u32);
+        bits = bits + 6;
+        if bits >= 8 {
+            bits = bits - 8;
+            let byte: u8 = ((acc >> (bits as u32)) & (0xFF as u32)) as u8;
+            let _s: status::Status = out.append(byte);
+        }
+        i = i +% (1 as usize);
+    }
+    return option::Option[vec::Vec[u8]]::Some(out);
+}
+
+// Standard base64 -> bytes. Accepts padded and unpadded input.
+fn decode(s: str) -> option::Option[vec::Vec[u8]] {
+    return decode_with(s, false);
+}
+
+// base64url -> bytes. Accepts padded and unpadded input, which is what makes
+// this usable against real JWTs from producers that disagree about padding.
+fn decode_url(s: str) -> option::Option[vec::Vec[u8]] {
+    return decode_with(s, true);
+}
+
+// base64url -> Text, for a segment that is known to carry text (a JWT header
+// or payload is UTF-8 JSON). The bytes are taken as they are; this validates
+// base64, not UTF-8.
+fn decode_url_text(s: str) -> option::Option[text::Text] {
+    return match decode_with(s, true) {
+        option::Option[vec::Vec[u8]]::Some(b) => {
+            option::Option[text::Text]::Some(
+                text::from_str(b.as_byte_view()))
+        }
+        option::Option[vec::Vec[u8]]::None => option::Option[text::Text]::None,
+    };
+}
+
+// ====================================================================
+// Tests — RFC 4648 §10 vectors, then the malformed shapes a strict decoder
+// exists to refuse.
+// ====================================================================
+
+fn round_trip(s: str) -> bool {
+    let enc: text::Text = encode(s);
+    return match decode({ enc.view() }) {
+        option::Option[vec::Vec[u8]]::Some(b) => {
+            b.as_byte_view() == s
+        }
+        option::Option[vec::Vec[u8]]::None => false,
+    };
+}
+
+#[test]
+fn encode_matches_the_rfc_4648_vectors() {
+    assert encode("").view() == "";
+    assert encode("f").view() == "Zg==";
+    assert encode("fo").view() == "Zm8=";
+    assert encode("foo").view() == "Zm9v";
+    assert encode("foob").view() == "Zm9vYg==";
+    assert encode("fooba").view() == "Zm9vYmE=";
+    assert encode("foobar").view() == "Zm9vYmFy";
+    return;
+}
+
+#[test]
+fn decode_matches_the_rfc_4648_vectors() {
+    assert round_trip("");
+    assert round_trip("f");
+    assert round_trip("fo");
+    assert round_trip("foo");
+    assert round_trip("foob");
+    assert round_trip("fooba");
+    assert round_trip("foobar");
+    return;
+}
+
+#[test]
+fn url_safe_uses_its_own_two_characters_and_no_padding() {
+    // 0xfb 0xff exercises both characters that differ between the alphabets:
+    // standard yields "+/", url-safe yields "-_".
+    var raw: [u8; 2] = [0xfbu8, 0xffu8];
+    assert encode_bytes(#addr_of(raw) as *u8, 2 as usize).view() == "+/8=";
+    assert encode_url_bytes(#addr_of(raw) as *u8, 2 as usize).view() == "-_8";
+    // And the two decoders do not accept each other's characters.
+    match decode_url("+/8=") {
+        option::Option[vec::Vec[u8]]::Some(_) => { assert false; }
+        option::Option[vec::Vec[u8]]::None => { }
+    };
+    match decode("-_8") {
+        option::Option[vec::Vec[u8]]::Some(_) => { assert false; }
+        option::Option[vec::Vec[u8]]::None => { }
+    };
+    return;
+}
+
+#[test]
+fn a_url_decode_accepts_padded_and_unpadded_alike() {
+    // Real producers disagree about padding, and the padding carries no
+    // information — refusing one of them would refuse well-formed tokens.
+    match decode_url("Zm9vYg") {
+        option::Option[vec::Vec[u8]]::Some(b) => {
+            assert b.as_byte_view() == "foob";
+        }
+        option::Option[vec::Vec[u8]]::None => { assert false; }
+    };
+    match decode_url("Zm9vYg==") {
+        option::Option[vec::Vec[u8]]::Some(b) => {
+            assert b.as_byte_view() == "foob";
+        }
+        option::Option[vec::Vec[u8]]::None => { assert false; }
+    };
+    return;
+}
+
+#[test]
+fn a_character_outside_the_alphabet_is_refused_not_skipped() {
+    // THE ONE THAT MATTERS. A decoder that skips what it does not recognise is
+    // one where two different inputs produce the same bytes — and a signature
+    // over the encoded form then means nothing.
+    match decode("Zm9v YmFy") {              // a space in the middle
+        option::Option[vec::Vec[u8]]::Some(_) => { assert false; }
+        option::Option[vec::Vec[u8]]::None => { }
+    };
+    match decode("Zm9v\nYmFy") {             // a newline (wrapped MIME)
+        option::Option[vec::Vec[u8]]::Some(_) => { assert false; }
+        option::Option[vec::Vec[u8]]::None => { }
+    };
+    match decode("Zm9!YmFy") {
+        option::Option[vec::Vec[u8]]::Some(_) => { assert false; }
+        option::Option[vec::Vec[u8]]::None => { }
+    };
+    return;
+}
+
+#[test]
+fn impossible_lengths_and_misplaced_padding_are_refused() {
+    // One leftover character encodes no byte — no encoder produces this.
+    match decode("Zm9vYmFyX") {
+        option::Option[vec::Vec[u8]]::Some(_) => { assert false; }
+        option::Option[vec::Vec[u8]]::None => { }
+    };
+    // Padding in the middle: a concatenation of two encodings, decoding to
+    // something neither producer wrote.
+    match decode("Zm9=YmFy") {
+        option::Option[vec::Vec[u8]]::Some(_) => { assert false; }
+        option::Option[vec::Vec[u8]]::None => { }
+    };
+    // Three pad characters cannot occur.
+    match decode("Zg===") {
+        option::Option[vec::Vec[u8]]::Some(_) => { assert false; }
+        option::Option[vec::Vec[u8]]::None => { }
+    };
+    // Padding on a length that was never 4-aligned.
+    match decode("Zm9vY=") {
+        option::Option[vec::Vec[u8]]::Some(_) => { assert false; }
+        option::Option[vec::Vec[u8]]::None => { }
+    };
+    return;
+}
+
+#[test]
+fn every_byte_value_survives_a_round_trip() {
+    // The high bytes are where a sign-extension bug lives: 0x80..0xff read as
+    // a signed char turn negative and corrupt the accumulator.
+    var raw: [u8; 256] = [0u8; 256];
+    var i: usize = 0 as usize;
+    while i < (256 as usize) {
+        { *(((#addr_of(raw) as usize) +% i) as *u8) = i as u8 };
+        i = i +% (1 as usize);
+    }
+    let enc: text::Text = encode_url_bytes(#addr_of(raw) as *u8, 256 as usize);
+    match decode_url({ enc.view() }) {
+        option::Option[vec::Vec[u8]]::Some(b) => {
+            assert b.count() == (256 as usize);
+            var j: usize = 0 as usize;
+            while j < (256 as usize) {
+                match b.at_ptr(j) {
+                    option::Option[*u8]::Some(p) => { assert { *p } == (j as u8); }
+                    option::Option[*u8]::None => { assert false; }
+                }
+                j = j +% (1 as usize);
+            }
+        }
+        option::Option[vec::Vec[u8]]::None => { assert false; }
+    };
+    return;
+}
+
+#[test]
+fn decode_url_text_reads_a_json_segment() {
+    let seg: text::Text = encode_url("{\"alg\":\"HS256\"}");
+    match decode_url_text({ seg.view() }) {
+        option::Option[text::Text]::Some(t) => { assert t.view() == "{\"alg\":\"HS256\"}"; }
+        option::Option[text::Text]::None => { assert false; }
+    };
+    match decode_url_text("not valid base64!") {
+        option::Option[text::Text]::Some(_) => { assert false; }
+        option::Option[text::Text]::None => { }
+    };
+    return;
+}

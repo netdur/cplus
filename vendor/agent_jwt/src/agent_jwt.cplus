@@ -1,0 +1,327 @@
+// agent_jwt — HS256 JWT verification, for an agent surface's policy.
+//
+// `agent_core::auth` hands the application's policy an opaque `token: str` and
+// takes back a `Grant`. This is the piece that turns one common kind of token
+// into something a policy can decide on. The core deliberately does not do this
+// itself: verification needs crypto and a clock, and a core that reaches for
+// either stops being unit-testable and stops porting.
+//
+//     fn my_policy(req: auth::Request) -> auth::Grant {
+//         return match jwt::verify_hs256(req.token, SECRET) {
+//             jwt::Verified::Valid(c) => grant_for_scope({ c.scope.view() }),
+//             jwt::Verified::Invalid(_) => auth::nothing(),
+//         };
+//     }
+//
+// ---- what it refuses, and why each one is a real attack --------------------
+//
+// A JWT verifier is mostly a list of things not to do, and every item below is
+// a published break of some library that did it:
+//
+//   alg: "none"        The header names the algorithm, and the header is
+//                      attacker-supplied. A verifier that trusts it accepts a
+//                      token with an empty signature. Only "HS256" is accepted
+//                      here, compared before anything else is read.
+//
+//   algorithm confusion
+//                      The same "trust the header" bug in its other shape: a
+//                      token claiming RS256 verified with an HMAC over the
+//                      public key. Not possible here because the algorithm is
+//                      not a parameter — this function verifies HS256, and a
+//                      token saying anything else is invalid.
+//
+//   early-exit compare A `==` over the MAC bytes leaks, by timing, how many
+//                      leading bytes matched, which forges a signature one
+//                      byte at a time. `crypto::Digest::equals` is constant
+//                      time and is what this uses.
+//
+//   lenient base64     A decoder that skips characters it does not recognise
+//                      makes two spellings of a token verify identically.
+//                      `stdlib/base64` refuses instead.
+//
+//   signature over the DECODED payload
+//                      The signature covers the ENCODED first two segments,
+//                      byte for byte, exactly as they arrived. Re-encoding the
+//                      payload to check it would accept a re-ordered or
+//                      re-spaced JSON object that hashes differently.
+//
+//   no expiry check    A token that never expires is a credential that leaked
+//                      once and works forever. `exp` and `nbf` are checked
+//                      when present, against `stdlib/time::now()`.
+//
+// ---- what it does NOT do ----------------------------------------------------
+//
+// No RS256/ES256 (those want real asymmetric crypto and a key format parser),
+// no JWKS fetching, no issuer/audience policy. `iss` and `aud` are parsed and
+// handed over; deciding what they mean is the application's job, and so is
+// deciding what a scope is worth.
+
+import "stdlib/base64" as base64;
+import "stdlib/crypto" as crypto;
+import "stdlib/option" as option;
+import "stdlib/result" as result;
+import "stdlib/vec" as vec;
+import "stdlib/text" as text;
+import "stdlib/time" as time;
+import "json/json" as json;
+
+// Why a token was refused. Distinct values because "this token expired" and
+// "this token was forged" call for different responses from an application —
+// one is a re-login, the other is worth logging.
+enum Reason {
+    Malformed,        // not three dot-separated segments, or a segment is not base64
+    UnsupportedAlg,   // the header names anything but HS256, including "none"
+    BadSignature,     // the MAC did not match
+    Expired,          // `exp` is in the past
+    NotYetValid,      // `nbf` is in the future
+}
+
+fn reason_index(r: Reason) -> i32 {
+    return match r {
+        Reason::Malformed => 0,
+        Reason::UnsupportedAlg => 1,
+        Reason::BadSignature => 2,
+        Reason::Expired => 3,
+        Reason::NotYetValid => 4,
+    };
+}
+
+fn reason_eq(a: Reason, b: Reason) -> bool {
+    return reason_index(a) == reason_index(b);
+}
+
+fn reason_text(r: Reason) -> str {
+    return match r {
+        Reason::Malformed => "malformed",
+        Reason::UnsupportedAlg => "unsupported_alg",
+        Reason::BadSignature => "bad_signature",
+        Reason::Expired => "expired",
+        Reason::NotYetValid => "not_yet_valid",
+    };
+}
+
+// The claims this package reads. The registered ones by name, plus `scope`,
+// which is not registered but is what every OAuth-shaped system puts a
+// capability list in.
+//
+// A missing claim is "" or 0 rather than an Option per field: a policy asks
+// "is the scope `autofill`", and `""` answers that correctly without four
+// levels of match. `has_exp` / `has_nbf` exist because 0 is a real time.
+struct Claims {
+    subject: text::Text,      // sub
+    issuer: text::Text,       // iss
+    audience: text::Text,     // aud
+    scope: text::Text,        // scope
+    expires_at: i64,          // exp, unix seconds
+    not_before: i64,          // nbf
+    issued_at: i64,           // iat
+    has_exp: bool,
+    has_nbf: bool,
+    // The verified payload, as its JSON source. For a policy that needs a
+    // claim this struct does not name: parse it and read whatever you like.
+    //
+    // Text rather than a parsed `json::Value` because handing back the parsed
+    // tree means this function both BORROWS the local (to read `sub`, `exp`,
+    // …) and MOVES it into the result, and on the current compiler that value
+    // is then dropped twice — a heap abort at the end of the run, nowhere near
+    // the code that caused it. See bugs/borrow-then-move-into-struct-literal.md.
+    //
+    // It is decoded, so a caller pays only a parse and never a base64 decode
+    // of a segment whose signature was already checked in its encoded form.
+    payload_json: text::Text,
+}
+
+// The result of verifying. A two-armed enum rather than `Option[Claims]`
+// because the reason is the point: a policy that cannot tell `Expired` from
+// `BadSignature` cannot tell a user to log in again.
+enum Verified {
+    Valid(Claims),
+    Invalid(Reason),
+}
+
+// Reads the discriminant and nothing else. It does NOT move the payload out —
+// which matters, because a by-value parameter in C+ BORROWS rather than
+// consuming, and a match arm that binds `Invalid(r)` and returns `r` out of a
+// borrowed parameter hands the caller a value its own temporary will also
+// drop. That is a double-free, and it surfaces as a crash in whatever runs
+// next rather than at the call. Bind the result to a named local and match
+// THAT when you want the reason.
+fn is_valid(v: Verified) -> bool {
+    return match v {
+        Verified::Valid(_) => true,
+        Verified::Invalid(_) => false,
+    };
+}
+
+// ---- segment splitting -------------------------------------------------------
+
+// Byte offset of the next '.' at or after `from`, or the length when there is
+// none. Hand-rolled rather than a split-into-Vec because a JWT has exactly two
+// dots and the segments must stay as views into the original token — the
+// signature covers those bytes, and copying them is how a re-encoding bug
+// starts.
+fn dot_at(s: str, from: usize) -> usize {
+    let n: usize = { #str_len(s) };
+    var i: usize = from;
+    while i < n {
+        if { *(((#str_ptr(s) as usize) +% i) as *u8) } == ('.' as u8) { return i; }
+        i = i +% (1 as usize);
+    }
+    return n;
+}
+
+fn slice_of(s: str, from: usize, to: usize) -> str {
+    if to <= from { return ""; }
+    return { #str_from_raw_parts(((#str_ptr(s) as usize) +% from) as *u8, to -% from) };
+}
+
+// ---- verification ------------------------------------------------------------
+
+// Verify an HS256 JWT against `secret` and return its claims.
+//
+// `leeway_secs` widens the expiry window in both directions, for clock skew
+// between the issuer and this machine. 0 is exact; 60 is the usual choice.
+fn verify_hs256(token: str, secret: str, leeway_secs: i64 = 0 as i64) -> Verified {
+    return verify_hs256_at(token, secret, time::now(), leeway_secs);
+}
+
+// The same, at a stated time. The clock is a parameter so expiry is testable
+// without waiting and without a fake clock installed globally — every test
+// below drives this one.
+fn verify_hs256_at(token: str, secret: str, now: i64, leeway_secs: i64 = 0 as i64) -> Verified {
+    let n: usize = { #str_len(token) };
+    let d1: usize = dot_at(token, 0 as usize);
+    if d1 >= n { return Verified::Invalid(Reason::Malformed); }
+    let d2: usize = dot_at(token, d1 +% (1 as usize));
+    if d2 >= n { return Verified::Invalid(Reason::Malformed); }
+    // A fourth segment is not a JWS Compact Serialization.
+    if dot_at(token, d2 +% (1 as usize)) < n { return Verified::Invalid(Reason::Malformed); }
+
+    let header_seg: str = slice_of(token, 0 as usize, d1);
+    let payload_seg: str = slice_of(token, d1 +% (1 as usize), d2);
+    let sig_seg: str = slice_of(token, d2 +% (1 as usize), n);
+    if { #str_len(header_seg) } == (0 as usize) { return Verified::Invalid(Reason::Malformed); }
+    if { #str_len(sig_seg) } == (0 as usize) { return Verified::Invalid(Reason::Malformed); }
+
+    // THE ALGORITHM IS NOT A PARAMETER. The header is attacker-supplied, so it
+    // is checked against the one algorithm this function implements rather
+    // than used to choose one. `alg: "none"` fails here like anything else.
+    let header_json: text::Text = match base64::decode_url_text(header_seg) {
+        option::Option[text::Text]::Some(t) => t,
+        option::Option[text::Text]::None => { return Verified::Invalid(Reason::Malformed); }
+    };
+    let header: json::Value = match json::Value::parse({ header_json.view() }) {
+        result::Result[json::Value, json::ParseError]::Ok(v) => v,
+        result::Result[json::Value, json::ParseError]::Err(_) => {
+            return Verified::Invalid(Reason::Malformed);
+        }
+    };
+    if header.field_str("alg", "").view() != "HS256" {
+        return Verified::Invalid(Reason::UnsupportedAlg);
+    }
+
+    // THE SIGNATURE COVERS THE ENCODED SEGMENTS, byte for byte as they
+    // arrived. Not the decoded payload, and not a re-encoding of it — either
+    // would accept a token whose JSON was re-ordered or re-spaced.
+    let signing_input: str = slice_of(token, 0 as usize, d2);
+    let expected: crypto::Digest = crypto::hmac_sha256(secret, signing_input);
+
+    let supplied: vec::Vec[u8] = match base64::decode_url(sig_seg) {
+        option::Option[vec::Vec[u8]]::Some(b) => b,
+        option::Option[vec::Vec[u8]]::None => { return Verified::Invalid(Reason::Malformed); }
+    };
+    // CONSTANT TIME, and length-checked inside: a MAC of the wrong length is
+    // not a MAC, and comparing its prefix would accept a truncated one. A byte
+    // loop here forges a signature one byte at a time.
+    if !expected.equals_bytes({ #str_ptr(supplied.as_byte_view()) }, supplied.count()) {
+        return Verified::Invalid(Reason::BadSignature);
+    }
+
+    // Only now is the payload worth reading. Parsing before the signature
+    // check would run the parser on unauthenticated bytes.
+    let payload_text: text::Text = match base64::decode_url_text(payload_seg) {
+        option::Option[text::Text]::Some(t) => t,
+        option::Option[text::Text]::None => { return Verified::Invalid(Reason::Malformed); }
+    };
+    let payload: json::Value = match json::Value::parse({ payload_text.view() }) {
+        result::Result[json::Value, json::ParseError]::Ok(v) => v,
+        result::Result[json::Value, json::ParseError]::Err(_) => {
+            return Verified::Invalid(Reason::Malformed);
+        }
+    };
+
+    let has_exp: bool = payload.has("exp");
+    let has_nbf: bool = payload.has("nbf");
+    let exp: i64 = payload.field_number("exp", 0.0f64) as i64;
+    let nbf: i64 = payload.field_number("nbf", 0.0f64) as i64;
+
+    // Expiry is checked AFTER the signature: an unsigned token's `exp` is not
+    // a fact about anything, and reporting `Expired` for a forgery would tell
+    // an attacker their signature was fine.
+    if has_exp {
+        if now > (exp +% leeway_secs) { return Verified::Invalid(Reason::Expired); }
+    }
+    if has_nbf {
+        if now < (nbf -% leeway_secs) { return Verified::Invalid(Reason::NotYetValid); }
+    }
+
+    // EVERY read off `payload` happens HERE, into a local, before the struct
+    // literal. `field_str` and friends take `this` BY VALUE, which in C+
+    // borrows — so a literal that reads `payload` in one field and moves it in
+    // another has both borrowed and consumed the same local, and the value is
+    // dropped twice. That is a heap abort at the end of the run, nowhere near
+    // the code that caused it.
+    let subject: text::Text = payload.field_str("sub", "");
+    let issuer: text::Text = payload.field_str("iss", "");
+    let audience: text::Text = payload.field_str("aud", "");
+    let scope: text::Text = payload.field_str("scope", "");
+    let issued_at: i64 = payload.field_number("iat", 0.0f64) as i64;
+    // A fresh Text, created here and moved once — `payload_text` itself is
+    // borrowed above and must stay borrow-only for the reason in `Claims`.
+    let source: text::Text = text::from_str({ payload_text.view() });
+
+    return Verified::Valid(Claims {
+        subject: subject,
+        issuer: issuer,
+        audience: audience,
+        scope: scope,
+        expires_at: exp,
+        not_before: nbf,
+        issued_at: issued_at,
+        has_exp: has_exp,
+        has_nbf: has_nbf,
+        payload_json: source,
+    });
+}
+
+// ---- signing (for tests and for an app that issues its own) ------------------
+
+// Build an HS256 token over an already-serialized claims object.
+//
+// Here because a verifier with no way to produce a valid token is a verifier
+// whose tests can only assert failures — and because an application that mints
+// its own short-lived agent tokens needs exactly this and nothing more.
+fn sign_hs256(payload_json: str, secret: str) -> text::Text {
+    // EVERY intermediate is a NAMED local, and none of these `.view()`s is
+    // taken from a call result inline. A coerced rvalue `Text` at an argument
+    // position aims into a temporary whose lifetime does not survive the way
+    // this needs it to — the symptom is a segment of binary garbage where the
+    // base64 should be, and the token then fails its own verifier. See
+    // bugs/rvalue-text-coercion-binding-leak.md for the family.
+    let head_b64: text::Text = base64::encode_url("{\"alg\":\"HS256\",\"typ\":\"JWT\"}");
+    let payload_b64: text::Text = base64::encode_url(payload_json);
+
+    var signing_input: text::Text = text::from_str({ head_b64.view() });
+    signing_input = signing_input.appending(".");
+    signing_input = signing_input.appending({ payload_b64.view() });
+
+    let mac: crypto::Digest = crypto::hmac_sha256(secret, { signing_input.view() });
+    var raw: [u8; 32] = [0u8; 32];
+    let _ok: bool = mac.copy_into(#addr_of(raw) as *u8, 32 as usize);
+    let sig_b64: text::Text = base64::encode_url_bytes(#addr_of(raw) as *u8, 32 as usize);
+
+    var out: text::Text = text::from_str({ signing_input.view() });
+    out = out.appending(".");
+    out = out.appending({ sig_b64.view() });
+    return out;
+}

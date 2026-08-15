@@ -1,0 +1,302 @@
+// agent_jwt test root.
+//
+// Every refusal this package makes is a published break of some JWT library,
+// so each one gets a test that produces the attack rather than asserting the
+// code path. `sign_hs256` is what makes that possible: a verifier whose tests
+// can only assert failures is a verifier nobody trusts on the success path.
+
+import "stdlib/base64" as base64;
+import "stdlib/crypto" as crypto;
+import "stdlib/text" as text;
+import "stdlib/io" as io;
+import "stdlib/option" as option;
+import "stdlib/vec" as vec;
+import "agent_core/auth" as auth;
+import "./agent_jwt" as jwt;
+
+fn main() -> i32 { return 0; }
+
+fn secret() -> str { return "a-shared-secret-of-reasonable-length"; }
+
+// A token that is valid at t=1000, expiring at t=2000.
+fn good_token() -> text::Text {
+    return jwt::sign_hs256(
+        "{\"sub\":\"agent-7\",\"iss\":\"iris\",\"aud\":\"payments\",\"scope\":\"autofill\",\"exp\":2000,\"iat\":900}",
+        secret());
+}
+
+// Verify, and answer whether it refused for `want`.
+//
+// The result is bound to a NAMED LOCAL before it is matched. `Verified::Valid`
+// owns Texts, and a by-value parameter in C+ BORROWS rather than consuming —
+// so a helper taking the result as a parameter and returning the reason out of
+// it hands back a value the caller's temporary will also drop. That is a heap
+// abort at the end of the run, in whatever ran last rather than here.
+fn refuses(token: str, now: i64, want: jwt::Reason) -> bool {
+    let v: jwt::Verified = jwt::verify_hs256_at(token, secret(), now);
+    return match v {
+        jwt::Verified::Valid(_) => false,
+        jwt::Verified::Invalid(r) => jwt::reason_eq(r, want),
+    };
+}
+
+fn refuses_with_leeway(token: str, now: i64, leeway: i64, want: jwt::Reason) -> bool {
+    let v: jwt::Verified = jwt::verify_hs256_at(token, secret(), now, leeway);
+    return match v {
+        jwt::Verified::Valid(_) => false,
+        jwt::Verified::Invalid(r) => jwt::reason_eq(r, want),
+    };
+}
+
+fn accepts(token: str, now: i64) -> bool {
+    let v: jwt::Verified = jwt::verify_hs256_at(token, secret(), now);
+    return match v {
+        jwt::Verified::Valid(_) => true,
+        jwt::Verified::Invalid(_) => false,
+    };
+}
+
+fn accepts_with_leeway(token: str, now: i64, leeway: i64) -> bool {
+    let v: jwt::Verified = jwt::verify_hs256_at(token, secret(), now, leeway);
+    return match v {
+        jwt::Verified::Valid(_) => true,
+        jwt::Verified::Invalid(_) => false,
+    };
+}
+
+#[test]
+fn a_well_formed_token_verifies_and_carries_its_claims() {
+    let t: text::Text = good_token();
+    match jwt::verify_hs256_at({ t.view() }, secret(), 1000 as i64) {
+        jwt::Verified::Valid(c) => {
+            assert c.subject.view() == "agent-7";
+            assert c.issuer.view() == "iris";
+            assert c.audience.view() == "payments";
+            assert c.scope.view() == "autofill";
+            assert c.expires_at == (2000 as i64);
+            assert c.issued_at == (900 as i64);
+            assert c.has_exp;
+            assert !c.has_nbf;
+            // The verified payload is there as JSON, for a claim this struct
+            // does not name.
+            assert c.payload_json.contains("\"scope\"");
+        }
+        jwt::Verified::Invalid(_) => { assert false; }
+    };
+    return;
+}
+
+#[test]
+fn alg_none_is_refused() {
+    // THE canonical JWT break: the header names the algorithm, the header is
+    // attacker-supplied, and a verifier that trusts it accepts an empty
+    // signature. Built by hand because `sign_hs256` cannot produce it.
+    // Every intermediate is a NAMED local. A `.view()` taken from a call
+    // result and passed as an argument aims into a temporary that does not
+    // survive the call reliably — the symptom is a test that passes most runs
+    // and fails some. See bugs/rvalue-text-view-as-argument.md.
+    let hdr: text::Text = base64::encode_url("{\"alg\":\"none\",\"typ\":\"JWT\"}");
+    let body: text::Text = base64::encode_url("{\"sub\":\"attacker\",\"scope\":\"autofill\"}");
+    var t: text::Text = text::from_str({ hdr.view() });
+    t = t.appending(".");
+    t = t.appending({ body.view() });
+    t = t.appending(".");
+    // Some producers of this attack append an empty signature, some append
+    // junk. Neither is accepted, and neither reaches the signature check.
+    assert !accepts({ t.view() }, 1000 as i64);
+    let t2: text::Text = t.appending("AAAA");
+    assert refuses({ t2.view() }, 1000 as i64, jwt::Reason::UnsupportedAlg);
+    return;
+}
+
+#[test]
+fn an_algorithm_this_package_does_not_implement_is_refused() {
+    // Algorithm confusion in its other shape: a token claiming RS256, which a
+    // library that dispatches on the header would try to verify with an HMAC
+    // over the public key. The algorithm is not a parameter here.
+    let hdr: text::Text = base64::encode_url("{\"alg\":\"RS256\",\"typ\":\"JWT\"}");
+    let body: text::Text = base64::encode_url("{\"sub\":\"attacker\"}");
+    var t: text::Text = text::from_str({ hdr.view() });
+    t = t.appending(".");
+    t = t.appending({ body.view() });
+    let mac: crypto::Digest = crypto::hmac_sha256(secret(), { t.view() });
+    var raw: [u8; 32] = [0u8; 32];
+    let _ok: bool = mac.copy_into(#addr_of(raw) as *u8, 32 as usize);
+    let sig: text::Text = base64::encode_url_bytes(#addr_of(raw) as *u8, 32 as usize);
+    t = t.appending(".");
+    t = t.appending({ sig.view() });
+    // The MAC is genuinely correct for these bytes. It is still refused,
+    // because the header does not say HS256.
+    assert refuses({ t.view() }, 1000 as i64, jwt::Reason::UnsupportedAlg);
+    return;
+}
+
+#[test]
+fn a_token_signed_with_another_secret_is_refused() {
+    let t: text::Text = jwt::sign_hs256("{\"sub\":\"agent-7\",\"scope\":\"autofill\"}",
+                                        "the-wrong-secret");
+    assert refuses({ t.view() }, 1000 as i64, jwt::Reason::BadSignature);
+    return;
+}
+
+#[test]
+fn a_tampered_payload_is_refused() {
+    // The attack the signature exists to stop: take a valid token, rewrite the
+    // claims, keep the signature. Every byte of the new payload is well-formed
+    // base64 and well-formed JSON.
+    let t: text::Text = good_token();
+    let s: str = { t.view() };
+    // Rebuild with a payload granting a wider scope, keeping header and sig.
+    var i: usize = 0 as usize;
+    var d1: usize = 0 as usize;
+    var d2: usize = 0 as usize;
+    var seen: i32 = 0;
+    while i < { #str_len(s) } {
+        if { *(((#str_ptr(s) as usize) +% i) as *u8) } == ('.' as u8) {
+            if seen == 0 { d1 = i; } else { d2 = i; }
+            seen = seen + 1;
+        }
+        i = i +% (1 as usize);
+    }
+    var forged: text::Text = text::from_str(
+        { #str_from_raw_parts(#str_ptr(s), d1 +% (1 as usize)) });
+    let wider: text::Text = base64::encode_url("{\"sub\":\"agent-7\",\"scope\":\"admin\",\"exp\":2000}");
+    forged = forged.appending({ wider.view() });
+    forged = forged.appending({
+        #str_from_raw_parts(((#str_ptr(s) as usize) +% d2) as *u8, { #str_len(s) } -% d2) });
+    assert refuses({ forged.view() }, 1000 as i64, jwt::Reason::BadSignature);
+    return;
+}
+
+#[test]
+fn expiry_is_enforced_and_leeway_widens_it() {
+    let t: text::Text = good_token();          // exp = 2000
+    assert accepts({ t.view() }, 1999 as i64);
+    assert accepts({ t.view() }, 2000 as i64);
+    assert refuses({ t.view() }, 2001 as i64, jwt::Reason::Expired);
+    // Clock skew between the issuer and this machine is real; leeway is how an
+    // application says how much of it to tolerate.
+    assert accepts_with_leeway({ t.view() }, 2030 as i64, 60 as i64);
+    assert refuses_with_leeway({ t.view() }, 2061 as i64, 60 as i64, jwt::Reason::Expired);
+    return;
+}
+
+#[test]
+fn a_not_before_claim_is_enforced() {
+    let t: text::Text = jwt::sign_hs256("{\"sub\":\"later\",\"nbf\":5000}", secret());
+    assert refuses({ t.view() }, 4999 as i64, jwt::Reason::NotYetValid);
+    assert accepts({ t.view() }, 5000 as i64);
+    return;
+}
+
+#[test]
+fn a_token_with_no_exp_does_not_expire_but_says_so() {
+    // Not an error — plenty of tokens are bounded by something other than a
+    // claim — but a policy has to be able to SEE that there is no bound.
+    let t: text::Text = jwt::sign_hs256("{\"sub\":\"forever\"}", secret());
+    match jwt::verify_hs256_at({ t.view() }, secret(), 999999 as i64) {
+        jwt::Verified::Valid(c) => { assert !c.has_exp; }
+        jwt::Verified::Invalid(_) => { assert false; }
+    };
+    return;
+}
+
+#[test]
+fn expiry_is_reported_only_after_the_signature_checks_out() {
+    // A forged token whose `exp` is also in the past must answer
+    // BadSignature. Reporting Expired would tell an attacker their signature
+    // was fine and only the clock was wrong.
+    let t: text::Text = jwt::sign_hs256("{\"sub\":\"x\",\"exp\":100}", "the-wrong-secret");
+    assert refuses({ t.view() }, 99999 as i64, jwt::Reason::BadSignature);
+    return;
+}
+
+#[test]
+fn malformed_tokens_are_refused_at_every_shape() {
+    let now: i64 = 1000 as i64;
+    assert !accepts("", now);
+    assert !accepts("not-a-token", now);
+    assert !accepts("only.two", now);
+    assert !accepts("a.b.c.d", now);   // four segments
+    assert !accepts("..", now);
+    assert !accepts("!!!.!!!.!!!", now);
+    // A header that decodes but is not JSON.
+    let bad_hdr: text::Text = base64::encode_url("not json");
+    let empty_body: text::Text = base64::encode_url("{}");
+    var t: text::Text = text::from_str({ bad_hdr.view() });
+    t = t.appending(".");
+    t = t.appending({ empty_body.view() });
+    t = t.appending(".AAAA");
+    assert !accepts({ t.view() }, now);
+    return;
+}
+
+#[test]
+fn a_signature_of_the_wrong_length_is_refused() {
+    // A truncated MAC must not be accepted by comparing its prefix.
+    let t: text::Text = good_token();
+    let s: str = { t.view() };
+    var d2: usize = 0 as usize;
+    var i: usize = 0 as usize;
+    var seen: i32 = 0;
+    while i < { #str_len(s) } {
+        if { *(((#str_ptr(s) as usize) +% i) as *u8) } == ('.' as u8) {
+            seen = seen + 1;
+            if seen == 2 { d2 = i; }
+        }
+        i = i +% (1 as usize);
+    }
+    // Keep the first four base64 characters of the signature: a valid encoding
+    // of a 3-byte prefix of the real MAC.
+    var short_t: text::Text = text::from_str(
+        { #str_from_raw_parts(#str_ptr(s), d2 +% (5 as usize)) });
+    assert refuses({ short_t.view() }, 1000 as i64, jwt::Reason::BadSignature);
+    return;
+}
+
+// ---- the shape this exists for ----------------------------------------------
+
+// An application's policy: verify, then decide what the claims are worth. The
+// mapping from a scope to capabilities is the APPLICATION's, which is why this
+// lives in a test rather than in the package.
+fn policy_grant(token: str, now: i64) -> auth::Grant {
+    return match jwt::verify_hs256_at(token, secret(), now, 60 as i64) {
+        jwt::Verified::Valid(c) => {
+            if { c.scope.view() } == "autofill" {
+                auth::protected_operator()
+            } else if { c.scope.view() } == "drive" {
+                auth::operator()
+            } else {
+                auth::reader()
+            }
+        }
+        jwt::Verified::Invalid(_) => auth::nothing(),
+    };
+}
+
+#[test]
+fn a_policy_turns_a_verified_scope_into_a_grant() {
+    // The whole point of the package, end to end: a credential arrives as an
+    // opaque string on `auth::Request`, and what comes out is what the agent
+    // may reach.
+    let autofill: text::Text = jwt::sign_hs256("{\"scope\":\"autofill\",\"exp\":2000}", secret());
+    let g1: auth::Grant = policy_grant({ autofill.view() }, 1000 as i64);
+    assert g1.has(auth::cap_read_protected() | auth::cap_act_protected());
+    // ...and still not the tier an application declares and never mints.
+    assert !g1.has(auth::cap_read_private());
+
+    let drive: text::Text = jwt::sign_hs256("{\"scope\":\"drive\",\"exp\":2000}", secret());
+    let g2: auth::Grant = policy_grant({ drive.view() }, 1000 as i64);
+    assert g2.has(auth::cap_act());
+    assert !g2.has(auth::cap_act_protected());
+
+    // An expired credential grants nothing at all — which the MCP layer turns
+    // into a refused connection rather than a per-verb denial.
+    let g3: auth::Grant = policy_grant({ autofill.view() }, 9999 as i64);
+    assert g3.is_empty();
+    // As does a forged one.
+    let forged: text::Text = jwt::sign_hs256("{\"scope\":\"autofill\"}", "wrong");
+    assert policy_grant({ forged.view() }, 1000 as i64).is_empty();
+    return;
+}
+
