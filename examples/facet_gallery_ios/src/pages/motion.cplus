@@ -19,10 +19,18 @@ import "../shell" as shell;
 struct Motion {
     faded: bool,
     spun: f64,
+    // THE TIMER HANDLE HAS TO BE HELD. `services::Cancellable` cancels on DROP
+    // — that is the API's whole point, an observation must not outlive its
+    // owner — so a `let` inside the handler cancels the timer on the way out
+    // and the second half of the pop never runs. Found by running: the dot
+    // grew and stayed grown.
+    pop_timer: services::Cancellable,
 }
 
 impl Motion {
-    fn new() -> Motion { return Motion { faded: false, spun: 0.0f64 }; }
+    fn new() -> Motion {
+        return Motion { faded: false, spun: 0.0f64, pop_timer: services::Cancellable::none() };
+    }
 
     fn fade(ref this, sender: *u8) {
         match mount::find("m:fader") {
@@ -61,7 +69,7 @@ impl Motion {
             option::Option[*core::Node]::Some(n) => {
                 core::animate_scale(n, 1.4f64, vocab::Duration::of_seconds(0.16f64),
                                     vocab::Easing::SinOut);
-                let _h: services::Cancellable = services::after(0.16f64, unpop, n as *u8);
+                this.pop_timer = services::after(0.16f64, unpop, n as *u8);
             }
             option::Option[*core::Node]::None => { }
         }

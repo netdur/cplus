@@ -92,7 +92,18 @@ fn page(title: str, intro: str, take body: flex::Builder, key: str) -> core::Nod
     col.add(ui::column(body).gap(16.0f64));
     var inner: core::Node = ui::column(col).padding(20.0f64).gap(16.0f64);
 
-    var root: core::Node = ui::scroll(key: key, axis: vocab::ScrollAxis::Vertical).grow(1.0f64);
+    // `.shrink(1)` IS WHAT MAKES IT SCROLL, and it is the least obvious line in
+    // this file. flex defaults `flex_shrink` to 0 — Yoga's deviation from CSS,
+    // inherited by the engine — so an item never lays out smaller than its
+    // content. A scroll's whole job is to be smaller than its content, so
+    // without this the scroll VIEW is as tall as everything inside it,
+    // `contentSize` equals its frame, and there is nothing to scroll.
+    //
+    // Measured in the simulator before the fix: frame 402x1137 on an 874pt
+    // screen, contentSize 402x1137.
+    var root: core::Node = ui::scroll(key: key, axis: vocab::ScrollAxis::Vertical)
+        .grow(1.0f64)
+        .shrink(1.0f64);
     match scroll::find(key, within: #addr_of(root)) {
         option::Option[scroll::Scroll]::Some(s) => {
             let _s: scroll::Scroll = s.set_content(inner);

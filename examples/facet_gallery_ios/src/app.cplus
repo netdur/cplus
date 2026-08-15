@@ -116,7 +116,14 @@ impl Gallery: component::Component {
 
         // The outlet: an empty keyed column `set_content` fills. Keyed, because
         // a key is an address and `mount::find` has to reach it.
-        root.add(ui::column(flex::Builder::new(), key: "g:outlet").grow(1.0f64));
+        // `.shrink(1)` HERE TOO, and it has to be on every ancestor between the
+        // window and the scroll. flex's default `flex_shrink` is 0, so any
+        // container in the chain that omits it lays out at its content's height
+        // and pins everything below it — the scroll included, which is then as
+        // tall as its own content and has nothing to scroll.
+        root.add(ui::column(flex::Builder::new(), key: "g:outlet")
+                 .grow(1.0f64)
+                 .shrink(1.0f64));
 
         var page: core::Node = ui::column(root).gap(12.0f64).grow(1.0f64);
         page.set_background_color(vocab::Color::window_background());

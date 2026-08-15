@@ -62,6 +62,22 @@ approximations the last page names.
 | **Motion** | `animate_*`, plus the entrance pattern and one button that is deliberately wrong (the dead snap) so its stderr line can be seen |
 | **Gaps** | what is NOT built, shown rather than described: a `list` that warns once, a `split` that is silent because it is answered, and the approximations |
 
+## The one layout trap, written down because it cost an evening
+
+**flex defaults `flex_shrink` to 0** — Yoga's deviation from CSS, inherited by
+the engine — so an item never lays out smaller than its content. A scroll's
+whole job is to be smaller than its content, so a `scroll` **and every container
+between it and the window** needs `.shrink(1.0f64)`. Miss one and that container
+lays out at its content's height, pins everything below it, and the scroll view
+ends up exactly as tall as what is inside it: `contentSize == frame`, and
+nothing scrolls.
+
+Measured here, before the fix: `frame 402x1137` on an 874pt screen, with
+`contentSize 402x1137`. After: `frame 402x730, content 402x1137`.
+
+It is not an iOS bug — the same rule applies on macOS. A phone just runs out of
+screen sooner.
+
 ## What to watch for on the first run
 
 In rough order of how likely each is to be the thing that breaks:
