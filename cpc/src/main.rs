@@ -1868,6 +1868,76 @@ fn emit_extra_object_missing(diag_mode: DiagMode, obj: &Path, declared_in: &Path
 /// in the current working directory, walks the import graph from the
 /// declared binary entry, and produces a single linked binary at
 /// `target/{debug,release}/<bin-name>` (or `-o OUT` if provided).
+/// W0005: list every `.cplus` under the package's own `src/` that the build
+/// never loaded. An unimported file is invisible — it compiles never and
+/// warns never, and an agent READS it as if it described the live API:
+/// unreachable code is false evidence, proven the blunt way when a call to
+/// an undefined function appended to one still built exit-0. Platform-suffixed
+/// siblings (`runtime_linux.cplus` beside a loaded `runtime.cplus`) are the
+/// resolver's own convention for "reachable on another target", so they are
+/// exempt; everything else unloaded is dead on every target. The scan stays
+/// inside `src/` — a vendored dependency legitimately ships more modules than
+/// one consumer imports.
+fn warn_orphan_sources(loaded: &[PathBuf], root: &Path, diag_mode: DiagMode) {
+    let mut loaded_set: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
+    for p in loaded {
+        if let Ok(c) = p.canonicalize() {
+            loaded_set.insert(c);
+        }
+    }
+    let mut orphans: Vec<PathBuf> = Vec::new();
+    let mut stack = vec![root.join("src")];
+    while let Some(dir) = stack.pop() {
+        let Ok(rd) = fs::read_dir(&dir) else { continue };
+        for e in rd.flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                stack.push(p);
+                continue;
+            }
+            if p.extension().and_then(|x| x.to_str()) != Some("cplus") {
+                continue;
+            }
+            let Ok(c) = p.canonicalize() else { continue };
+            if loaded_set.contains(&c) {
+                continue;
+            }
+            if let Some(stem) = p.file_stem().and_then(|x| x.to_str()) {
+                if target::PLATFORMS
+                    .iter()
+                    .any(|plat| stem.ends_with(&format!("_{plat}")))
+                {
+                    continue;
+                }
+            }
+            orphans.push(p);
+        }
+    }
+    orphans.sort();
+    for p in orphans {
+        let rel = p.strip_prefix(root).unwrap_or(&p).to_path_buf();
+        let d = diag::Diagnostic {
+            severity: Severity::Warning,
+            code: diag::DiagCode("W0005"),
+            message: format!(
+                "`{}` is not reachable from the entry — it never compiles, and nothing it says is checked",
+                rel.display()
+            ),
+            primary: diag::SourceSpan {
+                file: p.clone(),
+                start: diag::Position { line: 1, col: 1, byte: 0 },
+                end: diag::Position { line: 1, col: 1, byte: 0 },
+            },
+            labels: Vec::new(),
+            notes: vec![
+                "an import line from a reachable module is what compiles a file; import it or delete it".to_string(),
+            ],
+            suggestions: Vec::new(),
+        };
+        emit_diag(&d, diag_mode, "");
+    }
+}
+
 fn build_project(
     out: Option<PathBuf>,
     diag_mode: DiagMode,
@@ -1972,7 +2042,7 @@ fn build_project(
     // the resolver so vendor imports (`utils/math`) resolve under
     // vendor/<dep>/src/. The consumer's bin path is the entry.
     let dep_names: Vec<String> = active_dep_names(&m);
-    let (program, _entry_file_id, mono) = match timings::phase("resolve+sema+borrowck", || {
+    let (program, _entry_file_id, mono, loaded_paths) = match timings::phase("resolve+sema+borrowck", || {
         load_and_check_project_full(
             &bin.path,
             &m.root,
@@ -1991,6 +2061,7 @@ fn build_project(
     // linked without `-fsanitize=...`), which meant every e2e ASan
     // test was vacuously clean. The single-file path (`compile_file`)
     // already plumbed sanitizers; this matches.
+    warn_orphan_sources(&loaded_paths, &m.root, diag_mode);
     ensure_coro_end_probed();
     let ir = timings::phase("codegen", || {
         codegen::generate_with_mono(&program, build_mode, fp_contract, None, sanitizers, false, &mono)
@@ -2099,6 +2170,14 @@ fn build_project(
     });
     timings::report();
     drop(tmp_handle); // explicit cleanup on the secure temp path
+    if status == ExitCode::SUCCESS {
+        // One line on success. The only signal used to be the exit code,
+        // which is easy to lose — piping through `tail` reports tail's
+        // status, and that produced a confidently wrong "the build is
+        // green" at least once. The count is the loaded-file count: the
+        // modules this binary was actually built from.
+        println!("ok: {} modules -> {}", loaded_paths.len(), out_path.display());
+    }
     status
 }
 
@@ -2189,7 +2268,7 @@ fn build_lib_project(
         }
     };
     let dep_names: Vec<String> = active_dep_names(&m);
-    let (program, _entry_file_id, mono) = match timings::phase("resolve+sema+borrowck", || {
+    let (program, _entry_file_id, mono, _loaded_paths) = match timings::phase("resolve+sema+borrowck", || {
         load_and_check_project_full(
             &lib.path,
             &m.root,
@@ -2437,7 +2516,7 @@ fn emit_ll_project(diag_mode: DiagMode, build_mode: BuildMode, fp_contract: bool
         return code;
     }
     let dep_names: Vec<String> = active_dep_names(&m);
-    let (program, _, mono) = match load_and_check_project_full(
+    let (program, _, mono, _loaded_paths) = match load_and_check_project_full(
         &bin.path,
         &m.root,
         diag_mode,
@@ -2548,7 +2627,7 @@ fn load_and_check_project_full(
     is_lib: bool,
     deps: Option<&[String]>,
     rt_profile: Option<&cplus_core::manifest::RealtimeProfile>,
-) -> Result<(cplus_core::ast::Program, String, sema::MonoInfo), ExitCode> {
+) -> Result<(cplus_core::ast::Program, String, sema::MonoInfo, Vec<PathBuf>), ExitCode> {
     let mut loaded =
         match resolver::load_project_full(entry, root, is_lib, deps, Default::default()) {
             Ok(l) => l,
@@ -2677,7 +2756,12 @@ fn load_and_check_project_full(
     // are rewritten to mangled names. The result is a Program with no
     // generic items — codegen can consume it directly.
     let post_mono = run_monomorphize(loaded.program, &mono, &loaded.files);
-    Ok((post_mono, loaded.entry_file_id, mono))
+    // The files the build actually compiled — `cpc build`'s success line
+    // counts them, and the orphan warning (W0005) subtracts them from what
+    // sits under `src/`. Collected here because the per-file map is consumed
+    // with `loaded`.
+    let loaded_paths: Vec<PathBuf> = loaded.files.values().map(|(p, _)| p.clone()).collect();
+    Ok((post_mono, loaded.entry_file_id, mono, loaded_paths))
 }
 
 /// Slice 7GEN.5a wrapper: builds the type-name lookup closure from
@@ -2992,7 +3076,7 @@ fn run_test(
                 return code;
             }
             let dep_names: Vec<String> = active_dep_names(&m);
-            let (program, _, mono) = match load_and_check_project_full(
+            let (program, _, mono, _loaded_paths) = match load_and_check_project_full(
                 &entry_path,
                 &m.root,
                 diag_mode,

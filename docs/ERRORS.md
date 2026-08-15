@@ -4,7 +4,7 @@
 
 Every C+ diagnostic carries a numbered code, a source span, and often a machine-applicable suggestion. `cpc --diagnostics=json` emits the same information in a machine-readable shape for editors and agents. Codes prefixed with **W** are non-fatal warnings; the build continues. The normative ranges and what each phase owns are fixed in [§20 of the language specification](/docs/spec).
 
-This is the complete index — **189 codes**. Each entry gives the meaning, a minimal example that triggers it, and the typical fix. **148** of the examples are reproduced directly by `cpc check`; the rest need a multi-file project, a `--target`, or a build-time file, and say so in the example.
+This is the complete index — **191 codes**. Each entry gives the meaning, a minimal example that triggers it, and the typical fix. **150** of the examples are reproduced directly by `cpc check`; the rest need a multi-file project, a `--target`, or a build-time file, and say so in the example.
 
 ## Lexical
 
@@ -246,13 +246,13 @@ fn main() { }
 
 ### E0312 · Function used as value
 
-A function name is used as a bare value (or another unsupported form such as `&x`, a range outside `for`, or a malformed path) where a callable or value of the right shape was required.
+A function name is used as a bare value (or another unsupported form such as `&x`, a range outside `for`, or a malformed path) where a callable or value of the right shape was required. An ASSOCIATED fn — `Type::f`, no receiver — is a namespaced fn and takes its address the same way; a METHOD is not, because `fn(this, …)` is not the `fn(…)` written at the binding, and there is nothing to supply its receiver.
 
 ```cplus
 fn main() -> i32 { let x = 1; let y = &x; return 0; }
 ```
 
-**Fix.** Assign it to a `fn(...)`-typed binding to take the address.
+**Fix.** Assign it to a `fn(...)`-typed binding (or pass it where one is expected) to take the address. For a method, pass a bound method reference to a handler slot instead — the `*u8` after it carries the receiver.
 
 <sub>repro: checked · cplus-core/src/sema.rs:13138 · test cplus-core/src/sema.rs:ref_not_supported_e0312</sub>
 
@@ -1443,7 +1443,7 @@ fn main() -> i32 { return 0; }
 
 ### E0513 · Returning a `str` / `T[]` view of a local that drops
 
-A `str` / `T[]` view rooted at a function-local non-Copy owned value escapes the frame — returned directly, returned inside an aggregate (a struct with a `str` field CARRIES the view's borrow, including when built through a call like `store(local.view(), ..)` or returned via an alias), or stored into a place that outlives the frame (a `static`, or a `ref` target). The local is freed at return, so the escaped view would dangle.
+A `str` / `T[]` view is rooted at storage with no lifetime long enough for it. Two shapes. (1) The owner is a function-local non-Copy value and the view escapes the frame — returned directly, returned inside an aggregate (a struct with a `str` field CARRIES the view's borrow, including when built through a call like `store(local.view(), ..)` or returned via an alias), or stored into a place that outlives the frame (a `static`, or a `ref` target); the local is freed at return, so the escaped view would dangle. (2) The owner is a TEMPORARY nothing names — `let s: str = mk().view();`, the `Text`->`str` coercion of an rvalue (`let s: str = t.clone();`, `let s: str = "x ${i}";`), or either of those captured into an aggregate a binding keeps (`Slot { s: mk().view() }`). A temporary is an anonymous slot of the statement; a binding that outlives it has nothing to borrow from. The same temporary at an ARGUMENT position is fine — it outlives the call.
 
 ```cplus
 extern fn malloc(n: usize) -> *u8;
@@ -1460,9 +1460,9 @@ fn bad() -> str {
 }
 ```
 
-**Fix.** Own the bytes instead: store/return `Text` / `Vec[T]`, or borrow the view from a non-`take` parameter. Literal-backed views ('static bytes) escape freely.
+**Fix.** Own the bytes instead: store/return `Text` / `Vec[T]`, or borrow the view from a non-`take` parameter. For a temporary owner, give it a name first — `let owner: Text = mk(); let s: str = owner.view();` — or keep the binding owned. Literal-backed views ('static bytes) escape freely.
 
-<sub>repro: checked · cplus-core/src/borrowck.rs (ViewRules: check_return / flag_view_leaves / check_view_of_temp / check_store_escape) · test cpc/tests/e2e.rs:return_borrow_of_local_owned_rejected_e0513</sub>
+<sub>repro: checked · cplus-core/src/borrowck.rs (ViewRules: check_return / flag_view_leaves / check_view_of_temp / check_view_of_rvalue_owner / check_captured_view_of_temp / check_store_escape) · test cpc/tests/e2e.rs:return_borrow_of_local_owned_rejected_e0513</sub>
 
 ### E0514 · Owner goes out of scope while a view of it is still live
 
@@ -2738,6 +2738,37 @@ impl Counter {
 **Fix.** Add `#[watch]` to the struct, or rename the method if it is not meant to be a write hook. Only the two accepted hook shapes are flagged, so an `on_value` with any other signature stays an ordinary method.
 
 <sub>repro: checked · cplus-core/src/sema.rs:check_unwatched_watch_hook · test cplus-core/src/sema.rs:hook_shaped_on_value_without_watch_warns_w0004</sub>
+
+### W0005 · Source file is not reachable from the entry
+
+A file under `src/` compiles only when something reachable from the entry imports it. An unimported file is invisible: it compiles never, warns never, and reads as if it described the live API — a call to an undefined function in one still builds exit 0. For anyone reasoning from the source (a reviewer, an agent), unreachable code is false evidence. Platform-suffixed siblings (`runtime_linux.cplus` beside a loaded `runtime.cplus`) are the resolver's convention for `reachable on another target` and are exempt; the scan stays inside the package's own `src/`, since a vendored dependency legitimately ships more modules than one consumer imports.
+
+```cplus
+// src/dead.cplus — no reachable module imports it
+fn never_compiled() -> i32 { return undefined_function(); }   // builds exit-0 today
+// -> W0005 `src/dead.cplus` is not reachable from the entry — it never
+//    compiles, and nothing it says is checked
+```
+
+**Fix.** Import the file from a reachable module, or delete it. If it is a platform variant, name it `<module>_<platform>.cplus` beside its base module so the resolver owns the choice.
+
+<sub>repro: checked · cpc/src/main.rs:warn_orphan_sources · test cpc/tests/e2e.rs:orphan_source_file_warns_w0005_and_success_prints_module_count</sub>
+
+### W0006 · Use of a `#[deprecated]` item
+
+A call resolved to a function or method carrying `#[deprecated]`. The item still exists and still works; the attribute says it is on its way out, and the optional string is the author's migration note, printed verbatim. Reported at the USE, never at the declaration — a deprecated item is expected to still be defined and still be exercised by its own tests.
+
+```cplus
+#[deprecated("use parse_v2 instead")]
+fn parse() -> i32 { return 1; }
+
+fn main() -> i32 { return parse(); }
+// -> W0006 `parse` is deprecated: use parse_v2 instead
+```
+
+**Fix.** Move to the replacement the note names. Nothing breaks until the item is actually removed, so a warning list can be worked through at leisure; that is the point of the attribute over a hard rename.
+
+<sub>repro: checked · cplus-core/src/sema.rs:warn_if_deprecated · test cplus-core/src/sema.rs:deprecated_fn_and_method_uses_warn_w0006</sub>
 
 ### W0824 · Handler parameter cannot receive a bound method
 

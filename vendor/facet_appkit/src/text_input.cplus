@@ -236,6 +236,43 @@ fn did_change_imp(self_obj: *u8, cmd: *u8, notification: *u8) {
     return;
 }
 
+// THE CARET MOVED, or the selection changed. AppKit reports it for a text VIEW
+// only — a field's selection is the shared field editor's business — so this is
+// the editor's event and `text_area` is where the contract carries it.
+//
+// The props are written before the handler runs, so a handler that asks
+// `cursor_position()` gets where the caret IS rather than where it was: that
+// read is the whole point of the event, and a poll is what it replaces.
+fn did_change_selection_imp(self_obj: *u8, cmd: *u8, notification: *u8) {
+    let n: *core::Node = node_of(self_obj);
+    if n == (0 as *core::Node) { return; }
+    // NOTHING APPKIT REPORTS SAYS WHO CAUSED IT. Setting the text moves the
+    // selection to 0 and reports that like any other move — so a create pass
+    // stating `cursor_position: 3` wrote 3, heard "the caret is at 0" from its
+    // own text write, stored the 0, and then placed the caret from what it had
+    // just been told. `paint::is_asserting` brackets facet's own pass; a user
+    // event never lands inside one.
+    if paint::is_asserting() { return; }
+    let obj: *u8 = { rt::msg_id(notification, rt::sel(#str_ptr("object\0"))) };
+    if obj == (0 as *u8) { return; }
+    let iv: *props::InputViewProps = input_props_of(n);
+    if iv == (0 as *props::InputViewProps) { return; }
+    let sel: rt::Range = { msg_range(obj, rt::sel(#str_ptr("selectedRange\0"))) };
+    { (*iv).cursor_position = sel.location as i64 };
+    { (*iv).selection_length = sel.length as i64 };
+    let d: *core::Data = core::node_data(n);
+    if d == (0 as *core::Data) { return; }
+    let raw: *u8 = { (*d).props };
+    if raw == (0 as *u8) { return; }
+    if { (*d).kind } != props::K_TEXT_AREA { return; }
+    let p: *props::TextAreaProps = raw as *props::TextAreaProps;
+    fire({ (*p).on_selection_changed }, { (*p).on_selection_changed_ctx }, obj);
+    return;
+}
+
+#[link_name = "objc_msgSend"]
+extern fn msg_range(recv: *u8, sel: *u8) -> rt::Range;
+
 // A field's field editor is created when editing begins and is SHARED with
 // every other field in the window, so anything set on it has to be set again
 // here — see `apply_editor_state`.
@@ -351,6 +388,10 @@ fn delegate_class() -> *u8 {
                             did_end_imp, #str_ptr("v@:@\0"));
     synth::add_method_v_1id(cls, rt::sel(#str_ptr("textDidEndEditing:\0")),
                             did_end_imp, #str_ptr("v@:@\0"));
+    // THE CARET MOVED. Nothing fired for the selection, so every app that
+    // shows `Ln 4, Col 9` had to poll a control that knows the answer exactly.
+    synth::add_method_v_1id(cls, rt::sel(#str_ptr("textViewDidChangeSelection:\0")),
+                            did_change_selection_imp, #str_ptr("v@:@\0"));
     let _e1: i8 = add_method_i8_3id_sel(cls, rt::sel(#str_ptr("control:textView:doCommandBySelector:\0")),
                                         field_do_command_imp, #str_ptr("c@:@@:\0"));
     let _e2: i8 = add_method_i8_2id_sel(cls, rt::sel(#str_ptr("textView:doCommandBySelector:\0")),
@@ -1183,6 +1224,19 @@ fn apply_editor_state(f: ak::TextField, n: *core::Node, iv: *props::InputViewPro
 
 fn apply_editor_band(tv: ak::TextView, n: *core::Node, iv: *props::InputViewProps,
                      align: vocab::TextAlign, dirty: u64, b: Bits) {
+    // EVERYTHING FROM HERE IS FACET WRITING THIS CONTROL. Setting the text
+    // moves the caret to 0 and AppKit reports that exactly like a user click,
+    // so without the bracket a create pass stating `cursor_position: 3` heard
+    // "the caret is at 0" from its own text write, stored the 0, and then
+    // placed the caret from what it had just been told.
+    paint::begin_assert();
+    apply_editor_band_inner(tv, n, iv, align, dirty, b);
+    paint::end_assert();
+    return;
+}
+
+fn apply_editor_band_inner(tv: ak::TextView, n: *core::Node, iv: *props::InputViewProps,
+                           align: vocab::TextAlign, dirty: u64, b: Bits) {
     if (dirty & (b.text | b.text_transform)) != (0 as u64) {
         let want: text::Text = shown_text(iv);
         if tv.as_text().string().view() != want.view() { tv.as_text().set_string(want.view()); }
@@ -1220,6 +1274,150 @@ fn style_storage(tv: ak::TextView, attrs: *u8) {
     { rt::msg_void_id_range(storage, rt::sel(#str_ptr("setAttributes:range:\0")),
                             attrs, rt::Range { location: 0 as u64, length: len }) };
     return;
+}
+
+// ---- styling ranges of the text that is already there ------------------------
+//
+// Syntax highlighting, said portably. The contract's runs are BYTE offsets into
+// the control's own text (how `str` counts); an NSTextStorage indexes in UTF-16
+// units. One scan converts, because the two disagree on exactly the characters a
+// code editor is full of — an emoji in a comment shifts every run after it by
+// one unit, and nothing downstream would say so.
+//
+// The whole storage is reset to the editor's own band first, so a run that
+// disappears takes its colour with it. Bracketed in begin/endEditing: one layout
+// pass for the file, not one per run.
+fn apply_style_runs(tv: ak::TextView, runs: *vocab::StyleRuns,
+                    iv: *props::InputViewProps) {
+    let storage: *u8 = { rt::msg_id(tv.raw(), rt::sel(#str_ptr("textStorage\0"))) };
+    if storage == (0 as *u8) { return; }
+    let units: u64 = { rt::msg_u64(storage, rt::sel(#str_ptr("length\0"))) };
+    if units == (0 as u64) { return; }
+    let whole: rt::Range = rt::Range { location: 0 as u64, length: units };
+    { rt::msg_void(storage, rt::sel(#str_ptr("beginEditing\0"))) };
+    // Back to one colour for everything. `addAttribute:` layered over whatever
+    // the last set of runs left would leave a deleted run coloured forever.
+    let base: *u8 = paint::rich_attributes(editor_font(iv), { (*iv).text_color },
+                                           { (*iv).character_spacing }, 0.0f64,
+                                           option::Option[vocab::TextAlign]::None,
+                                           vocab::TextDecoration::None);
+    if base != (0 as *u8) {
+        { rt::msg_void_id_range(storage, rt::sel(#str_ptr("setAttributes:range:\0")),
+                                base, whole) };
+        rt::release(base);
+    }
+    let text: text::Text = tv.as_text().string();
+    let src: str = text;
+    var i: usize = 0 as usize;
+    let n: usize = { (*runs).count() };
+    while i < n {
+        let r: *vocab::StyleRun = { (*runs).at(i) };
+        if r != (0 as *vocab::StyleRun) {
+            let span: rt::Range = utf16_range_of(src, { (*r).start }, { (*r).length });
+            if span.length > (0 as u64) && span.location < units {
+                var clipped: rt::Range = span;
+                if clipped.location +% clipped.length > units {
+                    clipped.length = units -% clipped.location;
+                }
+                let attrs: *u8 = run_attributes(r, iv);
+                if attrs != (0 as *u8) {
+                    { rt::msg_void_id_range(storage,
+                                            rt::sel(#str_ptr("addAttributes:range:\0")),
+                                            attrs, clipped) };
+                    rt::release(attrs);
+                }
+            }
+        }
+        i = i +% (1 as usize);
+    }
+    { rt::msg_void(storage, rt::sel(#str_ptr("endEditing\0"))) };
+    return;
+}
+
+// The editor's own font — the one a run's weight and slant are applied ON TOP
+// of, so a bold keyword is the editor's face in bold rather than the system's.
+fn editor_font(iv: *props::InputViewProps) -> option::Option[ak::Font] {
+    return paint::ns_font_scaled({ (*iv).font_size }, { (*iv).font_weight },
+                                 { (*iv).font_family.view() }, { (*iv).is_italic },
+                                 { (*iv).font_scales });
+}
+
+// What ONE run says, and nothing it does not: an attribute a run leaves unset
+// keeps whatever the editor's band put there.
+fn run_attributes(r: *vocab::StyleRun, iv: *props::InputViewProps) -> *u8 {
+    let attrs: *u8 = { rt::alloc_init(#str_ptr("NSMutableDictionary\0")) };
+    if attrs == (0 as *u8) { return 0 as *u8; }
+    let fg: vocab::Color = { (*r).color };
+    if fg.is_set() {
+        { rt::msg_void_id_id(attrs, rt::sel(#str_ptr("setObject:forKey:\0")),
+                             paint::ns_color(fg).raw(), bridge::nsstring("NSColor")) };
+    }
+    let bg: vocab::Color = { (*r).background_color };
+    if bg.is_set() {
+        { rt::msg_void_id_id(attrs, rt::sel(#str_ptr("setObject:forKey:\0")),
+                             paint::ns_color(bg).raw(),
+                             bridge::nsstring("NSBackgroundColor")) };
+    }
+    // A weight or a slant of its own re-derives the face at the editor's size
+    // and family — the two facts a run does not carry and must not invent.
+    let w: vocab::FontWeight = { (*r).font_weight };
+    let italic: bool = { (*r).is_italic };
+    let plain: bool = match w { vocab::FontWeight::Default => true, _ => false };
+    if plain == false || italic {
+        match paint::ns_font_scaled({ (*iv).font_size }, w, { (*iv).font_family.view() },
+                                    italic, { (*iv).font_scales }) {
+            option::Option[ak::Font]::Some(f) => {
+                { rt::msg_void_id_id(attrs, rt::sel(#str_ptr("setObject:forKey:\0")),
+                                     f.raw(), bridge::nsstring("NSFont")) };
+            }
+            option::Option[ak::Font]::None => { }
+        }
+    }
+    match { (*r).decoration } {
+        vocab::TextDecoration::Underline => {
+            { rt::msg_void_id_id(attrs, rt::sel(#str_ptr("setObject:forKey:\0")),
+                                 paint::ns_number_i64(1 as i64),
+                                 bridge::nsstring("NSUnderline")) };
+        }
+        vocab::TextDecoration::Strikethrough => {
+            { rt::msg_void_id_id(attrs, rt::sel(#str_ptr("setObject:forKey:\0")),
+                                 paint::ns_number_i64(1 as i64),
+                                 bridge::nsstring("NSStrikethrough")) };
+        }
+        vocab::TextDecoration::None => { }
+    }
+    return attrs;
+}
+
+// BYTES IN, UTF-16 UNITS OUT. One pass over the text up to the run's end: a
+// two-byte character is one unit, a four-byte one is TWO (a surrogate pair),
+// and an offset that lands mid-character is snapped to the character it is in
+// rather than refused — a lexer one keystroke behind is stale, not wrong.
+fn utf16_range_of(s: str, start_b: usize, len_b: usize) -> rt::Range {
+    let bytes: *u8 = #str_ptr(s);
+    let total: usize = #str_len(s);
+    var b: usize = 0 as usize;
+    var u: u64 = 0 as u64;
+    var loc: u64 = 0 as u64;
+    var have_loc: bool = false;
+    let end_b: usize = start_b +% len_b;
+    while b < total {
+        if have_loc == false && b >= start_b { loc = u; have_loc = true; }
+        if b >= end_b {
+            if have_loc == false { return rt::Range { location: u, length: 0 as u64 }; }
+            return rt::Range { location: loc, length: u -% loc };
+        }
+        let c: u8 = { *(bytes + b) };
+        var step: usize = 1 as usize;
+        var wide: u64 = 1 as u64;
+        if c >= (0xF0 as u8) { step = 4 as usize; wide = 2 as u64; }
+        else if c >= (0xE0 as u8) { step = 3 as usize; }
+        else if c >= (0xC0 as u8) { step = 2 as usize; }
+        b = b +% step;
+        u = u +% wide;
+    }
+    if have_loc == false { return rt::Range { location: u, length: 0 as u64 }; }
+    return rt::Range { location: loc, length: u -% loc };
 }
 
 // ---- the length limit --------------------------------------------------------

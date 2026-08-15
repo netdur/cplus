@@ -58,7 +58,8 @@ reimplementing something whose traps are already documented in its comments.
 - **`iris/components.txt`**: never cite entry numbers from source. Resolved
   entries are deleted, which renumbers everything below; name the missing
   behaviour in words instead.
-- **`examples/`** is gitignored. Probe apps live there and are not committed.
+- **`playground/`** is gitignored. Local probe apps live there and are not committed.
+- **`examples/`** is tracked. Commit-worthy sample programs go there.
 - **Don't commit unless asked.** Flip task-tracker checkboxes in the same turn
   as the work.
 
@@ -67,7 +68,7 @@ reimplementing something whose traps are already documented in its comments.
 Full coverage per module — unit, e2e, and negative. Don't propose a lighter
 bar. UI *feel* (drag, wheel, momentum) cannot be asserted: an agent has no
 hands. Pin the state machine in a test, then build a probe app under
-`examples/` and ask the user to try it.
+`playground/` and ask the user to try it.
 
 Suites, all expected green:
 

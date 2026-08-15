@@ -1,0 +1,72 @@
+// Reference: span / formatted label
+//   var runs = Spans::new();
+//   runs.add(TextSpan::of("Hello ", color: …));
+//   ui::label("", formatted_text: runs)
+
+import "facet/facet" as core;
+import "facet/elements" as ui;
+import "facet/component" as component;
+import "facet/vocabulary" as vocab;
+import "stdlib/status" as status;
+import "../shell" as shell;
+
+struct SpansDemo {
+    n: i32,
+}
+
+impl SpansDemo {
+    fn new() -> SpansDemo { return SpansDemo { n: 0 }; }
+}
+
+impl SpansDemo: component::Component {
+    fn build(ref this) -> core::Node {
+        var body: core::Builder = core::Builder::new();
+        body.add(shell::caption("formatted_text  ·  Spans of TextSpan"));
+
+        var runs: vocab::Spans = vocab::Spans::new();
+        let _a: status::Status = runs.add(vocab::TextSpan::of(
+            "Bold ",
+            font_size: 16.0f64,
+            font_weight: vocab::FontWeight::Bold,
+            color: vocab::Color::ink(),
+        ));
+        let _b: status::Status = runs.add(vocab::TextSpan::of(
+            "italic ",
+            font_size: 16.0f64,
+            italic: true,
+            color: vocab::Color::ink(0.75f64),
+        ));
+        let _c: status::Status = runs.add(vocab::TextSpan::of(
+            "primary",
+            font_size: 16.0f64,
+            font_weight: vocab::FontWeight::Semibold,
+            color: vocab::Color::primary(),
+        ));
+        let _d: status::Status = runs.add(vocab::TextSpan::of(
+            " and plain.",
+            font_size: 16.0f64,
+            color: vocab::Color::ink(0.7f64),
+        ));
+        body.add(ui::label("", key: "sp:runs", formatted_text: runs));
+
+        body.add(shell::caption("span  ·  single styled run (viewless leaf)"));
+        body.add(ui::span(
+            "A span is a leaf used inside richer compositions.",
+            key: "sp:one",
+            font_size: 14.0f64,
+            text_color: vocab::Color::ink(0.8f64),
+        ));
+
+        return shell::panel(
+            "Spans",
+            "Rich text without a second text system: Spans feed label.formatted_text; span is a single run.",
+            core::column(body).gap(12.0f64),
+            howto: "var runs = Spans::new();\nruns.add(TextSpan::of(\"Hi \", font_weight: Bold, color: ink()));\nui::label(\"\", formatted_text: runs)",
+        );
+    }
+}
+
+impl SpansDemo: component::Lifecycle {
+    fn on_attach(ref this) { return; }
+    fn on_detach(ref this) { return; }
+}

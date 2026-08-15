@@ -1,0 +1,86 @@
+// Shared page helpers for demo panels shown in the main column.
+// Each demo is both a showcase and a minimal implementation reference.
+
+import "facet/facet" as core;
+import "facet/elements" as ui;
+import "facet/vocabulary" as vocab;
+import "facet/scroll" as scroll;
+import "stdlib/option" as option;
+
+fn heading(title: str) -> core::Node {
+    return ui::label(
+        title,
+        key: "",
+        font_size: 24.0f64,
+        font_weight: vocab::FontWeight::Bold,
+        text_color: vocab::Color::ink(),
+    );
+}
+
+fn blurb(text: str) -> core::Node {
+    return ui::label(
+        text,
+        key: "",
+        font_size: 13.0f64,
+        text_color: vocab::Color::ink(0.55f64),
+        max_lines: 6 as i64,
+        line_break: vocab::LineBreak::WordWrap,
+    );
+}
+
+fn caption(text: str) -> core::Node {
+    return ui::label(
+        text,
+        key: "",
+        font_size: 12.0f64,
+        font_weight: vocab::FontWeight::Semibold,
+        text_color: vocab::Color::ink(0.6f64),
+    );
+}
+
+// Implementation hint — import path + constructor shape.
+fn reference(text: str) -> core::Node {
+    var n: core::Node = ui::label(
+        text,
+        key: "",
+        font_size: 11.0f64,
+        font_family: "Menlo",
+        text_color: vocab::Color::ink(0.7f64),
+        max_lines: 8 as i64,
+        line_break: vocab::LineBreak::WordWrap,
+    ).padding(10.0f64);
+    n.set_background_color(vocab::Color::sunken());
+    n.set_corner_radius(vocab::Corners::all(6.0f64));
+    return n;
+}
+
+// Scrollable demo body with standard padding on the surface.
+fn panel(
+    title: str,
+    description: str,
+    take body: core::Node,
+    howto: str = "",
+) -> core::Node {
+    var col: core::Builder = core::Builder::new();
+    col.add(heading(title));
+    col.add(blurb(description));
+    if howto != "" {
+        col.add(reference(howto));
+    }
+    col.add(body);
+
+    var page: core::Node = core::column(col)
+        .padding(24.0f64)
+        .gap(14.0f64)
+        .grow(1.0f64);
+    page.set_background_color(vocab::Color::surface());
+
+    var root: core::Node = ui::scroll(key: "demo:scroll").grow(1.0f64);
+    match scroll::find("demo:scroll", within: #addr_of(root)) {
+        option::Option[scroll::Scroll]::Some(s) => {
+            let _s: scroll::Scroll = s.set_content(page);
+        }
+        option::Option[scroll::Scroll]::None => { }
+    }
+    return root;
+}

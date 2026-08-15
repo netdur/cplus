@@ -3486,7 +3486,7 @@ impl Lower {
                 .iter()
                 .map(|(n, t)| (n.clone(), classify_derive_field(t, &enums_payload_free)))
                 .collect();
-            let mut bad = |this: &mut Self, fname: &str, why: &str| {
+            let bad = |this: &mut Self, fname: &str, why: &str| {
                 this.err(
                     "E0920",
                     format!(

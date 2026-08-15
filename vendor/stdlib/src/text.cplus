@@ -225,8 +225,10 @@ fn from_utf8(take bytes: vec::Vec[u8]) -> option::Option[Text] {
 // still contributes its separator (`join(["", "", ""], separator: ",")` →
 // `",,"`). The default separator is empty, making `join(parts)` a plain
 // concatenation (Swift `Array.joined()` / `joined(separator:)`). Each piece is
-// read in place and its bytes copied; `parts` is left untouched.
-fn join(parts: vec::Vec[Text], separator: str = "") -> Text {
+// read in place and its bytes copied; `parts` is left untouched. Takes VIEWS
+// (`Vec[str]`, what `split` returns) — the pieces are only read, so owned
+// inputs go through their views.
+fn join(parts: vec::Vec[str], separator: str = "") -> Text {
     var out: Text = new();
     var i: usize = 0 as usize;
     while i < parts.count() {
@@ -234,8 +236,8 @@ fn join(parts: vec::Vec[Text], separator: str = "") -> Text {
             out.append(separator);
         }
         match parts.at_ptr(i) {
-            option::Option[*Text]::Some(p) => { out.append({ *p }.view()); }
-            option::Option[*Text]::None => { }
+            option::Option[*str]::Some(p) => { out.append({ *p }); }
+            option::Option[*str]::None => { }
         }
         i = i +% (1 as usize);
     }
@@ -258,16 +260,17 @@ impl Text {
         return status::Status::OutOfMemory;
     }
 
-    fn count(this) -> usize {
-        return this._len;
-    }
+    // Reads live on `str` (2026-08-13): `count`, `is_empty`, `trim`, `slice`,
+    // `split`, `find`, `has_prefix`, … are NOT declared here. A read missing
+    // from this impl dispatches to the blessed `impl str` block through the
+    // borrowing coercion, so `t.trim()` returns a `str` VIEW of `t`'s buffer
+    // (no copy; `t` stays write-locked while the view lives). Only what
+    // allocates or mutates belongs in this impl — plus `capacity`, which has
+    // no `str` counterpart. Convert a view to an owned value with
+    // `.to_text()`.
 
     fn capacity(this) -> usize {
         return this._cap;
-    }
-
-    fn is_empty(this) -> bool {
-        return this._len == (0 as usize);
     }
 
     // A `str` view of this Text's content (no allocation; aliases the buffer).
@@ -388,36 +391,14 @@ impl Text {
         return t;
     }
 
-    fn has_prefix(this, prefix: str) -> bool {
-        return this.view().has_prefix(prefix);
-    }
-
-    fn has_suffix(this, suffix: str) -> bool {
-        return this.view().has_suffix(suffix);
-    }
-
-    // Byte offset of the first occurrence of `needle`, or None. An empty
-    // needle matches at 0.
-    fn find(this, needle: str) -> option::Option[usize] {
-        return this.view().find(needle);
-    }
-
-    fn contains(this, needle: str) -> bool {
-        return this.view().contains(needle);
-    }
-
-    // Byte offset of the *last* occurrence of `needle`, or None. An empty needle
-    // matches at `len`.
-    fn rfind(this, needle: str) -> option::Option[usize] {
-        return this.view().rfind(needle);
-    }
-
-    // Safe, bounds-checked byte read: the byte at `i`, or None if `i >= len`.
-    // This is the public read door — it can never read out of bounds. Internal
-    // callers that have already proven `i < len` (loop bodies below) use the
-    // unchecked `_byte_at_raw` directly to skip the redundant check.
-    fn byte_at(this, index: usize) -> option::Option[u8] {
-        return this.view().byte_at(index: index);
+    // `clone` under the name generic call sites reach for. `str` answers
+    // `.to_text()` and a `Text` errored E0324 on the same spelling, so code
+    // written against a str-or-Text value had to know which it held — the
+    // asymmetry was the most common compile error in iris. On a Text the
+    // question "as an owned Text, please" is already answered; a copy is the
+    // only honest reading, because the caller expects to own the result.
+    fn to_text(this) -> Text {
+        return this.clone();
     }
 
     // Unchecked byte read — caller guarantees `i < len`. Module-private (the
@@ -441,35 +422,6 @@ impl Text {
             t._len = n;
         }
         return t;
-    }
-
-    // Owned copy of the byte range `[from, to)`, or None if out of bounds /
-    // inverted. (Copies — the result owns its bytes.) e.g. `t.slice(from: 2, to: 5)`.
-    fn slice(this, from: usize, to: usize) -> option::Option[Text] {
-        match this.view().slice(from: from, to: to) {
-            option::Option[str]::Some(s) => {
-                return option::Option[Text]::Some(s.to_text());
-            }
-            option::Option[str]::None => {
-                return option::Option[Text]::None;
-            }
-        }
-        return option::Option[Text]::None;
-    }
-
-    // Owned copy with leading ASCII whitespace removed.
-    fn trim_start(this) -> Text {
-        return this.view().trim_start().to_text();
-    }
-
-    // Owned copy with trailing ASCII whitespace removed.
-    fn trim_end(this) -> Text {
-        return this.view().trim_end().to_text();
-    }
-
-    // Owned copy with leading and trailing ASCII whitespace removed.
-    fn trim(this) -> Text {
-        return this.view().trim().to_text();
     }
 
     // ASCII-lowercased owned copy (`A`–`Z` → `a`–`z`; other bytes unchanged).
@@ -532,60 +484,6 @@ impl Text {
         return t;
     }
 
-    // Split on every (non-overlapping) occurrence of `separator`, returning the
-    // pieces as owned `Text` values. An empty separator yields the whole string
-    // as one piece. `"a,b,c".split(separator: ",")` → `["a", "b", "c"]`.
-    fn split(this, separator: str) -> vec::Vec[Text] {
-        var out: vec::Vec[Text] = vec::new::[Text]();
-        let n: usize = #str_len(separator);
-        if n == (0 as usize) {
-            out.append(this._copy_range(0 as usize, this._len));
-            return out;
-        }
-        let p: *u8 = #str_ptr(separator);
-        var start: usize = 0 as usize;
-        var i: usize = 0 as usize;
-        while (i +% n) <= this._len {
-            if region_matches(this._ptr, i, p, n) {
-                out.append(this._copy_range(start, i));
-                i = i +% n;
-                start = i;
-            } else {
-                i = i +% (1 as usize);
-            }
-        }
-        out.append(this._copy_range(start, this._len));
-        return out;
-    }
-
-    // ── Borrowed from Swift String: non-mutating substring + query helpers ──
-    // All return owned `Text` (the caller owns the bytes) or a plain value; none
-    // alias `this`, and the out-of-range cases clamp instead of trapping.
-
-    // Owned copy of the first `count` bytes — the whole string if it is shorter.
-    // Swift's `String.prefix(_:)`. Never traps.
-    fn prefix(this, count: usize) -> Text {
-        return this.view().prefix(count: count).to_text();
-    }
-
-    // Owned copy of the last `count` bytes — the whole string if it is shorter.
-    // Swift's `String.suffix(_:)`.
-    fn suffix(this, count: usize) -> Text {
-        return this.view().suffix(count: count).to_text();
-    }
-
-    // Owned copy with the first `count` bytes dropped (Swift `dropFirst`,
-    // which defaults to 1).
-    fn drop_first(this, count: usize = 1) -> Text {
-        return this.view().drop_first(count: count).to_text();
-    }
-
-    // Owned copy with the last `count` bytes dropped (Swift `dropLast`,
-    // which defaults to 1).
-    fn drop_last(this, count: usize = 1) -> Text {
-        return this.view().drop_last(count: count).to_text();
-    }
-
     // Owned copy with `s` appended — non-mutating, leaving `this` untouched.
     // C+ has no `+` operator overloading, so this is the value-style concat.
     fn appending(this, s: str) -> Text {
@@ -597,16 +495,6 @@ impl Text {
     // True when this text's bytes equal `other` exactly (Swift `==`).
     fn equals(this, other: str) -> bool {
         return this.view() == other;
-    }
-
-    // True when every byte is ASCII (< 128). Mirrors Swift `String.isASCII`.
-    fn is_ascii(this) -> bool {
-        return this.view().is_ascii();
-    }
-
-    // Count of non-overlapping occurrences of `needle`. An empty needle is 0.
-    fn count_of(this, needle: str) -> usize {
-        return this.view().count_of(needle);
     }
 
     // Owned copy with every (non-overlapping) occurrence of `of` replaced by
@@ -633,42 +521,6 @@ impl Text {
         }
         out.append(this._copy_range(start, this._len));
         return out;
-    }
-
-    // Count of Unicode scalars (not bytes). `count` returns the byte length;
-    // this returns the number of encoded scalars by counting every byte that is
-    // not a UTF-8 continuation byte (0x80–0xBF). For all-ASCII text the two
-    // agree. Assumes well-formed UTF-8 (see `from_utf8`).
-    fn char_count(this) -> usize {
-        return this.view().char_count();
-    }
-
-    // Lexicographic byte comparison (unsigned): `-1` if `this` sorts before
-    // `other`, `1` if after, `0` if equal. Shorter is less when one is a prefix
-    // of the other. The ordering primitive for sorting Texts (`strcmp` /
-    // `compareTo`); `equals` is the equality-only fast path.
-    fn compare(this, other: str) -> i32 {
-        return this.view().compare(other);
-    }
-
-    // ASCII case-insensitive equality: like `equals` but treating `A`–`Z` and
-    // `a`–`z` as the same letter. Non-letter bytes must still match exactly.
-    // (ASCII only — no Unicode case folding.)
-    fn equals_ignoring_case(this, other: str) -> bool {
-        return this.view().equals_ignoring_case(other);
-    }
-
-    // Owned copy with `prefix` removed from the front if present; an unchanged
-    // copy otherwise (Rust `strip_prefix`, non-trapping). An empty prefix is a
-    // plain copy.
-    fn removing_prefix(this, prefix: str) -> Text {
-        return this.view().removing_prefix(prefix).to_text();
-    }
-
-    // Owned copy with `suffix` removed from the end if present; an unchanged
-    // copy otherwise (Rust `strip_suffix`). An empty suffix is a plain copy.
-    fn removing_suffix(this, suffix: str) -> Text {
-        return this.view().removing_suffix(suffix).to_text();
     }
 
     // Owned copy left-padded with `with` (a space by default) until it is at
@@ -895,6 +747,39 @@ fn text_lang_string_literal_lowering() {
 }
 
 #[test]
+fn text_to_text_is_an_owned_copy() {
+    // The no-op direction: str answers `.to_text()`, so a Text must too, and
+    // the caller expects to OWN the answer — mutating the original cannot
+    // reach the copy.
+    var a: Text = from_str("hello");
+    let b: Text = a.to_text();
+    assert b.equals("hello");
+    let _s: status::Status = a.append("!");
+    assert a.equals("hello!");
+    assert b.equals("hello");
+}
+
+#[test]
+fn text_equals_text_compares_content() {
+    // `==` on two Texts compares BYTE CONTENT through their views — the rule
+    // `Text == str` set, completed. Identity has no meaning for a heap
+    // buffer: two separately built strings that render the same ARE equal.
+    let a: Text = from_str("same");
+    let b: Text = from_str("same");
+    let c: Text = from_str("other");
+    assert a == b;
+    assert a != c;
+    assert (a == c) == false;
+    // The mirror forms stay what they were.
+    assert a == "same";
+    assert "same" == a;
+    // And an empty pair is equal, not an accident of null pointers.
+    let e1: Text = new();
+    let e2: Text = new();
+    assert e1 == e2;
+}
+
+#[test]
 fn text_append_concats_and_grows() {
     var t: Text = from_str("foo");
     let st: status::Status = t.append("bar");
@@ -1009,11 +894,13 @@ fn text_byte_at_in_and_out_of_bounds() {
 }
 
 #[test]
-fn text_slice_copies_range() {
+fn text_slice_views_range() {
+    // `slice` on a Text routes to the `str` set: the result is a VIEW into
+    // `t`'s buffer, not a copy.
     let t: Text = from_str("hello");
     match t.slice(from: 1 as usize, to: 4 as usize) {
-        option::Option[Text]::Some(s) => { assert s.equals("ell"); }
-        option::Option[Text]::None => { assert false; }
+        option::Option[str]::Some(s) => { assert s == "ell"; }
+        option::Option[str]::None => { assert false; }
     }
     return;
 }
@@ -1022,8 +909,8 @@ fn text_slice_copies_range() {
 fn text_slice_out_of_bounds_is_none() {
     let t: Text = from_str("hi");
     match t.slice(from: 0 as usize, to: 9 as usize) {
-        option::Option[Text]::Some(s) => { assert false; }
-        option::Option[Text]::None => { assert true; }
+        option::Option[str]::Some(s) => { assert false; }
+        option::Option[str]::None => { assert true; }
     }
     return;
 }
@@ -1032,8 +919,8 @@ fn text_slice_out_of_bounds_is_none() {
 fn text_slice_inverted_is_none() {
     let t: Text = from_str("hello");
     match t.slice(from: 4 as usize, to: 1 as usize) {
-        option::Option[Text]::Some(s) => { assert false; }
-        option::Option[Text]::None => { assert true; }
+        option::Option[str]::Some(s) => { assert false; }
+        option::Option[str]::None => { assert true; }
     }
     return;
 }
@@ -1041,9 +928,9 @@ fn text_slice_inverted_is_none() {
 #[test]
 fn text_trim_variants() {
     let a: Text = from_str("  hi  ");
-    assert a.trim().equals("hi");
-    assert a.trim_start().equals("hi  ");
-    assert a.trim_end().equals("  hi");
+    assert a.trim() == "hi";
+    assert a.trim_start() == "hi  ";
+    assert a.trim_end() == "  hi";
 }
 
 #[test]
@@ -1197,18 +1084,18 @@ fn text_equals_ignoring_case() {
 
 #[test]
 fn text_removing_prefix() {
-    assert from_str("foobar").removing_prefix("foo").equals("bar");
+    assert from_str("foobar").removing_prefix("foo") == "bar";
     // Absent prefix → unchanged copy.
-    assert from_str("foobar").removing_prefix("xyz").equals("foobar");
+    assert from_str("foobar").removing_prefix("xyz") == "foobar";
     // Empty prefix → plain copy.
-    assert from_str("foo").removing_prefix("").equals("foo");
+    assert from_str("foo").removing_prefix("") == "foo";
 }
 
 #[test]
 fn text_removing_suffix() {
-    assert from_str("foobar").removing_suffix("bar").equals("foo");
-    assert from_str("foobar").removing_suffix("xyz").equals("foobar");
-    assert from_str("foo").removing_suffix("").equals("foo");
+    assert from_str("foobar").removing_suffix("bar") == "foo";
+    assert from_str("foobar").removing_suffix("xyz") == "foobar";
+    assert from_str("foo").removing_suffix("") == "foo";
 }
 
 // ── pad_start / pad_end ──
@@ -1260,57 +1147,60 @@ fn text_char_count_empty_is_zero() {
 
 #[test]
 fn text_split_on_sep() {
-    var parts: vec::Vec[Text] = from_str("a,bb,ccc").split(separator: ",");
+    let src: Text = from_str("a,bb,ccc");
+    var parts: vec::Vec[str] = src.split(separator: ",");
     assert parts.count() == (3 as usize);
     match parts.remove_last() {
-        option::Option[Text]::Some(last) => { assert last.equals("ccc"); }
-        option::Option[Text]::None => { assert false; }
+        option::Option[str]::Some(last) => { assert last == "ccc"; }
+        option::Option[str]::None => { assert false; }
     }
     return;
 }
 
 #[test]
 fn text_split_empty_sep_is_whole_string() {
-    var parts: vec::Vec[Text] = from_str("abc").split(separator: "");
+    let src: Text = from_str("abc");
+    var parts: vec::Vec[str] = src.split(separator: "");
     assert parts.count() == (1 as usize);
 }
 
 #[test]
 fn text_join_roundtrips_split() {
-    var parts: vec::Vec[Text] = from_str("a,bb,ccc").split(separator: ",");
+    let src: Text = from_str("a,bb,ccc");
+    var parts: vec::Vec[str] = src.split(separator: ",");
     let whole: Text = join(parts, separator: ",");
     assert whole.equals("a,bb,ccc");
 }
 
 #[test]
 fn text_join_default_separator_concatenates() {
-    var parts: vec::Vec[Text] = vec::new::[Text]();
-    parts.append(from_str("foo"));
-    parts.append(from_str("bar"));
-    parts.append(from_str("baz"));
+    var parts: vec::Vec[str] = vec::new::[str]();
+    parts.append("foo");
+    parts.append("bar");
+    parts.append("baz");
     assert join(parts).equals("foobarbaz");
 }
 
 #[test]
 fn text_join_places_separator_between_pieces_only() {
     // Leading/trailing empty pieces still contribute their separators.
-    var parts: vec::Vec[Text] = vec::new::[Text]();
-    parts.append(from_str(""));
-    parts.append(from_str(""));
-    parts.append(from_str(""));
+    var parts: vec::Vec[str] = vec::new::[str]();
+    parts.append("");
+    parts.append("");
+    parts.append("");
     assert join(parts, separator: ",").equals(",,");
 }
 
 #[test]
 fn text_join_empty_vec_is_empty() {
-    let parts: vec::Vec[Text] = vec::new::[Text]();
+    let parts: vec::Vec[str] = vec::new::[str]();
     assert join(parts, separator: ",").is_empty();
 }
 
 #[test]
 fn text_join_single_piece_has_no_separator() {
-    var parts: vec::Vec[Text] = vec::new::[Text]();
-    parts.append(from_str("solo"));
+    var parts: vec::Vec[str] = vec::new::[str]();
+    parts.append("solo");
     assert join(parts, separator: ", ").equals("solo");
 }
 
@@ -1329,25 +1219,25 @@ fn text_repeating_zero_is_empty() {
 #[test]
 fn text_prefix_suffix() {
     let t: Text = from_str("hello");
-    assert t.prefix(count: 3 as usize).equals("hel");
-    assert t.suffix(count: 3 as usize).equals("llo");
+    assert t.prefix(count: 3 as usize) == "hel";
+    assert t.suffix(count: 3 as usize) == "llo";
 }
 
 #[test]
 fn text_prefix_suffix_clamp_no_trap() {
     let t: Text = from_str("hi");
-    assert t.prefix(count: 99 as usize).equals("hi");
-    assert t.suffix(count: 99 as usize).equals("hi");
+    assert t.prefix(count: 99 as usize) == "hi";
+    assert t.suffix(count: 99 as usize) == "hi";
 }
 
 #[test]
 fn text_drop_first_last() {
     let t: Text = from_str("hello");
-    assert t.drop_first(count: 2 as usize).equals("llo");
-    assert t.drop_last(count: 2 as usize).equals("hel");
+    assert t.drop_first(count: 2 as usize) == "llo";
+    assert t.drop_last(count: 2 as usize) == "hel";
     // default count is 1 (Swift dropFirst()/dropLast())
-    assert t.drop_first().equals("ello");
-    assert t.drop_last().equals("hell");
+    assert t.drop_first() == "ello";
+    assert t.drop_last() == "hell";
 }
 
 #[test]

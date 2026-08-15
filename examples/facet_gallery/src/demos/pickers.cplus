@@ -1,0 +1,79 @@
+import "facet/facet" as core;
+import "facet/elements" as ui;
+import "facet/component" as component;
+import "facet/label" as label;
+import "facet/popup" as popup;
+import "facet/vocabulary" as vocab;
+import "stdlib/option" as option;
+import "stdlib/status" as status;
+import "../shell" as shell;
+
+struct Pickers {
+    n: i32,
+}
+
+impl Pickers {
+    fn new() -> Pickers { return Pickers { n: 0 }; }
+
+    fn on_popup(ref this, sender: *u8) {
+        match popup::find("pk:popup") {
+            option::Option[popup::Popup]::Some(p) => {
+                let idx: i64 = p.selected_index();
+                match label::find("pk:popup_status") {
+                    option::Option[label::Label]::Some(l) => {
+                        let _l: label::Label = l.set_text("Selected index: ${idx}");
+                    }
+                    option::Option[label::Label]::None => { }
+                }
+            }
+            option::Option[popup::Popup]::None => { }
+        }
+        return;
+    }
+}
+
+impl Pickers: component::Component {
+    fn build(ref this) -> core::Node {
+        var body: core::Builder = core::Builder::new();
+
+        body.add(shell::caption("Popup  ·  MAUI Picker"));
+        var items: vocab::TextList = vocab::TextList::new();
+        let _a: status::Status = items.add("Red");
+        let _b: status::Status = items.add("Green");
+        let _c: status::Status = items.add("Blue");
+        let _d: status::Status = items.add("Indigo");
+        body.add(ui::popup(
+            "Colour",
+            key: "pk:popup",
+            selected_index: 0 as i64,
+            on_selected_index_changed: this.on_popup,
+            items: items,
+        ));
+        body.add(ui::label("Selected index: 0", key: "pk:popup_status",
+            font_size: 14.0f64, text_color: vocab::Color::ink(0.7f64)));
+
+        body.add(shell::caption("Date picker"));
+        body.add(ui::date_picker(
+            vocab::Date { year: 2026 as i64, month: 8 as i64, day: 15 as i64 },
+            key: "pk:date",
+        ));
+
+        body.add(shell::caption("Time picker"));
+        body.add(ui::time_picker(
+            vocab::Duration { seconds: 3600.0f64 * 14.0f64 + 30.0f64 * 60.0f64 },
+            key: "pk:time",
+        ));
+
+        return shell::panel(
+            "Pickers",
+            "Popup (dropdown), date, and time — the discrete choice family.",
+            core::column(body).gap(12.0f64),
+            howto: "var items = TextList::new(); items.add(\"Red\");\nui::popup(\"Colour\", key: \"p\", items: items,\n    on_selected_index_changed: this.on_popup)\nui::date_picker(Date { year: 2026, month: 8, day: 15 })\nui::time_picker(Duration { seconds: 3600.0 })",
+        );
+    }
+}
+
+impl Pickers: component::Lifecycle {
+    fn on_attach(ref this) { return; }
+    fn on_detach(ref this) { return; }
+}

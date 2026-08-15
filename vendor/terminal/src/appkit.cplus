@@ -34,9 +34,13 @@ extern fn dispatch_release(object: *u8);
 // main thread, which is the whole point where it is used (repaint_for_focus).
 extern fn dispatch_async_f(queue: *u8, context: *u8, work: fn(*u8));
 
+// A handler slot. A null fn pointer is not a value C+ hands out, so "nobody is
+// listening" is a flag beside the pointer rather than a comparison against one.
+fn no_handler(_ctx: *u8) { return; }
+
 struct TerminalContext {
     session: pty::Session,
-    transcript: terminal::Transcript,
+    screen: terminal::Screen,
     opaque text_view: *u8,     // borrowed from Widget._scroll's view tree
     opaque scroll_view: *u8,   // borrowed from Widget._scroll
     opaque source: *u8,        // released by the dispatch cancel handler
@@ -45,6 +49,17 @@ struct TerminalContext {
     cancel_requested: bool,
     cancel_finished: bool,
     dispose_requested: bool,
+    // Command completions already delivered. The read handler compares this
+    // against the ledger to fire the callback once per command rather than once
+    // per chunk of output that happens to contain the mark.
+    delivered: u64,
+    on_command_end: fn(*u8),
+    opaque on_command_end_ctx: *u8,
+    has_command_handler: bool,
+    on_exit: fn(*u8),
+    opaque on_exit_ctx: *u8,
+    has_exit_handler: bool,
+    exit_delivered: bool,
 }
 
 struct Widget {
@@ -161,17 +176,39 @@ fn paint_cursor(tv: ak::TextView, at: rt::Range, focused: bool, full: rt::Range)
     return;
 }
 
+// The clean-slate half of `paint_cursor`, for when there is no cursor to draw.
+// It still has to run every pass: the wipe is what stops NSTextView adopting a
+// cursor attribute as its typing attribute and painting the whole document with
+// it on the next render.
+fn paint_cursor_none(tv: ak::TextView, full: rt::Range) {
+    let bg_name: *u8 = appkit_string_global(#str_ptr("NSBackgroundColorAttributeName\0"));
+    let fg_name: *u8 = appkit_string_global(#str_ptr("NSForegroundColorAttributeName\0"));
+    let ul_name: *u8 = appkit_string_global(#str_ptr("NSUnderlineStyleAttributeName\0"));
+    if bg_name == (0 as *u8) || fg_name == (0 as *u8) { return; }
+    match tv.text_storage() {
+        option::Option[ak::TextStorage]::Some(storage) => {
+            let s: *u8 = storage.as_mutable_attributed_string().raw();
+            let add: *u8 = rt::sel(#str_ptr("addAttribute:value:range:\0"));
+            let remove: *u8 = rt::sel(#str_ptr("removeAttribute:range:\0"));
+            rt::msg_void_id_range(s, remove, bg_name, full);
+            if ul_name != (0 as *u8) { rt::msg_void_id_range(s, remove, ul_name, full); }
+            rt::msg_void_id_id_range(s, add, fg_name, ak::Color::text_color().raw(), full);
+        }
+        option::Option[ak::TextStorage]::None => {}
+    }
+    return;
+}
+
 fn render(c: *TerminalContext) {
     if c == (0 as *TerminalContext) || { (*c).text_view } == (0 as *u8) { return; }
     let tv: ak::TextView = ak::TextView::from_raw({ (*c).text_view });
 
-    // The cursor needs a cell to sit on. The transcript drops the blanks a
-    // shell leaves under it (that is what makes `\b space \b` read as an
-    // erase), so pad them back for display only — otherwise the block would
-    // have nothing to occupy at the end of a line, which is where it spends
-    // most of its time.
-    let cursor: usize = { (*c).transcript.cursor() };
-    var display: text::Text = text::from_str({ (*c).transcript.view() });
+    // The cursor needs a cell to sit on. The screen drops the blanks a shell
+    // leaves under it (that is what makes `\b space \b` read as an erase), so
+    // pad them back for display only — otherwise the block would have nothing
+    // to occupy at the end of a line, which is where it spends most of its time.
+    let cursor: usize = { (*c).screen.cursor() };
+    var display: text::Text = text::from_str({ (*c).screen.view() });
     while display.count() <= cursor {
         let _pad: status::Status = display.append(" ");
     }
@@ -195,7 +232,17 @@ fn render(c: *TerminalContext) {
 
     let cell: rt::Range = rt::Range { location: at, length: 1 as u64 };
     let whole: rt::Range = rt::Range { location: 0 as u64, length: end };
-    paint_cursor(tv, cell, view_has_focus({ (*c).text_view }), whole);
+    // A program that hid the cursor (`ESC[?25l` — every full-screen TUI does it
+    // while repainting) gets no block drawn. Painting one anyway would leave a
+    // block parked wherever the program last left the cursor, which in a TUI is
+    // wherever its last write happened to end rather than anywhere meaningful.
+    let visible: bool = { (*c).screen.cursor_visible() };
+    let focused: bool = visible && view_has_focus({ (*c).text_view });
+    if visible {
+        paint_cursor(tv, cell, focused, whole);
+    } else {
+        paint_cursor_none(tv, whole);
+    }
     // Empty selection at the cursor: nothing is highlighted (the block is drawn
     // by attributes) and ⌘C with no selection copies nothing, as it should.
     let caret: rt::Range = rt::Range { location: at, length: 0 as u64 };
@@ -247,6 +294,42 @@ fn request_cancel(c: *TerminalContext) {
     return;
 }
 
+// Answers the screen owes the program — a device-attributes or cursor-position
+// query — written straight back to the pseudo-terminal. A program that asks and
+// never hears back simply waits, so this is not optional politeness.
+fn flush_replies(c: *TerminalContext) {
+    if !{ (*c).screen.has_reply() } { return; }
+    let answer: text::Text = text::from_str({ (*c).screen.reply() });
+    { (*c).screen.clear_reply(); }
+    let _w: isize = { (*c).session.write(answer.view()) };
+    return;
+}
+
+// Fire the caller's callbacks for anything that happened during this drain.
+// Counted rather than edge-triggered: one read can carry several commands'
+// worth of marks, and a handler that ran once per chunk would miss some and
+// repeat others.
+fn deliver_events(c: *TerminalContext) {
+    let finished: u64 = { (*c).screen.finished_count() };
+    if finished > { (*c).delivered } {
+        { (*c).delivered = finished; }
+        if { (*c).has_command_handler } {
+            let f: fn(*u8) = { (*c).on_command_end };
+            let a: *u8 = { (*c).on_command_end_ctx };
+            f(a);
+        }
+    }
+    if { (*c).cancel_requested } && !{ (*c).exit_delivered } {
+        { (*c).exit_delivered = true; }
+        if { (*c).has_exit_handler } {
+            let f: fn(*u8) = { (*c).on_exit };
+            let a: *u8 = { (*c).on_exit_ctx };
+            f(a);
+        }
+    }
+    return;
+}
+
 fn read_ready(ctx: *u8) {
     let c: *TerminalContext = { ctx as *TerminalContext };
     if c == (0 as *TerminalContext) || { (*c).cancel_requested } { return; }
@@ -256,12 +339,12 @@ fn read_ready(ctx: *u8) {
         match { (*c).session.read_into(#addr_of(buf) as *u8, 8192 as usize) } {
             pty::ReadResult::Data(n) => {
                 let chunk: str = { #str_from_raw_parts(#addr_of(buf) as *u8, n) };
-                { (*c).transcript.feed(chunk); }
+                { (*c).screen.feed(chunk); }
                 changed = true;
             }
             pty::ReadResult::WouldBlock => { break; }
             pty::ReadResult::Closed => {
-                { (*c).transcript.finish(); }
+                { (*c).screen.finish(); }
                 changed = true;
                 request_cancel(c);
                 break;
@@ -272,7 +355,9 @@ fn read_ready(ctx: *u8) {
             }
         }
     }
+    if changed { flush_replies(c); }
     if changed { render(c); }
+    deliver_events(c);
     return;
 }
 
@@ -329,7 +414,17 @@ fn key_down_imp(self_obj: *u8, cmd: *u8, event_obj: *u8) {
             let ns: *u8 = rt::msg_id_id(pb, rt::sel(#str_ptr("stringForType:\0")), bridge::nsstring("public.utf8-plain-text"));
             if ns != (0 as *u8) {
                 let pasted = bridge::to_text(ns);
-                send(c, pasted);
+                // Bracketed paste, when the program asked for it. Without the
+                // brackets an editor cannot tell pasted text from typing, so it
+                // auto-indents every line of a pasted block and reflows it into
+                // a staircase — and a pasted newline runs as a command.
+                if { (*c).screen.bracketed_paste() } {
+                    send(c, "\x1b[200~");
+                    send(c, pasted);
+                    send(c, "\x1b[201~");
+                } else {
+                    send(c, pasted);
+                }
             }
         }
         return;
@@ -339,12 +434,18 @@ fn key_down_imp(self_obj: *u8, cmd: *u8, event_obj: *u8) {
     if key == (48 as u16) { send(c, "\t"); return; }
     if key == (51 as u16) { send(c, "\x7f"); return; }
     if key == (53 as u16) { send(c, "\x1b"); return; }
-    if key == (123 as u16) { send(c, "\x1b[D"); return; }
-    if key == (124 as u16) { send(c, "\x1b[C"); return; }
-    if key == (125 as u16) { send(c, "\x1b[B"); return; }
-    if key == (126 as u16) { send(c, "\x1b[A"); return; }
-    if key == (115 as u16) { send(c, "\x1b[H"); return; }
-    if key == (119 as u16) { send(c, "\x1b[F"); return; }
+
+    // Arrows and Home/End change SHAPE with DECCKM (`ESC[?1h`): `ESC O A`
+    // rather than `ESC [ A`. Every full-screen program turns it on, and one that
+    // gets the wrong form sees a literal `[` followed by an `A` — which is how
+    // arrow keys "do nothing but insert junk" inside `top`, `less` and vim.
+    let app: bool = { (*c).screen.application_cursor_keys() };
+    if key == (123 as u16) { if app { send(c, "\x1bOD"); } else { send(c, "\x1b[D"); } return; }
+    if key == (124 as u16) { if app { send(c, "\x1bOC"); } else { send(c, "\x1b[C"); } return; }
+    if key == (125 as u16) { if app { send(c, "\x1bOB"); } else { send(c, "\x1b[B"); } return; }
+    if key == (126 as u16) { if app { send(c, "\x1bOA"); } else { send(c, "\x1b[A"); } return; }
+    if key == (115 as u16) { if app { send(c, "\x1bOH"); } else { send(c, "\x1b[H"); } return; }
+    if key == (119 as u16) { if app { send(c, "\x1bOF"); } else { send(c, "\x1b[F"); } return; }
     if key == (117 as u16) { send(c, "\x1b[3~"); return; }
     if key == (116 as u16) { send(c, "\x1b[5~"); return; }
     if key == (121 as u16) { send(c, "\x1b[6~"); return; }
@@ -489,6 +590,12 @@ fn resize_pty(ctx: *u8) {
     if cols < (2 as u16) { cols = 2 as u16; }
     if rows < (1 as u16) { rows = 1 as u16; }
     let _ok: bool = { (*c).session.resize(rows, cols) };
+    // The MODEL has to move with the pseudo-terminal, or the program is drawing
+    // to a screen of one size while we lay it out at another: every absolute
+    // cursor address lands on the wrong cell and a full-screen program renders
+    // as diagonal wreckage. This is the whole reason the screen has a size.
+    { (*c).screen.resize(rows, cols); }
+    render(c);
     return;
 }
 
@@ -532,7 +639,7 @@ fn start(
     }
     { *c = TerminalContext {
         session: session,
-        transcript: terminal::Transcript::new(max_bytes: max_scrollback),
+        screen: terminal::new(max_scrollback: max_scrollback),
         text_view: tv.raw(),
         scroll_view: scroll.raw(),
         source: 0 as *u8,
@@ -541,6 +648,14 @@ fn start(
         cancel_requested: false,
         cancel_finished: false,
         dispose_requested: false,
+        delivered: 0 as u64,
+        on_command_end: no_handler,
+        on_command_end_ctx: 0 as *u8,
+        has_command_handler: false,
+        on_exit: no_handler,
+        on_exit_ctx: 0 as *u8,
+        has_exit_handler: false,
+        exit_delivered: false,
     }; }
     synth::set_associated(tv.raw(), terminal_context_key(), c as *u8);
 
@@ -654,11 +769,149 @@ impl Widget {
 
     fn text(this) -> text::Text {
         if this._ctx == (0 as *TerminalContext) { return text::new(); }
-        return text::from_str({ (*this._ctx).transcript.view() });
+        return text::from_str({ (*this._ctx).screen.view() });
     }
 
     fn is_running(this) -> bool {
         return this._ctx != (0 as *TerminalContext) && !{ (*this._ctx).cancel_requested };
+    }
+
+    // ---- driving commands ---------------------------------------------------
+
+    // Run `command` and let the ledger report how it ends. Returns the id the
+    // command will be given, or 0 if it was not sent — a stopped session, or one
+    // that is still busy with the previous command.
+    //
+    // Refusing while busy is what makes the returned id meaningful: ids are
+    // handed out when the SHELL reports the command starting, which has not
+    // happened yet when this returns, so "the next id" is only a sound promise
+    // if nothing else can claim it first.
+    fn run(this, command: str) -> u64 {
+        let c: *TerminalContext = this._ctx;
+        if c == (0 as *TerminalContext) || { (*c).cancel_requested } { return 0 as u64; }
+        if { (*c).screen.command_state() } == terminal::CommandState::Running { return 0 as u64; }
+        let next: u64 = { (*c).screen.command_id() } +% (1 as u64);
+        if { (*c).screen.has_integration() } {
+            send(c, command);
+            send(c, "\r");
+        } else {
+            // No shell integration — a shell other than zsh, or a shim that
+            // could not be written. The command still has to report itself, so
+            // it is bracketed by marks of our own. Three lines rather than one
+            // `;`-joined line because a command ending in `&` or `;` would make
+            // the joined form a syntax error, and newlines separate anything.
+            // The cost is that the two printf lines are echoed where the user
+            // can see them, which is why the shim exists at all.
+            send(c, "printf '\\033]133;C\\007'\r");
+            send(c, command);
+            send(c, "\r");
+            send(c, "printf '\\033]133;D;%d\\007' \"$?\"\r");
+        }
+        return next;
+    }
+
+    // Interrupt whatever is running, as ^C does.
+    fn interrupt(this) {
+        send(this._ctx, "\x03");
+        return;
+    }
+
+    // Whether the shell reports prompt and command marks at all. False means
+    // `command_state` never leaves Idle on its own and `run` falls back to
+    // bracketing commands itself.
+    fn has_integration(this) -> bool {
+        if this._ctx == (0 as *TerminalContext) { return false; }
+        return { (*this._ctx).screen.has_integration() };
+    }
+
+    fn command_state(this) -> terminal::CommandState {
+        if this._ctx == (0 as *TerminalContext) { return terminal::CommandState::Idle; }
+        return { (*this._ctx).screen.command_state() };
+    }
+
+    fn command_id(this) -> u64 {
+        if this._ctx == (0 as *TerminalContext) { return 0 as u64; }
+        return { (*this._ctx).screen.command_id() };
+    }
+
+    fn command_line(this) -> text::Text {
+        if this._ctx == (0 as *TerminalContext) { return text::new(); }
+        return text::from_str({ (*this._ctx).screen.command_line() });
+    }
+
+    // The exit status of the last command that finished. `None` before any has,
+    // and while a NEW one is running — but not merely because the shell has
+    // drawn its next prompt. The prompt-start mark arrives within microseconds
+    // of the command-finished one, so gating this on the Done state made the
+    // answer evaporate before any caller could read it.
+    fn exit_code(this) -> option::Option[i32] {
+        if this._ctx == (0 as *TerminalContext) { return option::Option[i32]::None; }
+        if { (*this._ctx).screen.command_state() } == terminal::CommandState::Running {
+            return option::Option[i32]::None;
+        }
+        let code: i32 = { (*this._ctx).screen.exit_code() };
+        if code < (0 as i32) { return option::Option[i32]::None; }
+        return option::Option[i32]::Some(code);
+    }
+
+    // Commands that have run to completion. Poll this to notice one finishing
+    // without having to catch `command_state` mid-transition.
+    fn finished_count(this) -> u64 {
+        if this._ctx == (0 as *TerminalContext) { return 0 as u64; }
+        return { (*this._ctx).screen.finished_count() };
+    }
+
+    // What the running or last-finished command put on the screen — the text a
+    // build's errors are in.
+    fn output(this) -> text::Text {
+        if this._ctx == (0 as *TerminalContext) { return text::new(); }
+        return { (*this._ctx).screen.output() };
+    }
+
+    // The shell's working directory, as it reports it after every command.
+    fn cwd(this) -> text::Text {
+        if this._ctx == (0 as *TerminalContext) { return text::new(); }
+        return text::from_str({ (*this._ctx).screen.cwd() });
+    }
+
+    fn title(this) -> text::Text {
+        if this._ctx == (0 as *TerminalContext) { return text::new(); }
+        return text::from_str({ (*this._ctx).screen.title() });
+    }
+
+    // Is a full-screen program up? A caller that wants to disable its own
+    // "run a build" button while `vim` has the pane needs to know.
+    fn alternate_screen(this) -> bool {
+        if this._ctx == (0 as *TerminalContext) { return false; }
+        return { (*this._ctx).screen.alternate_screen() };
+    }
+
+    // Called on the main thread once per command that finishes. Read the result
+    // off the widget from inside it; the handler carries only its own context
+    // pointer, which must outlive the widget.
+    fn on_command_end(this, handler: fn(*u8), ctx: *u8) {
+        let c: *TerminalContext = this._ctx;
+        if c == (0 as *TerminalContext) { return; }
+        { (*c).on_command_end = handler; }
+        { (*c).on_command_end_ctx = ctx; }
+        { (*c).has_command_handler = true; }
+        return;
+    }
+
+    // Called once when the shell itself goes away.
+    fn on_exit(this, handler: fn(*u8), ctx: *u8) {
+        let c: *TerminalContext = this._ctx;
+        if c == (0 as *TerminalContext) { return; }
+        { (*c).on_exit = handler; }
+        { (*c).on_exit_ctx = ctx; }
+        { (*c).has_exit_handler = true; }
+        return;
+    }
+
+    // The shell's own exit status, once it has exited.
+    fn shell_exit_code(this) -> option::Option[i32] {
+        if this._ctx == (0 as *TerminalContext) { return option::Option[i32]::None; }
+        return { (*this._ctx).session.poll_exit() };
     }
 
     fn stop(this) { request_cancel(this._ctx); return; }

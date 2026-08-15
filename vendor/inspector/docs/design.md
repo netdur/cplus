@@ -301,8 +301,8 @@ of an owning struct, and undo has to *move* the node into `insert_child`.
 A structural edit has no "value it used to be", so the override ledger cannot
 hold it and `reset` cannot undo it. What it has instead is what the property
 tier already had: the edit as the line of source that would make it. The journal
-accumulates those lines and `Copy as C+` prints them after the selected node's
-overrides.
+accumulates those lines; `journal_count`/`journal_at` read them back, the way
+`snippet_for` reads back a property override.
 
 It is volatile for the same reason the ledger is. An inspector that replayed its
 own structural edits at startup would have become the part of the application

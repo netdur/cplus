@@ -1,0 +1,395 @@
+// Master–detail shell: tree catalog + main demo pane.
+// Each leaf is a reference implementation of one control family.
+
+import "facet/facet" as core;
+import "facet/elements" as ui;
+import "facet/component" as component;
+import "facet/screen" as screen;
+import "facet/mount" as mount;
+import "facet/split" as split;
+import "facet/tree" as tree;
+import "facet/vocabulary" as vocab;
+import "stdlib/vec" as vec;
+import "stdlib/option" as option;
+import "stdlib/status" as status;
+
+import "./demos/overview" as overview;
+import "./demos/buttons" as buttons;
+import "./demos/text" as text;
+import "./demos/controls" as controls;
+import "./demos/values" as values;
+import "./demos/inputs" as inputs;
+import "./demos/pickers" as pickers;
+import "./demos/icons" as icons;
+import "./demos/images" as images;
+import "./demos/spans" as spans;
+import "./demos/graphics" as graphics;
+import "./demos/web_demo" as web_demo;
+import "./demos/layout/basic" as layout;
+import "./demos/layout/scrolls" as scrolls;
+import "./demos/layout/splits" as splits;
+import "./demos/layout/zstacks" as zstacks;
+import "./demos/layout/responsive" as responsive;
+import "./demos/lists" as lists;
+import "./demos/collections" as collections;
+import "./demos/trees" as trees;
+import "./demos/page_dots_demo" as page_dots_demo;
+import "./demos/tables" as tables;
+import "./demos/refresh" as refresh;
+import "./demos/swipe" as swipe;
+import "./demos/carousel_demo" as carousel_demo;
+
+const ID_OVERVIEW: i32 = 0;
+const ID_BUTTON: i32 = 1;
+const ID_LABEL: i32 = 2;
+const ID_CONTROLS: i32 = 3;
+const ID_VALUES: i32 = 4;
+const ID_INPUTS: i32 = 5;
+const ID_PICKERS: i32 = 6;
+const ID_ICONS: i32 = 7;
+const ID_IMAGES: i32 = 8;
+const ID_SPANS: i32 = 9;
+const ID_GRAPHICS: i32 = 10;
+const ID_WEB: i32 = 11;
+const ID_LAYOUT: i32 = 12;
+const ID_SCROLL: i32 = 13;
+const ID_SPLIT: i32 = 14;
+const ID_ZSTACK: i32 = 15;
+const ID_RESPONSIVE: i32 = 16;
+const ID_LIST: i32 = 17;
+const ID_COLLECTION: i32 = 18;
+const ID_TREE: i32 = 19;
+const ID_PAGE_DOTS: i32 = 20;
+const ID_TABLE: i32 = 21;
+const ID_REFRESH: i32 = 22;
+const ID_SWIPE: i32 = 23;
+const ID_CAROUSEL: i32 = 24;
+
+const NAV_OVERVIEW: str = "overview";
+const NAV_BUTTON: str = "button";
+const NAV_LABEL: str = "label";
+const NAV_CONTROLS: str = "controls";
+const NAV_VALUES: str = "values";
+const NAV_INPUTS: str = "inputs";
+const NAV_PICKERS: str = "pickers";
+const NAV_ICONS: str = "icons";
+const NAV_IMAGES: str = "images";
+const NAV_SPANS: str = "spans";
+const NAV_GRAPHICS: str = "graphics";
+const NAV_WEB: str = "web";
+const NAV_LAYOUT: str = "layout";
+const NAV_SCROLL: str = "scroll";
+const NAV_SPLIT: str = "split";
+const NAV_ZSTACK: str = "zstack";
+const NAV_RESPONSIVE: str = "responsive";
+const NAV_LIST: str = "list";
+const NAV_COLLECTION: str = "collection";
+const NAV_TREE: str = "tree";
+const NAV_PAGE_DOTS: str = "page_dots";
+const NAV_TABLE: str = "table";
+const NAV_REFRESH: str = "refresh";
+const NAV_SWIPE: str = "swipe";
+const NAV_CAROUSEL: str = "carousel";
+
+const SEC_VIEWS: str = "sec:views";
+const SEC_LAYOUT: str = "sec:layout";
+const SEC_COLLECTIONS: str = "sec:collections";
+const SEC_INTERACTION: str = "sec:interaction";
+
+struct Gallery {
+    selected: i32,
+    overview: overview::Overview,
+    buttons: buttons::Buttons,
+    text: text::TextDemo,
+    controls: controls::Controls,
+    values: values::Values,
+    inputs: inputs::Inputs,
+    pickers: pickers::Pickers,
+    icons: icons::Icons,
+    images: images::Images,
+    spans: spans::SpansDemo,
+    graphics: graphics::Graphics,
+    web: web_demo::WebDemo,
+    layout: layout::LayoutDemo,
+    scrolls: scrolls::Scrolls,
+    splits: splits::Splits,
+    zstacks: zstacks::ZStacks,
+    responsive: responsive::Responsive,
+    lists: lists::Lists,
+    collections: collections::Collections,
+    trees: trees::Trees,
+    page_dots: page_dots_demo::PageDotsDemo,
+    tables: tables::Tables,
+    refresh: refresh::Refresh,
+    swipe: swipe::Swipe,
+    carousel: carousel_demo::CarouselDemo,
+}
+
+fn demo_id_for(nav_id: str) -> i32 {
+    if nav_id == NAV_OVERVIEW { return ID_OVERVIEW; }
+    if nav_id == NAV_BUTTON { return ID_BUTTON; }
+    if nav_id == NAV_LABEL { return ID_LABEL; }
+    if nav_id == NAV_CONTROLS { return ID_CONTROLS; }
+    if nav_id == NAV_VALUES { return ID_VALUES; }
+    if nav_id == NAV_INPUTS { return ID_INPUTS; }
+    if nav_id == NAV_PICKERS { return ID_PICKERS; }
+    if nav_id == NAV_ICONS { return ID_ICONS; }
+    if nav_id == NAV_IMAGES { return ID_IMAGES; }
+    if nav_id == NAV_SPANS { return ID_SPANS; }
+    if nav_id == NAV_GRAPHICS { return ID_GRAPHICS; }
+    if nav_id == NAV_WEB { return ID_WEB; }
+    if nav_id == NAV_LAYOUT { return ID_LAYOUT; }
+    if nav_id == NAV_SCROLL { return ID_SCROLL; }
+    if nav_id == NAV_SPLIT { return ID_SPLIT; }
+    if nav_id == NAV_ZSTACK { return ID_ZSTACK; }
+    if nav_id == NAV_RESPONSIVE { return ID_RESPONSIVE; }
+    if nav_id == NAV_LIST { return ID_LIST; }
+    if nav_id == NAV_COLLECTION { return ID_COLLECTION; }
+    if nav_id == NAV_TREE { return ID_TREE; }
+    if nav_id == NAV_PAGE_DOTS { return ID_PAGE_DOTS; }
+    if nav_id == NAV_TABLE { return ID_TABLE; }
+    if nav_id == NAV_REFRESH { return ID_REFRESH; }
+    if nav_id == NAV_SWIPE { return ID_SWIPE; }
+    if nav_id == NAV_CAROUSEL { return ID_CAROUSEL; }
+    return 0 -% 1;
+}
+
+fn leaf(label: str, id: str) -> tree::TreeNode {
+    return tree::TreeNode::new(label, id: id, is_branch: false);
+}
+
+fn section(label: str, id: str) -> tree::TreeNode {
+    return tree::TreeNode::new(label, id: id, is_branch: true);
+}
+
+fn catalog_model() -> tree::TreeNode {
+    var root: tree::TreeNode = tree::TreeNode::new("", id: "root", is_branch: true);
+
+    // Overview sits at the root — not nested under a Start folder.
+    let _o: status::Status = root.add_child(leaf("Overview", NAV_OVERVIEW));
+
+    var views: tree::TreeNode = section("Views", SEC_VIEWS);
+    let _b: status::Status = views.add_child(leaf("Button", NAV_BUTTON));
+    let _l: status::Status = views.add_child(leaf("Label", NAV_LABEL));
+    let _c: status::Status = views.add_child(leaf("Controls", NAV_CONTROLS));
+    let _v: status::Status = views.add_child(leaf("Values", NAV_VALUES));
+    let _i: status::Status = views.add_child(leaf("Inputs", NAV_INPUTS));
+    let _p: status::Status = views.add_child(leaf("Pickers", NAV_PICKERS));
+    let _ic: status::Status = views.add_child(leaf("Icons", NAV_ICONS));
+    let _im: status::Status = views.add_child(leaf("Image", NAV_IMAGES));
+    let _sp: status::Status = views.add_child(leaf("Spans", NAV_SPANS));
+    let _g: status::Status = views.add_child(leaf("Graphics", NAV_GRAPHICS));
+    let _w: status::Status = views.add_child(leaf("Web", NAV_WEB));
+    let _vs: status::Status = root.add_child(views);
+
+    var lay: tree::TreeNode = section("Layout", SEC_LAYOUT);
+    let _ly: status::Status = lay.add_child(leaf("Basics", NAV_LAYOUT));
+    let _sc: status::Status = lay.add_child(leaf("Scroll", NAV_SCROLL));
+    let _sl: status::Status = lay.add_child(leaf("Split", NAV_SPLIT));
+    let _zs: status::Status = lay.add_child(leaf("ZStack", NAV_ZSTACK));
+    let _rp: status::Status = lay.add_child(leaf("Responsive", NAV_RESPONSIVE));
+    let _ls: status::Status = root.add_child(lay);
+
+    var cols: tree::TreeNode = section("Collections", SEC_COLLECTIONS);
+    let _li: status::Status = cols.add_child(leaf("List", NAV_LIST));
+    let _co: status::Status = cols.add_child(leaf("Collection", NAV_COLLECTION));
+    let _tr: status::Status = cols.add_child(leaf("Tree", NAV_TREE));
+    let _pd: status::Status = cols.add_child(leaf("Page dots", NAV_PAGE_DOTS));
+    let _tb: status::Status = cols.add_child(leaf("Table", NAV_TABLE));
+    let _cr: status::Status = cols.add_child(leaf("Carousel", NAV_CAROUSEL));
+    let _cs: status::Status = root.add_child(cols);
+
+    var ix: tree::TreeNode = section("Interaction", SEC_INTERACTION);
+    let _rf: status::Status = ix.add_child(leaf("Refresh", NAV_REFRESH));
+    let _sw: status::Status = ix.add_child(leaf("Swipe", NAV_SWIPE));
+    let _ix: status::Status = root.add_child(ix);
+
+    return root;
+}
+
+impl Gallery {
+    fn new() -> Gallery {
+        return Gallery {
+            selected: ID_OVERVIEW,
+            overview: overview::Overview::new(),
+            buttons: buttons::Buttons::new(),
+            text: text::TextDemo::new(),
+            controls: controls::Controls::new(),
+            values: values::Values::new(),
+            inputs: inputs::Inputs::new(),
+            pickers: pickers::Pickers::new(),
+            icons: icons::Icons::new(),
+            images: images::Images::new(),
+            spans: spans::SpansDemo::new(),
+            graphics: graphics::Graphics::new(),
+            web: web_demo::WebDemo::new(),
+            layout: layout::LayoutDemo::new(),
+            scrolls: scrolls::Scrolls::new(),
+            splits: splits::Splits::new(),
+            zstacks: zstacks::ZStacks::new(),
+            responsive: responsive::Responsive::new(),
+            lists: lists::Lists::new(),
+            collections: collections::Collections::new(),
+            trees: trees::Trees::new(),
+            page_dots: page_dots_demo::PageDotsDemo::new(),
+            tables: tables::Tables::new(),
+            refresh: refresh::Refresh::new(),
+            swipe: swipe::Swipe::new(),
+            carousel: carousel_demo::CarouselDemo::new(),
+        };
+    }
+
+    fn show_demo(ref this, id: i32) {
+        this.selected = id;
+        match mount::find("gallery:main") {
+            option::Option[*core::Node]::Some(out) => {
+                if id == ID_OVERVIEW {
+                    let _ok: bool = mount::set_content(out, this.overview);
+                } else if id == ID_BUTTON {
+                    let _ok: bool = mount::set_content(out, this.buttons);
+                } else if id == ID_LABEL {
+                    let _ok: bool = mount::set_content(out, this.text);
+                } else if id == ID_CONTROLS {
+                    let _ok: bool = mount::set_content(out, this.controls);
+                } else if id == ID_VALUES {
+                    let _ok: bool = mount::set_content(out, this.values);
+                } else if id == ID_INPUTS {
+                    let _ok: bool = mount::set_content(out, this.inputs);
+                } else if id == ID_PICKERS {
+                    let _ok: bool = mount::set_content(out, this.pickers);
+                } else if id == ID_ICONS {
+                    let _ok: bool = mount::set_content(out, this.icons);
+                } else if id == ID_IMAGES {
+                    let _ok: bool = mount::set_content(out, this.images);
+                } else if id == ID_SPANS {
+                    let _ok: bool = mount::set_content(out, this.spans);
+                } else if id == ID_GRAPHICS {
+                    let _ok: bool = mount::set_content(out, this.graphics);
+                } else if id == ID_WEB {
+                    let _ok: bool = mount::set_content(out, this.web);
+                } else if id == ID_LAYOUT {
+                    let _ok: bool = mount::set_content(out, this.layout);
+                } else if id == ID_SCROLL {
+                    let _ok: bool = mount::set_content(out, this.scrolls);
+                } else if id == ID_SPLIT {
+                    let _ok: bool = mount::set_content(out, this.splits);
+                } else if id == ID_ZSTACK {
+                    let _ok: bool = mount::set_content(out, this.zstacks);
+                } else if id == ID_RESPONSIVE {
+                    let _ok: bool = mount::set_content(out, this.responsive);
+                } else if id == ID_LIST {
+                    let _ok: bool = mount::set_content(out, this.lists);
+                } else if id == ID_COLLECTION {
+                    let _ok: bool = mount::set_content(out, this.collections);
+                } else if id == ID_TREE {
+                    let _ok: bool = mount::set_content(out, this.trees);
+                } else if id == ID_PAGE_DOTS {
+                    let _ok: bool = mount::set_content(out, this.page_dots);
+                } else if id == ID_TABLE {
+                    let _ok: bool = mount::set_content(out, this.tables);
+                } else if id == ID_REFRESH {
+                    let _ok: bool = mount::set_content(out, this.refresh);
+                } else if id == ID_SWIPE {
+                    let _ok: bool = mount::set_content(out, this.swipe);
+                } else if id == ID_CAROUSEL {
+                    let _ok: bool = mount::set_content(out, this.carousel);
+                }
+            }
+            option::Option[*core::Node]::None => { }
+        }
+        return;
+    }
+
+    fn on_nav_select(ref this, node: *tree::TreeNode) {
+        if node == (0 as *tree::TreeNode) { return; }
+        if { (*node).is_branch } { return; }
+        let id: i32 = demo_id_for({ (*node).id_of() });
+        if id < 0 { return; }
+        this.show_demo(id);
+        return;
+    }
+}
+
+impl Gallery: component::Component {
+    fn build(ref this) -> core::Node {
+        var head: core::Builder = core::Builder::new();
+        head.add(ui::label(
+            "Facet Gallery",
+            key: "nav:title",
+            font_size: 16.0f64,
+            font_weight: vocab::FontWeight::Bold,
+            text_color: vocab::Color::ink(),
+        ));
+        head.add(ui::label(
+            "Widget reference",
+            key: "nav:sub",
+            font_size: 11.0f64,
+            text_color: vocab::Color::ink(0.5f64),
+        ));
+
+        var side: core::Builder = core::Builder::new();
+        side.add(core::column(head).padding(14.0f64).gap(2.0f64));
+        side.add(ui::tree(
+            catalog_model(),
+            key: "gallery:nav",
+            on_select: this.on_nav_select,
+            row_height: 28.0f64,
+        ).grow(1.0f64));
+
+        var sidebar: core::Node = core::column(side).grow(1.0f64);
+        sidebar.set_background_color(vocab::Color::raised());
+
+        var main: core::Node = core::column(core::Builder::new(), key: "gallery:main")
+            .grow(1.0f64);
+        main.set_background_color(vocab::Color::surface());
+
+        var panes: core::Builder = core::Builder::new();
+        panes.add(sidebar);
+        panes.add(main);
+        return ui::split(
+            panes,
+            key: "gallery:split",
+            axis: split::SplitAxis::Columns,
+            position: 240.0f64,
+            min_leading: 180.0f64,
+            min_trailing: 360.0f64,
+        ).grow(1.0f64);
+    }
+}
+
+impl Gallery: component::Lifecycle {
+    fn on_attach(ref this) {
+        match tree::find("gallery:nav") {
+            option::Option[tree::Tree]::Some(t) => {
+                let _b: tree::Tree = t.expand(SEC_VIEWS);
+                let _c: tree::Tree = t.expand(SEC_LAYOUT);
+                let _d: tree::Tree = t.expand(SEC_COLLECTIONS);
+                let _e: tree::Tree = t.expand(SEC_INTERACTION);
+                let _f: tree::Tree = t.select(NAV_OVERVIEW);
+            }
+            option::Option[tree::Tree]::None => { }
+        }
+        this.show_demo(ID_OVERVIEW);
+        return;
+    }
+    fn on_detach(ref this) { return; }
+}
+
+impl Gallery: screen::Screen {
+    fn chrome(this) -> screen::Chrome {
+        return screen::Chrome::new(
+            title: "Facet Gallery",
+            width: 1000.0f64,
+            height: 680.0f64,
+            min_width: 720.0f64,
+            min_height: 480.0f64,
+        );
+    }
+    fn menu_items(this) -> vec::Vec[screen::MenuItem] {
+        return vec::new::[screen::MenuItem]();
+    }
+}
+
+fn screen_box() -> screen::ScreenBox {
+    return screen::screen_box(Gallery::new());
+}

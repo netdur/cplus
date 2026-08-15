@@ -341,10 +341,11 @@ fn parent_of(path: str) -> text::Text {
     }
     if !found { return text::from_str("."); }
     if cut == (0 as usize) { return text::from_str("/"); }
-    let whole: text::Text = text::from_str(path);
-    return match whole.slice(from: 0 as usize, to: cut) {
-        option::Option[text::Text]::Some(t) => t,
-        option::Option[text::Text]::None => text::from_str("."),
+    // `slice` returns a view of the `path` param; copy it into the owned
+    // return.
+    return match path.slice(from: 0 as usize, to: cut) {
+        option::Option[str]::Some(s) => text::from_str(s),
+        option::Option[str]::None => text::from_str("."),
     };
 }
 
@@ -470,10 +471,10 @@ fn json_string(s: str) -> text::Text {
 fn append_range(out: *text::Text, src: *text::Text, from: usize, to: usize) {
     if from >= to { return; }
     match { (*src).slice(from: from, to: to) } {
-        option::Option[text::Text]::Some(t) => {
-            let _a: status::Status = { (*out).append(t.view()) };
+        option::Option[str]::Some(t) => {
+            let _a: status::Status = { (*out).append(t) };
         }
-        option::Option[text::Text]::None => { }
+        option::Option[str]::None => { }
     }
     return;
 }

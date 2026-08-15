@@ -139,6 +139,15 @@ struct ModuleMetadata {
     /// the exact span is masked, so any *other* coercion nested in the subtree
     /// (e.g. a `str` arg inside a block statement) still fires.
     text_coercion_suppress: Cell<Option<crate::lexer::Span>>,
+    /// 2026-08-13: true while lowering a CONSUMED coercion context — a call
+    /// argument or method receiver, where any coerced view dies with the
+    /// enclosing statement. `gen_text_to_str` then registers an OWNED RVALUE
+    /// `Text` (a call result, an interpolation) for the end-of-statement
+    /// temp drop; it used to leak (nothing owned the spilled temp). A
+    /// coerced rvalue at a BINDING position stays on the historical leaking
+    /// path — dropping it there would dangle the binding; the honest fix is
+    /// rejecting the shape (see bugs/rvalue-text-coercion-binding-leak.md).
+    text_coercion_consumed: Cell<bool>,
 }
 
 impl ModuleMetadata {
@@ -329,44 +338,6 @@ impl ModuleMetadata {
             .push(format!("!{id} = !{{!\"{name}\", !{root}, i64 0}}"));
         self.tbaa_leaves.borrow_mut().insert(name, id);
         Some(id)
-    }
-
-    /// Helper: compute the TBAA leaf *name* for `ty` without allocating
-    /// a leaf node. Used by `tbaa_tag_for` when building composite
-    /// names (`arrN_<elem>`, `<elem>x<lanes>`).
-    fn tbaa_leaf_name_for(&self, ty: &Ty, types: &TypeTable) -> Option<String> {
-        match ty {
-            Ty::I8 => Some("i8".into()),
-            Ty::U8 => Some("u8".into()),
-            Ty::Bool => Some("bool".into()),
-            Ty::I16 => Some("i16".into()),
-            Ty::U16 => Some("u16".into()),
-            Ty::I32 => Some("i32".into()),
-            Ty::U32 => Some("u32".into()),
-            Ty::I64 => Some("i64".into()),
-            Ty::U64 => Some("u64".into()),
-            Ty::Isize => Some("isize".into()),
-            Ty::Usize => Some("usize".into()),
-            Ty::F16 => Some("f16".into()),
-            Ty::F32 => Some("f32".into()),
-            Ty::F64 => Some("f64".into()),
-            Ty::RawPtr(_) | Ty::FnPtr { .. } => Some("ptr".into()),
-            Ty::Struct(id) => Some(format!("struct.{}", types.struct_defs[id.0 as usize].name)),
-            Ty::Enum(id) => {
-                let info = &types.enum_defs[id.0 as usize];
-                if info.is_tagged {
-                    let n = types
-                        .enum_by_name
-                        .iter()
-                        .find_map(|(name, eid)| (*eid == *id).then(|| name.clone()))
-                        .unwrap_or_else(|| format!("enum_{}", id.0));
-                    Some(format!("enum.{n}"))
-                } else {
-                    Some("i32".into())
-                }
-            }
-            _ => None,
-        }
     }
 
     /// Drain the accumulated metadata definitions into the output. Must be
@@ -2820,6 +2791,59 @@ fn is_copy_ty(ty: &Ty, t: &TypeTable) -> bool {
     }
 }
 
+/// True iff a value of this type can carry a borrow into storage it does not
+/// own — `str`, a slice, a raw pointer, or an aggregate with such a field.
+/// Codegen's twin of borrowck's `type_contains_view`, on the `TypeTable`:
+/// borrowck answers it for diagnostics, this answers it for lifetimes, and the
+/// only caller is the block-tail temp decision (`close_temp_scope_for_value`).
+/// Over-answering `true` costs a temp a slightly later drop; answering `false`
+/// on a carrier frees storage the produced value still aims at, so unknown
+/// shapes lean `true`.
+fn ty_carries_view(ty: &Ty, t: &TypeTable) -> bool {
+    ty_carries_view_rec(ty, t, &mut Vec::new())
+}
+
+/// `visiting` keys on (is_enum, id) — struct and enum ids are separate
+/// universes and would otherwise alias each other.
+fn ty_carries_view_rec(ty: &Ty, t: &TypeTable, visiting: &mut Vec<(bool, u32)>) -> bool {
+    match ty {
+        Ty::Str | Ty::Slice(_) | Ty::RawPtr(_) => true,
+        Ty::Array(elem, _) => ty_carries_view_rec(elem, t, visiting),
+        Ty::Distinct { base, .. } => ty_carries_view_rec(base, t, visiting),
+        Ty::Struct(id) => {
+            // A struct can reach itself only through a pointer field, which
+            // already answered `true` above; the guard is here so a malformed
+            // table cannot spin.
+            if visiting.contains(&(false, id.0)) {
+                return false;
+            }
+            visiting.push((false, id.0));
+            let r = t.struct_defs[id.0 as usize]
+                .fields
+                .iter()
+                .any(|(_, fty)| ty_carries_view_rec(fty, t, visiting));
+            visiting.pop();
+            r
+        }
+        Ty::Enum(id) => {
+            if visiting.contains(&(true, id.0)) {
+                return false;
+            }
+            visiting.push((true, id.0));
+            let r = t.enum_defs[id.0 as usize]
+                .variant_payloads
+                .iter()
+                .any(|p| p.iter().any(|pty| ty_carries_view_rec(pty, t, visiting)));
+            visiting.pop();
+            r
+        }
+        // A generic parameter never reaches codegen post-monomorphization;
+        // `Error` is a type that failed to resolve. Both lean sound.
+        Ty::Param(_) | Ty::Error => true,
+        _ => false,
+    }
+}
+
 /// §2.9 borrow-ABI choice for a parameter. Returns true when the LLVM signature
 /// should use `ptr` for this parameter and the callee binds it directly (no
 /// alloca, no initial store, no drop registration), so that the callee's
@@ -3625,6 +3649,12 @@ fn static_layout(ty: &Ty, types: &TypeTable) -> Option<(u64, u64)> {
 /// complement, so a mask whose top bit is set comes out negative
 /// (`and i40 %raw, -8589934585`, which is clang's own text for the same
 /// mask). Printing it unsigned would exceed the type and be rejected.
+///
+/// `iN` is LLVM's own notation, where `N` stands for the bit width — the
+/// name mirrors the thing it prints. Snake case would render it `i_n_const`,
+/// which reads as three words and loses that; the lint is waived rather
+/// than the reference broken.
+#[allow(non_snake_case)]
 fn iN_const(v: u128, bits: u32) -> String {
     let width = bits.min(127);
     let modulus = 1u128 << width;
@@ -4842,6 +4872,13 @@ fn write_preamble(out: &mut String, sanitizer_attrs: &str) {
     out.push_str(
         "@.cplus.str.empty = private unnamed_addr constant [1 x i8] zeroinitializer, align 1\n",
     );
+    // Stage-3 sink lowering (2026-08-13): the no-newline `%.*s` format and a
+    // one-byte newline blob, for writing interpolation parts straight to a
+    // stream (no `Text` materialization).
+    out.push_str(
+        "@.fmt_str = private unnamed_addr constant [5 x i8] c\"%.*s\\00\", align 1\n",
+    );
+    out.push_str("@.cplus.nl = private unnamed_addr constant [1 x i8] c\"\\0A\", align 1\n");
     out.push('\n');
     out.push_str("declare i32 @printf(ptr noundef, ...)\n");
     // Phase 8 slice 8.STR.3: byte-level string comparison.
@@ -9165,6 +9202,22 @@ impl<'a> FnState<'a> {
         slot
     }
 
+    /// An anonymous slot whose value OUTLIVES the scope that fills it: the
+    /// shared result slot of an `if`/`match`, written inside one branch and
+    /// read at the merge. `alloca_anon` brackets a slot's lifetime to the
+    /// frame that allocated it, and branch frames now close before their jump
+    /// to the merge — so a bracketed result slot would be marked dead one
+    /// instruction before the merge loads it. This one lives for the function,
+    /// which is what it already meant.
+    fn alloca_anon_unscoped(&mut self, ty: Ty) -> String {
+        self.tmp_counter += 1;
+        let slot = format!("%a{}", self.tmp_counter);
+        let al = self.stated_align(&ty);
+        self.allocas
+            .push(format!("{slot} = alloca {}{al}", self.lty(&ty)));
+        slot
+    }
+
     /// v0.0.28: the `, align N` an alloca of `ty` has to state.
     ///
     /// A planned struct is emitted as a blob of bytes, and a blob of bytes
@@ -9569,8 +9622,62 @@ impl<'a> FnState<'a> {
             return;
         }
         for (slot, ty, flag) in scope.iter().rev() {
-            self.emit_flag_gated_drop(ty, slot, flag);
+            self.emit_flag_gated_drop_clearing(ty, slot, flag);
         }
+    }
+
+    /// Close the current temporary scope by handing its temps to the ENCLOSING
+    /// scope instead of dropping them here. The bracket a value-producing
+    /// evaluation point needs when the value it produced may BORROW from those
+    /// temps.
+    ///
+    /// 2026-08-15: `{ mk().view() }` — a block whose tail takes a view of a
+    /// call result — spilled the `Text` to a temp, registered it in the block
+    /// tail's own scope, and freed it at the end of the tail. The `str` the
+    /// block yielded then aimed into freed memory, and the consumer of the
+    /// block read it: `out = out.appending({ base64::encode_url(p).view() })`
+    /// appended garbage, intermittently (the freed buffer often still held the
+    /// right bytes). Without the braces the same expression is correct — the
+    /// temp lands in the statement's scope and outlives the call — so the
+    /// block bracket was the whole defect
+    /// (bugs/rvalue-text-view-as-argument.md).
+    ///
+    /// Promotion, not suppression: the enclosing statement drops the temp once
+    /// the value has been consumed, which is exactly the unbraced lifetime.
+    /// With no enclosing scope the temp leaks, which is what every other
+    /// view-producing position already does (`return` skips its temp drops on
+    /// the terminated path — see `close_temp_scope`).
+    fn promote_temp_scope(&mut self) {
+        let scope = self.temp_scopes.pop().unwrap_or_default();
+        if let Some(parent) = self.temp_scopes.last_mut() {
+            parent.extend(scope);
+        }
+    }
+
+    /// Close a value-producing evaluation point's temp scope: promote when the
+    /// value carries a view (it may alias a temp created while evaluating it),
+    /// drop otherwise. `None` — a diverging or Unit-valued tail — borrows
+    /// nothing, so it drops.
+    fn close_temp_scope_for_value(&mut self, val: Option<&Ty>) {
+        match val {
+            Some(ty) if ty_carries_view(ty, self.types) => self.promote_temp_scope(),
+            _ => self.close_temp_scope(),
+        }
+    }
+
+    /// Evaluate `e` inside its own temporary scope — the bracket `gen_stmt`
+    /// puts around a statement, at an evaluation point that is *not* a
+    /// statement. Loop conditions, C-style `for` update expressions and block
+    /// tails are all re-evaluated (per iteration, per call) while the nearest
+    /// enclosing statement scope closes only once; without their own bracket
+    /// their owned Drop temporaries either pile up in that outer scope — one
+    /// drop for N allocations — or, with no scope open at all (a function body
+    /// whose whole content is an `if`), are never registered and never freed.
+    fn gen_expr_scoped(&mut self, e: &Expr) -> Option<(String, Ty)> {
+        self.open_temp_scope();
+        let v = self.gen_expr(e);
+        self.close_temp_scope();
+        v
     }
 
     /// A *place* expression — `gen_place` returns an address into existing
@@ -9691,7 +9798,24 @@ impl<'a> FnState<'a> {
         kind: DropKind,
         initialized: bool,
     ) -> String {
-        let disposition = if self.moved_bindings.contains(binding_name) {
+        // `Always` means "this binding provably owns a value at scope exit, so
+        // drop it without asking". Two independent facts can make that false,
+        // and only one of them used to be consulted here.
+        //
+        // The move scanner answers "is it moved away somewhere". `initialized`
+        // answers "does it own anything to begin with" — a deferred-init
+        // `var x: T;` owns nothing until its first assignment. That second fact
+        // was read only to pick the flag's *initial value*, which is dead code
+        // when the disposition is `Always`: a `var x: T;` that is never
+        // assigned never enters `moved_bindings` (the scanner adds assignment
+        // targets, and there is no assignment), so it took the `Always` branch
+        // and scope exit called `T.drop` on an alloca nothing ever wrote —
+        // stack garbage through a destructor that frees its fields. Deferred
+        // init therefore forces `Runtime` on its own, which also makes the
+        // pairing structural: `Always` is now unreachable for a binding
+        // registered with `initialized: false`, so a future scanner change
+        // cannot reopen the hole.
+        let disposition = if !initialized || self.moved_bindings.contains(binding_name) {
             DropDisposition::Runtime
         } else {
             DropDisposition::Always
@@ -9986,54 +10110,6 @@ impl<'a> FnState<'a> {
         // If there's no flag, the binding isn't Drop — nothing to do.
     }
 
-    /// v0.0.5 Slice 1A: deep-clone a `Text` aggregate value (`{ ptr, i64
-    /// len, i64 cap }`). Allocates `len` bytes on the heap, memcpies the
-    /// source bytes in, returns a fresh aggregate `{ new_ptr, len, len }`.
-    /// `cap` is set to `len` (tighter than the source) — the result is
-    /// only ever read or freed, never grown, so the saved bytes are pure
-    /// win. Free-of-null is a libc no-op, so `len == 0` is safe even
-    /// though `malloc(0)` is implementation-defined.
-    ///
-    /// Used by `StmtKind::Return` when the returned ident is a shared-
-    /// parameter: the caller still owns the original; the result
-    /// must be an independent allocation or Drop double-frees.
-    fn clone_string_aggregate(&mut self, src: &str) -> String {
-        let us = usize_llvm_ty();
-        let src_ptr = self.next_tmp();
-        self.emit(&format!(
-            "{src_ptr} = extractvalue {{ ptr, {us}, {us} }} {src}, 0"
-        ));
-        let len = self.next_tmp();
-        self.emit(&format!(
-            "{len} = extractvalue {{ ptr, {us}, {us} }} {src}, 1"
-        ));
-        let new_ptr = self.next_tmp();
-        self.emit(&format!("{new_ptr} = call ptr @malloc({us} {len})"));
-        // `len == 0` → malloc may return null or a unique sentinel; either
-        // way memcpy(_, _, 0) is a no-op, free(null) is a no-op. Skip the
-        // zero-length branch — keeps the IR flat and matches what the
-        // existing string constructors emit. libc `memcpy` is already
-        // declared in the preamble; cheaper than introducing the LLVM
-        // memcpy intrinsic here.
-        let _dummy = self.next_tmp();
-        self.emit(&format!(
-            "{_dummy} = call ptr @memcpy(ptr {new_ptr}, ptr {src_ptr}, {us} {len})"
-        ));
-        let t1 = self.next_tmp();
-        self.emit(&format!(
-            "{t1} = insertvalue {{ ptr, {us}, {us} }} undef, ptr {new_ptr}, 0"
-        ));
-        let t2 = self.next_tmp();
-        self.emit(&format!(
-            "{t2} = insertvalue {{ ptr, {us}, {us} }} {t1}, {us} {len}, 1"
-        ));
-        let t3 = self.next_tmp();
-        self.emit(&format!(
-            "{t3} = insertvalue {{ ptr, {us}, {us} }} {t2}, {us} {len}, 2"
-        ));
-        t3
-    }
-
     /// Emit a drop call for a Drop binding at scope-exit. Slice
     /// 6BC.opt's disposition decides the lowering:
     /// - **Always**: direct unconditional `call @T.drop(ptr)`. No
@@ -10085,6 +10161,23 @@ impl<'a> FnState<'a> {
     /// already-moved storage. Mirrors `emit_conditional_drop`'s Runtime branch
     /// (the auto-`br` emitted by `open_block` joins the skip path).
     fn emit_flag_gated_drop(&mut self, ty: &Ty, slot: &str, flag: &str) {
+        self.emit_flag_gated_drop_impl(ty, slot, flag, false);
+    }
+
+    /// `emit_flag_gated_drop` that also disarms the flag on the drop path.
+    /// A temp's flag alloca is hoisted to the entry block and initialised
+    /// `false` exactly once, so it survives every re-execution of the code that
+    /// sets it. Now that temp scopes close per loop iteration, a temp that one
+    /// iteration materialises on a conditional path (`while a() || mk().g()`,
+    /// a loop-body tail `if c { mk().g() } else { 0 }`) would still read `true`
+    /// on a later iteration that never re-created it — a second drop of a slot
+    /// already torn down. Clearing here makes the drop happen once per
+    /// materialisation, which is the invariant the flag is supposed to encode.
+    fn emit_flag_gated_drop_clearing(&mut self, ty: &Ty, slot: &str, flag: &str) {
+        self.emit_flag_gated_drop_impl(ty, slot, flag, true);
+    }
+
+    fn emit_flag_gated_drop_impl(&mut self, ty: &Ty, slot: &str, flag: &str, clear: bool) {
         let flag_val = self.next_tmp();
         self.gen_load(&flag_val, &Ty::Bool, flag);
         let drop_lbl = self.next_block_label();
@@ -10094,6 +10187,9 @@ impl<'a> FnState<'a> {
         ));
         self.open_block(&drop_lbl);
         self.gen_drop_in_place(ty, slot);
+        if clear {
+            self.gen_store(&Ty::Bool, "false", flag);
+        }
         self.open_block(&skip_lbl);
     }
 
@@ -10107,6 +10203,28 @@ impl<'a> FnState<'a> {
                 // expression statement. Side effects fire; the result
                 // (if any) is dropped on the floor.
                 let _ = self.gen_expr(e);
+            }
+        }
+    }
+
+    /// Drop every owned temporary registered by every statement still open,
+    /// innermost first. A statement's temps normally drain at its own end
+    /// (`close_temp_scope`), which a `return` jumps straight past — so
+    /// `return f().g()` never dropped the `f()` its chain borrowed, and
+    /// neither did any enclosing statement's temps. The scopes are NOT popped:
+    /// `close_temp_scope` still runs later and skips its drops because the
+    /// block is terminated, and every drop emitted here sits on the path that
+    /// ends in `ret`, so the non-returning path drops each temp exactly once
+    /// in its own block.
+    fn emit_all_temp_scope_exits(&mut self) {
+        let scopes: Vec<Vec<(String, Ty, String)>> =
+            self.temp_scopes.iter().rev().cloned().collect();
+        for scope in &scopes {
+            for (slot, ty, flag) in scope.iter().rev() {
+                if self.terminated {
+                    return;
+                }
+                self.emit_flag_gated_drop(ty, slot, flag);
             }
         }
     }
@@ -10185,7 +10303,7 @@ impl<'a> FnState<'a> {
         }
         if !self.terminated {
             if let Some(t) = &b.tail {
-                let _ = self.gen_expr(t);
+                let _ = self.gen_expr_scoped(t);
             }
         }
         self.pop_scope();
@@ -10206,7 +10324,15 @@ impl<'a> FnState<'a> {
             // run scope-exit drops, then ret.
             match &b.tail {
                 Some(t) => {
-                    let val = self.gen_expr(t);
+                    // A function body is not a statement, so with no bracket
+                    // here `temp_scopes` is empty while the tail runs and
+                    // `register_temp` records nothing at all — a function whose
+                    // whole content is `if mk().get() > 0 { … }` never freed the
+                    // receiver, not even at function exit.
+                    // (No view-promotion bracket here: E0333 forbids a
+                    // non-Unit body from ending in a value tail, so this tail
+                    // is Unit or diverging — it borrows nothing.)
+                    let val = self.gen_expr_scoped(t);
                     self.emit_all_scope_exits();
                     if !self.terminated {
                         match self.return_ty {
@@ -10553,6 +10679,11 @@ impl<'a> FnState<'a> {
                         }
                     }
                 }
+                // Whether a musttail was ASKED for, captured before the value
+                // is lowered (the call site consumes the flag). Read by the
+                // temp-drop drain below, which must not come between a
+                // musttail call and its `ret`.
+                let wanted_musttail = self.pending_musttail;
                 // Evaluate the return value first so any moves it triggers
                 // (e.g. `return f(move_x)`) flip drop flags before scope drops.
                 //
@@ -10593,6 +10724,9 @@ impl<'a> FnState<'a> {
                         // produces no SSA value. Fall through to the Unit
                         // return path — emit drops, then `ret void`.
                         if v.is_none() && matches!(ret_ty, Ty::Unit) {
+                            if !wanted_musttail {
+                                self.emit_all_temp_scope_exits();
+                            }
                             self.emit_all_scope_exits();
                             if !self.terminated {
                                 self.emit_terminator("ret void");
@@ -10628,6 +10762,18 @@ impl<'a> FnState<'a> {
                 // gen_named_call (e.g. ExprKind::Call routed through a
                 // different lowering path).
                 self.pending_musttail = false;
+                // The statement's own temporaries first — a chain like
+                // `return f().g()` borrowed `f()`'s owned value and nothing
+                // else will ever free it. Skipped when this return asked for a
+                // musttail: LLVM requires the `ret` to follow that call with
+                // nothing in between, and musttail is an optimization while a
+                // leak here is confined to `return f(g())` in tail position.
+                if !wanted_musttail {
+                    self.emit_all_temp_scope_exits();
+                    if self.terminated {
+                        return;
+                    }
+                }
                 // Run destructors for all live Drop bindings in every scope
                 // before the `ret`. The conditional drop respects each
                 // binding's flag, so values moved into the return expr are
@@ -10836,7 +10982,10 @@ impl<'a> FnState<'a> {
         }
         if !self.terminated {
             if let Some(tail) = &body.tail {
-                let _ = self.gen_expr(tail);
+                // The tail is an evaluation point, not a statement — it needs
+                // the same temp bracket `gen_stmt` gives the statements above,
+                // or its temporaries accumulate for the life of the loop.
+                let _ = self.gen_expr_scoped(tail);
             }
         }
         // v0.0.16: emit this iteration's scope-exit drops (+ lifetime.end) BEFORE
@@ -10864,7 +11013,13 @@ impl<'a> FnState<'a> {
 
         self.emit_terminator(&format!("br label %{head}"));
         self.open_block(&head);
-        let (cond_v, _) = self.gen_expr(cond).expect("while cond produces bool");
+        // The condition re-runs every iteration, so its owned temporaries get
+        // their own scope, closed here in the head — before the branch, and on
+        // the exit path too. Registering them in the enclosing statement's
+        // scope instead meant one drop for N iterations' allocations.
+        let (cond_v, _) = self
+            .gen_expr_scoped(cond)
+            .expect("while cond produces bool");
         self.emit_terminator(&format!(
             "br i1 {cond_v}, label %{loop_body}, label %{exit}"
         ));
@@ -10883,8 +11038,8 @@ impl<'a> FnState<'a> {
         }
         if !self.terminated {
             if let Some(tail) = &body.tail {
-                // value discarded
-                let _ = self.gen_expr(tail);
+                // value discarded; temps bracketed per iteration (see gen_loop)
+                let _ = self.gen_expr_scoped(tail);
             }
         }
         // v0.0.16: drops before the back-edge — see gen_loop for the rationale
@@ -11021,7 +11176,8 @@ impl<'a> FnState<'a> {
         }
         if !self.terminated {
             if let Some(tail) = &body.tail {
-                let _ = self.gen_expr(tail);
+                // per-iteration temp bracket — see gen_loop
+                let _ = self.gen_expr_scoped(tail);
             }
         }
         // v0.0.16: drops before the back-edge (pop_scope skips hooks once
@@ -11099,7 +11255,8 @@ impl<'a> FnState<'a> {
                 }
                 if !self.terminated {
                     if let Some(tail) = &body.tail {
-                        let _ = self.gen_expr(tail);
+                        // per-iteration temp bracket — see gen_loop
+                        let _ = self.gen_expr_scoped(tail);
                     }
                 }
                 // v0.0.16: drops before the back-edge (to `step`) — else
@@ -11143,8 +11300,10 @@ impl<'a> FnState<'a> {
 
                 self.emit_terminator(&format!("br label %{head}"));
                 self.open_block(&head);
+                // Same per-iteration bracket as `while` — the condition is
+                // re-evaluated on every trip, including the one that exits.
                 let cond_v = match cond {
-                    Some(c) => self.gen_expr(c).expect("for-cond produces bool").0,
+                    Some(c) => self.gen_expr_scoped(c).expect("for-cond produces bool").0,
                     None => "true".to_string(),
                 };
                 self.emit_terminator(&format!("br i1 {cond_v}, label %{body_lbl}, label %{exit}"));
@@ -11163,7 +11322,8 @@ impl<'a> FnState<'a> {
                 }
                 if !self.terminated {
                     if let Some(tail) = &body.tail {
-                        let _ = self.gen_expr(tail);
+                        // per-iteration temp bracket — see gen_loop
+                        let _ = self.gen_expr_scoped(tail);
                     }
                 }
                 // v0.0.16: drops before the back-edge (to `step`) — else
@@ -11175,10 +11335,12 @@ impl<'a> FnState<'a> {
                 self.loop_labels.pop();
                 self.loop_scope_depth.pop();
 
-                // Step block: run update list, branch back to head.
+                // Step block: run update list, branch back to head. The updates
+                // are re-evaluated per iteration too, so each gets its own temp
+                // bracket rather than the enclosing statement's.
                 self.open_block(&step);
                 for u in update {
-                    let _ = self.gen_expr(u);
+                    let _ = self.gen_expr_scoped(u);
                 }
                 // v0.0.7 Slice 1.3: back-edge gets `!llvm.loop`.
                 let md = self.loop_metadata_for(attributes);
@@ -11906,6 +12068,11 @@ impl<'a> FnState<'a> {
     /// Void (returns no SSA value), so it has its own `gen_intrinsic` arm rather
     /// than going through `ffi_builtin_cg` (whose `None` means "not a builtin").
     fn gen_println(&mut self, args: &[Expr]) {
+        // Stage-3 sink lowering: `#println("i = ${i}")` writes parts straight
+        // to stdout — same rule as the `io::println` intercept.
+        if let ExprKind::InterpStr { parts } = &args[0].kind {
+            return self.gen_interp_print_sink(parts, false, true);
+        }
         let us = usize_llvm_ty();
         let (av, aty) = self.gen_expr(&args[0]).expect("println arg");
         let v = self.next_tmp();
@@ -13328,6 +13495,34 @@ impl<'a> FnState<'a> {
         debug_assert_eq!(segments.len(), 2, "Phase 2A paths are 2 segments");
         let enum_name = &segments[0].name;
         let variant_name = &segments[1].name;
+        // `Type::f` in value position: a receiverless associated fn is a
+        // namespaced fn, and its address is the symbol its own definition
+        // emitted. Methods are mangled `Struct.method`, which is what a
+        // direct call at any other site resolves to.
+        if !self.types.enum_by_name.contains_key(enum_name) {
+            if let Some(sid) = self.types.struct_by_name.get(enum_name).copied() {
+                if let Some(m) = self.types.struct_defs[sid.0 as usize]
+                    .methods
+                    .get(variant_name)
+                    .cloned()
+                {
+                    if m.receiver.is_none() {
+                        let params: Vec<Ty> = m.params.iter().map(|p| p.ty.clone()).collect();
+                        let param_takes: Vec<bool> =
+                            m.params.iter().map(|p| p.mode.is_take()).collect();
+                        let param_refs: Vec<bool> =
+                            m.params.iter().map(|p| p.mode.is_ref()).collect();
+                        let ty = Ty::FnPtr {
+                            params,
+                            param_takes,
+                            param_refs,
+                            return_type: Box::new(m.return_type.clone()),
+                        };
+                        return (format!("@{}", mangle(enum_name, variant_name)), ty);
+                    }
+                }
+            }
+        }
         let id = *self.types.enum_by_name.get(enum_name).unwrap_or_else(|| {
             panic!(
                 "sema validated enum name: missing `{}::{}`",
@@ -13710,7 +13905,7 @@ impl<'a> FnState<'a> {
             let body_val = self.gen_expr(&arm.body);
             if let Some((v, ty)) = body_val {
                 if result_slot.is_none() {
-                    let s = self.alloca_anon(ty.clone());
+                    let s = self.alloca_anon_unscoped(ty.clone());
                     result_slot = Some((s, ty.clone()));
                 }
                 let (rs, rt) = result_slot.clone().unwrap();
@@ -14426,6 +14621,22 @@ impl<'a> FnState<'a> {
         // cleared.
         let want_musttail = self.pending_musttail;
         self.pending_musttail = false;
+        // Stage-3 sink lowering (2026-08-13): an interpolated literal passed
+        // DIRECTLY to a blessed print sink writes its parts to the stream —
+        // no `Text` is materialized, no heap is touched. Any other argument
+        // shape (a binding, a `Text` value, a wrapped block) takes the
+        // normal path below. The captured musttail request is dropped: the
+        // lowering emits a call sequence, not a single tail call.
+        if args.len() == 1 {
+            if let ExprKind::InterpStr { parts } = &args[0].kind {
+                // The set lives in `ast::blessed_print_sink` — shared with
+                // sema's `#[no_alloc]` effect pass, so they cannot drift.
+                if let Some((to_stderr, nl)) = crate::ast::blessed_print_sink(name) {
+                    self.gen_interp_print_sink(parts, to_stderr, nl);
+                    return None;
+                }
+            }
+        }
         // Does the callee use `fastcc`? Keyed on the same symbol the return gate
         // (`want_c_abi_ret`) uses below (`link_name` for extern, else `name`); for
         // a native fastcc-eligible callee `link_name` is None so this is `name`,
@@ -15621,10 +15832,29 @@ impl<'a> FnState<'a> {
         // read (`{ *p }`) would be spilled as a bit-copy instead of aliasing
         // the real place (breaking mutate-through-pointer code, e.g.
         // flex_layout's node access).
-        let pre: Option<(String, Ty)> = if self.method_receiver_is_place(receiver) {
+        // TEXT→STR receiver fallthrough (2026-08-13): sema recorded a
+        // coercion on this receiver (a str-set method reached through a
+        // `Text` receiver, e.g. `t.trim()`). Route it through `gen_expr`,
+        // whose coercion arm packages the `{ptr,len}` view — the spill below
+        // then hands the str-method arm a `Ty::Str` place, same as any
+        // rvalue receiver.
+        let receiver_coerces = self
+            .md
+            .text_to_str_coercions
+            .borrow()
+            .contains(&receiver.span);
+        let pre: Option<(String, Ty)> = if self.method_receiver_is_place(receiver)
+            && !receiver_coerces
+        {
             None
         } else {
-            self.gen_expr(receiver)
+            // A receiver is consumed within its statement — a coerced
+            // rvalue `Text` here may be temp-dropped (see
+            // `text_coercion_consumed`).
+            let prev = self.md.text_coercion_consumed.replace(true);
+            let r = self.gen_expr(receiver);
+            self.md.text_coercion_consumed.set(prev);
+            r
         };
         // Phase 8 slice 8.STR.6: blessed `to_string()` on primitives + `str`.
         // The receiver is a primitive value, not a place — handle before
@@ -15775,6 +16005,17 @@ impl<'a> FnState<'a> {
             }
             None => self.gen_place(receiver),
         };
+        // Stage-3 follow-up (2026-08-13): `t.append("… ${x} …")` appends the
+        // interpolation's parts in place — no `Text` materializes. Parts
+        // that read the receiver keep the old materializing path (its
+        // copy-out makes the aliasing safe).
+        if name.name == "append" && args.len() == 1 && self.is_lang_string_ty(&recv_ty) {
+            if let ExprKind::InterpStr { parts } = &args[0].kind {
+                if !Self::interp_mentions_receiver_root(receiver, parts) {
+                    return self.gen_text_append_interp(&recv_ptr, &recv_ty, parts);
+                }
+            }
+        }
         // STRM v2 (2026-07-31): the Phase-8 `Ty::String` blessed-method arm
         // (`len`/`is_empty`/`as_str`/`clone`) was deleted as unreachable —
         // no expression types as the legacy internal string in receiver
@@ -16479,6 +16720,12 @@ impl<'a> FnState<'a> {
         }
         if !self.terminated {
             if let Some(tail) = &b.tail {
+                // The tail's own temporaries belong to this evaluation of the
+                // branch, not to the statement the `if` sits in — an `if` that
+                // is itself a loop-body tail is re-entered every iteration.
+                // Opened around the result store as well so the produced value
+                // is safely in the slot before the temps are torn down.
+                self.open_temp_scope();
                 let v = self.gen_expr(tail);
                 if let Some((rv, rt)) = &v {
                     // v0.0.7 Slice 1.2: block-tail value store.
@@ -16499,10 +16746,24 @@ impl<'a> FnState<'a> {
                         }
                     }
                 }
+                // Same rule as `gen_block_expr`: a view-carrying branch value
+                // outlives this branch, so its temps go to the enclosing
+                // statement instead of being freed before the merge.
+                self.close_temp_scope_for_value(v.as_ref().map(|(_, t)| t));
             }
+        }
+        // The scope closes BEFORE the jump to the merge, exactly as a match arm
+        // does (`gen_match`). `pop_scope` skips its hooks once the block is
+        // terminated — that is what lets an early `return` own its own drops —
+        // so emitting the `br` first meant every owned local declared in an
+        // `if`/`else` body was never dropped at all. Measured before the fix:
+        // 100k iterations of `if true { let t = big(); … }` peaked at 393.6 MB
+        // against 1.5 MB for the same binding in a `while` body, a bare block
+        // or a match arm.
+        self.pop_scope();
+        if !self.terminated {
             self.emit_terminator(&format!("br label %{merge_lbl}"));
         }
-        self.pop_scope();
     }
 
     /// v0.0.15: lazily allocate the shared if/else result slot from the actual
@@ -16521,7 +16782,7 @@ impl<'a> FnState<'a> {
             return;
         }
         if result_slot.is_none() {
-            *result_slot = Some((self.alloca_anon(ty.clone()), ty.clone()));
+            *result_slot = Some((self.alloca_anon_unscoped(ty.clone()), ty.clone()));
         }
         let (slot, slot_ty) = result_slot.clone().unwrap();
         self.gen_store(&slot_ty, val, &slot);
@@ -16540,6 +16801,10 @@ impl<'a> FnState<'a> {
         } else {
             match &b.tail {
                 Some(t) => {
+                    // Own temp bracket: the block may be a loop-body tail, a
+                    // match arm body, or a function's whole body, none of which
+                    // is a statement.
+                    self.open_temp_scope();
                     let r = self.gen_expr(t);
                     // v0.0.5 Phase 1B: a block whose tail expression is a
                     // bare `Ident(name)` of a non-Copy binding is moving
@@ -16558,6 +16823,12 @@ impl<'a> FnState<'a> {
                             }
                         }
                     }
+                    // The block's value leaves this bracket. If it carries a
+                    // view it may aim into a temp the tail just made, so that
+                    // temp is handed to the enclosing statement rather than
+                    // freed here — `{ mk().view() }` as a call argument used to
+                    // pass a dangling `str`.
+                    self.close_temp_scope_for_value(r.as_ref().map(|(_, t)| t));
                     r
                 }
                 None => None,
@@ -16971,9 +17242,351 @@ impl<'a> FnState<'a> {
     //   5. memcpy each part's bytes into the buffer at the running offset.
     //   6. Build the result aggregate `{ buf, total, total }`.
     //
-    // v1 leak: any Expr-derived `Text`'s buffer is malloc'd inside
-    // to_string and never freed. Matches the broader 8.STR.3 leak
-    // policy; Drop integration is a follow-up.
+    // Ownership of part buffers: scalar conversions are scratch temps,
+    // freed after the copy; a CALL-produced `Text` part is an rvalue
+    // temporary owned here and freed the same way (2026-08-13 — it used
+    // to leak: the v0.0.26 end-of-statement temp-drop never sees interp
+    // parts, they are evaluated in this function rather than spilled
+    // through the receiver/arg paths); a place-read `Text` part stays
+    // owned by its binding and is not touched.
+
+    /// Stage-3 sink lowering (2026-08-13): an interpolated literal consumed
+    /// DIRECTLY by a blessed print sink (`io::print` / `io::println` /
+    /// `io::eprintln`, and the `#println` intrinsic) never materializes a
+    /// `Text`. Each part writes straight to the stream in order: literal
+    /// parts from their globals, `str`/`Text` parts from their buffers
+    /// (call-produced `Text` parts freed after the write, mirroring
+    /// `gen_interp_str`'s ownership rule), bools from the static
+    /// `true`/`false` blobs, and numeric parts via `snprintf` into a
+    /// per-part 32-byte STACK scratch hoisted to the entry block. Zero heap
+    /// traffic — the loop `loop {{ io::println("i = ${i}"); }}` compiles to
+    /// what the equivalent `printf` does. Stdout parts go through
+    /// `printf("%.*s")` (same stream + buffering as `io::print` itself);
+    /// stderr parts through `stdlib.src.io.write_all` (same partial-write
+    /// loop `io::eprintln` uses).
+    fn gen_interp_print_sink(
+        &mut self,
+        parts: &[crate::ast::InterpStrPart],
+        to_stderr: bool,
+        newline: bool,
+    ) {
+        let us = usize_llvm_ty();
+        let (mut pieces, frees) = self.gen_interp_parts(parts);
+        if newline {
+            pieces.push(("@.cplus.nl".to_string(), "1".to_string()));
+        }
+        for (p, len) in pieces {
+            if to_stderr {
+                let cc = self.md.fastcc_prefix("stdlib.src.io.write_all");
+                self.emit(&format!(
+                    "call {cc}void @stdlib.src.io.write_all(i32 2, ptr {p}, {us} {len})"
+                ));
+            } else {
+                let len_i32 = if us == "i64" {
+                    let t = self.next_tmp();
+                    self.emit(&format!("{t} = trunc i64 {len} to i32"));
+                    t
+                } else {
+                    len
+                };
+                let r = self.next_tmp();
+                self.emit(&format!(
+                    "{r} = call i32 (ptr, ...) @printf(ptr noundef @.fmt_str, i32 {len_i32}, ptr {p})"
+                ));
+            }
+        }
+        for f in frees {
+            self.emit(&format!("call void @free(ptr {f})"));
+        }
+    }
+
+    /// Shared first pass of the interpolation sinks: evaluate every part to
+    /// a borrowed `(ptr, len)` pair, in order. Literals come from their
+    /// globals; bools select the static blobs; numbers `snprintf` into
+    /// per-part 32-byte entry-block STACK scratch; `str`/`Text` parts hand
+    /// out their buffers (an empty `Text`'s null pointer is redirected to
+    /// the shared empty blob). A CALL-produced `Text` part is an rvalue
+    /// temp owned here — its buffer lands in the returned free list, to
+    /// release only after the caller has consumed every piece. Nothing in
+    /// this pass touches the heap.
+    fn gen_interp_parts(
+        &mut self,
+        parts: &[crate::ast::InterpStrPart],
+    ) -> (Vec<(String, String)>, Vec<String>) {
+        let us = usize_llvm_ty();
+        use crate::ast::InterpStrPart;
+        let mut frees: Vec<String> = Vec::new();
+        let mut pieces: Vec<(String, String)> = Vec::with_capacity(parts.len() + 1);
+        for p in parts {
+            match p {
+                InterpStrPart::Lit(s) => {
+                    let (symbol, len) = self
+                        .str_lits
+                        .get(s)
+                        .expect("interp lit part missing from str_lits table")
+                        .clone();
+                    pieces.push((symbol, format!("{len}")));
+                }
+                InterpStrPart::Expr(e) => {
+                    let (v, t) = self.gen_expr(e).expect("interp expr has value");
+                    let is_text_part = matches!(&t, Ty::Struct(id)
+                        if self.types.struct_defs[id.0 as usize].is_lang_string);
+                    if is_text_part {
+                        // Same ownership rule as `gen_interp_str`: a CALL
+                        // result is an rvalue temp freed after use; a place
+                        // read stays binding-owned. Null-guard the pointer —
+                        // an empty `Text` never allocated.
+                        let core = Self::trivial_block_tail(e).unwrap_or(e);
+                        let owned = matches!(
+                            core.kind,
+                            crate::ast::ExprKind::Call { .. } | crate::ast::ExprKind::Await(_)
+                        );
+                        let agg = self.lty(&t);
+                        let pp = self.next_tmp();
+                        self.emit(&format!("{pp} = extractvalue {agg} {v}, 0"));
+                        let lp = self.next_tmp();
+                        self.emit(&format!("{lp} = extractvalue {agg} {v}, 1"));
+                        let isnull = self.next_tmp();
+                        self.emit(&format!("{isnull} = icmp eq ptr {pp}, null"));
+                        let safe = self.next_tmp();
+                        self.emit(&format!(
+                            "{safe} = select i1 {isnull}, ptr @.cplus.str.empty, ptr {pp}"
+                        ));
+                        pieces.push((safe, lp));
+                        if owned {
+                            // Free the raw pointer (free(null) is a no-op)
+                            // once every piece has been consumed.
+                            frees.push(pp);
+                        }
+                        continue;
+                    }
+                    match &t {
+                        Ty::String => {
+                            let pp = self.next_tmp();
+                            self.emit(&format!("{pp} = extractvalue {{ ptr, i64, i64 }} {v}, 0"));
+                            let lp = self.next_tmp();
+                            self.emit(&format!("{lp} = extractvalue {{ ptr, i64, i64 }} {v}, 1"));
+                            pieces.push((pp, lp));
+                        }
+                        Ty::Str => {
+                            let pp = self.next_tmp();
+                            self.emit(&format!("{pp} = extractvalue {{ ptr, {us} }} {v}, 0"));
+                            let lp = self.next_tmp();
+                            self.emit(&format!("{lp} = extractvalue {{ ptr, {us} }} {v}, 1"));
+                            pieces.push((pp, lp));
+                        }
+                        Ty::Bool => {
+                            // No conversion at all: select the static blob.
+                            let len = self.next_tmp();
+                            self.emit(&format!("{len} = select i1 {v}, {us} 4, {us} 5"));
+                            let src = self.next_tmp();
+                            self.emit(&format!(
+                                "{src} = select i1 {v}, ptr @.bool_true, ptr @.bool_false"
+                            ));
+                            pieces.push((src, len));
+                        }
+                        Ty::F16 | Ty::F32 | Ty::F64 => {
+                            let widened = if matches!(t, Ty::F64) {
+                                v
+                            } else {
+                                let w = self.next_tmp();
+                                self.emit(&format!("{w} = fpext {} {v} to double", self.lty(&t)));
+                                w
+                            };
+                            let slot = self.sink_scratch_slot();
+                            let written = self.next_tmp();
+                            self.emit(&format!(
+                                "{written} = call i32 (ptr, {us}, ptr, ...) @snprintf(ptr {slot}, {us} 32, ptr @.fmt_f64, double {widened})"
+                            ));
+                            let len = self.next_tmp();
+                            self.emit(&format!("{len} = sext i32 {written} to i64"));
+                            pieces.push((slot, len));
+                        }
+                        rt if rt.is_signed_int() => {
+                            let widened = if matches!(t, Ty::I64 | Ty::Isize) {
+                                v
+                            } else {
+                                let w = self.next_tmp();
+                                self.emit(&format!("{w} = sext {} {v} to i64", self.lty(&t)));
+                                w
+                            };
+                            let slot = self.sink_scratch_slot();
+                            let written = self.next_tmp();
+                            self.emit(&format!(
+                                "{written} = call i32 (ptr, {us}, ptr, ...) @snprintf(ptr {slot}, {us} 32, ptr @.fmt_i64, i64 {widened})"
+                            ));
+                            let len = self.next_tmp();
+                            self.emit(&format!("{len} = sext i32 {written} to i64"));
+                            pieces.push((slot, len));
+                        }
+                        rt if rt.is_unsigned_int() => {
+                            let widened = if matches!(t, Ty::U64 | Ty::Usize) {
+                                v
+                            } else {
+                                let w = self.next_tmp();
+                                self.emit(&format!("{w} = zext {} {v} to i64", self.lty(&t)));
+                                w
+                            };
+                            let slot = self.sink_scratch_slot();
+                            let written = self.next_tmp();
+                            self.emit(&format!(
+                                "{written} = call i32 (ptr, {us}, ptr, ...) @snprintf(ptr {slot}, {us} 32, ptr @.fmt_u64, i64 {widened})"
+                            ));
+                            let len = self.next_tmp();
+                            self.emit(&format!("{len} = sext i32 {written} to i64"));
+                            pieces.push((slot, len));
+                        }
+                        _ => unreachable!("sema validated interp expr type"),
+                    }
+                }
+            }
+        }
+        (pieces, frees)
+    }
+
+    /// A fresh 32-byte entry-block stack slot for one sink scalar conversion.
+    fn sink_scratch_slot(&mut self) -> String {
+        self.tmp_counter += 1;
+        let slot = format!("%interp.sink.scratch{}", self.tmp_counter);
+        self.allocas.push(format!("{slot} = alloca [32 x i8]"));
+        slot
+    }
+
+    /// Does any `${...}` part mention the identifier at the root of the
+    /// receiver place? Guard for the in-place append lowering: a part that
+    /// reads the receiver (`t.append("x = ${t}")`) hands out pointers into
+    /// the very buffer the appends grow — `reserve` can realloc them stale.
+    /// The materializing path copies the bytes out first, so that shape
+    /// keeps it. Mention = any `Ident` equal to the root anywhere in the
+    /// part's subtree — over-approximate (a `${t.count()}` scalar bails
+    /// too), which only ever costs the one allocation the old path paid.
+    fn interp_mentions_receiver_root(
+        receiver: &Expr,
+        parts: &[crate::ast::InterpStrPart],
+    ) -> bool {
+        let mut root = receiver;
+        loop {
+            root = match &root.kind {
+                ExprKind::Field { receiver, .. } => receiver,
+                ExprKind::Index { receiver, .. } => receiver,
+                ExprKind::Unary {
+                    op: UnaryOp::Deref,
+                    operand,
+                } => operand,
+                _ => break,
+            };
+        }
+        let ExprKind::Ident(root_name) = &root.kind else {
+            // No identifiable root (e.g. a block-wrapped deref chain):
+            // assume aliasing, take the safe path.
+            return true;
+        };
+        let mut found = false;
+        for p in parts {
+            if let crate::ast::InterpStrPart::Expr(pe) = p {
+                crate::ast::visit_exprs(pe, &mut |e| {
+                    if matches!(&e.kind, ExprKind::Ident(n) if n == root_name) {
+                        found = true;
+                    }
+                });
+            }
+        }
+        found
+    }
+
+    /// Stage-3 follow-up (2026-08-13): `t.append("x = ${x}")` appends the
+    /// parts IN PLACE — the interpolation never materializes. Shape:
+    ///
+    ///   1. Evaluate every part to `(ptr, len)` (scalars via stack scratch —
+    ///      `gen_interp_parts`, shared with the print sinks).
+    ///   2. One real `Text.reserve(recv, total)` call — the growth policy
+    ///      stays in stdlib, never duplicated here. Its `Status` is the
+    ///      overall result: on failure nothing is appended (atomic, matching
+    ///      the old one-shot append), on success the copies cannot fail.
+    ///   3. Inline the copies: memcpy each piece at `_ptr + _len`, then
+    ///      store the new `_len`. The `{ptr, len, cap}` layout is the
+    ///      compiler-known `#[lang("string")]` shape codegen already builds
+    ///      by hand in `gen_interp_str`.
+    ///
+    /// The caller guards receiver-aliasing parts (see
+    /// `interp_mentions_receiver_root`) — those keep the materializing path.
+    fn gen_text_append_interp(
+        &mut self,
+        recv_ptr: &str,
+        recv_ty: &Ty,
+        parts: &[crate::ast::InterpStrPart],
+    ) -> Option<(String, Ty)> {
+        let us = usize_llvm_ty();
+        let Ty::Struct(sid) = recv_ty else {
+            unreachable!("caller checked the receiver is the lang string");
+        };
+        let struct_name = self.types.struct_defs[sid.0 as usize].name.clone();
+        let status_ty = self.types.struct_defs[sid.0 as usize]
+            .methods
+            .get("reserve")
+            .expect("Text.reserve exists")
+            .return_type
+            .clone();
+        let sty = self.lty(&status_ty);
+        let text_lty = self.lty(recv_ty);
+
+        let (pieces, frees) = self.gen_interp_parts(parts);
+        // Total appended length.
+        let mut total = String::from("0");
+        for (_, l) in &pieces {
+            let next = self.next_tmp();
+            self.emit(&format!("{next} = add {us} {total}, {l}"));
+            total = next;
+        }
+        // One reserve call carries the whole operation's Status. Scalar
+        // args only, so the operand shapes are identical under fastcc and
+        // the C ABI.
+        let mangled = mangle(&struct_name, "reserve");
+        let cc = self.md.fastcc_prefix(&mangled);
+        let st = self.next_tmp();
+        self.emit(&format!(
+            "{st} = call {cc}{sty} @{mangled}(ptr {recv_ptr}, {us} {total})"
+        ));
+        let ok = self.next_tmp();
+        // `Status::Ok` is variant 0 (stdlib/status.cplus declares it first).
+        self.emit(&format!("{ok} = icmp eq {sty} {st}, 0"));
+        let do_label = self.next_block_label();
+        let done_label = self.next_block_label();
+        self.emit_terminator(&format!("br i1 {ok}, label %{do_label}, label %{done_label}"));
+        self.open_block(&do_label);
+        // Capacity is reserved: copy each piece at the running end.
+        let bufp = self.next_tmp();
+        self.emit(&format!(
+            "{bufp} = getelementptr inbounds {text_lty}, ptr {recv_ptr}, i32 0, i32 0"
+        ));
+        let buf = self.next_tmp();
+        self.emit(&format!("{buf} = load ptr, ptr {bufp}"));
+        let lenp = self.next_tmp();
+        self.emit(&format!(
+            "{lenp} = getelementptr inbounds {text_lty}, ptr {recv_ptr}, i32 0, i32 1"
+        ));
+        let len0 = self.next_tmp();
+        self.emit(&format!("{len0} = load {us}, ptr {lenp}"));
+        let mut off = len0.clone();
+        for (p, l) in &pieces {
+            let dst = self.next_tmp();
+            self.emit(&format!("{dst} = getelementptr i8, ptr {buf}, {us} {off}"));
+            let _cpy = self.next_tmp();
+            self.emit(&format!(
+                "{_cpy} = call ptr @memcpy(ptr {dst}, ptr {p}, {us} {l})"
+            ));
+            let next = self.next_tmp();
+            self.emit(&format!("{next} = add {us} {off}, {l}"));
+            off = next;
+        }
+        self.emit(&format!("store {us} {off}, ptr {lenp}"));
+        self.emit_terminator(&format!("br label %{done_label}"));
+        self.open_block(&done_label);
+        for f in frees {
+            self.emit(&format!("call void @free(ptr {f})"));
+        }
+        Some((st, status_ty))
+    }
 
     fn gen_interp_str(&mut self, parts: &[crate::ast::InterpStrPart]) -> (String, Ty) {
         let us = usize_llvm_ty();
@@ -17008,10 +17621,28 @@ impl<'a> FnState<'a> {
                     // aggregate, so the extract must use that named type.
                     let is_text_part = matches!(&t, Ty::Struct(id)
                         if self.types.struct_defs[id.0 as usize].is_lang_string);
+                    // A CALL-produced `Text` part — `${t.clone()}`, `${make()}`,
+                    // and the mono-inserted `${p}` → `p.to_text()` rewrite — is
+                    // an rvalue temporary only this expression owns: no binding
+                    // will ever drop it, so its buffer joins `temps_to_free`
+                    // once its bytes are copied out (`Text.drop` is exactly a
+                    // null-guarded `free(_ptr)`, the call the release loop
+                    // emits; `free(null)` for an empty `Text` is a no-op). A
+                    // PLACE part (`${name}`, `${p.f}`, `${xs[i]}`) stays owned
+                    // by its binding — freeing it here is the double free the
+                    // note above warns about. If/match/block parts keep their
+                    // previous behaviour: an arm can yield a moved-in binding,
+                    // and that ownership story belongs to the general temp
+                    // machinery, not to interpolation.
+                    let core = Self::trivial_block_tail(e).unwrap_or(e);
+                    let owned_call_part = matches!(
+                        core.kind,
+                        crate::ast::ExprKind::Call { .. } | crate::ast::ExprKind::Await(_)
+                    );
                     // Convert to a string aggregate. Every arm except the
                     // owned-string passthroughs allocates a fresh buffer.
                     let (sv, is_temp, agg) = if is_text_part {
-                        (v, false, self.lty(&t))
+                        (v, owned_call_part, self.lty(&t))
                     } else {
                         let s = "{ ptr, i64, i64 }".to_string();
                         match t {
@@ -17744,6 +18375,23 @@ impl<'a> FnState<'a> {
         let prev = self.md.text_coercion_suppress.replace(Some(e.span));
         let (slot, ty) = self.gen_place(e);
         self.md.text_coercion_suppress.set(prev);
+        // 2026-08-13: an OWNED RVALUE coerced in a consumed context (a call
+        // argument, a method receiver — the view dies with the statement) is
+        // a temporary nothing else drops: register its spilled slot for the
+        // end-of-statement temp drop. Every such coercion used to leak its
+        // buffer (`f("x = ${i}")`, `f(t.clone())`). A PLACE stays owned by
+        // its binding; an rvalue coerced at a BINDING position keeps the
+        // historical leaking path — dropping it would dangle the binding
+        // (bugs/rvalue-text-coercion-binding-leak.md has the analysis).
+        let core = Self::trivial_block_tail(e).unwrap_or(e);
+        if self.md.text_coercion_consumed.get()
+            && matches!(
+                core.kind,
+                ExprKind::Call { .. } | ExprKind::Await(_) | ExprKind::InterpStr { .. }
+            )
+        {
+            self.register_temp(slot.clone(), ty.clone());
+        }
         let llvm_text = self.lty(&ty);
         let pptr = self.next_tmp();
         self.emit(&format!(
@@ -17784,6 +18432,15 @@ impl<'a> FnState<'a> {
             if self.is_lang_string_ty(pty) {
                 return (self.gen_strlit_as_lang_string(s, pty), pty.clone());
             }
+        }
+        // A `str`-param argument consumes any coerced view within this
+        // statement, so an rvalue `Text` coerced under it is safe to
+        // temp-drop (see `text_coercion_consumed`).
+        if matches!(pty, Ty::Str) {
+            let prev = self.md.text_coercion_consumed.replace(true);
+            let r = self.gen_expr(a).expect("call arg has value");
+            self.md.text_coercion_consumed.set(prev);
+            return r;
         }
         self.gen_expr(a).expect("call arg has value")
     }
@@ -18759,6 +19416,169 @@ mod tests {
 
     fn gen_src(src: &str) -> String {
         gen_src_with(src, BuildMode::Debug)
+    }
+
+    // ---- owned temps at re-evaluation points that are not statements ----
+    // bug 2026-08-13 (owned-temps-outside-statement-scope-are-not-dropped).
+    // The RSS and drop-count halves live in `cpc/tests/e2e.rs`; these pin the
+    // IR *shape*, which is what the reports read as the diagnosis: a single
+    // `drop` call parked on the loop-exit block rather than one per trip.
+
+    /// A Drop type with a borrowing method, so `mk().get()` in a condition or a
+    /// tail materialises a temporary that someone has to free.
+    const TEMPSRC: &str = "extern fn malloc(n: usize) -> *u8;\n\
+         extern fn free(p: *u8);\n\
+         struct S24 { a: *u8, b: i64, c: i64 }\n\
+         impl S24 { fn drop(ref this) { { free(this.a); } return; }\n\
+                    fn get(this) -> i32 { return 1; } }\n\
+         fn mk24() -> S24 { return S24 { a: { malloc(8 as usize) }, b: 0 as i64, c: 0 as i64 }; }\n";
+
+    /// One `(label, body)` per basic block of `define … @<fname>(`, in emission
+    /// order. Enough structure to ask where a drop landed relative to the loop.
+    fn blocks_of(ir: &str, fname: &str) -> Vec<(String, String)> {
+        let sig = format!(" @{fname}(");
+        // Each chunk after the split starts at the signature line, so its first
+        // line is `<attrs> <ret> @name(...) {`.
+        let body = ir
+            .split("\ndefine ")
+            .find(|d| d.lines().next().is_some_and(|l| l.contains(&sig)))
+            .unwrap_or_else(|| panic!("no definition of @{fname}:\n{ir}"));
+        let body = body.split("\n}").next().unwrap();
+        let mut out: Vec<(String, String)> = Vec::new();
+        for line in body.lines().skip(1) {
+            let t = line.trim();
+            if let Some(lbl) = t.strip_suffix(':') {
+                if !lbl.is_empty() && !lbl.contains(' ') {
+                    out.push((lbl.to_string(), String::new()));
+                    continue;
+                }
+            }
+            if let Some(last) = out.last_mut() {
+                last.1.push_str(t);
+                last.1.push('\n');
+            }
+        }
+        out
+    }
+
+    /// True when `@S24.drop` is called somewhere on the loop's own path — a
+    /// block at or after the head and at or before the back-edge that closes
+    /// it. A drop emitted only *past* the back-edge is on the exit path: it
+    /// runs once for however many times the loop allocated, which is the bug.
+    fn drops_on_the_loop_path(ir: &str) -> bool {
+        let blocks = blocks_of(ir, "main");
+        // `entry` branches to the loop head; the back-edge is the last block
+        // that branches back to it.
+        let head = blocks[0]
+            .1
+            .lines()
+            .find_map(|l| l.trim().strip_prefix("br label %"))
+            .unwrap_or_else(|| panic!("entry does not branch to a loop head:\n{ir}"))
+            .to_string();
+        let head_idx = blocks.iter().position(|(l, _)| *l == head).unwrap();
+        let back_edge = blocks
+            .iter()
+            .rposition(|(_, b)| b.contains(&format!("br label %{head}\n")))
+            .unwrap_or_else(|| panic!("no back-edge to %{head}:\n{ir}"));
+        assert!(
+            back_edge > head_idx,
+            "expected a back-edge after the head:\n{ir}"
+        );
+        blocks[head_idx..=back_edge]
+            .iter()
+            .any(|(_, b)| b.contains("call void @S24.drop("))
+    }
+
+    /// A `while` condition is re-evaluated every trip, so its temporary must be
+    /// freed inside the loop — between the head and the back-edge — not once
+    /// past it, which is one free for N allocations.
+    #[test]
+    fn a_while_condition_temp_drops_inside_the_loop_not_on_the_exit() {
+        let ir = gen_src(&format!(
+            "{TEMPSRC}fn main() -> i32 {{ var i: i32 = 0;\n\
+             while mk24().get() > 0 {{ i = i + 1; if i == 3 {{ break; }} }}\n\
+             return 0; }}\n"
+        ));
+        assert!(
+            drops_on_the_loop_path(&ir),
+            "the condition's temporary must be dropped inside the loop:\n{ir}"
+        );
+    }
+
+    /// The drop flag is an entry-block alloca initialised `false` exactly once,
+    /// so it outlives every iteration that sets it. Closing a temp scope per
+    /// trip therefore has to disarm the flag on the drop path — otherwise an
+    /// iteration that never re-created the temp (a short-circuited `||`, an
+    /// untaken branch) re-drops a slot that was already torn down.
+    #[test]
+    fn a_temp_drop_disarms_its_flag_so_the_next_trip_cannot_redrop() {
+        let ir = gen_src(&format!(
+            "{TEMPSRC}fn main() -> i32 {{ var i: i32 = 0;\n\
+             while mk24().get() > 0 {{ i = i + 1; if i == 3 {{ break; }} }}\n\
+             return 0; }}\n"
+        ));
+        let drop_block = blocks_of(&ir, "main")
+            .into_iter()
+            .find(|(_, b)| b.contains("call void @S24.drop("))
+            .unwrap_or_else(|| panic!("no drop of the temp at all:\n{ir}"));
+        assert!(
+            drop_block.1.contains("store i1 false, ptr %tmp.drop_flag"),
+            "the drop path must clear the temp's liveness flag:\n{}",
+            drop_block.1
+        );
+    }
+
+    /// The parser puts a trailing `if` in `body.tail`, and a tail is lowered
+    /// with a bare `gen_expr`. A loop body that is *only* an `if` therefore fed
+    /// its condition's temporary to the enclosing statement's scope.
+    #[test]
+    fn a_loop_body_tail_if_drops_its_condition_temp_each_iteration() {
+        let ir = gen_src(&format!(
+            "{TEMPSRC}fn main() -> i32 {{ var i: i32 = 0;\n\
+             while i < 3 {{ if mk24().get() > 0 {{ i = i + 1; }} else {{ i = i + 1; }} }}\n\
+             return 0; }}\n"
+        ));
+        assert!(
+            drops_on_the_loop_path(&ir),
+            "a body-tail `if` parked its condition's drop past the back-edge, \
+             so it runs once for the whole loop:\n{ir}"
+        );
+    }
+
+    /// The C-style `for` update list runs once per trip in the `step` block —
+    /// the same re-evaluation point as the condition, and it was missing the
+    /// same bracket.
+    #[test]
+    fn a_c_style_for_update_temp_drops_each_iteration() {
+        let ir = gen_src(&format!(
+            "{TEMPSRC}fn main() -> i32 {{\n\
+             for (var i: i32 = 0; i < 3; i = i + mk24().get()) {{ }}\n\
+             return 0; }}\n"
+        ));
+        assert!(
+            drops_on_the_loop_path(&ir),
+            "the update expression's temporary must be dropped inside the loop:\n{ir}"
+        );
+    }
+
+    /// Surface C of the report: with the `if` as the function's whole body,
+    /// `temp_scopes` was empty when the receiver was materialised, so
+    /// `register_temp` recorded nothing — there was not even a late drop at
+    /// function exit. The assertion is simply that the function frees it at all.
+    #[test]
+    fn a_function_whose_body_is_only_an_if_drops_the_condition_temp() {
+        let ir = gen_src(&format!(
+            "{TEMPSRC}fn once() {{ if mk24().get() > 0 {{ let _x: i32 = 1; }} else {{ let _y: i32 = 2; }} }}\n\
+             fn main() -> i32 {{ once(); return 0; }}\n"
+        ));
+        let dropped = blocks_of(&ir, "once")
+            .iter()
+            .any(|(_, b)| b.contains("call void @S24.drop("));
+        assert!(
+            dropped,
+            "a function body is not a statement — its tail's temporary was \
+             registered nowhere and never freed:\n{ir}"
+        );
     }
 
     // R4: a user-defined 24-byte owned (Drop) struct — `{ ptr, i64, i64 }`, the
@@ -20720,6 +21540,59 @@ fn main() -> i32 {\n\
     }
 
     #[test]
+    fn owned_local_in_an_if_body_drops_at_the_end_of_that_body() {
+        // An owned local declared inside an `if` (or `else`) body was never
+        // dropped: `gen_block_into_slot` jumped to the merge label first, and
+        // `pop_scope` skips its hooks once the block is terminated. Every C+
+        // program that had ever run one leaked — measured at 393.6 MB against
+        // 1.5 MB for the same binding one scope shape over. A `while` body, a
+        // bare block and a match arm all dropped correctly, so the assertion
+        // is per-branch: BOTH arms must tear their own local down.
+        let ir = gen_src(
+            "struct Cell { id: i32 }\n\
+             impl Cell { fn drop(ref this) { return; } }\n\
+             fn mk(i: i32) -> Cell { return Cell { id: i }; }\n\
+             fn branchy(c: bool) {\n\
+                 if c { let _a: Cell = mk(1); } else { let _b: Cell = mk(2); }\n\
+                 return;\n\
+             }\n\
+             fn main() -> i32 { branchy(true); return 0; }",
+        );
+        let drops = ir.matches("call void @Cell.drop").count();
+        assert!(
+            drops >= 2,
+            "each branch body must drop its own owned local (>=2 calls), got {drops}:\n{ir}"
+        );
+    }
+
+    #[test]
+    fn return_of_a_chained_temporary_drops_the_receiver() {
+        // `return f().g()` borrowed `f()`'s owned value as the chain's receiver
+        // and returned a new one. The receiver's temp scope belongs to the
+        // `return` statement, which jumps past `close_temp_scope` — so nothing
+        // ever freed it. The same chain bound to a name was always fine, which
+        // is what made it look like a chain problem rather than a return one.
+        let ir = gen_src(
+            "struct Cell { id: i32 }\n\
+             impl Cell {\n\
+                 fn drop(ref this) { return; }\n\
+                 fn twin(this) -> Cell { return Cell { id: this.id }; }\n\
+             }\n\
+             fn mk(i: i32) -> Cell { return Cell { id: i }; }\n\
+             fn chained() -> Cell { return mk(1).twin(); }\n\
+             fn main() -> i32 { let c: Cell = chained(); return 0; }",
+        );
+        let body = ir
+            .split("define")
+            .find(|f| f.contains("@chained"))
+            .unwrap_or("");
+        assert!(
+            body.contains("call void @Cell.drop"),
+            "the borrowed receiver of a returned chain must be dropped before the ret, got:\n{body}"
+        );
+    }
+
+    #[test]
     fn reassign_drop_binding_drops_old_value_before_overwrite() {
         // #8: `x = new` on a Drop binding must drop the value `x` currently
         // owns before storing the new one. Pre-fix, `gen_assign` stored over
@@ -20754,6 +21627,73 @@ fn main() -> i32 {\n\
         assert!(
             ir.contains("store i1 false, ptr %x.drop_flag"),
             "deferred-init Drop binding must start its liveness flag false:\n{ir}"
+        );
+    }
+
+    /// bugs/closed/deferred-init-drop-binding-without-assignment-frees-garbage.
+    /// The test above only covers the *assigned* shape, and that is the shape
+    /// that accidentally worked: the move scanner adds an assignment target to
+    /// `moved_bindings`, which is what forced the Runtime flag. Declare a Drop
+    /// binding and never write it and the name never enters the set, so
+    /// disposition fell back to `Always` and scope exit called `Owner.drop` on
+    /// an alloca nothing had constructed.
+    #[test]
+    fn a_never_assigned_deferred_init_binding_is_not_dropped() {
+        let ir = gen_src(
+            "struct Owner { id: i32 }\n\
+             impl Owner { fn drop(ref this) { return; } }\n\
+             fn f() { var x: Owner; return; }\n\
+             fn main() -> i32 { f(); return 0; }",
+        );
+        let body = ir
+            .split("\ndefine ")
+            .find(|d| d.lines().next().is_some_and(|l| l.contains(" @f(")))
+            .unwrap_or_else(|| panic!("no definition of @f:\n{ir}"));
+        assert!(
+            body.contains("store i1 false, ptr %x.drop_flag"),
+            "a deferred-init binding needs a real liveness flag even when \
+             nothing ever assigns to it:\n{body}"
+        );
+        // Whatever `Owner.drop` calls exist must be reached through the flag —
+        // a bare unconditional call is the bug. Every gated drop is preceded by
+        // a load of the flag and a `br i1` into its own block, so the call can
+        // never be the first instruction after the entry label.
+        for (i, line) in body.lines().enumerate() {
+            if line.contains("call void @Owner.drop") {
+                let preceding = body.lines().take(i).collect::<Vec<_>>().join("\n");
+                assert!(
+                    preceding.contains("br i1")
+                        && preceding.contains("load i1, ptr %x.drop_flag"),
+                    "the scope-exit drop must be gated on the liveness flag, \
+                     not called unconditionally:\n{body}"
+                );
+            }
+        }
+    }
+
+    /// The other half of the same rule: a binding initialised at its `let`/`var`
+    /// and never moved still takes the `Always` fast path — no flag alloca, no
+    /// load, no branch. Forcing every Drop binding onto the runtime flag would
+    /// have "fixed" the bug by pessimising the common case.
+    #[test]
+    fn an_initialized_never_moved_binding_keeps_the_unconditional_drop() {
+        let ir = gen_src(
+            "struct Owner { id: i32 }\n\
+             impl Owner { fn drop(ref this) { return; } }\n\
+             fn f() { var x: Owner = Owner { id: 1 }; return; }\n\
+             fn main() -> i32 { f(); return 0; }",
+        );
+        let body = ir
+            .split("\ndefine ")
+            .find(|d| d.lines().next().is_some_and(|l| l.contains(" @f(")))
+            .unwrap_or_else(|| panic!("no definition of @f:\n{ir}"));
+        assert!(
+            body.contains("call void @Owner.drop"),
+            "an initialized owned binding must still be dropped:\n{body}"
+        );
+        assert!(
+            !body.contains("%x.drop_flag"),
+            "a never-moved, initialized binding needs no liveness flag:\n{body}"
         );
     }
 

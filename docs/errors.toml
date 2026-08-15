@@ -327,8 +327,8 @@ lang = "cplus"
 verified = true
 emit_site = "cplus-core/src/sema.rs:13138"
 test = "cplus-core/src/sema.rs:ref_not_supported_e0312"
-cause = "A function name is used as a bare value (or another unsupported form such as `&x`, a range outside `for`, or a malformed path) where a callable or value of the right shape was required."
-fix = "Assign it to a `fn(...)`-typed binding to take the address."
+cause = "A function name is used as a bare value (or another unsupported form such as `&x`, a range outside `for`, or a malformed path) where a callable or value of the right shape was required. An ASSOCIATED fn — `Type::f`, no receiver — is a namespaced fn and takes its address the same way; a METHOD is not, because `fn(this, …)` is not the `fn(…)` written at the binding, and there is nothing to supply its receiver."
+fix = "Assign it to a `fn(...)`-typed binding (or pass it where one is expected) to take the address. For a method, pass a bound method reference to a handler slot instead — the `*u8` after it carries the receiver."
 example = '''
 fn main() -> i32 { let x = 1; let y = &x; return 0; }
 '''
@@ -1963,10 +1963,10 @@ severity = "error"
 repro = "checked"
 lang = "cplus"
 verified = true
-emit_site = "cplus-core/src/borrowck.rs (ViewRules: check_return / flag_view_leaves / check_view_of_temp / check_store_escape)"
+emit_site = "cplus-core/src/borrowck.rs (ViewRules: check_return / flag_view_leaves / check_view_of_temp / check_view_of_rvalue_owner / check_captured_view_of_temp / check_store_escape)"
 test = "cpc/tests/e2e.rs:return_borrow_of_local_owned_rejected_e0513"
-cause = "A `str` / `T[]` view rooted at a function-local non-Copy owned value escapes the frame — returned directly, returned inside an aggregate (a struct with a `str` field CARRIES the view's borrow, including when built through a call like `store(local.view(), ..)` or returned via an alias), or stored into a place that outlives the frame (a `static`, or a `ref` target). The local is freed at return, so the escaped view would dangle."
-fix = "Own the bytes instead: store/return `Text` / `Vec[T]`, or borrow the view from a non-`take` parameter. Literal-backed views ('static bytes) escape freely."
+cause = "A `str` / `T[]` view is rooted at storage with no lifetime long enough for it. Two shapes. (1) The owner is a function-local non-Copy value and the view escapes the frame — returned directly, returned inside an aggregate (a struct with a `str` field CARRIES the view's borrow, including when built through a call like `store(local.view(), ..)` or returned via an alias), or stored into a place that outlives the frame (a `static`, or a `ref` target); the local is freed at return, so the escaped view would dangle. (2) The owner is a TEMPORARY nothing names — `let s: str = mk().view();`, the `Text`->`str` coercion of an rvalue (`let s: str = t.clone();`, `let s: str = \"x ${i}\";`), or either of those captured into an aggregate a binding keeps (`Slot { s: mk().view() }`). A temporary is an anonymous slot of the statement; a binding that outlives it has nothing to borrow from. The same temporary at an ARGUMENT position is fine — it outlives the call."
+fix = "Own the bytes instead: store/return `Text` / `Vec[T]`, or borrow the view from a non-`take` parameter. For a temporary owner, give it a name first — `let owner: Text = mk(); let s: str = owner.view();` — or keep the binding owned. Literal-backed views ('static bytes) escape freely."
 example = '''
 extern fn malloc(n: usize) -> *u8;
 extern fn free(p: *u8);
@@ -3270,6 +3270,45 @@ impl Counter {
 }
 // -> W0004 `Counter::on_value` has the `#[watch]` hook signature but
 //    `struct Counter` is not `#[watch]`, so nothing calls it
+'''
+
+[[code]]
+id = "W0005"
+title = "Source file is not reachable from the entry"
+category = "Warnings"
+severity = "warning"
+repro = "checked"
+lang = "cplus"
+verified = true
+emit_site = "cpc/src/main.rs:warn_orphan_sources"
+test = "cpc/tests/e2e.rs:orphan_source_file_warns_w0005_and_success_prints_module_count"
+cause = "A file under `src/` compiles only when something reachable from the entry imports it. An unimported file is invisible: it compiles never, warns never, and reads as if it described the live API — a call to an undefined function in one still builds exit 0. For anyone reasoning from the source (a reviewer, an agent), unreachable code is false evidence. Platform-suffixed siblings (`runtime_linux.cplus` beside a loaded `runtime.cplus`) are the resolver's convention for `reachable on another target` and are exempt; the scan stays inside the package's own `src/`, since a vendored dependency legitimately ships more modules than one consumer imports."
+fix = "Import the file from a reachable module, or delete it. If it is a platform variant, name it `<module>_<platform>.cplus` beside its base module so the resolver owns the choice."
+example = '''
+// src/dead.cplus — no reachable module imports it
+fn never_compiled() -> i32 { return undefined_function(); }   // builds exit-0 today
+// -> W0005 `src/dead.cplus` is not reachable from the entry — it never
+//    compiles, and nothing it says is checked
+'''
+
+[[code]]
+id = "W0006"
+title = "Use of a `#[deprecated]` item"
+category = "Warnings"
+severity = "warning"
+repro = "checked"
+lang = "cplus"
+verified = true
+emit_site = "cplus-core/src/sema.rs:warn_if_deprecated"
+test = "cplus-core/src/sema.rs:deprecated_fn_and_method_uses_warn_w0006"
+cause = "A call resolved to a function or method carrying `#[deprecated]`. The item still exists and still works; the attribute says it is on its way out, and the optional string is the author's migration note, printed verbatim. Reported at the USE, never at the declaration \u2014 a deprecated item is expected to still be defined and still be exercised by its own tests."
+fix = "Move to the replacement the note names. Nothing breaks until the item is actually removed, so a warning list can be worked through at leisure; that is the point of the attribute over a hard rename."
+example = '''
+#[deprecated("use parse_v2 instead")]
+fn parse() -> i32 { return 1; }
+
+fn main() -> i32 { return parse(); }
+// -> W0006 `parse` is deprecated: use parse_v2 instead
 '''
 
 [[code]]

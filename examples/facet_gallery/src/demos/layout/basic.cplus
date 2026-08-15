@@ -1,0 +1,86 @@
+import "facet/facet" as core;
+import "facet/elements" as ui;
+import "facet/component" as component;
+import "facet/vocabulary" as vocab;
+import "../../shell" as shell;
+
+struct LayoutDemo {
+    n: i32,
+}
+
+impl LayoutDemo {
+    fn new() -> LayoutDemo { return LayoutDemo { n: 0 }; }
+}
+
+fn swatch(title: str, color: vocab::Color) -> core::Node {
+    var b: core::Builder = core::Builder::new();
+    b.add(ui::label(title, key: "", font_size: 12.0f64,
+        font_weight: vocab::FontWeight::Semibold, text_color: vocab::Color::ink()));
+    var n: core::Node = core::column(b).padding(12.0f64).height(56.0f64).grow(1.0f64);
+    n.set_background_color(color);
+    n.set_corner_radius(vocab::Corners::all(8.0f64));
+    return n;
+}
+
+impl LayoutDemo: component::Component {
+    fn build(ref this) -> core::Node {
+        var body: core::Builder = core::Builder::new();
+
+        body.add(shell::caption("Row + spacer"));
+        var row: core::Builder = core::Builder::new();
+        row.add(ui::button("Left", key: "lay:left"));
+        row.add(ui::spacer());
+        row.add(ui::button("Right", key: "lay:right"));
+        body.add(core::row(row));
+
+        body.add(shell::caption("Equal-width surface tiers"));
+        var colors: core::Builder = core::Builder::new();
+        colors.add(swatch("surface", vocab::Color::surface()));
+        colors.add(swatch("raised", vocab::Color::raised()));
+        colors.add(swatch("sunken", vocab::Color::sunken()));
+        body.add(core::row(colors).gap(8.0f64));
+
+        body.add(shell::caption("Card"));
+        var card_inner: core::Builder = core::Builder::new();
+        card_inner.add(ui::label("Card container", key: "lay:card_title",
+            font_size: 16.0f64, font_weight: vocab::FontWeight::Semibold,
+            text_color: vocab::Color::ink()));
+        card_inner.add(ui::label(
+            "facet::card applies HIG padding and gap so grouped content sits on an 8pt grid.",
+            key: "lay:card_body",
+            font_size: 13.0f64,
+            text_color: vocab::Color::ink(0.6f64),
+            max_lines: 4 as i64,
+            line_break: vocab::LineBreak::WordWrap,
+        ));
+        var card: core::Node = core::card(card_inner);
+        card.set_background_color(vocab::Color::raised());
+        card.set_corner_radius(vocab::Corners::all(12.0f64));
+        body.add(card);
+
+        body.add(shell::caption("Tall column (this panel scrolls)"));
+        var tall: core::Builder = core::Builder::new();
+        var i: i32 = 1;
+        while i <= 16 {
+            tall.add(ui::label("Row ${i}", key: "", font_size: 14.0f64,
+                text_color: vocab::Color::ink(0.8f64)));
+            i = i +% 1;
+        }
+        var strip: core::Node = core::column(tall).padding(12.0f64).gap(6.0f64);
+        strip.set_background_color(vocab::Color::sunken());
+        strip.set_corner_radius(vocab::Corners::all(8.0f64));
+        body.add(strip);
+
+        return shell::panel(
+            "Layout basics",
+            "flex_layout containers: row, column, spacer, card. Split is the outer shell of this app.",
+            core::column(body).gap(12.0f64),
+            howto: "var b = Builder::new();\nb.add(ui::button(\"Left\")); b.add(ui::spacer()); b.add(…);\ncore::row(b) · core::column(b).padding(16.0).gap(8.0)\ncore::card(inner) · node.grow(1.0)",
+        );
+    }
+}
+
+impl LayoutDemo: component::Lifecycle {
+    fn on_attach(ref this) { return; }
+    fn on_detach(ref this) { return; }
+}

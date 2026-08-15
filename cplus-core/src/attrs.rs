@@ -57,6 +57,10 @@ enum ArgsSpec {
     /// No allow-list — the value is opaque (e.g. a linker symbol name).
     /// Used by `#[link_name = "..."]` (Phase 11 / ObjC interop).
     ExactlyOneStr,
+    /// `#[name]` or `#[name("VAL")]` — zero args, or one opaque string.
+    /// Used by `#[deprecated]`, where the string is the migration note
+    /// carried into the warning and omitting it is legal.
+    OptionalStr,
     /// v0.0.7 Slice 1.3: `#[name(N)]` — exactly one integer-literal
     /// arg. Range validation is per-attribute and lives in sema (so
     /// the diagnostic carries the loop-statement context).
@@ -81,6 +85,18 @@ struct AttrSpec {
     targets: u16,
     /// True iff the attribute may appear multiple times on the same item.
     allow_duplicate: bool,
+}
+
+/// `Some(note)` iff `attrs` carries `#[deprecated]`, where `note` is the
+/// attribute's optional string. The two levels are distinct and both matter:
+/// the outer says whether to warn at all, the inner whether there is a
+/// migration hint to print.
+pub fn deprecation_note(attrs: &[Attribute]) -> Option<Option<String>> {
+    let a = attrs.iter().find(|a| a.path.name == "deprecated")?;
+    Some(a.args.iter().find_map(|g| match g {
+        AttrArg::Str(s, _) => Some(s.clone()),
+        _ => None,
+    }))
 }
 
 /// Memory-model contract §5 (docs/design/memory-model.md): true iff `attrs`
@@ -323,6 +339,27 @@ const KNOWN_ATTRS: &[AttrSpec] = &[
         name: "watch",
         args: ArgsSpec::None,
         targets: TARGET_STRUCT,
+        allow_duplicate: false,
+    },
+    // `#[deprecated]` / `#[deprecated("use parse_v2 instead")]` — this item
+    // still works and should stop being used. Sema warns (W0006) at each
+    // USE, never at the declaration, and the optional string is carried into
+    // the warning verbatim as the migration note.
+    //
+    // The point is the migration shape it makes available: a stdlib
+    // refinement can land as a warning list a consumer fixes at leisure and
+    // break one release later, instead of arriving as a wall of hard errors.
+    // Iris took 84 of those in one sitting; none of them had to be errors on
+    // the day they appeared.
+    AttrSpec {
+        name: "deprecated",
+        args: ArgsSpec::OptionalStr,
+        targets: TARGET_FN
+            | TARGET_METHOD
+            | TARGET_STRUCT
+            | TARGET_ENUM
+            | TARGET_FIELD
+            | TARGET_VARIANT,
         allow_duplicate: false,
     },
 ];
@@ -688,6 +725,12 @@ impl Ctx {
                     }
                 }
             }
+            ArgsSpec::OptionalStr => {
+                let ok = matches!(attr.args.as_slice(), [] | [AttrArg::Str(_, _)]);
+                if !ok {
+                    self.emit_expected_str_arg(attr, spec);
+                }
+            }
             ArgsSpec::ExactlyOneInt => {
                 let ok = matches!(attr.args.as_slice(), [AttrArg::Int(_, _)]);
                 if !ok {
@@ -1043,6 +1086,55 @@ mod tests {
         let suggestions = &diags[0].suggestions;
         assert_eq!(suggestions.len(), 1, "expected did-you-mean");
         assert_eq!(suggestions[0].replacement, "test");
+    }
+
+    #[test]
+    fn deprecated_is_a_registered_attribute_not_an_unknown_one() {
+        // `#[deprecated]` used to be E0354. It read as supported because the
+        // parser accepts any `#[ident("...")]` shape and one parser test
+        // happened to use the name as its sample string — neither of which
+        // is a registration. Both spellings must validate now.
+        assert!(
+            check_src("#[deprecated(\"gone\")] fn old() { return; }").is_empty(),
+            "string-arg form must be accepted"
+        );
+        assert!(
+            check_src("#[deprecated] fn old() { return; }").is_empty(),
+            "bare form must be accepted"
+        );
+        // Every placement the spec claims. (An `impl` BLOCK carries no
+        // attributes in Phase 5 — the parser says so before this pass runs —
+        // so the method case is written where the attribute actually goes.)
+        for (label, src) in [
+            ("struct", "#[deprecated] struct S { n: i32 }".to_string()),
+            ("enum", "#[deprecated] enum E { A }".to_string()),
+            (
+                "method",
+                "struct S { n: i32 }\n\
+                 impl S { #[deprecated] fn m(this) -> i32 { return 0; } }"
+                    .to_string(),
+            ),
+            (
+                "field",
+                "struct S { #[deprecated] n: i32 }".to_string(),
+            ),
+            ("variant", "enum E { #[deprecated] A }".to_string()),
+        ] {
+            assert!(
+                !codes(&check_src(&src)).contains(&"E0356"),
+                "placement must be legal on a {label}"
+            );
+        }
+    }
+
+    #[test]
+    fn deprecated_rejects_a_non_string_argument() {
+        // `OptionalStr` means zero args or ONE string — not "anything goes".
+        let diags = check_src("#[deprecated(4)] fn old() { return; }");
+        assert!(
+            !diags.is_empty(),
+            "an int argument must still be refused, got none"
+        );
     }
 
     #[test]

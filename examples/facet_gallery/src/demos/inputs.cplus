@@ -1,0 +1,94 @@
+import "facet/facet" as core;
+import "facet/elements" as ui;
+import "facet/component" as component;
+import "facet/label" as label;
+import "facet/text_field" as text_field;
+import "facet/search_field" as search_field;
+import "facet/vocabulary" as vocab;
+import "stdlib/option" as option;
+import "../shell" as shell;
+
+struct Inputs {
+    n: i32,
+}
+
+impl Inputs {
+    fn new() -> Inputs { return Inputs { n: 0 }; }
+
+    fn on_name(ref this, sender: *u8) {
+        match text_field::find("in:name") {
+            option::Option[text_field::TextField]::Some(f) => {
+                let t: str = f.text();
+                match label::find("in:name_echo") {
+                    option::Option[label::Label]::Some(l) => {
+                        if t.count() == (0 as usize) {
+                            let _l: label::Label = l.set_text("Hello, stranger");
+                        } else {
+                            let _l: label::Label = l.set_text("Hello, ${t}");
+                        }
+                    }
+                    option::Option[label::Label]::None => { }
+                }
+            }
+            option::Option[text_field::TextField]::None => { }
+        }
+        return;
+    }
+
+    fn on_search(ref this, sender: *u8) {
+        match search_field::find("in:search") {
+            option::Option[search_field::SearchField]::Some(f) => {
+                let t: str = f.text();
+                match label::find("in:search_echo") {
+                    option::Option[label::Label]::Some(l) => {
+                        if t.count() == (0 as usize) {
+                            let _l: label::Label = l.set_text("Query: (empty)");
+                        } else {
+                            let _l: label::Label = l.set_text("Query: ${t}");
+                        }
+                    }
+                    option::Option[label::Label]::None => { }
+                }
+            }
+            option::Option[search_field::SearchField]::None => { }
+        }
+        return;
+    }
+}
+
+impl Inputs: component::Component {
+    fn build(ref this) -> core::Node {
+        var body: core::Builder = core::Builder::new();
+
+        body.add(shell::caption("Text field"));
+        body.add(ui::text_field("", key: "in:name", placeholder: "Your name",
+            on_text_changed: this.on_name));
+        body.add(ui::label("Hello, stranger", key: "in:name_echo",
+            font_size: 14.0f64, text_color: vocab::Color::ink(0.7f64)));
+
+        body.add(shell::caption("Secure field"));
+        body.add(ui::text_field("", key: "in:secret", placeholder: "Password", secure: true));
+
+        body.add(shell::caption("Search field"));
+        body.add(ui::search_field("", key: "in:search", placeholder: "Search the catalog…",
+            on_text_changed: this.on_search));
+        body.add(ui::label("Query: (empty)", key: "in:search_echo",
+            font_size: 14.0f64, text_color: vocab::Color::ink(0.7f64)));
+
+        body.add(shell::caption("Text area"));
+        body.add(ui::text_area("Write a few lines…\nSecond line.", key: "in:area")
+            .height(120.0f64));
+
+        return shell::panel(
+            "Inputs",
+            "Single-line, secure, search, and multi-line text entry.",
+            core::column(body).gap(10.0f64),
+            howto: "ui::text_field(\"\", key: \"n\", placeholder: \"Name\",\n    on_text_changed: this.on_name)\nui::search_field(\"\", placeholder: \"Search…\")\nui::text_area(\"…\", key: \"a\").height(120.0)",
+        );
+    }
+}
+
+impl Inputs: component::Lifecycle {
+    fn on_attach(ref this) { return; }
+    fn on_detach(ref this) { return; }
+}

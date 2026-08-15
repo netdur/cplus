@@ -1,0 +1,79 @@
+// Reference: icon_button, symbol
+//   import "facet/elements" as ui;
+//   import "facet/icons" as icons;
+//   ui::icon_button("gearshape", key: "…", on_clicked: …)
+//   ui::symbol(icons::home, size: 20.0, color: …)
+
+import "facet/facet" as core;
+import "facet/elements" as ui;
+import "facet/component" as component;
+import "facet/label" as label;
+import "facet/vocabulary" as vocab;
+import "facet/icons" as icons;
+import "stdlib/option" as option;
+import "../shell" as shell;
+
+struct Icons {
+    clicks: i32,
+}
+
+impl Icons {
+    fn new() -> Icons { return Icons { clicks: 0 }; }
+
+    fn on_icon(ref this, sender: *u8) {
+        this.clicks = this.clicks +% 1;
+        match label::find("ico:status") {
+            option::Option[label::Label]::Some(l) => {
+                let _l: label::Label = l.set_text("icon_button clicks: ${this.clicks}");
+            }
+            option::Option[label::Label]::None => { }
+        }
+        return;
+    }
+}
+
+impl Icons: component::Component {
+    fn build(ref this) -> core::Node {
+        var body: core::Builder = core::Builder::new();
+
+        body.add(shell::caption("icon_button  ·  SF Symbol name as source"));
+        var row: core::Builder = core::Builder::new();
+        row.add(ui::icon_button("gearshape", key: "ico:gear",
+            bordered: false, on_clicked: this.on_icon).width(36.0f64).height(28.0f64));
+        row.add(ui::icon_button("star", key: "ico:star",
+            bordered: false, on_clicked: this.on_icon).width(36.0f64).height(28.0f64));
+        row.add(ui::icon_button("trash", key: "ico:trash",
+            bordered: false, on_clicked: this.on_icon).width(36.0f64).height(28.0f64));
+        row.add(ui::icon_button("plus", key: "ico:plus",
+            bordered: true, on_clicked: this.on_icon).width(36.0f64).height(28.0f64));
+        body.add(core::row(row).gap(8.0f64));
+        body.add(ui::label("icon_button clicks: 0", key: "ico:status",
+            font_size: 13.0f64, text_color: vocab::Color::ink(0.7f64)));
+
+        body.add(shell::caption("symbol  ·  Material Symbols codepoints (facet/icons)"));
+        var syms: core::Builder = core::Builder::new();
+        syms.add(ui::symbol(icons::home, key: "ico:s_home", size: 24.0f64,
+            color: vocab::Color::ink()));
+        syms.add(ui::symbol(icons::search, key: "ico:s_search", size: 24.0f64,
+            color: vocab::Color::ink(0.7f64)));
+        syms.add(ui::symbol(icons::settings, key: "ico:s_set", size: 24.0f64,
+            color: vocab::Color::primary()));
+        syms.add(ui::symbol(icons::favorite, key: "ico:s_fav", size: 24.0f64, fill: 1.0f64,
+            color: vocab::Color::rgba(0.9f64, 0.25f64, 0.3f64, 1.0f64)));
+        syms.add(ui::symbol(icons::add, key: "ico:s_add", size: 24.0f64,
+            color: vocab::Color::ink()));
+        body.add(core::row(syms).gap(16.0f64));
+
+        return shell::panel(
+            "Icons",
+            "Two icon systems: AppKit SF Symbols via icon_button(source), and Material codepoints via symbol(icons::…).",
+            core::column(body).gap(12.0f64),
+            howto: "ui::icon_button(\"gearshape\", key: \"k\", on_clicked: this.on_icon)\nui::symbol(icons::home, size: 24.0, color: Color::ink())",
+        );
+    }
+}
+
+impl Icons: component::Lifecycle {
+    fn on_attach(ref this) { return; }
+    fn on_detach(ref this) { return; }
+}

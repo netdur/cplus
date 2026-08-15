@@ -32,9 +32,12 @@ import "objc/runtime" as rt;
 import "objc/bridge" as bridge;
 import "appkit/appkit" as ak;
 import "quartzcore/quartzcore" as qc;
+import "stdlib/env" as env;
 import "facet/facet" as core;
 import "facet/application" as app;
 import "facet/mount" as mount;
+import "facet/runtime" as runtime;
+import "facet/agent" as agent;
 import "./inspector" as insp;
 import "./tree" as tree;
 import "./mcp" as mcp;
@@ -298,5 +301,31 @@ fn install() {
     // libdispatch, and a build with no platform shim keeps `mcp`'s direct call,
     // which is right for headless and for an in-process caller.
     mcp::set_marshal(run_on_main_sync);
+    return;
+}
+
+// Serve the inspector IF the environment asks — the one line an application
+// adds to be inspectable by the tool that launched it. `FACET_INSPECT` names a
+// socket path; an IDE (iris's Run does this) sets it on the child it spawns
+// and connects a remote Backend to the same path. A process launched any other
+// way has no variable, and this is a no-op costing one getenv.
+//
+// Everything it does is the explicit wiring the probe app spells out by hand:
+// the platform half (overlay + the synchronous main-thread hop a socket
+// request needs), the armed namespace, and the serving thread. Arming stays a
+// deliberate act — linking this package in still exposes nothing; only the
+// launcher that set the variable gets a listener.
+fn serve_if_asked() {
+    let path: text::Text = match env::var("FACET_INSPECT") {
+        option::Option[text::Text]::Some(p) => p,
+        option::Option[text::Text]::None => { return; }
+    };
+    if path.is_empty() { return; }
+    install();
+    mcp::arm(tree::local_backend());
+    // `serve_once` is installed by `enable`; without it the dispatch below is
+    // a null fn-pointer check that quietly serves nothing.
+    agent::enable();
+    runtime::agent_serve_once(path.view());
     return;
 }

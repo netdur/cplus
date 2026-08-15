@@ -238,6 +238,18 @@ row(on_click: opened, on_click_ctx: #addr_of(this) as *u8)
 
 Codes: **W0824** (declaration has no ctx slot) · **W0825** (ctx is FIRST — a bound method reads it from the LAST parameter) · **E0824** (callee has no slot, or the call filled it) · **E0823** (method shape does not fit) · **E0822** (`take this`, generic, or `ref`/`take` params — none can be bound).
 
+An **associated fn** (no receiver) is a namespaced fn, so `Type::f` is a legal fn-pointer value — which is what an objc IMP or any other C callback needs, and it lets the callback live on the type it belongs to instead of as a top-level fn beside it:
+
+```cplus
+impl LineGutter {
+    fn draw_imp(view: *u8, rect: rt::Rect) { ... }        // no `this`
+}
+let imp: fn(*u8, rt::Rect) = LineGutter::draw_imp;        // its address
+synth::add_method(cls, sel, LineGutter::draw_imp, types); // or straight in
+```
+
+Type-directed, exactly like a free fn: without an expected `fn(...)` type it is **E0312**. A **method** (one with a receiver) has no address of this shape — `fn(this, …)` is not `fn(…)` — and says so with E0312; a generic associated fn is **E0821**.
+
 ### Enums
 ```cplus
 enum Color { Red, Green, Blue }                  // plain, lowers to i32, Copy
@@ -322,7 +334,20 @@ let v = vec::with_capacity::[i32](16 as usize);
 let s = #size_of::[Point]();
 ```
 
-Always write source-level type args (`Option[i32]::Some(v)`). Mangled names like `Option__i32` are internal and never user-typeable.
+Always write source-level type args, never mangled names — `Option__i32` is internal and is not accepted in source (E0405), even though older diagnostics printed it.
+
+**Where the args are required, and where they are noise.** *Constructing* a generic enum value needs them — nothing else says which instantiation you mean (`Option[i32]::Some(1)`; the bare form is E0303). *Matching* one does not: the scrutinee already fixes the instantiation, so the enum path alone resolves in `match`, `if let`, `while let` and `guard let`.
+
+```cplus
+fn find(k: str) -> Option[i32] { return Option[i32]::Some(42); }  // construct: args REQUIRED
+
+match find("answer") {
+    Option::Some(v) => v,        // match: args optional — prefer this
+    Option::None    => 0,
+}
+```
+
+Prefer the short form in patterns. Restating the type is not just noise: it is the arm's only dependency on a type the compiler already derived, so a later change to that type turns every arm into an error (E0341) with nothing wrong in the logic. Written the short way, the same change touches none of them.
 
 ### Strings
 | Type | Shape | Owns? |
@@ -337,7 +362,21 @@ b.count(); b.is_empty(); b.clone();               // Text methods
 a.count(); a.contains("ell");                     // str methods (import "stdlib/str")
 ```
 
-A borrowed `Text` **coerces to `str`** at argument, binding, and return positions, and when compared with a `str` (`name == "x"`), so a `str`-typed slot accepts a `Text` directly — no `.as_str()`. The coercion borrows; returning the view of a *local* `Text` is rejected (E0513). `Text::clone` copies/owns. `str` is forbidden in `async fn` signatures (E0900); pass `Text` instead.
+A borrowed `Text` **coerces to `str`** at argument, binding, return, and receiver positions, and when compared with a `str` (`name == "x"`), so a `str`-typed slot accepts a `Text` directly — no `.as_str()`. The coercion borrows; returning the view of a *local* `Text` is rejected (E0513). `Text::clone` copies/owns. `str` is forbidden in `async fn` signatures (E0900); pass `Text` instead.
+
+**A view needs a named owner.** At a BINDING (or an assignment, or a field of an aggregate a binding keeps) the thing being viewed must be somebody's binding — a temporary has no lifetime to lend:
+
+```cplus
+let s: str = t.clone();          // E0513 — clone's Text is an anonymous temp
+let s: str = "x = ${n}";         // E0513 — so is the interpolation's
+let s: str = mk().view();        // E0513 — same, one accessor deeper
+let owner: Text = t.clone();     // name it, then view it
+let s: str = { owner.view() };   // fine — `owner` outlives the statement
+
+f("x = ${n}");                   // fine — an ARGUMENT's temp outlives the call
+```
+
+**One read surface: reads live on `str` and return views.** `Text` declares only what allocates or mutates (`append`, `insert`, `truncate`, `reserve`, `clone`, `uppercased`, `appending`, `replacing`, `pad_start/pad_end`, …) plus `capacity`/`view`/`equals`. Every read — `count`, `trim`, `slice`, `split`, `find`, … — lives in the blessed `impl str` block, and a `Text` receiver reaches it through the coercion: `t.trim()` returns a **`str` view into `t`'s buffer**, no copy. While a view lives, its owner is write-locked (mutating/moving/dropping it is rejected; reads stay fine); **the borrow ends at the view's last use**, not at scope end, so `let v = t.trim(); use(v); t.append("!")` compiles. A use inside a loop pins the borrow past the loop; a use in a `defer` or block tail pins it to scope exit. Convert a view to an owned value with `.to_text()` — that is the only copy you ever pay, and you spell it.
 
 **`str` methods.** stdlib declares the builtin view's method set (`import "stdlib/str" as _;` anywhere in the build enables it — `as _` is the discard alias for extension-only imports; importing `stdlib/text` brings it in transitively). Everything reads or returns sub-views of the same buffer — no allocation except `split`:
 
@@ -356,19 +395,21 @@ s.split(separator: ",");                                        // Vec[str] of v
 s.to_i64();  s.to_f64();                                        // Option — strict decimal shapes
 ```
 
-Importing `stdlib/text` brings the str methods in transitively (text
-delegates its reads to them). Slices and arrays carry the same two core
-reads — `xs.count()`, `xs.is_empty()` — with `#slice_*` as their FFI tier.
+All of these work identically on a `Text` receiver (same names, same view
+returns). `text::join(parts, separator:)` takes the `Vec[str]` that `split`
+returns. Slices and arrays carry the same two core reads — `xs.count()`,
+`xs.is_empty()` — with `#slice_*` as their FFI tier.
 
 There is still **no `+` concatenation**: build strings with interpolation (below) or `Text::append`. Operations that must allocate (uppercasing, replacing, padding) live on `Text` — convert with `s.to_text()`. The `#str_ptr(s)` / `#str_len(s)` / `#str_from_raw_parts(p, n)` intrinsics remain the FFI tier — passing bytes to C and building views over foreign memory — not the way to do string work.
 
 ### String interpolation
 ```cplus
 let n: i32 = 42;
-let s: Text = "answer is ${n}, name is ${name}";   // interpolation yields an owned Text
+let s: Text = "answer is ${n}, name is ${name}";   // bound: an owned Text (allocates)
+io::println("i = ${n}");                            // sink: writes parts, ZERO heap
 ```
 
-Syntax is `${expr}` (not `\{...}`). Format specifiers (`${x:04d}`) are **not** implemented — convert numbers manually if needed.
+Syntax is `${expr}` (not `\{...}`). An interpolated literal passed **directly** to `io::print` / `io::println` / `io::eprintln` never materializes a `Text`: each part writes straight to the stream (numbers via stack scratch), so a print loop compiles to what the equivalent `printf` does — and since the sinks are `#[no_alloc]`, real-time code may log this way. `t.append("x = ${x}")` likewise appends the parts **in place** (one `reserve`, then copies; atomic on OOM) — unless a part reads `t` itself, which takes the copying path. Any other position (a binding, an argument to anything else) builds an owned `Text`. Format specifiers (`${x:04d}`) are **not** implemented — convert numbers manually if needed.
 
 ### Also supported
 Type aliases (`type Name = ExistingType;`) and tuples (`(a, b)` literal, `(T, U)` type) parse and compile. Check the online examples for exact usage before relying on tuple method surface.
@@ -615,6 +656,28 @@ extern fn fcntl(fd: i32, cmd: i32, ...) -> i32;
 
 Pointer ↔ int casts go through `usize`, never directly to `i32` (E0315).
 
+### Calling INTO C+ — from lldb, a test harness, or any C caller
+
+The one supported door is `export fn`, and it deliberately rejects `str`
+(E0410): `str` is a fat pointer with no C-ABI counterpart, so an exported
+entry takes `*u8` + `usize` and rebuilds the view inside:
+
+```cplus
+export fn probe_emit(name_ptr: *u8, name_len: usize) {
+    let name: str = { #str_from_raw_parts(name_ptr, name_len) };
+    events::emit(name);
+    return;
+}
+```
+
+Everything that is NOT `export` is off limits from outside, and the failure
+mode is silent: internal functions are `fastcc` with module-scoped mangled
+names, and a `str` there is an LLVM `{ ptr, i64 }` aggregate under that
+convention — an lldb `call` or a C declaration reaches the symbol, passes
+garbage, and nothing says so (there is no way to tell a bad ABI from a no-op
+handler from the outside). If a harness needs to drive an internal path,
+write the two-line `export` wrapper above; that is what it is for.
+
 ---
 
 ## 7. Compile-time intrinsics — all spelled `#name(...)`
@@ -836,6 +899,13 @@ Only compiler-known attributes are accepted; an unknown attribute is rejected (E
 fn rt_safe() { ... }
 #[inline] / #[inline(always)] / #[inline(never)] // LLVM inlinehint/alwaysinline/noinline
 fn hot(x: i32) -> i32 { return x; }              // (always) forces inline even at -O0
+#[deprecated("use parse_v2 instead")]            // W0006 at each USE, never at the
+fn parse() -> i32 { return 1; }                  // declaration; the string is optional and
+                                                 // is printed verbatim. A WARNING — the call
+                                                 // still builds, so a rename can land as a
+                                                 // list consumers work through and break a
+                                                 // release later. On fn/method/struct/enum/
+                                                 // field/variant
 ```
 
 ---

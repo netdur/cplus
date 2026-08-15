@@ -1,0 +1,84 @@
+import "facet/facet" as core;
+import "facet/elements" as ui;
+import "facet/component" as component;
+import "facet/label" as label;
+import "facet/vocabulary" as vocab;
+import "stdlib/option" as option;
+import "../shell" as shell;
+
+struct Buttons {
+    clicks: i32,
+}
+
+impl Buttons {
+    fn new() -> Buttons { return Buttons { clicks: 0 }; }
+
+    fn on_click(ref this, sender: *u8) {
+        this.clicks = this.clicks +% 1;
+        match label::find("btn:count") {
+            option::Option[label::Label]::Some(l) => {
+                let _l: label::Label = l.set_text("Clicked ${this.clicks} time(s)");
+            }
+            option::Option[label::Label]::None => { }
+        }
+        return;
+    }
+
+    fn on_reset(ref this, sender: *u8) {
+        this.clicks = 0;
+        match label::find("btn:count") {
+            option::Option[label::Label]::Some(l) => {
+                let _l: label::Label = l.set_text("Clicked 0 time(s)");
+            }
+            option::Option[label::Label]::None => { }
+        }
+        return;
+    }
+}
+
+impl Buttons: component::Component {
+    fn build(ref this) -> core::Node {
+        var body: core::Builder = core::Builder::new();
+
+        body.add(shell::caption("Button  ·  on_click"));
+        var row: core::Builder = core::Builder::new();
+        row.add(ui::button("Click me", key: "btn:click", on_click: this.on_click));
+        row.add(ui::button("Reset", key: "btn:reset", on_click: this.on_reset));
+        body.add(core::row(row).gap(8.0f64));
+        body.add(ui::label(
+            "Clicked 0 time(s)",
+            key: "btn:count",
+            font_size: 15.0f64,
+            text_color: vocab::Color::ink(),
+        ));
+
+        body.add(shell::caption("Disabled"));
+        var off: core::Node = ui::button("Unavailable", key: "btn:off");
+        off.set_enabled(false);
+        body.add(off);
+
+        body.add(shell::caption("Toggle button  ·  sticky on/off"));
+        body.add(ui::button("Pinned", key: "btn:toggle", toggles: true, on: true));
+
+        body.add(shell::caption("Text button  ·  borderless"));
+        body.add(ui::text_button(
+            "Text action",
+            key: "btn:text",
+            text_color: vocab::Color::primary(),
+            font_size: 15.0f64,
+            font_weight: vocab::FontWeight::Semibold,
+        ));
+
+        return shell::panel(
+            "Button",
+            "Primary actions, disabled state, toggle-style, and borderless text buttons.",
+            core::column(body).gap(10.0f64),
+            howto: "ui::button(\"Save\", key: \"save\", on_click: this.on_click)\nui::text_button(\"Link\", text_color: Color::primary())\nlabel::find(\"count\").set_text(\"…\")",
+        );
+    }
+}
+
+impl Buttons: component::Lifecycle {
+    fn on_attach(ref this) { return; }
+    fn on_detach(ref this) { return; }
+}

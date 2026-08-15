@@ -1,0 +1,892 @@
+// remote — the inspector's Backend over a socket, as a JSON-RPC client.
+//
+// The widget is written against the `Backend` vtable and does not know where
+// its answers come from; `mcp` puts the local walker ON a socket. This module
+// is the other end of that wire: the same vtable, implemented by asking a
+// remote process's `inspector.*` namespace and decoding what comes back. Point
+// the widget at one of these and it inspects an app it is not part of — an
+// IDE inspecting the app it just launched being the case it was built for.
+//
+// ---- the wire address, as a Handle ---------------------------------------------
+//
+// A `Handle` is a node pointer, and a pointer does not survive a socket —
+// `describe` answers indices for exactly this reason. So a remote handle
+// CARRIES the index, one-biased so that index 0 does not read as
+// `Handle::none()`: `node = index + 1`, never dereferenced, only carried back
+// to the wire. `seen` holds the remote REVISION the listing arrived with. The
+// widget treats handles as opaque and hands them back to the backend that
+// issued them, which is the entire contract; nothing on this side may pass one
+// to `tree`, whose functions would dereference it.
+//
+// ---- names ----------------------------------------------------------------------
+//
+// `Prop.name` is a borrowed `str` because locally every name is one of the
+// package's own literals. A name arriving off the wire is request-scoped, so
+// it is EXCHANGED for this package's literal (`tree::canonical_prop`, plus the
+// platform names the appkit module emits) before it is stored. A name in
+// neither table names a property this build could not render or write anyway,
+// and its row is dropped rather than left pointing at freed bytes.
+//
+// ---- fidelity --------------------------------------------------------------------
+//
+// One call, one connection, one line each way. That is the transport the
+// server already speaks (each request is answered before the next is read),
+// and it makes a dead target cost one refused `connect` rather than a hung
+// panel: every verb degrades to a refusal the widget already knows how to
+// say. Transport failure reads as `Stale` — "re-describe" is exactly the
+// remedy — and the fault line carries the sentence.
+
+import "stdlib/text" as text;
+import "stdlib/vec" as vec;
+import "stdlib/option" as option;
+import "stdlib/status" as status;
+import "stdlib/result" as result;
+import "flex_layout/flex_layout" as flex;
+import "facet/facet" as core;
+import "facet/vocabulary" as vocab;
+import "json/json" as json;
+import "./inspector" as insp;
+import "./tree" as tree;
+
+// AF_UNIX = 1, SOCK_STREAM = 1 on Darwin; `sockaddr_un` is
+// { uint8 sun_len; uint8 sun_family; char sun_path[104] } — built in a byte
+// buffer, the same way `agent_mcp` builds the server's.
+extern fn socket(domain: i32, ty: i32, protocol: i32) -> i32;
+extern fn connect(fd: i32, addr: *u8, addrlen: u32) -> i32;
+extern fn read(fd: i32, buf: *u8, count: usize) -> i64;
+extern fn write(fd: i32, buf: *u8, count: usize) -> i64;
+extern fn close(fd: i32) -> i32;
+
+// ---- the client --------------------------------------------------------------
+
+// One remote target. The CALLER owns it — the vtable's `surface` is a borrowed
+// pointer, so the struct must outlive the Backend built over it; a component
+// holds it as a field for exactly that reason.
+struct Remote {
+    path: text::Text,
+    // The remote revision the last listing arrived with. Diagnostic — liveness
+    // is the target's own check, made against its own counter.
+    revision: u64,
+    // The last transport failure, empty while the wire answers. `fault()` is
+    // the read; a UI shows it INSTEAD of a tree that silently stopped moving.
+    _fault: text::Text,
+}
+
+impl Remote {
+    fn new(path: str) -> Remote {
+        return Remote {
+            path: text::from_str(path),
+            revision: 0 as u64,
+            _fault: text::new(),
+        };
+    }
+
+    fn fault(this) -> text::Text { return this._fault.clone(); }
+    fn faulted(this) -> bool { return !this._fault.is_empty(); }
+}
+
+// Is anything listening at `path`? One connect, closed again — the cheap
+// question a host asks BEFORE switching a panel to a target, so the switch
+// happens on evidence rather than on a socket file somebody forgot to unlink
+// (a refused connect on a leftover file answers no, which is the truth).
+fn probe(path: str) -> bool {
+    let fd: i32 = connect_to(path);
+    if fd < (0 as i32) { return false; }
+    { close(fd) };
+    return true;
+}
+
+// The Backend, over the caller's Remote. All ten verbs cross the wire; the
+// two the platform normally owns — highlight and its clearing — draw in the
+// TARGET's window, which is where the inspected node is.
+fn backend_of(r: *Remote) -> insp::Backend {
+    return insp::Backend {
+        surface: r as *u8,
+        describe: r_describe,
+        inspect: r_inspect,
+        set: r_set,
+        reset: r_reset,
+        highlight: r_highlight,
+        clear_highlight: r_clear_highlight,
+        insert: r_insert,
+        remove: r_remove,
+        reparent: r_reparent,
+        undo: r_undo,
+    };
+}
+
+// ---- transport -----------------------------------------------------------------
+
+fn connect_to(path: str) -> i32 {
+    let plen: usize = #str_len(path);
+    if plen > (100 as usize) { return - 4 as i32; }
+    var addr: [u8; 110] = [0 as u8; 110];
+    addr[1] = 1 as u8; // sun_family = AF_UNIX
+    let pbytes: *u8 = #str_ptr(path);
+    var i: usize = 0 as usize;
+    while i < plen {
+        addr[(2 as usize) +% i] = { *(pbytes + i) };
+        i = i +% (1 as usize);
+    }
+    let addrlen: u32 = ((2 as usize) +% plen +% (1 as usize)) as u32;
+    let fd: i32 = { socket(1 as i32, 1 as i32, 0 as i32) };
+    if fd < (0 as i32) { return - 1 as i32; }
+    let rc: i32 = { connect(fd, #addr_of(addr[0]), addrlen) };
+    if rc != (0 as i32) {
+        { close(fd) };
+        return - 2 as i32;
+    }
+    return fd;
+}
+
+fn send_all(fd: i32, line: str) -> bool {
+    let total: usize = #str_len(line);
+    let base: *u8 = #str_ptr(line);
+    var off: usize = 0 as usize;
+    while off < total {
+        let n: i64 = { write(fd, base + off, total -% off) };
+        if n <= (0 as i64) { return false; }
+        off = off +% (n as usize);
+    }
+    return true;
+}
+
+// Read until the response's newline (or the peer closes). One response per
+// request is the server's own framing; anything after the first newline
+// belongs to no question this client asked.
+fn read_reply(fd: i32) -> text::Text {
+    var out: text::Text = text::new();
+    var tmp: [u8; 8192] = [0 as u8; 8192];
+    let p: *u8 = #addr_of(tmp) as *u8;
+    loop {
+        let n: i64 = { read(fd, p, 8192 as usize) };
+        if n <= (0 as i64) { break; }
+        let _s: status::Status = out.append(#str_from_raw_parts(p, n as usize));
+        var i: usize = 0 as usize;
+        var done: bool = false;
+        let got: usize = n as usize;
+        while i < got {
+            if p[i] == (10 as u8) { done = true; i = got; }
+            else { i = i +% (1 as usize); }
+        }
+        if done { break; }
+    }
+    return out;
+}
+
+fn member_of(k: str, take v: json::Value) -> json::Member {
+    return json::Member { key: text::from_str(k), value: v };
+}
+
+fn no_params() -> json::Value {
+    return json::Value::Object(vec::new::[json::Member]());
+}
+
+fn set_fault(rp: *Remote, msg: str) {
+    { (*rp)._fault = text::from_str(msg) };
+    return;
+}
+
+// One call: connect, one line out, one line in, close. `None` is a transport
+// or protocol failure and the fault says which; a REFUSAL is not a failure —
+// it comes back as a result whose outcome the verb maps.
+fn rpc(rp: *Remote, method: str, take params: json::Value) -> option::Option[json::Value] {
+    var m: vec::Vec[json::Member] = vec::new::[json::Member]();
+    m.append(member_of("jsonrpc", json::Value::Text(text::from_str("2.0"))));
+    m.append(member_of("id", json::Value::Number(1.0f64)));
+    m.append(member_of("method", json::Value::Text(text::from_str(method))));
+    m.append(member_of("params", params));
+    var line: text::Text = json::Value::Object(m).to_text();
+    let _nl: status::Status = line.append("\n");
+
+    let path_t: text::Text = { (*rp).path }.clone();
+    let ps: str = path_t;
+    let fd: i32 = connect_to(ps);
+    if fd < (0 as i32) {
+        set_fault(rp, "no app is listening at the run socket");
+        return option::Option[json::Value]::None;
+    }
+    let ls: str = line;
+    if !send_all(fd, ls) {
+        { close(fd) };
+        set_fault(rp, "the app stopped reading mid-request");
+        return option::Option[json::Value]::None;
+    }
+    let reply: text::Text = read_reply(fd);
+    { close(fd) };
+    if reply.is_empty() {
+        set_fault(rp, "the app closed without answering");
+        return option::Option[json::Value]::None;
+    }
+    let parsed: result::Result[json::Value, json::ParseError] =
+        json::Value::parse(reply.view());
+    let v: json::Value = match parsed {
+        result::Result[json::Value, json::ParseError]::Ok(val) => val,
+        result::Result[json::Value, json::ParseError]::Err(_e) => {
+            set_fault(rp, "the app answered something that is not JSON");
+            return option::Option[json::Value]::None;
+        }
+    };
+    match v.value("result") {
+        option::Option[json::Value]::Some(res) => {
+            { (*rp)._fault = text::new() };
+            return option::Option[json::Value]::Some(res);
+        }
+        option::Option[json::Value]::None => { }
+    }
+    // A JSON-RPC error object. Its message is the fault, verbatim — "namespace
+    // is not armed" told through this line is a developer unblocked.
+    var msg: text::Text = text::from_str("the app refused the request");
+    match v.value("error") {
+        option::Option[json::Value]::Some(e) => {
+            match e.value("message") {
+                option::Option[json::Value]::Some(mv) => {
+                    match mv.as_text() {
+                        option::Option[text::Text]::Some(t) => { msg = t; }
+                        option::Option[text::Text]::None => { }
+                    }
+                }
+                option::Option[json::Value]::None => { }
+            }
+        }
+        option::Option[json::Value]::None => { }
+    }
+    { (*rp)._fault = msg };
+    return option::Option[json::Value]::None;
+}
+
+// ---- decoding ------------------------------------------------------------------
+
+fn field_of(v: *json::Value, key: str) -> json::Value {
+    return match { (*v).value(key) } {
+        option::Option[json::Value]::Some(x) => x,
+        option::Option[json::Value]::None => json::Value::Null,
+    };
+}
+
+// The accessors, over a pointer: `json::Value` owns its payloads and has no
+// clone, so everything below reads through the place it already lives in.
+fn raw_num(v: *json::Value, fallback: f64) -> f64 {
+    return match { (*v).as_number() } {
+        option::Option[f64]::Some(n) => n,
+        option::Option[f64]::None => fallback,
+    };
+}
+
+fn raw_flag(v: *json::Value) -> bool {
+    return match { (*v).as_boolean() } {
+        option::Option[bool]::Some(b) => b,
+        option::Option[bool]::None => false,
+    };
+}
+
+fn raw_text(v: *json::Value) -> text::Text {
+    return match { (*v).as_text() } {
+        option::Option[text::Text]::Some(t) => t,
+        option::Option[text::Text]::None => text::new(),
+    };
+}
+
+fn num_at(obj: *json::Value, key: str, fallback: f64) -> f64 {
+    let x: json::Value = field_of(obj, key);
+    return raw_num(#addr_of(x), fallback);
+}
+
+fn flag_at(obj: *json::Value, key: str) -> bool {
+    let x: json::Value = field_of(obj, key);
+    return raw_flag(#addr_of(x));
+}
+
+fn text_at(obj: *json::Value, key: str) -> text::Text {
+    let x: json::Value = field_of(obj, key);
+    return raw_text(#addr_of(x));
+}
+
+// The index a remote handle carries, one-biased so index 0 is not `none()`.
+fn handle_for(index: usize, revision: u64) -> insp::Handle {
+    return insp::Handle {
+        node: (index +% (1 as usize)) as *core::Node,
+        seen: revision,
+        window: 0 as usize,
+    };
+}
+
+// The wire index back out of a handle, or `None` for `Handle::none()`.
+fn index_of(h: insp::Handle) -> option::Option[usize] {
+    let raw: usize = #addr(h.node);
+    if raw == (0 as usize) { return option::Option[usize]::None; }
+    return option::Option[usize]::Some(raw -% (1 as usize));
+}
+
+// The kind code for a wire kind name — `kind_name` run backwards, over the
+// codes themselves so there is no second table to drift. Codes are small and
+// dense; 64 bounds every one of them with room. An unknown name answers 0,
+// which is `kind_name`'s own fallback ("node") read back.
+fn kind_from_name(name: str) -> u32 {
+    var k: u32 = 0u32;
+    while k < (64 as u32) {
+        if insp::kind_name(k) == name { return k; }
+        k = k +% (1 as u32);
+    }
+    return 0u32;
+}
+
+// This package's literal for a wire property name — the ledger invariant
+// `tree::canonical_prop` documents, extended by the names the platform module
+// emits. `None` drops the row: a name in no table is one this build could not
+// draw an editor for anyway.
+fn intern_name(name: str) -> option::Option[str] {
+    match tree::canonical_prop(name) {
+        option::Option[str]::Some(n) => { return option::Option[str]::Some(n); }
+        option::Option[str]::None => { }
+    }
+    if name == "native_frame" { return option::Option[str]::Some("native_frame"); }
+    if name == "native_hidden" { return option::Option[str]::Some("native_hidden"); }
+    if name == "first_responder" { return option::Option[str]::Some("first_responder"); }
+    return option::Option[str]::None;
+}
+
+fn channel_of(arr: *json::Value, at: usize) -> f64 {
+    return match { (*arr).item(at) } {
+        option::Option[json::Value]::Some(x) => raw_num(#addr_of(x), 0.0f64),
+        option::Option[json::Value]::None => 0.0f64,
+    };
+}
+
+// A colour, decoded by what it IS — literal rgba, adaptive pair, or a theme
+// role whose channels genuinely are not there. The inverse of `color_json`.
+fn color_of(v: *json::Value) -> vocab::Color {
+    let token: u32 = num_at(v, "token", 0.0f64) as u32;
+    var c: vocab::Color = vocab::Color {
+        token: token,
+        r: 0.0f64, g: 0.0f64, b: 0.0f64, a: 0.0f64,
+        r2: 0.0f64, g2: 0.0f64, b2: 0.0f64, a2: 0.0f64,
+    };
+    if token == (255 as u32) {
+        let rgba: json::Value = field_of(v, "rgba");
+        let rp: *json::Value = #addr_of(rgba);
+        c.r = channel_of(rp, 0 as usize);
+        c.g = channel_of(rp, 1 as usize);
+        c.b = channel_of(rp, 2 as usize);
+        c.a = channel_of(rp, 3 as usize);
+        return c;
+    }
+    if token == (254 as u32) {
+        let light: json::Value = field_of(v, "light");
+        let lp: *json::Value = #addr_of(light);
+        c.r = channel_of(lp, 0 as usize);
+        c.g = channel_of(lp, 1 as usize);
+        c.b = channel_of(lp, 2 as usize);
+        c.a = channel_of(lp, 3 as usize);
+        let dark: json::Value = field_of(v, "dark");
+        let dp: *json::Value = #addr_of(dark);
+        c.r2 = channel_of(dp, 0 as usize);
+        c.g2 = channel_of(dp, 1 as usize);
+        c.b2 = channel_of(dp, 2 as usize);
+        c.a2 = channel_of(dp, 3 as usize);
+        return c;
+    }
+    return c;
+}
+
+// A value, decoded against the TAG the wire states — the same rule the whole
+// package reads by: what arrived is whatever the property already holds.
+fn value_of(ty: str, v: *json::Value) -> insp::Value {
+    if ty == "bool" { return insp::Value::Bool(raw_flag(v)); }
+    if ty == "int" { return insp::Value::Int(raw_num(v, 0.0f64) as i64); }
+    if ty == "number" { return insp::Value::Num(raw_num(v, 0.0f64)); }
+    if ty == "text" { return insp::Value::Str(raw_text(v)); }
+    if ty == "enum" { return insp::Value::Enum(raw_text(v)); }
+    if ty == "color" { return insp::Value::Color(color_of(v)); }
+    return insp::Value::Nothing;
+}
+
+fn node_of(obj: *json::Value, revision: u64) -> insp::Node {
+    let index: usize = num_at(obj, "index", 0.0f64) as usize;
+    let parent: option::Option[usize] = match { (*obj).value("parent") } {
+        option::Option[json::Value]::Some(pv) => match pv {
+            json::Value::Number(n) => option::Option[usize]::Some(n as usize),
+            _ => option::Option[usize]::None,
+        },
+        option::Option[json::Value]::None => option::Option[usize]::None,
+    };
+    let kind_t: text::Text = text_at(obj, "kind");
+    let frame_v: json::Value = field_of(obj, "frame");
+    let fp: *json::Value = #addr_of(frame_v);
+    return insp::Node {
+        handle: handle_for(index, revision),
+        parent: parent,
+        depth: num_at(obj, "depth", 0.0f64) as usize,
+        key: text_at(obj, "key"),
+        slot: text::new(),
+        kind: kind_from_name(kind_t.view()),
+        frame: flex::Frame {
+            left: num_at(fp, "x", 0.0f64),
+            top: num_at(fp, "y", 0.0f64),
+            width: num_at(fp, "w", 0.0f64),
+            height: num_at(fp, "h", 0.0f64),
+        },
+        has_view: flag_at(obj, "has_view"),
+        is_attached: flag_at(obj, "attached"),
+        is_focused: flag_at(obj, "focused"),
+        is_visible: flag_at(obj, "visible"),
+        dirty: 0 as u64,
+        child_count: num_at(obj, "children", 0.0f64) as usize,
+        is_inspector: flag_at(obj, "is_inspector"),
+    };
+}
+
+fn nodes_of(res: *json::Value) -> vec::Vec[insp::Node] {
+    var out: vec::Vec[insp::Node] = vec::new::[insp::Node]();
+    let revision: u64 = num_at(res, "revision", 0.0f64) as u64;
+    match { (*res).value("nodes") } {
+        option::Option[json::Value]::Some(nv) => match nv {
+            json::Value::Array(items) => {
+                var i: usize = 0 as usize;
+                while i < items.count() {
+                    match items.at_ptr(i) {
+                        option::Option[*json::Value]::Some(p) => {
+                            let _s: status::Status = out.append(node_of(p, revision));
+                        }
+                        option::Option[*json::Value]::None => { }
+                    }
+                    i = i +% (1 as usize);
+                }
+            }
+            _ => { }
+        },
+        option::Option[json::Value]::None => { }
+    }
+    return out;
+}
+
+fn props_of(res: *json::Value, key: str) -> vec::Vec[insp::Prop] {
+    var out: vec::Vec[insp::Prop] = vec::new::[insp::Prop]();
+    match { (*res).value(key) } {
+        option::Option[json::Value]::Some(pv) => match pv {
+            json::Value::Array(items) => {
+                var i: usize = 0 as usize;
+                while i < items.count() {
+                    match items.at_ptr(i) {
+                        option::Option[*json::Value]::Some(p) => {
+                            let name_t: text::Text = text_at(p, "name");
+                            match intern_name(name_t.view()) {
+                                option::Option[str]::Some(nm) => {
+                                    let ty: text::Text = text_at(p, "type");
+                                    let raw: json::Value = field_of(p, "value");
+                                    let _s: status::Status = out.append(insp::Prop {
+                                        name: nm,
+                                        value: value_of(ty.view(), #addr_of(raw)),
+                                        writable: flag_at(p, "writable"),
+                                        overridden: flag_at(p, "overridden"),
+                                    });
+                                }
+                                option::Option[str]::None => { }
+                            }
+                        }
+                        option::Option[*json::Value]::None => { }
+                    }
+                    i = i +% (1 as usize);
+                }
+            }
+            _ => { }
+        },
+        option::Option[json::Value]::None => { }
+    }
+    return out;
+}
+
+fn detail_of(res: *json::Value) -> option::Option[insp::Detail] {
+    let revision: u64 = num_at(res, "revision", 0.0f64) as u64;
+    let node_v: json::Value = match { (*res).value("node") } {
+        option::Option[json::Value]::Some(nv) => nv,
+        option::Option[json::Value]::None => { return option::Option[insp::Detail]::None; }
+    };
+    return option::Option[insp::Detail]::Some(insp::Detail {
+        node: node_of(#addr_of(node_v), revision),
+        declared: props_of(res, "declared"),
+        computed: props_of(res, "computed"),
+        native: props_of(res, "native"),
+    });
+}
+
+// The outcome, back off the wire by its NAME — the same closed set
+// `outcome_name` writes, so a name that has drifted is caught here as the
+// honest default rather than silently read as some other refusal.
+fn outcome_from(name: str) -> insp::Outcome {
+    if name == "ok" { return insp::Outcome::Ok; }
+    if name == "stale" { return insp::Outcome::Stale; }
+    if name == "not_found" { return insp::Outcome::NotFound; }
+    if name == "unknown_property" { return insp::Outcome::UnknownProperty; }
+    if name == "type_mismatch" { return insp::Outcome::TypeMismatch; }
+    if name == "read_only" { return insp::Outcome::ReadOnly; }
+    if name == "unsupported" { return insp::Outcome::Unsupported; }
+    if name == "not_a_container" { return insp::Outcome::NotAContainer; }
+    if name == "protected" { return insp::Outcome::Protected; }
+    if name == "unknown_kind" { return insp::Outcome::UnknownKind; }
+    if name == "cycle" { return insp::Outcome::Cycle; }
+    if name == "nothing_to_undo" { return insp::Outcome::NothingToUndo; }
+    return insp::Outcome::Unsupported;
+}
+
+fn outcome_of(res: *json::Value) -> insp::Outcome {
+    let name: text::Text = text_at(res, "outcome");
+    return outcome_from(name.view());
+}
+
+// ---- encoding a write ------------------------------------------------------------
+
+fn hex_nibble(n: u8) -> u8 {
+    if n < (10 as u8) { return (48 as u8) +% n; }
+    return (87 as u8) +% n; // 'a' - 10
+}
+
+fn append_hex_byte(out: *text::Text, chan: f64) {
+    var scaled: f64 = chan * 255.0f64 + 0.5f64;
+    if scaled < 0.0f64 { scaled = 0.0f64; }
+    if scaled > 255.0f64 { scaled = 255.0f64; }
+    let b: u8 = scaled as u8;
+    var pair: [u8; 2] = [0 as u8; 2];
+    pair[0] = hex_nibble(b / (16 as u8));
+    pair[1] = hex_nibble(b % (16 as u8));
+    let _s: status::Status = { (*out).append(#str_from_raw_parts(#addr_of(pair[0]), 2 as usize)) };
+    return;
+}
+
+// "#rrggbb" — the one spelling the far side's parser reads. Only a literal
+// colour can be said this way, and only a literal is what the panel's own
+// parse produces; alpha is the parser's own 1.0, matching what it will read.
+fn hex_of(c: vocab::Color) -> text::Text {
+    var out: text::Text = text::from_str("#");
+    append_hex_byte(#addr_of(out), c.r);
+    append_hex_byte(#addr_of(out), c.g);
+    append_hex_byte(#addr_of(out), c.b);
+    return out;
+}
+
+// A `Value` as the wire's `value` parameter — number, boolean or string, which
+// is all `set` accepts; the far side re-reads a string against the property's
+// live tag. `None` for `Nothing`: an unset is not a thing `set` can send, and
+// refusing here beats asking the target to guess.
+fn wire_value(v: insp::Value) -> option::Option[json::Value] {
+    return match v {
+        insp::Value::Nothing => option::Option[json::Value]::None,
+        insp::Value::Bool(b) => option::Option[json::Value]::Some(json::Value::Bool(b)),
+        insp::Value::Int(i) =>
+            option::Option[json::Value]::Some(json::Value::Number(i as f64)),
+        insp::Value::Num(x) => option::Option[json::Value]::Some(json::Value::Number(x)),
+        insp::Value::Str(s) =>
+            option::Option[json::Value]::Some(json::Value::Text(s.clone())),
+        insp::Value::Enum(e) =>
+            option::Option[json::Value]::Some(json::Value::Text(e.clone())),
+        insp::Value::Color(c) =>
+            option::Option[json::Value]::Some(json::Value::Text(hex_of(c))),
+    };
+}
+
+// ---- the vtable ------------------------------------------------------------------
+
+fn r_describe(s: *u8) -> vec::Vec[insp::Node] {
+    let rp: *Remote = s as *Remote;
+    return match rpc(rp, "inspector.describe", no_params()) {
+        option::Option[json::Value]::Some(res) => {
+            let out: vec::Vec[insp::Node] = nodes_of(#addr_of(res));
+            { (*rp).revision = num_at(#addr_of(res), "revision", 0.0f64) as u64 };
+            out
+        }
+        option::Option[json::Value]::None => vec::new::[insp::Node](),
+    };
+}
+
+fn node_params(index: usize) -> json::Value {
+    var m: vec::Vec[json::Member] = vec::new::[json::Member]();
+    m.append(member_of("node", json::Value::Number(index as f64)));
+    return json::Value::Object(m);
+}
+
+fn r_inspect(s: *u8, h: insp::Handle) -> option::Option[insp::Detail] {
+    let rp: *Remote = s as *Remote;
+    let index: usize = match index_of(h) {
+        option::Option[usize]::Some(i) => i,
+        option::Option[usize]::None => { return option::Option[insp::Detail]::None; }
+    };
+    return match rpc(rp, "inspector.inspect", node_params(index)) {
+        option::Option[json::Value]::Some(res) => detail_of(#addr_of(res)),
+        option::Option[json::Value]::None => option::Option[insp::Detail]::None,
+    };
+}
+
+fn r_set(s: *u8, h: insp::Handle, p: str, take v: insp::Value) -> insp::Outcome {
+    let rp: *Remote = s as *Remote;
+    let index: usize = match index_of(h) {
+        option::Option[usize]::Some(i) => i,
+        option::Option[usize]::None => { return insp::Outcome::NotFound; }
+    };
+    let wv: json::Value = match wire_value(v) {
+        option::Option[json::Value]::Some(x) => x,
+        option::Option[json::Value]::None => { return insp::Outcome::TypeMismatch; }
+    };
+    var m: vec::Vec[json::Member] = vec::new::[json::Member]();
+    m.append(member_of("node", json::Value::Number(index as f64)));
+    m.append(member_of("property", json::Value::Text(text::from_str(p))));
+    m.append(member_of("value", wv));
+    return match rpc(rp, "inspector.set", json::Value::Object(m)) {
+        option::Option[json::Value]::Some(res) => outcome_of(#addr_of(res)),
+        option::Option[json::Value]::None => insp::Outcome::Stale,
+    };
+}
+
+fn r_reset(s: *u8, h: insp::Handle, p: str) -> insp::Outcome {
+    let rp: *Remote = s as *Remote;
+    let index: usize = match index_of(h) {
+        option::Option[usize]::Some(i) => i,
+        option::Option[usize]::None => { return insp::Outcome::NotFound; }
+    };
+    var m: vec::Vec[json::Member] = vec::new::[json::Member]();
+    m.append(member_of("node", json::Value::Number(index as f64)));
+    m.append(member_of("property", json::Value::Text(text::from_str(p))));
+    return match rpc(rp, "inspector.reset", json::Value::Object(m)) {
+        option::Option[json::Value]::Some(res) => outcome_of(#addr_of(res)),
+        option::Option[json::Value]::None => insp::Outcome::Stale,
+    };
+}
+
+fn r_highlight(s: *u8, h: insp::Handle) {
+    let rp: *Remote = s as *Remote;
+    match index_of(h) {
+        option::Option[usize]::Some(i) => {
+            let _r: option::Option[json::Value] =
+                rpc(rp, "inspector.highlight", node_params(i));
+        }
+        option::Option[usize]::None => { }
+    }
+    return;
+}
+
+fn r_clear_highlight(s: *u8) {
+    let rp: *Remote = s as *Remote;
+    let _r: option::Option[json::Value] =
+        rpc(rp, "inspector.clear_highlight", no_params());
+    return;
+}
+
+fn r_insert(s: *u8, h: insp::Handle, at: usize, take sp: insp::Spec) -> insp::Outcome {
+    let rp: *Remote = s as *Remote;
+    let index: usize = match index_of(h) {
+        option::Option[usize]::Some(i) => i,
+        option::Option[usize]::None => { return insp::Outcome::NotFound; }
+    };
+    var m: vec::Vec[json::Member] = vec::new::[json::Member]();
+    m.append(member_of("node", json::Value::Number(index as f64)));
+    m.append(member_of("element", json::Value::Text(sp.maker.clone())));
+    m.append(member_of("key", json::Value::Text(sp.key.clone())));
+    m.append(member_of("text", json::Value::Text(sp.label.clone())));
+    // An append arrives as a very large index; the wire's own rule ("absent
+    // appends, and `insert_child` clamps") makes one billion the same append
+    // without asking a f64 to carry usize::MAX exactly.
+    var wire_at: usize = at;
+    if wire_at > (1000000000 as usize) { wire_at = 1000000000 as usize; }
+    m.append(member_of("at", json::Value::Number(wire_at as f64)));
+    return match rpc(rp, "inspector.insert", json::Value::Object(m)) {
+        option::Option[json::Value]::Some(res) => outcome_of(#addr_of(res)),
+        option::Option[json::Value]::None => insp::Outcome::Stale,
+    };
+}
+
+fn r_remove(s: *u8, h: insp::Handle) -> insp::Outcome {
+    let rp: *Remote = s as *Remote;
+    let index: usize = match index_of(h) {
+        option::Option[usize]::Some(i) => i,
+        option::Option[usize]::None => { return insp::Outcome::NotFound; }
+    };
+    return match rpc(rp, "inspector.remove", node_params(index)) {
+        option::Option[json::Value]::Some(res) => outcome_of(#addr_of(res)),
+        option::Option[json::Value]::None => insp::Outcome::Stale,
+    };
+}
+
+fn r_reparent(s: *u8, h: insp::Handle, parent: insp::Handle, at: usize) -> insp::Outcome {
+    let rp: *Remote = s as *Remote;
+    let index: usize = match index_of(h) {
+        option::Option[usize]::Some(i) => i,
+        option::Option[usize]::None => { return insp::Outcome::NotFound; }
+    };
+    let pindex: usize = match index_of(parent) {
+        option::Option[usize]::Some(i) => i,
+        option::Option[usize]::None => { return insp::Outcome::NotFound; }
+    };
+    var m: vec::Vec[json::Member] = vec::new::[json::Member]();
+    m.append(member_of("node", json::Value::Number(index as f64)));
+    m.append(member_of("parent", json::Value::Number(pindex as f64)));
+    var wire_at: usize = at;
+    if wire_at > (1000000000 as usize) { wire_at = 1000000000 as usize; }
+    m.append(member_of("at", json::Value::Number(wire_at as f64)));
+    return match rpc(rp, "inspector.reparent", json::Value::Object(m)) {
+        option::Option[json::Value]::Some(res) => outcome_of(#addr_of(res)),
+        option::Option[json::Value]::None => insp::Outcome::Stale,
+    };
+}
+
+fn r_undo(s: *u8) -> insp::Outcome {
+    let rp: *Remote = s as *Remote;
+    return match rpc(rp, "inspector.undo", no_params()) {
+        option::Option[json::Value]::Some(res) => outcome_of(#addr_of(res)),
+        option::Option[json::Value]::None => insp::Outcome::Stale,
+    };
+}
+
+// ---- tests -------------------------------------------------------------------
+// The decode half, headless: canned wire JSON in, this package's own types out.
+// The transport half is one syscall wide and is exercised by `probe` against a
+// path nothing listens on.
+
+fn parsed(s: str) -> json::Value {
+    return match json::Value::parse(s) {
+        result::Result[json::Value, json::ParseError]::Ok(v) => v,
+        result::Result[json::Value, json::ParseError]::Err(_e) => json::Value::Null,
+    };
+}
+
+#[test]
+fn a_remote_handle_is_the_wire_index_one_biased_never_a_pointer() {
+    let h: insp::Handle = handle_for(0 as usize, 7 as u64);
+    assert !h.is_none();
+    match index_of(h) {
+        option::Option[usize]::Some(i) => { assert i == (0 as usize); }
+        option::Option[usize]::None => { assert false; }
+    }
+    match index_of(insp::Handle::none()) {
+        option::Option[usize]::Some(_i) => { assert false; }
+        option::Option[usize]::None => { }
+    }
+    return;
+}
+
+#[test]
+fn kind_names_read_back_as_the_codes_that_wrote_them() {
+    assert insp::kind_name(kind_from_name("label")) == "label";
+    assert insp::kind_name(kind_from_name("button")) == "button";
+    assert insp::kind_name(kind_from_name("scroll")) == "scroll";
+    // The fallback both ways: an unknown name is a plain node, code 0.
+    assert kind_from_name("node") == (0 as u32);
+    assert kind_from_name("no_such_kind") == (0 as u32);
+    return;
+}
+
+#[test]
+fn a_describe_answer_becomes_rows_with_parents_frames_and_wire_handles() {
+    let res: json::Value = parsed("{\"revision\": 9, \"nodes\": [ {\"index\":0,\"parent\":null,\"depth\":0,\"kind\":\"node\",\"key\":\"root\",\"children\":1,\"has_view\":true,\"attached\":true,\"focused\":false,\"visible\":true,\"frame\":{\"x\":0,\"y\":0,\"w\":800,\"h\":600}}, {\"index\":1,\"parent\":0,\"depth\":1,\"kind\":\"label\",\"key\":\"title\",\"children\":0,\"has_view\":true,\"attached\":true,\"focused\":false,\"visible\":true,\"frame\":{\"x\":20,\"y\":10,\"w\":200,\"h\":24},\"is_inspector\":true} ]}");
+    let rows: vec::Vec[insp::Node] = nodes_of(#addr_of(res));
+    assert rows.count() == (2 as usize);
+    match rows.at_ptr(0 as usize) {
+        option::Option[*insp::Node]::Some(p) => {
+            assert { (*p).key.view() } == "root";
+            assert match { (*p).parent } {
+                option::Option[usize]::Some(_x) => false,
+                option::Option[usize]::None => true,
+            };
+            assert { (*p).frame.width } == 800.0f64;
+            assert !{ (*p).is_inspector };
+        }
+        option::Option[*insp::Node]::None => { assert false; }
+    }
+    match rows.at_ptr(1 as usize) {
+        option::Option[*insp::Node]::Some(p) => {
+            assert insp::kind_name({ (*p).kind }) == "label";
+            assert { (*p).is_inspector };
+            assert match { (*p).parent } {
+                option::Option[usize]::Some(x) => x == (0 as usize),
+                option::Option[usize]::None => false,
+            };
+            // The handle carries index 1 and the answer's revision.
+            match index_of({ (*p).handle }) {
+                option::Option[usize]::Some(i) => { assert i == (1 as usize); }
+                option::Option[usize]::None => { assert false; }
+            }
+            assert { (*p).handle.seen } == (9 as u64);
+        }
+        option::Option[*insp::Node]::None => { assert false; }
+    }
+    return;
+}
+
+#[test]
+fn an_inspect_answer_becomes_a_detail_and_wire_names_become_our_literals() {
+    let res: json::Value = parsed("{\"revision\": 3, \"node\": {\"index\":4,\"parent\":0,\"depth\":1,\"kind\":\"label\",\"key\":\"t\",\"children\":0,\"has_view\":true,\"attached\":true,\"focused\":false,\"visible\":true,\"frame\":{\"x\":1,\"y\":2,\"w\":3,\"h\":4}}, \"declared\": [ {\"name\":\"opacity\",\"type\":\"number\",\"value\":0.9,\"writable\":true,\"overridden\":true}, {\"name\":\"no_such_prop\",\"type\":\"number\",\"value\":1,\"writable\":true,\"overridden\":false} ], \"computed\": [ {\"name\":\"frame_width\",\"type\":\"number\",\"value\":3,\"writable\":false,\"overridden\":false} ], \"native\": []}");
+    match detail_of(#addr_of(res)) {
+        option::Option[insp::Detail]::Some(d) => {
+            // The unknown name was dropped, not stored as borrowed wire bytes.
+            assert d.declared.count() == (1 as usize);
+            match d.declared.at_ptr(0 as usize) {
+                option::Option[*insp::Prop]::Some(p) => {
+                    assert { (*p).name } == "opacity";
+                    assert { (*p).overridden };
+                    assert match { (*p).value }.clone() {
+                        insp::Value::Num(x) => x == 0.9f64,
+                        _ => false,
+                    };
+                }
+                option::Option[*insp::Prop]::None => { assert false; }
+            }
+            assert d.computed.count() == (1 as usize);
+        }
+        option::Option[insp::Detail]::None => { assert false; }
+    }
+    // No "node" member is the refusal shape — stale, re-describe.
+    let refusal: json::Value = parsed("{\"outcome\":\"stale\",\"revision\":4}");
+    assert match detail_of(#addr_of(refusal)) {
+        option::Option[insp::Detail]::Some(_d) => false,
+        option::Option[insp::Detail]::None => true,
+    };
+    return;
+}
+
+#[test]
+fn outcomes_come_back_by_name_and_a_drifted_name_is_not_read_as_ok() {
+    let ok: json::Value = parsed("{\"outcome\":\"ok\",\"revision\":1}");
+    assert outcome_of(#addr_of(ok)).is_ok();
+    let ro: json::Value = parsed("{\"outcome\":\"read_only\",\"revision\":1}");
+    assert outcome_of(#addr_of(ro)) == insp::Outcome::ReadOnly;
+    let odd: json::Value = parsed("{\"outcome\":\"something_new\",\"revision\":1}");
+    assert outcome_of(#addr_of(odd)) == insp::Outcome::Unsupported;
+    return;
+}
+
+#[test]
+fn a_write_crosses_as_number_boolean_or_string_and_a_colour_as_hex() {
+    assert match wire_value(insp::Value::Num(0.4f64)) {
+        option::Option[json::Value]::Some(v) => match v {
+            json::Value::Number(x) => x == 0.4f64,
+            _ => false,
+        },
+        option::Option[json::Value]::None => false,
+    };
+    assert match wire_value(insp::Value::Bool(true)) {
+        option::Option[json::Value]::Some(v) => match v {
+            json::Value::Bool(b) => b,
+            _ => false,
+        },
+        option::Option[json::Value]::None => false,
+    };
+    let c: vocab::Color = vocab::Color::rgba(
+        (34.0f64) / 255.0f64, (119.0f64) / 255.0f64, (255.0f64) / 255.0f64, 1.0f64);
+    assert match wire_value(insp::Value::Color(c)) {
+        option::Option[json::Value]::Some(v) => match v {
+            json::Value::Text(t) => t.view() == "#2277ff",
+            _ => false,
+        },
+        option::Option[json::Value]::None => false,
+    };
+    // An unset cannot be sent; it is refused here, not guessed at over there.
+    assert match wire_value(insp::Value::Nothing) {
+        option::Option[json::Value]::Some(_v) => false,
+        option::Option[json::Value]::None => true,
+    };
+    return;
+}
+
+#[test]
+fn probing_a_path_nobody_listens_on_answers_no_rather_than_hanging() {
+    assert !probe("/tmp/iris-remote-inspector-test-nothing-here.sock");
+    return;
+}

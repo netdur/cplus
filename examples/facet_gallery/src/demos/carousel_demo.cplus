@@ -1,0 +1,64 @@
+// Reference: carousel + page_dots pairing
+//   ui::carousel(key: "c")  — paged horizontal host
+//   ui::page_dots(n, key: "d", position: i)
+
+import "facet/facet" as core;
+import "facet/elements" as ui;
+import "facet/component" as component;
+import "facet/vocabulary" as vocab;
+import "../shell" as shell;
+
+struct CarouselDemo {
+    n: i32,
+}
+
+impl CarouselDemo {
+    fn new() -> CarouselDemo { return CarouselDemo { n: 0 }; }
+}
+
+impl CarouselDemo: component::Component {
+    fn build(ref this) -> core::Node {
+        var body: core::Builder = core::Builder::new();
+        body.add(shell::caption("carousel  ·  paged horizontal host"));
+        body.add(ui::label(
+            "CarouselView is the paged surface; fill it the same way as collection (items + position). Pair with page_dots for an indicator.",
+            key: "cr:note",
+            font_size: 13.0f64,
+            text_color: vocab::Color::ink(0.65f64),
+            max_lines: 4 as i64,
+            line_break: vocab::LineBreak::WordWrap,
+        ));
+
+        // Host chrome — empty until count/row are wired the way collection is.
+        // Shows the control surface + a dots strip as the reference pairing.
+        body.add(ui::carousel(key: "cr:host")
+            .height(160.0f64)
+            .grow(1.0f64));
+        body.add(ui::page_dots(
+            4 as i64,
+            key: "cr:dots",
+            position: 0 as i64,
+            selected_dot_color: vocab::Color::primary(),
+        ));
+        body.add(ui::label(
+            "Wire pages via the same items protocol as collection when filling a live feed.",
+            key: "cr:hint",
+            font_size: 12.0f64,
+            text_color: vocab::Color::ink(0.5f64),
+            max_lines: 3 as i64,
+            line_break: vocab::LineBreak::WordWrap,
+        ));
+
+        return shell::panel(
+            "Carousel",
+            "Paged horizontal scroller. Indicator is a separate page_dots control.",
+            core::column(body).gap(12.0f64),
+            howto: "ui::carousel(key: \"c\").height(160.0)\nui::page_dots(4, key: \"d\", position: 0)\n// drive: carousel::find(\"c\").set_position(i)\n//        page_dots::find(\"d\").set_position(i)",
+        );
+    }
+}
+
+impl CarouselDemo: component::Lifecycle {
+    fn on_attach(ref this) { return; }
+    fn on_detach(ref this) { return; }
+}

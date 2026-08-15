@@ -1233,32 +1233,36 @@ fn within(root: *core::Node, target: *core::Node) -> bool {
 // controls can end a debugging session with one misplaced click.
 fn is_panels_own(n: *core::Node) -> bool { return within(SELF_ROOT, n); }
 
-// Is this node still reachable from an open window? A stored parent pointer
-// outlives the tree it pointed into, and `undo` is the one place that holds
-// one across an interval in which anything could have happened.
-fn still_mounted(n: *core::Node) -> bool {
-    if n == (0 as *core::Node) { return false; }
-    var w: usize = 0 as usize;
-    let c: usize = app::window_count();
-    while w < c {
-        if within(app::window_root(w), n) { return true; }
-        w = w +% (1 as usize);
-    }
-    return false;
-}
-
 // ---- the trash ---------------------------------------------------------------
 //
 // A removed subtree, kept so `undo` can put it back where it was.
 //
-// THREE PARALLEL VECTORS AND NOT ONE OF A STRUCT, for a language reason worth
+// PARALLEL VECTORS AND NOT ONE OF A STRUCT, for a language reason worth
 // stating: `core::Node` carries a destructor, so a field of it cannot be moved
 // out of an owning struct — the same rule `ledger_take` documents for `Value`.
 // Undo has to MOVE the node into `insert_child`, which takes it by value, so
 // the node has to live in a vector of its own where `remove_last` hands the
 // whole element over.
+//
+// THE PARENT IS RECORDED AS A PATH, NOT AS A POINTER. An address is not an
+// identity for a node that can move, and the undo stack is exactly where one
+// does: `remove(kid); remove(holder); undo(); undo()` restores the holder by
+// MOVING it back into its parent's child vector, at whatever address that
+// vector's storage gives it. Usually — but not reliably — the one it had
+// before. So the kid's stored parent pointer was a coin flip, the mounted-check
+// answered false when it landed wrong, and the second undo refused. That is
+// bugs/closed/inspector-undo-test-is-flaky.md: about one run in four, with nothing
+// but the allocator differing between them.
+//
+// A path — a window index plus the chain of child indices down to the parent —
+// survives the move, because the stack restores the structure the path was
+// recorded against before it needs it. Flattened into one vector with a
+// parallel length, rather than a `Vec[Vec[usize]]`, so the pop stays a
+// `remove_last` loop and the nested-generic question never comes up.
 static TRASH: vec::Vec[core::Node] = #zero::[vec::Vec[core::Node]]();
-static TRASH_PARENT: vec::Vec[*core::Node] = #zero::[vec::Vec[*core::Node]]();
+static TRASH_WINDOW: vec::Vec[usize] = #zero::[vec::Vec[usize]]();
+static TRASH_PATH: vec::Vec[usize] = #zero::[vec::Vec[usize]]();
+static TRASH_PATH_LEN: vec::Vec[usize] = #zero::[vec::Vec[usize]]();
 static TRASH_AT: vec::Vec[usize] = #zero::[vec::Vec[usize]]();
 
 fn trash_count() -> usize { return TRASH.count(); }
@@ -1268,8 +1272,103 @@ fn trash_count() -> usize { return TRASH.count(); }
 // renderer's paired release runs with the node's destructor.
 fn empty_trash() {
     TRASH.remove_all();
-    TRASH_PARENT.remove_all();
+    TRASH_WINDOW.remove_all();
+    TRASH_PATH.remove_all();
+    TRASH_PATH_LEN.remove_all();
     TRASH_AT.remove_all();
+    return;
+}
+
+// The child-index chain from `root` down to `target`, deepest step last,
+// appended to `out`. False (and `out` left as it was found) when `target` is
+// not in `root`'s subtree. A `root == target` answer is an empty chain, which
+// is the right one: the window root's own path is no steps.
+fn path_to(root: *core::Node, target: *core::Node, ref out: vec::Vec[usize]) -> bool {
+    if root == (0 as *core::Node) { return false; }
+    if target == (0 as *core::Node) { return false; }
+    if root == target { return true; }
+    var i: usize = 0 as usize;
+    let c: usize = core::child_count_of(root);
+    while i < c {
+        match core::child_of(root, i) {
+            option::Option[*core::Node]::Some(ch) => {
+                let _a: status::Status = out.append(i);
+                if path_to(ch, target, out) { return true; }
+                let _r: option::Option[usize] = out.remove_last();
+            }
+            option::Option[*core::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return false;
+}
+
+// Record `p`'s position as a path. False when `p` is in no open window, which
+// is a removal whose parent is already gone — the caller keeps the subtree out
+// of the trash rather than storing a path that can never resolve.
+fn trash_push_parent(p: *core::Node) -> bool {
+    var w: usize = 0 as usize;
+    let n: usize = app::window_count();
+    while w < n {
+        let before: usize = TRASH_PATH.count();
+        if path_to(app::window_root(w), p, TRASH_PATH) {
+            let _w: status::Status = TRASH_WINDOW.append(w);
+            let _l: status::Status = TRASH_PATH_LEN.append(TRASH_PATH.count() -% before);
+            return true;
+        }
+        w = w +% (1 as usize);
+    }
+    return false;
+}
+
+// An in-range `at` never answers `None`; the fallback exists so the walk below
+// stays a plain expression rather than a flag.
+fn or_zero(o: option::Option[usize]) -> usize {
+    return match o {
+        option::Option[usize]::Some(x) => x,
+        option::Option[usize]::None => 0 as usize,
+    };
+}
+
+// Resolve the path recorded for the entry on top of the trash. Null when the
+// window is gone or a step no longer exists — the parent this entry named is
+// not there any more, and `undo_remove` refuses rather than guessing.
+fn trash_top_parent() -> *core::Node {
+    let c: usize = TRASH_PATH_LEN.count();
+    if c == (0 as usize) { return 0 as *core::Node; }
+    let last: usize = c -% (1 as usize);
+    let len: usize = or_zero(TRASH_PATH_LEN.at(last));
+    let w: usize = or_zero(TRASH_WINDOW.at(last));
+    if w >= app::window_count() { return 0 as *core::Node; }
+    if len > TRASH_PATH.count() { return 0 as *core::Node; }
+    var n: *core::Node = app::window_root(w);
+    let base: usize = TRASH_PATH.count() -% len;
+    var i: usize = 0 as usize;
+    while i < len {
+        if n == (0 as *core::Node) { return 0 as *core::Node; }
+        match core::child_of(n, or_zero(TRASH_PATH.at(base +% i))) {
+            option::Option[*core::Node]::Some(ch) => { n = ch; }
+            option::Option[*core::Node]::None => { return 0 as *core::Node; }
+        }
+        i = i +% (1 as usize);
+    }
+    return n;
+}
+
+// Drop the top entry's path. Paired with every `TRASH.remove_last()`.
+fn trash_pop_parent() {
+    let c: usize = TRASH_PATH_LEN.count();
+    if c == (0 as usize) { return; }
+    let len: usize = match TRASH_PATH_LEN.remove_last() {
+        option::Option[usize]::Some(x) => x,
+        option::Option[usize]::None => 0 as usize,
+    };
+    let _w: option::Option[usize] = TRASH_WINDOW.remove_last();
+    var i: usize = 0 as usize;
+    while i < len {
+        let _s: option::Option[usize] = TRASH_PATH.remove_last();
+        i = i +% (1 as usize);
+    }
     return;
 }
 
@@ -1453,14 +1552,24 @@ fn remove(h: insp::Handle) -> insp::Outcome {
                 // Journalled while the node is still whole: after the removal
                 // its key is not readable from a pointer this scope still has.
                 journal_remove(n);
-                match mount::remove_child(p, at) {
-                    option::Option[core::Node]::Some(gone) => {
-                        let _a: status::Status = TRASH.append(gone);
-                        let _b: status::Status = TRASH_PARENT.append(p);
-                        let _c: status::Status = TRASH_AT.append(at);
-                        insp::Outcome::Ok
+                // The parent's path is taken while the tree still holds it,
+                // and BEFORE the removal shifts its siblings — the path names
+                // the parent, not the node, so the removal below does not
+                // move it.
+                if !trash_push_parent(p) {
+                    insp::Outcome::NotFound
+                } else {
+                    match mount::remove_child(p, at) {
+                        option::Option[core::Node]::Some(gone) => {
+                            let _a: status::Status = TRASH.append(gone);
+                            let _c: status::Status = TRASH_AT.append(at);
+                            insp::Outcome::Ok
+                        }
+                        option::Option[core::Node]::None => {
+                            trash_pop_parent();
+                            insp::Outcome::NotFound
+                        }
                     }
-                    option::Option[core::Node]::None => insp::Outcome::NotFound,
                 }
             }
         },
@@ -1521,20 +1630,23 @@ fn reparent(h: insp::Handle, parent: insp::Handle, at: usize) -> insp::Outcome {
 fn undo_remove() -> insp::Outcome {
     let c: usize = TRASH.count();
     if c == (0 as usize) { return insp::Outcome::NothingToUndo; }
-    let parent: *core::Node = match TRASH_PARENT.at(c -% (1 as usize)) {
-        option::Option[*core::Node]::Some(p) => p,
-        option::Option[*core::Node]::None => 0 as *core::Node,
-    };
     let at: usize = match TRASH_AT.at(c -% (1 as usize)) {
         option::Option[usize]::Some(x) => x,
         option::Option[usize]::None => 0 as usize,
     };
-    // The parent may itself have been removed since. Answering `NothingToUndo`
-    // keeps the subtree in the trash rather than inserting it into a node that
-    // is no longer in any window, where it would be invisible and unreachable.
-    if !still_mounted(parent) { return insp::Outcome::NothingToUndo; }
+    // Resolved now, not stored then: the parent may have been removed and put
+    // back by an earlier undo, at a different address. Null means the path no
+    // longer leads anywhere. Answering `NothingToUndo` keeps the subtree in the
+    // trash rather than inserting it into a node that is no longer in any
+    // window, where it would be invisible and unreachable.
+    // Null is the only failure to test for: the path is walked FROM a window
+    // root, so anything it reaches is mounted by construction. The pointer
+    // version needed a `still_mounted` sweep here precisely because its parent
+    // came from nowhere the tree could vouch for.
+    let parent: *core::Node = trash_top_parent();
+    if parent == (0 as *core::Node) { return insp::Outcome::NothingToUndo; }
 
-    let _p: option::Option[*core::Node] = TRASH_PARENT.remove_last();
+    trash_pop_parent();
     let _a: option::Option[usize] = TRASH_AT.remove_last();
     return match TRASH.remove_last() {
         option::Option[core::Node]::Some(n) => {

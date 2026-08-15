@@ -1,0 +1,221 @@
+// Reference: responsive layout
+//   Pick a mode from width (or a probe), then build column vs row vs rail.
+//
+//   if width < 480  → compact  (1 column)
+//   if width < 720  → regular (2 columns)
+//   else            → wide    (3 columns + rail)
+
+import "facet/facet" as core;
+import "facet/elements" as ui;
+import "facet/component" as component;
+import "facet/label" as label;
+import "facet/mount" as mount;
+import "facet/vocabulary" as vocab;
+import "stdlib/option" as option;
+import "../../shell" as shell;
+
+const BP_COMPACT: f64 = 480.0f64;
+const BP_REGULAR: f64 = 720.0f64;
+
+struct Responsive {
+    width: f64,
+    mode: i32,   // 0 compact, 1 regular, 2 wide
+}
+
+impl Responsive {
+    fn new() -> Responsive {
+        return Responsive { width: 560.0f64, mode: 1 };
+    }
+
+    fn mode_name(this) -> str {
+        if this.mode == 0 { return "compact"; }
+        if this.mode == 2 { return "wide"; }
+        return "regular";
+    }
+
+    fn classify(ref this, w: f64) {
+        this.width = w;
+        if w < BP_COMPACT {
+            this.mode = 0;
+        } else if w < BP_REGULAR {
+            this.mode = 1;
+        } else {
+            this.mode = 2;
+        }
+        return;
+    }
+
+    fn apply_visibility(ref this) {
+        // Compact: one column of cards. Regular: two. Wide: three + rail.
+        let show_b: bool = this.mode >= 1;
+        let show_c: bool = this.mode >= 2;
+        let show_rail: bool = this.mode >= 2;
+        set_shown_key("rp:card_b", show_b);
+        set_shown_key("rp:card_c", show_c);
+        set_shown_key("rp:rail", show_rail);
+        return;
+    }
+
+    fn paint(ref this) {
+        let name: str = this.mode_name();
+        let w: i32 = this.width as i32;
+        match label::find("rp:mode") {
+            option::Option[label::Label]::Some(l) => {
+                let _l: label::Label = l.set_text("mode: ${name}  ·  assumed width ${w}pt");
+            }
+            option::Option[label::Label]::None => { }
+        }
+        match label::find("rp:hint") {
+            option::Option[label::Label]::Some(l) => {
+                if this.mode == 0 {
+                    let _l: label::Label =
+                        l.set_text("Compact (<480): stack everything in one column.");
+                } else if this.mode == 2 {
+                    let _l: label::Label =
+                        l.set_text("Wide (≥720): three cards + a side rail.");
+                } else {
+                    let _l: label::Label =
+                        l.set_text("Regular (480–719): two cards side by side.");
+                }
+            }
+            option::Option[label::Label]::None => { }
+        }
+        this.apply_visibility();
+        return;
+    }
+
+    fn on_compact(ref this, sender: *u8) {
+        this.classify(400.0f64);
+        this.paint();
+        return;
+    }
+
+    fn on_regular(ref this, sender: *u8) {
+        this.classify(560.0f64);
+        this.paint();
+        return;
+    }
+
+    fn on_wide(ref this, sender: *u8) {
+        this.classify(900.0f64);
+        this.paint();
+        return;
+    }
+}
+
+fn set_shown_key(key: str, shown: bool) {
+    match mount::find(key) {
+        option::Option[*core::Node]::Some(n) => {
+            core::set_shown(n, shown);
+        }
+        option::Option[*core::Node]::None => { }
+    }
+    return;
+}
+
+fn card(title: str, body: str, key: str) -> core::Node {
+    var b: core::Builder = core::Builder::new();
+    b.add(ui::label(
+        title,
+        key: "",
+        font_size: 14.0f64,
+        font_weight: vocab::FontWeight::Semibold,
+        text_color: vocab::Color::ink(),
+    ));
+    b.add(ui::label(
+        body,
+        key: "",
+        font_size: 12.0f64,
+        text_color: vocab::Color::ink(0.6f64),
+        max_lines: 4 as i64,
+        line_break: vocab::LineBreak::WordWrap,
+    ));
+    var n: core::Node = core::column(b, key: key).padding(12.0f64).gap(4.0f64).grow(1.0f64);
+    n.set_background_color(vocab::Color::raised());
+    n.set_corner_radius(vocab::Corners::all(10.0f64));
+    return n;
+}
+
+impl Responsive: component::Component {
+    fn build(ref this) -> core::Node {
+        var body: core::Builder = core::Builder::new();
+        body.add(shell::caption("responsive  ·  breakpoint → structure"));
+        body.add(ui::label(
+            "Choose a width class. Cards show or hide so the layout matches compact / regular / wide. In a real app, drive classify() from window size (observe_window_size) or a host measure.",
+            key: "rp:blurb",
+            font_size: 13.0f64,
+            text_color: vocab::Color::ink(0.65f64),
+            max_lines: 5 as i64,
+            line_break: vocab::LineBreak::WordWrap,
+        ));
+
+        var toggles: core::Builder = core::Builder::new();
+        toggles.add(ui::button("Compact", key: "rp:btn_c", on_click: this.on_compact));
+        toggles.add(ui::button("Regular", key: "rp:btn_r", on_click: this.on_regular));
+        toggles.add(ui::button("Wide", key: "rp:btn_w", on_click: this.on_wide));
+        body.add(core::row(toggles).gap(8.0f64));
+
+        body.add(ui::label(
+            "mode: regular  ·  assumed width 560pt",
+            key: "rp:mode",
+            font_size: 14.0f64,
+            font_weight: vocab::FontWeight::Semibold,
+            text_color: vocab::Color::ink(),
+        ));
+        body.add(ui::label(
+            "Regular (480–719): two cards side by side.",
+            key: "rp:hint",
+            font_size: 13.0f64,
+            text_color: vocab::Color::ink(0.65f64),
+            max_lines: 2 as i64,
+            line_break: vocab::LineBreak::WordWrap,
+        ));
+
+        // Main cards row — B/C hidden in compact; C hidden in regular.
+        var cards: core::Builder = core::Builder::new();
+        cards.add(card("Primary", "Always visible. Full width when compact.", "rp:card_a"));
+        cards.add(card("Secondary", "Visible from regular up.", "rp:card_b"));
+        cards.add(card("Tertiary", "Visible only when wide.", "rp:card_c"));
+        body.add(core::row(cards).gap(10.0f64));
+
+        // Side rail — wide only.
+        var rail_b: core::Builder = core::Builder::new();
+        rail_b.add(ui::label(
+            "Rail",
+            key: "",
+            font_size: 13.0f64,
+            font_weight: vocab::FontWeight::Semibold,
+            text_color: vocab::Color::ink(),
+        ));
+        rail_b.add(ui::label(
+            "Filters, outline, or inspector. Hidden below the wide breakpoint.",
+            key: "",
+            font_size: 12.0f64,
+            text_color: vocab::Color::ink(0.55f64),
+            max_lines: 3 as i64,
+            line_break: vocab::LineBreak::WordWrap,
+        ));
+        var rail: core::Node = core::column(rail_b, key: "rp:rail")
+            .padding(12.0f64)
+            .gap(4.0f64);
+        rail.set_background_color(vocab::Color::sunken());
+        rail.set_corner_radius(vocab::Corners::all(10.0f64));
+        body.add(rail);
+
+        return shell::panel(
+            "Responsive",
+            "Breakpoint-driven structure: same state, different arrangement.",
+            core::column(body).gap(12.0f64),
+            howto: "fn classify(w: f64) -> Mode {\n  if w < 480 { return Compact; }\n  if w < 720 { return Regular; }\n  return Wide;\n}\n// then show/hide or rebuild columns from Mode\nfind(\"rail\").set_shown(mode == Wide)",
+        );
+    }
+}
+
+impl Responsive: component::Lifecycle {
+    fn on_attach(ref this) {
+        this.classify(560.0f64);
+        this.paint();
+        return;
+    }
+    fn on_detach(ref this) { return; }
+}

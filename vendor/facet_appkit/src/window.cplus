@@ -716,6 +716,16 @@ fn new_menu_item(it: *screen::MenuItem) -> *u8 {
         bridge::nsstring({ (*it).title.view() }), 0 as *u8,
         bridge::nsstring({ (*it).key.view() })) };
     if item == (0 as *u8) { return 0 as *u8; }
+    // ⇧/⌥ ADD to the ⌘ a bare `key:` always meant. AppKit's own default mask
+    // for a key equivalent is Command, so the mask is written only when the
+    // item asks for more — and Command stays in it, or the item would become
+    // a bare-letter shortcut that fires while the user types.
+    if { (*it).shift } || { (*it).alt } {
+        var mask: u64 = 1048576 as u64;                          // Command (1<<20)
+        if { (*it).shift } { mask = mask | (131072 as u64); }    // Shift   (1<<17)
+        if { (*it).alt } { mask = mask | (524288 as u64); }      // Option  (1<<19)
+        { rt::msg_void_u64(item, rt::sel(#str_ptr("setKeyEquivalentModifierMask:\0")), mask) };
+    }
     let on_click: fn(*u8, *u8) = { (*it).on_click };
     if on_click != (0 as fn(*u8, *u8)) {
         { rt::msg_void_id(item, rt::sel(#str_ptr("setTarget:\0")),

@@ -1,308 +1,1750 @@
-// terminal/terminal — platform-neutral terminal transcript model.
+// terminal/terminal — platform-neutral VT screen.
 //
-// This models a scrollback transcript with a CURSOR on the current line, not a
-// complete VT screen. That distinction is the whole design: a shell does not
-// edit text, it MOVES a cursor and overwrites. Treating CR / BS / cursor-CSI as
-// content edits (append a newline, delete a scalar) is correct for captured
-// pipe output and wrong for a live PTY, where CR + repaint is how zsh redraws
-// its prompt — it produced one transcript line per keystroke, and made
-// `\b space \b` erase the wrong cell. See
-// bugs/terminal-transcript-has-no-cursor.md.
+// This is a GRID, not a line buffer. The previous model was a scrollback
+// transcript with a cursor on one live line, and it was right about the thing it
+// was built for — CR is cursor motion, `\b space \b` is an erase — but a line
+// buffer has nowhere to put `ESC[5;10H`, `ESC[2J` or the alternate screen. Two
+// commands made that visible:
 //
-// The model: `_text` holds committed scrollback AND the line being edited.
-// `_line_start` is the byte offset where that live line begins; `_col` is the
-// cursor's byte offset within it. Keeping both in one buffer means `view()`
-// stays a borrow of `_text` with no assembly step.
+//   * `clear` sends `ESC[H ESC[2J ESC[3J`. All three were stripped, so it did
+//     nothing at all.
+//   * `top` sends `ESC[?1049h` (alternate screen), `ESC[1;24r` (scroll region)
+//     and absolute addressing (`ESC[<n>d`, `ESC[<n>G`). With no screen to
+//     address, every repaint appended, and quitting left the wreckage behind.
 //
-// It strips ANSI/OSC control traffic, preserves UTF-8 payload bytes, normalizes
-// CRLF, and bounds retained scrollback. The PTY and UI live in separate modules
-// so a future Linux/Windows backend can keep this API.
+// So: `_cells` is `_rows * _cols` Unicode scalars, `_row`/`_col` are the cursor,
+// and lines that scroll off the top of the PRIMARY screen are appended to
+// `_scrollback`. `view()` is scrollback plus the live grid, assembled into
+// `_render` and cached until the next `feed`.
+//
+// What the old model got right is preserved, because a grid gets it for free:
+// CR sets the column, BS moves left, and the space in `\b space \b` is what
+// blanks the cell. Trailing blanks on a row are still trimmed out of `view()`,
+// and `cursor()` may still point one past the end for exactly that reason — a
+// renderer pads the cell back rather than clamping.
+//
+// Deliberately NOT modelled: per-cell colour and attributes (SGR is parsed and
+// dropped), mouse reporting, and sixel/DCS payloads. The cell is a scalar, so a
+// renderer draws one uniform run of text; adding attributes means widening the
+// cell and emitting attribute runs, which is a separate change.
 
 import "stdlib/option" as option;
 import "stdlib/status" as status;
 import "stdlib/text" as text;
+import "stdlib/vec" as vec;
+
+// A cell holds one Unicode scalar. Two values are reserved: BLANK is an erased
+// cell, and WIDE_TAIL is the second half of a double-width scalar, which renders
+// as nothing because the scalar before it already covers both columns.
+const BLANK: u32 = 0x20;
+const WIDE_TAIL: u32 = 0;
+const REPLACEMENT: u32 = 0xfffd;
+
+const MAX_PARAMS: usize = 8;
+const TAB_WIDTH: usize = 8;
 
 enum ParseState {
-    Text,
+    Ground,
     Escape,
     Csi,
+    CsiIgnore,
     Osc,
     OscEscape,
+    Charset,
+    Dcs,
+    DcsEscape,
 }
 
-struct Transcript {
-    _text: text::Text,
-    _state: ParseState,
-    // Byte offset in `_text` where the line currently being edited begins.
-    // Everything before it is committed scrollback and is never rewritten.
-    _line_start: usize,
-    // Cursor position as a byte offset from `_line_start`. Not a display
-    // column: for ASCII (every shell prompt and line-editor redraw) the two
-    // coincide, and motion steps whole UTF-8 scalars so it never lands mid-
-    // scalar.
-    _col: usize,
-    // Numeric parameter accumulated while parsing a CSI sequence, for the
-    // cursor-motion finals (`ESC[<n>C` / `ESC[<n>D`).
-    _csi_num: usize,
-    _max_bytes: usize,
+// Where the shell is in the prompt/command cycle, as reported by OSC 133 marks
+// (see `terminal/pty`, which installs the zsh hooks that emit them). This is the
+// whole answer to "did the command finish, and what did it exit with" — a
+// terminal cannot infer that from the byte stream, because the shell is the only
+// party that knows.
+enum CommandState {
+    // At a prompt: nothing is running.
+    Idle,
+    // Between `OSC 133;C` and `OSC 133;D` — a command is producing output.
+    Running,
+    // A command finished; `exit_code()` is its status.
+    Done,
 }
 
 fn is_utf8_continuation(b: u8) -> bool {
     return (b & (0xc0 as u8)) == (0x80 as u8);
 }
 
-fn byte_at_or_zero(t: text::Text, i: usize) -> u8 {
-    return match t.byte_at(i) {
-        option::Option[u8]::Some(b) => b,
+// Display columns for a scalar. Combining marks take none, the CJK and emoji
+// blocks take two, everything else takes one. This is a coarse `wcwidth`: it
+// covers the ranges a shell prompt or a build log actually produces, and getting
+// it wrong only shifts a row, never corrupts one.
+fn char_width(ch: u32) -> usize {
+    if ch < (0x20 as u32) { return 0 as usize; }
+    if ch >= (0x0300 as u32) && ch <= (0x036f as u32) { return 0 as usize; }
+    if ch >= (0x1ab0 as u32) && ch <= (0x1aff as u32) { return 0 as usize; }
+    if ch >= (0x1dc0 as u32) && ch <= (0x1dff as u32) { return 0 as usize; }
+    if ch >= (0x20d0 as u32) && ch <= (0x20f0 as u32) { return 0 as usize; }
+    if ch >= (0xfe00 as u32) && ch <= (0xfe0f as u32) { return 0 as usize; }
+    if ch >= (0xfe20 as u32) && ch <= (0xfe2f as u32) { return 0 as usize; }
+
+    if ch >= (0x1100 as u32) && ch <= (0x115f as u32) { return 2 as usize; }
+    if ch >= (0x2e80 as u32) && ch <= (0x303e as u32) { return 2 as usize; }
+    if ch >= (0x3041 as u32) && ch <= (0x33ff as u32) { return 2 as usize; }
+    if ch >= (0x3400 as u32) && ch <= (0x4dbf as u32) { return 2 as usize; }
+    if ch >= (0x4e00 as u32) && ch <= (0x9fff as u32) { return 2 as usize; }
+    if ch >= (0xa000 as u32) && ch <= (0xa4cf as u32) { return 2 as usize; }
+    if ch >= (0xac00 as u32) && ch <= (0xd7a3 as u32) { return 2 as usize; }
+    if ch >= (0xf900 as u32) && ch <= (0xfaff as u32) { return 2 as usize; }
+    if ch >= (0xfe30 as u32) && ch <= (0xfe6f as u32) { return 2 as usize; }
+    if ch >= (0xff00 as u32) && ch <= (0xff60 as u32) { return 2 as usize; }
+    if ch >= (0xffe0 as u32) && ch <= (0xffe6 as u32) { return 2 as usize; }
+    if ch >= (0x1f300 as u32) && ch <= (0x1f64f as u32) { return 2 as usize; }
+    if ch >= (0x1f900 as u32) && ch <= (0x1f9ff as u32) { return 2 as usize; }
+    if ch >= (0x20000 as u32) && ch <= (0x3fffd as u32) { return 2 as usize; }
+    return 1 as usize;
+}
+
+// DEC Special Graphics (`ESC ( 0`). Without this, every ncurses box draws as
+// `lqqqk` instead of a line — which is most of what a TUI's frame is made of.
+fn dec_graphic(ch: u32) -> u32 {
+    if ch < (0x5f as u32) || ch > (0x7e as u32) { return ch; }
+    if ch == (0x5f as u32) { return 0x00a0 as u32; }
+    if ch == (0x60 as u32) { return 0x25c6 as u32; }
+    if ch == (0x61 as u32) { return 0x2592 as u32; }
+    if ch == (0x62 as u32) { return 0x2409 as u32; }
+    if ch == (0x63 as u32) { return 0x240c as u32; }
+    if ch == (0x64 as u32) { return 0x240d as u32; }
+    if ch == (0x65 as u32) { return 0x240a as u32; }
+    if ch == (0x66 as u32) { return 0x00b0 as u32; }
+    if ch == (0x67 as u32) { return 0x00b1 as u32; }
+    if ch == (0x68 as u32) { return 0x2424 as u32; }
+    if ch == (0x69 as u32) { return 0x240b as u32; }
+    if ch == (0x6a as u32) { return 0x2518 as u32; }
+    if ch == (0x6b as u32) { return 0x2510 as u32; }
+    if ch == (0x6c as u32) { return 0x250c as u32; }
+    if ch == (0x6d as u32) { return 0x2514 as u32; }
+    if ch == (0x6e as u32) { return 0x253c as u32; }
+    if ch == (0x6f as u32) { return 0x23ba as u32; }
+    if ch == (0x70 as u32) { return 0x23bb as u32; }
+    if ch == (0x71 as u32) { return 0x2500 as u32; }
+    if ch == (0x72 as u32) { return 0x23bc as u32; }
+    if ch == (0x73 as u32) { return 0x23bd as u32; }
+    if ch == (0x74 as u32) { return 0x251c as u32; }
+    if ch == (0x75 as u32) { return 0x2524 as u32; }
+    if ch == (0x76 as u32) { return 0x2534 as u32; }
+    if ch == (0x77 as u32) { return 0x252c as u32; }
+    if ch == (0x78 as u32) { return 0x2502 as u32; }
+    if ch == (0x79 as u32) { return 0x2264 as u32; }
+    if ch == (0x7a as u32) { return 0x2265 as u32; }
+    if ch == (0x7b as u32) { return 0x03c0 as u32; }
+    if ch == (0x7c as u32) { return 0x2260 as u32; }
+    if ch == (0x7d as u32) { return 0x00a3 as u32; }
+    return 0x00b7 as u32;
+}
+
+fn append_scalar(ref out: text::Text, ch: u32) {
+    var b: [u8; 4] = [0 as u8; 4];
+    var n: usize = 0 as usize;
+    if ch < (0x80 as u32) {
+        b[0] = ch as u8;
+        n = 1 as usize;
+    } else if ch < (0x800 as u32) {
+        b[0] = ((ch >> (6 as u32)) | (0xc0 as u32)) as u8;
+        b[1] = ((ch & (0x3f as u32)) | (0x80 as u32)) as u8;
+        n = 2 as usize;
+    } else if ch < (0x10000 as u32) {
+        b[0] = ((ch >> (12 as u32)) | (0xe0 as u32)) as u8;
+        b[1] = (((ch >> (6 as u32)) & (0x3f as u32)) | (0x80 as u32)) as u8;
+        b[2] = ((ch & (0x3f as u32)) | (0x80 as u32)) as u8;
+        n = 3 as usize;
+    } else {
+        b[0] = ((ch >> (18 as u32)) | (0xf0 as u32)) as u8;
+        b[1] = (((ch >> (12 as u32)) & (0x3f as u32)) | (0x80 as u32)) as u8;
+        b[2] = (((ch >> (6 as u32)) & (0x3f as u32)) | (0x80 as u32)) as u8;
+        b[3] = ((ch & (0x3f as u32)) | (0x80 as u32)) as u8;
+        n = 4 as usize;
+    }
+    let s: str = { #str_from_raw_parts(#addr_of(b) as *u8, n) };
+    let _st: status::Status = out.append(s);
+    return;
+}
+
+fn scalar_utf8_len(ch: u32) -> usize {
+    if ch == WIDE_TAIL { return 0 as usize; }
+    if ch < (0x80 as u32) { return 1 as usize; }
+    if ch < (0x800 as u32) { return 2 as usize; }
+    if ch < (0x10000 as u32) { return 3 as usize; }
+    return 4 as usize;
+}
+
+// Drop bytes from the FRONT of `t` until it fits `cap`, preferring a line
+// boundary so the survivor starts at the beginning of a line rather than mid
+// word. Never leaves the new first byte inside a UTF-8 scalar.
+fn trim_front(ref t: text::Text, cap: usize) {
+    let n: usize = t.count();
+    if n <= cap { return; }
+    var cut: usize = n -% cap;
+    var i: usize = cut;
+    let scan_end: usize = if (cut +% (4096 as usize)) < n { cut +% (4096 as usize) } else { n };
+    while i < scan_end {
+        let b: u8 = match t.byte_at(i) {
+            option::Option[u8]::Some(v) => v,
+            option::Option[u8]::None => 0 as u8,
+        };
+        if b == (10 as u8) { break; }
+        i = i +% (1 as usize);
+    }
+    let hit: u8 = match t.byte_at(i) {
+        option::Option[u8]::Some(v) => v,
         option::Option[u8]::None => 0 as u8,
+    };
+    if i < n && hit == (10 as u8) {
+        cut = i +% (1 as usize);
+    } else {
+        while cut < n {
+            let b: u8 = match t.byte_at(cut) {
+                option::Option[u8]::Some(v) => v,
+                option::Option[u8]::None => 0 as u8,
+            };
+            if !is_utf8_continuation(b) { break; }
+            cut = cut +% (1 as usize);
+        }
+    }
+    let _st: status::Status = t.remove_range(0 as usize, cut);
+    return;
+}
+
+fn blank_cells(n: usize) -> vec::Vec[u32] {
+    var v: vec::Vec[u32] = vec::new::[u32]();
+    let _r: status::Status = v.reserve(n);
+    var i: usize = 0 as usize;
+    while i < n {
+        let _a: status::Status = v.append(BLANK);
+        i = i +% (1 as usize);
+    }
+    return v;
+}
+
+fn false_flags(n: usize) -> vec::Vec[bool] {
+    var v: vec::Vec[bool] = vec::new::[bool]();
+    let _r: status::Status = v.reserve(n);
+    var i: usize = 0 as usize;
+    while i < n {
+        let _a: status::Status = v.append(false);
+        i = i +% (1 as usize);
+    }
+    return v;
+}
+
+struct Screen {
+    _cells: vec::Vec[u32],
+    // Row N continued onto row N+1 because autowrap fired, rather than because
+    // the program emitted a newline. `view()` joins those rows, so copying a
+    // long command line out of the pane gives back one line — and a row that
+    // happens to fill the width exactly is NOT marked, because the deferred-wrap
+    // rule only sets this when the wrap actually fires.
+    _wrap: vec::Vec[bool],
+    // The primary screen, parked here while the alternate screen is up.
+    _save_cells: vec::Vec[u32],
+    _save_wrap: vec::Vec[bool],
+
+    _rows: usize,
+    _cols: usize,
+    _row: usize,
+    // In `0 ..= _cols`. Equal to `_cols` means "deferred wrap pending": the last
+    // column has been written and the NEXT printable scalar wraps. A VT does not
+    // wrap on the write itself, which is why a row filled exactly to the width
+    // followed by a newline does not leave a blank row behind.
+    _col: usize,
+    // Scroll region, inclusive row indices.
+    _top: usize,
+    _bottom: usize,
+    _saved_row: usize,
+    _saved_col: usize,
+    _alt_row: usize,
+    _alt_col: usize,
+
+    _alt: bool,
+    _autowrap: bool,
+    // LNM. A strict VT moves DOWN on `\n` and back to column 0 only on `\r`,
+    // which is why bare-LF text staircases across a real terminal. That never
+    // shows up on the pseudo-terminal path — the line discipline turns `\n` into
+    // `\r\n` before we see it — so honouring it by default would only punish the
+    // callers feeding this model captured pipe output, which is a thing it
+    // explicitly accepts. On by default, and `ESC[20l` turns it off for a
+    // program that means the staircase.
+    _newline_mode: bool,
+    _insert: bool,
+    _origin: bool,
+    _cursor_visible: bool,
+    _app_cursor_keys: bool,
+    _app_keypad: bool,
+    _bracketed_paste: bool,
+    _mouse: bool,
+    _g0_graphics: bool,
+    _g1_graphics: bool,
+    _shift_out: bool,
+
+    _state: ParseState,
+    _params: [usize; 8],
+    _nparams: usize,
+    _param_seen: bool,
+    _priv: u8,
+    _osc: text::Text,
+    _charset_slot: u8,
+
+    _acc: u32,
+    _need: usize,
+
+    _scrollback: text::Text,
+    _max_scrollback: usize,
+    _render: text::Text,
+    _dirty: bool,
+    _cursor_byte: usize,
+    // Answers the terminal owes the program (DA, DSR, cursor position). The host
+    // drains this and writes it back to the pseudo-terminal; a program that
+    // queries and never hears back stalls.
+    _reply: text::Text,
+
+    _title: text::Text,
+    _cwd: text::Text,
+
+    _cmd_state: CommandState,
+    _cmd_id: u64,
+    _cmd_line: text::Text,
+    _exit_code: i32,
+    _finished: u64,
+    // Output of the running command, taken from the SCREEN rather than from the
+    // byte stream. The difference is not cosmetic: zsh emits its partial-line
+    // marker (a reverse-video `%` padded to the full width) BEFORE running
+    // precmd, and erases it with `ESC[J` only AFTER — so it falls inside the
+    // command's region on the wire while never being visible for an instant.
+    // Capturing printable bytes put that marker on the end of every command's
+    // output. Capturing what actually landed on the grid does not.
+    _capture: text::Text,
+    // Rows already banked into `_capture` end there; the rest of the command's
+    // output is still live on the grid, between this anchor and the cursor.
+    _anchor_row: usize,
+    _anchor_col: usize,
+    _capture_open: bool,
+    _max_capture: usize,
+    _integration: bool,
+    _bells: u64,
+}
+
+fn new(
+    rows: u16 = 24 as u16,
+    cols: u16 = 80 as u16,
+    max_scrollback: usize = 1048576 as usize,
+    max_capture: usize = 1048576 as usize,
+) -> Screen {
+    var r: usize = rows as usize;
+    var c: usize = cols as usize;
+    if r < (1 as usize) { r = 1 as usize; }
+    if c < (2 as usize) { c = 2 as usize; }
+    var cap: usize = max_scrollback;
+    if cap < (1024 as usize) { cap = 1024 as usize; }
+    var ccap: usize = max_capture;
+    if ccap < (1024 as usize) { ccap = 1024 as usize; }
+
+    return Screen {
+        _cells: blank_cells(r *% c),
+        _wrap: false_flags(r),
+        _save_cells: vec::new::[u32](),
+        _save_wrap: vec::new::[bool](),
+        _rows: r,
+        _cols: c,
+        _row: 0 as usize,
+        _col: 0 as usize,
+        _top: 0 as usize,
+        _bottom: r -% (1 as usize),
+        _saved_row: 0 as usize,
+        _saved_col: 0 as usize,
+        _alt_row: 0 as usize,
+        _alt_col: 0 as usize,
+        _alt: false,
+        _autowrap: true,
+        _newline_mode: true,
+        _insert: false,
+        _origin: false,
+        _cursor_visible: true,
+        _app_cursor_keys: false,
+        _app_keypad: false,
+        _bracketed_paste: false,
+        _mouse: false,
+        _g0_graphics: false,
+        _g1_graphics: false,
+        _shift_out: false,
+        _state: ParseState::Ground,
+        _params: [0 as usize; 8],
+        _nparams: 0 as usize,
+        _param_seen: false,
+        _priv: 0 as u8,
+        _osc: text::new(),
+        _charset_slot: 0 as u8,
+        _acc: 0 as u32,
+        _need: 0 as usize,
+        _scrollback: text::new(),
+        _max_scrollback: cap,
+        _render: text::new(),
+        _dirty: true,
+        _cursor_byte: 0 as usize,
+        _reply: text::new(),
+        _title: text::new(),
+        _cwd: text::new(),
+        _cmd_state: CommandState::Idle,
+        _cmd_id: 0 as u64,
+        _cmd_line: text::new(),
+        _exit_code: -1 as i32,
+        _finished: 0 as u64,
+        _capture: text::new(),
+        _anchor_row: 0 as usize,
+        _anchor_col: 0 as usize,
+        _capture_open: false,
+        _max_capture: ccap,
+        _integration: false,
+        _bells: 0 as u64,
     };
 }
 
-impl Transcript {
-    fn new(max_bytes: usize = 1048576 as usize) -> Transcript {
-        var cap: usize = max_bytes;
-        if cap < (1024 as usize) { cap = 1024 as usize; }
-        return Transcript {
-            _text: text::new(),
-            _state: ParseState::Text,
-            _line_start: 0 as usize,
-            _col: 0 as usize,
-            _csi_num: 0 as usize,
-            _max_bytes: cap,
+impl Screen {
+    // ---- grid access --------------------------------------------------------
+
+    fn cell_at(this, r: usize, c: usize) -> u32 {
+        if r >= this._rows || c >= this._cols { return BLANK; }
+        return match this._cells.at((r *% this._cols) +% c) {
+            option::Option[u32]::Some(v) => v,
+            option::Option[u32]::None => BLANK,
         };
     }
 
-    // The transcript as text. Trailing spaces on the UNCOMMITTED line are
-    // excluded: `\b space \b` (how every shell erases) leaves a blank cell
-    // under the cursor that a real terminal renders as nothing, so reporting it
-    // would show erased characters as lingering whitespace. Committed lines are
-    // returned verbatim. Read-only — this narrows the borrow, it does not edit.
-    fn view(this) -> str {
-        let full: str = this._text.view();
-        let p: *u8 = #str_ptr(full);
-        var n: usize = #str_len(full);
-        while n > this._line_start {
-            let prev: u8 = { p[n -% (1 as usize)] };
-            if prev != (32 as u8) { break; }
-            n = n -% (1 as usize);
-        }
-        return { #str_from_raw_parts(p, n) };
-    }
-
-    fn count(this) -> usize {
-        return this._text.count();
-    }
-
-    // Byte offset of the cursor in the text. A UI needs this to draw the cell
-    // the shell is about to write: without a drawn cursor a user cannot tell
-    // where typing lands or which character backspace will take, which is the
-    // difference between a terminal and a log view.
-    //
-    // It can point one past the end of `view()`, and legitimately so — the
-    // trailing blanks a shell leaves under the cursor are trimmed from the
-    // view, and after a `\b space \b` erase the cursor sits on one of them. A
-    // renderer pads the cell back rather than clamping the cursor onto the last
-    // character, which would put the block one cell to the left of the truth.
-    fn cursor(this) -> usize {
-        return this._line_start +% this._col;
-    }
-
-    fn clear(ref this) {
-        this._text.remove_all();
-        this._state = ParseState::Text;
-        this._line_start = 0 as usize;
-        this._col = 0 as usize;
-        this._csi_num = 0 as usize;
+    fn set_cell(ref this, r: usize, c: usize, v: u32) {
+        if r >= this._rows || c >= this._cols { return; }
+        let _s: status::Status = this._cells.set(v, (r *% this._cols) +% c);
         return;
     }
 
-    // Write one byte AT THE CURSOR, overwriting what is there and extending the
-    // line only past its end. This is the difference between a cursor and an
-    // append-only log: a shell that backs up and rewrites (completion, history
-    // recall, prompt repaint) depends on the overwrite.
-    fn put_byte(ref this, b: u8) {
-        let pos: usize = this._line_start +% this._col;
-        let n: usize = this._text.count();
-        if pos < n {
-            // Overwrite: drop the scalar under the cursor, then insert. Sized
-            // per-scalar so replacing a multi-byte character with a 1-byte one
-            // does not leave a stray continuation byte behind.
-            var end: usize = pos +% (1 as usize);
-            while end < n && is_utf8_continuation(byte_at_or_zero(this._text, end)) {
-                end = end +% (1 as usize);
+    fn wrap_at(this, r: usize) -> bool {
+        return match this._wrap.at(r) {
+            option::Option[bool]::Some(v) => v,
+            option::Option[bool]::None => false,
+        };
+    }
+
+    fn set_wrap(ref this, r: usize, v: bool) {
+        if r >= this._rows { return; }
+        let _s: status::Status = this._wrap.set(v, r);
+        return;
+    }
+
+    fn blank_row(ref this, r: usize) {
+        var c: usize = 0 as usize;
+        while c < this._cols {
+            this.set_cell(r, c, BLANK);
+            c = c +% (1 as usize);
+        }
+        this.set_wrap(r, false);
+        return;
+    }
+
+    fn copy_row(ref this, dst: usize, src: usize) {
+        var c: usize = 0 as usize;
+        while c < this._cols {
+            this.set_cell(dst, c, this.cell_at(src, c));
+            c = c +% (1 as usize);
+        }
+        this.set_wrap(dst, this.wrap_at(src));
+        return;
+    }
+
+    // Last column of `r` that holds anything, exclusive. Trailing BLANKs are not
+    // content: `\b space \b` leaves one under the cursor and a real terminal
+    // renders nothing there.
+    fn row_end(this, r: usize) -> usize {
+        var e: usize = this._cols;
+        while e > (0 as usize) {
+            if this.cell_at(r, e -% (1 as usize)) != BLANK { break; }
+            e = e -% (1 as usize);
+        }
+        return e;
+    }
+
+    fn rows(this) -> u16 { return this._rows as u16; }
+    fn cols(this) -> u16 { return this._cols as u16; }
+
+    // ---- scrollback ---------------------------------------------------------
+
+    // A row leaving the top of the PRIMARY screen becomes scrollback. A row that
+    // wrapped does not get a newline, so a long line comes back out of `view()`
+    // as the one logical line it was — which is also why a later resize cannot
+    // corrupt it: scrollback holds logical lines, only the live grid is wrapped
+    // to the current width.
+    fn push_scrollback(ref this, r: usize) {
+        if this._alt { return; }
+        let end: usize = this.row_end(r);
+        var c: usize = 0 as usize;
+        while c < end {
+            let ch: u32 = this.cell_at(r, c);
+            if ch != WIDE_TAIL { append_scalar(this._scrollback, ch); }
+            c = c +% (1 as usize);
+        }
+        if !this.wrap_at(r) {
+            let _st: status::Status = this._scrollback.append("\n");
+        }
+        let cap: usize = this._max_scrollback;
+        trim_front(this._scrollback, cap);
+        return;
+    }
+
+    // ---- scrolling ----------------------------------------------------------
+
+    fn scroll_up(ref this, n: usize) {
+        if n == (0 as usize) { return; }
+        var k: usize = n;
+        let span: usize = (this._bottom -% this._top) +% (1 as usize);
+        if k > span { k = span; }
+        // Only a region anchored at the top of the screen is history; a program
+        // scrolling an inner region is repainting, not producing scrollback.
+        if this._top == (0 as usize) {
+            var i: usize = 0 as usize;
+            while i < k {
+                let leaving: usize = this._top +% i;
+                this.push_scrollback(leaving);
+                // The same row, banked into the command's output — but only
+                // once the anchor has reached the top, or the prompt and the
+                // output of whatever ran BEFORE this command would be swept in
+                // along with it.
+                if this._capture_open && this._anchor_row == (0 as usize) {
+                    let from: usize = this._anchor_col;
+                    this.capture_row(leaving, from);
+                    this._anchor_col = 0 as usize;
+                }
+                if this._anchor_row > (0 as usize) {
+                    this._anchor_row = this._anchor_row -% (1 as usize);
+                }
+                i = i +% (1 as usize);
             }
-            let _rm: status::Status = this._text.remove_range(pos, end);
         }
-        let one: str = { #str_from_raw_parts(#addr_of(b), 1 as usize) };
-        let _st: status::Status = this._text.insert(one, at: pos);
-        this._col = this._col +% (1 as usize);
+        var r: usize = this._top;
+        while (r +% k) <= this._bottom {
+            this.copy_row(r, r +% k);
+            r = r +% (1 as usize);
+        }
+        while r <= this._bottom {
+            this.blank_row(r);
+            r = r +% (1 as usize);
+        }
         return;
     }
 
-    // Commit the current line and start a new one. Only `\n` does this — CR
-    // moves the cursor, it does not end a line.
-    fn commit_line(ref this) {
-        let _st: status::Status = this._text.append("\n");
-        this._line_start = this._text.count();
-        this._col = 0 as usize;
+    fn scroll_down(ref this, n: usize) {
+        if n == (0 as usize) { return; }
+        var k: usize = n;
+        let span: usize = (this._bottom -% this._top) +% (1 as usize);
+        if k > span { k = span; }
+        var r: usize = this._bottom;
+        while r >= (this._top +% k) {
+            this.copy_row(r, r -% k);
+            if r == (0 as usize) { break; }
+            r = r -% (1 as usize);
+        }
+        var b: usize = this._top;
+        while b < (this._top +% k) && b <= this._bottom {
+            this.blank_row(b);
+            b = b +% (1 as usize);
+        }
         return;
     }
 
-    // Cursor left by whole scalars, clamped at the start of the line. Note it
-    // ERASES NOTHING: `\b space \b` erases because of the space in the middle.
-    fn cursor_left(ref this, cells: usize) {
-        var k: usize = cells;
+    // ---- cursor -------------------------------------------------------------
+
+    fn clamp_col(ref this) {
+        if this._col >= this._cols {
+            this._col = this._cols -% (1 as usize);
+        }
+        return;
+    }
+
+    fn index(ref this) {
+        if this._row == this._bottom {
+            this.scroll_up(1 as usize);
+        } else if (this._row +% (1 as usize)) < this._rows {
+            this._row = this._row +% (1 as usize);
+        }
+        return;
+    }
+
+    fn reverse_index(ref this) {
+        if this._row == this._top {
+            this.scroll_down(1 as usize);
+        } else if this._row > (0 as usize) {
+            this._row = this._row -% (1 as usize);
+        }
+        return;
+    }
+
+    fn move_to(ref this, r: usize, c: usize) {
+        var rr: usize = r;
+        var cc: usize = c;
+        if this._origin {
+            rr = rr +% this._top;
+            if rr > this._bottom { rr = this._bottom; }
+        }
+        if rr >= this._rows { rr = this._rows -% (1 as usize); }
+        if cc >= this._cols { cc = this._cols -% (1 as usize); }
+        this._row = rr;
+        this._col = cc;
+        return;
+    }
+
+    // ---- writing ------------------------------------------------------------
+
+    // Bank one row that is leaving the screen into the command's output.
+    fn capture_row(ref this, r: usize, from_col: usize) {
+        let end: usize = this.row_end(r);
+        var c: usize = from_col;
+        while c < end {
+            let ch: u32 = this.cell_at(r, c);
+            if ch != WIDE_TAIL { append_scalar(this._capture, ch); }
+            c = c +% (1 as usize);
+        }
+        if !this.wrap_at(r) {
+            let _st: status::Status = this._capture.append("\n");
+        }
+        let cap: usize = this._max_capture;
+        if this._capture.count() > cap { trim_front(this._capture, cap); }
+        return;
+    }
+
+    // The part of the command's output still on the grid: from the anchor to
+    // the CURSOR, not to the end of the cursor's row. Stopping at the cursor is
+    // what leaves zsh's partial-line marker out — it sits to the right of the
+    // cursor on the row where the command ends.
+    fn live_tail(this) -> text::Text {
+        var out: text::Text = text::new();
+        if this._anchor_row > this._row { return out; }
+        var r: usize = this._anchor_row;
+        while r <= this._row {
+            let from: usize = if r == this._anchor_row { this._anchor_col } else { 0 as usize };
+            var end: usize = this.row_end(r);
+            if r == this._row && this._col < end { end = this._col; }
+            var c: usize = from;
+            while c < end {
+                let ch: u32 = this.cell_at(r, c);
+                if ch != WIDE_TAIL { append_scalar(out, ch); }
+                c = c +% (1 as usize);
+            }
+            if r != this._row && !this.wrap_at(r) {
+                let _st: status::Status = out.append("\n");
+            }
+            r = r +% (1 as usize);
+        }
+        return out;
+    }
+
+    fn put_scalar(ref this, raw: u32) {
+        var ch: u32 = raw;
+        let graphics: bool = if this._shift_out { this._g1_graphics } else { this._g0_graphics };
+        if graphics { ch = dec_graphic(ch); }
+
+        let w: usize = char_width(ch);
+        // A combining mark has no cell of its own. Modelling it properly means
+        // attaching it to the scalar before it, which a one-scalar cell cannot
+        // hold; dropping it keeps the grid aligned, which is the property the
+        // rest of the model depends on.
+        if w == (0 as usize) { return; }
+
+        if this._col >= this._cols {
+            // Deferred wrap fires here, not on the write that filled the row.
+            if this._autowrap {
+                this.set_wrap(this._row, true);
+                this._col = 0 as usize;
+                this.index();
+            } else {
+                this._col = this._cols -% w;
+            }
+        }
+        if (this._col +% w) > this._cols {
+            if this._autowrap {
+                this.set_wrap(this._row, true);
+                this._col = 0 as usize;
+                this.index();
+            } else {
+                this._col = this._cols -% w;
+            }
+        }
+
+        if this._insert { this.insert_blanks(w); }
+
+        this.set_cell(this._row, this._col, ch);
+        if w == (2 as usize) {
+            this.set_cell(this._row, this._col +% (1 as usize), WIDE_TAIL);
+        }
+        this._col = this._col +% w;
+        return;
+    }
+
+    fn tab_forward(ref this, n: usize) {
+        var k: usize = n;
+        if k == (0 as usize) { k = 1 as usize; }
+        this.clamp_col();
+        while k > (0 as usize) {
+            var next: usize = ((this._col / TAB_WIDTH) +% (1 as usize)) *% TAB_WIDTH;
+            if next >= this._cols { next = this._cols -% (1 as usize); }
+            this._col = next;
+            k = k -% (1 as usize);
+        }
+        return;
+    }
+
+    fn tab_back(ref this, n: usize) {
+        var k: usize = n;
+        if k == (0 as usize) { k = 1 as usize; }
+        this.clamp_col();
         while k > (0 as usize) && this._col > (0 as usize) {
-            this._col = this._col -% (1 as usize);
-            while this._col > (0 as usize)
-                && is_utf8_continuation(byte_at_or_zero(this._text, this._line_start +% this._col)) {
-                this._col = this._col -% (1 as usize);
+            let rem: usize = this._col % TAB_WIDTH;
+            if rem == (0 as usize) {
+                this._col = this._col -% TAB_WIDTH;
+            } else {
+                this._col = this._col -% rem;
             }
             k = k -% (1 as usize);
         }
         return;
     }
 
-    // Cursor right by whole scalars, clamped at the end of the line.
-    fn cursor_right(ref this, cells: usize) {
-        let n: usize = this._text.count();
-        var k: usize = cells;
-        while k > (0 as usize) && (this._line_start +% this._col) < n {
-            this._col = this._col +% (1 as usize);
-            while (this._line_start +% this._col) < n
-                && is_utf8_continuation(byte_at_or_zero(this._text, this._line_start +% this._col)) {
-                this._col = this._col +% (1 as usize);
+    // ---- erase and edit -----------------------------------------------------
+
+    fn erase_line(ref this, mode: usize) {
+        let r: usize = this._row;
+        var from: usize = 0 as usize;
+        var to: usize = this._cols;
+        if mode == (0 as usize) {
+            from = if this._col > this._cols { this._cols } else { this._col };
+        } else if mode == (1 as usize) {
+            to = if this._col >= this._cols { this._cols } else { this._col +% (1 as usize) };
+        }
+        var c: usize = from;
+        while c < to {
+            this.set_cell(r, c, BLANK);
+            c = c +% (1 as usize);
+        }
+        if to >= this._cols { this.set_wrap(r, false); }
+        return;
+    }
+
+    fn erase_display(ref this, mode: usize) {
+        if mode == (3 as usize) {
+            // `ESC[3J` — drop the scrollback. `clear` sends it after `ESC[2J`,
+            // and it is the half that actually empties the pane.
+            this._scrollback.remove_all();
+            return;
+        }
+        if mode == (2 as usize) {
+            var r: usize = 0 as usize;
+            while r < this._rows {
+                this.blank_row(r);
+                r = r +% (1 as usize);
             }
-            k = k -% (1 as usize);
+            return;
+        }
+        if mode == (0 as usize) {
+            this.erase_line(0 as usize);
+            var r: usize = this._row +% (1 as usize);
+            while r < this._rows {
+                this.blank_row(r);
+                r = r +% (1 as usize);
+            }
+            return;
+        }
+        // mode 1: from the start of the screen through the cursor.
+        var r: usize = 0 as usize;
+        while r < this._row {
+            this.blank_row(r);
+            r = r +% (1 as usize);
+        }
+        this.erase_line(1 as usize);
+        return;
+    }
+
+    fn erase_chars(ref this, n: usize) {
+        this.clamp_col();
+        var k: usize = n;
+        if k == (0 as usize) { k = 1 as usize; }
+        var c: usize = this._col;
+        let end: usize = if (this._col +% k) < this._cols { this._col +% k } else { this._cols };
+        while c < end {
+            this.set_cell(this._row, c, BLANK);
+            c = c +% (1 as usize);
         }
         return;
     }
 
-    // `ESC[K` — erase from the cursor to the end of the line.
-    fn erase_to_line_end(ref this) {
-        this._text.truncate(this._line_start +% this._col);
+    fn insert_blanks(ref this, n: usize) {
+        this.clamp_col();
+        var k: usize = n;
+        if k == (0 as usize) { k = 1 as usize; }
+        if k > (this._cols -% this._col) { k = this._cols -% this._col; }
+        var c: usize = this._cols;
+        while c > (this._col +% k) {
+            c = c -% (1 as usize);
+            this.set_cell(this._row, c, this.cell_at(this._row, c -% k));
+        }
+        var b: usize = this._col;
+        while b < (this._col +% k) {
+            this.set_cell(this._row, b, BLANK);
+            b = b +% (1 as usize);
+        }
         return;
     }
 
-    fn trim(ref this) {
-        let n: usize = this._text.count();
-        if n <= this._max_bytes { return; }
-        var cut: usize = n -% this._max_bytes;
+    fn delete_chars(ref this, n: usize) {
+        this.clamp_col();
+        var k: usize = n;
+        if k == (0 as usize) { k = 1 as usize; }
+        if k > (this._cols -% this._col) { k = this._cols -% this._col; }
+        var c: usize = this._col;
+        while (c +% k) < this._cols {
+            this.set_cell(this._row, c, this.cell_at(this._row, c +% k));
+            c = c +% (1 as usize);
+        }
+        while c < this._cols {
+            this.set_cell(this._row, c, BLANK);
+            c = c +% (1 as usize);
+        }
+        return;
+    }
 
-        // Prefer a line boundary, but do not scan without bound when one huge
-        // line exceeds the cap.
-        var i: usize = cut;
-        let scan_end: usize = if (cut +% (4096 as usize)) < n {
-            cut +% (4096 as usize)
-        } else {
-            n
-        };
-        while i < scan_end && byte_at_or_zero(this._text, i) != (10 as u8) {
+    // Insert and delete run inside the scroll region, and do nothing at all when
+    // the cursor is outside it — that is what keeps a program's status line from
+    // being shoved around by output in the region above it.
+    fn insert_lines(ref this, n: usize) {
+        if this._row < this._top || this._row > this._bottom { return; }
+        var k: usize = n;
+        if k == (0 as usize) { k = 1 as usize; }
+        let saved_top: usize = this._top;
+        this._top = this._row;
+        this.scroll_down(k);
+        this._top = saved_top;
+        return;
+    }
+
+    fn delete_lines(ref this, n: usize) {
+        if this._row < this._top || this._row > this._bottom { return; }
+        var k: usize = n;
+        if k == (0 as usize) { k = 1 as usize; }
+        let saved_top: usize = this._top;
+        this._top = this._row;
+        this.scroll_up(k);
+        this._top = saved_top;
+        return;
+    }
+
+    // ---- modes and screens --------------------------------------------------
+
+    fn full_reset(ref this) {
+        if this._alt { this.leave_alt(); }
+        var r: usize = 0 as usize;
+        while r < this._rows {
+            this.blank_row(r);
+            r = r +% (1 as usize);
+        }
+        this._row = 0 as usize;
+        this._col = 0 as usize;
+        this._top = 0 as usize;
+        this._bottom = this._rows -% (1 as usize);
+        this._autowrap = true;
+        this._newline_mode = true;
+        this._insert = false;
+        this._origin = false;
+        this._cursor_visible = true;
+        this._app_cursor_keys = false;
+        this._app_keypad = false;
+        this._bracketed_paste = false;
+        this._mouse = false;
+        this._g0_graphics = false;
+        this._g1_graphics = false;
+        this._shift_out = false;
+        return;
+    }
+
+    fn enter_alt(ref this) {
+        if this._alt { return; }
+        this._alt = true;
+        this._alt_row = this._row;
+        this._alt_col = this._col;
+        this._save_cells = blank_cells(this._rows *% this._cols);
+        this._save_wrap = false_flags(this._rows);
+        var i: usize = 0 as usize;
+        let n: usize = this._rows *% this._cols;
+        while i < n {
+            let v: u32 = match this._cells.at(i) {
+                option::Option[u32]::Some(x) => x,
+                option::Option[u32]::None => BLANK,
+            };
+            let _s: status::Status = this._save_cells.set(v, i);
             i = i +% (1 as usize);
         }
-        if i < n && byte_at_or_zero(this._text, i) == (10 as u8) {
-            cut = i +% (1 as usize);
-        } else {
-            // Never leave the new first byte inside a UTF-8 scalar.
-            while cut < n && is_utf8_continuation(byte_at_or_zero(this._text, cut)) {
-                cut = cut +% (1 as usize);
-            }
+        var r: usize = 0 as usize;
+        while r < this._rows {
+            let _s: status::Status = this._save_wrap.set(this.wrap_at(r), r);
+            r = r +% (1 as usize);
         }
-        let _st: status::Status = this._text.remove_range(0 as usize, cut);
-        // Everything after the cut shifted down by `cut`; the live line has to
-        // move with it or the cursor would address committed scrollback.
-        if this._line_start > cut { this._line_start = this._line_start -% cut; }
-        else { this._line_start = 0 as usize; }
-        let n2: usize = this._text.count();
-        if (this._line_start +% this._col) > n2 {
-            this._col = n2 -% this._line_start;
+        var b: usize = 0 as usize;
+        while b < this._rows {
+            this.blank_row(b);
+            b = b +% (1 as usize);
+        }
+        this._top = 0 as usize;
+        this._bottom = this._rows -% (1 as usize);
+        this._row = 0 as usize;
+        this._col = 0 as usize;
+        return;
+    }
+
+    fn leave_alt(ref this) {
+        if !this._alt { return; }
+        this._alt = false;
+        // A resize while the alternate screen was up leaves the parked primary
+        // at the OLD geometry. Copy what still fits rather than trusting the
+        // two to agree; the shell repaints its prompt on the next keystroke.
+        let n: usize = this._rows *% this._cols;
+        let have: usize = this._save_cells.count();
+        var i: usize = 0 as usize;
+        while i < n {
+            var v: u32 = BLANK;
+            if i < have {
+                v = match this._save_cells.at(i) {
+                    option::Option[u32]::Some(x) => x,
+                    option::Option[u32]::None => BLANK,
+                };
+            }
+            let _s: status::Status = this._cells.set(v, i);
+            i = i +% (1 as usize);
+        }
+        var r: usize = 0 as usize;
+        let hw: usize = this._save_wrap.count();
+        while r < this._rows {
+            var w: bool = false;
+            if r < hw {
+                w = match this._save_wrap.at(r) {
+                    option::Option[bool]::Some(x) => x,
+                    option::Option[bool]::None => false,
+                };
+            }
+            this.set_wrap(r, w);
+            r = r +% (1 as usize);
+        }
+        this._save_cells = vec::new::[u32]();
+        this._save_wrap = vec::new::[bool]();
+        this._top = 0 as usize;
+        this._bottom = this._rows -% (1 as usize);
+        this._row = if this._alt_row < this._rows { this._alt_row } else { this._rows -% (1 as usize) };
+        this._col = if this._alt_col < this._cols { this._alt_col } else { this._cols -% (1 as usize) };
+        return;
+    }
+
+    fn set_private_mode(ref this, n: usize, on: bool) {
+        if n == (1 as usize) { this._app_cursor_keys = on; return; }
+        if n == (6 as usize) {
+            this._origin = on;
+            this.move_to(0 as usize, 0 as usize);
+            return;
+        }
+        if n == (7 as usize) { this._autowrap = on; return; }
+        if n == (25 as usize) { this._cursor_visible = on; return; }
+        if n == (1000 as usize) || n == (1002 as usize) || n == (1003 as usize) || n == (1006 as usize) {
+            this._mouse = on;
+            return;
+        }
+        if n == (1048 as usize) {
+            if on { this._saved_row = this._row; this._saved_col = this._col; }
+            else { this.move_to(this._saved_row, this._saved_col); }
+            return;
+        }
+        if n == (47 as usize) || n == (1047 as usize) || n == (1049 as usize) {
+            if n == (1049 as usize) && on { this._saved_row = this._row; this._saved_col = this._col; }
+            if on { this.enter_alt(); } else { this.leave_alt(); }
+            if n == (1049 as usize) && !on { this.move_to(this._saved_row, this._saved_col); }
+            return;
+        }
+        if n == (2004 as usize) { this._bracketed_paste = on; return; }
+        return;
+    }
+
+    // ---- replies ------------------------------------------------------------
+
+    fn reply_cursor_position(ref this, private_form: bool) {
+        var r: usize = this._row +% (1 as usize);
+        if this._origin {
+            if this._row >= this._top { r = (this._row -% this._top) +% (1 as usize); }
+            else { r = 1 as usize; }
+        }
+        var c: usize = this._col;
+        if c >= this._cols { c = this._cols -% (1 as usize); }
+        c = c +% (1 as usize);
+        let body: text::Text = if private_form {
+            "\x1b[?${r};${c}R"
+        } else {
+            "\x1b[${r};${c}R"
+        };
+        let _st: status::Status = this._reply.append(body.view());
+        return;
+    }
+
+    // ---- OSC ----------------------------------------------------------------
+
+    fn note_command_start(ref this, line: str) {
+        this._cmd_id = this._cmd_id +% (1 as u64);
+        this._cmd_state = CommandState::Running;
+        this._cmd_line.remove_all();
+        let _st: status::Status = this._cmd_line.append(line);
+        this._exit_code = -1 as i32;
+        this._capture.remove_all();
+        this._anchor_row = this._row;
+        this._anchor_col = this._col;
+        this._capture_open = true;
+        return;
+    }
+
+    fn note_command_end(ref this, code: i32) {
+        if this._cmd_state == CommandState::Running {
+            this._finished = this._finished +% (1 as u64);
+        }
+        // Freeze the output HERE. The shell keeps writing after the mark — the
+        // working directory, the prompt-start mark, the prompt itself — and a
+        // region that stayed open would grow to include all of it.
+        if this._capture_open {
+            let tail: text::Text = this.live_tail();
+            let _st: status::Status = this._capture.append(tail.view());
+            let cap: usize = this._max_capture;
+            if this._capture.count() > cap { trim_front(this._capture, cap); }
+            this._capture_open = false;
+        }
+        this._cmd_state = CommandState::Done;
+        this._exit_code = code;
+        return;
+    }
+
+    fn dispatch_osc(ref this) {
+        // `drop_first` and friends return VIEWS into `body` (reads live on
+        // `str`); `body` outlives every view here, and the appends copy the
+        // bytes into their own targets.
+        let body: text::Text = this._osc.clone();
+        let v: str = body.view();
+        if body.has_prefix("0;") || body.has_prefix("2;") {
+            this._title.remove_all();
+            let _st: status::Status = this._title.append(body.drop_first(2 as usize));
+            return;
+        }
+        if body.has_prefix("7;") {
+            // `file://<host>/path`, which is what shells emit for "the working
+            // directory is now this". Everything up to the third slash is the
+            // authority; what is left is the path.
+            // Every view stays rooted at `body` (a view of a view would tie
+            // `p` to a shorter-lived binding): 9 = "7;" + "file://".
+            var p: str = body.drop_first(2 as usize);
+            if p.has_prefix("file://") {
+                p = match body.drop_first(9 as usize).find("/") {
+                    option::Option[usize]::Some(i) => body.drop_first((9 as usize) +% i),
+                    option::Option[usize]::None => body.drop_first(9 as usize),
+                };
+            }
+            this._cwd.remove_all();
+            let _st: status::Status = this._cwd.append(p);
+            return;
+        }
+        if body.has_prefix("133;") {
+            this._integration = true;
+            let rest: str = body.drop_first(4 as usize);
+            if rest.has_prefix("A") {
+                // Prompt start: whatever ran before is over and reported.
+                if this._cmd_state == CommandState::Done { this._cmd_state = CommandState::Idle; }
+                return;
+            }
+            if rest.has_prefix("B") { return; }
+            if rest.has_prefix("C") {
+                var line: str = "";
+                if rest.has_prefix("C;") { line = rest.drop_first(2 as usize); }
+                this.note_command_start(line);
+                return;
+            }
+            if rest.has_prefix("D") {
+                // No status field means the shell did not say. -1 rather than 0,
+                // because reporting an unknown outcome as success is the one
+                // wrong answer a build pane must never give.
+                var code: i32 = -1 as i32;
+                if rest.has_prefix("D;") {
+                    let digits: str = rest.drop_first(2 as usize);
+                    code = parse_i32(digits);
+                }
+                this.note_command_end(code);
+                return;
+            }
+            return;
+        }
+        let _unused: str = v;
+        return;
+    }
+
+    // ---- CSI ----------------------------------------------------------------
+
+    fn param(this, i: usize, dflt: usize) -> usize {
+        if i >= this._nparams { return dflt; }
+        let v: usize = this._params[i];
+        if v == (0 as usize) { return dflt; }
+        return v;
+    }
+
+    fn param_raw(this, i: usize) -> usize {
+        if i >= this._nparams { return 0 as usize; }
+        return this._params[i];
+    }
+
+    fn reset_params(ref this) {
+        var i: usize = 0 as usize;
+        while i < MAX_PARAMS {
+            this._params[i] = 0 as usize;
+            i = i +% (1 as usize);
+        }
+        this._nparams = 0 as usize;
+        this._param_seen = false;
+        this._priv = 0 as u8;
+        return;
+    }
+
+    fn push_param_digit(ref this, d: usize) {
+        if this._nparams == (0 as usize) { this._nparams = 1 as usize; }
+        let i: usize = this._nparams -% (1 as usize);
+        if i < MAX_PARAMS {
+            this._params[i] = (this._params[i] *% (10 as usize)) +% d;
+        }
+        this._param_seen = true;
+        return;
+    }
+
+    fn next_param(ref this) {
+        if this._nparams == (0 as usize) { this._nparams = 1 as usize; }
+        if this._nparams < MAX_PARAMS {
+            this._nparams = this._nparams +% (1 as usize);
+        }
+        this._param_seen = true;
+        return;
+    }
+
+    fn dispatch_csi(ref this, final_byte: u8) {
+        let f: u8 = final_byte;
+        let question: bool = this._priv == (0x3f as u8);
+
+        if question {
+            if f == (0x68 as u8) || f == (0x6c as u8) {
+                let on: bool = f == (0x68 as u8);
+                var i: usize = 0 as usize;
+                let n: usize = if this._nparams == (0 as usize) { 0 as usize } else { this._nparams };
+                while i < n {
+                    this.set_private_mode(this.param_raw(i), on);
+                    i = i +% (1 as usize);
+                }
+                return;
+            }
+            if f == (0x6e as u8) {
+                if this.param(0 as usize, 0 as usize) == (6 as usize) {
+                    this.reply_cursor_position(true);
+                }
+                return;
+            }
+            return;
+        }
+        if this._priv != (0 as u8) {
+            // `>` and `<` introducers: secondary device attributes and friends.
+            if f == (0x63 as u8) && this._priv == (0x3e as u8) {
+                let _st: status::Status = this._reply.append("\x1b[>0;10;1c");
+            }
+            return;
+        }
+
+        if f == (0x40 as u8) { this.insert_blanks(this.param(0 as usize, 1 as usize)); return; }
+        if f == (0x41 as u8) {
+            let n: usize = this.param(0 as usize, 1 as usize);
+            this.clamp_col();
+            // Stops at the scroll region's top margin — unless the cursor
+            // started ABOVE the region, in which case the screen top is the
+            // limit and the margin is none of its business.
+            let limit: usize = if this._row >= this._top { this._top } else { 0 as usize };
+            var r: usize = this._row;
+            var k: usize = n;
+            while k > (0 as usize) && r > limit {
+                r = r -% (1 as usize);
+                k = k -% (1 as usize);
+            }
+            this._row = r;
+            return;
+        }
+        if f == (0x42 as u8) {
+            let n: usize = this.param(0 as usize, 1 as usize);
+            this.clamp_col();
+            var r: usize = this._row;
+            var k: usize = n;
+            let limit: usize = if this._row > this._bottom { this._rows -% (1 as usize) } else { this._bottom };
+            while k > (0 as usize) && r < limit {
+                r = r +% (1 as usize);
+                k = k -% (1 as usize);
+            }
+            this._row = r;
+            return;
+        }
+        if f == (0x43 as u8) || f == (0x61 as u8) {
+            let n: usize = this.param(0 as usize, 1 as usize);
+            this.clamp_col();
+            var c: usize = this._col +% n;
+            if c >= this._cols { c = this._cols -% (1 as usize); }
+            this._col = c;
+            return;
+        }
+        if f == (0x44 as u8) {
+            let n: usize = this.param(0 as usize, 1 as usize);
+            this.clamp_col();
+            var c: usize = this._col;
+            var k: usize = n;
+            while k > (0 as usize) && c > (0 as usize) {
+                c = c -% (1 as usize);
+                k = k -% (1 as usize);
+            }
+            this._col = c;
+            return;
+        }
+        if f == (0x45 as u8) {
+            let n: usize = this.param(0 as usize, 1 as usize);
+            var k: usize = n;
+            while k > (0 as usize) { this.index(); k = k -% (1 as usize); }
+            this._col = 0 as usize;
+            return;
+        }
+        if f == (0x46 as u8) {
+            let n: usize = this.param(0 as usize, 1 as usize);
+            var k: usize = n;
+            while k > (0 as usize) && this._row > (0 as usize) {
+                this._row = this._row -% (1 as usize);
+                k = k -% (1 as usize);
+            }
+            this._col = 0 as usize;
+            return;
+        }
+        if f == (0x47 as u8) || f == (0x60 as u8) {
+            let n: usize = this.param(0 as usize, 1 as usize);
+            var c: usize = n -% (1 as usize);
+            if c >= this._cols { c = this._cols -% (1 as usize); }
+            this._col = c;
+            return;
+        }
+        if f == (0x48 as u8) || f == (0x66 as u8) {
+            let r: usize = this.param(0 as usize, 1 as usize) -% (1 as usize);
+            let c: usize = this.param(1 as usize, 1 as usize) -% (1 as usize);
+            this.move_to(r, c);
+            return;
+        }
+        if f == (0x49 as u8) { this.tab_forward(this.param(0 as usize, 1 as usize)); return; }
+        if f == (0x4a as u8) { this.erase_display(this.param_raw(0 as usize)); return; }
+        if f == (0x4b as u8) { this.erase_line(this.param_raw(0 as usize)); return; }
+        if f == (0x4c as u8) { this.insert_lines(this.param(0 as usize, 1 as usize)); return; }
+        if f == (0x4d as u8) { this.delete_lines(this.param(0 as usize, 1 as usize)); return; }
+        if f == (0x50 as u8) { this.delete_chars(this.param(0 as usize, 1 as usize)); return; }
+        if f == (0x53 as u8) { this.scroll_up(this.param(0 as usize, 1 as usize)); return; }
+        if f == (0x54 as u8) { this.scroll_down(this.param(0 as usize, 1 as usize)); return; }
+        if f == (0x58 as u8) { this.erase_chars(this.param(0 as usize, 1 as usize)); return; }
+        if f == (0x5a as u8) { this.tab_back(this.param(0 as usize, 1 as usize)); return; }
+        if f == (0x62 as u8) { return; }
+        if f == (0x63 as u8) {
+            let _st: status::Status = this._reply.append("\x1b[?1;2c");
+            return;
+        }
+        if f == (0x64 as u8) {
+            let n: usize = this.param(0 as usize, 1 as usize);
+            var r: usize = n -% (1 as usize);
+            if r >= this._rows { r = this._rows -% (1 as usize); }
+            this._row = r;
+            this.clamp_col();
+            return;
+        }
+        if f == (0x65 as u8) {
+            let n: usize = this.param(0 as usize, 1 as usize);
+            var k: usize = n;
+            while k > (0 as usize) { this.index(); k = k -% (1 as usize); }
+            return;
+        }
+        if f == (0x68 as u8) || f == (0x6c as u8) {
+            let on: bool = f == (0x68 as u8);
+            let m: usize = this.param_raw(0 as usize);
+            if m == (4 as usize) { this._insert = on; }          // IRM
+            else if m == (20 as usize) { this._newline_mode = on; } // LNM
+            return;
+        }
+        if f == (0x6d as u8) { return; }             // SGR: parsed, not modelled
+        if f == (0x6e as u8) {
+            let n: usize = this.param(0 as usize, 0 as usize);
+            if n == (5 as usize) {
+                let _st: status::Status = this._reply.append("\x1b[0n");
+            } else if n == (6 as usize) {
+                this.reply_cursor_position(false);
+            }
+            return;
+        }
+        if f == (0x72 as u8) {
+            var t: usize = this.param(0 as usize, 1 as usize) -% (1 as usize);
+            var b: usize = this.param(1 as usize, this._rows) -% (1 as usize);
+            if b >= this._rows { b = this._rows -% (1 as usize); }
+            if t >= b { t = 0 as usize; b = this._rows -% (1 as usize); }
+            this._top = t;
+            this._bottom = b;
+            this.move_to(0 as usize, 0 as usize);
+            return;
+        }
+        if f == (0x73 as u8) {
+            this._saved_row = this._row;
+            this._saved_col = this._col;
+            return;
+        }
+        if f == (0x75 as u8) {
+            this.move_to(this._saved_row, this._saved_col);
+            return;
         }
         return;
     }
 
-    // Feed arbitrary PTY bytes. ANSI CSI sequences and OSC title/control
-    // strings are removed; UTF-8 bytes pass through unchanged.
+    // ---- feed ---------------------------------------------------------------
+
+    fn control(ref this, b: u8) {
+        if b == (0x07 as u8) { this._bells = this._bells +% (1 as u64); return; }
+        if b == (0x08 as u8) {
+            this.clamp_col();
+            if this._col > (0 as usize) { this._col = this._col -% (1 as usize); }
+            return;
+        }
+        if b == (0x09 as u8) { this.tab_forward(1 as usize); return; }
+        if b == (0x0a as u8) || b == (0x0b as u8) || b == (0x0c as u8) {
+            this.index();
+            if this._newline_mode { this._col = 0 as usize; }
+            return;
+        }
+        if b == (0x0d as u8) { this._col = 0 as usize; return; }
+        if b == (0x0e as u8) { this._shift_out = true; return; }
+        if b == (0x0f as u8) { this._shift_out = false; return; }
+        return;
+    }
+
+    fn escape(ref this, b: u8) {
+        if b == (0x5b as u8) {                       // [
+            this.reset_params();
+            this._state = ParseState::Csi;
+            return;
+        }
+        if b == (0x5d as u8) {                       // ]
+            this._osc.remove_all();
+            this._state = ParseState::Osc;
+            return;
+        }
+        if b == (0x50 as u8) || b == (0x58 as u8) || b == (0x5e as u8) || b == (0x5f as u8) {
+            this._state = ParseState::Dcs;           // P, X, ^, _ — string, ignored
+            return;
+        }
+        if b == (0x28 as u8) || b == (0x29 as u8) || b == (0x2a as u8) || b == (0x2b as u8) {
+            this._charset_slot = b;
+            this._state = ParseState::Charset;
+            return;
+        }
+        if b == (0x23 as u8) || b == (0x20 as u8) || b == (0x25 as u8) {
+            this._state = ParseState::Charset;       // consume one more byte
+            this._charset_slot = 0 as u8;
+            return;
+        }
+        this._state = ParseState::Ground;
+        if b == (0x37 as u8) {                       // ESC 7 — DECSC
+            this._saved_row = this._row;
+            this._saved_col = this._col;
+            return;
+        }
+        if b == (0x38 as u8) {                       // ESC 8 — DECRC
+            this.move_to(this._saved_row, this._saved_col);
+            return;
+        }
+        if b == (0x44 as u8) { this.index(); return; }             // ESC D
+        if b == (0x45 as u8) { this.index(); this._col = 0 as usize; return; }  // ESC E
+        if b == (0x4d as u8) { this.reverse_index(); return; }     // ESC M
+        if b == (0x63 as u8) { this.full_reset(); return; }        // ESC c
+        if b == (0x3d as u8) { this._app_keypad = true; return; }  // ESC =
+        if b == (0x3e as u8) { this._app_keypad = false; return; } // ESC >
+        return;
+    }
+
+    fn csi(ref this, b: u8) {
+        if b >= (0x30 as u8) && b <= (0x39 as u8) {
+            this.push_param_digit((b -% (0x30 as u8)) as usize);
+            return;
+        }
+        if b == (0x3b as u8) { this.next_param(); return; }
+        if b >= (0x3c as u8) && b <= (0x3f as u8) {
+            if !this._param_seen { this._priv = b; }
+            return;
+        }
+        if b >= (0x20 as u8) && b <= (0x2f as u8) {
+            // Intermediate bytes select variants this model does not implement;
+            // consume the sequence rather than acting on the wrong final.
+            this._state = ParseState::CsiIgnore;
+            return;
+        }
+        if b >= (0x40 as u8) && b <= (0x7e as u8) {
+            this.dispatch_csi(b);
+            this._state = ParseState::Ground;
+            return;
+        }
+        if b < (0x20 as u8) { this.control(b); return; }
+        return;
+    }
+
+    fn decode(ref this, b: u8) {
+        if this._need > (0 as usize) {
+            if is_utf8_continuation(b) {
+                this._acc = (this._acc << (6 as u32)) | ((b & (0x3f as u8)) as u32);
+                this._need = this._need -% (1 as usize);
+                if this._need == (0 as usize) { this.put_scalar(this._acc); }
+                return;
+            }
+            // Truncated sequence: report it and reprocess this byte fresh, so a
+            // control character that interrupted a scalar still does its job.
+            this._need = 0 as usize;
+            this.put_scalar(REPLACEMENT);
+        }
+        if b < (0x80 as u8) {
+            this.put_scalar(b as u32);
+            return;
+        }
+        if b >= (0xc2 as u8) && b <= (0xdf as u8) {
+            this._acc = (b & (0x1f as u8)) as u32;
+            this._need = 1 as usize;
+            return;
+        }
+        if b >= (0xe0 as u8) && b <= (0xef as u8) {
+            this._acc = (b & (0x0f as u8)) as u32;
+            this._need = 2 as usize;
+            return;
+        }
+        if b >= (0xf0 as u8) && b <= (0xf4 as u8) {
+            this._acc = (b & (0x07 as u8)) as u32;
+            this._need = 3 as usize;
+            return;
+        }
+        this.put_scalar(REPLACEMENT);
+        return;
+    }
+
     fn feed(ref this, bytes: str) {
         let p: *u8 = #str_ptr(bytes);
         let n: usize = #str_len(bytes);
         var i: usize = 0 as usize;
         while i < n {
             let b: u8 = { p[i] };
+            i = i +% (1 as usize);
 
-            if this._state == ParseState::Text {
-                if b == (27 as u8) {
+            if this._state == ParseState::Ground {
+                if b == (0x1b as u8) {
+                    this._need = 0 as usize;
                     this._state = ParseState::Escape;
-                } else if b == (13 as u8) {
-                    // CR is CURSOR TO COLUMN 0 — not a line break. This single
-                    // change removes the prompt storm: zsh repaints with
-                    // `\r<prompt>`, which now overwrites in place instead of
-                    // appending a fresh line per repaint.
-                    this._col = 0 as usize;
-                } else if b == (10 as u8) {
-                    this.commit_line();
-                } else if b == (8 as u8) || b == (127 as u8) {
-                    // BS/DEL MOVE the cursor. The shell's erase sequence is
-                    // `\b space \b`; the space does the blanking.
-                    this.cursor_left(1 as usize);
-                } else if b == (9 as u8) {
-                    var t: usize = 0 as usize;
-                    while t < (4 as usize) {
-                        this.put_byte(32 as u8);
-                        t = t +% (1 as usize);
-                    }
-                } else if b >= (32 as u8) {
-                    this.put_byte(b);
+                } else if b < (0x20 as u8) {
+                    this._need = 0 as usize;
+                    this.control(b);
+                } else if b == (0x7f as u8) {
+                    // DEL is filler on the wire; a VT discards it.
+                } else {
+                    this.decode(b);
                 }
             } else if this._state == ParseState::Escape {
-                // ESC [
-                if b == (91 as u8) {
-                    this._state = ParseState::Csi;
-                    this._csi_num = 0 as usize;
-                    // ESC ]
-                } else if b == (93 as u8) {
-                    this._state = ParseState::Osc;
-                } else if b == (27 as u8) {
-                    this._state = ParseState::Escape;
-                } else {
-                    // Single-character ESC command.
-                    this._state = ParseState::Text;
-                }
+                this.escape(b);
             } else if this._state == ParseState::Csi {
-                // ECMA-48 final bytes occupy 0x40...0x7e; digits before them
-                // are the parameter. Only the finals that move or clear the
-                // cursor are acted on — the rest (colour, mode) stay stripped.
-                if b >= (0x30 as u8) && b <= (0x39 as u8) {
-                    this._csi_num = (this._csi_num *% (10 as usize))
-                        +% ((b -% (0x30 as u8)) as usize);
-                } else if b >= (0x40 as u8) && b <= (0x7e as u8) {
-                    var cells: usize = this._csi_num;
-                    if cells == (0 as usize) { cells = 1 as usize; }
-                    if b == (0x43 as u8) { this.cursor_right(cells); }        // C
-                    else if b == (0x44 as u8) { this.cursor_left(cells); }    // D
-                    else if b == (0x4b as u8) { this.erase_to_line_end(); }   // K
-                    this._csi_num = 0 as usize;
-                    this._state = ParseState::Text;
-                }
+                this.csi(b);
+            } else if this._state == ParseState::CsiIgnore {
+                if b >= (0x40 as u8) && b <= (0x7e as u8) { this._state = ParseState::Ground; }
+            } else if this._state == ParseState::Charset {
+                if this._charset_slot == (0x28 as u8) { this._g0_graphics = b == (0x30 as u8); }
+                else if this._charset_slot == (0x29 as u8) { this._g1_graphics = b == (0x30 as u8); }
+                this._state = ParseState::Ground;
             } else if this._state == ParseState::Osc {
-                if b == (7 as u8) {
-                    this._state = ParseState::Text;       // BEL terminator
-                } else if b == (27 as u8) {
-                    this._state = ParseState::OscEscape;  // possible ST
+                if b == (0x07 as u8) {
+                    this.dispatch_osc();
+                    this._state = ParseState::Ground;
+                } else if b == (0x1b as u8) {
+                    this._state = ParseState::OscEscape;
+                } else if b == (0x0a as u8) {
+                    // An unterminated OSC would otherwise swallow the rest of the
+                    // stream. A newline is never part of one.
+                    this.dispatch_osc();
+                    this._state = ParseState::Ground;
+                    this.control(b);
+                } else {
+                    if this._osc.count() < (4096 as usize) {
+                        let one: str = { #str_from_raw_parts(#addr_of(b), 1 as usize) };
+                        let _st: status::Status = this._osc.append(one);
+                    }
                 }
+            } else if this._state == ParseState::OscEscape {
+                this.dispatch_osc();
+                this._state = ParseState::Ground;
+                if b != (0x5c as u8) {
+                    // Not an ST after all — the ESC starts something new.
+                    this._state = ParseState::Escape;
+                    this.escape(b);
+                }
+            } else if this._state == ParseState::Dcs {
+                if b == (0x1b as u8) { this._state = ParseState::DcsEscape; }
+                else if b == (0x07 as u8) { this._state = ParseState::Ground; }
             } else {
-                if b == (92 as u8) { this._state = ParseState::Text; }
-                else if b != (27 as u8) { this._state = ParseState::Osc; }
+                if b == (0x5c as u8) { this._state = ParseState::Ground; }
+                else { this._state = ParseState::Dcs; }
             }
-            i = i +% (1 as usize);
         }
-        this.trim();
+        this._dirty = true;
         return;
     }
 
-    // Stream closed. With CR as cursor motion there is no deferred state left
-    // to flush, so this exists only so callers (the AppKit backend) keep a
-    // stable API. Retained deliberately rather than removed.
-    fn finish(ref this) {
+    // ---- rendering ----------------------------------------------------------
+
+    fn ensure_render(ref this) {
+        if !this._dirty { return; }
+        this._dirty = false;
+        this._render.remove_all();
+        if !this._alt {
+            let _st: status::Status = this._render.append(this._scrollback.view());
+        }
+        this._cursor_byte = this._render.count();
+
+        // Blank rows below the last written one are not content. The cursor row
+        // always survives the trim: a terminal draws its cursor even on an empty
+        // line, and clipping the row out would move the block somewhere else.
+        var last: usize = this._rows -% (1 as usize);
+        while last > this._row {
+            if this.row_end(last) != (0 as usize) { break; }
+            last = last -% (1 as usize);
+        }
+
+        var r: usize = 0 as usize;
+        while r <= last {
+            let end: usize = this.row_end(r);
+            // On an interior row the cursor column must be reachable in the
+            // rendered text, so pad out to it. On the LAST row it must not be:
+            // the blank a shell leaves under the cursor after `\b space \b` is
+            // exactly what has to disappear, so the offset is allowed past the
+            // end and the renderer pads the cell back.
+            var stop: usize = end;
+            if r == this._row && r != last && this._col > stop {
+                stop = if this._col < this._cols { this._col } else { this._cols };
+            }
+            var c: usize = 0 as usize;
+            while c < stop {
+                if r == this._row && c == this._col { this._cursor_byte = this._render.count(); }
+                let ch: u32 = this.cell_at(r, c);
+                if ch != WIDE_TAIL { append_scalar(this._render, ch); }
+                c = c +% (1 as usize);
+            }
+            if r == this._row && this._col >= stop {
+                this._cursor_byte = this._render.count() +% (this._col -% stop);
+            }
+            if r != last && !this.wrap_at(r) {
+                let _st: status::Status = this._render.append("\n");
+            }
+            r = r +% (1 as usize);
+        }
         return;
     }
+
+    // The screen as text: scrollback followed by the live grid, with trailing
+    // blanks trimmed off each row. A borrow of the cached render, valid until
+    // the next `feed` or `resize`.
+    fn view(ref this) -> str {
+        this.ensure_render();
+        return this._render.view();
+    }
+
+    fn count(ref this) -> usize {
+        this.ensure_render();
+        return this._render.count();
+    }
+
+    // Byte offset of the cursor in `view()`. May point one past the end for the
+    // reason spelled out in `ensure_render`.
+    fn cursor(ref this) -> usize {
+        this.ensure_render();
+        return this._cursor_byte;
+    }
+
+    fn cursor_row(this) -> u16 { return this._row as u16; }
+    fn cursor_col(this) -> u16 {
+        if this._col >= this._cols { return (this._cols -% (1 as usize)) as u16; }
+        return this._col as u16;
+    }
+
+    fn scrollback(this) -> str { return this._scrollback.view(); }
+
+    // ---- resize -------------------------------------------------------------
+
+    // Columns are clipped or padded and rows are added or dropped from the top;
+    // wrapped lines are NOT reflowed. The shell repaints its prompt on SIGWINCH,
+    // and scrollback holds logical lines rather than wrapped ones, so what is
+    // left un-reflowed is only the part of the live screen a program is about to
+    // redraw anyway.
+    fn resize(ref this, rows: u16, cols: u16) {
+        var nr: usize = rows as usize;
+        var nc: usize = cols as usize;
+        if nr < (1 as usize) { nr = 1 as usize; }
+        if nc < (2 as usize) { nc = 2 as usize; }
+        if nr == this._rows && nc == this._cols { return; }
+
+        // Shrinking vertically drops rows from the TOP, so the prompt at the
+        // bottom stays put; those rows are history and belong in scrollback.
+        var drop: usize = 0 as usize;
+        if nr < this._rows {
+            drop = this._rows -% nr;
+            if this._row < drop { drop = this._row; }
+        }
+        if drop > (0 as usize) && !this._alt {
+            var d: usize = 0 as usize;
+            while d < drop {
+                this.push_scrollback(d);
+                d = d +% (1 as usize);
+            }
+        }
+
+        var next: vec::Vec[u32] = blank_cells(nr *% nc);
+        var next_wrap: vec::Vec[bool] = false_flags(nr);
+        var r: usize = 0 as usize;
+        while r < nr {
+            let src: usize = r +% drop;
+            if src < this._rows {
+                var c: usize = 0 as usize;
+                while c < nc && c < this._cols {
+                    let _s: status::Status = next.set(this.cell_at(src, c), (r *% nc) +% c);
+                    c = c +% (1 as usize);
+                }
+                // A row clipped mid-wrap is no longer continued by the next one.
+                let w: bool = this.wrap_at(src) && nc >= this._cols;
+                let _w: status::Status = next_wrap.set(w, r);
+            }
+            r = r +% (1 as usize);
+        }
+
+        this._cells = next;
+        this._wrap = next_wrap;
+        this._rows = nr;
+        this._cols = nc;
+        this._top = 0 as usize;
+        this._bottom = nr -% (1 as usize);
+        if this._row >= drop { this._row = this._row -% drop; } else { this._row = 0 as usize; }
+        if this._row >= nr { this._row = nr -% (1 as usize); }
+        if this._col > nc { this._col = nc; }
+        this._saved_row = 0 as usize;
+        this._saved_col = 0 as usize;
+        this._dirty = true;
+        return;
+    }
+
+    fn clear(ref this) {
+        this._scrollback.remove_all();
+        this.full_reset();
+        this._dirty = true;
+        return;
+    }
+
+    // ---- state a host needs -------------------------------------------------
+
+    fn alternate_screen(this) -> bool { return this._alt; }
+    fn cursor_visible(this) -> bool { return this._cursor_visible; }
+    // Arrow keys must be sent as `ESC O A` rather than `ESC [ A` while this is
+    // on, or nothing moves in a full-screen program.
+    fn application_cursor_keys(this) -> bool { return this._app_cursor_keys; }
+    fn application_keypad(this) -> bool { return this._app_keypad; }
+    fn bracketed_paste(this) -> bool { return this._bracketed_paste; }
+    fn mouse_tracking(this) -> bool { return this._mouse; }
+    fn bells(this) -> u64 { return this._bells; }
+    fn title(this) -> str { return this._title.view(); }
+    fn cwd(this) -> str { return this._cwd.view(); }
+
+    // Bytes the terminal owes the program. Write them to the pseudo-terminal and
+    // call `clear_reply`; a program that asked for the cursor position and never
+    // heard back waits forever.
+    fn reply(this) -> str { return this._reply.view(); }
+    fn has_reply(this) -> bool { return this._reply.count() > (0 as usize); }
+    fn clear_reply(ref this) {
+        this._reply.remove_all();
+        return;
+    }
+
+    // ---- command ledger -----------------------------------------------------
+
+    // Whether the shell is reporting prompt/command marks at all. False means
+    // `command_state` never leaves Idle and the exit code is unknown — the shell
+    // has no integration installed (see `terminal/pty`).
+    fn has_integration(this) -> bool { return this._integration; }
+    fn command_state(this) -> CommandState { return this._cmd_state; }
+    // Increments once per command started. A caller that remembers the id it saw
+    // can tell "the same command is still running" from "another one began".
+    fn command_id(this) -> u64 { return this._cmd_id; }
+    fn command_line(this) -> str { return this._cmd_line.view(); }
+    // -1 until a command has finished, or when the shell reported no status.
+    fn exit_code(this) -> i32 { return this._exit_code; }
+    // Total commands that have run to completion. Poll this to notice one
+    // finishing without racing on `command_state`.
+    fn finished_count(this) -> u64 { return this._finished; }
+    // What the command that is running — or the last one that ran — put on the
+    // screen, bounded by `max_capture`. An owned copy, because while a command
+    // is still running part of it is live on the grid and has to be assembled.
+    fn output(this) -> text::Text {
+        var out: text::Text = this._capture.clone();
+        if this._capture_open {
+            let tail: text::Text = this.live_tail();
+            let _st: status::Status = out.append(tail.view());
+        }
+        return out;
+    }
+
+    fn reset_command_ledger(ref this) {
+        this._cmd_state = CommandState::Idle;
+        this._exit_code = -1 as i32;
+        this._capture.remove_all();
+        this._cmd_line.remove_all();
+        this._capture_open = false;
+        return;
+    }
+
+    // Stream closed. Nothing is deferred, so this only flushes a scalar that was
+    // cut in half by the close.
+    fn finish(ref this) {
+        if this._need > (0 as usize) {
+            this._need = 0 as usize;
+            this.put_scalar(REPLACEMENT);
+            this._dirty = true;
+        }
+        return;
+    }
+}
+
+// Digits only, stopping at the first byte that is not one — the payload of
+// `OSC 133;D;<code>` is a decimal status, possibly followed by more fields.
+fn parse_i32(s: str) -> i32 {
+    let p: *u8 = #str_ptr(s);
+    let n: usize = #str_len(s);
+    var i: usize = 0 as usize;
+    var neg: bool = false;
+    if n > (0 as usize) {
+        let f: u8 = { p[0] };
+        if f == (0x2d as u8) { neg = true; i = 1 as usize; }
+    }
+    var v: i32 = 0 as i32;
+    var seen: bool = false;
+    while i < n {
+        let b: u8 = { p[i] };
+        if b < (0x30 as u8) || b > (0x39 as u8) { break; }
+        v = (v *% (10 as i32)) +% ((b -% (0x30 as u8)) as i32);
+        seen = true;
+        i = i +% (1 as usize);
+    }
+    if !seen { return -1 as i32; }
+    if neg { return (0 as i32) -% v; }
+    return v;
 }

@@ -839,6 +839,13 @@ struct SigTable {
     /// (`impl Vec[T]` records `Vec -> [T]`). Call sites zip these with the
     /// receiver's type arguments to substitute before view classification.
     impl_generics: HashMap<String, Vec<String>>,
+    /// TEXT→STR fallthrough (2026-08-13): the `#[lang("string")]` struct's
+    /// name (`Text`). Sema dispatches a read method missing from the owned
+    /// string to the blessed `impl str` set through the borrowing coercion;
+    /// `method_entry` mirrors that here so `t.trim()` still classifies as a
+    /// view OF `t` — without the mirror, every str-routed read would be an
+    /// untracked borrow (the realloc-UAF class the view audit closed).
+    lang_string: Option<String>,
 }
 
 /// v0.0.24 #9: the borrowck mirror of codegen's `effective_move` — does passing
@@ -893,6 +900,61 @@ fn base_type_name(name: &str) -> &str {
 }
 
 impl SigTable {
+    /// Receiver-keyed method lookup with the TEXT→STR fallthrough sema's
+    /// dispatch applies (2026-08-13): when the receiver's type is the
+    /// `#[lang("string")]` struct and it declares no inherent method of this
+    /// name, the call resolved against the blessed `impl str` set — so the
+    /// claim/view classification must come from `str.<method>`. An inherent
+    /// method always wins, mirroring sema exactly. `type_name` may arrive
+    /// module-qualified (`text::Text`); compare through `base_type_name`.
+    fn method_entry(&self, type_name: &str, method: &str) -> Option<&FnEntry> {
+        if let Some(e) = self.methods.get(&format!("{type_name}.{method}")) {
+            return Some(e);
+        }
+        let ls = self.lang_string.as_deref()?;
+        if type_name == ls || base_type_name(type_name) == ls {
+            return self.methods.get(&format!("str.{method}"));
+        }
+        let _ = ls;
+        None
+    }
+
+    /// Register the COMPILER-PROVIDED `str` methods, which no `impl` block
+    /// declares and the collector above therefore never sees. Only
+    /// `to_text` matters to this pass: it is the one that returns something
+    /// a later link can be called on, and without an entry the table could
+    /// not TYPE `q.to_text()` at all — `infer_ty` answered `None` and every
+    /// receiver-keyed rule went quiet. That silence is what let
+    /// `q.to_text().trim()` bind a view of a temporary with no diagnostic.
+    ///
+    /// It must be registered, NOT resolved by falling through to the
+    /// lang-string struct's own `to_text`. They are different functions:
+    /// `Text::to_text` is `this.clone()`, so the flow pass reads it as
+    /// returning receiver-rooted data. Borrowing that classification for a
+    /// `str` receiver says the returned Text views the str's bytes — false,
+    /// this allocates a copy — and a method storing the result into `ref
+    /// this` then looked like it kept a view of its argument. That fired
+    /// E0514 on four correct iris call sites, including one in a sibling
+    /// branch where the named owner was not even in scope.
+    fn register_builtin_str_methods(&mut self) {
+        let Some(ls) = self.lang_string.clone() else {
+            return;
+        };
+        let entry = FnEntry {
+            receiver_claim: Some(ClaimKind::Shared),
+            ret_ty: Some(Type {
+                kind: TypeKind::Path(ls),
+                span: Span::new(0, 0),
+            }),
+            // Owns its bytes: transports nothing out of the receiver, keeps
+            // nothing of its arguments, and is not a view.
+            computed_ret_flow: Some(0),
+            computed_ret_from_receiver: Some(false),
+            ..FnEntry::default()
+        };
+        self.methods.entry("str.to_text".to_string()).or_insert(entry);
+    }
+
     fn collect(prog: &Program, oracle: &CopyOracle) -> Self {
         let mut t = SigTable::default();
         for item in &prog.items {
@@ -959,6 +1021,16 @@ impl SigTable {
                             .map(|f| (f.name.name.clone(), f.ty.clone()))
                             .collect(),
                     );
+                    // TEXT→STR fallthrough: remember the `#[lang("string")]`
+                    // owner's name (sema validated uniqueness/shape).
+                    let is_lang_string = s.attributes.iter().any(|a| {
+                        a.path.name == "lang"
+                            && matches!(a.args.first(),
+                                Some(crate::ast::AttrArg::Str(v, _)) if v == "string")
+                    });
+                    if is_lang_string {
+                        t.lang_string = Some(s.name.name.clone());
+                    }
                 }
                 ItemKind::Enum(e) => {
                     t.enums.insert(e.name.name.clone());
@@ -1050,6 +1122,10 @@ impl SigTable {
                 _ => {}
             }
         }
+        // After the walk: `lang_string` is known by now, and a real
+        // `impl str` declaration (there is none for `to_text` — sema rejects
+        // redeclaring it) would already hold the key.
+        t.register_builtin_str_methods();
         t
     }
 
@@ -1379,8 +1455,8 @@ impl<'a> FlowCtx<'a> {
                             Some(r) => self.types.get(r).cloned(),
                             None => None,
                         };
-                        let entry = recv_ty
-                            .and_then(|t| self.sigs.methods.get(&format!("{t}.{}", method.name)));
+                        let entry =
+                            recv_ty.and_then(|t| self.sigs.method_entry(&t, &method.name));
                         if let Some(entry) = entry {
                             let keeps = SigTable::effective_keeps(entry);
                             let mut kept: u64 = 0;
@@ -3101,7 +3177,7 @@ impl<'p> Analyzer<'p> {
     fn keeps_flags_for_receiver_ty(&self, kind: &TypeKind, method: &str) -> Option<Vec<bool>> {
         match kind {
             TypeKind::Path(t) => {
-                let entry = self.sigs.methods.get(&format!("{t}.{method}"))?;
+                let entry = self.sigs.method_entry(t, method)?;
                 let keeps = SigTable::effective_keeps(entry);
                 keeps.iter().any(|b| *b).then_some(keeps)
             }
@@ -3335,8 +3411,7 @@ impl<'p> Analyzer<'p> {
                 let Some(type_name) = self.place_type_name(receiver) else {
                     return Vec::new();
                 };
-                let key = format!("{type_name}.{}", method_name.name);
-                let Some(entry) = self.sigs.methods.get(&key) else {
+                let Some(entry) = self.sigs.method_entry(&type_name, &method_name.name) else {
                     return Vec::new();
                 };
                 let flavor = entry.return_borrow_flavor.unwrap_or(BorrowFlavor::Shared);
@@ -3542,6 +3617,19 @@ fn infer_expr_type_with(
         }),
         ExprKind::Call { callee, .. } => match &callee.kind {
             ExprKind::Ident(f) => sigs.fns.get(f).and_then(|e2| e2.ret_ty.clone()),
+            // `Type::assoc(...)`. `BorrowCk::infer_ty` already answers this
+            // for a TOP-LEVEL call; the recursive walk needs it too, or a
+            // chain rooted in a constructor (`Buf::new().view()…`) goes
+            // untyped from the second link on and every receiver-keyed rule
+            // silently declines to fire.
+            ExprKind::Path { segments } => {
+                let [ty, assoc] = segments.as_slice() else {
+                    return None;
+                };
+                sigs.methods
+                    .get(&format!("{}.{}", ty.name, assoc.name))
+                    .and_then(|e2| e2.ret_ty.clone())
+            }
             ExprKind::Field {
                 receiver,
                 name: method,
@@ -3549,8 +3637,7 @@ fn infer_expr_type_with(
                 let recv_ty = infer_expr_type_with(receiver, sigs, lookup)?;
                 match &recv_ty.kind {
                     TypeKind::Path(t) => sigs
-                        .methods
-                        .get(&format!("{t}.{}", method.name))
+                        .method_entry(t, &method.name)
                         .and_then(|e2| e2.ret_ty.clone()),
                     TypeKind::Generic { name, args } => {
                         let entry = sigs.methods.get(&format!("{name}.{}", method.name))?;
@@ -3855,7 +3942,7 @@ impl<'a> ViewRules<'a> {
             TypeKind::Generic { name, .. } => name.clone(),
             _ => return false,
         };
-        let Some(entry) = self.sigs.methods.get(&format!("{base}.{method}")) else {
+        let Some(entry) = self.sigs.method_entry(&base, method) else {
             return false;
         };
         if entry.return_borrow != Some(ReturnBorrowSource::SelfReceiver) {
@@ -4376,32 +4463,9 @@ impl<'a> ViewRules<'a> {
     /// to a call is sound (the temporary outlives the call) and never
     /// routes here.
     fn check_view_of_temp(&mut self, value: &Expr) {
-        let ExprKind::Call { callee, .. } = &value.kind else {
+        let Some((tyname, m)) = self.temp_view_origin(value) else {
             return;
         };
-        let ExprKind::Field { receiver, name } = &callee.kind else {
-            return;
-        };
-        if Self::place_root(receiver).is_some() {
-            return;
-        }
-        let Some(rty) = self.infer_ty(receiver) else {
-            return;
-        };
-        // The temporary must be a non-Copy owner that actually drops (a
-        // view temporary is itself a Copy fat pointer — nothing to dangle).
-        if self.oracle.is_copy(&rty) {
-            return;
-        }
-        if !self.method_produces_view(receiver, &name.name) {
-            return;
-        }
-        let tyname = match &rty.kind {
-            TypeKind::Path(n) => n.clone(),
-            TypeKind::Generic { name, .. } => name.clone(),
-            _ => return,
-        };
-        let m = &name.name;
         self.err(
             "E0513",
             format!(
@@ -4409,6 +4473,198 @@ impl<'a> ViewRules<'a> {
             ),
             value.span,
         );
+    }
+
+    /// Contract §3.1, the coercion: `let s: str = t.clone();` and
+    /// `let s: str = "x ${i}";` bind a view of an owner nothing named. The
+    /// coercion spills the `Text` to an anonymous slot and keeps its
+    /// `{ptr,len}` prefix; no binding owns the slot. Codegen keeps the shape
+    /// SOUND by never freeing it — one leaked allocation per evaluation — so
+    /// the defect reads as memory growth rather than as a crash, and the
+    /// honest answer is that the binding is wrong, not that the free is
+    /// missing (bugs/rvalue-text-coercion-binding-leak.md).
+    ///
+    /// Sibling of `check_view_of_temp`: that one catches an EXPLICIT
+    /// view-producing method on a temporary (`mk().view()`), this one the
+    /// IMPLICIT owner→view coercion of a temporary. Both fire only on a
+    /// non-place initializer — `let s: str = t;` coerces from a named owner,
+    /// which outlives the statement, and `owns_value` judges any later escape.
+    ///
+    /// Argument and receiver positions never route here: a temporary in a
+    /// consumed context outlives the call it is an argument to, which is what
+    /// makes `f("x = ${i}")` sound (and, since 2026-08-13, non-leaking).
+    fn check_view_of_rvalue_owner(&mut self, value: &Expr) {
+        let core = Self::trivial_tail(value);
+        // A named place is somebody's binding; it outlives this statement.
+        if Self::place_root(core).is_some() {
+            return;
+        }
+        // An interpolation builds an owned string and names nothing. It has no
+        // declared type for `infer_ty` to return, so it is answered here.
+        if matches!(core.kind, ExprKind::InterpStr { .. }) {
+            self.err(
+                "E0513",
+                "cannot bind a view of a string interpolation: it builds an owned string in an anonymous slot that nothing frees and nothing keeps, so the view is backed by storage with no lifetime. Make the binding owned (`let s: Text = \"…\";`) and take the view from it"
+                    .to_string(),
+                value.span,
+            );
+            return;
+        }
+        let Some(ty) = self.infer_ty(core) else {
+            return;
+        };
+        // Already a view — `mk().view()` is `check_view_of_temp`'s.
+        if Self::is_view_ty(&ty) {
+            return;
+        }
+        // An owner with no heap of its own cannot be the source of a coercion
+        // to a view. Sema has already accepted the program, so a non-Copy,
+        // non-view initializer under a view-typed target IS the owner→view
+        // coercion; naming the type keeps the message specific.
+        if self.oracle.is_copy(&ty) {
+            return;
+        }
+        let tyname = match &ty.kind {
+            TypeKind::Path(n) => n.clone(),
+            TypeKind::Generic { name, .. } => name.clone(),
+            _ => return,
+        };
+        self.err(
+            "E0513",
+            format!(
+                "cannot bind a view of a temporary `{tyname}`: the coercion spills the owner to an anonymous slot that nothing frees and nothing keeps, so the view is backed by storage with no lifetime. Bind the owner first (`let owner: {tyname} = ...;` then take the view), or keep the binding owned"
+            ),
+            value.span,
+        );
+    }
+
+    /// The expression a trivial `{ … }` wrapper stands for — the block form
+    /// every raw-pointer read and most coercion sites are written in. A block
+    /// with statements is not trivial: its tail is evaluated after them and is
+    /// not the same expression.
+    fn trivial_tail(e: &Expr) -> &Expr {
+        match &e.kind {
+            ExprKind::Block(b) if b.stmts.is_empty() => match &b.tail {
+                Some(t) => Self::trivial_tail(t),
+                None => e,
+            },
+            _ => e,
+        }
+    }
+
+    /// Contract §3.1 at a CAPTURE: `let slot: Slot = Slot { s: mk().view() };`
+    /// stores a view of a temporary into a binding that outlives the
+    /// statement — the same dangle as `let s: str = mk().view()`, one
+    /// aggregate deep.
+    ///
+    /// The mirror of `flag_view_leaves`, which asks whether a leaf's owner
+    /// dies at RETURN; this asks whether the leaf has a named owner at all.
+    /// Same aggregate walk, so a field's declared type reaches its leaf and an
+    /// owned value moved into an owned field is never mistaken for a view.
+    ///
+    /// Binding, assignment and destructure positions only. The same aggregate
+    /// built as a call ARGUMENT is sound — its temporaries outlive the call.
+    fn check_captured_view_of_temp(&mut self, e: &Expr, expected: Option<&Type>) {
+        match &e.kind {
+            ExprKind::StructLit { name, fields } | ExprKind::GenericStructLit { name, fields, .. } => {
+                for f in fields {
+                    let fty = self.field_ty(&name.name, &f.name.name);
+                    self.check_captured_view_of_temp(&f.value, fty.as_ref());
+                }
+            }
+            ExprKind::InferredStructLit { fields } => {
+                let sname = match expected.map(|t| &t.kind) {
+                    Some(TypeKind::Path(n)) => Some(n.clone()),
+                    Some(TypeKind::Generic { name, .. }) => Some(name.clone()),
+                    _ => None,
+                };
+                for f in fields {
+                    let fty = sname.as_ref().and_then(|s| self.field_ty(s, &f.name.name));
+                    self.check_captured_view_of_temp(&f.value, fty.as_ref());
+                }
+            }
+            ExprKind::ArrayLit { elements } => {
+                let ety = Self::element_ty(expected);
+                for el in elements {
+                    self.check_captured_view_of_temp(el, ety.as_ref());
+                }
+            }
+            ExprKind::TupleLit { elements } => {
+                let etys = match expected.map(|t| &t.kind) {
+                    Some(TypeKind::Tuple(ts)) => ts.clone(),
+                    _ => Vec::new(),
+                };
+                for (i, el) in elements.iter().enumerate() {
+                    self.check_captured_view_of_temp(el, etys.get(i));
+                }
+            }
+            ExprKind::ArrayFill { fill, .. } => {
+                let ety = Self::element_ty(expected);
+                self.check_captured_view_of_temp(fill, ety.as_ref());
+            }
+            // A leaf. `check_view_of_temp` gates itself on the call actually
+            // producing a view of its receiver, so asking it about every leaf
+            // is free; the coercion arm needs the field's type to know a view
+            // was wanted at all.
+            _ => {
+                self.check_view_of_temp(e);
+                if self.is_coercion_to_view(e, expected) {
+                    self.check_view_of_rvalue_owner(e);
+                }
+            }
+        }
+    }
+
+    /// The owner a view-producing call chain ultimately borrows from, when
+    /// that owner is a TEMPORARY — `(owner type name, the method that took
+    /// the view)`. `None` when the chain is rooted in a named place (some
+    /// other rule judges that one), or when any link fails to propagate the
+    /// borrow.
+    ///
+    /// The recursion is the fix for the laundering hole: `mk().view()` was
+    /// caught, but `mk().view().trim()` was not. The old code read the
+    /// receiver's type, saw `str` — Copy, "nothing to dangle" — and
+    /// returned. That is true of the fat POINTER and false of the bytes it
+    /// points into: a `str→str` method hands the same borrow along, so the
+    /// dangle just moved one link out. `mk().view().trim()` compiled clean
+    /// and read freed memory. So a Copy *view* receiver no longer ends the
+    /// walk; it continues it, down to the first non-Copy owner.
+    ///
+    /// Every link must still pass `method_produces_view`, which is what
+    /// keeps a method that returns an unrelated view (an interned or
+    /// `'static` one — no `SelfReceiver` borrow) from being blamed on a
+    /// receiver it never pointed into.
+    fn temp_view_origin(&self, e: &Expr) -> Option<(String, String)> {
+        let ExprKind::Call { callee, .. } = &e.kind else {
+            return None;
+        };
+        let ExprKind::Field { receiver, name } = &callee.kind else {
+            return None;
+        };
+        // A named place is somebody's binding — the `owns_value` gate and
+        // the root rules judge that one, not this.
+        if Self::place_root(receiver).is_some() {
+            return None;
+        }
+        let rty = self.infer_ty(receiver)?;
+        // The link must actually hand the receiver's borrow along.
+        if !self.method_produces_view(receiver, &name.name) {
+            return None;
+        }
+        if self.oracle.is_copy(&rty) {
+            // A view receiver carries no storage of its own; whatever it
+            // points into is one link further down.
+            if Self::is_view_ty(&rty) {
+                return self.temp_view_origin(receiver);
+            }
+            return None;
+        }
+        let tyname = match &rty.kind {
+            TypeKind::Path(n) => n.clone(),
+            TypeKind::Generic { name, .. } => name.clone(),
+            _ => return None,
+        };
+        Some((tyname, name.name.clone()))
     }
 
     /// Does a `match` OWN the value it destructures, so that a payload
@@ -4984,6 +5240,15 @@ impl<'a> ViewRules<'a> {
         if is_view {
             if let Some(e) = init {
                 self.check_view_of_temp(e);
+                self.check_view_of_rvalue_owner(e);
+            }
+        } else if carries_view {
+            // A carrier binding outlives the statement exactly as a view
+            // binding does, so a view captured in one of its fields needs the
+            // same owner. Disjoint from the `is_view` arm above, so a leaf is
+            // never reported twice.
+            if let Some(e) = init {
+                self.check_captured_view_of_temp(e, resolved.as_ref());
             }
         }
         let borrow_roots = match (carries_view, init) {
@@ -5031,6 +5296,17 @@ impl<'a> ViewRules<'a> {
                 ..
             } => {
                 self.walk_expr(init);
+                // The decomposed value's view-typed fields outlive the
+                // statement as their own bindings, so a view captured from a
+                // temporary dangles here exactly as it does under a whole-value
+                // binding.
+                let decomposed = Type {
+                    kind: TypeKind::Path(type_name.name.clone()),
+                    span: init.span,
+                };
+                if self.carries_view(&decomposed) {
+                    self.check_captured_view_of_temp(init, Some(&decomposed));
+                }
                 // Each field binding re-owns its field of the decomposed
                 // value; its type comes from the named struct.
                 for f in fields {
@@ -5165,8 +5441,12 @@ impl<'a> ViewRules<'a> {
                 self.check_store_escape(target, value);
                 self.check_raw_store(target, value);
                 self.check_capture_store(target, value);
-                if self.place_ty(target).as_ref().is_some_and(Self::is_view_ty) {
+                let target_ty = self.place_ty(target);
+                if target_ty.as_ref().is_some_and(Self::is_view_ty) {
                     self.check_view_of_temp(value);
+                    self.check_view_of_rvalue_owner(value);
+                } else if target_ty.as_ref().is_some_and(|t| self.carries_view(t)) {
+                    self.check_captured_view_of_temp(value, target_ty.as_ref());
                 }
                 let ExprKind::Ident(n) = &target.kind else {
                     return;
@@ -6049,8 +6329,13 @@ impl Analyzer<'_> {
             state: state.clone(),
         });
 
+        let nll = Self::nll_release_schedule(body);
         for (i, stmt) in body.stmts.iter().enumerate() {
             self.apply_stmt(stmt, &mut state);
+            // NLL: end borrows whose last mention was this statement.
+            for name in &nll[i] {
+                self.drop_borrower(name, &mut state);
+            }
             points.push(PointSnapshot {
                 label: format!("after stmt {i}"),
                 state: state.clone(),
@@ -6236,6 +6521,82 @@ impl Analyzer<'_> {
         }
     }
 
+    /// NLL borrow ends (2026-08-13): per-statement release schedule for one
+    /// block. `schedule[i]` holds the `let`-declared binding names whose LAST
+    /// mention in this block is statement `i` — after statement `i` completes,
+    /// `drop_borrower` runs for each, ending their borrows at last use instead
+    /// of scope exit (`let v: str = t; io::println(v); t.append("!")` is
+    /// admitted: `v` is dead at the append).
+    ///
+    /// Soundness shape: the release point is the top-level statement OF THE
+    /// DECLARING BLOCK containing the last mention, so a use inside a nested
+    /// loop pins the borrow past the whole loop (the back edge re-reads it),
+    /// and a use inside one `if` branch pins it past the join. "Mention" is
+    /// any `Ident` in the statement's subtree — an over-approximation (a
+    /// shadowing arm binding counts), which only ever HOLDS a borrow longer,
+    /// never releases early. Two positions pin a name to scope exit outright:
+    /// the block's tail expression, and any `defer` (defers execute at scope
+    /// exit regardless of where they appear). A name never mentioned after
+    /// its `let` releases immediately — the borrow was never observable.
+    /// Scope-exit cleanup still runs for everything scheduled here;
+    /// `drop_borrower` is idempotent.
+    fn nll_release_schedule(b: &Block) -> Vec<Vec<String>> {
+        use std::collections::BTreeSet;
+        let n = b.stmts.len();
+        let mut schedule: Vec<Vec<String>> = vec![Vec::new(); n];
+        if n == 0 {
+            return schedule;
+        }
+        let mention_set = |s: &Stmt| -> BTreeSet<String> {
+            let mut set = BTreeSet::new();
+            let one = Block {
+                stmts: vec![s.clone()],
+                tail: None,
+                span: s.span,
+            };
+            crate::ast::visit_exprs_in_block(&one, &mut |e| {
+                if let ExprKind::Ident(name) = &e.kind {
+                    set.insert(name.clone());
+                }
+            });
+            set
+        };
+        let mentions: Vec<BTreeSet<String>> = b.stmts.iter().map(mention_set).collect();
+        let mut pinned: BTreeSet<String> = BTreeSet::new();
+        if let Some(t) = &b.tail {
+            crate::ast::visit_exprs(t, &mut |e| {
+                if let ExprKind::Ident(name) = &e.kind {
+                    pinned.insert(name.clone());
+                }
+            });
+        }
+        for (i, s) in b.stmts.iter().enumerate() {
+            if matches!(s.kind, StmtKind::Defer(_)) {
+                pinned.extend(mentions[i].iter().cloned());
+            }
+        }
+        for (i, s) in b.stmts.iter().enumerate() {
+            let names: Vec<String> = match &s.kind {
+                StmtKind::Let { name, .. } => vec![name.name.clone()],
+                StmtKind::LetDestructure { fields, .. } => {
+                    fields.iter().map(|f| f.name.clone()).collect()
+                }
+                _ => continue,
+            };
+            for nm in names {
+                if pinned.contains(&nm) {
+                    continue;
+                }
+                let last = (i + 1..n)
+                    .filter(|&j| mentions[j].contains(&nm))
+                    .next_back()
+                    .unwrap_or(i);
+                schedule[last].push(nm);
+            }
+        }
+        schedule
+    }
+
     /// Walk a block whose state must be scope-restricted to bindings that
     /// existed at `outer`. Bindings introduced inside the block are
     /// discarded from `state` on exit so they don't leak to subsequent
@@ -6246,8 +6607,14 @@ impl Analyzer<'_> {
         state: &mut BTreeMap<Place, PlaceState>,
         outer: &BTreeMap<Place, PlaceState>,
     ) {
-        for s in &b.stmts {
+        let nll = Self::nll_release_schedule(b);
+        for (i, s) in b.stmts.iter().enumerate() {
             self.apply_stmt(s, state);
+            // NLL: this statement was the last mention of these borrowers —
+            // their borrows end here, not at scope exit.
+            for name in &nll[i] {
+                self.drop_borrower(name, state);
+            }
         }
         if let Some(t) = &b.tail {
             self.apply_expr(t, state);
@@ -7522,8 +7889,7 @@ impl Analyzer<'_> {
         let Some(type_name) = Self::type_name_of(&bt.kind) else {
             return;
         };
-        let key = format!("{type_name}.{method_name}");
-        let Some(entry) = self.sigs.methods.get(&key) else {
+        let Some(entry) = self.sigs.method_entry(&type_name, method_name) else {
             return;
         };
         // A `this` (read-only) method does NOT conflict with a *shared* borrow —
@@ -7904,7 +8270,7 @@ mod tests {
     fn writing_lent_data_is_rejected() {
         let codes = check_src(&format!(
             "{SCOPE_MOCK}\
-             fn main() -> i32 {{\n                 var s: Scope = Scope {{ c: 0 }};\n                 var d: Data = Data {{ n: 1 }};\n                 s.lend(d);\n                 d.n = 5;\n                 return 0;\n             }}"
+             fn main() -> i32 {{\n                 var s: Scope = Scope {{ c: 0 }};\n                 var d: Data = Data {{ n: 1 }};\n                 s.lend(d);\n                 d.n = 5;\n                 s.c = 2;\n                 return 0;\n             }}"
         ));
         assert!(
             codes.iter().any(|c| c == "E0381"),
@@ -8230,6 +8596,7 @@ fn caller() {
   let v: B = B { x: 1 };
   let cur: B = cursor(v);
   let n: i32 = take(v);
+  let m: i32 = cur.x;
   return;
 }";
         let codes = check_src(src);
@@ -8247,10 +8614,12 @@ impl Leaf { fn drop(ref this) { return; } }
 enum E { A(Leaf), B }
 fn cursor(ref e: E) -> E { return e; }
 fn take(take e: E) -> i32 { return 0; }
+fn peek(e: E) -> i32 { return 0; }
 fn caller() {
   let v: E = E::B;
   let cur: E = cursor(v);
   let n: i32 = take(v);
+  let m: i32 = peek(cur);
   return;
 }";
         let codes = check_src(src);
@@ -8843,6 +9212,7 @@ fn caller() {
   let a: B = B { x: 1 };
   let b: B = B { x: 2 };
   let r: B = longest(a, b);
+  let n: i32 = r.x;
   return;
 }";
         let dump = analyze_src(src);
@@ -8878,6 +9248,7 @@ fn caller() {
   let b: B = B { x: 2 };
   let r: B = longest(a, b);
   drain(a);
+  let n: i32 = r.x;
   return;
 }";
         let codes = check_src(src);
@@ -8903,6 +9274,7 @@ fn caller() {
   let b: B = B { x: 2 };
   let r: B = longest(a, b);
   drain(b);
+  let n: i32 = r.x;
   return;
 }";
         let codes = check_src(src);
@@ -8992,10 +9364,12 @@ fn passthrough(b: B) -> B { return b; }
 fn caller() {
   let x: B = B { x: 1 };
   let y: B = passthrough(x);
+  let n: i32 = y.x;
   return;
 }";
         let dump = analyze_src(src);
-        // After stmt 1 (the `let y` line): x is BorrowedShared(1).
+        // After stmt 1 (the `let y` line): x is BorrowedShared(1). The later
+        // read of `y` keeps the borrow live there (NLL releases at last use).
         let line = dump
             .lines()
             .find(|l| l.contains("after stmt 1:"))
@@ -9018,6 +9392,7 @@ impl B {
 fn caller() {
   let b: B = B { x: 1 };
   let r: B = b.pass();
+  let n: i32 = r.x;
   return;
 }";
         let dump = analyze_src(src);
@@ -9045,6 +9420,7 @@ fn caller() {
   let x: B = B { x: 1 };
   let r: B = passthrough(x);
   drain(x);
+  let n: i32 = r.x;
   return;
 }";
         let codes = check_src(src);
@@ -9918,6 +10294,7 @@ fn cursor(ref b: B) -> B { return b; }
 fn caller() {
   let v: B = B { x: 1 };
   let cur: B = cursor(v);
+  let m: i32 = cur.x;
   return;
 }";
         let dump = analyze_src(src);
@@ -9939,6 +10316,7 @@ impl B {
 fn caller() {
   let v: B = B { x: 1 };
   let cur: B = v.cursor();
+  let m: i32 = cur.x;
   return;
 }";
         let dump = analyze_src(src);
@@ -9959,6 +10337,7 @@ fn caller() {
   let v: B = B { x: 1 };
   let cur: B = cursor(v);
   let n: i32 = peek(v);
+  let m: i32 = cur.x;
   return;
 }";
         let codes = check_src(src);
@@ -9990,6 +10369,141 @@ fn caller() {
         assert!(
             !codes.iter().any(|c| c == "E0383"),
             "E0383 should not fire after the borrower's scope exits; got {codes:?}"
+        );
+    }
+
+    // ---- 2026-08-13 — NLL borrow ends: a borrow ends after the statement
+    // (of its declaring block) containing its last mention, not at scope
+    // exit. Relaxations are positive tests; the pins (loop / defer / block
+    // tail) keep the borrow live where a release would be unsound. ----
+
+    #[test]
+    fn nll_move_after_borrowers_last_use_is_admitted() {
+        let src = "\
+struct B { x: i32 }
+impl B { fn drop(ref this) { return; } }
+fn passthrough(b: B) -> B { return b; }
+fn drain(take b: B) { return; }
+fn caller() {
+  let x: B = B { x: 1 };
+  let r: B = passthrough(x);
+  let n: i32 = r.x;
+  drain(x);
+  return;
+}";
+        let codes = check_src(src);
+        assert!(
+            !codes.iter().any(|c| c == "E0372"),
+            "`r` is dead at the move — NLL must admit it; got {codes:?}"
+        );
+    }
+
+    #[test]
+    fn nll_write_after_borrowers_last_use_is_admitted() {
+        let codes = check_src(&format!(
+            "{SCOPE_MOCK}\
+             fn main() -> i32 {{\n                 var s: Scope = Scope {{ c: 0 }};\n                 var d: Data = Data {{ n: 1 }};\n                 s.lend(d);\n                 d.n = 5;\n                 return 0;\n             }}"
+        ));
+        assert!(
+            !codes.iter().any(|c| c == "E0381"),
+            "`s` is dead at the write — NLL must admit it; got {codes:?}"
+        );
+    }
+
+    #[test]
+    fn nll_never_used_borrower_releases_immediately() {
+        let src = "\
+struct B { x: i32 }
+impl B { fn drop(ref this) { return; } }
+fn cursor(ref b: B) -> B { return b; }
+fn drain(take b: B) { return; }
+fn caller() {
+  let v: B = B { x: 1 };
+  let cur: B = cursor(v);
+  drain(v);
+  return;
+}";
+        let codes = check_src(src);
+        assert!(
+            !codes.iter().any(|c| c == "E0372" || c == "E0383"),
+            "an unused borrower's claim was never observable; got {codes:?}"
+        );
+    }
+
+    #[test]
+    fn nll_use_inside_loop_pins_borrow_past_the_loop() {
+        // `r` is read inside the loop body; the loop's back edge re-reads
+        // it, so its borrow is pinned past the whole loop statement — the
+        // write to `x` inside the loop must still be rejected.
+        let src = "\
+struct B { x: i32 }
+impl B { fn drop(ref this) { return; } }
+fn passthrough(b: B) -> B { return b; }
+fn caller() {
+  var x: B = B { x: 1 };
+  let r: B = passthrough(x);
+  var i: i32 = 0;
+  while i < 3 {
+    let n: i32 = r.x;
+    x.x = 5;
+    i = i + 1;
+  }
+  return;
+}";
+        let codes = check_src(src);
+        assert!(
+            codes.iter().any(|c| c == "E0381"),
+            "a loop-body use pins the borrow across the back edge; got {codes:?}"
+        );
+    }
+
+    #[test]
+    fn nll_defer_mention_pins_borrow_to_scope_exit() {
+        // `defer` runs at scope exit, so a deferred read of the borrower
+        // keeps its borrow live for the whole scope regardless of position.
+        let src = "\
+struct B { x: i32 }
+impl B { fn drop(ref this) { return; } }
+fn passthrough(b: B) -> B { return b; }
+fn drain(take b: B) { return; }
+fn peek(b: B) -> i32 { return b.x; }
+fn caller() {
+  let x: B = B { x: 1 };
+  let r: B = passthrough(x);
+  defer peek(r);
+  drain(x);
+  return;
+}";
+        let codes = check_src(src);
+        assert!(
+            codes.iter().any(|c| c == "E0372"),
+            "a defer mention pins the borrow to scope exit; got {codes:?}"
+        );
+    }
+
+    #[test]
+    fn nll_block_tail_mention_pins_borrow() {
+        // The borrower is read in the block's TAIL expression, which
+        // evaluates after every statement — the mid-block move must still
+        // be rejected.
+        let src = "\
+struct B { x: i32 }
+impl B { fn drop(ref this) { return; } }
+fn passthrough(b: B) -> B { return b; }
+fn drain(take b: B) { return; }
+fn caller() {
+  let x: B = B { x: 1 };
+  let m: i32 = {
+    let r: B = passthrough(x);
+    drain(x);
+    r.x
+  };
+  return;
+}";
+        let codes = check_src(src);
+        assert!(
+            codes.iter().any(|c| c == "E0372"),
+            "a tail mention pins the borrow past every statement; got {codes:?}"
         );
     }
 
@@ -10030,6 +10544,7 @@ fn caller() {
   let v: B = B { x: 1 };
   let cur: B = cursor(v);
   drain(v);
+  let m: i32 = cur.x;
   return;
 }";
         let toks = tokenize(src).expect("lex");
@@ -10241,6 +10756,7 @@ fn caller() {
   let p: Pair = Pair { left: Inner { v: 1 }, right: Inner { v: 2 } };
   let cur: Inner = cursor(p.left);
   let n: i32 = peek_pair(p);
+  let m: i32 = cur.v;
   return;
 }";
         let codes = check_src(src);
@@ -10353,6 +10869,7 @@ fn caller() {
   let b: B = B { x: 2 };
   let r: B = longest_mut(a, b);
   drain(a);
+  let n: i32 = r.x;
   return;
 }";
         let codes = check_src(src);
@@ -10412,16 +10929,18 @@ fn consume_h(take h: Holder) -> i32 { return 0; }
     #[test]
     fn view_captured_into_aggregate_blocks_owner_move() {
         // Every aggregate shape that can hold a view must record the borrow.
-        let shapes: &[(&str, &str)] = &[
-            ("struct_lit", "let w: Slot = Slot { s: t.view() };"),
-            ("nested_struct_lit", "let w: Nest = Nest { inner: Slot { s: t.view() } };"),
-            ("array_lit", "let w: [str; 1] = [t.view()];"),
-            ("tuple_lit", "let w: (str, i32) = (t.view(), 1);"),
-            ("enum_payload", "let w: Wrap = Wrap::V(t.view());"),
+        let shapes: &[(&str, &str, &str)] = &[
+            ("struct_lit", "let w: Slot = Slot { s: t.view() };", "let u: Slot = w;"),
+            ("nested_struct_lit", "let w: Nest = Nest { inner: Slot { s: t.view() } };", "let u: Nest = w;"),
+            ("array_lit", "let w: [str; 1] = [t.view()];", "let u: [str; 1] = w;"),
+            ("tuple_lit", "let w: (str, i32) = (t.view(), 1);", "let u: (str, i32) = w;"),
+            ("enum_payload", "let w: Wrap = Wrap::V(t.view());", "let u: Wrap = w;"),
         ];
-        for (sname, capture) in shapes {
+        for (sname, capture, later_use) in shapes {
+            // The trailing use of `w` keeps the aggregate's borrow live at the
+            // move site (NLL releases at last use).
             let src = format!(
-                "{VIEW_PRELUDE}fn f_{sname}() {{ let t: Buf = Buf::new(); {capture} let _c: i32 = consume(t); return; }}"
+                "{VIEW_PRELUDE}fn f_{sname}() {{ let t: Buf = Buf::new(); {capture} let _c: i32 = consume(t); {later_use} return; }}"
             );
             let codes = check_src(&src);
             assert!(
@@ -10438,7 +10957,7 @@ fn consume_h(take h: Holder) -> i32 { return 0; }
         // via the partial-place overlap rules.
         let src = format!(
             "{VIEW_PRELUDE}fn f() {{ let h: Holder = Holder {{ b: Buf::new() }}; \
-             let w: str = h.b.view(); let _c: i32 = consume_h(h); return; }}"
+             let w: str = h.b.view(); let _c: i32 = consume_h(h); let u: str = w; return; }}"
         );
         let codes = check_src(&src);
         assert!(
@@ -10460,9 +10979,10 @@ fn consume_h(take h: Holder) -> i32 { return 0; }
             ("tuple_elem", "let p2: (Buf, i32) = (t, 1);"),
         ];
         for (sname, mv) in sites {
+            // `let u: str = w;` after the move keeps the view live at it.
             let src = format!(
                 "{VIEW_PRELUDE}fn f_{sname}() {{ let t: Buf = Buf::new(); \
-                 let w: str = t.view(); {mv} return; }}"
+                 let w: str = t.view(); {mv} let u: str = w; return; }}"
             );
             let codes = check_src(&src);
             assert!(
@@ -10936,6 +11456,258 @@ fn mk() -> LStr { return LStr { ptr: { 0 as *u8 }, len: { 0 as usize }, cap: { 0
             assert!(
                 codes.iter().any(|c| c == "E0513"),
                 "[{name}] expected E0513, got {codes:?}"
+            );
+        }
+    }
+
+    /// `VIEW_PRELUDE` plus a `str→str` method, so a view can be handed one
+    /// link further along the way `str::trim` does in the stdlib.
+    const VIEW_CHAIN_PRELUDE: &str = "\
+impl str { fn narrow(this) -> str { return this; } }
+";
+
+    #[test]
+    fn view_of_a_temporary_laundered_through_a_str_method_denied_e0513() {
+        // The hole this closes: the rule read the receiver's type, saw the
+        // `str` a previous link returned, and stopped — Copy, "nothing to
+        // dangle". True of the fat pointer, false of the bytes under it.
+        // `Buf::new().view().narrow()` compiled clean and read freed memory.
+        let cases: &[(&str, &str)] = &[
+            (
+                "let_one_link",
+                "fn f() { let s: str = Buf::new().view().narrow(); return; }",
+            ),
+            (
+                "let_two_links",
+                "fn f() { let s: str = Buf::new().view().narrow().narrow(); return; }",
+            ),
+            (
+                "return",
+                "fn f() -> str { return Buf::new().view().narrow(); }",
+            ),
+            (
+                "assign",
+                "fn f() { var s: str = \"\"; s = Buf::new().view().narrow(); return; }",
+            ),
+            (
+                "field_store",
+                "fn f() { var sl: Slot = Slot { s: \"\" }; sl.s = Buf::new().view().narrow(); return; }",
+            ),
+        ];
+        for (name, tail) in cases {
+            let codes = check_src(&format!("{VIEW_PRELUDE}{VIEW_CHAIN_PRELUDE}{tail}"));
+            assert!(
+                codes.iter().any(|c| c == "E0513"),
+                "[{name}] expected E0513, got {codes:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn view_chain_rooted_in_a_named_owner_stays_clean() {
+        // The recursion must stop at a named place: `b` outlives the
+        // statement, so every link off it is somebody's binding to judge,
+        // not a temporary. A literal and a parameter root the same way.
+        let clean: &[(&str, &str)] = &[
+            (
+                "named_owner",
+                "fn f() { let b: Buf = Buf::new(); let s: str = b.view().narrow(); return; }",
+            ),
+            (
+                "named_owner_deep",
+                "fn f() { let b: Buf = Buf::new(); let s: str = b.view().narrow().narrow(); return; }",
+            ),
+            (
+                "literal_root",
+                "fn f() { let s: str = \"lit\".narrow(); return; }",
+            ),
+            (
+                "param_root",
+                "fn f(p: str) { let s: str = p.narrow().narrow(); return; }",
+            ),
+        ];
+        for (name, tail) in clean {
+            let codes = check_src(&format!("{VIEW_PRELUDE}{VIEW_CHAIN_PRELUDE}{tail}"));
+            assert!(
+                !codes.iter().any(|c| c == "E0513"),
+                "[{name}] must not be denied, got {codes:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_method_that_copies_its_view_argument_keeps_nothing() {
+        // Regression, found by running iris: `to_text()` on a `str` ALLOCATES
+        // a copy, so a method storing the result into `ref this` keeps no
+        // view of its argument and its callers tie nothing.
+        //
+        // Resolving `str.to_text` by falling through to the lang-string
+        // struct's own `to_text` broke exactly this — `LStr::to_text` is
+        // `this.clone()`, which the flow pass reads as returning
+        // receiver-rooted data, so the copy looked like a borrow. It fired
+        // E0514 on four correct iris call sites, one of them in a sibling
+        // `else if` where the named owner was not in scope at all.
+        let src = format!(
+            "{LANG_STR_PRELUDE}\
+             impl LStr {{ fn to_text(this) -> LStr {{ return mk(); }} }}\n\
+             struct Row {{ body: LStr }}\n\
+             impl Row {{ fn show(ref this, body: str) {{ this.body = body.to_text(); return; }} }}\n\
+             struct Chat {{ row: Row }}\n\
+             impl Chat {{\n\
+               fn aim(ref this, k: i32) {{\n\
+                 if k == 1 {{\n\
+                   let owner: LStr = mk();\n\
+                   let v: str = owner.view();\n\
+                   this.row.show(v);\n\
+                 }} else {{\n\
+                   this.row.show(\"lit\");\n\
+                 }}\n\
+                 return;\n\
+               }}\n\
+             }}\n\
+             impl LStr {{ fn view(this) -> str {{ return \"x\"; }} }}"
+        );
+        let codes = check_src(&src);
+        assert!(
+            !codes.iter().any(|c| c == "E0514"),
+            "a copying method must not tie its caller's receiver, got {codes:?}"
+        );
+    }
+
+    #[test]
+    fn str_receiver_resolves_lang_string_methods_for_the_temporary_rule() {
+        // `q.to_text()` on a `str` promotes the receiver, so the method lives
+        // on the lang-string struct. The sig table used to map only
+        // lang-string→`str`; without the reverse the call could not be TYPED
+        // and every receiver-keyed rule went quiet — which is how
+        // `q.to_text().trim()` bound a view of a Text temporary in silence.
+        let src = format!(
+            "{LANG_STR_PRELUDE}\
+             impl LStr {{ fn view(this) -> str {{ return \"x\"; }} }}\n\
+             impl str {{ fn to_lstr(this) -> LStr {{ return mk(); }} }}\n\
+             fn f(q: str) {{ let s: str = q.to_lstr().view(); return; }}"
+        );
+        let codes = check_src(&src);
+        assert!(
+            codes.iter().any(|c| c == "E0513"),
+            "expected E0513 for a view of a promoted-receiver temporary, got {codes:?}"
+        );
+    }
+
+    /// `LANG_STR_PRELUDE` plus the pieces a capture needs: a view accessor on
+    /// the owner, a `str`-field aggregate, an owned-field aggregate (the
+    /// control an over-eager rule would break), and a `str` sink.
+    const COERCE_PRELUDE: &str = "\
+impl LStr { fn view(this) -> str { return \"x\"; } }
+struct Slot { s: str, n: i32 }
+struct Own { o: LStr }
+impl Own { fn drop(ref this) { return; } }
+fn peek(x: str) -> i32 { return 0; }
+";
+
+    #[test]
+    fn view_bound_from_an_rvalue_owner_denied_e0513() {
+        // bugs/rvalue-text-coercion-binding-leak.md: the owner→view coercion
+        // of a TEMPORARY spills the owner to an anonymous slot and keeps its
+        // `{ptr,len}` prefix. Codegen never frees that slot — which is what
+        // kept the shape sound, and is exactly the leak. The binding is the
+        // wrong part, so it is the part that is rejected.
+        let cases: &[(&str, &str)] = &[
+            ("let_coercion", "fn f() { let s: str = mk(); return; }"),
+            (
+                "assign_coercion",
+                "fn f() { var s: str = \"\"; s = mk(); return; }",
+            ),
+            (
+                "let_interpolation",
+                "fn f() { let n: i32 = 1; let s: str = \"x ${n}\"; return; }",
+            ),
+            (
+                "assign_interpolation",
+                "fn f() { let n: i32 = 1; var s: str = \"\"; s = \"x ${n}\"; return; }",
+            ),
+            // Captures: the binding outlives the statement one aggregate deep.
+            (
+                "struct_field_coercion",
+                "fn f() { let w: Slot = Slot { s: mk(), n: 1 }; return; }",
+            ),
+            (
+                "struct_field_view_of_temp",
+                "fn f() { let w: Slot = Slot { s: mk().view(), n: 1 }; return; }",
+            ),
+            (
+                "tuple_element",
+                "fn f() { let w: (str, i32) = (mk(), 1); return; }",
+            ),
+            ("array_element", "fn f() { let w: [str; 1] = [mk()]; return; }"),
+            (
+                "assign_into_carrier",
+                "fn f() { var w: Slot = Slot { s: \"\", n: 0 }; w = Slot { s: mk(), n: 1 }; return; }",
+            ),
+            (
+                "destructure",
+                "fn f() { let Slot { s, n } = Slot { s: mk().view(), n: 1 }; return; }",
+            ),
+            // The block spelling every coercion site is written in.
+            (
+                "braced",
+                "fn f() { let s: str = { mk() }; return; }",
+            ),
+        ];
+        for (name, tail) in cases {
+            let codes = check_src(&format!("{LANG_STR_PRELUDE}{COERCE_PRELUDE}{tail}"));
+            assert!(
+                codes.iter().any(|c| c == "E0513"),
+                "[{name}] expected E0513, got {codes:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn coercion_from_a_named_owner_or_at_an_argument_stays_clean() {
+        // The controls that decide whether the rule is usable. A named owner
+        // outlives the statement (whether it outlives the VIEW is
+        // `owns_value`'s question); a temporary at an argument position
+        // outlives the call it is an argument to; and moving an owned value
+        // into an owned field is an ownership transfer, not a view.
+        let clean: &[(&str, &str)] = &[
+            (
+                "named_owner_coercion",
+                "fn f() { let o: LStr = mk(); let s: str = o; return; }",
+            ),
+            (
+                "named_owner_capture",
+                "fn f() { let o: LStr = mk(); let w: Slot = Slot { s: o.view(), n: 1 }; return; }",
+            ),
+            (
+                "named_owner_field_capture",
+                "fn f() { let h: Own = Own { o: mk() }; let w: Slot = Slot { s: h.o.view(), n: 1 }; return; }",
+            ),
+            ("literal", "fn f() { let s: str = \"lit\"; return; }"),
+            (
+                "literal_capture",
+                "fn f() { let w: Slot = Slot { s: \"lit\", n: 1 }; return; }",
+            ),
+            (
+                "argument_coercion",
+                "fn f() -> i32 { return peek(mk()); }",
+            ),
+            (
+                "argument_interpolation",
+                "fn f() -> i32 { let n: i32 = 1; return peek(\"x ${n}\"); }",
+            ),
+            // The one an over-eager rule breaks: an owned value moved into an
+            // owned field is not a view and must never be flagged.
+            (
+                "owned_move_into_owned_field",
+                "fn f() { let w: Own = Own { o: mk() }; return; }",
+            ),
+        ];
+        for (name, tail) in clean {
+            let codes = check_src(&format!("{LANG_STR_PRELUDE}{COERCE_PRELUDE}{tail}"));
+            assert!(
+                !codes.iter().any(|c| c == "E0513"),
+                "[{name}] must not be denied, got {codes:?}"
             );
         }
     }

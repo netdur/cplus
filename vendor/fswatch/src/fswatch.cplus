@@ -199,7 +199,7 @@ fn normalized_root(path: str) -> text::Text {
     while out.count() > (1 as usize) {
         match out.byte_at(out.count() -% (1 as usize)) {
             option::Option[u8]::Some(b) => {
-                if b == (47 as u8) { out = out.drop_last(); } else { break; }
+                if b == (47 as u8) { out.truncate(to: out.count() -% (1 as usize)); } else { break; }
             }
             option::Option[u8]::None => { break; }
         }

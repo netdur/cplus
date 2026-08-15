@@ -1,0 +1,98 @@
+import "facet/facet" as core;
+import "facet/elements" as ui;
+import "facet/component" as component;
+import "facet/label" as label;
+import "facet/slider" as slider;
+import "facet/stepper" as stepper;
+import "facet/progress" as progress;
+import "facet/vocabulary" as vocab;
+import "stdlib/option" as option;
+import "../shell" as shell;
+
+struct Values {
+    n: i32,
+}
+
+impl Values {
+    fn new() -> Values { return Values { n: 0 }; }
+
+    fn paint(ref this, v: f64) {
+        match label::find("val:readout") {
+            option::Option[label::Label]::Some(l) => {
+                let pct: i32 = (v * 100.0f64) as i32;
+                let _l: label::Label = l.set_text("Value: ${pct}%");
+            }
+            option::Option[label::Label]::None => { }
+        }
+        match progress::find("val:progress") {
+            option::Option[progress::Progress]::Some(p) => {
+                let _p: progress::Progress = p.set_progress(v);
+            }
+            option::Option[progress::Progress]::None => { }
+        }
+        return;
+    }
+
+    fn on_slider(ref this, sender: *u8) {
+        match slider::find("val:slider") {
+            option::Option[slider::Slider]::Some(s) => { this.paint(s.value()); }
+            option::Option[slider::Slider]::None => { }
+        }
+        return;
+    }
+
+    fn on_stepper(ref this, sender: *u8) {
+        match stepper::find("val:stepper") {
+            option::Option[stepper::Stepper]::Some(s) => {
+                let v: f64 = s.value() / 10.0f64;
+                match slider::find("val:slider") {
+                    option::Option[slider::Slider]::Some(sl) => {
+                        let _sl: slider::Slider = sl.set_value(v);
+                    }
+                    option::Option[slider::Slider]::None => { }
+                }
+                this.paint(v);
+            }
+            option::Option[stepper::Stepper]::None => { }
+        }
+        return;
+    }
+}
+
+impl Values: component::Component {
+    fn build(ref this) -> core::Node {
+        var body: core::Builder = core::Builder::new();
+
+        body.add(shell::caption("Slider  ·  0…1"));
+        body.add(ui::slider(0.4f64, key: "val:slider", minimum: 0.0f64, maximum: 1.0f64,
+            on_value_changed: this.on_slider));
+        body.add(ui::label("Value: 40%", key: "val:readout",
+            font_size: 15.0f64, text_color: vocab::Color::ink()));
+
+        body.add(shell::caption("Stepper  ·  0…10"));
+        body.add(ui::stepper(4.0f64, key: "val:stepper", minimum: 0.0f64, maximum: 10.0f64,
+            increment: 1.0f64, on_value_changed: this.on_stepper));
+
+        body.add(shell::caption("Progress"));
+        body.add(ui::progress(0.4f64, key: "val:progress"));
+
+        body.add(shell::caption("Spinner"));
+        var srow: core::Builder = core::Builder::new();
+        srow.add(ui::spinner(vocab::Color::primary(), key: "val:spin", running: true));
+        srow.add(ui::label("Running", key: "val:spin_label",
+            font_size: 14.0f64, text_color: vocab::Color::ink(0.65f64)));
+        body.add(core::row(srow).gap(12.0f64));
+
+        return shell::panel(
+            "Values",
+            "Continuous and discrete values. Slider and stepper drive the progress bar.",
+            core::column(body).gap(12.0f64),
+            howto: "ui::slider(0.4, key: \"s\", minimum: 0.0, maximum: 1.0,\n    on_value_changed: this.on_slider)\nui::stepper(4.0, minimum: 0.0, maximum: 10.0, increment: 1.0)\nui::progress(0.4) · ui::spinner(Color::primary(), running: true)",
+        );
+    }
+}
+
+impl Values: component::Lifecycle {
+    fn on_attach(ref this) { return; }
+    fn on_detach(ref this) { return; }
+}

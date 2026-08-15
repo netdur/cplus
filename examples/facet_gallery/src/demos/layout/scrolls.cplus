@@ -1,0 +1,72 @@
+// Reference: scroll
+//   var host = ui::scroll(key: "s").grow(1.0);
+//   scroll::find("s", within: #addr_of(host)).set_content(column);
+
+import "facet/facet" as core;
+import "facet/elements" as ui;
+import "facet/component" as component;
+import "facet/scroll" as scroll;
+import "facet/vocabulary" as vocab;
+import "stdlib/option" as option;
+import "../../shell" as shell;
+
+struct Scrolls {
+    n: i32,
+}
+
+impl Scrolls {
+    fn new() -> Scrolls { return Scrolls { n: 0 }; }
+}
+
+impl Scrolls: component::Component {
+    fn build(ref this) -> core::Node {
+        var body: core::Builder = core::Builder::new();
+        body.add(shell::caption("scroll  ·  set_content attaches the document"));
+        body.add(ui::label(
+            "A scroll is a viewport. Build the document separately, then set_content. Axis, bars, and observe_scrolled live on the control.",
+            key: "sc:note",
+            font_size: 13.0f64,
+            text_color: vocab::Color::ink(0.65f64),
+            max_lines: 4 as i64,
+            line_break: vocab::LineBreak::WordWrap,
+        ));
+
+        var doc: core::Builder = core::Builder::new();
+        var i: i32 = 1;
+        while i <= 24 {
+            doc.add(ui::label(
+                "Document line ${i}",
+                key: "",
+                font_size: 14.0f64,
+                text_color: vocab::Color::ink(),
+            ));
+            i = i +% 1;
+        }
+        var content: core::Node = core::column(doc).padding(12.0f64).gap(6.0f64);
+        content.set_background_color(vocab::Color::sunken());
+
+        var host: core::Node = ui::scroll(
+            key: "sc:host",
+            axis: vocab::ScrollAxis::Vertical,
+        ).height(220.0f64).grow(1.0f64);
+        match scroll::find("sc:host", within: #addr_of(host)) {
+            option::Option[scroll::Scroll]::Some(s) => {
+                let _s: scroll::Scroll = s.set_content(content);
+            }
+            option::Option[scroll::Scroll]::None => { }
+        }
+        body.add(host);
+
+        return shell::panel(
+            "Scroll",
+            "Viewport + document. The gallery shell uses the same pattern for every demo page.",
+            core::column(body).gap(12.0f64),
+            howto: "var host = ui::scroll(key: \"s\").height(220.0);\nmatch scroll::find(\"s\", within: #addr_of(host)) {\n  Some(s) => { s.set_content(doc); }\n  None => {}\n}",
+        );
+    }
+}
+
+impl Scrolls: component::Lifecycle {
+    fn on_attach(ref this) { return; }
+    fn on_detach(ref this) { return; }
+}

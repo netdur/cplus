@@ -1,0 +1,120 @@
+// Reference: swipeable + swipe_item
+//   var sw = ui::swipeable(key: "row");
+//   sw.add_child(content);
+//   sw.add_child(ui::swipe_item(text: "Delete", destructive: true,
+//                               on_clicked: this.on_delete));
+// On macOS: right-click for the action menu; drag may also reveal.
+
+import "facet/facet" as core;
+import "facet/elements" as ui;
+import "facet/component" as component;
+import "facet/label" as label;
+import "facet/vocabulary" as vocab;
+import "stdlib/option" as option;
+import "stdlib/status" as status;
+import "stdlib/text" as text;
+import "../shell" as shell;
+
+struct Swipe {
+    last: text::Text,
+}
+
+impl Swipe {
+    fn new() -> Swipe {
+        return Swipe { last: text::from_str("(none)") };
+    }
+
+    fn on_archive(ref this, sender: *u8) {
+        this.last = text::from_str("Archive");
+        match label::find("sw:status") {
+            option::Option[label::Label]::Some(l) => {
+                let _l: label::Label = l.set_text("last action: Archive");
+            }
+            option::Option[label::Label]::None => { }
+        }
+        return;
+    }
+
+    fn on_delete(ref this, sender: *u8) {
+        this.last = text::from_str("Delete");
+        match label::find("sw:status") {
+            option::Option[label::Label]::Some(l) => {
+                let _l: label::Label = l.set_text("last action: Delete");
+            }
+            option::Option[label::Label]::None => { }
+        }
+        return;
+    }
+}
+
+impl Swipe: component::Component {
+    fn build(ref this) -> core::Node {
+        var body: core::Builder = core::Builder::new();
+        body.add(shell::caption("swipeable  ·  content + swipe_item children"));
+        body.add(ui::label(
+            "On AppKit, actions also appear as a context menu (right-click). Touch platforms reveal by drag.",
+            key: "sw:note",
+            font_size: 13.0f64,
+            text_color: vocab::Color::ink(0.65f64),
+            max_lines: 4 as i64,
+            line_break: vocab::LineBreak::WordWrap,
+        ));
+
+        var row_body: core::Builder = core::Builder::new();
+        row_body.add(ui::label(
+            "Meeting notes",
+            key: "sw:title",
+            font_size: 14.0f64,
+            font_weight: vocab::FontWeight::Medium,
+            text_color: vocab::Color::ink(),
+        ));
+        row_body.add(ui::label(
+            "Swipe or right-click for actions",
+            key: "sw:sub",
+            font_size: 12.0f64,
+            text_color: vocab::Color::ink(0.55f64),
+        ));
+        var content: core::Node = core::column(row_body)
+            .padding(12.0f64)
+            .gap(2.0f64)
+            .grow(1.0f64);
+        content.set_background_color(vocab::Color::raised());
+        content.set_corner_radius(vocab::Corners::all(8.0f64));
+
+        var sw: core::Node = ui::swipeable(key: "sw:row").height(64.0f64);
+        let _c: status::Status = sw.add_child(content);
+        let _a: status::Status = sw.add_child(ui::swipe_item(
+            key: "sw:archive",
+            text: "Archive",
+            icon: "archivebox",
+            on_clicked: this.on_archive,
+        ));
+        let _d: status::Status = sw.add_child(ui::swipe_item(
+            key: "sw:delete",
+            text: "Delete",
+            icon: "trash",
+            destructive: true,
+            on_clicked: this.on_delete,
+        ));
+        body.add(sw);
+
+        body.add(ui::label(
+            "last action: (none)",
+            key: "sw:status",
+            font_size: 13.0f64,
+            text_color: vocab::Color::ink(0.7f64),
+        ));
+
+        return shell::panel(
+            "Swipe",
+            "Reveal actions on a row. Non-item children are content; swipe_item children are actions.",
+            core::column(body).gap(12.0f64),
+            howto: "var sw = ui::swipeable(key: \"row\");\nsw.add_child(content);\nsw.add_child(ui::swipe_item(text: \"Delete\",\n    destructive: true, on_clicked: this.on_delete));",
+        );
+    }
+}
+
+impl Swipe: component::Lifecycle {
+    fn on_attach(ref this) { return; }
+    fn on_detach(ref this) { return; }
+}

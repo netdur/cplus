@@ -44,6 +44,7 @@
 //! - E0346: uninitialized `let` requires a type annotation
 
 use crate::ast::*;
+use crate::attrs::deprecation_note;
 use crate::diagnostics::{DiagCode, DiagSink, Diagnostic, LineMap, Severity};
 use crate::lexer::{NumSuffix, Span as ByteSpan};
 use std::collections::HashMap;
@@ -1057,6 +1058,7 @@ fn check_with_files_inner(
         lm,
         sink: &mut sink,
         fns: HashMap::new(),
+        deprecated: HashMap::new(),
         enums: Vec::new(),
         enum_by_name: HashMap::new(),
         structs: Vec::new(),
@@ -1491,6 +1493,15 @@ struct SemaCx<'a> {
     lm: LineMap,
     sink: &'a mut DiagSink,
     fns: HashMap<String, FnSig>,
+    /// `#[deprecated]` items, by the key a USE resolves to: a free function's
+    /// name, or `Type.method` for a method. The value is the attribute's
+    /// optional migration note, carried into W0006 verbatim.
+    ///
+    /// Keyed rather than stored on `FnSig` because a deprecation is a
+    /// property of the declaration, not of the signature — nothing about
+    /// calling convention or types changes, and every `FnSig` construction
+    /// site would otherwise have to carry a field it never reads.
+    deprecated: HashMap<String, Option<String>>,
     enums: Vec<EnumDef>,
     enum_by_name: HashMap<String, EnumId>,
     structs: Vec<StructDef>,
@@ -2249,13 +2260,6 @@ fn layout_of_inner(
     tables: &dyn TypeShape,
     visiting: &mut Vec<(bool, u32)>,
 ) -> Option<(u64, u64)> {
-    fn align_up(off: u64, al: u64) -> u64 {
-        if al == 0 {
-            off
-        } else {
-            (off + al - 1) & !(al - 1)
-        }
-    }
     let ptr = (crate::target::active_target().pointer_width / 8) as u64;
     match ty {
         // v0.0.27 distinct alias: layout IS the base's layout.
@@ -2492,28 +2496,6 @@ impl SemaCx<'_> {
             message: msg,
             primary,
             labels: Vec::new(),
-            notes: Vec::new(),
-            suggestions: Vec::new(),
-        });
-    }
-
-    /// Like `err`, but attaches secondary labels (rendered as anchored
-    /// `note:` lines with their own snippet). Used where the error has a
-    /// partner location — E0335's "value moved here".
-    fn err_with_labels(
-        &mut self,
-        code: &'static str,
-        msg: String,
-        span: ByteSpan,
-        labels: Vec<crate::diagnostics::Label>,
-    ) {
-        let primary = self.primary_for(span);
-        self.sink.emit(Diagnostic {
-            severity: Severity::Error,
-            code: DiagCode(code),
-            message: msg,
-            primary,
-            labels,
             notes: Vec::new(),
             suggestions: Vec::new(),
         });
@@ -2782,6 +2764,57 @@ impl SemaCx<'_> {
             (Some(a), Some(b)) => a == b,
             _ => true,
         }
+    }
+
+    /// W0006: report a use of a `#[deprecated]` item. `what` is how the use
+    /// reads in source (`old`, `Parser.parse`), `key` the registry key.
+    ///
+    /// Warned at the USE, never at the declaration — a deprecated item is
+    /// expected to still exist and still be called by its own tests; the
+    /// signal is for the consumer who has to migrate.
+    fn warn_if_deprecated(&mut self, key: &str, what: &str, span: ByteSpan) {
+        let Some(note) = self.deprecated.get(key).cloned() else {
+            return;
+        };
+        let msg = match note {
+            Some(n) => format!("`{what}` is deprecated: {n}"),
+            None => format!("`{what}` is deprecated"),
+        };
+        self.warn("W0006", msg, span);
+    }
+
+    /// The registry key for a method use, given the resolved receiver type.
+    /// A generic instantiation carries a mangled struct name (`Vec__i32`)
+    /// that no `impl` block ever wrote, so the template name it came from is
+    /// the fallback — that is where the attribute was actually written.
+    fn deprecation_key_for_method(&self, recv: &Ty, method: &str) -> Option<String> {
+        let owner = match recv {
+            Ty::Str => "str".to_string(),
+            Ty::Struct(id) => {
+                let sd = &self.structs[id.0 as usize];
+                let direct = format!("{}.{}", sd.name, method);
+                if self.deprecated.contains_key(&direct) {
+                    return Some(direct);
+                }
+                match &sd.generic_origin {
+                    Some((tmpl, _)) => tmpl.clone(),
+                    None => return None,
+                }
+            }
+            Ty::Enum(id) => {
+                let ed = &self.enums[id.0 as usize];
+                let direct = format!("{}.{}", ed.name, method);
+                if self.deprecated.contains_key(&direct) {
+                    return Some(direct);
+                }
+                match &ed.generic_origin {
+                    Some((tmpl, _)) => tmpl.clone(),
+                    None => return None,
+                }
+            }
+            _ => return None,
+        };
+        Some(format!("{owner}.{method}"))
     }
 
     /// Emit a non-fatal warning. Same span-routing as `err`, but
@@ -4952,6 +4985,10 @@ impl SemaCx<'_> {
                     .iter()
                     .map(|gp| gp.bounds.iter().map(|b| b.name.clone()).collect())
                     .collect();
+                if let Some(note) = deprecation_note(&m.attributes) {
+                    let key = format!("{}.{}", self.structs[id.0 as usize].name, m.name.name);
+                    self.deprecated.insert(key, note);
+                }
                 self.structs[id.0 as usize].methods.insert(
                     m.name.name.clone(),
                     MethodSig {
@@ -5223,6 +5260,10 @@ impl SemaCx<'_> {
                 Some(t) => self.resolve_type(t),
                 None => Ty::Unit,
             };
+            if let Some(note) = deprecation_note(&m.attributes) {
+                self.deprecated
+                    .insert(format!("str.{}", m.name.name), note);
+            }
             self.builtin_str_methods.insert(
                 m.name.name.clone(),
                 MethodSig {
@@ -5409,6 +5450,10 @@ impl SemaCx<'_> {
                 .iter()
                 .map(|gp| gp.bounds.iter().map(|b| b.name.clone()).collect())
                 .collect();
+            if let Some(note) = deprecation_note(&m.attributes) {
+                let key = format!("{}.{}", self.enums[enum_id.0 as usize].name, m.name.name);
+                self.deprecated.insert(key, note);
+            }
             self.enums[enum_id.0 as usize].methods.insert(
                 m.name.name.clone(),
                 MethodSig {
@@ -6890,6 +6935,9 @@ impl SemaCx<'_> {
                     f.name.span,
                 );
                 continue;
+            }
+            if let Some(note) = deprecation_note(&f.attributes) {
+                self.deprecated.insert(f.name.name.clone(), note);
             }
             self.fns.insert(
                 f.name.name.clone(),
@@ -9146,17 +9194,20 @@ impl SemaCx<'_> {
         }
         if let Some(exp) = expected {
             if exp != Ty::Error && actual != Ty::Error && exp != actual {
-                // A distinct alias renders by its own name (v0.0.27) —
-                // "expected `distinct type`, found `distinct type`" names
-                // neither side. Other types keep the historical `name()`.
-                let side = |t: &Ty| match t {
-                    Ty::Distinct { .. } => ty_display(t),
-                    _ => t.name().to_string(),
-                };
+                // Name both sides the way the user spells them. The
+                // categorizing `Ty::name()` this used to call answers
+                // "struct" for every struct, so the most common mismatch in
+                // the language printed "expected `struct`, found `struct`"
+                // and the reader had to go read both declarations to learn
+                // it was `Vec[Text]` vs `Vec[str]`. `ty_display_named`
+                // already renders generic instantiations as source
+                // (`Vec[Text]`), keeps the distinct-alias leaf name the
+                // v0.0.27 note asks for, and falls through to the same
+                // `ty_display` for everything else.
                 let mut msg = format!(
                     "type mismatch: expected `{}`, found `{}`",
-                    side(&exp),
-                    side(&actual)
+                    self.ty_display_named(&exp),
+                    self.ty_display_named(&actual)
                 );
                 if matches!(exp, Ty::Distinct { .. }) || matches!(actual, Ty::Distinct { .. }) {
                     msg.push_str(" — distinct types convert only via an explicit `as` cast");
@@ -9271,7 +9322,7 @@ impl SemaCx<'_> {
             }
             ExprKind::Cast { expr, ty } => self.check_cast(expr, ty, e.span),
             ExprKind::CastChecked { expr, ty } => self.check_cast_checked(expr, ty, e.span),
-            ExprKind::Path { segments } => self.check_path(segments, e.span),
+            ExprKind::Path { segments } => self.check_path_expected(segments, e.span, expected),
             ExprKind::StructLit { name, fields } => self.check_struct_lit(name, fields, e.span),
             ExprKind::InferredStructLit { fields } => {
                 self.check_inferred_struct_lit(fields, expected, e.span)
@@ -10897,6 +10948,12 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         let scrutinee_owned = !scrutinee_borrowed;
 
         let enum_name = self.enums[enum_id.0 as usize].name.clone();
+        // `enum_name` is the IDENTITY key — a generic instantiation stores its
+        // mangled name (`Option__str`), which is what patterns are compared
+        // against. It is not a spelling: `Option__str` is not accepted in
+        // source (E0405), so an error printing it named a type the reader
+        // could not write. Diagnostics use the source rendering instead.
+        let enum_display = self.ty_display_named(&Ty::Enum(enum_id));
         let variant_names: Vec<String> = self.enums[enum_id.0 as usize]
             .variants
             .iter()
@@ -10962,6 +11019,9 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         }
         let moved_pre = self.snapshot_moved();
         let mut nondiverging_arm_moves: Vec<Vec<Vec<(String, bool)>>> = Vec::new();
+        // Any arm whose pattern was rejected drops the exhaustiveness report
+        // below — the arms it would judge are the ones that did not type.
+        let mut pattern_poisoned = false;
 
         for arm in arms {
             self.restore_moved(&moved_pre);
@@ -10976,6 +11036,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                 &mut covered,
                 &mut has_catchall,
                 scrutinee_owned,
+                &mut pattern_poisoned,
             );
             // An arm whose body syntactically diverges (every path ends in
             // `return` and friends) carries no value to the match: it neither
@@ -11089,7 +11150,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
 
         // Exhaustiveness: every variant must be covered, or there must be
         // a catch-all wildcard / binding arm.
-        if !has_catchall {
+        if !has_catchall && !pattern_poisoned {
             let mut missing: Vec<String> = variant_names
                 .iter()
                 .filter(|n| !covered.contains_key(*n))
@@ -11102,7 +11163,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                     "E0340",
                     format!(
                         "non-exhaustive `match` on enum `{}`: missing variant(s) {}",
-                        enum_name, list
+                        enum_display, list
                     ),
                     span,
                 );
@@ -11139,6 +11200,12 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         // may be moved out; a borrowed-place scrutinee makes them borrows
         // (a move-out is a partial move → E0337, enforced in `check_match`).
         scrutinee_owned: bool,
+        // Set when this pattern is rejected, so the caller drops the
+        // exhaustiveness report: a `match` whose arms did not type cannot
+        // also be judged on which variants they cover. One fault used to
+        // print as four errors — the E0341, an E0300 per unbound payload
+        // name, and a trailing E0340 listing every variant as missing.
+        poisoned: &mut bool,
     ) {
         match &pat.kind {
             // `lower` desugars a literal-pattern match into a temp binding
@@ -11171,6 +11238,10 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                 variant_name,
                 payload,
             } => {
+                // The scrutinee's SOURCE spelling, for diagnostics only —
+                // `enum_name` stays the mangled identity key the acceptance
+                // shapes below compare against.
+                let enum_display = self.ty_display_named(&Ty::Enum(enum_id));
                 // Pattern's enum-segment must match the scrutinee's enum.
                 //
                 // Three acceptance shapes (slice 7GEN.5e — "no mangled
@@ -11194,34 +11265,45 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                 // args must produce the same EnumId as the scrutinee's.
                 // Generic-base fallback applies *only* when the
                 // pattern has no type args (`Option::Some(v)`).
-                let pattern_matches = if !type_args.is_empty() {
-                    let resolved = self.resolve_generic_enum_instantiation(
+                let resolved_pat = if type_args.is_empty() {
+                    None
+                } else {
+                    Some(self.resolve_generic_enum_instantiation(
                         &pat_enum.name,
                         type_args,
                         pat.span,
-                    );
-                    matches!(resolved, Ty::Enum(rid) if rid == enum_id)
-                } else {
-                    pat_enum.name == enum_name
-                        || self.enums[enum_id.0 as usize]
-                            .generic_base
-                            .as_deref()
-                            .is_some_and(|g| g == pat_enum.name)
+                    ))
+                };
+                let pattern_matches = match &resolved_pat {
+                    Some(r) => matches!(r, Ty::Enum(rid) if *rid == enum_id),
+                    None => {
+                        pat_enum.name == enum_name
+                            || self.enums[enum_id.0 as usize]
+                                .generic_base
+                                .as_deref()
+                                .is_some_and(|g| g == pat_enum.name)
+                    }
                 };
                 if !pattern_matches {
-                    let display = if type_args.is_empty() {
-                        pat_enum.name.clone()
-                    } else {
-                        format!("{}[{}]", pat_enum.name, "...")
+                    // Name what the pattern actually says. This printed
+                    // `Option[...]` — the args elided — against a mangled
+                    // `Option__str`, so NEITHER side of the mismatch told
+                    // the reader a type. The pattern's args already resolved
+                    // above; render that instantiation.
+                    let display = match &resolved_pat {
+                        Some(Ty::Enum(rid)) => self.ty_display_named(&Ty::Enum(*rid)),
+                        _ => name_leaf(&pat_enum.name).to_string(),
                     };
                     self.err(
                         "E0341",
                         format!(
                             "pattern type `{}` does not match scrutinee enum `{}`",
-                            display, enum_name
+                            display, enum_display
                         ),
                         pat.span,
                     );
+                    self.bind_payload_as_error(payload, scrutinee_owned);
+                    *poisoned = true;
                     return;
                 }
                 // Look up the variant by name; capture its payload types.
@@ -11235,10 +11317,12 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                         "E0317",
                         format!(
                             "enum `{}` has no variant `{}`",
-                            enum_name, variant_name.name
+                            enum_display, variant_name.name
                         ),
                         variant_name.span,
                     );
+                    self.bind_payload_as_error(payload, scrutinee_owned);
+                    *poisoned = true;
                     return;
                 };
                 covered.insert(variant_name.name.clone(), ());
@@ -11248,13 +11332,14 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                         "E0342",
                         format!(
                             "variant `{}::{}` takes {} payload value(s); pattern has {}",
-                            enum_name,
+                            enum_display,
                             variant_name.name,
                             vdef.payload.len(),
                             payload.len()
                         ),
                         pat.span,
                     );
+                    self.bind_payload_as_error(payload, scrutinee_owned);
                     return;
                 }
                 // Bind payload patterns. Phase 3: only Wildcard / Binding
@@ -11300,6 +11385,31 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                     }
                 }
             }
+        }
+    }
+
+    /// Bind a rejected pattern's payload names as `Ty::Error` so the arm
+    /// BODY still resolves them. Without this, bailing out of a bad pattern
+    /// left `Some(lp)`'s `lp` out of scope and every mention of it in the
+    /// body reported E0300 `undefined name` — noise pointing at a name the
+    /// author wrote correctly. `Ty::Error` is the existing poison: it
+    /// compares equal to nothing and suppresses downstream type reports.
+    fn bind_payload_as_error(&mut self, payload: &[Pattern], scrutinee_owned: bool) {
+        for pp in payload {
+            let PatternKind::Binding(name) = &pp.kind else {
+                continue;
+            };
+            self.scopes.last_mut().unwrap().insert(
+                name.name.clone(),
+                LocalInfo {
+                    ty: Ty::Error,
+                    mutable: false,
+                    moved: false,
+                    moved_at: None,
+                    assigned: true,
+                    owns_value: scrutinee_owned,
+                },
+            );
         }
     }
 
@@ -12619,6 +12729,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
             }
             return Ty::Error;
         };
+        self.warn_if_deprecated(name, name_leaf(name), callee.span);
         // Slice 10.FFI.4: variadic extern fns accept any number of
         // extra args beyond their fixed-param list. Fixed-param count
         // is still enforced as a minimum.
@@ -13214,8 +13325,32 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         // to spot it; a parameter that IS generic is not a fn-pointer and the
         // shape test skips it.
         self.try_bound_method_refs(args, &gsig.params, call_span);
+        // 2026-08-12: a parameter whose declared type mentions no generic
+        // param is CONCRETE — it constrains no type variable, so its argument
+        // is checked the way the non-generic path checks it: WITH the expected
+        // type. That is what lets a bare fn name coerce into a fn-pointer
+        // slot (and a `Text` into a `str` slot). Checked with None, a generic
+        // fn's fn-typed DEFAULT (`run_job(job, then: fn(*u8) = job_done_noop)`)
+        // died as E0312 on every call that omitted it, with the error span
+        // pointing into the DECLARATION — so a generic fn could declare a
+        // default no caller could use, and the workaround in the wild was
+        // binding the library's own no-op to a local at every call site.
+        let concrete_expected: Vec<Option<Ty>> = gsig
+            .params
+            .iter()
+            .map(|p| {
+                if ty_contains_param(&p.ty, &self.structs, &self.enums) {
+                    None
+                } else {
+                    Some(p.ty.clone())
+                }
+            })
+            .collect();
         // First pass: check args without an expected type to get their
-        // natural type, then unify against the generic param type.
+        // natural type, then unify against the generic param type. Concrete
+        // positions carry their expected type instead (above) and skip
+        // unification below — `check_expr` already reported any mismatch, and
+        // a second E0302 from the unifier would say the same thing twice.
         let arg_tys: Vec<Ty> = args
             .iter()
             .enumerate()
@@ -13234,14 +13369,17 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                         .map(|p| p.ty.clone())
                         .unwrap_or(Ty::Error)
                 } else {
-                    self.check_expr(a, None)
+                    self.check_expr(a, concrete_expected.get(i).cloned().flatten())
                 }
             })
             .collect();
-        for (param, arg_ty) in gsig.params.iter().zip(arg_tys.iter()) {
+        for (i, (param, arg_ty)) in gsig.params.iter().zip(arg_tys.iter()).enumerate() {
             if matches!(arg_ty, Ty::Error) {
                 had_err = true;
                 continue;
+            }
+            if concrete_expected.get(i).map(|c| c.is_some()).unwrap_or(false) {
+                continue; // checked with its own expected type above
             }
             if !unify_param_against_concrete(
                 &param.ty,
@@ -13738,6 +13876,14 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         // receivers (string / SIMD / raw-ptr / iterator) are not in the map and
         // are handled at their own sites below (e.g. `to_string`).
         self.check_method_contract(&recv_ty, &name.name, call_span);
+        // One point for every method shape below (struct, enum, generic
+        // instantiation, blessed `str`): the receiver's type is resolved
+        // here, and each branch further down would otherwise need its own
+        // copy of the same lookup.
+        if let Some(key) = self.deprecation_key_for_method(&recv_ty, &name.name) {
+            let what = format!("{}.{}", self.ty_display_named(&recv_ty), name.name);
+            self.warn_if_deprecated(&key, &what, name.span);
+        }
         // STRM v2 (2026-07-31): the Phase-8 blessed method arm for the legacy
         // internal `Ty::String` (`len`/`is_empty`/`as_str`/`clone`) was
         // deleted as unreachable. Interpolation types as the designated
@@ -14074,6 +14220,40 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         };
         let struct_name = self.structs[id.0 as usize].name.clone();
         let Some(sig) = self.structs[id.0 as usize].methods.get(&name.name).cloned() else {
+            // TEXT→STR receiver fallthrough (2026-08-13): the designated
+            // owned string carries only its owning/mutating surface — every
+            // read lives in the blessed `impl str` block and is reached
+            // through the borrowing coercion, exactly like an argument
+            // position. `t.trim()` therefore dispatches to `str.trim` with
+            // `t` coerced to its view; the recorded span makes codegen
+            // extract the `{ptr,len}` prefix and borrowck classify the
+            // result as a view OF `t` (its owner stays write-locked while
+            // the view lives). An inherent `Text` method always wins —
+            // this arm only runs on a miss.
+            if self.designated_string_struct == Some(id) {
+                if let Some(sig) = self.builtin_str_methods.get(&name.name).cloned() {
+                    self.text_to_str_coercion_table.insert(receiver.span);
+                    if let Err(ty) =
+                        self.run_method_gates(GateOwner::NoNominal, "str", name, args, call_span)
+                    {
+                        return ty;
+                    }
+                    if !self.check_method_receiver(
+                        receiver, &Ty::Str, name, &sig, args, call_span, "str",
+                    ) {
+                        return Ty::Error;
+                    }
+                    return self.check_method_args_and_return(
+                        name,
+                        &sig,
+                        &HashMap::new(),
+                        type_args,
+                        args,
+                        "str",
+                        call_span,
+                    );
+                }
+            }
             self.err(
                 "E0324",
                 format!(
@@ -16996,6 +17176,18 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                     let rt = self.check_expr(rhs, None);
                     if rt == Ty::Str {
                         self.text_to_str_coercion_table.insert(lhs.span);
+                    } else if matches!(&rt, Ty::Struct(rid) if self.designated_string_struct == Some(*rid))
+                    {
+                        // 2026-08-12: `Text == Text` — both sides coerce to
+                        // their `str` views and compare by BYTE CONTENT, the
+                        // rule `Text == str` already set. Identity has no
+                        // meaning for a heap buffer, so content is the only
+                        // reading; without this the working spellings were
+                        // `a == b.view()` or knowing which side was owned —
+                        // one more asymmetry in the str/Text rules an agent
+                        // applies the wrong one of, confidently.
+                        self.text_to_str_coercion_table.insert(lhs.span);
+                        self.text_to_str_coercion_table.insert(rhs.span);
                     } else if rt != Ty::Error {
                         self.err(
                             "E0302",
@@ -18982,7 +19174,12 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         None
     }
 
-    fn check_path(&mut self, segments: &[Ident], span: ByteSpan) -> Ty {
+    fn check_path_expected(
+        &mut self,
+        segments: &[Ident],
+        span: ByteSpan,
+        expected: Option<Ty>,
+    ) -> Ty {
         // Phase 2A: paths are exactly two segments — `EnumName::Variant`.
         if segments.len() != 2 {
             self.err(
@@ -18994,6 +19191,20 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         }
         let enum_seg = &segments[0];
         let variant_seg = &segments[1];
+        // AN ASSOCIATED FN WITHOUT A RECEIVER IS A NAMESPACED FN, and a
+        // namespaced fn is an address like any other. `Type::f` in value
+        // position used to be "unknown type": the path checker only knew
+        // `Enum::Variant`, so an objc IMP — a fn pointer by definition — could
+        // not live on the type it belongs to, and every backend that needs one
+        // grew a top-level fn beside the struct that wanted it.
+        //
+        // Only receiverless fns qualify. A method has a `this` the caller has
+        // to supply, so its address is not this signature; that stays E0324.
+        if !self.enum_by_name.contains_key(&enum_seg.name) {
+            if let Some(ty) = self.assoc_fn_as_value(enum_seg, variant_seg, span, &expected) {
+                return ty;
+            }
+        }
         let Some(&id) = self.enum_by_name.get(&enum_seg.name) else {
             self.err(
                 "E0303",
@@ -19012,6 +19223,125 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
             return Ty::Error;
         }
         Ty::Enum(id)
+    }
+
+    /// `Type::f` in VALUE position, when `f` is an associated fn (no receiver).
+    /// Answers the fn-pointer type, or `None` when the path is not one of
+    /// these — the caller then continues down the `Enum::Variant` path and
+    /// reports whatever it finds.
+    fn assoc_fn_as_value(
+        &mut self,
+        type_seg: &Ident,
+        fn_seg: &Ident,
+        span: ByteSpan,
+        expected: &Option<Ty>,
+    ) -> Option<Ty> {
+        let sid = self.struct_by_name.get(&type_seg.name).copied()?;
+        let Some(sig) = self.structs[sid.0 as usize]
+            .methods
+            .get(&fn_seg.name)
+            .cloned()
+        else {
+            self.err(
+                "E0324",
+                format!(
+                    "struct `{}` has no associated function `{}`",
+                    type_seg.name, fn_seg.name
+                ),
+                fn_seg.span,
+            );
+            return Some(Ty::Error);
+        };
+        if sig.receiver.is_some() {
+            // A method needs its receiver supplied, so its address is not the
+            // signature written here — `fn(this, …)` is not `fn(…)`.
+            self.err(
+                "E0312",
+                format!(
+                    "`{}::{}` is a method, not an associated function: it takes a receiver, so it has no address as a plain `fn(...)` value",
+                    type_seg.name, fn_seg.name
+                ),
+                span,
+            );
+            return Some(Ty::Error);
+        }
+        if !sig.generic_params.is_empty() {
+            self.err(
+                "E0821",
+                format!(
+                    "cannot take address of generic associated function `{}::{}` without specifying type parameters",
+                    type_seg.name, fn_seg.name
+                ),
+                span,
+            );
+            return Some(Ty::Error);
+        }
+        let qualified = format!("{}::{}", type_seg.name, fn_seg.name);
+        let Some(Ty::FnPtr {
+            param_takes: expected_takes,
+            param_refs: expected_refs,
+            ..
+        }) = expected.clone()
+        else {
+            self.err(
+                "E0312",
+                format!(
+                    "associated function `{qualified}` used as a value; assign it to a `fn(...)`-typed binding to take its address"
+                ),
+                span,
+            );
+            return Some(Ty::Error);
+        };
+        // The same ownership-marker rules a free fn answers to: `fn(R)`
+        // borrows, `fn(take R)` consumes, `fn(ref R)` writes back.
+        let bad = sig.params.iter().enumerate().find_map(|(i, p)| {
+            let want_ref = expected_refs.get(i).copied().unwrap_or(false);
+            if p.mutable != want_ref {
+                let msg = if p.mutable {
+                    "is `ref` (write-back, pointer-passed), but the expected fn-pointer slot is not `ref` — write `fn(ref R)`"
+                } else {
+                    "is not `ref`, but the expected fn-pointer slot is `fn(ref R)` — make it a `ref` parameter"
+                };
+                return Some((i, msg.to_string()));
+            }
+            if want_ref || self.is_copy(&p.ty) {
+                return None;
+            }
+            let want_take = expected_takes.get(i).copied().unwrap_or(false);
+            if p.move_ != want_take {
+                let msg = if p.move_ {
+                    "is `take` (consumes ownership), but the expected fn-pointer borrows it — write `fn(take R)`"
+                } else {
+                    "is a read-only borrow, but the expected fn-pointer consumes it (`fn(take R)`) — make it a `take` parameter"
+                };
+                return Some((i, msg.to_string()));
+            }
+            None
+        });
+        if let Some((i, msg)) = bad {
+            self.err(
+                "E0312",
+                format!(
+                    "cannot coerce `{qualified}` to the expected fn-pointer type: parameter {} {msg}",
+                    i + 1
+                ),
+                span,
+            );
+            return Some(Ty::Error);
+        }
+        let params: Vec<Ty> = sig.params.iter().map(|p| p.ty.clone()).collect();
+        let param_takes: Vec<bool> = if expected_takes.len() == params.len() {
+            expected_takes
+        } else {
+            sig.params.iter().map(|p| p.move_).collect()
+        };
+        let param_refs: Vec<bool> = sig.params.iter().map(|p| p.mutable).collect();
+        Some(Ty::FnPtr {
+            params,
+            param_takes,
+            param_refs,
+            return_type: Box::new(sig.return_type),
+        })
     }
 
     fn resolve_value_ident(&mut self, name: &str, span: ByteSpan, expected: Option<Ty>) -> Ty {
@@ -21711,11 +22041,34 @@ fn collect_effects_expr(e: &Expr, out: &mut BodyEffects) {
         // Taking a function's address is pure — no runtime effect.
         ExprKind::FnRef { .. } => {}
         ExprKind::Call { callee, args, .. } => {
-            if let Some(name) = extract_call_name(callee) {
-                out.calls.push((name, e.span));
+            let name = extract_call_name(callee);
+            if let Some(n) = &name {
+                out.calls.push((n.clone(), e.span));
             }
             // Walk arguments — nested calls inside args still count.
             collect_effects_expr(callee, out);
+            // Sink relaxation (2026-08-13): an interpolated literal passed
+            // DIRECTLY to a blessed print sink is lowered part-wise by
+            // codegen — no `Text` materializes, nothing heap-allocates — so
+            // the interp effect is NOT recorded and `#[no_alloc]` admits it.
+            // The parts' own sub-expressions still walk (a call inside a
+            // part is still a call). The set lives in
+            // `ast::blessed_print_sink`, shared with codegen's intercept —
+            // they cannot drift.
+            if args.len() == 1
+                && name
+                    .as_deref()
+                    .is_some_and(|n| crate::ast::blessed_print_sink(n).is_some())
+            {
+                if let ExprKind::InterpStr { parts } = &args[0].kind {
+                    for p in parts {
+                        if let InterpStrPart::Expr(pe) = p {
+                            collect_effects_expr(pe, out);
+                        }
+                    }
+                    return;
+                }
+            }
             for a in args {
                 collect_effects_expr(a, out);
             }
@@ -25116,6 +25469,53 @@ fn pm(ref r: R) -> i32 { return 0; }\n";
     }
 
     #[test]
+    fn type_mismatch_e0302_names_both_sides() {
+        // It used to print the CATEGORY (`Ty::name()`), so the language's
+        // most common mismatch read "expected `struct`, found `struct`" and
+        // named neither side. Every shape must come back as source spelling.
+        let cases: &[(&str, &str, &str)] = &[
+            (
+                "struct",
+                "struct A { x: i32 }\nstruct B { y: i32 }\n\
+                 fn main() -> i32 { let a: A = B { y: 1 }; return 0; }",
+                "expected `A`, found `B`",
+            ),
+            (
+                "enum",
+                "enum E1 { A }\nenum E2 { B }\n\
+                 fn main() -> i32 { let e: E1 = E2::B; return 0; }",
+                "expected `E1`, found `E2`",
+            ),
+            (
+                "array",
+                "fn main() -> i32 { let a: [i32; 3] = 5; return 0; }",
+                "expected `[i32; 3]`, found `i32`",
+            ),
+            (
+                "raw_ptr",
+                "fn main() -> i32 { let p: *u8 = 5; return 0; }",
+                "expected `*u8`, found `i32`",
+            ),
+            (
+                "primitive",
+                "fn main() -> i32 { let b: bool = 5; return 0; }",
+                "expected `bool`, found `i32`",
+            ),
+        ];
+        for (name, src, want) in cases {
+            let msgs: Vec<String> = check_src(src)
+                .into_iter()
+                .filter(|d| d.code.0 == "E0302")
+                .map(|d| d.message.clone())
+                .collect();
+            assert!(
+                msgs.iter().any(|m| m.contains(want)),
+                "[{name}] expected a message containing {want:?}, got {msgs:?}"
+            );
+        }
+    }
+
+    #[test]
     fn unknown_type_e0303() {
         assert_only_code("fn main() -> Foo { return 0; }", "E0303");
     }
@@ -27036,6 +27436,116 @@ fn pm(ref r: R) -> i32 { return 0; }\n";
              fn main() -> i32 { let m: M = M::A; return match m { M::A => 0 }; }",
         );
         assert!(codes.contains(&"E0340"), "expected E0340, got: {codes:?}");
+    }
+
+    #[test]
+    fn deprecated_fn_and_method_uses_warn_w0006() {
+        // The whole point is that it stays a WARNING: the call still
+        // resolves, still type-checks, and the build still succeeds. A
+        // stdlib refinement can land as a list its consumers work through.
+        let src = "\
+#[deprecated(\"use parse_v2 instead\")]\n\
+fn parse() -> i32 { return 1; }\n\
+#[deprecated]\n\
+fn older() -> i32 { return 2; }\n\
+fn fine() -> i32 { return 3; }\n\
+struct P { n: i32 }\n\
+impl P {\n\
+  #[deprecated(\"use value() instead\")]\n\
+  fn get(this) -> i32 { return this.n; }\n\
+  fn value(this) -> i32 { return this.n; }\n\
+}\n\
+fn main() -> i32 { let p: P = P { n: 1 };\n\
+  return parse() + older() + p.get() + p.value() + fine(); }\n";
+        let ds = check_src(src);
+        let warns: Vec<String> = ds
+            .iter()
+            .filter(|d| d.code.0 == "W0006")
+            .map(|d| d.message.clone())
+            .collect();
+        assert_eq!(warns.len(), 3, "one per deprecated USE, got {warns:?}");
+        assert!(
+            warns
+                .iter()
+                .any(|m| m == "`parse` is deprecated: use parse_v2 instead"),
+            "note must be carried verbatim, got {warns:?}"
+        );
+        assert!(
+            warns.iter().any(|m| m == "`older` is deprecated"),
+            "a bare #[deprecated] warns without a note, got {warns:?}"
+        );
+        assert!(
+            warns
+                .iter()
+                .any(|m| m == "`P.get` is deprecated: use value() instead"),
+            "methods warn too, got {warns:?}"
+        );
+        assert!(
+            !ds.iter().any(|d| matches!(d.severity, Severity::Error)),
+            "deprecation must not fail the build: {:?}",
+            ds.iter().map(|d| d.code.0).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn pattern_mismatch_names_both_instantiations_not_the_mangled_one() {
+        // Both sides used to be unreadable: the scrutinee printed its
+        // mangled identity (`Option__str`, which source cannot even spell —
+        // writing it back gets E0405), and the pattern printed `Option[...]`
+        // with the args elided. The reader learned neither type.
+        let src = "\
+enum Opt[T] { Some(T), None }\n\
+fn f() -> Opt[i32] { return Opt[i32]::None; }\n\
+fn main() -> i32 { return match f() { Opt[bool]::Some(v) => 1, Opt[bool]::None => 0 }; }\n";
+        let msgs: Vec<String> = check_src(src)
+            .into_iter()
+            .filter(|d| d.code.0 == "E0341")
+            .map(|d| d.message.clone())
+            .collect();
+        assert!(
+            msgs.iter()
+                .any(|m| m.contains("`Opt[bool]`") && m.contains("`Opt[i32]`")),
+            "expected both instantiations named, got {msgs:?}"
+        );
+        for m in &msgs {
+            assert!(
+                !m.contains("__") && !m.contains("[...]"),
+                "diagnostic still leaks an unspellable name: {m:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_rejected_pattern_does_not_cascade_into_e0300_and_e0340() {
+        // One fault, one class of report. The unbound payload name used to
+        // add an E0300 per mention, and the uncovered arms added a trailing
+        // E0340 listing every variant as missing — 4 errors for 1 mistake.
+        let src = "\
+enum Opt[T] { Some(T), None }\n\
+fn f() -> Opt[i32] { return Opt[i32]::None; }\n\
+fn main() -> i32 { return match f() { Opt[bool]::Some(v) => v as i32, Opt[bool]::None => 0 }; }\n";
+        let codes = errors(src);
+        assert!(codes.contains(&"E0341"), "expected E0341, got {codes:?}");
+        assert!(
+            !codes.contains(&"E0300"),
+            "payload name must stay bound (as Error), got {codes:?}"
+        );
+        assert!(
+            !codes.contains(&"E0340"),
+            "exhaustiveness must not be judged on rejected arms, got {codes:?}"
+        );
+    }
+
+    #[test]
+    fn exhaustiveness_still_reported_when_every_pattern_is_valid() {
+        // The poison must be narrow: a match whose arms all type is still
+        // judged on coverage.
+        let codes = errors(
+            "enum Opt[T] { Some(T), None }\n\
+             fn f() -> Opt[i32] { return Opt[i32]::None; }\n\
+             fn main() -> i32 { return match f() { Opt[i32]::Some(v) => v }; }\n",
+        );
+        assert!(codes.contains(&"E0340"), "expected E0340, got {codes:?}");
     }
 
     #[test]
@@ -29792,6 +30302,67 @@ fn pm(ref r: R) -> i32 { return 0; }\n";
         assert!(
             codes.contains(&"E0312"),
             "expected E0312 for bare fn-as-value without expected type, got: {codes:?}"
+        );
+    }
+
+    #[test]
+    fn associated_fn_is_a_legal_fn_pointer_value() {
+        // An objc IMP is a function pointer, so a draw callback could not live
+        // on the type it belongs to: `Type::f` in value position was "unknown
+        // type", and every backend that needed one grew a top-level fn beside
+        // the struct that wanted it. A receiverless associated fn is just a
+        // namespaced fn.
+        let codes = errors(
+            "struct Gutter { n: i32 } \
+             impl Gutter { fn draw(a: *u8, b: i32) -> i32 { return b; } } \
+             fn take_it(f: fn(*u8, i32) -> i32) -> i32 { return f(0 as *u8, 1 as i32); } \
+             fn main() -> i32 { let p: fn(*u8, i32) -> i32 = Gutter::draw; \
+                                return take_it(p) +% take_it(Gutter::draw); }",
+        );
+        assert!(
+            codes.is_empty(),
+            "an associated fn should coerce to a fn pointer, got: {codes:?}"
+        );
+    }
+
+    #[test]
+    fn method_with_a_receiver_is_not_a_fn_pointer_value_e0312() {
+        // The line the rule is drawn on: a method needs its receiver supplied,
+        // so `fn(this, …)` is not the `fn(…)` written here.
+        let codes = errors(
+            "struct Gutter { n: i32 } \
+             impl Gutter { fn draw(this, b: i32) -> i32 { return b; } } \
+             fn main() -> i32 { let p: fn(i32) -> i32 = Gutter::draw; return 0; }",
+        );
+        assert!(
+            codes.contains(&"E0312"),
+            "expected E0312 for a method taken as a plain fn value, got: {codes:?}"
+        );
+    }
+
+    #[test]
+    fn associated_fn_as_value_without_expected_fnptr_e0312() {
+        let codes = errors(
+            "struct Gutter { n: i32 } \
+             impl Gutter { fn draw(b: i32) -> i32 { return b; } } \
+             fn main() -> i32 { let f = Gutter::draw; return 0; }",
+        );
+        assert!(
+            codes.contains(&"E0312"),
+            "expected E0312 without an expected fn-pointer type, got: {codes:?}"
+        );
+    }
+
+    #[test]
+    fn unknown_associated_fn_names_the_struct_e0324() {
+        let codes = errors(
+            "struct Gutter { n: i32 } \
+             impl Gutter { fn draw(b: i32) -> i32 { return b; } } \
+             fn main() -> i32 { let p: fn(i32) -> i32 = Gutter::nope; return 0; }",
+        );
+        assert!(
+            codes.contains(&"E0324"),
+            "expected E0324 naming the missing associated fn, got: {codes:?}"
         );
     }
 

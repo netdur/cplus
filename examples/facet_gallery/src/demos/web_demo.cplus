@@ -1,0 +1,47 @@
+// Reference: web
+//   ui::web("https://example.com", key: "w").grow(1.0)
+
+import "facet/facet" as core;
+import "facet/elements" as ui;
+import "facet/component" as component;
+import "facet/vocabulary" as vocab;
+import "../shell" as shell;
+
+struct WebDemo {
+    n: i32,
+}
+
+impl WebDemo {
+    fn new() -> WebDemo { return WebDemo { n: 0 }; }
+}
+
+impl WebDemo: component::Component {
+    fn build(ref this) -> core::Node {
+        var body: core::Builder = core::Builder::new();
+        body.add(shell::caption("web  ·  WKWebView host"));
+        body.add(ui::label(
+            "source is a URL or HTML document string. Layout with grow/height; navigation callbacks optional.",
+            key: "web:note",
+            font_size: 13.0f64,
+            text_color: vocab::Color::ink(0.65f64),
+            max_lines: 3 as i64,
+            line_break: vocab::LineBreak::WordWrap,
+        ));
+        body.add(ui::web(
+            "https://example.com",
+            key: "web:view",
+        ).height(320.0f64).grow(1.0f64));
+
+        return shell::panel(
+            "Web",
+            "Embedded browser surface. Heavyweight — give it a definite height or a growing parent.",
+            core::column(body).gap(12.0f64),
+            howto: "ui::web(\"https://example.com\", key: \"w\")\n    .height(320.0).grow(1.0)",
+        );
+    }
+}
+
+impl WebDemo: component::Lifecycle {
+    fn on_attach(ref this) { return; }
+    fn on_detach(ref this) { return; }
+}

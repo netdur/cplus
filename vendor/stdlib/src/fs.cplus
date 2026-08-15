@@ -405,7 +405,10 @@ fn create_dir_all(path: str) -> result::Result[bool, result::IoError] {
         option::Option[u8]::Some(b) => b == (47 as u8),   // '/'
         option::Option[u8]::None => false,
     };
-    let parts: vec::Vec[text::Text] = full.split("/");
+    // `split` returns VIEWS into `full`'s buffer (reads live on `str`), so
+    // `full` stays read-only while `parts` is in use — `prefix` is the
+    // accumulator precisely so nothing writes back into `full`.
+    let parts: vec::Vec[str] = full.split("/");
     // `prefix` always carries a trailing '/' between segments, so each mkdir
     // target is the accumulated path with no duplicate separators.
     var prefix: text::Text = text::with_capacity(full.count() +% (1 as usize));
@@ -413,9 +416,9 @@ fn create_dir_all(path: str) -> result::Result[bool, result::IoError] {
     var i: usize = 0 as usize;
     while i < parts.count() {
         match parts.at_ptr(i) {
-            option::Option[*text::Text]::Some(seg) => {
+            option::Option[*str]::Some(seg) => {
                 if (*seg).count() > (0 as usize) {
-                    let _a: status::Status = prefix.append((*seg).view());
+                    let _a: status::Status = prefix.append({ *seg });
                     match prefix.c_str() {
                         option::Option[text::CString]::Some(cs) => {
                             let r: i32 = { mkdir(cs.as_ptr(), 493 as u16) };
@@ -430,7 +433,7 @@ fn create_dir_all(path: str) -> result::Result[bool, result::IoError] {
                     let _b: status::Status = prefix.append("/");
                 }
             }
-            option::Option[*text::Text]::None => { }
+            option::Option[*str]::None => { }
         }
         i = i +% (1 as usize);
     }

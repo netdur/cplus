@@ -1,0 +1,80 @@
+import "facet/facet" as core;
+import "facet/elements" as ui;
+import "facet/component" as component;
+import "facet/vocabulary" as vocab;
+import "facet/icons" as icons;
+import "../shell" as shell;
+
+struct Graphics {
+    n: i32,
+}
+
+impl Graphics {
+    fn new() -> Graphics { return Graphics { n: 0 }; }
+}
+
+impl Graphics: component::Component {
+    fn build(ref this) -> core::Node {
+        var body: core::Builder = core::Builder::new();
+
+        body.add(shell::caption("Symbol  ·  Material Symbols"));
+        var icons_row: core::Builder = core::Builder::new();
+        icons_row.add(ui::symbol(icons::home, key: "g:home", size: 28.0f64,
+            color: vocab::Color::ink()));
+        icons_row.add(ui::symbol(icons::settings, key: "g:settings", size: 28.0f64,
+            color: vocab::Color::primary()));
+        icons_row.add(ui::symbol(icons::favorite, key: "g:fav", size: 28.0f64, fill: 1.0f64,
+            color: vocab::Color::rgba(0.9f64, 0.2f64, 0.3f64, 1.0f64)));
+        icons_row.add(ui::symbol(icons::search, key: "g:search", size: 28.0f64,
+            color: vocab::Color::ink(0.7f64)));
+        icons_row.add(ui::symbol(icons::add, key: "g:add", size: 28.0f64,
+            color: vocab::Color::ink()));
+        body.add(core::row(icons_row).gap(16.0f64));
+
+        body.add(shell::caption("Box  ·  solid colour block"));
+        var boxes: core::Builder = core::Builder::new();
+        boxes.add(ui::box(vocab::Color::primary(), key: "g:box1",
+            corner_radius: vocab::Corners::all(8.0f64)).width(64.0f64).height(64.0f64));
+        boxes.add(ui::box(vocab::Color::raised(), key: "g:box2",
+            corner_radius: vocab::Corners::all(8.0f64)).width(64.0f64).height(64.0f64));
+        boxes.add(ui::box(vocab::Color::sunken(), key: "g:box3",
+            corner_radius: vocab::Corners::all(8.0f64)).width(64.0f64).height(64.0f64));
+        body.add(core::row(boxes).gap(12.0f64));
+
+        body.add(shell::caption("Bordered  ·  stroked frame"));
+        var framed: core::Builder = core::Builder::new();
+        framed.add(ui::label("Inside a border", key: "g:border_label",
+            font_size: 14.0f64, text_color: vocab::Color::ink()));
+        var border: core::Node = ui::bordered(
+            key: "g:border",
+            stroke_width: 1.0f64,
+            stroke: vocab::Brush::solid(vocab::Color::outline()),
+        ).padding(16.0f64);
+        // Attach label as child of bordered via set_content on find after build.
+        // Simpler: put label beside a bordered empty chrome sample.
+        body.add(border.height(48.0f64));
+        body.add(ui::label("Bordered host (stroke only in this sample)", key: "g:border_note",
+            font_size: 12.0f64, text_color: vocab::Color::ink(0.55f64)));
+
+        body.add(shell::caption("Canvas"));
+        body.add(ui::canvas(key: "g:canvas").height(120.0f64).width_percent(100.0f64));
+        body.add(ui::label(
+            "Canvas hosts a Drawable; this sample shows the empty host.",
+            key: "g:canvas_note",
+            font_size: 12.0f64,
+            text_color: vocab::Color::ink(0.55f64),
+        ));
+
+        return shell::panel(
+            "Graphics",
+            "Symbols, colour boxes, borders, and the freeform canvas host.",
+            core::column(body).gap(12.0f64),
+            howto: "ui::symbol(icons::home, size: 28.0, color: Color::ink())\nui::box(Color::primary(), corner_radius: Corners::all(8.0))\nui::bordered(key: \"b\", stroke_width: 1.0,\n    stroke: Brush::solid(Color::outline()))\nui::canvas(key: \"c\").height(120.0)",
+        );
+    }
+}
+
+impl Graphics: component::Lifecycle {
+    fn on_attach(ref this) { return; }
+    fn on_detach(ref this) { return; }
+}

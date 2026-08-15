@@ -1,0 +1,74 @@
+import "facet/facet" as core;
+import "facet/elements" as ui;
+import "facet/component" as component;
+import "facet/list" as list;
+import "facet/vocabulary" as vocab;
+import "stdlib/option" as option;
+import "../shell" as shell;
+
+struct Lists {
+    n: i32,
+}
+
+fn list_row(index: usize, ctx: *u8) -> core::Node {
+    let n: i32 = (index as i32) +% 1;
+    var b: core::Builder = core::Builder::new();
+    b.add(ui::label(
+        "Item ${n}",
+        key: "row:title",
+        font_size: 14.0f64,
+        font_weight: vocab::FontWeight::Medium,
+        text_color: vocab::Color::ink(),
+    ));
+    b.add(ui::label(
+        "Secondary line for row ${n}",
+        key: "row:sub",
+        font_size: 12.0f64,
+        text_color: vocab::Color::ink(0.55f64),
+    ));
+    var row: core::Node = core::column(b).padding(10.0f64).gap(2.0f64);
+    return row;
+}
+
+impl Lists {
+    fn new() -> Lists { return Lists { n: 0 }; }
+}
+
+impl Lists: component::Component {
+    fn build(ref this) -> core::Node {
+        var body: core::Builder = core::Builder::new();
+        body.add(shell::caption("List  ·  set_count + set_row"));
+        body.add(ui::label(
+            "Rows are produced by a row factory — the portable half of a recycling list.",
+            key: "lst:note",
+            font_size: 13.0f64,
+            text_color: vocab::Color::ink(0.65f64),
+            max_lines: 3 as i64,
+            line_break: vocab::LineBreak::WordWrap,
+        ));
+
+        var host: core::Node = ui::list(key: "lst:list", row_height: 56 as i64)
+            .height(320.0f64)
+            .grow(1.0f64);
+        match list::find("lst:list", within: #addr_of(host)) {
+            option::Option[list::List]::Some(l) => {
+                let _c: list::List = l.set_count(24 as usize);
+                let _r: list::List = l.set_row(list_row);
+            }
+            option::Option[list::List]::None => { }
+        }
+        body.add(host);
+
+        return shell::panel(
+            "List",
+            "A virtualised row list: count + row factory, optional bind for recycling.",
+            core::column(body).gap(12.0f64),
+            howto: "var h = ui::list(key: \"l\", row_height: 56).height(320.0);\nmatch list::find(\"l\", within: #addr_of(h)) {\n  Some(l) => { l.set_count(24); l.set_row(row_fn); }\n  None => {}\n}",
+        );
+    }
+}
+
+impl Lists: component::Lifecycle {
+    fn on_attach(ref this) { return; }
+    fn on_detach(ref this) { return; }
+}

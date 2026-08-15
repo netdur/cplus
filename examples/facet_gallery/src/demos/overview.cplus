@@ -1,0 +1,67 @@
+// Landing panel — index of the catalog and how to use it as a reference.
+
+import "facet/facet" as core;
+import "facet/elements" as ui;
+import "facet/component" as component;
+import "facet/vocabulary" as vocab;
+import "../shell" as shell;
+
+struct Overview {
+    n: i32,
+}
+
+impl Overview {
+    fn new() -> Overview { return Overview { n: 0 }; }
+}
+
+impl Overview: component::Component {
+    fn build(ref this) -> core::Node {
+        var body: core::Builder = core::Builder::new();
+
+        body.add(shell::caption("What this is"));
+        body.add(ui::label(
+            "Facet Gallery is a living catalog of the facet widget vocabulary — browse from the tree, interact in the main pane. Each demo shows the control live and a short constructor snippet so you can copy the pattern into your app.",
+            key: "ov:about",
+            font_size: 14.0f64,
+            text_color: vocab::Color::ink(0.8f64),
+            max_lines: 8 as i64,
+            line_break: vocab::LineBreak::WordWrap,
+        ));
+
+        body.add(shell::caption("Update model"));
+        body.add(ui::label(
+            "There is no re-render. Handlers find a keyed control and write it:\n  label::find(\"count\").set_text(\"…\")\n  slider::find(\"s\").set_value(0.5)",
+            key: "ov:update",
+            font_size: 13.0f64,
+            text_color: vocab::Color::ink(0.75f64),
+            max_lines: 6 as i64,
+            line_break: vocab::LineBreak::WordWrap,
+        ));
+
+        body.add(shell::caption("Coverage"));
+        body.add(ui::label(
+            "Views — Button, Label, Controls, Values, Inputs, Pickers, Icons, Image, Spans, Graphics, Web\nLayout — Basics, Scroll, Split, ZStack, Responsive\nCollections — List, Collection, Tree, Page dots, Table, Carousel\nInteraction — Refresh, Swipe",
+            key: "ov:cov",
+            font_size: 13.0f64,
+            text_color: vocab::Color::ink(0.8f64),
+            max_lines: 12 as i64,
+            line_break: vocab::LineBreak::WordWrap,
+        ));
+
+        body.add(shell::caption("Imports every demo shares"));
+        body.add(shell::reference(
+            "import \"facet/elements\" as ui;\nimport \"facet/component\" as component;\nimport \"facet/<control>\" as <control>;  // for find + setters\nimport \"facet/vocabulary\" as vocab;",
+        ));
+
+        return shell::panel(
+            "Facet Gallery",
+            "Implementation reference for facet widgets on AppKit.",
+            core::column(body).gap(12.0f64),
+        );
+    }
+}
+
+impl Overview: component::Lifecycle {
+    fn on_attach(ref this) { return; }
+    fn on_detach(ref this) { return; }
+}

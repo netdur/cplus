@@ -1,0 +1,57 @@
+import "facet/facet" as core;
+import "facet/elements" as ui;
+import "facet/component" as component;
+import "facet/vocabulary" as vocab;
+import "../shell" as shell;
+
+struct TextDemo {
+    n: i32,
+}
+
+impl TextDemo {
+    fn new() -> TextDemo { return TextDemo { n: 0 }; }
+}
+
+impl TextDemo: component::Component {
+    fn build(ref this) -> core::Node {
+        var body: core::Builder = core::Builder::new();
+
+        body.add(shell::caption("Scale"));
+        body.add(ui::label("Display 28 / Bold", key: "t:d", font_size: 28.0f64,
+            font_weight: vocab::FontWeight::Bold, text_color: vocab::Color::ink()));
+        body.add(ui::label("Title 20 / Semibold", key: "t:t", font_size: 20.0f64,
+            font_weight: vocab::FontWeight::Semibold, text_color: vocab::Color::ink()));
+        body.add(ui::label("Body 15 / Regular", key: "t:b", font_size: 15.0f64,
+            text_color: vocab::Color::ink()));
+        body.add(ui::label("Caption 12 · secondary ink", key: "t:c", font_size: 12.0f64,
+            font_weight: vocab::FontWeight::Medium, text_color: vocab::Color::ink(0.55f64)));
+
+        body.add(shell::caption("Emphasis"));
+        body.add(ui::label("Italic", key: "t:i", font_size: 15.0f64, italic: true,
+            text_color: vocab::Color::ink()));
+        body.add(ui::label("Primary role colour", key: "t:p", font_size: 15.0f64,
+            font_weight: vocab::FontWeight::Semibold, text_color: vocab::Color::primary()));
+
+        body.add(shell::caption("Wrapping"));
+        body.add(ui::label(
+            "A longer paragraph that wraps across several lines so you can see how facet labels break text when max_lines and WordWrap are set. Useful for descriptions and empty states in a real app.",
+            key: "t:w",
+            font_size: 14.0f64,
+            text_color: vocab::Color::ink(0.75f64),
+            max_lines: 6 as i64,
+            line_break: vocab::LineBreak::WordWrap,
+        ));
+
+        return shell::panel(
+            "Label",
+            "Typography: size, weight, colour roles, italic, and wrapping.",
+            core::column(body).gap(10.0f64),
+            howto: "ui::label(\"Hello\", key: \"t\", font_size: 15.0,\n    font_weight: FontWeight::Semibold, text_color: Color::ink())",
+        );
+    }
+}
+
+impl TextDemo: component::Lifecycle {
+    fn on_attach(ref this) { return; }
+    fn on_detach(ref this) { return; }
+}

@@ -302,26 +302,22 @@ fn verify_hs256_at(token: str, secret: str, now: i64, leeway_secs: i64 = 0 as i6
 // whose tests can only assert failures — and because an application that mints
 // its own short-lived agent tokens needs exactly this and nothing more.
 fn sign_hs256(payload_json: str, secret: str) -> text::Text {
-    // EVERY intermediate is a NAMED local, and none of these `.view()`s is
-    // taken from a call result inline. A coerced rvalue `Text` at an argument
-    // position aims into a temporary whose lifetime does not survive the way
-    // this needs it to — the symptom is a segment of binary garbage where the
-    // base64 should be, and the token then fails its own verifier. See
-    // bugs/rvalue-text-coercion-binding-leak.md for the family.
-    let head_b64: text::Text = base64::encode_url("{\"alg\":\"HS256\",\"typ\":\"JWT\"}");
-    let payload_b64: text::Text = base64::encode_url(payload_json);
-
-    var signing_input: text::Text = text::from_str({ head_b64.view() });
+    // Written inline — `{ f(x).view() }` at an argument position — on purpose:
+    // that spelling produced binary garbage where the base64 belonged until
+    // 2026-08-15, intermittently enough that the suite passed most runs
+    // (bugs/closed/rvalue-text-view-as-argument.md). Keeping it is this
+    // package's share of the regression coverage; if the block-tail temporary
+    // ever dies early again, these tests fail before anyone hits it in an app.
+    var signing_input: text::Text = base64::encode_url("{\"alg\":\"HS256\",\"typ\":\"JWT\"}");
     signing_input = signing_input.appending(".");
-    signing_input = signing_input.appending({ payload_b64.view() });
+    signing_input = signing_input.appending({ base64::encode_url(payload_json).view() });
 
     let mac: crypto::Digest = crypto::hmac_sha256(secret, { signing_input.view() });
     var raw: [u8; 32] = [0u8; 32];
     let _ok: bool = mac.copy_into(#addr_of(raw) as *u8, 32 as usize);
-    let sig_b64: text::Text = base64::encode_url_bytes(#addr_of(raw) as *u8, 32 as usize);
 
     var out: text::Text = text::from_str({ signing_input.view() });
     out = out.appending(".");
-    out = out.appending({ sig_b64.view() });
+    out = out.appending({ base64::encode_url_bytes(#addr_of(raw) as *u8, 32 as usize).view() });
     return out;
 }

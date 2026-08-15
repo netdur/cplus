@@ -33,4 +33,10 @@ a.out
 /cplus-core/clippy.json
 /cplus-core/clippy_output.txt
 
-examples
+# Local probe apps (UI feel, repros). Not committed.
+playground
+
+# Local build wiring: a package's `vendor/` symlink into the repo's own
+# vendor tree, so `cpc build` resolves imports without a copy. Machine-local.
+/examples/*/vendor
+/vendor/stdlib/stdlib

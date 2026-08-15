@@ -91,10 +91,11 @@ fn alg_none_is_refused() {
     // THE canonical JWT break: the header names the algorithm, the header is
     // attacker-supplied, and a verifier that trusts it accepts an empty
     // signature. Built by hand because `sign_hs256` cannot produce it.
-    // Every intermediate is a NAMED local. A `.view()` taken from a call
-    // result and passed as an argument aims into a temporary that does not
-    // survive the call reliably — the symptom is a test that passes most runs
-    // and fails some. See bugs/rvalue-text-view-as-argument.md.
+    // The named intermediates here are for readability now, not for safety:
+    // `{ f(x).view() }` at an argument position used to aim into a temporary
+    // freed at the end of the block tail, which made tests pass most runs and
+    // fail some (bugs/closed/rvalue-text-view-as-argument.md, fixed
+    // 2026-08-15; `sign_hs256` keeps the inline spelling as coverage).
     let hdr: text::Text = base64::encode_url("{\"alg\":\"none\",\"typ\":\"JWT\"}");
     let body: text::Text = base64::encode_url("{\"sub\":\"attacker\",\"scope\":\"autofill\"}");
     var t: text::Text = text::from_str({ hdr.view() });

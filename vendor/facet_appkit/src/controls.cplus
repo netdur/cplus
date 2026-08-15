@@ -1378,7 +1378,7 @@ fn text_button_attributes(p: *text_button::TextButtonProps) -> *u8 {
                               { (*p).font_family.view() }, { (*p).is_italic },
                               { (*p).font_scales }),
         { (*p).text_color }, { (*p).character_spacing }, 0.0f64,
-        option::Option[vocab::TextAlign]::None, { (*p).text_decoration });
+        option::Option[vocab::TextAlign]::Some({ (*p).text_align }), { (*p).text_decoration });
 }
 
 fn apply_text_button(v: *u8, n: *core::Node, dirty: u64) {
@@ -1390,7 +1390,8 @@ fn apply_text_button(v: *u8, n: *core::Node, dirty: u64) {
         | text_button::P_CHARACTER_SPACING | text_button::P_TEXT_COLOR
         | text_button::P_IS_ITALIC | text_button::P_FONT_SIZE
         | text_button::P_FONT_WEIGHT | text_button::P_FONT_FAMILY
-        | text_button::P_FONT_SCALES | text_button::P_TEXT_DECORATION;
+        | text_button::P_FONT_SCALES | text_button::P_TEXT_DECORATION
+        | text_button::P_TEXT_ALIGN;
     if (dirty & title_bits) != (0 as u64) || dirty == paint::all_bits() {
         let shown: text::Text = paint::transformed({ (*p).title.view() }, { (*p).text_transform });
         // NSButton has no plain setter for a title COLOUR, so a text button
@@ -1406,6 +1407,11 @@ fn apply_text_button(v: *u8, n: *core::Node, dirty: u64) {
         } else {
             b.set_title(shown.view());
         }
+    }
+    // NSButton centres its title by default. Honour text_align so a full-width
+    // borderless row (sidebar catalog) can pin the label to the leading edge.
+    if (dirty & text_button::P_TEXT_ALIGN) != (0 as u64) || dirty == paint::all_bits() {
+        b.as_control().set_alignment(paint::ns_text_align({ (*p).text_align }));
     }
     if (dirty & (text_button::P_FONT_SIZE | text_button::P_FONT_WEIGHT
                  | text_button::P_FONT_FAMILY | text_button::P_IS_ITALIC
@@ -1903,6 +1909,15 @@ fn apply_text_area(v: *u8, n: *core::Node, dirty: u64) {
                 tv.as_text().set_max_size(rt::Size { w: 1000000.0f64, h: 1000000.0f64 });
                 if grows { tv.as_text().size_to_fit(); }
             }
+            // THE RUNS. After the text, because they index it — and after the
+            // font band, because a run's weight is applied on top of the
+            // editor's own font. A text write re-styles too: the ranges the
+            // application last stated still describe this buffer until it says
+            // otherwise, and the alternative is one unstyled frame per
+            // keystroke.
+            if (dirty & (text_area::P_STYLE_RUNS | text_area::P_TEXT)) != (0 as u64) {
+                text_input::apply_style_runs(tv, { #addr_of((*p).style_runs) }, iv);
+            }
         }
         option::Option[ak::TextView]::None => { }
     }
@@ -1969,13 +1984,31 @@ fn apply_popup(v: *u8, n: *core::Node, dirty: u64) {
         }
     }
     // The prompt is rebuilt with the items because it IS one — see below.
-    if (dirty & (popup::P_ITEMS | popup::P_TITLE | popup::P_TITLE_COLOR)) != (0 as u64) {
+    if (dirty & (popup::P_ITEMS | popup::P_TITLE | popup::P_TITLE_COLOR
+                 | popup::P_ITEM_ENABLED)) != (0 as u64) {
         b.remove_all_items();
         let items: *vocab::TextList = { #addr_of((*p).items) };
+        let enabled_of: fn(usize, *u8) -> bool = { (*p).item_enabled };
         var i: usize = 0 as usize;
         let count: usize = { (*items).count() };
         while i < count {
-            b.add_item_with_title({ (*items).at(i) });
+            let title: str = { (*items).at(i) };
+            if title == "" {
+                // AN EMPTY ITEM IS A SEPARATOR — the same word `menu` and
+                // `context_menu` already use, and the reason a section list
+                // needs no new entry type.
+                append_popup_item(b, ak::MenuItem::separator_item());
+            } else {
+                b.add_item_with_title(title);
+                // PRESENT BUT NOT PICKABLE: a section header, or a device
+                // that is paired and locked. Both had to be selectable rows
+                // that the selection handler caught and put back.
+                if enabled_of != props::every_item_enabled {
+                    if enabled_of(i, { (*p).item_enabled_ctx }) == false {
+                        disable_last_popup_item(b);
+                    }
+                }
+            }
             i = i +% (1 as usize);
         }
         // `Picker.Title` is what shows when nothing is chosen. NSPopUpButton
@@ -1997,6 +2030,12 @@ fn apply_popup(v: *u8, n: *core::Node, dirty: u64) {
         if idx >= (0 as i64) {
             b.select_item_at_index(idx + compose::title_offset({ (*p).title.view() }));
         }
+    }
+    // WHAT THE BUTTON READS. Written after the selection, because it is the
+    // selection the cell would otherwise be showing.
+    if (dirty & (popup::P_LABEL | popup::P_ITEMS | popup::P_SELECTED_INDEX
+                 | popup::P_TITLE)) != (0 as u64) {
+        apply_popup_label(b, { (*p).label.view() });
     }
     if (dirty & (popup::P_FONT_SCALES | popup::P_FONT_SIZE | popup::P_FONT_WEIGHT | popup::P_FONT_FAMILY
                  | popup::P_IS_ITALIC)) != (0 as u64) {
@@ -2034,6 +2073,57 @@ fn apply_popup(v: *u8, n: *core::Node, dirty: u64) {
     if (dirty & props::C_IS_ENABLED) != (0 as u64) || dirty == paint::all_bits() {
         b.as_control().set_enabled(core::is_enabled(n));
     }
+    return;
+}
+
+// One item onto the end of the button's own menu. `addItemWithTitle:` is the
+// only append NSPopUpButton exposes and it makes the item itself, so anything
+// that is not a plain title — a separator — goes through the menu underneath.
+fn append_popup_item(b: ak::PopUpButton, item: ak::MenuItem) {
+    match b.menu() {
+        option::Option[ak::Menu]::Some(m) => { m.add_item(item); }
+        option::Option[ak::Menu]::None => { }
+    }
+    return;
+}
+
+// The item just appended, greyed. AUTOENABLING IS THE TRAP: NSPopUpButton
+// enables its items itself unless told not to, so a `setEnabled:NO` here is
+// undone before the menu is ever seen. Switched off exactly when an
+// application takes over the answer, and left alone otherwise.
+fn disable_last_popup_item(b: ak::PopUpButton) {
+    b.set_autoenables_items(false);
+    let n: i64 = b.number_of_items();
+    if n <= (0 as i64) { return; }
+    match b.item_at_index(n -% (1 as i64)) {
+        option::Option[ak::MenuItem]::Some(it) => { it.set_enabled(false); }
+        option::Option[ak::MenuItem]::None => { }
+    }
+    return;
+}
+
+// WHAT THE BUTTON READS, whatever is selected.
+//
+// NSPopUpButton has no label of its own — the collapsed control shows the
+// selected item — which is why `title` had to be an item. `usesItemFromMenu:NO`
+// plus a `menuItem` of our own is the cell's documented way to say something
+// else, and it is the whole of the difference between a 74pt toolbar reading
+// "iPhone 17 Pro" and the same string having to serve the menu row too.
+//
+// Empty restores the ledger's behaviour, item and all.
+fn apply_popup_label(b: ak::PopUpButton, label: str) {
+    let cell: *u8 = { rt::msg_id(b.raw(), rt::sel(#str_ptr("cell\0"))) };
+    if cell == (0 as *u8) { return; }
+    let pc: ak::PopUpButtonCell = ak::PopUpButtonCell::from_raw(cell);
+    if label == "" {
+        pc.set_uses_item_from_menu(true);
+        { rt::msg_void(b.raw(), rt::sel(#str_ptr("synchronizeTitleAndSelectedItem\0"))) };
+        return;
+    }
+    let item: ak::MenuItem = ak::MenuItem::new(label, 0 as *u8, "");
+    pc.set_uses_item_from_menu(false);
+    pc.as_menu_item_cell().set_menu_item(item);
+    { rt::msg_void(b.raw(), rt::sel(#str_ptr("setNeedsDisplay\0"))) };
     return;
 }
 
@@ -4497,25 +4587,66 @@ fn build_tree_row(node: *tree::TreeNode, p: *tree::TreeProps) -> core::Node {
     // function that answers an empty node, so a null check is never false and
     // the fallback below never ran — a tree with no row builder rendered a
     // column of empty rows and the line that says otherwise was decoration.
-    if f != tree::no_row { return f(node, { (*p).row_ctx }); }
-    return plain_tree_row(node);
+    let h: f64 = stated_or_default_tree_row_h(p);
+    if f != tree::no_row {
+        // A custom row that does not fill the stated height sits at the TOP of
+        // the cell while AppKit centres the disclosure triangle in the full
+        // row — the misalignment the gallery catalog showed. Wrap so the
+        // content is vertically centred in the same height the triangle uses.
+        var content: core::Node = f(node, { (*p).row_ctx });
+        return center_in_tree_row(content, h);
+    }
+    return plain_tree_row(node, h);
 }
 
 // A tree with no row builder still shows its shape: the node's own text, keyed
 // by its identity. Shared with the recycling outline view, which asks the same
 // question and must not answer it differently.
-// One line of text, plus room to breathe.
 //
 // STATED, not left to the label's intrinsic size. An outline view asks for a
 // row's height before that row has been realised, and a label's intrinsic
 // height comes from the measure callback the backend installs when it creates
 // the native view — so an unrealised label measures at zero, clamps to one
 // point, and the whole tree renders as invisible one-pixel rows.
-const DEFAULT_TREE_ROW_H: f64 = 20.0f64;
+//
+// THE PLAIN LABEL IS NOT AS TALL AS THE ROW. AppKit centres the disclosure
+// triangle in the full row height. Stretching an NSTextField to that height
+// does NOT put the glyphs on the same centre — labelWithString draws slightly
+// high/low in a tall frame (the gallery sidebar showed the chevron mid-row and
+// "Start" offset). So the label keeps a single-line height, and `place_row`
+// vertically centres that short view in the cell.
+const DEFAULT_TREE_ROW_H: f64 = 28.0f64;
+// One line of system text — matches the disclosure's optical band better than
+// filling the row with a tall field.
+const TREE_PLAIN_LABEL_H: f64 = 18.0f64;
 
-fn plain_tree_row(node: *tree::TreeNode) -> core::Node {
-    return label::label({ (*node).label.view() }, key: { (*node).id.view() })
-        .height(DEFAULT_TREE_ROW_H);
+fn stated_or_default_tree_row_h(p: *tree::TreeProps) -> f64 {
+    if p == (0 as *tree::TreeProps) { return DEFAULT_TREE_ROW_H; }
+    let h: f64 = { (*p).row_height };
+    if h >= 1.0f64 { return h; }
+    return DEFAULT_TREE_ROW_H;
+}
+
+// Pin content to the vertical centre of a fixed-height row.
+fn center_in_tree_row(take content: core::Node, h: f64) -> core::Node {
+    var b: flex::Builder = flex::Builder::new();
+    b.add(content);
+    return flex::column(b)
+        .height(h)
+        .justify(flex::Justify::Center)
+        .align(flex::Align::Stretch);
+}
+
+fn plain_tree_row(node: *tree::TreeNode, row_h: f64 = 0.0f64) -> core::Node {
+    // `row_h` is the ROW (for callers that wrap); the label itself stays one
+    // line tall so place_row can centre it next to the disclosure.
+    let _row: f64 = row_h;
+    return label::label(
+        { (*node).label.view() },
+        key: { (*node).id.view() },
+        max_lines: 1 as i64,
+        line_break: vocab::LineBreak::TailTruncation,
+    ).height(TREE_PLAIN_LABEL_H);
 }
 
 fn apply_tree(v: *u8, n: *core::Node, dirty: u64) {

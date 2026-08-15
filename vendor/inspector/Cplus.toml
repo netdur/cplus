@@ -28,3 +28,14 @@ json        = "*"
 agent_mcp   = "*"
 agent_core  = "*"
 quartzcore  = "*"
+
+# The suite imports facet, and on macOS facet's runtime facade imports its
+# backend — which pulls webkit and the agent backends behind it. A transitive
+# platform dependency is resolved against the ROOT package's manifest, so
+# without these four the suite does not build at all. Same list the probe
+# under `examples/inspector_probe` declares, and for the same reason.
+[macos.dependencies]
+facet_appkit = "*"
+webkit       = "*"
+agent_appkit = "*"
+agent_inapp  = "*"

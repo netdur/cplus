@@ -1793,6 +1793,66 @@ fn undo_unwinds_in_reverse_and_a_restored_parent_can_take_its_child_back() {
     return;
 }
 
+// The deterministic half of the test above. That one restores the holder into
+// the same slot it came out of, so it read the same address back and passed —
+// about three runs in four (bugs/closed/inspector-undo-test-is-flaky.md). Here
+// the parent's child vector is grown past its old capacity while the holder is
+// in the trash, so the holder provably comes back at a DIFFERENT address, and
+// the kid's undo can only work if what was recorded for it is a position rather
+// than a pointer.
+#[test]
+fn undo_restores_into_a_parent_that_came_back_at_a_new_address() {
+    fresh();
+    var inner: core::Builder = core::Builder::new();
+    inner.add(ui::label("kid", key: "kid"));
+    var body: core::Builder = core::Builder::new();
+    body.add(ui::column(inner, key: "holder"));
+    var root: core::Node = ui::column(body, key: "root");
+    app::open_window(#addr_of(root));
+
+    let held: *core::Node = match core::child_of(#addr_of(root), 0 as usize) {
+        option::Option[*core::Node]::Some(c) => c,
+        option::Option[*core::Node]::None => 0 as *core::Node,
+    };
+    assert held != (0 as *core::Node);
+
+    assert tree::remove(row_for(tree::describe(), "kid")).is_ok();
+    assert tree::remove(row_for(tree::describe(), "holder")).is_ok();
+
+    // Eight siblings into a container that just went empty: whatever capacity
+    // its child vector had for one node, it does not have for eight.
+    var i: i32 = 0;
+    while i < 8 {
+        assert tree::insert(
+            row_for(tree::describe(), "root"),
+            0 as usize,
+            insp::Spec::of("label", "filler", "f")
+        ).is_ok();
+        i = i + 1;
+    }
+
+    assert tree::undo_remove().is_ok();
+    let back: *core::Node = match core::child_of(#addr_of(root), 0 as usize) {
+        option::Option[*core::Node]::Some(c) => c,
+        option::Option[*core::Node]::None => 0 as *core::Node,
+    };
+    assert back != (0 as *core::Node);
+    assert child_key_is(#addr_of(root), 0 as usize, "holder");
+    // The premise of the test: the holder is NOT where it was.
+    assert back != held;
+
+    // ...and the kid goes home to the HOLDER, because the trash recorded where
+    // the holder is and not where it was. Asserted as parentage, not as
+    // presence: the vacated slot gets reused, so a stale pointer can land the
+    // kid inside whichever node took the address over and still report `Ok`.
+    assert tree::undo_remove().is_ok();
+    assert !row_for(tree::describe(), "kid").is_none();
+    assert core::child_count_of(back) == (1 as usize);
+    assert child_key_is(back, 0 as usize, "kid");
+    assert tree::trash_count() == (0 as usize);
+    return;
+}
+
 #[test]
 fn reparent_moves_a_node_between_containers() {
     fresh();

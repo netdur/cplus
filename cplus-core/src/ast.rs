@@ -1997,6 +1997,23 @@ pub fn visit_exprs(e: &Expr, f: &mut impl FnMut(&Expr)) {
     let _ = walk_expr(e, &mut v);
 }
 
+/// The blessed print sinks for the interpolation sink lowering
+/// (2026-08-13): an interpolated literal passed DIRECTLY to one of these
+/// writes its parts to the stream — codegen never materializes a `Text`,
+/// and sema's `#[no_alloc]` effect pass skips the interp-allocates record.
+/// THE one place the set is written: codegen's `gen_named_call` intercept
+/// and sema's effect collection both consult it — a symbol present in one
+/// but not the other is either a `no_alloc` hole (sema blesses, codegen
+/// materializes) or a stale rejection. Returns `(to_stderr, newline)`.
+pub fn blessed_print_sink(symbol: &str) -> Option<(bool, bool)> {
+    match symbol {
+        "stdlib.src.io.print" => Some((false, false)),
+        "stdlib.src.io.println" => Some((false, true)),
+        "stdlib.src.io.eprintln" => Some((true, true)),
+        _ => None,
+    }
+}
+
 /// Read-only traversal of a block; see [`visit_exprs`].
 pub fn visit_exprs_in_block(b: &Block, f: &mut impl FnMut(&Expr)) {
     let mut v = ReadOnly { f };

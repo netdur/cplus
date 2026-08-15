@@ -79,6 +79,20 @@ struct Session {
     _master: i32,
     _pid: i32,
     _closed: bool,
+    // waitpid hands a status over exactly ONCE, and both `poll_exit` and
+    // `close` reap. Remembering it here is what lets a caller ask for the exit
+    // code after the widget has already torn the session down.
+    _reaped: bool,
+    _status: i32,
+}
+
+// WIFEXITED / WEXITSTATUS, plus the 128+signal convention a shell itself
+// reports for a child that was killed rather than returning.
+fn decode_wait_status(st: i32) -> i32 {
+    if (st & (0x7f as i32)) == (0 as i32) {
+        return (st >> (8 as i32)) & (0xff as i32);
+    }
+    return (128 as i32) +% (st & (0x7f as i32));
 }
 
 fn supported() -> bool { return true; }
@@ -91,11 +105,24 @@ fn make_nonblocking(fd: i32) {
     return;
 }
 
-// ---- shell history ----------------------------------------------------------
-// An embedded terminal must not write the user's GLOBAL shell history. What is
-// typed in an app's pane is the app's business; finding it later in `history` in
-// a real terminal is a surprise, and it evicts the entries the user actually
-// wants (macOS keeps SAVEHIST=1000).
+// ---- shell integration ------------------------------------------------------
+// Two separate things are installed into the shell, and they share one
+// mechanism — a generated ZDOTDIR whose rc files source the user's real ones —
+// so they are built together.
+//
+// COMMAND MARKS. A terminal cannot tell where one command ends and the next
+// begins, and it certainly cannot know an exit code: what arrives on the wire is
+// output, with nothing in it to say which command produced it or how that
+// command fared. The SHELL knows both. `preexec` fires when a line is accepted
+// and `precmd` fires before the next prompt, so each emits an OSC 133 mark and
+// `terminal/terminal` turns the pair into the command ledger that
+// `Widget::run` reports through. The marks are the same vocabulary iTerm2 and
+// VS Code use, so a shell already configured for one of those is undisturbed.
+//
+// SHELL HISTORY. An embedded terminal must not write the user's GLOBAL shell
+// history. What is typed in an app's pane is the app's business; finding it
+// later in `history` in a real terminal is a surprise, and it evicts the entries
+// the user actually wants (macOS keeps SAVEHIST=1000).
 //
 // Exporting `HISTFILE` does NOT work for zsh on macOS. `/etc/zshrc` contains
 //
@@ -147,19 +174,60 @@ fn capture_original_zdotdir() {
     return;
 }
 
-// Undo everything the opt-out sets, so `save_history: true` really is the
-// user's own shell — including in a process that already opened a pane without
-// history.
-fn restore_history_env() {
-    capture_original_zdotdir();
-    let _hf: i32 = { unsetenv(#str_ptr("HISTFILE\0")) };
-    let _th: i32 = { unsetenv(#str_ptr("CPLUS_TERM_HOME\0")) };
-    if ZDOTDIR_WAS_SET {
-        let _zd: i32 = { setenv(#str_ptr("ZDOTDIR\0"), #addr_of(ZDOTDIR_ORIGINAL[0]), 1 as i32) };
-    } else {
-        let _zd: i32 = { unsetenv(#str_ptr("ZDOTDIR\0")) };
-    }
-    return;
+// The shell half of the command API.
+//
+// zsh hands `preexec` the line as typed (`$1`), a single-line size-limited form
+// (`$2`), and the fully expanded text (`$3`). `$1` is the one worth reporting —
+// it is what the user actually typed, where `$2` normalises punctuation and
+// spacing (`(exit 3)` comes back as `( exit 3; )`). The catch is that a newline
+// inside an OSC payload terminates the sequence early and sprays the remainder
+// of the command across the screen, so a multi-line `$1` falls back to `$2`,
+// which has the newlines already collapsed. The `case` test costs no fork, and
+// `$'\n'` is brace-free where a substitution would not be.
+//
+// `__cplus_ran` is what keeps the FIRST prompt from reporting a command that
+// never ran: precmd fires before the first prompt too, and a bare `D;0` there
+// reads downstream as "the last command succeeded" on a pane nobody has typed
+// into yet.
+//
+// `local __cplus_st=$?` has to be precmd's first line, or the shell's own
+// bookkeeping has already overwritten the status we came for.
+//
+// No `${...}` anywhere below, deliberately: that is C+ string interpolation and
+// would be eaten before zsh ever saw it. `$1`, `$?`, `$PWD` and `$(...)` are all
+// safe; braces are not.
+fn marks_rc() -> text::Text {
+    var t: text::Text = text::new();
+    let _a: status::Status = t.append("\n# Command marks for terminal/pty. OSC 133, as iTerm2 and VS Code use.\n");
+    let _b: status::Status = t.append("if [ -z \"$CPLUS_TERM_MARKS\" ]; then\n");
+    let _c: status::Status = t.append("  CPLUS_TERM_MARKS=1\n");
+    let _d: status::Status = t.append("  __cplus_preexec() {\n");
+    let _e: status::Status = t.append("    __cplus_ran=1\n");
+    let _e2: status::Status = t.append("    __cplus_c=$1\n");
+    let _e3: status::Status = t.append("    case $__cplus_c in\n");
+    let _e4: status::Status = t.append("      *$'\\n'*) __cplus_c=$2 ;;\n");
+    let _e5: status::Status = t.append("    esac\n");
+    let _f: status::Status = t.append("    printf '\\033]133;C;%s\\007' \"$__cplus_c\"\n");
+    let _g: status::Status = t.append("  }\n");
+    let _h: status::Status = t.append("  __cplus_precmd() {\n");
+    let _i: status::Status = t.append("    local __cplus_st=$?\n");
+    let _j: status::Status = t.append("    if [ -n \"$__cplus_ran\" ]; then\n");
+    let _k: status::Status = t.append("      unset __cplus_ran\n");
+    let _l: status::Status = t.append("      printf '\\033]133;D;%d\\007' $__cplus_st\n");
+    let _m: status::Status = t.append("    fi\n");
+    let _n: status::Status = t.append("    printf '\\033]7;file://%s%s\\007' \"$HOST\" \"$PWD\"\n");
+    let _o: status::Status = t.append("    printf '\\033]133;A\\007'\n");
+    let _p: status::Status = t.append("  }\n");
+    let _q: status::Status = t.append("  autoload -Uz add-zsh-hook 2>/dev/null\n");
+    let _r: status::Status = t.append("  if whence add-zsh-hook >/dev/null 2>&1; then\n");
+    let _s: status::Status = t.append("    add-zsh-hook preexec __cplus_preexec\n");
+    let _t: status::Status = t.append("    add-zsh-hook precmd __cplus_precmd\n");
+    let _u: status::Status = t.append("  else\n");
+    let _v: status::Status = t.append("    preexec_functions+=(__cplus_preexec)\n");
+    let _w: status::Status = t.append("    precmd_functions+=(__cplus_precmd)\n");
+    let _x: status::Status = t.append("  fi\n");
+    let _y: status::Status = t.append("fi\n");
+    return t;
 }
 
 fn shim_rc(dir: str, name: str, extra: str) -> bool {
@@ -184,7 +252,13 @@ fn shim_rc(dir: str, name: str, extra: str) -> bool {
 // Build the shim ZDOTDIR, or None if anything about it fails — in which case
 // `start` runs the shell unmodified rather than half-configured. A terminal that
 // works and writes history beats one that does not open.
-fn history_free_zdotdir() -> option::Option[text::Text] {
+//
+// The two history dispositions get SEPARATE directories. They used to share one
+// that was rewritten on every `start`, which is fine until an app opens a pane
+// of each kind: the second rewrite changes what the first pane's shell would
+// read on any later startup stage, and the setting silently becomes "whichever
+// pane started last" rather than the argument each caller passed.
+fn integration_zdotdir(kill_history: bool) -> option::Option[text::Text] {
     capture_original_zdotdir();
     let home: text::Text = match env::var("HOME") {
         option::Option[text::Text]::Some(h) => h,
@@ -195,7 +269,8 @@ fn history_free_zdotdir() -> option::Option[text::Text] {
         option::Option[text::Text]::None => text::from_str("/tmp/"),
     };
     if base.has_suffix("/") == false { let _s: status::Status = base.append("/"); }
-    let dir: text::Text = "${base}cplus-terminal-rc";
+    let flavour: str = if kill_history { "nohist" } else { "hist" };
+    let dir: text::Text = "${base}cplus-terminal-rc-${flavour}";
     match fs::create_dir_all(dir.view()) {
         result::Result[bool, result::IoError]::Ok(_) => {}
         result::Result[bool, result::IoError]::Err(_) => { return option::Option[text::Text]::None; }
@@ -222,11 +297,26 @@ fn history_free_zdotdir() -> option::Option[text::Text] {
     // has had its say, so it is the last word. SAVEHIST=0 covers a shell that
     // re-derives HISTFILE later. In-memory history still works for the session,
     // so the up-arrow behaves; nothing reaches disk.
-    let kill_history: str = "\n# The embedded terminal does not persist history (terminal/pty save_history).\nunset HISTFILE\nSAVEHIST=0";
+    //
+    // With history KEPT there is still a repair to make, and it is caused by the
+    // shim itself: /etc/zshrc sets HISTFILE to `$ZDOTDIR/.zsh_history`
+    // unconditionally, and ZDOTDIR is ours, so leaving it alone would quietly
+    // move the user's history into a temp directory. The test is exact — it
+    // fires only on the value /etc/zshrc produces — so a user who sets their own
+    // HISTFILE keeps it.
+    var extra: text::Text = text::new();
+    if kill_history {
+        let _k: status::Status = extra.append("\n# The embedded terminal does not persist history (terminal/pty save_history).\nunset HISTFILE\nSAVEHIST=0\n");
+    } else {
+        let _k: status::Status = extra.append("\n# Undo the HISTFILE that /etc/zshrc derived from our shim ZDOTDIR.\nif [ \"$HISTFILE\" = \"$ZDOTDIR/.zsh_history\" ]; then HISTFILE=\"$CPLUS_TERM_HOME/.zsh_history\"; fi\n");
+    }
+    let marks: text::Text = marks_rc();
+    let _m: status::Status = extra.append(marks.view());
+
     if shim_rc(dir.view(), ".zshenv", "") == false { return option::Option[text::Text]::None; }
     if shim_rc(dir.view(), ".zprofile", "") == false { return option::Option[text::Text]::None; }
-    if shim_rc(dir.view(), ".zshrc", kill_history) == false { return option::Option[text::Text]::None; }
-    if shim_rc(dir.view(), ".zlogin", kill_history) == false { return option::Option[text::Text]::None; }
+    if shim_rc(dir.view(), ".zshrc", extra.view()) == false { return option::Option[text::Text]::None; }
+    if shim_rc(dir.view(), ".zlogin", extra.view()) == false { return option::Option[text::Text]::None; }
     return option::Option[text::Text]::Some(dir);
 }
 
@@ -264,25 +354,31 @@ fn start(shell: str = "/bin/zsh", cwd: str = "", rows: u16 = 24 as u16, cols: u1
     // hazard, not a theoretical one.
     let _term: i32 = { setenv(#str_ptr("TERM\0"), #str_ptr("xterm-256color\0"), 1 as i32) };
     let _color: i32 = { setenv(#str_ptr("COLORTERM\0"), #str_ptr("truecolor\0"), 1 as i32) };
+    // `setenv` mutates the HOST process environment and is not undone when
+    // `start` returns, so a pane that turned history off would otherwise leave
+    // HISTFILE=/dev/null behind for the next pane whatever IT asked for.
     if save_history {
-        restore_history_env();
-    }
-    if save_history == false {
+        let _hf: i32 = { unsetenv(#str_ptr("HISTFILE\0")) };
+    } else {
         // Works for bash/ksh directly; zsh needs the ZDOTDIR shim below because
         // /etc/zshrc reassigns HISTFILE after this point.
         let _hf: i32 = { setenv(#str_ptr("HISTFILE\0"), #str_ptr("/dev/null\0"), 1 as i32) };
-        match history_free_zdotdir() {
-            option::Option[text::Text]::Some(dir) => {
-                let dir_c: text::CString = match dir.c_str() {
-                    option::Option[text::CString]::Some(v) => v,
-                    option::Option[text::CString]::None => { return option::Option[Session]::None; }
-                };
-                let _zd: i32 = { setenv(#str_ptr("ZDOTDIR\0"), dir_c.as_ptr(), 1 as i32) };
-            }
-            // Could not build the shim: run the shell unmodified rather than
-            // half-configured.
-            option::Option[text::Text]::None => {}
+    }
+    // Installed for BOTH history dispositions, because the command marks are
+    // not a history feature — a caller that opted into the user's real history
+    // still needs to know when a build finished.
+    match integration_zdotdir(save_history == false) {
+        option::Option[text::Text]::Some(dir) => {
+            let dir_c: text::CString = match dir.c_str() {
+                option::Option[text::CString]::Some(v) => v,
+                option::Option[text::CString]::None => { return option::Option[Session]::None; }
+            };
+            let _zd: i32 = { setenv(#str_ptr("ZDOTDIR\0"), dir_c.as_ptr(), 1 as i32) };
         }
+        // Could not build the shim: run the shell unmodified rather than
+        // half-configured. The pane still works; it just cannot report exit
+        // codes, which `Screen::has_integration` reports as false.
+        option::Option[text::Text]::None => {}
     }
 
     var master: i32 = -1 as i32;
@@ -303,6 +399,8 @@ fn start(shell: str = "/bin/zsh", cwd: str = "", rows: u16 = 24 as u16, cols: u1
         _master: master,
         _pid: pid,
         _closed: false,
+        _reaped: false,
+        _status: -1 as i32,
     });
 }
 
@@ -334,6 +432,36 @@ impl Session {
         return { ioctl(this._master, 0x80087467 as u64, #addr_of(ws) as *u8) } == (0 as i32);
     }
 
+    // Has the shell itself exited, and with what status? `None` while it is
+    // still running. Non-blocking, and safe to call in a loop: waitpid gives a
+    // status up exactly once, so the answer is remembered.
+    fn poll_exit(ref this) -> option::Option[i32] {
+        if this._reaped { return option::Option[i32]::Some(this._status); }
+        if this._pid <= (0 as i32) { return option::Option[i32]::None; }
+        var st: i32 = 0 as i32;
+        let r: i32 = { waitpid(this._pid, #addr_of(st), 1 as i32) }; // WNOHANG
+        if r == this._pid {
+            this._reaped = true;
+            this._status = decode_wait_status(st);
+            return option::Option[i32]::Some(this._status);
+        }
+        if r < (0 as i32) {
+            // ECHILD — something else already collected it, and the status is
+            // gone with it. Still exited, just not knowably how.
+            this._reaped = true;
+            this._status = -1 as i32;
+            return option::Option[i32]::Some(this._status);
+        }
+        return option::Option[i32]::None;
+    }
+
+    fn has_exited(ref this) -> bool {
+        return match this.poll_exit() {
+            option::Option[i32]::Some(_) => true,
+            option::Option[i32]::None => false,
+        };
+    }
+
     fn close(ref this) {
         if this._closed { return; }
         this._closed = true;
@@ -341,16 +469,35 @@ impl Session {
             let _fd: i32 = { close(this._master) };
             this._master = -1 as i32;
         }
+        // Reap BEFORE signalling: a shell that already exited on its own has a
+        // real status waiting, and hanging up first would still collect it, but
+        // asking first means the common case never touches a signal at all.
+        match this.poll_exit() {
+            option::Option[i32]::Some(_) => { return; }
+            option::Option[i32]::None => {}
+        }
         let _sig: i32 = { kill(this._pid, 1 as i32) }; // SIGHUP
         var st: i32 = 0 as i32;
         let first: i32 = { waitpid(this._pid, #addr_of(st), 1 as i32) }; // WNOHANG
+        if first == this._pid {
+            this._reaped = true;
+            this._status = decode_wait_status(st);
+            return;
+        }
         if first == (0 as i32) {
             // A foreground program may ignore SIGHUP. Widget destruction must
             // remain deterministic, so finish the owned child rather than
             // blocking the AppKit main thread indefinitely.
             let _kill: i32 = { kill(this._pid, 9 as i32) }; // SIGKILL
-            let _reaped: i32 = { waitpid(this._pid, #addr_of(st), 0 as i32) };
+            let got: i32 = { waitpid(this._pid, #addr_of(st), 0 as i32) };
+            if got == this._pid {
+                this._reaped = true;
+                this._status = decode_wait_status(st);
+                return;
+            }
         }
+        this._reaped = true;
+        this._status = -1 as i32;
         return;
     }
 

@@ -173,6 +173,400 @@ fn owned_temporaries_drop_at_end_of_statement() {
     );
 }
 
+// bug 2026-08-13 (deferred-init-drop-binding-without-assignment-frees-garbage):
+// `var x: T;` owns nothing until its first assignment, so its scope-exit drop
+// must be gated on a liveness flag. Codegen picked the disposition from the
+// syntactic move scanner alone, and a binding that is never assigned never
+// enters that set — so it took the unconditional path and ran `T.drop` on an
+// alloca nothing had constructed. Every deferred-init shape is counted here,
+// with a distinct exit code per failing probe; the value is `DROPS`, so too
+// many means a double free and too few means a leak.
+#[test]
+fn deferred_init_drop_bindings_drop_only_what_they_own() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("deferred_init.cplus");
+    std::fs::write(
+        &src,
+        "static DROPS: i32 = 0;\n\
+         struct R { opaque data: *u8 }\n\
+         impl R { fn drop(ref this) { { DROPS = DROPS + 1; } return; } }\n\
+         fn mk() -> R { return R { data: { 0 as *u8 } }; }\n\
+         fn consume(take r: R) -> i32 { return 0; }\n\
+         // (a) the crashing shape: declared, never written, scope ends.\n\
+         fn p_never_assigned() { var x: R; return; }\n\
+         // (b) same, leaving by an early return.\n\
+         fn p_never_assigned_early() { var x: R; if 1 == 1 { return; } return; }\n\
+         // (c) deferred init written once.\n\
+         fn p_assigned_once() { var x: R; x = mk(); return; }\n\
+         // (d) written twice: the first store must NOT pre-drop garbage, the\n\
+         // second must pre-drop the value the binding then owns.\n\
+         fn p_assigned_twice() { var x: R; x = mk(); x = mk(); return; }\n\
+         // (e) written only on a branch that is not taken.\n\
+         fn p_branch_untaken() { var n: i32 = 0; var x: R; if n == 1 { x = mk(); } return; }\n\
+         // (f) written only on the branch that is taken.\n\
+         fn p_branch_taken() { var n: i32 = 1; var x: R; if n == 1 { x = mk(); } return; }\n\
+         // (g) initialised at the declaration — the never-moved fast path, which\n\
+         // must keep its unconditional drop rather than be pessimised.\n\
+         fn p_init_at_decl() { var x: R = mk(); return; }\n\
+         // (h) deferred, assigned, then moved out: the move disarms the same flag.\n\
+         fn p_assigned_then_moved() { var x: R; x = mk(); let _n: i32 = consume(x); return; }\n\
+         // (i) never assigned, declared inside a loop body, three trips.\n\
+         fn p_loop_never_assigned() { var i: i32 = 0; while i < 3 { var x: R; i = i + 1; } return; }\n\
+         fn main() -> i32 {\n\
+             p_never_assigned();      if { DROPS } != 0 { return 1; } { DROPS = 0; }\n\
+             p_never_assigned_early();if { DROPS } != 0 { return 2; } { DROPS = 0; }\n\
+             p_assigned_once();       if { DROPS } != 1 { return 3; } { DROPS = 0; }\n\
+             p_assigned_twice();      if { DROPS } != 2 { return 4; } { DROPS = 0; }\n\
+             p_branch_untaken();      if { DROPS } != 0 { return 5; } { DROPS = 0; }\n\
+             p_branch_taken();        if { DROPS } != 1 { return 6; } { DROPS = 0; }\n\
+             p_init_at_decl();        if { DROPS } != 1 { return 7; } { DROPS = 0; }\n\
+             p_assigned_then_moved(); if { DROPS } != 1 { return 8; } { DROPS = 0; }\n\
+             p_loop_never_assigned(); if { DROPS } != 0 { return 9; } { DROPS = 0; }\n\
+             return 0;\n\
+         }\n",
+    )
+    .unwrap();
+    for sanitizer in &["", "--asan"] {
+        let bin = dir.join("deferred_init");
+        let mut cmd = Command::new(cpc);
+        cmd.arg(&src).arg("-o").arg(&bin);
+        if !sanitizer.is_empty() {
+            cmd.arg(sanitizer);
+        }
+        assert!(
+            cmd.status().expect("invoke cpc").success(),
+            "deferred-init program must compile ({sanitizer})"
+        );
+        let run = Command::new(&bin).output().expect("run deferred_init");
+        let stderr = String::from_utf8_lossy(&run.stderr);
+        assert!(
+            !stderr.contains("AddressSanitizer"),
+            "ASan flagged deferred-init teardown ({sanitizer}): {stderr}"
+        );
+        // Pre-fix this exited 1: probe (a) dropped a binding that owned nothing.
+        assert_eq!(
+            run.status.code(),
+            Some(0),
+            "a deferred-init binding must drop exactly what it owns; \
+             failing probe = exit code ({sanitizer})"
+        );
+    }
+}
+
+// The same bug with a destructor that actually touches memory. `R` above has an
+// `opaque` field and an empty-bodied `drop`, which is what let the hole hide for
+// so long: the bogus call happened and did nothing observable. A `drop` that
+// `free`s a pointer field turns the same program into an invalid free.
+#[test]
+fn a_never_assigned_deferred_heap_binding_does_not_free_garbage() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("deferred_heap.cplus");
+    std::fs::write(
+        &src,
+        "extern fn malloc(n: usize) -> *u8;\n\
+         extern fn free(p: *u8);\n\
+         struct HeapCell { p: *u8 }\n\
+         impl HeapCell {\n\
+             fn drop(ref this) {\n\
+                 if this.p.is_not_null() { free(this.p); { this.p = 0 as *u8 }; }\n\
+                 return;\n\
+             }\n\
+         }\n\
+         fn main() -> i32 {\n\
+             var x: HeapCell;\n\
+             return 0;\n\
+         }\n",
+    )
+    .unwrap();
+    for sanitizer in &["", "--asan"] {
+        let bin = dir.join("deferred_heap");
+        let mut cmd = Command::new(cpc);
+        cmd.arg(&src).arg("-o").arg(&bin);
+        if !sanitizer.is_empty() {
+            cmd.arg(sanitizer);
+        }
+        assert!(
+            cmd.status().expect("invoke cpc").success(),
+            "deferred-heap program must compile ({sanitizer})"
+        );
+        let run = Command::new(&bin).output().expect("run deferred_heap");
+        let stderr = String::from_utf8_lossy(&run.stderr);
+        assert!(
+            !stderr.contains("AddressSanitizer"),
+            "ASan flagged the never-assigned binding ({sanitizer}): {stderr}"
+        );
+        // Pre-fix: `Abort trap: 6` (exit 134) from libc's invalid-free check.
+        assert_eq!(
+            run.status.code(),
+            Some(0),
+            "a `var x: T;` that is never written must not run T.drop on stack \
+             garbage ({sanitizer}); stderr: {stderr}"
+        );
+    }
+}
+
+// bug 2026-08-13 (owned-temps-outside-statement-scope-are-not-dropped): temp
+// lifetime was tied to `gen_stmt`, but a loop condition, a C-style `for` update
+// and a block tail are not statements. Their temporaries either piled up in the
+// enclosing statement's scope — one drop for N iterations — or, with no scope
+// open at all (a function whose whole body is an `if`), were never registered
+// and never freed. Every re-evaluation point now opens its own temp scope. The
+// counts below are exact: too few means a leak came back, too many means a
+// re-armed drop flag fired on a path that never re-created the temp.
+#[test]
+fn owned_temporaries_drop_per_evaluation_outside_statements() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("temp_reeval.cplus");
+    std::fs::write(
+        &src,
+        "static DROPS: i32 = 0;\n\
+         struct R { id: i32 }\n\
+         impl R {\n\
+             fn make() -> R { return R { id: 1 }; }\n\
+             fn get(this) -> i32 { return this.id; }\n\
+             fn drop(ref this) { { DROPS = DROPS + 1; } return; }\n\
+         }\n\
+         // (a) while condition: evaluated once per trip, break on the 4th.\n\
+         fn while_cond() {\n\
+             var i: i32 = 0;\n\
+             while R::make().get() > 0 { i = i + 1; if i == 4 { break; } }\n\
+             return;\n\
+         }\n\
+         // (b) C-style for condition: i = 0,1,2 then break.\n\
+         fn for_cond() {\n\
+             for (var i: i32 = 0; R::make().get() > 0; i = i + 1) { if i == 2 { break; } }\n\
+             return;\n\
+         }\n\
+         // (c) C-style for update: runs after each of 3 bodies.\n\
+         fn for_update() {\n\
+             for (var i: i32 = 0; i < 3; i = i + R::make().get()) { }\n\
+             return;\n\
+         }\n\
+         // (d) loop body whose sole content is an `if` — parsed as body.tail.\n\
+         fn body_tail() {\n\
+             var i: i32 = 0;\n\
+             while i < 3 {\n\
+                 if R::make().get() > 0 { i = i + 1; } else { i = i + 1; }\n\
+             }\n\
+             return;\n\
+         }\n\
+         // (e) function whose sole content is that same `if`: no temp scope was\n\
+         // open at all, so nothing was registered — not even a late drop.\n\
+         fn fn_tail() {\n\
+             if R::make().get() > 0 { let _x: i32 = 1; } else { let _y: i32 = 2; }\n\
+         }\n\
+         // (f) the temp is materialised on a CONDITIONAL path (the `||` RHS)\n\
+         // whose scope closes at the merge. Its drop flag is hoisted to the\n\
+         // entry block and initialised once, so it must be disarmed after each\n\
+         // drop — otherwise a short-circuiting iteration re-drops a torn-down\n\
+         // slot. i = 0,2 short-circuit; i = 1,3 build a temp.\n\
+         fn short_circuit() {\n\
+             var i: i32 = 0;\n\
+             var n: i32 = 0;\n\
+             while i % 2 == 0 || R::make().get() > 0 { i = i + 1; n = n + 1; if n == 4 { break; } }\n\
+             return;\n\
+         }\n\
+         // (g) control: the statement spelling already worked and must stay at\n\
+         // one drop per evaluation — a double free would push the count up.\n\
+         fn control() {\n\
+             var i: i32 = 0;\n\
+             while i < 3 { let n: i32 = R::make().get(); i = i + n; }\n\
+             return;\n\
+         }\n\
+         fn main() -> i32 {\n\
+             while_cond();\n\
+             for_cond();\n\
+             for_update();\n\
+             body_tail();\n\
+             fn_tail(); fn_tail(); fn_tail();\n\
+             short_circuit();\n\
+             control();\n\
+             return { DROPS };\n\
+         }\n",
+    )
+    .unwrap();
+    let bin = dir.join("temp_reeval");
+    let status = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .status()
+        .expect("invoke cpc");
+    assert!(status.success(), "re-evaluation temp program must compile");
+    let run = Command::new(&bin).status().expect("run temp_reeval");
+    // a=4, b=3, c=3, d=3, e=3, f=2, g=3  ⇒  21 drops, each exactly once.
+    // Before the fix this program reported 13.
+    assert_eq!(
+        run.code(),
+        Some(21),
+        "owned temporaries must drop once per evaluation of a loop condition, \
+         a for-update and a block tail; got {:?}",
+        run.code()
+    );
+}
+
+// The companion to the drop-count test above: the same shapes with a *heap*
+// Drop type, so a missed drop shows up as unbounded growth and a double drop as
+// a libc abort. `drop` does not null the pointer, which is what makes the
+// second free real rather than a no-op. 50k iterations of 64 bytes is 3.2 MB of
+// leak — far outside the noise of a process that should stay flat.
+#[test]
+fn heap_temporaries_in_loop_conditions_do_not_accumulate() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("temp_heap.cplus");
+    std::fs::write(
+        &src,
+        "extern fn malloc(n: usize) -> *u8;\n\
+         extern fn free(p: *u8);\n\
+         struct Cell { p: *u8 }\n\
+         impl Cell {\n\
+             fn drop(ref this) { free(this.p); return; }\n\
+             fn get(this) -> i32 { return 1; }\n\
+         }\n\
+         fn mk() -> Cell { return Cell { p: malloc(64 as usize) }; }\n\
+         fn tail_only() {\n\
+             if mk().get() > 0 { let _x: i32 = 1; } else { let _y: i32 = 2; }\n\
+         }\n\
+         fn main() -> i32 {\n\
+             var i: i32 = 0;\n\
+             while mk().get() > 0 { i = i + 1; if i >= 50000 { break; } }\n\
+             for (var j: i32 = 0; mk().get() > 0; j = j + 1) { if j >= 50000 { break; } }\n\
+             var k: i32 = 0;\n\
+             while k < 50000 {\n\
+                 if mk().get() > 0 { k = k + 1; } else { k = k + 1; }\n\
+             }\n\
+             var m: i32 = 0;\n\
+             while m < 50000 { tail_only(); m = m + 1; }\n\
+             return 0;\n\
+         }\n",
+    )
+    .unwrap();
+    let bin = dir.join("temp_heap");
+    let status = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .status()
+        .expect("invoke cpc");
+    assert!(status.success(), "heap-temp program must compile");
+    let run = Command::new(&bin).output().expect("run temp_heap");
+    // A double free aborts here (no null-out in `drop`); a leak would be caught
+    // by the RSS check the bug report used. Exit status pins the double-free
+    // half, which is the half a unit test can assert without measuring memory.
+    assert_eq!(
+        run.status.code(),
+        Some(0),
+        "heap temporaries must be freed exactly once per evaluation; stderr: {}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+}
+
+// 2026-08-15 (bugs/rvalue-text-view-as-argument.md): a block-expression tail —
+// `{ mk().view() }`, an `if`/`match` branch — produces a value that may BORROW a
+// temporary made while evaluating it. The tail's own temp bracket used to free
+// that temporary at the end of the tail, so the `str` the block yielded pointed
+// into freed memory before the consumer ever saw it. The same expression without
+// the braces was correct, which is what made it look like a logic bug.
+//
+// Asserted on the DROP ORDER, not on the bytes: the freed buffer usually still
+// holds the right bytes, and a byte check passes ~2 runs in 3. `observe` records
+// how many drops have run *at the moment the callee reads its argument* — 0 if
+// the temporary is still alive, 1 if it was freed underneath the view. The
+// second half of each case checks the temp is still freed by the end of the
+// statement, so the fix is a promotion to the enclosing statement and not a
+// leak; `drop` does not null the pointer, so a double free aborts.
+#[test]
+fn view_carrying_block_tails_outlive_their_bracket() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("view_tail.cplus");
+    std::fs::write(
+        &src,
+        "extern fn malloc(n: usize) -> *u8;\n\
+         extern fn free(p: *u8);\n\
+         static DROPS: i32 = 0;\n\
+         static SEEN: i32 = 0;\n\
+         struct Cell { p: *u8 }\n\
+         impl Cell {\n\
+             fn drop(ref this) { { DROPS = DROPS + 1; } free(this.p); return; }\n\
+             fn view(this) -> str { return { #str_from_raw_parts(this.p, 4 as usize) }; }\n\
+         }\n\
+         fn mk() -> Cell { return Cell { p: malloc(64 as usize) }; }\n\
+         // Records whether the argument's owner was already freed on entry.\n\
+         fn observe(s: str) -> i32 { { SEEN = SEEN + DROPS; } return #str_len(s) as i32; }\n\
+         fn reset() { { DROPS = 0; } return; }\n\
+         // Each case returns 0 when correct: the view was live at the call (SEEN\n\
+         // stayed 0) and the temp was freed once the statement ended (DROPS 1).\n\
+         fn block_tail() -> i32 {\n\
+             reset(); { SEEN = 0; }\n\
+             let _n: i32 = observe({ mk().view() });\n\
+             return { SEEN + (1 - DROPS) };\n\
+         }\n\
+         fn if_branch(c: bool) -> i32 {\n\
+             reset(); { SEEN = 0; }\n\
+             let _n: i32 = observe(if c { mk().view() } else { \"zzzz\" });\n\
+             return { SEEN + (1 - DROPS) };\n\
+         }\n\
+         fn match_arm(k: i32) -> i32 {\n\
+             reset(); { SEEN = 0; }\n\
+             let _n: i32 = observe(match k { 1 => { mk().view() } _ => \"zzzz\" });\n\
+             return { SEEN + (1 - DROPS) };\n\
+         }\n\
+         fn nested_block() -> i32 {\n\
+             reset(); { SEEN = 0; }\n\
+             let _n: i32 = observe({ { mk().view() } });\n\
+             return { SEEN + (1 - DROPS) };\n\
+         }\n\
+         // The unbraced spelling was always correct; it is the control.\n\
+         fn no_braces() -> i32 {\n\
+             reset(); { SEEN = 0; }\n\
+             let _n: i32 = observe(mk().view());\n\
+             return { SEEN + (1 - DROPS) };\n\
+         }\n\
+         // Two view temps live at once in one statement.\n\
+         fn two_temps() -> i32 {\n\
+             reset(); { SEEN = 0; }\n\
+             let _n: i32 = observe({ mk().view() }) + observe({ mk().view() });\n\
+             return { SEEN + (2 - DROPS) };\n\
+         }\n\
+         // A promotion must not become an accumulation: 50k trips, one free each,\n\
+         // and a double free aborts (drop does not null the pointer).\n\
+         fn loop_case() -> i32 {\n\
+             reset();\n\
+             var i: i32 = 0;\n\
+             while i < 50000 { let _n: i32 = observe({ mk().view() }); i = i + 1; }\n\
+             return { 50000 - DROPS };\n\
+         }\n\
+         fn main() -> i32 {\n\
+             return block_tail() + if_branch(true) + match_arm(1) + nested_block()\n\
+                  + no_braces() + two_temps() + loop_case();\n\
+         }\n",
+    )
+    .unwrap();
+    let bin = dir.join("view_tail");
+    let status = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .status()
+        .expect("invoke cpc");
+    assert!(status.success(), "view-tail program must compile");
+    let run = Command::new(&bin).output().expect("run view_tail");
+    // Before the fix this program exits 7 — every braced case saw its owner
+    // already freed, and only the unbraced control was correct.
+    assert_eq!(
+        run.status.code(),
+        Some(0),
+        "a view produced by a block tail must outlive the bracket and still be \
+         freed at end of statement; stderr: {}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+}
+
 // v0.0.19: a narrowing-literal cast (`<numeric literal> as T`) is accepted in
 // `static` initializer position and produces the same value the runtime cast
 // would. Compile a program whose statics use the cast form, then read them back
@@ -2242,6 +2636,7 @@ fn assign_reassign_view_borrow_rejected_e0372() {
            var s: str = \"x\";\n\
            s = b.view();\n\
            let b2: Buf = b;\n\
+           let s2: str = s;\n\
            return 0;\n\
          }\n",
         "E0372",
@@ -3306,6 +3701,352 @@ fn generic_call_in_interpolation_monomorphizes() {
         .output()
         .expect("run interpmono");
     assert_eq!(String::from_utf8_lossy(&run.stdout), "v=7\n");
+}
+
+/// bug 2026-08-13: a CALL-produced `Text` interpolation part (`${t.clone()}`,
+/// and the mono-inserted `${p}` → `p.to_text()` rewrite for a ToText struct)
+/// is an rvalue temporary nothing owned — the v0.0.26 end-of-statement
+/// temp-drop never sees interpolation parts, so its buffer leaked on every
+/// evaluation. It now joins the scratch-buffer free after the copy. A PLACE
+/// part (`${t}`) must stay untouched: it is owned by its binding, and freeing
+/// it would double-free (the run below aborts if that regresses). The IR
+/// counts are exact — one more free means a double free, one less a leak.
+#[test]
+fn interp_call_text_parts_freed_place_parts_not() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"interpfree\"\n\n[[bin]]\nname = \"interpfree\"\npath = \"src/main.cplus\"\n\n[dependencies]\nstdlib = \"*\"\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::os::unix::fs::symlink(
+        format!("{}/../vendor", env!("CARGO_MANIFEST_DIR")),
+        dir.join("vendor"),
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"stdlib/io\" as io;\n\
+         import \"stdlib/text\" as text;\n\
+         \n\
+         struct P { x: i32 }\n\
+         \n\
+         impl P: ToText {\n\
+             fn to_text(this) -> text::Text {\n\
+                 return \"P${this.x}\";\n\
+             }\n\
+         }\n\
+         \n\
+         fn main() -> i32 {\n\
+             let t = text::from_str(\"hi\");\n\
+             let p = P { x: 7 };\n\
+             let s = \"a=${t.clone()} b=${t} p=${p} n=${t.view()}\";\n\
+             io::println(s);\n\
+             return 0;\n\
+         }\n",
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .output()
+        .expect("invoke cpc build");
+    assert!(
+        out.status.success(),
+        "interp free probe must build: {}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr),
+    );
+    // A wrongly freed place part makes `Text.drop(t)` at scope end a double
+    // free — the run aborts. Output correctness guards the copy itself.
+    let run = Command::new(dir.join("target/debug/interpfree"))
+        .output()
+        .expect("run interpfree");
+    assert!(run.status.success(), "run aborted: {}", run.status);
+    assert_eq!(String::from_utf8_lossy(&run.stdout), "a=hi b=hi p=P7 n=hi\n");
+
+    // IR-level count, scoped to @main: the clone part, the `p.to_text()`
+    // rewrite part, and the `${t.view()}` str-conversion scratch each free —
+    // the place part `${t}` must not. Plus exactly two drops: `s` and `t`.
+    let ll = Command::new(cpc)
+        .arg("--emit-ll-project")
+        .current_dir(&dir)
+        .output()
+        .expect("emit-ll-project");
+    let ir = String::from_utf8_lossy(&ll.stdout);
+    let start = ir.find("define i32 @main(").expect("main missing from IR");
+    let end = start + ir[start..].find("\n}").expect("main body unterminated");
+    let body = &ir[start..end];
+    let frees = body.matches("call void @free(").count();
+    let drops = body.matches("Text.drop(").count();
+    assert_eq!(
+        frees, 3,
+        "expected exactly 3 frees in @main (clone part, to_text part, str scratch), got {frees}:\n{body}"
+    );
+    assert_eq!(
+        drops, 2,
+        "expected exactly 2 Text.drops in @main (`s`, `t`), got {drops}:\n{body}"
+    );
+}
+
+/// Stage-3 sink lowering (2026-08-13): an interpolated literal passed
+/// DIRECTLY to `io::print` / `io::println` / `io::eprintln` writes its parts
+/// straight to the stream — no `Text` materializes, no heap is touched.
+/// Covers every part kind (literal, int, float, bool, `str`, place-`Text`,
+/// call-`Text`): stdout output is byte-exact, stderr gets its line, and the
+/// emitted @main contains ZERO malloc calls — one malloc means the
+/// materializing path came back. The call-`Text` part's buffer is freed
+/// after the write (exactly one free in @main).
+#[test]
+fn interp_in_print_sink_position_never_allocates() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"interpsink\"\n\n[[bin]]\nname = \"interpsink\"\npath = \"src/main.cplus\"\n\n[dependencies]\nstdlib = \"*\"\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::os::unix::fs::symlink(
+        format!("{}/../vendor", env!("CARGO_MANIFEST_DIR")),
+        dir.join("vendor"),
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"stdlib/io\" as io;\n\
+         import \"stdlib/text\" as text;\n\
+         \n\
+         fn main() -> i32 {\n\
+             let t = text::from_str(\"hi\");\n\
+             let s: str = \"vw\";\n\
+             var i = 0;\n\
+             loop {\n\
+                 io::println(\"i=${i} f=${1.5f64} b=${true} s=${s} t=${t} c=${t.clone()}\");\n\
+                 i = i + 1;\n\
+                 if i > 1 { break; }\n\
+             }\n\
+             io::print(\"p=${i}\");\n\
+             io::println(\"\");\n\
+             io::eprintln(\"e=${i}\");\n\
+             return 0;\n\
+         }\n",
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .output()
+        .expect("invoke cpc build");
+    assert!(
+        out.status.success(),
+        "sink probe must build: {}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr),
+    );
+    let run = Command::new(dir.join("target/debug/interpsink"))
+        .output()
+        .expect("run interpsink");
+    assert!(run.status.success(), "run failed: {}", run.status);
+    assert_eq!(
+        String::from_utf8_lossy(&run.stdout),
+        "i=0 f=1.5 b=true s=vw t=hi c=hi\ni=1 f=1.5 b=true s=vw t=hi c=hi\np=2\n"
+    );
+    assert_eq!(String::from_utf8_lossy(&run.stderr), "e=2\n");
+
+    let ll = Command::new(cpc)
+        .arg("--emit-ll-project")
+        .current_dir(&dir)
+        .output()
+        .expect("emit-ll-project");
+    let ir = String::from_utf8_lossy(&ll.stdout);
+    let start = ir.find("define i32 @main(").expect("main missing from IR");
+    let end = start + ir[start..].find("\n}").expect("main body unterminated");
+    let body = &ir[start..end];
+    let mallocs = body.matches("call ptr @malloc").count();
+    let frees = body.matches("call void @free(").count();
+    assert_eq!(
+        mallocs, 0,
+        "sink-position interpolation must not allocate; got {mallocs} mallocs:\n{body}"
+    );
+    assert_eq!(
+        frees, 1,
+        "exactly the call-`Text` part frees (its clone), got {frees}:\n{body}"
+    );
+}
+
+/// Stage-3 follow-up (2026-08-13): `t.append("… ${x} …")` appends the
+/// interpolation's parts IN PLACE — one `Text.reserve` call carries the
+/// whole operation's `Status`, the copies are inlined, and no `Text`
+/// materializes (zero mallocs in @main; the buffers grow inside stdlib).
+/// A part that READS THE RECEIVER (`w.append("x = ${w}")`) keeps the
+/// materializing path — its copy-out makes the aliasing safe — and since
+/// the same day's `text_coercion_consumed` fix, that materialized temp is
+/// dropped at end of statement instead of leaking (the run stays correct
+/// either way; the IR shows the fallback's malloc plus its drop).
+#[test]
+fn text_append_interp_appends_in_place() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"appendsink\"\n\n[[bin]]\nname = \"appendsink\"\npath = \"src/main.cplus\"\n\n[dependencies]\nstdlib = \"*\"\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::os::unix::fs::symlink(
+        format!("{}/../vendor", env!("CARGO_MANIFEST_DIR")),
+        dir.join("vendor"),
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"stdlib/io\" as io;\n\
+         import \"stdlib/text\" as text;\n\
+         import \"stdlib/status\" as status;\n\
+         \n\
+         fn aliasing() {\n\
+             var w = text::from_str(\"ab\");\n\
+             w.append(\"x = ${w}\");\n\
+             io::println(w);\n\
+             return;\n\
+         }\n\
+         \n\
+         fn main() -> i32 {\n\
+             let u = text::from_str(\"world\");\n\
+             var t = text::from_str(\"hello\");\n\
+             var i = 0;\n\
+             loop {\n\
+                 let _a: status::Status = t.append(\" ${i}:${u}\");\n\
+                 i = i + 1;\n\
+                 if i > 2 { break; }\n\
+             }\n\
+             io::println(t);\n\
+             aliasing();\n\
+             return 0;\n\
+         }\n",
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .output()
+        .expect("invoke cpc build");
+    assert!(
+        out.status.success(),
+        "append sink probe must build: {}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr),
+    );
+    let run = Command::new(dir.join("target/debug/appendsink"))
+        .output()
+        .expect("run appendsink");
+    assert!(run.status.success(), "run failed: {}", run.status);
+    assert_eq!(
+        String::from_utf8_lossy(&run.stdout),
+        "hello 0:world 1:world 2:world\nabx = ab\n"
+    );
+
+    let ll = Command::new(cpc)
+        .arg("--emit-ll-project")
+        .current_dir(&dir)
+        .output()
+        .expect("emit-ll-project");
+    let ir = String::from_utf8_lossy(&ll.stdout);
+    // @main: the in-place path — one reserve call site, zero mallocs.
+    let start = ir.find("define i32 @main(").expect("main missing");
+    let end = start + ir[start..].find("\n}").expect("main unterminated");
+    let main_body = &ir[start..end];
+    assert_eq!(
+        main_body.matches("call ptr @malloc").count(),
+        0,
+        "in-place append must not allocate in @main:\n{main_body}"
+    );
+    assert_eq!(
+        main_body.matches("Text.reserve").count(),
+        1,
+        "exactly one reserve call site in @main:\n{main_body}"
+    );
+    // @…aliasing: the materializing fallback — its temp is now DROPPED at
+    // end of statement (the coercion-consumed fix), not leaked. Find the
+    // define line by suffix (the module prefix is the package layout's).
+    let astart = ir
+        .match_indices("define ")
+        .map(|(i, _)| i)
+        .find(|&i| {
+            ir[i..].lines().next().is_some_and(|l| l.contains("aliasing("))
+        })
+        .expect("aliasing missing");
+    let aend = astart + ir[astart..].find("\n}").expect("aliasing unterminated");
+    let abody = &ir[astart..aend];
+    assert!(
+        abody.matches("call ptr @malloc").count() >= 1,
+        "aliasing keeps the materializing path:\n{abody}"
+    );
+    assert!(
+        abody.contains("Text.drop"),
+        "the materialized temp must be temp-dropped, not leaked:\n{abody}"
+    );
+}
+
+/// `#[no_alloc]` sink relaxation (2026-08-13): an interpolated literal
+/// passed DIRECTLY to a blessed print sink allocates nothing (the sink
+/// lowering), so a `#[no_alloc]` function may use it — the io sinks are
+/// themselves `#[no_alloc]` over whitelisted libc leaves. Any other interp
+/// position still heap-allocates and must keep the E0901 rejection.
+#[test]
+fn no_alloc_admits_sink_interpolation_only() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"nasink\"\n\n[[bin]]\nname = \"nasink\"\npath = \"src/main.cplus\"\n\n[dependencies]\nstdlib = \"*\"\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::os::unix::fs::symlink(
+        format!("{}/../vendor", env!("CARGO_MANIFEST_DIR")),
+        dir.join("vendor"),
+    )
+    .unwrap();
+    let write_main = |body: &str| {
+        std::fs::write(
+            dir.join("src/main.cplus"),
+            format!(
+                "import \"stdlib/io\" as io;\nimport \"stdlib/text\" as text;\n\n{body}\nfn main() -> i32 {{ tick(7); return 0; }}\n"
+            ),
+        )
+        .unwrap();
+    };
+    let check = || -> (bool, String) {
+        let out = Command::new(cpc).arg("check").current_dir(&dir).output().expect("cpc");
+        (
+            out.status.success(),
+            format!(
+                "{}{}",
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr)
+            ),
+        )
+    };
+    // (a) sink positions — all three blessed sinks admit interpolation.
+    write_main(
+        "#[no_alloc]\nfn tick(i: i32) {\n    io::println(\"i = ${i}\");\n    io::eprintln(\"e = ${i}\");\n    io::print(\"p = ${i}\");\n    io::println(\"\");\n    return;\n}\n",
+    );
+    let (ok_a, out_a) = check();
+    assert!(ok_a, "sink interpolation must pass #[no_alloc]; got: {out_a}");
+    // (b) a bound interpolation still allocates → E0901 stays.
+    write_main(
+        "#[no_alloc]\nfn tick(i: i32) {\n    let s: text::Text = \"i = ${i}\";\n    io::println(s);\n    return;\n}\n",
+    );
+    let (ok_b, out_b) = check();
+    assert!(!ok_b, "bound interpolation must stay rejected");
+    assert!(
+        out_b.contains("uses string interpolation"),
+        "expected the interpolation E0901, got: {out_b}"
+    );
 }
 
 #[test]
@@ -5891,14 +6632,64 @@ fn view_stored_into_projection_then_move_rejected_e0372() {
     // construction form `let w = Slot { s: b.view() }`.
     for tail in [
         "fn main() -> i32 { let b: Buf = mk(); var w: Slot = Slot { s: \"\" }; \
-         w.s = b.view(); consume(b); return 0; }",
+         w.s = b.view(); consume(b); let u: str = w.s; return 0; }",
         "fn main() -> i32 { let b: Buf = mk(); var a: [str; 1] = [\"\"]; \
-         a[0] = b.view(); consume(b); return 0; }",
+         a[0] = b.view(); consume(b); let u: str = a[0]; return 0; }",
     ] {
         let (ok, stderr) = try_compile_snippet(&format!("{VIEW_PRELUDE}{tail}\n"));
         assert!(!ok, "expected E0372 for `{tail}`, compiled instead");
         assert!(stderr.contains("E0372"), "expected E0372 for `{tail}`, got: {stderr}");
     }
+}
+
+/// NLL borrow ends (2026-08-13): a view's borrow ends after the statement
+/// containing its last use, not at scope exit. The canonical shape —
+/// `let v: str = t; println(v); t.append(...)` — must compile (`v` is dead at
+/// the append), while the reversed order (append, then read the view) stays
+/// a hard error: that one is the realloc UAF.
+#[test]
+fn nll_view_borrow_ends_at_last_use() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"nll\"\n\n[[bin]]\nname = \"nll\"\npath = \"src/main.cplus\"\n\n[dependencies]\nstdlib = \"*\"\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::os::unix::fs::symlink(
+        format!("{}/../vendor", env!("CARGO_MANIFEST_DIR")),
+        dir.join("vendor"),
+    )
+    .unwrap();
+    let head = "import \"stdlib/io\" as io;\n\
+         import \"stdlib/text\" as text;\n\
+         fn main() -> i32 {\n\
+             var t: text::Text = text::from_str(\"  hi  \");\n\
+             let v: str = t;\n";
+    let check = |body: &str| -> (bool, String) {
+        std::fs::write(dir.join("src/main.cplus"), format!("{head}{body}")).unwrap();
+        let out = Command::new(cpc).arg("check").current_dir(&dir).output().expect("cpc");
+        (
+            out.status.success(),
+            format!(
+                "{}{}",
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr)
+            ),
+        )
+    };
+    // (a) use, then mutate — v dead at the append → compiles.
+    let (ok_a, out_a) =
+        check("    io::println(v);\n    t.append(\"!\");\n    io::println(t);\n    return 0;\n}\n");
+    assert!(ok_a, "use-then-mutate must compile under NLL; got: {out_a}");
+    // (b) mutate, then use — the realloc UAF → still rejected.
+    let (ok_b, out_b) = check("    t.append(\"!\");\n    io::println(v);\n    return 0;\n}\n");
+    assert!(!ok_b, "mutate-then-use must stay an error");
+    assert!(
+        out_b.contains("E0381"),
+        "expected E0381 for mutate-then-use, got: {out_b}"
+    );
 }
 
 #[test]
@@ -5947,8 +6738,8 @@ fn view_through_control_flow_expr_then_move_rejected_e0372() {
     // pins its owner — moving the owner while the binding is live is E0372.
     for tail in [
         "fn main() -> i32 { let b: Buf = mk(); \
-         let s: str = if true { b.view() } else { \"\" }; consume(b); return 0; }",
-        "fn main() -> i32 { let b: Buf = mk(); let s: str = { b.view() }; consume(b); return 0; }",
+         let s: str = if true { b.view() } else { \"\" }; consume(b); let u: str = s; return 0; }",
+        "fn main() -> i32 { let b: Buf = mk(); let s: str = { b.view() }; consume(b); let u: str = s; return 0; }",
     ] {
         let (ok, stderr) = try_compile_snippet(&format!("{VIEW_PRELUDE}{tail}\n"));
         assert!(!ok, "expected E0372 for `{tail}`, compiled instead");
@@ -5962,7 +6753,7 @@ fn view_through_destructure_then_move_rejected_e0372() {
     // not an owned resource — the owner must stay pinned.
     let (ok, stderr) = try_compile_snippet(&format!(
         "{VIEW_PRELUDE}fn main() -> i32 {{ let b: Buf = mk(); \
-         let Slot {{ s }} = Slot {{ s: b.view() }}; consume(b); return 0; }}\n"
+         let Slot {{ s }} = Slot {{ s: b.view() }}; consume(b); let u: str = s; return 0; }}\n"
     ));
     assert!(!ok, "expected E0372, compiled instead");
     assert!(stderr.contains("E0372"), "expected E0372, got: {stderr}");
@@ -6480,6 +7271,82 @@ fn text_coercion_param_root_compiles() {
          fn main() -> i32 {{ return 0; }}\n"
     ));
     assert!(ok, "a param-rooted coerced view must compile; stderr: {stderr}");
+}
+
+#[test]
+fn orphan_source_file_warns_w0005_and_success_prints_module_count() {
+    // NOTES items B and C (2026-08-12), one project: an unimported file under
+    // `src/` is invisible — it compiles never and warns never, and a call to
+    // an undefined function in one still built exit-0 — and `cpc build` said
+    // nothing on success, so the only signal was an exit code a pipe through
+    // `tail` promptly replaced. W0005 names the dead file; the success line
+    // says what was built.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"orph\"\n\n[[bin]]\nname = \"orph\"\npath = \"src/main.cplus\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"./used\" as used;\nfn main() -> i32 { return used::zero(); }\n",
+    )
+    .unwrap();
+    std::fs::write(dir.join("src/used.cplus"), "fn zero() -> i32 { return 0; }\n").unwrap();
+    // The orphan carries an undefined call on purpose: nothing checks it,
+    // which is exactly what the warning exists to say.
+    std::fs::write(
+        dir.join("src/dead.cplus"),
+        "fn f() -> i32 { return undefined(); }\n",
+    )
+    .unwrap();
+    // A platform variant of a loaded module is the resolver's own convention
+    // for "reachable on another target" — exempt on every target.
+    std::fs::write(
+        dir.join("src/used_linux.cplus"),
+        "fn zero() -> i32 { return 1; }\n",
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .output()
+        .expect("invoke cpc");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(out.status.success(), "build must succeed: {stderr}");
+    assert!(stderr.contains("W0005"), "orphan must warn: {stderr}");
+    assert!(stderr.contains("dead.cplus"), "the orphan is named: {stderr}");
+    assert!(
+        !stderr.contains("used_linux"),
+        "platform variant is exempt: {stderr}"
+    );
+    assert!(
+        stdout.contains("ok: 2 modules"),
+        "success names what it built: {stdout}"
+    );
+}
+
+#[test]
+fn lang_string_eq_lang_string_compiles() {
+    // 2026-08-12: `Text == Text` compares byte content through BOTH sides'
+    // `str` views — the rule `Text == str` set, completed. This was E0302
+    // ("write your own equality function"), so the working spellings were
+    // `a == b.view()` or knowing which side was owned — one more str/Text
+    // asymmetry an agent applies the wrong rule to, confidently. Content
+    // semantics are pinned in stdlib's text tests; this pins the sema seam
+    // without the stdlib.
+    let (ok, stderr) = try_compile_snippet(&format!(
+        "{LANG_STR_PRELUDE}fn main() -> i32 {{\n\
+             let a: LStr = mk();\n\
+             let b: LStr = mk();\n\
+             if a == b {{ return 0; }}\n\
+             return 1;\n\
+         }}\n"
+    ));
+    assert!(ok, "lang-string == lang-string must compile; stderr: {stderr}");
 }
 
 // ── Memory-model contract §3.3 / §5 (2026-08-01): the scope-exit and
@@ -7335,13 +8202,17 @@ fn generic_vec_slice_view_invalidation_rejected() {
         )
     };
 
-    // (a) move the owner while the slice is live → E0372
-    let (ok_a, out_a) = check("    consume(v);\n    return 0;\n}\n");
+    // (a) move the owner while the slice is live (read after) → E0372
+    let (ok_a, out_a) = check(
+        "    consume(v);\n    let p: *i32 = { #slice_ptr(s) as *i32 };\n    return 0;\n}\n",
+    );
     assert!(!ok_a, "moving a Vec under a live slice must be rejected");
     assert!(out_a.contains("E0372"), "expected E0372, got: {out_a}");
 
-    // (b) mutate (append → realloc) while the slice is live → E0381
-    let (ok_b, out_b) = check("    let b: status::Status = v.append(2);\n    return 0;\n}\n");
+    // (b) mutate (append → realloc) while the slice is live (read after) → E0381
+    let (ok_b, out_b) = check(
+        "    let b: status::Status = v.append(2);\n    let p: *i32 = { #slice_ptr(s) as *i32 };\n    return 0;\n}\n",
+    );
     assert!(!ok_b, "append under a live slice must be rejected");
     assert!(out_b.contains("E0381"), "expected E0381, got: {out_b}");
 
@@ -8224,6 +9095,49 @@ fn features_inside_a_generic_impl_body_reach_codegen_intact() {
         );
         assert!(ok, "[{name}] must compile; stderr: {stderr}");
     }
+}
+
+// 2026-08-12: a concrete fn-pointer param on a GENERIC fn is checked with its
+// own expected type, so a spliced fn-typed DEFAULT (a bare fn name) coerces
+// exactly as it does on a non-generic call. Before, the inference path checked
+// every argument with no expected type, so `run_job(job)` — omitting a
+// `then: fn(*u8) = job_done_noop` default — was E0312 with the span pointing
+// into the DECLARATION: a generic fn could declare a default no caller could
+// use, and callers bound the library's own no-op to a local to pass it
+// explicitly (facet services::run_job, three copies in iris).
+#[test]
+fn generic_fn_with_fn_typed_default_is_callable_without_it() {
+    let src = "interface Job { fn run(ref this); }\n\
+         fn job_done_noop(ctx: *u8) { return; }\n\
+         fn run_job[J: Job](ref job_v: J, then: fn(*u8) = job_done_noop, ctx: *u8 = 0 as *u8) {\n\
+             job_v.run();\n\
+             then(ctx);\n\
+             return;\n\
+         }\n\
+         struct W { n: i32 }\n\
+         impl W: Job { fn run(ref this) { this.n = this.n + 1; return; } }\n\
+         fn main() -> i32 { var w: W = W { n: 0 }; run_job(w); return w.n - 1; }\n";
+    let (ok, stderr) = try_compile_snippet(src);
+    assert!(!stderr.contains("panicked"), "must not ICE: {stderr}");
+    assert!(ok, "generic fn-typed default must compile; stderr: {stderr}");
+}
+
+#[test]
+fn generic_fn_concrete_param_mismatch_reports_one_error_not_two() {
+    // The concrete position is checked WITH its expected type and skipped by
+    // the unifier — a mismatch must not be reported by both.
+    let src = "interface Job { fn run(ref this); }\n\
+         fn run_job[J: Job](ref job_v: J, then: fn(*u8)) { job_v.run(); return; }\n\
+         struct W { n: i32 }\n\
+         impl W: Job { fn run(ref this) { this.n = this.n + 1; return; } }\n\
+         fn main() -> i32 { var w: W = W { n: 0 }; run_job(w, then: 5); return 0; }\n";
+    let (ok, stderr) = try_compile_snippet(src);
+    assert!(!ok, "mismatched fn-pointer arg must fail");
+    assert_eq!(
+        stderr.matches("E0302").count(),
+        1,
+        "one E0302, not a unifier duplicate: {stderr}"
+    );
 }
 
 #[test]
@@ -24174,4 +25088,37 @@ fn a_typoed_import_prefix_reports_the_same_error_in_every_position() {
             "{what}: expected E0402 naming the prefix, got:\n{all}"
         );
     }
+}
+
+/// An objc IMP is a function pointer, and until now it could not live on the
+/// type it belongs to: `Type::f` in value position answered "unknown type", so
+/// every backend that needed a draw callback grew a top-level fn beside the
+/// struct that wanted it. A receiverless associated fn is a namespaced fn, and
+/// its address is the symbol its own definition emitted — including when the
+/// only reference to it in the whole program IS that address.
+#[test]
+fn an_associated_fn_can_be_a_fn_pointer_value_and_runs() {
+    let out = compile_and_run_src(
+        "assocfnptr",
+        "struct Gutter { n: i32 }\n\
+         impl Gutter {\n\
+             fn draw(base: i32, add: i32) -> i32 { return base +% add; }\n\
+             fn pick() -> fn(i32, i32) -> i32 { return Gutter::draw; }\n\
+         }\n\
+         fn through(f: fn(i32, i32) -> i32) -> i32 { return f(40 as i32, 2 as i32); }\n\
+         fn main() -> i32 {\n\
+             let p: fn(i32, i32) -> i32 = Gutter::draw;\n\
+             let a: i32 = p(1 as i32, 2 as i32);\n\
+             let b: i32 = through(Gutter::draw);\n\
+             let c: i32 = through(Gutter::pick());\n\
+             if a == (3 as i32) && b == (42 as i32) && c == (42 as i32) { return 0; }\n\
+             return 1;\n\
+         }\n",
+    );
+    assert!(
+        out.status.success(),
+        "an associated fn taken by address must run: {}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
 }

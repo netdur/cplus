@@ -17,7 +17,29 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 DEFAULT_ERRORS  = HERE / "errors.toml"
 DEFAULT_ERRORSMD = HERE / "ERRORS.md"
-DEFAULT_SITEMD = Path("/Users/adel/Workspace/cplus.dev/resources/content/docs/0.0.22/error-codes.md")
+SITE_DOCS = Path("/Users/adel/Workspace/cplus.dev/resources/content/docs")
+
+
+def newest_site_version(root=SITE_DOCS):
+    """The highest-numbered version folder under the site's docs/, or None.
+
+    The site keeps every released manual version as a frozen archive and serves
+    only the newest one from the clean /docs URLs, so the newest folder is the
+    one a regeneration should land in. This used to be a hardcoded path, which
+    silently rewrote a long-frozen archive once the manual moved on; resolve it
+    instead, and pass --site-md to target a specific version deliberately.
+    """
+    if not root.is_dir():
+        return None
+    found = []
+    for p in root.iterdir():
+        if not p.is_dir():
+            continue
+        try:
+            found.append((tuple(int(n) for n in p.name.split(".")), p))
+        except ValueError:
+            continue  # not a version folder
+    return max(found)[1] if found else None
 
 # Display order of categories (entries within a category sort by id).
 CATEGORY_ORDER = [
@@ -99,19 +121,28 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--errors", type=Path, default=DEFAULT_ERRORS)
     ap.add_argument("--errors-md", type=Path, default=DEFAULT_ERRORSMD)
-    ap.add_argument("--site-md", type=Path, default=DEFAULT_SITEMD)
+    ap.add_argument("--site-md", type=Path, default=None,
+                    help="site page to write; defaults to the newest version folder under "
+                         f"{SITE_DOCS}")
     a = ap.parse_args()
     cat = load(a.errors)
 
     a.errors_md.write_text(render(cat, frontmatter=False, maintainer=True,
                                   header=ERRORSMD_HEADER))
     print(f"wrote {a.errors_md} ({len(cat)} codes)")
-    if a.site_md.parent.is_dir():
-        a.site_md.write_text(render(cat, frontmatter=True, maintainer=False,
-                                    header=SITE_HEADER))
-        print(f"wrote {a.site_md} ({len(cat)} codes)")
+
+    site_md = a.site_md
+    if site_md is None:
+        newest = newest_site_version()
+        site_md = newest / "error-codes.md" if newest else None
+    if site_md is None:
+        print(f"skip site page: no version folder under {SITE_DOCS}", file=sys.stderr)
+    elif site_md.parent.is_dir():
+        site_md.write_text(render(cat, frontmatter=True, maintainer=False,
+                                  header=SITE_HEADER))
+        print(f"wrote {site_md} ({len(cat)} codes)")
     else:
-        print(f"skip site page: {a.site_md.parent} not found", file=sys.stderr)
+        print(f"skip site page: {site_md.parent} not found", file=sys.stderr)
 
 if __name__ == "__main__":
     main()

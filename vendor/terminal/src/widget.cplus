@@ -6,6 +6,7 @@
 // platform implementation selected underneath it.
 
 import "./appkit" as backend;
+import "./terminal" as terminal;
 import "stdlib/option" as option;
 import "stdlib/text" as text;
 import "facet/facet" as facet;
@@ -13,6 +14,12 @@ import "facet/facet" as facet;
 struct Widget {
     _backend: backend::Widget,
 }
+
+// Re-exported so an application can name the state without importing the screen
+// model as well.
+fn state_idle() -> terminal::CommandState { return terminal::CommandState::Idle; }
+fn state_running() -> terminal::CommandState { return terminal::CommandState::Running; }
+fn state_done() -> terminal::CommandState { return terminal::CommandState::Done; }
 
 fn supported() -> bool { return backend::supported(); }
 
@@ -77,4 +84,66 @@ impl Widget {
         this._backend.stop();
         return;
     }
+
+    // ---- driving commands ---------------------------------------------------
+    //
+    // A terminal that can only be typed into is not enough for an application
+    // that runs builds in one: it has to know when the build finished and
+    // whether it worked. The shell reports both through prompt/command marks
+    // that `terminal/pty` installs, and this is where they surface.
+    //
+    //     let id: u64 = term.run("cpc build");
+    //     // ...later, from on_command_end or a poll:
+    //     match term.exit_code() {
+    //         option::Option[i32]::Some(0) => { /* built */ }
+    //         option::Option[i32]::Some(_) => { show(term.output()); }
+    //         option::Option[i32]::None    => { /* still running */ }
+    //     }
+
+    // Run `command`. Returns the id it will be given, or 0 if it was not sent
+    // because the session is stopped or the previous command is still running.
+    fn run(this, command: str) -> u64 {
+        return this._backend.run(command);
+    }
+
+    // Interrupt whatever is running, as ^C does.
+    fn interrupt(this) {
+        this._backend.interrupt();
+        return;
+    }
+
+    fn has_integration(this) -> bool { return this._backend.has_integration(); }
+    fn command_state(this) -> terminal::CommandState { return this._backend.command_state(); }
+    fn command_id(this) -> u64 { return this._backend.command_id(); }
+    fn command_line(this) -> text::Text { return this._backend.command_line(); }
+
+    // The exit status of the last command that finished; `None` while one is
+    // still running, and before any has run.
+    fn exit_code(this) -> option::Option[i32] { return this._backend.exit_code(); }
+
+    fn finished_count(this) -> u64 { return this._backend.finished_count(); }
+
+    // What the running or last-finished command put on the screen.
+    fn output(this) -> text::Text { return this._backend.output(); }
+
+    fn cwd(this) -> text::Text { return this._backend.cwd(); }
+    fn title(this) -> text::Text { return this._backend.title(); }
+
+    // Is a full-screen program up (`vim`, `top`)? Worth asking before sending
+    // the shell a command it will not see.
+    fn alternate_screen(this) -> bool { return this._backend.alternate_screen(); }
+
+    // Called on the main thread once per command that finishes.
+    fn on_command_end(this, handler: fn(*u8), ctx: *u8 = 0 as *u8) {
+        this._backend.on_command_end(handler, ctx);
+        return;
+    }
+
+    // Called once when the shell itself goes away.
+    fn on_exit(this, handler: fn(*u8), ctx: *u8 = 0 as *u8) {
+        this._backend.on_exit(handler, ctx);
+        return;
+    }
+
+    fn shell_exit_code(this) -> option::Option[i32] { return this._backend.shell_exit_code(); }
 }

@@ -1,0 +1,71 @@
+// Reference: zstack
+//   core::zstack(builder) — later children paint above earlier ones
+
+import "facet/facet" as core;
+import "facet/elements" as ui;
+import "facet/component" as component;
+import "facet/vocabulary" as vocab;
+import "flex_layout/flex_layout" as flex;
+import "../../shell" as shell;
+
+struct ZStacks {
+    n: i32,
+}
+
+impl ZStacks {
+    fn new() -> ZStacks { return ZStacks { n: 0 }; }
+}
+
+impl ZStacks: component::Component {
+    fn build(ref this) -> core::Node {
+        var body: core::Builder = core::Builder::new();
+        body.add(shell::caption("zstack  ·  overlay layers"));
+        body.add(ui::label(
+            "Children share one frame; paint order is declaration order (last on top). Use for badges, watermarks, loading overlays.",
+            key: "zs:note",
+            font_size: 13.0f64,
+            text_color: vocab::Color::ink(0.65f64),
+            max_lines: 4 as i64,
+            line_break: vocab::LineBreak::WordWrap,
+        ));
+
+        var layers: core::Builder = core::Builder::new();
+        layers.add(ui::box(
+            vocab::Color::primary(),
+            key: "zs:base",
+            corner_radius: vocab::Corners::all(12.0f64),
+        ).width(200.0f64).height(120.0f64));
+
+        var badge_b: core::Builder = core::Builder::new();
+        badge_b.add(ui::label(
+            "3",
+            key: "zs:badge_t",
+            font_size: 12.0f64,
+            font_weight: vocab::FontWeight::Bold,
+            text_color: vocab::Color::rgba(1.0f64, 1.0f64, 1.0f64, 1.0f64),
+        ));
+        var badge: core::Node = core::column(badge_b)
+            .padding(6.0f64)
+            .width(28.0f64)
+            .height(28.0f64)
+            .margin_edge(flex::Edge::Top, 8.0f64)
+            .margin_edge(flex::Edge::Left, 160.0f64);
+        badge.set_background_color(vocab::Color::rgba(0.9f64, 0.2f64, 0.25f64, 1.0f64));
+        badge.set_corner_radius(vocab::Corners::all(14.0f64));
+        layers.add(badge);
+
+        body.add(core::zstack(layers).width(200.0f64).height(120.0f64));
+
+        return shell::panel(
+            "ZStack",
+            "Layered layout. Same context as column/row; z-order is source order.",
+            core::column(body).gap(12.0f64),
+            howto: "var b = Builder::new();\nb.add(background);\nb.add(badge);\ncore::zstack(b).width(200.0).height(120.0)",
+        );
+    }
+}
+
+impl ZStacks: component::Lifecycle {
+    fn on_attach(ref this) { return; }
+    fn on_detach(ref this) { return; }
+}
