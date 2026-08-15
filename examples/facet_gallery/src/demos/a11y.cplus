@@ -1,0 +1,163 @@
+// Reference: what a node says about ITSELF — to VoiceOver, to a tooltip, and
+// to an agent.
+//   core::set_accessibility_label(n, "…")   — the name assistive tech reads
+//   core::set_accessibility_hint(n, "…")    — what happens if you use it
+//   core::set_heading_level(n, 1)           — structure, for rotor navigation
+//   core::set_tooltip(n, "…")               — the mouse-hover affordance
+//   core::set_flow_direction(n, vocab::FlowDirection::RightToLeft)
+//   core::set_agent(n, vocab::Agent::Private)
+//
+// The last one is not accessibility, it is the same question asked by a
+// different reader: an embedded agent walks this tree, and a node's tier says
+// how much of itself it is willing to show. `Open` is readable and operable,
+// `Protected` is visible but not operable, `Private` is present with its value
+// withheld, `Hidden` is not in the agent's tree at all. The tier is inherited
+// down the subtree and the strictest ancestor wins — marking a payment box
+// covers the card field without naming it.
+
+import "facet/facet" as core;
+import "facet/elements" as ui;
+import "facet/component" as component;
+import "facet/mount" as mount;
+import "facet/label" as label;
+import "facet/vocabulary" as vocab;
+import "stdlib/option" as option;
+import "../shell" as shell;
+
+const RTL: str = "ax:rtl";
+const STATUS: str = "ax:status";
+
+struct Accessibility {
+    rtl: bool,
+    tier: i32,
+}
+
+impl Accessibility {
+    fn new() -> Accessibility { return Accessibility { rtl: false, tier: 0 }; }
+
+    fn say(ref this, msg: str) {
+        match label::find(STATUS) {
+            option::Option[label::Label]::Some(l) => { let _l: label::Label = l.set_text(msg); }
+            option::Option[label::Label]::None => { }
+        }
+        return;
+    }
+
+    // Mirrors the layout: a row's children run the other way, and every
+    // leading/trailing edge follows.
+    fn on_rtl(ref this, sender: *u8) {
+        this.rtl = !this.rtl;
+        core::set_flow_direction(mount::node(RTL),
+            if this.rtl { vocab::FlowDirection::RightToLeft } else { vocab::FlowDirection::LeftToRight });
+        core::relayout(mount::node(RTL));
+        this.say(if this.rtl { "flow_direction: RightToLeft" } else { "flow_direction: LeftToRight" });
+        return;
+    }
+
+    fn on_tier(ref this, sender: *u8) {
+        this.tier = (this.tier +% 1) % 4;
+        let n: *core::Node = mount::node("ax:secret");
+        if this.tier == 0 {
+            core::set_agent(n, vocab::Agent::Open);
+            this.say("agent: Open — an agent may read this subtree and press its buttons");
+        } else if this.tier == 1 {
+            core::set_agent(n, vocab::Agent::Protected);
+            this.say("agent: Protected — visible to an agent, not operable by one");
+        } else if this.tier == 2 {
+            core::set_agent(n, vocab::Agent::Private);
+            this.say("agent: Private — the field is there, its value is not");
+        } else {
+            core::set_agent(n, vocab::Agent::Hidden);
+            this.say("agent: Hidden — not in the agent's tree at all");
+        }
+        return;
+    }
+}
+
+impl Accessibility: component::Component {
+    fn build(ref this) -> core::Node {
+        var body: core::Builder = core::Builder::new();
+
+        body.add(shell::caption("Labels and hints  ·  what VoiceOver reads"));
+        // A glyph button says nothing useful on its own — this is exactly the
+        // control that needs a label, and the reason the verb exists.
+        var icon: core::Node = ui::button("✕", key: "ax:close");
+        icon.set_accessibility_label("Close");
+        icon.set_accessibility_hint("Dismisses this panel without saving");
+        icon.set_tooltip("Close (⌘W)");
+        body.add(icon);
+        body.add(ui::label(
+            "The button above draws one glyph and announces \"Close\", with a hint and a tooltip. Hover it for the tooltip; a screen reader gets the other two.",
+            key: "ax:n1",
+            font_size: 12.0f64,
+            text_color: vocab::Color::ink(0.6f64),
+            max_lines: 3 as i64,
+            line_break: vocab::LineBreak::WordWrap,
+        ));
+
+        body.add(shell::caption("Heading level  ·  document structure"));
+        var h: core::Node = ui::label(
+            "Section title",
+            key: "ax:h",
+            font_size: 17.0f64,
+            font_weight: vocab::FontWeight::Bold,
+            text_color: vocab::Color::ink(),
+        );
+        h.set_heading_level(2 as i64);
+        body.add(h);
+
+        body.add(shell::caption("Flow direction  ·  mirroring the layout"));
+        body.add(ui::button("Toggle RTL", key: "ax:rtlbtn", on_click: this.on_rtl));
+        var r: core::Builder = core::Builder::new();
+        r.add(ui::button("First", key: "ax:b1"));
+        r.add(ui::button("Second", key: "ax:b2"));
+        r.add(ui::button("Third", key: "ax:b3"));
+        body.add(core::row(r, key: RTL).gap(8.0f64));
+
+        body.add(shell::caption("Agent tier  ·  what an embedded agent may see"));
+        body.add(ui::button("Cycle tier", key: "ax:tier", on_click: this.on_tier));
+        var s: core::Builder = core::Builder::new();
+        s.add(ui::label(
+            "Card ending 4242",
+            key: "ax:card",
+            font_size: 13.0f64,
+            text_color: vocab::Color::ink(),
+        ));
+        s.add(ui::button("Pay", key: "ax:pay"));
+        var secret: core::Node = core::column(s, key: "ax:secret").padding(12.0f64).gap(6.0f64);
+        secret.set_background_color(vocab::Color::sunken());
+        secret.set_corner_radius(vocab::Corners::all(8.0f64));
+        body.add(secret);
+
+        body.add(ui::label(
+            "agent: Open — an agent may read this subtree and press its buttons",
+            key: STATUS,
+            font_size: 12.0f64,
+            font_family: "Menlo",
+            text_color: vocab::Color::ink(0.75f64),
+            max_lines: 2 as i64,
+            line_break: vocab::LineBreak::WordWrap,
+        ));
+
+        body.add(ui::label(
+            "A tier is inherited down the subtree and the strictest ancestor wins, so marking the box covers the card number without naming it. That is the point: the leak is never the field you remembered.",
+            key: "ax:n2",
+            font_size: 12.0f64,
+            text_color: vocab::Color::ink(0.6f64),
+            max_lines: 4 as i64,
+            line_break: vocab::LineBreak::WordWrap,
+        ));
+
+        return shell::panel(
+            "Accessibility and agent tiers",
+            "What a node says about itself — to assistive technology, to the mouse, and to an embedded agent.",
+            core::column(body).gap(12.0f64),
+            howto: "n.set_accessibility_label(\"Close\");\nn.set_accessibility_hint(\"Dismisses this panel\");\nn.set_heading_level(2);\nn.set_tooltip(\"Close (⌘W)\");\nn.set_agent(vocab::Agent::Private);",
+        );
+    }
+}
+
+impl Accessibility: component::Lifecycle {
+    fn on_attach(ref this) { return; }
+    fn on_detach(ref this) { return; }
+}

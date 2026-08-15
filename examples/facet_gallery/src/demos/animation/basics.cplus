@@ -1,0 +1,256 @@
+// Reference: the shared-band animate_* verbs, on any node
+//   core::animate_opacity(n, to, duration, easing)
+//   core::animate_scale(n, to, ...) / _scale_x / _scale_y
+//   core::animate_rotation(n, degrees, ...) / _rotation_x / _rotation_y
+//   core::animate_translation(n, x, y, ...)
+//   core::cancel_animations(n)
+//
+// Every verb writes the END VALUE into the ordinary shared-band field and then
+// asks the backend to interpolate rather than snap — so `core::opacity(n)` and
+// the agent surface read the destination the moment the verb returns, while the
+// pixels are still on their way.
+
+import "facet/facet" as core;
+import "facet/elements" as ui;
+import "facet/component" as component;
+import "facet/mount" as mount;
+import "facet/label" as label;
+import "facet/popup" as popup;
+import "facet/vocabulary" as vocab;
+import "stdlib/option" as option;
+import "stdlib/status" as status;
+import "./curves" as curves;
+import "../../shell" as shell;
+
+const CARD: str = "ab:card";
+const READOUT: str = "ab:readout";
+
+struct AnimBasics {
+    seconds: f64,
+    easing_index: i64,
+    faded: bool,
+    big: bool,
+    turned: bool,
+    moved: bool,
+}
+
+impl AnimBasics {
+    fn new() -> AnimBasics {
+        return AnimBasics {
+            seconds: 0.45f64,
+            easing_index: 3 as i64,
+            faded: false,
+            big: false,
+            turned: false,
+            moved: false,
+        };
+    }
+
+    fn duration(this) -> vocab::Duration {
+        return vocab::Duration::of_seconds(this.seconds);
+    }
+
+    fn easing(this) -> vocab::Easing {
+        return curves::at(this.easing_index);
+    }
+
+    // The model is readable the instant a verb returns — that is the point of
+    // end values living in the real fields.
+    fn readout(ref this) {
+        let n: *core::Node = mount::node(CARD);
+        if n == (0 as *core::Node) { return; }
+        match label::find(READOUT) {
+            option::Option[label::Label]::Some(l) => {
+                let _l: label::Label = l.set_text(
+                    "opacity ${core::opacity(n)}   scale ${core::scale(n)}   rotation ${core::rotation(n)}°   x ${core::translation_x(n)}"
+                );
+            }
+            option::Option[label::Label]::None => { }
+        }
+        return;
+    }
+
+    fn on_fade(ref this, sender: *u8) {
+        this.faded = !this.faded;
+        let to: f64 = if this.faded { 0.15f64 } else { 1.0f64 };
+        core::animate_opacity(mount::node(CARD), to, this.duration(), this.easing());
+        this.readout();
+        return;
+    }
+
+    fn on_scale(ref this, sender: *u8) {
+        this.big = !this.big;
+        let to: f64 = if this.big { 1.6f64 } else { 1.0f64 };
+        core::animate_scale(mount::node(CARD), to, this.duration(), this.easing());
+        this.readout();
+        return;
+    }
+
+    fn on_rotate(ref this, sender: *u8) {
+        this.turned = !this.turned;
+        let to: f64 = if this.turned { 18.0f64 } else { 0.0f64 };
+        core::animate_rotation(mount::node(CARD), to, this.duration(), this.easing());
+        this.readout();
+        return;
+    }
+
+    fn on_move(ref this, sender: *u8) {
+        this.moved = !this.moved;
+        let to: f64 = if this.moved { 220.0f64 } else { 0.0f64 };
+        core::animate_translation(mount::node(CARD), to, 0.0f64, this.duration(), this.easing());
+        this.readout();
+        return;
+    }
+
+    // Two verbs, one tick, one matrix: the card scales AND turns as a single
+    // animation. `props::ANIM_TRANSFORM` is one channel for exactly this reason.
+    //
+    // 180 and not 360: an animation interpolates between two MATRICES, and the
+    // matrix for a full turn is the matrix for no turn at all — measured, rot
+    // 0 and rot 360 both give m11 1.35, m12 0. A whole revolution has nothing
+    // to travel through and simply does not play.
+    fn on_flourish(ref this, sender: *u8) {
+        let n: *core::Node = mount::node(CARD);
+        this.big = true;
+        this.turned = true;
+        core::animate_scale(n, 1.35f64, this.duration(), this.easing());
+        core::animate_rotation(n, 180.0f64, this.duration(), this.easing());
+        this.readout();
+        return;
+    }
+
+    // Abort in flight. The model already holds the end values, so presentation
+    // snaps to them — freeze-at-presentation is not v1, and the MANIFEST says so.
+    fn on_cancel(ref this, sender: *u8) {
+        core::cancel_animations(mount::node(CARD));
+        this.readout();
+        return;
+    }
+
+    // A `set_*` SNAPS, and cancels any pending animation of the same band. Here
+    // it is the reset button, which is the honest use of the pair.
+    fn on_reset(ref this, sender: *u8) {
+        let n: *core::Node = mount::node(CARD);
+        core::cancel_animations(n);
+        core::set_opacity(n, 1.0f64);
+        core::set_scale(n, 1.0f64);
+        core::set_rotation(n, 0.0f64);
+        core::set_translation_x(n, 0.0f64);
+        core::set_translation_y(n, 0.0f64);
+        this.faded = false;
+        this.big = false;
+        this.turned = false;
+        this.moved = false;
+        this.readout();
+        return;
+    }
+
+    fn on_speed_fast(ref this, sender: *u8) { this.seconds = 0.15f64; return; }
+    fn on_speed_normal(ref this, sender: *u8) { this.seconds = 0.45f64; return; }
+    fn on_speed_slow(ref this, sender: *u8) { this.seconds = 1.2f64; return; }
+
+    fn on_easing(ref this, sender: *u8) {
+        match popup::find("ab:easing") {
+            option::Option[popup::Popup]::Some(p) => { this.easing_index = p.selected_index(); }
+            option::Option[popup::Popup]::None => { }
+        }
+        return;
+    }
+}
+
+fn card() -> core::Node {
+    var inner: core::Builder = core::Builder::new();
+    inner.add(ui::label(
+        "animate me",
+        key: "ab:card_text",
+        font_size: 15.0f64,
+        font_weight: vocab::FontWeight::Semibold,
+        text_color: vocab::Color::rgba(1.0f64, 1.0f64, 1.0f64, 1.0f64),
+    ));
+    var n: core::Node = core::column(inner, key: CARD)
+        .padding(18.0f64)
+        .width(150.0f64)
+        .height(72.0f64);
+    n.set_background_color(vocab::Color::primary());
+    n.set_corner_radius(vocab::Corners::all(12.0f64));
+    return n;
+}
+
+impl AnimBasics: component::Component {
+    fn build(ref this) -> core::Node {
+        var body: core::Builder = core::Builder::new();
+
+        body.add(shell::caption("Timing"));
+        var speed: core::Builder = core::Builder::new();
+        speed.add(ui::button("0.15s", key: "ab:fast", on_click: this.on_speed_fast));
+        speed.add(ui::button("0.45s", key: "ab:normal", on_click: this.on_speed_normal));
+        speed.add(ui::button("1.2s", key: "ab:slow", on_click: this.on_speed_slow));
+        var items: vocab::TextList = vocab::TextList::new();
+        var i: i64 = 0 as i64;
+        while i < curves::count() {
+            let _a: status::Status = items.add(curves::name_of(i));
+            i = i +% (1 as i64);
+        }
+        speed.add(ui::popup(
+            "Easing",
+            key: "ab:easing",
+            selected_index: 3 as i64,
+            on_selected_index_changed: this.on_easing,
+            items: items,
+        ));
+        body.add(core::row(speed).gap(8.0f64));
+
+        body.add(shell::caption("Verbs"));
+        var row1: core::Builder = core::Builder::new();
+        row1.add(ui::button("Fade", key: "ab:fade", on_click: this.on_fade));
+        row1.add(ui::button("Scale", key: "ab:scale", on_click: this.on_scale));
+        row1.add(ui::button("Rotate", key: "ab:rot", on_click: this.on_rotate));
+        row1.add(ui::button("Move", key: "ab:move", on_click: this.on_move));
+        body.add(core::row(row1).gap(8.0f64));
+
+        var row2: core::Builder = core::Builder::new();
+        row2.add(ui::button("Flourish", key: "ab:flourish", on_click: this.on_flourish));
+        row2.add(ui::button("Cancel", key: "ab:cancel", on_click: this.on_cancel));
+        row2.add(ui::button("Reset (snap)", key: "ab:reset", on_click: this.on_reset));
+        body.add(core::row(row2).gap(8.0f64));
+
+        // Roomy stage: the card translates 220pt and scales 1.6×, and a parent
+        // that clipped would hide the demo rather than the animation.
+        var stage_b: core::Builder = core::Builder::new();
+        stage_b.add(card());
+        var stage: core::Node = core::column(stage_b)
+            .padding(24.0f64)
+            .height(160.0f64);
+        stage.set_background_color(vocab::Color::sunken());
+        stage.set_corner_radius(vocab::Corners::all(10.0f64));
+        body.add(stage);
+
+        body.add(ui::label(
+            "opacity 1   scale 1   rotation 0°   x 0",
+            key: READOUT,
+            font_size: 11.0f64,
+            font_family: "Menlo",
+            text_color: vocab::Color::ink(0.7f64),
+        ));
+        body.add(ui::label(
+            "The readout is the MODEL, not the pixels: an animate_* verb writes its end value into the ordinary field before the motion starts, so reads, find() and the agent surface all see the destination immediately.",
+            key: "ab:note",
+            font_size: 12.0f64,
+            text_color: vocab::Color::ink(0.6f64),
+            max_lines: 4 as i64,
+            line_break: vocab::LineBreak::WordWrap,
+        ));
+
+        return shell::panel(
+            "Basics",
+            "The eight shared-band animate_* verbs on one card, plus cancel and a snapping reset.",
+            core::column(body).gap(12.0f64),
+            howto: "core::animate_opacity(n, 0.0, Duration::of_seconds(0.45), Easing::SinInOut)\ncore::animate_translation(n, 220.0, 0.0, d, e)\ncore::cancel_animations(n)   // snaps to the model end values",
+        );
+    }
+}
+
+impl AnimBasics: component::Lifecycle {
+    fn on_attach(ref this) { this.readout(); return; }
+    fn on_detach(ref this) { return; }
+}

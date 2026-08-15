@@ -38,6 +38,16 @@ import "./demos/tables" as tables;
 import "./demos/refresh" as refresh;
 import "./demos/swipe" as swipe;
 import "./demos/carousel_demo" as carousel_demo;
+import "./demos/animation/basics" as anim_basics;
+import "./demos/animation/easings" as anim_easings;
+import "./demos/animation/entrance" as anim_entrance;
+import "./demos/animation/rules" as anim_rules;
+import "./demos/decoration/shadows" as dec_shadows;
+import "./demos/decoration/brushes" as dec_brushes;
+import "./demos/decoration/clipping" as dec_clipping;
+import "./demos/layout/grids" as grids;
+import "./demos/layout/placement" as placement;
+import "./demos/a11y" as a11y;
 
 const ID_OVERVIEW: i32 = 0;
 const ID_BUTTON: i32 = 1;
@@ -64,6 +74,16 @@ const ID_TABLE: i32 = 21;
 const ID_REFRESH: i32 = 22;
 const ID_SWIPE: i32 = 23;
 const ID_CAROUSEL: i32 = 24;
+const ID_ANIM_BASICS: i32 = 25;
+const ID_ANIM_EASING: i32 = 26;
+const ID_ANIM_ENTRANCE: i32 = 27;
+const ID_ANIM_RULES: i32 = 28;
+const ID_SHADOW: i32 = 29;
+const ID_BRUSH: i32 = 30;
+const ID_CLIP: i32 = 31;
+const ID_GRID: i32 = 32;
+const ID_PLACEMENT: i32 = 33;
+const ID_A11Y: i32 = 34;
 
 const NAV_OVERVIEW: str = "overview";
 const NAV_BUTTON: str = "button";
@@ -90,11 +110,23 @@ const NAV_TABLE: str = "table";
 const NAV_REFRESH: str = "refresh";
 const NAV_SWIPE: str = "swipe";
 const NAV_CAROUSEL: str = "carousel";
+const NAV_ANIM_BASICS: str = "anim_basics";
+const NAV_ANIM_EASING: str = "anim_easing";
+const NAV_ANIM_ENTRANCE: str = "anim_entrance";
+const NAV_ANIM_RULES: str = "anim_rules";
+const NAV_SHADOW: str = "shadow";
+const NAV_BRUSH: str = "brush";
+const NAV_CLIP: str = "clip";
+const NAV_GRID: str = "grid";
+const NAV_PLACEMENT: str = "placement";
+const NAV_A11Y: str = "a11y";
 
 const SEC_VIEWS: str = "sec:views";
 const SEC_LAYOUT: str = "sec:layout";
 const SEC_COLLECTIONS: str = "sec:collections";
 const SEC_INTERACTION: str = "sec:interaction";
+const SEC_ANIMATION: str = "sec:animation";
+const SEC_DECORATION: str = "sec:decoration";
 
 struct Gallery {
     selected: i32,
@@ -123,6 +155,16 @@ struct Gallery {
     refresh: refresh::Refresh,
     swipe: swipe::Swipe,
     carousel: carousel_demo::CarouselDemo,
+    anim_basics: anim_basics::AnimBasics,
+    anim_easings: anim_easings::Easings,
+    anim_entrance: anim_entrance::Entrance,
+    anim_rules: anim_rules::AnimRules,
+    shadows: dec_shadows::Shadows,
+    brushes: dec_brushes::Brushes,
+    clipping: dec_clipping::Clipping,
+    grids: grids::Grids,
+    placement: placement::Placement,
+    a11y: a11y::Accessibility,
 }
 
 fn demo_id_for(nav_id: str) -> i32 {
@@ -151,6 +193,16 @@ fn demo_id_for(nav_id: str) -> i32 {
     if nav_id == NAV_REFRESH { return ID_REFRESH; }
     if nav_id == NAV_SWIPE { return ID_SWIPE; }
     if nav_id == NAV_CAROUSEL { return ID_CAROUSEL; }
+    if nav_id == NAV_ANIM_BASICS { return ID_ANIM_BASICS; }
+    if nav_id == NAV_ANIM_EASING { return ID_ANIM_EASING; }
+    if nav_id == NAV_ANIM_ENTRANCE { return ID_ANIM_ENTRANCE; }
+    if nav_id == NAV_ANIM_RULES { return ID_ANIM_RULES; }
+    if nav_id == NAV_SHADOW { return ID_SHADOW; }
+    if nav_id == NAV_BRUSH { return ID_BRUSH; }
+    if nav_id == NAV_CLIP { return ID_CLIP; }
+    if nav_id == NAV_GRID { return ID_GRID; }
+    if nav_id == NAV_PLACEMENT { return ID_PLACEMENT; }
+    if nav_id == NAV_A11Y { return ID_A11Y; }
     return 0 -% 1;
 }
 
@@ -188,6 +240,8 @@ fn catalog_model() -> tree::TreeNode {
     let _sl: status::Status = lay.add_child(leaf("Split", NAV_SPLIT));
     let _zs: status::Status = lay.add_child(leaf("ZStack", NAV_ZSTACK));
     let _rp: status::Status = lay.add_child(leaf("Responsive", NAV_RESPONSIVE));
+    let _gd: status::Status = lay.add_child(leaf("Grid", NAV_GRID));
+    let _pm: status::Status = lay.add_child(leaf("Placement", NAV_PLACEMENT));
     let _ls: status::Status = root.add_child(lay);
 
     var cols: tree::TreeNode = section("Collections", SEC_COLLECTIONS);
@@ -199,10 +253,25 @@ fn catalog_model() -> tree::TreeNode {
     let _cr: status::Status = cols.add_child(leaf("Carousel", NAV_CAROUSEL));
     let _cs: status::Status = root.add_child(cols);
 
+    var dec: tree::TreeNode = section("Decoration", SEC_DECORATION);
+    let _ds: status::Status = dec.add_child(leaf("Shadow", NAV_SHADOW));
+    let _db: status::Status = dec.add_child(leaf("Brush", NAV_BRUSH));
+    let _dc: status::Status = dec.add_child(leaf("Clip & order", NAV_CLIP));
+    let _dr: status::Status = root.add_child(dec);
+
+    var an: tree::TreeNode = section("Animation", SEC_ANIMATION);
+    let _ab: status::Status = an.add_child(leaf("Basics", NAV_ANIM_BASICS));
+    let _ae: status::Status = an.add_child(leaf("Easing", NAV_ANIM_EASING));
+    let _an: status::Status = an.add_child(leaf("Entrance", NAV_ANIM_ENTRANCE));
+    let _ar: status::Status = an.add_child(leaf("Rules", NAV_ANIM_RULES));
+    let _as: status::Status = root.add_child(an);
+
     var ix: tree::TreeNode = section("Interaction", SEC_INTERACTION);
     let _rf: status::Status = ix.add_child(leaf("Refresh", NAV_REFRESH));
     let _sw: status::Status = ix.add_child(leaf("Swipe", NAV_SWIPE));
     let _ix: status::Status = root.add_child(ix);
+
+    let _ax: status::Status = root.add_child(leaf("Accessibility", NAV_A11Y));
 
     return root;
 }
@@ -236,6 +305,16 @@ impl Gallery {
             refresh: refresh::Refresh::new(),
             swipe: swipe::Swipe::new(),
             carousel: carousel_demo::CarouselDemo::new(),
+            anim_basics: anim_basics::AnimBasics::new(),
+            anim_easings: anim_easings::Easings::new(),
+            anim_entrance: anim_entrance::Entrance::new(),
+            anim_rules: anim_rules::AnimRules::new(),
+            shadows: dec_shadows::Shadows::new(),
+            brushes: dec_brushes::Brushes::new(),
+            clipping: dec_clipping::Clipping::new(),
+            grids: grids::Grids::new(),
+            placement: placement::Placement::new(),
+            a11y: a11y::Accessibility::new(),
         };
     }
 
@@ -293,6 +372,26 @@ impl Gallery {
                     let _ok: bool = mount::set_content(out, this.swipe);
                 } else if id == ID_CAROUSEL {
                     let _ok: bool = mount::set_content(out, this.carousel);
+                } else if id == ID_ANIM_BASICS {
+                    let _ok: bool = mount::set_content(out, this.anim_basics);
+                } else if id == ID_ANIM_EASING {
+                    let _ok: bool = mount::set_content(out, this.anim_easings);
+                } else if id == ID_ANIM_ENTRANCE {
+                    let _ok: bool = mount::set_content(out, this.anim_entrance);
+                } else if id == ID_ANIM_RULES {
+                    let _ok: bool = mount::set_content(out, this.anim_rules);
+                } else if id == ID_SHADOW {
+                    let _ok: bool = mount::set_content(out, this.shadows);
+                } else if id == ID_BRUSH {
+                    let _ok: bool = mount::set_content(out, this.brushes);
+                } else if id == ID_CLIP {
+                    let _ok: bool = mount::set_content(out, this.clipping);
+                } else if id == ID_GRID {
+                    let _ok: bool = mount::set_content(out, this.grids);
+                } else if id == ID_PLACEMENT {
+                    let _ok: bool = mount::set_content(out, this.placement);
+                } else if id == ID_A11Y {
+                    let _ok: bool = mount::set_content(out, this.a11y);
                 }
             }
             option::Option[*core::Node]::None => { }
@@ -364,6 +463,8 @@ impl Gallery: component::Lifecycle {
                 let _b: tree::Tree = t.expand(SEC_VIEWS);
                 let _c: tree::Tree = t.expand(SEC_LAYOUT);
                 let _d: tree::Tree = t.expand(SEC_COLLECTIONS);
+                let _a: tree::Tree = t.expand(SEC_ANIMATION);
+                let _dx: tree::Tree = t.expand(SEC_DECORATION);
                 let _e: tree::Tree = t.expand(SEC_INTERACTION);
                 let _f: tree::Tree = t.select(NAV_OVERVIEW);
             }

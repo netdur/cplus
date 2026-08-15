@@ -1,0 +1,69 @@
+// The `vocab::Easing` presets as an indexable list, shared by the demos in this
+// folder so what is on screen stays in the same order as the enum.
+//
+// Answered as `if` chains over literals rather than an array: the names are
+// `str` and a literal is 'static, so nothing here can hand out a view of
+// something that dies.
+
+import "facet/vocabulary" as vocab;
+
+fn count() -> i64 { return 11 as i64; }
+
+fn at(i: i64) -> vocab::Easing {
+    if i == (1 as i64) { return vocab::Easing::SinIn; }
+    if i == (2 as i64) { return vocab::Easing::SinOut; }
+    if i == (3 as i64) { return vocab::Easing::SinInOut; }
+    if i == (4 as i64) { return vocab::Easing::CubicIn; }
+    if i == (5 as i64) { return vocab::Easing::CubicOut; }
+    if i == (6 as i64) { return vocab::Easing::CubicInOut; }
+    if i == (7 as i64) { return vocab::Easing::BounceIn; }
+    if i == (8 as i64) { return vocab::Easing::BounceOut; }
+    if i == (9 as i64) { return vocab::Easing::SpringIn; }
+    if i == (10 as i64) { return vocab::Easing::SpringOut; }
+    return vocab::Easing::Linear;
+}
+
+fn name_of(i: i64) -> str {
+    if i == (1 as i64) { return "SinIn"; }
+    if i == (2 as i64) { return "SinOut"; }
+    if i == (3 as i64) { return "SinInOut"; }
+    if i == (4 as i64) { return "CubicIn"; }
+    if i == (5 as i64) { return "CubicOut"; }
+    if i == (6 as i64) { return "CubicInOut"; }
+    if i == (7 as i64) { return "BounceIn"; }
+    if i == (8 as i64) { return "BounceOut"; }
+    if i == (9 as i64) { return "SpringIn"; }
+    if i == (10 as i64) { return "SpringOut"; }
+    return "Linear";
+}
+
+// What this backend actually PLAYS. AppKit animates through
+// `CAMediaTimingFunction`, which names four curves, so eleven presets collapse
+// onto them — `facet_appkit/MANIFEST.md` records the mapping rather than
+// pretending the difference is there. Shown next to each track so the demo is
+// honest about which pairs are the same motion.
+fn appkit_curve_of(i: i64) -> str {
+    if i == (0 as i64) { return "linear"; }
+    if i == (3 as i64) { return "easeInEaseOut"; }
+    if i == (6 as i64) { return "easeInEaseOut"; }
+    if i == (2 as i64) { return "easeOut"; }
+    if i == (5 as i64) { return "easeOut"; }
+    if i == (8 as i64) { return "easeOut"; }
+    if i == (10 as i64) { return "easeOut"; }
+    return "easeIn";
+}
+
+// Stable, 'static keys for the racing tracks — one per preset.
+fn track_key(i: i64) -> str {
+    if i == (1 as i64) { return "ez:1"; }
+    if i == (2 as i64) { return "ez:2"; }
+    if i == (3 as i64) { return "ez:3"; }
+    if i == (4 as i64) { return "ez:4"; }
+    if i == (5 as i64) { return "ez:5"; }
+    if i == (6 as i64) { return "ez:6"; }
+    if i == (7 as i64) { return "ez:7"; }
+    if i == (8 as i64) { return "ez:8"; }
+    if i == (9 as i64) { return "ez:9"; }
+    if i == (10 as i64) { return "ez:10"; }
+    return "ez:0";
+}

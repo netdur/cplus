@@ -1,0 +1,149 @@
+// Reference: the `easing:` argument, all eleven presets racing at once.
+//
+// Same distance, same duration, one curve each — which is the only way to see
+// what a curve IS. The right-hand column names what THIS backend plays: AppKit
+// animates through `CAMediaTimingFunction`, which has four curves, so several
+// of these rows are the same motion under different names. That is recorded in
+// `facet_appkit/MANIFEST.md` and shown here rather than hidden.
+
+import "facet/facet" as core;
+import "facet/elements" as ui;
+import "facet/component" as component;
+import "facet/mount" as mount;
+import "facet/vocabulary" as vocab;
+import "flex_layout/flex_layout" as flex;
+import "./curves" as curves;
+import "../../shell" as shell;
+
+const TRACK: f64 = 320.0f64;
+const DOT: f64 = 18.0f64;
+
+struct Easings {
+    seconds: f64,
+    out: bool,
+}
+
+impl Easings {
+    fn new() -> Easings { return Easings { seconds: 0.9f64, out: false }; }
+
+    // One click sends every track out, the next brings them back. A second
+    // click in the SAME direction would animate from the end to the end — no
+    // motion — which is the tick rule the Rules demo is about.
+    fn on_run(ref this, sender: *u8) {
+        this.out = !this.out;
+        let to: f64 = if this.out { TRACK - DOT } else { 0.0f64 };
+        let d: vocab::Duration = vocab::Duration::of_seconds(this.seconds);
+        var i: i64 = 0 as i64;
+        while i < curves::count() {
+            core::animate_translation(mount::node(curves::track_key(i)), to, 0.0f64,
+                                      d, curves::at(i));
+            i = i +% (1 as i64);
+        }
+        return;
+    }
+
+    // Snap everything home. `set_*` does not interpolate, and it cancels any
+    // pending transform animation on the node it touches.
+    fn on_reset(ref this, sender: *u8) {
+        this.out = false;
+        var i: i64 = 0 as i64;
+        while i < curves::count() {
+            core::set_translation_x(mount::node(curves::track_key(i)), 0.0f64);
+            i = i +% (1 as i64);
+        }
+        return;
+    }
+
+    fn on_slow(ref this, sender: *u8) { this.seconds = 2.0f64; return; }
+    fn on_normal(ref this, sender: *u8) { this.seconds = 0.9f64; return; }
+    fn on_quick(ref this, sender: *u8) { this.seconds = 0.35f64; return; }
+}
+
+fn dot(i: i64) -> core::Node {
+    var b: core::Builder = core::Builder::new();
+    var n: core::Node = core::column(b, key: curves::track_key(i))
+        .width(DOT)
+        .height(DOT);
+    n.set_background_color(vocab::Color::primary());
+    n.set_corner_radius(vocab::Corners::all(9.0f64));
+    return n;
+}
+
+fn track_row(i: i64) -> core::Node {
+    var name: core::Node = ui::label(
+        curves::name_of(i),
+        key: "",
+        font_size: 12.0f64,
+        font_family: "Menlo",
+        text_color: vocab::Color::ink(0.85f64),
+    ).width(96.0f64);
+
+    var lane_b: core::Builder = core::Builder::new();
+    lane_b.add(dot(i));
+    var lane: core::Node = core::row(lane_b).width(TRACK).height(DOT);
+    lane.set_background_color(vocab::Color::sunken());
+    lane.set_corner_radius(vocab::Corners::all(9.0f64));
+
+    var plays: core::Node = ui::label(
+        curves::appkit_curve_of(i),
+        key: "",
+        font_size: 11.0f64,
+        font_family: "Menlo",
+        text_color: vocab::Color::ink(0.45f64),
+    );
+
+    var row: core::Builder = core::Builder::new();
+    row.add(name);
+    row.add(lane);
+    row.add(plays);
+    return core::row(row).gap(12.0f64).align(flex::Align::Center);
+}
+
+impl Easings: component::Component {
+    fn build(ref this) -> core::Node {
+        var body: core::Builder = core::Builder::new();
+
+        var ctl: core::Builder = core::Builder::new();
+        ctl.add(ui::button("Run / return", key: "ez:run", on_click: this.on_run));
+        ctl.add(ui::button("Reset (snap)", key: "ez:reset", on_click: this.on_reset));
+        ctl.add(ui::button("0.35s", key: "ez:quick", on_click: this.on_quick));
+        ctl.add(ui::button("0.9s", key: "ez:normal", on_click: this.on_normal));
+        ctl.add(ui::button("2.0s", key: "ez:slow", on_click: this.on_slow));
+        body.add(core::row(ctl).gap(8.0f64));
+
+        var head: core::Builder = core::Builder::new();
+        head.add(shell::caption("preset").width(96.0f64));
+        head.add(shell::caption("motion").width(TRACK));
+        head.add(shell::caption("plays as"));
+        body.add(core::row(head).gap(12.0f64));
+
+        var tracks: core::Builder = core::Builder::new();
+        var i: i64 = 0 as i64;
+        while i < curves::count() {
+            tracks.add(track_row(i));
+            i = i +% (1 as i64);
+        }
+        body.add(core::column(tracks).gap(6.0f64));
+
+        body.add(ui::label(
+            "Bounce and Spring are not bounce and spring on this backend — AppKit names four timing functions and the eleven presets collapse onto them. A real spring wants a portable ticker, not Core Animation's timing; the backend manifest records the gap rather than the API pretending.",
+            key: "ez:note",
+            font_size: 12.0f64,
+            text_color: vocab::Color::ink(0.6f64),
+            max_lines: 5 as i64,
+            line_break: vocab::LineBreak::WordWrap,
+        ));
+
+        return shell::panel(
+            "Easing",
+            "Every vocab::Easing preset over the same distance and duration, launched together.",
+            core::column(body).gap(12.0f64),
+            howto: "core::animate_translation(n, 302.0, 0.0,\n    vocab::Duration::of_seconds(0.9),\n    vocab::Easing::CubicOut)",
+        );
+    }
+}
+
+impl Easings: component::Lifecycle {
+    fn on_attach(ref this) { return; }
+    fn on_detach(ref this) { return; }
+}

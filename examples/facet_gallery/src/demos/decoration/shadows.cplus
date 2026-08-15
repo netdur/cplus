@@ -1,0 +1,115 @@
+// Reference: the shared-band shadow
+//   core::set_shadow(n, vocab::Shadow { color:, offset:, radius:, opacity: })
+//
+// One of the shared band's paint verbs, on any node — not a control property.
+// A shadow is four numbers and they interact: a large radius with a small
+// opacity is a soft ambient lift, a small radius with a hard offset is a
+// drop. The presets below are the four shapes worth knowing.
+
+import "facet/facet" as core;
+import "facet/elements" as ui;
+import "facet/component" as component;
+import "facet/mount" as mount;
+import "facet/vocabulary" as vocab;
+import "../../shell" as shell;
+
+const CARD: str = "sh:card";
+
+struct Shadows {
+    n: i32,
+}
+
+fn ink_shadow(dx: f64, dy: f64, radius: f64, opacity: f64) -> vocab::Shadow {
+    return vocab::Shadow {
+        color: vocab::Color::rgba(0.0f64, 0.0f64, 0.0f64, 1.0f64),
+        offset: vocab::Point::of(dx, dy),
+        radius: radius,
+        opacity: opacity,
+    };
+}
+
+impl Shadows {
+    fn new() -> Shadows { return Shadows { n: 0 }; }
+
+    fn on_none(ref this, sender: *u8) {
+        core::set_shadow(mount::node(CARD), vocab::Shadow::none());
+        return;
+    }
+    // Soft and directionless — the "raised surface" look.
+    fn on_ambient(ref this, sender: *u8) {
+        core::set_shadow(mount::node(CARD), ink_shadow(0.0f64, 2.0f64, 18.0f64, 0.22f64));
+        return;
+    }
+    // Tight and offset — the "sheet above the page" look.
+    fn on_drop(ref this, sender: *u8) {
+        core::set_shadow(mount::node(CARD), ink_shadow(6.0f64, 8.0f64, 6.0f64, 0.45f64));
+        return;
+    }
+    // Coloured: the shadow is a colour, not a darkness, so it can tint.
+    fn on_glow(ref this, sender: *u8) {
+        core::set_shadow(mount::node(CARD), vocab::Shadow {
+            color: vocab::Color::primary(),
+            offset: vocab::Point::zero(),
+            radius: 24.0f64,
+            opacity: 0.8f64,
+        });
+        return;
+    }
+}
+
+impl Shadows: component::Component {
+    fn build(ref this) -> core::Node {
+        var body: core::Builder = core::Builder::new();
+
+        var ctl: core::Builder = core::Builder::new();
+        ctl.add(ui::button("None", key: "sh:none", on_click: this.on_none));
+        ctl.add(ui::button("Ambient", key: "sh:amb", on_click: this.on_ambient));
+        ctl.add(ui::button("Drop", key: "sh:drop", on_click: this.on_drop));
+        ctl.add(ui::button("Glow", key: "sh:glow", on_click: this.on_glow));
+        body.add(core::row(ctl).gap(8.0f64));
+
+        var inner: core::Builder = core::Builder::new();
+        inner.add(ui::label(
+            "shadowed",
+            key: "sh:t",
+            font_size: 14.0f64,
+            font_weight: vocab::FontWeight::Semibold,
+            text_color: vocab::Color::ink(),
+        ));
+        var card: core::Node = core::column(inner, key: CARD)
+            .padding(20.0f64)
+            .width(180.0f64)
+            .height(90.0f64);
+        card.set_background_color(vocab::Color::raised());
+        card.set_corner_radius(vocab::Corners::all(12.0f64));
+        card.set_shadow(ink_shadow(0.0f64, 2.0f64, 18.0f64, 0.22f64));
+
+        var stage_b: core::Builder = core::Builder::new();
+        stage_b.add(card);
+        var stage: core::Node = core::column(stage_b).padding(36.0f64).height(180.0f64);
+        stage.set_background_color(vocab::Color::sunken());
+        stage.set_corner_radius(vocab::Corners::all(10.0f64));
+        body.add(stage);
+
+        body.add(ui::label(
+            "A shadow is a colour, an offset, a blur radius and an opacity — four numbers that read as one look. Ambient is a big radius at low opacity with no offset; a drop is a small radius, a real offset and more opacity. The colour is a colour, so a shadow can tint rather than only darken.",
+            key: "sh:note",
+            font_size: 12.0f64,
+            text_color: vocab::Color::ink(0.6f64),
+            max_lines: 5 as i64,
+            line_break: vocab::LineBreak::WordWrap,
+        ));
+
+        return shell::panel(
+            "Shadow",
+            "The shared band's shadow verb, on an ordinary container.",
+            core::column(body).gap(14.0f64),
+            howto: "core::set_shadow(n, vocab::Shadow {\n    color: vocab::Color::ink(),\n    offset: vocab::Point::of(0.0, 2.0),\n    radius: 18.0, opacity: 0.22,\n});",
+        );
+    }
+}
+
+impl Shadows: component::Lifecycle {
+    fn on_attach(ref this) { return; }
+    fn on_detach(ref this) { return; }
+}

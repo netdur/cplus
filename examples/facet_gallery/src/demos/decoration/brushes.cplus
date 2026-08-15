@@ -1,0 +1,109 @@
+// Reference: background as a BRUSH
+//   core::set_background(n, vocab::Brush { start:, end:, angle:, is_gradient: })
+//   core::set_background_color(n, c)   — the flat shorthand
+//
+// `set_background_color` and `set_background` write the same band. A brush is
+// the general form: two colours and an angle, with `is_gradient` deciding
+// whether the second colour is used at all.
+
+import "facet/facet" as core;
+import "facet/elements" as ui;
+import "facet/component" as component;
+import "facet/mount" as mount;
+import "facet/vocabulary" as vocab;
+import "../../shell" as shell;
+
+const PANEL: str = "br:panel";
+
+struct Brushes {
+    angle: f64,
+}
+
+fn gradient(a: vocab::Color, b: vocab::Color, angle: f64) -> vocab::Brush {
+    return vocab::Brush { start: a, end: b, angle: angle, is_gradient: true };
+}
+
+impl Brushes {
+    fn new() -> Brushes { return Brushes { angle: 90.0f64 }; }
+
+    fn on_flat(ref this, sender: *u8) {
+        core::set_background(mount::node(PANEL), vocab::Brush::solid(vocab::Color::primary()));
+        return;
+    }
+    fn on_vertical(ref this, sender: *u8) {
+        this.angle = 90.0f64;
+        core::set_background(mount::node(PANEL), gradient(
+            vocab::Color::rgba(0.35f64, 0.42f64, 0.95f64, 1.0f64),
+            vocab::Color::rgba(0.75f64, 0.30f64, 0.85f64, 1.0f64),
+            this.angle));
+        return;
+    }
+    fn on_horizontal(ref this, sender: *u8) {
+        this.angle = 0.0f64;
+        core::set_background(mount::node(PANEL), gradient(
+            vocab::Color::rgba(0.95f64, 0.55f64, 0.20f64, 1.0f64),
+            vocab::Color::rgba(0.90f64, 0.20f64, 0.35f64, 1.0f64),
+            this.angle));
+        return;
+    }
+    // The angle is a number, not a set of presets — this is the proof.
+    fn on_turn(ref this, sender: *u8) {
+        this.angle = this.angle + 30.0f64;
+        if this.angle >= 360.0f64 { this.angle = this.angle - 360.0f64; }
+        core::set_background(mount::node(PANEL), gradient(
+            vocab::Color::rgba(0.20f64, 0.70f64, 0.55f64, 1.0f64),
+            vocab::Color::rgba(0.15f64, 0.35f64, 0.75f64, 1.0f64),
+            this.angle));
+        return;
+    }
+    fn on_clear(ref this, sender: *u8) {
+        core::set_background(mount::node(PANEL), vocab::Brush::none());
+        return;
+    }
+}
+
+impl Brushes: component::Component {
+    fn build(ref this) -> core::Node {
+        var body: core::Builder = core::Builder::new();
+
+        var ctl: core::Builder = core::Builder::new();
+        ctl.add(ui::button("Flat", key: "br:flat", on_click: this.on_flat));
+        ctl.add(ui::button("Vertical", key: "br:vert", on_click: this.on_vertical));
+        ctl.add(ui::button("Horizontal", key: "br:horz", on_click: this.on_horizontal));
+        ctl.add(ui::button("Turn 30°", key: "br:turn", on_click: this.on_turn));
+        ctl.add(ui::button("Clear", key: "br:clear", on_click: this.on_clear));
+        body.add(core::row(ctl).gap(8.0f64));
+
+        var inner: core::Builder = core::Builder::new();
+        var panel: core::Node = core::column(inner, key: PANEL)
+            .width(320.0f64)
+            .height(140.0f64);
+        panel.set_background(gradient(
+            vocab::Color::rgba(0.35f64, 0.42f64, 0.95f64, 1.0f64),
+            vocab::Color::rgba(0.75f64, 0.30f64, 0.85f64, 1.0f64),
+            90.0f64));
+        panel.set_corner_radius(vocab::Corners::all(12.0f64));
+        body.add(panel);
+
+        body.add(ui::label(
+            "set_background_color is the flat shorthand; set_background takes a Brush — two colours and an angle, with is_gradient deciding whether the second one is used. Both write the same band, so the last one wins.",
+            key: "br:note",
+            font_size: 12.0f64,
+            text_color: vocab::Color::ink(0.6f64),
+            max_lines: 4 as i64,
+            line_break: vocab::LineBreak::WordWrap,
+        ));
+
+        return shell::panel(
+            "Brush",
+            "Flat fills and gradients through one verb.",
+            core::column(body).gap(14.0f64),
+            howto: "core::set_background(n, vocab::Brush {\n    start: a, end: b, angle: 90.0, is_gradient: true,\n});\ncore::set_background(n, vocab::Brush::solid(c));   // flat",
+        );
+    }
+}
+
+impl Brushes: component::Lifecycle {
+    fn on_attach(ref this) { return; }
+    fn on_detach(ref this) { return; }
+}
