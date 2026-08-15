@@ -1,0 +1,103 @@
+// facet agent facade for iOS. `import "facet/agent"` resolves HERE on an iOS
+// target, through the same filename override that picks `runtime_ios.cplus` —
+// and for the same reason: the module names a platform package, and on this
+// platform that package does not exist.
+//
+// `agent.cplus` is written against `agent_appkit`, which walks an NSWindow's
+// live view tree into a surface an MCP worker serves. There is no
+// `agent_uikit`. Nothing here is hard about iOS — a UIWindow's tree walks the
+// same way and the whole agent stack below the backend (agent_core, agent_mcp,
+// agent_inapp) is portable — it simply has not been written.
+//
+// So this file keeps the surface compiling and REFUSES LOUDLY, which is the
+// posture runtime.cplus takes for a platform with no backend. The alternative
+// was leaving `import "facet/agent"` a hard error on iOS, which would make an
+// app that serves an agent on the Mac fail to build for the phone at the import
+// line, with nothing said about why.
+//
+// `policy_for` is the exception and is a real answer: it is facet's vocabulary
+// translated into agent_core's, and agent_core is portable, so the one function
+// here that does not touch a platform keeps working.
+
+import "./runtime" as runtime;
+import "./vocabulary" as vocab;
+import "agent_core/auth" as auth;
+import "agent_core/identity" as identity;
+import "stdlib/text" as text;
+import "stdlib/io" as io;
+
+fn no_surface(entry: str) {
+    io::eprintln(text::from_str("facet(ios): agent::").appending(entry)
+        .appending(" needs an agent_uikit backend, which does not exist yet — facet/agent is AppKit-only. No agent is served.").view());
+    return;
+}
+
+// Nothing to install: the hooks would attach a window to a surface there is no
+// backend to open. Installing half of them — the portable `pin_policy` alone —
+// was considered and rejected for the reason every seam in facet gives: a
+// struct with one of three slots filled looks installed and behaves randomly.
+fn enable() {
+    no_surface("enable");
+    return;
+}
+
+fn disable() {
+    runtime::install_agent(runtime::AgentHooks {
+        attach_window: 0 as fn(*u8),
+        serve_once: 0 as fn(str),
+        pin_policy: 0 as fn(*u8, vocab::Agent),
+    });
+    return;
+}
+
+// `in_app` and `in_app_with_grant` are DELIBERATELY ABSENT rather than stubbed.
+//
+// Every other entry here can refuse at runtime because refusing costs nothing:
+// `enable` installs no hooks, `serve_once` starts no worker. A session cannot.
+// It is a value the caller then CALLS — `describe_ui`, `click`, `set_text` —
+// through a backend vtable, and a stub would have to hand back a session with a
+// null vtable whose first use is a jump through a null function pointer.
+//
+// So an app that opens an in-process assistant fails to COMPILE for iOS, at the
+// call site, with the name of the thing that is missing. That is the loudest and
+// earliest signal available, and it is the same rule the rest of facet follows:
+// no side door that looks portable.
+
+// THE ONE PLACE the two vocabularies meet, and it is portable: facet's
+// `vocab::Agent` is what a developer writes, agent_core's `policy_*` is what a
+// backend pins and reads. Identical to the AppKit module's, deliberately — a
+// second translation table would be the thing that drifts.
+fn policy_for(a: vocab::Agent) -> u32 {
+    return match a {
+        vocab::Agent::Open => identity::policy_none(),
+        vocab::Agent::Protected => identity::policy_protected(),
+        vocab::Agent::Private => identity::policy_private(),
+        vocab::Agent::Hidden => identity::policy_exclude(),
+    };
+}
+
+fn pin_policy(view: *u8, a: vocab::Agent) { return; }
+
+fn attach_window(win: *u8) { return; }
+
+fn admit(req: auth::Request) -> auth::Grant { return auth::operator(); }
+
+fn serve_once(path: str) {
+    no_surface("serve_once");
+    return;
+}
+
+// ---- tests ------------------------------------------------------------------
+
+// The half that is real here. The tier translation is agent_core's vocabulary
+// and does not touch a platform, so it is asserted on iOS exactly as the AppKit
+// module asserts it — and a divergence between the two tables is what this
+// catches.
+#[test]
+fn every_facet_tier_maps_to_the_policy_the_core_reads() {
+    assert policy_for(vocab::Agent::Open) == identity::policy_none();
+    assert policy_for(vocab::Agent::Protected) == identity::policy_protected();
+    assert policy_for(vocab::Agent::Private) == identity::policy_private();
+    assert policy_for(vocab::Agent::Hidden) == identity::policy_exclude();
+    return;
+}

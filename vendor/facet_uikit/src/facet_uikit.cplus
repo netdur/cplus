@@ -38,6 +38,11 @@ import "facet/application" as app;
 import "objc/runtime" as rt;
 import "./views" as views;
 import "./scheduler" as scheduler;
+// Imported so the package's own build compiles it: an iOS target builds the
+// `[lib]` root and what it reaches, and the window host is reached by the
+// FACADE (facet/runtime_ios.cplus) rather than from here. Without this line it
+// would be the one file in the package no build of the package covers.
+import "./window" as window;
 
 fn renderer() -> mount::Renderer {
     return mount::Renderer {

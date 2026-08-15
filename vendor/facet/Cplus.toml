@@ -49,3 +49,14 @@ objc = "*"
 appkit = "*"
 quartzcore = "*"
 webkit     = "*"
+
+# The iOS side of the same seam. `runtime_ios.cplus` is what `import
+# "facet/runtime"` resolves to on an iOS target, and it imports facet_uikit —
+# so facet's own build on iOS compiles that backend, exactly as it compiles
+# facet_appkit on macOS. Same consequence, stated out loud: a backend that does
+# not build turns facet red.
+[ios.dependencies]
+facet_uikit = "*"
+objc        = "*"
+uikit       = "*"
+quartzcore  = "*"

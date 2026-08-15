@@ -126,6 +126,15 @@ fn tick() {
 
 fn ticks() -> u64 { return TICKS; }
 
+// Force a tick NOW, outside the observer. The window host needs one at launch:
+// UIKit lays out on the next turn of the loop, and the tree would otherwise sit
+// at its mount-time size — zero — for the first frame the user sees.
+fn tick_now() {
+    SYNC_PENDING = true;
+    tick();
+    return;
+}
+
 // ---- the layout pass ----------------------------------------------------------
 
 fn layout_all_windows() {

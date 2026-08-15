@@ -1,0 +1,275 @@
+// facet_uikit window host — the UIWindow, the root view controller, and the
+// application entry point.
+//
+// ---- THE ORDER IS INVERTED, AND THAT IS THE WHOLE FILE ----------------------
+//
+// On macOS a facade opens a window and THEN runs the loop: `open_window` makes
+// an NSWindow, mounts into it, orders it front, and `run_loop` starts pumping
+// events afterwards. Both halves are the application's to sequence.
+//
+// On iOS the loop makes the window. `UIApplicationMain` takes over the process,
+// creates the UIApplication, loads the app delegate, and calls
+// `application:didFinishLaunchingWithOptions:` — and THAT is the first moment a
+// UIWindow may exist. Anything built earlier is built before UIKit is ready.
+//
+// So `open_window` here does not open anything. It records what the application
+// asked for, and the delegate builds it at launch. The two facade calls are the
+// same pair in the same order; only the moment the window appears moves.
+//
+// ---- AND `run_loop` DOES NOT RETURN ------------------------------------------
+//
+// `UIApplicationMain` never comes back — it calls `exit()`. On macOS
+// `[NSApp run]` returns when the app stops, which is what lets `run_component`
+// hand the component's final state back to its caller and lets a facade tear a
+// tree down afterwards. Neither is reachable on iOS. `runtime_ios.cplus` says
+// so at each of those call sites rather than pretending the value comes back.
+
+import "stdlib/option" as option;
+import "stdlib/text" as text;
+import "facet/facet" as core;
+import "facet/mount" as mount;
+import "facet/application" as app;
+import "facet/screen" as screen;
+import "facet/vocabulary" as vocab;
+import "objc/runtime" as rt;
+import "objc/bridge" as bridge;
+import "objc/synthesis" as synth;
+import "uikit/uikit" as ui;
+import "./geometry" as geometry;
+import "./scheduler" as scheduler;
+
+type Chrome = screen::Chrome;
+
+// What `open_window` recorded, for the delegate to build. Statics because the
+// delegate callback is a bare C function with no closure — the same reason
+// every platform's launch hook carries its configuration this way.
+static PENDING_ROOT: *core::Node = 0 as *core::Node;
+static WINDOW: *u8 = 0 as *u8;
+
+fn default_should_close(ctx: *u8) -> bool { return true; }
+fn default_will_close(ctx: *u8) { return; }
+
+// Record the root. Answers 0, not a window: there is no window yet, and
+// inventing a handle that is not one would be worse than the honest null — the
+// facade assigns it to `_w` on every platform anyway.
+//
+// `chrome` is taken and mostly dropped. A phone window has no title bar, no
+// resizable frame and no minimum size, so `width`, `height`, `min_*`, `max_*`,
+// `maximizable` and `minimizable` describe nothing here. The screen is the
+// window. MANIFEST.md records that the whole Chrome record is inert on iOS
+// except for what the tree itself draws.
+fn open_window(root: *core::Node, take chrome: Chrome,
+               should_close: fn(*u8) -> bool = default_should_close,
+               should_close_ctx: *u8 = 0 as *u8,
+               will_close: fn(*u8) = default_will_close,
+               will_close_ctx: *u8 = 0 as *u8) -> *u8 {
+    let _c: Chrome = chrome;
+    if root == (0 as *core::Node) { return 0 as *u8; }
+    PENDING_ROOT = root;
+    // Already launched — a second `open_window` in a running app replaces what
+    // the one window shows, because a phone has one window and stacking a
+    // second would hide the first with no way back to it.
+    if WINDOW != (0 as *u8) {
+        attach_root(WINDOW, root);
+        return WINDOW;
+    }
+    return 0 as *u8;
+}
+
+// Build the window and mount into it. Called from the launch hook, and from
+// `open_window` when the app is already running.
+fn attach_root(win: *u8, root: *core::Node) {
+    let content: *u8 = content_view_of(win);
+    if content == (0 as *u8) { return; }
+    let mounted: bool = mount::mount(root);
+    app::set_window_native(root, win);
+    // The root's own view was inserted nowhere by the mount walk — the facade
+    // puts it in the window, which is here.
+    if mounted { add_root_views(ui::View::from_raw(content), root); }
+    // A first layout, now: UIKit lays out on the next turn of the loop and the
+    // tree would otherwise sit at its mount-time size (zero) for one frame.
+    scheduler::tick_now();
+    return;
+}
+
+fn content_view_of(win: *u8) -> *u8 {
+    let vc: *u8 = { rt::msg_id(win, rt::sel(#str_ptr("rootViewController\0"))) };
+    if vc == (0 as *u8) { return 0 as *u8; }
+    return { rt::msg_id(vc, rt::sel(#str_ptr("view\0"))) };
+}
+
+// The root's view, or — when the root is a keyless pass-through — its topmost
+// BACKED descendants, which is what the mount walk left unhosted.
+fn add_root_views(content: ui::View, root: *core::Node) {
+    let rv: *u8 = core::view_of(root);
+    if rv != (0 as *u8) {
+        content.add_subview(ui::View::from_raw(rv));
+        return;
+    }
+    add_backed_descendants(content, root);
+    return;
+}
+
+fn add_backed_descendants(content: ui::View, n: *core::Node) {
+    var i: usize = 0 as usize;
+    let count: usize = core::child_count_of(n);
+    while i < count {
+        match core::child_of(n, i) {
+            option::Option[*core::Node]::Some(c) => {
+                let v: *u8 = core::view_of(c);
+                if v != (0 as *u8) {
+                    content.add_subview(ui::View::from_raw(v));
+                } else {
+                    add_backed_descendants(content, c);
+                }
+            }
+            option::Option[*core::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return;
+}
+
+// ---- the app delegate ---------------------------------------------------------
+// One synthesized class, registered before `UIApplicationMain` is told its name.
+//
+// Three hooks, and only three: launch (build the window), and the two
+// foreground/background edges facet's `observe_backgrounding` / `observe_resumed`
+// are declared for. Anything else UIKit offers is not facet's vocabulary and
+// does not belong on a class this package owns.
+
+static DELEGATE_CLASS: *u8 = 0 as *u8;
+
+fn imp_did_finish_launching(self_obj: *u8, cmd: *u8, application: *u8, options: *u8) -> i8 {
+    let screen_bounds: rt::Rect = ui::Screen::main_screen().bounds();
+    let win: ui::Window = ui::Window::new_with_frame(screen_bounds);
+    let w: *u8 = { rt::retain(win.raw()) };
+    // A UIWindow with no root view controller is a UIKit assertion failure at
+    // first display, not a blank screen — so the controller comes first and its
+    // view is what everything mounts into.
+    let vc: *u8 = { rt::alloc_init(#str_ptr("UIViewController\0")) };
+    if vc != (0 as *u8) {
+        { rt::msg_void_id(w, rt::sel(#str_ptr("setRootViewController:\0")), vc) };
+        { rt::release(vc) };
+    }
+    WINDOW = w;
+    if PENDING_ROOT != (0 as *core::Node) { attach_root(w, PENDING_ROOT); }
+    { rt::msg_void(w, rt::sel(#str_ptr("makeKeyAndVisible\0"))) };
+    return 1 as i8;
+}
+
+// A dark-mode flip arrives as a TRAIT CHANGE on views and controllers, not as
+// a notification — UIKit has no application-level "the appearance changed"
+// hook, which is the one place this platform is poorer than AppKit's
+// `viewDidChangeEffectiveAppearance`.
+//
+// So the flip is NOT wired yet: `applicationSignificantTimeChange:` is a
+// different event (midnight, a timezone change) and firing the theme signal
+// from it would be a lie. It is here because it is the delegate hook facet's
+// `observe_stopped`/`observe_resumed` tier will land on, and MANIFEST.md lists
+// the appearance flip as needing a `traitCollectionDidChange:` override on the
+// root view controller.
+fn imp_significant_time_change(self_obj: *u8, cmd: *u8, application: *u8) {
+    return;
+}
+
+fn delegate_class() -> *u8 {
+    if DELEGATE_CLASS != (0 as *u8) { return DELEGATE_CLASS; }
+    let existing: *u8 = rt::get_class(#str_ptr("FacetUIKitAppDelegate\0"));
+    if existing != (0 as *u8) {
+        DELEGATE_CLASS = existing;
+        return DELEGATE_CLASS;
+    }
+    let base: *u8 = rt::get_class(#str_ptr("UIResponder\0"));
+    if base == (0 as *u8) { return 0 as *u8; }
+    let cls: *u8 = { synth::allocate_class_pair(base, #str_ptr("FacetUIKitAppDelegate\0"), 0 as usize) };
+    if cls == (0 as *u8) { return 0 as *u8; }
+    let _a: i8 = synth::add_method_i8_2id(cls,
+        rt::sel(#str_ptr("application:didFinishLaunchingWithOptions:\0")),
+        imp_did_finish_launching, #str_ptr("c@:@@\0"));
+    let _b: i8 = synth::add_method_v_1id(cls,
+        rt::sel(#str_ptr("applicationSignificantTimeChange:\0")),
+        imp_significant_time_change, #str_ptr("v@:@\0"));
+    { synth::register_class_pair(cls) };
+    DELEGATE_CLASS = cls;
+    return DELEGATE_CLASS;
+}
+
+extern fn UIApplicationMain(argc: i32, argv: *u8, principal: *u8, delegate: *u8) -> i32;
+
+// Hand the process to UIKit. DOES NOT RETURN.
+//
+// argc 0 / argv NULL: a C+ program's `main` does not thread its arguments down
+// to here, and UIKit reads what it needs (the bundle, the launch options) from
+// the app bundle rather than from argv. UNVERIFIED ON A DEVICE — MANIFEST.md
+// lists it as the first thing to check when this package is first run, because
+// it is the one call whose failure mode is the app not starting at all.
+// The backend must already be installed — the facade calls `install()` before
+// this, exactly as runtime_macos does. Not called from here on purpose: it
+// would make this file import the package root that imports it back.
+fn run_loop() {
+    let cls: *u8 = delegate_class();
+    if cls == (0 as *u8) { return; }
+    let name: *u8 = bridge::nsstring("FacetUIKitAppDelegate");
+    let _rc: i32 = { UIApplicationMain(0 as i32, 0 as *u8, 0 as *u8, name) };
+    return;
+}
+
+fn window_native() -> *u8 { return WINDOW; }
+
+// ---- the desktop verbs, answered honestly -------------------------------------
+// An iOS window cannot be closed, minimised or zoomed by the application: the
+// user leaves an app, the app does not leave the user. Apple rejects apps that
+// terminate themselves, so `close_window` is not "not yet built" — it is a
+// thing this platform declines to offer.
+
+fn close_window(win: *u8) { return; }
+
+fn install_app_menu(m: *screen::AppMenu) { return; }
+
+// ---- the reads the facade needs ------------------------------------------------
+
+// Points to pixels. One screen, and a window that cannot be dragged to another,
+// so the screen's scale IS the answer — where a desktop has to ask which screen
+// the window is currently on.
+fn display_density() -> f64 { return geometry::screen_scale(); }
+
+// "Active" on iOS is the APPLICATION being frontmost — `applicationState` 0 is
+// Active, 1 Inactive, 2 Background. A desktop asks the same question of the
+// window's key status; there is one window here, so it is the app's state.
+fn is_app_active() -> bool {
+    let appl: *u8 = { rt::msg_id(rt::get_class(#str_ptr("UIApplication\0")),
+                                 rt::sel(#str_ptr("sharedApplication\0"))) };
+    if appl == (0 as *u8) { return false; }
+    return { rt::msg_i64(appl, rt::sel(#str_ptr("applicationState\0"))) } == (0 as i64);
+}
+
+// An explicit light/dark override, on the window. UIUserInterfaceStyle:
+// 0 unspecified (the system decides), 1 light, 2 dark — and `Unspecified` is
+// the only way to give the system back, which is why it is not optional.
+fn set_app_appearance(a: vocab::Appearance) {
+    if WINDOW == (0 as *u8) { return; }
+    let style: i64 = match a {
+        vocab::Appearance::Unspecified => 0 as i64,
+        vocab::Appearance::Light => 1 as i64,
+        vocab::Appearance::Dark => 2 as i64,
+    };
+    { rt::msg_void_i64(WINDOW, rt::sel(#str_ptr("setOverrideUserInterfaceStyle:\0")), style) };
+    return;
+}
+
+fn app_appearance() -> vocab::Appearance {
+    if WINDOW == (0 as *u8) { return vocab::Appearance::Unspecified; }
+    let style: i64 = { rt::msg_i64(WINDOW, rt::sel(#str_ptr("overrideUserInterfaceStyle\0"))) };
+    if style == (1 as i64) { return vocab::Appearance::Light; }
+    if style == (2 as i64) { return vocab::Appearance::Dark; }
+    return vocab::Appearance::Unspecified;
+}
+
+// The window's frame is the screen's bounds. A read that is always true and a
+// write that can never be honoured — `set_window_frame` is refused in the
+// facade rather than silently ignored here.
+fn window_frame() -> vocab::Rect {
+    let b: rt::Rect = ui::Screen::main_screen().bounds();
+    return vocab::Rect { x: b.x, y: b.y, width: b.w, height: b.h };
+}

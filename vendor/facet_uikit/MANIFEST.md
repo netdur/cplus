@@ -178,3 +178,50 @@ on iOS — where an NSView's backing layer starts at `(0,0)`. So the
 first transform of every view in the AppKit backend. It is kept because an app
 that states a corner anchor still needs it: a layer puts its anchor point AT
 `position`, so moving one without the other slides the view.
+
+---
+
+## 6. The facade, and what the window host does not do
+
+`facet/src/runtime_ios.cplus` is the facade; `window.cplus` here is the host it
+calls. Both are new and both are unrun.
+
+### `UIApplicationMain` is called with argc 0 and argv NULL
+
+A C+ program's `main` does not thread its arguments down to `run_loop`, and
+UIKit reads the bundle and the launch options from the app bundle rather than
+from argv. **This is the first thing to check when the package is first run on a
+device**, because its failure mode is the app not starting at all.
+
+### The appearance flip is not wired
+
+UIKit has no application-level "the appearance changed" hook — a dark-mode flip
+arrives as a trait change on views and controllers. `facet_uikit.cplus` has the
+repaint walk ready and nothing fires it; the missing piece is a
+`traitCollectionDidChange:` override on the root view controller. This is the
+one place UIKit is poorer than AppKit, which has
+`viewDidChangeEffectiveAppearance`.
+
+Most colours do not need it: UIKit's semantic colours are dynamic objects and
+re-resolve themselves. What does not follow on its own is an `adaptive` literal
+pair and anything flattened to a CGColor.
+
+### A navigation leaks one screen
+
+`App::run`'s screen swap tears the old screen down (`on_detach`) but does not
+free it or its tree. The macOS facade settles the job queue before dropping —
+which it can do because its loop returned. There is no such moment here, so the
+honest choice was to leak one screen per navigation rather than free something a
+queued apply still holds. The fix is a settle that runs ON the loop.
+
+### `Chrome` is almost entirely inert
+
+`width`, `height`, `min_*`, `max_*`, `maximizable`, `minimizable`, `title` and
+the pinch-zoom trio describe a desktop window. The screen is the window here.
+Only what the tree itself draws survives.
+
+### `nav::push` / `nav::pop` are refused
+
+A pushed screen is a modal presentation on iOS — the same tier `alert`,
+`prompt`, `choose` and `present_window` wait on. They answer `false` rather than
+doing nothing silently, which is what their callers check.

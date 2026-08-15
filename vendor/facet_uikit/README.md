@@ -10,9 +10,9 @@ facet's **UIKit** backend — the iOS counterpart of `facet_appkit`.
 > delivery — is **unvalidated**. `facet_appkit` is the reference implementation
 > and the only tested one.
 
-That is a stronger position than `vendor/facet_gtk`, which type-checks but has
-never been through codegen; the whole package here goes through LLVM and out to
-an object for the real target. It is a much weaker position than "works".
+The whole package goes through LLVM and out to an object for the real target,
+which is more than a type-check proves. It is a much weaker position than
+"works".
 
 ## Build
 
@@ -83,20 +83,39 @@ declares on every input and macOS can do nothing with.
 The largest single piece of work left is the recycling tier: `facet_appkit`'s
 `recycler.cplus` is 2,900 lines and has no counterpart here.
 
-## Not wired into facet yet
+## Wired into facet
 
-facet selects a backend through a platform-suffixed facade —
-`facet/src/runtime_macos.cplus` on macOS, chosen by the resolver from
-`target::active_platform()`. There is no `runtime_ios.cplus`, so importing
-`facet/runtime` on an iOS target still lands on the neutral no-backend base.
-Writing that facade (and `[ios.dependencies]` in facet's manifest, which the
-manifest parser already supports) is the next step, and it is deliberately
-separate: it puts this package into facet's own build on an iOS target, and a
-backend that does not build turns facet red.
+`import "facet/runtime"` resolves to `facet/src/runtime_ios.cplus` on an iOS
+target — the same filename override that picks `runtime_macos.cplus` on a Mac,
+keyed off `target::active_platform()`. facet's manifest carries
+`[ios.dependencies]`, so **facet's own build on iOS compiles this package**,
+exactly as it compiles `facet_appkit` on macOS. The consequence is the one
+facet's manifest already states for the Mac: a backend that does not build turns
+facet red.
 
-Until then an application installs the backend directly:
+`facet/src/agent_ios.cplus` shadows `agent.cplus` the same way, because that
+module is written against `agent_appkit` and there is no `agent_uikit`. It keeps
+the surface compiling and refuses loudly.
 
-```cplus
-import "facet_uikit/facet_uikit" as backend;
-backend::install();
 ```
+cd vendor/facet && cpc check --target ios-arm64     # facet + this backend
+```
+
+### One structural difference an app author must know
+
+`UIApplicationMain` **does not return**. `[NSApp run]` does, and the macOS
+facade is built on that — `run_component` blocks and then hands the component's
+final state back, `App::run` loops (open a window, block, close, read the nav
+intent, open the next).
+
+So on iOS:
+
+- `run_component` / `run_screen` keep their signatures and never return, so the
+  value they promise never arrives. The component lives in the frame that
+  entered the loop, which is the process's bottom frame forever.
+- `App::run` shows the initial screen and enters the loop. **Navigation is a
+  swap**: `nav::go` builds the next screen into the same window, because a phone
+  has one window and closing it is not something an app may do.
+- `on_quit` never fires and nothing is torn down. That is what iOS termination
+  is — apps are killed, they do not wind down. `observe_backgrounding` is the
+  hook the platform actually gives for saving state.
