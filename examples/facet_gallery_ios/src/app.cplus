@@ -1,0 +1,135 @@
+// The gallery shell: a segmented picker at the top, one page below it.
+//
+// NOT `tabs`, and not `App::run` with routes. Both would work on paper and
+// neither is the thing to lean a first-run test app on:
+//
+//   * `tabs` hosts its panes as children and the iOS body shows and hides
+//     them, which is a second untested mechanism stacked under the first.
+//   * `App::run`'s route swap is the newest code in the facade — it is the one
+//     path that rebuilds a screen INTO a live window — so a bug there would
+//     take the whole app down rather than one page.
+//
+// So the shell is `mount::set_content` into a keyed outlet, which is the same
+// mechanism the desktop gallery uses and the one with the most miles on it. The
+// route swap has its own place to be tested; it should not be the thing between
+// the tester and the first pixel.
+
+import "facet/facet" as core;
+import "facet/elements" as ui;
+import "facet/component" as component;
+import "facet/mount" as mount;
+import "facet/popup" as popup;
+import "facet/vocabulary" as vocab;
+import "flex_layout/flex_layout" as flex;
+import "stdlib/option" as option;
+import "stdlib/status" as status;
+import "./pages/controls" as p_controls;
+import "./pages/text" as p_text;
+import "./pages/paint" as p_paint;
+import "./pages/motion" as p_motion;
+import "./pages/gaps" as p_gaps;
+
+const PAGE_CONTROLS: i64 = 0 as i64;
+const PAGE_TEXT: i64 = 1 as i64;
+const PAGE_PAINT: i64 = 2 as i64;
+const PAGE_MOTION: i64 = 3 as i64;
+const PAGE_GAPS: i64 = 4 as i64;
+
+struct Gallery {
+    shown: i64,
+    controls: p_controls::Controls,
+    text: p_text::Text,
+    paint: p_paint::Paint,
+    motion: p_motion::Motion,
+    gaps: p_gaps::Gaps,
+}
+
+impl Gallery {
+    fn new() -> Gallery {
+        return Gallery {
+            shown: PAGE_CONTROLS,
+            controls: p_controls::Controls::new(),
+            text: p_text::Text::new(),
+            paint: p_paint::Paint::new(),
+            motion: p_motion::Motion::new(),
+            gaps: p_gaps::Gaps::new(),
+        };
+    }
+
+    // The picker moved. Its selected index has already been written back into
+    // facet's props by the backend, so this reads the model rather than the
+    // control — which is the same code the desktop gallery would run.
+    fn on_pick(ref this, sender: *u8) {
+        match popup::find("g:picker") {
+            option::Option[popup::Popup]::Some(p) => {
+                this.shown = p.selected_index();
+                this.show();
+            }
+            option::Option[popup::Popup]::None => { }
+        }
+        return;
+    }
+
+    fn show(ref this) {
+        match mount::find("g:outlet") {
+            option::Option[*core::Node]::Some(out) => {
+                if this.shown == PAGE_TEXT {
+                    let _ok: bool = mount::set_content(out, this.text);
+                } else if this.shown == PAGE_PAINT {
+                    let _ok: bool = mount::set_content(out, this.paint);
+                } else if this.shown == PAGE_MOTION {
+                    let _ok: bool = mount::set_content(out, this.motion);
+                } else if this.shown == PAGE_GAPS {
+                    let _ok: bool = mount::set_content(out, this.gaps);
+                } else {
+                    let _ok: bool = mount::set_content(out, this.controls);
+                }
+            }
+            option::Option[*core::Node]::None => { }
+        }
+        return;
+    }
+}
+
+fn page_names() -> vocab::TextList {
+    var v: vocab::TextList = vocab::TextList::new();
+    let _a: status::Status = v.add("Controls");
+    let _b: status::Status = v.add("Text");
+    let _c: status::Status = v.add("Paint");
+    let _d: status::Status = v.add("Motion");
+    let _e: status::Status = v.add("Gaps");
+    return v;
+}
+
+impl Gallery: component::Component {
+    fn build(ref this) -> core::Node {
+        var root: flex::Builder = flex::Builder::new();
+
+        // The picker. A UISegmentedControl underneath — which is also what
+        // `popup` renders as on this backend, so the shell is itself one of the
+        // approximations the Gaps page names.
+        root.add(ui::popup("", key: "g:picker",
+                           items: page_names(),
+                           selected_index: this.shown,
+                           on_selected_index_changed: this.on_pick)
+                 .height(36.0f64));
+
+        // The outlet: an empty keyed column `set_content` fills. Keyed, because
+        // a key is an address and `mount::find` has to reach it.
+        root.add(ui::column(flex::Builder::new(), key: "g:outlet").grow(1.0f64));
+
+        var page: core::Node = ui::column(root).gap(12.0f64).grow(1.0f64);
+        page.set_background_color(vocab::Color::window_background());
+        return page;
+    }
+}
+
+impl Gallery: component::Lifecycle {
+    // The first page goes in AFTER the mount: `set_content` needs a live tree
+    // to find its outlet in, which is exactly what on_attach is the seam for.
+    fn on_attach(ref this) {
+        this.show();
+        return;
+    }
+    fn on_detach(ref this) { return; }
+}

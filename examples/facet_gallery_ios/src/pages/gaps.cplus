@@ -1,0 +1,63 @@
+// Gaps — the page that shows what is NOT built, on purpose.
+//
+// A gallery that only showed the finished parts would be the most misleading
+// document in the repo. facet_uikit keeps two lists strictly apart —
+// `decided_absent` (iOS has no such thing; silent) and `not_yet_built` (iOS has
+// an answer nobody wrote yet; warns once on stderr) — and this page mounts one
+// of each so both behaviours can be observed rather than read about.
+//
+// The `list` below WILL print a line to the Xcode console the first time this
+// page is shown. That is the machinery working, not a bug.
+
+import "facet/facet" as core;
+import "facet/elements" as ui;
+import "facet/component" as component;
+import "facet/vocabulary" as vocab;
+import "flex_layout/flex_layout" as flex;
+import "../shell" as shell;
+
+struct Gaps {
+    _unused: i32,
+}
+
+impl Gaps {
+    fn new() -> Gaps { return Gaps { _unused: 0 }; }
+}
+
+impl Gaps: component::Component {
+    fn build(ref this) -> core::Node {
+        var body: flex::Builder = flex::Builder::new();
+
+        var unbuilt: flex::Builder = flex::Builder::new();
+        unbuilt.add(shell::blurb("A `list` is mounted below. UIKit has the answer — UITableView with a data source — and this pass did not write it, so the kind renders as a plain backing view and names itself once on stderr."));
+        unbuilt.add(shell::painted(ui::list(key: "g:list").height(80.0f64),
+                                   vocab::Color::fill(), 10.0f64));
+        unbuilt.add(shell::caption("Also unbuilt: collection, table, tree, carousel, swipeable, web, hybrid_web, canvas, and the context-menu family. The recycling tier is the largest piece — facet_appkit's recycler is 2,900 lines."));
+        body.add(shell::card("NOT YET BUILT — WARNS ONCE", unbuilt));
+
+        var absent: flex::Builder = flex::Builder::new();
+        absent.add(shell::blurb("A `split` is mounted below. iOS has no draggable divider — a divider is a pointer idiom — so the two panes lay out stacked and NOTHING is said, because the question is answered rather than outstanding."));
+        var panes: flex::Builder = flex::Builder::new();
+        panes.add(shell::painted(ui::column(flex::Builder::new()).height(36.0f64),
+                                 vocab::Color::system_teal(), 8.0f64));
+        panes.add(shell::painted(ui::column(flex::Builder::new()).height(36.0f64),
+                                 vocab::Color::system_indigo(), 8.0f64));
+        absent.add(ui::column(panes).gap(8.0f64));
+        absent.add(shell::caption("Also decided absent: window buttons (an iOS window is the screen), the menu bar, and tooltips (there is no pointer to hover)."));
+        body.add(shell::card("DECIDED ABSENT — SILENT", absent));
+
+        var approx: flex::Builder = flex::Builder::new();
+        approx.add(shell::blurb("A third list, and the one worth arguing about: kinds whose verb WORKS and whose handler fires, but which are drawn by a different control than the name suggests."));
+        approx.add(shell::caption("`checkbox` and `radio` are UISwitches. `popup` and `tabs` are UISegmentedControls until the UIMenu block bridge lands. Each is recorded in MANIFEST.md §3 rather than left to be discovered on screen."));
+        body.add(shell::card("APPROXIMATED", approx));
+
+        return shell::page("Gaps",
+            "What this backend does not do, shown rather than described. Watch the Xcode console when this page appears.",
+            body, "page:gaps");
+    }
+}
+
+impl Gaps: component::Lifecycle {
+    fn on_attach(ref this) { return; }
+    fn on_detach(ref this) { return; }
+}

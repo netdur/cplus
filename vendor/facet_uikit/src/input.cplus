@@ -237,6 +237,33 @@ fn fire_value_changed(n: *core::Node, sender: *u8) {
         if h != (0 as fn(*u8, *u8)) { h(sender, { (*sp).on_value_changed_ctx }); }
         return;
     }
+    // The segmented-control family. Both kinds are a UISegmentedControl here
+    // (MANIFEST.md §3 says why), so both arrive through the same event and are
+    // told apart by their kind rather than by the sender's class.
+    if kind == props::K_POPUP {
+        let pp: *props::PopupProps = p as *props::PopupProps;
+        let h: fn(*u8, *u8) = { (*pp).on_selected_index_changed };
+        if h != (0 as fn(*u8, *u8)) { h(sender, { (*pp).on_selected_index_changed_ctx }); }
+        return;
+    }
+    if kind == props::K_TABS {
+        let tp: *props::TabsProps = p as *props::TabsProps;
+        let h: fn(*u8, *u8) = { (*tp).on_tab_changed };
+        if h != (0 as fn(*u8, *u8)) { h(sender, { (*tp).on_tab_changed_ctx }); }
+        return;
+    }
+    if kind == props::K_DATE_PICKER {
+        let dp: *props::DatePickerProps = p as *props::DatePickerProps;
+        let h: fn(*u8, *u8) = { (*dp).on_date_selected };
+        if h != (0 as fn(*u8, *u8)) { h(sender, { (*dp).on_date_selected_ctx }); }
+        return;
+    }
+    if kind == props::K_TIME_PICKER {
+        let tp: *props::TimePickerProps = p as *props::TimePickerProps;
+        let h: fn(*u8, *u8) = { (*tp).on_time_selected };
+        if h != (0 as fn(*u8, *u8)) { h(sender, { (*tp).on_time_selected_ctx }); }
+        return;
+    }
     return;
 }
 
@@ -268,6 +295,21 @@ fn read_back(n: *core::Node, sender: *u8) {
     if kind == props::K_STEPPER {
         let sp: *props::StepperProps = p as *props::StepperProps;
         { (*sp).value = ui::Stepper::from_raw(sender).value() };
+        return;
+    }
+    if kind == props::K_POPUP {
+        let pp: *props::PopupProps = p as *props::PopupProps;
+        { (*pp).selected_index = ui::SegmentedControl::from_raw(sender).selected_segment_index() };
+        return;
+    }
+    if kind == props::K_TABS {
+        let tp: *props::TabsProps = p as *props::TabsProps;
+        { (*tp).selected_index = ui::SegmentedControl::from_raw(sender).selected_segment_index() };
+        return;
+    }
+    if kind == props::K_PAGE_DOTS {
+        let dp: *props::PageDotsProps = p as *props::PageDotsProps;
+        { (*dp).position = ui::PageControl::from_raw(sender).current_page() };
         return;
     }
     return;

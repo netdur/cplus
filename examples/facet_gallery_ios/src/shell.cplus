@@ -1,0 +1,103 @@
+// Shared page furniture, phone-shaped.
+//
+// The desktop gallery's shell assumes a wide pane next to a sidebar. A phone
+// has one column and a thumb, so the sizes here are bigger, the gaps are
+// looser, and every row is at least 44 points tall — the tap target Apple's
+// own guidance names, and the number a Mac has no reason to know about.
+
+import "facet/facet" as core;
+import "facet/elements" as ui;
+import "facet/vocabulary" as vocab;
+import "facet/scroll" as scroll;
+import "flex_layout/flex_layout" as flex;
+import "stdlib/option" as option;
+
+fn heading(title: str) -> core::Node {
+    return ui::label(title, font_size: 28.0f64,
+                     font_weight: vocab::FontWeight::Bold,
+                     text_color: vocab::Color::ink());
+}
+
+fn blurb(body: str) -> core::Node {
+    return ui::label(body, font_size: 15.0f64,
+                     text_color: vocab::Color::ink(0.6f64),
+                     max_lines: 0 as i64,
+                     line_break: vocab::LineBreak::WordWrap);
+}
+
+fn caption(body: str) -> core::Node {
+    return ui::label(body, font_size: 13.0f64,
+                     text_color: vocab::Color::ink(0.5f64),
+                     max_lines: 0 as i64,
+                     line_break: vocab::LineBreak::WordWrap);
+}
+
+// THE SHARED BAND IS WRITTEN, NOT CHAINED. The flex modifiers (`padding`,
+// `gap`, `grow`, `width`) return the cursor and chain; facet's paint props are
+// `set_*` statements that return unit, and the read-side `background_color()`
+// is a GETTER. So every helper here takes a built node and writes onto it.
+fn painted(take node: core::Node, fill: vocab::Color, radius: f64) -> core::Node {
+    var n: core::Node = node;
+    n.set_background_color(fill);
+    n.set_corner_radius(vocab::Corners::all(radius));
+    return n;
+}
+
+fn shadowed(take node: core::Node, dy: f64, blur: f64, alpha: f64) -> core::Node {
+    var n: core::Node = node;
+    n.set_shadow(vocab::Shadow {
+        color: vocab::Color::rgba(0.0f64, 0.0f64, 0.0f64, 1.0f64),
+        offset: vocab::Point { x: 0.0f64, y: dy },
+        radius: blur,
+        opacity: alpha,
+    });
+    return n;
+}
+
+// A titled group: a surface, a radius and a shadow — the shortest exercise of
+// three shared-band verbs at once, on every page.
+fn card(title: str, take body: flex::Builder) -> core::Node {
+    var inner: flex::Builder = flex::Builder::new();
+    inner.add(ui::label(title, font_size: 13.0f64,
+                        font_weight: vocab::FontWeight::Semibold,
+                        character_spacing: 1.0f64,
+                        text_color: vocab::Color::ink(0.45f64)));
+    inner.add(ui::column(body).gap(12.0f64));
+    var box_: core::Node = ui::column(inner).padding(16.0f64).gap(12.0f64);
+    box_ = painted(box_, vocab::Color::surface(), 14.0f64);
+    return shadowed(box_, 2.0f64, 10.0f64, 0.10f64);
+}
+
+// A label + control pair, laid out the way a settings row is: the label takes
+// what it needs, the control takes the rest, and the row is a tap target.
+fn field(name: str, take control: core::Node) -> core::Node {
+    var b: flex::Builder = flex::Builder::new();
+    b.add(ui::label(name, font_size: 16.0f64, text_color: vocab::Color::ink()));
+    b.add(ui::column(flex::Builder::new()).grow(1.0f64));
+    b.add(control);
+    return ui::row(b)
+        .gap(12.0f64)
+        .height(44.0f64)
+        .align(flex::Align::Center);
+}
+
+// The page body: a scroll, because a phone screen is always shorter than the
+// content someone wants on it. A scroll takes its content through
+// `set_content` rather than a builder — the same shape the desktop gallery
+// uses, so the two shells stay comparable.
+fn page(title: str, intro: str, take body: flex::Builder, key: str) -> core::Node {
+    var col: flex::Builder = flex::Builder::new();
+    col.add(heading(title));
+    col.add(blurb(intro));
+    col.add(ui::column(body).gap(16.0f64));
+    var inner: core::Node = ui::column(col).padding(20.0f64).gap(16.0f64);
+
+    var root: core::Node = ui::scroll(key: key, axis: vocab::ScrollAxis::Vertical).grow(1.0f64);
+    match scroll::find(key, within: #addr_of(root)) {
+        option::Option[scroll::Scroll]::Some(s) => {
+            let _s: scroll::Scroll = s.set_content(inner);
+        }
+        option::Option[scroll::Scroll]::None => { }
+    }
+    return root;
+}

@@ -1,0 +1,156 @@
+// Controls — every kind facet_uikit maps onto a real UIKit control, in one
+// scroll, wired to handlers so a tap proves the target/action path end to end.
+//
+// TWO OF THESE ARE APPROXIMATIONS AND THE PAGE SAYS SO ON SCREEN. `checkbox`
+// is a UISwitch because iOS has neither a checkbox nor a radio button, and the
+// dropdown is a UISegmentedControl until the UIMenu block bridge lands. A
+// gallery that showed them without a word would be teaching the wrong thing.
+
+import "facet/facet" as core;
+import "facet/elements" as ui;
+import "facet/component" as component;
+import "facet/label" as label;
+import "facet/slider" as slider;
+import "facet/stepper" as stepper;
+import "facet/progress" as progress;
+import "facet/toggle" as toggle;
+import "facet/vocabulary" as vocab;
+import "flex_layout/flex_layout" as flex;
+import "stdlib/option" as option;
+import "../shell" as shell;
+
+struct Controls {
+    taps: i32,
+}
+
+impl Controls {
+    fn new() -> Controls { return Controls { taps: 0 }; }
+
+    fn on_tap(ref this, sender: *u8) {
+        this.taps = this.taps + 1;
+        match label::find("c:taps") {
+            option::Option[label::Label]::Some(l) => {
+                let _l: label::Label = l.set_text("tapped ${this.taps}×");
+            }
+            option::Option[label::Label]::None => { }
+        }
+        return;
+    }
+
+    // The write-back is what this proves: the control moved, facet's props
+    // carry the new number, and the handler reads it back through `find`.
+    fn on_slide(ref this, sender: *u8) {
+        match slider::find("c:slider") {
+            option::Option[slider::Slider]::Some(s) => {
+                let v: f64 = s.value();
+                let pct: i32 = (v * 100.0f64) as i32;
+                match label::find("c:slider:read") {
+                    option::Option[label::Label]::Some(l) => {
+                        let _l: label::Label = l.set_text("${pct}%");
+                    }
+                    option::Option[label::Label]::None => { }
+                }
+                match progress::find("c:progress") {
+                    option::Option[progress::Progress]::Some(p) => {
+                        let _p: progress::Progress = p.set_progress(v);
+                    }
+                    option::Option[progress::Progress]::None => { }
+                }
+            }
+            option::Option[slider::Slider]::None => { }
+        }
+        return;
+    }
+
+    fn on_step(ref this, sender: *u8) {
+        match stepper::find("c:stepper") {
+            option::Option[stepper::Stepper]::Some(s) => {
+                let n: i32 = s.value() as i32;
+                match label::find("c:stepper:read") {
+                    option::Option[label::Label]::Some(l) => {
+                        let _l: label::Label = l.set_text("${n}");
+                    }
+                    option::Option[label::Label]::None => { }
+                }
+            }
+            option::Option[stepper::Stepper]::None => { }
+        }
+        return;
+    }
+
+    fn on_switch(ref this, sender: *u8) {
+        match toggle::find("c:toggle") {
+            option::Option[toggle::Toggle]::Some(t) => {
+                let on: bool = t.on();
+                match label::find("c:toggle:read") {
+                    option::Option[label::Label]::Some(l) => {
+                        if on {
+                            let _l: label::Label = l.set_text("on");
+                        } else {
+                            let _l: label::Label = l.set_text("off");
+                        }
+                    }
+                    option::Option[label::Label]::None => { }
+                }
+            }
+            option::Option[toggle::Toggle]::None => { }
+        }
+        return;
+    }
+}
+
+impl Controls: component::Component {
+    fn build(ref this) -> core::Node {
+        var body: flex::Builder = flex::Builder::new();
+
+        var taps: flex::Builder = flex::Builder::new();
+        taps.add(ui::button("Tap me", key: "c:button", on_click: this.on_tap)
+                 .height(44.0f64));
+        taps.add(ui::label("tapped 0×", key: "c:taps", font_size: 15.0f64,
+                           text_color: vocab::Color::ink(0.6f64)));
+        body.add(shell::card("BUTTON", taps));
+
+        var vals: flex::Builder = flex::Builder::new();
+        vals.add(shell::field("Slider",
+            ui::slider(0.35f64, key: "c:slider", minimum: 0.0f64, maximum: 1.0f64,
+                       on_value_changed: this.on_slide).width(180.0f64)));
+        vals.add(shell::field("Reads",
+            ui::label("35%", key: "c:slider:read", font_size: 16.0f64,
+                      font_weight: vocab::FontWeight::Semibold)));
+        vals.add(ui::progress(0.35f64, key: "c:progress").height(4.0f64));
+        vals.add(shell::field("Stepper",
+            ui::stepper(3.0f64, key: "c:stepper", minimum: 0.0f64, maximum: 10.0f64,
+                        increment: 1.0f64, on_value_changed: this.on_step)));
+        vals.add(shell::field("Reads",
+            ui::label("3", key: "c:stepper:read", font_size: 16.0f64,
+                      font_weight: vocab::FontWeight::Semibold)));
+        body.add(shell::card("VALUES", vals));
+
+        var sw: flex::Builder = flex::Builder::new();
+        sw.add(shell::field("Switch",
+            ui::toggle(true, key: "c:toggle", on_toggled: this.on_switch)));
+        sw.add(shell::field("Reads",
+            ui::label("on", key: "c:toggle:read", font_size: 16.0f64,
+                      font_weight: vocab::FontWeight::Semibold)));
+        sw.add(shell::field("Checkbox", ui::checkbox(false, key: "c:check")));
+        sw.add(shell::caption("`checkbox` and `radio` are UISwitches here: iOS has neither control. The platform's answer is a table row with a checkmark, which cannot stand in a row of its own."));
+        body.add(shell::card("SWITCHES", sw));
+
+        var busy: flex::Builder = flex::Builder::new();
+        busy.add(shell::field("Spinner",
+            ui::spinner(vocab::Color::accent(), key: "c:spinner", running: true)));
+        busy.add(shell::field("Page dots",
+            ui::page_dots(4 as i64, key: "c:dots", position: 1 as i64)));
+        busy.add(shell::caption("UIPageControl is a real control here. The AppKit backend draws the dots itself, because macOS has none."));
+        body.add(shell::card("INDICATORS", busy));
+
+        return shell::page("Controls",
+            "Every kind with a real UIKit body, wired to handlers. Move one and the label beside it reads the value back out of facet's props.",
+            body, "page:controls");
+    }
+}
+
+impl Controls: component::Lifecycle {
+    fn on_attach(ref this) { return; }
+    fn on_detach(ref this) { return; }
+}
