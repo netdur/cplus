@@ -117,7 +117,7 @@ fn load_source(v: *u8, src: str) {
     if src == "" { return; }
     if looks_like_url(src) {
         let url: *u8 = { rt::msg_id_id(rt::get_class(#str_ptr("NSURL\0")),
-                                       rt::sel(#str_ptr("URLWithString\0")),
+                                       rt::sel(#str_ptr("URLWithString:\0")),
                                        bridge::nsstring(src)) };
         if url == (0 as *u8) { return; }
         let req: *u8 = { rt::msg_id_id(rt::get_class(#str_ptr("NSURLRequest\0")),

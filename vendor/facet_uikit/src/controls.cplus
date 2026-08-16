@@ -471,8 +471,13 @@ fn append_run(ms: *u8, c: *core::Node) {
 // Markup, parsed. `NSAttributedString` reads HTML when told the document type,
 // which is the whole of what `TextType.Html` asks for.
 fn html_string(s: str) -> *u8 {
-    let data: *u8 = { rt::msg_id(bridge::nsstring(s),
-                                 rt::sel(#str_ptr("dataUsingEncoding:\0"))) };
+    // 4 is NSUTF8StringEncoding. The argument is not optional — a selector
+    // sent through a msgSend shape that declares fewer arguments than it takes
+    // leaves the callee reading whatever was in the register, which is the same
+    // failure that crashed the swipe animation.
+    let data: *u8 = { msg_id_u64(bridge::nsstring(s),
+                                 rt::sel(#str_ptr("dataUsingEncoding:\0")),
+                                 4 as u64) };
     if data == (0 as *u8) { return 0 as *u8; }
     let opts: *u8 = { rt::alloc_init(#str_ptr("NSMutableDictionary\0")) };
     if opts == (0 as *u8) { return 0 as *u8; }
@@ -2521,3 +2526,5 @@ extern fn msg_void_insets(recv: *u8, sel: *u8, top: f64, left: f64, bottom: f64,
 extern fn msg_void_id_u64(recv: *u8, sel: *u8, a: *u8, b: u64);
 #[link_name = "objc_msgSend"]
 extern fn msg_i8_sel(recv: *u8, sel: *u8, a: *u8) -> i8;
+#[link_name = "objc_msgSend"]
+extern fn msg_id_u64(recv: *u8, sel: *u8, a: u64) -> *u8;

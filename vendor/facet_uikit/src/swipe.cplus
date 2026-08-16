@@ -290,9 +290,21 @@ fn settle(v: *u8, p: *props::SwipeableProps, open: bool) {
     return;
 }
 
+// `beginAnimations:context:` takes an NSString and a void* — TWO POINTERS, and
+// sending it through a double-shaped msgSend is how a swipe crashed in
+// `objc_retain`: UIKit read the double's bits as the animation's name and
+// retained them. Both arguments are nil here (the name is for
+// `UIViewAnimationDelegate`, which this has none of), but nil has to arrive in
+// the register the callee reads.
+//
+// The whole class of bug is a msgSend declared with the wrong shape, which the
+// compiler cannot catch — the selector is a string. Every call in this package
+// that names a selector taking objects goes through an id-shaped extern for
+// that reason.
 fn animate_to(v: *u8, x: f64) {
     let cls: *u8 = rt::get_class(#str_ptr("UIView\0"));
-    { rt::msg_void_f64(cls, rt::sel(#str_ptr("beginAnimations:context:\0")), 0.0f64) };
+    { rt::msg_void_id_id(cls, rt::sel(#str_ptr("beginAnimations:context:\0")),
+                         0 as *u8, 0 as *u8) };
     { rt::msg_void_f64(cls, rt::sel(#str_ptr("setAnimationDuration:\0")), 0.2f64) };
     apply_offset(v, x);
     { rt::msg_void(cls, rt::sel(#str_ptr("commitAnimations\0"))) };
