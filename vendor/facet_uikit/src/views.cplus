@@ -29,6 +29,8 @@ import "objc/runtime" as rt;
 import "objc/bridge" as bridge;
 import "uikit/uikit" as ui;
 import "./paint" as paint;
+import "./input" as input;
+import "./keys" as keys;
 import "./controls" as controls;
 import "./swipe" as swipe;
 import "./web" as web;
@@ -165,6 +167,16 @@ fn create(ctx: *u8, n: *core::Node) -> *u8 {
 // appearance is current" window to close.
 fn configure(v: *u8, n: *core::Node, d: u64) {
     paint::apply_common(v, n, d);
+    // THE GESTURE BAND, and it was never armed. `input::arm_tap` was written,
+    // is idempotent, and had NO CALLER — so a plain view carrying
+    // `.gesture(on_click:)` got a backing view (`wants_view` says yes for
+    // exactly that reason) and then no recogniser, and the handler could not
+    // fire. `arm_keys` goes in beside it for the same reason: the band has to
+    // be armed somewhere every apply reaches.
+    if (d & core::C_GESTURES) != (0 as u64) || d == paint::all_bits() {
+        input::arm_tap(v, n);
+        keys::arm(v, n);
+    }
     apply_for_kind(core::kind_of(n), v, n, d);
     return;
 }

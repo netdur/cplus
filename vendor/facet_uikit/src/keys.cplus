@@ -1,0 +1,215 @@
+// facet_uikit keys — the hardware key band.
+//
+// MANIFEST.md recorded this as "deliberately not filled" because a hardware key
+// on iOS arrives as a `UIKey` through the responder chain, "which is a
+// different shape from the AppKit reader". Both halves of that are true and the
+// conclusion was wrong: a different shape is a different reader, not no reader.
+// It is the same mistake as writing "iOS has no hover" before finding
+// `UIHoverGestureRecognizer`.
+//
+// WHERE THE EVENTS COME FROM. `pressesBegan:withEvent:` on UIResponder
+// (iOS 13.4+), which delivers a SET of `UIPress` — a chord arrives as one call
+// with several presses — so the shim unpacks one key per press before calling
+// into facet. The event pointer facet's readers are handed is the `UIKey`
+// itself, which is the object that actually knows the code, the characters and
+// the modifiers.
+//
+// WHO GETS THEM. The responder chain, so something has to be first responder.
+// On a phone with no keyboard attached this fires for nobody, which is correct
+// rather than broken: an iPad with a Magic Keyboard, a Mac running the iOS
+// binary, or the simulator with hardware-keyboard capture on are where it is
+// real. MANIFEST.md says so rather than leaving it to be discovered.
+
+import "stdlib/text" as text;
+import "objc/runtime" as rt;
+import "objc/bridge" as bridge;
+import "objc/synthesis" as synth;
+import "facet/gestures" as gestures;
+import "facet/facet" as core;
+import "./input" as input;
+
+// ---- the four readers ----------------------------------------------------------
+// `event` is a UIKey. Every accessor below is one of its properties, which is
+// why the readers are short: UIKey was designed for exactly this question.
+
+fn code_of(event: *u8) -> i64 {
+    if event == (0 as *u8) { return -1 as i64; }
+    return { rt::msg_i64(event, rt::sel(#str_ptr("keyCode\0"))) };
+}
+
+fn chars_of(event: *u8) -> text::Text {
+    if event == (0 as *u8) { return text::new(); }
+    let s: *u8 = { rt::msg_id(event, rt::sel(#str_ptr("characters\0"))) };
+    if s == (0 as *u8) { return text::new(); }
+    return bridge::to_text(s);
+}
+
+// UIKeyModifierFlags onto facet's own bits. The two sets are not the same
+// numbers, and mapping is what keeps an application from testing a platform
+// constant: facet's `mod_*` helpers are what a handler compares against.
+//
+// UIKit: AlphaShift 1<<16, Shift 1<<17, Control 1<<18, Alternate 1<<19,
+// Command 1<<20, NumericPad 1<<21.
+fn modifiers_of(event: *u8) -> u64 {
+    if event == (0 as *u8) { return 0 as u64; }
+    return modifiers_of_flags({ rt::msg_u64(event, rt::sel(#str_ptr("modifierFlags\0"))) });
+}
+
+// Split from the reader so the MAPPING can be checked without a UIKey — a
+// table is exactly the kind of thing that is wrong silently.
+fn modifiers_of_flags(f: u64) -> u64 {
+    var out: u64 = 0 as u64;
+    if (f & ((1 as u64) * (131072 as u64))) != (0 as u64) { out = out | gestures::mod_shift(); }
+    if (f & ((1 as u64) * (262144 as u64))) != (0 as u64) { out = out | gestures::mod_control(); }
+    if (f & ((1 as u64) * (524288 as u64))) != (0 as u64) { out = out | gestures::mod_option(); }
+    if (f & ((1 as u64) * (1048576 as u64))) != (0 as u64) { out = out | gestures::mod_command(); }
+    return out;
+}
+
+// The USB HID usage codes UIKey reports, onto facet's named keys. Only the keys
+// an application actually BRANCHES on are named — everything else comes through
+// `key_code` raw, which is the contract's own rule.
+fn named_of(event: *u8) -> i64 {
+    if event == (0 as *u8) { return gestures::key_none(); }
+    return named_of_code({ rt::msg_i64(event, rt::sel(#str_ptr("keyCode\0"))) });
+}
+
+fn named_of_code(c: i64) -> i64 {
+    if c == (40 as i64) { return gestures::key_return(); }        // Return
+    if c == (88 as i64) { return gestures::key_return(); }        // KeypadEnter
+    if c == (43 as i64) { return gestures::key_tab(); }
+    if c == (44 as i64) { return gestures::key_space(); }
+    if c == (42 as i64) { return gestures::key_delete(); }        // Backspace
+    if c == (76 as i64) { return gestures::key_forward_delete(); }
+    if c == (41 as i64) { return gestures::key_escape(); }
+    if c == (80 as i64) { return gestures::key_arrow_left(); }
+    if c == (79 as i64) { return gestures::key_arrow_right(); }
+    if c == (82 as i64) { return gestures::key_arrow_up(); }
+    if c == (81 as i64) { return gestures::key_arrow_down(); }
+    if c == (74 as i64) { return gestures::key_home(); }
+    if c == (77 as i64) { return gestures::key_end(); }
+    if c == (75 as i64) { return gestures::key_page_up(); }
+    if c == (78 as i64) { return gestures::key_page_down(); }
+    return gestures::key_none();
+}
+
+fn reader() -> gestures::KeyReader {
+    return gestures::KeyReader {
+        code: code_of,
+        chars: chars_of,
+        modifiers: modifiers_of,
+        named: named_of,
+    };
+}
+
+// ---- delivery ------------------------------------------------------------------
+// ON THE VIEW, exactly as the AppKit backend puts `keyDown:` on the view.
+// `pressesBegan:withEvent:` travels the responder chain from the first
+// responder, so the view that receives it IS the focused one and the node is
+// resolved from it — the same rule, a different selector.
+//
+// A per-view subclass rather than this package's one shared target: target
+// /action takes a separate object and the responder chain does not. Only a node
+// that actually declares `on_key` is moved, so nothing pays for a band it does
+// not use — and, just as importantly, a view that was already able to become
+// first responder is not made unable to.
+//
+// A handler returning true CONSUMES the key: it reaches neither facet ancestors
+// nor the native chain, which is what lets an application keep Tab away from
+// the system. Anything nobody claimed goes to `super`, so every control UIKit
+// handles itself keeps working.
+
+fn imp_presses_began(self_obj: *u8, cmd: *u8, presses: *u8, event: *u8) {
+    if deliver(self_obj, presses) { return; }
+    call_super_presses(self_obj, cmd, presses, event);
+    return;
+}
+
+// `canBecomeFirstResponder` — answered from the NODE rather than hardcoded, so
+// a gesture set with no key handler does not start swallowing focus.
+fn imp_can_become_first_responder(self_obj: *u8, cmd: *u8) -> i8 {
+    let n: *core::Node = input::node_of(self_obj);
+    if n == (0 as *core::Node) { return 0 as i8; }
+    if gestures::on_key_of(n) != gestures::no_gesture { return 1 as i8; }
+    return 0 as i8;
+}
+
+fn deliver(view: *u8, presses: *u8) -> bool {
+    let n: *core::Node = input::node_of(view);
+    if n == (0 as *core::Node) { return false; }
+    if presses == (0 as *u8) { return false; }
+    let all: *u8 = { rt::msg_id(presses, rt::sel(#str_ptr("allObjects\0"))) };
+    if all == (0 as *u8) { return false; }
+    let count: u64 = { rt::msg_u64(all, rt::sel(#str_ptr("count\0"))) };
+    var consumed: bool = false;
+    var i: u64 = 0 as u64;
+    while i < count {
+        let press: *u8 = { rt::msg_id_u64(all, rt::sel(#str_ptr("objectAtIndex:\0")), i) };
+        if press != (0 as *u8) {
+            let key: *u8 = { rt::msg_id(press, rt::sel(#str_ptr("key\0"))) };
+            // A press with no `key` is a game-controller button, not a keyboard
+            // key. It is not ours and must reach the chain.
+            if key != (0 as *u8) {
+                if gestures::fire_key(n, key) { consumed = true; }
+            }
+        }
+        i = i +% (1 as u64);
+    }
+    return consumed;
+}
+
+fn call_super_presses(self_obj: *u8, cmd: *u8, presses: *u8, event: *u8) {
+    let cls: *u8 = { rt::msg_id(self_obj, rt::sel(#str_ptr("class\0"))) };
+    let base: *u8 = { class_get_superclass(cls) };
+    if base == (0 as *u8) { return; }
+    var sup: ObjcSuper = ObjcSuper { receiver: self_obj, class_: base };
+    { msg_super_2id(#addr_of(sup), cmd, presses, event) };
+    return;
+}
+
+// ---- arming --------------------------------------------------------------------
+
+fn armed_key() -> *u8 { return 41050 as *u8; }
+
+// Move this view into a subclass that reads keys. Idempotent, and a no-op for a
+// node with no key handler — `apply` re-arms on every gesture write.
+fn arm(v: *u8, n: *core::Node) {
+    if v == (0 as *u8) { return; }
+    if gestures::on_key_of(n) == gestures::no_gesture { return; }
+    if { synth::get_associated(v, armed_key()) } != (0 as *u8) { return; }
+    let base: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("class\0"))) };
+    if base == (0 as *u8) { return; }
+    SEQ = SEQ +% (1 as u64);
+    var name: text::Text = text::from_str("FacetUIKitKeyed_${SEQ}");
+    let cls: *u8 = { synth::allocate_class_pair(base, #str_ptr(name.view()), 0 as usize) };
+    if cls == (0 as *u8) { return; }
+    let _a: i8 = add_method_v_2id(cls, rt::sel(#str_ptr("pressesBegan:withEvent:\0")),
+                                  imp_presses_began, #str_ptr("v@:@@\0"));
+    let _b: i8 = add_method_i8_0(cls, rt::sel(#str_ptr("canBecomeFirstResponder\0")),
+                                 imp_can_become_first_responder, #str_ptr("c@:\0"));
+    { synth::register_class_pair(cls) };
+    { object_set_class(v, cls) };
+    synth::set_associated(v, armed_key(), 1 as *u8);
+    // A view that can be first responder is not one until it is MADE one, and
+    // nothing else here would: facet's focus is the application's to place, and
+    // the first keyed element asking for it is the closest thing to a default
+    // that does not fight the user.
+    { rt::msg_i8(v, rt::sel(#str_ptr("becomeFirstResponder\0"))) };
+    return;
+}
+
+static SEQ: u64 = 0 as u64;
+
+#[repr(C)]
+struct ObjcSuper { opaque receiver: *u8, opaque class_: *u8 }
+
+#[link_name = "objc_msgSendSuper"]
+extern fn msg_super_2id(sup: *ObjcSuper, sel: *u8, a: *u8, b: *u8);
+#[link_name = "class_getSuperclass"]
+extern fn class_get_superclass(cls: *u8) -> *u8;
+#[link_name = "object_setClass"]
+extern fn object_set_class(obj: *u8, cls: *u8) -> *u8;
+#[link_name = "class_addMethod"]
+extern fn add_method_v_2id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8), types: *u8) -> i8;
+#[link_name = "class_addMethod"]
+extern fn add_method_i8_0(cls: *u8, sel: *u8, imp: fn(*u8, *u8) -> i8, types: *u8) -> i8;

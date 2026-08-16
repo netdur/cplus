@@ -36,6 +36,10 @@ import "uikit/uikit" as uik;
 import "./paint" as paint;
 import "./views" as views;
 import "./recycler" as recycler;
+import "./input" as input;
+import "./keys" as keys;
+import "facet/gestures" as gestures;
+import "objc/bridge" as bridge;
 
 static FAILED: i32 = 0 as i32;
 static RAN: i32 = 0 as i32;
@@ -163,6 +167,74 @@ fn realising_a_subtree_opens_no_window() -> bool {
     return before == after;
 }
 
+// ---- the bands that were recorded as unfillable --------------------------------
+// Two seams were left empty on the grounds that iOS's shape was different. It
+// is, and different is not absent — the same error as "iOS has no hover".
+
+fn the_sender_readers_are_installed() -> bool {
+    // `key_of` walks accessibilityIdentifier up the superview chain — the SAME
+    // code the AppKit backend runs, because both properties are UIView's too.
+    let v: uik::View = uik::View::new_with_frame(
+        rt::Rect { x: 0.0f64, y: 0.0f64, w: 10.0f64, h: 10.0f64 });
+    { rt::msg_void_id(v.raw(), rt::sel(#str_ptr("setAccessibilityIdentifier:\0")),
+                      bridge::nsstring("row:7")) };
+    return { input::key_of(v.raw()).view() } == "row:7";
+}
+
+fn key_of_walks_up_to_a_tagged_ancestor() -> bool {
+    let parent: uik::View = uik::View::new_with_frame(
+        rt::Rect { x: 0.0f64, y: 0.0f64, w: 10.0f64, h: 10.0f64 });
+    let child: uik::View = uik::View::new_with_frame(
+        rt::Rect { x: 0.0f64, y: 0.0f64, w: 5.0f64, h: 5.0f64 });
+    { rt::msg_void_id(parent.raw(), rt::sel(#str_ptr("setAccessibilityIdentifier:\0")),
+                      bridge::nsstring("outer")) };
+    parent.add_subview(child);
+    // A tap on an untagged icon inside a tagged row answers the ROW.
+    return { input::key_of(child.raw()).view() } == "outer";
+}
+
+fn raise_brings_a_keyed_sibling_to_the_front() -> bool {
+    let host: uik::View = uik::View::new_with_frame(
+        rt::Rect { x: 0.0f64, y: 0.0f64, w: 10.0f64, h: 10.0f64 });
+    let a: uik::View = uik::View::new_with_frame(
+        rt::Rect { x: 0.0f64, y: 0.0f64, w: 5.0f64, h: 5.0f64 });
+    let b: uik::View = uik::View::new_with_frame(
+        rt::Rect { x: 0.0f64, y: 0.0f64, w: 5.0f64, h: 5.0f64 });
+    { rt::msg_void_id(a.raw(), rt::sel(#str_ptr("setAccessibilityIdentifier:\0")),
+                      bridge::nsstring("first")) };
+    host.add_subview(a);
+    host.add_subview(b);
+    // `a` is behind `b`; raising it must put it last, which IS the front.
+    input::raise(host.raw(), "first");
+    let subs: *u8 = { rt::msg_id(host.raw(), rt::sel(#str_ptr("subviews\0"))) };
+    let last: *u8 = { rt::msg_id_u64(subs, rt::sel(#str_ptr("objectAtIndex:\0")), 1 as u64) };
+    return last == a.raw();
+}
+
+// The key band's mapping, which is a table and therefore exactly the kind of
+// thing that is wrong silently. USB HID usage codes, not ASCII.
+fn named_keys_map_from_hid_codes() -> bool {
+    if keys::named_of_code(40 as i64) != gestures::key_return() { return false; }
+    if keys::named_of_code(41 as i64) != gestures::key_escape() { return false; }
+    if keys::named_of_code(42 as i64) != gestures::key_delete() { return false; }
+    if keys::named_of_code(43 as i64) != gestures::key_tab() { return false; }
+    if keys::named_of_code(79 as i64) != gestures::key_arrow_right() { return false; }
+    if keys::named_of_code(82 as i64) != gestures::key_arrow_up() { return false; }
+    // A printable key has no NAME — it comes through key_chars / key_code.
+    return keys::named_of_code(4 as i64) == gestures::key_none();
+}
+
+fn modifier_flags_map_onto_facets_bits() -> bool {
+    // UIKeyModifierShift is 1<<17, which is NOT facet's 1.
+    if keys::modifiers_of_flags((1 as u64) * (131072 as u64)) != gestures::mod_shift() {
+        return false;
+    }
+    if keys::modifiers_of_flags((1 as u64) * (1048576 as u64)) != gestures::mod_command() {
+        return false;
+    }
+    return keys::modifiers_of_flags(0 as u64) == (0 as u64);
+}
+
 // ---- the run --------------------------------------------------------------------
 
 fn run_all() -> i32 {
@@ -180,6 +252,12 @@ fn run_all() -> i32 {
     check("expansion is keyed on the node's own id", expansion_is_keyed_on_the_nodes_own_id());
     check("no_handler is a real function, not null", no_handler_is_a_real_function_not_null());
     check("realising a subtree opens no window", realising_a_subtree_opens_no_window());
+    check("the sender readers are installed", the_sender_readers_are_installed());
+    check("key_of walks up to a tagged ancestor", key_of_walks_up_to_a_tagged_ancestor());
+    check("raise brings a keyed sibling to the front",
+          raise_brings_a_keyed_sibling_to_the_front());
+    check("named keys map from HID codes", named_keys_map_from_hid_codes());
+    check("modifier flags map onto facet's bits", modifier_flags_map_onto_facets_bits());
 
     let ran: i32 = RAN;
     let failed: i32 = FAILED;

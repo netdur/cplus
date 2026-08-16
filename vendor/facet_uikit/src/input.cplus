@@ -19,6 +19,9 @@
 import "facet/facet" as core;
 import "facet/props" as props;
 import "facet/gestures" as gestures;
+import "facet/vocabulary" as vocab;
+import "objc/bridge" as bridge;
+import "stdlib/text" as text;
 import "facet/component" as component;
 import "objc/runtime" as rt;
 import "objc/synthesis" as synth;
@@ -570,6 +573,140 @@ fn props_of(n: *core::Node, kind: u32) -> *u8 {
     let d: *core::Data = core::node_data(n);
     if d == (0 as *core::Data) { return 0 as *u8; }
     return { (*d).props };
+}
+
+// ---- the sender readers ---------------------------------------------------------
+// What a handler can recover from its opaque `sender`. facet declares six; four
+// of them are the SAME CODE the AppKit backend runs, because they are written
+// against `accessibilityIdentifier` and `superview` — both of which are UIView.
+//
+// That is worth saying out loud: this band was recorded as unfilled on the
+// assumption it was AppKit work, and most of it was never AppKit-specific at
+// all. Only the drag trio genuinely differs, and it is left empty on purpose —
+// see below.
+
+// A tap arrives with the CONTROL as sender; a gesture arrives with the
+// RECOGNISER, which carries the view it is attached to. One reader for both.
+fn sender_view(sender: *u8) -> *u8 {
+    if sender == (0 as *u8) { return 0 as *u8; }
+    if synth::class_responds(synth::object_class(sender),
+                             rt::sel(#str_ptr("view\0"))) != (0 as i8) {
+        let v: *u8 = { rt::msg_id(sender, rt::sel(#str_ptr("view\0"))) };
+        if v != (0 as *u8) { return v; }
+    }
+    return sender;
+}
+
+// The key IS the accessibilityIdentifier (one token, three jobs), and the walk
+// goes UP: a tap on an untagged icon inside a tagged row answers the row.
+fn key_of(sender: *u8) -> text::Text {
+    var v: *u8 = sender_view(sender);
+    while v != (0 as *u8) {
+        let ns: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("accessibilityIdentifier\0"))) };
+        if ns != (0 as *u8) {
+            let len: u64 = { rt::msg_u64_u64(ns, rt::sel(#str_ptr("lengthOfBytesUsingEncoding:\0")),
+                                             bridge::ns_utf8()) };
+            if len > (0 as u64) { return bridge::to_text(ns); }
+        }
+        v = { rt::msg_id(v, rt::sel(#str_ptr("superview\0"))) };
+    }
+    return text::new();
+}
+
+// The app pointer a node carries, found by the same walk, so `item` and `key`
+// always resolve off the same view.
+fn item_key() -> *u8 { return 41040 as *u8; }
+
+fn item_of(sender: *u8) -> *u8 {
+    var v: *u8 = sender_view(sender);
+    while v != (0 as *u8) {
+        let it: *u8 = { synth::get_associated(v, item_key()) };
+        if it != (0 as *u8) { return it; }
+        v = { rt::msg_id(v, rt::sel(#str_ptr("superview\0"))) };
+    }
+    return 0 as *u8;
+}
+
+// Bring the keyed element to the front of its siblings, in place — the
+// no-rebuild z-order change. facet is not reactive, so the element is addressed
+// rather than re-described.
+//
+// `bringSubviewToFront:` is UIKit's own verb for it. AppKit has no such call
+// and removes-and-re-adds to get the same ordering, which is the one place
+// this reader is SHORTER than its AppKit twin rather than identical.
+fn raise(sender: *u8, key: str) {
+    let sv: *u8 = sender_view(sender);
+    if sv == (0 as *u8) { return; }
+    // THE WINDOW WHEN THERE IS ONE, THE TOPMOST ANCESTOR OTHERWISE.
+    //
+    // The AppKit backend searches from the window's content view, which is
+    // right for a screen and wrong for everything this backend realises
+    // OUTSIDE one: a recycled row's subtree is live and mounted before its
+    // cell is on screen, so `window` is nil and the search would find nothing.
+    // Falling back to the highest ancestor reachable makes the same call work
+    // in both places, and a view IN a window still searches the whole window
+    // because that is where the walk ends up.
+    var root: *u8 = { rt::msg_id(sv, rt::sel(#str_ptr("window\0"))) };
+    if root == (0 as *u8) { root = topmost(sv); }
+    if root == (0 as *u8) { return; }
+    let target: *u8 = find_by_key(root, key);
+    if target == (0 as *u8) { return; }
+    let sup: *u8 = { rt::msg_id(target, rt::sel(#str_ptr("superview\0"))) };
+    if sup == (0 as *u8) { return; }
+    { rt::msg_void_id(sup, rt::sel(#str_ptr("bringSubviewToFront:\0")), target) };
+    return;
+}
+
+fn topmost(v: *u8) -> *u8 {
+    var cur: *u8 = v;
+    var depth: i32 = 0 as i32;
+    while depth < (64 as i32) {
+        let sup: *u8 = { rt::msg_id(cur, rt::sel(#str_ptr("superview\0"))) };
+        if sup == (0 as *u8) { return cur; }
+        cur = sup;
+        depth = depth + (1 as i32);
+    }
+    return cur;
+}
+
+fn find_by_key(root: *u8, key: str) -> *u8 {
+    if root == (0 as *u8) { return 0 as *u8; }
+    let ns: *u8 = { rt::msg_id(root, rt::sel(#str_ptr("accessibilityIdentifier\0"))) };
+    if ns != (0 as *u8) {
+        if { bridge::to_text(ns).view() } == key { return root; }
+    }
+    let subs: *u8 = { rt::msg_id(root, rt::sel(#str_ptr("subviews\0"))) };
+    if subs == (0 as *u8) { return 0 as *u8; }
+    let count: u64 = { rt::msg_u64(subs, rt::sel(#str_ptr("count\0"))) };
+    var i: u64 = 0 as u64;
+    while i < count {
+        let child: *u8 = { rt::msg_id_u64(subs, rt::sel(#str_ptr("objectAtIndex:\0")), i) };
+        let hit: *u8 = find_by_key(child, key);
+        if hit != (0 as *u8) { return hit; }
+        i = i +% (1 as u64);
+    }
+    return 0 as *u8;
+}
+
+// THE DRAG TRIO IS LEFT EMPTY, and deliberately rather than for want of time.
+//
+// On macOS these read an `NSDraggingInfo` the view was handed. iOS has the same
+// three questions and a different answer — `UIDropInteraction` — and nothing in
+// facet asks them on this platform yet: facet declares no drag verbs at all (an
+// agent has no hands, and a phone's drag-and-drop is BETWEEN apps rather than
+// within one). Filling them would be inventing a caller.
+//
+// Zero fields keep facet's portable defaults — empty text, no position, not
+// targeted — which is the seam working as designed rather than a hole.
+fn sender_readers() -> component::SenderReaders {
+    return component::SenderReaders {
+        raise: raise,
+        key_of: key_of,
+        item_of: item_of,
+        dropped_text: 0 as fn(*u8) -> text::Text,
+        drop_position: 0 as fn(*u8) -> option::Option[vocab::Point],
+        drag_targeted: 0 as fn(*u8) -> bool,
+    };
 }
 
 #[link_name = "objc_msgSend"]

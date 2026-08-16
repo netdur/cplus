@@ -213,13 +213,40 @@ its presentation style and has no size of its own.
 
 ### Bands that are still unfilled
 
-- **No key band.** `gestures::install_key_reader` is deliberately not filled: a
-  hardware key on iOS arrives as a `UIKey` through the responder chain, which is
-  a different shape from the AppKit reader.
-- **No sender readers.** `component::install_sender_readers` is unfilled —
-  `input.cplus` binds nodes to views but does not yet answer facet's sender
-  questions.
-- **No agent surface.** `runtime::install_agent` is unfilled.
+- **No agent surface.** `runtime::install_agent` is unfilled. The transport it
+  needs exists — `agent_mcp::serve_tcp` — and the reader (`agent_uikit`, the
+  sibling of `agent_appkit`) is not written. See below.
+
+### The key band and the sender readers ARE filled
+
+Both were recorded here as unfillable and both were wrong, in the same way "iOS
+has no hover" was wrong.
+
+`install_sender_readers`: four of the six readers are the SAME CODE the AppKit
+backend runs. `key_of` walks `accessibilityIdentifier` up the `superview`
+chain — both properties are UIView's too — and `item_of` shares the walk.
+`raise` is shorter here, because `bringSubviewToFront:` is a verb AppKit does
+not have. The drag trio is left as zero fields on purpose: facet declares no
+drag verbs, a phone's drag-and-drop is BETWEEN apps, and filling them would be
+inventing a caller.
+
+`install_key_reader`: `pressesBegan:withEvent:` on UIResponder, unpacked one
+`UIKey` per press, with the four readers over UIKey's own properties. The
+mapping tables — USB HID codes onto facet's named keys, UIKeyModifierFlags onto
+facet's bits — are checked by the selftest, because a table is exactly the kind
+of thing that is wrong silently.
+
+**Who gets keys:** the responder chain, so something must be first responder.
+On a phone with no keyboard this fires for nobody, which is correct rather than
+broken — an iPad with a Magic Keyboard, a Mac running the iOS binary, or the
+simulator with hardware-keyboard capture are where it is real.
+
+### The gesture band was armed nowhere
+
+`input::arm_tap` was written, idempotent, and had NO CALLER. A plain view
+carrying `.gesture(on_click:)` got a backing view — `wants_view` says yes for
+exactly that reason — and then no recogniser, so the handler could not fire.
+Both bands are armed in `views::configure` now, which every apply reaches.
 
 ### The checks run now
 

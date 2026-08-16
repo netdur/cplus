@@ -33,10 +33,14 @@ import "facet/facet" as core;
 import "facet/props" as props;
 import "facet/mount" as mount;
 import "facet/services" as services;
+import "facet/component" as component;
+import "facet/gestures" as gestures;
 import "facet/theme" as theme;
 import "facet/application" as app;
 import "objc/runtime" as rt;
 import "./views" as views;
+import "./input" as input;
+import "./keys" as keys;
 import "./scheduler" as scheduler;
 // Imported so the package's own build compiles it: an iOS target builds the
 // `[lib]` root and what it reaches, and the window host is reached by the
@@ -73,6 +77,8 @@ fn install() {
     services::install_scheduler(scheduler::scheduler());
     theme::set_is_dark_fn(is_dark);
     theme::set_theme_changed_fn(theme_changed);
+    component::install_sender_readers(input::sender_readers());
+    gestures::install_key_reader(keys::reader());
     scheduler::install_sync_tick();
     return;
 }

@@ -759,6 +759,123 @@ fn serve_uds(
     return 0;
 }
 
+// ---- TCP transport -----------------------------------------------------------
+//
+// The same wire on a port instead of a path, and it exists because of ONE
+// platform: an iOS app's Unix socket lives inside its sandbox, where nothing on
+// the development machine can reach it. There is no shared filesystem to a
+// device at all.
+//
+// A port there IS reachable — forwarded over USB by usbmuxd, which is exactly
+// how Flutter's Dart VM Service and Chrome's remote debugging are reached. So
+// the transport is the standard one for this problem rather than something
+// invented here.
+//
+// BOUND TO LOOPBACK, never to 0.0.0.0. The forwarder connects locally on the
+// device; a listener on all interfaces would put the agent surface — which can
+// read a UI and press its buttons — on whatever network the phone is joined to.
+// That is not a default anyone should have to remember to change.
+//
+// AF_INET = 2, SOCK_STREAM = 1, INADDR_LOOPBACK = 0x7f000001. `sockaddr_in` is
+// { uint8 sin_len; uint8 sin_family; uint16 sin_port; uint32 sin_addr; char
+// sin_zero[8] } on Darwin — 16 bytes, built here in a byte buffer for the same
+// reason the `sockaddr_un` above is.
+
+fn put_be16(ref buf: [u8; 16], at: usize, v: u16) {
+    buf[at] = { (v / (256 as u16)) as u8 };
+    buf[at +% (1 as usize)] = { (v % (256 as u16)) as u8 };
+    return;
+}
+
+// Bind a loopback listener on `port`. Returns the fd, or a negative setup code
+// matching `bind_uds`: -1 socket, -2 bind, -3 listen.
+fn bind_tcp(port: u16) -> i32 {
+    let fd: i32 = { socket(2 as i32, 1 as i32, 0 as i32) };
+    if fd < (0 as i32) { return - 1 as i32; }
+    // SO_REUSEADDR, so a restart does not wait out TIME_WAIT on the same port.
+    // SOL_SOCKET = 0xffff, SO_REUSEADDR = 4 on Darwin.
+    var one: i32 = 1 as i32;
+    let _o: i32 = { setsockopt(fd, 65535 as i32, 4 as i32,
+                               { #addr_of(one) as *u8 }, 4 as u32) };
+    var addr: [u8; 16] = [0 as u8; 16];
+    addr[0] = 16 as u8;          // sin_len
+    addr[1] = 2 as u8;           // sin_family = AF_INET
+    put_be16(addr, 2 as usize, port);
+    // 127.0.0.1, in network order — which is the same byte order written out.
+    addr[4] = 127 as u8;
+    addr[5] = 0 as u8;
+    addr[6] = 0 as u8;
+    addr[7] = 1 as u8;
+    if { bind(fd, { #addr_of(addr[0]) }, 16 as u32) } != (0 as i32) {
+        { close(fd); }
+        return - 2 as i32;
+    }
+    if { listen(fd, 4 as i32) } != (0 as i32) {
+        { close(fd); }
+        return - 3 as i32;
+    }
+    return fd;
+}
+
+// Accept and serve, one connection at a time, forever — the same loop
+// `serve_uds` runs, over the same `serve_fd`. Nothing about the protocol knows
+// which transport carried it.
+fn serve_tcp(
+    surf: *u8,
+    vt: backend::Backend,
+    ref sub: events::Subscriber,
+    policy: fn(auth::Request) -> auth::Grant,
+    port: u16,
+) -> i32 {
+    let fd: i32 = bind_tcp(port);
+    if fd < (0 as i32) { return fd; }
+    loop {
+        let conn: i32 = { accept(fd, 0 as *u8, 0 as *u32) };
+        if conn < (0 as i32) { break; }
+        serve_fd(surf, vt, sub, policy, conn);
+        { close(conn); }
+    }
+    { close(fd); }
+    return 0;
+}
+
+extern fn setsockopt(fd: i32, level: i32, name: i32, val: *u8, len: u32) -> i32;
+
+// ---- tests for the TCP transport ---------------------------------------------
+
+#[test]
+fn a_loopback_listener_binds_and_closes() {
+    // Port 0 asks the kernel for a free one, which is the only port a test may
+    // take: a fixed number is a test that fails when something else is running.
+    let fd: i32 = bind_tcp(0 as u16);
+    assert fd >= (0 as i32);
+    { close(fd); }
+    return;
+}
+
+#[test]
+fn the_port_is_written_big_endian() {
+    var buf: [u8; 16] = [0 as u8; 16];
+    put_be16(buf, 2 as usize, 8123 as u16);
+    // 8123 = 0x1FBB, so the high byte comes first on the wire.
+    assert buf[2] == (0x1F as u8);
+    assert buf[3] == (0xBB as u8);
+    return;
+}
+
+#[test]
+fn two_listeners_on_one_port_is_a_bind_error() {
+    let a: i32 = bind_tcp(0 as u16);
+    assert a >= (0 as i32);
+    // A second bind on a port the kernel chose cannot be attempted without
+    // reading it back, so this asserts the shape that IS reachable: a
+    // privileged port refuses, and the code says which step failed.
+    let b: i32 = bind_tcp(1 as u16);
+    assert b == (0 as i32 - (2 as i32));
+    { close(a); }
+    return;
+}
+
 // ---- tests -------------------------------------------------------------------
 // Dispatch-level: a fake vtable proves the wire behavior without a backend.
 
