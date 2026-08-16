@@ -96,14 +96,21 @@ fn fill_cell(cell: *u8, n: *core::Node, i: usize) {
             // `bind` shares `row`'s context: facet gives the pair one, because they
             // are two halves of the same callback.
             if bind != (0 as fn(usize, *flex::Node, *u8)) { bind(i, root, { (*p).row_ctx }); }
-            let mounted: bool = mount::realise(root) != (0 as *u8);
-            if mounted {
-                let rv: *u8 = core::view_of(root);
-                if rv != (0 as *u8) {
-                    ui::View::from_raw(content).add_subview(ui::View::from_raw(rv));
-                } else {
-                    add_backed(ui::View::from_raw(content), root);
-                }
+            // `realise` ANSWERS THE ROOT'S VIEW, AND 0 IS NOT FAILURE.
+            //
+            // A row built as `ui::row(...)` is an unkeyed pure-layout node and
+            // gets no view of its own — its children carry the views — so 0 is
+            // the ORDINARY answer for a row, not an error. Reading it as a
+            // success flag (`realise(root) != 0`) skipped both branches and put
+            // nothing in the cell: every recycled row in the package rendered
+            // as an empty cell with a separator under it.
+            //
+            // Which is what `add_backed` exists for, and it was already written.
+            let rv: *u8 = mount::realise(root);
+            if rv != (0 as *u8) {
+                ui::View::from_raw(content).add_subview(ui::View::from_raw(rv));
+            } else {
+                add_backed(ui::View::from_raw(content), root);
             }
             synth::set_associated(cell, cell_root_key(), root as *u8);
             layout_cell(cell, root);
@@ -980,14 +987,12 @@ fn imp_tree_cell(self_obj: *u8, cmd: *u8, tv: *u8, index_path: *u8) -> *u8 {
                     if bind != (0 as fn(*tree::TreeNode, *u8, *flex::Node)) {
                         bind(node, { (*p).row_ctx }, root);
                     }
-                    let mounted: bool = mount::realise(root) != (0 as *u8);
-                    if mounted {
-                        let rv: *u8 = core::view_of(root);
-                        if rv != (0 as *u8) {
-                            ui::View::from_raw(content).add_subview(ui::View::from_raw(rv));
-                        } else {
-                            add_backed(ui::View::from_raw(content), root);
-                        }
+                    // 0 is a viewless root, not a failure — see `fill_cell`.
+                    let rv: *u8 = mount::realise(root);
+                    if rv != (0 as *u8) {
+                        ui::View::from_raw(content).add_subview(ui::View::from_raw(rv));
+                    } else {
+                        add_backed(ui::View::from_raw(content), root);
                     }
                     synth::set_associated(cell, cell_root_key(), root as *u8);
                     // A BRANCH SAYS SO. With the rows flattened there is no
@@ -1217,14 +1222,21 @@ fn fill_item_cell(cell: *u8, n: *core::Node, i: usize) {
     match box::new::[core::Node](build(i, ctx)) {
         option::Option[box::Box[core::Node]]::Some(b) => {
             let root: *core::Node = b.into_raw() as *core::Node;
-            let mounted: bool = mount::realise(root) != (0 as *u8);
-            if mounted {
-                let rv: *u8 = core::view_of(root);
-                if rv != (0 as *u8) {
-                    ui::View::from_raw(content).add_subview(ui::View::from_raw(rv));
-                } else {
-                    add_backed(ui::View::from_raw(content), root);
-                }
+            // `realise` ANSWERS THE ROOT'S VIEW, AND 0 IS NOT FAILURE.
+            //
+            // A row built as `ui::row(...)` is an unkeyed pure-layout node and
+            // gets no view of its own — its children carry the views — so 0 is
+            // the ORDINARY answer for a row, not an error. Reading it as a
+            // success flag (`realise(root) != 0`) skipped both branches and put
+            // nothing in the cell: every recycled row in the package rendered
+            // as an empty cell with a separator under it.
+            //
+            // Which is what `add_backed` exists for, and it was already written.
+            let rv: *u8 = mount::realise(root);
+            if rv != (0 as *u8) {
+                ui::View::from_raw(content).add_subview(ui::View::from_raw(rv));
+            } else {
+                add_backed(ui::View::from_raw(content), root);
             }
             synth::set_associated(cell, cell_root_key(), root as *u8);
             layout_cell(cell, root);

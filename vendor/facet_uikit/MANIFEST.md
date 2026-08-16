@@ -106,6 +106,18 @@ the table is mounted has nowhere to land: the view would have to be replaced,
 and the view is mount's rather than the backend's. The write is named in
 `apply_recycling_table` rather than left silent.
 
+### A scroll view clips; the paint band used to un-clip it
+
+`masksToBounds` on a layer IS `clipsToBounds` on its view, and the paint band
+wrote `false` into it for every node without a corner radius. That is right for
+a plain UIView, whose default is false, and WRONG for a UIScrollView, whose
+default is true and whose entire purpose is to be a window onto something
+bigger — so every scroll, list, table, tree, collection and carousel had its
+clipping switched off by the paint pass, and their content drew outside them.
+
+The "off" state is not `false`, it is what the view does when nobody has asked,
+which the class knows and `apply_corner_radius` now asks it.
+
 ### Hovering a canvas — NOT absent
 
 `GraphicsView` names seven interaction verbs. Five are touches and are wired

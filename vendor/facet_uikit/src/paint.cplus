@@ -431,12 +431,37 @@ fn apply_flow_direction(view: ui::View, n: *core::Node) {
 // mask buys is clipping the CHILDREN, and that is what a node asks for with
 // `clip` — so a node that states a shadow keeps its shadow, and a node that
 // states a clip keeps its clipping.
+// A SCROLL VIEW CLIPS BY NATURE, and that is the whole of this function's
+// difficulty.
+//
+// `masksToBounds` on the layer IS `clipsToBounds` on the view, and this band
+// used to write `false` into it for every node without a corner radius — which
+// is right for a plain UIView, whose default is false, and WRONG for a
+// UIScrollView, whose default is true and whose entire purpose is to be a
+// window onto something bigger. So every scroll, list, table, tree, collection
+// and carousel in the package had its clipping switched off by the paint pass,
+// and their content drew outside them: in the gallery it rode up over the top
+// bar as you scrolled, which is what it looked like from the outside.
+//
+// So the "off" state is not `false`, it is WHAT THIS VIEW DOES WHEN NOBODY HAS
+// ASKED — which the class knows and this function has to ask it.
+fn clips_by_nature(view: ui::View) -> bool {
+    let cls: *u8 = rt::get_class(#str_ptr("UIScrollView\0"));
+    if cls == (0 as *u8) { return false; }
+    return { rt::msg_i8_id(view.raw(), rt::sel(#str_ptr("isKindOfClass:\0")), cls) }
+           != (0 as i8);
+}
+
 fn apply_corner_radius(view: ui::View, c: vocab::Corners, has_clip: bool, has_shadow: bool) {
     let l: quartz::Layer = view.layer();
+    let natural: bool = clips_by_nature(view);
     let r: f64 = largest_corner(c);
     if r > 0.0f64 {
         l.set_corner_radius(r);
-        if has_shadow && !has_clip {
+        // A shadow needs the layer NOT to clip, or the shadow is clipped away
+        // with everything else — unless the view clips by nature, where losing
+        // it costs more than the shadow is worth.
+        if has_shadow && !has_clip && !natural {
             l.set_masks_to_bounds(false);
         } else {
             l.set_masks_to_bounds(true);
@@ -446,7 +471,7 @@ fn apply_corner_radius(view: ui::View, c: vocab::Corners, has_clip: bool, has_sh
     l.set_corner_radius(0.0f64);
     // Only give the clipping back if nothing ELSE asked for it: a node that
     // loses its radius but keeps a clip shape still clips.
-    if has_clip == false { l.set_masks_to_bounds(false); }
+    if has_clip == false { l.set_masks_to_bounds(natural); }
     return;
 }
 
