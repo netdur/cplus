@@ -1,0 +1,31 @@
+[package]
+name    = "facet_uikit_tests"
+version = "0.0.1"
+edition = "2026"
+
+# The iOS test runner for facet_uikit.
+#
+# `cpc test` builds a HOST binary and macOS has no UIKit, so this package's
+# checks cannot run the ordinary way — they need the framework, which means an
+# iOS binary and a simulator. This is that binary.
+#
+# It is not an app: `main` runs the checks, prints them, and RETURNS a count.
+# UIApplicationMain is never called, because none of the checks needs a run
+# loop and an app that never exits cannot report a failure to a shell.
+#
+#     vendor/facet_uikit/tools/run_ios_tests.sh
+[lib]
+crate-type = "staticlib"
+path = "src/main.cplus"
+
+[dependencies]
+stdlib      = "*"
+facet       = "*"
+flex_layout = "*"
+
+[ios.dependencies]
+facet_uikit = "*"
+objc        = "*"
+uikit       = "*"
+quartzcore  = "*"
+webkit      = "*"

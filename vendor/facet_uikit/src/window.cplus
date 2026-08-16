@@ -30,6 +30,9 @@ import "facet/facet" as core;
 import "facet/mount" as mount;
 import "facet/application" as app;
 import "facet/screen" as screen;
+import "facet/services" as services;
+import "stdlib/vec" as vec;
+import "stdlib/status" as status;
 import "facet/vocabulary" as vocab;
 import "objc/runtime" as rt;
 import "objc/bridge" as bridge;
@@ -116,11 +119,269 @@ fn attach_root(win: *u8, root: *core::Node) {
     return;
 }
 
+// The navigation stack, or 0 before the window exists.
+fn nav_controller() -> *u8 { return NAV; }
+
+// WHERE THE PRIMARY SCREEN LIVES: the BASE controller's view, not the
+// navigation controller's own. The nav controller's view hosts the bar and the
+// stack; putting content directly in it would put the primary screen behind
+// every pushed one.
 fn content_view_of(win: *u8) -> *u8 {
+    if BASE_VC != (0 as *u8) { return { rt::msg_id(BASE_VC, rt::sel(#str_ptr("view\0"))) }; }
     let vc: *u8 = { rt::msg_id(win, rt::sel(#str_ptr("rootViewController\0"))) };
     if vc == (0 as *u8) { return 0 as *u8; }
     return { rt::msg_id(vc, rt::sel(#str_ptr("view\0"))) };
 }
+
+// ---- the navigation stack ------------------------------------------------------
+// `nav::push` is a screen ON TOP of the current one, with a way back. On a
+// desktop that is a second window; here it is a pushed view controller, which
+// is why this backend can offer the back button and the swipe-back gesture
+// without drawing either.
+//
+// ONE ENTRY PER PUSH, holding what has to be torn down when it goes: the
+// screen's tree and the facade's own box. The facade is told through
+// `set_popped` rather than reaching in here, because a pop can be the USER's —
+// the swipe-back gesture is a pop nobody called `nav::pop` for, and a stack
+// that only knew about programmatic pops would leak every swiped screen.
+
+struct Pushed {
+    opaque vc: *u8,
+    opaque root: *core::Node,
+    opaque box_: *u8,
+}
+
+static STACK: vec::Vec[Pushed] = #zero::[vec::Vec[Pushed]]();
+static POPPED_FN: fn(*u8) = 0 as fn(*u8);
+
+fn set_popped(f: fn(*u8)) { POPPED_FN = f; return; }
+
+// Push `root` as a new screen. `box_` is the facade's own handle, handed back
+// to `set_popped` when this screen goes away by any route.
+fn push_screen(root: *core::Node, title: str, box_: *u8) -> bool {
+    if NAV == (0 as *u8) { return false; }
+    let vc: *u8 = { rt::alloc_init(#str_ptr("UIViewController\0")) };
+    if vc == (0 as *u8) { return false; }
+    { rt::msg_void_id(vc, rt::sel(#str_ptr("setTitle:\0")), bridge::nsstring(title)) };
+    let view: *u8 = { rt::msg_id(vc, rt::sel(#str_ptr("view\0"))) };
+    if view != (0 as *u8) {
+        { rt::msg_void_id(view, rt::sel(#str_ptr("setBackgroundColor:\0")),
+                          ui::Color::system_background_color().raw()) };
+        add_root_views(ui::View::from_raw(view), root);
+    }
+    // THE BAR COMES BACK for a pushed screen: it carries the back button, and
+    // the back button is the whole reason a stack is the right shape here.
+    { msg_void_i8_i8(NAV, rt::sel(#str_ptr("setNavigationBarHidden:animated:\0")),
+                     0 as i8, 1 as i8) };
+    { msg_void_id_i8(NAV, rt::sel(#str_ptr("pushViewController:animated:\0")),
+                     vc, 1 as i8) };
+    let _s: status::Status = STACK.append(Pushed { vc: vc, root: root, box_: box_ });
+    { rt::release(vc) };
+    scheduler::schedule(0 as *u8);
+    return true;
+}
+
+fn pop_screen() -> bool {
+    if NAV == (0 as *u8) { return false; }
+    if STACK.count() == (0 as usize) { return false; }
+    let _p: *u8 = { msg_id_i8(NAV, rt::sel(#str_ptr("popViewControllerAnimated:\0")),
+                              1 as i8) };
+    // The teardown is NOT done here. `didShowViewController` fires for a
+    // programmatic pop and for a swiped one alike, and doing it in both places
+    // would do it twice.
+    return true;
+}
+
+fn pushed_count() -> usize { return STACK.count(); }
+
+// -[UINavigationControllerDelegate navigationController:didShowViewController:animated:]
+//
+// The moment a pop has COMPLETED — whichever way it happened. Every entry whose
+// controller is no longer in the stack has gone, so each is torn down and
+// dropped. Reading the live stack rather than counting pops is what makes a
+// swipe-back and a `nav::pop` the same event.
+fn imp_did_show(self_obj: *u8, cmd: *u8, navc: *u8, shown: *u8, animated: i8) {
+    if navc == (0 as *u8) { return; }
+    let live: *u8 = { rt::msg_id(navc, rt::sel(#str_ptr("viewControllers\0"))) };
+    if live == (0 as *u8) { return; }
+    var i: usize = STACK.count();
+    while i > (0 as usize) {
+        i = i -% (1 as usize);
+        let gone: bool = match STACK.at_ptr(i) {
+            option::Option[*Pushed]::Some(e) => !array_has(live, { (*e).vc }),
+            option::Option[*Pushed]::None => false,
+        };
+        if gone {
+            match STACK.remove(at: i) {
+                option::Option[Pushed]::Some(e) => {
+                    let f: fn(*u8) = POPPED_FN;
+                    if f != (0 as fn(*u8)) { f({ e.box_ }); }
+                }
+                option::Option[Pushed]::None => { }
+            }
+        }
+    }
+    // The bar goes away again once the stack is back to the primary screen,
+    // which draws its own.
+    if STACK.count() == (0 as usize) {
+        { msg_void_i8_i8(navc, rt::sel(#str_ptr("setNavigationBarHidden:animated:\0")),
+                         1 as i8, 1 as i8) };
+    }
+    return;
+}
+
+fn array_has(arr: *u8, obj: *u8) -> bool {
+    let n: u64 = { rt::msg_u64(arr, rt::sel(#str_ptr("count\0"))) };
+    var i: u64 = 0 as u64;
+    while i < n {
+        if { rt::msg_id_u64(arr, rt::sel(#str_ptr("objectAtIndex:\0")), i) } == obj {
+            return true;
+        }
+        i = i +% (1 as u64);
+    }
+    return false;
+}
+
+// ---- a presented screen ---------------------------------------------------------
+// facet's `present_window` opens a second window on a desktop. A phone has one
+// window, and the iOS shape of "a screen over the current one that is not part
+// of the back stack" is a MODAL PRESENTATION — a sheet the user can pull down.
+//
+// Not a push: a pushed screen is part of a journey and has a back button; a
+// presented one is an interruption and is dismissed rather than navigated out
+// of. facet's two verbs mean exactly that difference, so they get the two
+// different UIKit shapes.
+
+struct Presented {
+    opaque vc: *u8,
+    opaque root: *core::Node,
+    opaque box_: *u8,
+}
+
+static SHEETS: vec::Vec[Presented] = #zero::[vec::Vec[Presented]]();
+
+fn present_screen(root: *core::Node, title: str, box_: *u8) -> bool {
+    let w: *u8 = WINDOW;
+    if w == (0 as *u8) { return false; }
+    let host_vc: *u8 = top_controller();
+    if host_vc == (0 as *u8) { return false; }
+    let vc: *u8 = { rt::alloc_init(#str_ptr("UIViewController\0")) };
+    if vc == (0 as *u8) { return false; }
+    { rt::msg_void_id(vc, rt::sel(#str_ptr("setTitle:\0")), bridge::nsstring(title)) };
+    let view: *u8 = { rt::msg_id(vc, rt::sel(#str_ptr("view\0"))) };
+    if view != (0 as *u8) {
+        { rt::msg_void_id(view, rt::sel(#str_ptr("setBackgroundColor:\0")),
+                          ui::Color::system_background_color().raw()) };
+        add_root_views(ui::View::from_raw(view), root);
+    }
+    // The sheet's own delegate, so a PULL-DOWN dismissal is reported. Without
+    // it a user who swiped the sheet away would leave the screen attached
+    // forever — the same hole the navigation stack's `didShow` closes.
+    let pc: *u8 = { rt::msg_id(vc, rt::sel(#str_ptr("presentationController\0"))) };
+    if pc != (0 as *u8) {
+        { rt::msg_void_id(pc, rt::sel(#str_ptr("setDelegate:\0")), nav_delegate_object()) };
+    }
+    { msg_void_id_i8_id2(host_vc, rt::sel(#str_ptr("presentViewController:animated:completion:\0")),
+                         vc, 1 as i8, 0 as *u8) };
+    let _s: status::Status = SHEETS.append(Presented { vc: vc, root: root, box_: box_ });
+    { rt::release(vc) };
+    scheduler::schedule(0 as *u8);
+    return true;
+}
+
+// -[UIAdaptivePresentationControllerDelegate presentationControllerDidDismiss:]
+fn imp_did_dismiss(self_obj: *u8, cmd: *u8, pc: *u8) {
+    if pc == (0 as *u8) { return; }
+    let vc: *u8 = { rt::msg_id(pc, rt::sel(#str_ptr("presentedViewController\0"))) };
+    var i: usize = SHEETS.count();
+    while i > (0 as usize) {
+        i = i -% (1 as usize);
+        let hit: bool = match SHEETS.at_ptr(i) {
+            option::Option[*Presented]::Some(e) => ({ (*e).vc } == vc),
+            option::Option[*Presented]::None => false,
+        };
+        if hit {
+            match SHEETS.remove(at: i) {
+                option::Option[Presented]::Some(e) => {
+                    let f: fn(*u8) = POPPED_FN;
+                    if f != (0 as fn(*u8)) { f({ e.box_ }); }
+                }
+                option::Option[Presented]::None => { }
+            }
+            return;
+        }
+    }
+    return;
+}
+
+// The controller anything modal is presented ON: the deepest one already up,
+// because presenting on a covered controller is a UIKit warning and a sheet
+// nobody sees.
+fn top_controller() -> *u8 {
+    let w: *u8 = WINDOW;
+    if w == (0 as *u8) { return 0 as *u8; }
+    var vc: *u8 = { rt::msg_id(w, rt::sel(#str_ptr("rootViewController\0"))) };
+    if vc == (0 as *u8) { return 0 as *u8; }
+    var depth: i32 = 0 as i32;
+    while depth < (8 as i32) {
+        let top: *u8 = { rt::msg_id(vc, rt::sel(#str_ptr("presentedViewController\0"))) };
+        if top == (0 as *u8) { return vc; }
+        vc = top;
+        depth = depth + (1 as i32);
+    }
+    return vc;
+}
+
+static NAV_DELEGATE_CLASS: *u8 = 0 as *u8;
+static NAV_DELEGATE: *u8 = 0 as *u8;
+
+// One object serves both protocols — the navigation delegate and the sheet's
+// presentation delegate. They are different questions about the same thing
+// (a screen went away), and one object answering both is what keeps the
+// teardown in one place.
+fn nav_delegate_object() -> *u8 {
+    install_nav_delegate(0 as *u8);
+    return NAV_DELEGATE;
+}
+
+fn install_nav_delegate(navc: *u8) {
+    if NAV_DELEGATE == (0 as *u8) {
+        let existing: *u8 = rt::get_class(#str_ptr("FacetUIKitNavDelegate\0"));
+        if existing != (0 as *u8) {
+            NAV_DELEGATE_CLASS = existing;
+        } else {
+            let base: *u8 = rt::get_class(#str_ptr("NSObject\0"));
+            let cls: *u8 = { synth::allocate_class_pair(base,
+                #str_ptr("FacetUIKitNavDelegate\0"), 0 as usize) };
+            if cls == (0 as *u8) { return; }
+            let _a: i8 = add_method_v_2id_i8(cls,
+                rt::sel(#str_ptr("navigationController:didShowViewController:animated:\0")),
+                imp_did_show, #str_ptr("v@:@@c\0"));
+            let _b: i8 = synth::add_method_v_1id(cls,
+                rt::sel(#str_ptr("presentationControllerDidDismiss:\0")),
+                imp_did_dismiss, #str_ptr("v@:@\0"));
+            { synth::register_class_pair(cls) };
+            NAV_DELEGATE_CLASS = cls;
+        }
+        NAV_DELEGATE = { synth::alloc_init_class(NAV_DELEGATE_CLASS) };
+    }
+    if NAV_DELEGATE == (0 as *u8) { return; }
+    if navc == (0 as *u8) { return; }
+    { rt::msg_void_id(navc, rt::sel(#str_ptr("setDelegate:\0")), NAV_DELEGATE) };
+    return;
+}
+
+#[link_name = "objc_msgSend"]
+extern fn msg_void_id_i8_id2(recv: *u8, sel: *u8, a: *u8, b: i8, c: *u8);
+#[link_name = "objc_msgSend"]
+extern fn msg_void_i8_i8(recv: *u8, sel: *u8, a: i8, b: i8);
+#[link_name = "objc_msgSend"]
+extern fn msg_void_id_i8(recv: *u8, sel: *u8, a: *u8, b: i8);
+#[link_name = "objc_msgSend"]
+extern fn msg_id_i8(recv: *u8, sel: *u8, a: i8) -> *u8;
+#[link_name = "class_addMethod"]
+extern fn add_method_v_2id_i8(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8, i8),
+                              types: *u8) -> i8;
 
 // The root's view, or — when the root is a keyless pass-through — its topmost
 // BACKED descendants, which is what the mount walk left unhosted.
@@ -163,6 +424,8 @@ fn add_backed_descendants(content: ui::View, n: *core::Node) {
 // does not belong on a class this package owns.
 
 static DELEGATE_CLASS: *u8 = 0 as *u8;
+static NAV: *u8 = 0 as *u8;
+static BASE_VC: *u8 = 0 as *u8;
 
 fn imp_did_finish_launching(self_obj: *u8, cmd: *u8, application: *u8, options: *u8) -> i8 {
     let screen_bounds: rt::Rect = ui::Screen::main_screen().bounds();
@@ -171,10 +434,33 @@ fn imp_did_finish_launching(self_obj: *u8, cmd: *u8, application: *u8, options: 
     // A UIWindow with no root view controller is a UIKit assertion failure at
     // first display, not a blank screen — so the controller comes first and its
     // view is what everything mounts into.
-    let vc: *u8 = { rt::alloc_init(#str_ptr("UIViewController\0")) };
-    if vc != (0 as *u8) {
-        { rt::msg_void_id(w, rt::sel(#str_ptr("setRootViewController:\0")), vc) };
-        { rt::release(vc) };
+    //
+    // A NAVIGATION CONTROLLER, not a bare one. `nav::push` has to put a screen
+    // ON something, and the iOS answer is a stack — which brings the back
+    // button, the swipe-back gesture and the title bar with it rather than
+    // making each of those a thing this package draws. The base controller is
+    // the primary screen and is never popped.
+    let base: *u8 = { rt::alloc_init(#str_ptr("UIViewController\0")) };
+    if base != (0 as *u8) {
+        let navc: *u8 = { rt::msg_id(rt::get_class(#str_ptr("UINavigationController\0")),
+                                     rt::sel(#str_ptr("alloc\0"))) };
+        if navc != (0 as *u8) {
+            let n2: *u8 = { rt::msg_id_id(navc,
+                rt::sel(#str_ptr("initWithRootViewController:\0")), base) };
+            if n2 != (0 as *u8) {
+                NAV = n2;
+                BASE_VC = base;
+                { rt::msg_void_id(w, rt::sel(#str_ptr("setRootViewController:\0")), n2) };
+                // HIDDEN AT THE ROOT. The primary screen draws its own chrome
+                // — facet's `chrome` tier owns that — and a bar over it would
+                // be two headers. A pushed screen shows it, because the back
+                // affordance is the whole reason it is there.
+                { msg_void_i8_i8(n2, rt::sel(#str_ptr("setNavigationBarHidden:animated:\0")),
+                                 1 as i8, 0 as i8) };
+                install_nav_delegate(n2);
+            }
+        }
+        { rt::release(base) };
     }
     WINDOW = w;
     // VISIBLE FIRST, THEN MOUNTED. A window that is not key has no laid-out
@@ -204,6 +490,96 @@ fn imp_significant_time_change(self_obj: *u8, cmd: *u8, application: *u8) {
     return;
 }
 
+// ---- the lifecycle band ------------------------------------------------------
+// The five edges facet declares, straight off the app delegate. UIKit posts
+// notifications for all of them too, and the delegate is the shorter road:
+// this package already owns the class.
+//
+// THE ONE PLATFORM IS RICHER HERE. Backgrounding and resuming are frequent,
+// user-visible moments on a phone; on a desktop they are hide and unhide and
+// an application can reasonably ignore them. An app that needs to save state
+// should save it on BACKGROUNDING — `willTerminate` is not guaranteed, because
+// a backgrounded app is usually killed without it.
+
+const PHASE_BACKGROUND: i32 = 0 as i32;
+const PHASE_FOREGROUND: i32 = 1 as i32;
+const PHASE_ACTIVE: i32 = 2 as i32;
+const PHASE_INACTIVE: i32 = 3 as i32;
+const PHASE_TERMINATE: i32 = 4 as i32;
+
+struct LifeWatch {
+    phase: i32,
+    cb: fn(*u8),
+    opaque ctx: *u8,
+    live: bool,
+}
+
+static LIFE: vec::Vec[LifeWatch] = #zero::[vec::Vec[LifeWatch]]();
+static LIFE_SEQ: u64 = 0 as u64;
+
+fn observe_lifecycle(phase: i32, cb: fn(*u8), ctx: *u8) -> services::Cancellable {
+    if cb == (0 as fn(*u8)) { return services::Cancellable::none(); }
+    LIFE_SEQ = LIFE_SEQ +% (1 as u64);
+    let _s: status::Status = LIFE.append(LifeWatch {
+        phase: phase, cb: cb, ctx: ctx, live: true,
+    });
+    return services::Cancellable::of(LIFE_SEQ, cancel_lifecycle);
+}
+
+// Cancelled by index; the entry stays and stops being called. One per observer,
+// not one per event.
+fn cancel_lifecycle(id: u64) {
+    if id == (0 as u64) { return; }
+    match LIFE.at_ptr((id -% (1 as u64)) as usize) {
+        option::Option[*LifeWatch]::Some(w) => { { (*w).live = false }; }
+        option::Option[*LifeWatch]::None => { }
+    }
+    return;
+}
+
+fn fire_phase(phase: i32) {
+    var i: usize = 0 as usize;
+    let n: usize = LIFE.count();
+    while i < n {
+        match LIFE.at_ptr(i) {
+            option::Option[*LifeWatch]::Some(w) => {
+                if { (*w).live } && { (*w).phase } == phase {
+                    let f: fn(*u8) = { (*w).cb };
+                    if f != (0 as fn(*u8)) { f({ (*w).ctx }); }
+                }
+            }
+            option::Option[*LifeWatch]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return;
+}
+
+fn imp_did_enter_background(self_obj: *u8, cmd: *u8, application: *u8) {
+    fire_phase(PHASE_BACKGROUND);
+    return;
+}
+
+fn imp_will_enter_foreground(self_obj: *u8, cmd: *u8, application: *u8) {
+    fire_phase(PHASE_FOREGROUND);
+    return;
+}
+
+fn imp_did_become_active(self_obj: *u8, cmd: *u8, application: *u8) {
+    fire_phase(PHASE_ACTIVE);
+    return;
+}
+
+fn imp_will_resign_active(self_obj: *u8, cmd: *u8, application: *u8) {
+    fire_phase(PHASE_INACTIVE);
+    return;
+}
+
+fn imp_will_terminate(self_obj: *u8, cmd: *u8, application: *u8) {
+    fire_phase(PHASE_TERMINATE);
+    return;
+}
+
 fn delegate_class() -> *u8 {
     if DELEGATE_CLASS != (0 as *u8) { return DELEGATE_CLASS; }
     let existing: *u8 = rt::get_class(#str_ptr("FacetUIKitAppDelegate\0"));
@@ -221,6 +597,21 @@ fn delegate_class() -> *u8 {
     let _b: i8 = synth::add_method_v_1id(cls,
         rt::sel(#str_ptr("applicationSignificantTimeChange:\0")),
         imp_significant_time_change, #str_ptr("v@:@\0"));
+    let _c: i8 = synth::add_method_v_1id(cls,
+        rt::sel(#str_ptr("applicationDidEnterBackground:\0")),
+        imp_did_enter_background, #str_ptr("v@:@\0"));
+    let _d: i8 = synth::add_method_v_1id(cls,
+        rt::sel(#str_ptr("applicationWillEnterForeground:\0")),
+        imp_will_enter_foreground, #str_ptr("v@:@\0"));
+    let _e: i8 = synth::add_method_v_1id(cls,
+        rt::sel(#str_ptr("applicationDidBecomeActive:\0")),
+        imp_did_become_active, #str_ptr("v@:@\0"));
+    let _f: i8 = synth::add_method_v_1id(cls,
+        rt::sel(#str_ptr("applicationWillResignActive:\0")),
+        imp_will_resign_active, #str_ptr("v@:@\0"));
+    let _g: i8 = synth::add_method_v_1id(cls,
+        rt::sel(#str_ptr("applicationWillTerminate:\0")),
+        imp_will_terminate, #str_ptr("v@:@\0"));
     { synth::register_class_pair(cls) };
     DELEGATE_CLASS = cls;
     return DELEGATE_CLASS;

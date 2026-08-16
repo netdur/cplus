@@ -54,6 +54,7 @@ import "./mount" as mount;
 import "./nav" as nav;
 import "facet_uikit/facet_uikit" as backend;
 import "facet_uikit/window" as host;
+import "facet_uikit/dialogs" as dialogs;
 
 type Node = flex::Node;
 type Builder = flex::Builder;
@@ -166,6 +167,7 @@ fn hold_root(take root: Node) -> *core::Node {
 
 fn run[W: Window](take window: W) {
     backend::install();
+    host::set_popped(pushed_gone);
     var owned_window: W = window;
     var root: Node = owned_window.root();
     let c: Chrome = chrome_of_window(owned_window);
@@ -219,6 +221,7 @@ fn run_component[C: component::Component + component::Lifecycle](
     take menu: AppMenu = screen::empty_app_menu(),
 ) -> C {
     backend::install();
+    host::set_popped(pushed_gone);
     var owned_menu: AppMenu = menu;
     host::install_app_menu(#addr_of(owned_menu));
     var owned: C = component_v;
@@ -240,6 +243,7 @@ fn run_screen[S: component::Component + component::Lifecycle + screen::Screen](
     take menu: AppMenu = screen::empty_app_menu(),
 ) -> S {
     backend::install();
+    host::set_popped(pushed_gone);
     var owned: S = screen_v;
     var owned_menu: AppMenu = menu;
     owned_menu.extend(owned.menu_items());
@@ -267,15 +271,17 @@ fn run_screen[S: component::Component + component::Lifecycle + screen::Screen](
 fn alert(title: str, message: str, primary: str, secondary: str = "",
          on_answer: fn(i32, *u8) = 0 as fn(i32, *u8),
          on_answer_ctx: *u8 = 0 as *u8) {
-    not_yet("alert");
+    dialogs::alert(title, message, primary, secondary, on_answer, on_answer_ctx);
     return;
 }
 
 fn choose(title: str, message: str, take options: vec::Vec[text::Text],
           on_answer: fn(i32, *u8) = 0 as fn(i32, *u8),
           on_answer_ctx: *u8 = 0 as *u8) {
+    // Owned so the list outlives the call that built it: the alert is presented
+    // and this returns, and the buttons were already made from these strings.
     var owned: vec::Vec[text::Text] = options;
-    not_yet("choose");
+    dialogs::choose(title, message, #addr_of(owned), on_answer, on_answer_ctx);
     return;
 }
 
@@ -285,7 +291,8 @@ fn prompt(title: str, message: str, placeholder: str = "", primary: str = "OK",
           on_typed_ctx: *u8 = 0 as *u8,
           on_answer: fn(i32, *u8) = 0 as fn(i32, *u8),
           on_answer_ctx: *u8 = 0 as *u8) {
-    not_yet("prompt");
+    dialogs::prompt(title, message, placeholder, primary, secondary,
+                    on_typed, on_typed_ctx, on_answer, on_answer_ctx);
     return;
 }
 
@@ -313,9 +320,20 @@ fn choose_file() -> option::Option[text::Text] {
 // ---- secondary windows -----------------------------------------------------------
 // There are none. A phone has one window; a second "window" on iOS is a
 // presented view controller, which is the modal tier above and is not built.
+// A SHEET, not a second window. `width` and `height` are a desktop window's
+// size and a sheet has none of its own — iOS sizes it from the presentation
+// style — so both are read and ignored, which MANIFEST.md records rather than
+// pretending the numbers landed.
 fn present_window(take root: Node, title: str, width: f64, height: f64) {
-    var owned: Node = root;
-    not_yet("present_window");
+    let _w: f64 = width;
+    let _h: f64 = height;
+    let tp: *core::Node = match box::new::[Node](root) {
+        option::Option[box::Box[Node]]::Some(b) => { b.into_raw() } as *core::Node,
+        option::Option[box::Box[Node]]::None => 0 as *core::Node,
+    };
+    if tp == (0 as *core::Node) { return; }
+    if !mount::mount(tp) { return; }
+    let _ok: bool = host::present_screen(tp, title, 0 as *u8);
     return;
 }
 
@@ -347,9 +365,14 @@ fn is_window_active() -> bool {
     return host::is_app_active();
 }
 
+// The window's size, which on a phone changes exactly when the device rotates.
+// `services::observe_size` over the window's root node is the same machinery a
+// node-level observer uses — the root IS the window's content, so watching it
+// is watching the window.
 fn observe_window_size(cb: fn(*u8), ctx: *u8 = 0 as *u8) -> services::Cancellable {
-    not_yet("observe_window_size");
-    return services::Cancellable::none();
+    let root: *core::Node = app::window_root(0 as usize);
+    if root == (0 as *core::Node) { return services::Cancellable::none(); }
+    return services::observe_size(root, cb, ctx);
 }
 
 // Backgrounding / resumed / stopped. THE ONE PLACE THIS PLATFORM IS RICHER:
@@ -357,28 +380,33 @@ fn observe_window_size(cb: fn(*u8), ctx: *u8 = 0 as *u8) -> services::Cancellabl
 // desktop they are hide, unhide and terminate. They are the app delegate's
 // notifications and are not wired yet.
 fn observe_backgrounding(cb: fn(*u8), ctx: *u8 = 0 as *u8) -> services::Cancellable {
-    not_yet("observe_backgrounding");
-    return services::Cancellable::none();
+    return host::observe_lifecycle(host::PHASE_BACKGROUND, cb, ctx);
 }
 
 fn observe_resumed(cb: fn(*u8), ctx: *u8 = 0 as *u8) -> services::Cancellable {
-    not_yet("observe_resumed");
-    return services::Cancellable::none();
+    return host::observe_lifecycle(host::PHASE_FOREGROUND, cb, ctx);
 }
 
+// `stopped` is TERMINATION, and on iOS it is the one lifecycle edge that is not
+// guaranteed: a backgrounded app is usually killed without
+// `applicationWillTerminate:` ever being sent. The notification is wired
+// because it does arrive when the app is quit while foregrounded, and
+// MANIFEST.md records that an app which needs to save state should save it on
+// BACKGROUNDING instead.
 fn observe_stopped(cb: fn(*u8), ctx: *u8 = 0 as *u8) -> services::Cancellable {
-    not_yet("observe_stopped");
-    return services::Cancellable::none();
+    return host::observe_lifecycle(host::PHASE_TERMINATE, cb, ctx);
 }
 
+// "Window active" on iOS is the APPLICATION being frontmost and interactive,
+// which is what `didBecomeActive` / `willResignActive` mean — the same question
+// a desktop asks of a window, asked of the app, exactly as `is_window_active`
+// already answers it.
 fn observe_window_active(cb: fn(*u8), ctx: *u8 = 0 as *u8) -> services::Cancellable {
-    not_yet("observe_window_active");
-    return services::Cancellable::none();
+    return host::observe_lifecycle(host::PHASE_ACTIVE, cb, ctx);
 }
 
 fn observe_window_inactive(cb: fn(*u8), ctx: *u8 = 0 as *u8) -> services::Cancellable {
-    not_yet("observe_window_inactive");
-    return services::Cancellable::none();
+    return host::observe_lifecycle(host::PHASE_INACTIVE, cb, ctx);
 }
 
 // An explicit light/dark choice overriding the system's:
@@ -491,6 +519,7 @@ impl App {
     // which is the hook the platform actually gives for it.
     fn run(ref this, initial: str, arg: str = "") -> status::Status {
         backend::install();
+    host::set_popped(pushed_gone);
         this.application.host = #addr_of(this) as *u8;
         app::make_current(#addr_of(this.application));
         nav::reset(arg);
@@ -598,14 +627,53 @@ fn close_current() {
 // Pushed screens are a modal presentation on iOS — the tier `alert` and
 // `present_window` also wait on. Refused rather than silently doing nothing:
 // `nav::push` answers false, which is what its callers check.
+// A PUSHED SCREEN IS A VIEW CONTROLLER ON THE STACK, which is the iOS shape of
+// what macOS does with a second window. The back button and the swipe-back
+// gesture come with the stack rather than being drawn here.
+//
+// The tree and the ScreenBox both outlive this frame, so both go to the heap;
+// the box is what the host hands back when the screen goes, whichever way it
+// went.
 fn push_screen(route: str, arg: str) -> bool {
-    not_yet("nav::push");
-    return false;
+    if CURRENT_APP == (0 as *u8) { return false; }
+    let ap: *App = CURRENT_APP as *App;
+    let f: fn() -> screen::ScreenBox = { (*ap).route_factory(route) };
+    if f == (0 as fn() -> screen::ScreenBox) { return false; }
+    nav::set_arg(arg);   // after the lookup: a failed push leaves arg alone
+    var sb: screen::ScreenBox = f();
+    if !sb.valid() { return false; }
+    let c: Chrome = sb.chrome();
+    let tp: *core::Node = match box::new::[Node](sb.build()) {
+        option::Option[box::Box[Node]]::Some(b) => { b.into_raw() } as *core::Node,
+        option::Option[box::Box[Node]]::None => 0 as *core::Node,
+    };
+    if tp == (0 as *core::Node) { return false; }
+    if !mount::mount(tp) { return false; }
+    let sbp: *u8 = match box::new::[screen::ScreenBox](sb) {
+        option::Option[box::Box[screen::ScreenBox]]::Some(b) => b.into_raw(),
+        option::Option[box::Box[screen::ScreenBox]]::None => 0 as *u8,
+    };
+    if sbp == (0 as *u8) { return false; }
+    if !host::push_screen(tp, c.title(), sbp) { return false; }
+    { (*(sbp as *screen::ScreenBox)).on_attach() };
+    return true;
+}
+
+// Fires ONCE per pushed screen, whichever way it left — `nav::pop`, the back
+// button, or the swipe-back gesture. The host cannot tell those apart and does
+// not try: it reports what is no longer on the stack.
+fn pushed_gone(box_: *u8) {
+    if box_ == (0 as *u8) { return; }
+    { (*(box_ as *screen::ScreenBox)).on_detach() };
+    // The ScreenBox and its tree are deliberately NOT freed, for the reason
+    // `drop_current_screen` gives: there is no moment on this platform where
+    // the loop has returned and the job queue is settled, so freeing something
+    // a queued apply still holds would be worse than leaking it.
+    return;
 }
 
 fn pop_screen() -> bool {
-    not_yet("nav::pop");
-    return false;
+    return host::pop_screen();
 }
 
 // ---- app context ------------------------------------------------------------

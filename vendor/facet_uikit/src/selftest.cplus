@@ -1,0 +1,189 @@
+// facet_uikit selftest — the checks that need UIKit, and therefore a device.
+//
+// WHY THIS IS NOT `#[test]`. `cpc test` builds a host binary, and macOS has no
+// UIKit to link it against — so this package has never had a test executed.
+// Everything about it was verified by hand: a screenshot, a probe, a console
+// line. That is how five bugs in this backend reached a person before they
+// reached a check, and one of them I mismeasured and declared fixed twice.
+//
+// So the checks live here as ordinary functions and `run_all` calls them. The
+// runner is `examples/facet_uikit_tests`, which links this into an iOS binary
+// and runs it under `simctl`:
+//
+//     vendor/facet_uikit/tools/run_ios_tests.sh
+//
+// It exits non-zero when anything fails, which is the whole point: it can say
+// no without me reading it.
+//
+// EVERY CHECK HERE IS A BUG THAT HAPPENED. They are not a survey of the
+// package — they are the specific things that broke, written down so they
+// cannot break again quietly.
+
+import "stdlib/option" as option;
+import "stdlib/text" as text;
+import "stdlib/io" as io;
+import "stdlib/status" as status;
+import "flex_layout/flex_layout" as flex;
+import "facet/facet" as core;
+import "facet/props" as props;
+import "facet/mount" as mount;
+import "facet/application" as app;
+import "facet/tree" as tree;
+import "facet/vocabulary" as vocab;
+import "facet/elements" as ui;
+import "objc/runtime" as rt;
+import "uikit/uikit" as uik;
+import "./paint" as paint;
+import "./views" as views;
+import "./recycler" as recycler;
+
+static FAILED: i32 = 0 as i32;
+static RAN: i32 = 0 as i32;
+
+fn check(name: str, ok: bool) {
+    RAN = RAN + (1 as i32);
+    if ok {
+        io::eprintln(text::from_str("  ok   ${name}"));
+        return;
+    }
+    FAILED = FAILED + (1 as i32);
+    io::eprintln(text::from_str("  FAIL ${name}"));
+    return;
+}
+
+// ---- the clipping bug ----------------------------------------------------------
+// The paint band wrote `masksToBounds = false` for every node without a corner
+// radius, which is right for a plain UIView and wrong for a UIScrollView —
+// whose default is true and whose whole purpose is to be a window onto
+// something bigger. Every scroll, list and table in the package stopped
+// clipping, and their content drew over whatever was above them.
+
+fn scroll_view_keeps_its_clipping() -> bool {
+    let s: uik::ScrollView = uik::ScrollView::new_with_frame(
+        rt::Rect { x: 0.0f64, y: 0.0f64, w: 100.0f64, h: 100.0f64 });
+    let v: uik::View = s.as_view();
+    // What `apply_common` does to a node with no radius, no clip, no shadow.
+    paint::apply_corner_radius(v, vocab::Corners::none(), false, false);
+    return { rt::msg_i8(v.raw(), rt::sel(#str_ptr("clipsToBounds\0"))) } != (0 as i8);
+}
+
+fn a_plain_view_does_not_start_clipping() -> bool {
+    let v: uik::View = uik::View::new_with_frame(
+        rt::Rect { x: 0.0f64, y: 0.0f64, w: 100.0f64, h: 100.0f64 });
+    paint::apply_corner_radius(v, vocab::Corners::none(), false, false);
+    return { rt::msg_i8(v.raw(), rt::sel(#str_ptr("clipsToBounds\0"))) } == (0 as i8);
+}
+
+fn a_radius_clips_whatever_the_view_is() -> bool {
+    let v: uik::View = uik::View::new_with_frame(
+        rt::Rect { x: 0.0f64, y: 0.0f64, w: 100.0f64, h: 100.0f64 });
+    paint::apply_corner_radius(v, vocab::Corners::all(8.0f64), false, false);
+    return { rt::msg_i8(v.raw(), rt::sel(#str_ptr("clipsToBounds\0"))) } != (0 as i8);
+}
+
+// ---- the empty-row bug ----------------------------------------------------------
+// `mount::realise` answers the root's VIEW, and 0 is the ordinary answer for a
+// row built as `ui::row(...)` — an unkeyed pure-layout node has no view of its
+// own. Reading that as failure put nothing in the cell, and every recycled row
+// in the package rendered as an empty cell with a separator under it.
+
+fn an_unkeyed_row_has_no_view_of_its_own() -> bool {
+    var n: core::Node = ui::row(flex::Builder::new());
+    return views::wants_view(#addr_of(n)) == false;
+}
+
+fn a_realised_viewless_root_still_has_backed_children() -> bool {
+    var b: flex::Builder = flex::Builder::new();
+    b.add(ui::label("x", font_size: 12.0f64));
+    var row: core::Node = ui::row(b);
+    let p: *core::Node = #addr_of(row);
+    // The row itself is viewless; its LABEL is what carries a view, and
+    // `add_backed` is the path that finds it. If this is false the cell would
+    // be empty however the gate above it was written.
+    if views::wants_view(p) { return false; }
+    return core::child_count_of(p) == (1 as usize);
+}
+
+// ---- the tree bugs --------------------------------------------------------------
+// Two null checks against defaults that are REAL FUNCTIONS: `row` defaults to
+// `tree::no_row` and `row_id` to `tree::no_row_id`, so `f == 0` was never true.
+// The first rendered a column of empty rows; the second made `expand` a no-op,
+// because expansion was keyed on `row_id` rather than on the node's own id.
+
+fn a_tree_default_row_is_no_row_not_null() -> bool {
+    var root: tree::TreeNode = tree::TreeNode::new("", id: "root", is_branch: true);
+    var t: core::Node = ui::tree(root, key: "t");
+    let p: *tree::TreeProps = recycler::props_of(#addr_of(t), tree::K_TREE) as *tree::TreeProps;
+    if p == (0 as *tree::TreeProps) { return false; }
+    let f: fn(*tree::TreeNode, *u8) -> flex::Node = { (*p).row };
+    // The point: NOT null, so a null check would have skipped the fallback.
+    if f == (0 as fn(*tree::TreeNode, *u8) -> flex::Node) { return false; }
+    return f == tree::no_row;
+}
+
+fn expansion_is_keyed_on_the_nodes_own_id() -> bool {
+    var root: tree::TreeNode = tree::TreeNode::new("", id: "root", is_branch: true);
+    var sec: tree::TreeNode = tree::TreeNode::new("Section", id: "sec", is_branch: true);
+    let _c: status::Status = sec.add_child(tree::TreeNode::new("Leaf", id: "leaf"));
+    let _r: status::Status = root.add_child(sec);
+    var t: core::Node = ui::tree(root, key: "t2");
+    match tree::find("t2", within: #addr_of(t)) {
+        option::Option[tree::Tree]::Some(h) => {
+            let _e: tree::Tree = h.expand("sec");
+            return h.is_expanded("sec");
+        }
+        option::Option[tree::Tree]::None => { return false; }
+    }
+}
+
+// ---- the handler bug ------------------------------------------------------------
+// `fire_primary` routed `K_BUTTON` and nothing else, and compared its handler
+// against null — but `props::no_handler` is a real function, so the fall
+// through to the gesture band was unreachable too. A text button and an icon
+// button were armed, tapped, and called nothing.
+
+fn no_handler_is_a_real_function_not_null() -> bool {
+    let h: fn(*u8, *u8) = props::no_handler;
+    return h != (0 as fn(*u8, *u8));
+}
+
+// ---- the window leak ------------------------------------------------------------
+// `mount::mount` opens a WINDOW, and the recycler called it for every cell —
+// so each row became a window, and the entry dangled when the cell was
+// recycled. `realise` is the same walk minus the window.
+
+fn realising_a_subtree_opens_no_window() -> bool {
+    let before: usize = app::window_count();
+    var b: flex::Builder = flex::Builder::new();
+    b.add(ui::label("x", font_size: 12.0f64));
+    var row: core::Node = ui::row(b);
+    let _v: *u8 = mount::realise(#addr_of(row));
+    let after: usize = app::window_count();
+    mount::unrealise(#addr_of(row));
+    return before == after;
+}
+
+// ---- the run --------------------------------------------------------------------
+
+fn run_all() -> i32 {
+    FAILED = 0 as i32;
+    RAN = 0 as i32;
+    io::eprintln(text::from_str("facet_uikit selftest"));
+
+    check("a scroll view keeps its clipping", scroll_view_keeps_its_clipping());
+    check("a plain view does not start clipping", a_plain_view_does_not_start_clipping());
+    check("a radius clips whatever the view is", a_radius_clips_whatever_the_view_is());
+    check("an unkeyed row has no view of its own", an_unkeyed_row_has_no_view_of_its_own());
+    check("a viewless root still has backed children",
+          a_realised_viewless_root_still_has_backed_children());
+    check("a tree's default row is no_row, not null", a_tree_default_row_is_no_row_not_null());
+    check("expansion is keyed on the node's own id", expansion_is_keyed_on_the_nodes_own_id());
+    check("no_handler is a real function, not null", no_handler_is_a_real_function_not_null());
+    check("realising a subtree opens no window", realising_a_subtree_opens_no_window());
+
+    let ran: i32 = RAN;
+    let failed: i32 = FAILED;
+    let passed: i32 = ran - failed;
+    io::eprintln(text::from_str("selftest result: ${passed} passed; ${failed} failed"));
+    return FAILED;
+}

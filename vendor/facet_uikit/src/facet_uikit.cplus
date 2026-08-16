@@ -43,6 +43,8 @@ import "./scheduler" as scheduler;
 // FACADE (facet/runtime_ios.cplus) rather than from here. Without this line it
 // would be the one file in the package no build of the package covers.
 import "./window" as window;
+import "./dialogs" as dialogs;
+import "./selftest" as selftest;
 import "./drawing" as drawing;
 import "./swipe" as swipe;
 

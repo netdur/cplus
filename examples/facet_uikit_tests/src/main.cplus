@@ -1,0 +1,16 @@
+// The iOS test runner's entry point.
+//
+// `facet_uikit::install()` first, because several checks go through the
+// renderer seam — a check that ran with no backend installed would be testing
+// facet's portable no-op rather than this package.
+//
+// Returns the FAILURE COUNT, so the process's exit status is the result and a
+// shell can act on it without parsing anything.
+
+import "facet_uikit/facet_uikit" as backend;
+import "facet_uikit/selftest" as selftest;
+
+export extern fn facet_uikit_tests_main() -> i32 {
+    backend::install();
+    return selftest::run_all();
+}

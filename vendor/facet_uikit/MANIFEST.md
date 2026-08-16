@@ -191,6 +191,26 @@ has to stay a scroll view.
 `examples/facet_gallery_ios`'s Responsive demo reads the real width through it.
 The desktop gallery's equivalent simulates the width with three buttons.
 
+### The facade refuses nothing
+
+`runtime_ios.cplus` had twelve entries that printed "not yet" and returned
+false. It now has none:
+
+| verb | what it is here |
+|---|---|
+| `alert` / `choose` / `prompt` | `UIAlertController`, presented on the topmost controller. NOT blocking — iOS has no nested modal loop, and the answer arrives in a handler |
+| `nav::push` / `nav::pop` | a `UINavigationController` at the window root. The back button and the SWIPE-BACK gesture come with the stack rather than being drawn |
+| `present_window` | a modal sheet. A push is a journey and has a back button; a presentation is an interruption and is dismissed — facet's two verbs mean that difference, so they get the two UIKit shapes |
+| `observe_backgrounding` / `observe_resumed` / `observe_stopped` | the app delegate's lifecycle edges |
+| `observe_window_active` / `observe_window_inactive` | `didBecomeActive` / `willResignActive` — the same question a desktop asks of a window, asked of the app |
+| `observe_window_size` | `services::observe_size` over the window's root node |
+
+Two notes worth keeping. `observe_stopped` rides `applicationWillTerminate:`,
+which iOS does NOT guarantee — a backgrounded app is usually killed without it,
+so an app that must save state should save it on BACKGROUNDING. And
+`present_window`'s `width` / `height` are read and ignored: a sheet is sized by
+its presentation style and has no size of its own.
+
 ### Bands that are still unfilled
 
 - **No key band.** `gestures::install_key_reader` is deliberately not filled: a
@@ -200,6 +220,27 @@ The desktop gallery's equivalent simulates the width with three buttons.
   `input.cplus` binds nodes to views but does not yet answer facet's sender
   questions.
 - **No agent surface.** `runtime::install_agent` is unfilled.
+
+### The checks run now
+
+`cpc test` builds a HOST binary and macOS has no UIKit, so this package had
+never executed a test — every claim about it was a screenshot or a console line
+I read by hand. That is how five bugs reached a person before they reached a
+check, and one of them was declared fixed twice on a measurement that was
+counting the wrong pixels.
+
+`src/selftest.cplus` holds the checks and `examples/facet_uikit_tests` is an
+iOS binary that runs them:
+
+```
+vendor/facet_uikit/tools/run_ios_tests.sh
+```
+
+It builds the runner, links it against the simulator SDK, installs, launches,
+and **exits non-zero when anything failed** — verified both ways by putting the
+clipping bug back and watching it report 8 passed / 1 failed.
+
+Every check in it is a bug that happened. It is not a survey of the package.
 
 Each of those is zero fields rather than three of five, which keeps facet's
 portable no-op — a struct half filled would look installed and behave randomly.
