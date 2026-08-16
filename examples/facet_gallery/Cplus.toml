@@ -6,10 +6,6 @@ edition = "2026"
 # Facet Gallery — a Flutter Gallery–style catalog of facet widgets.
 # Browse demos from the home screen; each route is an interactive sample.
 
-[[bin]]
-name = "facet_gallery"
-path = "src/main.cplus"
-
 [dependencies]
 stdlib      = "*"
 facet       = "*"

@@ -4,7 +4,7 @@
 //! Transport: stdio JSON-RPC via `lsp-server`. Synchronous dispatch loop;
 //! no async runtime. Every language operation routes through
 //! `cplus-core` — the same library `cpc build` / `cpc fmt` use. See
-//! `docs/design/phase4-lsp.md`.
+//! `docs/compiler/design/phase4-lsp.md`.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -605,9 +605,9 @@ fn build_project_graph(
         })
         .collect();
     match find_manifest(open_path) {
-        ManifestProbe::Loaded { manifest, .. } if manifest.bins[0].path.is_file() => {
+        ManifestProbe::Loaded { manifest, entry, .. } if entry.is_file() => {
             let loaded = resolver::load_project_with_overlays(
-                &manifest.bins[0].path,
+                &entry,
                 &manifest.root,
                 overlays,
             )
@@ -939,19 +939,19 @@ fn compute_diagnostics(
             by_file.entry(open_path.to_path_buf()).or_default();
             return by_file;
         }
-        ManifestProbe::Loaded { manifest, .. } => {
-            if !manifest.bins[0].path.is_file() {
-                // E0407 — manifest's binary entry doesn't exist on disk.
-                push_into(&mut by_file, manifest_entry_missing_diagnostic(&manifest));
+        ManifestProbe::Loaded { manifest, entry, .. } => {
+            if !entry.is_file() {
+                // E0407 — manifest's app entry doesn't exist on disk.
+                push_into(&mut by_file, manifest_entry_missing_diagnostic(&entry));
                 by_file.entry(open_path.to_path_buf()).or_default();
                 return by_file;
             }
-            match resolver::load_project(&manifest.bins[0].path, &manifest.root) {
+            match resolver::load_project(&entry, &manifest.root) {
                 Ok(mut loaded) => {
                     // Phase 5 slice 5ATTR.1: attribute validation runs first.
                     let attr_diags = attrs::check_multi(
                         &loaded.program,
-                        manifest.bins[0].path.clone(),
+                        entry.clone(),
                         open_text,
                         loaded.files.clone(),
                     );
@@ -960,7 +960,7 @@ fn compute_diagnostics(
                     }
                     let lower_diags = lower::lower_multi(
                         &mut loaded.program,
-                        &manifest.bins[0].path,
+                        &entry,
                         open_text,
                         loaded.files.clone(),
                     );
@@ -969,7 +969,7 @@ fn compute_diagnostics(
                     }
                     let diags = sema::check_multi(
                         &loaded.program,
-                        manifest.bins[0].path.clone(),
+                        entry.clone(),
                         open_text,
                         loaded.files.clone(),
                     );
@@ -981,7 +981,7 @@ fn compute_diagnostics(
                     // land on the right file in the editor.
                     let bc_diags = borrowck::check_multi(
                         &loaded.program,
-                        &manifest.bins[0].path,
+                        &entry,
                         open_text,
                         &loaded.files,
                     );
@@ -1060,6 +1060,11 @@ enum ManifestProbe {
     Loaded {
         #[allow(dead_code)]
         manifest_path: PathBuf,
+        /// The resolved project entry for the host platform: the app entry
+        /// when one is declared (kept even if the file is missing, so the
+        /// E0407 diagnostic can name it), else the manifest's source-entry
+        /// ladder (`[library]`, `src/test_main.cplus`, `src/<pkg>.cplus`).
+        entry: PathBuf,
         // Boxed to keep `ManifestProbe` small: `Manifest` dwarfs the other
         // variants, so an unboxed field bloats every probe result.
         manifest: Box<manifest::Manifest>,
@@ -1074,11 +1079,24 @@ fn find_manifest(open_path: &Path) -> ManifestProbe {
         let candidate = dir.join("Cplus.toml");
         if candidate.is_file() {
             return match manifest::load(&candidate) {
-                Ok(m) if !m.bins.is_empty() => ManifestProbe::Loaded {
-                    manifest_path: candidate,
-                    manifest: Box::new(m),
-                },
-                Ok(_) => ManifestProbe::None, // empty bin list: behave as single-file
+                Ok(m) => {
+                    let platform = cplus_core::target::active_platform();
+                    // A declared app entry wins even when the file is
+                    // missing (the E0407 path names it); otherwise the
+                    // source-entry ladder finds the widest existing tree.
+                    let entry = m
+                        .entry_for(platform)
+                        .or_else(|| m.resolve_source_entry(platform).map(|(p, _)| p));
+                    match entry {
+                        Some(entry) => ManifestProbe::Loaded {
+                            manifest_path: candidate,
+                            entry,
+                            manifest: Box::new(m),
+                        },
+                        // No entry at all: behave as single-file.
+                        None => ManifestProbe::None,
+                    }
+                }
                 Err(e) => ManifestProbe::Error(e.to_diagnostic()),
             };
         }
@@ -1089,17 +1107,17 @@ fn find_manifest(open_path: &Path) -> ManifestProbe {
     }
 }
 
-/// Build the E0407 "binary entry missing" diagnostic.
+/// Build the E0407 "app entry missing" diagnostic.
 fn manifest_entry_missing_diagnostic(
-    m: &manifest::Manifest,
+    entry: &Path,
 ) -> cplus_core::diagnostics::Diagnostic {
     use cplus_core::diagnostics::{DiagCode, Position as P, Severity, SourceSpan};
     cplus_core::diagnostics::Diagnostic {
         severity: Severity::Error,
         code: DiagCode("E0407"),
-        message: format!("binary entry `{}` does not exist", m.bins[0].path.display()),
+        message: format!("app entry `{}` does not exist", entry.display()),
         primary: SourceSpan {
-            file: m.bins[0].path.clone(),
+            file: entry.to_path_buf(),
             start: P {
                 line: 1,
                 col: 1,

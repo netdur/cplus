@@ -1,6 +1,6 @@
 # SKILL — writing C+ source
 
-Dense reference for an LLM about to write or edit C+ code. Not a tutorial; for the normative spec (exact syntax + semantics) see [SPEC.md](SPEC.md).
+Dense reference for an LLM about to write or edit C+ code. Not a tutorial; for a human-paced start see [tour.md](tour.md); for the normative spec (exact syntax + semantics) see [spec.md](spec.md).
 
 **Project:** <https://cplus-lang.dev> · **Source:** <https://github.com/netdur/cplus>
 
@@ -51,9 +51,6 @@ cat > Cplus.toml <<'EOF'
 name = "my_proj"
 version = "0.0.1"
 edition = "2026"
-[[bin]]
-name = "my_proj"
-path = "src/main.cplus"
 [dependencies]
 stdlib = "*"
 EOF
@@ -63,6 +60,21 @@ fn main() -> i32 { io::println("hi"); return 0; }
 EOF
 cpc build && ./target/debug/my_proj
 ```
+
+Manifest model (v0.0.28): **no `[[bin]]` / `[lib]` sections.** A package with an
+entry is an app — `src/main.cplus` is the default, `entry = "..."` under
+`[package]` or a `[<platform>]` section overrides it — and what a build
+produces is the TARGET's fact: self-linked platforms (macos, linux, windows)
+get an executable from `fn main`; external-builder platforms (ios, android,
+esp32) get `lib<name>.a` + a C header, entered through an `export extern fn`
+the platform shell calls (E0409 if the entry has `fn main`, E0414 if a
+self-linked entry lacks one). Declaring any `[<platform>] entry` scopes the app
+to the named platforms — others fail with E0413. A package with no entry is a
+library: `cpc build` archives its whole `src/` tree. A C-ABI product library
+(consumed from C) is the `[library]` section: `kind = "staticlib"|"cdylib"|"both"`,
+optional `entry` whose top-level names become the bare C ABI. An app's link
+surface is the `[link]` table (`frameworks`, `libs`, `search-paths`,
+`extra-objects`).
 
 ---
 
@@ -357,7 +369,7 @@ Prefer the short form in patterns. Restating the type is not just noise: it is t
 
 ```cplus
 let a: str = "hello";                             // literal — always str
-let b: Text = Text::from("hello");                // copies to heap
+let b: Text = "hello".to_text();                  // copies to heap (or text::from_str("hello"))
 b.count(); b.is_empty(); b.clone();               // Text methods
 a.count(); a.contains("ell");                     // str methods (import "stdlib/str")
 ```
@@ -436,7 +448,7 @@ fn sink(take t: Text) -> usize { return t.len(); }    // consumes t
 
 var k: i32 = 0;
 bump(k);                    // k is now 1 — a write-back call is `bump(k)`, not `bump(&k)`
-let s: Text = Text::from("hi");
+let s: Text = "hi".to_text();
 let n = sink(s);            // s consumed; using s again = E0335
 ```
 
@@ -690,6 +702,7 @@ write the two-line `export` wrapper above; that is what it is for.
 | `#include_bytes("path")` | `*[u8; N]` | Path relative to source file |
 | `#include_str("path")` | `str` | UTF-8 validated at sema time |
 | `#env("NAME")` | `str` | Resolved at sema; E0876 if unset |
+| `#platform()` | `str` | Active TARGET's platform: `macos`/`linux`/`windows`/`ios`/`android`/`esp32`/`wasm` — the manifest-section vocabulary. Value-level only: both branches of an `if` on it still compile (no import gating; that is the `_<platform>.cplus` file override's job) |
 | `#zero::[T]()` | `T` | Safe all-zero value |
 | `#cpu_relax()` | `()` | Safe spin-loop hint |
 | `#asm("tmpl", name = dir(reg) expr, clobber("r"))` | `()` | Unsafe inline asm; Tier 1 = bare template, Tier 2 = `in`/`out`/`inout` operands + clobbers |
@@ -709,6 +722,7 @@ fn now() -> i64 {
 
 let metallib: *[u8; 2048] = #include_bytes("../shaders/double.metallib");
 let greeting: str = #env("GREETING");
+if #platform() == "ios" { /* value-level platform branch */ }
 
 // Inline asm. Tier 1: bare template (fences/barriers/hints):
 #asm("dmb ish");
@@ -851,7 +865,7 @@ A marker impl's body is empty — and an empty impl of `Eq`/`Ord`/`Hash`/`Clone`
 
 ## 11. SIMD types (one-paragraph summary)
 
-Nineteen widths: `f32x4 f64x2 f32x8 f64x4 i{8,16,32,64}x{16,8,4,2} u...` plus 256-bit doublings, plus `mask{N}x{M}` types distinct from signed-int SIMD. Constructors `splat`/`new`/`load`/`from_array`/`to_array`. Methods follow lane type: `add/sub/mul/div`, float `fma/sqrt/abs`, int `and/or/xor/shl/shr`. Compare returns `mask`, blend via `mask.select(a,b)`. SIMD does NOT cross `extern fn` boundaries — round-trip via `[f32; N]` (E0410 otherwise). Full reference: SPEC.md.
+Nineteen widths: `f32x4 f64x2 f32x8 f64x4 i{8,16,32,64}x{16,8,4,2} u...` plus 256-bit doublings, plus `mask{N}x{M}` types distinct from signed-int SIMD. Constructors `splat`/`new`/`load`/`from_array`/`to_array`. Methods follow lane type: `add/sub/mul/div`, float `fma/sqrt/abs`, int `and/or/xor/shl/shr`. Compare returns `mask`, blend via `mask.select(a,b)`. SIMD does NOT cross `extern fn` boundaries — round-trip via `[f32; N]` (E0410 otherwise). Full reference: spec.md.
 
 ---
 
@@ -976,7 +990,7 @@ fn unwrap(take this) -> T {
 
 // 6. String literal is `str`, not `Text`.
 let a: str    = "hello";
-let b: Text = Text::from("hello");
+let b: Text = "hello".to_text();
 ```
 
 Recurring traps for generated code:

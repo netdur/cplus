@@ -5,22 +5,21 @@ edition = "2026"
 
 # The iOS gallery — the phone-shaped counterpart of examples/facet_gallery.
 #
-# A STATICLIB, not a `[[bin]]`. An iOS target stops at object emission (Xcode
-# owns the final link), so a program is not a thing cpc can produce for it:
+# The entry is declared in the `[ios]` section, so this package builds for iOS
+# and nothing else — `cpc build` on a Mac says so (E0413) instead of guessing.
+# What the entry builds INTO is the target's fact: an iOS target stops at
+# object emission (Xcode owns the final link), so cpc produces
+# `libfacet_gallery_ios.a` plus a C header:
 #
 #     cpc build --target ios-arm64-simulator
 #     cpc build --target ios-arm64
 #
-# The entry point Xcode's `ios/main.m` calls is `facet_gallery_ios_main`,
-# exported from src/main.cplus and declared in the generated header. README.md
-# has the whole Xcode recipe.
-#
-# The desktop gallery stays a `[[bin]]` and is unaffected: `[[bin]]` and `[lib]`
-# are mutually exclusive in one manifest (E0408), which is why this is a
-# separate package rather than a second target in that one.
-[lib]
-crate-type = "staticlib"
-path = "src/main.cplus"
+# The entry point Xcode's `ios/main.m` calls is `facet_gallery_ios_main`, an
+# `export extern fn` in src/main.cplus, declared in the generated header.
+# README.md has the whole Xcode recipe.
+
+[ios]
+entry = "src/main.cplus"
 
 [dependencies]
 stdlib      = "*"

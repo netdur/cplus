@@ -9,7 +9,3 @@ objc       = "*"
 quartzcore = "*"
 appkit     = "*"
 agent_core = "*"
-
-[[bin]]
-name = "agent_appkit_tests"
-path = "src/test_main.cplus"

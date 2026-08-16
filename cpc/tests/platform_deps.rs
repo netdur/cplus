@@ -80,7 +80,6 @@ fn deps_scoped_to_another_platform_are_skipped_entirely() {
         &project.join("Cplus.toml"),
         &format!(
             "[package]\nname = \"app\"\nversion = \"0.0.1\"\nedition = \"2026\"\n\n\
-             [[bin]]\nname = \"app\"\npath = \"src/main.cplus\"\n\n\
              [dependencies]\nherelib = \"*\"\n\n\
              [{}.dependencies]\nghostlib = \"*\"\n",
             other_platform()
@@ -111,7 +110,6 @@ fn deps_scoped_to_the_active_platform_participate() {
         &project.join("Cplus.toml"),
         &format!(
             "[package]\nname = \"app\"\nversion = \"0.0.1\"\nedition = \"2026\"\n\n\
-             [[bin]]\nname = \"app\"\npath = \"src/main.cplus\"\n\n\
              [{}.dependencies]\nherelib = \"*\"\n",
             host_platform()
         ),
@@ -142,7 +140,6 @@ fn importing_an_off_platform_dep_is_a_targeted_e0866() {
         &project.join("Cplus.toml"),
         &format!(
             "[package]\nname = \"app\"\nversion = \"0.0.1\"\nedition = \"2026\"\n\n\
-             [[bin]]\nname = \"app\"\npath = \"src/main.cplus\"\n\n\
              [{}.dependencies]\ngatedlib = \"*\"\n",
             other_platform()
         ),
@@ -179,7 +176,6 @@ fn conflicting_dependency_declarations_fail_with_e0869() {
         &project.join("Cplus.toml"),
         &format!(
             "[package]\nname = \"app\"\nversion = \"0.0.1\"\nedition = \"2026\"\n\n\
-             [[bin]]\nname = \"app\"\npath = \"src/main.cplus\"\n\n\
              [dependencies]\nherelib = \"*\"\n\n\
              [{}.dependencies]\nherelib = \"*\"\n",
             host_platform()
@@ -219,7 +215,6 @@ fn platform_suffix_module_shadows_the_base_file() {
     write(
         &project.join("Cplus.toml"),
         "[package]\nname = \"app\"\nversion = \"0.0.1\"\nedition = \"2026\"\n\n\
-         [[bin]]\nname = \"app\"\npath = \"src/main.cplus\"\n\n\
          [dependencies]\nherelib = \"*\"\n",
     );
     write(

@@ -8,10 +8,6 @@ edition = "2026"
 # - terminal/pty:      pseudo-terminal session (Darwin forkpty backend)
 # - terminal/appkit:   live AppKit widget
 
-[[bin]]
-name = "terminal_tests"
-path = "src/test_main.cplus"
-
 [dependencies]
 stdlib     = "*"
 objc       = "*"

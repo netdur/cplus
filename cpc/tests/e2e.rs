@@ -1255,7 +1255,7 @@ fn monomorphize_inferred_same_offset_no_collision() {
     let dir = tempdir();
     std::fs::write(
         dir.join("Cplus.toml"),
-        "[package]\nname = \"infer_span\"\n\n[[bin]]\nname = \"infer_span\"\npath = \"src/main.cplus\"\n",
+        "[package]\nname = \"infer_span\"\n",
     )
     .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
@@ -3663,7 +3663,7 @@ fn generic_call_in_interpolation_monomorphizes() {
     let dir = tempdir();
     std::fs::write(
         dir.join("Cplus.toml"),
-        "[package]\nname = \"interpmono\"\n\n[[bin]]\nname = \"interpmono\"\npath = \"src/main.cplus\"\n\n[dependencies]\nstdlib = \"*\"\n",
+        "[package]\nname = \"interpmono\"\n\n[dependencies]\nstdlib = \"*\"\n",
     )
     .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
@@ -3717,7 +3717,7 @@ fn interp_call_text_parts_freed_place_parts_not() {
     let dir = tempdir();
     std::fs::write(
         dir.join("Cplus.toml"),
-        "[package]\nname = \"interpfree\"\n\n[[bin]]\nname = \"interpfree\"\npath = \"src/main.cplus\"\n\n[dependencies]\nstdlib = \"*\"\n",
+        "[package]\nname = \"interpfree\"\n\n[dependencies]\nstdlib = \"*\"\n",
     )
     .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
@@ -3805,7 +3805,7 @@ fn interp_in_print_sink_position_never_allocates() {
     let dir = tempdir();
     std::fs::write(
         dir.join("Cplus.toml"),
-        "[package]\nname = \"interpsink\"\n\n[[bin]]\nname = \"interpsink\"\npath = \"src/main.cplus\"\n\n[dependencies]\nstdlib = \"*\"\n",
+        "[package]\nname = \"interpsink\"\n\n[dependencies]\nstdlib = \"*\"\n",
     )
     .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
@@ -3892,7 +3892,7 @@ fn text_append_interp_appends_in_place() {
     let dir = tempdir();
     std::fs::write(
         dir.join("Cplus.toml"),
-        "[package]\nname = \"appendsink\"\n\n[[bin]]\nname = \"appendsink\"\npath = \"src/main.cplus\"\n\n[dependencies]\nstdlib = \"*\"\n",
+        "[package]\nname = \"appendsink\"\n\n[dependencies]\nstdlib = \"*\"\n",
     )
     .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
@@ -4002,7 +4002,7 @@ fn no_alloc_admits_sink_interpolation_only() {
     let dir = tempdir();
     std::fs::write(
         dir.join("Cplus.toml"),
-        "[package]\nname = \"nasink\"\n\n[[bin]]\nname = \"nasink\"\npath = \"src/main.cplus\"\n\n[dependencies]\nstdlib = \"*\"\n",
+        "[package]\nname = \"nasink\"\n\n[dependencies]\nstdlib = \"*\"\n",
     )
     .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
@@ -4518,7 +4518,7 @@ fn manifest_libs_links_libobjc() {
     let dir = tempdir();
     std::fs::write(
         dir.join("Cplus.toml"),
-        "[package]\nname = \"objc_smoke\"\n\n[[bin]]\nname = \"objc_smoke\"\npath = \"src/main.cplus\"\nlibs = [\"objc\"]\n",
+        "[package]\nname = \"objc_smoke\"\n\n[link]\nlibs = [\"objc\"]\n",
     ).unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::write(
@@ -4551,7 +4551,7 @@ fn manifest_frameworks_passes_dash_framework() {
     let dir = tempdir();
     std::fs::write(
         dir.join("Cplus.toml"),
-        "[package]\nname = \"fw\"\n\n[[bin]]\nname = \"fw\"\npath = \"src/main.cplus\"\nframeworks = [\"Foundation\"]\nlibs = [\"objc\"]\n",
+        "[package]\nname = \"fw\"\n\n[link]\nframeworks = [\"Foundation\"]\nlibs = [\"objc\"]\n",
     ).unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
     // The body doesn't have to use Foundation — we only need to prove the
@@ -6350,7 +6350,7 @@ fn main() -> i32 {
 fn partial_move_out_of_drop_type_rejected_e0509() {
     // v0.0.12 fix (E0509): moving a non-Copy field out of a value whose type
     // implements `drop` is rejected. The owning destructor frees its fields by
-    // hand (docs/design/phase3-drop.md §5), so stealing a field would
+    // hand (docs/compiler/design/phase3-drop.md §5), so stealing a field would
     // double-free it. Both the `let`-binding and `return` move positions are
     // guarded.
     let cpc = env!("CARGO_BIN_EXE_cpc");
@@ -6653,7 +6653,7 @@ fn nll_view_borrow_ends_at_last_use() {
     let dir = tempdir();
     std::fs::write(
         dir.join("Cplus.toml"),
-        "[package]\nname = \"nll\"\n\n[[bin]]\nname = \"nll\"\npath = \"src/main.cplus\"\n\n[dependencies]\nstdlib = \"*\"\n",
+        "[package]\nname = \"nll\"\n\n[dependencies]\nstdlib = \"*\"\n",
     )
     .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
@@ -7286,7 +7286,7 @@ fn orphan_source_file_warns_w0005_and_success_prints_module_count() {
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::write(
         dir.join("Cplus.toml"),
-        "[package]\nname = \"orph\"\n\n[[bin]]\nname = \"orph\"\npath = \"src/main.cplus\"\n",
+        "[package]\nname = \"orph\"\n",
     )
     .unwrap();
     std::fs::write(
@@ -7841,7 +7841,7 @@ fn interface_bound_satisfied_in_package_mode() {
     let dir = tempdir();
     std::fs::write(
         dir.join("Cplus.toml"),
-        "[package]\nname = \"bp\"\n\n[[bin]]\nname = \"bp\"\npath = \"src/main.cplus\"\n",
+        "[package]\nname = \"bp\"\n",
     )
     .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
@@ -7887,7 +7887,7 @@ fn str_view_cannot_outlive_owner() {
     let dir = tempdir();
     std::fs::write(
         dir.join("Cplus.toml"),
-        "[package]\nname = \"vw\"\n\n[[bin]]\nname = \"vw\"\npath = \"src/main.cplus\"\n\n[dependencies]\nstdlib = \"*\"\n",
+        "[package]\nname = \"vw\"\n\n[dependencies]\nstdlib = \"*\"\n",
     )
     .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
@@ -7937,7 +7937,7 @@ fn str_builtin_methods_compile_and_run() {
     let dir = tempdir();
     std::fs::write(
         dir.join("Cplus.toml"),
-        "[package]\nname = \"sm\"\n\n[[bin]]\nname = \"sm\"\npath = \"src/main.cplus\"\n\n[dependencies]\nstdlib = \"*\"\n",
+        "[package]\nname = \"sm\"\n\n[dependencies]\nstdlib = \"*\"\n",
     )
     .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
@@ -7996,7 +7996,7 @@ fn slice_array_count_and_to_f64_run() {
     let dir = tempdir();
     std::fs::write(
         dir.join("Cplus.toml"),
-        "[package]\nname = \"sc\"\n\n[[bin]]\nname = \"sc\"\npath = \"src/main.cplus\"\n\n[dependencies]\nstdlib = \"*\"\n",
+        "[package]\nname = \"sc\"\n\n[dependencies]\nstdlib = \"*\"\n",
     )
     .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
@@ -8053,7 +8053,7 @@ fn discard_import_alias_underscore() {
     let dir = tempdir();
     std::fs::write(
         dir.join("Cplus.toml"),
-        "[package]\nname = \"di\"\n\n[[bin]]\nname = \"di\"\npath = \"src/main.cplus\"\n\n[dependencies]\nstdlib = \"*\"\n",
+        "[package]\nname = \"di\"\n\n[dependencies]\nstdlib = \"*\"\n",
     )
     .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
@@ -8099,7 +8099,7 @@ fn str_builtin_methods_negative_paths() {
     let dir = tempdir();
     std::fs::write(
         dir.join("Cplus.toml"),
-        "[package]\nname = \"sn\"\n\n[[bin]]\nname = \"sn\"\npath = \"src/main.cplus\"\n\n[dependencies]\nstdlib = \"*\"\n",
+        "[package]\nname = \"sn\"\n\n[dependencies]\nstdlib = \"*\"\n",
     )
     .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
@@ -8173,7 +8173,7 @@ fn generic_vec_slice_view_invalidation_rejected() {
     let dir = tempdir();
     std::fs::write(
         dir.join("Cplus.toml"),
-        "[package]\nname = \"gv\"\n\n[[bin]]\nname = \"gv\"\npath = \"src/main.cplus\"\n\n[dependencies]\nstdlib = \"*\"\n",
+        "[package]\nname = \"gv\"\n\n[dependencies]\nstdlib = \"*\"\n",
     )
     .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
@@ -8447,7 +8447,7 @@ fn str_view_coercion_and_free_fn_ties() {
     let dir = tempdir();
     std::fs::write(
         dir.join("Cplus.toml"),
-        "[package]\nname = \"vc\"\n\n[[bin]]\nname = \"vc\"\npath = \"src/main.cplus\"\n\n[dependencies]\nstdlib = \"*\"\n",
+        "[package]\nname = \"vc\"\n\n[dependencies]\nstdlib = \"*\"\n",
     )
     .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
@@ -8525,7 +8525,7 @@ fn bound_method_reference_wires_handler_and_ctx() {
     let dir = tempdir();
     std::fs::write(
         dir.join("Cplus.toml"),
-        "[package]\nname = \"br\"\n\n[[bin]]\nname = \"br\"\npath = \"src/main.cplus\"\n",
+        "[package]\nname = \"br\"\n",
     )
     .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
@@ -8576,7 +8576,7 @@ fn bound_method_reference_misuse_rejected() {
     let dir = tempdir();
     std::fs::write(
         dir.join("Cplus.toml"),
-        "[package]\nname = \"bn\"\n\n[[bin]]\nname = \"bn\"\npath = \"src/main.cplus\"\n",
+        "[package]\nname = \"bn\"\n",
     )
     .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
@@ -8633,7 +8633,7 @@ fn handler_without_a_ctx_slot_warns_w0824() {
     let dir = tempdir();
     std::fs::write(
         dir.join("Cplus.toml"),
-        "[package]\nname = \"hw\"\n\n[[bin]]\nname = \"hw\"\npath = \"src/main.cplus\"\n",
+        "[package]\nname = \"hw\"\n",
     )
     .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
@@ -8790,7 +8790,7 @@ fn ctx_first_handler_warns_w0825() {
     let dir = tempdir();
     std::fs::write(
         dir.join("Cplus.toml"),
-        "[package]\nname = \"cf\"\n\n[[bin]]\nname = \"cf\"\npath = \"src/main.cplus\"\n",
+        "[package]\nname = \"cf\"\n",
     )
     .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
@@ -8843,7 +8843,7 @@ fn w0824_is_silent_for_a_dependencys_declarations() {
     std::fs::create_dir_all(dir.join("vendor/dep/src")).unwrap();
     std::fs::write(
         dir.join("Cplus.toml"),
-        "[package]\nname = \"app\"\n\n[[bin]]\nname = \"app\"\npath = \"src/main.cplus\"\n\
+        "[package]\nname = \"app\"\n\
          \n[dependencies]\ndep = \"*\"\n",
     )
     .unwrap();
@@ -8901,7 +8901,7 @@ fn e0824_prints_the_line_the_callee_is_missing() {
     let dir = tempdir();
     std::fs::write(
         dir.join("Cplus.toml"),
-        "[package]\nname = \"hx\"\n\n[[bin]]\nname = \"hx\"\npath = \"src/main.cplus\"\n",
+        "[package]\nname = \"hx\"\n",
     )
     .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
@@ -9151,7 +9151,7 @@ fn cross_module_interface_conformance_and_alias_bounds() {
     let dir = tempdir();
     std::fs::write(
         dir.join("Cplus.toml"),
-        "[package]\nname = \"xi\"\n\n[[bin]]\nname = \"xi\"\npath = \"src/main.cplus\"\n",
+        "[package]\nname = \"xi\"\n",
     )
     .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
@@ -13327,7 +13327,7 @@ fn vendor_import_round_trips_end_to_end() {
     let dir = tempdir();
     std::fs::write(
         dir.join("Cplus.toml"),
-        "[package]\nname = \"app\"\n\n[[bin]]\nname = \"app\"\npath = \"src/main.cplus\"\n\n[dependencies]\nutils = \"*\"\n",
+        "[package]\nname = \"app\"\n\n[dependencies]\nutils = \"*\"\n",
     ).unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::create_dir_all(dir.join("vendor/utils/src")).unwrap();
@@ -13574,7 +13574,7 @@ fn dep_link_table_libs_flow_through_to_linker() {
     let dir = tempdir();
     std::fs::write(
         dir.join("Cplus.toml"),
-        "[package]\nname = \"app\"\n\n[[bin]]\nname = \"app\"\npath = \"src/main.cplus\"\n\n[dependencies]\nmathy = \"*\"\n",
+        "[package]\nname = \"app\"\n\n[dependencies]\nmathy = \"*\"\n",
     ).unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::create_dir_all(dir.join("vendor/mathy/src")).unwrap();
@@ -13606,17 +13606,16 @@ fn dep_link_table_libs_flow_through_to_linker() {
 }
 
 #[test]
-fn bin_package_link_libs_warns_w0003() {
-    // v0.0.20 (W0003): a `[[bin]]` package's own `[link] libs`/`frameworks`
-    // are dead (read only when the package is a *dependency*). Declaring them
-    // must warn and point to `[[bin]] libs`, but the build still succeeds
-    // (the entries are simply ignored — here `boguslib` would not resolve if
-    // it were actually passed to the linker).
+fn app_package_link_libs_are_linked() {
+    // v0.0.28 manifest overhaul: an app package's own `[link] libs` /
+    // `frameworks` ARE its link surface (the old `[[bin]] libs` moved here,
+    // and W0003 died with it). Proof they reach the linker: a bogus lib
+    // must fail the build.
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();
     std::fs::write(
         dir.join("Cplus.toml"),
-        "[package]\nname = \"app\"\n\n[[bin]]\nname = \"app\"\npath = \"src/main.cplus\"\n\n[link]\nlibs = [\"boguslib\"]\n",
+        "[package]\nname = \"app\"\n\n[link]\nlibs = [\"z\"]\n",
     )
     .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
@@ -13632,17 +13631,23 @@ fn bin_package_link_libs_warns_w0003() {
         .expect("invoke cpc");
     assert!(
         out.status.success(),
-        "build must succeed (the dead [link] libs are ignored, not linked); stderr: {}",
+        "a real `[link] lib` (z) must link; stderr: {}",
         String::from_utf8_lossy(&out.stderr)
     );
-    let stderr = String::from_utf8_lossy(&out.stderr);
+    // And a bogus one must FAIL — the entries are on the link line now.
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"app\"\n\n[link]\nlibs = [\"cpc-definitely-not-a-lib\"]\n",
+    )
+    .unwrap();
+    let out2 = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .output()
+        .expect("invoke cpc");
     assert!(
-        stderr.contains("W0003"),
-        "expected W0003 warning, got: {stderr}"
-    );
-    assert!(
-        stderr.contains("[[bin]] libs"),
-        "warning should point to `[[bin]] libs`: {stderr}"
+        !out2.status.success(),
+        "a bogus `[link] lib` must fail the link (it is no longer ignored)"
     );
 }
 
@@ -13699,7 +13704,7 @@ fn dep_walk_links_bundled_static_lib_end_to_end() {
     // 3. Consumer.
     std::fs::write(
         dir.join("Cplus.toml"),
-        "[package]\nname = \"app\"\n\n[[bin]]\nname = \"app\"\npath = \"src/main.cplus\"\n\n[dependencies]\ntiny = \"*\"\n",
+        "[package]\nname = \"app\"\n\n[dependencies]\ntiny = \"*\"\n",
     ).unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::write(
@@ -13763,7 +13768,7 @@ fn dep_link_expands_env_var_in_extra_objects_end_to_end() {
     // 3. Consumer.
     std::fs::write(
         dir.join("Cplus.toml"),
-        "[package]\nname = \"app\"\n\n[[bin]]\nname = \"app\"\npath = \"src/main.cplus\"\n\n[dependencies]\nmathy = \"*\"\n",
+        "[package]\nname = \"app\"\n\n[dependencies]\nmathy = \"*\"\n",
     ).unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::write(
@@ -14076,12 +14081,12 @@ fn cpc_bindgen_round_trips_via_c_library() {
     // the bindings into one file would make `add_ints` the wrapper and the
     // link-name clash). Build a package that links libtiny.a via `[link]`.
     let _ = lib; // libtiny.dylib is linked by name (`libs`) + search-path below
-                 // The consumer's own libs go on `[[bin]]`; `[link]` supplies its
+                 // The consumer's own libs go in `[link]`; a dep's `[link]` supplies its
                  // search-paths (and `-Wl,-rpath` so the dylib resolves at run time).
     std::fs::write(
         dir.join("Cplus.toml"),
         format!(
-            "[package]\nname = \"bgtiny\"\n\n[[bin]]\nname = \"bgtiny\"\npath = \"src/main.cplus\"\nlibs = [\"tiny\"]\n\n[link]\nsearch-paths = [\"{}\"]\n",
+            "[package]\nname = \"bgtiny\"\n\n[link]\nlibs = [\"tiny\"]\nsearch-paths = [\"{}\"]\n",
             dir.display()
         ),
     )
@@ -14169,7 +14174,7 @@ fn phase3b_tuple_construct_projection_round_trip() {
     let dir = tempdir();
     std::fs::write(
         dir.join("Cplus.toml"),
-        "[package]\nname = \"tup\"\n\n[[bin]]\nname = \"tup\"\npath = \"src/main.cplus\"\n",
+        "[package]\nname = \"tup\"\n",
     )
     .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
@@ -15682,7 +15687,7 @@ fn fnptr_returning_drop_struct_no_crash() {
     let dir = tempdir();
     std::fs::write(
         dir.join("Cplus.toml"),
-        "[package]\nname = \"fpd\"\n\n[[bin]]\nname = \"fpd\"\npath = \"src/main.cplus\"\n",
+        "[package]\nname = \"fpd\"\n",
     )
     .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
@@ -15827,7 +15832,7 @@ fn phase2c_generic_enum_impl_synthesis() {
     let dir = tempdir();
     std::fs::write(
         dir.join("Cplus.toml"),
-        "[package]\nname = \"gei\"\n\n[[bin]]\nname = \"gei\"\npath = \"src/main.cplus\"\n",
+        "[package]\nname = \"gei\"\n",
     )
     .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
@@ -16017,7 +16022,7 @@ fn lib_target_produces_staticlib() {
     let dir = tempdir();
     std::fs::write(
         dir.join("Cplus.toml"),
-        "[package]\nname = \"mathlib\"\n\n[lib]\ncrate-type = \"staticlib\"\n",
+        "[package]\nname = \"mathlib\"\n\n[library]\nentry = \"src/lib.cplus\"\nkind = \"staticlib\"\n",
     )
     .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
@@ -16046,7 +16051,7 @@ fn lib_target_produces_dylib_or_so() {
     let dir = tempdir();
     std::fs::write(
         dir.join("Cplus.toml"),
-        "[package]\nname = \"mathlib\"\n\n[lib]\ncrate-type = \"cdylib\"\n",
+        "[package]\nname = \"mathlib\"\n\n[library]\nentry = \"src/lib.cplus\"\nkind = \"cdylib\"\n",
     )
     .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
@@ -16080,7 +16085,7 @@ fn lib_target_both_produces_a_and_dylib() {
     let dir = tempdir();
     std::fs::write(
         dir.join("Cplus.toml"),
-        "[package]\nname = \"mathlib\"\n\n[lib]\ncrate-type = \"both\"\n",
+        "[package]\nname = \"mathlib\"\n\n[library]\nentry = \"src/lib.cplus\"\nkind = \"both\"\n",
     )
     .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
@@ -16113,7 +16118,7 @@ fn lib_target_exposes_pub_symbols_unmangled() {
     let dir = tempdir();
     std::fs::write(
         dir.join("Cplus.toml"),
-        "[package]\nname = \"mathlib\"\n\n[lib]\ncrate-type = \"staticlib\"\n",
+        "[package]\nname = \"mathlib\"\n\n[library]\nentry = \"src/lib.cplus\"\nkind = \"staticlib\"\n",
     )
     .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
@@ -16157,7 +16162,7 @@ fn c_consumer_links_static_and_dynamic() {
     let dir = tempdir();
     std::fs::write(
         dir.join("Cplus.toml"),
-        "[package]\nname = \"mathlib\"\n\n[lib]\ncrate-type = \"both\"\n",
+        "[package]\nname = \"mathlib\"\n\n[library]\nentry = \"src/lib.cplus\"\nkind = \"both\"\n",
     )
     .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
@@ -16272,7 +16277,7 @@ fn export_ref_param_writes_back_through_c() {
     let dir = tempdir();
     std::fs::write(
         dir.join("Cplus.toml"),
-        "[package]\nname = \"reflib\"\n\n[lib]\ncrate-type = \"both\"\n",
+        "[package]\nname = \"reflib\"\n\n[library]\nentry = \"src/lib.cplus\"\nkind = \"both\"\n",
     )
     .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
@@ -16339,7 +16344,7 @@ fn lib_target_rejects_fn_main_with_e0409() {
     let dir = tempdir();
     std::fs::write(
         dir.join("Cplus.toml"),
-        "[package]\nname = \"badlib\"\n\n[lib]\n",
+        "[package]\nname = \"badlib\"\n\n[library]\nentry = \"src/lib.cplus\"\nkind = \"both\"\n",
     )
     .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
@@ -16360,12 +16365,13 @@ fn lib_target_rejects_fn_main_with_e0409() {
 }
 
 #[test]
-fn bin_and_lib_in_one_manifest_emit_e0408() {
+fn legacy_bin_section_emits_e0408_migration() {
+    // v0.0.28: `[[bin]]` was removed; the parse error carries the migration.
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();
     std::fs::write(
         dir.join("Cplus.toml"),
-        "[package]\nname = \"both\"\n\n[[bin]]\nname = \"exe\"\n\n[lib]\n",
+        "[package]\nname = \"legacy\"\n\n[[bin]]\nname = \"exe\"\n",
     )
     .unwrap();
     let out = Command::new(cpc)
@@ -16373,9 +16379,28 @@ fn bin_and_lib_in_one_manifest_emit_e0408() {
         .current_dir(&dir)
         .output()
         .expect("invoke cpc");
-    assert!(!out.status.success(), "expected failure on bin+lib");
+    assert!(!out.status.success(), "expected failure on legacy [[bin]]");
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("E0408"), "expected E0408, got: {stderr}");
+    assert!(
+        stderr.contains("was removed"),
+        "the error must carry the migration, got: {stderr}"
+    );
+
+    // Same for `[lib]`.
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"legacy\"\n\n[lib]\ncrate-type = \"staticlib\"\n",
+    )
+    .unwrap();
+    let out2 = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .output()
+        .expect("invoke cpc");
+    assert!(!out2.status.success(), "expected failure on legacy [lib]");
+    let stderr2 = String::from_utf8_lossy(&out2.stderr);
+    assert!(stderr2.contains("E0408"), "expected E0408, got: {stderr2}");
 }
 
 #[test]
@@ -16421,7 +16446,7 @@ fn lib_target_non_pub_fns_get_internal_linkage() {
     let dir = tempdir();
     std::fs::write(
         dir.join("Cplus.toml"),
-        "[package]\nname = \"linkage\"\n\n[lib]\ncrate-type = \"staticlib\"\n",
+        "[package]\nname = \"linkage\"\n\n[library]\nentry = \"src/lib.cplus\"\nkind = \"staticlib\"\n",
     )
     .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
@@ -16469,7 +16494,7 @@ fn lib_target_non_pub_methods_get_internal_linkage() {
     let dir = tempdir();
     std::fs::write(
         dir.join("Cplus.toml"),
-        "[package]\nname = \"meth\"\n\n[lib]\ncrate-type = \"staticlib\"\n",
+        "[package]\nname = \"meth\"\n\n[library]\nentry = \"src/lib.cplus\"\nkind = \"staticlib\"\n",
     )
     .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
@@ -16825,7 +16850,7 @@ fn lib_build_writes_libname_h_alongside_artifacts() {
     let dir = tempdir();
     std::fs::write(
         dir.join("Cplus.toml"),
-        "[package]\nname = \"hdrgen\"\n\n[lib]\ncrate-type = \"staticlib\"\n",
+        "[package]\nname = \"hdrgen\"\n\n[library]\nentry = \"src/lib.cplus\"\nkind = \"staticlib\"\n",
     )
     .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
@@ -16880,7 +16905,7 @@ fn aggregate_param_8_bytes_round_trips() {
     let dir = tempdir();
     std::fs::write(
         dir.join("Cplus.toml"),
-        "[package]\nname = \"abi8\"\n\n[lib]\ncrate-type = \"staticlib\"\n",
+        "[package]\nname = \"abi8\"\n\n[library]\nentry = \"src/lib.cplus\"\nkind = \"staticlib\"\n",
     )
     .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
@@ -16929,7 +16954,7 @@ fn aggregate_param_16_bytes_round_trips() {
     let dir = tempdir();
     std::fs::write(
         dir.join("Cplus.toml"),
-        "[package]\nname = \"abi16\"\n\n[lib]\ncrate-type = \"staticlib\"\n",
+        "[package]\nname = \"abi16\"\n\n[library]\nentry = \"src/lib.cplus\"\nkind = \"staticlib\"\n",
     )
     .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
@@ -16978,7 +17003,7 @@ fn aggregate_param_24_bytes_indirect_round_trips() {
     let dir = tempdir();
     std::fs::write(
         dir.join("Cplus.toml"),
-        "[package]\nname = \"abi24\"\n\n[lib]\ncrate-type = \"staticlib\"\n",
+        "[package]\nname = \"abi24\"\n\n[library]\nentry = \"src/lib.cplus\"\nkind = \"staticlib\"\n",
     )
     .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
@@ -17029,7 +17054,7 @@ fn aggregate_return_8_bytes_coerces() {
     let dir = tempdir();
     std::fs::write(
         dir.join("Cplus.toml"),
-        "[package]\nname = \"retc8\"\n\n[lib]\ncrate-type = \"staticlib\"\n",
+        "[package]\nname = \"retc8\"\n\n[library]\nentry = \"src/lib.cplus\"\nkind = \"staticlib\"\n",
     )
     .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
@@ -17083,7 +17108,7 @@ fn aggregate_return_24_bytes_sret() {
     let dir = tempdir();
     std::fs::write(
         dir.join("Cplus.toml"),
-        "[package]\nname = \"retc24\"\n\n[lib]\ncrate-type = \"staticlib\"\n",
+        "[package]\nname = \"retc24\"\n\n[library]\nentry = \"src/lib.cplus\"\nkind = \"staticlib\"\n",
     )
     .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
@@ -17141,7 +17166,7 @@ fn pub_extern_fn_round_trips_through_c() {
     let dir = tempdir();
     std::fs::write(
         dir.join("Cplus.toml"),
-        "[package]\nname = \"cexport\"\n\n[lib]\ncrate-type = \"staticlib\"\n",
+        "[package]\nname = \"cexport\"\n\n[library]\nentry = \"src/lib.cplus\"\nkind = \"staticlib\"\n",
     )
     .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
@@ -17746,7 +17771,7 @@ fn agent_win32_describe_and_gated_actions() {
     let dir = tempdir();
     std::fs::write(
         dir.join("Cplus.toml"),
-        "[package]\nname = \"ag32\"\n\n[[bin]]\nname = \"ag32\"\npath = \"src/main.cplus\"\n\n[dependencies]\nwin32 = \"*\"\nagent_win32 = \"*\"\nagent_core = \"*\"\nstdlib = \"*\"\n",
+        "[package]\nname = \"ag32\"\n\n[dependencies]\nwin32 = \"*\"\nagent_win32 = \"*\"\nagent_core = \"*\"\nstdlib = \"*\"\n",
     ).unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
     copy_vendor_pkg(&dir, "win32");
@@ -18030,6 +18055,83 @@ fn env_macro_missing_var_errors_e0876() {
     assert!(
         stderr.contains("E0876"),
         "expected E0876 in stderr, got:\n{stderr}"
+    );
+}
+
+// ---- `#platform()` — active target's platform name ----
+
+#[test]
+fn platform_intrinsic_round_trip_runs() {
+    // `#platform()` resolves to the ACTIVE target's platform name. With no
+    // `--target` that is the host, so the comparison against the host's own
+    // name must take the true branch at runtime.
+    let host = if cfg!(target_os = "macos") {
+        "macos"
+    } else if cfg!(windows) {
+        "windows"
+    } else {
+        "linux"
+    };
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("plat.cplus");
+    std::fs::write(
+        &src,
+        format!(
+            "fn main() -> i32 {{\n\
+                 if #platform() == \"{host}\" {{ return 7; }}\n\
+                 return 1;\n\
+             }}\n"
+        ),
+    )
+    .unwrap();
+    let bin = dir.join("plat");
+    let st = Command::new(cpc)
+        .arg(&src)
+        .arg("-o")
+        .arg(&bin)
+        .status()
+        .expect("invoke cpc");
+    assert!(st.success(), "cpc build failed for #platform round-trip");
+    let run = Command::new(&bin).status().expect("run plat");
+    assert_eq!(
+        run.code(),
+        Some(7),
+        "expected exit 7 (host platform matched), got: {run}"
+    );
+}
+
+#[test]
+fn platform_intrinsic_follows_cross_target() {
+    // The value comes from `--target`, not the compiler host: an ios-arm64
+    // emit from any host must bake the bytes "ios" into the module. The IR
+    // path stops before clang, so no Apple SDK is needed.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    let src = dir.join("plat_ios.cplus");
+    std::fs::write(
+        &src,
+        "fn which() -> str { return #platform(); }\n\
+         fn main() -> i32 { let _p: str = which(); return 0; }\n",
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("--target")
+        .arg("ios-arm64")
+        .arg("--emit-ll")
+        .arg(&src)
+        .output()
+        .expect("invoke cpc");
+    assert!(
+        out.status.success(),
+        "cpc --target ios-arm64 --emit-ll failed:\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let ir = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        ir.contains("c\"ios\""),
+        "expected the envvar global to carry c\"ios\", got IR:\n{}",
+        &ir[..ir.len().min(2000)]
     );
 }
 
@@ -18493,10 +18595,6 @@ fn link_extra_objects_e2e_runs() {
         "[package]\n\
          name = \"extra-objects-test\"\n\
          \n\
-         [[bin]]\n\
-         name = \"extra-objects-test\"\n\
-         path = \"src/main.cplus\"\n\
-         \n\
          [link]\n\
          extra-objects = [\"helper.o\"]\n",
     )
@@ -18538,10 +18636,6 @@ fn link_extra_objects_missing_file_rejected_e0864() {
         dir.join("Cplus.toml"),
         "[package]\n\
          name = \"missing-obj\"\n\
-         \n\
-         [[bin]]\n\
-         name = \"missing-obj\"\n\
-         path = \"src/main.cplus\"\n\
          \n\
          [link]\n\
          extra-objects = [\"does-not-exist.o\"]\n",
@@ -18994,7 +19088,6 @@ fn realtime_profile_rejects_local_allocation() {
     std::fs::write(
         dir.join("Cplus.toml"),
         "[package]\nname = \"f\"\nversion = \"0.0.1\"\nedition = \"2026\"\n\
-         [[bin]]\nname = \"f\"\npath = \"src/main.cplus\"\n\
          [profile.realtime]\ndeny-alloc = true\ndeny-block = true\nstack-limit = 4096\n",
     )
     .unwrap();
@@ -19028,7 +19121,6 @@ fn realtime_profile_clean_program_passes() {
     std::fs::write(
         dir.join("Cplus.toml"),
         "[package]\nname = \"f\"\nversion = \"0.0.1\"\nedition = \"2026\"\n\
-         [[bin]]\nname = \"f\"\npath = \"src/main.cplus\"\n\
          [profile.realtime]\ndeny-alloc = true\ndeny-block = true\nstack-limit = 4096\n",
     )
     .unwrap();
@@ -19517,8 +19609,7 @@ fn graph_project() -> std::path::PathBuf {
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::write(
         dir.join("Cplus.toml"),
-        "[package]\nname = \"g\"\nversion = \"0.0.1\"\nedition = \"2026\"\n\
-         [[bin]]\nname = \"g\"\npath = \"src/main.cplus\"\n",
+        "[package]\nname = \"g\"\nversion = \"0.0.1\"\nedition = \"2026\"\n",
     )
     .unwrap();
     std::fs::write(
@@ -19736,8 +19827,7 @@ fn query_callers_resolves_free_function_calls() {
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::write(
         dir.join("Cplus.toml"),
-        "[package]\nname = \"g\"\nversion = \"0.0.1\"\nedition = \"2026\"\n\
-         [[bin]]\nname = \"g\"\npath = \"src/main.cplus\"\n",
+        "[package]\nname = \"g\"\nversion = \"0.0.1\"\nedition = \"2026\"\n",
     )
     .unwrap();
     // `helper` is a free function called twice from `mid`, which `main` calls.
@@ -19787,8 +19877,7 @@ fn query_fn_pointer_call_stays_unresolved() {
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::write(
         dir.join("Cplus.toml"),
-        "[package]\nname = \"g\"\nversion = \"0.0.1\"\nedition = \"2026\"\n\
-         [[bin]]\nname = \"g\"\npath = \"src/main.cplus\"\n",
+        "[package]\nname = \"g\"\nversion = \"0.0.1\"\nedition = \"2026\"\n",
     )
     .unwrap();
     std::fs::write(
@@ -20179,7 +20268,6 @@ fn realtime_report_json_flags_violations() {
     std::fs::write(
         dir.join("Cplus.toml"),
         "[package]\nname = \"rt\"\nversion = \"0.0.1\"\nedition = \"2026\"\n\
-         [[bin]]\nname = \"rt\"\npath = \"src/main.cplus\"\n\
          [profile.realtime]\ndeny-alloc = true\ndeny-block = true\n",
     )
     .unwrap();
@@ -20221,7 +20309,6 @@ fn realtime_report_clean_exits_zero() {
     std::fs::write(
         dir.join("Cplus.toml"),
         "[package]\nname = \"rt\"\nversion = \"0.0.1\"\nedition = \"2026\"\n\
-         [[bin]]\nname = \"rt\"\npath = \"src/main.cplus\"\n\
          [profile.realtime]\ndeny-alloc = true\ndeny-block = true\nstack-limit = 4096\n",
     )
     .unwrap();
@@ -20520,12 +20607,16 @@ fn target_ios_single_file_binary_is_rejected() {
 }
 
 #[test]
-fn target_ios_bin_project_build_is_rejected() {
+fn target_ios_app_with_fn_main_is_rejected_e0409() {
+    // v0.0.28: an app entry on an external-builder target routes into the
+    // archive pipeline. A `fn main` there has no caller — the platform
+    // shell enters through an `export extern fn` — so the build fails with
+    // E0409, naming the rule rather than a linker symptom.
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();
     std::fs::write(
         dir.join("Cplus.toml"),
-        "[package]\nname = \"app\"\n\n[[bin]]\nname = \"app\"\npath = \"src/main.cplus\"\n",
+        "[package]\nname = \"app\"\n",
     )
     .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
@@ -20543,16 +20634,71 @@ fn target_ios_bin_project_build_is_rejected() {
         .expect("invoke cpc");
     assert!(
         !out.status.success(),
-        "[[bin]] + external-builder target must fail"
+        "fn main + external-builder target must fail"
     );
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
-        stderr.contains("`[[bin]]` projects can't be built"),
-        "rejection must name the [[bin]] restriction: {stderr}"
+        stderr.contains("E0409"),
+        "rejection must be the E0409 entry-shape rule: {stderr}"
     );
+}
+
+#[test]
+fn target_ios_app_entry_builds_the_archive() {
+    // The other half of the v0.0.28 routing: the SAME app package whose
+    // entry is export-extern-shaped builds `lib<name>.a` + the C header on
+    // an external-builder target — no `[library]` section involved.
+    if !clang_supports_ios_arm64() {
+        eprintln!("skipping: clang lacks arm64-apple-ios object support");
+        return;
+    }
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"app\"\n\n[ios]\nentry = \"src/main_ios.cplus\"\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(
+        dir.join("src/main_ios.cplus"),
+        "export extern fn app_main() -> i32 { return 7; }\n",
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("build")
+        .arg("--target")
+        .arg("ios-arm64")
+        .current_dir(&dir)
+        .output()
+        .expect("invoke cpc");
     assert!(
-        stderr.contains("staticlib"),
-        "rejection must point at the [lib] staticlib flow: {stderr}"
+        out.status.success(),
+        "iOS app-entry build failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    for artifact in ["app.o", "libapp.a", "app.h"] {
+        let p = dir.join("target/ios-arm64/debug").join(artifact);
+        assert!(p.is_file(), "expected {} in the per-target tree", p.display());
+    }
+    // The header declares the exported entry the platform shell calls.
+    let header = std::fs::read_to_string(dir.join("target/ios-arm64/debug/app.h")).unwrap();
+    assert!(
+        header.contains("app_main"),
+        "header must declare the export extern entry, got:\n{header}"
+    );
+    // And the same package on a self-linked platform declares no entry:
+    // building for the host is E0413, never a silent library build.
+    let out2 = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .output()
+        .expect("invoke cpc");
+    assert!(!out2.status.success(), "host build must fail: no host entry");
+    let stderr2 = String::from_utf8_lossy(&out2.stderr);
+    assert!(
+        stderr2.contains("E0413"),
+        "expected E0413 (no entry for platform), got: {stderr2}"
     );
 }
 
@@ -20562,7 +20708,7 @@ fn target_ios_cdylib_crate_type_is_rejected() {
     let dir = tempdir();
     std::fs::write(
         dir.join("Cplus.toml"),
-        "[package]\nname = \"shaky\"\n\n[lib]\nname = \"shaky\"\npath = \"src/lib.cplus\"\ncrate-type = \"cdylib\"\n",
+        "[package]\nname = \"shaky\"\n\n[library]\nname = \"shaky\"\nentry = \"src/lib.cplus\"\nkind = \"cdylib\"\n",
     )
     .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
@@ -20647,7 +20793,7 @@ fn target_ios_staticlib_build_lands_in_per_target_tree() {
     let dir = tempdir();
     std::fs::write(
         dir.join("Cplus.toml"),
-        "[package]\nname = \"gadget\"\n\n[lib]\nname = \"gadget\"\npath = \"src/lib.cplus\"\ncrate-type = \"staticlib\"\n",
+        "[package]\nname = \"gadget\"\n\n[library]\nname = \"gadget\"\nentry = \"src/lib.cplus\"\nkind = \"staticlib\"\n",
     )
     .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
@@ -20707,7 +20853,7 @@ fn target_dep_bundled_artifacts_resolve_by_selected_target() {
     // stable artifact triple, not a versioned clang triple.
     std::fs::write(
         dir.join("Cplus.toml"),
-        "[package]\nname = \"app\"\n\n[[bin]]\nname = \"app\"\npath = \"src/main.cplus\"\n\n[dependencies]\ngadget = \"*\"\n",
+        "[package]\nname = \"app\"\n\n[dependencies]\ngadget = \"*\"\n",
     )
     .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
@@ -20775,7 +20921,7 @@ fn target_dep_without_a_slice_for_the_selected_target_uses_source() {
     // ios-arm64 must fail E0862 and word it for the *target* triple.
     std::fs::write(
         dir.join("Cplus.toml"),
-        "[package]\nname = \"app\"\n\n[[bin]]\nname = \"app\"\npath = \"src/main.cplus\"\n\n[dependencies]\ngadget = \"*\"\n",
+        "[package]\nname = \"app\"\n\n[dependencies]\ngadget = \"*\"\n",
     )
     .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
@@ -21031,7 +21177,7 @@ fn target_android_staticlib_links_under_ndk_clang() {
     let dir = tempdir();
     std::fs::write(
         dir.join("Cplus.toml"),
-        "[package]\nname = \"droid\"\n\n[lib]\nname = \"droid\"\npath = \"src/lib.cplus\"\ncrate-type = \"staticlib\"\n",
+        "[package]\nname = \"droid\"\n\n[library]\nname = \"droid\"\nentry = \"src/lib.cplus\"\nkind = \"staticlib\"\n",
     )
     .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
@@ -21619,7 +21765,7 @@ fn extern_import_of_program_defined_symbol_links_and_runs() {
     let dir = tempdir();
     std::fs::write(
         dir.join("Cplus.toml"),
-        "[package]\nname = \"hookapp\"\n\n[[bin]]\nname = \"hookapp\"\npath = \"src/main.cplus\"\n",
+        "[package]\nname = \"hookapp\"\n",
     )
     .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
@@ -21734,8 +21880,7 @@ fn builder_chain_take_self_and_mutator_compose() {
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::write(
         dir.join("Cplus.toml"),
-        "[package]\nname = \"bt\"\nversion = \"0.0.1\"\nedition = \"2026\"\n\n\
-         [[bin]]\nname = \"bt\"\npath = \"src/main.cplus\"\n",
+        "[package]\nname = \"bt\"\nversion = \"0.0.1\"\nedition = \"2026\"\n",
     )
     .unwrap();
     // A non-Copy `Node` (has drop glue) with a take-self builder + a ref-self
@@ -22220,7 +22365,7 @@ fn builder_block_lowers_and_runs() {
     let dir = tempdir();
     std::fs::write(
         dir.join("Cplus.toml"),
-        "[package]\nname = \"bb\"\n\n[[bin]]\nname = \"bb\"\npath = \"src/main.cplus\"\n",
+        "[package]\nname = \"bb\"\n",
     )
     .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
@@ -22270,7 +22415,7 @@ fn builder_block_diagnostics_at_dsl_lines() {
     let dir = tempdir();
     std::fs::write(
         dir.join("Cplus.toml"),
-        "[package]\nname = \"bd\"\n\n[[bin]]\nname = \"bd\"\npath = \"src/main.cplus\"\n",
+        "[package]\nname = \"bd\"\n",
     )
     .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
@@ -22361,7 +22506,7 @@ fn builder_block_contextual_lookup_runs() {
     let dir = tempdir();
     std::fs::write(
         dir.join("Cplus.toml"),
-        "[package]\nname = \"bc\"\n\n[[bin]]\nname = \"bc\"\npath = \"src/main.cplus\"\n",
+        "[package]\nname = \"bc\"\n",
     )
     .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
@@ -22405,7 +22550,7 @@ fn builder_block_contextual_precedence_and_unknown() {
     let dir = tempdir();
     std::fs::write(
         dir.join("Cplus.toml"),
-        "[package]\nname = \"bp\"\n\n[[bin]]\nname = \"bp\"\npath = \"src/main.cplus\"\n",
+        "[package]\nname = \"bp\"\n",
     )
     .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
@@ -22480,7 +22625,7 @@ fn builder_block_containers_and_flow_control_run() {
     let dir = tempdir();
     std::fs::write(
         dir.join("Cplus.toml"),
-        "[package]\nname = \"bf\"\n\n[[bin]]\nname = \"bf\"\npath = \"src/main.cplus\"\n",
+        "[package]\nname = \"bf\"\n",
     )
     .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
@@ -22536,7 +22681,7 @@ fn builder_container_with_args_runs_and_stray_block_is_denied() {
     let dir = tempdir();
     std::fs::write(
         dir.join("Cplus.toml"),
-        "[package]\nname = \"ba\"\n\n[[bin]]\nname = \"ba\"\npath = \"src/main.cplus\"\n",
+        "[package]\nname = \"ba\"\n",
     )
     .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
@@ -22615,7 +22760,7 @@ fn named_args_resolve_through_a_type_alias() {
     let dir = tempdir();
     std::fs::write(
         dir.join("Cplus.toml"),
-        "[package]\nname = \"ta\"\n\n[[bin]]\nname = \"ta\"\npath = \"src/main.cplus\"\n",
+        "[package]\nname = \"ta\"\n",
     )
     .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
@@ -22707,7 +22852,7 @@ fn builder_block_container_fluent_chain_runs() {
     let dir = tempdir();
     std::fs::write(
         dir.join("Cplus.toml"),
-        "[package]\nname = \"bc\"\n\n[[bin]]\nname = \"bc\"\npath = \"src/main.cplus\"\n",
+        "[package]\nname = \"bc\"\n",
     )
     .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
@@ -22756,7 +22901,7 @@ fn builder_block_own_line_fluent_modifier_composes() {
     let dir = tempdir();
     std::fs::write(
         dir.join("Cplus.toml"),
-        "[package]\nname = \"bm\"\n\n[[bin]]\nname = \"bm\"\npath = \"src/main.cplus\"\n",
+        "[package]\nname = \"bm\"\n",
     )
     .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
@@ -22802,7 +22947,7 @@ fn builder_block_nested_at_rejected_e2e() {
     let dir = tempdir();
     std::fs::write(
         dir.join("Cplus.toml"),
-        "[package]\nname = \"bn\"\n\n[[bin]]\nname = \"bn\"\npath = \"src/main.cplus\"\n",
+        "[package]\nname = \"bn\"\n",
     )
     .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
@@ -23165,7 +23310,7 @@ fn gen_fn_protocol_survives_nested_option_instantiation() {
     let dir = tempdir();
     std::fs::write(
         dir.join("Cplus.toml"),
-        "[package]\nname = \"genopt\"\n\n[[bin]]\nname = \"genopt\"\npath = \"src/main.cplus\"\n\n[dependencies]\nstdlib = \"*\"\n",
+        "[package]\nname = \"genopt\"\n\n[dependencies]\nstdlib = \"*\"\n",
     )
     .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
@@ -23241,7 +23386,7 @@ fn gen_fn_protocol_survives_nested_option_instantiation() {
 fn blessed_capabilities_agree_between_bounds_dispatch_and_impls() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();
-    std::fs::write(dir.join("Cplus.toml"), "[package]\nname = \"blessed\"\n\n[[bin]]\nname = \"blessed\"\npath = \"src/main.cplus\"\n\n[dependencies]\nstdlib = \"*\"\n").unwrap();
+    std::fs::write(dir.join("Cplus.toml"), "[package]\nname = \"blessed\"\n\n[dependencies]\nstdlib = \"*\"\n").unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::os::unix::fs::symlink(
         format!("{}/../vendor", env!("CARGO_MANIFEST_DIR")),
@@ -23590,7 +23735,7 @@ fn str_literal_coerces_to_text_in_every_owning_position() {
     let dir = tempdir();
     std::fs::write(
         dir.join("Cplus.toml"),
-        "[package]\nname = \"textco\"\n\n[[bin]]\nname = \"textco\"\npath = \"src/main.cplus\"\n\n[dependencies]\nstdlib = \"*\"\n",
+        "[package]\nname = \"textco\"\n\n[dependencies]\nstdlib = \"*\"\n",
     )
     .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
@@ -23705,7 +23850,7 @@ fn user_generic_named_iterator_is_not_a_coroutine() {
     let dir = tempdir();
     std::fs::write(
         dir.join("Cplus.toml"),
-        "[package]\nname = \"hijack\"\n\n[[bin]]\nname = \"hijack\"\npath = \"src/main.cplus\"\n\n[dependencies]\nstdlib = \"*\"\n",
+        "[package]\nname = \"hijack\"\n\n[dependencies]\nstdlib = \"*\"\n",
     )
     .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
@@ -23777,7 +23922,7 @@ fn async_and_gen_fns_pointer_pass_ref_params() {
     let dir = tempdir();
     std::fs::write(
         dir.join("Cplus.toml"),
-        "[package]\nname = \"coro_ref\"\n\n[[bin]]\nname = \"coro_ref\"\npath = \"src/main.cplus\"\n\n[dependencies]\nstdlib = \"*\"\n",
+        "[package]\nname = \"coro_ref\"\n\n[dependencies]\nstdlib = \"*\"\n",
     )
     .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
@@ -23855,7 +24000,7 @@ fn empty_text_coerces_to_valid_str_view() {
     let dir = tempdir();
     std::fs::write(
         dir.join("Cplus.toml"),
-        "[package]\nname = \"etc\"\n\n[[bin]]\nname = \"etc\"\npath = \"src/main.cplus\"\n\n[dependencies]\nstdlib = \"*\"\n",
+        "[package]\nname = \"etc\"\n\n[dependencies]\nstdlib = \"*\"\n",
     )
     .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
@@ -23909,7 +24054,7 @@ fn borrow_error_names_the_offending_module() {
     let dir = tempdir();
     std::fs::write(
         dir.join("Cplus.toml"),
-        "[package]\nname = \"dm\"\n\n[[bin]]\nname = \"dm\"\npath = \"src/main.cplus\"\n\n[dependencies]\nstdlib = \"*\"\n",
+        "[package]\nname = \"dm\"\n\n[dependencies]\nstdlib = \"*\"\n",
     )
     .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
@@ -24550,7 +24695,7 @@ fn same_package_impl_extension_compiles_and_runs() {
     let dir = tempdir();
     std::fs::write(
         dir.join("Cplus.toml"),
-        "[package]\nname = \"app\"\n\n[[bin]]\nname = \"app\"\npath = \"src/main.cplus\"\n",
+        "[package]\nname = \"app\"\n",
     )
     .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
@@ -24587,7 +24732,7 @@ fn ext_project(main_src: &str, extra: &[(&str, &str)]) -> std::path::PathBuf {
     let dir = tempdir();
     std::fs::write(
         dir.join("Cplus.toml"),
-        "[package]\nname = \"app\"\n\n[[bin]]\nname = \"app\"\npath = \"src/main.cplus\"\n\n[dependencies]\ndep = \"*\"\next = \"*\"\n",
+        "[package]\nname = \"app\"\n\n[dependencies]\ndep = \"*\"\next = \"*\"\n",
     )
     .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
@@ -24966,7 +25111,7 @@ fn a_user_type_named_like_a_lang_item_does_not_shadow_it() {
     let dir = tempdir();
     std::fs::write(
         dir.join("Cplus.toml"),
-        "[package]\nname = \"shadow\"\n\n[[bin]]\nname = \"shadow\"\npath = \"src/main.cplus\"\n\n[dependencies]\nstdlib = \"*\"\n",
+        "[package]\nname = \"shadow\"\n\n[dependencies]\nstdlib = \"*\"\n",
     )
     .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
@@ -25055,7 +25200,7 @@ fn a_typoed_import_prefix_reports_the_same_error_in_every_position() {
         let dir = tempdir();
         std::fs::write(
             dir.join("Cplus.toml"),
-            "[package]\nname = \"typo\"\n\n[[bin]]\nname = \"typo\"\npath = \"src/main.cplus\"\n",
+            "[package]\nname = \"typo\"\n",
         )
         .unwrap();
         std::fs::create_dir_all(dir.join("src")).unwrap();

@@ -1,22 +1,22 @@
 #!/usr/bin/env python3
-"""Generate the diagnostic docs from the single-source catalog docs/errors.toml.
+"""Generate the diagnostic docs from the single-source catalog docs/lang/errors.toml.
 
 Outputs (both carry a "generated — do not edit" header):
-  - docs/ERRORS.md                          (maintainer reference, in this repo)
+  - docs/lang/errors.md                     (maintainer reference, in this repo)
   - the cplus-lang.dev /docs/error-codes page (the public manual)
 
 The same catalog is intended to back a future `cpc explain <CODE>`, so the CLI,
-ERRORS.md, and the website cannot drift. Edit docs/errors.toml, then run:
+errors.md, and the website cannot drift. Edit docs/lang/errors.toml, then run:
 
-    python3 docs/gen_errors.py
-    python3 docs/gen_errors.py --site-md /path/to/error-codes.md   # override site path
+    python3 docs/lang/gen_errors.py
+    python3 docs/lang/gen_errors.py --site-md /path/to/error-codes.md   # override site path
 """
 import argparse, sys, tomllib
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 DEFAULT_ERRORS  = HERE / "errors.toml"
-DEFAULT_ERRORSMD = HERE / "ERRORS.md"
+DEFAULT_ERRORSMD = HERE / "errors.md"
 SITE_DOCS = Path("/Users/adel/Workspace/cplus.dev/resources/content/docs")
 
 
@@ -110,10 +110,10 @@ def render(cat, *, frontmatter, maintainer, header):
         parts += [entry_md(c, maintainer=maintainer) for c in items]
     return "\n".join(parts).rstrip() + "\n"
 
-SITE_HEADER = ("<!-- GENERATED FILE — do not edit by hand. Source: docs/errors.toml in "
+SITE_HEADER = ("<!-- GENERATED FILE — do not edit by hand. Source: docs/lang/errors.toml in "
                "the cplus compiler repo (github.com/netdur/cplus); regenerate with "
-               "`python3 docs/gen_errors.py`. -->\n")
-ERRORSMD_HEADER = ("<!-- GENERATED from docs/errors.toml by docs/gen_errors.py — do not "
+               "`python3 docs/lang/gen_errors.py`. -->\n")
+ERRORSMD_HEADER = ("<!-- GENERATED from docs/lang/errors.toml by docs/lang/gen_errors.py — do not "
                    "edit by hand. This is the maintainer reference; the public copy is the "
                    "cplus-lang.dev /docs/error-codes page. -->\n")
 

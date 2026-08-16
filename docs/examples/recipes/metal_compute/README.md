@@ -39,7 +39,7 @@ If `xcrun -sdk macosx metal --version` succeeds, you're set.
    then writes the resulting byte count to `shaders/double.metallib.size`.
 2. Runs `cpc build`, which reads `Cplus.toml`, walks `src/main.cplus`,
    and links against `Metal` + `Foundation` + `-lobjc` from the manifest's
-   `[[bin]]` section.
+   `[link]` table.
 
 Exits 0 when the GPU result matches the scalar reference for every
 element of the input buffer.
@@ -48,7 +48,7 @@ element of the input buffer.
 
 The v0.0.6 recipe used `cpc --emit-ll | clang` because `cpc build` was
 assumed not to honor `-framework`. The follow-on `appkit_hello` recipe
-proved it does (via `[[bin]] frameworks = [...]`), so this recipe now
+proved it does (via `[link] frameworks = [...]`), so this recipe now
 uses plain `cpc build`. The v0.0.6 `sed s/__SHADER_LEN__/.../` patch on
 `src/main.cplus` is also gone — the shader byte count flows through
 `include_str!("../shaders/double.metallib.size")` and a 5-line digit

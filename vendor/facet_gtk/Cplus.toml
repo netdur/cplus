@@ -15,9 +15,6 @@ edition = "2026"
 # facet_appkit is the reference implementation. See README.md.
 
 # Test root (structural, host-independent tests; runtime tests need a GTK host).
-[[bin]]
-name = "facet_gtk_tests"
-path = "src/test_main.cplus"
 
 [dependencies]
 stdlib      = "*"

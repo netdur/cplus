@@ -19,9 +19,8 @@ edition = "2026"
 # loop and an app that never exits cannot report a failure to a shell.
 #
 #     vendor/facet_uikit/tools/run_ios_tests.sh
-[lib]
-crate-type = "staticlib"
-path = "src/main.cplus"
+[ios]
+entry = "src/main.cplus"
 
 [dependencies]
 stdlib      = "*"

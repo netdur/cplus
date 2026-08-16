@@ -2,7 +2,3 @@
 name    = "tcp_client"
 version = "0.0.1"
 edition = "2026"
-
-[[bin]]
-name = "tcp_client"
-path = "src/main.cplus"

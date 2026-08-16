@@ -1,10 +1,10 @@
 # C+ diagnostic catalog — THE SINGLE SOURCE OF TRUTH for error codes.
 #
-# This file is the source for the generated docs: docs/ERRORS.md and the
+# This file is the source for the generated docs: docs/lang/errors.md and the
 # cplus-lang.dev /docs/error-codes page are produced from here by
-# docs/gen_errors.py. A planned `cpc explain <CODE>` will read it too, so
+# docs/lang/gen_errors.py. A planned `cpc explain <CODE>` will read it too, so
 # the CLI, the manual, and ERRORS.md cannot drift. Do NOT edit the
-# generated outputs by hand; edit this file and rerun docs/gen_errors.py.
+# generated outputs by hand; edit this file and rerun docs/lang/gen_errors.py.
 #
 # Fields per
 
@@ -1655,38 +1655,36 @@ name = "x"
 
 [[code]]
 id = "E0408"
-title = "Both `[[bin]]` and `[lib]` declared"
+title = "Removed target section, or an app entry conflicting with `[library]`"
 category = "Modules, paths, and visibility"
 severity = "error"
 repro = "scenario"
 lang = "toml"
 verified = true
-emit_site = "cplus-core/src/manifest.rs:332"
-test = "cpc/tests/e2e.rs:bin_and_lib_in_one_manifest_emit_e0408"
-cause = "A single manifest declares both a binary target and a library target, which are mutually exclusive."
-fix = "A manifest is either an executable or a library; split it into two crates if you need both."
+emit_site = "cplus-core/src/manifest.rs:parse"
+test = "cpc/tests/e2e.rs:legacy_bin_section_emits_e0408_migration"
+cause = "The manifest uses a removed Cargo-shaped target section (`[[bin]]` / `[lib]`), or declares both an app `entry` and a `[library]` section. An app is named by its `entry` (per platform when needed); what a build produces is the target platform's fact, not a manifest section."
+fix = "Delete `[[bin]]` (`src/main.cplus` is the default entry) or replace it with `entry = \"...\"`; move its `frameworks`/`libs` to `[link]`. Replace `[lib]` with a `[<platform>] entry` (external-builder app) or a `[library]` section with `kind = \"staticlib\"|\"cdylib\"|\"both\"`. A package is an application or a C-ABI library, never both."
 example = '''
 [package]
-name = "both"
+name = "legacy"
 
 [[bin]]
 name = "exe"
-
-[lib]
 '''
 
 [[code]]
 id = "E0409"
-title = "`fn main` defined in a library target"
+title = "`fn main` in a build that produces a library archive"
 category = "Modules, paths, and visibility"
 severity = "error"
 repro = "scenario"
 lang = "cplus"
 verified = true
-emit_site = "cpc/src/main.rs:1810"
+emit_site = "cpc/src/main.rs:build_lib_project"
 test = "cpc/tests/e2e.rs:lib_target_rejects_fn_main_with_e0409"
-cause = "A manifest that declares `[lib]` also defines a `fn main`, but a library has no entry point."
-fix = "Remove `fn main`, or use `[[bin]]` instead of `[lib]` if you meant to build an executable. (Requires a `[lib]` manifest.)"
+cause = "The build produces a library archive — a `[library]` target, an entry-less library package, or an app entry on an external-builder platform (ios, android) — and the program defines `fn main`, which nothing would ever call: the consumer (or the platform shell, through an `export extern fn`) owns the entry point."
+fix = "Remove `fn main`. An external-builder platform's entry is an `export extern fn` the platform shell calls; a self-linked platform's entry (with `fn main`) belongs in a package/platform `entry`, not a library."
 example = '''
 fn add(a: i32, b: i32) -> i32 { return a + b; }
 fn main() -> i32 { return 0; }
@@ -1728,21 +1726,59 @@ fn main() -> i32 { return bad(0); }
 
 [[code]]
 id = "E0412"
-title = "Unsupported `crate-type` value"
+title = "Unsupported `[library] kind` value"
 category = "Modules, paths, and visibility"
 severity = "error"
 repro = "source"
 lang = "toml"
 verified = false
-emit_site = "cplus-core/src/manifest.rs:337"
-cause = "A `[lib]` `crate-type` value is not one of the accepted kinds."
-fix = "Use one of `staticlib`, `cdylib`, or `both`."
+emit_site = "cplus-core/src/manifest.rs:parse"
+test = "cplus-core/src/manifest.rs:library_rejects_unknown_kind_e0412"
+cause = "A `[library] kind` value is not one of the accepted kinds."
+fix = "Use one of `staticlib` (the default), `cdylib`, or `both`."
 example = '''
 [package]
 name = "mathlib"
 
-[lib]
-crate-type = "rlib"
+[library]
+kind = "rlib"
+'''
+
+[[code]]
+id = "E0413"
+title = "No entry for the target platform"
+category = "Modules, paths, and visibility"
+severity = "error"
+repro = "scenario"
+lang = "toml"
+verified = true
+emit_site = "cpc/src/main.rs:build_project"
+test = "cpc/tests/e2e.rs:target_ios_app_entry_builds_the_archive"
+cause = "The package declares app entries, but none that applies to the platform being built: no `[<platform>] entry` for it and no package-level `entry`. A declared platform entry also suppresses the `src/main.cplus` default everywhere else — the scoping is taken as deliberate."
+fix = "Add `[<platform>] entry = \"src/...\"` for the platform, or a package-level `entry` that every platform without an override shares."
+example = '''
+[package]
+name = "gallery_ios"
+
+[ios]
+entry = "src/main.cplus"
+# -> building on macOS: E0413 `gallery_ios` declares no entry for platform `macos`
+'''
+
+[[code]]
+id = "E0414"
+title = "Self-linked platform entry defines no `fn main`"
+category = "Modules, paths, and visibility"
+severity = "error"
+repro = "scenario"
+lang = "cplus"
+verified = true
+emit_site = "cpc/src/main.rs:build_project"
+cause = "The entry for a self-linked platform (macos, linux, windows) — where cpc links an executable — defines no `fn main`. Without this check the only symptom is the linker's `undefined symbol: _main`."
+fix = "Define `fn main() -> i32` in the entry's import tree. An `export extern fn` entry is the external-builder shape (ios, android), where the platform shell calls it."
+example = '''
+export extern fn app_main() -> i32 { return 0; }
+// -> building for the host: E0414 entry defines no `fn main`
 '''
 
 [[code]]
@@ -3229,29 +3265,6 @@ impl Cell: Drop {
 '''
 
 [[code]]
-id = "W0003"
-title = "`[[bin]]` `[link]` libs / frameworks ignored"
-category = "Warnings"
-severity = "warning"
-repro = "scenario"
-lang = "toml"
-verified = true
-emit_site = "cpc/src/main.rs:1654"
-test = "cpc/tests/e2e.rs:bin_package_link_libs_warns_w0003"
-cause = "A `[[bin]]` package declares its own top-level `[link]` `libs` / `frameworks`, but those are read only when a package is a dependency of another — a `[[bin]]` is never a dependency, so they are ignored when building the binary."
-fix = "Move them under `[[bin]]` `libs` / `frameworks` (top-level `[link]` libs apply only when the package is a dependency)."
-example = '''
-[package]
-name = "app"
-[[bin]]
-name = "app"
-path = "src/main.cplus"
-[link]
-libs = ["boguslib"]
-# -> W0003 `[link] libs` on a `[[bin]]` package is ignored when building the binary
-'''
-
-[[code]]
 id = "W0004"
 title = "`on_value` has the `#[watch]` hook signature but the struct is not `#[watch]`"
 category = "Warnings"
@@ -3367,7 +3380,7 @@ repro = "checked"
 lang = "cplus"
 verified = false
 emit_site = "cplus-core/src/sema.rs"
-cause = "A call used a named argument (`f(name: value)`). The parser accepts the syntax, but the argument-matching pass that reorders named arguments into positional order and splices defaults is not implemented yet (see docs/design/named-params-and-defaults.md). This is a temporary guard so a labeled call is rejected cleanly rather than silently bound by position."
+cause = "A call used a named argument (`f(name: value)`). The parser accepts the syntax, but the argument-matching pass that reorders named arguments into positional order and splices defaults is not implemented yet (see docs/compiler/design/named-params-and-defaults.md). This is a temporary guard so a labeled call is rejected cleanly rather than silently bound by position."
 fix = "Pass the arguments positionally for now: `f(value)`."
 example = '''
 fn add(n1: i32, n2: i32) -> i32 { return n1 +% n2; }

@@ -110,8 +110,8 @@ fn init_scaffolds_a_named_project() {
     let proj = dir.path().join("myapp");
     let manifest = read(&proj.join("Cplus.toml"));
     assert!(manifest.contains("name    = \"myapp\""), "manifest: {manifest}");
-    assert!(manifest.contains("[[bin]]"));
-    assert!(manifest.contains("path = \"src/main.cplus\""));
+    // v0.0.28: no target section — src/main.cplus is the default entry.
+    assert!(!manifest.contains("[[bin]]"), "legacy [[bin]] must not be scaffolded: {manifest}");
     // stdlib is the Go-style path@version source, pinned to this toolchain.
     assert!(manifest.contains("vendor/stdlib@"), "stdlib should use path@version: {manifest}");
     assert!(

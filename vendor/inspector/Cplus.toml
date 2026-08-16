@@ -14,10 +14,6 @@ edition = "2026"
 # this one sees unexposed nodes and writes properties that are not user
 # affordances. See docs/design.md.
 
-[[bin]]
-name = "inspector_tests"
-path = "src/test_main.cplus"
-
 [dependencies]
 stdlib      = "*"
 flex_layout = "*"

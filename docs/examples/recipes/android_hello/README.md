@@ -57,7 +57,7 @@ the package name in both the Java file and the C+ export
 
 ```
 android_hello/
-├── Cplus.toml              package metadata ([lib] staticlib)
+├── Cplus.toml              package metadata ([android] entry)
 ├── src/lib.cplus           View tree + click hook, all C+
 ├── host/MainActivity.java  the entire Java surface (2 methods)
 ├── host/AndroidManifest.xml

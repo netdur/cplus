@@ -28,4 +28,4 @@ cpc build
 
 Requires GTK 4 development files (`libgtk-4-dev` on Debian/Ubuntu); the
 `gobject-2.0` / `glib-2.0` link libs arrive transitively from the `gobject`
-dependency, so this package only adds `gtk-4` under `[[bin]] libs`.
+dependency, so this package only adds `gtk-4` under `[link] libs`.

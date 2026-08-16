@@ -7,10 +7,6 @@ edition = "2026"
 # on agent_core only for the Grant it helps an application build; the
 # verification itself names nothing about agents.
 
-[[bin]]
-name = "agent_jwt_tests"
-path = "src/test_main.cplus"
-
 [dependencies]
 stdlib     = "*"
 json       = "*"

@@ -366,11 +366,11 @@ pub struct StructDef {
     /// Cached `Copy` flag — structural auto-derive: true iff every field type
     /// is `Copy` AND the type is not `Drop`. Computed by
     /// `compute_struct_copy_flags` after field types and Drop status are
-    /// resolved. See `docs/design/phase3-copy-derivation.md`.
+    /// resolved. See `docs/compiler/design/phase3-copy-derivation.md`.
     pub is_copy: bool,
     /// True iff this struct has a destructor (a method named `drop` with the
     /// signature `fn drop(ref this)`). Drop types are always non-`Copy` —
-    /// see `docs/design/phase3-drop.md`. Set by `collect_methods`.
+    /// see `docs/compiler/design/phase3-drop.md`. Set by `collect_methods`.
     pub is_drop: bool,
     /// OBS.1: true when the struct carries `#[watch]`. Every field store
     /// reached through a safe owned place is followed by a call to this
@@ -3705,7 +3705,7 @@ impl SemaCx<'_> {
     /// or we stop). Once flipped to true, a flag never flips back — the rule
     /// is monotone.
     ///
-    /// See `docs/design/phase3-copy-derivation.md`.
+    /// See `docs/compiler/design/phase3-copy-derivation.md`.
     /// v0.0.15: reconcile each struct's `is_drop` flag with its method table
     /// before the Copy/Drop fixpoints run. A `struct`/`impl` with a `drop`
     /// method sets `is_drop` at collection time, but a *generic instantiation*
@@ -4015,7 +4015,7 @@ impl SemaCx<'_> {
                 }
                 // `Drop` types are non-Copy regardless of fields — allowing
                 // Copy on a Drop type would cause double-free. See
-                // `docs/design/phase3-drop.md` §4.2.
+                // `docs/compiler/design/phase3-drop.md` §4.2.
                 if self.structs[i].is_drop {
                     continue;
                 }
@@ -4611,7 +4611,7 @@ impl SemaCx<'_> {
     /// Resolve variant payload types after all type names are known. This
     /// is the enum-side mirror of `collect_struct_fields`: it lets variant
     /// payloads forward-reference any struct or enum declared elsewhere
-    /// in the program. See `docs/design/phase3-tagged-unions.md`.
+    /// in the program. See `docs/compiler/design/phase3-tagged-unions.md`.
     fn collect_enum_payloads(&mut self, p: &Program) {
         for item in &p.items {
             self.current_file = item.origin_file.clone();
@@ -4960,7 +4960,7 @@ impl SemaCx<'_> {
                 // return type). Defining a method named `drop` marks the
                 // struct as `Drop`, which forces non-Copy in
                 // `compute_struct_copy_flags`. See
-                // `docs/design/phase3-drop.md`.
+                // `docs/compiler/design/phase3-drop.md`.
                 if m.name.name == "drop" {
                     let recv_ok = matches!(m.receiver, Some(Receiver::Mut));
                     let no_extra_params = params.is_empty();
@@ -8131,7 +8131,7 @@ impl SemaCx<'_> {
     ///
     /// E0360 (`#[test]` inside `impl`) is already caught at the attrs-pass
     /// layer (E0356 on method placement) — fires before sema sees this; the
-    /// code is reserved by [docs/design/phase5-attributes.md](../../docs/design/phase5-attributes.md)
+    /// code is reserved by [docs/compiler/design/phase5-attributes.md](../../docs/compiler/design/phase5-attributes.md)
     /// in case a future refactor needs a sema-level fallback. Not emitted here.
     fn check_test_attribute_rules(&mut self, f: &Function, sig: &FnSig) {
         // Find the #[test] attribute (if any) — span is used for diagnostic
@@ -8928,7 +8928,7 @@ impl SemaCx<'_> {
                 // The deferred expression's value is discarded; sema just
                 // type-checks it like any expression statement. Codegen
                 // re-emits the expression at scope exit (lexical, not
-                // runtime-stack — see `docs/design/phase3-drop.md` §4.4).
+                // runtime-stack — see `docs/compiler/design/phase3-drop.md` §4.4).
                 let _ = self.check_expr(e, None);
             }
             // The lowering pass (`crate::lower`) replaces every `IfLet` /
@@ -9564,6 +9564,17 @@ impl SemaCx<'_> {
             "include_bytes" => self.check_intrinsic_include_bytes(type_args, args, ret_ty, span),
             "include_str" => self.check_intrinsic_include_str(type_args, args, ret_ty, span),
             "env" => self.check_intrinsic_env(type_args, args, ret_ty, span),
+            // `#platform()` — the ACTIVE TARGET's platform name as a `str`
+            // constant: one of `crate::target::PLATFORMS` ("macos", "linux",
+            // "windows", "ios", "android", "esp32", "wasm"), the same
+            // vocabulary `[<platform>.dependencies]` sections and the
+            // `_<platform>.cplus` file override use. Resolved at check time
+            // from `--target`, so a `--target ios-arm64` build from a Mac
+            // sees "ios", never "macos". Value-level only: both arms of an
+            // `if #platform() == ...` still compile, so a branch cannot hide
+            // an import the platform doesn't have (that is what the file
+            // override is for).
+            "platform" => self.check_intrinsic_platform(type_args, args, ret_ty, span),
             "size_of" => self.check_intrinsic_layout("size_of", type_args, args, ret_ty, span),
             "align_of" => self.check_intrinsic_layout("align_of", type_args, args, ret_ty, span),
             // v0.0.12 G-028 (llama.cplus G-026): `#zero::[T]()` returns a
@@ -10207,6 +10218,58 @@ impl SemaCx<'_> {
             }
         };
         self.check_env_var(&name, span)
+    }
+
+    /// `#platform() -> str`. Zero-arg sibling of `#env`: the value is
+    /// computed here (`target::active_platform()`) instead of read from the
+    /// process environment, and it rides the same span-keyed table, so
+    /// codegen's `emit_env_var_globals` prepass emits the byte global and
+    /// `gen_intrinsic_env` builds the `str` fat pointer without any new
+    /// machinery. All sites in a module share one global (the prepass dedups
+    /// by value).
+    fn check_intrinsic_platform(
+        &mut self,
+        type_args: &[Type],
+        args: &[Expr],
+        ret_ty: Option<&Type>,
+        span: ByteSpan,
+    ) -> Ty {
+        if !type_args.is_empty() {
+            self.err(
+                "E0903",
+                format!(
+                    "`#platform` takes no type arguments, got {}",
+                    type_args.len()
+                ),
+                span,
+            );
+        }
+        if ret_ty.is_some() {
+            self.err(
+                "E0903",
+                "`#platform` does not accept a `-> T` return-type ascription".to_string(),
+                span,
+            );
+        }
+        if !args.is_empty() {
+            self.err(
+                "E0903",
+                format!("`#platform` takes 0 arguments, got {}", args.len()),
+                span,
+            );
+            for a in args {
+                let _ = self.check_expr(a, None);
+            }
+            return Ty::Error;
+        }
+        self.env_vars_table.insert(
+            span,
+            EnvVarEntry {
+                name: "platform".to_string(),
+                value: crate::target::active_platform().to_string(),
+            },
+        );
+        Ty::Str
     }
 
     // ---- v0.0.11 Phase 4: `#size_of::[T]()` / `#align_of::[T]()` ----
@@ -16806,7 +16869,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
     /// E0509: reject moving a non-Copy value out of a field/index of a place
     /// whose type — at any level of the projection chain — implements `drop`.
     ///
-    /// C+'s drop model (docs/design/phase3-drop.md §5) makes a destructor
+    /// C+'s drop model (docs/compiler/design/phase3-drop.md §5) makes a destructor
     /// responsible for freeing its own fields by hand; the compiler does not
     /// synthesize per-field drops for Drop types. So stealing a field out from
     /// under a live destructor is a guaranteed double-free / use-after-free:
@@ -24623,6 +24686,45 @@ fn pm(ref r: R) -> i32 { return 0; }\n";
                  return 0;\n\
              }",
             "E0876",
+        );
+    }
+
+    // ---- `#platform()` — active target's platform name as a str ----
+
+    #[test]
+    fn platform_intrinsic_types_as_str() {
+        // Zero-arg, resolves to `str` at sema time. Tests never mutate the
+        // process-global target, so the value is the host platform.
+        assert_clean(
+            "fn main() -> i32 {\n\
+                 let p: str = #platform();\n\
+                 return 0;\n\
+             }",
+        );
+        // The value participates in ordinary str comparison.
+        assert_clean(
+            "fn main() -> i32 {\n\
+                 if #platform() == \"ios\" { return 1; }\n\
+                 return 0;\n\
+             }",
+        );
+    }
+
+    #[test]
+    fn platform_intrinsic_rejects_args_and_ascription() {
+        assert_only_code(
+            "fn main() -> i32 {\n\
+                 let _p: str = #platform(\"macos\");\n\
+                 return 0;\n\
+             }",
+            "E0903",
+        );
+        assert_only_code(
+            "fn main() -> i32 {\n\
+                 let _p: str = #platform() -> str;\n\
+                 return 0;\n\
+             }",
+            "E0903",
         );
     }
 

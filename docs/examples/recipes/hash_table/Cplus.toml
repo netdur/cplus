@@ -2,7 +2,3 @@
 name    = "hash_table"
 version = "0.0.1"
 edition = "2026"
-
-[[bin]]
-name = "hash_table"
-path = "src/main.cplus"

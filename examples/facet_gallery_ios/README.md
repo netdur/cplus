@@ -129,10 +129,11 @@ Five bugs, all found by running and none by reading:
    `bugs/closed/ios-target-defaulted-struct-param-garbage.md`.
 
 The fifth is worth reading even if you never touch iOS. It only appeared here
-because an iOS target is a **staticlib**, and a `[lib]` gives every name-public
-function `weak_odr` linkage — which forfeits `fastcc`, which is what had been
-passing the big struct in registers. The same source as a `[[bin]]` was correct
-on every platform, which is why it read for three sessions as a UIKit problem.
+because an iOS target builds a **library archive**, and the library pipeline
+gives every name-public function `weak_odr` linkage — which forfeits `fastcc`,
+which is what had been passing the big struct in registers. The same source
+built as an executable was correct on every platform, which is why it read for
+three sessions as a UIKit problem.
 
 Not yet exercised at all: the dark-mode flip (known unwired — UIKit has no
 application-level appearance hook), and every kind on the Gaps page.

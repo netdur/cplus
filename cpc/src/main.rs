@@ -95,8 +95,9 @@ build flags (apply to `cpc FILE` and `cpc build`):
                                     External-builder targets stop at object emission — the
                                     external build system (Xcode, the Android NDK build,
                                     ESP-IDF) owns the final link. Combine with --emit-obj /
-                                    --emit-ll / --emit-asm, or `cpc build` of a `[lib]`
-                                    staticlib. android-arm64 uses the NDK's clang
+                                    --emit-ll / --emit-asm, or `cpc build` of a project (an
+                                    app entry or a library becomes lib<name>.a + a C
+                                    header). android-arm64 uses the NDK's clang
                                     ($ANDROID_NDK_HOME, or the SDK's newest ndk/; r28.2+);
                                     esp32-xtensa uses esp-clang ($CPC_ESP_CLANG, or
                                     ~/.espressif via `idf_tools.py install esp-clang`).
@@ -734,7 +735,7 @@ fn main() -> ExitCode {
     // Reject the host-link entry points up front with a pointer to the
     // supported flows. `--emit-obj` (checked via emit_obj_input) and the
     // `--emit-ll`/`--emit-asm` flags (already dispatched inline above) are
-    // the handoff points; `build` enforces its own [lib]-vs-[[bin]] rule.
+    // the handoff points; `build` routes by entry/library and handoff class.
     if target_spec.handoff == Handoff::ExternalBuilder && emit_obj_input.is_none() {
         match (subcommand, &input) {
             (Some(Subcommand::Test), _) => {
@@ -750,7 +751,7 @@ fn main() -> ExitCode {
                     target_spec.name
                 );
                 eprintln!(
-                    "    use --emit-obj/--emit-ll/--emit-asm, or `cpc build` with a `[lib]` staticlib"
+                    "    use --emit-obj/--emit-ll/--emit-asm, or `cpc build` of a project (the entry or library becomes a static archive)"
                 );
                 return ExitCode::FAILURE;
             }
@@ -1348,7 +1349,7 @@ fn manifest_diag(
 /// Phase 2 Slice 2C: walk the consumer's `[dependencies]`, validate each
 /// vendor package against the manifest-is-truth contract, and accumulate
 /// linker arguments. The build driver appends these after the consumer's
-/// own `[[bin]].frameworks`/`libs` (or `[lib]`'s equivalents) so the order
+/// own `[link]` frameworks/libs so the order
 /// is: consumer-first, then each dep in declared order.
 ///
 /// Per-dep validation:
@@ -1960,16 +1961,15 @@ fn build_project(
     if let Err(code) = ensure_prebuilt_deps(&m, build_mode, diag_mode) {
         return code;
     }
-    // Phase 5 Slice 5.A: a `[lib]` manifest dispatches to the library
-    // build path (object → archive / shared-library) instead of the
-    // executable path. Mutual exclusion with `[[bin]]` is enforced at
-    // manifest-parse time (E0408), so reaching here with `lib` set
-    // means no `[[bin]]` declared.
+    // A `[library]` (or prebuild-synthesized) target dispatches to the
+    // library build path (object → archive / shared-library) instead of the
+    // executable path. Mutual exclusion with app entries is enforced at
+    // manifest-parse time (E0408).
     if let Some(mut lib) = m.lib.clone() {
         // A synthesized target compiles the whole package, the same way the
         // prebuild pass does — `cpc build` inside the package and a consumer's
         // prebuild of it must not produce different archives. An explicit
-        // `[lib]` keeps its declared entry and its bare C-ABI names.
+        // `[library] entry` keeps its declared entry and its bare C-ABI names.
         let c_abi_entry = !lib.synthesized;
         if lib.synthesized {
             match write_package_entry(&m.root, &m.package.name) {
@@ -1987,38 +1987,92 @@ fn build_project(
         timings::report();
         return code;
     }
-    // v0.0.21 multi-backend slice 1: an external-builder target has no app
-    // link inside cpc — Xcode (or the platform's build system) owns it. A
-    // `[[bin]]` build would end at exactly that link, so reject it with the
-    // supported flow instead of failing inside clang.
+    // WHAT A BUILD PRODUCES IS THE TARGET'S FACT, not the manifest's. The
+    // manifest names the entry per platform; the target's handoff class
+    // picks the pipeline: a self-linked platform (macos/linux/windows) gets
+    // an executable, an external-builder platform (ios/android/esp32) gets
+    // `lib<name>.a` + a C header and Xcode / Gradle / ESP-IDF owns the link.
     let tgt = target::active_target();
+    let platform = target::active_platform();
+    let entry: PathBuf = match m.entry_for(platform) {
+        Some(e) => e,
+        // An app that names entries, none of them for this platform: a hard,
+        // specific error — never a silent fall-through to library mode.
+        None if m.is_app() => {
+            let declared = m.entry_platforms();
+            let d = diag::Diagnostic {
+                severity: Severity::Error,
+                code: diag::DiagCode("E0413"),
+                message: format!(
+                    "`{}` declares no entry for platform `{platform}`",
+                    m.package.name
+                ),
+                primary: diag::SourceSpan {
+                    file: manifest_path.clone(),
+                    start: diag::Position { line: 1, col: 1, byte: 0 },
+                    end: diag::Position { line: 1, col: 1, byte: 0 },
+                },
+                labels: Vec::new(),
+                notes: vec![
+                    format!("entries are declared for: {}", declared.join(", ")),
+                    format!("add `[{platform}] entry = \"src/...\"` (or a package-level `entry`) to build for this platform"),
+                ],
+                suggestions: Vec::new(),
+            };
+            emit_diag(&d, diag_mode, "");
+            return ExitCode::FAILURE;
+        }
+        // No entry anywhere: a library package. `cpc build` archives the
+        // whole src/ tree, exactly as a consumer's prebuild pass would.
+        None => {
+            let mut lib = manifest::LibTarget {
+                name: m.package.name.clone(),
+                path: PathBuf::new(),
+                crate_type: manifest::CrateType::Staticlib,
+                synthesized: true,
+                frameworks: Vec::new(),
+                libs: Vec::new(),
+            };
+            match write_package_entry(&m.root, &m.package.name) {
+                Ok(p) => lib.path = p,
+                Err(e) => {
+                    eprintln!("cpc: {e}");
+                    return ExitCode::FAILURE;
+                }
+            }
+            let code =
+                build_lib_project(&m, &lib, out, diag_mode, build_mode, fp_contract, false);
+            timings::report();
+            return code;
+        }
+    };
     if tgt.handoff == Handoff::ExternalBuilder {
-        eprintln!(
-            "cpc: target `{}` stops at object emission (the external builder owns the final link); `[[bin]]` projects can't be built for it",
-            tgt.name
-        );
-        eprintln!(
-            "    declare a `[lib]` staticlib instead and link the archive from the external build system"
-        );
-        return ExitCode::FAILURE;
+        // The entry's import tree becomes the archive. Qualified names
+        // (c_abi_entry = false): nothing consumes the archive's internal
+        // names — the external shell calls the entry's `export extern fn`s,
+        // which are unmangled by definition and declared in the generated
+        // header. The E0409 scan inside rejects a stray `fn main`.
+        let lib = manifest::LibTarget {
+            name: m.package.name.clone(),
+            path: entry,
+            crate_type: manifest::CrateType::Staticlib,
+            synthesized: false,
+            frameworks: Vec::new(),
+            libs: Vec::new(),
+        };
+        let code = build_lib_project(&m, &lib, out, diag_mode, build_mode, fp_contract, false);
+        timings::report();
+        return code;
     }
-    if m.bins.len() != 1 {
-        eprintln!(
-            "cpc: Phase 4 slice 4A supports exactly one [[bin]]; found {}",
-            m.bins.len()
-        );
-        return ExitCode::FAILURE;
-    }
-    let bin = &m.bins[0];
-    if !bin.path.is_file() {
+    if !entry.is_file() {
         // Build E0407 directly here — same structured shape so json/short/human
         // all work uniformly.
         let d = diag::Diagnostic {
             severity: Severity::Error,
             code: diag::DiagCode("E0407"),
-            message: format!("binary entry `{}` does not exist", bin.path.display()),
+            message: format!("app entry `{}` does not exist", entry.display()),
             primary: diag::SourceSpan {
-                file: bin.path.clone(),
+                file: entry.clone(),
                 start: diag::Position {
                     line: 1,
                     col: 1,
@@ -2040,11 +2094,11 @@ fn build_project(
 
     // Phase 2 Slice 2B: thread the manifest's [dependencies] names into
     // the resolver so vendor imports (`utils/math`) resolve under
-    // vendor/<dep>/src/. The consumer's bin path is the entry.
+    // vendor/<dep>/src/. The app entry is the resolver's entry.
     let dep_names: Vec<String> = active_dep_names(&m);
     let (program, _entry_file_id, mono, loaded_paths) = match timings::phase("resolve+sema+borrowck", || {
         load_and_check_project_full(
-            &bin.path,
+            &entry,
             &m.root,
             diag_mode,
             false,
@@ -2055,6 +2109,35 @@ fn build_project(
         Ok(p) => p,
         Err(code) => return code,
     };
+    // E0414: a self-linked platform's entry must define `fn main` — without
+    // it the only symptom used to be clang's `undefined symbol: _main`,
+    // which names neither the file nor the rule.
+    if !program.items.iter().any(|item| {
+        matches!(&item.kind, cplus_core::ast::ItemKind::Function(f)
+            if f.name.name == "main" && !f.is_extern)
+    }) {
+        let d = diag::Diagnostic {
+            severity: Severity::Error,
+            code: diag::DiagCode("E0414"),
+            message: format!(
+                "entry `{}` defines no `fn main` (platform `{platform}` links an executable)",
+                entry.display()
+            ),
+            primary: diag::SourceSpan {
+                file: entry.clone(),
+                start: diag::Position { line: 1, col: 1, byte: 0 },
+                end: diag::Position { line: 1, col: 1, byte: 0 },
+            },
+            labels: Vec::new(),
+            notes: vec![
+                "self-linked platforms (macos, linux, windows) enter through `fn main() -> i32`".to_string(),
+                "an `export extern fn` entry is for external-builder platforms (ios, android), where the platform shell calls it".to_string(),
+            ],
+            suggestions: Vec::new(),
+        };
+        emit_diag(&d, diag_mode, "");
+        return ExitCode::FAILURE;
+    }
     // v0.0.3 Phase 5 Slice 5D follow-up: forward --asan/--tsan/--ubsan/
     // --msan through codegen options + clang. Previously `cpc build`
     // silently dropped these flags (always emitted unsanitised IR and
@@ -2073,7 +2156,7 @@ fn build_project(
             BuildMode::Debug => "debug",
             BuildMode::Release => "release",
         };
-        m.root.join("target").join(sub).join(&bin.name)
+        m.root.join("target").join(sub).join(&m.package.name)
     });
     if let Some(parent) = out_path.parent() {
         if let Err(e) = fs::create_dir_all(parent) {
@@ -2089,60 +2172,23 @@ fn build_project(
         }
     };
     let tmp = tmp_handle.path().to_path_buf();
-    // v0.0.2 (AppKit-via-Cplus.toml): expand the manifest's `frameworks`
-    // and `libs` lists into `-framework <name>` / `-l<name>` linker args.
-    // `frameworks` is macOS/iOS-specific (no-op elsewhere because clang's
-    // `-framework` flag is platform-gated), `-l` is cross-platform.
-    let mut link_args: Vec<String> = Vec::with_capacity(bin.frameworks.len() * 2 + bin.libs.len());
-    // The consumer's own `[link] search-paths` go first so `-L<dir>`
-    // precedes any `-l<name>` (its own `[[bin]] libs` below, or a dep's).
+    // The app's own link surface is its `[link]` table: `frameworks`
+    // expand to `-framework <name>` (macOS/iOS-specific — clang gates the
+    // flag), `libs` to `-l<name>` (cross-platform), and `search-paths` go
+    // first so `-L<dir>` precedes any `-l<name>` (its own, or a dep's).
+    let mut link_args: Vec<String> = Vec::new();
     if let Some(ls) = m.link.as_ref() {
-        // v0.0.20 (W0003): a `[[bin]]` package's own `[link] libs`/`frameworks`
-        // are dead — the dep walk (`collect_dep_link_args`) reads a package's
-        // `[link]` libs/frameworks only when it is a *dependency* of another,
-        // and a `[[bin]]` package is never a dependency. Only `[link]
-        // search-paths` feed the binary's own link line (the `-L`/`-rpath`
-        // below). Warn rather than silently ignore; the build continues.
-        if !ls.libs.is_empty() || !ls.frameworks.is_empty() {
-            let mut what: Vec<&str> = Vec::new();
-            if !ls.libs.is_empty() {
-                what.push("libs");
-            }
-            if !ls.frameworks.is_empty() {
-                what.push("frameworks");
-            }
-            let what = what.join(" / ");
-            let d = diag::Diagnostic {
-                severity: Severity::Warning,
-                code: diag::DiagCode("W0003"),
-                message: format!(
-                    "`[link] {what}` on a `[[bin]]` package is ignored when building the binary"
-                ),
-                primary: diag::SourceSpan {
-                    file: manifest_path.clone(),
-                    start: diag::Position { line: 1, col: 1, byte: 0 },
-                    end: diag::Position { line: 1, col: 1, byte: 0 },
-                },
-                labels: Vec::new(),
-                notes: vec![
-                    "`[link] libs`/`frameworks` are read only when this package is a dependency of another package".to_string(),
-                    format!("move them to `[[bin]] {what}` to link them into this binary"),
-                ],
-                suggestions: Vec::new(),
-            };
-            emit_diag(&d, diag_mode, "");
-        }
         for dir in &ls.search_paths {
             link_args.push(format!("-L{dir}"));
             link_args.push(format!("-Wl,-rpath,{dir}"));
         }
-    }
-    for fw in &bin.frameworks {
-        link_args.push("-framework".to_string());
-        link_args.push(fw.clone());
-    }
-    for lib in &bin.libs {
-        link_args.push(format!("-l{lib}"));
+        for fw in &ls.frameworks {
+            link_args.push("-framework".to_string());
+            link_args.push(fw.clone());
+        }
+        for lib in &ls.libs {
+            link_args.push(format!("-l{lib}"));
+        }
     }
     // Phase 2 Slice 2C: walk dependencies, validate each vendor package's
     // manifest-is-truth contract, and append their `[link]` contributions
@@ -2182,8 +2228,9 @@ fn build_project(
 }
 
 /// Phase 5 Slice 5.A: library-build path. Produces `lib<name>.a` and/or
-/// `lib<name>.{dylib,so}` in `target/<mode>/`. Mutually exclusive with
-/// the executable build via the manifest's `[[bin]]` vs `[lib]` choice.
+/// `lib<name>.{dylib,so}` in `target/<mode>/`. Reached three ways: a
+/// `[library]` target, an entry-less library package, or an app entry
+/// built for an external-builder platform.
 ///
 /// Pipeline (mirrors the bin path's structure):
 ///   1. Load + sema-check the lib root source (via `load_and_check_project_full`).
@@ -2196,7 +2243,7 @@ fn build_project(
 /// `c_abi_entry` decides how the entry file's top-level names are spelled, and
 /// the two consumers of an archive want opposite answers.
 ///
-/// A declared `[lib]` exists to be called from C: the entry file's names are
+/// A declared `[library] entry` exists to be called from C: the entry file's names are
 /// the public ABI, so they stay bare and match the generated `.h`. A `[build]
 /// prebuild = true` package exists to be linked by another C+ project, which
 /// addresses every module the same way — `<package>.src.<module>.<item>` — so
@@ -2251,10 +2298,10 @@ fn build_lib_project(
         )
     {
         eprintln!(
-            "cpc: target `{}` stops at object emission (the external builder owns the final link); `crate-type = \"cdylib\"` would require one",
+            "cpc: target `{}` stops at object emission (the external builder owns the final link); `[library] kind = \"cdylib\"` would require one",
             tgt.name
         );
-        eprintln!("    use `crate-type = \"staticlib\"` and link the archive from the external build system");
+        eprintln!("    use `kind = \"staticlib\"` and link the archive from the external build system");
         return ExitCode::FAILURE;
     }
     // v0.0.21 rung 2: resolve the target's toolchain before any front-end
@@ -2292,17 +2339,19 @@ fn build_lib_project(
         Err(code) => return code,
     };
 
-    // Phase 5 Slice 5.A.4: reject `fn main` in a library target. A
-    // library has no entry point; declaring one means the user probably
-    // meant `[[bin]]` instead. E0409 — sema-level gate enforced here at
-    // build-time because sema itself doesn't know about manifest mode.
+    // Reject `fn main` in anything built as a library archive: a `[library]`
+    // target, an entry-less library package, or an app entry on an
+    // external-builder platform. In all three the archive has no process
+    // entry — the consumer (or the platform shell, through an
+    // `export extern fn`) owns it. E0409 — enforced here at build time
+    // because sema itself doesn't know about manifest mode.
     for item in &program.items {
         if let cplus_core::ast::ItemKind::Function(f) = &item.kind {
             if f.name.name == "main" && !f.is_extern {
                 let d = diag::Diagnostic {
                     severity: Severity::Error,
                     code: diag::DiagCode("E0409"),
-                    message: "library targets must not define `fn main`".to_string(),
+                    message: "this build produces a library archive — `fn main` has no caller here".to_string(),
                     primary: diag::SourceSpan {
                         file: lib.path.clone(),
                         start: diag::Position { line: 1, col: 1, byte: 0 },
@@ -2310,8 +2359,8 @@ fn build_lib_project(
                     },
                     labels: Vec::new(),
                     notes: vec![
-                        "this manifest declares `[lib]`; a `fn main` would conflict with the consumer's entry point".to_string(),
-                        "if you meant to build an executable, use `[[bin]]` instead of `[lib]`".to_string(),
+                        "a `[library]` package (and any library archive) leaves the entry point to its consumer".to_string(),
+                        "an external-builder platform (ios, android) enters through an `export extern fn` the platform shell calls".to_string(),
                     ],
                     suggestions: Vec::new(),
                 };
@@ -2464,8 +2513,8 @@ fn build_lib_project(
         // `[link] extra-objects = [...]` bakes into the .dylib so the
         // downstream consumer doesn't have to re-state them. Static
         // archives don't carry link metadata at all, so extra-objects
-        // for `[lib] crate-type = "staticlib"` are silently dropped —
-        // the consumer's `[[bin]]` is where they'd be respected anyway.
+        // for a staticlib are silently dropped — the consumer's own
+        // `[link]` is where they'd be respected anyway.
         if let Some(ls) = m.link.as_ref() {
             for obj in &ls.extra_objects {
                 if !obj.is_file() {
@@ -2494,6 +2543,12 @@ fn build_lib_project(
 /// `--emit-ll-project`: project build, but emit IR to stdout instead of
 /// linking. Mirrors the single-file `--emit-ll FILE` flag. Mostly useful
 /// for testing.
+///
+/// A library-shaped project emits the IR the LIBRARY pipeline would compile, not a
+/// bin-shaped approximation of it. The two differ in linkage, calling
+/// convention and entry-name spelling (`is_lib` / `c_abi_entry`), and emitting
+/// bin flags for a lib manifest makes this flag useless for exactly the bug
+/// that only appears in an archive.
 fn emit_ll_project(diag_mode: DiagMode, build_mode: BuildMode, fp_contract: bool) -> ExitCode {
     let manifest_path = PathBuf::from("Cplus.toml");
     let m = match manifest::load(&manifest_path) {
@@ -2503,11 +2558,29 @@ fn emit_ll_project(diag_mode: DiagMode, build_mode: BuildMode, fp_contract: bool
             return ExitCode::FAILURE;
         }
     };
-    if m.bins.len() != 1 {
-        eprintln!("cpc: Phase 4 slice 4A supports exactly one [[bin]]");
-        return ExitCode::FAILURE;
-    }
-    let bin = &m.bins[0];
+    // App entries and `[library]` are mutually exclusive in one manifest
+    // (E0408), so at most one arm matches. The IR mirrors what `cpc build`
+    // would compile FOR THE ACTIVE TARGET: an app entry on an
+    // external-builder platform emits library-shaped IR, same as the build.
+    let platform = target::active_platform();
+    let (entry, is_lib, c_abi_entry) = match (m.entry_for(platform), m.lib.as_ref()) {
+        (Some(e), _) => {
+            let external = target::active_target().handoff == Handoff::ExternalBuilder;
+            (e, external, false)
+        }
+        // A declared `[library] entry` spells its entry file's names bare —
+        // they are the public C ABI. A synthesized one (no `entry`, or a
+        // `[build] prebuild` package) is addressed like any other module, so
+        // its entry stays qualified. `build_lib_project`'s caller makes the
+        // same choice.
+        (None, Some(lib)) => (lib.path.clone(), true, !lib.synthesized),
+        (None, None) => {
+            eprintln!(
+                "cpc: --emit-ll-project needs an entry for platform `{platform}` or a `[library]` target"
+            );
+            return ExitCode::FAILURE;
+        }
+    };
     // Phase 2 Slice 2C: surface dep walk errors before codegen — the same
     // E0854/E0855/E0860-E0862 checks fire on `--emit-ll-project`, even
     // though no link step runs here. Catches manifest-is-truth violations
@@ -2517,10 +2590,10 @@ fn emit_ll_project(diag_mode: DiagMode, build_mode: BuildMode, fp_contract: bool
     }
     let dep_names: Vec<String> = active_dep_names(&m);
     let (program, _, mono, _loaded_paths) = match load_and_check_project_full(
-        &bin.path,
+        &entry,
         &m.root,
         diag_mode,
-        false,
+        c_abi_entry,
         Some(&dep_names),
         m.realtime_profile.as_ref(),
     ) {
@@ -2529,7 +2602,7 @@ fn emit_ll_project(diag_mode: DiagMode, build_mode: BuildMode, fp_contract: bool
     };
     ensure_coro_end_probed();
     let ir = prune_ir(codegen::generate_with_mono(
-        &program, build_mode, fp_contract, None, &[], false, &mono,
+        &program, build_mode, fp_contract, None, &[], is_lib, &mono,
     ));
     print!("{ir}");
     ExitCode::SUCCESS
@@ -3033,40 +3106,28 @@ fn run_test(
             if let Err(code) = ensure_prebuilt_deps(&m, build_mode, diag_mode) {
                 return code;
             }
-            // Resolve the entry: prefer [lib] (explicit library target),
-            // then [[bin]]. If neither exists on disk, fall back to
-            // `src/<package-name>.cplus` — library-only vendor packages
-            // commonly declare no target at all, and the manifest auto-
-            // injects a phantom `[[bin]]` pointing at `src/main.cplus`
-            // that doesn't exist. The fallback lets such packages still
-            // discover and run their `#[test]` fns.
-            let (entry_path, is_lib_pkg, fw_list, lib_list) = if let Some(lt) = m.lib.as_ref() {
-                (
-                    lt.path.clone(),
-                    true,
-                    lt.frameworks.clone(),
-                    lt.libs.clone(),
-                )
-            } else if m.bins.len() == 1 && m.bins[0].path.is_file() {
-                let b = &m.bins[0];
-                (b.path.clone(), false, b.frameworks.clone(), b.libs.clone())
-            } else if m.bins.len() == 1 {
-                let guess = m.root.join("src").join(format!("{}.cplus", m.package.name));
-                if !guess.is_file() {
-                    eprintln!(
-                        "cpc test: bin entry `{}` not found, and no `{}` fallback either",
-                        m.bins[0].path.display(),
-                        guess.display()
-                    );
-                    return ExitCode::FAILURE;
-                }
-                (guess, true, Vec::new(), Vec::new())
-            } else {
-                eprintln!(
-                    "cpc test: project must declare at most one [[bin]]; found {}",
-                    m.bins.len()
-                );
-                return ExitCode::FAILURE;
+            // Resolve the test entry: `src/test_main.cplus` first (a
+            // dedicated test root means it, even when the package is also an
+            // app), then the app entry for this platform, then the
+            // `[library]` target, then the `src/<package-name>.cplus` root
+            // module — library-only vendor packages commonly declare no
+            // target at all, and the fallback lets them still discover and
+            // run their `#[test]` fns.
+            let (entry_path, is_lib_pkg) =
+                match m.test_entry(cplus_core::target::active_platform()) {
+                    Some(pair) => pair,
+                    None => {
+                        eprintln!(
+                            "cpc test: no test entry — expected `src/test_main.cplus`, an app entry, a `[library]` target, or `src/{}.cplus`",
+                            m.package.name
+                        );
+                        return ExitCode::FAILURE;
+                    }
+                };
+            // A `[library]`'s own frameworks/libs join the test link line.
+            let (fw_list, lib_list) = match m.lib.as_ref() {
+                Some(lt) => (lt.frameworks.clone(), lt.libs.clone()),
+                None => (Vec::new(), Vec::new()),
             };
             // Phase 2 Slice 2C: validate the dep graph before sema. Tests
             // share the consumer's `[dependencies]`, so a misdeclared
@@ -3108,8 +3169,8 @@ fn run_test(
             // Vendor-package self-test: when the package under test
             // declares its own `[link]` table (e.g. metal → Metal,
             // Foundation, objc), the consumer-style fw_list/lib_list
-            // pass above doesn't see it (those come from [[bin]]/[lib]
-            // targets only). Splice in the package's own [link]
+            // pass above doesn't see it (those come from a `[library]`
+            // target only). Splice in the package's own [link]
             // contributions so tests resolve against the same symbols
             // a real consumer would.
             if let Some(ls) = m.link.as_ref() {
@@ -3458,31 +3519,20 @@ fn run_check_project(diag_mode: DiagMode) -> ExitCode {
 }
 
 /// Shared whole-project entry resolution for `cpc check` / `--realtime-report`:
-/// [lib], then a single real [[bin]], then the `src/<package-name>.cplus`
-/// fallback for library-only packages that declare no on-disk target. `ctx` is
-/// the command label used in error messages.
+/// the manifest's source-entry ladder (app entry for the active platform,
+/// `[library]`, `src/test_main.cplus`, then the `src/<package-name>.cplus`
+/// root-module fallback for library-only packages). `ctx` is the command
+/// label used in error messages.
 fn resolve_project_entry(m: &manifest::Manifest, ctx: &str) -> Result<(PathBuf, bool), ExitCode> {
-    if let Some(lt) = m.lib.as_ref() {
-        Ok((lt.path.clone(), true))
-    } else if m.bins.len() == 1 && m.bins[0].path.is_file() {
-        Ok((m.bins[0].path.clone(), false))
-    } else if m.bins.len() == 1 {
-        let guess = m.root.join("src").join(format!("{}.cplus", m.package.name));
-        if !guess.is_file() {
+    match m.resolve_source_entry(cplus_core::target::active_platform()) {
+        Some(pair) => Ok(pair),
+        None => {
             eprintln!(
-                "{ctx}: bin entry `{}` not found, and no `{}` fallback either",
-                m.bins[0].path.display(),
-                guess.display()
+                "{ctx}: no source entry — expected an app entry, a `[library]` target, `src/test_main.cplus`, or `src/{}.cplus`",
+                m.package.name
             );
-            return Err(ExitCode::FAILURE);
+            Err(ExitCode::FAILURE)
         }
-        Ok((guess, true))
-    } else {
-        eprintln!(
-            "{ctx}: project must declare at most one [[bin]]; found {}",
-            m.bins.len()
-        );
-        Err(ExitCode::FAILURE)
     }
 }
 
@@ -3727,28 +3777,17 @@ fn load_project_for_graph(diag_mode: DiagMode) -> Result<resolver::LoadedProject
             return Err(ExitCode::FAILURE);
         }
     };
-    let (entry_path, is_lib_pkg) = if let Some(lt) = m.lib.as_ref() {
-        (lt.path.clone(), true)
-    } else if m.bins.len() == 1 && m.bins[0].path.is_file() {
-        (m.bins[0].path.clone(), false)
-    } else if m.bins.len() == 1 {
-        let guess = m.root.join("src").join(format!("{}.cplus", m.package.name));
-        if !guess.is_file() {
-            eprintln!(
-                "cpc: bin entry `{}` not found, and no `{}` fallback either",
-                m.bins[0].path.display(),
-                guess.display()
-            );
-            return Err(ExitCode::FAILURE);
-        }
-        (guess, true)
-    } else {
-        eprintln!(
-            "cpc: project must declare at most one [[bin]]; found {}",
-            m.bins.len()
-        );
-        return Err(ExitCode::FAILURE);
-    };
+    let (entry_path, is_lib_pkg) =
+        match m.resolve_source_entry(cplus_core::target::active_platform()) {
+            Some(pair) => pair,
+            None => {
+                eprintln!(
+                    "cpc: no source entry — expected an app entry, a `[library]` target, `src/test_main.cplus`, or `src/{}.cplus`",
+                    m.package.name
+                );
+                return Err(ExitCode::FAILURE);
+            }
+        };
     let dep_names: Vec<String> = active_dep_names(&m);
     match resolver::load_project_full(
         &entry_path,
@@ -4551,7 +4590,7 @@ fn run_clang(
     // Linux). Emit `input_ll`, then the manifest link args, then `-lm`.
     cmd.arg(input_ll);
     // v0.0.2 (AppKit-via-Cplus.toml): manifest-driven linker args. Each
-    // entry was generated by `build_project` from `[[bin]] frameworks`
+    // entry was generated by `build_project` from `[link] frameworks`
     // (`-framework X`), `libs` (`-lX`), and bundled `[link]` archives.
     // Empty for everything except project builds whose manifest declares
     // them.
@@ -5174,8 +5213,8 @@ fn dump_ast(path: PathBuf, mode: DiagMode) -> ExitCode {
 
 /// The C+ agent reference, bundled into the binary at build time so `cpc skill`
 /// works from any install (brew / cargo / source) with no network, and is
-/// always version-matched to this `cpc`. Source of truth: `docs/SKILL.md`.
-const SKILL_MD: &str = include_str!("../../docs/SKILL.md");
+/// always version-matched to this `cpc`. Source of truth: `docs/lang/skill.md`.
+const SKILL_MD: &str = include_str!("../../docs/lang/skill.md");
 
 const SKILL_USAGE: &str = "\
 cpc skill - print the C+ reference for an LLM/agent (version-matched to this cpc)
@@ -5239,10 +5278,10 @@ fn run_skill(args: &[OsString]) -> ExitCode {
 
 /// The C+ diagnostic catalog, embedded at build time so `cpc explain <CODE>`
 /// works from any install with no network. Same source of truth that generates
-/// `docs/ERRORS.md` and the cplus-lang.dev /docs/error-codes page, so the CLI,
+/// `docs/lang/errors.md` and the cplus-lang.dev /docs/error-codes page, so the CLI,
 /// the docs, and the compiler never drift. An agent that hits a diagnostic runs
 /// `cpc explain E0502` for its cause, fix, and an example instead of guessing.
-const ERRORS_TOML: &str = include_str!("../../docs/errors.toml");
+const ERRORS_TOML: &str = include_str!("../../docs/lang/errors.toml");
 
 const EXPLAIN_USAGE: &str = "\
 cpc explain [CODE] - explain a C+ diagnostic (e.g. `cpc explain E0502`)
@@ -5481,9 +5520,10 @@ fn run_init(args: &[OsString]) -> ExitCode {
         "https://github.com/netdur/cplus/tree/main/vendor/stdlib@{}",
         env!("CARGO_PKG_VERSION")
     );
+    // No target section: `src/main.cplus` is the default entry, and what a
+    // build produces is the target platform's fact.
     let manifest_toml = format!(
         "[package]\nname    = \"{proj_name}\"\nversion = \"0.0.1\"\nedition = \"2026\"\n\n\
-         [[bin]]\nname = \"{proj_name}\"\npath = \"src/main.cplus\"\n\n\
          [dependencies]\nstdlib = \"{stdlib_dep}\"\n"
     );
     let main_cplus = "import \"stdlib/io\" as io;\n\n\

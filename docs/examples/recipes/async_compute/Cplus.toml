@@ -3,9 +3,5 @@ name    = "async_compute"
 version = "0.0.1"
 edition = "2026"
 
-[[bin]]
-name = "async_compute"
-path = "src/main.cplus"
-
 [dependencies]
 stdlib = "*"

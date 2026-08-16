@@ -13,9 +13,6 @@ edition = "2026"
 # bound-method references work.
 
 # Test root: imports the package module, so `cpc test` runs the suite.
-[[bin]]
-name = "events_tests"
-path = "src/test_main.cplus"
 
 [dependencies]
 stdlib = "*"

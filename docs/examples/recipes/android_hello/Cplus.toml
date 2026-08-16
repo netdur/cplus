@@ -3,10 +3,11 @@ name    = "android_hello"
 version = "0.0.1"
 edition = "2026"
 
-[lib]
-name       = "android_hello"
-path       = "src/lib.cplus"
-crate-type = "staticlib"
+# An Android app: the entry lives in the `[android]` section, and the target
+# decides the artifact — `cpc build --target android-arm64` stops at
+# `libandroid_hello.a` + a header, and the Gradle/NDK build owns the link.
+[android]
+entry = "src/lib.cplus"
 
 [dependencies]
 android_view = "*"

@@ -1,20 +1,36 @@
-//! `Cplus.toml` manifest loader (Phase 4 slice 4A).
+//! `Cplus.toml` manifest loader.
 //!
-//! Schema (see `docs/design/phase4-modules.md` §5):
+//! Schema:
 //!
 //! ```toml
 //! [package]
 //! name    = "myapp"
 //! version = "0.1.0"
 //! edition = "2026"
+//! entry   = "src/main.cplus"     # optional — this default applies when the file exists
 //!
-//! [[bin]]
-//! name = "myapp"
-//! path = "src/main.cplus"
+//! [dependencies]                 # the portable tier
+//! stdlib = "*"
+//!
+//! [ios]                          # per-platform: entry override + scoped deps
+//! entry = "src/main_ios.cplus"
+//! [ios.dependencies]
+//! facet_uikit = "*"
+//!
+//! [library]                      # a C-ABI product library (rare)
+//! kind  = "staticlib"            # or "cdylib" / "both"; default "staticlib"
+//! entry = "src/lib.cplus"        # omitted → the whole of src/ is archived
 //! ```
 //!
-//! Only `[package]` is required. If `[[bin]]` is omitted, defaults are
-//! `name = package.name`, `path = "src/main.cplus"`.
+//! Only `[package]` is required. What a build produces is decided by the
+//! TARGET, not the manifest: an entry on a self-linked platform (macos,
+//! linux, windows) becomes an executable; on an external-builder platform
+//! (ios, android, esp32) it becomes `lib<name>.a` + a C header, and Xcode /
+//! Gradle / ESP-IDF owns the final link. A package with no entry at all is a
+//! library: `cpc build` archives its whole `src/` tree.
+//!
+//! The Cargo-shaped `[[bin]]` / `[lib]` sections were REMOVED in v0.0.28;
+//! they parse into a targeted E0408 with the migration in the message.
 
 use crate::diagnostics::{
     Applicability, DiagCode, Diagnostic, Position, Severity, SourceSpan, Suggestion,
@@ -26,11 +42,28 @@ use std::path::{Path, PathBuf};
 #[derive(Debug, Clone, PartialEq)]
 pub struct Manifest {
     pub package: Package,
-    pub bins: Vec<BinTarget>,
-    /// Phase 5 (v0.0.2) — C ABI export: optional library target. Mutually
-    /// exclusive with `[[bin]]` (E0408). When present, `cpc build` produces
-    /// `.a` and/or `.dylib`/`.so` instead of an executable, and the codegen
-    /// path skips the test-driver `@main` injection.
+    /// The package-level app entry: `[package] entry = "..."`, or the
+    /// conventional default `src/main.cplus` when that file exists, no
+    /// `[library]` is declared, AND no platform section names an entry (a
+    /// declared platform entry scopes the app deliberately — the default
+    /// must not leak into platforms the author left out). `None` = no
+    /// package-level entry (the package may still be an app through
+    /// `platform_entries`).
+    pub entry: Option<PathBuf>,
+    /// True when an `entry` key was actually WRITTEN somewhere (package
+    /// level or a platform section) — as opposed to the src/main.cplus
+    /// default being picked up. Drives the "no entry for platform X" error:
+    /// a package that declared entries is an app everywhere, and building it
+    /// for a platform it names no entry for is a hard error, never a silent
+    /// fall-through to library mode.
+    pub entry_declared: bool,
+    /// Per-platform entry overrides: `[<platform>] entry = "..."`. Keys are
+    /// `crate::target::PLATFORMS` names.
+    pub platform_entries: std::collections::BTreeMap<String, PathBuf>,
+    /// A C-ABI product library: the `[library]` section, or the target
+    /// synthesized by `[build] prebuild = true`. When present, `cpc build`
+    /// produces `.a` and/or `.dylib`/`.so` instead of an executable, and the
+    /// codegen path skips the test-driver `@main` injection.
     pub lib: Option<LibTarget>,
     /// Phase 2 (v0.0.2) — package system MVP. Vendor packages declare
     /// their linker requirements in a top-level `[link]` table; the
@@ -150,12 +183,14 @@ pub struct LibTarget {
     pub name: String,
     pub path: PathBuf,
     pub crate_type: CrateType,
-    /// True when `[build] prebuild = true` produced this target rather than an
-    /// explicit `[lib]` table.
+    /// True when this target was synthesized — by `[build] prebuild = true`,
+    /// or by a `[library]` section with no `entry` key — rather than naming
+    /// an entry file on purpose.
     ///
-    /// The two mean different things by "the entry". An explicit `[lib]` names
-    /// one file on purpose — that import tree IS the library. A prebuilt
-    /// package means all of `src/`: `cpc headers` generates a declaration file
+    /// The two mean different things by "the entry". An explicit entry names
+    /// one file on purpose — that import tree IS the library, and its
+    /// top-level names are the public C ABI (spelled bare). A synthesized
+    /// target means all of `src/`: `cpc headers` generates a declaration file
     /// per module there, so any module the entry doesn't happen to import
     /// would be declared to consumers with nothing defining it. The build
     /// driver compiles a synthesized entry importing every module to keep the
@@ -211,13 +246,14 @@ impl BuildSpec {
     }
 }
 
+/// `[library] kind` — what artifact(s) a C-ABI product library produces.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CrateType {
-    /// `libNAME.a` archive. Linked statically by the consumer.
+    /// `libNAME.a` archive. Linked statically by the consumer. The default.
     Staticlib,
     /// `libNAME.dylib` (macOS) / `libNAME.so` (Linux). Linked dynamically.
     Cdylib,
-    /// Produce both `.a` and `.dylib`/`.so`. Default in v1.
+    /// Produce both `.a` and `.dylib`/`.so`.
     Both,
 }
 
@@ -228,17 +264,79 @@ pub struct Package {
     pub edition: String,
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct BinTarget {
-    pub name: String,
-    pub path: PathBuf,
-    /// v0.0.2 (AppKit-via-Cplus.toml): platform frameworks to pass to the
-    /// linker. Each entry becomes `-framework <name>` (macOS / iOS only).
-    /// Example: `frameworks = ["Cocoa", "Foundation"]`.
-    pub frameworks: Vec<String>,
-    /// v0.0.2: shared libraries to pass to the linker. Each entry becomes
-    /// `-l<name>` (cross-platform). Example: `libs = ["objc", "z"]`.
-    pub libs: Vec<String>,
+impl Manifest {
+    /// The app entry a build for `platform` uses: the platform section's
+    /// `entry` when one is declared, else the package-level entry. `None` on
+    /// a platform the manifest names no entry for.
+    pub fn entry_for(&self, platform: &str) -> Option<PathBuf> {
+        if let Some(p) = self.platform_entries.get(platform) {
+            return Some(p.clone());
+        }
+        self.entry.clone()
+    }
+
+    /// Whether this package is an application — any entry, declared or the
+    /// src/main.cplus default. An app with no entry for the ACTIVE platform
+    /// is a build error, never a silent library build.
+    pub fn is_app(&self) -> bool {
+        self.entry.is_some() || !self.platform_entries.is_empty()
+    }
+
+    /// The platforms an entry is declared or available for, for the
+    /// "no entry for platform X" diagnostic.
+    pub fn entry_platforms(&self) -> Vec<String> {
+        let mut out: Vec<String> = self.platform_entries.keys().cloned().collect();
+        if self.entry.is_some() {
+            out.insert(0, "every platform (package-level entry)".to_string());
+        }
+        out
+    }
+
+    /// The source-entry ladder shared by `cpc check`, `cpc graph`/`query`/
+    /// `mcp` and the LSP — the file whose import tree best describes the
+    /// package. Returns `(path, is_lib_like)`, where `is_lib_like` selects
+    /// the bare (C-ABI) spelling of the entry's top-level names.
+    ///
+    ///   1. the app entry for `platform`,
+    ///   2. the `[library]` target,
+    ///   3. the `src/test_main.cplus` convention (a library package's test
+    ///      root imports the whole surface, so it is the widest tree),
+    ///   4. the `src/<package>.cplus` root-module fallback.
+    pub fn resolve_source_entry(&self, platform: &str) -> Option<(PathBuf, bool)> {
+        if let Some(e) = self.entry_for(platform) {
+            if e.is_file() {
+                return Some((e, false));
+            }
+        }
+        if let Some(lt) = &self.lib {
+            if lt.path.is_file() {
+                return Some((lt.path.clone(), !lt.synthesized));
+            }
+        }
+        let test_main = self.root.join("src").join("test_main.cplus");
+        if test_main.is_file() {
+            return Some((test_main, false));
+        }
+        let root_module = self
+            .root
+            .join("src")
+            .join(format!("{}.cplus", self.package.name));
+        if root_module.is_file() {
+            return Some((root_module, true));
+        }
+        None
+    }
+
+    /// The `cpc test` entry ladder. Same rungs as `resolve_source_entry`,
+    /// but `src/test_main.cplus` comes FIRST: a package with a dedicated
+    /// test root means it, even when the package is also an app.
+    pub fn test_entry(&self, platform: &str) -> Option<(PathBuf, bool)> {
+        let test_main = self.root.join("src").join("test_main.cplus");
+        if test_main.is_file() {
+            return Some((test_main, false));
+        }
+        self.resolve_source_entry(platform)
+    }
 }
 
 #[derive(Debug)]
@@ -259,13 +357,19 @@ pub enum ManifestError {
         path: PathBuf,
         found: String,
     },
-    /// Phase 5 (E0408): both `[[bin]]` and `[lib]` declared. A manifest is
-    /// either a binary target or a library target, not both. Users with a
-    /// genuine "executable + library" need two manifests today.
-    BinAndLibConflict {
+    /// (E0408): a removed Cargo-shaped target section (`[[bin]]` / `[lib]`)
+    /// appears in the manifest. The error carries the migration.
+    LegacyTargetSection {
+        path: PathBuf,
+        section: &'static str,
+        hint: &'static str,
+    },
+    /// (E0408): an app entry and a `[library]` section in one manifest. A
+    /// package is an application or a C-ABI product library, not both.
+    EntryAndLibraryConflict {
         path: PathBuf,
     },
-    /// Phase 5 (E0412): `crate-type` value not in `{staticlib, cdylib, both}`.
+    /// (E0412): `[library] kind` value not in `{staticlib, cdylib, both}`.
     UnsupportedCrateType {
         path: PathBuf,
         found: String,
@@ -299,13 +403,13 @@ pub enum ManifestError {
         name: String,
         message: String,
     },
-    /// (E0868): a `[lib].path` / `[[bin]].path` resolves outside the package
-    /// directory (absolute, or a `..` chain). A package's source targets must
-    /// live inside its own tree — the same containment the import paths
-    /// enforce (E0859/E0914); a hostile vendored manifest must not be able to
-    /// point compilation at arbitrary host files. `[link]` paths are exempt:
-    /// search paths and `${VAR}`-expanded extra objects legitimately name
-    /// external SDK locations.
+    /// (E0868): an `entry` / `[library] entry` path resolves outside the
+    /// package directory (absolute, or a `..` chain). A package's source
+    /// targets must live inside its own tree — the same containment the
+    /// import paths enforce (E0859/E0914); a hostile vendored manifest must
+    /// not be able to point compilation at arbitrary host files. `[link]`
+    /// paths are exempt: search paths and `${VAR}`-expanded extra objects
+    /// legitimately name external SDK locations.
     TargetPathEscapes {
         path: PathBuf,
         target: String,
@@ -336,11 +440,14 @@ impl fmt::Display for ManifestError {
                     path.display()
                 )
             }
-            ManifestError::BinAndLibConflict { path } => {
-                write!(f, "manifest {}: cannot declare both `[[bin]]` and `[lib]` (a manifest is either an executable or a library)", path.display())
+            ManifestError::LegacyTargetSection { path, section, hint } => {
+                write!(f, "manifest {}: the `{section}` section was removed — {hint}", path.display())
+            }
+            ManifestError::EntryAndLibraryConflict { path } => {
+                write!(f, "manifest {}: cannot declare both an app `entry` and `[library]` (a package is an application or a C-ABI library, not both)", path.display())
             }
             ManifestError::UnsupportedCrateType { path, found } => {
-                write!(f, "manifest {}: unsupported `crate-type` value `{found}` (must be one of `staticlib`, `cdylib`, `both`)", path.display())
+                write!(f, "manifest {}: unsupported `[library] kind` value `{found}` (must be one of `staticlib`, `cdylib`, `both`)", path.display())
             }
             ManifestError::InvalidDependencyName { path, found } => {
                 write!(f, "manifest {}: dependency name `{found}` must be a lowercase identifier (`[a-z][a-z0-9_]*`)", path.display())
@@ -391,7 +498,8 @@ impl ManifestError {
             | ManifestError::Parse { path, .. }
             | ManifestError::MissingField { path, .. }
             | ManifestError::UnsupportedEdition { path, .. }
-            | ManifestError::BinAndLibConflict { path }
+            | ManifestError::LegacyTargetSection { path, .. }
+            | ManifestError::EntryAndLibraryConflict { path }
             | ManifestError::UnsupportedCrateType { path, .. }
             | ManifestError::InvalidDependencyName { path, .. }
             | ManifestError::EnvExpansion { path, .. }
@@ -438,14 +546,18 @@ impl ManifestError {
                     format!("unsupported edition `{found}` (only `2026` is currently valid)"),
                 )
             }
-            ManifestError::BinAndLibConflict { .. } => (
+            ManifestError::LegacyTargetSection { section, hint, .. } => (
                 "E0408",
-                "cannot declare both `[[bin]]` and `[lib]` in one manifest \
-                 (a manifest is either an executable or a library — split into two crates if you need both)".to_string(),
+                format!("the `{section}` section was removed — {hint}"),
+            ),
+            ManifestError::EntryAndLibraryConflict { .. } => (
+                "E0408",
+                "cannot declare both an app `entry` and `[library]` in one manifest \
+                 (a package is an application or a C-ABI library — split into two packages if you need both)".to_string(),
             ),
             ManifestError::UnsupportedCrateType { found, .. } => (
                 "E0412",
-                format!("unsupported `crate-type` value `{found}` (expected one of `staticlib`, `cdylib`, `both`)"),
+                format!("unsupported `[library] kind` value `{found}` (expected one of `staticlib`, `cdylib`, `both`)"),
             ),
             ManifestError::InvalidDependencyName { found, .. } => (
                 "E0857",
@@ -507,10 +619,16 @@ fn target_path_escapes(root: &Path, joined: &Path) -> bool {
 #[serde(deny_unknown_fields)]
 struct RawManifest {
     package: RawPackage,
+    /// REMOVED sections, kept as opaque values so any legacy shape parses
+    /// far enough to get the targeted E0408 migration error instead of a
+    /// generic serde "unknown field".
     #[serde(default, rename = "bin")]
-    bin: Vec<RawBin>,
+    bin: Option<toml::Value>,
     #[serde(default)]
-    lib: Option<RawLib>,
+    lib: Option<toml::Value>,
+    /// `[library]` — a C-ABI product library (staticlib / cdylib / both).
+    #[serde(default)]
+    library: Option<RawLibrary>,
     /// Phase 2: top-level `[link]` table on a vendor package's manifest.
     #[serde(default)]
     link: Option<RawLinkSpec>,
@@ -548,12 +666,15 @@ struct RawManifest {
     wasm: Option<RawPlatformSection>,
 }
 
-/// One `[<platform>.*]` table. Only `dependencies` exists today;
-/// `deny_unknown_fields` reserves the rest of the namespace (a future
-/// `[<platform>.link]` arrives as a feature, not a silently-ignored key).
+/// One `[<platform>.*]` table: an optional `entry` override plus scoped
+/// `dependencies`. `deny_unknown_fields` reserves the rest of the namespace
+/// (a future `[<platform>.link]` arrives as a feature, not a
+/// silently-ignored key).
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RawPlatformSection {
+    #[serde(default)]
+    entry: Option<String>,
     #[serde(default)]
     dependencies: std::collections::BTreeMap<String, String>,
 }
@@ -615,11 +736,14 @@ struct RawBuildSpec {
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct RawLib {
+struct RawLibrary {
     name: Option<String>,
-    path: Option<String>,
-    #[serde(default, rename = "crate-type")]
-    crate_type: Option<String>,
+    /// Explicit entry: this file's import tree IS the library and its
+    /// top-level names are the public C ABI. Omitted: the whole of `src/`
+    /// is archived (synthesized entry, qualified names).
+    entry: Option<String>,
+    #[serde(default)]
+    kind: Option<String>,
     #[serde(default)]
     frameworks: Vec<String>,
     #[serde(default)]
@@ -632,17 +756,9 @@ struct RawPackage {
     name: Option<String>,
     version: Option<String>,
     edition: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct RawBin {
-    name: Option<String>,
-    path: Option<String>,
+    /// The app entry. Defaults to `src/main.cplus` when that file exists.
     #[serde(default)]
-    frameworks: Vec<String>,
-    #[serde(default)]
-    libs: Vec<String>,
+    entry: Option<String>,
 }
 
 /// Load and validate a `Cplus.toml` file. The returned `Manifest`'s
@@ -685,13 +801,26 @@ pub fn parse(text: &str, manifest_path: &Path) -> Result<Manifest, ManifestError
         None => std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
     };
 
-    // Phase 5: `[lib]` and `[[bin]]` are mutually exclusive. Detect
-    // explicit dual-presence here — the default-bin auto-injection that
-    // follows is suppressed when `[lib]` is present (so an absent
-    // `[[bin]]` block in a lib manifest doesn't conflict).
-    if raw.lib.is_some() && !raw.bin.is_empty() {
-        return Err(ManifestError::BinAndLibConflict {
+    // The removed Cargo-shaped sections get a targeted migration error, not
+    // a serde "unknown field". Checked before anything else so a legacy
+    // manifest fails on the section, never on some downstream consequence.
+    if raw.bin.is_some() {
+        return Err(ManifestError::LegacyTargetSection {
             path: manifest_path.to_path_buf(),
+            section: "[[bin]]",
+            hint: "delete it (`src/main.cplus` is the default entry), or set \
+                   `entry = \"...\"` under `[package]` / a `[<platform>]` section; \
+                   `frameworks`/`libs` move to the `[link]` table",
+        });
+    }
+    if raw.lib.is_some() {
+        return Err(ManifestError::LegacyTargetSection {
+            path: manifest_path.to_path_buf(),
+            section: "[lib]",
+            hint: "for an external-builder app (iOS/Android), name the entry in that \
+                   platform's section (`[ios] entry = \"...\"`) — the target decides the \
+                   artifact; for a C-ABI product library use `[library]` with \
+                   `kind = \"staticlib\"|\"cdylib\"|\"both\"` and an optional `entry`",
         });
     }
 
@@ -703,28 +832,14 @@ pub fn parse(text: &str, manifest_path: &Path) -> Result<Manifest, ManifestError
         })
         .unwrap_or_default();
 
-    let lib = match raw.lib {
+    let lib = match &raw.library {
         None => None,
         Some(rl) => {
             let lib_name = rl.name.clone().unwrap_or_else(|| name.clone());
-            let lib_path = match rl.path {
-                Some(p) => {
-                    let joined = root.join(&p);
-                    if target_path_escapes(&root, &joined) {
-                        return Err(ManifestError::TargetPathEscapes {
-                            path: manifest_path.to_path_buf(),
-                            target: "[lib]".to_string(),
-                            requested: p,
-                        });
-                    }
-                    joined
-                }
-                None => root.join("src").join("lib.cplus"),
-            };
-            let crate_type = match rl.crate_type.as_deref() {
-                None | Some("both") => CrateType::Both,
-                Some("staticlib") => CrateType::Staticlib,
+            let crate_type = match rl.kind.as_deref() {
+                None | Some("staticlib") => CrateType::Staticlib,
                 Some("cdylib") => CrateType::Cdylib,
+                Some("both") => CrateType::Both,
                 Some(other) => {
                     return Err(ManifestError::UnsupportedCrateType {
                         path: manifest_path.to_path_buf(),
@@ -732,25 +847,48 @@ pub fn parse(text: &str, manifest_path: &Path) -> Result<Manifest, ManifestError
                     })
                 }
             };
+            let (lib_path, synthesized) = match &rl.entry {
+                Some(p) => {
+                    let joined = root.join(p);
+                    if target_path_escapes(&root, &joined) {
+                        return Err(ManifestError::TargetPathEscapes {
+                            path: manifest_path.to_path_buf(),
+                            target: "[library] entry".to_string(),
+                            requested: p.clone(),
+                        });
+                    }
+                    (joined, false)
+                }
+                // No entry: the whole of src/ is the library. Same root-module
+                // preference the prebuild synthesis uses.
+                None => {
+                    let named = root.join("src").join(format!("{name}.cplus"));
+                    let path = if named.is_file() {
+                        named
+                    } else {
+                        root.join("src").join("lib.cplus")
+                    };
+                    (path, true)
+                }
+            };
             Some(LibTarget {
                 name: lib_name,
                 path: lib_path,
                 crate_type,
-                synthesized: false,
-                frameworks: rl.frameworks,
-                libs: rl.libs,
+                synthesized,
+                frameworks: rl.frameworks.clone(),
+                libs: rl.libs.clone(),
             })
         }
     };
 
     // `prebuild = true` is the whole opt-in: a package that asks to be compiled
     // once and reused is a library by definition, so it gets a staticlib target
-    // without also having to write `[lib] crate-type = ...`. An explicit `[lib]`
-    // still wins, and an explicit `[[bin]]` means the author meant a program —
-    // leave both alone. The entry is `src/<name>.cplus` when that exists (a
-    // package usually names its root module after itself, as stdlib does),
+    // without also having to write a `[library]` section. An explicit
+    // `[library]` still wins. The entry is `src/<name>.cplus` when that exists
+    // (a package usually names its root module after itself, as stdlib does),
     // otherwise the conventional `src/lib.cplus`.
-    let lib = match (lib, build.prebuild && raw.bin.is_empty()) {
+    let lib = match (lib, build.prebuild) {
         (None, true) => {
             let named = root.join("src").join(format!("{name}.cplus"));
             let path = if named.is_file() {
@@ -770,44 +908,27 @@ pub fn parse(text: &str, manifest_path: &Path) -> Result<Manifest, ManifestError
         (other, _) => other,
     };
 
-    // Bin targets — only auto-injected when neither `[lib]` nor `[[bin]]`
-    // was declared. When `[lib]` is present, the bin list stays empty.
-    let bins = if lib.is_some() {
-        Vec::new()
-    } else if raw.bin.is_empty() {
-        vec![BinTarget {
-            name: name.clone(),
-            path: root.join("src").join("main.cplus"),
-            frameworks: Vec::new(),
-            libs: Vec::new(),
-        }]
-    } else {
-        raw.bin
-            .into_iter()
-            .map(|b| {
-                let bin_name = b.name.clone().unwrap_or_else(|| name.clone());
-                let bin_path = match b.path {
-                    Some(p) => {
-                        let joined = root.join(&p);
-                        if target_path_escapes(&root, &joined) {
-                            return Err(ManifestError::TargetPathEscapes {
-                                path: manifest_path.to_path_buf(),
-                                target: format!("[[bin]] `{bin_name}`"),
-                                requested: p,
-                            });
-                        }
-                        joined
-                    }
-                    None => root.join("src").join("main.cplus"),
-                };
-                Ok(BinTarget {
-                    name: bin_name,
-                    path: bin_path,
-                    frameworks: b.frameworks,
-                    libs: b.libs,
-                })
-            })
-            .collect::<Result<Vec<_>, ManifestError>>()?
+    // App entries. `[package] entry` names one on purpose; the bare
+    // `src/main.cplus` convention keeps the zero-config app working — but
+    // only when NO platform section declares an entry (see below): declared
+    // platform entries mean the author scoped the app deliberately, and a
+    // platform they left out must be E0413, not a silent default. A library
+    // package (explicit or prebuild-synthesized) is never an app — declaring
+    // both is E0408.
+    let package_entry_declared = raw.package.entry.is_some();
+    let entry: Option<PathBuf> = match &raw.package.entry {
+        Some(p) => {
+            let joined = root.join(p);
+            if target_path_escapes(&root, &joined) {
+                return Err(ManifestError::TargetPathEscapes {
+                    path: manifest_path.to_path_buf(),
+                    target: "[package] entry".to_string(),
+                    requested: p.clone(),
+                });
+            }
+            Some(joined)
+        }
+        None => None,
     };
 
     // Phase 2: convert raw `[link]` to LinkSpec. The pure-source-package case (no [link]
@@ -880,8 +1001,21 @@ pub fn parse(text: &str, manifest_path: &Path) -> Result<Manifest, ManifestError
         ("esp32", raw.esp32),
         ("wasm", raw.wasm),
     ];
+    let mut platform_entries: std::collections::BTreeMap<String, PathBuf> =
+        std::collections::BTreeMap::new();
     for (platform, section) in sections {
         let Some(section) = section else { continue };
+        if let Some(p) = &section.entry {
+            let joined = root.join(p);
+            if target_path_escapes(&root, &joined) {
+                return Err(ManifestError::TargetPathEscapes {
+                    path: manifest_path.to_path_buf(),
+                    target: format!("[{platform}] entry"),
+                    requested: p.clone(),
+                });
+            }
+            platform_entries.insert(platform.to_string(), joined);
+        }
         for (dep_name, dep_version) in section.dependencies {
             if !is_valid_dep_name(&dep_name) {
                 return Err(ManifestError::InvalidDependencyName {
@@ -926,6 +1060,30 @@ pub fn parse(text: &str, manifest_path: &Path) -> Result<Manifest, ManifestError
     }
     let dependencies: Vec<Dependency> = dep_map.into_values().collect();
 
+    // An app entry and a `[library]` cannot coexist — the declared kinds
+    // contradict. (The src/main.cplus DEFAULT never conflicts: it is only
+    // picked up when no library target exists.)
+    let entry_declared = package_entry_declared || !platform_entries.is_empty();
+    if lib.is_some() && entry_declared {
+        return Err(ManifestError::EntryAndLibraryConflict {
+            path: manifest_path.to_path_buf(),
+        });
+    }
+
+    // The src/main.cplus default: only for a package that declared nothing —
+    // no library target and no platform-scoped entry.
+    let entry = match entry {
+        Some(e) => Some(e),
+        None => {
+            let default = root.join("src").join("main.cplus");
+            if lib.is_none() && platform_entries.is_empty() && default.is_file() {
+                Some(default)
+            } else {
+                None
+            }
+        }
+    };
+
     let realtime_profile = raw
         .profile
         .and_then(|p| p.realtime)
@@ -942,7 +1100,9 @@ pub fn parse(text: &str, manifest_path: &Path) -> Result<Manifest, ManifestError
             version,
             edition,
         },
-        bins,
+        entry,
+        entry_declared,
+        platform_entries,
         lib,
         link,
         dependencies,
@@ -1122,47 +1282,161 @@ mod tests {
         assert_eq!(p.stack_limit, None);
     }
 
-    fn assert_bin_relpath(m: &Manifest, idx: usize, expected_rel: &str) {
-        let actual = m.bins[idx]
-            .path
+    /// A fresh directory under the system temp dir, for tests that need
+    /// real files (the src/main.cplus default is existence-gated).
+    fn fresh_dir(tag: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!(
+            "cpc-manifest-test-{tag}-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    fn assert_entry_relpath(m: &Manifest, expected_rel: &str) {
+        let actual = m
+            .entry
+            .as_ref()
+            .expect("expected a package-level entry")
             .strip_prefix(&m.root)
-            .expect("bin path should sit under manifest root");
+            .expect("entry path should sit under manifest root");
         assert_eq!(actual, Path::new(expected_rel));
     }
 
     #[test]
-    fn minimum_package_only() {
+    fn minimum_package_only_is_a_library() {
+        // No entry key and no src/main.cplus on disk: a library package.
         let text = r#"
             [package]
             name = "hello"
         "#;
-        let dir = std::env::temp_dir();
+        let dir = fresh_dir("min");
         let m = parse_in(&dir, text).unwrap();
         assert_eq!(m.package.name, "hello");
         assert_eq!(m.package.version, "0.0.0");
         assert_eq!(m.package.edition, "2026");
-        assert_eq!(m.bins.len(), 1);
-        assert_eq!(m.bins[0].name, "hello");
-        assert_bin_relpath(&m, 0, "src/main.cplus");
+        assert!(m.entry.is_none());
+        assert!(!m.entry_declared);
+        assert!(!m.is_app());
+        assert!(m.lib.is_none());
     }
 
     #[test]
-    fn explicit_bin_entry() {
+    fn src_main_default_makes_an_app() {
+        // The zero-config app: src/main.cplus on disk, no entry key.
+        let text = r#"
+            [package]
+            name = "hello"
+        "#;
+        let dir = fresh_dir("default-entry");
+        std::fs::create_dir_all(dir.join("src")).unwrap();
+        std::fs::write(dir.join("src").join("main.cplus"), "fn main() -> i32 { return 0; }").unwrap();
+        let m = parse_in(&dir, text).unwrap();
+        assert!(m.is_app());
+        assert!(!m.entry_declared, "the default is picked up, not declared");
+        assert_entry_relpath(&m, "src/main.cplus");
+        // Every platform resolves to the package-level entry.
+        assert!(m.entry_for("macos").is_some());
+        assert!(m.entry_for("ios").is_some());
+    }
+
+    #[test]
+    fn explicit_package_entry() {
         let text = r#"
             [package]
             name = "hello"
             version = "0.1.0"
             edition = "2026"
-
-            [[bin]]
-            name = "hello-bin"
-            path = "src/entry.cplus"
+            entry = "src/entry.cplus"
         "#;
-        let dir = std::env::temp_dir();
+        let dir = fresh_dir("pkg-entry");
         let m = parse_in(&dir, text).unwrap();
-        assert_eq!(m.bins.len(), 1);
-        assert_eq!(m.bins[0].name, "hello-bin");
-        assert_bin_relpath(&m, 0, "src/entry.cplus");
+        assert!(m.is_app());
+        assert!(m.entry_declared);
+        assert_entry_relpath(&m, "src/entry.cplus");
+    }
+
+    #[test]
+    fn platform_entry_overrides_package_entry() {
+        let text = r#"
+            [package]
+            name = "gallery"
+            entry = "src/main.cplus"
+
+            [ios]
+            entry = "src/main_ios.cplus"
+            [ios.dependencies]
+            facet_uikit = "*"
+        "#;
+        let dir = fresh_dir("plat-entry");
+        let m = parse_in(&dir, text).unwrap();
+        assert!(m.is_app());
+        assert!(m.entry_declared);
+        assert!(m.entry_for("macos").unwrap().ends_with("src/main.cplus"));
+        assert!(m.entry_for("ios").unwrap().ends_with("src/main_ios.cplus"));
+    }
+
+    #[test]
+    fn platform_only_entry_has_no_other_platforms() {
+        // An iOS-only app: building it for macos must see None (the driver
+        // turns that into E0413, never a silent library build).
+        let text = r#"
+            [package]
+            name = "gallery_ios"
+
+            [ios]
+            entry = "src/main.cplus"
+        "#;
+        let dir = fresh_dir("ios-only");
+        let m = parse_in(&dir, text).unwrap();
+        assert!(m.is_app());
+        assert!(m.entry_for("ios").is_some());
+        assert!(m.entry_for("macos").is_none());
+    }
+
+    #[test]
+    fn platform_entry_suppresses_the_src_main_default() {
+        // The iOS-gallery shape: `[ios] entry = "src/main.cplus"` names the
+        // SAME file the default would pick up. A platform the author left
+        // out must resolve to None (→ E0413 in the driver), never to the
+        // default — the declared scoping is the intent.
+        let text = r#"
+            [package]
+            name = "gallery_ios"
+
+            [ios]
+            entry = "src/main.cplus"
+        "#;
+        let dir = fresh_dir("suppress-default");
+        std::fs::create_dir_all(dir.join("src")).unwrap();
+        std::fs::write(dir.join("src").join("main.cplus"), "// ios entry\n").unwrap();
+        let m = parse_in(&dir, text).unwrap();
+        assert!(m.entry_for("ios").is_some());
+        assert!(
+            m.entry_for("macos").is_none(),
+            "the default must not leak into undeclared platforms"
+        );
+    }
+
+    #[test]
+    fn entry_escaping_the_package_rejected_e0868() {
+        let text = r#"
+            [package]
+            name = "evil"
+            entry = "../../outside.cplus"
+        "#;
+        let err = parse_in(&fresh_dir("escape"), text).unwrap_err();
+        assert!(matches!(err, ManifestError::TargetPathEscapes { .. }));
+        let text2 = r#"
+            [package]
+            name = "evil"
+
+            [ios]
+            entry = "/etc/passwd"
+        "#;
+        let err2 = parse_in(&fresh_dir("escape2"), text2).unwrap_err();
+        assert!(matches!(err2, ManifestError::TargetPathEscapes { .. }));
     }
 
     #[test]
@@ -1200,7 +1474,9 @@ mod tests {
     }
 
     #[test]
-    fn frameworks_and_libs_parse() {
+    fn legacy_bin_section_rejected_with_migration_e0408() {
+        // The removed Cargo shape must fail with the migration in the
+        // message, whatever its body contains.
         let text = r#"
             [package]
             name = "appkit_hello"
@@ -1209,59 +1485,77 @@ mod tests {
             name = "appkit_hello"
             path = "src/main.cplus"
             frameworks = ["Cocoa", "Foundation"]
-            libs = ["objc", "z"]
         "#;
-        let m = parse_in(&std::env::temp_dir(), text).unwrap();
-        assert_eq!(
-            m.bins[0].frameworks,
-            vec!["Cocoa".to_string(), "Foundation".to_string()]
+        let err = parse_in(&std::env::temp_dir(), text).unwrap_err();
+        assert!(
+            matches!(err, ManifestError::LegacyTargetSection { section: "[[bin]]", .. }),
+            "expected LegacyTargetSection, got: {err:?}"
         );
-        assert_eq!(m.bins[0].libs, vec!["objc".to_string(), "z".to_string()]);
+        assert_eq!(err.to_diagnostic().code, DiagCode("E0408"));
     }
 
     #[test]
-    fn frameworks_and_libs_default_empty_when_absent() {
-        // Backward-compat: existing manifests with no frameworks/libs key
-        // continue to parse and produce empty vectors.
+    fn legacy_lib_section_rejected_with_migration_e0408() {
         let text = r#"
             [package]
-            name = "simple"
+            name = "gallery_ios"
+
+            [lib]
+            crate-type = "staticlib"
+            path = "src/main.cplus"
         "#;
-        let m = parse_in(&std::env::temp_dir(), text).unwrap();
-        assert!(m.bins[0].frameworks.is_empty());
-        assert!(m.bins[0].libs.is_empty());
+        let err = parse_in(&std::env::temp_dir(), text).unwrap_err();
+        assert!(
+            matches!(err, ManifestError::LegacyTargetSection { section: "[lib]", .. }),
+            "expected LegacyTargetSection, got: {err:?}"
+        );
+        assert_eq!(err.to_diagnostic().code, DiagCode("E0408"));
     }
 
     #[test]
-    fn lib_section_parses_with_defaults() {
-        // Phase 5: `[lib]` declares a library target. Defaults: name =
-        // package.name, path = src/lib.cplus, crate-type = both.
+    fn library_section_defaults_to_synthesized_staticlib() {
+        // `[library]` with no keys: kind = staticlib, entry synthesized
+        // (whole of src/, root-module preference).
         let text = r#"
             [package]
             name = "mathlib"
 
-            [lib]
+            [library]
         "#;
-        let m = parse_in(&std::env::temp_dir(), text).unwrap();
-        let lib = m.lib.expect("expected a lib target");
+        let m = parse_in(&fresh_dir("lib-default"), text).unwrap();
+        assert!(!m.is_app());
+        let lib = m.lib.expect("expected a library target");
         assert_eq!(lib.name, "mathlib");
-        assert_eq!(lib.crate_type, CrateType::Both);
+        assert_eq!(lib.crate_type, CrateType::Staticlib);
+        assert!(lib.synthesized, "no entry key means the whole src/ tree");
         assert!(lib.path.ends_with("src/lib.cplus"));
-        // `[lib]` suppresses the default-bin auto-injection.
-        assert!(
-            m.bins.is_empty(),
-            "bins should be empty when only [lib] present"
-        );
     }
 
     #[test]
-    fn lib_section_respects_crate_type() {
+    fn library_explicit_entry_is_the_c_abi_surface() {
+        let text = r#"
+            [package]
+            name = "mathlib"
+
+            [library]
+            entry = "src/lib.cplus"
+            kind  = "both"
+        "#;
+        let m = parse_in(&fresh_dir("lib-entry"), text).unwrap();
+        let lib = m.lib.unwrap();
+        assert!(!lib.synthesized, "an explicit entry is deliberate");
+        assert_eq!(lib.crate_type, CrateType::Both);
+        assert!(lib.path.ends_with("src/lib.cplus"));
+    }
+
+    #[test]
+    fn library_kind_values_parse() {
         let text = r#"
             [package]
             name = "x"
 
-            [lib]
-            crate-type = "cdylib"
+            [library]
+            kind = "cdylib"
         "#;
         let m = parse_in(&std::env::temp_dir(), text).unwrap();
         assert_eq!(m.lib.unwrap().crate_type, CrateType::Cdylib);
@@ -1270,56 +1564,75 @@ mod tests {
             [package]
             name = "x"
 
-            [lib]
-            crate-type = "staticlib"
+            [library]
+            kind = "staticlib"
         "#;
         let m2 = parse_in(&std::env::temp_dir(), text2).unwrap();
         assert_eq!(m2.lib.unwrap().crate_type, CrateType::Staticlib);
     }
 
     #[test]
-    fn lib_section_rejects_unknown_crate_type() {
+    fn library_rejects_unknown_kind_e0412() {
         let text = r#"
             [package]
             name = "x"
 
-            [lib]
-            crate-type = "rlib"
+            [library]
+            kind = "rlib"
         "#;
         let err = parse_in(&std::env::temp_dir(), text).unwrap_err();
         assert!(
             matches!(err, ManifestError::UnsupportedCrateType { .. }),
             "expected UnsupportedCrateType, got: {err:?}"
         );
+        assert_eq!(err.to_diagnostic().code, DiagCode("E0412"));
     }
 
     #[test]
-    fn lib_and_bin_together_emits_e0408() {
+    fn entry_and_library_together_emit_e0408() {
+        let text = r#"
+            [package]
+            name = "x"
+            entry = "src/main.cplus"
+
+            [library]
+        "#;
+        let err = parse_in(&std::env::temp_dir(), text).unwrap_err();
+        assert!(
+            matches!(err, ManifestError::EntryAndLibraryConflict { .. }),
+            "expected EntryAndLibraryConflict, got: {err:?}"
+        );
+        assert_eq!(err.to_diagnostic().code, DiagCode("E0408"));
+    }
+
+    #[test]
+    fn library_ignores_src_main_default() {
+        // A `[library]` package that happens to have src/main.cplus on disk
+        // stays a library — the DEFAULT never conflicts, only a declared key.
         let text = r#"
             [package]
             name = "x"
 
-            [[bin]]
-            name = "exe"
-
-            [lib]
+            [library]
         "#;
-        let err = parse_in(&std::env::temp_dir(), text).unwrap_err();
-        assert!(
-            matches!(err, ManifestError::BinAndLibConflict { .. }),
-            "expected BinAndLibConflict, got: {err:?}"
-        );
+        let dir = fresh_dir("lib-with-main");
+        std::fs::create_dir_all(dir.join("src")).unwrap();
+        std::fs::write(dir.join("src").join("main.cplus"), "// probe\n").unwrap();
+        let m = parse_in(&dir, text).unwrap();
+        assert!(m.lib.is_some());
+        assert!(!m.is_app());
+        assert!(m.entry.is_none());
     }
 
     #[test]
-    fn lib_section_carries_frameworks_and_libs() {
-        // Library can declare its own linker flags — baked into the
+    fn library_section_carries_frameworks_and_libs() {
+        // A library can declare its own linker flags — baked into the
         // .dylib (or recorded for the consumer's link line in .a).
         let text = r#"
             [package]
             name = "uikit_wrapper"
 
-            [lib]
+            [library]
             frameworks = ["UIKit"]
             libs = ["objc"]
         "#;
@@ -1327,19 +1640,6 @@ mod tests {
         let lib = m.lib.unwrap();
         assert_eq!(lib.frameworks, vec!["UIKit".to_string()]);
         assert_eq!(lib.libs, vec!["objc".to_string()]);
-    }
-
-    #[test]
-    fn bin_name_defaults_to_package_name() {
-        let text = r#"
-            [package]
-            name = "myapp"
-
-            [[bin]]
-            path = "src/main.cplus"
-        "#;
-        let m = parse_in(&std::env::temp_dir(), text).unwrap();
-        assert_eq!(m.bins[0].name, "myapp");
     }
 
     // ---- Phase 2 Slice 2A: [dependencies] + top-level [link] ----
@@ -1969,25 +2269,25 @@ mod tests {
     }
 
     #[test]
-    fn bin_path_escaping_package_is_rejected_e0868() {
-        // A `[[bin]].path` with a `..` chain (or absolute path) must not
-        // point compilation at files outside the package tree — the same
+    fn package_entry_escaping_package_is_rejected_e0868() {
+        // An `entry` with a `..` chain (or absolute path) must not point
+        // compilation at files outside the package tree — the same
         // containment the import paths enforce (E0859/E0914).
         for bad in ["../../outside/main.cplus", "/etc/hosts"] {
-            let text = format!(
-                "[package]\nname = \"esc\"\n\n[[bin]]\nname = \"esc\"\npath = \"{bad}\"\n"
-            );
+            let text =
+                format!("[package]\nname = \"esc\"\nentry = \"{bad}\"\n");
             let err = parse_in(&std::env::temp_dir(), &text)
-                .expect_err("escaping bin path must be rejected");
+                .expect_err("escaping entry must be rejected");
             assert_eq!(err.to_diagnostic().code, DiagCode("E0868"), "path: {bad}");
         }
     }
 
     #[test]
-    fn lib_path_escaping_package_is_rejected_e0868() {
-        let text = "[package]\nname = \"esc\"\n\n[lib]\npath = \"../sibling/lib.cplus\"\n";
+    fn library_entry_escaping_package_is_rejected_e0868() {
+        let text =
+            "[package]\nname = \"esc\"\n\n[library]\nentry = \"../sibling/lib.cplus\"\n";
         let err = parse_in(&std::env::temp_dir(), text)
-            .expect_err("escaping lib path must be rejected");
+            .expect_err("escaping library entry must be rejected");
         assert_eq!(err.to_diagnostic().code, DiagCode("E0868"));
     }
 
@@ -1995,8 +2295,9 @@ mod tests {
     fn in_tree_target_paths_are_allowed() {
         // Nested and `./`-relative in-tree paths must keep working; only a
         // path that actually leaves the package root is rejected.
-        let text = "[package]\nname = \"ok\"\n\n[[bin]]\nname = \"ok\"\npath = \"./tools/../src/main.cplus\"\n";
-        let m = parse_in(&std::env::temp_dir(), text).expect("in-tree bin path parses");
-        assert!(m.bins[0].path.ends_with("src/main.cplus"));
+        let text =
+            "[package]\nname = \"ok\"\nentry = \"./tools/../src/main.cplus\"\n";
+        let m = parse_in(&std::env::temp_dir(), text).expect("in-tree entry parses");
+        assert!(m.entry.unwrap().ends_with("src/main.cplus"));
     }
 }

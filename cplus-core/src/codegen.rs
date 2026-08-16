@@ -12066,6 +12066,9 @@ impl<'a> FnState<'a> {
             "include_bytes" => Some(self.gen_intrinsic_include_bytes(span)),
             "include_str" => Some(self.gen_intrinsic_include_str(span)),
             "env" => Some(self.gen_intrinsic_env(span)),
+            // `#platform()` — sema resolved the value into the same
+            // span-keyed table `#env` uses, so the lowering is identical.
+            "platform" => Some(self.gen_intrinsic_env(span)),
             "size_of" => Some(self.gen_intrinsic_size_of(type_args)),
             "align_of" => Some(self.gen_intrinsic_align_of(type_args)),
             // v0.0.12 G-028: `#zero::[T]()` — alloca a fresh T-sized slot,

@@ -1,10 +1,10 @@
-<!-- GENERATED from docs/errors.toml by docs/gen_errors.py — do not edit by hand. This is the maintainer reference; the public copy is the cplus-lang.dev /docs/error-codes page. -->
+<!-- GENERATED from docs/lang/errors.toml by docs/lang/gen_errors.py — do not edit by hand. This is the maintainer reference; the public copy is the cplus-lang.dev /docs/error-codes page. -->
 
 # Error codes
 
 Every C+ diagnostic carries a numbered code, a source span, and often a machine-applicable suggestion. `cpc --diagnostics=json` emits the same information in a machine-readable shape for editors and agents. Codes prefixed with **W** are non-fatal warnings; the build continues. The normative ranges and what each phase owns are fixed in [§20 of the language specification](/docs/spec).
 
-This is the complete index — **191 codes**. Each entry gives the meaning, a minimal example that triggers it, and the typical fix. **150** of the examples are reproduced directly by `cpc check`; the rest need a multi-file project, a `--target`, or a build-time file, and say so in the example.
+This is the complete index — **192 codes**. Each entry gives the meaning, a minimal example that triggers it, and the typical fix. **150** of the examples are reproduced directly by `cpc check`; the rest need a multi-file project, a `--target`, or a build-time file, and say so in the example.
 
 ## Lexical
 
@@ -1691,36 +1691,34 @@ name = "x"
 
 <sub>repro: source · cplus-core/src/manifest.rs:307</sub>
 
-### E0408 · Both `[[bin]]` and `[lib]` declared
+### E0408 · Removed target section, or an app entry conflicting with `[library]`
 
-A single manifest declares both a binary target and a library target, which are mutually exclusive.
+The manifest uses a removed Cargo-shaped target section (`[[bin]]` / `[lib]`), or declares both an app `entry` and a `[library]` section. An app is named by its `entry` (per platform when needed); what a build produces is the target platform's fact, not a manifest section.
 
 ```toml
 [package]
-name = "both"
+name = "legacy"
 
 [[bin]]
 name = "exe"
-
-[lib]
 ```
 
-**Fix.** A manifest is either an executable or a library; split it into two crates if you need both.
+**Fix.** Delete `[[bin]]` (`src/main.cplus` is the default entry) or replace it with `entry = "..."`; move its `frameworks`/`libs` to `[link]`. Replace `[lib]` with a `[<platform>] entry` (external-builder app) or a `[library]` section with `kind = "staticlib"|"cdylib"|"both"`. A package is an application or a C-ABI library, never both.
 
-<sub>repro: scenario · cplus-core/src/manifest.rs:332 · test cpc/tests/e2e.rs:bin_and_lib_in_one_manifest_emit_e0408</sub>
+<sub>repro: scenario · cplus-core/src/manifest.rs:parse · test cpc/tests/e2e.rs:legacy_bin_section_emits_e0408_migration</sub>
 
-### E0409 · `fn main` defined in a library target
+### E0409 · `fn main` in a build that produces a library archive
 
-A manifest that declares `[lib]` also defines a `fn main`, but a library has no entry point.
+The build produces a library archive — a `[library]` target, an entry-less library package, or an app entry on an external-builder platform (ios, android) — and the program defines `fn main`, which nothing would ever call: the consumer (or the platform shell, through an `export extern fn`) owns the entry point.
 
 ```cplus
 fn add(a: i32, b: i32) -> i32 { return a + b; }
 fn main() -> i32 { return 0; }
 ```
 
-**Fix.** Remove `fn main`, or use `[[bin]]` instead of `[lib]` if you meant to build an executable. (Requires a `[lib]` manifest.)
+**Fix.** Remove `fn main`. An external-builder platform's entry is an `export extern fn` the platform shell calls; a self-linked platform's entry (with `fn main`) belongs in a package/platform `entry`, not a library.
 
-<sub>repro: scenario · cpc/src/main.rs:1810 · test cpc/tests/e2e.rs:lib_target_rejects_fn_main_with_e0409</sub>
+<sub>repro: scenario · cpc/src/main.rs:build_lib_project · test cpc/tests/e2e.rs:lib_target_rejects_fn_main_with_e0409</sub>
 
 ### E0410 · Type in `export extern fn` is not C-ABI compatible
 
@@ -1748,21 +1746,51 @@ fn main() -> i32 { return bad(0); }
 
 <sub>repro: checked · cplus-core/src/sema.rs:3199 · test cplus-core/src/sema.rs:restrict_on_integer_param_e0411</sub>
 
-### E0412 · Unsupported `crate-type` value
+### E0412 · Unsupported `[library] kind` value
 
-A `[lib]` `crate-type` value is not one of the accepted kinds.
+A `[library] kind` value is not one of the accepted kinds.
 
 ```toml
 [package]
 name = "mathlib"
 
-[lib]
-crate-type = "rlib"
+[library]
+kind = "rlib"
 ```
 
-**Fix.** Use one of `staticlib`, `cdylib`, or `both`.
+**Fix.** Use one of `staticlib` (the default), `cdylib`, or `both`.
 
-<sub>repro: source · cplus-core/src/manifest.rs:337</sub>
+<sub>repro: source · cplus-core/src/manifest.rs:parse · test cplus-core/src/manifest.rs:library_rejects_unknown_kind_e0412</sub>
+
+### E0413 · No entry for the target platform
+
+The package declares app entries, but none that applies to the platform being built: no `[<platform>] entry` for it and no package-level `entry`. A declared platform entry also suppresses the `src/main.cplus` default everywhere else — the scoping is taken as deliberate.
+
+```toml
+[package]
+name = "gallery_ios"
+
+[ios]
+entry = "src/main.cplus"
+# -> building on macOS: E0413 `gallery_ios` declares no entry for platform `macos`
+```
+
+**Fix.** Add `[<platform>] entry = "src/..."` for the platform, or a package-level `entry` that every platform without an override shares.
+
+<sub>repro: scenario · cpc/src/main.rs:build_project · test cpc/tests/e2e.rs:target_ios_app_entry_builds_the_archive</sub>
+
+### E0414 · Self-linked platform entry defines no `fn main`
+
+The entry for a self-linked platform (macos, linux, windows) — where cpc links an executable — defines no `fn main`. Without this check the only symptom is the linker's `undefined symbol: _main`.
+
+```cplus
+export extern fn app_main() -> i32 { return 0; }
+// -> building for the host: E0414 entry defines no `fn main`
+```
+
+**Fix.** Define `fn main() -> i32` in the entry's import tree. An `export extern fn` entry is the external-builder shape (ios, android), where the platform shell calls it.
+
+<sub>repro: scenario · cpc/src/main.rs:build_project</sub>
 
 ## Generics and bounds
 
@@ -1983,7 +2011,7 @@ fn main() -> i32 {
 
 ### E1002 · Named arguments not supported yet
 
-A call used a named argument (`f(name: value)`). The parser accepts the syntax, but the argument-matching pass that reorders named arguments into positional order and splices defaults is not implemented yet (see docs/design/named-params-and-defaults.md). This is a temporary guard so a labeled call is rejected cleanly rather than silently bound by position.
+A call used a named argument (`f(name: value)`). The parser accepts the syntax, but the argument-matching pass that reorders named arguments into positional order and splices defaults is not implemented yet (see docs/compiler/design/named-params-and-defaults.md). This is a temporary guard so a labeled call is rejected cleanly rather than silently bound by position.
 
 ```cplus
 fn add(n1: i32, n2: i32) -> i32 { return n1 +% n2; }
@@ -2702,25 +2730,6 @@ impl Cell: Drop {
 **Fix.** Confirm it frees on every owning path (expected for refcounted types).
 
 <sub>repro: checked · cplus-core/src/sema.rs:4429</sub>
-
-### W0003 · `[[bin]]` `[link]` libs / frameworks ignored
-
-A `[[bin]]` package declares its own top-level `[link]` `libs` / `frameworks`, but those are read only when a package is a dependency of another — a `[[bin]]` is never a dependency, so they are ignored when building the binary.
-
-```toml
-[package]
-name = "app"
-[[bin]]
-name = "app"
-path = "src/main.cplus"
-[link]
-libs = ["boguslib"]
-# -> W0003 `[link] libs` on a `[[bin]]` package is ignored when building the binary
-```
-
-**Fix.** Move them under `[[bin]]` `libs` / `frameworks` (top-level `[link]` libs apply only when the package is a dependency).
-
-<sub>repro: scenario · cpc/src/main.rs:1654 · test cpc/tests/e2e.rs:bin_package_link_libs_warns_w0003</sub>
 
 ### W0004 · `on_value` has the `#[watch]` hook signature but the struct is not `#[watch]`
 

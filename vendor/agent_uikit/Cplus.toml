@@ -11,11 +11,8 @@ edition = "2026"
 # is pure and agent_core owns the registry, the grants and the outcomes. This
 # package is the platform half and no wider.
 #
-# NOT AN APP AND NOT A LIB WITH A MAIN: an iOS target stops at object emission,
-# so this is a staticlib like every other iOS package in the tree.
-[lib]
-crate-type = "staticlib"
-path = "src/agent_uikit.cplus"
+# NOT AN APP: a library package needs no target section — `cpc build` for an
+# iOS target archives the whole src/ tree.
 
 [dependencies]
 stdlib     = "*"

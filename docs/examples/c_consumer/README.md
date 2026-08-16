@@ -8,7 +8,7 @@ from C, exercising every C-ABI class the compiler supports today.
 ```
 c_consumer/
 ├── mathlib/                 ← the C+ library
-│   ├── Cplus.toml           ← [lib] crate-type = "both"
+│   ├── Cplus.toml           ← [library] kind = "both"
 │   └── src/lib.cplus        ← one pub extern fn per ABI class
 └── c_user/                  ← the C consumer
     ├── c_user.c             ← calls every export, asserts results
@@ -43,6 +43,6 @@ working and you keep the user-facing slice working.
 
 ## Design note
 
-[docs/design/phase5-c-abi-export.md](../../design/phase5-c-abi-export.md)
+[docs/compiler/design/phase5-c-abi-export.md](../../design/phase5-c-abi-export.md)
 has the rationale, the locked decisions, and the worked ABI examples
 showing what cpc emits at the LLVM level for each class.

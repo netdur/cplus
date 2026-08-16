@@ -21,14 +21,9 @@ edition = "2026"
 # simulator — examples/facet_gallery_ios links against it. Not on a device.
 # Prop parity with facet_appkit is 305/318; MANIFEST.md §1 is the difference.
 
-# A staticlib, not a program: an iOS target stops at object emission and Xcode
-# owns the final link, so `[[bin]]` is not a thing this package can be. That is
-# also why the structural tests live inside `views.cplus` rather than in a test
-# root — a `[[bin]]` test target would be the only code here the iOS build never
-# compiled.
-[lib]
-crate-type = "staticlib"
-path = "src/facet_uikit.cplus"
+# A library package: no entry, no section. `cpc build --target ios-arm64`
+# archives the whole src/ tree. The structural tests live inside `views.cplus`
+# rather than in a test root so the iOS build compiles every line of them.
 
 [dependencies]
 stdlib      = "*"

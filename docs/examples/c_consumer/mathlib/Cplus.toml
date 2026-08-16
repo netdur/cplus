@@ -3,8 +3,10 @@ name    = "mathlib"
 version = "0.1.0"
 edition = "2026"
 
-# Phase 5 reference: a C-callable library. `crate-type = "both"` produces
-# both `target/<mode>/libmathlib.a` (static) and `libmathlib.{dylib,so}`
-# (dynamic), plus `mathlib.h` for C consumers.
-[lib]
-crate-type = "both"
+# Phase 5 reference: a C-callable library. `kind = "both"` produces both
+# `target/<mode>/libmathlib.a` (static) and `libmathlib.{dylib,so}`
+# (dynamic), plus `mathlib.h` for C consumers. The explicit `entry` makes
+# that file's top-level names the public C ABI (spelled bare in the archive).
+[library]
+entry = "src/lib.cplus"
+kind  = "both"
