@@ -585,11 +585,23 @@ fn apply_shadow(view: ui::View, s: vocab::Shadow) {
 
 // The shared band's `clip`. A CAShapeLayer used as the layer's MASK, which is
 // how Core Animation clips to anything that is not a rectangle.
+// CLEARING A CLIP REMOVES THE MASK, AND NOTHING ELSE.
+//
+// This used to force `clipsToBounds = NO` as well — clearing something it never
+// set. `clipsToBounds` is not facet's to own: a UIScrollView defaults it to YES
+// because a scroll that does not clip is not a scroll, and every node gets this
+// branch on create (an unstated `clip` is shape kind 0). So every scroll in the
+// app was silently un-clipped, and its content drew outside its own box, over
+// whatever sibling came before it — the gallery's picker, in the report that
+// found this.
+//
+// The mask is the only thing the other branch installs, so removing the mask is
+// the exact inverse. Rectangular clipping rides `masksToBounds` in
+// `apply_corner_radius`, which is symmetric on its own.
 fn apply_clip(view: ui::View, s: vocab::Shape) {
     let l: quartz::Layer = view.layer();
     if s.kind == (0 as i64) {
         { rt::msg_void_id(l.raw(), rt::sel(#str_ptr("setMask:\0")), 0 as *u8) };
-        view.set_clips_to_bounds(false);
         return;
     }
     let b: rt::Rect = view.bounds();
