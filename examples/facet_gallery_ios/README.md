@@ -1,5 +1,9 @@
 # facet_gallery_ios
 
+> **Putting this on a real iPhone or iPad: [DEPLOYING.md](DEPLOYING.md).**
+> Device detection, certificates, teams, provisioning, the free-account limits
+> and the trust step — every command, and every error they actually produce.
+
 The phone-shaped gallery — `examples/facet_gallery`'s counterpart on iOS, and
 the app to point at a simulator when `facet_uikit` is run for the first time.
 
