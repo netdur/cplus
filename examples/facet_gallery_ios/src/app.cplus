@@ -35,6 +35,7 @@ import "./demos/motion" as motion;
 import "./demos/interaction" as interaction;
 import "./demos/collections" as collections;
 import "./demos/notes" as notes;
+import "./demos/responsive" as responsive;
 
 struct Gallery {
     // The demo on screen, or DEMO_NONE when the catalog is.
@@ -63,6 +64,8 @@ struct Gallery {
     split: interaction::Split,
     list: collections::ListDemo,
     cannot: notes::Cannot,
+    refresh: collections::Refresh,
+    responsive: responsive::Responsive,
 }
 
 impl Gallery {
@@ -92,6 +95,8 @@ impl Gallery {
             split: interaction::Split::new(),
             list: collections::ListDemo::new(),
             cannot: notes::Cannot::new(),
+            refresh: collections::Refresh::new(),
+            responsive: responsive::Responsive::new(),
         };
     }
 
@@ -151,6 +156,8 @@ impl Gallery {
                 else if d == catalog::DEMO_SPLIT { let _o: bool = mount::set_content(out, this.split); }
                 else if d == catalog::DEMO_LIST { let _o: bool = mount::set_content(out, this.list); }
                 else if d == catalog::DEMO_CANNOT { let _o: bool = mount::set_content(out, this.cannot); }
+                else if d == catalog::DEMO_REFRESH { let _o: bool = mount::set_content(out, this.refresh); }
+                else if d == catalog::DEMO_RESPONSIVE { let _o: bool = mount::set_content(out, this.responsive); }
             }
             option::Option[*core::Node]::None => { }
         }

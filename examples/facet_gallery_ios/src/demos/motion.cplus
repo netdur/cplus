@@ -31,6 +31,31 @@ fn hidden_dot(fill: vocab::Color, key: str) -> core::Node {
     return n;
 }
 
+// A SHAPE THAT SHOWS WHICH WAY IT IS FACING.
+//
+// The rotation demo used a circle, and a rotated circle is the same circle —
+// the demo claimed something it could not show. Nor would a square do it: this
+// steps by 180°, and a square at 180° is a square. So the target carries a bar
+// at its top, which ends up at the bottom, which is the whole point.
+fn pointer(fill: vocab::Color, key: str) -> core::Node {
+    var inner: flex::Builder = flex::Builder::new();
+    // A LITERAL, not `Color::on(fill)`. `on()` answers a derived ink for a
+    // THEME ROLE — primary, secondary, surface — and `Color::none()` for
+    // anything else, and a system colour is anything else. An unset colour
+    // paints nothing, which is what this bar did on its first run.
+    inner.add(shell::painted(
+        ui::column(flex::Builder::new()).width(22.0f64).height(8.0f64),
+        vocab::Color::rgba(1.0f64, 1.0f64, 1.0f64, 1.0f64), 4.0f64));
+    var n: core::Node = ui::column(inner, key: key)
+        .width(56.0f64)
+        .height(56.0f64)
+        .padding(8.0f64)
+        .align(flex::Align::Center);
+    n.set_background_color(fill);
+    n.set_corner_radius(vocab::Corners::all(12.0f64));
+    return n;
+}
+
 fn stage(take control: core::Node, take target: core::Node) -> core::Node {
     var row: flex::Builder = flex::Builder::new();
     row.add(target);
@@ -107,11 +132,12 @@ impl Spin: component::Component {
         var body: flex::Builder = flex::Builder::new();
         var s: flex::Builder = flex::Builder::new();
         s.add(stage(ui::button("Half turn", on_click: this.go).height(44.0f64),
-                    dot(vocab::Color::system_orange(), "m:spinner")));
+                    pointer(vocab::Color::system_orange(), "m:spinner")));
         s.add(shell::caption("Half a turn, not a whole one: the matrix for 360° IS the matrix for 0°, so a full revolution has no path between its ends and plays nothing."));
+        s.add(shell::caption("The bar is there so the turn can be SEEN. This demo used a circle, and a rotated circle is the same circle — a square would have been no better, because a square at 180° is a square."));
         body.add(shell::card("ROTATION", s));
         return shell::page("Rotate",
-            "Why a full turn animates nothing, and what to do instead.",
+            "Why a full turn animates nothing, and what to do instead. Tap: the bar goes from top to bottom and back.",
             body, "demo:spin");
     }
 }

@@ -42,6 +42,8 @@ const NAV_SWIPE: str = "swipe";
 const NAV_RADIO: str = "radio";
 const NAV_SPLIT: str = "split";
 const NAV_LIST: str = "list";
+const NAV_REFRESH: str = "refresh";
+const NAV_RESPONSIVE: str = "responsive";
 const NAV_CANNOT: str = "cannot";
 
 const SEC_WIDGETS: str = "sec:widgets";
@@ -49,6 +51,7 @@ const SEC_TEXT: str = "sec:text";
 const SEC_DECORATION: str = "sec:decoration";
 const SEC_MOTION: str = "sec:motion";
 const SEC_INTERACTION: str = "sec:interaction";
+const SEC_LAYOUT: str = "sec:layout";
 const SEC_COLLECTIONS: str = "sec:collections";
 const SEC_NOTES: str = "sec:notes";
 
@@ -78,6 +81,8 @@ const DEMO_RADIO: i64 = 19 as i64;
 const DEMO_SPLIT: i64 = 20 as i64;
 const DEMO_LIST: i64 = 21 as i64;
 const DEMO_CANNOT: i64 = 22 as i64;
+const DEMO_REFRESH: i64 = 23 as i64;
+const DEMO_RESPONSIVE: i64 = 24 as i64;
 
 fn demo_for(id: str) -> i64 {
     if id == NAV_BUTTON { return DEMO_BUTTON; }
@@ -103,6 +108,8 @@ fn demo_for(id: str) -> i64 {
     if id == NAV_SPLIT { return DEMO_SPLIT; }
     if id == NAV_LIST { return DEMO_LIST; }
     if id == NAV_CANNOT { return DEMO_CANNOT; }
+    if id == NAV_REFRESH { return DEMO_REFRESH; }
+    if id == NAV_RESPONSIVE { return DEMO_RESPONSIVE; }
     return DEMO_NONE;
 }
 
@@ -114,7 +121,7 @@ fn leaf(title: str, id: str) -> tree::TreeNode {
     return tree::TreeNode::new(title, id: id);
 }
 
-// The model. Seven sections, twenty-three demos — the same shape the desktop
+// The model. Eight sections, twenty-five demos — the same shape the desktop
 // gallery's catalog has, at the size this backend's content actually is.
 fn model() -> tree::TreeNode {
     var root: tree::TreeNode = tree::TreeNode::new("", id: "root", is_branch: true);
@@ -155,8 +162,13 @@ fn model() -> tree::TreeNode {
     let _i4: status::Status = i.add_child(leaf("Split", NAV_SPLIT));
     let _is: status::Status = root.add_child(i);
 
+    var l: tree::TreeNode = section("Layout", SEC_LAYOUT);
+    let _l1: status::Status = l.add_child(leaf("Responsive", NAV_RESPONSIVE));
+    let _ls: status::Status = root.add_child(l);
+
     var c: tree::TreeNode = section("Collections", SEC_COLLECTIONS);
     let _c1: status::Status = c.add_child(leaf("List", NAV_LIST));
+    let _c2: status::Status = c.add_child(leaf("Pull to refresh", NAV_REFRESH));
     let _cs: status::Status = root.add_child(c);
 
     var n: tree::TreeNode = section("Notes", SEC_NOTES);
@@ -175,6 +187,7 @@ fn expand_all(t: tree::Tree) {
     let _c: tree::Tree = t.expand(SEC_DECORATION);
     let _d: tree::Tree = t.expand(SEC_MOTION);
     let _e: tree::Tree = t.expand(SEC_INTERACTION);
+    let _l: tree::Tree = t.expand(SEC_LAYOUT);
     let _f: tree::Tree = t.expand(SEC_COLLECTIONS);
     let _g: tree::Tree = t.expand(SEC_NOTES);
     return;

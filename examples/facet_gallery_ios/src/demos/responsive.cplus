@@ -1,0 +1,164 @@
+// Responsive — the layout following the width it actually has.
+//
+// The desktop gallery's version of this demo SIMULATES the width with three
+// buttons, because AppKit's size observer was the only one wired and the demo
+// predates it. This one reads the real number: `services::observe_size` is
+// filled on this backend now, so the class changes when the thing changes —
+// rotate the simulator (⌘→) and watch it move.
+//
+// The three classes are the ones a phone actually has:
+//
+//   < 480   compact   one column. A phone upright.
+//   < 720   regular   two columns. A phone on its side, or a small window.
+//   ≥ 720   wide      three columns and a rail. An iPad.
+
+import "facet/facet" as core;
+import "facet/elements" as ui;
+import "facet/component" as component;
+import "facet/label" as label;
+import "facet/mount" as mount;
+import "facet/services" as services;
+import "facet/vocabulary" as vocab;
+import "flex_layout/flex_layout" as flex;
+import "stdlib/option" as option;
+import "../shell" as shell;
+
+const BP_COMPACT: f64 = 480.0f64;
+const BP_REGULAR: f64 = 720.0f64;
+
+struct Responsive {
+    // THE HANDLE HAS TO BE HELD. `services::Cancellable` cancels on DROP, so a
+    // `let` here would stop the observation on the way out of `on_attach` and
+    // the layout would never hear about a rotation.
+    watch: services::Cancellable,
+    mode: i64,
+}
+
+impl Responsive {
+    fn new() -> Responsive {
+        return Responsive { watch: services::Cancellable::none(), mode: 0 as i64 };
+    }
+}
+
+fn mode_name(m: i64) -> str {
+    if m == (0 as i64) { return "compact"; }
+    if m == (2 as i64) { return "wide"; }
+    return "regular";
+}
+
+// The one place the width becomes a decision. Called from the size observer,
+// which is called from the observed view's own `layoutSubviews`.
+fn reclassify(ctx: *u8) {
+    match mount::find("rp:root") {
+        option::Option[*core::Node]::Some(n) => {
+            let w: f64 = core::width_of(n);
+            if w <= 0.0f64 { return; }
+            var m: i64 = 2 as i64;
+            if w < BP_COMPACT { m = 0 as i64; }
+            else if w < BP_REGULAR { m = 1 as i64; }
+            paint(m, w);
+        }
+        option::Option[*core::Node]::None => { }
+    }
+    return;
+}
+
+fn paint(m: i64, w: f64) {
+    let px: i64 = w as i64;
+    let name: str = mode_name(m);
+    match label::find("rp:mode") {
+        option::Option[label::Label]::Some(l) => {
+            let _l: label::Label = l.set_text("${name}  ·  ${px}pt wide");
+        }
+        option::Option[label::Label]::None => { }
+    }
+    // The layout itself: which cards exist, and whether they sit in a row or a
+    // column. `set_display` rather than `set_visible` — a hidden card that kept
+    // its width would leave a hole where the wide layout used to be.
+    show("rp:b", m >= (1 as i64));
+    show("rp:c", m >= (2 as i64));
+    show("rp:rail", m >= (2 as i64));
+    match mount::find("rp:cards") {
+        option::Option[*core::Node]::Some(n) => {
+            var flow: flex::FlexDirection = flex::FlexDirection::Row;
+            if m == (0 as i64) { flow = flex::FlexDirection::Column; }
+            core::set_flow(n, flow);
+        }
+        option::Option[*core::Node]::None => { }
+    }
+    return;
+}
+
+fn show(key: str, on: bool) {
+    match mount::find(key) {
+        option::Option[*core::Node]::Some(n) => {
+            if on { core::set_display(n, flex::Display::Flex); }
+            else { core::set_display(n, flex::Display::None); }
+        }
+        option::Option[*core::Node]::None => { }
+    }
+    return;
+}
+
+fn pane(title: str, body: str, fill: vocab::Color, key: str) -> core::Node {
+    var b: flex::Builder = flex::Builder::new();
+    b.add(ui::label(title, font_size: 15.0f64,
+                    font_weight: vocab::FontWeight::Semibold));
+    b.add(ui::label(body, font_size: 13.0f64,
+                    text_color: vocab::Color::ink(0.6f64),
+                    max_lines: 0 as i64,
+                    line_break: vocab::LineBreak::WordWrap));
+    var n: core::Node = ui::column(b, key: key)
+        .padding(12.0f64).gap(4.0f64).grow(1.0f64).shrink(1.0f64);
+    n.set_background_color(fill);
+    n.set_corner_radius(vocab::Corners::all(10.0f64));
+    return n;
+}
+
+impl Responsive: component::Component {
+    fn build(ref this) -> core::Node {
+        var body: flex::Builder = flex::Builder::new();
+
+        var live: flex::Builder = flex::Builder::new();
+        live.add(ui::label("measuring…", key: "rp:mode", font_size: 17.0f64,
+                           font_weight: vocab::FontWeight::Semibold));
+        live.add(shell::caption("Rotate the simulator with ⌘← / ⌘→. This number is the width the layout below was actually given — not a guess, and not a button pretending to be one."));
+        body.add(shell::card("WIDTH CLASS", live));
+
+        var cards: flex::Builder = flex::Builder::new();
+        cards.add(pane("A", "Always here.", vocab::Color::system_teal(), "rp:a"));
+        cards.add(pane("B", "From regular up.", vocab::Color::system_indigo(), "rp:b"));
+        cards.add(pane("C", "Wide only.", vocab::Color::system_purple(), "rp:c"));
+        var group: flex::Builder = flex::Builder::new();
+        group.add(ui::row(cards, key: "rp:cards").gap(10.0f64).height(150.0f64));
+        group.add(pane("Side rail", "Wide only — an iPad has room for it and a phone does not.",
+                       vocab::Color::fill(), "rp:rail"));
+        body.add(shell::card("THE LAYOUT", group));
+
+        var note: flex::Builder = flex::Builder::new();
+        note.add(shell::caption("`observe_size` was one of the seams this backend left empty — AppKit posts a frame notification and UIKit posts nothing. What UIKit does is CALL a method, so the observer is `layoutSubviews` added to the observed view's own class, one subclass per observed view through `object_setClass`. That is why a scroll view stays a scroll view."));
+        body.add(shell::card("HOW IT KNOWS", note));
+
+        var root: core::Node = shell::page("Responsive",
+            "The layout following the width it actually has, live.",
+            body, "rp:root");
+        return root;
+    }
+}
+
+impl Responsive: component::Lifecycle {
+    fn on_attach(ref this) {
+        match mount::find("rp:root") {
+            option::Option[*core::Node]::Some(n) => {
+                this.watch = services::observe_size(n, reclassify, 0 as *u8);
+            }
+            option::Option[*core::Node]::None => { }
+        }
+        // The first classification does not wait for a resize: the view has a
+        // size the moment it is laid out, and nothing will resize it if the
+        // reader never rotates.
+        reclassify(0 as *u8);
+        return;
+    }
+    fn on_detach(ref this) { return; }
+}

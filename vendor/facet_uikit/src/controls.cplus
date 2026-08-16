@@ -1483,6 +1483,9 @@ fn create_slider(n: *core::Node) -> *u8 {
     let s: ui::Slider = ui::Slider::new_with_frame(zero_rect());
     let v: *u8 = rt::retain(s.as_view().raw());
     input::arm_value(v, n);
+    // The one value control with a drag worth naming: `on_drag_started` and
+    // `on_drag_completed` are the slider's, and no other kind here has them.
+    input::arm_drag(v, n);
     return v;
 }
 

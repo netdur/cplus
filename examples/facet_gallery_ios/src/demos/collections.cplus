@@ -10,6 +10,8 @@ import "facet/elements" as ui;
 import "facet/component" as component;
 import "facet/vocabulary" as vocab;
 import "facet/list" as list;
+import "facet/label" as label;
+import "facet/services" as services;
 import "flex_layout/flex_layout" as flex;
 import "stdlib/option" as option;
 import "../shell" as shell;
@@ -23,6 +25,104 @@ fn gap_row(i: usize, ctx: *u8) -> core::Node {
     b.add(ui::label("recycled", font_size: 13.0f64,
                     text_color: vocab::Color::ink(0.45f64)));
     return ui::row(b).padding(12.0f64).gap(8.0f64).align(flex::Align::Center);
+}
+
+// ---- pull to refresh ---------------------------------------------------------
+// The touch idiom the AppKit backend records as absent: macOS has no pull, so
+// `refreshable` there shows its content and simply never pulls. Here it is a
+// UIRefreshControl on the table, and the whole point is the ROUND TRIP — pull,
+// the app is told, the app loads, the app says it is done.
+
+static REFRESH_TIMER: services::Cancellable = #zero::[services::Cancellable]();
+static LOADED: usize = 8 as usize;
+static ROUNDS: i64 = 0 as i64;
+
+fn refresh_row(i: usize, ctx: *u8) -> core::Node {
+    var b: flex::Builder = flex::Builder::new();
+    b.add(ui::label("Item ${i}", font_size: 16.0f64));
+    b.add(ui::column(flex::Builder::new()).grow(1.0f64));
+    b.add(ui::label("loaded", font_size: 13.0f64,
+                    text_color: vocab::Color::ink(0.45f64)));
+    return ui::row(b).padding(12.0f64).gap(8.0f64).align(flex::Align::Center);
+}
+
+// The app was told to load. A real one would go to the network; this one waits
+// long enough for the spinner to be seen, adds rows, and — the half that
+// matters — says it has FINISHED. A refresh that never ends is a spinner that
+// never stops.
+fn finish_refresh(ctx: *u8) {
+    LOADED = LOADED +% (4 as usize);
+    ROUNDS = ROUNDS + (1 as i64);
+    match list::find("r:list") {
+        option::Option[list::List]::Some(l) => {
+            let _c: list::List = l.set_count(LOADED);
+            let _e: list::List = l.end_refresh();
+        }
+        option::Option[list::List]::None => { }
+    }
+    match label::find("r:status") {
+        option::Option[label::Label]::Some(lb) => {
+            let _t: label::Label =
+                lb.set_text("${ROUNDS} refresh(es) · ${LOADED} rows");
+        }
+        option::Option[label::Label]::None => { }
+    }
+    return;
+}
+
+struct Refresh { _unused: i32 }
+impl Refresh {
+    fn new() -> Refresh { return Refresh { _unused: 0 }; }
+
+    // `on_refreshing` is the moment the finger let go past the threshold. The
+    // control is already spinning; this is the app being asked for data.
+    fn on_pull(ref this, sender: *u8) {
+        match label::find("r:status") {
+            option::Option[label::Label]::Some(lb) => {
+                let _t: label::Label = lb.set_text("loading…");
+            }
+            option::Option[label::Label]::None => { }
+        }
+        REFRESH_TIMER = services::after(1.2f64, finish_refresh, 0 as *u8);
+        return;
+    }
+}
+
+impl Refresh: component::Component {
+    fn build(ref this) -> core::Node {
+        var body: flex::Builder = flex::Builder::new();
+
+        var r: flex::Builder = flex::Builder::new();
+        var host: core::Node = ui::list(key: "r:list", row_height: 48 as i64,
+                                        refreshable: true,
+                                        on_refreshing: this.on_pull)
+            .height(320.0f64);
+        match list::find("r:list", within: #addr_of(host)) {
+            option::Option[list::List]::Some(l) => {
+                let _c: list::List = l.set_count(LOADED);
+                let _rw: list::List = l.set_row(refresh_row);
+            }
+            option::Option[list::List]::None => { }
+        }
+        r.add(shell::painted(host, vocab::Color::fill(), 10.0f64));
+        r.add(ui::label("pull the list down", key: "r:status", font_size: 13.0f64,
+                        text_color: vocab::Color::ink(0.7f64)));
+        r.add(shell::caption("Pull down and let go. The spinner is UIKit's; being TOLD is facet's, and `end_refresh` is what stops it. Each pull adds four rows."));
+        body.add(shell::card("PULL DOWN", r));
+
+        var note: flex::Builder = flex::Builder::new();
+        note.add(shell::caption("The AppKit backend records pull-to-refresh as decided-absent: macOS has no pull, so a `refreshable` there shows its content and never pulls. This is one of the few places facet's vocabulary is wider than the desktop rather than narrower."));
+        note.add(shell::caption("It was also wired and dead until an hour ago: the UIRefreshControl was created and armed, and `on_refreshing` was never called — so the spinner span and nothing ever asked for data. `fire_value_changed` had no arm for the list's kind."));
+        body.add(shell::card("A TOUCH IDIOM", note));
+
+        return shell::page("Pull to refresh",
+            "The round trip: pull, the app is told, the app loads, the app says it is done.",
+            body, "demo:refresh");
+    }
+}
+impl Refresh: component::Lifecycle {
+    fn on_attach(ref this) { return; }
+    fn on_detach(ref this) { return; }
 }
 
 // ---- list --------------------------------------------------------------------

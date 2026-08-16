@@ -41,7 +41,10 @@ fn draw_badge(into: *vocab::Canvas, dirty: vocab::Rect, ctx: *u8) {
     let _c: status::Status = { (*into).fill_ellipse(
         vocab::Rect::of(14.0f64, 14.0f64, h - 28.0f64, h - 28.0f64)) };
 
-    { (*into).set_stroke(vocab::Color::on(vocab::Color::system_indigo())) };
+    // A LITERAL. `Color::on(role)` answers a derived ink for a THEME ROLE and
+    // `none()` for a system colour — and an unset colour resolves to
+    // transparent black, which draws nothing at all.
+    { (*into).set_stroke(vocab::Color::rgba(1.0f64, 1.0f64, 1.0f64, 1.0f64)) };
     { (*into).set_stroke_width(3.0f64) };
     let _l1: status::Status = { (*into).draw_line(
         from: vocab::Point::of(w - 70.0f64, 22.0f64),
@@ -53,7 +56,7 @@ fn draw_badge(into: *vocab::Canvas, dirty: vocab::Rect, ctx: *u8) {
         from: vocab::Point::of(w - 70.0f64, h - 22.0f64),
         to: vocab::Point::of(w - 46.0f64, h - 22.0f64)) };
 
-    { (*into).set_text_color(vocab::Color::on(vocab::Color::system_indigo())) };
+    { (*into).set_text_color(vocab::Color::rgba(1.0f64, 1.0f64, 1.0f64, 1.0f64)) };
     let _f: status::Status = { (*into).set_font(size: 15.0f64,
                                                 weight: vocab::FontWeight::Medium) };
     let _t: status::Status = { (*into).draw_text("Core Graphics",

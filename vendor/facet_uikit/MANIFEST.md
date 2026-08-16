@@ -165,13 +165,22 @@ registered on the configuration before the view exists, the way
 (`on_raw_message_received`, a page calling out through
 `window.webkit.messageHandlers.facet.postMessage`) IS built.
 
+### `observe_size` is filled
+
+"A view learns it was resized in `layoutSubviews`, which needs a synthesized
+subclass" was the reason this seam was left empty, and it turned out to be the
+whole implementation rather than the obstacle. AppKit posts a frame
+notification and `facet_appkit` rides it; UIKit posts nothing because it CALLS
+a method instead — so the observer is `layoutSubviews`, added to the observed
+view's own class through `object_setClass`, one subclass per observed view.
+Per view rather than one shared class because the base differs: a scroll view
+has to stay a scroll view.
+
+`examples/facet_gallery_ios`'s Responsive demo reads the real width through it.
+The desktop gallery's equivalent simulates the width with three buttons.
+
 ### Bands that are still unfilled
 
-- **`observe_size` answers no handle.** AppKit posts
-  `NSViewFrameDidChangeNotification` and `facet_appkit` rides it; UIKit has no
-  such notification — a view learns it was resized in `layoutSubviews`, which
-  needs a synthesized subclass. The seam returns 0 rather than a handle that
-  never fires, so a caller can tell.
 - **No key band.** `gestures::install_key_reader` is deliberately not filled: a
   hardware key on iOS arrives as a `UIKey` through the responder chain, which is
   a different shape from the AppKit reader.

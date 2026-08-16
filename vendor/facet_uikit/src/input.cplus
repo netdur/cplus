@@ -167,9 +167,21 @@ fn arm_primary(v: *u8, n: *core::Node) {
 fn arm_value(v: *u8, n: *core::Node) {
     bind_node(v, n);
     add_target(v, #str_ptr("facetValueChanged:\0"), event_value_changed());
-    // A slider's drag START and END. Armed for every value control because the
-    // events are free and `fire_press` answers only for the kinds that carry
-    // the verbs — a switch has no drag to report.
+    return;
+}
+
+// A control whose DRAG has a start and an end worth reporting — which is the
+// slider, and only the slider.
+//
+// This was folded into `arm_value` on the grounds that the extra events are
+// free and `fire_press` answers only for the kinds that carry the verbs. They
+// are not free. A UIRefreshControl armed for touchDown rendered its table's
+// cells EMPTY — separators in the right places and no content in any of them —
+// and the same list with the arming removed rendered normally. Measured both
+// ways; the mechanism inside UIKit is not visible from here, and the fix is to
+// ask for what the kind actually has rather than for everything.
+fn arm_drag(v: *u8, n: *core::Node) {
+    bind_node(v, n);
     add_target(v, #str_ptr("facetPressed:\0"), event_touch_down());
     add_target(v, #str_ptr("facetReleased:\0"),
                event_touch_up_inside() | event_touch_up_outside());
