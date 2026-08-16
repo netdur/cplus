@@ -25,10 +25,12 @@
 import "stdlib/option" as option;
 import "flex_layout/flex_layout" as flex;
 import "facet/facet" as core;
+import "facet/props" as props;
 import "objc/runtime" as rt;
 import "facet/vocabulary" as vocab;
 import "uikit/uikit" as ui;
 import "./paint" as paint;
+import "./controls" as controls;
 
 type Node = flex::Node;
 
@@ -189,6 +191,10 @@ fn reposition_children(node: *core::Node, host_abs: flex::Frame) {
                     // own brush — a struct read, not a message, for every node
                     // that has no gradient.
                     if { core::background(c).is_gradient } { paint::resize_gradient(v); }
+                    // Same rule, other sublayer: a `bordered` node's stroke is
+                    // a CAShapeLayer whose PATH is its geometry, so it is
+                    // rebuilt at the size the walk just gave it.
+                    if core::kind_of(c) == props::K_BORDERED { controls::resize_stroke(v, c); }
                     // Its descendants' frames are relative to IT. A cache-skipped
                     // child means every absolute frame under it is unchanged, so
                     // the views already sit exactly there.

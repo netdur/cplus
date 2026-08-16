@@ -42,6 +42,7 @@ import "facet/text_button" as text_button;
 import "facet/split" as split;
 import "facet/tree" as tree;
 import "facet/window_chrome" as chrome;
+import "facet/application" as app;
 import "objc/runtime" as rt;
 import "objc/bridge" as bridge;
 import "objc/synthesis" as synth;
@@ -323,16 +324,131 @@ fn apply_text_button(v: *u8, n: *core::Node, dirty: u64) {
         props_of(n, text_button::K_TEXT_BUTTON) as *text_button::TextButtonProps;
     if p == (0 as *text_button::TextButtonProps) { return; }
     let b: ui::Button = ui::Button::from_raw(v);
-    b.set_title(transformed({ (*p).title.view() }, { (*p).text_transform }).view(), 0 as u64);
-    let c: vocab::Color = { (*p).text_color };
-    if c.is_set() { b.set_title_color(paint::ui_color(c), 0 as u64); }
-    match paint::ui_font({ (*p).font_size }, { (*p).font_weight },
-                         { (*p).font_family.view() }, { (*p).is_italic },
-                         { (*p).font_scales }) {
-        option::Option[ui::Font]::Some(f) => { b.set_font(f); }
-        option::Option[ui::Font]::None => { }
+    // The link posture's whole point is a DECORATED title, so the title, its
+    // colour, its kerning and its underline are one write: an attributed string
+    // is the only form that carries the last two, and rebuilding it needs all
+    // four in hand.
+    let rich: u64 = text_button::P_TITLE | text_button::P_TEXT_TRANSFORM
+        | text_button::P_TEXT_DECORATION | text_button::P_CHARACTER_SPACING
+        | text_button::P_TEXT_COLOR;
+    if (dirty & rich) != (0 as u64) {
+        let shown: text::Text = transformed({ (*p).title.view() }, { (*p).text_transform });
+        let underlined: bool = decoration_underlines({ (*p).text_decoration });
+        let strike: bool = decoration_strikes({ (*p).text_decoration });
+        if underlined || strike || { (*p).character_spacing } != 0.0f64 {
+            let a: *u8 = decorated_title(shown.view(), { (*p).character_spacing },
+                                         underlined, strike, { (*p).text_color });
+            if a != (0 as *u8) {
+                { rt::msg_void_id_u64(v, rt::sel(#str_ptr("setAttributedTitle:forState:\0")),
+                                      a, 0 as u64) };
+                { rt::release(a) };
+            }
+        } else {
+            b.set_title(shown.view(), 0 as u64);
+            let c: vocab::Color = { (*p).text_color };
+            if c.is_set() { b.set_title_color(paint::ui_color(c), 0 as u64); }
+        }
+    }
+    if (dirty & (text_button::P_FONT_SIZE | text_button::P_FONT_WEIGHT
+                 | text_button::P_FONT_FAMILY | text_button::P_IS_ITALIC
+                 | text_button::P_FONT_SCALES)) != (0 as u64) {
+        match paint::ui_font({ (*p).font_size }, { (*p).font_weight },
+                             { (*p).font_family.view() }, { (*p).is_italic },
+                             { (*p).font_scales }) {
+            option::Option[ui::Font]::Some(f) => { b.set_font(f); }
+            option::Option[ui::Font]::None => { }
+        }
+    }
+    if (dirty & text_button::P_LINE_BREAK) != (0 as u64) {
+        b.set_line_break_mode(line_break_of({ (*p).line_break }));
+    }
+    // A button's title alignment is its LABEL's, and the label fills the
+    // content rect — so `contentHorizontalAlignment` is what moves the text.
+    if (dirty & text_button::P_TEXT_ALIGN) != (0 as u64) {
+        { rt::msg_void_i64(v, rt::sel(#str_ptr("setContentHorizontalAlignment:\0")),
+                           content_h_align_of({ (*p).text_align })) };
+    }
+    if (dirty & (text_button::P_BORDER_COLOR | text_button::P_BORDER_WIDTH
+                 | text_button::P_BORDERED)) != (0 as u64) {
+        apply_border(v, { (*p).bordered }, { (*p).border_color }, { (*p).border_width });
+    }
+    if (dirty & text_button::P_CORNER_RADIUS) != (0 as u64) {
+        ui::View::from_raw(v).layer().set_corner_radius(
+            paint::largest_corner({ (*p).corner_radius }));
+    }
+    if (dirty & (text_button::P_TOGGLES | text_button::P_ON)) != (0 as u64) {
+        if { (*p).toggles } {
+            { rt::msg_void_i8(v, rt::sel(#str_ptr("setSelected:\0")), bool_i8({ (*p).on })) };
+        }
     }
     return;
+}
+
+fn decoration_underlines(d: vocab::TextDecoration) -> bool {
+    return match d {
+        vocab::TextDecoration::None => false,
+        vocab::TextDecoration::Underline => true,
+        vocab::TextDecoration::Strikethrough => false,
+    };
+}
+
+fn decoration_strikes(d: vocab::TextDecoration) -> bool {
+    return match d {
+        vocab::TextDecoration::None => false,
+        vocab::TextDecoration::Underline => false,
+        vocab::TextDecoration::Strikethrough => true,
+    };
+}
+
+// UIControlContentHorizontalAlignment: 0 centre, 1 left, 2 right, 3 fill.
+fn content_h_align_of(a: vocab::TextAlign) -> i64 {
+    return match a {
+        vocab::TextAlign::Start => 1 as i64,
+        vocab::TextAlign::Center => 0 as i64,
+        vocab::TextAlign::End => 2 as i64,
+        vocab::TextAlign::Justify => 3 as i64,
+    };
+}
+
+// A title carrying kerning and/or a line, at +1. UIKit has no plain property
+// for either, so a decorated title IS an attributed string.
+fn decorated_title(s: str, kern: f64, underline: bool, strike: bool,
+                   c: vocab::Color) -> *u8 {
+    let dict: *u8 = { rt::alloc_init(#str_ptr("NSMutableDictionary\0")) };
+    if dict == (0 as *u8) { return 0 as *u8; }
+    if kern != 0.0f64 {
+        { rt::msg_void_id_id(dict, rt::sel(#str_ptr("setObject:forKey:\0")),
+                             number_f64(kern), bridge::nsstring("NSKern")) };
+    }
+    if underline {
+        { rt::msg_void_id_id(dict, rt::sel(#str_ptr("setObject:forKey:\0")),
+                             number_i64(1 as i64), bridge::nsstring("NSUnderline")) };
+    }
+    if strike {
+        { rt::msg_void_id_id(dict, rt::sel(#str_ptr("setObject:forKey:\0")),
+                             number_i64(1 as i64), bridge::nsstring("NSStrikethrough")) };
+    }
+    if c.is_set() {
+        { rt::msg_void_id_id(dict, rt::sel(#str_ptr("setObject:forKey:\0")),
+                             paint::ui_color(c).raw(), bridge::nsstring("NSColor")) };
+    }
+    let cls: *u8 = rt::get_class(#str_ptr("NSAttributedString\0"));
+    let alloced: *u8 = { rt::msg_id(cls, rt::sel(#str_ptr("alloc\0"))) };
+    if alloced == (0 as *u8) { { rt::release(dict) }; return 0 as *u8; }
+    let a: *u8 = { rt::msg_id_id_id(alloced, rt::sel(#str_ptr("initWithString:attributes:\0")),
+                                    bridge::nsstring(s), dict) };
+    { rt::release(dict) };
+    return a;
+}
+
+fn number_f64(v: f64) -> *u8 {
+    return { rt::msg_id_f64(rt::get_class(#str_ptr("NSNumber\0")),
+                            rt::sel(#str_ptr("numberWithDouble:\0")), v) };
+}
+
+fn number_i64(v: i64) -> *u8 {
+    return { rt::msg_id_i64(rt::get_class(#str_ptr("NSNumber\0")),
+                            rt::sel(#str_ptr("numberWithLongLong:\0")), v) };
 }
 
 // ---- icon_button --------------------------------------------------------------
@@ -407,6 +523,20 @@ fn apply_image(v: *u8, n: *core::Node, dirty: u64) {
     if (dirty & image::P_FIT) != (0 as u64) {
         iv.as_view().set_content_mode(content_mode_of({ (*p).fit }));
     }
+    // An animated image (a GIF, or a frame list) runs or holds. UIImageView
+    // drives it; facet only says which.
+    if (dirty & image::P_IS_ANIMATION_PLAYING) != (0 as u64) {
+        if { (*p).is_animation_playing } { iv.start_animating(); }
+        else { iv.stop_animating(); }
+    }
+    // `is_opaque` is a DRAWING promise, not an appearance: a view that fills
+    // every pixel lets the compositor skip what is behind it. paint.cplus
+    // clears the same flag when a background is unset (an opaque view with
+    // nothing to draw is black), so this is the one place an app may set it on
+    // purpose.
+    if (dirty & image::P_IS_OPAQUE) != (0 as u64) {
+        { rt::msg_void_i8(v, rt::sel(#str_ptr("setOpaque:\0")), bool_i8({ (*p).is_opaque })) };
+    }
     return;
 }
 
@@ -430,15 +560,41 @@ fn apply_symbol(v: *u8, n: *core::Node, dirty: u64) {
     let p: *symbol::SymbolProps = props_of(n, symbol::K_SYMBOL) as *symbol::SymbolProps;
     if p == (0 as *symbol::SymbolProps) { return; }
     let iv: ui::ImageView = ui::ImageView::from_raw(v);
-    let name: str = { (*p).name.view() };
-    if name != "" {
-        match symbol_image(name, { (*p).size }) {
-            option::Option[ui::Image]::Some(img) => { iv.set_image(img); }
-            option::Option[ui::Image]::None => { }
+    // The image, its weight and its fill are ONE write: a symbol's appearance
+    // is a name plus a UIImageSymbolConfiguration, and the configuration is
+    // built whole or not at all.
+    if (dirty & (symbol::P_NAME | symbol::P_ICON | symbol::P_SIZE
+                 | symbol::P_FILL | symbol::P_FONT)) != (0 as u64) {
+        let name: str = { (*p).name.view() };
+        if name != "" {
+            match symbol_image(name, { (*p).size }) {
+                option::Option[ui::Image]::Some(img) => {
+                    iv.set_image(img);
+                    apply_symbol_config(v, { (*p).size }, { (*p).fill });
+                }
+                option::Option[ui::Image]::None => { }
+            }
         }
     }
-    let c: vocab::Color = { (*p).color };
-    if c.is_set() { iv.set_tint_color(paint::ui_color(c)); }
+    if (dirty & symbol::P_COLOR) != (0 as u64) {
+        let c: vocab::Color = { (*p).color };
+        if c.is_set() { iv.set_tint_color(paint::ui_color(c)); }
+    }
+    return;
+}
+
+// SF Symbols carry their weight and their fill in a configuration, not in the
+// name. `fill` is 0 outline .. 1 filled, and the two ends are two different
+// SYMBOLS in Apple's vocabulary — so the fill picks a rendering configuration
+// rather than interpolating, and a value between the ends rounds to the nearer.
+fn apply_symbol_config(v: *u8, size: f64, fill: f64) {
+    let cls: *u8 = rt::get_class(#str_ptr("UIImageSymbolConfiguration\0"));
+    if cls == (0 as *u8) { return; }
+    var pt: f64 = size;
+    if pt <= 0.0f64 { pt = 17.0f64; }
+    let cfg: *u8 = { rt::msg_id_f64(cls, rt::sel(#str_ptr("configurationWithPointSize:\0")), pt) };
+    if cfg == (0 as *u8) { return; }
+    { rt::msg_void_id(v, rt::sel(#str_ptr("setPreferredSymbolConfiguration:\0")), cfg) };
     return;
 }
 
@@ -503,22 +659,166 @@ fn create_bordered(n: *core::Node) -> *u8 {
 // and one width, so a DASHED or non-rectangular stroke is not expressible this
 // way — those ride `stroke_shape` and want a CAShapeLayer, which is the same
 // piece of work the canvas tier needs. MANIFEST.md records it.
+// The ledger's Border: a stroke around content, with a shape, a width, a cap, a
+// join, a miter limit and a dash pattern.
+//
+// A layer border draws ONE colour at ONE width around the layer's rectangle (or
+// its corner radius) and can express none of the rest. So a border that asks
+// for anything richer — a dash, a non-rectangular shape, a gradient stroke — is
+// drawn as a CAShapeLayer instead, which is exactly what those properties
+// describe. The plain case stays on the layer, where it costs nothing.
 fn apply_bordered(v: *u8, n: *core::Node, dirty: u64) {
     let p: *props::BorderedProps = props_of(n, props::K_BORDERED) as *props::BorderedProps;
     if p == (0 as *props::BorderedProps) { return; }
-    let l = ui::View::from_raw(v).layer();
+    let touched: u64 = bordered::P_STROKE | bordered::P_STROKE_WIDTH
+        | bordered::P_STROKE_SHAPE | bordered::P_STROKE_DASH
+        | bordered::P_STROKE_DASH_OFFSET | bordered::P_STROKE_CAP
+        | bordered::P_STROKE_JOIN | bordered::P_STROKE_MITER_LIMIT;
+    if (dirty & touched) == (0 as u64) { return; }
+
     let w: f64 = { (*p).stroke_width };
-    l.set_border_width(w);
     let b: vocab::Brush = { (*p).stroke };
-    if b.start.is_set() && w > 0.0f64 {
-        { rt::msg_void_id(l.raw(), rt::sel(#str_ptr("setBorderColor:\0")),
-                          paint::ui_color(b.start).c_g_color()) };
-    }
     let sh: vocab::Shape = { (*p).stroke_shape };
+    let dash: vocab::Dashes = { (*p).stroke_dash };
+    let view: ui::View = ui::View::from_raw(v);
+    let l: quartz::Layer = view.layer();
+
+    // A rounded stroke shape also rounds the node itself — the border and the
+    // content have to agree about where the corner is.
     if sh.kind == (2 as i64) {
         l.set_corner_radius(paint::largest_corner({ sh.corners }));
     }
+
+    let rich: bool = { dash.count } > (0 as usize) || sh.kind == (3 as i64)
+        || b.is_gradient;
+    if !rich {
+        remove_stroke_layer(view);
+        l.set_border_width(w);
+        if b.start.is_set() && w > 0.0f64 {
+            { rt::msg_void_id(l.raw(), rt::sel(#str_ptr("setBorderColor:\0")),
+                              paint::ui_color(b.start).c_g_color()) };
+        }
+        return;
+    }
+    // The rich case. The layer's own border is turned off so the two do not
+    // both draw.
+    l.set_border_width(0.0f64);
+    apply_stroke_layer(view, p);
     return;
+}
+
+fn stroke_key() -> *u8 { return 29061 as *u8; }
+
+// A stroke layer is a SUBLAYER and does not follow the view it sits under —
+// the same rule the gradient follows, and re-sized by the same layout pass.
+// The path is rebuilt rather than just re-framed, because a stroke's geometry
+// is the path, not the frame.
+fn resize_stroke(v: *u8, n: *core::Node) {
+    if v == (0 as *u8) { return; }
+    let p: *props::BorderedProps = props_of(n, props::K_BORDERED) as *props::BorderedProps;
+    if p == (0 as *props::BorderedProps) { return; }
+    let view: ui::View = ui::View::from_raw(v);
+    if { synth::get_associated(view.layer().raw(), stroke_key()) } == (0 as *u8) { return; }
+    apply_stroke_layer(view, p);
+    return;
+}
+
+fn remove_stroke_layer(view: ui::View) {
+    let host: quartz::Layer = view.layer();
+    let existing: *u8 = { synth::get_associated(host.raw(), stroke_key()) };
+    if existing == (0 as *u8) { return; }
+    { rt::msg_void(existing, rt::sel(#str_ptr("removeFromSuperlayer\0"))) };
+    synth::set_associated(host.raw(), stroke_key(), 0 as *u8);
+    return;
+}
+
+// One CAShapeLayer per bordered node, kept on an associated key so a re-apply
+// updates it rather than stacking a second one — the same rule the gradient
+// sublayer follows, and it is re-sized by the same layout pass.
+fn apply_stroke_layer(view: ui::View, p: *props::BorderedProps) {
+    let host: quartz::Layer = view.layer();
+    var shape: *u8 = { synth::get_associated(host.raw(), stroke_key()) };
+    if shape == (0 as *u8) {
+        shape = { rt::alloc_init(#str_ptr("CAShapeLayer\0")) };
+        if shape == (0 as *u8) { return; }
+        { rt::msg_void_id(host.raw(), rt::sel(#str_ptr("addSublayer:\0")), shape) };
+        synth::set_associated(host.raw(), stroke_key(), shape);
+        { rt::release(shape) };
+    }
+    let b: rt::Rect = view.bounds();
+    { msg_void_rect(shape, rt::sel(#str_ptr("setFrame:\0")), b) };
+    let w: f64 = { (*p).stroke_width };
+    // The path is INSET by half the line width, because a stroke straddles its
+    // path and would otherwise be clipped in half at the node's edge.
+    let inset: f64 = w / 2.0f64;
+    let r: rt::Rect = rt::Rect { x: inset, y: inset,
+                                 w: b.w - w, h: b.h - w };
+    let sh: vocab::Shape = { (*p).stroke_shape };
+    let path: *u8 = stroke_path(r, sh);
+    if path == (0 as *u8) { return; }
+    { rt::msg_void_id(shape, rt::sel(#str_ptr("setPath:\0")), path) };
+    { CGPathRelease(path) };
+    { rt::msg_void_f64(shape, rt::sel(#str_ptr("setLineWidth:\0")), w) };
+    { rt::msg_void_id(shape, rt::sel(#str_ptr("setFillColor:\0")), 0 as *u8) };
+    let brush: vocab::Brush = { (*p).stroke };
+    if brush.start.is_set() {
+        { rt::msg_void_id(shape, rt::sel(#str_ptr("setStrokeColor:\0")),
+                          paint::ui_color(brush.start).c_g_color()) };
+    }
+    { rt::msg_void_id(shape, rt::sel(#str_ptr("setLineCap:\0")),
+                      bridge::nsstring(line_cap_name({ (*p).stroke_cap }))) };
+    { rt::msg_void_id(shape, rt::sel(#str_ptr("setLineJoin:\0")),
+                      bridge::nsstring(line_join_name({ (*p).stroke_join }))) };
+    { rt::msg_void_f64(shape, rt::sel(#str_ptr("setMiterLimit:\0")),
+                       { (*p).stroke_miter_limit }) };
+    { rt::msg_void_f64(shape, rt::sel(#str_ptr("setLineDashPhase:\0")),
+                       { (*p).stroke_dash_offset }) };
+    let dashes: *u8 = dash_array({ (*p).stroke_dash });
+    { rt::msg_void_id(shape, rt::sel(#str_ptr("setLineDashPattern:\0")), dashes) };
+    return;
+}
+
+fn stroke_path(r: rt::Rect, s: vocab::Shape) -> *u8 {
+    if r.w <= 0.0f64 || r.h <= 0.0f64 { return 0 as *u8; }
+    if s.kind == (3 as i64) { return { CGPathCreateWithEllipseInRect(r, 0 as *u8) }; }
+    if s.kind == (2 as i64) {
+        let rad: f64 = paint::largest_corner({ s.corners });
+        return { CGPathCreateWithRoundedRect(r, rad, rad, 0 as *u8) };
+    }
+    return { CGPathCreateWithRect(r, 0 as *u8) };
+}
+
+// kCALineCap / kCALineJoin are strings, not enums.
+fn line_cap_name(c: vocab::LineCap) -> str {
+    return match c {
+        vocab::LineCap::Flat => "butt",
+        vocab::LineCap::Round => "round",
+        vocab::LineCap::Square => "square",
+    };
+}
+
+fn line_join_name(j: vocab::LineJoin) -> str {
+    return match j {
+        vocab::LineJoin::Bevel => "bevel",
+        vocab::LineJoin::Miter => "miter",
+        vocab::LineJoin::Round => "round",
+    };
+}
+
+// The dash pattern as an NSArray of NSNumbers, which is the only shape
+// `lineDashPattern` takes. An empty pattern answers nil — a solid line.
+fn dash_array(d: vocab::Dashes) -> *u8 {
+    let n: usize = { d.count };
+    if n == (0 as usize) { return 0 as *u8; }
+    let arr: *u8 = { rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")),
+                                rt::sel(#str_ptr("array\0"))) };
+    var i: usize = 0 as usize;
+    while i < n {
+        { rt::msg_void_id(arr, rt::sel(#str_ptr("addObject:\0")),
+                          number_f64({ d.run(i) })) };
+        i = i +% (1 as usize);
+    }
+    return arr;
 }
 
 // ---- toggle / checkbox / radio ---------------------------------------------------
@@ -566,8 +866,17 @@ fn apply_checkbox(v: *u8, n: *core::Node, dirty: u64) {
     if p == (0 as *props::CheckboxProps) { return; }
     let s: ui::Switch = ui::Switch::from_raw(v);
     if (dirty & checkbox::P_ON) != (0 as u64) { s.set_on({ (*p).on }); }
-    let c: vocab::Color = { (*p).color };
-    if c.is_set() { s.set_on_tint_color(paint::ui_color(c)); }
+    if (dirty & checkbox::P_COLOR) != (0 as u64) {
+        let c: vocab::Color = { (*p).color };
+        if c.is_set() { s.set_on_tint_color(paint::ui_color(c)); }
+    }
+    // `foreground` is the CheckBox's tick colour in the ledger, and facet gives
+    // it no dirty bit of its own — there is no setter for it — so it rides the
+    // colour write, which is the only moment it can change.
+    if (dirty & checkbox::P_COLOR) != (0 as u64) {
+        let b: vocab::Brush = { (*p).foreground };
+        if b.start.is_set() { s.set_thumb_tint_color(paint::ui_color(b.start)); }
+    }
     return;
 }
 
@@ -578,11 +887,62 @@ fn create_radio(n: *core::Node) -> *u8 {
     return v;
 }
 
+// A radio is a UISwitch here (MANIFEST.md §3), so its LABEL, its border and
+// its radius have nowhere on the control to live — a UISwitch draws none of
+// them. What it can honour is the state, the tint and the group.
 fn apply_radio(v: *u8, n: *core::Node, dirty: u64) {
     let p: *props::RadioProps = props_of(n, props::K_RADIO) as *props::RadioProps;
     if p == (0 as *props::RadioProps) { return; }
     let s: ui::Switch = ui::Switch::from_raw(v);
     if (dirty & radio::P_ON) != (0 as u64) { s.set_on({ (*p).on }); }
+    if (dirty & radio::P_TEXT_COLOR) != (0 as u64) {
+        let c: vocab::Color = { (*p).text_color };
+        if c.is_set() { s.set_on_tint_color(paint::ui_color(c)); }
+    }
+    // THE GROUP IS THE POINT OF A RADIO: turning one on turns its siblings off,
+    // and nothing in UIKit does that for a switch. facet carries the group name
+    // on every member, so the exclusion is done here — over the mounted tree,
+    // which is the only place the siblings can be found.
+    if (dirty & (radio::P_ON | radio::P_GROUP)) != (0 as u64) {
+        if { (*p).on } { turn_off_group_siblings(n, { (*p).group.view() }); }
+    }
+    return;
+}
+
+// Every other radio in the same group, off. Walks from each open window's root
+// because a node has no parent pointer — the same walk `theme_changed` makes,
+// and for the same reason.
+fn turn_off_group_siblings(me: *core::Node, group: str) {
+    if group == "" { return; }
+    var i: usize = 0 as usize;
+    let n: usize = app::window_count();
+    while i < n {
+        let r: *core::Node = app::window_root(i);
+        if r != (0 as *core::Node) { group_walk(r, me, group); }
+        i = i +% (1 as usize);
+    }
+    return;
+}
+
+fn group_walk(node: *core::Node, me: *core::Node, group: str) {
+    if node != me && core::kind_of(node) == props::K_RADIO {
+        let rp: *props::RadioProps = props_of(node, props::K_RADIO) as *props::RadioProps;
+        if rp != (0 as *props::RadioProps) {
+            if { (*rp).group.view() } == group && { (*rp).on } {
+                { (*rp).on = false };
+                core::touch(node, radio::P_ON);
+            }
+        }
+    }
+    var i: usize = 0 as usize;
+    let count: usize = core::child_count_of(node);
+    while i < count {
+        match core::child_of(node, i) {
+            option::Option[*core::Node]::Some(c) => { group_walk(c, me, group); }
+            option::Option[*core::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
     return;
 }
 
@@ -1008,3 +1368,13 @@ fn apply_refreshable(v: *u8, n: *core::Node, dirty: u64) {
     }
     return;
 }
+
+// ---- the runtime edges the stroke layer needs --------------------------------
+
+#[link_name = "objc_msgSend"]
+extern fn msg_void_rect(recv: *u8, sel: *u8, r: rt::Rect);
+
+extern fn CGPathRelease(p: *u8);
+extern fn CGPathCreateWithRect(r: rt::Rect, t: *u8) -> *u8;
+extern fn CGPathCreateWithEllipseInRect(r: rt::Rect, t: *u8) -> *u8;
+extern fn CGPathCreateWithRoundedRect(r: rt::Rect, cw: f64, ch: f64, t: *u8) -> *u8;

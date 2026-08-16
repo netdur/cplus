@@ -109,6 +109,22 @@ meaning and the same handler shape.
 Drawing a checkbox by hand was considered and rejected: it invents a control iOS
 users do not have.
 
+### A `radio` keeps its state and loses its label
+
+A radio is a UISwitch (above), and a UISwitch has nowhere to put a title, a
+border, a corner radius or a font. So of `radio`'s 14 props this backend honours
+three — `on`, its tint, and `group` — and the other eleven describe a control
+UIKit does not have.
+
+**The group DOES work**, and it is the half that matters: turning one radio on
+turns its group siblings off. Nothing in UIKit does that for a switch, so the
+exclusion is walked over the mounted tree, which is the only place the siblings
+can be found.
+
+**Instead:** put the label beside the control, as a `label` in the same row.
+That is what an iOS settings row is, and it is what `shell::field` does in the
+gallery.
+
 ### `popup` is a segmented control
 
 The modern iOS dropdown is a `UIButton` with a `UIMenu`, which needs `UIAction`
