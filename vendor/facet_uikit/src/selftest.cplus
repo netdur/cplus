@@ -38,6 +38,9 @@ import "./views" as views;
 import "./recycler" as recycler;
 import "./input" as input;
 import "./keys" as keys;
+import "./window" as window;
+import "./dialogs" as dialogs;
+import "facet/services" as services;
 import "facet/gestures" as gestures;
 import "objc/bridge" as bridge;
 import "stdlib/vec" as vec;
@@ -45,6 +48,7 @@ import "agent_uikit/agent_uikit" as agent;
 import "agent_core/identity" as identity;
 import "agent_core/auth" as auth;
 import "agent_core/backend" as mcpb;
+import "agent_core/surface" as surf;
 
 static FAILED: i32 = 0 as i32;
 static RAN: i32 = 0 as i32;
@@ -308,6 +312,137 @@ fn a_control_is_clickable_and_a_bare_view_is_not() -> bool {
     return agent::view_clickable(v.raw()) == false;
 }
 
+// ---- the caret and the runs ---------------------------------------------------
+// Both were unsupported an hour ago and both are BYTE-indexed, which is the
+// half that can be silently wrong: UIKit counts UTF-16 and facet counts bytes,
+// and every non-ASCII character before the caret moves the two apart.
+
+fn a_caret_lands_where_bytes_say_on_ascii() -> bool {
+    let f: uik::TextField = uik::TextField::new_with_frame(
+        rt::Rect { x: 0.0f64, y: 0.0f64, w: 100.0f64, h: 30.0f64 });
+    { rt::msg_void_id(f.as_view().raw(), rt::sel(#str_ptr("setText:\0")),
+                      bridge::nsstring("hello")) };
+    if !agent::place_caret(f.as_view().raw(), 2 as u64, 0 as u64) { return false; }
+    let r: *u8 = { rt::msg_id(f.as_view().raw(),
+                              rt::sel(#str_ptr("selectedTextRange\0"))) };
+    if r == (0 as *u8) { return false; }
+    let begin: *u8 = { rt::msg_id(f.as_view().raw(),
+                                  rt::sel(#str_ptr("beginningOfDocument\0"))) };
+    let start: *u8 = { rt::msg_id(r, rt::sel(#str_ptr("start\0"))) };
+    let off: i64 = { msg_i64_2id(f.as_view().raw(),
+                                 rt::sel(#str_ptr("offsetFromPosition:toPosition:\0")),
+                                 begin, start) };
+    return off == (2 as i64);
+}
+
+// THE CONVERSION, which is where a byte index and a UTF-16 index part company.
+// "é" is two bytes and one UTF-16 unit, so byte 2 is unit 1 — an off-by-one
+// here puts the caret inside a character.
+fn byte_offsets_convert_to_utf16_units() -> bool {
+    if agent::utf16_of_byte("héllo", 0 as u64) != (0 as u64) { return false; }
+    if agent::utf16_of_byte("héllo", 1 as u64) != (1 as u64) { return false; }
+    if agent::utf16_of_byte("héllo", 3 as u64) != (2 as u64) { return false; }
+    // And back the other way, so the pair is consistent.
+    return agent::byte_offset_of("héllo", 2 as u64) == (3 as u64);
+}
+
+fn runs_are_read_from_a_labels_attributed_text() -> bool {
+    let l: uik::Label = uik::Label::new_with_frame(
+        rt::Rect { x: 0.0f64, y: 0.0f64, w: 100.0f64, h: 30.0f64 });
+    let a: *u8 = { rt::msg_id_id(
+        { rt::msg_id(rt::get_class(#str_ptr("NSAttributedString\0")),
+                     rt::sel(#str_ptr("alloc\0"))) },
+        rt::sel(#str_ptr("initWithString:\0")), bridge::nsstring("abc")) };
+    if a == (0 as *u8) { return false; }
+    { rt::msg_void_id(l.as_view().raw(), rt::sel(#str_ptr("setAttributedText:\0")), a) };
+    let runs: vec::Vec[surf::TextRun] = agent::walk_runs(agent::attributed_of(l.as_view().raw()));
+    { rt::release(a) };
+    // One uniform run over three ASCII bytes.
+    if runs.count() != (1 as usize) { return false; }
+    return match runs.at_ptr(0 as usize) {
+        option::Option[*surf::TextRun]::Some(r) => ({ (*r).length } == (3 as u64)),
+        option::Option[*surf::TextRun]::None => false,
+    };
+}
+
+// ---- the lifecycle band -----------------------------------------------------------
+// Pure registry logic, so it runs with no app: register, fire, check it ran;
+// cancel, fire again, check it did not. The five phases are separate lists in
+// one vector and a fire must not cross them.
+
+static FIRED: i32 = 0 as i32;
+fn count_fire(ctx: *u8) { FIRED = FIRED + (1 as i32); return; }
+
+fn a_lifecycle_observer_fires_for_its_own_phase() -> bool {
+    FIRED = 0 as i32;
+    var h: services::Cancellable = window::observe_lifecycle(
+        window::PHASE_BACKGROUND, count_fire, 0 as *u8);
+    window::fire_phase(window::PHASE_BACKGROUND);
+    let after_own: i32 = FIRED;
+    // A DIFFERENT phase must not reach it: five edges in one vector, and a
+    // fire that crossed them would tell an app it was backgrounded when it
+    // was merely resigning active.
+    window::fire_phase(window::PHASE_ACTIVE);
+    let after_other: i32 = FIRED;
+    h.cancel();
+    return after_own == (1 as i32) && after_other == (1 as i32);
+}
+
+fn a_cancelled_lifecycle_observer_stops_firing() -> bool {
+    FIRED = 0 as i32;
+    var h: services::Cancellable = window::observe_lifecycle(
+        window::PHASE_TERMINATE, count_fire, 0 as *u8);
+    window::fire_phase(window::PHASE_TERMINATE);
+    h.cancel();
+    window::fire_phase(window::PHASE_TERMINATE);
+    return FIRED == (1 as i32);
+}
+
+// ---- the dialog tier ---------------------------------------------------------------
+// The controller is real; only the PRESENTATION needs a window, so everything
+// up to it is checkable here.
+
+fn an_alert_carries_one_button_per_named_title() -> bool {
+    let a: *u8 = dialogs::build("Title", "Message", false, "");
+    if a == (0 as *u8) { return false; }
+    dialogs::add_button(a, "OK", 0 as i32, false);
+    dialogs::add_button(a, "Cancel", 1 as i32, true);
+    let acts: *u8 = { rt::msg_id(a, rt::sel(#str_ptr("actions\0"))) };
+    let n: u64 = { rt::msg_u64(acts, rt::sel(#str_ptr("count\0"))) };
+    { rt::release(a) };
+    return n == (2 as u64);
+}
+
+fn a_prompt_gets_exactly_one_text_field() -> bool {
+    let a: *u8 = dialogs::build("T", "M", true, "type here");
+    if a == (0 as *u8) { return false; }
+    let fields: *u8 = { rt::msg_id(a, rt::sel(#str_ptr("textFields\0"))) };
+    var n: u64 = 0 as u64;
+    if fields != (0 as *u8) { n = { rt::msg_u64(fields, rt::sel(#str_ptr("count\0"))) }; }
+    { rt::release(a) };
+    return n == (1 as u64);
+}
+
+// An alert with no window to present on must clean up rather than leave the
+// pending answer armed forever — the next question would inherit it.
+fn a_dialog_with_nowhere_to_present_leaves_no_pending_answer() -> bool {
+    dialogs::alert("T", "M", "OK", "", answer_noop, 0 as *u8);
+    return dialogs::is_showing() == false;
+}
+
+fn answer_noop(index: i32, ctx: *u8) { return; }
+
+// ---- the navigation stack ----------------------------------------------------------
+
+fn the_stack_starts_empty_and_refuses_without_a_window() -> bool {
+    if window::pushed_count() != (0 as usize) { return false; }
+    // No window means no navigation controller, and a push must SAY so rather
+    // than half-succeed.
+    var n: core::Node = ui::column(flex::Builder::new());
+    if window::push_screen(#addr_of(n), "Screen", 0 as *u8) { return false; }
+    return window::pop_screen() == false;
+}
+
 // ---- the run --------------------------------------------------------------------
 
 fn run_all() -> i32 {
@@ -337,6 +472,21 @@ fn run_all() -> i32 {
     check("a secure field is sensitive by class", a_secure_field_is_sensitive_by_class());
     check("a control is clickable, a bare view is not",
           a_control_is_clickable_and_a_bare_view_is_not());
+    check("a lifecycle observer fires for its own phase",
+          a_lifecycle_observer_fires_for_its_own_phase());
+    check("a cancelled lifecycle observer stops firing",
+          a_cancelled_lifecycle_observer_stops_firing());
+    check("an alert carries one button per named title",
+          an_alert_carries_one_button_per_named_title());
+    check("a prompt gets exactly one text field", a_prompt_gets_exactly_one_text_field());
+    check("a dialog with nowhere to present leaves no pending answer",
+          a_dialog_with_nowhere_to_present_leaves_no_pending_answer());
+    check("the stack starts empty and refuses without a window",
+          the_stack_starts_empty_and_refuses_without_a_window());
+    check("a caret lands where bytes say on ascii", a_caret_lands_where_bytes_say_on_ascii());
+    check("byte offsets convert to utf16 units", byte_offsets_convert_to_utf16_units());
+    check("runs are read from a label's attributed text",
+          runs_are_read_from_a_labels_attributed_text());
 
     let ran: i32 = RAN;
     let failed: i32 = FAILED;
@@ -344,3 +494,6 @@ fn run_all() -> i32 {
     io::eprintln(text::from_str("selftest result: ${passed} passed; ${failed} failed"));
     return FAILED;
 }
+
+#[link_name = "objc_msgSend"]
+extern fn msg_i64_2id(recv: *u8, sel: *u8, a: *u8, b: *u8) -> i64;

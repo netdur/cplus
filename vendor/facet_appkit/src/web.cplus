@@ -590,9 +590,15 @@ fn task_path(task: *u8) -> text::Text {
 }
 
 fn fail_task(task: *u8) {
-    let err: *u8 = { msg_id_id_u64_i64_id(rt::get_class(#str_ptr("NSError\0")),
+    // THREE ARGUMENTS, not four. This shared four-slot extern also serves
+    // `initWithURL:MIMEType:expectedContentLength:textEncodingName:`, and the
+    // spare `0 as *u8` copied across with it — which shifted every argument
+    // one place right: the domain landed as the domain, NULL as the code, and
+    // `404` reached `userInfo` AS A DICTIONARY POINTER. NSError keeps it and
+    // anything that later reads the error's userInfo dereferences 404.
+    let err: *u8 = { msg_id_id_i64_id(rt::get_class(#str_ptr("NSError\0")),
         rt::sel(#str_ptr("errorWithDomain:code:userInfo:\0")),
-        bridge::nsstring("FacetHybrid"), 0 as *u8, 404 as i64, 0 as *u8) };
+        bridge::nsstring("FacetHybrid"), 404 as i64, 0 as *u8) };
     if err == (0 as *u8) { return; }
     { rt::msg_void_id(task, rt::sel(#str_ptr("didFailWithError:\0")), err) };
     return;
@@ -683,3 +689,6 @@ fn install_scheme(config: *u8, n: *core::Node) -> *u8 {
                          h, bridge::nsstring(facet_scheme())) };
     return h;
 }
+
+#[link_name = "objc_msgSend"]
+extern fn msg_id_id_i64_id(recv: *u8, sel: *u8, a: *u8, b: i64, c: *u8) -> *u8;

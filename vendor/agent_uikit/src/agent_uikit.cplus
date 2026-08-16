@@ -749,24 +749,234 @@ fn mcp_hit_test(p: *u8, grant: auth::Grant, id: str) -> surface::HitTest {
     return { (*(p as *Surface)).hit_test(grant, id) };
 }
 
-// THE TWO THAT ARE NOT BUILT, reported as unsupported rather than answered
-// wrongly.
+// ---- the caret ------------------------------------------------------------------
+// PLACE THE CARET, in BYTES of the control's own text — facet's unit
+// everywhere, and not UIKit's.
 //
-// `set_caret` is reachable — a UITextField's caret is a `UITextRange` built
-// from `positionFromPosition:offset:`, which facet_uikit's text band already
-// uses for `cursor_position` — and it is not written here yet.
+// A UITextInput's selection is a `UITextRange` between two `UITextPosition`
+// objects, not an offset pair, so the range is BUILT: from the document's
+// beginning, offset by the caret's UTF-16 index. `positionFromPosition:offset:`
+// counts in UTF-16 units, so the byte offset an agent gave has to be converted
+// — every non-ASCII character before the caret moves the two apart.
 //
-// `invoke_menu` is not reachable at all: iOS has no menu bar, and the
-// context-menu tier is a per-view interaction rather than an application-wide
-// tree with a path. There is nothing for a path like "File/Save" to name.
+// Authorized like `set_text` minus the version check: this moves an insertion
+// point rather than replacing a value, so there is nothing to race — but it is
+// still a WRITE to a control an agent may not drive.
+
+fn utf16_of_byte(s: str, byte: u64) -> u64 {
+    let bytes: *u8 = #str_ptr(s);
+    let total: usize = #str_len(s);
+    var b: usize = 0 as usize;
+    var u: u64 = 0 as u64;
+    while b < total {
+        if (b as u64) >= byte { return u; }
+        let c: u8 = { *(bytes + b) };
+        var step: usize = 1 as usize;
+        var wide: u64 = 1 as u64;
+        if c >= (0xF0 as u8) { step = 4 as usize; wide = 2 as u64; }
+        else if c >= (0xE0 as u8) { step = 3 as usize; }
+        else if c >= (0xC0 as u8) { step = 2 as usize; }
+        b = b +% step;
+        u = u +% wide;
+    }
+    return u;
+}
+
+fn byte_offset_of(s: str, unit: u64) -> u64 {
+    let bytes: *u8 = #str_ptr(s);
+    let total: usize = #str_len(s);
+    var b: usize = 0 as usize;
+    var u: u64 = 0 as u64;
+    while b < total {
+        if u >= unit { return b as u64; }
+        let c: u8 = { *(bytes + b) };
+        var step: usize = 1 as usize;
+        var wide: u64 = 1 as u64;
+        if c >= (0xF0 as u8) { step = 4 as usize; wide = 2 as u64; }
+        else if c >= (0xE0 as u8) { step = 3 as usize; }
+        else if c >= (0xC0 as u8) { step = 2 as usize; }
+        b = b +% step;
+        u = u +% wide;
+    }
+    return total as u64;
+}
+
+fn place_caret(v: *u8, at: u64, length: u64) -> bool {
+    if !responds_to(v, #str_ptr("beginningOfDocument ")) { return false; }
+    let owned: text::Text = node_text(v, identity::Role::Input);
+    let src: str = { owned.view() };
+    let start_u: u64 = utf16_of_byte(src, at);
+    let end_u: u64 = utf16_of_byte(src, at +% length);
+    let begin: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("beginningOfDocument "))) };
+    if is_null(begin) { return false; }
+    let from: *u8 = { msg_id_id_i64(v, rt::sel(#str_ptr("positionFromPosition:offset: ")),
+                                    begin, start_u as i64) };
+    let to: *u8 = { msg_id_id_i64(v, rt::sel(#str_ptr("positionFromPosition:offset: ")),
+                                  begin, end_u as i64) };
+    if is_null(from) || is_null(to) { return false; }
+    let r: *u8 = { msg_id_2id(v, rt::sel(#str_ptr("textRangeFromPosition:toPosition: ")),
+                              from, to) };
+    if is_null(r) { return false; }
+    { rt::msg_void_id(v, rt::sel(#str_ptr("setSelectedTextRange: ")), r) };
+    return true;
+}
+
 fn mcp_set_caret(p: *u8, grant: auth::Grant, id: str, at: u64,
                  length: u64) -> surface::Outcome {
-    return surface::Outcome::NotActionable;
+    if is_null(p) { return surface::Outcome::NotFound; }
+    let s: *Surface = p as *Surface;
+    match { (*s).reg.lookup(id) } {
+        option::Option[usize]::Some(node) => {
+            let oc: surface::Outcome = surface::authorize_action({ (*s).reg }, grant, node);
+            if !surface::outcome_eq(oc, surface::Outcome::Allowed) { return oc; }
+            let v: *u8 = { (*s).view_of(node) };
+            if is_detached(v) { return surface::Outcome::Stale; }
+            if !place_caret(v, at, length) { return surface::Outcome::NotActionable; }
+            return surface::Outcome::Allowed;
+        }
+        option::Option[usize]::None => { }
+    }
+    return surface::Outcome::NotFound;
+}
+
+// ---- the runs -------------------------------------------------------------------
+// The styled ranges of a node's text, in BYTES. NSAttributedString is
+// Foundation, so the walk is the AppKit one — what differs is where the string
+// comes from (`attributedText` on a label or a field, `textStorage` on a text
+// view) and how a font's traits are read: UIFontDescriptor has symbolic traits
+// of its own, where AppKit asks NSFontManager.
+
+fn attributed_of(v: *u8) -> *u8 {
+    if is_null(v) { return null(); }
+    if responds_to(v, #str_ptr("textStorage ")) {
+        let ts: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("textStorage "))) };
+        if !is_null(ts) { return ts; }
+    }
+    if responds_to(v, #str_ptr("attributedText ")) {
+        return { rt::msg_id(v, rt::sel(#str_ptr("attributedText "))) };
+    }
+    return null();
+}
+
+fn has_attribute(attrs: *u8, key: str) -> bool {
+    if is_null(attrs) { return false; }
+    return !is_null({ rt::msg_id_id(attrs, rt::sel(#str_ptr("objectForKey: ")),
+                                    bridge::nsstring(key)) });
+}
+
+fn hex_digit(n: i64) -> text::Text {
+    let digits: text::Text = "0123456789abcdef".to_text();
+    var i: usize = n as usize;
+    if n < (0 as i64) { i = 0 as usize; }
+    if n > (15 as i64) { i = 15 as usize; }
+    return match digits.slice(i, i +% (1 as usize)) {
+        option::Option[str]::Some(d) => d.to_text(),
+        option::Option[str]::None => text::new(),
+    };
+}
+
+fn hex_byte(v: f64) -> text::Text {
+    var n: i64 = (v * 255.0f64 + 0.5f64) as i64;
+    if n < (0 as i64) { n = 0 as i64; }
+    if n > (255 as i64) { n = 255 as i64; }
+    return "${hex_digit(n / (16 as i64))}${hex_digit(n % (16 as i64))}";
+}
+
+// `#rrggbb`. A UIColor answers its components directly — there is no colour
+// space to convert through the way an NSColor needs — and a dynamic colour
+// resolves against the current trait collection, which is the colour it is
+// CURRENTLY drawing with and therefore the question being asked.
+fn run_color_hex(attrs: *u8) -> text::Text {
+    if is_null(attrs) { return text::new(); }
+    let c: *u8 = { rt::msg_id_id(attrs, rt::sel(#str_ptr("objectForKey: ")),
+                                 bridge::nsstring("NSColor")) };
+    if is_null(c) { return text::new(); }
+    if !responds_to(c, #str_ptr("getRed:green:blue:alpha: ")) { return text::new(); }
+    var r: f64 = 0.0f64; var g: f64 = 0.0f64; var b: f64 = 0.0f64; var a: f64 = 0.0f64;
+    let _ok: i8 = { msg_i8_4ptr(c, rt::sel(#str_ptr("getRed:green:blue:alpha: ")),
+                                #addr_of(r), #addr_of(g), #addr_of(b), #addr_of(a)) };
+    return "#${hex_byte(r)}${hex_byte(g)}${hex_byte(b)}";
+}
+
+// UIFontDescriptorSymbolicTraits: Italic 1<<0, Bold 1<<1 — the same two bits
+// AppKit's NSFontTraitMask uses, reached through the descriptor rather than a
+// font manager iOS does not have.
+fn run_has_trait(attrs: *u8, mask: u64) -> bool {
+    if is_null(attrs) { return false; }
+    let f: *u8 = { rt::msg_id_id(attrs, rt::sel(#str_ptr("objectForKey: ")),
+                                 bridge::nsstring("NSFont")) };
+    if is_null(f) { return false; }
+    if !responds_to(f, #str_ptr("fontDescriptor ")) { return false; }
+    let d: *u8 = { rt::msg_id(f, rt::sel(#str_ptr("fontDescriptor "))) };
+    if is_null(d) { return false; }
+    let traits: u64 = { rt::msg_u64(d, rt::sel(#str_ptr("symbolicTraits "))) };
+    return (traits & mask) != (0 as u64);
+}
+
+fn walk_runs(storage: *u8) -> vec::Vec[surface::TextRun] {
+    var out: vec::Vec[surface::TextRun] = vec::new::[surface::TextRun]();
+    if is_null(storage) { return out; }
+    let units: u64 = { rt::msg_u64(storage, rt::sel(#str_ptr("length "))) };
+    if units == (0 as u64) { return out; }
+    let whole: text::Text = bridge::to_text(
+        { rt::msg_id(storage, rt::sel(#str_ptr("string "))) });
+    let src: str = { whole.view() };
+    var at: u64 = 0 as u64;
+    // Bounded by the length: a malformed effective range would otherwise spin.
+    var seen: u64 = 0 as u64;
+    while at < units && seen <= units {
+        seen = seen +% (1 as u64);
+        var eff: rt::Range = rt::Range { location: at, length: 0 as u64 };
+        let attrs: *u8 = { msg_id_u64_rangep(storage,
+            rt::sel(#str_ptr("attributesAtIndex:effectiveRange: ")), at, #addr_of(eff)) };
+        if eff.length == (0 as u64) { eff.length = units -% at; }
+        let start_b: u64 = byte_offset_of(src, at);
+        let end_b: u64 = byte_offset_of(src, at +% eff.length);
+        out.append(surface::TextRun {
+            start: start_b,
+            length: end_b -% start_b,
+            color: run_color_hex(attrs),
+            is_bold: run_has_trait(attrs, 2 as u64),
+            is_italic: run_has_trait(attrs, 1 as u64),
+            is_underlined: has_attribute(attrs, "NSUnderline"),
+        });
+        at = at +% eff.length;
+    }
+    return out;
 }
 
 fn mcp_read_runs(p: *u8, grant: auth::Grant, id: str) -> surface::Runs {
-    return surface::runs_refused(surface::Outcome::NotActionable, false);
+    if is_null(p) { return surface::runs_refused(surface::Outcome::NotFound, true); }
+    let s: *Surface = p as *Surface;
+    match { (*s).reg.lookup(id) } {
+        option::Option[usize]::Some(node) => {
+            let oc: surface::Outcome = surface::authorize_read({ (*s).reg }, grant, node);
+            if !surface::outcome_eq(oc, surface::Outcome::Allowed) {
+                return surface::runs_refused(oc, true);
+            }
+            let v: *u8 = { (*s).view_of(node) };
+            if is_detached(v) {
+                return surface::runs_refused(surface::Outcome::Stale, true);
+            }
+            let storage: *u8 = attributed_of(v);
+            if is_null(storage) {
+                // Not a text control. Supported, and there is nothing to read.
+                return surface::runs_refused(surface::Outcome::Allowed, true);
+            }
+            return surface::Runs {
+                outcome: surface::Outcome::Allowed,
+                supported: true,
+                runs: walk_runs(storage),
+            };
+        }
+        option::Option[usize]::None => { }
+    }
+    return surface::runs_refused(surface::Outcome::NotFound, true);
 }
+
+// `invoke_menu` is not reachable at all: iOS has no menu bar, and the
+// context-menu tier is a per-view interaction rather than an application-wide
+// tree with a path. There is nothing for "File/Save" to name.
 
 fn mcp_invoke_menu(p: *u8, grant: auth::Grant, path: str) -> surface::Outcome {
     return surface::Outcome::NotActionable;
@@ -788,6 +998,14 @@ fn mcp_backend() -> mcpb::Backend {
 
 #[link_name = "objc_msgSend"]
 extern fn msg_id_u64(recv: *u8, sel: *u8, a: u64) -> *u8;
+#[link_name = "objc_msgSend"]
+extern fn msg_id_id_i64(recv: *u8, sel: *u8, a: *u8, b: i64) -> *u8;
+#[link_name = "objc_msgSend"]
+extern fn msg_id_2id(recv: *u8, sel: *u8, a: *u8, b: *u8) -> *u8;
+#[link_name = "objc_msgSend"]
+extern fn msg_id_u64_rangep(recv: *u8, sel: *u8, i: u64, r: *rt::Range) -> *u8;
+#[link_name = "objc_msgSend"]
+extern fn msg_i8_4ptr(recv: *u8, sel: *u8, r: *f64, g: *f64, b: *f64, a: *f64) -> i8;
 #[link_name = "objc_msgSend"]
 extern fn msg_void_u64(recv: *u8, sel: *u8, a: u64);
 #[link_name = "objc_msgSend"]

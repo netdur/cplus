@@ -169,14 +169,6 @@ which is iOS 17.4. The call is guarded by `respondsToSelector:`, so on an older
 system the write is inert rather than a crash. Everything else in the package
 builds against the deployment target with no version check.
 
-### The one unbuilt handler
-
-`hybrid_web`'s `on_web_resource_requested` needs a `WKURLSchemeHandler`
-registered on the configuration before the view exists, the way
-`facet_appkit/web.cplus` does it. The message channel in the other direction
-(`on_raw_message_received`, a page calling out through
-`window.webkit.messageHandlers.facet.postMessage`) IS built.
-
 ### `observe_size` is filled
 
 "A view learns it was resized in `layoutSubviews`, which needs a synthesized
@@ -229,16 +221,20 @@ and served by `agent_mcp::serve_tcp`, bound to LOOPBACK. Reach it over USB with
 usbmuxd — `iproxy 8787 8787` or `pymobiledevice3` — which is how Flutter's Dart
 VM Service and Chrome's remote debugging are reached.
 
-Two verbs report unsupported rather than answering wrongly. `set_caret` is
-reachable (a UITextField's caret is a `UITextRange` from
-`positionFromPosition:offset:`, which the text band already uses) and is not
-written. `invoke_menu` is not reachable at all: iOS has no menu bar, and the
-context-menu tier is a per-view interaction rather than an application-wide tree
-with a path — there is nothing for "File/Save" to name.
+`invoke_menu` is the one verb that reports unsupported, and it is unreachable
+rather than unbuilt: iOS has no menu bar, and the context-menu tier is a
+per-view interaction rather than an application-wide tree with a path. There is
+nothing for "File/Save" to name.
 
-`read_runs` is unsupported for now: `UITextView.textStorage` and
-`UILabel.attributedText` are both NSAttributedString and the walk is portable,
-so this is unbuilt rather than unanswerable.
+`set_caret` and `read_runs` are BUILT. The caret is a `UITextRange` between two
+`UITextPosition`s rather than an offset pair, so the range is constructed from
+the document's beginning — and facet counts BYTES where UIKit counts UTF-16, so
+the offset is converted rather than passed through. The runs walk
+`UITextView.textStorage` / `UILabel.attributedText`, which are NSAttributedString
+on both platforms; only the font traits differ, reached through a
+UIFontDescriptor rather than the NSFontManager iOS does not have.
+
+`invoke_menu` remains the one verb that is unreachable rather than unbuilt.
 
 ### The key band and the sender readers ARE filled
 
