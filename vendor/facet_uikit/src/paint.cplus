@@ -373,7 +373,10 @@ fn apply_common(v: *u8, n: *core::Node, dirty: u64) {
     // node has to clip or the corners are paint over square content. The clip
     // shape is the richer verb, so it goes first and this corrects it.
     if (dirty & props::C_CORNER_RADIUS) != (0 as u64) {
-        apply_corner_radius(view, core::corner_radius(n), { core::clip(n).kind } != (0 as i64));
+        let sh: vocab::Shadow = core::shadow(n);
+        apply_corner_radius(view, core::corner_radius(n),
+                            { core::clip(n).kind } != (0 as i64),
+                            sh.color.is_set() && sh.opacity > 0.0f64);
     }
     if (dirty & props::C_TRANSFORM) != (0 as u64) {
         apply_transform(view, n);
@@ -407,14 +410,29 @@ fn apply_flow_direction(view: ui::View, n: *core::Node) {
 // Core Animation has ONE radius per layer and facet carries four, so the
 // largest wins — the same reduction the per-control bodies make, made in one
 // place for every other node.
-fn apply_corner_radius(view: ui::View, c: vocab::Corners, has_clip: bool) {
+// A SHADOW AND A CLIP CANNOT SHARE ONE LAYER, and a card wants both.
+//
+// `masksToBounds` clips everything outside the layer — including the shadow,
+// which is drawn outside by definition. Measured on the simulator: not one card
+// in the gallery had a shadow, and the Shadow page was three blank rows, because
+// every one of them also had a corner radius.
+//
+// The radius alone is enough for the ordinary case: a CALayer draws its own
+// `backgroundColor` and border rounded whether or not it masks, so a rounded
+// card with a shadow gets both as long as nothing forces the mask on. What the
+// mask buys is clipping the CHILDREN, and that is what a node asks for with
+// `clip` — so a node that states a shadow keeps its shadow, and a node that
+// states a clip keeps its clipping.
+fn apply_corner_radius(view: ui::View, c: vocab::Corners, has_clip: bool, has_shadow: bool) {
     let l: quartz::Layer = view.layer();
     let r: f64 = largest_corner(c);
     if r > 0.0f64 {
         l.set_corner_radius(r);
-        // A rounded container whose children are not clipped is a rectangle
-        // with rounded paint, which is not what anyone means by rounded.
-        l.set_masks_to_bounds(true);
+        if has_shadow && !has_clip {
+            l.set_masks_to_bounds(false);
+        } else {
+            l.set_masks_to_bounds(true);
+        }
         return;
     }
     l.set_corner_radius(0.0f64);
@@ -497,6 +515,22 @@ fn apply_brush(view: ui::View, b: vocab::Brush) {
 }
 
 fn gradient_key() -> *u8 { return 29060 as *u8; }
+
+// A GRADIENT SUBLAYER DOES NOT FOLLOW ITS VIEW. `apply_brush` sizes it from
+// `view.bounds()`, and at apply time those bounds are ZERO — the frame walk
+// runs after the applies, so a gradient was laid out into a 0x0 layer and
+// never seen again. A sublayer has no autoresizing that a view-backed layer
+// honours, so the layout pass calls this for any node whose brush is a
+// gradient (geometry.cplus), which is a struct read rather than a message for
+// every other node.
+fn resize_gradient(v: *u8) {
+    if v == (0 as *u8) { return; }
+    let view: ui::View = ui::View::from_raw(v);
+    let existing: *u8 = { synth::get_associated(view.layer().raw(), gradient_key()) };
+    if existing == (0 as *u8) { return; }
+    { msg_void_rect(existing, rt::sel(#str_ptr("setFrame:\0")), view.bounds()) };
+    return;
+}
 
 // One gradient sublayer per view, kept on an associated key so a re-apply
 // updates it rather than stacking a second one under the first.

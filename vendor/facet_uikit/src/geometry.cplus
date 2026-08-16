@@ -26,7 +26,9 @@ import "stdlib/option" as option;
 import "flex_layout/flex_layout" as flex;
 import "facet/facet" as core;
 import "objc/runtime" as rt;
+import "facet/vocabulary" as vocab;
 import "uikit/uikit" as ui;
+import "./paint" as paint;
 
 type Node = flex::Node;
 
@@ -181,6 +183,12 @@ fn reposition_children(node: *core::Node, host_abs: flex::Frame) {
                         w: cf.width,
                         h: cf.height,
                     });
+                    // A gradient is a SUBLAYER and does not follow the view it
+                    // sits under, so the one kind of paint that has to be
+                    // re-sized per pass is re-sized here. Gated on the node's
+                    // own brush — a struct read, not a message, for every node
+                    // that has no gradient.
+                    if { core::background(c).is_gradient } { paint::resize_gradient(v); }
                     // Its descendants' frames are relative to IT. A cache-skipped
                     // child means every absolute frame under it is unchanged, so
                     // the views already sit exactly there.
