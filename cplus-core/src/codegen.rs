@@ -10661,6 +10661,53 @@ impl<'a> FnState<'a> {
                                                 &self.return_ty,
                                                 self.types,
                                             );
+                                        // `musttail` DESTROYS this frame before
+                                        // control reaches the callee, so an
+                                        // argument that is a pointer INTO this
+                                        // frame is read from dead stack. Two
+                                        // lowering arms in `gen_named_call`
+                                        // produce exactly that, and this mirrors
+                                        // their conditions:
+                                        //
+                                        //   - `param_passes_by_ptr` — a `ref`
+                                        //     param, or a non-Copy struct borrow:
+                                        //     `gen_arg_place` hands over an
+                                        //     address, and an rvalue arg is
+                                        //     spilled to a fresh slot to get one;
+                                        //   - a Copy struct the C ABI classifies
+                                        //     `Indirect` (>16B on aarch64-darwin):
+                                        //     copied into `alloca_anon` and passed
+                                        //     as a bare pointer.
+                                        //
+                                        // The second arm only runs for a non-
+                                        // `fastcc` callee — a fastcc one takes
+                                        // Copy aggregates raw, in registers, so
+                                        // nothing points at the frame. That is
+                                        // why this only ever bit a LIBRARY build:
+                                        // `[lib]` gives every name-public fn
+                                        // `weak_odr` linkage, which forfeits
+                                        // fastcc, which turns every big Copy
+                                        // struct parameter indirect. The same
+                                        // source in a `[[bin]]` passes the
+                                        // aggregate by value and is correct.
+                                        // `facet`'s 25-parameter `elements::button`
+                                        // forwarder lost both its `vocab::Color`
+                                        // arguments this way, and read back the
+                                        // low half of a stale stack pointer as
+                                        // `Color.token` —
+                                        // bugs/ios-target-defaulted-struct-param-garbage.md.
+                                        let passes_frame_ptr = sig.params.iter().any(|ps| {
+                                            if param_passes_by_ptr(ps, self.types) {
+                                                return true;
+                                            }
+                                            !callee_is_fastcc
+                                                && matches!(&ps.ty, Ty::Struct(_))
+                                                && is_copy_ty(&ps.ty, self.types)
+                                                && matches!(
+                                                    classify_c_abi(&ps.ty, self.types),
+                                                    CAbiClass::Indirect
+                                                )
+                                        });
                                         if !sig.is_variadic
                                             && sig.return_type == self.return_ty
                                             && callee_params == enclosing
@@ -10670,6 +10717,7 @@ impl<'a> FnState<'a> {
                                             && !enclosing_ret_coerced
                                             && !callee_ret_coerced
                                             && !enclosing_export_sret
+                                            && !passes_frame_ptr
                                         {
                                             self.pending_musttail = true;
                                         }
@@ -19597,6 +19645,91 @@ mod tests {
         let diags = sema::check(&prog, PathBuf::from("test.cplus"), src);
         assert!(diags.is_empty(), "sema errors: {diags:#?}");
         generate(&prog, mode)
+    }
+
+    /// The IR a `[lib]` build emits: name-public functions become `weak_odr`
+    /// instead of `internal fastcc`, which is what forfeits the raw-aggregate
+    /// parameter ABI and makes big Copy structs pass indirectly. Several real
+    /// defects exist only in this mode — a `[[bin]]` of the same source is
+    /// correct — so a bin-only test cannot see them.
+    fn gen_src_lib(src: &str) -> String {
+        let toks = tokenize(src).expect("lex");
+        let prog = parse(toks).expect("parse");
+        let diags = sema::check(&prog, PathBuf::from("test.cplus"), src);
+        assert!(diags.is_empty(), "sema errors: {diags:#?}");
+        generate_inner(
+            &prog,
+            BuildMode::Debug,
+            true,
+            None,
+            None,
+            &[],
+            true, // is_lib
+            &Default::default(),
+            &Default::default(),
+            &Default::default(),
+            &Default::default(),
+            &Default::default(),
+            &Default::default(),
+            &Default::default(),
+        )
+    }
+
+    /// A forwarder whose parameter is a Copy struct too big for registers.
+    ///
+    /// `bugs/ios-target-defaulted-struct-param-garbage.md`. In a LIBRARY build
+    /// `outer` is `weak_odr`, so a 72-byte `Color` is passed indirectly: the
+    /// caller copies it into its own frame and hands over a pointer. Marking
+    /// that call `musttail` destroys the frame BEFORE the callee runs, so the
+    /// callee reads the struct out of dead stack — in facet's 25-parameter
+    /// `elements::button` the low half of a stale stack pointer came back as
+    /// `Color.token`, and the iOS gallery drew a button with alpha 0.
+    ///
+    /// The same source built as a `[[bin]]` passes the aggregate by value and
+    /// was always correct, which is what made the bug look target-specific.
+    const BIGARG_FORWARDER: &str = "\
+        struct Color { token: u32, r: f64, g: f64, b: f64, a: f64,\n\
+                       r2: f64, g2: f64, b2: f64, a2: f64 }\n\
+        fn inner(c: Color) -> u32 { return c.token; }\n\
+        fn outer(c: Color) -> u32 { return inner(c); }\n\
+        fn main() -> i32 { return 0; }\n";
+
+    #[test]
+    fn a_tail_call_passing_a_frame_pointer_is_not_musttail() {
+        let ir = gen_src_lib(BIGARG_FORWARDER);
+        let call = ir
+            .lines()
+            .find(|l| l.contains("call") && l.contains("@inner("))
+            .unwrap_or_else(|| panic!("no call to @inner:\n{ir}"));
+        // The premise: this build really does pass the struct indirectly.
+        // Without that the test would pass for the wrong reason.
+        assert!(
+            call.contains("ptr %"),
+            "expected an indirect (pointer) argument, got `{call}`"
+        );
+        assert!(
+            !call.contains("musttail"),
+            "musttail frees the frame the argument points into:\n  {call}"
+        );
+    }
+
+    #[test]
+    fn a_tail_call_passing_only_registers_is_still_musttail() {
+        // The guard must not cost TCO on calls that pass nothing by pointer —
+        // `musttail` is the reason a forwarder doesn't grow the stack.
+        let ir = gen_src(
+            "fn inner(n: i64) -> i64 { return n; }\n\
+             fn outer(n: i64) -> i64 { return inner(n); }\n\
+             fn main() -> i32 { return 0; }\n",
+        );
+        let call = ir
+            .lines()
+            .find(|l| l.contains("call") && l.contains("@inner("))
+            .unwrap_or_else(|| panic!("no call to @inner:\n{ir}"));
+        assert!(
+            call.contains("musttail"),
+            "a scalar forwarder should still tail-call:\n  {call}"
+        );
     }
 
     // A `str` literal passed DIRECTLY as a by-value `#[lang("string")]` argument
