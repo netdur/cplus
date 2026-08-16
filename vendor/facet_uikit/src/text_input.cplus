@@ -1,0 +1,562 @@
+// facet_uikit text input — the band a form is made of.
+//
+// `text_field`, `search_field` and `text_area` share one prop record
+// (`InputViewProps`, flattened into each control's own props), so they share
+// their writers here. Each control module owns its OWN copy of the bit
+// constants, which is why every writer takes the bits it should honour rather
+// than reading a module's directly: the same field means `text_field::P_TEXT`
+// in one control and `text_area::P_TEXT` in another, and the values differ.
+//
+// ---- what this file is FOR --------------------------------------------------
+//
+// Parity with facet_appkit, which reads 23 props on a text field, 22 on a text
+// area and 23 on a search field. This backend read 4, 1 and 1 — so a form
+// written against facet ran on a Mac and lost its placeholder, its keyboard,
+// its length limit, its selection, its read-only posture and its spell-checking
+// on a phone. Nothing warned, because every one of those is a prop a backend is
+// free to ignore.
+//
+// ---- THE WRITE-BACK, which is the half that is not a property ---------------
+//
+// A UITextField is a UIControl, so `editingChanged` carries its text back
+// (input.cplus arms it). A UITextView IS NOT — it has no target/action at all,
+// and its changes arrive through UITextViewDelegate. So this file synthesizes
+// one delegate class for the process and points every text area at it, which is
+// the same shape input.cplus uses for target/action: one shared object, the node
+// found from the sender.
+
+import "stdlib/option" as option;
+import "stdlib/text" as text;
+import "facet/facet" as core;
+import "facet/props" as props;
+import "facet/vocabulary" as vocab;
+import "objc/runtime" as rt;
+import "objc/bridge" as bridge;
+import "objc/synthesis" as synth;
+import "uikit/uikit" as ui;
+import "./paint" as paint;
+import "./input" as input;
+import "facet/text_field" as tf;
+import "facet/text_area" as ta;
+import "facet/search_field" as sf;
+
+// ---- the shared band ----------------------------------------------------------
+
+// Which bits a control uses for the shared input props. Each control module
+// declares its own, so the caller passes the set it owns.
+struct InputBits {
+    text: u64,
+    text_color: u64,
+    placeholder: u64,
+    placeholder_color: u64,
+    font: u64,              // the OR of the five font bits
+    read_only: u64,
+    keyboard: u64,
+    checks_spelling: u64,
+    predicts_text: u64,
+    max_length: u64,
+    selection: u64,         // cursor position OR selection length
+    character_spacing: u64,
+    text_transform: u64,
+}
+
+fn transformed(s: str, t: vocab::TextTransform) -> text::Text {
+    return match t {
+        vocab::TextTransform::None => text::from_str(s),
+        vocab::TextTransform::Default => text::from_str(s),
+        vocab::TextTransform::Lowercase => text::from_str(s).lowercased(),
+        vocab::TextTransform::Uppercase => text::from_str(s).uppercased(),
+    };
+}
+
+fn bool_i8(b: bool) -> i8 {
+    if b { return 1 as i8; }
+    return 0 as i8;
+}
+
+// UIKeyboardType. The band that only exists on this platform: facet declares a
+// keyboard on every input because a phone has one, and AppKit can do nothing
+// with the verb at all.
+fn keyboard_of(k: vocab::Keyboard) -> ui::KeyboardType {
+    return match k {
+        vocab::Keyboard::Default => ui::KeyboardType::Default,
+        vocab::Keyboard::Plain => ui::KeyboardType::ASCIICapable,
+        vocab::Keyboard::Text => ui::KeyboardType::Default,
+        vocab::Keyboard::Chat => ui::KeyboardType::Default,
+        vocab::Keyboard::Url => ui::KeyboardType::URL,
+        vocab::Keyboard::Email => ui::KeyboardType::EmailAddress,
+        vocab::Keyboard::Telephone => ui::KeyboardType::PhonePad,
+        vocab::Keyboard::Numeric => ui::KeyboardType::DecimalPad,
+    };
+}
+
+fn return_key_of(r: vocab::ReturnKey) -> ui::ReturnKeyType {
+    return match r {
+        vocab::ReturnKey::Default => ui::ReturnKeyType::UIReturnKeyDefault,
+        vocab::ReturnKey::Go => ui::ReturnKeyType::UIReturnKeyGo,
+        vocab::ReturnKey::Next => ui::ReturnKeyType::UIReturnKeyNext,
+        vocab::ReturnKey::Search => ui::ReturnKeyType::UIReturnKeySearch,
+        vocab::ReturnKey::Send => ui::ReturnKeyType::UIReturnKeySend,
+        vocab::ReturnKey::Done => ui::ReturnKeyType::UIReturnKeyDone,
+    };
+}
+
+fn text_align_of(a: vocab::TextAlign) -> ui::NSTextAlignment {
+    return match a {
+        vocab::TextAlign::Start => ui::NSTextAlignment::Natural,
+        vocab::TextAlign::Center => ui::NSTextAlignment::Center,
+        vocab::TextAlign::End => ui::NSTextAlignment::Right,
+        vocab::TextAlign::Justify => ui::NSTextAlignment::Justified,
+    };
+}
+
+// `keyboardType`, `returnKeyType`, `spellCheckingType` and `autocorrectionType`
+// all reach a field through UITextInputTraits — a PROTOCOL — so the generated
+// binding carries the enums and puts no setters on the class. The enum's own
+// raw converter plus one msgSend is the whole gap, and it is the same on a
+// UITextField and a UITextView.
+fn set_trait_i64(v: *u8, sel_name: *u8, value: i64) {
+    { rt::msg_void_i64(v, rt::sel(sel_name), value) };
+    return;
+}
+
+fn apply_traits(v: *u8, iv: *props::InputViewProps, dirty: u64, b: InputBits) {
+    if (dirty & b.keyboard) != (0 as u64) {
+        set_trait_i64(v, #str_ptr("setKeyboardType:\0"),
+                      ui::keyboard_type_raw(keyboard_of({ (*iv).keyboard })));
+    }
+    // `Yes`/`No` rather than `Default`, because facet's flag is a decision the
+    // app made — leaving the platform default would silently ignore it.
+    if (dirty & b.checks_spelling) != (0 as u64) {
+        var s: ui::TextSpellCheckingType = ui::TextSpellCheckingType::No;
+        if { (*iv).checks_spelling } { s = ui::TextSpellCheckingType::Yes; }
+        set_trait_i64(v, #str_ptr("setSpellCheckingType:\0"), ui::text_spell_checking_type_raw(s));
+    }
+    // Prediction is the QuickType bar, and `autocorrectionType` is the switch
+    // UIKit gives for it — the nearest thing to facet's `predicts_text`.
+    if (dirty & b.predicts_text) != (0 as u64) {
+        var a: ui::TextAutocorrectionType = ui::TextAutocorrectionType::No;
+        if { (*iv).predicts_text } { a = ui::TextAutocorrectionType::Yes; }
+        set_trait_i64(v, #str_ptr("setAutocorrectionType:\0"), ui::text_autocorrection_type_raw(a));
+    }
+    return;
+}
+
+// The placeholder, with its colour when one is stated.
+//
+// UIKit has `placeholder` (plain) and `attributedPlaceholder` (coloured), and
+// only the second can carry a colour — so a stated colour promotes the write.
+fn apply_placeholder(f: ui::TextField, iv: *props::InputViewProps, dirty: u64, b: InputBits) {
+    if (dirty & (b.placeholder | b.placeholder_color)) == (0 as u64) { return; }
+    let s: str = { (*iv).placeholder.view() };
+    let c: vocab::Color = { (*iv).placeholder_color };
+    if c.is_set() == false {
+        f.set_placeholder(s);
+        return;
+    }
+    let a: *u8 = attributed_with_color(s, paint::ui_color(c));
+    if a == (0 as *u8) { f.set_placeholder(s); return; }
+    { rt::msg_void_id(f.as_view().raw(), rt::sel(#str_ptr("setAttributedPlaceholder:\0")), a) };
+    { rt::release(a) };
+    return;
+}
+
+// An NSAttributedString carrying one colour, at +1.
+fn attributed_with_color(s: str, c: ui::Color) -> *u8 {
+    let dict: *u8 = { rt::alloc_init(#str_ptr("NSMutableDictionary\0")) };
+    if dict == (0 as *u8) { return 0 as *u8; }
+    { rt::msg_void_id_id(dict, rt::sel(#str_ptr("setObject:forKey:\0")),
+                         c.raw(), bridge::nsstring("NSColor")) };
+    let cls: *u8 = rt::get_class(#str_ptr("NSAttributedString\0"));
+    let alloced: *u8 = { rt::msg_id(cls, rt::sel(#str_ptr("alloc\0"))) };
+    if alloced == (0 as *u8) { { rt::release(dict) }; return 0 as *u8; }
+    let a: *u8 = { rt::msg_id_id_id(alloced, rt::sel(#str_ptr("initWithString:attributes:\0")),
+                                    bridge::nsstring(s), dict) };
+    { rt::release(dict) };
+    return a;
+}
+
+// Kerning, as an attributed run over the whole string. UIKit has no plain
+// `characterSpacing`, so a field that asks for one is written attributed — the
+// same split facet_appkit makes between a plain and a rich label.
+fn apply_character_spacing(v: *u8, s: str, spacing: f64, c: vocab::Color) {
+    if spacing == 0.0f64 { return; }
+    let dict: *u8 = { rt::alloc_init(#str_ptr("NSMutableDictionary\0")) };
+    if dict == (0 as *u8) { return; }
+    { rt::msg_void_id_id(dict, rt::sel(#str_ptr("setObject:forKey:\0")),
+                         number_f64(spacing), bridge::nsstring("NSKern")) };
+    if c.is_set() {
+        { rt::msg_void_id_id(dict, rt::sel(#str_ptr("setObject:forKey:\0")),
+                             paint::ui_color(c).raw(), bridge::nsstring("NSColor")) };
+    }
+    let cls: *u8 = rt::get_class(#str_ptr("NSAttributedString\0"));
+    let alloced: *u8 = { rt::msg_id(cls, rt::sel(#str_ptr("alloc\0"))) };
+    if alloced == (0 as *u8) { { rt::release(dict) }; return; }
+    let a: *u8 = { rt::msg_id_id_id(alloced, rt::sel(#str_ptr("initWithString:attributes:\0")),
+                                    bridge::nsstring(s), dict) };
+    { rt::release(dict) };
+    if a == (0 as *u8) { return; }
+    { rt::msg_void_id(v, rt::sel(#str_ptr("setAttributedText:\0")), a) };
+    { rt::release(a) };
+    return;
+}
+
+fn number_f64(v: f64) -> *u8 {
+    return { rt::msg_id_f64(rt::get_class(#str_ptr("NSNumber\0")),
+                            rt::sel(#str_ptr("numberWithDouble:\0")), v) };
+}
+
+// The caret, and the selection around it.
+//
+// A UITextView takes an NSRange outright. A UITextField does not — it works in
+// `UITextPosition` objects, so the range has to be walked from the document's
+// beginning. Both are the same two facet numbers.
+fn apply_selection(v: *u8, iv: *props::InputViewProps, is_text_view: bool) {
+    let start: i64 = { (*iv).cursor_position };
+    let len: i64 = { (*iv).selection_length };
+    if start < (0 as i64) { return; }
+    if is_text_view {
+        { msg_void_range(v, rt::sel(#str_ptr("setSelectedRange:\0")),
+                         rt::Range { location: start as u64, length: len as u64 }) };
+        return;
+    }
+    let begin: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("beginningOfDocument\0"))) };
+    if begin == (0 as *u8) { return; }
+    let from: *u8 = { msg_id_id_i64(v, rt::sel(#str_ptr("positionFromPosition:offset:\0")),
+                                    begin, start) };
+    if from == (0 as *u8) { return; }
+    let to: *u8 = { msg_id_id_i64(v, rt::sel(#str_ptr("positionFromPosition:offset:\0")),
+                                  from, len) };
+    if to == (0 as *u8) { return; }
+    let r: *u8 = { rt::msg_id_id_id(v, rt::sel(#str_ptr("textRangeFromPosition:toPosition:\0")),
+                                    from, to) };
+    if r == (0 as *u8) { return; }
+    { rt::msg_void_id(v, rt::sel(#str_ptr("setSelectedTextRange:\0")), r) };
+    return;
+}
+
+// ---- the UITextView delegate ---------------------------------------------------
+// One class for the process, the node found from the sender — the same shape
+// input.cplus uses for target/action, and for the same reason: a delegate per
+// text area would allocate an object per control and leak one per teardown,
+// since `delegate` is a weak reference with no hook that fires when it goes.
+
+static TV_DELEGATE_CLASS: *u8 = 0 as *u8;
+static TV_DELEGATE: *u8 = 0 as *u8;
+
+fn imp_text_view_did_change(self_obj: *u8, cmd: *u8, tv: *u8) {
+    let n: *core::Node = input::node_of(tv);
+    if n == (0 as *core::Node) { return; }
+    write_back_text_area(n, tv);
+    return;
+}
+
+fn imp_text_view_did_change_selection(self_obj: *u8, cmd: *u8, tv: *u8) {
+    let n: *core::Node = input::node_of(tv);
+    if n == (0 as *core::Node) { return; }
+    let d: *core::Data = core::node_data(n);
+    if d == (0 as *core::Data) { return; }
+    let p: *u8 = { (*d).props };
+    if p == (0 as *u8) { return; }
+    if { (*d).kind } != props::K_TEXT_AREA { return; }
+    let ap: *props::TextAreaProps = p as *props::TextAreaProps;
+    let r: rt::Range = { msg_range(tv, rt::sel(#str_ptr("selectedRange\0"))) };
+    let iv: *props::InputViewProps = { #addr_of((*ap).input_view) };
+    { (*iv).cursor_position = r.location as i64 };
+    { (*iv).selection_length = r.length as i64 };
+    let h: fn(*u8, *u8) = { (*ap).on_selection_changed };
+    if h != (0 as fn(*u8, *u8)) { h(tv, { (*ap).on_selection_changed_ctx }); }
+    return;
+}
+
+// The write-back. The control the user typed into holds the truth, and facet's
+// props hold what the app last said — so the text travels back BEFORE any
+// handler runs, or the handler reads the old string.
+//
+// Written straight into the props rather than through the `set_*` verb: the
+// verb would raise the control's dirty bit and the next sync would write the
+// value back onto the control that just produced it.
+fn write_back_text_area(n: *core::Node, tv: *u8) {
+    let d: *core::Data = core::node_data(n);
+    if d == (0 as *core::Data) { return; }
+    if { (*d).kind } != props::K_TEXT_AREA { return; }
+    let ap: *props::TextAreaProps = { (*d).props } as *props::TextAreaProps;
+    if ap == (0 as *props::TextAreaProps) { return; }
+    let iv: *props::InputViewProps = { #addr_of((*ap).input_view) };
+    let s: *u8 = { rt::msg_id(tv, rt::sel(#str_ptr("text\0"))) };
+    var typed: text::Text = bridge::to_text(s);
+    // The length limit, enforced where the text arrives — UIKit has no
+    // `maxLength`, so the only place it can live is the moment after a change.
+    let max: i64 = { (*iv).max_length };
+    if max > (0 as i64) && { typed.view().char_count() } > (max as usize) {
+        typed = prefix_chars(typed.view(), max as usize);
+        { rt::msg_void_id(tv, rt::sel(#str_ptr("setText:\0")), bridge::nsstring(typed.view())) };
+    }
+    { (*iv).text = typed };
+    let h: fn(*u8, *u8) = { (*iv).on_text_changed };
+    if h != (0 as fn(*u8, *u8)) { h(tv, { (*iv).on_text_changed_ctx }); }
+    return;
+}
+
+// The first `n` CHARACTERS, as a Text. `max_length` counts characters — that is
+// what a person means by "at most 20" — and `str` offers bytes, so the cut walks
+// forward over UTF-8 lead bytes rather than slicing at a byte offset and
+// halving a character.
+//
+// A continuation byte is 0b10xxxxxx; every other byte starts a character.
+fn prefix_chars(s: str, n: usize) -> text::Text {
+    var out: text::Text = text::from_str(s);
+    let cut: usize = byte_offset_of_char(s, n);
+    out.truncate(cut);
+    return out;
+}
+
+// The BYTE offset at which character `n` begins. A continuation byte is
+// 0b10xxxxxx; every other byte starts a character.
+fn byte_offset_of_char(s: str, n: usize) -> usize {
+    var chars: usize = 0 as usize;
+    var i: usize = 0 as usize;
+    let bytes: usize = { s.count() };
+    while i < bytes {
+        // `byte_at` answers an Option — an index past the end is not a byte,
+        // and the type says so rather than handing back a zero.
+        match { s.byte_at(i) } {
+            option::Option[u8]::Some(b) => {
+                if (b & (192 as u8)) != (128 as u8) {
+                    if chars == n { return i; }
+                    chars = chars +% (1 as usize);
+                }
+            }
+            option::Option[u8]::None => { return bytes; }
+        }
+        i = i +% (1 as usize);
+    }
+    return bytes;
+}
+
+fn text_view_delegate() -> *u8 {
+    if TV_DELEGATE != (0 as *u8) { return TV_DELEGATE; }
+    if TV_DELEGATE_CLASS == (0 as *u8) {
+        let existing: *u8 = rt::get_class(#str_ptr("FacetUIKitTextViewDelegate\0"));
+        if existing != (0 as *u8) {
+            TV_DELEGATE_CLASS = existing;
+        } else {
+            let base: *u8 = rt::get_class(#str_ptr("NSObject\0"));
+            let cls: *u8 = { synth::allocate_class_pair(base,
+                #str_ptr("FacetUIKitTextViewDelegate\0"), 0 as usize) };
+            if cls == (0 as *u8) { return 0 as *u8; }
+            let _a: i8 = synth::add_method_v_1id(cls,
+                rt::sel(#str_ptr("textViewDidChange:\0")),
+                imp_text_view_did_change, #str_ptr("v@:@\0"));
+            let _b: i8 = synth::add_method_v_1id(cls,
+                rt::sel(#str_ptr("textViewDidChangeSelection:\0")),
+                imp_text_view_did_change_selection, #str_ptr("v@:@\0"));
+            { synth::register_class_pair(cls) };
+            TV_DELEGATE_CLASS = cls;
+        }
+    }
+    TV_DELEGATE = { synth::alloc_init_class(TV_DELEGATE_CLASS) };
+    return TV_DELEGATE;
+}
+
+fn arm_text_view(v: *u8, n: *core::Node) {
+    input::bind_node(v, n);
+    let d: *u8 = text_view_delegate();
+    if d == (0 as *u8) { return; }
+    { rt::msg_void_id(v, rt::sel(#str_ptr("setDelegate:\0")), d) };
+    return;
+}
+
+// ---- the writers ----------------------------------------------------------------
+
+// Everything a UITextField and a UISearchTextField share.
+fn apply_field_band(v: *u8, iv: *props::InputViewProps, dirty: u64, b: InputBits) {
+    let transform: vocab::TextTransform = { (*iv).text_transform };
+    let f: ui::TextField = ui::TextField::from_raw(v);
+    if (dirty & (b.text | b.text_transform | b.character_spacing)) != (0 as u64) {
+        let shown: text::Text = transformed({ (*iv).text.view() }, transform);
+        if { (*iv).character_spacing } != 0.0f64 {
+            apply_character_spacing(v, shown.view(), { (*iv).character_spacing },
+                                    { (*iv).text_color });
+        } else {
+            f.set_text(shown.view());
+        }
+    }
+    apply_placeholder(f, iv, dirty, b);
+    if (dirty & b.text_color) != (0 as u64) {
+        let c: vocab::Color = { (*iv).text_color };
+        if c.is_set() { f.set_text_color(paint::ui_color(c)); }
+    }
+    if (dirty & b.font) != (0 as u64) {
+        match paint::ui_font({ (*iv).font_size }, { (*iv).font_weight },
+                             { (*iv).font_family.view() }, { (*iv).is_italic },
+                             { (*iv).font_scales }) {
+            option::Option[ui::Font]::Some(font) => {
+                f.set_font(font);
+                { rt::msg_void_i8(v, rt::sel(#str_ptr("setAdjustsFontForContentSizeCategory:\0")),
+                                  bool_i8({ (*iv).font_scales })) };
+            }
+            option::Option[ui::Font]::None => { }
+        }
+    }
+    // READ-ONLY, not disabled. `setEnabled:NO` greys a field out; facet's
+    // `is_read_only` means the text is there to be read and copied and not
+    // changed, which is what UITextField's own editing switch says.
+    if (dirty & b.read_only) != (0 as u64) {
+        { rt::msg_void_i8(v, rt::sel(#str_ptr("setEnabled:\0")),
+                          bool_i8({ (*iv).is_read_only } == false)) };
+    }
+    apply_traits(v, iv, dirty, b);
+    if (dirty & b.selection) != (0 as u64) { apply_selection(v, iv, false); }
+    return;
+}
+
+// ---- text_field ------------------------------------------------------------------
+
+fn field_bits() -> InputBits {
+    return InputBits {
+        text: tf::P_TEXT,
+        text_color: tf::P_TEXT_COLOR,
+        placeholder: tf::P_PLACEHOLDER,
+        placeholder_color: tf::P_PLACEHOLDER_COLOR,
+        font: tf::P_FONT_SIZE | tf::P_FONT_WEIGHT | tf::P_FONT_FAMILY
+              | tf::P_IS_ITALIC | tf::P_FONT_SCALES,
+        read_only: tf::P_IS_READ_ONLY,
+        keyboard: tf::P_KEYBOARD,
+        checks_spelling: tf::P_CHECKS_SPELLING,
+        predicts_text: tf::P_PREDICTS_TEXT,
+        max_length: tf::P_MAX_LENGTH,
+        selection: tf::P_CURSOR_POSITION | tf::P_SELECTION_LENGTH,
+        character_spacing: tf::P_CHARACTER_SPACING,
+        text_transform: tf::P_TEXT_TRANSFORM,
+    };
+}
+
+fn text_area_bits() -> InputBits {
+    return InputBits {
+        text: ta::P_TEXT,
+        text_color: ta::P_TEXT_COLOR,
+        placeholder: ta::P_PLACEHOLDER,
+        placeholder_color: ta::P_PLACEHOLDER_COLOR,
+        font: ta::P_FONT_SIZE | ta::P_FONT_WEIGHT | ta::P_FONT_FAMILY
+              | ta::P_IS_ITALIC | ta::P_FONT_SCALES,
+        read_only: ta::P_IS_READ_ONLY,
+        keyboard: ta::P_KEYBOARD,
+        checks_spelling: ta::P_CHECKS_SPELLING,
+        predicts_text: ta::P_PREDICTS_TEXT,
+        max_length: ta::P_MAX_LENGTH,
+        selection: ta::P_CURSOR_POSITION | ta::P_SELECTION_LENGTH,
+        character_spacing: ta::P_CHARACTER_SPACING,
+        text_transform: ta::P_TEXT_TRANSFORM,
+    };
+}
+
+fn search_bits() -> InputBits {
+    return InputBits {
+        text: sf::P_TEXT,
+        text_color: sf::P_TEXT_COLOR,
+        placeholder: sf::P_PLACEHOLDER,
+        placeholder_color: sf::P_PLACEHOLDER_COLOR,
+        font: sf::P_FONT_SIZE | sf::P_FONT_WEIGHT | sf::P_FONT_FAMILY
+              | sf::P_IS_ITALIC | sf::P_FONT_SCALES,
+        read_only: sf::P_IS_READ_ONLY,
+        keyboard: sf::P_KEYBOARD,
+        checks_spelling: sf::P_CHECKS_SPELLING,
+        predicts_text: sf::P_PREDICTS_TEXT,
+        max_length: sf::P_MAX_LENGTH,
+        selection: sf::P_CURSOR_POSITION | sf::P_SELECTION_LENGTH,
+        character_spacing: sf::P_CHARACTER_SPACING,
+        text_transform: sf::P_TEXT_TRANSFORM,
+    };
+}
+
+#[link_name = "objc_msgSend"]
+extern fn msg_void_range(recv: *u8, sel: *u8, r: rt::Range);
+#[link_name = "objc_msgSend"]
+extern fn msg_range(recv: *u8, sel: *u8) -> rt::Range;
+#[link_name = "objc_msgSend"]
+extern fn msg_id_id_i64(recv: *u8, sel: *u8, a: *u8, b: i64) -> *u8;
+
+// ---- text_area -------------------------------------------------------------------
+// A UITextView, which shares the input band and almost none of its API: it is
+// not a UIControl, it takes an NSRange for its selection, and it has NO
+// PLACEHOLDER at all — UIKit simply does not give one, and drawing a fake one
+// means overlaying a label and hiding it on the first keystroke. Recorded in
+// MANIFEST.md rather than faked here.
+
+fn apply_text_view_band(v: *u8, iv: *props::InputViewProps, dirty: u64, b: InputBits) {
+    let transform: vocab::TextTransform = { (*iv).text_transform };
+    let t: ui::TextView = ui::TextView::from_raw(v);
+    if (dirty & (b.text | b.text_transform | b.character_spacing)) != (0 as u64) {
+        let shown: text::Text = transformed({ (*iv).text.view() }, transform);
+        if { (*iv).character_spacing } != 0.0f64 {
+            apply_character_spacing(v, shown.view(), { (*iv).character_spacing },
+                                    { (*iv).text_color });
+        } else {
+            t.set_text(shown.view());
+        }
+    }
+    if (dirty & b.text_color) != (0 as u64) {
+        let c: vocab::Color = { (*iv).text_color };
+        if c.is_set() { t.set_text_color(paint::ui_color(c)); }
+    }
+    if (dirty & b.font) != (0 as u64) {
+        match paint::ui_font({ (*iv).font_size }, { (*iv).font_weight },
+                             { (*iv).font_family.view() }, { (*iv).is_italic },
+                             { (*iv).font_scales }) {
+            option::Option[ui::Font]::Some(font) => {
+                t.set_font(font);
+                { rt::msg_void_i8(v, rt::sel(#str_ptr("setAdjustsFontForContentSizeCategory:\0")),
+                                  bool_i8({ (*iv).font_scales })) };
+            }
+            option::Option[ui::Font]::None => { }
+        }
+    }
+    // A read-only text area stays SELECTABLE — the text is there to be read and
+    // copied, which is the whole difference between read-only and disabled.
+    if (dirty & b.read_only) != (0 as u64) {
+        t.set_editable({ (*iv).is_read_only } == false);
+        t.set_selectable(true);
+    }
+    apply_traits(v, iv, dirty, b);
+    if (dirty & b.selection) != (0 as u64) { apply_selection(v, iv, true); }
+    return;
+}
+
+// The three writers the control bodies call, each closing over its module's bits.
+
+fn write_text_field(v: *u8, iv: *props::InputViewProps, dirty: u64) {
+    apply_field_band(v, iv, dirty, field_bits());
+    return;
+}
+
+fn write_search_field(v: *u8, iv: *props::InputViewProps, dirty: u64) {
+    apply_field_band(v, iv, dirty, search_bits());
+    return;
+}
+
+fn write_text_area(v: *u8, iv: *props::InputViewProps, dirty: u64) {
+    apply_text_view_band(v, iv, dirty, text_area_bits());
+    return;
+}
+
+// The vertical alignment of a field's text inside its box. UITextField has the
+// property outright (`contentVerticalAlignment`); AppKit has none and
+// facet_appkit moves the drawing rect to fake it.
+fn field_vertical_align(v: *u8, a: vocab::TextAlign) {
+    let m: ui::ControlContentVerticalAlignment = match a {
+        vocab::TextAlign::Start => ui::ControlContentVerticalAlignment::Top,
+        vocab::TextAlign::Center => ui::ControlContentVerticalAlignment::Center,
+        vocab::TextAlign::End => ui::ControlContentVerticalAlignment::Bottom,
+        vocab::TextAlign::Justify => ui::ControlContentVerticalAlignment::Fill,
+    };
+    { rt::msg_void_i64(v, rt::sel(#str_ptr("setContentVerticalAlignment:\0")),
+                       ui::control_content_vertical_alignment_raw(m)) };
+    return;
+}
+
+fn set_return_key(v: *u8, r: vocab::ReturnKey) {
+    { rt::msg_void_i64(v, rt::sel(#str_ptr("setReturnKeyType:\0")),
+                       ui::return_key_type_raw(return_key_of(r))) };
+    return;
+}

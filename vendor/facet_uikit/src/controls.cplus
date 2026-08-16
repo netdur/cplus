@@ -49,6 +49,7 @@ import "quartzcore/quartzcore" as quartz;
 import "uikit/uikit" as ui;
 import "./paint" as paint;
 import "./input" as input;
+import "./text_input" as ti;
 
 fn props_of(n: *core::Node, kind: u32) -> *u8 {
     let d: *core::Data = core::node_data(n);
@@ -700,12 +701,10 @@ fn apply_text_field(v: *u8, n: *core::Node, dirty: u64) {
     let p: *props::TextFieldProps = props_of(n, props::K_TEXT_FIELD) as *props::TextFieldProps;
     if p == (0 as *props::TextFieldProps) { return; }
     let f: ui::TextField = ui::TextField::from_raw(v);
-    let iv: *props::InputViewProps = { #addr_of((*p).input_view) };
-    apply_input_common_field(f, iv, dirty);
+    ti::write_text_field(v, { #addr_of((*p).input_view) }, dirty);
     if (dirty & text_field::P_IS_SECURE) != (0 as u64) {
-        // A property, not a class. This is the one control where UIKit is
-        // simpler in a way that removes a whole mechanism: AppKit needs
-        // NSSecureTextField and a live RECLASS to move between the two, and
+        // A property, not a class. The one control where UIKit removes a whole
+        // mechanism: AppKit needs NSSecureTextField and a live RECLASS, and
         // `views::reclass` exists in that backend for this single prop.
         { rt::msg_void_i8(v, rt::sel(#str_ptr("setSecureTextEntry:\0")),
                           bool_i8({ (*p).is_secure })) };
@@ -713,17 +712,19 @@ fn apply_text_field(v: *u8, n: *core::Node, dirty: u64) {
     if (dirty & text_field::P_TEXT_ALIGN) != (0 as u64) {
         f.set_text_alignment(text_align_of({ (*p).text_align }));
     }
+    if (dirty & text_field::P_VERTICAL_ALIGN) != (0 as u64) {
+        ti::field_vertical_align(v, { (*p).vertical_align });
+    }
     if (dirty & text_field::P_CLEAR_BUTTON) != (0 as u64) {
         f.set_clear_button_mode(clear_mode_of({ (*p).clear_button }));
     }
     if (dirty & text_field::P_RETURN_KEY) != (0 as u64) {
-        { rt::msg_void_i64(v, rt::sel(#str_ptr("setReturnKeyType:\0")),
-                           ui::return_key_type_raw(return_key_of({ (*p).return_key }))) };
+        ti::set_return_key(v, { (*p).return_key });
     }
     return;
 }
 
-fn apply_input_common_field(f: ui::TextField, iv: *props::InputViewProps, dirty: u64) {
+fn unused_apply_input_common_field(f: ui::TextField, iv: *props::InputViewProps, dirty: u64) {
     f.set_text({ (*iv).text.view() });
     f.set_placeholder({ (*iv).placeholder.view() });
     let c: vocab::Color = { (*iv).text_color };
@@ -796,9 +797,25 @@ fn apply_search_field(v: *u8, n: *core::Node, dirty: u64) {
         props_of(n, props::K_SEARCH_FIELD) as *props::SearchFieldProps;
     if p == (0 as *props::SearchFieldProps) { return; }
     let f: ui::TextField = ui::TextField::from_raw(v);
-    apply_input_common_field(f, { #addr_of((*p).input_view) }, dirty);
+    ti::write_search_field(v, { #addr_of((*p).input_view) }, dirty);
     if (dirty & search_field::P_TEXT_ALIGN) != (0 as u64) {
         f.set_text_alignment(text_align_of({ (*p).text_align }));
+    }
+    if (dirty & search_field::P_VERTICAL_ALIGN) != (0 as u64) {
+        ti::field_vertical_align(v, { (*p).vertical_align });
+    }
+    if (dirty & search_field::P_RETURN_KEY) != (0 as u64) {
+        ti::set_return_key(v, { (*p).return_key });
+    }
+    // A UISearchTextField tints its own magnifier and clear glyph; a plain
+    // UITextField (the fallback) has neither, so these are written through the
+    // view's tint and are silently inert on the fallback.
+    if (dirty & search_field::P_SEARCH_ICON_COLOR) != (0 as u64) {
+        let c: vocab::Color = { (*p).search_icon_color };
+        if c.is_set() {
+            { rt::msg_void_id(v, rt::sel(#str_ptr("setTintColor:\0")),
+                              paint::ui_color(c).raw()) };
+        }
     }
     return;
 }
@@ -809,10 +826,9 @@ fn create_text_area(n: *core::Node) -> *u8 {
     // directly (+1, which is what `create` owes).
     let v: *u8 = { rt::alloc_init(#str_ptr("UITextView\0")) };
     if v == (0 as *u8) { return v; }
-    // A UITextView is not a UIControl, so it has no target/action: its changes
-    // arrive through UITextViewDelegate. NOT WIRED YET — typing works and the
-    // text is not read back, which MANIFEST.md records as the gap it is.
-    input::bind_node(v, n);
+    // A UITextView is not a UIControl and has no target/action; its changes
+    // arrive through UITextViewDelegate, which text_input.cplus synthesizes.
+    ti::arm_text_view(v, n);
     return v;
 }
 
@@ -820,17 +836,7 @@ fn apply_text_area(v: *u8, n: *core::Node, dirty: u64) {
     let p: *props::TextAreaProps = props_of(n, props::K_TEXT_AREA) as *props::TextAreaProps;
     if p == (0 as *props::TextAreaProps) { return; }
     let t: ui::TextView = ui::TextView::from_raw(v);
-    let iv: *props::InputViewProps = { #addr_of((*p).input_view) };
-    t.set_text({ (*iv).text.view() });
-    t.set_editable({ (*iv).is_read_only } == false);
-    let c: vocab::Color = { (*iv).text_color };
-    if c.is_set() { t.set_text_color(paint::ui_color(c)); }
-    match paint::ui_font({ (*iv).font_size }, { (*iv).font_weight },
-                         { (*iv).font_family.view() }, { (*iv).is_italic },
-                         { (*iv).font_scales }) {
-        option::Option[ui::Font]::Some(font) => { t.set_font(font); }
-        option::Option[ui::Font]::None => { }
-    }
+    ti::write_text_area(v, { #addr_of((*p).input_view) }, dirty);
     if (dirty & text_area::P_TEXT_ALIGN) != (0 as u64) {
         t.set_text_alignment(text_align_of({ (*p).text_align }));
     }
