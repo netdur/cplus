@@ -30,6 +30,9 @@ import "objc/bridge" as bridge;
 import "uikit/uikit" as ui;
 import "./paint" as paint;
 import "./controls" as controls;
+import "./swipe" as swipe;
+import "./web" as web;
+import "./recycler" as recycler;
 
 type Node = flex::Node;
 
@@ -267,6 +270,9 @@ fn create_for_kind(kind: u32, n: *core::Node) -> *u8 {
     if kind == props::K_TOGGLE { return controls::create_toggle(n); }
     if kind == props::K_CHECKBOX { return controls::create_checkbox(n); }
     if kind == props::K_RADIO { return controls::create_radio(n); }
+    if kind == props::K_CANVAS { return controls::create_canvas(n); }
+    if kind == split::K_SPLIT { return controls::create_split(n); }
+    if kind == props::K_SWIPEABLE { return swipe::create(n); }
     if kind == props::K_SLIDER { return controls::create_slider(n); }
     if kind == props::K_PROGRESS { return controls::create_progress(n); }
     if kind == props::K_SPINNER { return controls::create_spinner(n); }
@@ -277,6 +283,13 @@ fn create_for_kind(kind: u32, n: *core::Node) -> *u8 {
     if kind == props::K_DATE_PICKER { return controls::create_date_picker(n); }
     if kind == props::K_TIME_PICKER { return controls::create_time_picker(n); }
     if kind == props::K_REFRESHABLE { return controls::create_refreshable(n); }
+    if kind == props::K_LIST { return recycler::create_recycling_list(n); }
+    if kind == props::K_TABLE { return recycler::create_recycling_table(n); }
+    if kind == props::K_COLLECTION { return recycler::create_collection(n); }
+    if kind == props::K_CAROUSEL { return recycler::create_carousel(n); }
+    if kind == tree::K_TREE { return recycler::create_recycling_tree(n); }
+    if kind == props::K_WEB { return web::create_web(n); }
+    if kind == props::K_HYBRID_WEB { return web::create_hybrid_web(n); }
     // Decided, not missing: MANIFEST.md records why these have no iOS
     // equivalent and what to use instead. They get a plain backing view so
     // their content still renders — and SILENTLY, because a warning for
@@ -329,6 +342,9 @@ fn apply_for_kind(kind: u32, v: *u8, n: *core::Node, dirty: u64) {
     if kind == props::K_TOGGLE { controls::apply_toggle(v, n, dirty); return; }
     if kind == props::K_CHECKBOX { controls::apply_checkbox(v, n, dirty); return; }
     if kind == props::K_RADIO { controls::apply_radio(v, n, dirty); return; }
+    if kind == props::K_CANVAS { controls::apply_canvas(v, n, dirty); return; }
+    if kind == split::K_SPLIT { controls::apply_split(v, n, dirty); return; }
+    if kind == props::K_SWIPEABLE { swipe::apply(v, n, dirty); return; }
     if kind == props::K_SLIDER { controls::apply_slider(v, n, dirty); return; }
     if kind == props::K_PROGRESS { controls::apply_progress(v, n, dirty); return; }
     if kind == props::K_SPINNER { controls::apply_spinner(v, n, dirty); return; }
@@ -339,6 +355,13 @@ fn apply_for_kind(kind: u32, v: *u8, n: *core::Node, dirty: u64) {
     if kind == props::K_DATE_PICKER { controls::apply_date_picker(v, n, dirty); return; }
     if kind == props::K_TIME_PICKER { controls::apply_time_picker(v, n, dirty); return; }
     if kind == props::K_REFRESHABLE { controls::apply_refreshable(v, n, dirty); return; }
+    if kind == props::K_LIST { recycler::apply_recycling_list(v, n, dirty); return; }
+    if kind == props::K_TABLE { recycler::apply_recycling_table(v, n, dirty); return; }
+    if kind == props::K_COLLECTION { recycler::apply_collection(v, n, dirty); return; }
+    if kind == props::K_CAROUSEL { recycler::apply_carousel(v, n, dirty); return; }
+    if kind == tree::K_TREE { recycler::apply_recycling_tree(v, n, dirty); return; }
+    if kind == props::K_WEB { web::apply_web(v, n, dirty); return; }
+    if kind == props::K_HYBRID_WEB { web::apply_hybrid_web(v, n, dirty); return; }
     return;
 }
 
@@ -357,12 +380,17 @@ fn has_body(kind: u32) -> bool {
         || kind == symbol::K_SYMBOL || kind == props::K_SCROLL
         || kind == props::K_BOX || kind == props::K_BORDERED
         || kind == props::K_TOGGLE || kind == props::K_CHECKBOX
-        || kind == props::K_RADIO || kind == props::K_SLIDER
+        || kind == props::K_RADIO || kind == props::K_CANVAS
+        || kind == split::K_SPLIT || kind == props::K_SWIPEABLE
+        || kind == props::K_SLIDER
         || kind == props::K_PROGRESS || kind == props::K_SPINNER
         || kind == props::K_STEPPER || kind == props::K_PAGE_DOTS
         || kind == props::K_POPUP || kind == props::K_TABS
         || kind == props::K_DATE_PICKER || kind == props::K_TIME_PICKER
-        || kind == props::K_REFRESHABLE;
+        || kind == props::K_REFRESHABLE
+        || kind == props::K_WEB || kind == props::K_HYBRID_WEB
+        || kind == props::K_LIST || kind == props::K_TABLE || kind == tree::K_TREE
+        || kind == props::K_COLLECTION || kind == props::K_CAROUSEL;
 }
 
 // ---- the unbuilt kinds -------------------------------------------------------
@@ -454,6 +482,11 @@ fn remove(ctx: *u8, host: *u8, child: *u8) {
 // fires it, so a dropped tree cannot leak its views.
 fn view_release(v: *u8) {
     if v == (0 as *u8) { return; }
+    // A web view is cut loose from its node BEFORE the release, because
+    // releasing it does not necessarily deallocate it: WebKit retains a page
+    // that is still loading, and a navigation callback arriving afterwards
+    // would read a node that is gone.
+    if web::is_web_view(v) { web::detach(v); }
     { rt::release(v) };
     return;
 }
@@ -602,7 +635,6 @@ fn the_desktop_window_tier_is_decided_absent_not_unbuilt() {
     assert controls::decided_absent(chrome::K_WINDOW_BUTTONS);
     assert controls::decided_absent(props::K_MENU);
     // A draggable split divider is a pointer idiom.
-    assert controls::decided_absent(split::K_SPLIT);
     return;
 }
 
@@ -613,7 +645,6 @@ fn the_desktop_window_tier_is_decided_absent_not_unbuilt() {
 fn an_unbuilt_kind_is_audible_and_a_decided_one_is_silent() {
     assert controls::not_yet_built(props::K_LIST);
     assert controls::not_yet_built(props::K_WEB);
-    assert controls::not_yet_built(props::K_CANVAS);
     assert controls::decided_absent(props::K_LIST) == false;
     assert controls::decided_absent(props::K_WEB) == false;
     assert controls::not_yet_built(chrome::K_WINDOW_BUTTONS) == false;

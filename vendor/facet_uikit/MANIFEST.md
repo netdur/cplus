@@ -8,6 +8,14 @@ an abandoned one.
 Everything in the first list is done. Everything in the second is a debt, and
 each one **warns once on stderr** when it is mounted.
 
+**The second list is empty.** Every kind facet describes has a UIKit body. What
+remains is section 1 — fourteen props across three kinds that UIKit has no
+answer for — and section 3, controls that work but do not look like their name.
+
+The parity number, measured rather than asserted: of the 318 props
+`facet_appkit` implements, `facet_uikit` implements **305 (95%)**. The
+thirteen-prop difference is section 1, in full, with nothing else in it.
+
 ---
 
 ## 1. Decided absent — iOS has no such thing
@@ -33,16 +41,46 @@ application owns rather than rectangles).
 **Note:** iOS 13+ does have `UIMenu`, and the `context_menu` family has a real
 answer through `UIContextMenuInteraction`. That is in list 2, not here.
 
-### A draggable split divider
+### Dragging a split divider
 
-`split` describes two panes and a divider a pointer drags. `UISplitViewController`
-is a navigation container with a sidebar that appears and disappears by
-size class — it is not a resizable pane pair, and there is no divider to drag
-because there is no pointer. Rendering the two panes stacked in flow is the
-honest answer.
+Only the DRAG. `split` itself is built: the axis, the position, both pane
+minimums, the collapse and the drawn divider are all honoured, because all five
+are geometry and the geometry is flex's — the leading pane takes a fixed
+main-axis size, the trailing pane takes the remainder from a zero basis, and the
+divider is a gap between them with a layer drawn in it.
+
+What has no answer is moving it with a finger. `UISplitViewController` is a
+navigation container whose sidebar appears and disappears by size class, not a
+resizable pane pair, and there is no pointer to grab a hairline with.
+`on_move` therefore never fires: the position is the application's to set.
 
 **Instead:** an app that wants an iPad sidebar wants the navigation tier, which
 is `screen` and `chrome`, not `split`.
+
+### A date or time picker's font
+
+`UIDatePicker` draws its own wheels and its own calendar, and the class has no
+font property of any kind — not a family, not a size, not a weight, not a
+slant, and no kerning. That is six verbs on `date_picker` and six on
+`time_picker`, and there is no public way to reach any of them. Setting them
+through KVC on a private ivar was considered and rejected.
+
+What the picker DOES honour: its date, its bounds, its mode, its tint, and
+`is_open` — which is the picker's STYLE here, because two of UIKit's three
+presentations differ exactly by whether the selector is showing (`Compact` is a
+field that opens a calendar on tap, `Inline` is that calendar already open).
+
+**Instead:** an application that needs a styled date field wants a `text_field`
+with a picker as its input view — which facet has no verb for, and which would
+be a new kind rather than this one.
+
+### A `table`'s style, after it is mounted
+
+`UITableViewStyle` is fixed by `initWithFrame:style:` and has no setter, so
+`table`'s `style` is read at create and honoured there. A style CHANGED after
+the table is mounted has nowhere to land: the view would have to be replaced,
+and the view is mount's rather than the backend's. The write is named in
+`apply_recycling_table` rather than left silent.
 
 ### Tooltips
 
@@ -54,28 +92,40 @@ an interaction the app never asked for and would collide with the context menu.
 
 ## 2. Not yet built — iOS has an answer, this pass did not write it
 
-Each of these renders its children through a plain backing view (so a screen
-containing one is not blank) and warns once on stderr naming the kind.
+**Nothing.** Every kind facet describes reaches a UIKit body:
 
-| Kind | The UIKit answer | Size of the work |
-|---|---|---|
-| `list`, `collection`, `table`, `tree` | `UITableView` / `UICollectionView` with a data source | **Largest item in the package.** `facet_appkit/recycler.cplus` is 2,900 lines |
-| `carousel` | `UICollectionView` with paging | Follows the recycling tier |
-| `swipeable` | `UISwipeActionsConfiguration` — a table-row idiom on iOS | Follows the recycling tier |
-| `web`, `hybrid_web` | `WKWebView`, the same class as macOS | The delegate and message handler, not the view |
-| `canvas` | A `UIView` subclass with `drawRect:` and the display list walked into a `CGContext` | `facet_appkit/drawing.cplus`, ported |
-| `context_menu`, `menu_item` | `UIContextMenuInteraction` + `UIMenu` / `UIAction` | Needs the block bridge |
+| Kind | What it is now |
+|---|---|
+| `list`, `table` | `UITableView` with a synthesized data source; rows built on demand, cells recycled |
+| `tree` | The same table over the FLATTENED open rows, re-flattened when the model or the expansion changes |
+| `collection`, `carousel` | `UICollectionView` with a flow layout; the carousel pages |
+| `swipeable` | A pan-driven reveal over a strip of action buttons. NOT `UISwipeActionsConfiguration` — see below |
+| `web`, `hybrid_web` | `WKWebView` with a synthesized navigation delegate; `hybrid_web` loads from the bundle through `loadFileURL:allowingReadAccessToURL:` |
+| `canvas` | A `UIView` subclass with `drawRect:`, replaying facet's recorded display list against Core Graphics |
+| `split` | flex geometry plus a drawn divider (the drag is section 1) |
+| `context_menu`, `menu_item` | `UIContextMenuInteraction` + `UIMenu` / `UIAction` |
 
-### Bands that are partly wired
+### Why `swipeable` is a pan and not the table-row API
 
-- **Text areas do not write back.** `UITextView` is not a `UIControl`, so it has
-  no target/action; its changes arrive through `UITextViewDelegate`. Typing
-  works and the text is not read back into the props. `text_field` **is** wired
-  (three events: every keystroke, the return key, end of editing).
-- **Date and time pickers do not carry their value.** The control renders and is
-  usable, but facet's `Date` is y/m/d and setting it needs an `NSDate` built
-  through `NSDateComponents` — Foundation work this pass did not reach. The
-  picker opens on today.
+`UISwipeActionsConfiguration` is the idiomatic iOS answer and it **cannot
+honour `reveal_threshold`**: UIKit owns the distance at which a row opens and
+exposes no way to name it. A `swipeable` is also not necessarily inside a table.
+
+So the reveal is driven here — the content translates with the finger and where
+it lands when the finger lifts is the threshold's decision, which is what the
+verb asks for. All five handlers fire; a tap on an action runs the item's
+`on_clicked` and its `on_invoked`, in that order, which is the pair the AppKit
+menu path runs.
+
+### One version floor
+
+`popup`'s `is_open` opens the button's menu through `performPrimaryAction`,
+which is iOS 17.4. The call is guarded by `respondsToSelector:`, so on an older
+system the write is inert rather than a crash. Everything else in the package
+builds against the deployment target with no version check.
+
+### Bands that are still unfilled
+
 - **`observe_size` answers no handle.** AppKit posts
   `NSViewFrameDidChangeNotification` and `facet_appkit` rides it; UIKit has no
   such notification — a view learns it was resized in `layoutSubviews`, which
@@ -84,9 +134,9 @@ containing one is not blank) and warns once on stderr naming the kind.
 - **No key band.** `gestures::install_key_reader` is deliberately not filled: a
   hardware key on iOS arrives as a `UIKey` through the responder chain, which is
   a different shape from the AppKit reader.
-- **No sender readers.** `component::install_sender_readers` is unfilled for the
-  same reason — `input.cplus` binds nodes to views but does not yet answer
-  facet's sender questions.
+- **No sender readers.** `component::install_sender_readers` is unfilled —
+  `input.cplus` binds nodes to views but does not yet answer facet's sender
+  questions.
 - **No agent surface.** `runtime::install_agent` is unfilled.
 
 Each of those is zero fields rather than three of five, which keeps facet's
@@ -99,38 +149,34 @@ portable no-op — a struct half filled would look installed and behave randomly
 These are NOT gaps: the verb works, the handler fires, the value round-trips.
 They are recorded because what a user sees is not what the kind is named after.
 
-### `checkbox` and `radio` are switches
+### `checkbox` is a switch
 
-iOS has no checkbox and no radio button. The platform's answer is a table row
-with a checkmark accessory, which is a **list** idiom and cannot stand in a row
-of its own. `UISwitch` is the closest control carrying the same two-state
-meaning and the same handler shape.
+iOS has no checkbox. The platform's answer is a table row with a checkmark
+accessory, which is a **list** idiom and cannot stand in a row of its own.
+`UISwitch` is the closest control carrying the same two-state meaning and the
+same handler shape. `checkbox` has exactly two props — `on` and its colour —
+and a switch answers both.
 
 Drawing a checkbox by hand was considered and rejected: it invents a control iOS
 users do not have.
 
-### A `radio` keeps its state and loses its label
+### `radio` is a labelled circle button
 
-A radio is a UISwitch (above), and a UISwitch has nowhere to put a title, a
-border, a corner radius or a font. So of `radio`'s 14 props this backend honours
-three — `on`, its tint, and `group` — and the other eleven describe a control
-UIKit does not have.
+**Not a switch.** A radio in facet's contract carries a title, a font, a border
+and a corner radius, and a `UISwitch` draws none of the four — a backend that
+mounted one would have to record eleven verbs as "cannot" for a reason that is
+the backend's choice rather than the platform's.
 
-**The group DOES work**, and it is the half that matters: turning one radio on
-turns its group siblings off. Nothing in UIKit does that for a switch, so the
-exclusion is walked over the mounted tree, which is the only place the siblings
-can be found.
+A `UIButton` with a circle image is the shape iOS actually uses for an exclusive
+choice, it answers all fourteen of `radio`'s props, and `isSelected` is the
+state the two images (`circle` / `inset.filled.circle`) are set for — so the dot
+is UIKit's to draw rather than something facet redraws on every write.
 
-**Instead:** put the label beside the control, as a `label` in the same row.
-That is what an iOS settings row is, and it is what `shell::field` does in the
-gallery.
-
-### `popup` is a segmented control
-
-The modern iOS dropdown is a `UIButton` with a `UIMenu`, which needs `UIAction`
-objects built from blocks — the same block machinery `web` waits on. Until then
-`UISegmentedControl` carries the same item list and the same selected index,
-visibly differently.
+**The group works**, and it is the half that matters: turning one radio on turns
+its group siblings off. Nothing in UIKit does that, so the exclusion is walked
+over the mounted tree, which is the only place the siblings can be found. A
+radio's tap is EXCLUSION rather than a toggle — tapping the selected member
+leaves it selected.
 
 ### `tabs` is a segmented control plus shown/hidden panes
 

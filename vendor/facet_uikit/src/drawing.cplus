@@ -1,0 +1,965 @@
+// facet_uikit drawing — the canvas replay.
+//
+// facet's `canvas` carries a `Drawable`, and a Drawable RECORDS: it is handed a
+// `vocab::Canvas` and appends commands to it. Nothing here is called back into
+// facet; this module reads the recording and executes it against Core Graphics,
+// once, in order. That is the whole seam, and it is why the backend has one
+// replay loop instead of forty registered callbacks.
+//
+// CORE GRAPHICS IS THE SAME FRAMEWORK ON BOTH PLATFORMS, so this module is the
+// AppKit one with three substitutions and nothing else invented:
+//
+//   the view needs no flip. `isFlipped` is the AppKit half of "top-left
+//   origin"; a UIView already is one, so the override is gone rather than
+//   ported — and the CTM below it is identical either way;
+//   the current context is UIKit's (`UIGraphicsPushContext`), which is what
+//   NSString's drawing methods read on this platform;
+//   a font's italic face comes from a UIFontDescriptor rather than
+//   NSFontManager, which iOS does not have.
+//
+// The one place a convention has to be chosen rather than inherited is the arc,
+// and it is written out at `add_arc_path`.
+
+import "stdlib/option" as option;
+import "stdlib/text" as text;
+import "stdlib/vec" as vec;
+import "flex_layout/flex_layout" as flex;
+import "facet/facet" as core;
+import "facet/props" as props;
+import "facet/vocabulary" as vocab;
+import "objc/runtime" as rt;
+import "objc/synthesis" as synth;
+import "objc/bridge" as bridge;
+import "uikit/uikit" as ui;
+import "./paint" as paint;
+
+// ---- Core Graphics -----------------------------------------------------------
+// Declared here rather than bound as a package: these are the drawing calls one
+// module makes, and a whole CoreGraphics binding for them would be a package
+// nothing else in facet imports.
+
+// CGAffineTransform: the same six numbers as vocab::Transform, in the same
+// order, which is why `concat_transform` needs no conversion beyond the copy.
+#[repr(C)]
+struct Affine { a: f64, b: f64, c: f64, d: f64, tx: f64, ty: f64 }
+
+extern fn CGContextSaveGState(c: *u8);
+extern fn CGContextRestoreGState(c: *u8);
+extern fn CGContextTranslateCTM(c: *u8, tx: f64, ty: f64);
+extern fn CGContextScaleCTM(c: *u8, sx: f64, sy: f64);
+extern fn CGContextRotateCTM(c: *u8, angle: f64);
+extern fn CGContextConcatCTM(c: *u8, t: Affine);
+
+extern fn CGContextSetLineWidth(c: *u8, w: f64);
+extern fn CGContextSetMiterLimit(c: *u8, limit: f64);
+extern fn CGContextSetLineCap(c: *u8, cap: i32);
+extern fn CGContextSetLineJoin(c: *u8, join: i32);
+extern fn CGContextSetLineDash(c: *u8, phase: f64, lengths: *f64, count: usize);
+extern fn CGContextSetStrokeColorWithColor(c: *u8, color: *u8);
+extern fn CGContextSetFillColorWithColor(c: *u8, color: *u8);
+extern fn CGContextSetAlpha(c: *u8, alpha: f64);
+extern fn CGContextSetShouldAntialias(c: *u8, on: i8);
+extern fn CGContextSetBlendMode(c: *u8, mode: i32);
+extern fn CGContextSetShadowWithColor(c: *u8, offset: rt::Size, blur: f64, color: *u8);
+
+extern fn CGContextAddPath(c: *u8, path: *u8);
+extern fn CGContextStrokePath(c: *u8);
+extern fn CGContextFillPath(c: *u8);
+extern fn CGContextEOFillPath(c: *u8);
+extern fn CGContextClip(c: *u8);
+extern fn CGContextEOClip(c: *u8);
+extern fn CGContextClipToRect(c: *u8, r: rt::Rect);
+extern fn CGContextGetClipBoundingBox(c: *u8) -> rt::Rect;
+extern fn CGContextBeginPath(c: *u8);
+extern fn CGContextAddRect(c: *u8, r: rt::Rect);
+extern fn CGContextMoveToPoint(c: *u8, x: f64, y: f64);
+extern fn CGContextAddLineToPoint(c: *u8, x: f64, y: f64);
+extern fn CGContextStrokeRect(c: *u8, r: rt::Rect);
+extern fn CGContextFillRect(c: *u8, r: rt::Rect);
+extern fn CGContextStrokeEllipseInRect(c: *u8, r: rt::Rect);
+extern fn CGContextFillEllipseInRect(c: *u8, r: rt::Rect);
+
+extern fn CGPathCreateMutable() -> *u8;
+extern fn CGPathRelease(p: *u8);
+extern fn CGPathMoveToPoint(p: *u8, m: *Affine, x: f64, y: f64);
+extern fn CGPathAddLineToPoint(p: *u8, m: *Affine, x: f64, y: f64);
+extern fn CGPathAddQuadCurveToPoint(p: *u8, m: *Affine, cpx: f64, cpy: f64, x: f64, y: f64);
+extern fn CGPathAddCurveToPoint(p: *u8, m: *Affine, c1x: f64, c1y: f64, c2x: f64, c2y: f64, x: f64, y: f64);
+extern fn CGPathAddArc(p: *u8, m: *Affine, x: f64, y: f64, radius: f64,
+                       start: f64, end: f64, clockwise: i8);
+extern fn CGPathAddRect(p: *u8, m: *Affine, r: rt::Rect);
+extern fn CGPathAddEllipseInRect(p: *u8, m: *Affine, r: rt::Rect);
+extern fn CGPathAddRoundedRect(p: *u8, m: *Affine, r: rt::Rect, cw: f64, ch: f64);
+extern fn CGPathCloseSubpath(p: *u8);
+
+extern fn CGColorSpaceCreateDeviceRGB() -> *u8;
+extern fn CGColorSpaceRelease(cs: *u8);
+extern fn CGGradientCreateWithColors(space: *u8, colors: *u8, locations: *f64) -> *u8;
+extern fn CGGradientRelease(g: *u8);
+extern fn CGContextDrawLinearGradient(c: *u8, g: *u8, start: rt::Point, end: rt::Point,
+                                      options: u32);
+
+// UIKit's half of the same idea. NSString's drawing methods read the CURRENT
+// context rather than taking one, and these two are how a context becomes
+// current on iOS.
+extern fn UIGraphicsPushContext(c: *u8);
+extern fn UIGraphicsPopContext();
+extern fn UIGraphicsGetCurrentContext() -> *u8;
+
+// ---- objc_msgSend shapes this module needs -----------------------------------
+// The generated binding declares its own where it needs them; these are the
+// three it has no reason to.
+
+#[link_name = "objc_msgSend"]
+extern fn msg_size_id(recv: *u8, sel: *u8, a: *u8) -> rt::Size;
+
+#[link_name = "objc_msgSend"]
+extern fn msg_rect_size_u64_id(recv: *u8, sel: *u8, a: rt::Size, b: u64, c: *u8) -> rt::Rect;
+
+#[link_name = "objc_msgSend"]
+extern fn msg_id_id_u64(recv: *u8, sel: *u8, a: *u8, b: u64) -> *u8;
+
+#[link_name = "objc_msgSend"]
+extern fn msg_id_u64(recv: *u8, sel: *u8, a: u64) -> *u8;
+
+#[link_name = "objc_msgSend"]
+extern fn msg_id_id_f64(recv: *u8, sel: *u8, a: *u8, b: f64) -> *u8;
+
+#[link_name = "objc_msgSend"]
+extern fn msg_id_id_i8(recv: *u8, sel: *u8, a: *u8, b: i8) -> *u8;
+
+#[link_name = "class_addMethod"]
+extern fn add_method_bool_0(cls: *u8, sel: *u8, imp: fn(*u8, *u8) -> i8, types: *u8) -> i8;
+
+#[link_name = "class_addMethod"]
+extern fn add_method_void_rect(cls: *u8, sel: *u8, imp: fn(*u8, *u8, rt::Rect),
+                               types: *u8) -> i8;
+
+// ---- the view ----------------------------------------------------------------
+// A canvas is the one control whose backing view has behaviour of its own, so
+// it is the one control with a class of its own. Everything else about it is
+// an ordinary UIView — including its origin, which is already top-left and
+// needs no override to become one.
+
+fn canvas_node_key() -> *u8 { return { 29000 as *u8 }; }
+
+fn canvas_draw_rect_imp(self_obj: *u8, cmd: *u8, dirty: rt::Rect) {
+    let n: *core::Node = { synth::get_associated(self_obj, canvas_node_key()) as *core::Node };
+    if n == (0 as *core::Node) { return; }
+    let d: vocab::Drawable = drawable_of(n);
+    if d.is_none() { return; }
+
+    // The context UIKit has already set up for this view: top-left, clipped to
+    // the dirty rect, and current for NSString/UIImage drawing.
+    let ctx: *u8 = { UIGraphicsGetCurrentContext() };
+    if ctx == (0 as *u8) { return; }
+
+    let bounds: rt::Rect = { rt::msg_rect(self_obj, rt::sel(#str_ptr("bounds\0"))) };
+    var surface: vocab::Canvas = vocab::Canvas::of(
+        vocab::Size::of(bounds.w, bounds.h),
+        scale_of(self_obj));
+
+    // The application draws. It appends commands and touches nothing else.
+    let f: fn(*vocab::Canvas, vocab::Rect, *u8) = d.draw;
+    f(#addr_of(surface),
+      vocab::Rect::of(dirty.x, dirty.y, dirty.w, dirty.h), d.ctx);
+
+    replay(ctx, #addr_of(surface));
+    return;
+}
+
+// The device pixels per point. A UIView carries it outright — there is no
+// window to ask, and no moment where a view is on a screen the property does
+// not already know about.
+fn scale_of(view: *u8) -> f64 {
+    let s: f64 = { rt::msg_f64(view, rt::sel(#str_ptr("contentScaleFactor\0"))) };
+    if s <= 0.0f64 { return 1.0f64; }
+    return s;
+}
+
+// Registered once; `get_class` answers null until the pair is registered.
+fn canvas_view_class() -> *u8 {
+    let existing: *u8 = rt::get_class(#str_ptr("FacetUIKitCanvasView\0"));
+    if existing != (0 as *u8) { return existing; }
+    let cls: *u8 = synth::allocate_class_pair(rt::get_class(#str_ptr("UIView\0")),
+                                              #str_ptr("FacetUIKitCanvasView\0"), 0 as usize);
+    add_method_void_rect(cls, rt::sel(#str_ptr("drawRect:\0")),
+                         canvas_draw_rect_imp, #str_ptr("v@:{CGRect={CGPoint=dd}{CGSize=dd}}\0"));
+    synth::register_class_pair(cls);
+    return cls;
+}
+
+fn new_canvas_view() -> ui::View {
+    let r: rt::Rect = rt::Rect { x: 0.0f64, y: 0.0f64, w: 0.0f64, h: 0.0f64 };
+    let alloced: *u8 = rt::msg_id(canvas_view_class(), rt::sel(#str_ptr("alloc\0")));
+    let inited: *u8 = rt::msg_id_rect(alloced, rt::sel(#str_ptr("initWithFrame:\0")), r);
+    // A UIView draws its background and nothing else unless it is told it has
+    // content of its own — an opaque view with no background paints black, and
+    // a canvas that clears to nothing has to be told so.
+    { rt::msg_void_i8(inited, rt::sel(#str_ptr("setOpaque:\0")), 0 as i8) };
+    { rt::msg_void_id(inited, rt::sel(#str_ptr("setBackgroundColor:\0")), 0 as *u8) };
+    // REDRAW ON RESIZE, and this is THE difference between the two platforms.
+    //
+    // An NSView is asked to draw again when its bounds change. A UIView is not:
+    // its default content mode SCALES the drawing it already has, and a canvas
+    // whose first display happened at zero size has none — so it stretches
+    // nothing to fill the box and the canvas is blank forever. Nothing about
+    // the replay is wrong; it is simply never asked to run a second time.
+    //
+    // UIViewContentMode 3 is Redraw, which turns a bounds change back into a
+    // `drawRect:`.
+    { rt::msg_void_i64(inited, rt::sel(#str_ptr("setContentMode:\0")), 3 as i64) };
+    return ui::View::from_raw(rt::autorelease(inited));
+}
+
+// The node a canvas view draws for. Set at create; the node outlives the view,
+// because mount releases the view before the node goes.
+fn bind_node(v: *u8, n: *core::Node) {
+    synth::set_associated(v, canvas_node_key(), n as *u8);
+    return;
+}
+
+// Ask for a redraw. UIKit coalesces these, so calling it on every dirty write
+// costs one draw per frame however many writes there were. The selector takes
+// no argument on this platform, which is the whole difference.
+fn invalidate(v: *u8) {
+    { rt::msg_void(v, rt::sel(#str_ptr("setNeedsDisplay\0"))) };
+    return;
+}
+
+fn drawable_of(n: *core::Node) -> vocab::Drawable {
+    let d: *core::Data = core::node_data(n);
+    if d == (0 as *core::Data) { return vocab::Drawable::none(); }
+    if { (*d).kind } != props::K_CANVAS { return vocab::Drawable::none(); }
+    let p: *props::CanvasProps = { (*d).props } as *props::CanvasProps;
+    if p == (0 as *props::CanvasProps) { return vocab::Drawable::none(); }
+    return { (*p).drawable };
+}
+
+// ---- the replay --------------------------------------------------------------
+// Core Graphics carries most of the state itself (stroke, fill, dash, alpha,
+// blend, the CTM, the clip), and SaveGState/RestoreGState save all of it. What
+// CG has no state for is the FONT and the FILL BRUSH, so those two ride here
+// and are pushed and popped alongside.
+
+struct DrawState {
+    text_color: vocab::Color,
+    font_family: i64,          // index into the canvas text table, -1 = system
+    font_size: f64,
+    font_weight: vocab::FontWeight,
+    is_italic: bool,
+    has_brush: bool,
+    brush: vocab::Brush,
+    brush_rect: rt::Rect,
+}
+
+impl DrawState {
+    fn initial() -> DrawState {
+        return DrawState {
+            text_color: vocab::Color::text(),
+            font_family: 0 as i64 - (1 as i64),
+            font_size: 0.0f64,
+            font_weight: vocab::FontWeight::Default,
+            is_italic: false,
+            has_brush: false,
+            brush: vocab::Brush::none(),
+            brush_rect: rt::Rect { x: 0.0f64, y: 0.0f64, w: 0.0f64, h: 0.0f64 },
+        };
+    }
+}
+
+fn cg_rect(r: vocab::Rect) -> rt::Rect {
+    return rt::Rect { x: r.x, y: r.y, w: r.width, h: r.height };
+}
+
+fn set_stroke_color(ctx: *u8, col: vocab::Color) {
+    let nc: ui::Color = paint::ui_color(col);
+    CGContextSetStrokeColorWithColor(ctx, nc.c_g_color());
+    return;
+}
+
+fn set_fill_color(ctx: *u8, col: vocab::Color) {
+    let nc: ui::Color = paint::ui_color(col);
+    CGContextSetFillColorWithColor(ctx, nc.c_g_color());
+    return;
+}
+
+fn cg_line_cap(c: vocab::LineCap) -> i32 {
+    return match c {
+        vocab::LineCap::Flat => { 0 as i32 },      // kCGLineCapButt
+        vocab::LineCap::Round => { 1 as i32 },
+        vocab::LineCap::Square => { 2 as i32 },
+    };
+}
+
+fn cg_line_join(j: vocab::LineJoin) -> i32 {
+    return match j {
+        vocab::LineJoin::Miter => { 0 as i32 },
+        vocab::LineJoin::Round => { 1 as i32 },
+        vocab::LineJoin::Bevel => { 2 as i32 },
+    };
+}
+
+// The ledger's BlendMode was modelled on CGBlendMode and matches it value for value,
+// so this is an ordinal map and not a translation.
+fn cg_blend(b: vocab::Blend) -> i32 {
+    return match b {
+        vocab::Blend::Normal => { 0 as i32 },
+        vocab::Blend::Multiply => { 1 as i32 },
+        vocab::Blend::Screen => { 2 as i32 },
+        vocab::Blend::Overlay => { 3 as i32 },
+        vocab::Blend::Darken => { 4 as i32 },
+        vocab::Blend::Lighten => { 5 as i32 },
+        vocab::Blend::ColorDodge => { 6 as i32 },
+        vocab::Blend::ColorBurn => { 7 as i32 },
+        vocab::Blend::SoftLight => { 8 as i32 },
+        vocab::Blend::HardLight => { 9 as i32 },
+        vocab::Blend::Difference => { 10 as i32 },
+        vocab::Blend::Exclusion => { 11 as i32 },
+        vocab::Blend::Hue => { 12 as i32 },
+        vocab::Blend::Saturation => { 13 as i32 },
+        vocab::Blend::Color => { 14 as i32 },
+        vocab::Blend::Luminosity => { 15 as i32 },
+        vocab::Blend::Clear => { 16 as i32 },
+        vocab::Blend::Copy => { 17 as i32 },
+        vocab::Blend::SourceIn => { 18 as i32 },
+        vocab::Blend::SourceOut => { 19 as i32 },
+        vocab::Blend::SourceAtop => { 20 as i32 },
+        vocab::Blend::DestinationOver => { 21 as i32 },
+        vocab::Blend::DestinationIn => { 22 as i32 },
+        vocab::Blend::DestinationOut => { 23 as i32 },
+        vocab::Blend::DestinationAtop => { 24 as i32 },
+        vocab::Blend::Xor => { 25 as i32 },
+        vocab::Blend::PlusDarker => { 26 as i32 },
+        vocab::Blend::PlusLighter => { 27 as i32 },
+    };
+}
+
+fn radians(degrees: f64) -> f64 {
+    return degrees * 3.14159265358979323846f64 / 180.0f64;
+}
+
+// An arc inside a BOX, which is what the ledger's DrawArc takes and what CG has no
+// call for — CGPathAddArc draws a circle. The transform maps the unit circle
+// onto the box, so the arc is elliptical while the stroke width stays round.
+//
+// The angle convention, written out because it is the one thing here that
+// cannot be read off an API:
+//
+//   facet's canvas space is y-DOWN, and this view is flipped, so the CTM is
+//   y-down too. The ledger measures its angles the ordinary way — 0 at 3 o'clock,
+//   increasing counterclockwise ON SCREEN. A point at the ledger angle t is therefore
+//   (cos t, -sin t) in a y-down space, so the CG angle is -t.
+//   Negating the angles also inverts the sweep: what the ledger calls clockwise is
+//   the increasing direction in the negated space, and CGPathAddArc's own
+//   `clockwise` flag means DECREASING. Hence `!clockwise`.
+fn add_arc_path(p: *u8, box: rt::Rect, from: f64, to: f64, clockwise: bool) {
+    let rx: f64 = box.w / 2.0f64;
+    let ry: f64 = box.h / 2.0f64;
+    var m: Affine = Affine {
+        a: rx, b: 0.0f64, c: 0.0f64, d: ry,
+        tx: box.x + rx, ty: box.y + ry,
+    };
+    var cw: i8 = 1 as i8;
+    if clockwise { cw = 0 as i8; }
+    CGPathAddArc(p, #addr_of(m), 0.0f64, 0.0f64, 1.0f64,
+                 0.0f64 - radians(from), 0.0f64 - radians(to), cw);
+    return;
+}
+
+// A recorded path, as a CGPath at +1. The caller releases it.
+fn build_path(src: *vocab::Path) -> *u8 {
+    let p: *u8 = CGPathCreateMutable();
+    if p == (0 as *u8) { return 0 as *u8; }
+    if src == (0 as *vocab::Path) { return p; }
+    var i: usize = 0 as usize;
+    let n: usize = { (*src).count() };
+    while i < n {
+        let s: vocab::PathSegment = { (*src).at(i) };
+        let b: rt::Rect = cg_rect(s.bounds);
+        if s.op == vocab::PathOp::Move {
+            CGPathMoveToPoint(p, 0 as *Affine, s.point.x, s.point.y);
+        } else if s.op == vocab::PathOp::Line {
+            CGPathAddLineToPoint(p, 0 as *Affine, s.point.x, s.point.y);
+        } else if s.op == vocab::PathOp::Quad {
+            CGPathAddQuadCurveToPoint(p, 0 as *Affine, s.control1.x, s.control1.y,
+                                      s.point.x, s.point.y);
+        } else if s.op == vocab::PathOp::Curve {
+            CGPathAddCurveToPoint(p, 0 as *Affine, s.control1.x, s.control1.y,
+                                  s.control2.x, s.control2.y, s.point.x, s.point.y);
+        } else if s.op == vocab::PathOp::Arc {
+            add_arc_path(p, b, s.start_angle(), s.end_angle(), s.is_clockwise);
+        } else if s.op == vocab::PathOp::Rect {
+            CGPathAddRect(p, 0 as *Affine, b);
+        } else if s.op == vocab::PathOp::RoundedRect {
+            CGPathAddRoundedRect(p, 0 as *Affine, b, s.corner_radius(), s.corner_radius());
+        } else if s.op == vocab::PathOp::Ellipse {
+            CGPathAddEllipseInRect(p, 0 as *Affine, b);
+        } else if s.op == vocab::PathOp::Close {
+            CGPathCloseSubpath(p);
+        }
+        i = i +% (1 as usize);
+    }
+    return p;
+}
+
+// One rounded rect, as a CGPath at +1.
+fn rounded_rect_path(r: rt::Rect, radius: f64) -> *u8 {
+    let p: *u8 = CGPathCreateMutable();
+    if p == (0 as *u8) { return 0 as *u8; }
+    CGPathAddRoundedRect(p, 0 as *Affine, r, radius, radius);
+    return p;
+}
+
+// One arc, as a CGPath at +1. `closed` joins the two ends, which is what a
+// filled arc always wants and what DrawArc(closed:) asks for.
+fn arc_path(r: rt::Rect, from: f64, to: f64, clockwise: bool, closed: bool) -> *u8 {
+    let p: *u8 = CGPathCreateMutable();
+    if p == (0 as *u8) { return 0 as *u8; }
+    add_arc_path(p, r, from, to, clockwise);
+    if closed { CGPathCloseSubpath(p); }
+    return p;
+}
+
+// ---- gradients ---------------------------------------------------------------
+// `set_fill_brush` is the only place a fill is not a flat colour. CG draws a
+// gradient by painting the whole clip, so a gradient-filled shape is the shape
+// used as a clip and the gradient drawn through it.
+
+fn gradient_of(b: vocab::Brush) -> *u8 {
+    let space: *u8 = CGColorSpaceCreateDeviceRGB();
+    if space == (0 as *u8) { return 0 as *u8; }
+    let colors: *u8 = { rt::msg_id(rt::get_class(#str_ptr("NSMutableArray\0")),
+                                   rt::sel(#str_ptr("array\0"))) };
+    let c0: ui::Color = paint::ui_color(b.start);
+    let c1: ui::Color = paint::ui_color(b.end);
+    { rt::msg_void_id(colors, rt::sel(#str_ptr("addObject:\0")), c0.c_g_color()) };
+    { rt::msg_void_id(colors, rt::sel(#str_ptr("addObject:\0")), c1.c_g_color()) };
+    var stops: [f64; 2] = [0.0f64, 1.0f64];
+    let g: *u8 = CGGradientCreateWithColors(space, colors, #addr_of(stops[0 as usize]));
+    CGColorSpaceRelease(space);
+    return g;
+}
+
+// The two ends of the gradient's axis across `r`, at `angle` degrees. Half the
+// box's extent along the axis is the projection of its half-diagonal, which is
+// what makes a 45-degree gradient reach both corners.
+fn gradient_axis(r: rt::Rect, angle: f64) -> [rt::Point; 2] {
+    let t: f64 = radians(angle);
+    let dx: f64 = cos(t);
+    let dy: f64 = sin(t);
+    let cx: f64 = r.x + r.w / 2.0f64;
+    let cy: f64 = r.y + r.h / 2.0f64;
+    let half: f64 = abs_f64(r.w / 2.0f64 * dx) + abs_f64(r.h / 2.0f64 * dy);
+    return [
+        rt::Point { x: cx - dx * half, y: cy - dy * half },
+        rt::Point { x: cx + dx * half, y: cy + dy * half },
+    ];
+}
+
+extern fn cos(x: f64) -> f64;
+extern fn sin(x: f64) -> f64;
+
+fn abs_f64(x: f64) -> f64 {
+    if x < 0.0f64 { return 0.0f64 - x; }
+    return x;
+}
+
+// Fill whatever is currently clipped with the state's brush. `kCGGradientDraws
+// BeforeStartLocation | AfterEndLocation` = 3, so the ends extend rather than
+// leaving the corners unpainted.
+fn fill_clip_with_brush(ctx: *u8, st: DrawState) {
+    let g: *u8 = gradient_of(st.brush);
+    if g == (0 as *u8) { return; }
+    let axis: [rt::Point; 2] = gradient_axis(st.brush_rect, st.brush.angle);
+    CGContextDrawLinearGradient(ctx, g, axis[0 as usize], axis[1 as usize], 3 as u32);
+    CGGradientRelease(g);
+    return;
+}
+
+// Fill a path with the state's fill: a gradient through it when a brush is set,
+// the plain fill colour otherwise. `path` is consumed (released).
+fn fill_path_with(ctx: *u8, path: *u8, st: DrawState, even_odd: bool) {
+    if path == (0 as *u8) { return; }
+    if st.has_brush && st.brush.is_gradient {
+        CGContextSaveGState(ctx);
+        CGContextBeginPath(ctx);
+        CGContextAddPath(ctx, path);
+        if even_odd { CGContextEOClip(ctx); } else { CGContextClip(ctx); }
+        fill_clip_with_brush(ctx, st);
+        CGContextRestoreGState(ctx);
+    } else {
+        CGContextBeginPath(ctx);
+        CGContextAddPath(ctx, path);
+        if even_odd { CGContextEOFillPath(ctx); } else { CGContextFillPath(ctx); }
+    }
+    CGPathRelease(path);
+    return;
+}
+
+// The rect form, which does not need a path object at all.
+fn fill_rect_with(ctx: *u8, r: rt::Rect, st: DrawState) {
+    if st.has_brush && st.brush.is_gradient {
+        CGContextSaveGState(ctx);
+        CGContextClipToRect(ctx, r);
+        fill_clip_with_brush(ctx, st);
+        CGContextRestoreGState(ctx);
+        return;
+    }
+    CGContextFillRect(ctx, r);
+    return;
+}
+
+// ---- text --------------------------------------------------------------------
+// AppKit draws the text, because AppKit already knows how to wrap, align and
+// space it, and because `drawRect:` runs with the NSGraphicsContext current.
+// Core Text would be a second text stack in a package that already has one.
+
+const ITALIC_TRAIT: u64 = 1u64;
+const USES_LINE_FRAGMENT_ORIGIN: u64 = 1u64;
+
+// The italic face of a font. iOS has no font manager; a descriptor with the
+// italic trait is the same request, and a font built from one keeps the size
+// and family it started with.
+fn italicised(f: ui::Font) -> *u8 {
+    let d: *u8 = { rt::msg_id(f.raw(), rt::sel(#str_ptr("fontDescriptor\0"))) };
+    if d == (0 as *u8) { return f.raw(); }
+    let italic: *u8 = { msg_id_u64(d,
+        rt::sel(#str_ptr("fontDescriptorWithSymbolicTraits:\0")), ITALIC_TRAIT) };
+    if italic == (0 as *u8) { return f.raw(); }
+    let out: *u8 = { msg_id_id_f64(rt::get_class(#str_ptr("UIFont\0")),
+        rt::sel(#str_ptr("fontWithDescriptor:size:\0")), italic, 0.0f64) };
+    if out == (0 as *u8) { return f.raw(); }
+    return out;
+}
+
+
+
+// The attributes a run of text is drawn with, as an NSMutableDictionary at +1.
+// The caller releases it.
+fn text_attributes(st: DrawState, c: *vocab::Canvas, align: vocab::TextAlign,
+                   line_spacing: f64, wraps: bool) -> *u8 {
+    let attrs: *u8 = { rt::alloc_init(#str_ptr("NSMutableDictionary\0")) };
+    if attrs == (0 as *u8) { return 0 as *u8; }
+
+    var family: str = "";
+    if st.font_family >= (0 as i64) { family = { (*c).text(st.font_family as usize) }; }
+    match paint::ui_font_plain(st.font_size, st.font_weight, family) {
+        option::Option[ui::Font]::Some(f) => {
+            var raw: *u8 = f.raw();
+            if st.is_italic { raw = italicised(f); }
+            { rt::msg_void_id_id(attrs, rt::sel(#str_ptr("setObject:forKey:\0")),
+                                 raw, bridge::nsstring("NSFont")) };
+        }
+        option::Option[ui::Font]::None => { }
+    }
+
+    let col: ui::Color = paint::ui_color(st.text_color);
+    { rt::msg_void_id_id(attrs, rt::sel(#str_ptr("setObject:forKey:\0")),
+                         col.raw(), bridge::nsstring("NSColor")) };
+
+    let ps: *u8 = { rt::alloc_init(#str_ptr("NSMutableParagraphStyle\0")) };
+    if ps != (0 as *u8) {
+        { rt::msg_void_i64(ps, rt::sel(#str_ptr("setAlignment:\0")), ns_align_raw(align)) };
+        { rt::msg_void_f64(ps, rt::sel(#str_ptr("setLineSpacing:\0")), line_spacing) };
+        // 0 = word wrap, 2 = clip. A single line at a point never wraps.
+        var mode: i64 = 2 as i64;
+        if wraps { mode = 0 as i64; }
+        { rt::msg_void_i64(ps, rt::sel(#str_ptr("setLineBreakMode:\0")), mode) };
+        { rt::msg_void_id_id(attrs, rt::sel(#str_ptr("setObject:forKey:\0")),
+                             ps, bridge::nsstring("NSParagraphStyle")) };
+        rt::release(ps);
+    }
+    return attrs;
+}
+
+// NSTextAlignment: 0 left, 1 right, 2 center, 3 justified. facet's TextAlign is
+// flow-relative; on a left-to-right canvas Start is left and End is right, and
+// a drawing has no flow direction of its own to consult.
+fn ns_align_raw(a: vocab::TextAlign) -> i64 {
+    return match a {
+        vocab::TextAlign::Start => { 0 as i64 },
+        vocab::TextAlign::End => { 1 as i64 },
+        vocab::TextAlign::Center => { 2 as i64 },
+        vocab::TextAlign::Justify => { 3 as i64 },
+    };
+}
+
+fn draw_text_at(ctx: *u8, c: *vocab::Canvas, cmd: vocab::DrawCommand, st: DrawState) {
+    if cmd.has_aux() == false { return; }
+    let s: *u8 = bridge::nsstring({ (*c).text(cmd.aux as usize) });
+    let attrs: *u8 = text_attributes(st, c, cmd.align, 0.0f64, false);
+    if attrs == (0 as *u8) { return; }
+    // A point placement aligns the string ABOUT the point, so it needs the
+    // string's own width — the one measurement a recording cannot carry.
+    let size: rt::Size = msg_size_id(s, rt::sel(#str_ptr("sizeWithAttributes:\0")), attrs);
+    let at: vocab::Point = cmd.at();
+    var x: f64 = at.x;
+    if cmd.align == vocab::TextAlign::Center { x = at.x - size.w / 2.0f64; }
+    if cmd.align == vocab::TextAlign::End { x = at.x - size.w; }
+    // Drawn LEFT-ALIGNED in its own box: the alignment has already been spent
+    // on placing that box, and asking for it twice would centre it twice.
+    let plain: *u8 = text_attributes(st, c, vocab::TextAlign::Start, 0.0f64, false);
+    if plain != (0 as *u8) {
+        { rt::msg_void_rect_id(s, rt::sel(#str_ptr("drawInRect:withAttributes:\0")),
+                               rt::Rect { x: x, y: at.y, w: size.w, h: size.h }, plain) };
+        rt::release(plain);
+    }
+    rt::release(attrs);
+    return;
+}
+
+fn draw_text_block(ctx: *u8, c: *vocab::Canvas, cmd: vocab::DrawCommand, st: DrawState) {
+    if cmd.has_aux() == false { return; }
+    let s: *u8 = bridge::nsstring({ (*c).text(cmd.aux as usize) });
+    let attrs: *u8 = text_attributes(st, c, cmd.align, cmd.line_spacing(), true);
+    if attrs == (0 as *u8) { return; }
+    let box: rt::Rect = cg_rect(cmd.bounds);
+
+    var target: rt::Rect = box;
+    if cmd.vertical_align != vocab::VerticalAlign::Top {
+        let fit: rt::Rect = msg_rect_size_u64_id(
+            s, rt::sel(#str_ptr("boundingRectWithSize:options:attributes:\0")),
+            rt::Size { w: box.w, h: 1000000.0f64 }, USES_LINE_FRAGMENT_ORIGIN, attrs);
+        if cmd.vertical_align == vocab::VerticalAlign::Center {
+            target.y = box.y + (box.h - fit.h) / 2.0f64;
+        } else {
+            target.y = box.y + box.h - fit.h;
+        }
+        target.h = fit.h;
+    }
+
+    if cmd.flow == vocab::TextFlow::Clip {
+        CGContextSaveGState(ctx);
+        CGContextClipToRect(ctx, box);
+        { rt::msg_void_rect_id(s, rt::sel(#str_ptr("drawInRect:withAttributes:\0")),
+                               target, attrs) };
+        CGContextRestoreGState(ctx);
+    } else {
+        { rt::msg_void_rect_id(s, rt::sel(#str_ptr("drawInRect:withAttributes:\0")),
+                               target, attrs) };
+    }
+    rt::release(attrs);
+    return;
+}
+
+// The attribute values that are numbers rather than objects. Autoreleased.
+fn ns_number(v: i64) -> *u8 {
+    return { rt::msg_id_i64(rt::get_class(#str_ptr("NSNumber\0")),
+                            rt::sel(#str_ptr("numberWithInteger:\0")), v) };
+}
+
+// A run of a recorded Spans, appended to an NSMutableAttributedString. The
+// label path builds the same thing from span NODES; this one reads the value
+// type, because a drawing has no children.
+fn append_recorded_run(ms: *u8, r: *vocab::TextSpan) {
+    if ms == (0 as *u8) || r == (0 as *vocab::TextSpan) { return; }
+    let attrs: *u8 = { rt::alloc_init(#str_ptr("NSMutableDictionary\0")) };
+    if attrs == (0 as *u8) { return; }
+    match paint::ui_font_plain({ (*r).font_size }, { (*r).font_weight },
+                         { (*r).font_family.view() }) {
+        option::Option[ui::Font]::Some(f) => {
+            var raw: *u8 = f.raw();
+            if { (*r).is_italic } { raw = italicised(f); }
+            { rt::msg_void_id_id(attrs, rt::sel(#str_ptr("setObject:forKey:\0")),
+                                 raw, bridge::nsstring("NSFont")) };
+        }
+        option::Option[ui::Font]::None => { }
+    }
+    let col: vocab::Color = { (*r).color };
+    if col.is_set() {
+        let nc: ui::Color = paint::ui_color(col);
+        { rt::msg_void_id_id(attrs, rt::sel(#str_ptr("setObject:forKey:\0")),
+                             nc.raw(), bridge::nsstring("NSColor")) };
+    }
+    let back: vocab::Color = { (*r).background_color };
+    if back.is_set() {
+        let nb: ui::Color = paint::ui_color(back);
+        { rt::msg_void_id_id(attrs, rt::sel(#str_ptr("setObject:forKey:\0")),
+                             nb.raw(), bridge::nsstring("NSBackgroundColor")) };
+    }
+    if { (*r).decoration } == vocab::TextDecoration::Underline {
+        { rt::msg_void_id_id(attrs, rt::sel(#str_ptr("setObject:forKey:\0")),
+                             ns_number(1 as i64),
+                             bridge::nsstring("NSUnderline")) };
+    }
+    if { (*r).decoration } == vocab::TextDecoration::Strikethrough {
+        { rt::msg_void_id_id(attrs, rt::sel(#str_ptr("setObject:forKey:\0")),
+                             ns_number(1 as i64),
+                             bridge::nsstring("NSStrikethrough")) };
+    }
+    let piece: *u8 = { rt::msg_id_id_id(
+        { rt::msg_id(rt::get_class(#str_ptr("NSAttributedString\0")),
+                     rt::sel(#str_ptr("alloc\0"))) },
+        rt::sel(#str_ptr("initWithString:attributes:\0")),
+        bridge::nsstring({ (*r).view() }), attrs) };
+    if piece != (0 as *u8) {
+        { rt::msg_void_id(ms, rt::sel(#str_ptr("appendAttributedString:\0")), piece) };
+        rt::release(piece);
+    }
+    rt::release(attrs);
+    return;
+}
+
+fn draw_spans(ctx: *u8, c: *vocab::Canvas, cmd: vocab::DrawCommand) {
+    if cmd.has_aux() == false { return; }
+    let sp: *vocab::Spans = { (*c).spans(cmd.aux as usize) };
+    if sp == (0 as *vocab::Spans) { return; }
+    let ms: *u8 = { rt::alloc_init(#str_ptr("NSMutableAttributedString\0")) };
+    if ms == (0 as *u8) { return; }
+    var i: usize = 0 as usize;
+    let n: usize = { (*sp).count() };
+    while i < n {
+        append_recorded_run(ms, { (*sp).at(i) });
+        i = i +% (1 as usize);
+    }
+    { rt::msg_void_rect(ms, rt::sel(#str_ptr("drawInRect:\0")), cg_rect(cmd.bounds)) };
+    rt::release(ms);
+    return;
+}
+
+// ---- the loop ----------------------------------------------------------------
+
+// NSString draws the text, and it draws into the CURRENT context rather than
+// into one handed to it. Inside `drawRect:` one is already current and this is
+// redundant; anywhere else — a bitmap, the suite — it is what makes the same
+// recording produce the same drawing. No `flipped` argument: on iOS the
+// current context is top-left by construction.
+fn push_graphics_context(ctx: *u8) {
+    { UIGraphicsPushContext(ctx) };
+    return;
+}
+
+fn pop_graphics_context() {
+    { UIGraphicsPopContext() };
+    return;
+}
+
+fn replay(ctx: *u8, c: *vocab::Canvas) {
+    if ctx == (0 as *u8) || c == (0 as *vocab::Canvas) { return; }
+    push_graphics_context(ctx);
+    replay_commands(ctx, c);
+    pop_graphics_context();
+    return;
+}
+
+fn replay_commands(ctx: *u8, c: *vocab::Canvas) {
+    var st: DrawState = DrawState::initial();
+    var stack: vec::Vec[DrawState] = vec::new::[DrawState]();
+    var i: usize = 0 as usize;
+    let n: usize = { (*c).count() };
+    while i < n {
+        let cmd: vocab::DrawCommand = { (*c).at(i) };
+        let b: rt::Rect = cg_rect(cmd.bounds);
+
+        // ---- state
+        if cmd.op == vocab::DrawOp::SetStroke {
+            set_stroke_color(ctx, cmd.color);
+        } else if cmd.op == vocab::DrawOp::SetFill {
+            st.has_brush = false;
+            set_fill_color(ctx, cmd.color);
+        } else if cmd.op == vocab::DrawOp::SetFillBrush {
+            if cmd.has_aux() {
+                st.brush = { (*c).brush(cmd.aux as usize) };
+                st.brush_rect = b;
+                st.has_brush = true;
+                // A solid brush is just a fill colour; only a gradient needs
+                // the clip-and-paint path.
+                if st.brush.is_gradient == false {
+                    st.has_brush = false;
+                    set_fill_color(ctx, st.brush.start);
+                }
+            }
+        } else if cmd.op == vocab::DrawOp::SetTextColor {
+            st.text_color = cmd.color;
+        } else if cmd.op == vocab::DrawOp::SetStrokeWidth {
+            CGContextSetLineWidth(ctx, cmd.stroke_width());
+        } else if cmd.op == vocab::DrawOp::SetMiterLimit {
+            CGContextSetMiterLimit(ctx, cmd.miter_limit());
+        } else if cmd.op == vocab::DrawOp::SetStrokeCap {
+            CGContextSetLineCap(ctx, cg_line_cap(cmd.cap));
+        } else if cmd.op == vocab::DrawOp::SetStrokeJoin {
+            CGContextSetLineJoin(ctx, cg_line_join(cmd.join));
+        } else if cmd.op == vocab::DrawOp::SetStrokeDash {
+            if cmd.has_aux() {
+                var d: vocab::Dashes = { (*c).dashes(cmd.aux as usize) };
+                if d.is_solid() {
+                    CGContextSetLineDash(ctx, 0.0f64, 0 as *f64, 0 as usize);
+                } else {
+                    CGContextSetLineDash(ctx, cmd.dash_offset(),
+                                         #addr_of(d.runs[0 as usize]), d.count);
+                }
+            }
+        } else if cmd.op == vocab::DrawOp::SetFont {
+            st.font_family = cmd.aux;
+            st.font_size = cmd.font_size();
+            st.font_weight = cmd.weight;
+            st.is_italic = cmd.is_italic;
+        } else if cmd.op == vocab::DrawOp::SetOpacity {
+            CGContextSetAlpha(ctx, cmd.opacity());
+        } else if cmd.op == vocab::DrawOp::SetAntialiased {
+            var on: i8 = 0 as i8;
+            if cmd.is_on { on = 1 as i8; }
+            CGContextSetShouldAntialias(ctx, on);
+        } else if cmd.op == vocab::DrawOp::SetBlend {
+            CGContextSetBlendMode(ctx, cg_blend(cmd.blend));
+        } else if cmd.op == vocab::DrawOp::SetShadow {
+            let sh: vocab::Shadow = cmd.shadow();
+            let nc: ui::Color = paint::ui_color(sh.color);
+            // The y offset is NEGATED, and this is not a guess: a shadow's
+            // offset is not carried through the CTM, so the flip that makes
+            // everything else top-left does not reach it and a positive y
+            // would throw the shadow UP. The ledger does the same thing in the same
+            // place — `SetShadow`, `#if MONOMAC: sizeF.Height *= -1`.
+            CGContextSetShadowWithColor(ctx,
+                rt::Size { w: sh.offset.x, h: 0.0f64 - sh.offset.y },
+                sh.radius, nc.c_g_color());
+
+        // ---- the state stack and the transform
+        } else if cmd.op == vocab::DrawOp::Save {
+            CGContextSaveGState(ctx);
+            stack.append(st);
+        } else if cmd.op == vocab::DrawOp::Restore {
+            CGContextRestoreGState(ctx);
+            match stack.remove_last() {
+                option::Option[DrawState]::Some(prev) => { st = prev; }
+                option::Option[DrawState]::None => { }
+            }
+        } else if cmd.op == vocab::DrawOp::Reset {
+            st = DrawState::initial();
+        } else if cmd.op == vocab::DrawOp::Rotate {
+            let p: vocab::Point = cmd.pivot();
+            CGContextTranslateCTM(ctx, p.x, p.y);
+            CGContextRotateCTM(ctx, radians(cmd.degrees()));
+            CGContextTranslateCTM(ctx, 0.0f64 - p.x, 0.0f64 - p.y);
+        } else if cmd.op == vocab::DrawOp::Scale {
+            CGContextScaleCTM(ctx, cmd.x(), cmd.y());
+        } else if cmd.op == vocab::DrawOp::Translate {
+            CGContextTranslateCTM(ctx, cmd.x(), cmd.y());
+        } else if cmd.op == vocab::DrawOp::ConcatTransform {
+            let t: vocab::Transform = cmd.transform();
+            CGContextConcatCTM(ctx, Affine { a: t.a, b: t.b, c: t.c, d: t.d,
+                                             tx: t.tx, ty: t.ty });
+
+        // ---- clipping
+        } else if cmd.op == vocab::DrawOp::ClipRect {
+            CGContextClipToRect(ctx, b);
+        } else if cmd.op == vocab::DrawOp::ClipPath {
+            if cmd.has_aux() {
+                let path: *u8 = build_path({ (*c).path(cmd.aux as usize) });
+                if path != (0 as *u8) {
+                    CGContextBeginPath(ctx);
+                    CGContextAddPath(ctx, path);
+                    if cmd.winding == vocab::Winding::EvenOdd { CGContextEOClip(ctx); }
+                    else { CGContextClip(ctx); }
+                    CGPathRelease(path);
+                }
+            }
+        } else if cmd.op == vocab::DrawOp::SubtractFromClip {
+            // CG has no subtract. The even-odd rule over {everything, the hole}
+            // is the same region: the hole is inside exactly one, so it drops.
+            let whole: rt::Rect = CGContextGetClipBoundingBox(ctx);
+            CGContextBeginPath(ctx);
+            CGContextAddRect(ctx, whole);
+            CGContextAddRect(ctx, b);
+            CGContextEOClip(ctx);
+
+        // ---- shapes
+        } else if cmd.op == vocab::DrawOp::DrawLine {
+            let f: vocab::Point = cmd.from();
+            let t: vocab::Point = cmd.to();
+            CGContextBeginPath(ctx);
+            CGContextMoveToPoint(ctx, f.x, f.y);
+            CGContextAddLineToPoint(ctx, t.x, t.y);
+            CGContextStrokePath(ctx);
+        } else if cmd.op == vocab::DrawOp::DrawRect {
+            CGContextStrokeRect(ctx, b);
+        } else if cmd.op == vocab::DrawOp::FillRect {
+            fill_rect_with(ctx, b, st);
+        } else if cmd.op == vocab::DrawOp::DrawRoundedRect {
+            let path: *u8 = rounded_rect_path(b, cmd.corner_radius());
+            if path != (0 as *u8) {
+                CGContextBeginPath(ctx);
+                CGContextAddPath(ctx, path);
+                CGContextStrokePath(ctx);
+                CGPathRelease(path);
+            }
+        } else if cmd.op == vocab::DrawOp::FillRoundedRect {
+            fill_path_with(ctx, rounded_rect_path(b, cmd.corner_radius()), st, false);
+        } else if cmd.op == vocab::DrawOp::DrawEllipse {
+            CGContextStrokeEllipseInRect(ctx, b);
+        } else if cmd.op == vocab::DrawOp::FillEllipse {
+            if st.has_brush && st.brush.is_gradient {
+                let path: *u8 = CGPathCreateMutable();
+                if path != (0 as *u8) {
+                    CGPathAddEllipseInRect(path, 0 as *Affine, b);
+                    fill_path_with(ctx, path, st, false);
+                }
+            } else {
+                CGContextFillEllipseInRect(ctx, b);
+            }
+        } else if cmd.op == vocab::DrawOp::DrawArc {
+            let path: *u8 = arc_path(b, cmd.start_angle(), cmd.end_angle(),
+                                     cmd.is_clockwise, cmd.is_closed);
+            if path != (0 as *u8) {
+                CGContextBeginPath(ctx);
+                CGContextAddPath(ctx, path);
+                CGContextStrokePath(ctx);
+                CGPathRelease(path);
+            }
+        } else if cmd.op == vocab::DrawOp::FillArc {
+            fill_path_with(ctx, arc_path(b, cmd.start_angle(), cmd.end_angle(),
+                                         cmd.is_clockwise, true), st, false);
+        } else if cmd.op == vocab::DrawOp::DrawPath {
+            if cmd.has_aux() {
+                let path: *u8 = build_path({ (*c).path(cmd.aux as usize) });
+                if path != (0 as *u8) {
+                    CGContextBeginPath(ctx);
+                    CGContextAddPath(ctx, path);
+                    CGContextStrokePath(ctx);
+                    CGPathRelease(path);
+                }
+            }
+        } else if cmd.op == vocab::DrawOp::FillPath {
+            if cmd.has_aux() {
+                fill_path_with(ctx, build_path({ (*c).path(cmd.aux as usize) }), st,
+                               cmd.winding == vocab::Winding::EvenOdd);
+            }
+
+        // ---- content
+        } else if cmd.op == vocab::DrawOp::DrawText {
+            draw_text_at(ctx, c, cmd, st);
+        } else if cmd.op == vocab::DrawOp::DrawTextBlock {
+            draw_text_block(ctx, c, cmd, st);
+        } else if cmd.op == vocab::DrawOp::DrawSpans {
+            draw_spans(ctx, c, cmd);
+        } else if cmd.op == vocab::DrawOp::DrawImage {
+            if cmd.has_aux() {
+                match resolve_drawn_image({ (*c).text(cmd.aux as usize) }) {
+                    option::Option[ui::Image]::Some(img) => {
+                        { rt::msg_void_rect(img.raw(), rt::sel(#str_ptr("drawInRect:\0")), b) };
+                    }
+                    option::Option[ui::Image]::None => { }
+                }
+            }
+        }
+
+        i = i +% (1 as usize);
+    }
+    return;
+}
+
+// The same resolution order a `image` node uses: a system symbol, then a named
+// asset, then a file. One word means one thing across the package.
+fn resolve_drawn_image(src: str) -> option::Option[ui::Image] {
+    if src == "" { return option::Option[ui::Image]::None; }
+    match ui::Image::system_image_named(src) {
+        option::Option[ui::Image]::Some(img) => { return option::some(img); }
+        option::Option[ui::Image]::None => { }
+    }
+    match ui::Image::image_named(src) {
+        option::Option[ui::Image]::Some(named) => { return option::some(named); }
+        option::Option[ui::Image]::None => { }
+    }
+    return ui::Image::image_with_contents_of_file(src);
+}

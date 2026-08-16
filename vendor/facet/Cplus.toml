@@ -57,6 +57,7 @@ webkit     = "*"
 # not build turns facet red.
 [ios.dependencies]
 facet_uikit = "*"
+webkit      = "*"
 objc        = "*"
 uikit       = "*"
 quartzcore  = "*"

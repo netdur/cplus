@@ -231,6 +231,14 @@ fn is_default_weight(w: vocab::FontWeight) -> bool {
 // follows the user's content-size setting, which is the accessibility feature
 // the flag exists to ask for. A named size overrides it, because a caller that
 // states 18pt has said what it wants.
+// The font a RECORDING names: a size, a weight and a family, and no Dynamic
+// Type — a drawing states its own sizes and a canvas that re-scaled them would
+// draw something other than what was recorded.
+fn ui_font_plain(size: f64, weight: vocab::FontWeight, family: str)
+    -> option::Option[ui::Font] {
+    return ui_font(size, weight, family, false, false);
+}
+
 fn ui_font(size: f64, weight: vocab::FontWeight, family: str, italic: bool,
            scales: bool) -> option::Option[ui::Font] {
     var f: ui::Font = ui::Font::system_font_of_size(ui::Font::system_font_size());

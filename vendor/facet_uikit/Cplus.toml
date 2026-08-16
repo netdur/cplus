@@ -17,8 +17,9 @@ edition = "2026"
 #   theme::set_theme_changed_fn              repaint the running app's chrome
 # A hook family appearing outside those is drift by definition.
 #
-# STATUS: compiles for `--target ios-arm64` (and the simulator); NOT run.
-# Nothing here has been on a device or in a simulator — see README.md.
+# STATUS: builds for `--target ios-arm64` and the simulator, and RUNS in the
+# simulator — examples/facet_gallery_ios links against it. Not on a device.
+# Prop parity with facet_appkit is 305/318; MANIFEST.md §1 is the difference.
 
 # A staticlib, not a program: an iOS target stops at object emission and Xcode
 # owns the final link, so `[[bin]]` is not a thing this package can be. That is
@@ -36,3 +37,4 @@ quartzcore  = "*"
 uikit       = "*"
 flex_layout = "*"
 facet       = "*"
+webkit      = "*"

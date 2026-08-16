@@ -1,0 +1,334 @@
+// facet_uikit web — WKWebView, which is the SAME class on both platforms.
+//
+// That is the whole reason this file is short: `webkit` is one framework, so
+// nothing here is a UIKit translation of an AppKit idea. What differs is only
+// what a WKWebView is embedded IN, and facet already owns that.
+//
+// ---- the two halves ----------------------------------------------------------
+//
+// The PROPERTIES are ordinary: a source, a user agent. The rest of facet's web
+// surface is COMMANDS — go back, go forward, reload, eval — which are verbs the
+// backend performs and clears, exactly like `focus` and `blur` on the shared
+// band. A command bit that is re-read as state would re-navigate on every
+// unrelated write.
+//
+// The other half is the NAVIGATION DELEGATE, which is what makes `on_navigating`
+// and `on_navigated` real, and what keeps `can_go_back` / `can_go_forward` true
+// in facet's props rather than only in WebKit's. One synthesized class for the
+// process, the node found from the view — the same shape input.cplus uses.
+
+import "stdlib/option" as option;
+import "stdlib/text" as text;
+import "facet/facet" as core;
+import "facet/props" as props;
+import "facet/web" as web;
+import "facet/hybrid_web" as hybrid_web;
+import "objc/runtime" as rt;
+import "objc/bridge" as bridge;
+import "objc/synthesis" as synth;
+import "uikit/uikit" as ui;
+import "webkit/webkit" as wk;
+import "./input" as input;
+
+fn create_web(n: *core::Node) -> *u8 {
+    let cfg: *u8 = { rt::alloc_init(#str_ptr("WKWebViewConfiguration\0")) };
+    let cls: *u8 = rt::get_class(#str_ptr("WKWebView\0"));
+    if cls == (0 as *u8) { return 0 as *u8; }
+    let alloced: *u8 = { rt::msg_id(cls, rt::sel(#str_ptr("alloc\0"))) };
+    if alloced == (0 as *u8) { return 0 as *u8; }
+    let zero: rt::Rect = rt::Rect { x: 0.0f64, y: 0.0f64, w: 0.0f64, h: 0.0f64 };
+    let v: *u8 = { msg_id_rect_id(alloced, rt::sel(#str_ptr("initWithFrame:configuration:\0")),
+                                  zero, cfg) };
+    if cfg != (0 as *u8) { { rt::release(cfg) }; }
+    if v == (0 as *u8) { return 0 as *u8; }
+    arm_navigation(v, n);
+    return v;
+}
+
+fn is_web_view(v: *u8) -> bool {
+    if v == (0 as *u8) { return false; }
+    return { rt::msg_i8_id(v, rt::sel(#str_ptr("isKindOfClass:\0")),
+                           rt::get_class(#str_ptr("WKWebView\0"))) } != (0 as i8);
+}
+
+// A web view is cut loose from its node BEFORE its release, because releasing
+// it does not necessarily deallocate it: WebKit retains a page that is still
+// loading, and a navigation callback arriving afterwards would read a node that
+// is gone. facet_appkit learned this the same way.
+fn detach(v: *u8) {
+    if v == (0 as *u8) { return; }
+    { rt::msg_void_id(v, rt::sel(#str_ptr("setNavigationDelegate:\0")), 0 as *u8) };
+    { rt::msg_void(v, rt::sel(#str_ptr("stopLoading\0"))) };
+    input::bind_node(v, 0 as *core::Node);
+    return;
+}
+
+fn apply_web(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *props::WebProps = props_of(n, props::K_WEB) as *props::WebProps;
+    if p == (0 as *props::WebProps) { return; }
+    apply_web_props(v, n, p, dirty);
+    return;
+}
+
+fn props_of(n: *core::Node, kind: u32) -> *u8 {
+    let d: *core::Data = core::node_data(n);
+    if d == (0 as *core::Data) { return 0 as *u8; }
+    if { (*d).kind } != kind { return 0 as *u8; }
+    return { (*d).props };
+}
+
+fn apply_web_props(v: *u8, n: *core::Node, p: *props::WebProps, dirty: u64) {
+    // The user agent goes on BEFORE the load, or the first request carries the
+    // default one and the app's is only honoured from the second page.
+    if (dirty & web::P_USER_AGENT) != (0 as u64) {
+        let ua: str = { (*p).user_agent.view() };
+        if ua != "" {
+            { rt::msg_void_id(v, rt::sel(#str_ptr("setCustomUserAgent:\0")),
+                              bridge::nsstring(ua)) };
+        }
+    }
+    if (dirty & web::P_SOURCE) != (0 as u64) { load_source(v, { (*p).source.view() }); }
+
+    // ---- the commands. Verbs the backend performs; facet clears the bits.
+    if (dirty & web::P_GO_BACK) != (0 as u64) {
+        { rt::msg_void(v, rt::sel(#str_ptr("goBack\0"))) };
+    }
+    if (dirty & web::P_GO_FORWARD) != (0 as u64) {
+        { rt::msg_void(v, rt::sel(#str_ptr("goForward\0"))) };
+    }
+    if (dirty & web::P_RELOAD) != (0 as u64) {
+        { rt::msg_void(v, rt::sel(#str_ptr("reload\0"))) };
+    }
+    if (dirty & web::P_EVAL) != (0 as u64) {
+        let js: str = { (*p).eval_script.view() };
+        if js != "" {
+            // No completion handler: facet's `eval` is fire-and-forget, and a
+            // handler would need a block whose result has nowhere to land.
+            { rt::msg_void_id_id(v, rt::sel(#str_ptr("evaluateJavaScript:completionHandler:\0")),
+                                 bridge::nsstring(js), 0 as *u8) };
+        }
+    }
+    return;
+}
+
+// A source is a URL or a document. Both are ordinary WebKit loads; the split is
+// whether the string names a scheme.
+fn load_source(v: *u8, src: str) {
+    if src == "" { return; }
+    if looks_like_url(src) {
+        let url: *u8 = { rt::msg_id_id(rt::get_class(#str_ptr("NSURL\0")),
+                                       rt::sel(#str_ptr("URLWithString\0")),
+                                       bridge::nsstring(src)) };
+        if url == (0 as *u8) { return; }
+        let req: *u8 = { rt::msg_id_id(rt::get_class(#str_ptr("NSURLRequest\0")),
+                                       rt::sel(#str_ptr("requestWithURL:\0")), url) };
+        if req == (0 as *u8) { return; }
+        { rt::msg_void_id(v, rt::sel(#str_ptr("loadRequest:\0")), req) };
+        return;
+    }
+    // Not a URL: the string IS the document.
+    { rt::msg_void_id_id(v, rt::sel(#str_ptr("loadHTMLString:baseURL:\0")),
+                         bridge::nsstring(src), 0 as *u8) };
+    return;
+}
+
+fn looks_like_url(s: str) -> bool {
+    return { s.has_prefix("http://") } || { s.has_prefix("https://") }
+        || { s.has_prefix("file://") } || { s.has_prefix("about:") };
+}
+
+// ---- the navigation delegate -----------------------------------------------------
+
+static NAV_CLASS: *u8 = 0 as *u8;
+static NAV_DELEGATE: *u8 = 0 as *u8;
+
+// A navigation is STARTING. facet's `on_navigating` is the app's chance to know
+// before the page changes.
+fn imp_did_start(self_obj: *u8, cmd: *u8, wv: *u8, nav: *u8) {
+    let n: *core::Node = input::node_of(wv);
+    if n == (0 as *core::Node) { return; }
+    let p: *props::WebProps = props_of(n, props::K_WEB) as *props::WebProps;
+    if p == (0 as *props::WebProps) { return; }
+    sync_history(wv, p);
+    let h: fn(*u8, *u8) = { (*p).on_navigating };
+    if h != (0 as fn(*u8, *u8)) { h(wv, { (*p).on_navigating_ctx }); }
+    return;
+}
+
+fn imp_did_finish(self_obj: *u8, cmd: *u8, wv: *u8, nav: *u8) {
+    let n: *core::Node = input::node_of(wv);
+    if n == (0 as *core::Node) { return; }
+    let p: *props::WebProps = props_of(n, props::K_WEB) as *props::WebProps;
+    if p == (0 as *props::WebProps) { return; }
+    sync_history(wv, p);
+    let h: fn(*u8, *u8) = { (*p).on_navigated };
+    if h != (0 as fn(*u8, *u8)) { h(wv, { (*p).on_navigated_ctx }); }
+    return;
+}
+
+// The renderer died. An app that shows a blank page forever is the failure this
+// callback exists to prevent.
+fn imp_content_terminated(self_obj: *u8, cmd: *u8, wv: *u8) {
+    let n: *core::Node = input::node_of(wv);
+    if n == (0 as *core::Node) { return; }
+    let p: *props::WebProps = props_of(n, props::K_WEB) as *props::WebProps;
+    if p == (0 as *props::WebProps) { return; }
+    let h: fn(*u8, *u8) = { (*p).on_process_terminated };
+    if h != (0 as fn(*u8, *u8)) { h(wv, { (*p).on_process_terminated_ctx }); }
+    return;
+}
+
+// `can_go_back` / `can_go_forward` are READS on facet's props, and WebKit owns
+// the truth — so the props are refreshed at both edges of every navigation,
+// which is exactly when the answer can change.
+fn sync_history(wv: *u8, p: *props::WebProps) {
+    { (*p).can_go_back = { rt::msg_i8(wv, rt::sel(#str_ptr("canGoBack\0"))) } != (0 as i8) };
+    { (*p).can_go_forward = { rt::msg_i8(wv, rt::sel(#str_ptr("canGoForward\0"))) } != (0 as i8) };
+    return;
+}
+
+fn nav_delegate() -> *u8 {
+    if NAV_DELEGATE != (0 as *u8) { return NAV_DELEGATE; }
+    if NAV_CLASS == (0 as *u8) {
+        let existing: *u8 = rt::get_class(#str_ptr("FacetUIKitWebNav\0"));
+        if existing != (0 as *u8) {
+            NAV_CLASS = existing;
+        } else {
+            let base: *u8 = rt::get_class(#str_ptr("NSObject\0"));
+            let cls: *u8 = { synth::allocate_class_pair(base, #str_ptr("FacetUIKitWebNav\0"),
+                                                        0 as usize) };
+            if cls == (0 as *u8) { return 0 as *u8; }
+            let _a: i8 = synth::add_method_v_2id(cls,
+                rt::sel(#str_ptr("webView:didStartProvisionalNavigation:\0")),
+                imp_did_start, #str_ptr("v@:@@\0"));
+            let _b: i8 = synth::add_method_v_2id(cls,
+                rt::sel(#str_ptr("webView:didFinishNavigation:\0")),
+                imp_did_finish, #str_ptr("v@:@@\0"));
+            let _c: i8 = synth::add_method_v_1id(cls,
+                rt::sel(#str_ptr("webViewWebContentProcessDidTerminate:\0")),
+                imp_content_terminated, #str_ptr("v@:@\0"));
+            { synth::register_class_pair(cls) };
+            NAV_CLASS = cls;
+        }
+    }
+    NAV_DELEGATE = { synth::alloc_init_class(NAV_CLASS) };
+    return NAV_DELEGATE;
+}
+
+fn arm_navigation(v: *u8, n: *core::Node) {
+    input::bind_node(v, n);
+    let d: *u8 = nav_delegate();
+    if d == (0 as *u8) { return; }
+    { rt::msg_void_id(v, rt::sel(#str_ptr("setNavigationDelegate:\0")), d) };
+    return;
+}
+
+// ---- hybrid_web ------------------------------------------------------------------
+// The same view with a message channel: script in the page calls out to the app.
+// `hybrid_root` names the folder a local document is served from, and
+// `send_message` is the app calling IN.
+
+fn create_hybrid_web(n: *core::Node) -> *u8 {
+    let v: *u8 = create_web(n);
+    if v == (0 as *u8) { return v; }
+    let p: *props::HybridWebProps =
+        props_of(n, props::K_HYBRID_WEB) as *props::HybridWebProps;
+    if p != (0 as *props::HybridWebProps) {
+        // `on_web_view_initializing` fires BEFORE anything is loaded — it is the
+        // app's one chance to touch the view before a page can see it — and
+        // `on_web_view_initialized` right after. Both are edges of construction,
+        // so they belong here rather than in an apply.
+        let a: fn(*u8, *u8) = { (*p).on_web_view_initializing };
+        if a != (0 as fn(*u8, *u8)) { a(v, { (*p).on_web_view_initializing_ctx }); }
+        let b: fn(*u8, *u8) = { (*p).on_web_view_initialized };
+        if b != (0 as fn(*u8, *u8)) { b(v, { (*p).on_web_view_initialized_ctx }); }
+    }
+    return v;
+}
+
+// A hybrid view serves a LOCAL BUNDLE: `hybrid_root` is the folder and
+// `default_file` the page inside it. That is a different load from a URL —
+// `loadFileURL:allowingReadAccessToURL:` is the only one that grants a page
+// read access to its own folder, which is what makes relative script and style
+// references resolve.
+fn apply_hybrid_web(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *props::HybridWebProps =
+        props_of(n, props::K_HYBRID_WEB) as *props::HybridWebProps;
+    if p == (0 as *props::HybridWebProps) { return; }
+    if (dirty & (hybrid_web::P_HYBRID_ROOT | hybrid_web::P_DEFAULT_FILE)) != (0 as u64) {
+        load_local(v, { (*p).hybrid_root.view() }, { (*p).default_file.view() });
+    }
+    // The app calling INTO the page. A message is arbitrary text spliced into
+    // source, so it is JSON-quoted first — an unescaped quote is an injection.
+    if (dirty & hybrid_web::P_SEND_MESSAGE) != (0 as u64) {
+        let m: str = { (*p).outgoing_message.view() };
+        if m != "" {
+            var js: text::Text = text::from_str("window.facet && window.facet.receive && window.facet.receive(");
+            js = js.appending(json_quoted(m).view()).appending(")");
+            { rt::msg_void_id_id(v, rt::sel(#str_ptr("evaluateJavaScript:completionHandler:\0")),
+                                 bridge::nsstring(js.view()), 0 as *u8) };
+        }
+    }
+    return;
+}
+
+// The bundle folder, and the page in it.
+fn load_local(v: *u8, root: str, file: str) {
+    if root == "" && file == "" { return; }
+    var path: text::Text = text::from_str(root);
+    if root != "" && file != "" { path = path.appending("/"); }
+    path = path.appending(file);
+    let url: *u8 = { rt::msg_id_id(rt::get_class(#str_ptr("NSURL\0")),
+                                   rt::sel(#str_ptr("fileURLWithPath:\0")),
+                                   bridge::nsstring(path.view())) };
+    if url == (0 as *u8) { return; }
+    var dir: *u8 = url;
+    if root != "" {
+        dir = { rt::msg_id_id(rt::get_class(#str_ptr("NSURL\0")),
+                              rt::sel(#str_ptr("fileURLWithPath:\0")),
+                              bridge::nsstring(root)) };
+    }
+    { rt::msg_void_id_id(v, rt::sel(#str_ptr("loadFileURL:allowingReadAccessToURL:\0")),
+                         url, dir) };
+    return;
+}
+
+// A JSON string literal. A message is arbitrary text and it is being spliced
+// into source, so quoting is not cosmetic — an unescaped quote is an injection.
+// The single byte at `i`, as a `str`. `Text::append` takes a string and there
+// is no byte-wise append; a one-byte slice of the source is the same bytes.
+fn one_byte(s: str, i: usize) -> str {
+    return match { s.slice(i, i +% (1 as usize)) } {
+        option::Option[str]::Some(b) => b,
+        option::Option[str]::None => "",
+    };
+}
+
+fn json_quoted(s: str) -> text::Text {
+    var out: text::Text = text::from_str("\"");
+    var i: usize = 0 as usize;
+    let n: usize = { s.count() };
+    while i < n {
+        match { s.byte_at(i) } {
+            option::Option[u8]::Some(b) => {
+                if b == (34 as u8) { out = out.appending("\\\""); }
+                else if b == (92 as u8) { out = out.appending("\\\\"); }
+                else if b == (10 as u8) { out = out.appending("\\n"); }
+                else if b == (13 as u8) { out = out.appending("\\r"); }
+                else if b == (9 as u8) { out = out.appending("\\t"); }
+                else {
+                    // Not an escape: the byte passes through. `Text` appends
+                    // strings, so the byte is handed over as the one-byte
+                    // slice it already is inside `s`.
+                    out = out.appending(one_byte(s, i));
+                }
+            }
+            option::Option[u8]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return out.appending("\"");
+}
+
+#[link_name = "objc_msgSend"]
+extern fn msg_id_rect_id(recv: *u8, sel: *u8, r: rt::Rect, a: *u8) -> *u8;

@@ -1,0 +1,420 @@
+// facet_uikit swipe — swipe-to-reveal, as a swipe.
+//
+// This is the kind the AppKit backend had to answer sideways. macOS has no
+// swipe, so facet_appkit reads a swipeable's `swipe_item` children as a CONTEXT
+// MENU and says so in its manifest; here the description is read the way it was
+// written, because a finger is what the platform has.
+//
+// THE STRIP IS BUILT FROM THE SAME CHILDREN. A `swipe_item` is not a view (it
+// is a row, the way a `menu_item` is), so the buttons under the content are
+// this module's, built from the items' text and their destructive marking — and
+// tapping one runs the item's `on_clicked` and its `on_invoked`, in that order,
+// which is the same pair the menu path runs.
+//
+// WHY A PAN AND NOT `UISwipeActionsConfiguration`: the table-row API is the
+// idiomatic iOS answer and it cannot honour `reveal_threshold` — UIKit owns the
+// distance at which a row opens and exposes no way to name it. A swipeable is
+// also not necessarily in a table. So the reveal is driven here: the content
+// translates with the finger, and where it lands when the finger lifts is the
+// threshold's decision, which is what the verb asks for.
+
+import "stdlib/option" as option;
+import "stdlib/text" as text;
+import "facet/facet" as core;
+import "facet/props" as props;
+import "facet/vocabulary" as vocab;
+import "facet/swipeable" as swipeable;
+import "objc/runtime" as rt;
+import "objc/synthesis" as synth;
+import "objc/bridge" as bridge;
+import "uikit/uikit" as ui;
+import "quartzcore/quartzcore" as quartz;
+import "./paint" as paint;
+import "./input" as input;
+
+// ---- the pieces hung on a swipeable's view -----------------------------------
+// Three associated objects, and no per-swipeable state anywhere else: a strip
+// (the buttons, under the content), the node's own children view (what moves),
+// and the current offset. A static would be one swipeable's state shared by all
+// of them, which a list of swipeables makes wrong immediately.
+
+fn strip_key() -> *u8 { return 41030 as *u8; }
+fn gesture_key() -> *u8 { return 41031 as *u8; }
+fn offset_key() -> *u8 { return 41032 as *u8; }
+
+// How far a swipe has moved the content, held as an NSNumber because that is
+// what an associated object can be.
+fn offset_of(v: *u8) -> f64 {
+    let o: *u8 = { synth::get_associated(v, offset_key()) };
+    if o == (0 as *u8) { return 0.0f64; }
+    return { rt::msg_f64(o, rt::sel(#str_ptr("doubleValue\0"))) };
+}
+
+fn set_offset(v: *u8, x: f64) {
+    synth::set_associated(v, offset_key(),
+        { rt::msg_id_f64(rt::get_class(#str_ptr("NSNumber\0")),
+                         rt::sel(#str_ptr("numberWithDouble:\0")), x) });
+    return;
+}
+
+// ---- the strip ---------------------------------------------------------------
+// The buttons a swipe reveals. They sit UNDER the content in z-order and at the
+// trailing edge, which is why the content sliding left uncovers them rather
+// than pushing them.
+
+fn action_width() -> f64 { return 88.0f64; }
+
+fn strip_of(v: *u8) -> *u8 {
+    return { synth::get_associated(v, strip_key()) };
+}
+
+fn ensure_strip(v: *u8) -> *u8 {
+    let existing: *u8 = strip_of(v);
+    if existing != (0 as *u8) { return existing; }
+    let s: ui::View = ui::View::new_with_frame(rt::Rect {
+        x: 0.0f64, y: 0.0f64, w: 0.0f64, h: 0.0f64,
+    });
+    let raw: *u8 = s.raw();
+    // BELOW everything the application put in the swipeable. `insertSubview:
+    // atIndex:0` rather than `addSubview:`, because the content is what has to
+    // cover it.
+    { msg_void_id_u64(v, rt::sel(#str_ptr("insertSubview:atIndex:\0")), raw, 0 as u64) };
+    synth::set_associated(v, strip_key(), raw);
+    return raw;
+}
+
+// Rebuilt whole whenever the items change. A UIButton per `swipe_item`, in the
+// order they were described, coloured by the item's destructive marking.
+fn rebuild_strip(v: *u8, n: *core::Node) -> usize {
+    let strip: *u8 = ensure_strip(v);
+    if strip == (0 as *u8) { return 0 as usize; }
+    clear_subviews(strip);
+    var count: usize = 0 as usize;
+    var i: usize = 0 as usize;
+    let children: usize = core::child_count_of(n);
+    while i < children {
+        match core::child_of(n, i) {
+            option::Option[*core::Node]::Some(c) => {
+                if core::kind_of(c) == props::K_SWIPE_ITEM {
+                    add_action(strip, c, count);
+                    count = count +% (1 as usize);
+                }
+            }
+            option::Option[*core::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return count;
+}
+
+fn clear_subviews(host: *u8) {
+    let subs: *u8 = { rt::msg_id(host, rt::sel(#str_ptr("subviews\0"))) };
+    if subs == (0 as *u8) { return; }
+    let n: u64 = { rt::msg_u64(subs, rt::sel(#str_ptr("count\0"))) };
+    var i: u64 = 0 as u64;
+    while i < n {
+        let s: *u8 = { rt::msg_id_u64(subs, rt::sel(#str_ptr("objectAtIndex:\0")), i) };
+        if s != (0 as *u8) {
+            { rt::msg_void(s, rt::sel(#str_ptr("removeFromSuperview\0"))) };
+        }
+        i = i +% (1 as u64);
+    }
+    return;
+}
+
+// One action. The NODE rides on the button as an associated object, so the tap
+// can find the item it belongs to without a table keyed by index — the index
+// changes whenever the description does.
+fn action_node_key() -> *u8 { return 41033 as *u8; }
+
+fn add_action(strip: *u8, item: *core::Node, at: usize) {
+    let p: *props::SwipeItemProps =
+        props_of(item, props::K_SWIPE_ITEM) as *props::SwipeItemProps;
+    if p == (0 as *props::SwipeItemProps) { return; }
+    let mi: *props::MenuItemProps = { #addr_of((*p).menu_item) };
+    let b: ui::Button = ui::Button::button_with_type(ui::ButtonType::System);
+    let raw: *u8 = b.as_view().raw();
+    b.set_title({ (*mi).text.view() }, 0 as u64);
+    b.set_title_color(paint::ui_color(vocab::Color::on_primary()), 0 as u64);
+    // A destructive action is red and a plain one is the system fill, which is
+    // the same pair iOS draws for a table row's own swipe actions.
+    var back: vocab::Color = vocab::Color::fill();
+    if { (*mi).is_destructive } { back = vocab::Color::danger(); }
+    { rt::msg_void_id(raw, rt::sel(#str_ptr("setBackgroundColor:\0")),
+                      paint::ui_color(back).raw()) };
+    synth::set_associated(raw, action_node_key(), item as *u8);
+    target_class();
+    { msg_void_id_sel_u64(raw, rt::sel(#str_ptr("addTarget:action:forControlEvents:\0")),
+                          target(), rt::sel(#str_ptr("facetSwipeAction:\0")),
+                          (1 as u64) * (64 as u64)) };
+    { rt::msg_void_id(strip, rt::sel(#str_ptr("addSubview:\0")), raw) };
+    return;
+}
+
+// ---- laying the strip out ----------------------------------------------------
+// From the layout pass, because the actions are as tall as the swipeable and
+// the swipeable's height is not known until flex has run.
+
+fn resize_strip(v: *u8, n: *core::Node) {
+    let strip: *u8 = strip_of(v);
+    if strip == (0 as *u8) { return; }
+    let f: rt::Rect = ui::View::from_raw(v).frame();
+    let subs: *u8 = { rt::msg_id(strip, rt::sel(#str_ptr("subviews\0"))) };
+    if subs == (0 as *u8) { return; }
+    let count: u64 = { rt::msg_u64(subs, rt::sel(#str_ptr("count\0"))) };
+    if count == (0 as u64) { return; }
+    let w: f64 = action_width() * (count as f64);
+    { msg_void_rect(strip, rt::sel(#str_ptr("setFrame:\0")),
+                    rt::Rect { x: f.w - w, y: 0.0f64, w: w, h: f.h }) };
+    var i: u64 = 0 as u64;
+    while i < count {
+        let s: *u8 = { rt::msg_id_u64(subs, rt::sel(#str_ptr("objectAtIndex:\0")), i) };
+        if s != (0 as *u8) {
+            { msg_void_rect(s, rt::sel(#str_ptr("setFrame:\0")),
+                            rt::Rect { x: action_width() * (i as f64), y: 0.0f64,
+                                       w: action_width(), h: f.h }) };
+        }
+        i = i +% (1 as u64);
+    }
+    // The content sits where the last swipe left it, and a resize does not
+    // close it — so the translation is re-asserted against the new geometry.
+    apply_offset(v, offset_of(v));
+    return;
+}
+
+// How far open a swipe can go: the whole strip, and no further.
+fn open_width(v: *u8) -> f64 {
+    let strip: *u8 = strip_of(v);
+    if strip == (0 as *u8) { return 0.0f64; }
+    let subs: *u8 = { rt::msg_id(strip, rt::sel(#str_ptr("subviews\0"))) };
+    if subs == (0 as *u8) { return 0.0f64; }
+    return action_width() * ({ rt::msg_u64(subs, rt::sel(#str_ptr("count\0"))) } as f64);
+}
+
+// The content, translated. Every subview EXCEPT the strip moves — the strip is
+// what is being uncovered, so it stays where it is.
+fn apply_offset(v: *u8, x: f64) {
+    let strip: *u8 = strip_of(v);
+    // HIDDEN AT REST. The strip sits at the trailing edge under the content, so
+    // it is covered only as far as the content actually reaches — and content
+    // narrower than the swipeable leaves the actions showing with nothing
+    // touched. Which is not a layout bug to chase: a closed swipeable should
+    // show no actions whatever its content's width, so the closed state says so
+    // outright.
+    if strip != (0 as *u8) {
+        var hidden: i8 = 0 as i8;
+        if x == 0.0f64 { hidden = 1 as i8; }
+        { rt::msg_void_i8(strip, rt::sel(#str_ptr("setHidden:\0")), hidden) };
+    }
+    let subs: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("subviews\0"))) };
+    if subs == (0 as *u8) { return; }
+    let n: u64 = { rt::msg_u64(subs, rt::sel(#str_ptr("count\0"))) };
+    var i: u64 = 0 as u64;
+    while i < n {
+        let s: *u8 = { rt::msg_id_u64(subs, rt::sel(#str_ptr("objectAtIndex:\0")), i) };
+        if s != (0 as *u8) && s != strip {
+            let l: quartz::Layer = ui::View::from_raw(s).layer();
+            var t: quartz::Transform3D = paint::transform_identity();
+            { t.m41 = x };
+            l.set_transform(t);
+        }
+        i = i +% (1 as u64);
+    }
+    return;
+}
+
+// ---- the gesture -------------------------------------------------------------
+
+static TARGET_CLASS: *u8 = 0 as *u8;
+static TARGET: *u8 = 0 as *u8;
+
+// UIGestureRecognizerState: Began 1, Changed 2, Ended 3.
+fn imp_pan(self_obj: *u8, cmd: *u8, g: *u8) {
+    let v: *u8 = { rt::msg_id(g, rt::sel(#str_ptr("view\0"))) };
+    if v == (0 as *u8) { return; }
+    let n: *core::Node = input::node_of(v);
+    if n == (0 as *core::Node) { return; }
+    let p: *props::SwipeableProps =
+        props_of(n, props::K_SWIPEABLE) as *props::SwipeableProps;
+    if p == (0 as *props::SwipeableProps) { return; }
+    let state: i64 = { rt::msg_i64(g, rt::sel(#str_ptr("state\0"))) };
+    let t: rt::Point = { msg_point_id(g, rt::sel(#str_ptr("translationInView:\0")), v) };
+    let limit: f64 = open_width(v);
+    if limit <= 0.0f64 { return; }
+
+    if state == (1 as i64) {
+        fire(p, { (*p).on_swipe_started }, { (*p).on_swipe_started_ctx }, v);
+        return;
+    }
+    if state == (2 as i64) {
+        // Left only, and never past the strip: a swipeable opens toward its
+        // actions and there is nothing on the other side to reveal.
+        var x: f64 = t.x;
+        if x > 0.0f64 { x = 0.0f64; }
+        if x < -limit { x = -limit; }
+        set_offset(v, x);
+        apply_offset(v, x);
+        fire(p, { (*p).observe_swipe_changing }, { (*p).observe_swipe_changing_ctx }, v);
+        return;
+    }
+    if state != (3 as i64) {
+        settle(v, p, false);
+        return;
+    }
+
+    // THE THRESHOLD, which is the whole reason this is a pan rather than a
+    // table row's own configuration. `reveal_threshold` is the distance past
+    // which letting go opens rather than closes; zero means halfway, which is
+    // what an application that never named one expects.
+    var bar: f64 = { (*p).reveal_threshold };
+    if bar <= 0.0f64 { bar = limit / 2.0f64; }
+    if bar > limit { bar = limit; }
+    var travelled: f64 = -offset_of(v);
+    if travelled < 0.0f64 { travelled = 0.0f64; }
+    settle(v, p, travelled >= bar);
+    fire(p, { (*p).on_swipe_ended }, { (*p).on_swipe_ended_ctx }, v);
+    return;
+}
+
+// Open or closed, animated, and the matching handler told. `open_requested` and
+// `close_requested` are the two names the ledger gives this moment, and they
+// fire on the LANDING rather than on the gesture, because a swipe that is
+// dragged back to where it started requested nothing.
+fn settle(v: *u8, p: *props::SwipeableProps, open: bool) {
+    var x: f64 = 0.0f64;
+    if open { x = -open_width(v); }
+    set_offset(v, x);
+    animate_to(v, x);
+    if open { fire(p, { (*p).on_open_requested }, { (*p).on_open_requested_ctx }, v); }
+    else { fire(p, { (*p).on_close_requested }, { (*p).on_close_requested_ctx }, v); }
+    return;
+}
+
+fn animate_to(v: *u8, x: f64) {
+    let cls: *u8 = rt::get_class(#str_ptr("UIView\0"));
+    { rt::msg_void_f64(cls, rt::sel(#str_ptr("beginAnimations:context:\0")), 0.0f64) };
+    { rt::msg_void_f64(cls, rt::sel(#str_ptr("setAnimationDuration:\0")), 0.2f64) };
+    apply_offset(v, x);
+    { rt::msg_void(cls, rt::sel(#str_ptr("commitAnimations\0"))) };
+    return;
+}
+
+fn fire(p: *props::SwipeableProps, h: fn(*u8, *u8), ctx: *u8, sender: *u8) {
+    if h == props::no_handler { return; }
+    h(sender, ctx);
+    return;
+}
+
+// An action button, tapped. Both handlers run — `on_clicked` is the menu item's
+// and `on_invoked` is the swipe item's, and the ledger fires them together — and
+// then the swipeable closes, which is what tapping an action means.
+fn imp_action(self_obj: *u8, cmd: *u8, sender: *u8) {
+    if sender == (0 as *u8) { return; }
+    let item: *core::Node = { synth::get_associated(sender, action_node_key()) } as *core::Node;
+    if item == (0 as *core::Node) { return; }
+    let p: *props::SwipeItemProps =
+        props_of(item, props::K_SWIPE_ITEM) as *props::SwipeItemProps;
+    if p == (0 as *props::SwipeItemProps) { return; }
+    let mi: *props::MenuItemProps = { #addr_of((*p).menu_item) };
+    let click: fn(*u8, *u8) = { (*mi).on_clicked };
+    if click != props::no_handler { click(sender, { (*mi).on_clicked_ctx }); }
+    let inv: fn(*u8, *u8) = { (*p).on_invoked };
+    if inv != props::no_handler { inv(sender, { (*p).on_invoked_ctx }); }
+    // The swipeable is the strip's superview's superview: button -> strip ->
+    // swipeable.
+    let strip: *u8 = { rt::msg_id(sender, rt::sel(#str_ptr("superview\0"))) };
+    if strip == (0 as *u8) { return; }
+    let v: *u8 = { rt::msg_id(strip, rt::sel(#str_ptr("superview\0"))) };
+    if v == (0 as *u8) { return; }
+    let n: *core::Node = input::node_of(v);
+    if n == (0 as *core::Node) { return; }
+    let sp: *props::SwipeableProps =
+        props_of(n, props::K_SWIPEABLE) as *props::SwipeableProps;
+    if sp == (0 as *props::SwipeableProps) { return; }
+    settle(v, sp, false);
+    return;
+}
+
+fn target_class() -> *u8 {
+    if TARGET_CLASS != (0 as *u8) { return TARGET_CLASS; }
+    let existing: *u8 = rt::get_class(#str_ptr("FacetUIKitSwipeTarget\0"));
+    if existing != (0 as *u8) { TARGET_CLASS = existing; return TARGET_CLASS; }
+    let base: *u8 = rt::get_class(#str_ptr("NSObject\0"));
+    let cls: *u8 = { synth::allocate_class_pair(base,
+        #str_ptr("FacetUIKitSwipeTarget\0"), 0 as usize) };
+    if cls == (0 as *u8) { return 0 as *u8; }
+    let _a: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("facetSwipePan:\0")),
+                                         imp_pan, #str_ptr("v@:@\0"));
+    let _b: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("facetSwipeAction:\0")),
+                                         imp_action, #str_ptr("v@:@\0"));
+    { synth::register_class_pair(cls) };
+    TARGET_CLASS = cls;
+    return TARGET_CLASS;
+}
+
+fn target() -> *u8 {
+    if TARGET != (0 as *u8) { return TARGET; }
+    let cls: *u8 = target_class();
+    if cls == (0 as *u8) { return 0 as *u8; }
+    TARGET = { synth::alloc_init_class(cls) };
+    return TARGET;
+}
+
+fn install_pan(v: *u8) {
+    if { synth::get_associated(v, gesture_key()) } != (0 as *u8) { return; }
+    let t: *u8 = target();
+    if t == (0 as *u8) { return; }
+    let cls: *u8 = rt::get_class(#str_ptr("UIPanGestureRecognizer\0"));
+    if cls == (0 as *u8) { return; }
+    let alloced: *u8 = { rt::msg_id(cls, rt::sel(#str_ptr("alloc\0"))) };
+    if alloced == (0 as *u8) { return; }
+    let g: *u8 = { msg_id_id_sel(alloced, rt::sel(#str_ptr("initWithTarget:action:\0")),
+                                 t, rt::sel(#str_ptr("facetSwipePan:\0"))) };
+    if g == (0 as *u8) { return; }
+    ui::View::from_raw(v).set_user_interaction_enabled(true);
+    { rt::msg_void_id(v, rt::sel(#str_ptr("addGestureRecognizer:\0")), g) };
+    synth::set_associated(v, gesture_key(), g);
+    { rt::release(g) };
+    return;
+}
+
+// ---- the kind's two verbs ----------------------------------------------------
+
+fn create(n: *core::Node) -> *u8 {
+    let v: ui::View = ui::View::new_with_frame(rt::Rect {
+        x: 0.0f64, y: 0.0f64, w: 0.0f64, h: 0.0f64,
+    });
+    let raw: *u8 = rt::retain(v.raw());
+    { rt::msg_void_i8(raw, rt::sel(#str_ptr("setClipsToBounds:\0")), 1 as i8) };
+    input::bind_node(raw, n);
+    install_pan(raw);
+    return raw;
+}
+
+fn apply(v: *u8, n: *core::Node, dirty: u64) {
+    input::bind_node(v, n);
+    let band: u64 = props::C_HANDLERS | props::C_LAYOUT | swipeable::P_REVEAL_THRESHOLD;
+    if (dirty & band) != (0 as u64) || dirty == paint::all_bits() {
+        let _count: usize = rebuild_strip(v, n);
+        resize_strip(v, n);
+    }
+    return;
+}
+
+fn props_of(n: *core::Node, kind: u32) -> *u8 {
+    if core::kind_of(n) != kind { return 0 as *u8; }
+    let d: *core::Data = core::node_data(n);
+    if d == (0 as *core::Data) { return 0 as *u8; }
+    return { (*d).props };
+}
+
+#[link_name = "objc_msgSend"]
+extern fn msg_void_rect(recv: *u8, sel: *u8, r: rt::Rect);
+#[link_name = "objc_msgSend"]
+extern fn msg_void_id_u64(recv: *u8, sel: *u8, a: *u8, b: u64);
+#[link_name = "objc_msgSend"]
+extern fn msg_void_id_sel_u64(recv: *u8, sel: *u8, t: *u8, a: *u8, e: u64);
+#[link_name = "objc_msgSend"]
+extern fn msg_id_id_sel(recv: *u8, sel: *u8, a: *u8, b: *u8) -> *u8;
+#[link_name = "objc_msgSend"]
+extern fn msg_point_id(recv: *u8, sel: *u8, a: *u8) -> rt::Point;

@@ -28,9 +28,13 @@ import "facet/facet" as core;
 import "facet/props" as props;
 import "objc/runtime" as rt;
 import "facet/vocabulary" as vocab;
+import "facet/split" as split;
 import "uikit/uikit" as ui;
 import "./paint" as paint;
 import "./controls" as controls;
+import "./drawing" as drawing;
+import "./swipe" as swipe;
+import "./text_input" as ti;
 
 type Node = flex::Node;
 
@@ -195,6 +199,21 @@ fn reposition_children(node: *core::Node, host_abs: flex::Frame) {
                     // a CAShapeLayer whose PATH is its geometry, so it is
                     // rebuilt at the size the walk just gave it.
                     if core::kind_of(c) == props::K_BORDERED { controls::resize_stroke(v, c); }
+                    // And the third: a text area's VERTICAL alignment is the
+                    // inset that puts its text where it was asked for, and the
+                    // inset that centres a paragraph in a 40pt box does not
+                    // centre it in an 80pt one.
+                    if core::kind_of(c) == props::K_TEXT_AREA { ti::resize_text_view(v); }
+                    // And a split: its clamps are against its OWN extent, so
+                    // the division is recomputed whenever that extent changes.
+                    if core::kind_of(c) == split::K_SPLIT { controls::resize_split(v, c); }
+                    // And a swipeable: its action strip is as tall as it is,
+                    // and it is not that tall until flex has run.
+                    if core::kind_of(c) == props::K_SWIPEABLE { swipe::resize_strip(v, c); }
+                    // And a canvas: `apply` runs BEFORE the walk, so the
+                    // redraw it asked for was asked for at the size the view
+                    // had then — which on the first pass is nothing.
+                    if core::kind_of(c) == props::K_CANVAS { drawing::invalidate(v); }
                     // Its descendants' frames are relative to IT. A cache-skipped
                     // child means every absolute frame under it is unchanged, so
                     // the views already sit exactly there.

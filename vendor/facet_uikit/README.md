@@ -2,17 +2,30 @@
 
 facet's **UIKit** backend — the iOS counterpart of `facet_appkit`.
 
-> **Status: compiles for iOS, never run.** `cpc build --target ios-arm64`
-> produces a real arm64 iOS static library (`platform 2`, minos 13.0) and
-> `--target ios-arm64-simulator` produces the simulator one. Nothing in this
-> package has been on a device or in a simulator. Every runtime behaviour —
-> layout, measurement, view ownership, the run-loop tick, target/action
-> delivery — is **unvalidated**. `facet_appkit` is the reference implementation
-> and the only tested one.
+> **Status: runs in the simulator; not on a device.** `cpc build --target
+> ios-arm64` produces a real arm64 iOS static library (`platform 2`, minos 13.0)
+> and `--target ios-arm64-simulator` produces the simulator one.
+> `examples/facet_gallery_ios` links against it and runs: layout, measurement,
+> view ownership, the run-loop tick and target/action delivery have all been
+> observed working. What is **unvalidated** is FEEL — a drag, a fling, momentum,
+> the exact moment a swipe opens — because those cannot be asserted from a
+> screenshot and nobody has held the phone.
 
-The whole package goes through LLVM and out to an object for the real target,
-which is more than a type-check proves. It is a much weaker position than
-"works".
+**Prop parity with `facet_appkit`: 305 of 318 (95%).** The thirteen-prop
+difference is MANIFEST.md §1 in full — a date or time picker's font band (twelve
+verbs UIDatePicker has no property for) and a window's chrome style. Nothing is
+missing for want of writing.
+
+That number is a measurement, not a claim — `tools/parity.py` walks facet's
+contract modules and asks which bits each backend names:
+
+```
+python3 vendor/facet_uikit/tools/parity.py      # from the repo root
+```
+
+Anything it prints under UIKIT MISSING must appear in MANIFEST.md §1. It also
+reports the other direction, which is how the four props `facet_uikit` honours
+and `facet_appkit` does not were found.
 
 ## Build
 
@@ -40,8 +53,15 @@ facet owns the description tree (`facet::Node`) and all layout (the shared
 | `controls.cplus` | one body per kind |
 | `paint.cplus` | the shared band — colour, brush, shadow, clip, radius, transform, `animate_*` |
 | `geometry.cplus` | the layout pass and the frame walk |
-| `input.cplus` | target/action and tap recognisers → facet handlers |
+| `input.cplus` | target/action and tap recognisers → facet handlers, and the radio group |
 | `scheduler.cplus` | the CFRunLoop tick, `run_on_main`, `after` |
+| `text_input.cplus` | the field / editor / search band, style runs, the length limit |
+| `recycler.cplus` | `list`, `table`, `tree` on UITableView; `collection`, `carousel` on UICollectionView |
+| `drawing.cplus` | the canvas replay — facet's recorded display list into a `CGContext` |
+| `swipe.cplus` | swipe-to-reveal, driven by a pan so `reveal_threshold` means something |
+| `web.cplus` | `web` and `hybrid_web` over WKWebView |
+| `dates.cplus` | facet's `Date` / `Time` ↔ `NSDate`, through `NSDateComponents` |
+| `window.cplus` | the app delegate, the window, and the first tick |
 
 ## Where UIKit is SHORTER than AppKit
 
