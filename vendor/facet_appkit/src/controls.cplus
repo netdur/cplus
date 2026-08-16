@@ -4601,7 +4601,15 @@ fn build_tree_row(node: *tree::TreeNode, p: *tree::TreeProps) -> core::Node {
         var content: core::Node = f(node, { (*p).row_ctx });
         return center_in_tree_row(content, h);
     }
-    return plain_tree_row(node, h);
+    // THE PLAIN ROW NEEDS THE SAME WRAP, and did not get it. `plain_tree_row`
+    // answers a label ONE LINE tall on purpose — its own comment says "for
+    // callers that wrap" — and this caller returned it bare. So a tree with no
+    // row builder measured 18 points where the disclosure triangle is centred
+    // in 28, and every default row sat tighter than the control beside it.
+    //
+    // The height query measures what this returns, so the wrap is what makes
+    // `stated_or_default_tree_row_h` the height a default row actually gets.
+    return center_in_tree_row(plain_tree_row(node, h), h);
 }
 
 // A tree with no row builder still shows its shape: the node's own text, keyed
