@@ -1,0 +1,52 @@
+// Notes — what this backend does NOT do, shown rather than described.
+//
+// A gallery that only showed the finished parts would be the most misleading
+// document in the repo. facet_uikit keeps two lists strictly apart —
+// `decided_absent` (iOS has no such thing; silent) and `not_yet_built` (iOS has
+// an answer nobody wrote yet; warns once on stderr).
+//
+// THE SECOND LIST IS EMPTY, and that is the news. Every kind facet describes
+// has a UIKit body. What is left is three verbs, and they are mounted here so
+// they can be observed rather than read about.
+
+import "facet/facet" as core;
+import "facet/elements" as ui;
+import "facet/component" as component;
+import "facet/vocabulary" as vocab;
+import "flex_layout/flex_layout" as flex;
+import "../shell" as shell;
+
+struct Cannot { _unused: i32 }
+impl Cannot { fn new() -> Cannot { return Cannot { _unused: 0 }; } }
+
+impl Cannot: component::Component {
+    fn build(ref this) -> core::Node {
+        var body: flex::Builder = flex::Builder::new();
+
+        var font: flex::Builder = flex::Builder::new();
+        font.add(ui::date_picker(vocab::Date { year: 2026 as i64, month: 8 as i64,
+                                               day: 16 as i64 },
+                                 key: "g:date", font_size: 28.0f64,
+                                 font_family: "Georgia",
+                                 font_weight: vocab::FontWeight::Bold)
+                 .height(44.0f64));
+        font.add(shell::caption("The picker above asks for a 28pt bold Georgia. It is drawn in the system font, because UIDatePicker has no font property of ANY kind — the class has twenty-odd methods and every one of them is about dates. Six verbs on `date_picker` and six on `time_picker`, with no public way to reach any of them."));
+        body.add(shell::card("A PICKER'S FONT — 12 VERBS", font));
+
+        var two: flex::Builder = flex::Builder::new();
+        two.add(shell::caption("A `table`'s STYLE is fixed by initWithFrame:style: and has no setter, so it is read at create and honoured there; a style changed after the table is mounted has nowhere to land. And `window_chrome` names close / minimise / zoom buttons an iOS window does not have — an iOS window is the screen."));
+        body.add(shell::card("THE OTHER TWO", two));
+
+        var count: flex::Builder = flex::Builder::new();
+        count.add(shell::caption("305 of the 318 props facet_appkit implements are implemented here — 95%. The thirteen above are the whole difference, and `tools/parity.py` measures it rather than asserting it. Anything that tool prints must appear in MANIFEST.md §1."));
+        body.add(shell::card("THE NUMBER", count));
+
+        return shell::page("What UIKit cannot do",
+            "Three verbs, mounted rather than described. A cannot that is only ever read is one nobody checks.",
+            body, "demo:cannot");
+    }
+}
+impl Cannot: component::Lifecycle {
+    fn on_attach(ref this) { return; }
+    fn on_detach(ref this) { return; }
+}

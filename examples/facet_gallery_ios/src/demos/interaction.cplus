@@ -1,0 +1,210 @@
+// Interaction — the four kinds whose iOS answer is DIFFERENT from the AppKit
+// one rather than a translation of it.
+//
+//   canvas    — the same recorded display list, replayed against the same Core
+//               Graphics. No flip: a UIView is already top-left.
+//   swipeable — a real swipe, driven by a pan. macOS reads the same items as a
+//               context menu, because macOS has no finger.
+//   radio     — a labelled circle button, not a switch. A switch has nowhere to
+//               put a title, a border or a radius, and a radio has all three.
+//   split     — every verb a split has except dragging the divider, which is a
+//               pointer idiom with no touch equivalent.
+
+import "facet/facet" as core;
+import "facet/elements" as ui;
+import "facet/component" as component;
+import "facet/vocabulary" as vocab;
+import "facet/label" as label;
+import "facet/split" as m_split;
+import "flex_layout/flex_layout" as flex;
+import "stdlib/option" as option;
+import "stdlib/status" as status;
+import "../shell" as shell;
+
+// ---- canvas ------------------------------------------------------------------
+
+struct Canvas { _unused: i32 }
+impl Canvas { fn new() -> Canvas { return Canvas { _unused: 0 }; } }
+
+// The drawing. It RECORDS — it is handed a Canvas and appends to it, and
+// nothing in it knows what platform will replay it. That is why the same
+// function would draw the same picture in the desktop gallery.
+fn draw_badge(into: *vocab::Canvas, dirty: vocab::Rect, ctx: *u8) {
+    let w: f64 = { (*into).size().width };
+    let h: f64 = { (*into).size().height };
+
+    { (*into).set_fill(vocab::Color::system_indigo()) };
+    let _bg: status::Status = { (*into).fill_rounded_rect(
+        vocab::Rect::of(0.0f64, 0.0f64, w, h), 12.0f64) };
+
+    { (*into).set_fill(vocab::Color::system_teal()) };
+    let _c: status::Status = { (*into).fill_ellipse(
+        vocab::Rect::of(14.0f64, 14.0f64, h - 28.0f64, h - 28.0f64)) };
+
+    { (*into).set_stroke(vocab::Color::on(vocab::Color::system_indigo())) };
+    { (*into).set_stroke_width(3.0f64) };
+    let _l1: status::Status = { (*into).draw_line(
+        from: vocab::Point::of(w - 70.0f64, 22.0f64),
+        to: vocab::Point::of(w - 22.0f64, 22.0f64)) };
+    let _l2: status::Status = { (*into).draw_line(
+        from: vocab::Point::of(w - 70.0f64, h / 2.0f64),
+        to: vocab::Point::of(w - 34.0f64, h / 2.0f64)) };
+    let _l3: status::Status = { (*into).draw_line(
+        from: vocab::Point::of(w - 70.0f64, h - 22.0f64),
+        to: vocab::Point::of(w - 46.0f64, h - 22.0f64)) };
+
+    { (*into).set_text_color(vocab::Color::on(vocab::Color::system_indigo())) };
+    let _f: status::Status = { (*into).set_font(size: 15.0f64,
+                                                weight: vocab::FontWeight::Medium) };
+    let _t: status::Status = { (*into).draw_text("Core Graphics",
+        at: vocab::Point::of(20.0f64, h - 26.0f64)) };
+    return;
+}
+
+impl Canvas: component::Component {
+    fn build(ref this) -> core::Node {
+        var body: flex::Builder = flex::Builder::new();
+        var cv: flex::Builder = flex::Builder::new();
+        cv.add(ui::canvas(key: "t:canvas", drawable: vocab::Drawable::of(draw_badge))
+                   .height(120.0f64));
+        cv.add(shell::caption("Every shape above was RECORDED by a function that names no platform, then replayed against Core Graphics — the same framework, the same replay loop and the same arc convention the AppKit backend uses."));
+        body.add(shell::card("A RECORDED DRAWING", cv));
+
+        var note: flex::Builder = flex::Builder::new();
+        note.add(shell::caption("A UIView SCALES the drawing it already has when its bounds change; an NSView is asked to draw again. A canvas whose first display happened at zero size has nothing to scale, so this one asks for contentMode Redraw and re-invalidates from the layout pass. Without both it was blank on every launch."));
+        body.add(shell::card("THE ONE THING THAT DIFFERS", note));
+
+        return shell::page("Canvas",
+            "facet records a display list; the backend replays it. Nothing here calls back into facet, which is why there is one replay loop instead of forty callbacks.",
+            body, "demo:canvas");
+    }
+}
+impl Canvas: component::Lifecycle {
+    fn on_attach(ref this) { return; }
+    fn on_detach(ref this) { return; }
+}
+
+// ---- swipeable ---------------------------------------------------------------
+
+struct Swipe { _unused: i32 }
+impl Swipe {
+    fn new() -> Swipe { return Swipe { _unused: 0 }; }
+    fn on_archive(ref this, sender: *u8) { say("Archive"); return; }
+    fn on_delete(ref this, sender: *u8) { say("Delete"); return; }
+}
+
+fn say(what: str) {
+    match label::find("t:status") {
+        option::Option[label::Label]::Some(l) => {
+            let _l: label::Label = l.set_text("last action: ${what}");
+        }
+        option::Option[label::Label]::None => { }
+    }
+    return;
+}
+
+impl Swipe: component::Component {
+    fn build(ref this) -> core::Node {
+        var body: flex::Builder = flex::Builder::new();
+        var sw: flex::Builder = flex::Builder::new();
+
+        var row_body: flex::Builder = flex::Builder::new();
+        row_body.add(ui::label("Meeting notes", key: "t:title", font_size: 15.0f64,
+                               font_weight: vocab::FontWeight::Medium));
+        row_body.add(ui::label("Drag me to the left", key: "t:sub",
+                               font_size: 12.0f64,
+                               text_color: vocab::Color::ink(0.55f64)));
+        var content: core::Node = ui::column(row_body).padding(12.0f64).gap(2.0f64);
+        content.set_background_color(vocab::Color::fill());
+        content.set_corner_radius(vocab::Corners::all(8.0f64));
+
+        var row: core::Node = ui::swipeable(key: "t:row", reveal_threshold: 60.0f64)
+            .height(64.0f64);
+        let _c: status::Status = row.add_child(content);
+        let _a: status::Status = row.add_child(ui::swipe_item(
+            key: "t:archive", text: "Archive", on_clicked: this.on_archive));
+        let _d: status::Status = row.add_child(ui::swipe_item(
+            key: "t:delete", text: "Delete", destructive: true,
+            on_clicked: this.on_delete));
+        sw.add(row);
+        sw.add(ui::label("last action: (none)", key: "t:status", font_size: 13.0f64,
+                         text_color: vocab::Color::ink(0.7f64)));
+        sw.add(shell::caption("Let go before 60 points and it closes; past it, it opens. That threshold is the verb `reveal_threshold`, and it is the reason this is a pan rather than UISwipeActionsConfiguration — UIKit owns that distance and exposes no way to name it."));
+        body.add(shell::card("SWIPE TO REVEAL", sw));
+
+        return shell::page("Swipeable",
+            "The kind the AppKit backend has to answer sideways: macOS has no swipe, so it reads the same items as a context menu. Here the description is read the way it was written.",
+            body, "demo:swipe");
+    }
+}
+impl Swipe: component::Lifecycle {
+    fn on_attach(ref this) { return; }
+    fn on_detach(ref this) { return; }
+}
+
+// ---- radio -------------------------------------------------------------------
+
+struct Radio { _unused: i32 }
+impl Radio { fn new() -> Radio { return Radio { _unused: 0 }; } }
+
+impl Radio: component::Component {
+    fn build(ref this) -> core::Node {
+        var body: flex::Builder = flex::Builder::new();
+        var rd: flex::Builder = flex::Builder::new();
+        rd.add(ui::radio(true, key: "t:r1", text: "Every hour", group: "when",
+                         font_size: 16.0f64));
+        rd.add(ui::radio(false, key: "t:r2", text: "Every day", group: "when",
+                         font_size: 16.0f64));
+        rd.add(ui::radio(false, key: "t:r3", text: "Never", group: "when",
+                         font_size: 16.0f64, text_color: vocab::Color::danger()));
+        rd.add(shell::caption("Tap one and the others turn off. Nothing in UIKit does that, so facet's group name is walked over the mounted tree — the only place the siblings can be found."));
+        body.add(shell::card("ONE GROUP, THREE MEMBERS", rd));
+
+        var why: flex::Builder = flex::Builder::new();
+        why.add(shell::caption("A radio was a UISwitch here until this pass, honouring 3 of its 14 props. A switch has nowhere to put a title, a font, a border or a radius — and a radio has all four — so it is a UIButton carrying `circle` / `inset.filled.circle` images, which is the shape iOS uses for an exclusive choice. `isSelected` is the state the two images are set for, so the dot is UIKit's to draw."));
+        body.add(shell::card("WHY NOT A SWITCH", why));
+
+        return shell::page("Radio",
+            "An exclusive choice. The group is the point of the kind, and it is the half no platform gives you.",
+            body, "demo:radio");
+    }
+}
+impl Radio: component::Lifecycle {
+    fn on_attach(ref this) { return; }
+    fn on_detach(ref this) { return; }
+}
+
+// ---- split -------------------------------------------------------------------
+
+struct Split { _unused: i32 }
+impl Split { fn new() -> Split { return Split { _unused: 0 }; } }
+
+impl Split: component::Component {
+    fn build(ref this) -> core::Node {
+        var body: flex::Builder = flex::Builder::new();
+        var sp: flex::Builder = flex::Builder::new();
+        var panes: flex::Builder = flex::Builder::new();
+        panes.add(shell::painted(ui::column(flex::Builder::new()),
+                                 vocab::Color::system_teal(), 8.0f64));
+        panes.add(shell::painted(ui::column(flex::Builder::new()),
+                                 vocab::Color::system_indigo(), 8.0f64));
+        sp.add(ui::split(panes, key: "t:split", axis: m_split::SplitAxis::Rows,
+                         position: 44.0f64, min_leading: 20.0f64,
+                         min_trailing: 20.0f64,
+                         divider_thickness: 2.0f64).height(120.0f64));
+        sp.add(shell::caption("The divider sits at `position` (44), clamped by both minimums, with the hairline drawn in the gap between the panes. The leading pane takes a fixed main-axis size and the trailing one takes the remainder from a zero basis — all of it flex, none of it UIKit."));
+        body.add(shell::card("TWO PANES", sp));
+
+        var no: flex::Builder = flex::Builder::new();
+        no.add(shell::caption("What is absent is DRAGGING it. UISplitViewController is a navigation container whose sidebar appears and disappears by size class, not a resizable pane pair, and there is no pointer to grab a hairline with — so `on_move` never fires and the position is the application's to set. That one fact used to stand in for the whole kind here."));
+        body.add(shell::card("MINUS THE DRAG", no));
+
+        return shell::page("Split",
+            "Every verb a split has except one. The axis, the position, both minimums, the collapse and the divider are geometry — and geometry is flex's.",
+            body, "demo:split");
+    }
+}
+impl Split: component::Lifecycle {
+    fn on_attach(ref this) { return; }
+    fn on_detach(ref this) { return; }
+}

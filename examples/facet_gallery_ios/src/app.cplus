@@ -1,130 +1,226 @@
-// The gallery shell: a segmented picker at the top, one page below it.
+// The gallery shell: a catalog, a demo, and a way back.
+//
+// MASTER THEN DETAIL, not a sidebar. The desktop gallery puts its catalog tree
+// beside the demo in a `split`, because a Mac window is wide; a phone has one
+// column, so the catalog IS the first screen and a demo replaces it. That is
+// the same idea in the shape the platform has.
 //
 // NOT `tabs`, and not `App::run` with routes. Both would work on paper and
-// neither is the thing to lean a first-run test app on:
+// neither is the thing to lean a test app on:
 //
 //   * `tabs` hosts its panes as children and the iOS body shows and hides
-//     them, which is a second untested mechanism stacked under the first.
+//     them, which is a second mechanism stacked under the first.
 //   * `App::run`'s route swap is the newest code in the facade — it is the one
 //     path that rebuilds a screen INTO a live window — so a bug there would
-//     take the whole app down rather than one page.
+//     take the whole app down rather than one demo.
 //
 // So the shell is `mount::set_content` into a keyed outlet, which is the same
-// mechanism the desktop gallery uses and the one with the most miles on it. The
-// route swap has its own place to be tested; it should not be the thing between
-// the tester and the first pixel.
+// mechanism the desktop gallery uses and the one with the most miles on it.
 
 import "facet/facet" as core;
 import "facet/elements" as ui;
 import "facet/component" as component;
 import "facet/mount" as mount;
-import "facet/popup" as popup;
+import "facet/tree" as tree;
+import "facet/label" as label;
 import "facet/vocabulary" as vocab;
 import "flex_layout/flex_layout" as flex;
 import "stdlib/option" as option;
-import "stdlib/status" as status;
-import "./pages/controls" as p_controls;
-import "./pages/text" as p_text;
-import "./pages/paint" as p_paint;
-import "./pages/motion" as p_motion;
-import "./pages/gaps" as p_gaps;
-import "./pages/tiers" as p_tiers;
-
-const PAGE_CONTROLS: i64 = 0 as i64;
-const PAGE_TEXT: i64 = 1 as i64;
-const PAGE_PAINT: i64 = 2 as i64;
-const PAGE_MOTION: i64 = 3 as i64;
-const PAGE_TIERS: i64 = 4 as i64;
-const PAGE_GAPS: i64 = 5 as i64;
+import "stdlib/text" as text;
+import "./catalog" as catalog;
+import "./demos/widgets" as widgets;
+import "./demos/typography" as typography;
+import "./demos/decoration" as decoration;
+import "./demos/motion" as motion;
+import "./demos/interaction" as interaction;
+import "./demos/collections" as collections;
+import "./demos/notes" as notes;
 
 struct Gallery {
+    // The demo on screen, or DEMO_NONE when the catalog is.
     shown: i64,
-    controls: p_controls::Controls,
-    text: p_text::Text,
-    paint: p_paint::Paint,
-    motion: p_motion::Motion,
-    tiers: p_tiers::Tiers,
-    gaps: p_gaps::Gaps,
+
+    button: widgets::Buttons,
+    values: widgets::Values,
+    switches: widgets::Switches,
+    indicators: widgets::Indicators,
+    type_: typography::Type,
+    fields: typography::Fields,
+    keyboards: typography::Keyboards,
+    radius: decoration::Radius,
+    brush: decoration::Brush,
+    shadow: decoration::Shadow,
+    clip: decoration::Clip,
+    transform: decoration::Transform,
+    fade: motion::Fade,
+    spin: motion::Spin,
+    pop: motion::Pop,
+    entrance: motion::Entrance,
+    dead: motion::DeadSnap,
+    canvas: interaction::Canvas,
+    swipe: interaction::Swipe,
+    radio: interaction::Radio,
+    split: interaction::Split,
+    list: collections::ListDemo,
+    cannot: notes::Cannot,
 }
 
 impl Gallery {
     fn new() -> Gallery {
         return Gallery {
-            shown: PAGE_TIERS,
-            controls: p_controls::Controls::new(),
-            text: p_text::Text::new(),
-            paint: p_paint::Paint::new(),
-            motion: p_motion::Motion::new(),
-            tiers: p_tiers::Tiers::new(),
-            gaps: p_gaps::Gaps::new(),
+            shown: catalog::DEMO_NONE,
+            button: widgets::Buttons::new(),
+            values: widgets::Values::new(),
+            switches: widgets::Switches::new(),
+            indicators: widgets::Indicators::new(),
+            type_: typography::Type::new(),
+            fields: typography::Fields::new(),
+            keyboards: typography::Keyboards::new(),
+            radius: decoration::Radius::new(),
+            brush: decoration::Brush::new(),
+            shadow: decoration::Shadow::new(),
+            clip: decoration::Clip::new(),
+            transform: decoration::Transform::new(),
+            fade: motion::Fade::new(),
+            spin: motion::Spin::new(),
+            pop: motion::Pop::new(),
+            entrance: motion::Entrance::new(),
+            dead: motion::DeadSnap::new(),
+            canvas: interaction::Canvas::new(),
+            swipe: interaction::Swipe::new(),
+            radio: interaction::Radio::new(),
+            split: interaction::Split::new(),
+            list: collections::ListDemo::new(),
+            cannot: notes::Cannot::new(),
         };
     }
 
-    // The picker moved. Its selected index has already been written back into
-    // facet's props by the backend, so this reads the model rather than the
-    // control — which is the same code the desktop gallery would run.
-    fn on_pick(ref this, sender: *u8) {
-        match popup::find("g:picker") {
-            option::Option[popup::Popup]::Some(p) => {
-                this.shown = p.selected_index();
-                this.show();
-            }
-            option::Option[popup::Popup]::None => { }
-        }
+    // A row was tapped. A BRANCH is not a demo — tapping a section expands it,
+    // which the tree does itself — so only a leaf whose id names something gets
+    // this far.
+    fn on_pick(ref this, node: *tree::TreeNode) {
+        if node == (0 as *tree::TreeNode) { return; }
+        if { (*node).is_branch } { return; }
+        let id: i64 = catalog::demo_for({ (*node).id_of() });
+        if id == catalog::DEMO_NONE { return; }
+        this.shown = id;
+        this.show();
         return;
     }
 
+    fn on_back(ref this, sender: *u8) {
+        this.shown = catalog::DEMO_NONE;
+        this.show();
+        return;
+    }
+
+    // The one swap. Written as a chain rather than a table because a component
+    // is a VALUE here — `set_content` takes it by reference and each arm names
+    // a different type, so there is nothing to put in a table.
     fn show(ref this) {
+        this.set_chrome();
+        // At the root there is nothing to swap IN — the outlet is hidden and
+        // keeps whatever it last held, which is what makes going back and
+        // forth cheap. A demo that must not keep its state between visits
+        // would need a rebuild, and none of them do: the entrance demo WANTS
+        // to replay, and it does, because `set_content` rebuilds on repeat.
+        if this.shown == catalog::DEMO_NONE { return; }
         match mount::find("g:outlet") {
             option::Option[*core::Node]::Some(out) => {
-                if this.shown == PAGE_TEXT {
-                    let _ok: bool = mount::set_content(out, this.text);
-                } else if this.shown == PAGE_PAINT {
-                    let _ok: bool = mount::set_content(out, this.paint);
-                } else if this.shown == PAGE_MOTION {
-                    let _ok: bool = mount::set_content(out, this.motion);
-                } else if this.shown == PAGE_TIERS {
-                    let _ok: bool = mount::set_content(out, this.tiers);
-                } else if this.shown == PAGE_GAPS {
-                    let _ok: bool = mount::set_content(out, this.gaps);
-                } else {
-                    let _ok: bool = mount::set_content(out, this.controls);
-                }
+                let d: i64 = this.shown;
+                if d == catalog::DEMO_BUTTON { let _o: bool = mount::set_content(out, this.button); }
+                else if d == catalog::DEMO_VALUES { let _o: bool = mount::set_content(out, this.values); }
+                else if d == catalog::DEMO_SWITCHES { let _o: bool = mount::set_content(out, this.switches); }
+                else if d == catalog::DEMO_INDICATORS { let _o: bool = mount::set_content(out, this.indicators); }
+                else if d == catalog::DEMO_TYPE { let _o: bool = mount::set_content(out, this.type_); }
+                else if d == catalog::DEMO_FIELDS { let _o: bool = mount::set_content(out, this.fields); }
+                else if d == catalog::DEMO_KEYBOARDS { let _o: bool = mount::set_content(out, this.keyboards); }
+                else if d == catalog::DEMO_RADIUS { let _o: bool = mount::set_content(out, this.radius); }
+                else if d == catalog::DEMO_BRUSH { let _o: bool = mount::set_content(out, this.brush); }
+                else if d == catalog::DEMO_SHADOW { let _o: bool = mount::set_content(out, this.shadow); }
+                else if d == catalog::DEMO_CLIP { let _o: bool = mount::set_content(out, this.clip); }
+                else if d == catalog::DEMO_TRANSFORM { let _o: bool = mount::set_content(out, this.transform); }
+                else if d == catalog::DEMO_FADE { let _o: bool = mount::set_content(out, this.fade); }
+                else if d == catalog::DEMO_SPIN { let _o: bool = mount::set_content(out, this.spin); }
+                else if d == catalog::DEMO_POP { let _o: bool = mount::set_content(out, this.pop); }
+                else if d == catalog::DEMO_ENTRANCE { let _o: bool = mount::set_content(out, this.entrance); }
+                else if d == catalog::DEMO_DEAD { let _o: bool = mount::set_content(out, this.dead); }
+                else if d == catalog::DEMO_CANVAS { let _o: bool = mount::set_content(out, this.canvas); }
+                else if d == catalog::DEMO_SWIPE { let _o: bool = mount::set_content(out, this.swipe); }
+                else if d == catalog::DEMO_RADIO { let _o: bool = mount::set_content(out, this.radio); }
+                else if d == catalog::DEMO_SPLIT { let _o: bool = mount::set_content(out, this.split); }
+                else if d == catalog::DEMO_LIST { let _o: bool = mount::set_content(out, this.list); }
+                else if d == catalog::DEMO_CANNOT { let _o: bool = mount::set_content(out, this.cannot); }
             }
             option::Option[*core::Node]::None => { }
         }
         return;
     }
+
+    // The bar: a Back button that is only there when there is somewhere to go
+    // back to, and a title that says where you are. Both are written rather
+    // than rebuilt — the bar is one row that outlives every swap under it.
+    fn set_chrome(ref this) {
+        let at_root: bool = this.shown == catalog::DEMO_NONE;
+        // `Display::None` rather than `set_visible`: an invisible Back button
+        // would still hold its 80 points and push the title off centre. The
+        // outlet gets the same treatment, so a hidden demo occupies no rows.
+        show_node("g:back", !at_root);
+        show_node("g:catalog", at_root);
+        show_node("g:outlet", !at_root);
+        match label::find("g:title") {
+            option::Option[label::Label]::Some(l) => {
+                if at_root {
+                    let _t: label::Label = l.set_text("facet_uikit");
+                } else {
+                    let _t: label::Label = l.set_text("Gallery");
+                }
+            }
+            option::Option[label::Label]::None => { }
+        }
+        return;
+    }
 }
 
-fn page_names() -> vocab::TextList {
-    var v: vocab::TextList = vocab::TextList::new();
-    let _a: status::Status = v.add("Controls");
-    let _b: status::Status = v.add("Text");
-    let _c: status::Status = v.add("Paint");
-    let _d: status::Status = v.add("Motion");
-    let _e: status::Status = v.add("Tiers");
-    let _f: status::Status = v.add("Gaps");
-    return v;
+fn show_node(key: str, on: bool) {
+    match mount::find(key) {
+        option::Option[*core::Node]::Some(n) => {
+            if on { core::set_display(n, flex::Display::Flex); }
+            else { core::set_display(n, flex::Display::None); }
+        }
+        option::Option[*core::Node]::None => { }
+    }
+    return;
 }
 
 impl Gallery: component::Component {
     fn build(ref this) -> core::Node {
         var root: flex::Builder = flex::Builder::new();
 
-        // The picker. A real UIMenu button underneath now — `popup` grew one
-        // when the binding gained block support — so tapping it drops the five
-        // page names down and marks the current one.
-        root.add(ui::popup("", key: "g:picker",
-                           items: page_names(),
-                           selected_index: this.shown,
-                           on_selected_index_changed: this.on_pick)
-                 .height(36.0f64));
+        // ---- the bar ---------------------------------------------------------
+        var bar: flex::Builder = flex::Builder::new();
+        bar.add(ui::text_button("‹ Back", key: "g:back", on_click: this.on_back)
+                .width(80.0f64).height(44.0f64));
+        bar.add(ui::label("facet_uikit", key: "g:title", font_size: 17.0f64,
+                          font_weight: vocab::FontWeight::Semibold));
+        bar.add(ui::column(flex::Builder::new()).grow(1.0f64));
+        root.add(ui::row(bar).gap(8.0f64).padding(8.0f64)
+                 .align(flex::Align::Center).height(52.0f64));
 
+        // ---- the catalog -----------------------------------------------------
+        // A real `ui::tree`, so browsing the gallery exercises the recycling
+        // tier before anything has been tapped.
+        root.add(ui::tree(catalog::model(), key: "g:catalog",
+                          on_select: this.on_pick,
+                          row_height: 44.0f64)
+                 .grow(1.0f64)
+                 .shrink(1.0f64));
+
+        // ---- the demo --------------------------------------------------------
         // The outlet: an empty keyed column `set_content` fills. Keyed, because
         // a key is an address and `mount::find` has to reach it.
         // `.shrink(1)` HERE TOO, and it has to be on every ancestor between the
-        // window and the scroll. flex's default `flex_shrink` is 0, so any
+        // window and a demo's scroll. flex's default `flex_shrink` is 0, so any
         // container in the chain that omits it lays out at its content's height
         // and pins everything below it — the scroll included, which is then as
         // tall as its own content and has nothing to scroll.
@@ -132,16 +228,21 @@ impl Gallery: component::Component {
                  .grow(1.0f64)
                  .shrink(1.0f64));
 
-        var page: core::Node = ui::column(root).gap(12.0f64).grow(1.0f64);
+        var page: core::Node = ui::column(root).grow(1.0f64);
         page.set_background_color(vocab::Color::window_background());
         return page;
     }
 }
 
 impl Gallery: component::Lifecycle {
-    // The first page goes in AFTER the mount: `set_content` needs a live tree
-    // to find its outlet in, which is exactly what on_attach is the seam for.
+    // AFTER the mount: `set_content` needs a live tree to find its outlet in,
+    // and the tree needs to be realised before its sections can be expanded.
+    // Both are exactly what on_attach is the seam for.
     fn on_attach(ref this) {
+        match tree::find("g:catalog") {
+            option::Option[tree::Tree]::Some(t) => { catalog::expand_all(t); }
+            option::Option[tree::Tree]::None => { }
+        }
         this.show();
         return;
     }

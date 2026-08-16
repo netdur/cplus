@@ -1,0 +1,181 @@
+// The catalog — what you browse.
+//
+// The desktop gallery puts its tree in a SIDEBAR beside the demo, because a Mac
+// window is wide. A phone has one column, so the same tree is the whole first
+// screen and the demo replaces it: master, then detail, then back. That is the
+// iOS shape of the same idea, and it is the reason this file exists rather than
+// the desktop's `split` being reused.
+//
+// The tree is a real `ui::tree` — the recycling tier over the flattened open
+// rows — so browsing the gallery exercises the largest piece of the backend
+// before you have tapped anything.
+
+import "facet/facet" as core;
+import "facet/tree" as tree;
+import "stdlib/status" as status;
+import "stdlib/text" as text;
+
+// ---- the ids -----------------------------------------------------------------
+// A leaf's id is what `on_select` hands back, so it is the only thing tying a
+// row to a demo. Written out rather than derived from the title: a title is
+// prose and will be reworded, an id is an address.
+
+const NAV_BUTTON: str = "button";
+const NAV_VALUES: str = "values";
+const NAV_SWITCHES: str = "switches";
+const NAV_INDICATORS: str = "indicators";
+const NAV_TYPE: str = "type";
+const NAV_FIELDS: str = "fields";
+const NAV_KEYBOARDS: str = "keyboards";
+const NAV_RADIUS: str = "radius";
+const NAV_BRUSH: str = "brush";
+const NAV_SHADOW: str = "shadow";
+const NAV_CLIP: str = "clip";
+const NAV_TRANSFORM: str = "transform";
+const NAV_FADE: str = "fade";
+const NAV_SPIN: str = "spin";
+const NAV_POP: str = "pop";
+const NAV_ENTRANCE: str = "entrance";
+const NAV_DEAD: str = "dead";
+const NAV_CANVAS: str = "canvas";
+const NAV_SWIPE: str = "swipe";
+const NAV_RADIO: str = "radio";
+const NAV_SPLIT: str = "split";
+const NAV_LIST: str = "list";
+const NAV_CANNOT: str = "cannot";
+
+const SEC_WIDGETS: str = "sec:widgets";
+const SEC_TEXT: str = "sec:text";
+const SEC_DECORATION: str = "sec:decoration";
+const SEC_MOTION: str = "sec:motion";
+const SEC_INTERACTION: str = "sec:interaction";
+const SEC_COLLECTIONS: str = "sec:collections";
+const SEC_NOTES: str = "sec:notes";
+
+// The demo a leaf id names. -1 for a branch or an id nobody claimed, which is
+// what `on_select` checks before it swaps anything in.
+const DEMO_NONE: i64 = 0 as i64 - (1 as i64);
+const DEMO_BUTTON: i64 = 0 as i64;
+const DEMO_VALUES: i64 = 1 as i64;
+const DEMO_SWITCHES: i64 = 2 as i64;
+const DEMO_INDICATORS: i64 = 3 as i64;
+const DEMO_TYPE: i64 = 4 as i64;
+const DEMO_FIELDS: i64 = 5 as i64;
+const DEMO_KEYBOARDS: i64 = 6 as i64;
+const DEMO_RADIUS: i64 = 7 as i64;
+const DEMO_BRUSH: i64 = 8 as i64;
+const DEMO_SHADOW: i64 = 9 as i64;
+const DEMO_CLIP: i64 = 10 as i64;
+const DEMO_TRANSFORM: i64 = 11 as i64;
+const DEMO_FADE: i64 = 12 as i64;
+const DEMO_SPIN: i64 = 13 as i64;
+const DEMO_POP: i64 = 14 as i64;
+const DEMO_ENTRANCE: i64 = 15 as i64;
+const DEMO_DEAD: i64 = 16 as i64;
+const DEMO_CANVAS: i64 = 17 as i64;
+const DEMO_SWIPE: i64 = 18 as i64;
+const DEMO_RADIO: i64 = 19 as i64;
+const DEMO_SPLIT: i64 = 20 as i64;
+const DEMO_LIST: i64 = 21 as i64;
+const DEMO_CANNOT: i64 = 22 as i64;
+
+fn demo_for(id: str) -> i64 {
+    if id == NAV_BUTTON { return DEMO_BUTTON; }
+    if id == NAV_VALUES { return DEMO_VALUES; }
+    if id == NAV_SWITCHES { return DEMO_SWITCHES; }
+    if id == NAV_INDICATORS { return DEMO_INDICATORS; }
+    if id == NAV_TYPE { return DEMO_TYPE; }
+    if id == NAV_FIELDS { return DEMO_FIELDS; }
+    if id == NAV_KEYBOARDS { return DEMO_KEYBOARDS; }
+    if id == NAV_RADIUS { return DEMO_RADIUS; }
+    if id == NAV_BRUSH { return DEMO_BRUSH; }
+    if id == NAV_SHADOW { return DEMO_SHADOW; }
+    if id == NAV_CLIP { return DEMO_CLIP; }
+    if id == NAV_TRANSFORM { return DEMO_TRANSFORM; }
+    if id == NAV_FADE { return DEMO_FADE; }
+    if id == NAV_SPIN { return DEMO_SPIN; }
+    if id == NAV_POP { return DEMO_POP; }
+    if id == NAV_ENTRANCE { return DEMO_ENTRANCE; }
+    if id == NAV_DEAD { return DEMO_DEAD; }
+    if id == NAV_CANVAS { return DEMO_CANVAS; }
+    if id == NAV_SWIPE { return DEMO_SWIPE; }
+    if id == NAV_RADIO { return DEMO_RADIO; }
+    if id == NAV_SPLIT { return DEMO_SPLIT; }
+    if id == NAV_LIST { return DEMO_LIST; }
+    if id == NAV_CANNOT { return DEMO_CANNOT; }
+    return DEMO_NONE;
+}
+
+fn section(title: str, id: str) -> tree::TreeNode {
+    return tree::TreeNode::new(title, id: id, is_branch: true);
+}
+
+fn leaf(title: str, id: str) -> tree::TreeNode {
+    return tree::TreeNode::new(title, id: id);
+}
+
+// The model. Seven sections, twenty-three demos — the same shape the desktop
+// gallery's catalog has, at the size this backend's content actually is.
+fn model() -> tree::TreeNode {
+    var root: tree::TreeNode = tree::TreeNode::new("", id: "root", is_branch: true);
+
+    var w: tree::TreeNode = section("Widgets", SEC_WIDGETS);
+    let _w1: status::Status = w.add_child(leaf("Button", NAV_BUTTON));
+    let _w2: status::Status = w.add_child(leaf("Values", NAV_VALUES));
+    let _w3: status::Status = w.add_child(leaf("Switches", NAV_SWITCHES));
+    let _w4: status::Status = w.add_child(leaf("Indicators", NAV_INDICATORS));
+    let _ws: status::Status = root.add_child(w);
+
+    var t: tree::TreeNode = section("Text", SEC_TEXT);
+    let _t1: status::Status = t.add_child(leaf("Type", NAV_TYPE));
+    let _t2: status::Status = t.add_child(leaf("Fields", NAV_FIELDS));
+    let _t3: status::Status = t.add_child(leaf("Keyboards", NAV_KEYBOARDS));
+    let _ts: status::Status = root.add_child(t);
+
+    var d: tree::TreeNode = section("Decoration", SEC_DECORATION);
+    let _d1: status::Status = d.add_child(leaf("Corner radius", NAV_RADIUS));
+    let _d2: status::Status = d.add_child(leaf("Brush", NAV_BRUSH));
+    let _d3: status::Status = d.add_child(leaf("Shadow", NAV_SHADOW));
+    let _d4: status::Status = d.add_child(leaf("Clip & opacity", NAV_CLIP));
+    let _d5: status::Status = d.add_child(leaf("Transform", NAV_TRANSFORM));
+    let _ds: status::Status = root.add_child(d);
+
+    var m: tree::TreeNode = section("Motion", SEC_MOTION);
+    let _m1: status::Status = m.add_child(leaf("Fade", NAV_FADE));
+    let _m2: status::Status = m.add_child(leaf("Rotate", NAV_SPIN));
+    let _m3: status::Status = m.add_child(leaf("Pop", NAV_POP));
+    let _m4: status::Status = m.add_child(leaf("Entrance", NAV_ENTRANCE));
+    let _m5: status::Status = m.add_child(leaf("Dead snap", NAV_DEAD));
+    let _ms: status::Status = root.add_child(m);
+
+    var i: tree::TreeNode = section("Interaction", SEC_INTERACTION);
+    let _i1: status::Status = i.add_child(leaf("Canvas", NAV_CANVAS));
+    let _i2: status::Status = i.add_child(leaf("Swipeable", NAV_SWIPE));
+    let _i3: status::Status = i.add_child(leaf("Radio", NAV_RADIO));
+    let _i4: status::Status = i.add_child(leaf("Split", NAV_SPLIT));
+    let _is: status::Status = root.add_child(i);
+
+    var c: tree::TreeNode = section("Collections", SEC_COLLECTIONS);
+    let _c1: status::Status = c.add_child(leaf("List", NAV_LIST));
+    let _cs: status::Status = root.add_child(c);
+
+    var n: tree::TreeNode = section("Notes", SEC_NOTES);
+    let _n1: status::Status = n.add_child(leaf("What UIKit cannot do", NAV_CANNOT));
+    let _ns: status::Status = root.add_child(n);
+
+    return root;
+}
+
+// Every section, so the catalog opens with all of them showing. A phone screen
+// holds about a dozen rows and there are thirty, so it scrolls — which is
+// better than a screen of seven words that all have to be tapped first.
+fn expand_all(t: tree::Tree) {
+    let _a: tree::Tree = t.expand(SEC_WIDGETS);
+    let _b: tree::Tree = t.expand(SEC_TEXT);
+    let _c: tree::Tree = t.expand(SEC_DECORATION);
+    let _d: tree::Tree = t.expand(SEC_MOTION);
+    let _e: tree::Tree = t.expand(SEC_INTERACTION);
+    let _f: tree::Tree = t.expand(SEC_COLLECTIONS);
+    let _g: tree::Tree = t.expand(SEC_NOTES);
+    return;
+}

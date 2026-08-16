@@ -1,0 +1,63 @@
+// Collections — the recycling tier, and the three verbs UIKit has no answer for.
+//
+// The recycler is the largest single piece of this backend: `list` and `table`
+// on UITableView, `tree` on the same table over the FLATTENED open rows, and
+// `collection` / `carousel` on UICollectionView. The point of the tier is that
+// a row callback runs for the rows on screen and for no others.
+
+import "facet/facet" as core;
+import "facet/elements" as ui;
+import "facet/component" as component;
+import "facet/vocabulary" as vocab;
+import "facet/list" as list;
+import "flex_layout/flex_layout" as flex;
+import "stdlib/option" as option;
+import "../shell" as shell;
+
+// The row builder the list calls. It is called for the rows on screen and for
+// no others, which is the whole point of the tier.
+fn gap_row(i: usize, ctx: *u8) -> core::Node {
+    var b: flex::Builder = flex::Builder::new();
+    b.add(ui::label("Row ${i}", font_size: 16.0f64));
+    b.add(ui::column(flex::Builder::new()).grow(1.0f64));
+    b.add(ui::label("recycled", font_size: 13.0f64,
+                    text_color: vocab::Color::ink(0.45f64)));
+    return ui::row(b).padding(12.0f64).gap(8.0f64).align(flex::Align::Center);
+}
+
+// ---- list --------------------------------------------------------------------
+
+struct ListDemo { _unused: i32 }
+impl ListDemo { fn new() -> ListDemo { return ListDemo { _unused: 0 }; } }
+
+impl ListDemo: component::Component {
+    fn build(ref this) -> core::Node {
+        var body: flex::Builder = flex::Builder::new();
+
+        var rec: flex::Builder = flex::Builder::new();
+        var host: core::Node = ui::list(key: "g:list", row_height: 48 as i64)
+            .height(320.0f64);
+        match list::find("g:list", within: #addr_of(host)) {
+            option::Option[list::List]::Some(l) => {
+                let _c: list::List = l.set_count(200 as usize);
+                let _r: list::List = l.set_row(gap_row);
+            }
+            option::Option[list::List]::None => { }
+        }
+        rec.add(shell::painted(host, vocab::Color::fill(), 10.0f64));
+        rec.add(shell::caption("Two hundred rows over a real UITableView with a real data source. Two hundred nodes were never built — the callback runs for the dozen on screen, and the cells come back as you scroll."));
+        body.add(shell::card("200 ROWS, ~12 CELLS", rec));
+
+        var kin: flex::Builder = flex::Builder::new();
+        kin.add(shell::caption("`table` is the same view with three verbs of its own — its style, its row height, and whether the rows size themselves. `tree` is the same table over the flattened OPEN rows, re-flattened whenever the model or the expansion changes. `collection` and `carousel` are UICollectionView with a flow layout."));
+        body.add(shell::card("THE REST OF THE TIER", kin));
+
+        return shell::page("List",
+            "The recycling tier: a count and a row factory, and a callback that runs for what is on screen.",
+            body, "demo:list");
+    }
+}
+impl ListDemo: component::Lifecycle {
+    fn on_attach(ref this) { return; }
+    fn on_detach(ref this) { return; }
+}

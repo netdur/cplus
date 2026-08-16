@@ -34,6 +34,7 @@ import "facet/table" as table;
 import "facet/collection" as collection;
 import "facet/carousel" as carousel;
 import "facet/tree" as tree;
+import "facet/label" as label;
 import "facet/mount" as mount;
 import "facet/vocabulary" as vocab;
 import "objc/runtime" as rt;
@@ -712,11 +713,16 @@ fn tree_props(tv: *u8) -> *tree::TreeProps {
 
 // Is this node expanded? facet carries the open set as a list of ids, which is
 // what survives a rebuild of the model — an index would not.
+// EXPANSION IS KEYED ON THE NODE'S OWN `id`, not on `row_id`.
+//
+// `row_id` is what a row is TAGGED with for an agent to find it by; a node's
+// `id` is what it IS, and it is what `Tree::expand` was handed. Reading the
+// wrong one meant nothing ever matched, so `expand` was a no-op and the
+// gallery's catalog opened as seven collapsed sections with no way to open
+// them. facet_appkit's `is_expanded` is this same three lines.
 fn tree_is_expanded(p: *tree::TreeProps, node: *tree::TreeNode) -> bool {
-    let idf: fn(*tree::TreeNode, *u8) -> text::Text = { (*p).row_id };
-    if idf == (0 as fn(*tree::TreeNode, *u8) -> text::Text) { return false; }
-    var idt: text::Text = idf(node, { (*p).row_id_ctx });
-    let id: str = idt.view();
+    let id: str = { (*node).id.view() };
+    if id == "" { return false; }
     let open: *vocab::TextList = { #addr_of((*p).expanded) };
     var i: usize = 0 as usize;
     let n: usize = { (*open).count() };
@@ -754,6 +760,20 @@ fn flatten_children(p: *tree::TreeProps, node: *tree::TreeNode, depth: i64) {
         i = i +% (1 as usize);
     }
     return;
+}
+
+// A tree with no row builder still shows its shape: the node's own text. A
+// tree that rendered blank rows would be indistinguishable from one whose model
+// is empty, and the two are very different problems.
+//
+// STATED height, not the label's intrinsic one: a table asks for a row's height
+// before that row is realised, and an unrealised label measures at zero.
+fn plain_tree_row(node: *tree::TreeNode) -> core::Node {
+    return label::label({ (*node).label.view() },
+                        key: { (*node).id.view() },
+                        max_lines: 1 as i64,
+                        line_break: vocab::LineBreak::TailTruncation)
+           .height(20.0f64);
 }
 
 fn create_recycling_tree(n: *core::Node) -> *u8 {
@@ -864,14 +884,21 @@ fn imp_tree_cell(self_obj: *u8, cmd: *u8, tv: *u8, index_path: *u8) -> *u8 {
         { rt::msg_void_id(cell, rt::sel(#str_ptr("setBackgroundColor:\0")), 0 as *u8) };
     }
     clear_cell(cell);
+    // COMPARED AGAINST `no_row`, NOT AGAINST NULL. The default is a real
+    // function that answers an empty node, so a null check is never false and
+    // the fallback never ran — a tree with no row builder rendered a column of
+    // empty rows, which is exactly what the gallery's catalog showed. The
+    // AppKit backend carries this comment too, and this backend earned its own
+    // copy by making the same mistake.
     let build: fn(*tree::TreeNode, *u8) -> flex::Node = { (*p).row };
-    if build == (0 as fn(*tree::TreeNode, *u8) -> flex::Node) { return cell; }
     match TREE_FLAT.at_ptr(row as usize) {
         option::Option[**tree::TreeNode]::Some(slot) => {
             let node: *tree::TreeNode = { (*slot) };
             let content: *u8 = { rt::msg_id(cell, rt::sel(#str_ptr("contentView\0"))) };
             if content == (0 as *u8) { return cell; }
-            match box::new::[core::Node](build(node, { (*p).row_ctx })) {
+            var built: core::Node = plain_tree_row(node);
+            if build != tree::no_row { built = build(node, { (*p).row_ctx }); }
+            match box::new::[core::Node](built) {
                 option::Option[box::Box[core::Node]]::Some(b) => {
                     let root: *core::Node = b.into_raw() as *core::Node;
                     let bind: fn(*tree::TreeNode, *u8, *flex::Node) = { (*p).bind };
@@ -888,6 +915,15 @@ fn imp_tree_cell(self_obj: *u8, cmd: *u8, tv: *u8, index_path: *u8) -> *u8 {
                         }
                     }
                     synth::set_associated(cell, cell_root_key(), root as *u8);
+                    // A BRANCH SAYS SO. With the rows flattened there is no
+                    // triangle, so the section carries UITableViewCell's own
+                    // disclosure accessory (1) and a leaf carries none (0) —
+                    // which is what makes "tap me to open" visible rather than
+                    // something a reader has to discover.
+                    var accessory: i64 = 0 as i64;
+                    if { (*node).is_branch } { accessory = 1 as i64; }
+                    { rt::msg_void_i64(cell, rt::sel(#str_ptr("setAccessoryType:\0")),
+                                       accessory) };
                     // THE INDENT is the tree's own geometry, and it is the one
                     // thing a flattened list has to carry that a list does not.
                     var depth: i64 = 0 as i64;
@@ -936,17 +972,48 @@ fn imp_tree_select(self_obj: *u8, cmd: *u8, tv: *u8, index_path: *u8) {
     match TREE_FLAT.at_ptr(row as usize) {
         option::Option[**tree::TreeNode]::Some(slot) => {
             let node: *tree::TreeNode = { (*slot) };
+            // A BRANCH TOGGLES. Selection is the only tap a leaf row has, but a
+            // section already has one that means something else — and with the
+            // rows flattened into a table there is no disclosure triangle to
+            // hit instead, so the row IS the control. facet_appkit's outline
+            // view reaches the same rule from the other direction.
+            if { (*node).is_branch } {
+                toggle_branch(tv, n, p, node);
+                { msg_void_id_i8(tv, rt::sel(#str_ptr("deselectRowAtIndexPath:animated:\0")),
+                                 index_path, 1 as i8) };
+                return;
+            }
             let idf: fn(*tree::TreeNode, *u8) -> text::Text = { (*p).row_id };
-            if idf != (0 as fn(*tree::TreeNode, *u8) -> text::Text) {
+            if idf != tree::no_row_id {
                 { (*p).selected = idf(node, { (*p).row_id_ctx }) };
             }
             let h: fn(*tree::TreeNode, *u8) = { (*p).on_select };
-            if h != (0 as fn(*tree::TreeNode, *u8)) { h(node, { (*p).on_select_ctx }); }
+            if h != tree::no_select { h(node, { (*p).on_select_ctx }); }
         }
         option::Option[**tree::TreeNode]::None => { }
     }
     { msg_void_id_i8(tv, rt::sel(#str_ptr("deselectRowAtIndexPath:animated:\0")),
                      index_path, 1 as i8) };
+    return;
+}
+
+// Open a closed section or close an open one, then rebuild what the table
+// reads. The model is written through facet's own `Tree` handle rather than
+// into the props directly, so the expansion an application observes is the one
+// a tap produced.
+fn toggle_branch(tv: *u8, owner: *core::Node, p: *tree::TreeProps,
+                 node: *tree::TreeNode) {
+    let id: str = { (*node).id.view() };
+    if id == "" { return; }
+    match tree::from(owner) {
+        option::Option[tree::Tree]::Some(t) => {
+            if tree_is_expanded(p, node) { let _c: tree::Tree = t.collapse(id); }
+            else { let _e: tree::Tree = t.expand(id); }
+        }
+        option::Option[tree::Tree]::None => { return; }
+    }
+    flatten_tree(owner);
+    { rt::msg_void(tv, rt::sel(#str_ptr("reloadData\0"))) };
     return;
 }
 

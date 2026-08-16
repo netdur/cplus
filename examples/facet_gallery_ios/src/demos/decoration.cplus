@@ -1,0 +1,193 @@
+// Decoration — the shared band, which is the half of this backend that is Core
+// Animation rather than UIKit and is therefore the same code on both platforms.
+//
+// Worth checking against the desktop gallery's Decoration section side by side:
+// if a swatch here looks different from the one there, the difference is a bug
+// in one of the two backends and not a platform.
+//
+// ONE LINE IS NOT SHARED, and it is in the Shadow demo: the offset. macOS
+// negates y because its views are flipped and a CALayer's offset is not; iOS
+// does not, because both are y-down. Every shadow here falls DOWNWARD.
+
+import "facet/facet" as core;
+import "facet/elements" as ui;
+import "facet/component" as component;
+import "facet/vocabulary" as vocab;
+import "flex_layout/flex_layout" as flex;
+import "../shell" as shell;
+
+fn swatch(fill: vocab::Color, radius: f64) -> core::Node {
+    return shell::painted(
+        ui::column(flex::Builder::new()).width(64.0f64).height(64.0f64),
+        fill, radius);
+}
+
+fn card_shadow(dy: f64, blur: f64, alpha: f64) -> core::Node {
+    let base: core::Node = shell::painted(
+        ui::column(flex::Builder::new()).width(64.0f64).height(64.0f64),
+        vocab::Color::surface(), 12.0f64);
+    return shell::shadowed(base, dy, blur, alpha);
+}
+
+// A swatch with a transform written onto it. `set_rotation` / `set_scale` are
+// statements — the chainable side of a Node is flex's, not facet's.
+fn turned(fill: vocab::Color, degrees: f64, scale: f64) -> core::Node {
+    var n: core::Node = swatch(fill, 10.0f64);
+    if degrees != 0.0f64 { n.set_rotation(degrees); }
+    if scale != 1.0f64 { n.set_scale(scale); }
+    return n;
+}
+
+// ---- radius ------------------------------------------------------------------
+
+struct Radius { _unused: i32 }
+impl Radius { fn new() -> Radius { return Radius { _unused: 0 }; } }
+
+impl Radius: component::Component {
+    fn build(ref this) -> core::Node {
+        var body: flex::Builder = flex::Builder::new();
+        var radii: flex::Builder = flex::Builder::new();
+        var r: flex::Builder = flex::Builder::new();
+        r.add(swatch(vocab::Color::system_blue(), 0.0f64));
+        r.add(swatch(vocab::Color::system_blue(), 8.0f64));
+        r.add(swatch(vocab::Color::system_blue(), 18.0f64));
+        r.add(swatch(vocab::Color::system_blue(), 32.0f64));
+        radii.add(ui::row(r).gap(12.0f64));
+        radii.add(shell::caption("Core Animation has ONE radius per layer and facet carries four corners, so the largest wins — the same reduction on both platforms."));
+        body.add(shell::card("0 · 8 · 18 · 32", radii));
+
+        return shell::page("Corner radius",
+            "Four corners in, one radius out. The reduction is Core Animation's, so it is identical on macOS.",
+            body, "demo:radius");
+    }
+}
+impl Radius: component::Lifecycle {
+    fn on_attach(ref this) { return; }
+    fn on_detach(ref this) { return; }
+}
+
+// ---- brush -------------------------------------------------------------------
+
+struct Brush { _unused: i32 }
+impl Brush { fn new() -> Brush { return Brush { _unused: 0 }; } }
+
+impl Brush: component::Component {
+    fn build(ref this) -> core::Node {
+        var body: flex::Builder = flex::Builder::new();
+        var grad: flex::Builder = flex::Builder::new();
+        var g: core::Node = ui::column(flex::Builder::new()).height(90.0f64);
+        g.set_corner_radius(vocab::Corners::all(14.0f64));
+        g.set_background(vocab::Brush {
+            start: vocab::Color::system_indigo(),
+            end: vocab::Color::system_teal(),
+            angle: 135.0f64,
+            is_gradient: true,
+        });
+        grad.add(g);
+        grad.add(shell::caption("A gradient is a CAGradientLayer inserted BELOW everything the view draws, kept on an associated key so a re-apply updates it instead of stacking a second one. It is also re-sized on every layout pass, because a sublayer does not follow the view above it."));
+        body.add(shell::card("LINEAR GRADIENT", grad));
+
+        return shell::page("Brush",
+            "A two-stop gradient at an angle. The layer under the view, not the view.",
+            body, "demo:brush");
+    }
+}
+impl Brush: component::Lifecycle {
+    fn on_attach(ref this) { return; }
+    fn on_detach(ref this) { return; }
+}
+
+// ---- shadow ------------------------------------------------------------------
+
+struct Shadow { _unused: i32 }
+impl Shadow { fn new() -> Shadow { return Shadow { _unused: 0 }; } }
+
+impl Shadow: component::Component {
+    fn build(ref this) -> core::Node {
+        var body: flex::Builder = flex::Builder::new();
+        var shadows: flex::Builder = flex::Builder::new();
+        var sh: flex::Builder = flex::Builder::new();
+        sh.add(card_shadow(2.0f64, 4.0f64, 0.18f64));
+        sh.add(card_shadow(6.0f64, 12.0f64, 0.22f64));
+        sh.add(card_shadow(12.0f64, 24.0f64, 0.26f64));
+        shadows.add(ui::row(sh).gap(16.0f64));
+        shadows.add(shell::caption("The offsets are positive y and the shadows fall DOWN. That is the one line in paint.cplus that could not be copied from the AppKit backend: macOS negates y because its views are flipped and a CALayer's offset is not."));
+        body.add(shell::card("RISING", shadows));
+
+        return shell::page("Shadow",
+            "Three elevations. The only line of the shared band that differs between the two backends is the sign of this offset.",
+            body, "demo:shadow");
+    }
+}
+impl Shadow: component::Lifecycle {
+    fn on_attach(ref this) { return; }
+    fn on_detach(ref this) { return; }
+}
+
+// ---- clip --------------------------------------------------------------------
+
+struct Clip { _unused: i32 }
+impl Clip { fn new() -> Clip { return Clip { _unused: 0 }; } }
+
+impl Clip: component::Component {
+    fn build(ref this) -> core::Node {
+        var body: flex::Builder = flex::Builder::new();
+        var clip: flex::Builder = flex::Builder::new();
+        var cl: flex::Builder = flex::Builder::new();
+        var ell: flex::Builder = flex::Builder::new();
+        ell.add(shell::painted(
+            ui::column(flex::Builder::new()).width(72.0f64).height(72.0f64),
+            vocab::Color::system_orange(), 0.0f64));
+        var clipped: core::Node = ui::column(ell).width(72.0f64).height(72.0f64);
+        // kind 3 is ellipse — `Shape` ships constructors for `none` and
+        // `rounded` only, so this one is written out.
+        clipped.set_clip(vocab::Shape { kind: 3 as i64, corners: vocab::Corners::none() });
+        cl.add(clipped);
+
+        var half: flex::Builder = flex::Builder::new();
+        half.add(shell::painted(
+            ui::column(flex::Builder::new()).width(72.0f64).height(72.0f64),
+            vocab::Color::system_pink(), 0.0f64));
+        var faded: core::Node = ui::column(half).width(72.0f64).height(72.0f64);
+        faded.set_opacity(0.45f64);
+        cl.add(faded);
+        clip.add(ui::row(cl).gap(16.0f64));
+        clip.add(shell::caption("A clip is a CAShapeLayer used as the layer's MASK — how Core Animation clips to anything that is not a rectangle. Beside it, plain opacity, which is one layer property."));
+        body.add(shell::card("MASK & OPACITY", clip));
+
+        return shell::page("Clip & opacity",
+            "A square clipped to an ellipse, and a square at 45%. One is a mask layer; the other is a number.",
+            body, "demo:clip");
+    }
+}
+impl Clip: component::Lifecycle {
+    fn on_attach(ref this) { return; }
+    fn on_detach(ref this) { return; }
+}
+
+// ---- transform ---------------------------------------------------------------
+
+struct Transform { _unused: i32 }
+impl Transform { fn new() -> Transform { return Transform { _unused: 0 }; } }
+
+impl Transform: component::Component {
+    fn build(ref this) -> core::Node {
+        var body: flex::Builder = flex::Builder::new();
+        var xf: flex::Builder = flex::Builder::new();
+        var t: flex::Builder = flex::Builder::new();
+        t.add(turned(vocab::Color::system_green(), 12.0f64, 1.0f64));
+        t.add(turned(vocab::Color::system_green(), 0.0f64, 0.72f64));
+        t.add(turned(vocab::Color::system_green(), -8.0f64, 1.1f64));
+        xf.add(ui::row(t).gap(20.0f64));
+        xf.add(shell::caption("The nine transform numbers are ONE matrix, which is why they share one dirty bit and why an animation over them is one animation."));
+        body.add(shell::card("ROTATE · SCALE", xf));
+
+        return shell::page("Transform",
+            "Rotation and scale, written as statements. They are one matrix and one dirty bit, which is why animating them is one animation.",
+            body, "demo:transform");
+    }
+}
+impl Transform: component::Lifecycle {
+    fn on_attach(ref this) { return; }
+    fn on_detach(ref this) { return; }
+}
