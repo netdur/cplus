@@ -12,6 +12,8 @@
 
 import "stdlib/option" as option;
 import "stdlib/text" as text;
+import "stdlib/vec" as vec;
+import "stdlib/status" as status;
 import "facet/facet" as core;
 import "facet/props" as props;
 import "facet/vocabulary" as vocab;
@@ -51,6 +53,7 @@ import "uikit/uikit" as ui;
 import "./paint" as paint;
 import "./input" as input;
 import "./text_input" as ti;
+import "./dates" as dates;
 
 fn props_of(n: *core::Node, kind: u32) -> *u8 {
     let d: *core::Data = core::node_data(n);
@@ -1205,36 +1208,149 @@ fn apply_text_area(v: *u8, n: *core::Node, dirty: u64) {
 
 // ---- popup + tabs ----------------------------------------------------------------
 
-// A dropdown. iOS has no NSPopUpButton; the modern answer is a UIButton with a
-// UIMenu, which needs UIAction objects built from blocks — the same block
-// machinery the web tier waits on. Until then a UISegmentedControl carries the
-// same list and the same selected index, visibly differently, and MANIFEST.md
-// says so rather than leaving a reader to discover it.
+// A dropdown, as a UIButton carrying a UIMenu — which IS the modern iOS
+// dropdown, and is what an NSPopUpButton means on this platform.
+//
+// This was a UISegmentedControl until the binding grew block support: a UIAction
+// takes a HANDLER BLOCK, and without one a menu item cannot call back. The
+// regenerated uikit binding emits the trampoline (`Action_action_with_title`),
+// so the real control is now reachable.
+//
+// The menu is rebuilt whole on any change to the items, the selection or the
+// enabling. A UIMenu is IMMUTABLE — there is no "set item 3 disabled" — so
+// rebuilding is not a shortcut, it is the only API.
 fn create_popup(n: *core::Node) -> *u8 {
-    let s: ui::SegmentedControl = ui::SegmentedControl::new(zero_rect());
-    let v: *u8 = rt::retain(s.as_view().raw());
-    input::arm_value(v, n);
+    let v: *u8 = make_system_button(n);
+    // The tap opens the menu rather than firing an action, and the menu marks
+    // its own selection: both are what a dropdown means.
+    { rt::msg_void_i8(v, rt::sel(#str_ptr("setShowsMenuAsPrimaryAction:\0")), 1 as i8) };
+    { rt::msg_void_i8(v, rt::sel(#str_ptr("setChangesSelectionAsPrimaryAction:\0")), 1 as i8) };
     return v;
+}
+
+fn popup_index_key() -> *u8 { return 41003 as *u8; }
+
+// An item was picked. `ctx` is the node; the index rides on the action itself,
+// because a handler block carries one context and the node is the half that
+// cannot be recovered from anything else.
+fn popup_picked(ctx: *u8, action: *u8) {
+    let n: *core::Node = ctx as *core::Node;
+    if n == (0 as *core::Node) { return; }
+    let p: *props::PopupProps = props_of(n, props::K_POPUP) as *props::PopupProps;
+    if p == (0 as *props::PopupProps) { return; }
+    let idx: i64 = { synth::get_associated(action, popup_index_key()) } as i64;
+    // The write-back, before the handler — the same rule every control follows.
+    { (*p).selected_index = idx };
+    let h: fn(*u8, *u8) = { (*p).on_selected_index_changed };
+    if h != (0 as fn(*u8, *u8)) { h(action, { (*p).on_selected_index_changed_ctx }); }
+    // The button's title follows the selection when the app did not name one.
+    refresh_popup_title(n);
+    return;
+}
+
+fn refresh_popup_title(n: *core::Node) {
+    let p: *props::PopupProps = props_of(n, props::K_POPUP) as *props::PopupProps;
+    if p == (0 as *props::PopupProps) { return; }
+    let v: *u8 = core::view_of(n);
+    if v == (0 as *u8) { return; }
+    let b: ui::Button = ui::Button::from_raw(v);
+    let label: str = { (*p).label.view() };
+    if label != "" { b.set_title(label, 0 as u64); return; }
+    let items: *vocab::TextList = { #addr_of((*p).items) };
+    let i: i64 = { (*p).selected_index };
+    if i >= (0 as i64) && (i as usize) < { (*items).count() } {
+        b.set_title({ (*items).at(i as usize) }, 0 as u64);
+        return;
+    }
+    b.set_title({ (*p).title.view() }, 0 as u64);
+    return;
+}
+
+// UIMenuElement state: 0 off, 1 on. Attributes: 1 disabled.
+fn build_popup_menu(v: *u8, n: *core::Node, p: *props::PopupProps) {
+    let items: *vocab::TextList = { #addr_of((*p).items) };
+    let count: usize = { (*items).count() };
+    var actions: vec::Vec[ui::MenuElement] = vec::new::[ui::MenuElement]();
+    var i: usize = 0 as usize;
+    let selected: i64 = { (*p).selected_index };
+    let enabled_fn: fn(usize, *u8) -> bool = { (*p).item_enabled };
+    while i < count {
+        let a: *u8 = ui::Action::action_with_title(
+            { (*items).at(i) }, ui::Image::from_raw(0 as *u8), "",
+            popup_picked, n as *u8);
+        if a != (0 as *u8) {
+            synth::set_associated(a, popup_index_key(), i as *u8);
+            if (i as i64) == selected {
+                { rt::msg_void_u64(a, rt::sel(#str_ptr("setState:\0")), 1 as u64) };
+            }
+            // `item_enabled` is facet's per-row veto — a header answers false.
+            if enabled_fn != (0 as fn(usize, *u8) -> bool) {
+                if !enabled_fn(i, { (*p).item_enabled_ctx }) {
+                    { rt::msg_void_u64(a, rt::sel(#str_ptr("setAttributes:\0")), 1 as u64) };
+                }
+            }
+            let _s: status::Status = actions.append(ui::MenuElement::from_raw(a));
+        }
+        i = i +% (1 as usize);
+    }
+    let menu: ui::Menu = ui::Menu::menu_with_children(actions);
+    ui::Button::from_raw(v).set_menu(menu);
+    return;
 }
 
 fn apply_popup(v: *u8, n: *core::Node, dirty: u64) {
     let p: *props::PopupProps = props_of(n, props::K_POPUP) as *props::PopupProps;
     if p == (0 as *props::PopupProps) { return; }
-    let s: ui::SegmentedControl = ui::SegmentedControl::from_raw(v);
-    if (dirty & popup::P_ITEMS) != (0 as u64) {
-        s.remove_all_segments();
-        let items: *vocab::TextList = { #addr_of((*p).items) };
-        var i: usize = 0 as usize;
-        let count: usize = { (*items).count() };
-        while i < count {
-            s.insert_segment_with_title({ (*items).at(i) }, i as u64, false);
-            i = i +% (1 as usize);
+    let b: ui::Button = ui::Button::from_raw(v);
+    // A UIMenu is immutable, so any of these rebuilds it whole.
+    if (dirty & (popup::P_ITEMS | popup::P_SELECTED_INDEX | popup::P_ITEM_ENABLED)) != (0 as u64) {
+        build_popup_menu(v, n, p);
+    }
+    if (dirty & (popup::P_LABEL | popup::P_TITLE | popup::P_SELECTED_INDEX
+                 | popup::P_ITEMS)) != (0 as u64) {
+        refresh_popup_title(n);
+    }
+    if (dirty & popup::P_TEXT_COLOR) != (0 as u64) {
+        let c: vocab::Color = { (*p).text_color };
+        if c.is_set() { b.set_title_color(paint::ui_color(c), 0 as u64); }
+    }
+    // `title_color` is the DROPDOWN's own label — the button's tint, which is
+    // what colours the chevron and the menu's accents.
+    if (dirty & popup::P_TITLE_COLOR) != (0 as u64) {
+        let c: vocab::Color = { (*p).title_color };
+        if c.is_set() {
+            { rt::msg_void_id(v, rt::sel(#str_ptr("setTintColor:\0")),
+                              paint::ui_color(c).raw()) };
         }
     }
-    if (dirty & popup::P_SELECTED_INDEX) != (0 as u64) {
-        s.set_selected_segment_index({ (*p).selected_index });
+    if (dirty & (popup::P_FONT_SIZE | popup::P_FONT_WEIGHT | popup::P_FONT_FAMILY
+                 | popup::P_IS_ITALIC | popup::P_FONT_SCALES)) != (0 as u64) {
+        match paint::ui_font({ (*p).font_size }, { (*p).font_weight },
+                             { (*p).font_family.view() }, { (*p).is_italic },
+                             { (*p).font_scales }) {
+            option::Option[ui::Font]::Some(f) => { b.set_font(f); }
+            option::Option[ui::Font]::None => { }
+        }
+    }
+    if (dirty & popup::P_TEXT_ALIGN) != (0 as u64) {
+        { rt::msg_void_i64(v, rt::sel(#str_ptr("setContentHorizontalAlignment:\0")),
+                           content_h_align_of({ (*p).text_align })) };
+    }
+    if (dirty & popup::P_VERTICAL_ALIGN) != (0 as u64) {
+        { rt::msg_void_i64(v, rt::sel(#str_ptr("setContentVerticalAlignment:\0")),
+                           content_v_align_of({ (*p).vertical_align })) };
     }
     return;
+}
+
+// UIControlContentVerticalAlignment: 0 centre, 1 top, 2 bottom, 3 fill.
+fn content_v_align_of(a: vocab::TextAlign) -> i64 {
+    return match a {
+        vocab::TextAlign::Start => 1 as i64,
+        vocab::TextAlign::Center => 0 as i64,
+        vocab::TextAlign::End => 2 as i64,
+        vocab::TextAlign::Justify => 3 as i64,
+    };
 }
 
 // facet's `tabs` is a strip plus panes. UISegmentedControl is the strip; the
@@ -1306,11 +1422,70 @@ fn apply_date_picker(v: *u8, n: *core::Node, dirty: u64) {
     let p: *props::DatePickerProps =
         props_of(n, props::K_DATE_PICKER) as *props::DatePickerProps;
     if p == (0 as *props::DatePickerProps) { return; }
-    // The DATE itself needs an NSDate built from facet's y/m/d through
-    // NSDateComponents, which is Foundation work this pass did not reach —
-    // MANIFEST.md lists it. The picker renders and is usable; it opens on today
-    // rather than on the stated date.
+    if (dirty & date_picker::P_DATE) != (0 as u64) {
+        let d: *u8 = dates::nsdate_of({ (*p).date });
+        if d != (0 as *u8) { { rt::msg_void_id(v, rt::sel(#str_ptr("setDate:\0")), d) }; }
+    }
+    if (dirty & date_picker::P_MINIMUM_DATE) != (0 as u64) {
+        let d: *u8 = dates::nsdate_of({ (*p).minimum_date });
+        { rt::msg_void_id(v, rt::sel(#str_ptr("setMinimumDate:\0")), d) };
+    }
+    if (dirty & date_picker::P_MAXIMUM_DATE) != (0 as u64) {
+        let d: *u8 = dates::nsdate_of({ (*p).maximum_date });
+        { rt::msg_void_id(v, rt::sel(#str_ptr("setMaximumDate:\0")), d) };
+    }
+    // The ink. A UIDatePicker draws its own wheels and exposes exactly one
+    // colour knob, which is the tint — there is no font on it at all, so the
+    // five font props and the character spacing have nowhere to go.
+    if (dirty & date_picker::P_TEXT_COLOR) != (0 as u64) {
+        let c: vocab::Color = { (*p).text_color };
+        if c.is_set() {
+            { rt::msg_void_id(v, rt::sel(#str_ptr("setTintColor:\0")),
+                              paint::ui_color(c).raw()) };
+        }
+    }
+    // `format` selects the MODE, which is the only part of a format string a
+    // wheel can honour: a picker showing a date and a time is a different mode
+    // from one showing a date.
+    if (dirty & date_picker::P_FORMAT) != (0 as u64) {
+        ui::DatePicker::from_raw(v).set_date_picker_mode(date_mode_of({ (*p).format.view() }));
+    }
     return;
+}
+
+// A format string, reduced to the modes a wheel has. Anything naming an hour
+// is date-and-time; anything else is a date.
+fn date_mode_of(fmt: str) -> ui::DatePickerMode {
+    if fmt == "" { return ui::DatePickerMode::Date; }
+    if str_contains(fmt, "H") || str_contains(fmt, "h") { return ui::DatePickerMode::DateAndTime; }
+    return ui::DatePickerMode::Date;
+}
+
+fn str_contains(hay: str, needle: str) -> bool {
+    let n: usize = { hay.count() };
+    let m: usize = { needle.count() };
+    if m == (0 as usize) || m > n { return false; }
+    var i: usize = 0 as usize;
+    while i + m <= n {
+        var j: usize = 0 as usize;
+        var same: bool = true;
+        while j < m {
+            match { hay.byte_at(i + j) } {
+                option::Option[u8]::Some(a) => {
+                    match { needle.byte_at(j) } {
+                        option::Option[u8]::Some(b) => { if a != b { same = false; } }
+                        option::Option[u8]::None => { same = false; }
+                    }
+                }
+                option::Option[u8]::None => { same = false; }
+            }
+            if !same { break; }
+            j = j +% (1 as usize);
+        }
+        if same { return true; }
+        i = i +% (1 as usize);
+    }
+    return false;
 }
 
 fn create_time_picker(n: *core::Node) -> *u8 {
@@ -1322,6 +1497,29 @@ fn create_time_picker(n: *core::Node) -> *u8 {
 }
 
 fn apply_time_picker(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *props::TimePickerProps =
+        props_of(n, props::K_TIME_PICKER) as *props::TimePickerProps;
+    if p == (0 as *props::TimePickerProps) { return; }
+    if (dirty & time_picker::P_TIME) != (0 as u64) {
+        let d: *u8 = dates::nsdate_of_time({ (*p).time });
+        if d != (0 as *u8) { { rt::msg_void_id(v, rt::sel(#str_ptr("setDate:\0")), d) }; }
+    }
+    if (dirty & time_picker::P_TEXT_COLOR) != (0 as u64) {
+        let c: vocab::Color = { (*p).text_color };
+        if c.is_set() {
+            { rt::msg_void_id(v, rt::sel(#str_ptr("setTintColor:\0")),
+                              paint::ui_color(c).raw()) };
+        }
+    }
+    // A countdown is a different wheel from a clock, and `format` is where an
+    // app says which.
+    if (dirty & time_picker::P_FORMAT) != (0 as u64) {
+        var m: ui::DatePickerMode = ui::DatePickerMode::Time;
+        if str_contains({ (*p).format.view() }, "countdown") {
+            m = ui::DatePickerMode::CountDownTimer;
+        }
+        ui::DatePicker::from_raw(v).set_date_picker_mode(m);
+    }
     return;
 }
 

@@ -4,10 +4,9 @@ The phone-shaped gallery — `examples/facet_gallery`'s counterpart on iOS, and
 the app to point at a simulator when `facet_uikit` is run for the first time.
 
 > **It runs.** Launched on an iPhone 17 Pro simulator (iOS 26.4, arm64) on
-> 2026-08-16. Labels, slider, progress, stepper, switch, the segmented picker,
-> card surfaces, the safe area, scrolling and the value write-back are all
-> correct on screen. **A `button` draws nothing** — that one is open, and
-> `bugs/uikit-button-draws-nothing.md` has every measurement.
+> 2026-08-16. Labels, button, slider, progress, stepper, switch, the segmented
+> picker, card surfaces, the safe area, scrolling and the value write-back are
+> all correct on screen.
 >
 > Never on a device.
 
@@ -106,9 +105,9 @@ xcrun simctl io booted screenshot shot.png
 interrogated from `on_attach` while the app ran. `open -a Simulator` puts the
 device on screen; without it the whole loop is headless.
 
-## What was wrong on the first run, and what is still open
+## What was wrong on the first run
 
-Four bugs, all found by running and none by reading:
+Five bugs, all found by running and none by reading:
 
 1. **No content at all** — `on_attach` fired before the tree was mounted. Fixed:
    the host has a launch seam the facade hangs the lifecycle on.
@@ -117,9 +116,19 @@ Four bugs, all found by running and none by reading:
 3. **Every label a black bar** — `isOpaque` YES with no background colour. Fixed:
    `opaque` is cleared with the background.
 4. **Nothing scrolled** — the flex trap above.
+5. **A `button` drew nothing** — and this one was not iOS, not UIKit, and not
+   this package. `musttail` was freeing the stack frame that an
+   indirectly-passed argument pointed into, so facet's 25-parameter
+   `elements::button` forwarder lost both its `vocab::Color` arguments and the
+   backend built a `UIColor` with alpha 0 out of the remains of a stack
+   pointer. Fixed in the compiler; **not one line of `facet_uikit` changed**.
+   `bugs/closed/ios-target-defaulted-struct-param-garbage.md`.
 
-Still open: **a `button` draws nothing.** Everything readable about it is right.
-`bugs/uikit-button-draws-nothing.md`.
+The fifth is worth reading even if you never touch iOS. It only appeared here
+because an iOS target is a **staticlib**, and a `[lib]` gives every name-public
+function `weak_odr` linkage — which forfeits `fastcc`, which is what had been
+passing the big struct in registers. The same source as a `[[bin]]` was correct
+on every platform, which is why it read for three sessions as a UIKit problem.
 
 Not yet exercised at all: the dark-mode flip (known unwired — UIKit has no
 application-level appearance hook), and every kind on the Gaps page.

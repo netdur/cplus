@@ -105,9 +105,9 @@ impl Gallery: component::Component {
     fn build(ref this) -> core::Node {
         var root: flex::Builder = flex::Builder::new();
 
-        // The picker. A UISegmentedControl underneath — which is also what
-        // `popup` renders as on this backend, so the shell is itself one of the
-        // approximations the Gaps page names.
+        // The picker. A real UIMenu button underneath now — `popup` grew one
+        // when the binding gained block support — so tapping it drops the five
+        // page names down and marks the current one.
         root.add(ui::popup("", key: "g:picker",
                            items: page_names(),
                            selected_index: this.shown,
