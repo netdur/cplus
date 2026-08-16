@@ -6,14 +6,20 @@
 // an answer nobody wrote yet; warns once on stderr) — and this page mounts one
 // of each so both behaviours can be observed rather than read about.
 //
-// The `list` below WILL print a line to the Xcode console the first time this
-// page is shown. That is the machinery working, not a bug.
+// THE SECOND LIST IS NOW EMPTY, and that is the news. Every kind this page used
+// to name as unbuilt — list, table, tree, collection, carousel, swipeable, web,
+// hybrid_web, canvas, split — has a body. What is left is three verbs UIKit has
+// no answer for, and they are shown here rather than described, because a
+// "cannot" that is only ever read is one nobody checks.
 
 import "facet/facet" as core;
 import "facet/elements" as ui;
 import "facet/component" as component;
 import "facet/vocabulary" as vocab;
 import "flex_layout/flex_layout" as flex;
+import "facet/list" as list;
+import "facet/split" as m_split;
+import "stdlib/option" as option;
 import "../shell" as shell;
 
 struct Gaps {
@@ -24,35 +30,72 @@ impl Gaps {
     fn new() -> Gaps { return Gaps { _unused: 0 }; }
 }
 
+// The row builder the list calls. It is called for the rows on screen and for
+// no others, which is the whole point of the tier.
+fn gap_row(i: usize, ctx: *u8) -> core::Node {
+    var b: flex::Builder = flex::Builder::new();
+    b.add(ui::label("Row ${i}", font_size: 16.0f64));
+    b.add(ui::column(flex::Builder::new()).grow(1.0f64));
+    b.add(ui::label("recycled", font_size: 13.0f64,
+                    text_color: vocab::Color::ink(0.45f64)));
+    return ui::row(b).padding(12.0f64).gap(8.0f64).align(flex::Align::Center);
+}
+
 impl Gaps: component::Component {
     fn build(ref this) -> core::Node {
         var body: flex::Builder = flex::Builder::new();
 
-        var unbuilt: flex::Builder = flex::Builder::new();
-        unbuilt.add(shell::blurb("A `list` is mounted below. UIKit has the answer — UITableView with a data source — and this pass did not write it, so the kind renders as a plain backing view and names itself once on stderr."));
-        unbuilt.add(shell::painted(ui::list(key: "g:list").height(80.0f64),
-                                   vocab::Color::fill(), 10.0f64));
-        unbuilt.add(shell::caption("Also unbuilt: collection, table, tree, carousel, swipeable, web, hybrid_web, canvas, and the context-menu family. The recycling tier is the largest piece — facet_appkit's recycler is 2,900 lines."));
-        body.add(shell::card("NOT YET BUILT — WARNS ONCE", unbuilt));
+        // ---- what UIKit cannot do -------------------------------------------
+        // A date picker whose font verbs are written and do nothing. This is the
+        // whole of the remaining gap: UIDatePicker draws its own calendar and
+        // exposes no font at all — not a family, not a size, not a weight — so
+        // the six verbs land on a control with nowhere to put them.
+        var cannot: flex::Builder = flex::Builder::new();
+        cannot.add(shell::blurb("The picker below asks for a 28pt bold serif face. It is drawn in the system font, because UIDatePicker has no font property of any kind — the class has twenty-odd methods and every one of them is about dates."));
+        cannot.add(shell::painted(
+            ui::date_picker(vocab::Date { year: 2026 as i64, month: 8 as i64, day: 16 as i64 },
+                            key: "g:date", font_size: 28.0f64,
+                            font_family: "Georgia",
+                            font_weight: vocab::FontWeight::Bold)
+                .height(44.0f64),
+            vocab::Color::fill(), 10.0f64));
+        cannot.add(shell::caption("The other two: a `table`'s style is fixed by initWithFrame:style: and cannot move after the table is mounted, and `window_chrome` names close/minimise/zoom buttons an iOS window does not have. Three verbs, all recorded in MANIFEST.md §3."));
+        body.add(shell::card("UIKIT CANNOT — SILENT", cannot));
 
-        var absent: flex::Builder = flex::Builder::new();
-        absent.add(shell::blurb("A `split` is mounted below. iOS has no draggable divider — a divider is a pointer idiom — so the two panes lay out stacked and NOTHING is said, because the question is answered rather than outstanding."));
+        // ---- the recycling tier ---------------------------------------------
+        var recycling: flex::Builder = flex::Builder::new();
+        recycling.add(shell::blurb("Forty rows over a real UITableView with a real data source. The row callback runs for the rows on screen and for no others — forty nodes, about a dozen cells, and the cells come back as you scroll."));
+        var host: core::Node = ui::list(key: "g:list", row_height: 48 as i64)
+            .height(200.0f64);
+        match list::find("g:list", within: #addr_of(host)) {
+            option::Option[list::List]::Some(l) => {
+                let _c: list::List = l.set_count(40 as usize);
+                let _r: list::List = l.set_row(gap_row);
+            }
+            option::Option[list::List]::None => { }
+        }
+        recycling.add(shell::painted(host, vocab::Color::fill(), 10.0f64));
+        recycling.add(shell::caption("`table`, `tree`, `collection` and `carousel` sit on the same tier — the first two on UITableView, the last two on UICollectionView."));
+        body.add(shell::card("RECYCLING — BUILT", recycling));
+
+        // ---- the split -------------------------------------------------------
+        // It used to be on the "decided absent" list, whole. One fact about it
+        // is absent; the rest is geometry, and geometry is flex's.
+        var sp: flex::Builder = flex::Builder::new();
+        sp.add(shell::blurb("A real split: the divider sits where `position` says, the panes honour their minimums, and the hairline between them is the split's own. What iOS has no answer for is DRAGGING it — a divider is a pointer idiom — so the position is the application's to set and nobody else's."));
         var panes: flex::Builder = flex::Builder::new();
-        panes.add(shell::painted(ui::column(flex::Builder::new()).height(36.0f64),
+        panes.add(shell::painted(ui::column(flex::Builder::new()),
                                  vocab::Color::system_teal(), 8.0f64));
-        panes.add(shell::painted(ui::column(flex::Builder::new()).height(36.0f64),
+        panes.add(shell::painted(ui::column(flex::Builder::new()),
                                  vocab::Color::system_indigo(), 8.0f64));
-        absent.add(ui::column(panes).gap(8.0f64));
-        absent.add(shell::caption("Also decided absent: window buttons (an iOS window is the screen), the menu bar, and tooltips (there is no pointer to hover)."));
-        body.add(shell::card("DECIDED ABSENT — SILENT", absent));
-
-        var approx: flex::Builder = flex::Builder::new();
-        approx.add(shell::blurb("A third list, and the one worth arguing about: kinds whose verb WORKS and whose handler fires, but which are drawn by a different control than the name suggests."));
-        approx.add(shell::caption("`checkbox` and `radio` are UISwitches. `popup` and `tabs` are UISegmentedControls until the UIMenu block bridge lands. Each is recorded in MANIFEST.md §3 rather than left to be discovered on screen."));
-        body.add(shell::card("APPROXIMATED", approx));
+        sp.add(ui::split(panes, key: "g:split", axis: m_split::SplitAxis::Rows,
+                         position: 40.0f64, min_leading: 20.0f64,
+                         min_trailing: 20.0f64,
+                         divider_thickness: 2.0f64).height(110.0f64));
+        body.add(shell::card("SPLIT — BUILT, MINUS THE DRAG", sp));
 
         return shell::page("Gaps",
-            "What this backend does not do, shown rather than described. Watch the Xcode console when this page appears.",
+            "What this backend does not do, shown rather than described. The unbuilt list is empty; what is left is three verbs UIKit has no answer for.",
             body, "page:gaps");
     }
 }

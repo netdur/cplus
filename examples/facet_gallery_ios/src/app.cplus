@@ -28,12 +28,14 @@ import "./pages/text" as p_text;
 import "./pages/paint" as p_paint;
 import "./pages/motion" as p_motion;
 import "./pages/gaps" as p_gaps;
+import "./pages/tiers" as p_tiers;
 
 const PAGE_CONTROLS: i64 = 0 as i64;
 const PAGE_TEXT: i64 = 1 as i64;
 const PAGE_PAINT: i64 = 2 as i64;
 const PAGE_MOTION: i64 = 3 as i64;
-const PAGE_GAPS: i64 = 4 as i64;
+const PAGE_TIERS: i64 = 4 as i64;
+const PAGE_GAPS: i64 = 5 as i64;
 
 struct Gallery {
     shown: i64,
@@ -41,17 +43,19 @@ struct Gallery {
     text: p_text::Text,
     paint: p_paint::Paint,
     motion: p_motion::Motion,
+    tiers: p_tiers::Tiers,
     gaps: p_gaps::Gaps,
 }
 
 impl Gallery {
     fn new() -> Gallery {
         return Gallery {
-            shown: PAGE_CONTROLS,
+            shown: PAGE_TIERS,
             controls: p_controls::Controls::new(),
             text: p_text::Text::new(),
             paint: p_paint::Paint::new(),
             motion: p_motion::Motion::new(),
+            tiers: p_tiers::Tiers::new(),
             gaps: p_gaps::Gaps::new(),
         };
     }
@@ -79,6 +83,8 @@ impl Gallery {
                     let _ok: bool = mount::set_content(out, this.paint);
                 } else if this.shown == PAGE_MOTION {
                     let _ok: bool = mount::set_content(out, this.motion);
+                } else if this.shown == PAGE_TIERS {
+                    let _ok: bool = mount::set_content(out, this.tiers);
                 } else if this.shown == PAGE_GAPS {
                     let _ok: bool = mount::set_content(out, this.gaps);
                 } else {
@@ -97,7 +103,8 @@ fn page_names() -> vocab::TextList {
     let _b: status::Status = v.add("Text");
     let _c: status::Status = v.add("Paint");
     let _d: status::Status = v.add("Motion");
-    let _e: status::Status = v.add("Gaps");
+    let _e: status::Status = v.add("Tiers");
+    let _f: status::Status = v.add("Gaps");
     return v;
 }
 
