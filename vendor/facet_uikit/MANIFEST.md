@@ -275,7 +275,7 @@ I read by hand. That is how five bugs reached a person before they reached a
 check, and one of them was declared fixed twice on a measurement that was
 counting the wrong pixels.
 
-`src/selftest.cplus` holds the checks and `examples/facet_uikit_tests` is an
+`src/selftest.cplus` holds the checks and `tests/` is an
 iOS binary that runs them:
 
 ```

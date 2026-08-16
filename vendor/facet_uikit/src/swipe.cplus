@@ -42,19 +42,40 @@ fn strip_key() -> *u8 { return 41030 as *u8; }
 fn gesture_key() -> *u8 { return 41031 as *u8; }
 fn offset_key() -> *u8 { return 41032 as *u8; }
 
-// How far a swipe has moved the content, held as an NSNumber because that is
-// what an associated object can be.
+// How far a swipe has moved the content.
+//
+// HELD AS BITS IN THE POINTER, not as an NSNumber — and that is the bug this
+// file was built on. `numberWithDouble:` answers an AUTORELEASED object and
+// `set_associated` uses OBJC_ASSOCIATION_ASSIGN, which does not retain: the
+// pool drains at the end of the run-loop turn and the association is left
+// pointing at freed memory. A drag WROTE the offset on every Changed event and
+// only READ it when the finger lifted, so the first read was always one turn
+// too late — the crash landed on release, every time, and nowhere else.
+//
+// `retain_associated` would fix it. Storing the bits fixes it AND allocates
+// nothing on a path that runs every frame of a drag: a double is 64 bits and
+// so is the pointer, so the value simply IS the association.
 fn offset_of(v: *u8) -> f64 {
-    let o: *u8 = { synth::get_associated(v, offset_key()) };
-    if o == (0 as *u8) { return 0.0f64; }
-    return { rt::msg_f64(o, rt::sel(#str_ptr("doubleValue\0"))) };
+    let raw: *u8 = { synth::get_associated(v, offset_key()) };
+    if raw == (0 as *u8) { return 0.0f64; }
+    return bits_to_f64(raw as usize);
 }
 
 fn set_offset(v: *u8, x: f64) {
-    synth::set_associated(v, offset_key(),
-        { rt::msg_id_f64(rt::get_class(#str_ptr("NSNumber\0")),
-                         rt::sel(#str_ptr("numberWithDouble:\0")), x) });
+    synth::set_associated(v, offset_key(), f64_to_bits(x) as *u8);
     return;
+}
+
+// A zero offset stores a null association, which reads back as 0.0 — the same
+// answer, and the state a swipeable starts in.
+fn f64_to_bits(x: f64) -> usize {
+    var v: f64 = x;
+    return { *({ #addr_of(v) } as *usize) };
+}
+
+fn bits_to_f64(b: usize) -> f64 {
+    var v: usize = b;
+    return { *({ #addr_of(v) } as *f64) };
 }
 
 // ---- the strip ---------------------------------------------------------------
@@ -290,24 +311,42 @@ fn settle(v: *u8, p: *props::SwipeableProps, open: bool) {
     return;
 }
 
-// `beginAnimations:context:` takes an NSString and a void* — TWO POINTERS, and
-// sending it through a double-shaped msgSend is how a swipe crashed in
-// `objc_retain`: UIKit read the double's bits as the animation's name and
-// retained them. Both arguments are nil here (the name is for
-// `UIViewAnimationDelegate`, which this has none of), but nil has to arrive in
-// the register the callee reads.
+// THE LAYER ANIMATES, not `+[UIView beginAnimations:context:]`.
 //
-// The whole class of bug is a msgSend declared with the wrong shape, which the
-// compiler cannot catch — the selector is a string. Every call in this package
-// that names a selector taking objects goes through an id-shaped extern for
-// that reason.
+// That call is the pre-iOS-4 API, deprecated since iOS 13, and it is the wrong
+// tool for what happens inside it: `apply_offset` writes a layer TRANSFORM, and
+// the legacy block does not reliably capture layer property writes made through
+// raw messaging. The settle jumped rather than moved.
+//
+// This package already animates a layer transform — `paint::animate_layer_
+// transform` is what every `animate_*` verb goes through — so the settle uses
+// it and looks like the rest of the backend rather than like 2009.
 fn animate_to(v: *u8, x: f64) {
-    let cls: *u8 = rt::get_class(#str_ptr("UIView\0"));
-    { rt::msg_void_id_id(cls, rt::sel(#str_ptr("beginAnimations:context:\0")),
-                         0 as *u8, 0 as *u8) };
-    { rt::msg_void_f64(cls, rt::sel(#str_ptr("setAnimationDuration:\0")), 0.2f64) };
-    apply_offset(v, x);
-    { rt::msg_void(cls, rt::sel(#str_ptr("commitAnimations\0"))) };
+    let strip: *u8 = strip_of(v);
+    let subs: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("subviews\0"))) };
+    if subs == (0 as *u8) { return; }
+    let n: u64 = { rt::msg_u64(subs, rt::sel(#str_ptr("count\0"))) };
+    var i: u64 = 0 as u64;
+    while i < n {
+        let sv: *u8 = { rt::msg_id_u64(subs, rt::sel(#str_ptr("objectAtIndex:\0")), i) };
+        if sv != (0 as *u8) && sv != strip {
+            let l: quartz::Layer = ui::View::from_raw(sv).layer();
+            var from: quartz::Transform3D = l.transform();
+            var to: quartz::Transform3D = paint::transform_identity();
+            { to.m41 = x };
+            paint::animate_layer_transform(l, from, to, 0.22f64, vocab::Easing::SinOut);
+            l.set_transform(to);
+        }
+        i = i +% (1 as u64);
+    }
+    // The strip's visibility follows the LANDING, not the animation: a closed
+    // swipeable shows no actions, and hiding it a frame early is invisible
+    // against a 220ms slide.
+    if strip != (0 as *u8) {
+        var hidden: i8 = 0 as i8;
+        if x == 0.0f64 { hidden = 1 as i8; }
+        { rt::msg_void_i8(strip, rt::sel(#str_ptr("setHidden:\0")), hidden) };
+    }
     return;
 }
 
@@ -403,11 +442,22 @@ fn create(n: *core::Node) -> *u8 {
     return raw;
 }
 
+// THE STRIP IS REBUILT WHEN THE ITEMS CHANGE, AND RE-LAID-OUT WHEN THE SIZE
+// DOES. Those were one branch, keyed on a band that included `C_LAYOUT` — so
+// every layout pass destroyed the action buttons and built new ones, and a
+// layout pass happens on every frame of a drag. The buttons under the finger
+// were freed and recreated continuously: UIKit was mid-touch on a view that no
+// longer existed.
+//
+// Rebuilding is expensive AND unsafe here; re-laying-out is neither.
 fn apply(v: *u8, n: *core::Node, dirty: u64) {
     input::bind_node(v, n);
-    let band: u64 = props::C_HANDLERS | props::C_LAYOUT | swipeable::P_REVEAL_THRESHOLD;
-    if (dirty & band) != (0 as u64) || dirty == paint::all_bits() {
+    let items: u64 = props::C_HANDLERS | swipeable::P_REVEAL_THRESHOLD;
+    if (dirty & items) != (0 as u64) || dirty == paint::all_bits() {
         let _count: usize = rebuild_strip(v, n);
+    }
+    // A size change moves the buttons; it does not replace them.
+    if (dirty & props::C_LAYOUT) != (0 as u64) || dirty == paint::all_bits() {
         resize_strip(v, n);
     }
     return;

@@ -35,7 +35,7 @@ vendor/facet_uikit/tools/run_ios_tests.sh      # builds, installs, runs, reports
 
 `cpc test` cannot run this package — it builds a host binary and macOS has no
 UIKit. The checks live in `src/selftest.cplus` and run as an iOS binary
-(`examples/facet_uikit_tests`) under `simctl`. The script exits non-zero when
+(`tests/`) under `simctl`. The script exits non-zero when
 anything fails.
 
 ## Build

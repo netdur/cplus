@@ -40,6 +40,7 @@ import "./input" as input;
 import "./keys" as keys;
 import "./window" as window;
 import "./dialogs" as dialogs;
+import "./swipe" as swipe;
 import "facet/services" as services;
 import "facet/gestures" as gestures;
 import "objc/bridge" as bridge;
@@ -443,6 +444,27 @@ fn the_stack_starts_empty_and_refuses_without_a_window() -> bool {
     return window::pop_screen() == false;
 }
 
+// ---- a swipe's offset survives the run loop ----------------------------------
+// THE CRASH ON A REAL IPAD. The offset was stored as an autoreleased NSNumber
+// through an association that does not retain, so a drag wrote it on every
+// Changed event and the read on Ended — one run-loop turn later — reached freed
+// memory. It crashed on RELEASE, every time, and never during the drag.
+//
+// The value round-trips through the pointer now, which allocates nothing and
+// cannot dangle. This checks the round trip, including the negative offsets a
+// leftward swipe actually produces.
+
+fn a_swipe_offset_round_trips_through_the_association() -> bool {
+    let v: uik::View = uik::View::new_with_frame(
+        rt::Rect { x: 0.0f64, y: 0.0f64, w: 100.0f64, h: 50.0f64 });
+    let raw: *u8 = v.raw();
+    if swipe::offset_of(raw) != 0.0f64 { return false; }
+    swipe::set_offset(raw, 0.0f64 - 88.5f64);
+    if swipe::offset_of(raw) != (0.0f64 - 88.5f64) { return false; }
+    swipe::set_offset(raw, 0.0f64);
+    return swipe::offset_of(raw) == 0.0f64;
+}
+
 // ---- the run --------------------------------------------------------------------
 
 fn run_all() -> i32 {
@@ -487,6 +509,8 @@ fn run_all() -> i32 {
     check("byte offsets convert to utf16 units", byte_offsets_convert_to_utf16_units());
     check("runs are read from a label's attributed text",
           runs_are_read_from_a_labels_attributed_text());
+    check("a swipe offset round-trips through the association",
+          a_swipe_offset_round_trips_through_the_association());
 
     let ran: i32 = RAN;
     let failed: i32 = FAILED;

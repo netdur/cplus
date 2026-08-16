@@ -1625,17 +1625,17 @@ fn cv_select(v: *u8, index: i64) {
 // answers `canMoveItemAtIndexPath:` has the view and not the node.
 fn mix_groups_key() -> *u8 { return 41013 as *u8; }
 
+// A FLAG IN THE POINTER, not an NSNumber. `numberWithLongLong:` answers an
+// AUTORELEASED object and `set_associated` does not retain — so the association
+// would dangle the moment the pool drained, and the next drop would read freed
+// memory. The same bug the swipe's offset had; a bool needs no object at all.
 fn flag_object(b: bool) -> *u8 {
-    var v: i64 = 0 as i64;
-    if b { v = 1 as i64; }
-    return { rt::msg_id_i64(rt::get_class(#str_ptr("NSNumber\0")),
-                            rt::sel(#str_ptr("numberWithLongLong:\0")), v) };
+    if b { return 1 as *u8; }
+    return 0 as *u8;
 }
 
 fn can_mix_groups(v: *u8) -> bool {
-    let o: *u8 = { synth::get_associated(v, mix_groups_key()) };
-    if o == (0 as *u8) { return false; }
-    return { rt::msg_i64(o, rt::sel(#str_ptr("longLongValue\0"))) } != (0 as i64);
+    return { synth::get_associated(v, mix_groups_key()) } != (0 as *u8);
 }
 
 #[link_name = "objc_msgSend"]

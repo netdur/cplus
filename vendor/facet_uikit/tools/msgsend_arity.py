@@ -91,6 +91,38 @@ def check_mount(files):
     return len(bad)
 
 
+# ---- 3. an association that does not retain ----------------------------------
+# `synth::set_associated` uses OBJC_ASSOCIATION_ASSIGN — it does NOT retain. So
+# storing anything that came back AUTORELEASED leaves the association pointing
+# at freed memory as soon as the pool drains, which is the end of the current
+# run-loop turn. The write succeeds, the read one event later does not.
+#
+# That is not hypothetical: a swipe stored its offset as `numberWithDouble:`,
+# wrote it on every Changed event and read it once on Ended — so it crashed on
+# release, every time, and never during the drag.
+#
+# The fix is `retain_associated`, or not storing an object at all. Both are
+# fine; a factory result stored through the assigning call is not.
+FACTORIES = ("numberWith", "stringWith", "arrayWith", "dictionaryWith",
+             "dataWith", "colorWith", "valueWith", "nsstring(")
+
+
+def check_associations(files):
+    bad = []
+    for path in files:
+        src = open(path).read()
+        # the call and its argument may wrap across lines
+        for m in re.finditer(r"synth::set_associated\((.{0,240}?)\);", src, re.S):
+            arg = m.group(1)
+            if any(f in arg for f in FACTORIES):
+                line = src[: m.start()].count("\n") + 1
+                bad.append((os.path.basename(path), line, " ".join(arg.split())[:90]))
+    for f, line, arg in bad:
+        print(f"{f}:{line}  set_associated does not retain — this value is autoreleased")
+        print(f"    {arg}")
+    return len(bad)
+
+
 def main():
     root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(
         os.path.abspath(__file__)))))
@@ -129,6 +161,12 @@ def main():
               f"dangles when the node is freed")
         return 1
     print("no mount::mount outside the window host")
+    assoc = check_associations(files)
+    if assoc:
+        print(f"{assoc} assigning association(s) holding an autoreleased object — "
+              f"each dangles when the pool drains")
+        return 1
+    print("no assigning associations holding autoreleased objects")
     return 0
 
 

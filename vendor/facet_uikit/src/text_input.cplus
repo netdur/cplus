@@ -735,9 +735,11 @@ fn set_text_view_vertical(v: *u8, a: vocab::TextAlign) {
         vocab::TextAlign::End => { code = 2 as i64; }
         _ => { }
     }
-    synth::set_associated(v, valign_key(),
-        { rt::msg_id_i64(rt::get_class(#str_ptr("NSNumber\0")),
-                         rt::sel(#str_ptr("numberWithLongLong:\0")), code) });
+    // THE CODE IN THE POINTER, not an NSNumber: `numberWithLongLong:` answers
+    // an autoreleased object and `set_associated` does not retain, so the
+    // association would dangle after the pool drained. Offset by one so that
+    // "no alignment recorded" and "Start" stay distinguishable from null.
+    synth::set_associated(v, valign_key(), (code + (1 as i64)) as *u8);
     resize_text_view(v);
     return;
 }
@@ -747,7 +749,7 @@ fn set_text_view_vertical(v: *u8, a: vocab::TextAlign) {
 fn resize_text_view(v: *u8) {
     let o: *u8 = { synth::get_associated(v, valign_key()) };
     if o == (0 as *u8) { return; }
-    let code: i64 = { rt::msg_i64(o, rt::sel(#str_ptr("longLongValue\0"))) };
+    let code: i64 = { (o as usize) as i64 } - (1 as i64);
     if code == (0 as i64) {
         { msg_void_insets(v, rt::sel(#str_ptr("setTextContainerInset:\0")),
                           0.0f64, 0.0f64, 0.0f64, 0.0f64) };

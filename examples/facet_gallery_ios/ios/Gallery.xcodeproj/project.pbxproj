@@ -1,0 +1,243 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 54;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		0000FACE0000000000000004 /* main.m in Sources */ = {isa = PBXBuildFile; fileRef = 0000FACE0000000000000001 /* main.m */; };
+		0000FACE000000000000000B /* UIKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 0000FACE0000000000000006 /* UIKit.framework */; };
+		0000FACE000000000000000C /* QuartzCore.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 0000FACE0000000000000007 /* QuartzCore.framework */; };
+		0000FACE000000000000000D /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 0000FACE0000000000000008 /* Foundation.framework */; };
+		0000FACE000000000000000E /* CoreGraphics.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 0000FACE0000000000000009 /* CoreGraphics.framework */; };
+		0000FACE000000000000000F /* WebKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 0000FACE000000000000000A /* WebKit.framework */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		0000FACE0000000000000014 /* Gallery.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Gallery.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		0000FACE0000000000000001 /* main.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = main.m; sourceTree = "<group>"; };
+		0000FACE0000000000000003 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		0000FACE0000000000000006 /* UIKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = UIKit.framework; path = System/Library/Frameworks/UIKit.framework; sourceTree = SDKROOT; };
+		0000FACE0000000000000007 /* QuartzCore.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = QuartzCore.framework; path = System/Library/Frameworks/QuartzCore.framework; sourceTree = SDKROOT; };
+		0000FACE0000000000000008 /* Foundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Foundation.framework; path = System/Library/Frameworks/Foundation.framework; sourceTree = SDKROOT; };
+		0000FACE0000000000000009 /* CoreGraphics.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreGraphics.framework; path = System/Library/Frameworks/CoreGraphics.framework; sourceTree = SDKROOT; };
+		0000FACE000000000000000A /* WebKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WebKit.framework; path = System/Library/Frameworks/WebKit.framework; sourceTree = SDKROOT; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		0000FACE0000000000000018 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				0000FACE000000000000000B /* UIKit.framework in Frameworks */,
+				0000FACE000000000000000C /* QuartzCore.framework in Frameworks */,
+				0000FACE000000000000000D /* Foundation.framework in Frameworks */,
+				0000FACE000000000000000E /* CoreGraphics.framework in Frameworks */,
+				0000FACE000000000000000F /* WebKit.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		0000FACE0000000000000010 = {
+			isa = PBXGroup;
+			children = (
+				0000FACE0000000000000011 /* Gallery */,
+				0000FACE0000000000000012 /* Frameworks */,
+				0000FACE0000000000000013 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		0000FACE0000000000000011 /* Gallery */ = {
+			isa = PBXGroup;
+			children = (
+				0000FACE0000000000000001 /* main.m */,
+				0000FACE0000000000000003 /* Info.plist */,
+			);
+			path = .;
+			sourceTree = "<group>";
+		};
+		0000FACE0000000000000012 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				0000FACE0000000000000006 /* UIKit.framework */,
+				0000FACE0000000000000007 /* QuartzCore.framework */,
+				0000FACE0000000000000008 /* Foundation.framework */,
+				0000FACE0000000000000009 /* CoreGraphics.framework */,
+				0000FACE000000000000000A /* WebKit.framework */,
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
+		0000FACE0000000000000013 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				0000FACE0000000000000014 /* Gallery.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		0000FACE0000000000000015 /* Gallery */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 0000FACE000000000000001B /* Build configuration list for PBXNativeTarget "Gallery" */;
+			buildPhases = (
+				0000FACE0000000000000017 /* Sources */,
+				0000FACE0000000000000018 /* Frameworks */,
+				0000FACE0000000000000019 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = Gallery;
+			productName = Gallery;
+			productReference = 0000FACE0000000000000014 /* Gallery.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		0000FACE0000000000000016 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastUpgradeCheck = 2600;
+				TargetAttributes = {
+					0000FACE0000000000000015 = {
+						CreatedOnToolsVersion = 26.0;
+					};
+				};
+			};
+			buildConfigurationList = 0000FACE000000000000001A /* Build configuration list for PBXProject "Gallery" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = 0000FACE0000000000000010;
+			productRefGroup = 0000FACE0000000000000013 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				0000FACE0000000000000015 /* Gallery */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		0000FACE0000000000000019 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		0000FACE0000000000000017 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				0000FACE0000000000000004 /* main.m in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		0000FACE000000000000001C /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ONLY_ACTIVE_ARCH = YES;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				GCC_OPTIMIZATION_LEVEL = 0;
+			};
+			name = Debug;
+		};
+		0000FACE000000000000001D /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+			};
+			name = Release;
+		};
+		0000FACE000000000000001E /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = YW2A442B88;
+				ENABLE_BITCODE = NO;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = "$(SRCROOT)/Info.plist";
+				IPHONEOS_DEPLOYMENT_TARGET = 14.0;
+				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks";
+				PRODUCT_BUNDLE_IDENTIFIER = dev.cplus.facetgalleryios;
+				PRODUCT_NAME = Gallery;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				HEADER_SEARCH_PATHS = "$(SRCROOT)/../target/ios-arm64/debug";
+				LIBRARY_SEARCH_PATHS = "$(SRCROOT)/../target/ios-arm64/debug";
+				OTHER_LDFLAGS = "-lfacet_gallery_ios";
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = NO;
+			};
+			name = Debug;
+		};
+		0000FACE000000000000001F /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = YW2A442B88;
+				ENABLE_BITCODE = NO;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = "$(SRCROOT)/Info.plist";
+				IPHONEOS_DEPLOYMENT_TARGET = 14.0;
+				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks";
+				PRODUCT_BUNDLE_IDENTIFIER = dev.cplus.facetgalleryios;
+				PRODUCT_NAME = Gallery;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				HEADER_SEARCH_PATHS = "$(SRCROOT)/../target/ios-arm64/debug";
+				LIBRARY_SEARCH_PATHS = "$(SRCROOT)/../target/ios-arm64/debug";
+				OTHER_LDFLAGS = "-lfacet_gallery_ios";
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = NO;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		0000FACE000000000000001A /* Build configuration list for PBXProject "Gallery" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				0000FACE000000000000001C /* Debug */,
+				0000FACE000000000000001D /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		0000FACE000000000000001B /* Build configuration list for PBXNativeTarget "Gallery" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				0000FACE000000000000001E /* Debug */,
+				0000FACE000000000000001F /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 0000FACE0000000000000016 /* Project object */;
+}

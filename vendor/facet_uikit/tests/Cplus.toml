@@ -3,7 +3,12 @@ name    = "facet_uikit_tests"
 version = "0.0.1"
 edition = "2026"
 
-# The iOS test runner for facet_uikit.
+# The iOS test runner for facet_uikit — the package's OWN tests, not an example.
+#
+# It lives here rather than under examples/ because it is infrastructure: a
+# reader looking for a sample program should not find a test harness, and a
+# reader looking for this package's tests should not have to know it was filed
+# with the demos.
 #
 # `cpc test` builds a HOST binary and macOS has no UIKit, so this package's
 # checks cannot run the ordinary way — they need the framework, which means an

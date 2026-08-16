@@ -3,7 +3,7 @@
 #
 # `cpc test` builds a HOST binary and macOS has no UIKit, so this package's
 # checks cannot run the ordinary way. This builds the runner in
-# examples/facet_uikit_tests, links it against the simulator SDK, installs it
+# ../tests, links it against the simulator SDK, installs it
 # and launches it — and exits non-zero when anything failed.
 #
 #     vendor/facet_uikit/tools/run_ios_tests.sh [device-udid]
@@ -14,7 +14,7 @@
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
-runner="$root/examples/facet_uikit_tests"
+runner="$(cd "$(dirname "${BASH_SOURCE[0]}")/../tests" && pwd)"
 cpc="$root/target/release/cpc"
 triple="ios-arm64-simulator"
 bundle_id="dev.cplus.facetuikittests"
