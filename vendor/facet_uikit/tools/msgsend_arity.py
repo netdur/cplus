@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
-"""Check every objc_msgSend call against its selector's arity.
+"""The backend's static checks — the things the compiler cannot catch.
+
+Two of them, both earned by a crash:
+
+  1. every objc_msgSend call against its selector's arity;
+  2. `mount::mount` outside the window host.
+
+Check every objc_msgSend call against its selector's arity.
 
 A selector is a STRING. Nothing in the compiler relates `"beginAnimations:
 context:"` to the shape of the `objc_msgSend` extern it is sent through, so a
@@ -57,6 +64,33 @@ def declared_arity(path_globs):
     return shared, local
 
 
+# ---- 2. mount vs realise -----------------------------------------------------
+# `mount::mount` OPENS A WINDOW — it appends the root to the application's window
+# list, and every later tick walks that list. A recycled row must not be one: the
+# cell frees its node when the row scrolls away, and the window entry becomes a
+# dangling pointer the next tick reads. Measured: 25 windows for a 24-row tree,
+# then a segfault in `flex_layout.Node.attachment` from the run-loop observer.
+#
+# facet ships `realise` / `unrealise` for exactly this — the same walk, minus the
+# window — and says so in a comment above them. So `mount::mount` belongs in the
+# window host and nowhere else.
+WINDOW_HOST = "window.cplus"
+
+
+def check_mount(files):
+    bad = []
+    for path in files:
+        if os.path.basename(path) == WINDOW_HOST:
+            continue
+        for i, line in enumerate(open(path), 1):
+            if "mount::mount(" in line:
+                bad.append((os.path.basename(path), i, line.strip()))
+    for f, i, line in bad:
+        print(f"{f}:{i}  mount::mount outside {WINDOW_HOST} — use mount::realise")
+        print(f"    {line}")
+    return len(bad)
+
+
 def main():
     root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(
         os.path.abspath(__file__)))))
@@ -89,6 +123,12 @@ def main():
         print(f"\n{len(bad)} mismatch(es) — each one reads a register the callee never set")
         return 1
     print(f"{len(files)} files, no msgSend arity mismatches")
+    mounts = check_mount(files)
+    if mounts:
+        print(f"{mounts} stray mount::mount — each one leaks a window entry that "
+              f"dangles when the node is freed")
+        return 1
+    print("no mount::mount outside the window host")
     return 0
 
 

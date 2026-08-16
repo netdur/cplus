@@ -65,6 +65,10 @@ fn clear_cell(cell: *u8) {
     if old == (0 as *core::Node) { return; }
     let v: *u8 = core::view_of(old);
     if v != (0 as *u8) { ui::View::from_raw(v).remove_from_superview(); }
+    // THE MATCHING TEARDOWN. `realise` fired on_attach over this subtree; this
+    // is what fires on_detach and clears the attach state. Dropping the box
+    // without it would free nodes that facet still believes are attached.
+    mount::unrealise(old);
     // `box::from_raw` takes ownership back, and the Box's drop runs the Node's,
     // which releases every view the mount walk created under it.
     let _b: box::Box[core::Node] = box::from_raw::[core::Node](old as *u8);
@@ -92,7 +96,7 @@ fn fill_cell(cell: *u8, n: *core::Node, i: usize) {
             // `bind` shares `row`'s context: facet gives the pair one, because they
             // are two halves of the same callback.
             if bind != (0 as fn(usize, *flex::Node, *u8)) { bind(i, root, { (*p).row_ctx }); }
-            let mounted: bool = mount::mount(root);
+            let mounted: bool = mount::realise(root) != (0 as *u8);
             if mounted {
                 let rv: *u8 = core::view_of(root);
                 if rv != (0 as *u8) {
@@ -976,7 +980,7 @@ fn imp_tree_cell(self_obj: *u8, cmd: *u8, tv: *u8, index_path: *u8) -> *u8 {
                     if bind != (0 as fn(*tree::TreeNode, *u8, *flex::Node)) {
                         bind(node, { (*p).row_ctx }, root);
                     }
-                    let mounted: bool = mount::mount(root);
+                    let mounted: bool = mount::realise(root) != (0 as *u8);
                     if mounted {
                         let rv: *u8 = core::view_of(root);
                         if rv != (0 as *u8) {
@@ -1213,7 +1217,7 @@ fn fill_item_cell(cell: *u8, n: *core::Node, i: usize) {
     match box::new::[core::Node](build(i, ctx)) {
         option::Option[box::Box[core::Node]]::Some(b) => {
             let root: *core::Node = b.into_raw() as *core::Node;
-            let mounted: bool = mount::mount(root);
+            let mounted: bool = mount::realise(root) != (0 as *u8);
             if mounted {
                 let rv: *u8 = core::view_of(root);
                 if rv != (0 as *u8) {
