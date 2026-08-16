@@ -1,0 +1,796 @@
+// agent_uikit — the UIKit backend for the agent surface.
+//
+// The sibling of `agent_appkit`, and deliberately its shape: walk a live view
+// hierarchy into agent_core's identity tree, keep a parallel Vec of the views
+// so a NodeId can be driven back to one, and fill agent_mcp's `Backend`.
+// Nothing about the PROTOCOL is here — agent_mcp is pure and agent_core owns
+// the registry, the grants and the outcomes.
+//
+// WHAT DIFFERS FROM THE APPKIT ONE, and it is less than the class names
+// suggest. `agent_appkit` imports no AppKit either: both walk through raw
+// messaging, and `accessibilityIdentifier`, `accessibilityLabel`, `subviews`,
+// `isHidden`, `isEnabled` and `frame` are all UIView's too. What actually
+// changes:
+//
+//   the root          a window's content is its root view controller's view,
+//                     not a `contentView`, and there are no titlebar
+//                     accessories to sweep up afterwards
+//   the classes       UIButton / UITextField / UILabel / UITextView /
+//                     UITableView, and a UITextView is its OWN scroller — the
+//                     `text_target` indirection an NSTextView needs is gone
+//   the click         `sendActionsForControlEvents:` rather than
+//                     `performClick:`, because UIKit's controls have no such
+//                     selector
+//   the hint          `accessibilityHint`, not `accessibilityHelp`
+//   the menu          there is none. `invoke_menu` reports unsupported rather
+//                     than inventing one
+//
+// NO GESTURE VERBS. EVER. An agent driving this surface has no hands — and on
+// a touch platform that is not a limitation to work around, it is the whole
+// truth of the thing. The answer to "the agent needs to swipe this row" is a
+// click path the app owes its users anyway. agent_core's `Backend` comment
+// says the same at greater length; it applies here with more force, not less.
+
+import "stdlib/option" as option;
+import "stdlib/text" as text;
+import "stdlib/vec" as vec;
+import "objc/runtime" as rt;
+import "objc/bridge" as bridge;
+import "objc/synthesis" as synth;
+import "agent_core/identity" as identity;
+import "agent_core/surface" as surface;
+import "agent_core/auth" as auth;
+import "agent_core/events" as events;
+import "agent_core/backend" as mcpb;
+
+fn null() -> *u8 { return 0 as *u8; }
+fn is_null(p: *u8) -> bool { return p == (0 as *u8); }
+
+// ---- the object band ---------------------------------------------------------
+
+fn is_kind(obj: *u8, class_name: *u8) -> bool {
+    if is_null(obj) { return false; }
+    let cls: *u8 = rt::get_class(class_name);
+    if is_null(cls) { return false; }
+    return { rt::msg_i8_id(obj, rt::sel(#str_ptr("isKindOfClass:\0")), cls) } != (0 as i8);
+}
+
+fn responds_to(obj: *u8, selector_name: *u8) -> bool {
+    if is_null(obj) { return false; }
+    let s: *u8 = rt::sel(selector_name);
+    return { rt::msg_i8_id(obj, rt::sel(#str_ptr("respondsToSelector:\0")), s) } != (0 as i8);
+}
+
+fn class_name_text(view: *u8) -> text::Text {
+    if is_null(view) { return text::new(); }
+    let cls: *u8 = { rt::msg_id(view, rt::sel(#str_ptr("class\0"))) };
+    if is_null(cls) { return text::new(); }
+    let ns: *u8 = { rt::msg_id(cls, rt::sel(#str_ptr("description\0"))) };
+    if is_null(ns) { return text::new(); }
+    return bridge::to_text(ns);
+}
+
+// ---- the agent id, the policy and the affordance -------------------------------
+// The same associated keys facet_uikit writes at mount, so a node's declared
+// tier and role are read here rather than guessed.
+
+// THE POLICY AND THE AFFORDANCE ARE AGENT_CORE'S KEYS, because the declaration
+// is agent_core's vocabulary and a second set would be a second answer to one
+// question. The pinned ID is this package's own address, the way agent_appkit's
+// is its own — a pin is per-backend state, not a shared declaration.
+static AGENT_ID_KEY: u8 = 0;
+fn agent_id_key() -> *u8 { return { #addr_of(AGENT_ID_KEY) }; }
+
+// Pin a stable agent-id on a view. A pinned id keeps the resolved id stable
+// across re-layouts AND marks the node exposed — part of the curated tree an
+// agent is offered rather than the full diagnostic dump.
+fn set_agent_id(view: *u8, id: str) {
+    if is_null(view) { return; }
+    { rt::set_associated_object(view, agent_id_key(), bridge::nsstring(id), 3 as usize) };
+    return;
+}
+
+fn get_agent_id(view: *u8) -> option::Option[text::Text] {
+    if is_null(view) { return option::Option[text::Text]::None; }
+    let v: *u8 = { rt::get_associated_object(view, agent_id_key()) };
+    if is_null(v) {
+        // The identifier IS the id when nothing was pinned: facet writes the
+        // key into `accessibilityIdentifier`, one token doing three jobs.
+        let ns: *u8 = { rt::msg_id(view, rt::sel(#str_ptr("accessibilityIdentifier\0"))) };
+        if is_null(ns) { return option::Option[text::Text]::None; }
+        let t: text::Text = bridge::to_text(ns);
+        if { t.is_empty() } { return option::Option[text::Text]::None; }
+        return option::some(t);
+    }
+    return option::some(bridge::to_text(v));
+}
+
+// Pin the declared tier on a view. facet's `pin_policy` calls this at mount,
+// so a node's declaration is read here rather than guessed — which is what
+// makes a secure field gated even when nothing about its class says so.
+fn set_agent_policy(view: *u8, policy: u32) {
+    if is_null(view) { return; }
+    { rt::set_associated_object(view, identity::policy_key(),
+                                identity::pack_policy(policy), 0 as usize) };
+    return;
+}
+
+fn get_agent_policy(view: *u8) -> u32 {
+    if is_null(view) { return identity::tier_open(); }
+    let v: *u8 = { rt::get_associated_object(view, identity::policy_key()) };
+    return identity::unpack_policy(v);
+}
+
+// A SECURE FIELD IS SENSITIVE WHATEVER IT DECLARED. The class is the
+// declaration of last resort: an app that forgot to mark a password field must
+// not leak it because it forgot.
+fn is_secure_by_class(view: *u8) -> bool {
+    if !responds_to(view, #str_ptr("isSecureTextEntry\0")) { return false; }
+    return { rt::msg_i8(view, rt::sel(#str_ptr("isSecureTextEntry\0"))) } != (0 as i8);
+}
+
+fn effective_policy(view: *u8) -> u32 {
+    if is_secure_by_class(view) { return identity::tier_protected(); }
+    return get_agent_policy(view);
+}
+
+fn get_declared_role(view: *u8) -> option::Option[identity::Role] {
+    if is_null(view) { return option::Option[identity::Role]::None; }
+    let p: *u8 = { rt::get_associated_object(view, identity::affordance_key()) };
+    if !identity::is_packed_affordance(p) { return option::Option[identity::Role]::None; }
+    return option::some(identity::role_from_index(identity::unpack_role(p)));
+}
+
+// Declared drive method if annotated; None when missing. A button is
+// `drive_click` and an input `drive_text`, and the verbs refuse rather than
+// no-op when they disagree — a write that reports success and does nothing is
+// worse than one that fails.
+fn get_declared_drive(view: *u8) -> option::Option[u32] {
+    if is_null(view) { return option::Option[u32]::None; }
+    let p: *u8 = { rt::get_associated_object(view, identity::affordance_key()) };
+    if !identity::is_packed_affordance(p) { return option::Option[u32]::None; }
+    return option::some(identity::unpack_drive(p));
+}
+
+// ---- roles ---------------------------------------------------------------------
+
+fn classify(view: *u8) -> identity::Role {
+    if is_kind(view, #str_ptr("UIButton\0")) { return identity::Role::Button; }
+    if is_kind(view, #str_ptr("UITextField\0")) { return identity::Role::Input; }
+    if is_kind(view, #str_ptr("UITextView\0")) {
+        // A read-only text view is prose, not a field — the same distinction
+        // an NSTextField's `isEditable` makes on the other backend.
+        if responds_to(view, #str_ptr("isEditable\0")) {
+            if { rt::msg_i8(view, rt::sel(#str_ptr("isEditable\0"))) } == (0 as i8) {
+                return identity::Role::Text;
+            }
+        }
+        return identity::Role::Input;
+    }
+    if is_kind(view, #str_ptr("UILabel\0")) { return identity::Role::Text; }
+    if is_kind(view, #str_ptr("UITableView\0")) { return identity::Role::List; }
+    if is_kind(view, #str_ptr("UICollectionView\0")) { return identity::Role::List; }
+    if is_kind(view, #str_ptr("UISwitch\0")) { return identity::Role::Button; }
+    if is_kind(view, #str_ptr("UISlider\0")) { return identity::Role::Button; }
+    if is_kind(view, #str_ptr("UISegmentedControl\0")) { return identity::Role::Button; }
+    return identity::Role::Group;
+}
+
+fn resolve_role(view: *u8) -> identity::Role {
+    return match get_declared_role(view) {
+        option::Option[identity::Role]::Some(r) => r,
+        option::Option[identity::Role]::None => classify(view),
+    };
+}
+
+// The live text a node carries. Every selector is respondsToSelector-guarded: a
+// DECLARED role (Button on a plain tappable UIView, say) must not raise when
+// the native class does not answer that role's usual getter.
+//
+// `text` is the getter for a UILabel, a UITextField AND a UITextView, which is
+// the one place UIKit is tidier than AppKit — there is no `stringValue` /
+// `string` split and no scroll-view indirection to see through.
+fn node_text(view: *u8, role: identity::Role) -> text::Text {
+    if identity::role_eq(role, identity::Role::Button) {
+        // A UIButton's title is per-state; state 0 is Normal, which is the one
+        // a person reads.
+        if responds_to(view, #str_ptr("titleForState:\0")) {
+            let t: *u8 = { msg_id_u64(view, rt::sel(#str_ptr("titleForState:\0")), 0 as u64) };
+            if !is_null(t) { return bridge::to_text(t); }
+        }
+        if responds_to(view, #str_ptr("title\0")) {
+            let t: *u8 = { rt::msg_id(view, rt::sel(#str_ptr("title\0"))) };
+            if !is_null(t) { return bridge::to_text(t); }
+        }
+        return text::new();
+    }
+    if identity::role_eq(role, identity::Role::Text)
+        || identity::role_eq(role, identity::Role::Input) {
+        if responds_to(view, #str_ptr("text\0")) {
+            let s: *u8 = { rt::msg_id(view, rt::sel(#str_ptr("text\0"))) };
+            if !is_null(s) { return bridge::to_text(s); }
+        }
+        return text::new();
+    }
+    return text::new();
+}
+
+fn view_a11y_string(view: *u8, prop: str) -> text::Text {
+    if is_null(view) { return text::new(); }
+    let name: *u8 = #str_ptr(prop);
+    if !responds_to(view, name) { return text::new(); }
+    let ns: *u8 = { rt::msg_id(view, rt::sel(name)) };
+    if is_null(ns) { return text::new(); }
+    return bridge::to_text(ns);
+}
+
+fn live_enabled(view: *u8) -> bool {
+    if !responds_to(view, #str_ptr("isEnabled\0")) { return true; }
+    return { rt::msg_i8(view, rt::sel(#str_ptr("isEnabled\0"))) } != (0 as i8);
+}
+
+fn live_hidden(view: *u8) -> bool {
+    if !responds_to(view, #str_ptr("isHidden\0")) { return false; }
+    return { rt::msg_i8(view, rt::sel(#str_ptr("isHidden\0"))) } != (0 as i8);
+}
+
+// A view that left the live UI: still alive (retained by the surface) but no
+// longer in any window, so acting on it would be invisible to the user.
+fn is_detached(view: *u8) -> bool {
+    if is_null(view) { return true; }
+    if !responds_to(view, #str_ptr("window\0")) { return false; }
+    return is_null({ rt::msg_id(view, rt::sel(#str_ptr("window\0"))) });
+}
+
+fn subview_count(view: *u8) -> usize {
+    if is_null(view) { return 0 as usize; }
+    let subs: *u8 = { rt::msg_id(view, rt::sel(#str_ptr("subviews\0"))) };
+    if is_null(subs) { return 0 as usize; }
+    return { rt::msg_u64(subs, rt::sel(#str_ptr("count\0"))) } as usize;
+}
+
+fn subview_at(view: *u8, i: usize) -> *u8 {
+    let subs: *u8 = { rt::msg_id(view, rt::sel(#str_ptr("subviews\0"))) };
+    if is_null(subs) { return null(); }
+    return { rt::msg_id_u64(subs, rt::sel(#str_ptr("objectAtIndex:\0")), i as u64) };
+}
+
+// ---- the surface ----------------------------------------------------------------
+
+struct ViewRef { opaque p: *u8 }
+
+struct Surface {
+    reg: identity::Registry,
+    versions: surface::TextVersions,
+    views: vec::Vec[ViewRef],
+}
+
+fn walk(ref reg: identity::Registry, ref views: vec::Vec[ViewRef], view: *u8,
+        parent_reg: usize) {
+    let role: identity::Role = resolve_role(view);
+    let reg_node: usize = match get_agent_id(view) {
+        option::Option[text::Text]::Some(t) =>
+            reg.add_child(parent_reg, option::Option[str]::Some({ t.view() }), role),
+        option::Option[text::Text]::None =>
+            reg.add_child(parent_reg, option::Option[str]::None, role),
+    };
+    reg.set_enabled(reg_node, live_enabled(view));
+    // SENSITIVITY FIRST. Everything below reads content off the widget and the
+    // registry's guards answer against the flag that is already set — so the
+    // declaration has to land before the first read, not after it.
+    reg.set_policy(reg_node, effective_policy(view));
+    // The agent-facing NAME: the accessibility label when the developer set
+    // one, else the widget's own text. The two go through DIFFERENT doors — a
+    // label is what the developer chose to call this node and is safe at any
+    // tier ("Card number" is not a card number); the fallback is the widget's
+    // own content, and on a secure field that content is the secret.
+    let label: text::Text = view_a11y_string(view, "accessibilityLabel\0");
+    if { label.is_empty() } == false {
+        reg.set_name(reg_node, { label.view() });
+    } else if !reg.is_sensitive(reg_node) {
+        let own: text::Text = node_text(view, role);
+        if { own.is_empty() } == false { reg.set_content_name(reg_node, { own.view() }); }
+    }
+    // The intent DESCRIPTION rides the hint channel — `accessibilityHint` here,
+    // `accessibilityHelp` on macOS. Dev-authored, no widget fallback.
+    let ds: text::Text = view_a11y_string(view, "accessibilityHint\0");
+    if { ds.is_empty() } == false { reg.set_description(reg_node, { ds.view() }); }
+    let _r: *u8 = rt::retain(view);
+    let _a: status_of_append = append_ref(views, view);
+
+    let n: usize = subview_count(view);
+    var i: usize = 0 as usize;
+    while i < n {
+        walk(reg, views, subview_at(view, i), reg_node);
+        i = i +% (1 as usize);
+    }
+    return;
+}
+
+// A tiny alias so the append's Status has a name at the call site without
+// importing status just for it.
+struct status_of_append { _u: i32 }
+fn append_ref(ref views: vec::Vec[ViewRef], view: *u8) -> status_of_append {
+    let _s: status_of_append = status_of_append { _u: 0 };
+    views.append(ViewRef { p: view });
+    return _s;
+}
+
+// Walk a window into a Surface. The window is the root node (role Window); its
+// ROOT VIEW CONTROLLER's view is the subtree — a UIWindow has no `contentView`,
+// which is the one structural difference from the AppKit walk.
+fn open(window: *u8) -> Surface {
+    var reg: identity::Registry = identity::new();
+    var views: vec::Vec[ViewRef] = vec::new::[ViewRef]();
+    // NodeId 0 is the synthetic app root — no backing view.
+    views.append(ViewRef { p: null() });
+
+    if is_null(window) {
+        return Surface { reg: reg, versions: surface::new_text_versions(), views: views };
+    }
+
+    let win_reg: usize = match get_agent_id(window) {
+        option::Option[text::Text]::Some(t) =>
+            reg.add_child(reg.root(), option::Option[str]::Some({ t.view() }),
+                          identity::Role::Window),
+        option::Option[text::Text]::None =>
+            reg.add_child(reg.root(), option::Option[str]::None, identity::Role::Window),
+    };
+    let _rw: *u8 = rt::retain(window);
+    views.append(ViewRef { p: window });
+
+    // The window's own subviews rather than the controller's view alone: a
+    // presented sheet and a pushed screen are siblings under the window, and an
+    // agent that could only see the root controller would go blind the moment
+    // an alert came up. That is the case `nav::push` and `present_window`
+    // create, so it is not hypothetical.
+    let n: usize = subview_count(window);
+    var i: usize = 0 as usize;
+    while i < n {
+        walk(reg, views, subview_at(window, i), win_reg);
+        i = i +% (1 as usize);
+    }
+
+    return Surface { reg: reg, versions: surface::new_text_versions(), views: views };
+}
+
+impl Surface {
+    // Balance the per-view retains `open` / `walk` took. Index 0 is the
+    // synthetic app root, mapped to null — skipped.
+    fn drop(ref this) {
+        var i: usize = 0 as usize;
+        let n: usize = this.views.count();
+        while i < n {
+            match this.views.at_ptr(i) {
+                option::Option[*ViewRef]::Some(r) => {
+                    let p: *u8 = { (*r).p };
+                    if !is_null(p) { rt::release(p); }
+                }
+                option::Option[*ViewRef]::None => { }
+            }
+            i = i +% (1 as usize);
+        }
+        return;
+    }
+
+    fn view_of(this, node: usize) -> *u8 {
+        return match this.views.at_ptr(node) {
+            option::Option[*ViewRef]::Some(r) => { (*r).p },
+            option::Option[*ViewRef]::None => null(),
+        };
+    }
+
+    // The live snapshot. Reads each node's frame / hidden / text from its view,
+    // so it reflects state NOW. The synthetic app root is omitted; snapshot
+    // index = NodeId - 1.
+    fn describe(this, grant: auth::Grant) -> vec::Vec[mcpb::UiNode] {
+        var out: vec::Vec[mcpb::UiNode] = vec::new::[mcpb::UiNode]();
+        let total: usize = this.reg.count();
+        var node: usize = 1 as usize;
+        while node < total {
+            let view: *u8 = this.view_of(node);
+            let role: identity::Role = this.reg.role_of(node);
+            let parent: option::Option[usize] = match this.reg.parent_of(node) {
+                option::Option[usize]::Some(p) => {
+                    if p == (0 as usize) { option::Option[usize]::None }
+                    else { option::Option[usize]::Some(p -% (1 as usize)) }
+                }
+                option::Option[usize]::None => option::Option[usize]::None,
+            };
+            // PER-GRANT, not per-node: the same window answers two agents
+            // differently, and the value is read off the widget only for the
+            // one entitled to it.
+            let may_read: bool = this.reg.can_read_value(grant, node);
+            let f: rt::Rect = { rt::msg_rect(view, rt::sel(#str_ptr("frame\0"))) };
+            out.append(mcpb::UiNode {
+                id: text::from_str(this.reg.resolved_id(node)),
+                role: role,
+                class_name: class_name_text(view),
+                frame: mcpb::Rect { x: f.x, y: f.y, w: f.w, h: f.h },
+                is_hidden: live_hidden(view),
+                text: if may_read { node_text(view, role) } else { text::new() },
+                tier: this.reg.tier_of(node),
+                readable: may_read,
+                name: text::from_str(this.reg.name_of(node)),
+                description: text::from_str(this.reg.description_of(node)),
+                // What THIS grant may do, not what the widget could take: a
+                // model reads this as its tool list, and reporting the ceiling
+                // advertises writes every attempt then refuses.
+                actionable: this.reg.can_act(grant, node),
+                clickable: view_clickable(view),
+                parent: parent,
+            });
+            node = node +% (1 as usize);
+        }
+        return out;
+    }
+
+    fn click(this, grant: auth::Grant, id: str) -> surface::Outcome {
+        match this.reg.lookup(id) {
+            option::Option[usize]::Some(node) => {
+                let oc: surface::Outcome = surface::authorize_action(this.reg, grant, node);
+                if !surface::outcome_eq(oc, surface::Outcome::Allowed) { return oc; }
+                let v: *u8 = this.view_of(node);
+                if is_detached(v) { return surface::Outcome::Stale; }
+                return click_view(v);
+            }
+            option::Option[usize]::None => { }
+        }
+        return surface::Outcome::NotFound;
+    }
+
+    fn set_text(ref this, grant: auth::Grant, id: str, value: str,
+                base_version: u64) -> surface::Outcome {
+        match this.reg.lookup(id) {
+            option::Option[usize]::Some(node) => {
+                let oc: surface::Outcome = surface::authorize_text_write(
+                    this.reg, grant, this.versions, node, base_version);
+                if !surface::outcome_eq(oc, surface::Outcome::Allowed) { return oc; }
+                let v: *u8 = this.view_of(node);
+                if is_detached(v) { return surface::Outcome::Stale; }
+                // A control that cannot take text must REFUSE rather than
+                // silently do nothing: a write that reports success and does
+                // nothing is worse than one that fails.
+                if !responds_to(v, #str_ptr("setText:\0")) {
+                    return surface::Outcome::NotActionable;
+                }
+                { rt::msg_void_id(v, rt::sel(#str_ptr("setText:\0")), bridge::nsstring(value)) };
+                // ...and tell the app. `click` fires the handler it authorizes;
+                // without this, `set_text` is the one verb that drives a control
+                // behind the application's back. UIControlEventEditingChanged
+                // is 1<<16 and UIControlEventValueChanged 1<<12.
+                if responds_to(v, #str_ptr("sendActionsForControlEvents:\0")) {
+                    { msg_void_u64(v, rt::sel(#str_ptr("sendActionsForControlEvents:\0")),
+                                   (1 as u64) * (65536 as u64)) };
+                    { msg_void_u64(v, rt::sel(#str_ptr("sendActionsForControlEvents:\0")),
+                                   (1 as u64) * (4096 as u64)) };
+                }
+                this.versions.bump(node);
+                return surface::Outcome::Allowed;
+            }
+            option::Option[usize]::None => { }
+        }
+        return surface::Outcome::NotFound;
+    }
+
+    // READ: is this node what a touch at its own centre would reach, or is
+    // something on top of it? An INSPECTION — it synthesizes no event and
+    // cannot act. `click` cannot answer it, because `click` drives the control
+    // directly and succeeds identically whether it is in front of the user or
+    // buried under an overlay.
+    fn hit_test(this, grant: auth::Grant, id: str) -> surface::HitTest {
+        match this.reg.lookup(id) {
+            option::Option[usize]::Some(node) => {
+                let oc: surface::Outcome = surface::authorize_read(this.reg, grant, node);
+                if !surface::outcome_eq(oc, surface::Outcome::Allowed) {
+                    return surface::hit_test_refused(oc, true);
+                }
+                let v: *u8 = this.view_of(node);
+                if is_detached(v) {
+                    return surface::hit_test_refused(surface::Outcome::Stale, true);
+                }
+                let hit: *u8 = view_at_center_of(v);
+                if is_null(hit) {
+                    // Nothing there at all: zero-sized, or clipped away by an
+                    // ancestor. Not reachable, and not covered BY anything.
+                    return surface::hit_test_refused(surface::Outcome::Allowed, true);
+                }
+                if is_at_or_inside(hit, v) {
+                    return surface::HitTest {
+                        outcome: surface::Outcome::Allowed, supported: true,
+                        reachable: true, covered: false, covered_by: text::new(),
+                    };
+                }
+                // Covered. Name the obstruction only when it is itself exposed
+                // — the fact is reported and the identity is not.
+                return surface::HitTest {
+                    outcome: surface::Outcome::Allowed, supported: true,
+                    reachable: false, covered: true,
+                    covered_by: this.exposed_id_at_or_above(hit),
+                };
+            }
+            option::Option[usize]::None => { }
+        }
+        return surface::hit_test_refused(surface::Outcome::NotFound, true);
+    }
+
+    fn exposed_id_at_or_above(this, v: *u8) -> text::Text {
+        var cur: *u8 = v;
+        var depth: i32 = 0 as i32;
+        while !is_null(cur) && depth < (64 as i32) {
+            let total: usize = this.reg.count();
+            var node: usize = 1 as usize;
+            while node < total {
+                if this.view_of(node) == cur && this.reg.is_exposed(node) {
+                    return text::from_str(this.reg.resolved_id(node));
+                }
+                node = node +% (1 as usize);
+            }
+            cur = { rt::msg_id(cur, rt::sel(#str_ptr("superview\0"))) };
+            depth = depth + (1 as i32);
+        }
+        return text::new();
+    }
+
+    fn emit(this, ref sub: events::Subscriber, source_id: str, verb: events::Verb) -> bool {
+        match this.reg.lookup(source_id) {
+            option::Option[usize]::Some(node) => {
+                sub.offer({ #addr_of(this.reg) }, events::event(node, verb));
+                return true;
+            }
+            option::Option[usize]::None => { }
+        }
+        return false;
+    }
+}
+
+// ---- driving a control -----------------------------------------------------------
+// UIKit has no `performClick:`. A UIControl fires through
+// `sendActionsForControlEvents:`, which is the same thing said the platform's
+// way — it runs every target/action the control has, which is exactly what
+// facet_uikit's `input.cplus` armed.
+//
+// A view that is NOT a control is not necessarily unclickable: facet gives a
+// plain view a tap recogniser when it carries a gesture band, and firing that
+// recogniser's action is how an agent reaches a whole-row affordance.
+
+fn view_clickable(view: *u8) -> bool {
+    if is_null(view) { return false; }
+    if is_kind(view, #str_ptr("UIControl\0")) { return true; }
+    return has_tap_recogniser(view);
+}
+
+fn has_tap_recogniser(view: *u8) -> bool {
+    let gs: *u8 = { rt::msg_id(view, rt::sel(#str_ptr("gestureRecognizers\0"))) };
+    if is_null(gs) { return false; }
+    let n: u64 = { rt::msg_u64(gs, rt::sel(#str_ptr("count\0"))) };
+    var i: u64 = 0 as u64;
+    while i < n {
+        let g: *u8 = { rt::msg_id_u64(gs, rt::sel(#str_ptr("objectAtIndex:\0")), i) };
+        if is_kind(g, #str_ptr("UITapGestureRecognizer\0")) { return true; }
+        i = i +% (1 as u64);
+    }
+    return false;
+}
+
+fn click_view(v: *u8) -> surface::Outcome {
+    if is_kind(v, #str_ptr("UIControl\0")) {
+        // TouchUpInside — the event facet_uikit arms its primary action on.
+        { msg_void_u64(v, rt::sel(#str_ptr("sendActionsForControlEvents:\0")),
+                       (1 as u64) * (64 as u64)) };
+        return surface::Outcome::Allowed;
+    }
+    // A tap recogniser's action, fired directly. Not a synthesized touch — the
+    // agent has no hands and this is not pretending otherwise; it is the same
+    // call the recogniser would make.
+    let gs: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("gestureRecognizers\0"))) };
+    if !is_null(gs) {
+        let n: u64 = { rt::msg_u64(gs, rt::sel(#str_ptr("count\0"))) };
+        var i: u64 = 0 as u64;
+        while i < n {
+            let g: *u8 = { rt::msg_id_u64(gs, rt::sel(#str_ptr("objectAtIndex:\0")), i) };
+            if is_kind(g, #str_ptr("UITapGestureRecognizer\0")) {
+                if fire_recogniser(g) { return surface::Outcome::Allowed; }
+            }
+            i = i +% (1 as u64);
+        }
+    }
+    return surface::Outcome::NotActionable;
+}
+
+// A recogniser's target and action are not readable through any public API, so
+// the recogniser is asked to send them the way UIKit would — through the shared
+// target facet_uikit registered. `facetTap:` is that selector, and a recogniser
+// this package did not install simply does not answer.
+fn fire_recogniser(g: *u8) -> bool {
+    let sel: *u8 = rt::sel(#str_ptr("facetTap:\0"));
+    let targets: *u8 = { rt::msg_id(g, rt::sel(#str_ptr("view\0"))) };
+    if is_null(targets) { return false; }
+    // The tap target is facet_uikit's process-wide singleton; reaching it by
+    // class is what keeps this package from importing that one.
+    let cls: *u8 = rt::get_class(#str_ptr("FacetUIKitTarget\0"));
+    if is_null(cls) { return false; }
+    let shared: *u8 = { synth::get_associated(g, tap_target_key()) };
+    if is_null(shared) { return false; }
+    if !responds_to(shared, #str_ptr("facetTap:\0")) { return false; }
+    { rt::msg_void_id(shared, sel, g) };
+    return true;
+}
+
+// The key facet_uikit's `arm_tap` pins its target under, so an agent can reach
+// the same object without importing the backend.
+fn tap_target_key() -> *u8 { return 41003 as *u8; }
+
+// The deepest view a touch at this view's own centre would land on, tested from
+// the window so ancestors and siblings above it are honoured.
+fn view_at_center_of(v: *u8) -> *u8 {
+    if is_null(v) { return null(); }
+    let win: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("window\0"))) };
+    if is_null(win) { return null(); }
+    let b: rt::Rect = { rt::msg_rect(v, rt::sel(#str_ptr("bounds\0"))) };
+    if b.w <= 0.0f64 || b.h <= 0.0f64 { return null(); }
+    let centre: rt::Point = rt::Point { x: b.w / 2.0f64, y: b.h / 2.0f64 };
+    let in_win: rt::Point = { msg_point_point_id(v, rt::sel(#str_ptr("convertPoint:toView:\0")),
+                                                 centre, win) };
+    return { msg_id_point_id(win, rt::sel(#str_ptr("hitTest:withEvent:\0")),
+                             in_win, null()) };
+}
+
+fn is_at_or_inside(hit: *u8, ancestor: *u8) -> bool {
+    var cur: *u8 = hit;
+    var depth: i32 = 0 as i32;
+    while !is_null(cur) && depth < (64 as i32) {
+        if cur == ancestor { return true; }
+        cur = { rt::msg_id(cur, rt::sel(#str_ptr("superview\0"))) };
+        depth = depth + (1 as i32);
+    }
+    return false;
+}
+
+// ---- the MCP vtable ---------------------------------------------------------------
+// `p` is a `*Surface` the runtime keeps alive for the app's life.
+
+fn mcp_describe(p: *u8, grant: auth::Grant) -> vec::Vec[mcpb::UiNode] {
+    if is_null(p) { return vec::new::[mcpb::UiNode](); }
+    return { (*(p as *Surface)).describe(grant) };
+}
+
+// The CURATED view: agent_core's own reduction over the registry, so the two
+// backends cannot disagree about what "exposed" means. Frames and class names
+// are omitted on purpose — the default view keeps an agent's context small —
+// but omitting a field and asserting a false one are different things, so
+// `is_hidden` is READ off the live view rather than reported as false.
+fn mcp_describe_exposed(p: *u8, grant: auth::Grant) -> vec::Vec[mcpb::UiNode] {
+    if is_null(p) { return vec::new::[mcpb::UiNode](); }
+    let s: *Surface = p as *Surface;
+    let views: vec::Vec[identity::NodeView] = { (*s).reg.describe(grant) };
+    var out: vec::Vec[mcpb::UiNode] = vec::new::[mcpb::UiNode]();
+    var i: usize = 0 as usize;
+    while i < views.count() {
+        match views.at_ptr(i) {
+            option::Option[*identity::NodeView]::Some(n) => {
+                var live: *u8 = null();
+                match { (*s).reg.lookup({ (*n).id.view() }) } {
+                    option::Option[usize]::Some(idx) => { live = { (*s).view_of(idx) }; }
+                    option::Option[usize]::None => { }
+                }
+                // In the lean view the NAME is the text — with one exception,
+                // and it is the whole reason the grant is threaded down here. A
+                // gated node's value is never stored in the registry, so for the
+                // one caller that IS entitled to it the value has to be read off
+                // the live widget now. Without this an approved agent asks for
+                // the card number and is told the field is empty — the exact lie
+                // this tier exists to stop, arriving from the other side.
+                var shown: text::Text = text::from_str({ (*n).name.view() });
+                if { (*n).tier } != identity::tier_open() {
+                    if { (*n).readable } {
+                        if !is_null(live) { shown = node_text(live, { (*n).role }); }
+                    }
+                }
+                out.append(mcpb::UiNode {
+                    id: text::from_str({ (*n).id.view() }),
+                    role: { (*n).role },
+                    class_name: text::new(),
+                    frame: mcpb::Rect { x: 0.0f64, y: 0.0f64, w: 0.0f64, h: 0.0f64 },
+                    is_hidden: if is_null(live) { false } else { live_hidden(live) },
+                    text: shown,
+                    name: text::from_str({ (*n).name.view() }),
+                    description: text::from_str({ (*n).description.view() }),
+                    tier: { (*n).tier },
+                    readable: { (*n).readable },
+                    actionable: { (*n).actionable },
+                    clickable: view_clickable(live),
+                    parent: { (*n).parent },
+                });
+            }
+            option::Option[*identity::NodeView]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return out;
+}
+
+fn mcp_click(p: *u8, grant: auth::Grant, id: str) -> surface::Outcome {
+    if is_null(p) { return surface::Outcome::NotFound; }
+    return { (*(p as *Surface)).click(grant, id) };
+}
+
+fn mcp_set_text(p: *u8, grant: auth::Grant, id: str, value: str,
+                base: u64) -> surface::Outcome {
+    if is_null(p) { return surface::Outcome::NotFound; }
+    return { (*(p as *Surface)).set_text(grant, id, value, base) };
+}
+
+// `navigate` is FOCUS on this platform: bringing a control to the user's
+// attention is `becomeFirstResponder`, which is also what makes the keyboard
+// appear for a field. Scrolling a row into view is the other half and belongs
+// to the recycler, which owns the scroll.
+fn mcp_navigate(p: *u8, grant: auth::Grant, id: str) -> surface::Outcome {
+    if is_null(p) { return surface::Outcome::NotFound; }
+    let s: *Surface = p as *Surface;
+    match { (*s).reg.lookup(id) } {
+        option::Option[usize]::Some(node) => {
+            let oc: surface::Outcome = surface::authorize_action({ (*s).reg }, grant, node);
+            if !surface::outcome_eq(oc, surface::Outcome::Allowed) { return oc; }
+            let v: *u8 = { (*s).view_of(node) };
+            if is_detached(v) { return surface::Outcome::Stale; }
+            if responds_to(v, #str_ptr("becomeFirstResponder\0")) {
+                let _b: i8 = { rt::msg_i8(v, rt::sel(#str_ptr("becomeFirstResponder\0"))) };
+            }
+            return surface::Outcome::Allowed;
+        }
+        option::Option[usize]::None => { }
+    }
+    return surface::Outcome::NotFound;
+}
+
+fn mcp_hit_test(p: *u8, grant: auth::Grant, id: str) -> surface::HitTest {
+    if is_null(p) { return surface::hit_test_refused(surface::Outcome::NotFound, true); }
+    return { (*(p as *Surface)).hit_test(grant, id) };
+}
+
+// THE TWO THAT ARE NOT BUILT, reported as unsupported rather than answered
+// wrongly.
+//
+// `set_caret` is reachable — a UITextField's caret is a `UITextRange` built
+// from `positionFromPosition:offset:`, which facet_uikit's text band already
+// uses for `cursor_position` — and it is not written here yet.
+//
+// `invoke_menu` is not reachable at all: iOS has no menu bar, and the
+// context-menu tier is a per-view interaction rather than an application-wide
+// tree with a path. There is nothing for a path like "File/Save" to name.
+fn mcp_set_caret(p: *u8, grant: auth::Grant, id: str, at: u64,
+                 length: u64) -> surface::Outcome {
+    return surface::Outcome::NotActionable;
+}
+
+fn mcp_read_runs(p: *u8, grant: auth::Grant, id: str) -> surface::Runs {
+    return surface::runs_refused(surface::Outcome::NotActionable, false);
+}
+
+fn mcp_invoke_menu(p: *u8, grant: auth::Grant, path: str) -> surface::Outcome {
+    return surface::Outcome::NotActionable;
+}
+
+fn mcp_backend() -> mcpb::Backend {
+    return mcpb::Backend {
+        describe: mcp_describe,
+        describe_exposed: mcp_describe_exposed,
+        click: mcp_click,
+        set_text: mcp_set_text,
+        navigate: mcp_navigate,
+        hit_test: mcp_hit_test,
+        set_caret: mcp_set_caret,
+        read_runs: mcp_read_runs,
+        invoke_menu: mcp_invoke_menu,
+    };
+}
+
+#[link_name = "objc_msgSend"]
+extern fn msg_id_u64(recv: *u8, sel: *u8, a: u64) -> *u8;
+#[link_name = "objc_msgSend"]
+extern fn msg_void_u64(recv: *u8, sel: *u8, a: u64);
+#[link_name = "objc_msgSend"]
+extern fn msg_point_point_id(recv: *u8, sel: *u8, p: rt::Point, v: *u8) -> rt::Point;
+#[link_name = "objc_msgSend"]
+extern fn msg_id_point_id(recv: *u8, sel: *u8, p: rt::Point, e: *u8) -> *u8;

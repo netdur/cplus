@@ -25,19 +25,52 @@ import "agent_core/auth" as auth;
 import "agent_core/identity" as identity;
 import "stdlib/text" as text;
 import "stdlib/io" as io;
+import "stdlib/thread" as thread;
+import "agent_core/events" as events;
+import "agent_inapp/agent_inapp" as inapp;
+import "agent_mcp/agent_mcp" as mcp;
+import "agent_uikit/agent_uikit" as agent_uikit;
 
-fn no_surface(entry: str) {
-    io::eprintln(text::from_str("facet(ios): agent::").appending(entry)
-        .appending(" needs an agent_uikit backend, which does not exist yet — facet/agent is AppKit-only. No agent is served.").view());
-    return;
+static AGENT_SURFACE: agent_uikit::Surface = #zero::[agent_uikit::Surface]();
+static AGENT_SERVING: bool = false;
+
+// THE TRANSPORT IS A PORT, not a path, and that is the whole iOS story.
+//
+// A Unix socket lives in the app's sandbox, where nothing on the development
+// machine can reach it — and to a DEVICE there is no shared filesystem at all.
+// A port is reachable, forwarded over USB by usbmuxd, which is how Flutter's
+// Dart VM Service and Chrome's remote debugging are reached. So the path an
+// application passes is read as a PORT NUMBER, and a path that is not one gets
+// the default.
+//
+// Bound to loopback by `serve_tcp`, never to every interface: this surface can
+// read a UI and press its buttons.
+const DEFAULT_PORT: u16 = 8787u16;
+
+fn port_of(path: str) -> u16 {
+    var n: u32 = 0 as u32;
+    var any: bool = false;
+    let bytes: *u8 = #str_ptr(path);
+    let len: usize = #str_len(path);
+    var i: usize = 0 as usize;
+    while i < len {
+        let c: u8 = { *(bytes + i) };
+        if c < ('0' as u8) || c > ('9' as u8) { return DEFAULT_PORT; }
+        n = n * (10 as u32) + ((c -% ('0' as u8)) as u32);
+        if n > (65535 as u32) { return DEFAULT_PORT; }
+        any = true;
+        i = i +% (1 as usize);
+    }
+    if !any { return DEFAULT_PORT; }
+    return n as u16;
 }
 
-// Nothing to install: the hooks would attach a window to a surface there is no
-// backend to open. Installing half of them — the portable `pin_policy` alone —
-// was considered and rejected for the reason every seam in facet gives: a
-// struct with one of three slots filled looks installed and behaves randomly.
 fn enable() {
-    no_surface("enable");
+    runtime::install_agent(runtime::AgentHooks {
+        attach_window: attach_window,
+        serve_once: serve_once,
+        pin_policy: pin_policy,
+    });
     return;
 }
 
@@ -50,7 +83,20 @@ fn disable() {
     return;
 }
 
-// `in_app` and `in_app_with_grant` are DELIBERATELY ABSENT rather than stubbed.
+// The in-process assistant, which needs no socket at all: it drives the same
+// backend vtable as the external bridge, with the same grant model.
+fn in_app() -> inapp::Session {
+    let surf: *u8 = #addr_of(AGENT_SURFACE) as *u8;
+    return inapp::open(surf, agent_uikit::mcp_backend());
+}
+
+fn in_app_with_grant(g: auth::Grant) -> inapp::Session {
+    let surf: *u8 = #addr_of(AGENT_SURFACE) as *u8;
+    return inapp::open_with_grant(surf, agent_uikit::mcp_backend(), g);
+}
+
+// (WAS ABSENT, and the reason is worth keeping.)
+// `in_app` and `in_app_with_grant` were DELIBERATELY ABSENT rather than stubbed.
 //
 // Every other entry here can refuse at runtime because refusing costs nothing:
 // `enable` installs no hooks, `serve_once` starts no worker. A session cannot.
@@ -76,14 +122,41 @@ fn policy_for(a: vocab::Agent) -> u32 {
     };
 }
 
-fn pin_policy(view: *u8, a: vocab::Agent) { return; }
+fn pin_policy(view: *u8, a: vocab::Agent) {
+    agent_uikit::set_agent_policy(view, policy_for(a));
+    return;
+}
 
-fn attach_window(win: *u8) { return; }
+// Walk `win`'s live view tree into the surface, replacing the previous
+// screen's — whose retained views are released by the drop.
+fn attach_window(win: *u8) {
+    AGENT_SURFACE = agent_uikit::open(win);
+    return;
+}
 
+// The default channel policy: the developer opted in by asking for a port, so
+// the channel is admitted — as an ORDINARY OPERATOR. Read the app, drive the
+// app, and nothing from a node the application put behind a tier. Widening is
+// an app supplying its own policy, which is a place a reader can find it.
 fn admit(req: auth::Request) -> auth::Grant { return auth::operator(); }
 
+struct AgentServe { port: u16 }
+
+fn serve_main(take job: AgentServe) -> i32 {
+    var sub: events::Subscriber = events::subscriber(events::everything(), 64 as usize);
+    let surf: *u8 = #addr_of(AGENT_SURFACE) as *u8;
+    return mcp::serve_tcp(surf, agent_uikit::mcp_backend(), sub, admit, job.port);
+}
+
+// Start the serve worker exactly once per process. The accept loop lives for
+// the app's life.
 fn serve_once(path: str) {
-    no_surface("serve_once");
+    if AGENT_SERVING { return; }
+    AGENT_SERVING = true;
+    let _t: thread::JoinHandle[i32] = thread::spawn_with::[AgentServe, i32](
+        AgentServe { port: port_of(path) },
+        serve_main,
+    );
     return;
 }
 

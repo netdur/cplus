@@ -213,9 +213,32 @@ its presentation style and has no size of its own.
 
 ### Bands that are still unfilled
 
-- **No agent surface.** `runtime::install_agent` is unfilled. The transport it
-  needs exists — `agent_mcp::serve_tcp` — and the reader (`agent_uikit`, the
-  sibling of `agent_appkit`) is not written. See below.
+
+### The agent surface is served
+
+`vendor/agent_uikit` is the reader — the sibling of `agent_appkit`, walking a
+live UIView tree into agent_core's identity registry and filling agent_mcp's
+`Backend`. `facet/agent_ios.cplus` installs it, so `runtime::install_agent` is
+no longer empty and `in_app()` compiles on this platform.
+
+**The transport is a PORT, not a path**, and that is the whole iOS story: a Unix
+socket lives in the app's sandbox where nothing on the development machine can
+reach it, and to a device there is no shared filesystem at all. So the string an
+application passes to `agent_mcp(...)` is read as a port number (default 8787)
+and served by `agent_mcp::serve_tcp`, bound to LOOPBACK. Reach it over USB with
+usbmuxd — `iproxy 8787 8787` or `pymobiledevice3` — which is how Flutter's Dart
+VM Service and Chrome's remote debugging are reached.
+
+Two verbs report unsupported rather than answering wrongly. `set_caret` is
+reachable (a UITextField's caret is a `UITextRange` from
+`positionFromPosition:offset:`, which the text band already uses) and is not
+written. `invoke_menu` is not reachable at all: iOS has no menu bar, and the
+context-menu tier is a per-view interaction rather than an application-wide tree
+with a path — there is nothing for "File/Save" to name.
+
+`read_runs` is unsupported for now: `UITextView.textStorage` and
+`UILabel.attributedText` are both NSAttributedString and the walk is portable,
+so this is unbuilt rather than unanswerable.
 
 ### The key band and the sender readers ARE filled
 

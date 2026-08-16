@@ -1,0 +1,26 @@
+[package]
+name    = "agent_uikit"
+version = "0.0.1"
+edition = "2026"
+
+# agent_uikit — the UIKit backend for the agent surface, the sibling of
+# `agent_appkit`.
+#
+# It walks a live UIView hierarchy into agent_core's identity tree and fills
+# agent_mcp's `Backend` vtable. Nothing about the PROTOCOL is here: agent_mcp
+# is pure and agent_core owns the registry, the grants and the outcomes. This
+# package is the platform half and no wider.
+#
+# NOT AN APP AND NOT A LIB WITH A MAIN: an iOS target stops at object emission,
+# so this is a staticlib like every other iOS package in the tree.
+[lib]
+crate-type = "staticlib"
+path = "src/agent_uikit.cplus"
+
+[dependencies]
+stdlib     = "*"
+objc       = "*"
+uikit      = "*"
+agent_core = "*"
+agent_mcp  = "*"
+json       = "*"

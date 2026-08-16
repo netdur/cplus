@@ -40,6 +40,11 @@ import "./input" as input;
 import "./keys" as keys;
 import "facet/gestures" as gestures;
 import "objc/bridge" as bridge;
+import "stdlib/vec" as vec;
+import "agent_uikit/agent_uikit" as agent;
+import "agent_core/identity" as identity;
+import "agent_core/auth" as auth;
+import "agent_core/backend" as mcpb;
 
 static FAILED: i32 = 0 as i32;
 static RAN: i32 = 0 as i32;
@@ -235,6 +240,74 @@ fn modifier_flags_map_onto_facets_bits() -> bool {
     return keys::modifiers_of_flags(0 as u64) == (0 as u64);
 }
 
+// ---- the agent surface -----------------------------------------------------------
+// The reader walks a live UIView tree into agent_core's identity registry. It
+// runs here rather than in agent_uikit's own suite for the reason everything
+// else does: the walk needs UIKit, and only an iOS binary has it.
+
+fn the_agent_walk_finds_a_tagged_view() -> bool {
+    let root: uik::View = uik::View::new_with_frame(
+        rt::Rect { x: 0.0f64, y: 0.0f64, w: 100.0f64, h: 100.0f64 });
+    let btn: uik::Button = uik::Button::button_with_type(uik::ButtonType::System);
+    btn.set_title("Save", 0 as u64);
+    { rt::msg_void_id(btn.as_view().raw(),
+                      rt::sel(#str_ptr("setAccessibilityIdentifier:\0")),
+                      bridge::nsstring("save")) };
+    root.add_subview(btn.as_view());
+    // `open` takes a WINDOW and walks its subviews, so the root stands in for
+    // one: the walk is the same either way.
+    let s: agent::Surface = agent::open(root.raw());
+    let nodes: vec::Vec[mcpb::UiNode] = { s.describe(auth::operator()) };
+    var found: bool = false;
+    var i: usize = 0 as usize;
+    while i < nodes.count() {
+        match nodes.at_ptr(i) {
+            option::Option[*mcpb::UiNode]::Some(n) => {
+                if { (*n).id.view() } == "save" { found = true; }
+            }
+            option::Option[*mcpb::UiNode]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return found;
+}
+
+fn a_button_classifies_as_a_button() -> bool {
+    let btn: uik::Button = uik::Button::button_with_type(uik::ButtonType::System);
+    return identity::role_eq(agent::classify(btn.as_view().raw()),
+                             identity::Role::Button);
+}
+
+fn a_label_classifies_as_text_and_a_field_as_input() -> bool {
+    let l: uik::Label = uik::Label::new_with_frame(
+        rt::Rect { x: 0.0f64, y: 0.0f64, w: 10.0f64, h: 10.0f64 });
+    if !identity::role_eq(agent::classify(l.as_view().raw()), identity::Role::Text) {
+        return false;
+    }
+    let f: uik::TextField = uik::TextField::new_with_frame(
+        rt::Rect { x: 0.0f64, y: 0.0f64, w: 10.0f64, h: 10.0f64 });
+    return identity::role_eq(agent::classify(f.as_view().raw()), identity::Role::Input);
+}
+
+// THE GATE, which is the one thing here that must never regress: a secure field
+// is sensitive whatever it declared, because an app that forgot to mark a
+// password field must not leak it because it forgot.
+fn a_secure_field_is_sensitive_by_class() -> bool {
+    let f: uik::TextField = uik::TextField::new_with_frame(
+        rt::Rect { x: 0.0f64, y: 0.0f64, w: 10.0f64, h: 10.0f64 });
+    { rt::msg_void_i8(f.as_view().raw(), rt::sel(#str_ptr("setSecureTextEntry:\0")),
+                      1 as i8) };
+    return agent::effective_policy(f.as_view().raw()) == identity::tier_protected();
+}
+
+fn a_control_is_clickable_and_a_bare_view_is_not() -> bool {
+    let btn: uik::Button = uik::Button::button_with_type(uik::ButtonType::System);
+    if !agent::view_clickable(btn.as_view().raw()) { return false; }
+    let v: uik::View = uik::View::new_with_frame(
+        rt::Rect { x: 0.0f64, y: 0.0f64, w: 10.0f64, h: 10.0f64 });
+    return agent::view_clickable(v.raw()) == false;
+}
+
 // ---- the run --------------------------------------------------------------------
 
 fn run_all() -> i32 {
@@ -258,6 +331,12 @@ fn run_all() -> i32 {
           raise_brings_a_keyed_sibling_to_the_front());
     check("named keys map from HID codes", named_keys_map_from_hid_codes());
     check("modifier flags map onto facet's bits", modifier_flags_map_onto_facets_bits());
+    check("the agent walk finds a tagged view", the_agent_walk_finds_a_tagged_view());
+    check("a button classifies as a button", a_button_classifies_as_a_button());
+    check("a label is Text and a field is Input", a_label_classifies_as_text_and_a_field_as_input());
+    check("a secure field is sensitive by class", a_secure_field_is_sensitive_by_class());
+    check("a control is clickable, a bare view is not",
+          a_control_is_clickable_and_a_bare_view_is_not());
 
     let ran: i32 = RAN;
     let failed: i32 = FAILED;
