@@ -12,9 +12,22 @@ each one **warns once on stderr** when it is mounted.
 remains is section 1 — fourteen props across three kinds that UIKit has no
 answer for — and section 3, controls that work but do not look like their name.
 
-The parity number, measured rather than asserted: of the 318 props
-`facet_appkit` implements, `facet_uikit` implements **305 (95%)**. The
-thirteen-prop difference is section 1, in full, with nothing else in it.
+**TWO NUMBERS, because a backend has two surfaces.** A prop is a WRITE — the
+application saying something to a control — and a handler is a READ, the
+control saying something back. Both are measured by `tools/parity.py`:
+
+| | appkit | uikit | |
+|---|---|---|---|
+| props | 318 | 305 | 95% |
+| handlers | 66 | 64 | 96% |
+
+The prop number was the only one for a while, and it was misleading in a
+specific way: a `text_button` whose every prop bit was honoured was armed,
+tapped, and called nothing, because `fire_primary` routed only `K_BUTTON`. Same
+for `icon_button`, for the return key on all three text kinds, and for pull to
+refresh. Every one of those counted as done on the prop axis. They were found
+by tapping the gallery, not by any check here — which is why the handler axis
+now exists and why both are printed together.
 
 ---
 
@@ -74,6 +87,17 @@ field that opens a calendar on tap, `Inline` is that calendar already open).
 with a picker as its input view — which facet has no verb for, and which would
 be a new kind rather than this one.
 
+### A split divider's `on_move`
+
+Covered by "dragging a split divider" above: nothing moves it, so nothing can
+report that it moved. The handler is real and is never called.
+
+### A web view's `on_web_resource_requested`
+
+A `WKURLSchemeHandler` is the answer and it is not written. It is the one
+handler in the package that is UNBUILT rather than unanswerable — reachable,
+public, and simply not done — so it belongs in section 2 and is repeated there.
+
 ### A `table`'s style, after it is mounted
 
 `UITableViewStyle` is fixed by `initWithFrame:style:` and has no setter, so
@@ -81,6 +105,15 @@ be a new kind rather than this one.
 the table is mounted has nowhere to land: the view would have to be replaced,
 and the view is mount's rather than the backend's. The write is named in
 `apply_recycling_table` rather than left silent.
+
+### Hovering a canvas — NOT absent
+
+`GraphicsView` names seven interaction verbs. Five are touches and are wired
+(`on_press`, `observe_drag_interaction`, `on_release`, `on_cancel`). The other
+two are hover, and "iOS has no hover" was the obvious thing to write and is not
+true: `UIHoverGestureRecognizer` reports a pointer or an Apple Pencil moving
+above the screen, and it is installed. On a device with neither it never fires,
+which is correct behaviour rather than a gap.
 
 ### Tooltips
 
@@ -123,6 +156,14 @@ menu path runs.
 which is iOS 17.4. The call is guarded by `respondsToSelector:`, so on an older
 system the write is inert rather than a crash. Everything else in the package
 builds against the deployment target with no version check.
+
+### The one unbuilt handler
+
+`hybrid_web`'s `on_web_resource_requested` needs a `WKURLSchemeHandler`
+registered on the configuration before the view exists, the way
+`facet_appkit/web.cplus` does it. The message channel in the other direction
+(`on_raw_message_received`, a page calling out through
+`window.webkit.messageHandlers.facet.postMessage`) IS built.
 
 ### Bands that are still unfilled
 

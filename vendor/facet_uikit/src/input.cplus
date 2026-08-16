@@ -24,6 +24,7 @@ import "objc/runtime" as rt;
 import "objc/synthesis" as synth;
 import "uikit/uikit" as ui;
 import "facet/radio" as radio;
+import "facet/text_button" as text_button;
 import "facet/application" as app;
 import "stdlib/option" as option;
 import "./dates" as dates;
@@ -54,7 +55,9 @@ static TARGET: *u8 = 0 as *u8;
 // before `as`, so a mask written as one big number is a different number by the
 // time it lands — the standing rule in this language, and these are the sort of
 // constants it was written for.
+fn event_touch_down() -> u64 { return 1 as u64; }                             // 1 << 0
 fn event_touch_up_inside() -> u64 { return (1 as u64) * (64 as u64); }        // 1 << 6
+fn event_touch_up_outside() -> u64 { return (1 as u64) * (128 as u64); }      // 1 << 7
 fn event_value_changed() -> u64 { return (1 as u64) * (4096 as u64); }        // 1 << 12
 fn event_editing_changed() -> u64 { return (1 as u64) * (65536 as u64); }     // 1 << 16
 fn event_editing_did_end() -> u64 { return (1 as u64) * (262144 as u64); }    // 1 << 18
@@ -116,6 +119,10 @@ fn target_class() -> *u8 {
                                          imp_editing_changed, #str_ptr("v@:@\0"));
     let _d: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("facetTap:\0")),
                                          imp_tap, #str_ptr("v@:@\0"));
+    let _e: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("facetPressed:\0")),
+                                         imp_pressed, #str_ptr("v@:@\0"));
+    let _f: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("facetReleased:\0")),
+                                         imp_released, #str_ptr("v@:@\0"));
     { synth::register_class_pair(cls) };
     TARGET_CLASS = cls;
     return TARGET_CLASS;
@@ -146,6 +153,12 @@ fn add_target(v: *u8, sel_name: *u8, events: u64) {
 fn arm_primary(v: *u8, n: *core::Node) {
     bind_node(v, n);
     add_target(v, #str_ptr("facetPrimary:\0"), event_touch_up_inside());
+    // A release is a release wherever the finger lifts — dragging off the
+    // button and letting go is still the end of a press, and an app holding
+    // something down needs to be told.
+    add_target(v, #str_ptr("facetPressed:\0"), event_touch_down());
+    add_target(v, #str_ptr("facetReleased:\0"),
+               event_touch_up_inside() | event_touch_up_outside());
     return;
 }
 
@@ -154,6 +167,12 @@ fn arm_primary(v: *u8, n: *core::Node) {
 fn arm_value(v: *u8, n: *core::Node) {
     bind_node(v, n);
     add_target(v, #str_ptr("facetValueChanged:\0"), event_value_changed());
+    // A slider's drag START and END. Armed for every value control because the
+    // events are free and `fire_press` answers only for the kinds that carry
+    // the verbs — a switch has no drag to report.
+    add_target(v, #str_ptr("facetPressed:\0"), event_touch_down());
+    add_target(v, #str_ptr("facetReleased:\0"),
+               event_touch_up_inside() | event_touch_up_outside());
     return;
 }
 
@@ -201,6 +220,18 @@ fn tap_key() -> *u8 { return 41002 as *u8; }
 // A button's own `on_click` when it has one, and the gesture band's otherwise.
 // A control kind carries its handler in its PROPS — the shared gesture band is
 // what a plain view uses — so both are asked, in that order.
+// THREE KINDS CARRY A CLICK HANDLER OF THEIR OWN, not one.
+//
+// `button`, `text_button` and `icon_button` are all a UIButton here, so they
+// all arrive through this one action — and each keeps its handler in ITS OWN
+// props. Routing only the first meant a text button and an icon button were
+// armed, tapped, and did nothing at all: the gallery's Back button is a
+// `text_button`, which is how this was found.
+//
+// COMPARED AGAINST `props::no_handler`, NOT AGAINST NULL. The default is a
+// real function, so a null check is never false — which is why the fall
+// through to the gesture band below was unreachable, and a `button` carrying
+// only a `.gesture(on_click:)` was as dead as the text button.
 fn fire_primary(n: *core::Node, sender: *u8) {
     let kind: u32 = core::kind_of(n);
     let d: *core::Data = core::node_data(n);
@@ -210,15 +241,124 @@ fn fire_primary(n: *core::Node, sender: *u8) {
         if kind == props::K_BUTTON {
             let bp: *props::ButtonProps = p as *props::ButtonProps;
             let h: fn(*u8, *u8) = { (*bp).on_click };
-            if h != (0 as fn(*u8, *u8)) { h(sender, { (*bp).on_click_ctx }); return; }
+            if h != props::no_handler { h(sender, { (*bp).on_click_ctx }); return; }
+        }
+        if kind == text_button::K_TEXT_BUTTON {
+            let tp: *text_button::TextButtonProps = p as *text_button::TextButtonProps;
+            let h: fn(*u8, *u8) = { (*tp).on_click };
+            if h != props::no_handler { h(sender, { (*tp).on_click_ctx }); return; }
+        }
+        if kind == props::K_ICON_BUTTON {
+            let ip: *props::IconButtonProps = p as *props::IconButtonProps;
+            let h: fn(*u8, *u8) = { (*ip).on_clicked };
+            if h != props::no_handler { h(sender, { (*ip).on_clicked_ctx }); return; }
         }
         // A radio arrives here rather than through `read_back` because a
         // UIButton has no value to hand back — pressing it is the whole event,
         // and what it MEANS (this member on, its group off) is the radio body's
         // to decide.
         if kind == props::K_RADIO { radio_pressed(n); return; }
+        // THE RETURN KEY. `arm_text_field` points editingDidEndOnExit at this
+        // same action, so a field's Done/Go/Search arrives here — and
+        // `on_submit` is the owning control's own verb rather than the shared
+        // band's, so it is read per kind. Without this the return key dismissed
+        // the keyboard and told the application nothing.
+        let sub: fn(*u8, *u8) = submit_handler(n);
+        if sub != props::no_handler { sub(sender, submit_ctx(n)); return; }
     }
     let _fired: bool = gestures::fire_click(n);
+    return;
+}
+
+// `on_submit` lives on the three kinds that can be completed. A node that is
+// not one of them answers `no_handler`, which the caller treats as nothing to
+// do.
+fn submit_handler(n: *core::Node) -> fn(*u8, *u8) {
+    let d: *core::Data = core::node_data(n);
+    if d == (0 as *core::Data) { return props::no_handler; }
+    let raw: *u8 = { (*d).props };
+    if raw == (0 as *u8) { return props::no_handler; }
+    let kind: u32 = { (*d).kind };
+    if kind == props::K_TEXT_FIELD { return { (*(raw as *props::TextFieldProps)).on_submit }; }
+    if kind == props::K_TEXT_AREA { return { (*(raw as *props::TextAreaProps)).on_submit }; }
+    if kind == props::K_SEARCH_FIELD { return { (*(raw as *props::SearchFieldProps)).on_submit }; }
+    return props::no_handler;
+}
+
+fn submit_ctx(n: *core::Node) -> *u8 {
+    let d: *core::Data = core::node_data(n);
+    if d == (0 as *core::Data) { return 0 as *u8; }
+    let raw: *u8 = { (*d).props };
+    if raw == (0 as *u8) { return 0 as *u8; }
+    let kind: u32 = { (*d).kind };
+    if kind == props::K_TEXT_FIELD { return { (*(raw as *props::TextFieldProps)).on_submit_ctx }; }
+    if kind == props::K_TEXT_AREA { return { (*(raw as *props::TextAreaProps)).on_submit_ctx }; }
+    if kind == props::K_SEARCH_FIELD { return { (*(raw as *props::SearchFieldProps)).on_submit_ctx }; }
+    return 0 as *u8;
+}
+
+// ---- press and release -------------------------------------------------------
+// The two moments a click is made of. `on_click` fires when the finger lifts
+// INSIDE; these fire when it goes down, and when it lifts wherever it lifts —
+// which is what a press-and-hold affordance needs and a click cannot express.
+
+fn imp_pressed(self_obj: *u8, cmd: *u8, sender: *u8) {
+    let n: *core::Node = node_of(sender);
+    if n == (0 as *core::Node) { return; }
+    fire_press(n, sender, true);
+    return;
+}
+
+fn imp_released(self_obj: *u8, cmd: *u8, sender: *u8) {
+    let n: *core::Node = node_of(sender);
+    if n == (0 as *core::Node) { return; }
+    fire_press(n, sender, false);
+    return;
+}
+
+fn fire_press(n: *core::Node, sender: *u8, down: bool) {
+    let kind: u32 = core::kind_of(n);
+    let d: *core::Data = core::node_data(n);
+    if d == (0 as *core::Data) { return; }
+    let p: *u8 = { (*d).props };
+    if p == (0 as *u8) { return; }
+    if kind == props::K_BUTTON {
+        let bp: *props::ButtonProps = p as *props::ButtonProps;
+        if down {
+            let h: fn(*u8, *u8) = { (*bp).on_pressed };
+            if h != props::no_handler { h(sender, { (*bp).on_pressed_ctx }); }
+        } else {
+            let h: fn(*u8, *u8) = { (*bp).on_released };
+            if h != props::no_handler { h(sender, { (*bp).on_released_ctx }); }
+        }
+        return;
+    }
+    if kind == props::K_ICON_BUTTON {
+        let ip: *props::IconButtonProps = p as *props::IconButtonProps;
+        if down {
+            let h: fn(*u8, *u8) = { (*ip).on_pressed };
+            if h != props::no_handler { h(sender, { (*ip).on_pressed_ctx }); }
+        } else {
+            let h: fn(*u8, *u8) = { (*ip).on_released };
+            if h != props::no_handler { h(sender, { (*ip).on_released_ctx }); }
+        }
+        return;
+    }
+    // A SLIDER'S DRAG is the same two moments under a different pair of names.
+    // The distinction matters to anything expensive: `on_value_changed` fires
+    // continuously, and an application that only wants the number the user
+    // settled on wants `on_drag_completed`.
+    if kind == props::K_SLIDER {
+        let sp: *props::SliderProps = p as *props::SliderProps;
+        if down {
+            let h: fn(*u8, *u8) = { (*sp).on_drag_started };
+            if h != props::no_handler { h(sender, { (*sp).on_drag_started_ctx }); }
+        } else {
+            let h: fn(*u8, *u8) = { (*sp).on_drag_completed };
+            if h != props::no_handler { h(sender, { (*sp).on_drag_completed_ctx }); }
+        }
+        return;
+    }
     return;
 }
 
@@ -259,6 +399,22 @@ fn fire_value_changed(n: *core::Node, sender: *u8) {
         let tp: *props::TabsProps = p as *props::TabsProps;
         let h: fn(*u8, *u8) = { (*tp).on_tab_changed };
         if h != (0 as fn(*u8, *u8)) { h(sender, { (*tp).on_tab_changed_ctx }); }
+        return;
+    }
+    // PULL TO REFRESH. The UIRefreshControl is armed with the LIST's node, so
+    // its valueChanged arrives here wearing the list's kind — which is what
+    // lets one action serve both. Without this the spinner appeared, span, and
+    // the application was never told to load anything.
+    if kind == props::K_LIST {
+        let lp: *props::ListProps = p as *props::ListProps;
+        let h: fn(*u8, *u8) = { (*lp).on_refreshing };
+        if h != props::no_handler { h(sender, { (*lp).on_refreshing_ctx }); }
+        return;
+    }
+    if kind == props::K_REFRESHABLE {
+        let rp: *props::RefreshableProps = p as *props::RefreshableProps;
+        let h: fn(*u8, *u8) = { (*rp).on_refreshing };
+        if h != props::no_handler { h(sender, { (*rp).on_refreshing_ctx }); }
         return;
     }
     if kind == props::K_DATE_PICKER {

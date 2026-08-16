@@ -82,10 +82,59 @@ def main():
         print(line)
 
     pct = total_uk * 100 // total_ak if total_ak else 0
-    print(f"\nappkit={total_ak}  uikit={total_uk}  ({pct}%)")
-    print("every remaining gap must appear in vendor/facet_uikit/MANIFEST.md §1")
+    print(f"\nprops: appkit={total_ak}  uikit={total_uk}  ({pct}%)")
+    handler_parity()
+    print("\nevery remaining gap must appear in vendor/facet_uikit/MANIFEST.md §1")
     return 0
+
+
+# ---- the second axis ---------------------------------------------------------
+# A prop is a WRITE and a handler is a READ, and this file only ever measured
+# the first. Every bug the gallery turned up was a handler: a text button armed
+# and tapped that called nothing, a return key that dismissed the keyboard and
+# said nothing, a refresh spinner that span and asked for nothing. All three
+# had their prop bits named, so the number above counted them as done.
+#
+# So handlers are counted too, on the same rule: a handler counts when the
+# backend NAMES it, which is an upper bound and catches the case that matters —
+# a verb nobody reads.
+
+def handlers():
+    """props struct -> its handler fields."""
+    out = {}
+    for path in glob.glob(os.path.join(FACET, "*.cplus")):
+        if path.endswith("test_main.cplus"):
+            continue
+        for m in re.finditer(r"struct (\w+Props) \{(.*?)\n\}", open(path).read(), re.S):
+            hs = sorted(set(re.findall(r"^\s+(on_\w+|observe_\w+): fn\(", m.group(2), re.M)))
+            if hs:
+                out[m.group(1)] = hs
+    return out
+
+
+def handler_parity():
+    src = {k: "".join(open(p).read() for p in glob.glob(os.path.join(d, "*.cplus"))
+                      if not p.endswith("test_main.cplus"))
+           for k, d in BACKENDS.items()}
+    total = fired = 0
+    gaps = []
+    for struct, hs in sorted(handlers().items()):
+        in_ak = [h for h in hs if re.search(r"\." + h + r"\b", src["appkit"])]
+        if not in_ak:
+            continue
+        missing = [h for h in in_ak if not re.search(r"\." + h + r"\b", src["uikit"])]
+        total += len(in_ak)
+        fired += len(in_ak) - len(missing)
+        if missing:
+            gaps.append((struct, missing))
+    print()
+    for struct, missing in gaps:
+        print(f"{struct:24} UIKIT NEVER FIRES: {' '.join(missing)}")
+    pct = fired * 100 // total if total else 0
+    print(f"\nhandlers: appkit={total}  uikit={fired}  ({pct}%)")
 
 
 if __name__ == "__main__":
     sys.exit(main())
+
+

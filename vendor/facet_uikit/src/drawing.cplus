@@ -135,6 +135,17 @@ extern fn add_method_bool_0(cls: *u8, sel: *u8, imp: fn(*u8, *u8) -> i8, types: 
 extern fn add_method_void_rect(cls: *u8, sel: *u8, imp: fn(*u8, *u8, rt::Rect),
                                types: *u8) -> i8;
 
+#[link_name = "class_addMethod"]
+extern fn add_method_v_2id(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, *u8),
+                           types: *u8) -> i8;
+
+#[link_name = "class_addMethod"]
+extern fn add_method_v_1id_x(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8),
+                             types: *u8) -> i8;
+
+#[link_name = "objc_msgSend"]
+extern fn msg_id_id_sel(recv: *u8, sel: *u8, a: *u8, b: *u8) -> *u8;
+
 // ---- the view ----------------------------------------------------------------
 // A canvas is the one control whose backing view has behaviour of its own, so
 // it is the one control with a class of its own. Everything else about it is
@@ -178,6 +189,121 @@ fn scale_of(view: *u8) -> f64 {
 }
 
 // Registered once; `get_class` answers null until the pair is registered.
+// ---- the interaction band ----------------------------------------------------
+// `GraphicsView` names seven interaction verbs and FIVE OF THEM ARE TOUCHES:
+// start, move-while-down (the ledger's "drag"), end and cancel are exactly what
+// `touchesBegan/Moved/Ended/Cancelled` are. The two that are not are HOVER —
+// start-hover and move-hover — and those need a pointer, which a finger is not.
+// MANIFEST.md §1 records the pair rather than approximating them with a
+// long-press, which would invent an interaction the app never asked for.
+//
+// A gesture recogniser would be the tidier shape and is the wrong one here: a
+// recogniser has to decide whether a touch is "its" gesture, and a canvas wants
+// every touch unconditionally and from the first moment.
+
+fn canvas_touches_began_imp(self_obj: *u8, cmd: *u8, touches: *u8, event: *u8) {
+    fire_canvas(self_obj, 0 as i64);
+    return;
+}
+
+fn canvas_touches_moved_imp(self_obj: *u8, cmd: *u8, touches: *u8, event: *u8) {
+    fire_canvas(self_obj, 1 as i64);
+    return;
+}
+
+fn canvas_touches_ended_imp(self_obj: *u8, cmd: *u8, touches: *u8, event: *u8) {
+    fire_canvas(self_obj, 2 as i64);
+    return;
+}
+
+fn canvas_touches_cancelled_imp(self_obj: *u8, cmd: *u8, touches: *u8, event: *u8) {
+    fire_canvas(self_obj, 3 as i64);
+    return;
+}
+
+// ---- hover -------------------------------------------------------------------
+// The two verbs a finger cannot answer — and iOS DOES have an answer for them,
+// just not one a phone in a pocket will ever fire: `UIHoverGestureRecognizer`
+// reports a pointer or an Apple Pencil moving above the screen. On a device
+// with neither it simply never fires, which is the correct behaviour rather
+// than a gap.
+//
+// Recorded here because "iOS has no hover" was the obvious thing to write and
+// it is not true.
+fn imp_hover(self_obj: *u8, cmd: *u8, g: *u8) {
+    if g == (0 as *u8) { return; }
+    let view: *u8 = { rt::msg_id(g, rt::sel(#str_ptr("view\0"))) };
+    if view == (0 as *u8) { return; }
+    // Began 1, Changed 2 — anything else is the pointer leaving.
+    let state: i64 = { rt::msg_i64(g, rt::sel(#str_ptr("state\0"))) };
+    if state == (1 as i64) { fire_canvas(view, 4 as i64); return; }
+    if state == (2 as i64) { fire_canvas(view, 5 as i64); return; }
+    fire_canvas(view, 6 as i64);
+    return;
+}
+
+fn hover_key() -> *u8 { return 29075 as *u8; }
+
+fn install_hover(view: *u8) {
+    if { synth::get_associated(view, hover_key()) } != (0 as *u8) { return; }
+    let cls: *u8 = rt::get_class(#str_ptr("UIHoverGestureRecognizer\0"));
+    if cls == (0 as *u8) { return; }
+    let alloced: *u8 = { rt::msg_id(cls, rt::sel(#str_ptr("alloc\0"))) };
+    if alloced == (0 as *u8) { return; }
+    let g: *u8 = { msg_id_id_sel(alloced, rt::sel(#str_ptr("initWithTarget:action:\0")),
+                                 view, rt::sel(#str_ptr("facetHover:\0"))) };
+    if g == (0 as *u8) { return; }
+    { rt::msg_void_id(view, rt::sel(#str_ptr("addGestureRecognizer:\0")), g) };
+    synth::set_associated(view, hover_key(), g);
+    { rt::release(g) };
+    return;
+}
+
+fn fire_canvas(view: *u8, phase: i64) {
+    let n: *core::Node = { synth::get_associated(view, canvas_node_key()) as *core::Node };
+    if n == (0 as *core::Node) { return; }
+    if core::kind_of(n) != props::K_CANVAS { return; }
+    let d: *core::Data = core::node_data(n);
+    if d == (0 as *core::Data) { return; }
+    let p: *props::CanvasProps = { (*d).props } as *props::CanvasProps;
+    if p == (0 as *props::CanvasProps) { return; }
+    if phase == (0 as i64) {
+        let h: fn(*u8, *u8) = { (*p).on_press };
+        if h != props::no_handler { h(view, { (*p).on_press_ctx }); }
+        return;
+    }
+    if phase == (1 as i64) {
+        let h: fn(*u8, *u8) = { (*p).observe_drag_interaction };
+        if h != props::no_handler { h(view, { (*p).observe_drag_interaction_ctx }); }
+        return;
+    }
+    if phase == (2 as i64) {
+        let h: fn(*u8, *u8) = { (*p).on_release };
+        if h != props::no_handler { h(view, { (*p).on_release_ctx }); }
+        return;
+    }
+    if phase == (3 as i64) {
+        let h: fn(*u8, *u8) = { (*p).on_cancel };
+        if h != props::no_handler { h(view, { (*p).on_cancel_ctx }); }
+        return;
+    }
+    if phase == (4 as i64) {
+        let h: fn(*u8, *u8) = { (*p).on_hover };
+        if h != props::no_handler { h(view, { (*p).on_hover_ctx }); }
+        return;
+    }
+    if phase == (5 as i64) {
+        let h: fn(*u8, *u8) = { (*p).observe_move_hover_interaction };
+        if h != props::no_handler {
+            h(view, { (*p).observe_move_hover_interaction_ctx });
+        }
+        return;
+    }
+    let h: fn(*u8, *u8) = { (*p).on_unhover };
+    if h != props::no_handler { h(view, { (*p).on_unhover_ctx }); }
+    return;
+}
+
 fn canvas_view_class() -> *u8 {
     let existing: *u8 = rt::get_class(#str_ptr("FacetUIKitCanvasView\0"));
     if existing != (0 as *u8) { return existing; }
@@ -185,6 +311,17 @@ fn canvas_view_class() -> *u8 {
                                               #str_ptr("FacetUIKitCanvasView\0"), 0 as usize);
     add_method_void_rect(cls, rt::sel(#str_ptr("drawRect:\0")),
                          canvas_draw_rect_imp, #str_ptr("v@:{CGRect={CGPoint=dd}{CGSize=dd}}\0"));
+    add_method_v_2id(cls, rt::sel(#str_ptr("touchesBegan:withEvent:\0")),
+                     canvas_touches_began_imp, #str_ptr("v@:@@\0"));
+    add_method_v_2id(cls, rt::sel(#str_ptr("touchesMoved:withEvent:\0")),
+                     canvas_touches_moved_imp, #str_ptr("v@:@@\0"));
+    add_method_v_2id(cls, rt::sel(#str_ptr("touchesEnded:withEvent:\0")),
+                     canvas_touches_ended_imp, #str_ptr("v@:@@\0"));
+    add_method_v_2id(cls, rt::sel(#str_ptr("touchesCancelled:withEvent:\0")),
+                     canvas_touches_cancelled_imp, #str_ptr("v@:@@\0"));
+    // The recogniser targets the VIEW itself, so the action is a method on it.
+    add_method_v_1id_x(cls, rt::sel(#str_ptr("facetHover:\0")),
+                       imp_hover, #str_ptr("v@:@\0"));
     synth::register_class_pair(cls);
     return cls;
 }
@@ -209,6 +346,7 @@ fn new_canvas_view() -> ui::View {
     // UIViewContentMode 3 is Redraw, which turns a bounds change back into a
     // `drawRect:`.
     { rt::msg_void_i64(inited, rt::sel(#str_ptr("setContentMode:\0")), 3 as i64) };
+    install_hover(inited);
     return ui::View::from_raw(rt::autorelease(inited));
 }
 

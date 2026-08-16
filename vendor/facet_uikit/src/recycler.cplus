@@ -298,10 +298,81 @@ fn imp_did_end_displaying(self_obj: *u8, cmd: *u8, tv: *u8, cell: *u8, index_pat
 }
 
 fn imp_scrolled(self_obj: *u8, cmd: *u8, sv: *u8) {
+    // A COLLECTION VIEW ARRIVES HERE TOO. Both sources point their scroll
+    // delegate at this one imp, so the kind decides which question to ask:
+    // a carousel wants its page, a list wants its scroll observer, and both
+    // want the load-more threshold.
+    let n: *core::Node = input::node_of(sv);
+    if n == (0 as *core::Node) { return; }
+    let kind: u32 = core::kind_of(n);
+    if kind == props::K_CAROUSEL { carousel_scrolled(sv, n); return; }
     let p: *props::ListProps = list_props(sv);
     if p == (0 as *props::ListProps) { return; }
     let h: fn(*u8, *u8) = { (*p).observe_scrolled };
-    if h != (0 as fn(*u8, *u8)) { h(sv, { (*p).observe_scrolled_ctx }); }
+    if h != props::no_handler { h(sv, { (*p).observe_scrolled_ctx }); }
+    return;
+}
+
+// ---- load more ---------------------------------------------------------------
+// `RemainingItemsThreshold`, which is an ItemsView verb — so it belongs to
+// `collection` and `carousel` and NOT to `list`, whose equivalent is the
+// `on_item_appearing` the row vend already fires.
+//
+// When the items still past the last one on screen drop to this many, the
+// application is told so it can fetch the next page.
+//
+// Fired from `willDisplayCell:`, which is the moment a row is about to be
+// realised — the only moment that means "the user has scrolled this far" and
+// costs nothing when they have not.
+//
+// ONCE PER CROSSING, not once per row. Held on the view, so a list scrolled
+// back up and down again asks again — which is what an application refilling
+// its page wants.
+fn threshold_key() -> *u8 { return 41015 as *u8; }
+
+fn note_row_shown(v: *u8, iv: *props::ItemsViewProps, row: i64, count: i64) {
+    let bar: i64 = { (*iv).remaining_threshold };
+    if bar <= (0 as i64) { return; }
+    let remaining: i64 = count - (row + (1 as i64));
+    let inside: bool = remaining <= bar;
+    let was: bool = { synth::get_associated(v, threshold_key()) } != (0 as *u8);
+    if inside == was { return; }
+    var mark: *u8 = 0 as *u8;
+    if inside { mark = 1 as *u8; }
+    synth::set_associated(v, threshold_key(), mark);
+    if !inside { return; }
+    let h: fn(*u8, *u8) = { (*iv).on_remaining_items_threshold_reached };
+    if h != props::no_handler {
+        h(v, { (*iv).on_remaining_items_threshold_reached_ctx });
+    }
+    return;
+}
+
+// ---- a carousel's page -------------------------------------------------------
+// A paging collection view has no "current page" of its own — UIPageControl
+// has one and a UICollectionView does not — so the page IS the offset divided
+// by the width, which is what paging makes true.
+fn carousel_scrolled(cv: *u8, n: *core::Node) {
+    let p: *props::CarouselProps =
+        props_of(n, props::K_CAROUSEL) as *props::CarouselProps;
+    if p == (0 as *props::CarouselProps) { return; }
+    let b: rt::Rect = { rt::msg_rect(cv, rt::sel(#str_ptr("bounds\0"))) };
+    if b.w <= 0.0f64 { return; }
+    let off: rt::Point = { rt::msg_point(cv, rt::sel(#str_ptr("contentOffset\0"))) };
+    var page: i64 = ((off.x + b.w / 2.0f64) / b.w) as i64;
+    if page < (0 as i64) { page = 0 as i64; }
+    if page == { (*p).position } { return; }
+    // Written straight into the props, not through the verb: the verb would
+    // raise the dirty bit and the next sync would scroll the carousel back to
+    // the page it just produced. The same rule every write-back here follows.
+    { (*p).position = page };
+    let ph: fn(*u8, *u8) = { (*p).on_position_changed };
+    if ph != props::no_handler { ph(cv, { (*p).on_position_changed_ctx }); }
+    // `CurrentItemChanged` is the same moment named for the ITEM rather than
+    // the index. facet gives them separate handlers and both are real, so both
+    // are called — in the ledger's order.
+    let ih: fn(*u8, *u8) = { (*p).on_current_item_changed };
+    if ih != props::no_handler { ih(cv, { (*p).on_current_item_changed_ctx }); }
     return;
 }
 
@@ -1159,6 +1230,24 @@ fn fill_item_cell(cell: *u8, n: *core::Node, i: usize) {
     return;
 }
 
+fn imp_cv_will_display(self_obj: *u8, cmd: *u8, cv: *u8, cell: *u8, index_path: *u8) {
+    let n: *core::Node = input::node_of(cv);
+    if n == (0 as *core::Node) { return; }
+    let row: i64 = { rt::msg_i64(index_path, rt::sel(#str_ptr("item\0"))) };
+    let p: *props::CollectionProps =
+        props_of(n, props::K_COLLECTION) as *props::CollectionProps;
+    if p != (0 as *props::CollectionProps) {
+        note_row_shown(cv, { #addr_of((*p).items_view) }, row, items_count(cv));
+        return;
+    }
+    let c: *props::CarouselProps =
+        props_of(n, props::K_CAROUSEL) as *props::CarouselProps;
+    if c != (0 as *props::CarouselProps) {
+        note_row_shown(cv, { #addr_of((*c).items_view) }, row, items_count(cv));
+    }
+    return;
+}
+
 fn imp_cv_did_end(self_obj: *u8, cmd: *u8, cv: *u8, cell: *u8, index_path: *u8) {
     clear_cell(cell);
     return;
@@ -1314,6 +1403,12 @@ fn collection_source() -> *u8 {
             let _g: i8 = synth::add_method_v_1id(cls,
                 rt::sel(#str_ptr("facetItemDrag:\0")),
                 imp_item_drag, #str_ptr("v@:@\0"));
+            let _h: i8 = synth::add_method_v_1id(cls,
+                rt::sel(#str_ptr("scrollViewDidScroll:\0")),
+                imp_scrolled, #str_ptr("v@:@\0"));
+            let _i: i8 = synth::add_method_v_3id(cls,
+                rt::sel(#str_ptr("collectionView:willDisplayCell:forItemAtIndexPath:\0")),
+                imp_cv_will_display, #str_ptr("v@:@@@\0"));
             { synth::register_class_pair(cls) };
             CV_CLASS = cls;
         }

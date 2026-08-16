@@ -2334,7 +2334,21 @@ fn apply_date_picker(v: *u8, n: *core::Node, dirty: u64) {
     // AppKit backend produces with a popover.
     if (dirty & (date_picker::P_IS_OPEN | date_picker::P_FORMAT)) != (0 as u64)
         || dirty == paint::all_bits() {
-        picker_openness(v, { (*p).is_open });
+        let _o: bool = picker_openness(v, { (*p).is_open });
+        if (dirty & date_picker::P_IS_OPEN) != (0 as u64) {
+            // OPENED / CLOSED fire on the change this backend just made, and
+            // only on that. A UIDatePicker has no callback of its own — the
+            // Compact style's overlay is UIKit's and reports nothing — so the
+            // moment facet can name is the moment the selector was shown or
+            // hidden, which is exactly what was written here.
+            if { (*p).is_open } {
+                let h: fn(*u8, *u8) = { (*p).on_opened };
+                if h != props::no_handler { h(v, { (*p).on_opened_ctx }); }
+            } else {
+                let h: fn(*u8, *u8) = { (*p).on_closed };
+                if h != props::no_handler { h(v, { (*p).on_closed_ctx }); }
+            }
+        }
     }
     // The ink. A UIDatePicker draws its own wheels and exposes exactly one
     // colour knob, which is the tint — there is no font on it at all, so the
@@ -2403,11 +2417,11 @@ fn create_time_picker(n: *core::Node) -> *u8 {
 // through `preferredDatePickerStyle` because that is the property — iOS picks
 // the concrete style from it, and asking for the read-only `datePickerStyle` to
 // change would be asking the wrong object.
-fn picker_openness(v: *u8, open: bool) {
+fn picker_openness(v: *u8, open: bool) -> bool {
     var s: ui::DatePickerStyle = ui::DatePickerStyle::Compact;
     if open { s = ui::DatePickerStyle::Inline; }
     ui::DatePicker::from_raw(v).set_preferred_date_picker_style(s);
-    return;
+    return open;
 }
 
 fn apply_time_picker(v: *u8, n: *core::Node, dirty: u64) {
@@ -2422,7 +2436,16 @@ fn apply_time_picker(v: *u8, n: *core::Node, dirty: u64) {
     // three presentations differ exactly by whether the selector is showing.
     if (dirty & (time_picker::P_IS_OPEN | time_picker::P_FORMAT)) != (0 as u64)
         || dirty == paint::all_bits() {
-        picker_openness(v, { (*p).is_open });
+        let _o: bool = picker_openness(v, { (*p).is_open });
+        if (dirty & time_picker::P_IS_OPEN) != (0 as u64) {
+            if { (*p).is_open } {
+                let h: fn(*u8, *u8) = { (*p).on_opened };
+                if h != props::no_handler { h(v, { (*p).on_opened_ctx }); }
+            } else {
+                let h: fn(*u8, *u8) = { (*p).on_closed };
+                if h != props::no_handler { h(v, { (*p).on_closed_ctx }); }
+            }
+        }
     }
     if (dirty & time_picker::P_TEXT_COLOR) != (0 as u64) {
         let c: vocab::Color = { (*p).text_color };
