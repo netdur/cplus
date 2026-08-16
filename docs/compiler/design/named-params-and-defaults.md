@@ -82,7 +82,7 @@ win for LLM legibility).
 
 ## Errors
 
-Allocate a contiguous block from `docs/errors.toml` (via `gen_errors.py`):
+Allocate a contiguous block from `docs/lang/errors.toml` (via `gen_errors.py`):
 
 | code | meaning |
 |---|---|

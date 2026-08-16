@@ -2178,7 +2178,7 @@ struct StructInfo {
     /// True iff this struct has a destructor — a method named `drop` with
     /// signature `fn drop(ref this)`. Sema validates the signature; codegen
     /// mirrors the flag to decide whether `let x: T = ...` registers a
-    /// scope-exit drop call. See `docs/design/phase3-drop.md`.
+    /// scope-exit drop call. See `docs/compiler/design/phase3-drop.md`.
     is_drop: bool,
     /// Mirror of sema's Copy fixpoint. A struct is Copy iff it has no Drop
     /// destructor and every field is Copy. Used by the §2.9 mutable-borrow
@@ -8813,7 +8813,7 @@ enum DropDisposition {
 }
 
 /// A scope-exit hook. Drop and `defer` share one LIFO stack per scope
-/// (see `docs/design/phase3-drop.md` §4.4). At scope exit codegen walks
+/// (see `docs/compiler/design/phase3-drop.md` §4.4). At scope exit codegen walks
 /// the frame in reverse-registration order and dispatches:
 ///   - `Drop` → conditional call gated on the drop flag
 ///   - `Defer` → re-emit the deferred expression (value discarded)

@@ -1,15 +1,15 @@
 # The C+ Language Specification
 
-Version 0.0.24 · normative reference.
+Version 0.0.27 · normative reference.
 
 **Project:** <https://cplus-lang.dev> · **Source:** <https://github.com/netdur/cplus>
 
 ## 0. About this document
 
 This is the normative reference for the C+ language. It describes syntax
-and semantics; it is not an implementation guide (see `docs/COMPILER.md`).
+and semantics; it is not an implementation guide (see `docs/compiler/internals.md`).
 For a dense "how to write C+" companion aimed at LLMs, see
-`docs/SKILL.md`.
+`docs/lang/skill.md`.
 
 **The compiler is the ultimate authority.** This document is verified
 against `cpc` and its test suite, but where the two ever disagree, the
@@ -426,7 +426,7 @@ pointers, and between raw pointer types. Casts that the language forbids
 This is the part of C+ that differs most from C. There is no garbage
 collector; memory safety is established statically. The parameter modes,
 borrows, and the absence of value-site references are described in full in
-[MEMORY-MODEL.md](MEMORY-MODEL.md).
+[memory-model.md](memory-model.md).
 
 ### 6.1 Move and copy
 
@@ -887,7 +887,8 @@ C ABI (pinned per target), object format, and **handoff**: host-linked
 targets produce an executable; external-builder targets (iOS, Android,
 ESP-IDF) stop at an object/static library and let the platform toolchain
 (Xcode, Gradle/NDK, ESP-IDF) perform the final link. For those targets,
-`[[bin]]`/cdylib/test/single-file outputs are rejected; output lives
+an app entry builds as a static archive + C header (a `fn main` there is
+E0409); cdylib/test/single-file outputs are rejected; output lives
 under `target/<target-name>/<mode>/`.
 
 The **embedded package profile** (32-bit targets) gates stdlib modules

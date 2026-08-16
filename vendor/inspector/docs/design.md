@@ -1,7 +1,7 @@
 # Design
 
 Why this package is shaped the way it is. The research that led here is
-[docs/design/runtime-iteration-spike.md](../../../docs/design/runtime-iteration-spike.md);
+[docs/compiler/design/runtime-iteration-spike.md](../../../docs/compiler/design/runtime-iteration-spike.md);
 this records the decisions that survived contact with the code.
 
 ## The vtable is the foundation, transport is an adapter

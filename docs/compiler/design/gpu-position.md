@@ -297,9 +297,9 @@ Worth tracking but not blocking:
 - **[plan.md](../plan.md)** — current cycle plan. §"GPU" intro + Phase 4 + Post-v0.0.10 follow-ups capture the position.
 - **[plan.gpu.md](../plan.gpu.md)** — the maximalist vision. Kept in-tree as historical record of the rejected direction. Do not implement.
 - **[vendor/metal](../vendor/metal/)** — current Metal bindings (v0.0.9). 6 files, ~620 LOC. Drop-clean, Result-returning. Lacks MPS bindings — that's the fast follow-up.
-- **[docs/COMPILER.md](COMPILER.md)** — compiler-internals reference. §11 explains the codegen / IR-text contract that `#compile_shader` plugs into.
+- **[docs/compiler/internals.md](../internals.md)** — compiler-internals reference. §11 explains the codegen / IR-text contract that `#compile_shader` plugs into.
 - **research.md** — the original "what would it take" survey. Predates the position decision; its framing of GPU as "feasible but massive" is correct but the conclusion (build it anyway) is what we rejected.
-- **[SKILL.md](SKILL.md)** — how to write C+ (the LLM-facing reference). §9 lists the existing vendor packages.
+- **[skill.md](../../lang/skill.md)** — how to write C+ (the LLM-facing reference). §9 lists the existing vendor packages.
 
 ---
 

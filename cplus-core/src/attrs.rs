@@ -99,7 +99,7 @@ pub fn deprecation_note(attrs: &[Attribute]) -> Option<Option<String>> {
     }))
 }
 
-/// Memory-model contract §5 (docs/design/memory-model.md): true iff `attrs`
+/// Memory-model contract §5 (docs/compiler/design/memory-model.md): true iff `attrs`
 /// carries `#[keeps(ARG)]` for the given argument (`"this"` / `"nothing"`).
 /// Shared by sema (E0515 exemption, return-tie suppression) and borrowck
 /// (caller-side receiver ties, elision short-circuit).
@@ -334,7 +334,7 @@ const KNOWN_ATTRS: &[AttrSpec] = &[
     // the mark the same way it reads `drop` to decide where teardown runs.
     // Sema enforces that an `#[watch]` struct supplies the hook (E0361)
     // with the exact signature (E0362). See
-    // [docs/design/watch-structs.md](../../docs/design/watch-structs.md).
+    // [docs/compiler/design/watch-structs.md](../../docs/compiler/design/watch-structs.md).
     AttrSpec {
         name: "watch",
         args: ArgsSpec::None,

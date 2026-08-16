@@ -55,7 +55,7 @@ pub struct Item {
 /// Phase 5 slice 5ATTR.1 — `#[NAME]` or `#[NAME(args)]` attribute attached
 /// to an item. Pure declarative metadata read by compiler stages (sema, codegen)
 /// or external tools (`cpc test`). Never an AST transformation source —
-/// see plan.md §2.8d and [docs/design/phase5-attributes.md](../../docs/design/phase5-attributes.md).
+/// see plan.md §2.8d and [docs/compiler/design/phase5-attributes.md](../../docs/compiler/design/phase5-attributes.md).
 #[derive(Debug, Clone, PartialEq)]
 pub struct Attribute {
     /// Attribute name — `"test"`, `"inline"`, `"repr"`. Single-segment in
@@ -227,7 +227,7 @@ pub struct EnumVariant {
     pub name: Ident,
     /// Positional payload types. Empty for payload-less (plain) variants.
     /// Named-field payloads (`Variant { f: T }`) are deferred — see
-    /// `docs/design/phase3-tagged-unions.md`.
+    /// `docs/compiler/design/phase3-tagged-unions.md`.
     pub payload: Vec<Type>,
     pub span: Span,
     /// Slice 5ATTR.1: attributes attached to this variant.
@@ -645,7 +645,7 @@ pub struct Param {
     pub borrow_: bool,
     /// Optional default value: `name: T = EXPR`. Spliced in at call sites that
     /// omit this argument (`lower` does the splice; see
-    /// docs/design/named-params-and-defaults.md). `None` for a required
+    /// docs/compiler/design/named-params-and-defaults.md). `None` for a required
     /// parameter. Only valid on C+ functions (never `extern fn`), and a
     /// defaulted parameter must not be followed by a required one.
     pub default: Option<Box<Expr>>,
@@ -804,7 +804,7 @@ pub enum StmtKind {
     Expr(Expr),
     /// `defer EXPR;` — registers the expression to run at the enclosing
     /// scope's exit, in LIFO order with any `Drop` calls. See
-    /// `docs/design/phase3-drop.md` §4.4. The deferred expression is
+    /// `docs/compiler/design/phase3-drop.md` §4.4. The deferred expression is
     /// re-emitted at scope exit (lexical, not Go's runtime-stack model):
     /// whatever the expression evaluates to at scope-exit time is what
     /// executes — so `defer #println(x)` reads x's final value, not its
@@ -815,7 +815,7 @@ pub enum StmtKind {
     /// (`crate::lower`) verifies the pattern is refutable (E0347) and then
     /// rewrites this node to an equivalent match. After the lowering pass
     /// runs, no `IfLet` nodes survive into sema. See
-    /// `docs/design/phase4-pattern-let.md`.
+    /// `docs/compiler/design/phase4-pattern-let.md`.
     IfLet {
         pattern: Pattern,
         scrutinee: Expr,
@@ -840,7 +840,7 @@ pub enum StmtKind {
     /// 5ATTR.4) the trap is replaced by a per-test failure-flag write
     /// so the runner can report which test failed without aborting the
     /// whole process. Source-line attribution (which assert fired) is
-    /// future work per design note [docs/design/phase5-attributes.md](../../docs/design/phase5-attributes.md) §6.3.
+    /// future work per design note [docs/compiler/design/phase5-attributes.md](../../docs/compiler/design/phase5-attributes.md) §6.3.
     Assert(Expr),
     /// `loop { BODY }` — unconditional loop. Exits only via `break`,
     /// `return`, or a no-return call. Codegen emits a simple back-edge

@@ -2,7 +2,7 @@
 
 C+ is a systems language: LLVM backend, manual memory, ownership with a borrow
 checker, one-way C ABI. `cplus-core/` is the compiler, `vendor/` is the package
-ecosystem (stdlib, facet UI, AppKit backend), `docs/SKILL.md` is the language
+ecosystem (stdlib, facet UI, AppKit backend), `docs/lang/skill.md` is the language
 reference — read it before writing any `.cplus`.
 
 This file is the things that cost hours when you don't know them.
@@ -32,7 +32,7 @@ default.
 |---|---|
 | `vendor/facet/src/*.cplus` (control modules, `props`, `elements`, `vocabulary`) | `tools/gen_contract.py` |
 | `vendor/appkit/src/appkit.cplus` | `cpc-bindgen` (hand additions go in `appkit_ext.cplus`) |
-| `docs/ERRORS.md` | `docs/gen_errors.py` from `docs/errors.toml` |
+| `docs/lang/errors.md` | `docs/lang/gen_errors.py` from `docs/lang/errors.toml` |
 
 A fix written into a generated file survives exactly until the next regen. This
 has already cost this project real behaviour — see below.

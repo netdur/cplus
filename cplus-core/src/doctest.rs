@@ -6,7 +6,7 @@
 //! through the regular lex / parse / lower / sema / borrowck / codegen
 //! pipeline — same as a hand-written `#[test] fn`.
 //!
-//! Design note: [docs/design/phase5-doctests.md](../../docs/design/phase5-doctests.md).
+//! Design note: [docs/compiler/design/phase5-doctests.md](../../docs/compiler/design/phase5-doctests.md).
 //!
 //! Pre-parser source-rewriting is the Phase-5 implementation choice. The note
 //! §6 enumerates two equally-valid hooks (token-stream rewrite, AST rewrite);

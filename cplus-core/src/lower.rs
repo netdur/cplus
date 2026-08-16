@@ -23,7 +23,7 @@
 //!    statement matches.
 //!
 //! No codegen changes; the desugar produces match IR that slice 3I already
-//! lowers. See `docs/design/phase4-pattern-let.md`.
+//! lowers. See `docs/compiler/design/phase4-pattern-let.md`.
 
 use crate::ast::*;
 use crate::diagnostics::{DiagCode, Diagnostic, LineMap, Severity};

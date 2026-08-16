@@ -1,6 +1,6 @@
 //! Phase 5 — borrow checker (slices 5BC.1, 5BC.2a, 5BC.2b).
 //!
-//! Design note: [`docs/design/phase5-borrow-shared.md`](../../docs/design/phase5-borrow-shared.md).
+//! Design note: [`docs/compiler/design/phase5-borrow-shared.md`](../../docs/compiler/design/phase5-borrow-shared.md).
 //!
 //! ## What this module produces
 //!

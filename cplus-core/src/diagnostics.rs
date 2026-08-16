@@ -2,7 +2,7 @@
 //!
 //! Every error and warning flows through `Diagnostic`. Renderers (human,
 //! NDJSON, short-form) are downstream of this single data model. See
-//! `docs/design/diagnostics.md` for the full design.
+//! `docs/compiler/design/diagnostics.md` for the full design.
 
 use crate::lexer::{LexError, LexErrorKind, Span as ByteSpan};
 use crate::parser::{ParseError, ParseErrorKind};

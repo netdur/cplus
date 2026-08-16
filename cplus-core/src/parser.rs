@@ -1792,7 +1792,7 @@ impl Parser {
         self.expect(&TokenKind::Colon, "`:`")?;
         let ty = self.parse_type()?;
         // Optional default value: `name: T = EXPR`. Spliced at call sites that
-        // omit this argument (see docs/design/named-params-and-defaults.md).
+        // omit this argument (see docs/compiler/design/named-params-and-defaults.md).
         let default = if self.eat(&TokenKind::Eq) {
             Some(Box::new(self.parse_expr()?))
         } else {

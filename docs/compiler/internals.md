@@ -2,7 +2,7 @@
 
 A compiler-internals reference for [`cplus-core`](../cplus-core/src/) (the library), [`cpc`](../cpc/src/) (the driver binary), and [`cpc-lsp`](../cpc-lsp/src/) (the language server). Audience: someone reading the source.
 
-If you want to use the language, read [SKILL.md](SKILL.md) (how to write C+) and [SPEC.md](SPEC.md) (the normative reference). If you want to extend it, read this file then `sema.rs` and `codegen.rs`.
+If you want to use the language, read [skill.md](../lang/skill.md) (how to write C+) and [spec.md](../lang/spec.md) (the normative reference). If you want to extend it, read this file then `sema.rs` and `codegen.rs`.
 
 ---
 
@@ -311,7 +311,7 @@ Sema emits ~77 unique `Exxxx` codes. The main ranges:
 | E0852–E0864 | Vendor packages + `[link]` validation |
 | E0900 | Borrow-shaped params in async fns |
 
-Each code lives in the file that emits it. There is no central error registry — the codes are documented in [ERRORS.md](ERRORS.md) and the error message itself.
+Each code lives in the file that emits it. There is no central error registry — the codes are documented in [errors.md](../lang/errors.md) and the error message itself.
 
 ---
 
@@ -536,13 +536,15 @@ pub struct Manifest {
 }
 ```
 
-`fn load(manifest_path: &Path) -> Result<Manifest, ManifestError>` parses `Cplus.toml` (using `toml-rs`) and applies defaults:
+`fn load(manifest_path: &Path) -> Result<Manifest, ManifestError>` parses `Cplus.toml` (using `toml-rs`) and applies defaults (v0.0.28 manifest model — the Cargo-shaped `[[bin]]`/`[lib]` sections are removed, E0408 with the migration):
 
-- If no `[[bin]]` and no `[lib]` declared → auto-inject a phantom `[[bin]]` with `name = package.name, path = "src/main.cplus"`.
-- `[lib]` and `[[bin]]` are mutually exclusive (E0408).
-- `[link].bundled` requires `[link].triples`; both validated against the filesystem (`src/lib/<triple>/<basename>`).
+- An app is named by its entry: `[package] entry`, a `[<platform>] entry` override, or the `src/main.cplus` default (picked up only when the file exists, no `[library]` is declared, and no platform section names an entry — a declared platform entry scopes the app to those platforms; others are E0413).
+- What a build produces is the target's fact: self-linked platforms → executable (entry must define `fn main`, E0414); external-builder platforms → `lib<name>.a` + C header (entry must NOT define `fn main`, E0409 — the shell enters through an `export extern fn`).
+- No entry at all → a library package: `cpc build` archives the whole `src/` tree via a synthesized entry.
+- `[library]` declares a C-ABI product library (`kind = staticlib|cdylib|both`); an explicit `[library] entry` makes that file's top-level names the bare C ABI. An app entry and `[library]` are mutually exclusive (E0408).
+- `[link].bundled` requires no triples declaration; validated against the filesystem (`lib/<triple>/<basename>`).
 
-The `cpc test` driver has a fallback for the phantom-bin case: when `src/main.cplus` doesn't exist, try `src/<package-name>.cplus` as the entry. This is what makes vendor packages (which declare no target) self-testable.
+The `cpc test` driver resolves its entry through a ladder: `src/test_main.cplus` first, then the app entry for the active platform, then `[library]`, then `src/<package-name>.cplus`. This is what makes vendor packages (which declare no target) self-testable.
 
 ### Cross-package validation
 
@@ -605,7 +607,7 @@ After all three: the typed json refactor (994 LOC) shipped with 23 in-package `#
 | Task | Files to touch | Notes |
 |---|---|---|
 | Add a new attribute | `attrs.rs`, possibly `codegen.rs`, `cpc/tests/e2e.rs` | Attribute table is the single source. Read §5. |
-| Add a new error code | The file that emits it. Document it in `docs/errors.toml` (E0xxx). | No central registry. Make the message specific. |
+| Add a new error code | The file that emits it. Document it in `docs/lang/errors.toml` (E0xxx). | No central registry. Make the message specific. |
 | Add a new builtin type | `ast.rs` (`Ty` variant), `sema.rs` (resolution + ops), `codegen.rs` (lowering), `monomorphize.rs` (mangling). | Mask was the most recent — search for `Ty::Mask` to see every site touched. |
 | Add a new compile-time intrinsic | `sema.rs` (`check_named_call`), `codegen.rs` (lowering), `MonoInfo` field if it carries data. | `addr_of` is the smallest example. |
 | Add a new generic stdlib type | `vendor/stdlib/src/<name>.cplus`, plus a smoke test under `docs/examples/projects/`. | No compiler changes if the type uses existing primitives. |

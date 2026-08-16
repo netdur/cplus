@@ -8,7 +8,7 @@
 //! `fn main()` is the one exception — it stays un-prefixed so the linker
 //! finds it as `@main`.
 //!
-//! See `docs/design/phase4-modules.md` §8 for the slice plan and §8.1/§8.2
+//! See `docs/compiler/design/phase4-modules.md` §8 for the slice plan and §8.1/§8.2
 //! for the AST/codegen-level intent.
 
 use std::collections::{BTreeMap, BTreeSet, HashSet};

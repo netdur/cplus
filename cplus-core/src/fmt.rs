@@ -13,7 +13,7 @@
 //! multi-line-bracket stack; same-line spacing comes from a small lookup
 //! table over the previous and current token kinds.
 //!
-//! See `docs/design/phase4-fmt.md` for the style decisions.
+//! See `docs/compiler/design/phase4-fmt.md` for the style decisions.
 
 use crate::diagnostics::Diagnostic;
 use crate::lexer::{self, Token, TokenKind};

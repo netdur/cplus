@@ -18,7 +18,7 @@ without requiring general code hot reload.
 
 ## What shipped, and where this document was wrong
 
-The inspector's own design notes are [vendor/inspector/docs/design.md](../../vendor/inspector/docs/design.md).
+The inspector's own design notes are [vendor/inspector/docs/design.md](../../../vendor/inspector/docs/design.md).
 Three things below did not survive contact with the code:
 
 **The narrow initial scope was drawn in the wrong place.** This document
