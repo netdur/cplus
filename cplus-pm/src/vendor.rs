@@ -198,6 +198,42 @@ pub fn install(
 
         let pin = stamp_pin(&dep);
 
+        // THE PROJECT ALREADY VENDORS IT, and the build will use that copy.
+        //
+        // An UNSTAMPED `<project>/vendor/<name>` is not something this tool
+        // installed — it is a checked-in tree, or the symlink every package
+        // inside the toolchain checkout has back to the monorepo's `vendor/`.
+        // Either way it is rung one of the ladder `cpc build` walks, so it is
+        // what gets compiled and linked, and fetching a release copy into the
+        // store would materialize a package the build never opens.
+        //
+        // It also fails, which is how this was found: in the toolchain checkout
+        // `vendor/` runs AHEAD of the last release tag, so `install` after an
+        // `add` of a newly-split package died with
+        //
+        //     error: package `agent_uikit` was not found in the fetched repo
+        //            at ~/.cplus/cache/…/v0.0.27/source/vendor/agent_uikit
+        //
+        // for a package sitting compiled two directories away. Its own
+        // dependencies are still walked, from ITS manifest, so a sibling that
+        // is genuinely missing is still discovered and fetched.
+        let vendored = local_vendor.join(&dep.name);
+        if read_stamp(&vendored).is_none() && vendored.join(MANIFEST_NAME).is_file() {
+            let sub_manifest = Manifest::load_dir(&vendored).map_err(VendorError::Manifest)?;
+            report.packages.push(Resolved {
+                name: dep.name.clone(),
+                repo: dep.repo.clone(),
+                version: dep.version.clone(),
+                fresh: false,
+                location: Location::Local,
+            });
+            winners.insert(dep.name.clone(), dep.clone());
+            for (name, value) in &sub_manifest.deps {
+                queue.push_back(transitive_pending(name, value, &dep)?);
+            }
+            continue;
+        }
+
         // Destination: the store unless `local` was asked for — or unless
         // the store already holds this name from a DIFFERENT pin, in which
         // case this project's copy goes local and the shared one is left

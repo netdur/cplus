@@ -239,3 +239,102 @@ fn a_third_party_add_pins_its_siblings_by_url() {
     assert!(store.join("v0.0.26/vendor/parser/Cplus.toml").is_file());
     assert!(store.join("v0.0.26/vendor/lex/Cplus.toml").is_file());
 }
+
+// ---- the two-resolver bug ----------------------------------------------------
+// `add` read the package's manifest from a git checkout of the toolchain repo
+// at the pinned RELEASE tag, while `cpc build` reads it from the project's own
+// `vendor/`. In the toolchain checkout — whose `vendor/` is always ahead of the
+// last release — that meant `add` failed for exactly the packages the build had
+// just compiled:
+//
+//     $ cpc pm add . facet_agent
+//     error: failed to access …/v0.0.27/source/vendor/facet_agent/Cplus.toml
+//
+// The fixture is that situation exactly: a package that exists LOCALLY and not
+// in the tagged release.
+
+/// A package present in the project's `vendor/` but absent from the release.
+fn local_only_package(project: &Path) {
+    write(
+        &project.join("vendor/fresh/Cplus.toml"),
+        "[package]\nname = \"fresh\"\nversion = \"0.0.26\"\n\n\
+         [dependencies]\nstdlib = \"*\"\n",
+    );
+    write(
+        &project.join("vendor/stdlib/Cplus.toml"),
+        "[package]\nname = \"stdlib\"\nversion = \"0.0.26\"\n",
+    );
+}
+
+/// `add` alone, without the install that follows it in the CLI: these tests
+/// are about WHERE the package's manifest is read from, and the fixture's
+/// local-only package has nothing to install from.
+fn add_only(
+    project: &Path,
+    repo: &Path,
+    store: &Path,
+    name: &str,
+) -> Result<cplus_pm::add::AddReport, String> {
+    let options = cplus_pm::vendor::InstallOptions {
+        store_root: Some(store.to_path_buf()),
+        repo_url_override: Some(repo.to_string_lossy().into_owned()),
+        toolchain: Some(cplus_pm::store::ToolchainContext {
+            repo: "github.com/netdur/cplus".into(),
+            version: "0.0.26".into(),
+            package_root: "vendor".into(),
+        }),
+        ..Default::default()
+    };
+    cplus_pm::add::add(project, name, None, &[], &options).map_err(|e| format!("{e}"))
+}
+
+#[test]
+fn add_reads_a_package_the_project_vendors_but_the_release_does_not_have() {
+    let temp = tempfile::tempdir().unwrap();
+    let (repo, store, project) = (
+        temp.path().join("cplus"),
+        temp.path().join("store"),
+        temp.path().join("app"),
+    );
+    monorepo(&repo); // the release: stdlib, ui, the three backends — no `fresh`
+    write(
+        &project.join("Cplus.toml"),
+        "[package]\nname = \"app\"\nversion = \"0.0.1\"\nedition = \"2026\"\n",
+    );
+    local_only_package(&project);
+
+    // Before the fix this failed with ENOENT on the store's source checkout.
+    add_only(&project, &repo, &store, "fresh")
+        .expect("add must resolve a locally-vendored package");
+
+    let manifest = fs::read_to_string(project.join("Cplus.toml")).unwrap();
+    assert!(manifest.contains("fresh = \"*\""), "{manifest}");
+    // Its CLOSURE came out of the local manifest too — that closure is the
+    // whole reason `add` exists rather than the user typing one line.
+    assert!(manifest.contains("stdlib = \"*\""), "{manifest}");
+}
+
+#[test]
+fn add_still_fetches_a_package_that_is_only_in_the_release() {
+    let temp = tempfile::tempdir().unwrap();
+    let (repo, store, project) = (
+        temp.path().join("cplus"),
+        temp.path().join("store"),
+        temp.path().join("app"),
+    );
+    monorepo(&repo);
+    write(
+        &project.join("Cplus.toml"),
+        "[package]\nname = \"app\"\nversion = \"0.0.1\"\nedition = \"2026\"\n",
+    );
+    // A local `vendor/` exists but does NOT hold `ui` — the fetch rung must
+    // still be reached rather than the empty directory shadowing it.
+    local_only_package(&project);
+
+    add_only(&project, &repo, &store, "ui").expect("add failed");
+
+    let manifest = fs::read_to_string(project.join("Cplus.toml")).unwrap();
+    assert!(manifest.contains("ui = \"*\""), "{manifest}");
+    // The closure came from the FETCHED manifest, which is the rung under test.
+    assert!(manifest.contains("stdlib = \"*\""), "{manifest}");
+}

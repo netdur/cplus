@@ -22,6 +22,7 @@
 use crate::fetch::Checkout;
 use crate::manifest::{is_valid_dep_name, MANIFEST_NAME, PLATFORMS};
 use crate::spec::DepSpec;
+use crate::store;
 use crate::vendor::{self, InstallOptions, VendorError};
 use std::collections::BTreeMap;
 use std::fmt;
@@ -62,6 +63,38 @@ pub enum AddError {
     Io { path: std::path::PathBuf, source: std::io::Error },
     ManifestSyntax { message: String },
     Vendor(VendorError),
+}
+
+/// Package `name`'s manifest text from somewhere on this machine, or `None`
+/// when only a fetch can supply it.
+///
+/// The rungs, in the order `cpc build`'s `vendor_dir_for` walks them:
+///
+///   1. `<project>/vendor/<name>/`   — what the build links against;
+///   2. `<project>/../<name>/`       — the vendor-package self-test case,
+///      where sibling packages sit beside the project rather than under a
+///      `vendor/` of its own. `cpc pm add . <sibling>` run from inside
+///      `vendor/<pkg>` means this one;
+///   3. `<store>/<tier>/vendor/<name>/` — the per-user store (D16).
+///
+/// A rung is taken only when the manifest is actually readable there, so a
+/// half-materialized directory falls through to the next rather than failing
+/// the command.
+fn local_package_manifest(
+    project_dir: &Path,
+    name: &str,
+    options: &InstallOptions,
+) -> Option<String> {
+    let mut candidates: Vec<std::path::PathBuf> = vec![vendor::vendor_dir(project_dir).join(name)];
+    if let Some(parent) = project_dir.parent() {
+        candidates.push(parent.join(name));
+    }
+    if let (Some(root), Some(tc)) = (options.resolved_store_root(), options.toolchain.as_ref()) {
+        candidates.push(store::Store::new(root, &tc.version).vendor_dir().join(name));
+    }
+    candidates
+        .into_iter()
+        .find_map(|dir| fs::read_to_string(dir.join(MANIFEST_NAME)).ok())
 }
 
 /// The host's manifest platform name — the fallback target of a project
@@ -120,38 +153,69 @@ pub fn add(
         platforms.push(host_platform().to_string());
     }
 
-    // Fetch the package and read ITS manifest straight from the cached
-    // checkout — the store fills when the caller installs afterwards.
+    // Read the package's OWN manifest — the closure comes out of it.
+    //
+    // THE SAME LADDER THE BUILD WALKS, and that is the whole point. `cpc build`
+    // resolves a dependency from `<project>/vendor/<name>` first, then a
+    // sibling `<project>/../<name>`, then the store; `add` went straight to a
+    // git checkout of the toolchain repo at the pinned tag. Two resolvers, two
+    // universes — so in a checkout whose `vendor/` is AHEAD of the last release
+    // (which the toolchain repo's own tree always is), `add` failed for exactly
+    // the packages the build had just compiled:
+    //
+    //     $ cpc pm add . facet_agent
+    //     error: failed to access ~/.cplus/cache/…/v0.0.27/source/vendor/
+    //            facet_agent/Cplus.toml: No such file or directory
+    //
+    // while `cpc build` in the same project resolved `facet_agent` without
+    // complaint. The tool whose job is "write the dependency closure into the
+    // manifest" was the one that could not see the closure.
+    //
+    // Fetching stays the LAST rung, not the first: a project that depends on a
+    // package it does not have locally still gets it.
     let raw_spec = spec.unwrap_or("*").to_string();
     let dep = vendor::root_pending(name, &raw_spec, options.toolchain.as_ref())
         .map_err(AddError::Vendor)?;
     let store_root = options.resolved_store_root();
-    let cache_root = options
-        .cache_root
-        .clone()
-        .or_else(|| store_root.as_ref().map(|r| r.join("cache")))
-        .ok_or(AddError::Vendor(VendorError::NoStoreRoot))?;
-    let repo_url = options
-        .repo_url_override
-        .clone()
-        .unwrap_or_else(|| dep.repo_url.clone());
-    let checkout = Checkout::new(&dep.repo, repo_url, &dep.tag, &cache_root);
-    let source_root = checkout
-        .ensure()
-        .map_err(|e| AddError::Vendor(VendorError::Fetch(e)))?
-        .to_path_buf();
-    let sha = checkout
-        .head_sha()
-        .map_err(|e| AddError::Vendor(VendorError::Fetch(e)))?;
-    if let Some(root) = &store_root {
-        vendor::check_tag_record(root, &dep, &sha).map_err(AddError::Vendor)?;
-    }
-    let pkg_dir = vendor::join_subpath(&source_root, &dep.subpath);
-    let pkg_text =
-        fs::read_to_string(pkg_dir.join(MANIFEST_NAME)).map_err(|source| AddError::Io {
-            path: pkg_dir.join(MANIFEST_NAME),
-            source,
-        })?;
+    // A PINNED spec names a specific repo, ref and version, and the local rungs
+    // cannot honour any of that — a directory called `foo` beside the project
+    // is not evidence that it is the `foo` at that URL. So a pin always fetches;
+    // the ladder is for the bare and sibling specs, which are exactly the ones
+    // that mean "the package this toolchain ships".
+    let local_first = !matches!(DepSpec::parse(&raw_spec), Ok(DepSpec::Pinned(_)));
+    let pkg_text = match local_first
+        .then(|| local_package_manifest(project_dir, name, options))
+        .flatten()
+    {
+        Some(text) => text,
+        None => {
+            let cache_root = options
+                .cache_root
+                .clone()
+                .or_else(|| store_root.as_ref().map(|r| r.join("cache")))
+                .ok_or(AddError::Vendor(VendorError::NoStoreRoot))?;
+            let repo_url = options
+                .repo_url_override
+                .clone()
+                .unwrap_or_else(|| dep.repo_url.clone());
+            let checkout = Checkout::new(&dep.repo, repo_url, &dep.tag, &cache_root);
+            let source_root = checkout
+                .ensure()
+                .map_err(|e| AddError::Vendor(VendorError::Fetch(e)))?
+                .to_path_buf();
+            let sha = checkout
+                .head_sha()
+                .map_err(|e| AddError::Vendor(VendorError::Fetch(e)))?;
+            if let Some(root) = &store_root {
+                vendor::check_tag_record(root, &dep, &sha).map_err(AddError::Vendor)?;
+            }
+            let pkg_dir = vendor::join_subpath(&source_root, &dep.subpath);
+            fs::read_to_string(pkg_dir.join(MANIFEST_NAME)).map_err(|source| AddError::Io {
+                path: pkg_dir.join(MANIFEST_NAME),
+                source,
+            })?
+        }
+    };
     let (base_deps, platform_deps) = split_sections(&pkg_text)?;
 
     // Was the added package itself pinned by URL? Its bare siblings then

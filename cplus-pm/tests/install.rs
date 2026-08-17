@@ -218,3 +218,59 @@ fn global_install_without_toolchain_version_names_the_fix() {
         "unexpected error: {err}"
     );
 }
+
+// ---- the clobbered checkout --------------------------------------------------
+// A project INSIDE the toolchain monorepo reaches the packages through
+// `vendor -> ../../vendor` — every `examples/*` is laid out that way. Install
+// treated an unstamped `vendor/<name>` as absent, and its "vendor locally"
+// branch is `remove_dir_all` + `copy_tree`: it deleted the monorepo's own
+// working sources and replaced them with the last RELEASE copy, through the
+// symlink. Found by doing it — `agent_core`, `agent_inapp` and `agent_mcp`
+// came back as their v0.0.27 selves, and the next build failed on a function
+// the newer source had and the older one did not.
+//
+// An unstamped local package is now honoured, which is both the right answer
+// (it is rung one of the ladder the BUILD walks, so it is what gets compiled)
+// and a refusal to write over sources this tool did not put there.
+
+#[test]
+fn install_does_not_overwrite_a_package_the_project_already_vendors() {
+    let temp = tempfile::tempdir().unwrap();
+    let repo = temp.path().join("cplus");
+    let store = temp.path().join("store");
+    let project = temp.path().join("app");
+    monorepo(&repo);
+
+    write(
+        &project.join("Cplus.toml"),
+        "[package]\nname = \"app\"\nversion = \"0.0.1\"\nedition = \"2026\"\n\n\
+         [dependencies]\njson = \"*\"\n",
+    );
+    // The working copy: same package name, content the release does not have.
+    write(
+        &project.join("vendor/json/Cplus.toml"),
+        "[package]\nname = \"json\"\nversion = \"0.0.26\"\n\n[dependencies]\nstdlib = \"*\"\n",
+    );
+    write(
+        &project.join("vendor/json/src/lib/json.cplus"),
+        "// the WORKING source, newer than any release\n",
+    );
+    write(
+        &project.join("vendor/stdlib/Cplus.toml"),
+        "[package]\nname = \"stdlib\"\nversion = \"0.0.26\"\n",
+    );
+
+    run_install(&project, &repo, &store, &[]).expect("install failed");
+
+    // Byte-for-byte what was there. The release's `// json` must NOT be here.
+    let src = fs::read_to_string(project.join("vendor/json/src/lib/json.cplus")).unwrap();
+    assert_eq!(
+        src, "// the WORKING source, newer than any release\n",
+        "install overwrote the project's own vendored source"
+    );
+    // And no stamp was dropped into a tree this tool does not own.
+    assert!(
+        !project.join("vendor/json/.cplus-vendor").exists(),
+        "install stamped a package it did not install"
+    );
+}
