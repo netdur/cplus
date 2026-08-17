@@ -21,19 +21,27 @@ edition = "2026"
 
 # The test root doubles as the leak harness (`leaks --atExit`).
 
-# Not prebuilt (2026-08-17): with this backend as a SLICE (facet as source),
-# facet_gallery segfaults at first window order-front — a ~8 MB single stack
-# frame inside flex_layout Node code reached from AppKit's key-view walk
-# (write into the stack guard). Source mode is the verified-alive
-# configuration; see bugs/facet-appkit-slice-runtime-crash.md before
-# re-enabling. The facet <-> backend CYCLE is gone (facet_runtime owns the
-# facades) — this opt-out is about the mixed slice/source ObjC path only.
-# Not prebuilt (2026-08-17): as a SLICE this backend makes divergent
-# view-arming decisions and the app dies in the key-view walk — see
-# bugs/facet-appkit-slice-runtime-crash.md (deep forensic record) before
-# re-enabling. NOT the old facet<->backend cycle; that is gone.
+# Prebuilt again (2026-08-17). This backend was opted OUT because as a SLICE it
+# made divergent view-arming decisions and the app died in AppKit's key-view
+# walk — an ~8 MB stack, write into the guard page, at first window
+# order-front. That is fixed in the COMPILER, not here.
+#
+# The cause was function-pointer identity. facet is source-mode, so its code was
+# compiled `internal` into the app and `weak_odr` into this slice; the linker
+# cannot coalesce those, so `props::no_handler` had TWO addresses. facet parks
+# `no_handler` in a handler slot and compares against it to mean "the
+# application set nothing" — written through one copy and compared against the
+# other, that answered "it DID set one" for every node, so every view was armed
+# for focus events, isa-swizzled into a gesture subclass, and the key-view ring
+# built over them recursed until the stack ran out.
+#
+# `gen_fn` now gives any address-taken, name-public function `weak_odr`, so it
+# has one address. Verified in this configuration: one `no_handler` symbol
+# instead of two, 0 views armed at boot instead of 6 (matching source mode's 72
+# skips), and the gallery runs. bugs/closed/facet-appkit-slice-runtime-crash.md
+# has the forensic record.
 [build]
-prebuild = false
+prebuild = true
 
 [dependencies]
 stdlib      = "*"

@@ -95,6 +95,13 @@ struct ModuleMetadata {
     /// purely-internal calls. obs.md flagged this as a "few percent on
     /// call-heavy code" win, cumulative with fix A.
     fastcc_funcs: RefCell<HashSet<String>>,
+    /// Functions whose ADDRESS IS TAKEN somewhere in this program.
+    ///
+    /// The same set that gates `fastcc` (a fastcc function cannot be reached
+    /// through a C-cc pointer), kept because linkage needs it too — see the
+    /// `weak_odr` arm in `gen_fn`. A function nobody points at may be
+    /// duplicated freely; one that is pointed at must have ONE address.
+    address_taken_funcs: RefCell<HashSet<String>>,
     /// v0.0.9 Phase 4: module-scope `static` items. Populated by the
     /// `emit_statics` pre-pass from sema's `MonoInfo::statics`. Maps
     /// the static's qualified name (the same name that survives in
@@ -1231,6 +1238,7 @@ fn generate_inner(
     // C cc so the OS runtime can invoke it.
     {
         let address_taken = collect_address_taken_fns(program, &sigs);
+        *md.address_taken_funcs.borrow_mut() = address_taken.clone();
         let mut fastcc = md.fastcc_funcs.borrow_mut();
         for item in &program.items {
             match &item.kind {
@@ -6720,9 +6728,51 @@ fn gen_function(
     // in a library build means the whole surface is stripped: stdlib came out
     // at 14 KB instead of 400 KB, the same empty archive `internal` produced.
     let lib_public = lib_public_name(is_lib, &f.name.name);
+    // A FUNCTION WHOSE ADDRESS IS TAKEN MUST HAVE ONE ADDRESS.
+    //
+    // `internal` is otherwise right for an executable: nothing outside links
+    // it, so LTO may strip or duplicate it freely. That freedom is only safe
+    // while the duplication is UNOBSERVABLE — and taking a function's address
+    // is exactly what makes it observable.
+    //
+    // A mixed build makes the duplication real. A package with
+    // `[build] prebuild = false` is compiled from source INTO the executable
+    // (`internal` here) and, when a prebuilt package also depends on it, into
+    // that package's slice as well (`weak_odr` there). The linker cannot
+    // coalesce an internal definition with a weak one, so the binary carries
+    // two, at two addresses:
+    //
+    //     00000001001062a0 (__TEXT,__text) non-external _facet.src.props.no_handler
+    //     0000000100a8e3cc (__TEXT,__text) weak external _facet.src.props.no_handler
+    //
+    // facet stores `no_handler` in a node's handler slot and asks "is this
+    // still no_handler?" to mean "did the application set one?". Written
+    // through one copy and compared against the other, the answer was YES for
+    // every node in the tree: every view was armed for focus events, every
+    // armed view was isa-swizzled into a gesture subclass, and AppKit's
+    // key-view ring — built by walking those views — recursed until the stack
+    // hit its guard page. The app died inside `makeKeyAndOrderFront:` having
+    // drawn nothing. Three sessions read that as a codegen, static-state or
+    // struct-layout divergence; it was none of those. It was `!=` on a
+    // function pointer that had been duplicated.
+    //
+    // So: address-taken and not module-private → `weak_odr`, in every build.
+    // The cost is nil where it applies. An address-taken function is already
+    // excluded from `fastcc` for the neighbouring reason (a fastcc function
+    // cannot be entered through a C-cc pointer), so this takes away an
+    // optimization it never had.
+    let identity_matters = !f.is_extern
+        && md.address_taken_funcs.borrow().contains(&f.name.name)
+        && !f
+            .name
+            .name
+            .rsplit('.')
+            .next()
+            .unwrap_or(&f.name.name)
+            .starts_with('_');
     let linkage = if f.name.name == "main" || f.is_pub || f.is_declaration {
         ""
-    } else if lib_public {
+    } else if lib_public || identity_matters {
         "weak_odr "
     } else {
         "internal "
@@ -21549,13 +21599,25 @@ fn main() -> i32 {\n\
                  return fp();\n\
              }",
         );
+        // DEFAULT CC is the claim this test is named for, and it is unchanged.
         assert!(
-            ir.contains("define internal i32 @target()"),
-            "address-taken target must keep default cc, got:\n{ir}"
+            ir.contains("i32 @target()"),
+            "address-taken target must be defined, got:\n{ir}"
         );
         assert!(
-            !ir.contains("define internal fastcc i32 @target"),
+            !ir.contains("fastcc i32 @target"),
             "address-taken target must NOT be fastcc, got:\n{ir}"
+        );
+        // And `weak_odr`, not `internal` — the linkage moved on purpose. An
+        // `internal` definition cannot coalesce with the `weak_odr` copy a
+        // prebuilt slice carries, so a function compiled into both ends up
+        // with TWO addresses and `fp == target` answers false. See the
+        // linkage comment in `gen_fn`: facet stores `no_handler` in a handler
+        // slot and compares against it to mean "the app set nothing", and the
+        // duplicate made that comparison lie for every node in the tree.
+        assert!(
+            ir.contains("define weak_odr i32 @target()"),
+            "address-taken target must be weak_odr so it has ONE address, got:\n{ir}"
         );
     }
 

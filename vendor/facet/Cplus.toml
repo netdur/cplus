@@ -6,13 +6,20 @@ edition = "2026"
 # facet — the UI vocabulary: 38 generated + 4 hand-written controls, the
 # platform-free tier (Stage 3), and the mount seam a backend fills.
 
-# Not prebuilt (2026-08-17). The structural blockers are gone — the runtime
-# facades live in facet_runtime, the agent tier in facet_agent, and facet is
-# now the pure platform-free core. What remains is the runtime bug that hits
-# facet's BACKEND as a slice (divergent view-arming decisions, app dies in
-# the key-view walk — bugs/facet-appkit-slice-runtime-crash.md). Until that
-# is diagnosed, the facet family ships as source: a slice that might behave
-# differently from the source build is worse than no cache.
+# Not prebuilt — and as of 2026-08-17 that is a CHOICE, not a workaround.
+#
+# The structural blockers went first: the runtime facades live in
+# facet_runtime, the agent tier in facet_agent, and facet is the pure
+# platform-free core. The runtime blocker went second: source-mode facet inside
+# a prebuilt backend used to duplicate `props::no_handler` at two addresses and
+# break every "did the application set a handler?" comparison
+# (bugs/closed/facet-appkit-slice-runtime-crash.md). `gen_fn` now gives an
+# address-taken function `weak_odr`, so it has one address whichever way the
+# package is consumed, and facet_appkit ships as a slice again.
+#
+# Prebuilding facet as well is a live option and purely a build-time win; it is
+# left off only because nothing has measured it. Enabling it is a one-line
+# change plus a suite run, not a risk to reason about.
 [build]
 prebuild = false
 
