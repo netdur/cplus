@@ -42,8 +42,18 @@ bundle is Xcode's and the code is cpc's.
    builds the UIWindow itself; a scene manifest would put UIKit in charge of the
    window instead and nothing would appear.
 4. **Build Phases → Link Binary With Libraries**: add
-   `libfacet_gallery_ios.a`, and the frameworks it needs — `UIKit`,
-   `QuartzCore`, `Foundation`, `CoreGraphics`, plus `libobjc.tbd`.
+   `libfacet_gallery_ios.a`, **every `vendor/*/lib/<artifact-triple>/*.a`**,
+   and the frameworks — `UIKit`, `QuartzCore`, `Foundation`, `CoreGraphics`,
+   `WebKit`, plus `libobjc.tbd`.
+
+   > The dependency archives are not optional and did not used to be needed.
+   > `prebuild` became the default on 2026-08-16: a library package is
+   > compiled once into `vendor/<pkg>/lib/<triple>/lib<pkg>.a` and linked
+   > thereafter, so its object code is no longer inside this app's archive.
+   > Miss them and the link fails on symbols nothing defines — typically
+   > `Vec[T]` instantiated over a dependency's type, because a generic has no
+   > object code until a consumer instantiates it and the instantiation calls
+   > a concrete method that lives only in that dependency's slice.
 5. **Build Settings → Header Search Paths**: the `target/<triple>/debug/`
    directory, so `#import "facet_gallery_ios.h"` resolves.
 6. **Library Search Paths**: the same directory. Point the simulator
@@ -92,11 +102,16 @@ Faster than the GUI, and how everything above was verified:
 cd examples/facet_gallery_ios
 cpc build --target ios-arm64-simulator
 
+# Every prebuilt dependency slice, as step 4 explains. Globbing over-links,
+# which costs nothing: an archive nothing references contributes no bytes.
+slices=$(find ../../vendor -maxdepth 4 -path '*/lib/arm64-apple-ios-simulator/*.a')
+
 xcrun -sdk iphonesimulator clang -arch arm64 -mios-simulator-version-min=14.0 \
   -I target/ios-arm64-simulator/debug \
   ios/main.m target/ios-arm64-simulator/debug/libfacet_gallery_ios.a \
+  $slices \
   -framework UIKit -framework QuartzCore -framework Foundation \
-  -framework CoreGraphics -lobjc -o Gallery.app/Gallery
+  -framework CoreGraphics -framework WebKit -lobjc -o Gallery.app/Gallery
 # Gallery.app also needs the Info.plist from the Xcode recipe above.
 
 xcrun simctl boot "iPhone 17 Pro"

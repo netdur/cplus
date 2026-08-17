@@ -69,9 +69,32 @@ cat > "$app/Info.plist" <<'PLIST'
 </plist>
 PLIST
 
+# Every prebuilt dependency slice, not just this package's own archive.
+#
+# `prebuild` became the DEFAULT on 2026-08-16: a library package is compiled
+# once into `vendor/<pkg>/lib/<triple>/lib<pkg>.a` and later builds LINK it
+# instead of recompiling. So a dependency's object code is no longer inside the
+# app's archive, and an external-builder target hands the final link to us —
+# which means this script has to name those archives or the link fails on
+# symbols nothing defines.
+#
+# It failed exactly that way: this runner instantiates `Vec[T]` over webkit
+# types (a generic has no object code until a consumer instantiates it), and
+# the instantiation calls `webkit…drop`, a concrete method that lives only in
+# webkit's slice. Undefined symbol, no link, no test run.
+#
+# Globbing the whole vendor tree over-links — an archive nothing references
+# contributes nothing to the binary — and that is the point: it cannot drift
+# out of step with the manifest the way a hand-kept list does.
+artifact_triple="arm64-apple-ios-simulator"
+slices=$(find "$root/vendor" -maxdepth 4 -path "*/lib/$artifact_triple/*.a" | sort)
+[ -n "$slices" ] || echo "warning: no prebuilt slices found for $artifact_triple" >&2
+
+# shellcheck disable=SC2086 # word splitting is deliberate: one -l arg per slice
 xcrun -sdk iphonesimulator clang -arch arm64 -mios-simulator-version-min=14.0 \
   -I "$runner/target/$triple/debug" \
   "$runner/ios/main.m" "$runner/target/$triple/debug/libfacet_uikit_tests.a" \
+  $slices \
   -framework UIKit -framework QuartzCore -framework Foundation \
   -framework CoreGraphics -framework WebKit -lobjc \
   -o "$app/FacetUIKitTests"

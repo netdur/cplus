@@ -21,9 +21,19 @@ cd examples/facet_gallery_ios
 cpc build --target ios-arm64-simulator
 
 S=/tmp/GalleryApp && mkdir -p $S/Gallery.app && cp ios/Info.plist $S/Gallery.app/
+
+# Every prebuilt dependency slice. NOT optional since `prebuild` became the
+# default on 2026-08-16: a dependency's object code lives in its own
+# `vendor/<pkg>/lib/<triple>/` archive rather than inside this app's, so
+# leaving these out fails the link on symbols nothing defines. Globbing
+# over-links, which costs nothing — an archive nothing references contributes
+# no bytes. README.md step 4 says the same for the Xcode route.
+slices=$(find ../../vendor -maxdepth 4 -path '*/lib/arm64-apple-ios-simulator/*.a')
+
 xcrun -sdk iphonesimulator clang -arch arm64 -mios-simulator-version-min=14.0 \
   -I target/ios-arm64-simulator/debug \
   ios/main.m target/ios-arm64-simulator/debug/libfacet_gallery_ios.a \
+  $slices \
   -framework UIKit -framework QuartzCore -framework Foundation \
   -framework CoreGraphics -framework WebKit -lobjc \
   -o $S/Gallery.app/Gallery

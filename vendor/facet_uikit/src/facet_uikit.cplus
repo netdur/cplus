@@ -42,13 +42,29 @@ import "./views" as views;
 import "./input" as input;
 import "./keys" as keys;
 import "./scheduler" as scheduler;
-// Imported so the package's own build compiles it: an iOS target builds the
-// `[lib]` root and what it reaches, and the window host is reached by the
-// FACADE (facet/runtime_ios.cplus) rather than from here. Without this line it
-// would be the one file in the package no build of the package covers.
+// Imported so the package's own build compiles it: the window host is reached
+// by the FACADE (facet_runtime/runtime_ios.cplus) rather than from here.
 import "./window" as window;
 import "./dialogs" as dialogs;
-import "./selftest" as selftest;
+// `./selftest` is deliberately NOT imported here, and must not be.
+//
+// It is this package's test suite — checks that need a device, because
+// `cpc test` builds a host binary and macOS has no UIKit. Its imports are
+// therefore test-shaped: `agent_uikit`, three `agent_core` modules, `agent_mcp`,
+// `json`. An import here puts all of that in the closure of EVERY consumer,
+// and the flat-set rule means each of them has to restate it in its own
+// manifest or fail with E0852. facet_runtime did fail that way, and the iOS
+// gallery with it; facet_appkit has no such module and so never had the
+// problem.
+//
+// Nothing is lost by leaving it out. A library package's own `cpc build`
+// archives the WHOLE `src/` tree — every module, so the archive and the
+// generated headers cannot disagree — so selftest.cplus is compiled by this
+// package's build whether or not anything imports it. And it is RUN by
+// `tests/`, which imports `facet_uikit/selftest` directly and declares the
+// agent closure in its own manifest, where that closure belongs:
+//
+//     vendor/facet_uikit/tools/run_ios_tests.sh
 import "./drawing" as drawing;
 import "./swipe" as swipe;
 
