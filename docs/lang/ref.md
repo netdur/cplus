@@ -374,7 +374,7 @@ archive of all of `src/`.
 ## CLI
 
 ```bash
-cpc init [NAME]                 # scaffold
+cpc init [--platform P]... [NAME]  # scaffold; --platform scopes the app ([ios] entry, E0413 elsewhere)
 cpc build [--release] [--target NAME] [--asan|--ubsan|--tsan|--msan] [-g]
 cpc FILE.cplus -o BIN           # single file, no imports
 cpc check [FILE]                # front-end only; project mode reads Cplus.toml

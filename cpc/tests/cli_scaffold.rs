@@ -263,3 +263,73 @@ fn init_manifest_parses_and_builds_front_end() {
         "generated manifest failed to parse: {err}"
     );
 }
+
+#[test]
+fn init_platform_scopes_the_app() {
+    // `--platform ios`: the entry lives in the [ios] section (E0413
+    // everywhere else), and the entry file has the external-builder shape —
+    // an `export extern fn <name>_main` the app shell calls, not `fn main`.
+    let dir = tempfile::tempdir().unwrap();
+    let out = Command::new(cpc())
+        .current_dir(dir.path())
+        .args(["init", "--platform", "ios", "phoneapp"])
+        .output().expect("run cpc init");
+    assert!(out.status.success(), "init failed: {}", String::from_utf8_lossy(&out.stderr));
+
+    let proj = dir.path().join("phoneapp");
+    let manifest = read(&proj.join("Cplus.toml"));
+    assert!(manifest.contains("[ios]"), "manifest: {manifest}");
+    assert!(manifest.contains("entry = \"src/main.cplus\""), "manifest: {manifest}");
+    let main = read(&proj.join("src/main.cplus"));
+    assert!(main.contains("export extern fn phoneapp_main() -> i32"), "main: {main}");
+    assert!(!main.contains("\nfn main"), "no fn main in an external-builder entry: {main}");
+    // The next-steps point at the simulator target, not a bare cpc build.
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("ios-arm64-simulator"), "{stdout}");
+
+    // The scoped app refuses to build for the host: E0413, never a guess.
+    let build = Command::new(cpc())
+        .current_dir(&proj)
+        .arg("build")
+        .env("CPLUS_HOME", proj.join(".no-store"))
+        .output().expect("run cpc build");
+    assert!(!build.status.success());
+    let all = format!("{}{}",
+        String::from_utf8_lossy(&build.stdout), String::from_utf8_lossy(&build.stderr));
+    assert!(all.contains("E0413"), "expected E0413, got: {all}");
+}
+
+#[test]
+fn init_two_platforms_get_their_own_entries() {
+    // First-named platform owns src/main.cplus; the second gets
+    // src/main_<p>.cplus — the entry SHAPES differ, so the files must too.
+    let dir = tempfile::tempdir().unwrap();
+    let out = Command::new(cpc())
+        .current_dir(dir.path())
+        .args(["init", "--platform", "macos", "--platform", "ios", "both"])
+        .output().expect("run cpc init");
+    assert!(out.status.success(), "init failed: {}", String::from_utf8_lossy(&out.stderr));
+
+    let proj = dir.path().join("both");
+    let manifest = read(&proj.join("Cplus.toml"));
+    assert!(manifest.contains("[macos]\nentry = \"src/main.cplus\""), "{manifest}");
+    assert!(manifest.contains("[ios]\nentry = \"src/main_ios.cplus\""), "{manifest}");
+    let mac_main = read(&proj.join("src/main.cplus"));
+    assert!(mac_main.contains("fn main() -> i32"), "{mac_main}");
+    let ios_main = read(&proj.join("src/main_ios.cplus"));
+    assert!(ios_main.contains("export extern fn both_main() -> i32"), "{ios_main}");
+}
+
+#[test]
+fn init_rejects_an_unknown_platform() {
+    let dir = tempfile::tempdir().unwrap();
+    let out = Command::new(cpc())
+        .current_dir(dir.path())
+        .args(["init", "--platform", "amiga", "x"])
+        .output().expect("run cpc init");
+    assert!(!out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("unknown platform `amiga`"), "{stderr}");
+    assert!(stderr.contains("macos"), "the error lists the valid names: {stderr}");
+    assert!(!dir.path().join("x").exists(), "nothing scaffolded on error");
+}

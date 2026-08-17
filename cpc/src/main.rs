@@ -5537,17 +5537,54 @@ const INIT_USAGE: &str = "\
 cpc init - scaffold a new C+ project
 
 usage:
-  cpc init [NAME]   create a project. With NAME, scaffold into NAME/; without,
+  cpc init [--platform P]... [NAME]
+                    create a project. With NAME, scaffold into NAME/; without,
                     scaffold in the current directory (name = directory name).
 
-writes: Cplus.toml, src/main.cplus, .gitignore, SKILL.md
+                    With no --platform: the zero-config HOST app —
+                    src/main.cplus is the default entry, and what a build
+                    produces is the target platform's fact.
+
+                    With --platform (repeatable, same vocabulary as
+                    `cpc pm add`): a deliberately SCOPED app — each platform
+                    gets an `[<platform>] entry` section, and building for a
+                    platform you did not name is an error (E0413), never a
+                    guess. iOS/Android entries are scaffolded in the
+                    external-builder shape (`export extern fn <name>_main`,
+                    the symbol Xcode's/Gradle's own main calls); everything
+                    else gets a normal `fn main`.
+
+writes: Cplus.toml, src/main*.cplus, .gitignore, SKILL.md
 ";
 
-/// `cpc init [NAME]`.
+/// `cpc init [--platform P]... [NAME]`.
 fn run_init(args: &[OsString]) -> ExitCode {
     let mut name: Option<String> = None;
+    let mut platforms: Vec<String> = Vec::new();
+    let mut want_platform = false;
     for a in args {
         match a.to_str() {
+            _ if want_platform => {
+                let p = match a.to_str() {
+                    Some(p) => p,
+                    None => {
+                        eprintln!("cpc init: --platform value must be valid UTF-8");
+                        return ExitCode::FAILURE;
+                    }
+                };
+                if !cplus_core::target::PLATFORMS.contains(&p) {
+                    eprintln!(
+                        "cpc init: unknown platform `{p}`; one of: {}",
+                        cplus_core::target::PLATFORMS.join(", ")
+                    );
+                    return ExitCode::FAILURE;
+                }
+                if !platforms.iter().any(|q| q == p) {
+                    platforms.push(p.to_string());
+                }
+                want_platform = false;
+            }
+            Some("--platform") => want_platform = true,
             Some("-h") | Some("--help") => {
                 print!("{INIT_USAGE}");
                 return ExitCode::SUCCESS;
@@ -5559,6 +5596,11 @@ fn run_init(args: &[OsString]) -> ExitCode {
                 return ExitCode::FAILURE;
             }
         }
+    }
+
+    if want_platform {
+        eprintln!("cpc init: --platform requires a value");
+        return ExitCode::FAILURE;
     }
 
     // Where to scaffold. An existing project takes precedence over every other
@@ -5608,23 +5650,73 @@ fn run_init(args: &[OsString]) -> ExitCode {
     // version — `cpc pm install` supplies the context, and the store tier
     // version-locks stdlib to this compiler by construction. Third-party
     // deps use the pinned tree-URL form instead.
-    // No target section: `src/main.cplus` is the default entry, and what a
-    // build produces is the target platform's fact.
+    //
+    // No --platform, no target section: `src/main.cplus` is the default
+    // entry, and what a build produces is the target platform's fact. With
+    // --platform, each named platform gets an explicit `[<p>] entry` — the
+    // app is scoped deliberately, and a platform left out is E0413, never a
+    // guess. The first-named platform owns src/main.cplus; the rest get
+    // src/main_<p>.cplus, because entry SHAPES differ (an iOS/Android entry
+    // is an `export extern fn` the platform's own main calls — those
+    // targets produce a staticlib, and a library has no entry the system
+    // knows to call).
+    let mut sections = String::new();
+    for (i, p) in platforms.iter().enumerate() {
+        let file = if i == 0 {
+            "src/main.cplus".to_string()
+        } else {
+            format!("src/main_{p}.cplus")
+        };
+        sections.push_str(&format!("[{p}]\nentry = \"{file}\"\n\n"));
+    }
     let manifest_toml = format!(
         "[package]\nname    = \"{proj_name}\"\nversion = \"0.0.1\"\nedition = \"2026\"\n\n\
-         [dependencies]\nstdlib = \"*\"\n"
+         {sections}[dependencies]\nstdlib = \"*\"\n"
     );
-    let main_cplus = "import \"stdlib/io\" as io;\n\n\
-         fn main() -> i32 {\n    io::println(\"hello from C+\");\n    return 0;\n}\n";
-    let gitignore = "/target\n/vendor\n";
 
-    let files: [(PathBuf, &str); 4] = [
-        (manifest, &manifest_toml),
-        (src.join("main.cplus"), main_cplus),
-        (root.join(".gitignore"), gitignore),
-        // The agent reference, so the fresh project is immediately LLM-ready.
-        (root.join("SKILL.md"), SKILL_MD),
-    ];
+    let desktop_main = "import \"stdlib/io\" as io;\n\n\
+         fn main() -> i32 {\n    io::println(\"hello from C+\");\n    return 0;\n}\n";
+    // The external-builder shape: a stable, unmangled C symbol in the
+    // generated header, which is how an app bundle's own `main` reaches C+
+    // code (see examples/facet_gallery_ios and examples/DEPLOYING.md).
+    let sym = proj_name.replace('-', "_");
+    let external_main = |p: &str| {
+        format!(
+            "// {proj_name} — the entry point the {p} app shell calls.\n\
+             //\n\
+             // `export extern fn` gives the symbol a stable, unmangled C name and puts\n\
+             // it in the generated header. A `fn main` would not do: this target\n\
+             // produces a STATICLIB, and a library has no entry the system knows to\n\
+             // call. See examples/DEPLOYING.md for the app-shell recipe.\n\n\
+             import \"stdlib/io\" as io;\n\n\
+             export extern fn {sym}_main() -> i32 {{\n    io::println(\"hello from C+\");\n    return 0;\n}}\n"
+        )
+    };
+    let entry_body = |p: &str| -> String {
+        if matches!(p, "ios" | "android") {
+            external_main(p)
+        } else {
+            desktop_main.to_string()
+        }
+    };
+
+    let gitignore = "/target\n/vendor\n";
+    let mut files: Vec<(PathBuf, String)> = vec![(manifest, manifest_toml)];
+    if platforms.is_empty() {
+        files.push((src.join("main.cplus"), desktop_main.to_string()));
+    } else {
+        for (i, p) in platforms.iter().enumerate() {
+            let file = if i == 0 {
+                "main.cplus".to_string()
+            } else {
+                format!("main_{p}.cplus")
+            };
+            files.push((src.join(file), entry_body(p)));
+        }
+    }
+    files.push((root.join(".gitignore"), gitignore.to_string()));
+    // The agent reference, so the fresh project is immediately LLM-ready.
+    files.push((root.join("SKILL.md"), SKILL_MD.to_string()));
     for (path, content) in files {
         if let Err(e) = std::fs::write(&path, content) {
             eprintln!("cpc init: could not write {}: {e}", path.display());
@@ -5644,8 +5736,20 @@ fn run_init(args: &[OsString]) -> ExitCode {
     if !in_place {
         println!("  cd {}", name.as_deref().unwrap());
     }
-    println!("  cpc pm install       # fetch dependencies into vendor/");
-    println!("  cpc build            # compile and link");
+    println!("  cpc pm install       # fetch dependencies into the store");
+    if platforms.iter().any(|p| p == "ios") {
+        println!("  cpc build --target ios-arm64-simulator   # then: examples/DEPLOYING.md");
+    }
+    if platforms.iter().any(|p| p == "android") {
+        println!("  cpc build --target <android target>      # see examples/DEPLOYING.md");
+    }
+    if platforms.is_empty()
+        || platforms
+            .iter()
+            .any(|p| !matches!(p.as_str(), "ios" | "android"))
+    {
+        println!("  cpc build            # compile and link");
+    }
     println!();
     println!(
         "note: Cplus.toml pins stdlib to this toolchain (v{}); `cpc pm install`",
