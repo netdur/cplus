@@ -802,22 +802,22 @@ fn byte_offset_of(s: str, unit: u64) -> u64 {
 }
 
 fn place_caret(v: *u8, at: u64, length: u64) -> bool {
-    if !responds_to(v, #str_ptr("beginningOfDocument ")) { return false; }
+    if !responds_to(v, #str_ptr("beginningOfDocument\0")) { return false; }
     let owned: text::Text = node_text(v, identity::Role::Input);
     let src: str = { owned.view() };
     let start_u: u64 = utf16_of_byte(src, at);
     let end_u: u64 = utf16_of_byte(src, at +% length);
-    let begin: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("beginningOfDocument "))) };
+    let begin: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("beginningOfDocument\0"))) };
     if is_null(begin) { return false; }
-    let from: *u8 = { msg_id_id_i64(v, rt::sel(#str_ptr("positionFromPosition:offset: ")),
+    let from: *u8 = { msg_id_id_i64(v, rt::sel(#str_ptr("positionFromPosition:offset:\0")),
                                     begin, start_u as i64) };
-    let to: *u8 = { msg_id_id_i64(v, rt::sel(#str_ptr("positionFromPosition:offset: ")),
+    let to: *u8 = { msg_id_id_i64(v, rt::sel(#str_ptr("positionFromPosition:offset:\0")),
                                   begin, end_u as i64) };
     if is_null(from) || is_null(to) { return false; }
-    let r: *u8 = { msg_id_2id(v, rt::sel(#str_ptr("textRangeFromPosition:toPosition: ")),
+    let r: *u8 = { msg_id_2id(v, rt::sel(#str_ptr("textRangeFromPosition:toPosition:\0")),
                               from, to) };
     if is_null(r) { return false; }
-    { rt::msg_void_id(v, rt::sel(#str_ptr("setSelectedTextRange: ")), r) };
+    { rt::msg_void_id(v, rt::sel(#str_ptr("setSelectedTextRange:\0")), r) };
     return true;
 }
 
@@ -848,19 +848,19 @@ fn mcp_set_caret(p: *u8, grant: auth::Grant, id: str, at: u64,
 
 fn attributed_of(v: *u8) -> *u8 {
     if is_null(v) { return null(); }
-    if responds_to(v, #str_ptr("textStorage ")) {
-        let ts: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("textStorage "))) };
+    if responds_to(v, #str_ptr("textStorage\0")) {
+        let ts: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("textStorage\0"))) };
         if !is_null(ts) { return ts; }
     }
-    if responds_to(v, #str_ptr("attributedText ")) {
-        return { rt::msg_id(v, rt::sel(#str_ptr("attributedText "))) };
+    if responds_to(v, #str_ptr("attributedText\0")) {
+        return { rt::msg_id(v, rt::sel(#str_ptr("attributedText\0"))) };
     }
     return null();
 }
 
 fn has_attribute(attrs: *u8, key: str) -> bool {
     if is_null(attrs) { return false; }
-    return !is_null({ rt::msg_id_id(attrs, rt::sel(#str_ptr("objectForKey: ")),
+    return !is_null({ rt::msg_id_id(attrs, rt::sel(#str_ptr("objectForKey:\0")),
                                     bridge::nsstring(key)) });
 }
 
@@ -888,12 +888,12 @@ fn hex_byte(v: f64) -> text::Text {
 // CURRENTLY drawing with and therefore the question being asked.
 fn run_color_hex(attrs: *u8) -> text::Text {
     if is_null(attrs) { return text::new(); }
-    let c: *u8 = { rt::msg_id_id(attrs, rt::sel(#str_ptr("objectForKey: ")),
+    let c: *u8 = { rt::msg_id_id(attrs, rt::sel(#str_ptr("objectForKey:\0")),
                                  bridge::nsstring("NSColor")) };
     if is_null(c) { return text::new(); }
-    if !responds_to(c, #str_ptr("getRed:green:blue:alpha: ")) { return text::new(); }
+    if !responds_to(c, #str_ptr("getRed:green:blue:alpha:\0")) { return text::new(); }
     var r: f64 = 0.0f64; var g: f64 = 0.0f64; var b: f64 = 0.0f64; var a: f64 = 0.0f64;
-    let _ok: i8 = { msg_i8_4ptr(c, rt::sel(#str_ptr("getRed:green:blue:alpha: ")),
+    let _ok: i8 = { msg_i8_4ptr(c, rt::sel(#str_ptr("getRed:green:blue:alpha:\0")),
                                 #addr_of(r), #addr_of(g), #addr_of(b), #addr_of(a)) };
     return "#${hex_byte(r)}${hex_byte(g)}${hex_byte(b)}";
 }
@@ -903,23 +903,23 @@ fn run_color_hex(attrs: *u8) -> text::Text {
 // font manager iOS does not have.
 fn run_has_trait(attrs: *u8, mask: u64) -> bool {
     if is_null(attrs) { return false; }
-    let f: *u8 = { rt::msg_id_id(attrs, rt::sel(#str_ptr("objectForKey: ")),
+    let f: *u8 = { rt::msg_id_id(attrs, rt::sel(#str_ptr("objectForKey:\0")),
                                  bridge::nsstring("NSFont")) };
     if is_null(f) { return false; }
-    if !responds_to(f, #str_ptr("fontDescriptor ")) { return false; }
-    let d: *u8 = { rt::msg_id(f, rt::sel(#str_ptr("fontDescriptor "))) };
+    if !responds_to(f, #str_ptr("fontDescriptor\0")) { return false; }
+    let d: *u8 = { rt::msg_id(f, rt::sel(#str_ptr("fontDescriptor\0"))) };
     if is_null(d) { return false; }
-    let traits: u64 = { rt::msg_u64(d, rt::sel(#str_ptr("symbolicTraits "))) };
+    let traits: u64 = { rt::msg_u64(d, rt::sel(#str_ptr("symbolicTraits\0"))) };
     return (traits & mask) != (0 as u64);
 }
 
 fn walk_runs(storage: *u8) -> vec::Vec[surface::TextRun] {
     var out: vec::Vec[surface::TextRun] = vec::new::[surface::TextRun]();
     if is_null(storage) { return out; }
-    let units: u64 = { rt::msg_u64(storage, rt::sel(#str_ptr("length "))) };
+    let units: u64 = { rt::msg_u64(storage, rt::sel(#str_ptr("length\0"))) };
     if units == (0 as u64) { return out; }
     let whole: text::Text = bridge::to_text(
-        { rt::msg_id(storage, rt::sel(#str_ptr("string "))) });
+        { rt::msg_id(storage, rt::sel(#str_ptr("string\0"))) });
     let src: str = { whole.view() };
     var at: u64 = 0 as u64;
     // Bounded by the length: a malformed effective range would otherwise spin.
@@ -928,7 +928,7 @@ fn walk_runs(storage: *u8) -> vec::Vec[surface::TextRun] {
         seen = seen +% (1 as u64);
         var eff: rt::Range = rt::Range { location: at, length: 0 as u64 };
         let attrs: *u8 = { msg_id_u64_rangep(storage,
-            rt::sel(#str_ptr("attributesAtIndex:effectiveRange: ")), at, #addr_of(eff)) };
+            rt::sel(#str_ptr("attributesAtIndex:effectiveRange:\0")), at, #addr_of(eff)) };
         if eff.length == (0 as u64) { eff.length = units -% at; }
         let start_b: u64 = byte_offset_of(src, at);
         let end_b: u64 = byte_offset_of(src, at +% eff.length);
