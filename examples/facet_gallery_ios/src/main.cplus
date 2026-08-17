@@ -10,7 +10,7 @@
 // there because the signature is the same one the desktop gallery's `main` has,
 // and a reader comparing the two should see the same shape.
 
-import "facet/runtime" as runtime;
+import "facet_runtime/runtime" as runtime;
 import "facet/theme" as theme;
 import "facet/vocabulary" as vocab;
 import "./app" as app;

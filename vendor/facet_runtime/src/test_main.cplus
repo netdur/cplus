@@ -1,0 +1,17 @@
+// facet_runtime's suite exists chiefly for one guarantee the facades carried
+// when they lived inside facet: importing ./runtime compiles the ACTIVE
+// platform's facade AND its backend — on macOS that is runtime_macos plus
+// facet_appkit — so a backend that does not build turns facet_runtime red.
+// The boot surface itself needs a window and a run loop; anything that opens
+// one belongs to the backend's own suite or an app under playground/. The
+// facades carry their own headless #[test]s (routes, refusals, agent-hook
+// defaults), which run as part of this suite.
+
+import "./runtime" as runtime;
+
+#[test]
+fn the_facade_and_its_backend_compile() {
+    // The import above is the assertion: resolving `./runtime` on this
+    // platform compiles the platform facade and the backend it installs.
+    return;
+}

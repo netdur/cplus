@@ -1,4 +1,4 @@
-// facet agent facade for iOS. `import "facet/agent"` resolves HERE on an iOS
+// facet agent facade for iOS. `import "facet_agent/agent"` resolves HERE on an iOS
 // target, through the same filename override that picks `runtime_ios.cplus` —
 // and for the same reason: the module names a platform package, and on this
 // platform that package does not exist.
@@ -11,7 +11,7 @@
 //
 // So this file keeps the surface compiling and REFUSES LOUDLY, which is the
 // posture runtime.cplus takes for a platform with no backend. The alternative
-// was leaving `import "facet/agent"` a hard error on iOS, which would make an
+// was leaving `import "facet_agent/agent"` a hard error on iOS, which would make an
 // app that serves an agent on the Mac fail to build for the phone at the import
 // line, with nothing said about why.
 //
@@ -19,8 +19,8 @@
 // translated into agent_core's, and agent_core is portable, so the one function
 // here that does not touch a platform keeps working.
 
-import "./runtime" as runtime;
-import "./vocabulary" as vocab;
+import "facet/application" as app;
+import "facet/vocabulary" as vocab;
 import "agent_core/auth" as auth;
 import "agent_core/identity" as identity;
 import "stdlib/text" as text;
@@ -66,7 +66,7 @@ fn port_of(path: str) -> u16 {
 }
 
 fn enable() {
-    runtime::install_agent(runtime::AgentHooks {
+    app::install_agent(app::AgentHooks {
         attach_window: attach_window,
         serve_once: serve_once,
         pin_policy: pin_policy,
@@ -75,7 +75,7 @@ fn enable() {
 }
 
 fn disable() {
-    runtime::install_agent(runtime::AgentHooks {
+    app::install_agent(app::AgentHooks {
         attach_window: 0 as fn(*u8),
         serve_once: 0 as fn(str),
         pin_policy: 0 as fn(*u8, vocab::Agent),

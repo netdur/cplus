@@ -2,7 +2,7 @@
 
 import "facet/theme" as theme;
 import "facet/vocabulary" as vocab;
-import "facet/runtime" as runtime;
+import "facet_runtime/runtime" as runtime;
 import "stdlib/status" as status;
 
 import "./gallery" as gallery;

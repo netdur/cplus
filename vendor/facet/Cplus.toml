@@ -6,55 +6,17 @@ edition = "2026"
 # facet — the UI vocabulary: 38 generated + 4 hand-written controls, the
 # platform-free tier (Stage 3), and the mount seam a backend fills.
 
+# Not prebuilt (2026-08-17). The structural blockers are gone — the runtime
+# facades live in facet_runtime, the agent tier in facet_agent, and facet is
+# now the pure platform-free core. What remains is the runtime bug that hits
+# facet's BACKEND as a slice (divergent view-arming decisions, app dies in
+# the key-view walk — bugs/facet-appkit-slice-runtime-crash.md). Until that
+# is diagnosed, the facet family ships as source: a slice that might behave
+# differently from the source build is worse than no cache.
+[build]
+prebuild = false
+
 [dependencies]
 stdlib      = "*"
 flex_layout = "*"
 events      = "*"
-
-# The agent stack, for `agent.cplus` alone. Listed for the same reason
-# facet_appkit is: `test_main.cplus` imports `./agent`, so facet's own suite
-# COMPILES it. Before this, nothing in the repo did — the module's translation
-# from `vocab::Agent` to agent_core's policy was live code that no build ever
-# type-checked, and a wrong arm there is a card number readable by every agent
-# that connects. An app that never imports facet/agent still links none of it.
-agent_core  = "*"
-agent_mcp   = "*"
-agent_inapp = "*"
-json        = "*"
-
-# The per-platform backends the runtime facades import. `runtime.cplus` is the
-# neutral base; the resolver's platform override picks `runtime_macos.cplus`
-# beside it on a macOS target, and that file — the only place in facet that
-# names a platform — imports the backend below. Declared here so facet
-# resolves on its own rather than leaning on whatever the root package vendors.
-#
-# Consequence, stated out loud: `test_main.cplus` imports `./runtime`, so on
-# macOS facet's own suite compiles facet_appkit. A backend that does not build
-# turns facet red. That is how the pre-regen tree had it too.
-
-[macos.dependencies]
-facet_appkit = "*"
-agent_appkit = "*"
-# facet_appkit's own transitive deps, listed here because the resolver
-# validates every import in the build against ONE flat set taken from the
-# consuming manifest — it does not read a dependency's own. Mechanical, not
-# semantic: facet imports none of these, `runtime_macos.cplus` reaches them
-# only through facet_appkit. Same shape every consumer uses (see
-# examples/hello_facet/Cplus.toml).
-objc = "*"
-appkit = "*"
-quartzcore = "*"
-webkit     = "*"
-
-# The iOS side of the same seam. `runtime_ios.cplus` is what `import
-# "facet/runtime"` resolves to on an iOS target, and it imports facet_uikit —
-# so facet's own build on iOS compiles that backend, exactly as it compiles
-# facet_appkit on macOS. Same consequence, stated out loud: a backend that does
-# not build turns facet red.
-[ios.dependencies]
-facet_uikit = "*"
-webkit      = "*"
-objc        = "*"
-uikit       = "*"
-quartzcore  = "*"
-agent_uikit = "*"

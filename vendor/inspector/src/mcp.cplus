@@ -225,6 +225,10 @@ fn node_json(p: *insp::Node, index: usize) -> json::Value {
     f.append(member("w", jnum({ (*p).frame.width })));
     f.append(member("h", jnum({ (*p).frame.height })));
     m.append(member("frame", json::Value::Object(f)));
+    // Declared tier (0 Open … 3 Hidden). Carried so a remote client can apply
+    // the same inherited-tier gate the local mcp namespace does, without a
+    // second round-trip to re-walk parents.
+    m.append(member("agent_tier", jnum({ (*p).agent_tier } as f64)));
     // The panel's own subtree, marked rather than hidden. A remote client is a
     // different consumer from the embedded panel and may legitimately want to
     // see it; what it must not do is edit it by accident, and the verbs refuse

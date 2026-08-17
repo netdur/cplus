@@ -24,6 +24,7 @@ entry = "src/main.cplus"
 [dependencies]
 stdlib      = "*"
 facet       = "*"
+facet_runtime = "*"
 flex_layout = "*"
 
 # The backend and its transitive closure. The resolver validates every import

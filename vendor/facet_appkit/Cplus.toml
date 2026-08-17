@@ -15,11 +15,25 @@ edition = "2026"
 #   services::install_scheduler(Scheduler)   run_on_main / after / observe_size
 #   gestures::install_key_reader(KeyReader)
 #   component::install_sender_readers(SenderReaders)
-#   runtime::install_agent(AgentHooks)
+#   application::install_agent(AgentHooks)
 #   theme::set_is_dark_fn / theme::set_theme_changed_fn
 # A hook family appearing outside those is drift by definition.
 
 # The test root doubles as the leak harness (`leaks --atExit`).
+
+# Not prebuilt (2026-08-17): with this backend as a SLICE (facet as source),
+# facet_gallery segfaults at first window order-front — a ~8 MB single stack
+# frame inside flex_layout Node code reached from AppKit's key-view walk
+# (write into the stack guard). Source mode is the verified-alive
+# configuration; see bugs/facet-appkit-slice-runtime-crash.md before
+# re-enabling. The facet <-> backend CYCLE is gone (facet_runtime owns the
+# facades) — this opt-out is about the mixed slice/source ObjC path only.
+# Not prebuilt (2026-08-17): as a SLICE this backend makes divergent
+# view-arming decisions and the app dies in the key-view walk — see
+# bugs/facet-appkit-slice-runtime-crash.md (deep forensic record) before
+# re-enabling. NOT the old facet<->backend cycle; that is gone.
+[build]
+prebuild = false
 
 [dependencies]
 stdlib      = "*"

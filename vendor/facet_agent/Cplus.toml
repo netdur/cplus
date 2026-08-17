@@ -1,0 +1,39 @@
+[package]
+name    = "facet_agent"
+version = "0.0.1"
+edition = "2026"
+
+# facet_agent — the agent serving surface. `import "facet_agent/agent"` and
+# call `agent::enable()` before `app.run`; the filename override picks
+# agent_ios.cplus on an iOS target. Split out of facet (2026-08-17) for the
+# same reason as facet_runtime: it is the OPTIONAL tier that drags the agent
+# stack (agent_core/mcp/inapp + the platform overlay) into a build, and
+# facet's own slice must never carry it — "an app that never imports
+# facet_agent links none of it" is the property this package boundary
+# guarantees by construction. It installs into facet's application seam
+# (application::install_agent) — facet knows nothing about it.
+
+[dependencies]
+stdlib      = "*"
+facet       = "*"
+# facet's transitive closure, restated: the resolver validates every import
+# in a build against ONE flat set taken from the consuming manifest.
+flex_layout = "*"
+events      = "*"
+# The agent stack this surface serves.
+agent_core  = "*"
+agent_mcp   = "*"
+agent_inapp = "*"
+json        = "*"
+
+[macos.dependencies]
+agent_appkit = "*"
+objc         = "*"
+appkit       = "*"
+quartzcore   = "*"
+
+[ios.dependencies]
+agent_uikit = "*"
+objc        = "*"
+uikit       = "*"
+quartzcore  = "*"

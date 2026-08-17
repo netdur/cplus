@@ -1,4 +1,4 @@
-// facet runtime facade for macOS. `import "facet/runtime"` resolves HERE on a
+// facet runtime facade for macOS. `import "facet_runtime/runtime"` resolves HERE on a
 // macOS target, through the resolver's platform override on the filename, and
 // this file selects the AppKit backend. Linux resolves to runtime_linux.cplus
 // the same way; a target with neither lands on the neutral base runtime.cplus,
@@ -27,14 +27,14 @@ import "stdlib/status" as status;
 import "stdlib/box" as box;
 import "stdlib/io" as io;
 import "flex_layout/flex_layout" as flex;
-import "./facet" as core;
-import "./vocabulary" as vocab;
-import "./component" as component;
-import "./screen" as screen;
-import "./services" as services;
-import "./application" as app;
-import "./mount" as mount;
-import "./nav" as nav;
+import "facet/facet" as core;
+import "facet/vocabulary" as vocab;
+import "facet/component" as component;
+import "facet/screen" as screen;
+import "facet/services" as services;
+import "facet/application" as app;
+import "facet/mount" as mount;
+import "facet/nav" as nav;
 import "facet_appkit/facet_appkit" as backend;
 import "facet_appkit/window" as host;
 import "facet_appkit/dialogs" as dialogs;
@@ -328,7 +328,7 @@ fn present_window(take root: Node, title: str, width: f64, height: f64) {
             );
             // Same reason as a pushed screen: the agent follows the window an
             // application just put in front of the user.
-            if w != (0 as *u8) { agent_attach_window(w); }
+            if w != (0 as *u8) { app::agent_attach(w); }
         }
         option::Option[box::Box[Node]]::None => { }
     }
@@ -554,7 +554,7 @@ impl App {
         // `agent_mcp(path)` recorded the path and nothing served it until now:
         // the same shape as the app menu, which was built and never installed.
         let sock: str = this.agent_path.view();
-        if sock != "" { agent_serve_once(sock); }
+        if sock != "" { app::agent_serve_once(sock); }
         let launch: fn(*u8) = this.on_launch_fn;
         launch(this.hook_ctx);
 
@@ -579,7 +579,7 @@ impl App {
             // on the new window each time a screen is shown. The serve worker
             // holds the surface's ADDRESS, so re-opening in place retargets
             // every later request rather than needing the worker restarted.
-            if w != (0 as *u8) { agent_attach_window(w); }
+            if w != (0 as *u8) { app::agent_attach(w); }
             sb.on_attach();
             host::run_loop();        // blocks until this screen's window closes
             close_all_pushed();      // replacing the root dismisses pushed screens
@@ -679,7 +679,7 @@ fn push_screen(route: str, arg: str) -> bool {
     // and so was an `alert` sheet. The sheet case is the sharp one: dialogs
     // argues it was rewritten off NSAlert/runModal precisely so "an agent
     // cannot answer it" would stop being true, and the surface never followed.
-    agent_attach_window(w);
+    app::agent_attach(w);
     let stack: *vec::Vec[PushedScreen] = #addr_of(PUSHED);
     { (*stack).append(PushedScreen { root: tp, sbp: sbp }) };
     { (*(sbp as *screen::ScreenBox)).on_attach() };
@@ -780,47 +780,6 @@ fn register_screen(route: str, factory: fn() -> screen::ScreenBox) -> bool {
 // ---- agent hookup ------------------------------------------------------------
 // Registered by facet/agent when an app opts into serving. Its own struct so
 // importing facet/runtime never drags the agent packages in.
-
-struct AgentHooks {
-    attach_window: fn(*u8),
-    serve_once: fn(str),
-    // Pin a node's declared `agent` tier onto its platform view at mount.
-    pin_policy: fn(*u8, vocab::Agent),
-}
-
-static AGENT: AgentHooks = #zero::[AgentHooks]();
-
-fn install_agent(take h: AgentHooks) {
-    AGENT = h;
-    // Mirrored into application, where a backend can reach it without
-    // importing runtime — `dialogs`' sheet is the caller that needs it, and it
-    // cannot import runtime (this file imports dialogs).
-    //
-    // This facade REPLACES runtime.cplus on macOS, statics and all, so a hook
-    // added there does not exist here. The portable file had this mirror and
-    // this one did not, which is why an alert sheet presented, called
-    // `app::agent_attach`, and found a null hook: the agent never learned about
-    // the window in front of the user.
-    app::set_agent_attach_fn(AGENT.attach_window);
-    app::set_activate_fn(host::activate_window);
-    return;
-}
-
-fn agent_attach_window(win: *u8) {
-    let f: fn(*u8) = AGENT.attach_window;
-    if f != (0 as fn(*u8)) { f(win); }
-    return;
-}
-
-fn agent_serve_once(path: str) {
-    let f: fn(str) = AGENT.serve_once;
-    if f == (0 as fn(str)) {
-        io::println("facet: agent_mcp path set but the agent module is not enabled — import \"facet/agent\" and call agent::enable() before app.run");
-        return;
-    }
-    f(path);
-    return;
-}
 
 // ---- tests -------------------------------------------------------------------
 // This file SHADOWS runtime.cplus on macOS, so the base's tests do not run —
@@ -923,12 +882,13 @@ fn window_frame_is_zero_with_no_window_up() {
 
 #[test]
 fn the_agent_hooks_default_to_saying_so() {
-    // Registered by facet/agent; unregistered, serving says why instead of
-    // silently serving nothing.
-    install_agent(AgentHooks { attach_window: 0 as fn(*u8), serve_once: 0 as fn(str),
-                               pin_policy: 0 as fn(*u8, vocab::Agent) });
-    agent_attach_window(0 as *u8);             // inert, not a trap
-    agent_serve_once("/tmp/probe.sock");       // prints the reason
+    // Registered by facet/agent into the application seam (its one home,
+    // 2026-08-17); unregistered, serving says why instead of silently
+    // serving nothing.
+    app::install_agent(app::AgentHooks { attach_window: 0 as fn(*u8), serve_once: 0 as fn(str),
+                                         pin_policy: 0 as fn(*u8, vocab::Agent) });
+    app::agent_attach(0 as *u8);               // inert, not a trap
+    app::agent_serve_once("/tmp/probe.sock");  // prints the reason
     app::agent_pin(0 as *u8, vocab::Agent::Private);   // and the pin is inert too
     return;
 }

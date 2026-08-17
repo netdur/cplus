@@ -1,0 +1,41 @@
+[package]
+name    = "facet_runtime"
+version = "0.0.1"
+edition = "2026"
+
+# facet_runtime — the boot facade. `import "facet_runtime/runtime"` starts an
+# app: the resolver's platform override on the filename picks runtime_macos /
+# runtime_ios beside the neutral base, and that file installs the matching
+# backend into facet's seams. This is the package that knows all the parts,
+# so it sits ABOVE all the parts: facet knows no backend, backends know no
+# facade, every arrow points down — which is what dissolved the old
+# facet <-> facet_appkit dependency cycle and made the family prebuildable
+# (2026-08-17).
+#
+# The suite guarantee moved here with the files: test_main imports ./runtime,
+# so the active platform's backend compiles in this package's own build — a
+# backend that does not build turns facet_runtime red, exactly as it used to
+# turn facet red.
+
+[dependencies]
+stdlib      = "*"
+flex_layout = "*"
+facet       = "*"
+# facet's transitive closure, restated: the resolver validates every import
+# in a build against ONE flat set taken from the consuming manifest.
+events      = "*"
+
+[macos.dependencies]
+facet_appkit = "*"
+# facet_appkit's transitive deps — same flat-set rule.
+objc       = "*"
+appkit     = "*"
+quartzcore = "*"
+webkit     = "*"
+
+[ios.dependencies]
+facet_uikit = "*"
+objc        = "*"
+uikit       = "*"
+quartzcore  = "*"
+webkit      = "*"

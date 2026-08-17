@@ -25,6 +25,16 @@ edition = "2026"
 # archives the whole src/ tree. The structural tests live inside `views.cplus`
 # rather than in a test root so the iOS build compiles every line of them.
 
+# Not prebuilt (2026-08-17): with this backend as a SLICE (facet as source),
+# facet_gallery segfaults at first window order-front — a ~8 MB single stack
+# frame inside flex_layout Node code reached from AppKit's key-view walk
+# (write into the stack guard). Source mode is the verified-alive
+# configuration; see bugs/facet-appkit-slice-runtime-crash.md before
+# re-enabling. The facet <-> backend CYCLE is gone (facet_runtime owns the
+# facades) — this opt-out is about the mixed slice/source ObjC path only.
+[build]
+prebuild = false
+
 [dependencies]
 stdlib      = "*"
 objc        = "*"

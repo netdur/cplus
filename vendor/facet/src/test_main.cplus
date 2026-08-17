@@ -66,10 +66,8 @@ import "./resource" as resource;
 import "./component" as component;
 import "./screen" as screen;
 import "./theme" as theme;
-import "./runtime" as runtime;
 // Compiled so its tests run: the vocab -> policy translation is the one arm in
 // facet whose wrong answer is a leak rather than a bug.
-import "./agent" as _;
 import "./mount" as mount;
 import "./application" as app;
 

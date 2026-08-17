@@ -30,6 +30,7 @@ import "stdlib/text" as text;
 import "stdlib/vec" as vec;
 import "stdlib/string_map" as smap;
 import "stdlib/option" as option;
+import "stdlib/io" as io;
 import "flex_layout/flex_layout" as flex;
 import "./vocabulary" as vocab;
 
@@ -144,6 +145,47 @@ fn set_activate_fn(f: fn(*u8)) { ACTIVATE_FN = f; return; }
 fn agent_attach(win: *u8) {
     let f: fn(*u8) = AGENT_ATTACH_FN;
     if f != (0 as fn(*u8)) { f(win); }
+    return;
+}
+
+// ---- the agent install seam ---------------------------------------------------
+// ONE install struct, ONE home (2026-08-17). This lived in the runtime
+// facades — every platform variant carried its own AgentHooks + static, and
+// a hook mirrored in one file but not another was a real bug (a sheet
+// presented, called `agent_attach`, and found a null hook). The facades are
+// now pure boot code in the facet_runtime package; the seam they used to
+// carry lives here, beside the slots it always filled.
+struct AgentHooks {
+    attach_window: fn(*u8),
+    serve_once: fn(str),
+    // Pin a node's declared `agent` tier onto its platform view at mount.
+    pin_policy: fn(*u8, vocab::Agent),
+}
+
+static AGENT_SERVE_FN: fn(str) = #zero::[fn(str)]();
+
+// `agent::enable()` calls this once, before `app.run`; `agent::disable()`
+// calls it with null hooks. Fans the struct out into the slots above so
+// every reader (dialogs' sheets, paint's pin, the facades' boot) sees one
+// truth.
+fn install_agent(take h: AgentHooks) {
+    AGENT_ATTACH_FN = h.attach_window;
+    AGENT_PIN_FN = h.pin_policy;
+    AGENT_SERVE_FN = h.serve_once;
+    return;
+}
+
+// Serve one agent connection on `path`. The runtime facades call this when
+// the app was launched with an agent socket; loud when the app never
+// enabled the agent module, because a set path with no server is operator
+// error, not a quiet no-op.
+fn agent_serve_once(path: str) {
+    let f: fn(str) = AGENT_SERVE_FN;
+    if f == (0 as fn(str)) {
+        io::println("facet: agent_mcp path set but the agent module is not enabled — import \"facet/agent\" and call agent::enable() before app.run");
+        return;
+    }
+    f(path);
     return;
 }
 

@@ -432,6 +432,7 @@ fn node_of(obj: *json::Value, revision: u64) -> insp::Node {
         is_visible: flag_at(obj, "visible"),
         dirty: 0 as u64,
         child_count: num_at(obj, "children", 0.0f64) as usize,
+        agent_tier: num_at(obj, "agent_tier", 0.0f64) as u32,
         is_inspector: flag_at(obj, "is_inspector"),
     };
 }

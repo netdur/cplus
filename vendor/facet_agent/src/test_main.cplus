@@ -1,0 +1,15 @@
+// facet_agent's suite carries the guarantee facet's suite used to hold for
+// this module: importing ./agent COMPILES the serving surface — the
+// translation from `vocab::Agent` to agent_core's policy is live code, and
+// a wrong arm there is a card number readable by every agent that
+// connects. The module's own #[test]s ride along with the import; anything
+// that needs a window or a live socket belongs to an app under playground/.
+
+import "./agent" as _;
+
+#[test]
+fn the_agent_surface_compiles() {
+    // The import above is the assertion: on macOS it compiles agent.cplus
+    // and the agent_appkit overlay it drives; on iOS, agent_ios.cplus.
+    return;
+}

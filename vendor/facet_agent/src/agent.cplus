@@ -3,13 +3,13 @@
 // The App tier's `app.agent_mcp(path)` names the Unix socket; THIS module does
 // the serving. It is a separate module so the agent packages (agent_core,
 // agent_appkit, agent_mcp and their deps) are only in an app's build when the
-// app actually serves — importing "facet/runtime" alone never pulls them.
+// app actually serves — importing "facet_runtime/runtime" alone never pulls them.
 //
-//     import "facet/agent" as agent;
+//     import "facet_agent/agent" as agent;
 //
 //     fn main() -> i32 {
 //         agent::enable();
-//         var app: runtime::App = runtime::App::new("Iris");
+//         var app: runtime::App = runtime::App::new("Iris");   // import "facet_runtime/runtime" as runtime;
 //         app.agent_mcp("/tmp/iris.sock");
 //         ...
 //         let _s: status::Status = app.run("welcome");
@@ -38,12 +38,12 @@
 // admits. The surface is re-opened in place rather than replaced, because the
 // worker holds its address.
 
-import "./runtime" as runtime;
+import "facet/application" as app;
 import "agent_appkit/agent_appkit" as agent_appkit;
 import "agent_core/events" as events;
 import "agent_core/auth" as auth;
 import "agent_core/identity" as identity;
-import "./vocabulary" as vocab;
+import "facet/vocabulary" as vocab;
 import "agent_inapp/agent_inapp" as inapp;
 import "agent_mcp/agent_mcp" as mcp;
 import "objc/runtime" as rt;
@@ -57,10 +57,10 @@ static AGENT_SERVING: bool = false;
 //
 // ONE install struct, filled here — the same shape every other backend seam
 // uses. Stage 3 replaced the old `set_agent_attach_fn` / `set_agent_serve_fn`
-// pair with `runtime::install_agent`, and a hook family outside the install
+// pair with `app::install_agent`, and a hook family outside the install
 // structs is drift by definition.
 fn enable() {
-    runtime::install_agent(runtime::AgentHooks {
+    app::install_agent(app::AgentHooks {
         attach_window: attach_window,
         serve_once: serve_once,
         pin_policy: pin_policy,
@@ -71,7 +71,7 @@ fn enable() {
 // Back to the portable no-op: an app that stops serving has no surface, and
 // the runtime's hooks answer nothing rather than reaching a dead one.
 fn disable() {
-    runtime::install_agent(runtime::AgentHooks {
+    app::install_agent(app::AgentHooks {
         attach_window: 0 as fn(*u8),
         serve_once: 0 as fn(str),
         pin_policy: 0 as fn(*u8, vocab::Agent),
@@ -182,12 +182,12 @@ fn enable_fills_the_install_struct_and_disable_empties_it() {
     // The seam's own rule: zero fields keep the portable no-op, so a runtime
     // with no agent enabled must reach nothing rather than reach a null.
     disable();
-    runtime::agent_attach_window(0 as *u8);      // inert, not a trap
-    runtime::agent_serve_once("/tmp/never");
+    app::agent_attach(0 as *u8);      // inert, not a trap
+    app::agent_serve_once("/tmp/never");
     enable();
     // `attach_window` with a null window is what the runtime does before any
     // window exists; the surface opens empty rather than refusing.
-    runtime::agent_attach_window(0 as *u8);
+    app::agent_attach(0 as *u8);
     disable();
     return;
 }

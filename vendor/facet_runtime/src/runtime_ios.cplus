@@ -1,4 +1,4 @@
-// facet runtime facade for iOS. `import "facet/runtime"` resolves HERE on an
+// facet runtime facade for iOS. `import "facet_runtime/runtime"` resolves HERE on an
 // iOS target, through the resolver's platform override on the filename, and
 // this file selects the UIKit backend. macOS resolves to runtime_macos.cplus
 // the same way; a target with neither lands on the neutral base runtime.cplus.
@@ -44,14 +44,14 @@ import "stdlib/status" as status;
 import "stdlib/box" as box;
 import "stdlib/io" as io;
 import "flex_layout/flex_layout" as flex;
-import "./facet" as core;
-import "./vocabulary" as vocab;
-import "./component" as component;
-import "./screen" as screen;
-import "./services" as services;
-import "./application" as app;
-import "./mount" as mount;
-import "./nav" as nav;
+import "facet/facet" as core;
+import "facet/vocabulary" as vocab;
+import "facet/component" as component;
+import "facet/screen" as screen;
+import "facet/services" as services;
+import "facet/application" as app;
+import "facet/mount" as mount;
+import "facet/nav" as nav;
 import "facet_uikit/facet_uikit" as backend;
 import "facet_uikit/window" as host;
 import "facet_uikit/dialogs" as dialogs;
@@ -528,7 +528,7 @@ impl App {
         nav::set_pop_fn(pop_screen);
         CURRENT_APP = #addr_of(this) as *u8;
         let sock: str = this.agent_path.view();
-        if sock != "" { agent_serve_once(sock); }
+        if sock != "" { app::agent_serve_once(sock); }
         let launch: fn(*u8) = this.on_launch_fn;
         launch(this.hook_ctx);
         // The route resolves NOW — a bad route name should fail before the
@@ -705,33 +705,4 @@ fn register_screen(route: str, factory: fn() -> screen::ScreenBox) -> bool {
     if has_screen(route) { return false; }
     { (*ap).screen(route, factory) };
     return true;
-}
-
-// ---- agent hookup ------------------------------------------------------------
-
-struct AgentHooks {
-    attach_window: fn(*u8),
-    serve_once: fn(str),
-    pin_policy: fn(*u8, vocab::Agent),
-}
-
-static AGENT: AgentHooks = #zero::[AgentHooks]();
-
-fn install_agent(take h: AgentHooks) {
-    AGENT = h;
-    app::set_agent_attach_fn(AGENT.attach_window);
-    app::set_agent_pin_fn(AGENT.pin_policy);
-    return;
-}
-
-fn agent_attach_window(win: *u8) {
-    let f: fn(*u8) = AGENT.attach_window;
-    if f != (0 as fn(*u8)) { f(win); }
-    return;
-}
-
-fn agent_serve_once(path: str) {
-    let f: fn(str) = AGENT.serve_once;
-    if f != (0 as fn(str)) { f(path); }
-    return;
 }

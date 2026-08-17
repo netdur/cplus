@@ -26,12 +26,12 @@ import "stdlib/vec" as vec;
 import "stdlib/status" as status;
 import "stdlib/io" as io;
 import "flex_layout/flex_layout" as flex;
-import "./facet" as core;
-import "./vocabulary" as vocab;
-import "./component" as component;
-import "./screen" as screen;
-import "./services" as services;
-import "./application" as app;
+import "facet/facet" as core;
+import "facet/vocabulary" as vocab;
+import "facet/component" as component;
+import "facet/screen" as screen;
+import "facet/services" as services;
+import "facet/application" as app;
 
 type Node = flex::Node;
 type Builder = flex::Builder;
@@ -359,41 +359,6 @@ fn register_screen(route: str, factory: fn() -> screen::ScreenBox) -> bool {
     if has_screen(route) { return false; }
     { (*ap).screen(route, factory) };
     return true;
-}
-
-// ---- agent hookup ------------------------------------------------------------
-// Registered by facet/agent when an app opts into serving; the same install
-// shape as every other backend seam. Exists as its own struct so importing
-// facet/runtime never drags the agent packages in.
-
-struct AgentHooks {
-    attach_window: fn(*u8),
-    serve_once: fn(str),
-    // Pin a node's declared `agent` tier onto its platform view at mount.
-    pin_policy: fn(*u8, vocab::Agent),
-}
-
-static AGENT: AgentHooks = #zero::[AgentHooks]();
-
-fn install_agent(take h: AgentHooks) {
-    AGENT = h;
-    // Mirrored into application, where a backend can reach it without
-    // importing runtime — dialogs' sheet is the caller that needs it.
-    app::set_agent_attach_fn(AGENT.attach_window);
-    app::set_agent_pin_fn(AGENT.pin_policy);
-    return;
-}
-
-fn agent_attach_window(win: *u8) {
-    let f: fn(*u8) = AGENT.attach_window;
-    if f != (0 as fn(*u8)) { f(win); }
-    return;
-}
-
-fn agent_serve_once(path: str) {
-    let f: fn(str) = AGENT.serve_once;
-    if f != (0 as fn(str)) { f(path); }
-    return;
 }
 
 // ---- tests ------------------------------------------------------------------
