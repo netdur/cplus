@@ -10,7 +10,7 @@ interactive; dropping it hangs the shell up.
 ```cplus
 import "terminal/widget" as terminal;
 import "facet/facet" as facet;
-import "facet/runtime" as runtime;
+import "facet_runtime/runtime" as runtime;
 import "stdlib/option" as option;
 
 struct Console {

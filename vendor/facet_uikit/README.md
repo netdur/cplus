@@ -116,10 +116,11 @@ The largest single piece of work left is the recycling tier: `facet_appkit`'s
 
 ## Wired into facet
 
-`import "facet/runtime"` resolves to `facet/src/runtime_ios.cplus` on an iOS
-target — the same filename override that picks `runtime_macos.cplus` on a Mac,
-keyed off `target::active_platform()`. facet's manifest carries
-`[ios.dependencies]`, so **facet's own build on iOS compiles this package**,
+`import "facet_runtime/runtime"` resolves to `facet_runtime/src/runtime_ios.cplus`
+on an iOS target — the same filename override that picks `runtime_macos.cplus`
+on a Mac, keyed off `target::active_platform()`. facet_runtime's manifest
+carries `[ios.dependencies]`, so **facet_runtime's own build on iOS compiles
+this package**,
 exactly as it compiles `facet_appkit` on macOS. The consequence is the one
 facet's manifest already states for the Mac: a backend that does not build turns
 facet red.

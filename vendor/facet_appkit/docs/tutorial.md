@@ -90,7 +90,7 @@ agent_appkit = "*"
 ```
 
 ```cplus
-import "facet/agent" as agent;
+import "facet_agent/agent" as agent;
 
 backend::install();
 agent::enable();

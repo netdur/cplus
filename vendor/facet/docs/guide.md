@@ -163,7 +163,7 @@ Plus two slots: `theme::set_is_dark_fn` and `theme::set_theme_changed_fn`.
 A zero field keeps the portable no-op, so a partially implemented backend is
 degraded rather than broken.
 
-An embedded assistant uses `facet/agent::in_app()`. This opens a typed
+An embedded assistant uses `facet_agent/agent::in_app()`. This opens a typed
 in-process session over the same attached surface; it does not connect to the
 application's MCP socket. The provider loop feeds `describe_ui()` to the model,
 maps model tool calls to session methods, returns each `Outcome`, and repeats

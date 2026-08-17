@@ -210,7 +210,7 @@ its presentation style and has no size of its own.
 
 `vendor/agent_uikit` is the reader — the sibling of `agent_appkit`, walking a
 live UIView tree into agent_core's identity registry and filling agent_mcp's
-`Backend`. `facet/agent_ios.cplus` installs it, so `runtime::install_agent` is
+`Backend`. `facet_agent/agent_ios.cplus` installs it, so `application::install_agent` is
 no longer empty and `in_app()` compiles on this platform.
 
 **The transport is a PORT, not a path**, and that is the whole iOS story: a Unix

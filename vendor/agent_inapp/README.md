@@ -17,7 +17,7 @@ let tree = session.describe_ui();
 let acted = session.click("save");
 ```
 
-For Facet applications, `facet/agent::in_app(policy)` supplies the attached
+For Facet applications, `facet_agent/agent::in_app(policy)` supplies the attached
 surface and backend automatically. The model-provider loop is intentionally
 outside this package: translate its tool calls to `describe_ui`, `click`,
 `set_text`, `scroll_to`, and `hit_test`, then return the typed outcome.

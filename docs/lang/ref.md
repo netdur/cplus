@@ -387,7 +387,7 @@ cpc headers                     # C+ declaration files for a package
 cpc --emit-ll|--emit-ll-opt|--emit-asm|--emit-obj|--emit-header FILE
 cpc --diagnostics=json          # NDJSON diagnostics
 cpc --realtime-report[=json]
-cpc pm …                        # fetch tree-URL dependencies into vendor/
+cpc pm …                        # install deps into the per-user store (~/.cplus); add/update/remove
 ```
 
 Targets: `host` (default), `ios-arm64`, `ios-arm64-simulator`,

@@ -191,7 +191,11 @@ interface Screen {
 
 `screen_box(s)` type-erases a screen for the runtime.
 
-## facet/runtime
+## facet_runtime/runtime
+
+(Moved out of facet, 2026-08-17: the boot facade is its own package —
+see `vendor/facet_runtime/README.md`. The surface below is unchanged;
+only the import path moved.)
 
 `App::new(name)` then:
 
@@ -320,7 +324,11 @@ Standing rule: a gesture-only affordance must also have a click path. An agent
 has no hands, and a feature it cannot reach is a feature half the users of this
 framework cannot reach.
 
-## facet/agent
+## facet_agent/agent
+
+(Moved out of facet, 2026-08-17: the agent surface is its own package —
+see `vendor/facet_agent/README.md`. The surface below is unchanged; only
+the import path moved.)
 
 `enable()` registers the serving hooks; `disable()` returns to the no-op. An
 application also declares `agent_core`, `agent_inapp`, `agent_mcp` and the

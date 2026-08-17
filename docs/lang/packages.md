@@ -52,9 +52,14 @@ dependency's own manifest. A backend's transitive closure is therefore named
 here too. Clear and noisy beats magic: the manifest is the complete bill of
 materials.
 
-Dependencies are directories under `vendor/`. `cpc pm` fetches tree-URL
-specs (`https://…/tree/main/vendor/stdlib@0.0.27`) into `vendor/<name>`;
-local work symlinks them.
+Dependencies are directories the resolver finds project-first:
+`<project>/vendor/<name>` wins, then the per-user store
+(`~/.cplus/<tier>/vendor/<name>`) that `cpc pm install` fills. A bare
+`stdlib = "*"` is the toolchain's own package at the toolchain's version;
+third-party packages use the pinned tree-URL form
+(`https://…/tree/main/<pkg>@1.2.3`), and `cpc pm add` writes a package
+plus its declared closure for you. Monorepo work symlinks `vendor/` as
+before.
 
 ## 3. Apps: the entry names you, the target shapes you
 

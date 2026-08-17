@@ -149,7 +149,7 @@ fn counter_screen() -> screen::ScreenBox {
 ## 6. Run it
 
 ```cplus
-import "facet/runtime" as runtime;
+import "facet_runtime/runtime" as runtime;
 import "stdlib/status" as status;
 import "facet_appkit/facet_appkit" as backend;
 

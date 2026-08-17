@@ -16,7 +16,9 @@ cpc init hello && cd hello
 cpc build && ./target/debug/hello
 ```
 
-`cpc init` writes three files. The manifest needs no target section —
+`cpc init` writes four files (the fourth is SKILL.md, the agent
+reference; `--platform ios` scaffolds a deliberately scoped app instead —
+see packages.md). The manifest needs no target section —
 `src/main.cplus` is the default entry:
 
 ```toml
@@ -29,7 +31,9 @@ edition = "2026"
 stdlib = "*"
 ```
 
-Dependencies resolve under `vendor/<name>/`. In this repository, symlink it:
+Dependencies resolve from the project's `vendor/<name>/` first, then the
+per-user store (`~/.cplus`) that `cpc pm install` fills. Working inside
+this repository, a symlink does the same job:
 `ln -s "$CPLUS"/vendor vendor`.
 
 ## 2. Hello

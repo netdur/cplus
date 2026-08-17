@@ -18,7 +18,7 @@ agent surface beside it.
 import "inspector/tree" as itree;
 import "inspector/mcp" as imcp;
 import "inspector/appkit" as iplatform;
-import "facet/agent" as agent;
+import "facet_agent/agent" as agent;
 
 fn main() -> i32 {
     iplatform::install();               // overlay, native rows, and the UI-thread hop
