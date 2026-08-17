@@ -112,11 +112,11 @@ fn init_scaffolds_a_named_project() {
     assert!(manifest.contains("name    = \"myapp\""), "manifest: {manifest}");
     // v0.0.28: no target section — src/main.cplus is the default entry.
     assert!(!manifest.contains("[[bin]]"), "legacy [[bin]] must not be scaffolded: {manifest}");
-    // stdlib is the Go-style path@version source, pinned to this toolchain.
-    assert!(manifest.contains("vendor/stdlib@"), "stdlib should use path@version: {manifest}");
+    // D15: a bare `*` is the toolchain's own package at the toolchain's
+    // version — `cpc pm` supplies the context, so no URL is scaffolded.
     assert!(
-        manifest.contains(&format!("@{}\"", env!("CARGO_PKG_VERSION"))),
-        "stdlib should be pinned to the cpc version: {manifest}"
+        manifest.contains("stdlib = \"*\""),
+        "stdlib should be the bare toolchain dep: {manifest}"
     );
 
     let main = read(&proj.join("src/main.cplus"));

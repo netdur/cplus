@@ -2,16 +2,14 @@
 **/target/
 a.out
 
-# Prebuilt package slices. A package's binary mode is `lib/<triple>/lib<name>.a`
-# next to the generated `lib/include/` headers; the headers are source-shaped
-# and tracked, the archives are build output and are not. `[build] prebuild =
-# true` recreates them on demand, and a missing slice directory just means the
-# package compiles from source — so a fresh clone needs nothing here.
-**/lib/*/*.a
-**/lib/*/*.dylib
-**/lib/*/*.so
-**/lib/*/*.lib
-**/lib/*/*.fingerprint
+# Prebuilt package slices — the WHOLE lib/ directory is build output
+# (2026-08-17): `lib/<triple>/lib<name>.a` + fingerprint AND the generated
+# `lib/include/` headers are all recreated by the prebuild pass whenever the
+# fingerprint (source + triple + mode + compiler version) mismatches. A
+# missing lib/ just means the package compiles from source; a fresh clone
+# needs nothing here. Author-SHIPPED binaries (`[link].bundled`) would be
+# tracked deliberately via `git add -f` — no package does this today.
+/vendor/*/lib/
 
 /proves
 
@@ -39,4 +37,6 @@ playground
 # Local build wiring: a package's `vendor/` symlink into the repo's own
 # vendor tree, so `cpc build` resolves imports without a copy. Machine-local.
 /examples/*/vendor
-/vendor/stdlib/stdlib
+# NOTE deliberately removed (2026-08-17): /vendor/stdlib/stdlib — the broken
+# self-symlink was deleted, and hiding the path meant a recreated one never
+# showed in `git status`. If it reappears, something recreates it: find out.

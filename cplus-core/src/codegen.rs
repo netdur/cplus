@@ -1494,7 +1494,7 @@ fn generate_inner(
                         }
                         gen_enum_method(
                             &mut out, enum_id, m, &sigs, &types, &str_lits, mode, test_mode, &md,
-                            &tramps,
+                            &tramps, is_lib,
                         );
                     }
                 } else if b.target.name == "str" {
@@ -7828,6 +7828,7 @@ fn gen_enum_method(
     test_mode: bool,
     md: &ModuleMetadata,
     tramps: &ThreadTrampolines,
+    is_lib: bool,
 ) {
     // Recover the enum name via the reverse-lookup table — EnumInfo
     // doesn't carry it directly (Phase-1F-style reverse lookup, same
@@ -7864,7 +7865,20 @@ fn gen_enum_method(
     let return_ty = sig.return_type.clone();
     let enum_ty = Ty::Enum(enum_id);
 
-    let linkage = if m.is_pub { "" } else { "internal " };
+    // MIRRORS `gen_method` (the struct path) — the three method emitters
+    // must stay in lockstep. This path missed BOTH rules and the miss was
+    // invisible until stdlib prebuilt (2026-08-16): the archive's enum
+    // methods stayed `internal` (unlinkable), and a header-declared enum
+    // method was emitted as a define with the synthesized empty body — a
+    // function whose whole body is a trap. `Status.is_ok` was the crash.
+    let lib_public = lib_public_name(is_lib, &m.name.name);
+    let linkage = if m.is_pub {
+        ""
+    } else if lib_public {
+        "weak_odr "
+    } else {
+        "internal "
+    };
     // v0.0.8 fix C: non-export enum method → eligible for fastcc.
     let cc = if linkage == "internal " {
         md.fastcc_prefix(&mangled)
@@ -7877,10 +7891,18 @@ fn gen_enum_method(
     } else {
         llvm_ty(&return_ty, types)
     };
+    // A body-less method from a generated header: the implementation lives
+    // in the package's archive. Same signature emission, only the keyword
+    // differs — see `gen_method`.
+    let (keyword, linkage, cc) = if m.is_declaration {
+        ("declare", "", "")
+    } else {
+        ("define", linkage, cc)
+    };
     write!(
         out,
-        "define {}{}{} @{}(",
-        linkage, cc, return_ty_str, mangled
+        "{} {}{}{} @{}(",
+        keyword, linkage, cc, return_ty_str, mangled
     )
     .unwrap();
     let mut llvm_idx: u32 = 0;
@@ -7920,6 +7942,11 @@ fn gen_enum_method(
         first = false;
     }
     out.push(')');
+    // Declaration: the signature is the whole emission.
+    if m.is_declaration {
+        out.push('\n');
+        return;
+    }
     out.push_str(&md.sanitizer_attrs.borrow());
     out.push_str(" {\nentry:\n");
 

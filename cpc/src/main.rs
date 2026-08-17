@@ -1425,10 +1425,13 @@ fn collect_dep_link_args(
                     dep.name,
                     vendor_manifest.display()
                 ),
-                vec![format!(
-                    "declared in `[dependencies]` of {}",
-                    m.root.join("Cplus.toml").display()
-                )],
+                vec![
+                    format!(
+                        "declared in `[dependencies]` of {}",
+                        m.root.join("Cplus.toml").display()
+                    ),
+                    "run `cpc pm install` to fetch dependencies into the store".to_string(),
+                ],
             );
             emit_diag(&d, diag_mode, "");
             return Err(ExitCode::FAILURE);
@@ -1596,8 +1599,17 @@ fn vendor_dir_for(m: &manifest::Manifest, dep_name: &str) -> Option<PathBuf> {
     if primary.join("Cplus.toml").is_file() {
         return Some(primary);
     }
-    let alt = m.root.parent()?.join(dep_name);
-    alt.join("Cplus.toml").is_file().then_some(alt)
+    if let Some(parent) = m.root.parent() {
+        let alt = parent.join(dep_name);
+        if alt.join("Cplus.toml").is_file() {
+            return Some(alt);
+        }
+    }
+    // The per-user store (D16), last: a globally-installed package at
+    // `~/.cplus/<tier>/vendor/<name>` — the same fallback order import
+    // resolution uses, so the linked package is the resolved one.
+    let store = cplus_core::resolver::store_vendor_dir()?.join(dep_name);
+    store.join("Cplus.toml").is_file().then_some(store)
 }
 
 /// Bring every `[build] prebuild = true` dependency's slice up to date, before
@@ -1611,7 +1623,12 @@ fn vendor_dir_for(m: &manifest::Manifest, dep_name: &str) -> Option<PathBuf> {
 ///
 /// A dep that is `dev = true`, or that ships author-built binaries, is skipped:
 /// the first is being worked on, the second already has its answer.
-fn ensure_prebuilt_deps(m: &manifest::Manifest, build_mode: BuildMode, diag_mode: DiagMode) -> Result<(), ExitCode> {
+fn ensure_prebuilt_deps(
+    m: &manifest::Manifest,
+    build_mode: BuildMode,
+    diag_mode: DiagMode,
+    stack: &mut Vec<String>,
+) -> Result<(), ExitCode> {
     if m.dependencies.is_empty() {
         return Ok(());
     }
@@ -1631,7 +1648,18 @@ fn ensure_prebuilt_deps(m: &manifest::Manifest, build_mode: BuildMode, diag_mode
         if !vm.build.prebuild || vm.build.dev {
             continue;
         }
-        if let Err(e) = ensure_one_prebuilt(&vm, &vendor_dir, &link_triple, build_mode, diag_mode) {
+        // A package that ships author-built binaries already has its answer:
+        // prebuilding it would compile a slice under the SAME archive name
+        // and overwrite the author's shipped library (its C symbols with
+        // it). Under opt-in prebuild this gate was implicit — a bundled
+        // package never set `prebuild = true` — with prebuild the default
+        // (2026-08-16) it must be said out loud.
+        if vm.link.as_ref().is_some_and(|l| !l.bundled.is_empty()) {
+            continue;
+        }
+        if let Err(e) =
+            ensure_one_prebuilt(&vm, &vendor_dir, &link_triple, build_mode, diag_mode, stack)
+        {
             eprintln!("cpc: prebuilding `{}`: {e}", dep.name);
             return Err(ExitCode::FAILURE);
         }
@@ -1639,10 +1667,40 @@ fn ensure_prebuilt_deps(m: &manifest::Manifest, build_mode: BuildMode, diag_mode
     Ok(())
 }
 
+/// Prebuild one package — its own prebuild dependencies FIRST, then its
+/// slice. The order is the correctness condition: a slice compiled before
+/// its deps' headers exist resolves them from `src/` and swallows their
+/// `export extern` definitions, and every consumer linking two such slices
+/// dies on the duplicate symbols. `stack` carries the chain for cycle
+/// detection — a manifest cycle must be an error, not a hang.
+fn ensure_one_prebuilt(
+    vm: &manifest::Manifest,
+    vendor_dir: &Path,
+    link_triple: &str,
+    build_mode: BuildMode,
+    diag_mode: DiagMode,
+    stack: &mut Vec<String>,
+) -> Result<(), String> {
+    let name = vm.package.name.clone();
+    if stack.contains(&name) {
+        return Err(format!(
+            "dependency cycle in prebuild: {} -> {name}; mutually-dependent packages cannot be compiled standalone — set `[build] prebuild = false` (or `dev = true`) on one side of the cycle",
+            stack.join(" -> ")
+        ));
+    }
+    stack.push(name);
+    let deps_first = ensure_prebuilt_deps(vm, build_mode, diag_mode, stack)
+        .map_err(|_| format!("a dependency of `{}` failed to prebuild", vm.package.name));
+    let result = deps_first
+        .and_then(|()| ensure_one_slice(vm, vendor_dir, link_triple, build_mode, diag_mode));
+    stack.pop();
+    result
+}
+
 /// Compile one package into `lib/<triple>/<name>.a` if the recorded
 /// fingerprint doesn't match the current inputs, and generate its headers
 /// alongside. A match is the fast path: nothing runs.
-fn ensure_one_prebuilt(
+fn ensure_one_slice(
     vm: &manifest::Manifest,
     vendor_dir: &Path,
     link_triple: &str,
@@ -1729,6 +1787,26 @@ fn write_package_entry(vendor_dir: &Path, pkg: &str) -> Result<PathBuf, String> 
         .filter_map(|p| p.file_stem().map(|s| s.to_string_lossy().into_owned()))
         .collect();
     modules.sort();
+    // Platform variants: an app build resolves ONE file per module — the
+    // resolver's `platform_override` swaps `reactor` for `reactor_linux` on
+    // a Linux target — and the archive must contain exactly the same set. A
+    // foreign platform's variant compiled in lands its exported C symbols
+    // beside the active file's and the merged module fails on the
+    // redefinition (stdlib's reactor_{linux,windows} vs reactor was the
+    // live case). So: import base names only and let the resolver pick the
+    // active variant; keep a suffixed module only when it has no base file
+    // (nothing else would reach it) and its platform is the active one.
+    let stems: std::collections::HashSet<String> = modules.iter().cloned().collect();
+    let active_suffix = format!("_{}", target::active_platform());
+    modules.retain(|m| {
+        for p in target::PLATFORMS {
+            let suffix = format!("_{p}");
+            if let Some(base) = m.strip_suffix(suffix.as_str()) {
+                return suffix == active_suffix && !stems.contains(base);
+            }
+        }
+        true
+    });
 
     let mut text = String::from(
         "// Generated by cpc. The entry a prebuilt package is compiled from:\n         // it imports every module in src/, so the archive covers the whole\n         // package and matches the declarations in lib/include/.\n",
@@ -1958,7 +2036,7 @@ fn build_project(
     // are brought up to date here, BEFORE the entry file is resolved: the
     // resolver reads `lib/include/` for them and the link line names the
     // archive, so both need the slice to already be on disk.
-    if let Err(code) = ensure_prebuilt_deps(&m, build_mode, diag_mode) {
+    if let Err(code) = ensure_prebuilt_deps(&m, build_mode, diag_mode, &mut Vec::new()) {
         return code;
     }
     // A `[library]` (or prebuild-synthesized) target dispatches to the
@@ -3103,7 +3181,7 @@ fn run_test(
             };
             // Same ordering rule as `build_project`: a prebuilt dependency's
             // slice must exist before anything resolves an import against it.
-            if let Err(code) = ensure_prebuilt_deps(&m, build_mode, diag_mode) {
+            if let Err(code) = ensure_prebuilt_deps(&m, build_mode, diag_mode, &mut Vec::new()) {
                 return code;
             }
             // Resolve the test entry: `src/test_main.cplus` first (a
@@ -5421,9 +5499,17 @@ fn run_explain(args: &[OsString]) -> ExitCode {
 
 // ---- `cpc pm` : the package manager, unified under cpc ----------------------
 
+/// The toolchain monorepo: where bare `*` dependencies come from (D15). The
+/// `cplus-pm` crate deliberately has no default org; `cpc` is what supplies
+/// the toolchain identity, because `cpc` is the toolchain.
+const TOOLCHAIN_REPO: &str = "github.com/netdur/cplus";
+
 /// `cpc pm <command> ...` — dispatch to the package manager (the same
 /// dispatcher as the standalone `cplus-pm` binary). Shipping it under `cpc`
-/// means the one Homebrew-installed toolchain carries the package manager too.
+/// means the one Homebrew-installed toolchain carries the package manager
+/// too — and, running inside the toolchain, it passes the toolchain's own
+/// identity: that is what resolves bare `stdlib = "*"` deps and names the
+/// store tier, version-locking official packages to this compiler.
 fn run_pm(args: &[OsString]) -> ExitCode {
     let strs: Option<Vec<String>> =
         args.iter().map(|a| a.to_str().map(String::from)).collect();
@@ -5431,7 +5517,12 @@ fn run_pm(args: &[OsString]) -> ExitCode {
         eprintln!("cpc pm: arguments must be valid UTF-8");
         return ExitCode::FAILURE;
     };
-    match cplus_pm::cli::run(strs) {
+    let toolchain = cplus_pm::store::ToolchainContext {
+        repo: TOOLCHAIN_REPO.to_string(),
+        version: env!("CARGO_PKG_VERSION").to_string(),
+        package_root: "vendor".to_string(),
+    };
+    match cplus_pm::cli::run_with_toolchain(strs, Some(toolchain)) {
         Ok(()) => ExitCode::SUCCESS,
         Err(message) => {
             eprintln!("error: {message}");
@@ -5513,18 +5604,15 @@ fn run_init(args: &[OsString]) -> ExitCode {
         return ExitCode::FAILURE;
     }
 
-    // The stdlib dependency is the Go-style `path@version` source, pinned to the
-    // version of *this* `cpc` — official packages track the toolchain, so the
-    // scaffolded project always pulls the stdlib that matches its compiler.
-    let stdlib_dep = format!(
-        "https://github.com/netdur/cplus/tree/main/vendor/stdlib@{}",
-        env!("CARGO_PKG_VERSION")
-    );
+    // D15: a bare `*` is the toolchain's own package at the toolchain's
+    // version — `cpc pm install` supplies the context, and the store tier
+    // version-locks stdlib to this compiler by construction. Third-party
+    // deps use the pinned tree-URL form instead.
     // No target section: `src/main.cplus` is the default entry, and what a
     // build produces is the target platform's fact.
     let manifest_toml = format!(
         "[package]\nname    = \"{proj_name}\"\nversion = \"0.0.1\"\nedition = \"2026\"\n\n\
-         [dependencies]\nstdlib = \"{stdlib_dep}\"\n"
+         [dependencies]\nstdlib = \"*\"\n"
     );
     let main_cplus = "import \"stdlib/io\" as io;\n\n\
          fn main() -> i32 {\n    io::println(\"hello from C+\");\n    return 0;\n}\n";

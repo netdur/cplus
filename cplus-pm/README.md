@@ -1,62 +1,64 @@
 # cplus-pm
 
-A small, standalone tool that **manages C+ packages in a project's `vendor/`
-folder**: install, remove, update. It does not build, publish, audit, or inspect
-symbols — those are separate concerns (or not concerns at all). It has no
-dependency on the C+ compiler. See `plans/pm.md` for the design.
-
-## What it does
-
-```text
-cplus-pm install DIR              resolve deps and place them in DIR/vendor/
-cplus-pm remove DIR NAME          delete DIR/vendor/NAME
-cplus-pm update DIR               re-resolve and refresh DIR/vendor/
-```
-
-`install` reads `DIR/pkg.toml`, resolves the dependency graph (transitively),
-fetches each package at its pinned version from its git tag, verifies its
-content hash, copies it into `DIR/vendor/<name>/`, and writes `DIR/pkg.lock` so
-the result is reproducible. `<name>` is the package's import name (its subpath
-leaf), matching how C+ imports resolve (`import "parser/..."` -> `vendor/parser`).
-
-Lower-level commands used by the above (and useful on their own):
+The C+ package manager: it materializes the packages a `Cplus.toml`
+declares — into the per-user store (`~/.cplus/<tier>/vendor/`, shared by
+every project on the machine) by default, or into the project's own
+`vendor/` with `--local`. Install, update, add, remove — nothing else. It does
+not build, publish, or audit, and it has no dependency on the compiler
+crates. It ships as `cpc pm` inside the toolchain (which supplies the
+toolchain context automatically) and as this standalone `cplus-pm` binary.
 
 ```text
-cplus-pm manifest [PATH]          parse pkg.toml and print normalized JSON
-cplus-pm resolve PATH             resolve transitive deps, print lockfile JSON
-cplus-pm lock PATH [OUT]          resolve and write pkg.lock
-cplus-pm fetch ID VERSION         fetch one tagged package into the cache
-cplus-pm fetch-dep PATH DEP_ID    resolve + fetch one direct dependency
-cplus-pm tag ID VERSION           print the canonical git tag for ID/VERSION
+cpc pm install [DIR]      resolve DIR/Cplus.toml deps into the store
+cpc pm update  [DIR]      the same materialization as install (pre-1.0)
+cpc pm add DIR NAME [SPEC]  write NAME + its closure into the manifest, then install
+cpc pm remove DIR NAME    delete DIR/vendor/NAME (never touches the store)
+cpc pm manifest [DIR]     parse DIR/Cplus.toml, print the pm's merged view as JSON
+
+install/update flags:  --local  --store DIR  --cache DIR  --repo-url URL
+                       --toolchain-repo R  --toolchain-version V
 ```
 
-## The manifest
-
-`pkg.toml` is deliberately small -- identity and dependencies:
+A dependency is either the toolchain's own package (bare `*` — resolved to
+the toolchain repo at the toolchain version, so stdlib is version-locked to
+the compiler by construction) or a directory of a git repo at a repo-wide
+version tag, written as the folder's browser URL plus an exact version:
 
 ```toml
-[package]
-id      = "github.com/sled/tools/parser"
-version = "2.1.0"
-
-[deps.public]
-"github.com/sled/tools/types" = "^1.4"
+[dependencies]
+stdlib = "*"
+parser = "https://github.com/acme/tools/tree/main/parser@1.4.2"
 ```
 
-There is **no source-vs-binary flag and no artifact/build/capability/API
-sections**. The compiler doesn't distinguish a source package from a
-binary-backed one -- it just consumes `.cplus` files (definitions, or `extern`
-declarations plus a linked library) -- so the manifest doesn't either. (Unknown
-tables in older manifests are ignored.)
+`install` clones each repo at its tag (once, into `~/.cplus/cache/`),
+copies the package subtree into the store tier, records the tag's commit
+(a re-pushed tag is a hard error), and walks the package's own manifest
+for its siblings. Builds resolve project `vendor/` first, then the store —
+local always wins. Installs are incremental and deterministic; there are
+no version ranges, no solver, and no lockfile — every spec is an exact
+pin, so the manifest is the lockfile.
 
-## Scope
+## Docs
 
-In scope: identity, versioning (git tags), resolution (`pubgrub`), content
-addressing (SHA-256 of the canonical source tree), a shared content-addressed
-cache, the lockfile, and `vendor/` install/remove/update.
+- [docs/model.md](docs/model.md) — what a package is, the two spec forms,
+  siblings, platforms, and how the pm's view relates to the compiler's.
+- [docs/operations.md](docs/operations.md) — exactly what each command does:
+  the cache, the `.cplus-vendor` stamp, the incremental rules, the security
+  boundary, the errors.
+- [docs/decisions.md](docs/decisions.md) — the decision record: why there is
+  no lockfile, how conflicts resolve, what is deliberately absent and what
+  is an open gap. **Read this before proposing a feature.**
 
-Out of scope (a separate tool, or not at all): publishing, capability auditing,
-running builds, `nm`/symbol-prefix API enforcement, SemVer publish checks,
-workspace auto-discovery. Building a package into a distributable **binary**
-(declarations + a bundled shared library, AAR-style) is a separate concern
-described in `plans/pm.md`, not this tool's job.
+The language-level view of packages (manifest shape, platform sections, how
+imports resolve against `vendor/`) is
+[docs/lang/packages.md](../docs/lang/packages.md).
+
+## Tests
+
+```text
+cargo test -p cplus-pm
+```
+
+Unit tests live in each module; `tests/install.rs` is an offline e2e that
+builds a throwaway git monorepo, tags it, and installs against it through
+the same CLI path `cpc pm` uses.

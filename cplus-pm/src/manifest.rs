@@ -4,9 +4,9 @@
 //! (`cpc init` writes it, `cpc build` consumes it). This crate stays standalone
 //! (no dependency on the compiler crates), so it re-reads the same file with a
 //! deliberately narrow view: the package's `name`/`version` and the
-//! `[dependencies]` table. Every other table (`[[bin]]`, `[lib]`, `[link]`,
-//! `[profile]`, …) is ignored — building packages is `cpc build`'s job, not
-//! this tool's.
+//! `[dependencies]` table. Every other table (`[library]`, `[link]`,
+//! `[build]`, `[profile]`, platform `entry` keys, …) is ignored — building
+//! packages is `cpc build`'s job, not this tool's.
 
 use serde::Deserialize;
 use std::collections::BTreeMap;
@@ -16,6 +16,13 @@ use std::path::{Path, PathBuf};
 
 /// The manifest filename, shared with `cpc init` / `cpc build`.
 pub const MANIFEST_NAME: &str = "Cplus.toml";
+
+/// The platform section names, in lockstep with the compiler's
+/// `target::PLATFORMS`. Used for `[<platform>.dependencies]` merging here
+/// and for `cpc pm add`'s target-set detection.
+pub const PLATFORMS: [&str; 7] = [
+    "macos", "linux", "windows", "ios", "android", "esp32", "wasm",
+];
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Manifest {
@@ -273,17 +280,14 @@ mod tests {
 
     #[test]
     fn parses_a_cpc_init_manifest() {
-        // Exactly what `cpc init` writes. Unknown tables ([[bin]]) are ignored.
+        // Exactly what `cpc init` writes (entry defaults to src/main.cplus;
+        // there is no target section). Unknown keys/tables are ignored.
         let manifest = Manifest::parse(
             r#"
 [package]
 name    = "Inspect"
 version = "0.0.1"
 edition = "2026"
-
-[[bin]]
-name = "Inspect"
-path = "src/main.cplus"
 
 [dependencies]
 stdlib = "https://github.com/netdur/cplus/tree/main/vendor/stdlib@0.0.26"

@@ -13372,6 +13372,8 @@ fn undeclared_vendor_package_emits_e0852() {
     let out = Command::new(cpc)
         .arg("build")
         .current_dir(&dir)
+        // Hermetic from any populated per-user store (~/.cplus).
+        .env("CPLUS_HOME", dir.join(".no-store"))
         .output()
         .expect("invoke cpc");
     assert!(!out.status.success());
@@ -13832,6 +13834,8 @@ fn missing_vendor_manifest_emits_e0854() {
     let out = Command::new(cpc)
         .arg("build")
         .current_dir(&dir)
+        // Hermetic from any populated per-user store (~/.cplus).
+        .env("CPLUS_HOME", dir.join(".no-store"))
         .output()
         .expect("invoke cpc");
     assert!(!out.status.success());
@@ -24325,6 +24329,70 @@ fn build_app(cpc: &str, dir: &std::path::Path, extra: &[&str]) -> std::process::
 }
 
 #[test]
+fn prebuilt_enum_and_str_methods_resolve_from_the_archive() {
+    // 2026-08-16: `gen_enum_method` missed BOTH prebuild rules the struct
+    // path had — archive copies stayed `internal` (unlinkable) and a
+    // header-declared enum method was emitted as a define with the
+    // synthesized empty body, i.e. a function whose whole body is a trap.
+    // The app then LINKED fine and died at runtime on the first call
+    // (`Status.is_ok` in every facet app). This pins all three method
+    // families — struct, enum, and a free fn — through the full
+    // header-declare + archive-link + RUN path.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"app\"\n\n[dependencies]\nkinds = \"*\"\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"kinds/kinds\" as k;\n\
+         fn main() -> i32 {\n\
+             let s: k::Signal = k::Signal::Go;\n\
+             let b: k::BoxI = k::BoxI { v: 7 };\n\
+             if s.is_go() { return b.doubled() + k::three(); }\n\
+             return 1;\n\
+         }\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("vendor/kinds/src")).unwrap();
+    // No [build] table: prebuild is the default.
+    std::fs::write(
+        dir.join("vendor/kinds/Cplus.toml"),
+        "[package]\nname = \"kinds\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("vendor/kinds/src/kinds.cplus"),
+        "enum Signal { Go, Stop }\n\
+         impl Signal {\n    fn is_go(this) -> bool {\n        return match this { Signal::Go => true, Signal::Stop => false };\n    }\n}\n\
+         struct BoxI { v: i32 }\n\
+         impl BoxI {\n    fn doubled(this) -> i32 {\n        return this.v * 2;\n    }\n}\n\
+         fn three() -> i32 {\n    return 3;\n}\n",
+    )
+    .unwrap();
+
+    let out = build_app(cpc, &dir, &[]);
+    assert!(
+        out.status.success(),
+        "prebuilt method-kinds build failed:\nstderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("prebuilding `kinds`"),
+        "the dep must actually go through the slice path"
+    );
+    // The part that matters: the binary RUNS. Before the fix it linked
+    // cleanly and trapped (SIGTRAP) on the enum-method call.
+    let run = Command::new(dir.join("target/debug/app"))
+        .status()
+        .expect("run");
+    assert_eq!(run.code(), Some(17), "7*2 + 3, all through the archive");
+}
+
+#[test]
 fn prebuild_compiles_the_dep_once_and_links_the_slice() {
     // `[build] prebuild = true` is the whole opt-in: no `[lib]`, no `[link]`,
     // no triple. The first consumer build produces the slice and its headers;
@@ -24524,21 +24592,40 @@ fn dev_mode_ignores_author_shipped_binaries_too() {
 }
 
 #[test]
-fn build_table_defaults_to_source_only() {
-    // A package that says nothing keeps the old behaviour: compiled from
-    // `src/` every time, no slice, no headers. `prebuild` is opt-in.
+fn build_table_defaults_to_prebuild() {
+    // Decision 2026-08-16: prebuild is the DEFAULT. A package that says
+    // nothing is compiled once into a slice and reused; `prebuild = false`
+    // is the opt-out that keeps the old source-only behaviour.
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();
     prebuild_fixture(&dir, "", 5);
     let out = build_app(cpc, &dir, &[]);
     assert!(out.status.success());
     assert!(
+        String::from_utf8_lossy(&out.stderr).contains("prebuilding"),
+        "a package that says nothing prebuilds by default: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        dir.join("vendor/mathy/lib/include").is_dir(),
+        "the default prebuild generates headers"
+    );
+    let run = Command::new(dir.join("target/debug/app")).status().expect("run");
+    assert_eq!(run.code(), Some(5));
+
+    // The opt-out: `prebuild = false` compiles from src/ every time.
+    let dir = tempdir();
+    prebuild_fixture(&dir, "[build]\nprebuild = false\n", 5);
+    let out = build_app(cpc, &dir, &[]);
+    assert!(out.status.success());
+    assert!(
         !String::from_utf8_lossy(&out.stderr).contains("prebuilding"),
-        "nothing should be cached without `prebuild = true`"
+        "`prebuild = false` must keep source mode: {}",
+        String::from_utf8_lossy(&out.stderr)
     );
     assert!(
         !dir.join("vendor/mathy/lib").exists(),
-        "a source-only package must not grow a lib/ directory"
+        "an opted-out package must not grow a lib/ directory"
     );
     let run = Command::new(dir.join("target/debug/app")).status().expect("run");
     assert_eq!(run.code(), Some(5));
@@ -24748,9 +24835,15 @@ fn ext_project(main_src: &str, extra: &[(&str, &str)]) -> std::path::PathBuf {
         "struct Point { x: i32, y: i32 }\nimpl Point { fn area(this) -> i32 { return this.x * this.y; } }\n",
     )
     .unwrap();
+    // `ext` declares its own dependency on `dep`: with prebuild the default
+    // (2026-08-16) a package is compiled STANDALONE into its slice, and its
+    // own manifest is the world there — an under-declared package cannot be
+    // compiled once and reused. (App builds still resolve against the root's
+    // flat set; this is the same closure said where the package build needs
+    // it, exactly as every real vendor package already does.)
     std::fs::write(
         dir.join("vendor/ext/Cplus.toml"),
-        "[package]\nname = \"ext\"\n",
+        "[package]\nname = \"ext\"\n\n[dependencies]\ndep = \"*\"\n",
     )
     .unwrap();
     std::fs::write(

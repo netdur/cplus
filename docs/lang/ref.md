@@ -363,7 +363,7 @@ Borrow-shaped types are rejected in `async fn` signatures (E0900) — pass
 | `[dependencies]` / `[<platform>.dependencies]` | flat, complete; `name = "*"` or a tree-URL spec |
 | `[library] kind/entry/name` | C-ABI product: `staticlib`(default)/`cdylib`/`both`; explicit `entry` = bare C names |
 | `[link] frameworks/libs/search-paths/extra-objects` | the app's link surface; `${VAR}` expansion in paths |
-| `[build] prebuild/dev` | compile-once cache / always-from-source override |
+| `[build] prebuild/dev` | prebuild defaults ON; `prebuild = false` opts out, `dev = true` = work-on-it override |
 | `[profile.realtime] deny-alloc/deny-block/deny-unknown-extern/stack-limit` | project-wide real-time contracts |
 
 What a build produces is the target's: self-linked platforms → executable

@@ -5,8 +5,10 @@
 //! copy each into `vendor/<name>/` — the same layout `cpc build` consumes.
 //! Building packages is `cpc build`'s job, not this tool's. See `plans/pm.md`.
 
+pub mod add;
 pub mod cli;
 pub mod fetch;
 pub mod manifest;
 pub mod spec;
+pub mod store;
 pub mod vendor;

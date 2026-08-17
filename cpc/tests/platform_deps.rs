@@ -56,6 +56,10 @@ fn build(project: &Path) -> std::process::Output {
     Command::new(cpc())
         .current_dir(project)
         .arg("build")
+        // Hermetic from any populated per-user store (~/.cplus): these
+        // fixtures assert on missing/absent vendor packages, which the
+        // store fallback could otherwise rescue.
+        .env("CPLUS_HOME", project.join(".no-store"))
         .output()
         .expect("run cpc build")
 }
@@ -234,4 +238,68 @@ fn platform_suffix_module_shadows_the_base_file() {
         "the _{} override should shadow the base module",
         host_platform()
     );
+}
+
+#[test]
+fn prebuilt_slice_excludes_foreign_platform_variants() {
+    // A `[build] prebuild = true` package with two platform-variant module
+    // families, every file exporting a C symbol of the same name as its
+    // siblings. The synthesized library entry must compile exactly the set
+    // an app build resolves — the active variant where one exists, the base
+    // where none does, and NEVER a foreign variant, whose duplicate export
+    // fails the merged module (stdlib's reactor_{linux,windows} vs reactor
+    // was the live case, 2026-08-16).
+    let dir = tempfile::tempdir().unwrap();
+    let project = dir.path();
+    write(
+        &project.join("vendor/plat/Cplus.toml"),
+        "[package]\nname = \"plat\"\nversion = \"0.0.1\"\n\n[build]\nprebuild = true\n",
+    );
+    // Family 1: base + ACTIVE variant + foreign variant. The active variant
+    // is what both the slice and the app must use.
+    write(
+        &project.join("vendor/plat/src/eng.cplus"),
+        "export extern fn plat_eng_probe_v1() {}\n\nfn answer() -> i32 {\n    return 1;\n}\n",
+    );
+    write(
+        &project.join(format!("vendor/plat/src/eng_{}.cplus", host_platform())),
+        "export extern fn plat_eng_probe_v1() {}\n\nfn answer() -> i32 {\n    return 2;\n}\n",
+    );
+    write(
+        &project.join(format!("vendor/plat/src/eng_{}.cplus", other_platform())),
+        "export extern fn plat_eng_probe_v1() {}\n\nfn answer() -> i32 {\n    return 3;\n}\n",
+    );
+    // Family 2: base + foreign variant only (stdlib's exact reactor shape
+    // on macOS). The base must stay in the slice.
+    write(
+        &project.join("vendor/plat/src/pump.cplus"),
+        "export extern fn plat_pump_probe_v1() {}\n\nfn answer() -> i32 {\n    return 5;\n}\n",
+    );
+    write(
+        &project.join(format!("vendor/plat/src/pump_{}.cplus", other_platform())),
+        "export extern fn plat_pump_probe_v1() {}\n\nfn answer() -> i32 {\n    return 7;\n}\n",
+    );
+    write(
+        &project.join("Cplus.toml"),
+        "[package]\nname = \"app\"\nversion = \"0.0.1\"\nedition = \"2026\"\n\n\
+         [dependencies]\nplat = \"*\"\n",
+    );
+    write(
+        &project.join("src/main.cplus"),
+        "import \"plat/eng\" as eng;\nimport \"plat/pump\" as pump;\n\n\
+         fn main() -> i32 {\n    return eng::answer() * 10 + pump::answer();\n}\n",
+    );
+
+    let out = build(project);
+    assert!(
+        out.status.success(),
+        "prebuild with platform variants failed:\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    // eng resolves to the active variant (2), pump to its base (5).
+    assert_eq!(run_built(project), 25, "slice must match the app-resolved set");
+    // The slice really was built (prebuild ran, not source fallback).
+    let lib = project.join("vendor/plat/lib");
+    assert!(lib.join("include").is_dir(), "headers were generated");
 }

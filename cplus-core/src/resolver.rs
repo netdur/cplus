@@ -1376,8 +1376,25 @@ fn classify_import_path(
     // package directories without requiring per-package vendor symlinks.
     if !p.is_file() {
         if let Some(parent) = manifest_root.parent() {
-            let mut alt = parent.to_path_buf();
-            alt.push(first);
+            // The sibling package must route through headers exactly like
+            // the primary vendor/ path: this is how a monorepo package's
+            // own build (and its PREBUILD slice) reaches stdlib, and a
+            // slice that resolves a prebuilt sibling from `src/` swallows
+            // its `export extern` definitions — every such slice then
+            // defines stdlib's reactor `_v1` symbols and the consumer link
+            // dies on the duplicates (iris, 2026-08-16).
+            let sib_root = parent.join(first);
+            if package_resolves_through_headers(&sib_root) {
+                let mut hdr = sib_root.join("lib").join("include");
+                for seg in &rest {
+                    hdr.push(seg);
+                }
+                hdr.set_extension("cplus");
+                if hdr.is_file() {
+                    return Ok(platform_override(hdr));
+                }
+            }
+            let mut alt = sib_root.clone();
             alt.push("src");
             for seg in &rest {
                 alt.push(seg);
@@ -1387,8 +1404,67 @@ fn classify_import_path(
                 return Ok(platform_override(alt));
             }
         }
+        // Per-user store fallback (D16): a package `cpc pm install`ed
+        // globally lives at `~/.cplus/<tier>/vendor/<name>` and resolves
+        // last — the project's own vendor/ and the monorepo sibling always
+        // win, which is what makes local edits and dev mode possible. The
+        // store path contains a `vendor` component, so file ids anchor to
+        // the package boundary exactly as project-vendored ones do.
+        if let Some(store_pkg) = store_package_dir(first) {
+            if package_resolves_through_headers(&store_pkg) {
+                let mut hdr = store_pkg.join("lib").join("include");
+                for seg in &rest {
+                    hdr.push(seg);
+                }
+                hdr.set_extension("cplus");
+                if hdr.is_file() {
+                    return Ok(platform_override(hdr));
+                }
+            }
+            let mut sp = store_pkg.join("src");
+            for seg in &rest {
+                sp.push(seg);
+            }
+            sp.set_extension("cplus");
+            if sp.is_file() {
+                return Ok(platform_override(sp));
+            }
+        }
     }
     Ok(platform_override(p))
+}
+
+/// The per-user store tier for THIS toolchain: `~/.cplus/<tier>/vendor`.
+///
+/// Kept in lockstep with `cplus-pm`'s `store` module — the pm writes the
+/// store, the resolver reads it; the shared vocabulary is deliberate (D16 in
+/// `cplus-pm/docs/decisions.md`). The tier is the compatibility line of the
+/// running toolchain: the exact version pre-1.0 (`v0.0.27`), `major.minor`
+/// from 1.0 (`v1.2`, D13/D14). `$CPLUS_HOME` overrides the root — which is
+/// also how tests keep themselves hermetic from a populated `~/.cplus`.
+pub fn store_vendor_dir() -> Option<std::path::PathBuf> {
+    let root = match std::env::var_os("CPLUS_HOME") {
+        Some(v) => std::path::PathBuf::from(v),
+        None => {
+            let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE"))?;
+            std::path::PathBuf::from(home).join(".cplus")
+        }
+    };
+    let version = env!("CARGO_PKG_VERSION");
+    let mut parts = version.split('.');
+    let major = parts.next().unwrap_or("0");
+    let tier = if major != "0" {
+        format!("v{}.{}", major, parts.next().unwrap_or("0"))
+    } else {
+        format!("v{version}")
+    };
+    Some(root.join(tier).join("vendor"))
+}
+
+/// The store's copy of package `name`, if it has one (manifest present).
+fn store_package_dir(name: &str) -> Option<std::path::PathBuf> {
+    let dir = store_vendor_dir()?.join(name);
+    dir.join("Cplus.toml").is_file().then_some(dir)
 }
 
 /// True iff resolving the relative import `rel` against `import_dir` escapes

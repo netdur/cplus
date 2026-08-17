@@ -69,24 +69,40 @@ fn declares_generics(p: &Program) -> bool {
     })
 }
 
-/// Byte ranges of every function/method body in the module, as `(start, end)`
-/// half-open over the source.
-fn body_spans(p: &Program) -> Vec<(usize, usize)> {
+/// Text replacements turning the module into its header form, as
+/// `(start, end, text)` half-open byte ranges, sorted and non-overlapping.
+fn replacements(src: &str, p: &Program) -> Vec<(usize, usize, &'static str)> {
     let mut out = Vec::new();
     for item in &p.items {
         match &item.kind {
             ItemKind::Function(f) => {
-                // `extern fn` bodies are synthesized empty blocks with no
-                // source extent; skip them, and skip anything already
-                // body-less.
-                if !f.is_extern && !f.is_declaration {
-                    out.push((f.body.span.start as usize, f.body.span.end as usize));
+                if f.is_extern && f.is_pub && !f.is_declaration {
+                    // `export extern fn X(...) { body }` — a C-ABI export
+                    // DEFINITION. Its header form is the import declaration
+                    // `extern fn X(...);`: the consumer must call the
+                    // archive's symbol, never redefine it. A kept body
+                    // recompiles in every consumer that imports the module
+                    // and the link dies on the duplicate symbol — stdlib's
+                    // reactor `_v1` wrappers were the live case (2026-08-16).
+                    // The grammar rejects a body-less `export extern fn`,
+                    // so the `export` keyword is removed with the body.
+                    if let Some((kw_start, kw_end)) =
+                        export_kw_span(src, f.name.span.start as usize)
+                    {
+                        out.push((kw_start, kw_end, ""));
+                    }
+                    out.push((f.body.span.start as usize, f.body.span.end as usize, ";"));
+                } else if !f.is_extern && !f.is_declaration {
+                    // `extern fn` import bodies are synthesized empty blocks
+                    // with no source extent; skip them, and skip anything
+                    // already body-less.
+                    out.push((f.body.span.start as usize, f.body.span.end as usize, ";"));
                 }
             }
             ItemKind::Impl(b) => {
                 for m in &b.methods {
                     if !m.is_declaration {
-                        out.push((m.body.span.start as usize, m.body.span.end as usize));
+                        out.push((m.body.span.start as usize, m.body.span.end as usize, ";"));
                     }
                 }
             }
@@ -95,6 +111,37 @@ fn body_spans(p: &Program) -> Vec<(usize, usize)> {
     }
     out.sort_unstable();
     out
+}
+
+/// The byte range of the `export` keyword (and the gap after it) preceding
+/// an export-extern fn whose NAME starts at `name_start` — found by walking
+/// back over `fn` and `extern`. Only whitespace gaps are scanned, so a
+/// comment wedged between the keywords defeats the match — the keyword then
+/// stays and the header fails to parse loudly rather than silently shipping
+/// a compilable body.
+fn export_kw_span(src: &str, name_start: usize) -> Option<(usize, usize)> {
+    let bytes = src.as_bytes();
+    let skip_ws = |mut i: usize| {
+        while i > 0 && bytes[i - 1].is_ascii_whitespace() {
+            i -= 1;
+        }
+        i
+    };
+    let take_kw = |i: usize, kw: &str| -> Option<usize> {
+        let start = i.checked_sub(kw.len())?;
+        (&src[start..i] == kw).then_some(start)
+    };
+    let i = skip_ws(name_start.min(bytes.len()));
+    let i = take_kw(i, "fn")?;
+    let extern_start = take_kw(skip_ws(i), "extern")?;
+    let kw_start = take_kw(skip_ws(extern_start), "export")?;
+    if kw_start > 0 {
+        let prev = bytes[kw_start - 1];
+        if prev.is_ascii_alphanumeric() || prev == b'_' {
+            return None;
+        }
+    }
+    Some((kw_start, extern_start))
 }
 
 /// Produce the header form of one module.
@@ -108,24 +155,25 @@ pub fn generate(src: &str) -> Result<(String, HeaderKind), HeaderError> {
         return Ok((src.to_string(), HeaderKind::VerbatimGeneric));
     }
 
-    let spans = body_spans(&program);
+    let spans = replacements(src, &program);
     if spans.is_empty() {
         return Ok((src.to_string(), HeaderKind::Stripped));
     }
 
-    // Walk forward, copying everything outside a body and emitting `;` for
-    // each body. Bodies never nest at item level, so a single pass suffices.
+    // Walk forward, copying everything outside a replaced range and emitting
+    // the replacement text for each. Ranges never nest at item level, so a
+    // single pass suffices.
     let bytes = src.as_bytes();
     let mut out = String::with_capacity(src.len());
     let mut cursor = 0usize;
-    for (start, end) in spans {
+    for (start, end, text) in spans {
         if start < cursor || end > bytes.len() || start >= end {
             // A span that doesn't line up with the source (synthesized, or
             // overlapping) — skip it rather than corrupt the output.
             continue;
         }
         out.push_str(&src[cursor..start]);
-        out.push(';');
+        out.push_str(text);
         cursor = end;
     }
     out.push_str(&src[cursor..]);
@@ -196,6 +244,27 @@ mod tests {
     fn a_generic_free_fn_also_forces_verbatim() {
         let (_, kind) = hdr("fn id[T](v: T) -> T { return v; }");
         assert_eq!(kind, HeaderKind::VerbatimGeneric);
+    }
+
+    #[test]
+    fn export_extern_definition_becomes_an_import_declaration() {
+        // The header form of a C-ABI export is the IMPORT of that symbol:
+        // body gone, `export` gone (the grammar rejects a body-less
+        // `export extern fn`). A kept body would recompile in every
+        // consumer and duplicate the archive's symbol at link.
+        let (out, kind) = hdr(
+            "export extern fn pkg_probe_v1(fd: i32) {\n    helper(fd);\n    return;\n}\n\nfn helper(fd: i32) {\n    return;\n}\n",
+        );
+        assert_eq!(kind, HeaderKind::Stripped);
+        assert!(
+            out.contains("extern fn pkg_probe_v1(fd: i32) ;"),
+            "export definition should become an extern declaration: {out}"
+        );
+        assert!(!out.contains("export"), "the keyword must go: {out}");
+        assert!(!out.contains("helper(fd)"), "no body may survive: {out}");
+        // The whole point: the result must be valid C+ for a consumer.
+        let toks = tokenize(&out).expect("header should lex");
+        parse(toks).expect("header should parse");
     }
 
     #[test]

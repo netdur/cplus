@@ -101,10 +101,19 @@ Two special cases earn keys:
   "both"`, and an optional `entry` whose top-level names become the bare C
   symbols (that entry's import tree *is* the library). This is for shipping
   to C consumers; a C+-consumed library never needs it.
-- **`[build] prebuild = true`** — compile once, reuse the archive. The
-  first consumer build produces `lib/<triple>/<name>.a` + `lib/include/`
-  headers and later builds link instead of recompiling. `dev = true` is the
-  escape hatch back to always-from-source.
+- **`[build]`** — prebuild is the **default** (2026-08-16): a library
+  package is compiled once into `lib/<triple>/<name>.a` + `lib/include/`
+  headers on the first consumer build, and later builds link instead of
+  recompiling. The content fingerprint (source + triple + debug/release +
+  compiler version) rebuilds the slice the moment anything changes; a
+  `touch` changes nothing, a one-character edit rebuilds. Two knobs:
+  `prebuild = false` opts a package out (e.g. one side of a dependency
+  cycle — mutually-dependent packages cannot be compiled standalone);
+  `dev = true` overrides everything while you work on the package —
+  always-from-source, restated on stderr every build. Apps are never
+  prebuilt (they aren't dependencies). A package must declare its own
+  `[dependencies]` to be prebuildable: the slice is compiled standalone,
+  and its own manifest is the world there.
 
 ## 5. The link surface
 

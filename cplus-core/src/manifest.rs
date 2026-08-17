@@ -229,10 +229,25 @@ pub struct LibTarget {
 /// flipping it applies to every app that depends on it. Every build restates
 /// it on stderr — a manifest knob that changes what gets compiled must not be
 /// able to rot silently.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BuildSpec {
     pub prebuild: bool,
     pub dev: bool,
+}
+
+/// `prebuild` defaults to TRUE (decision 2026-08-16): a package is a built
+/// artifact unless it says otherwise. `prebuild = false` opts a package out
+/// (e.g. one that is generic-only and gains nothing from an archive);
+/// `dev = true` overrides everything while the package is being worked on.
+/// The content fingerprint is what makes the default safe — an edited
+/// source can never be shadowed by a stale archive.
+impl Default for BuildSpec {
+    fn default() -> Self {
+        Self {
+            prebuild: true,
+            dev: false,
+        }
+    }
 }
 
 impl BuildSpec {
@@ -728,10 +743,16 @@ struct RawLinkSpec {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RawBuildSpec {
-    #[serde(default)]
+    /// Defaults to true (2026-08-16): prebuild is the norm, `prebuild =
+    /// false` is the opt-out, `dev = true` the development override.
+    #[serde(default = "default_prebuild")]
     prebuild: bool,
     #[serde(default)]
     dev: bool,
+}
+
+fn default_prebuild() -> bool {
+    true
 }
 
 #[derive(Debug, Deserialize)]
@@ -882,13 +903,32 @@ pub fn parse(text: &str, manifest_path: &Path) -> Result<Manifest, ManifestError
         }
     };
 
-    // `prebuild = true` is the whole opt-in: a package that asks to be compiled
-    // once and reused is a library by definition, so it gets a staticlib target
-    // without also having to write a `[library]` section. An explicit
-    // `[library]` still wins. The entry is `src/<name>.cplus` when that exists
-    // (a package usually names its root module after itself, as stdlib does),
-    // otherwise the conventional `src/lib.cplus`.
-    let lib = match (lib, build.prebuild) {
+    // `prebuild` synthesizes a staticlib target: a package compiled once and
+    // reused is a library by definition, so it needs no `[library]` section.
+    // An explicit `[library]` still wins. The entry is `src/<name>.cplus`
+    // when that exists (a package usually names its root module after
+    // itself, as stdlib does), otherwise the conventional `src/lib.cplus`.
+    //
+    // Gated on the package NOT being an app: with prebuild defaulting to
+    // true (2026-08-16), an ungated synthesis would hand every scaffolded
+    // app a library target — and the entry default below treats "a library
+    // is declared" as "not a zero-config app", so `cpc build` would archive
+    // instead of producing the executable. An app is never consumed as a
+    // dependency, so prebuild simply has no meaning for it.
+    let package_is_app = raw.package.entry.is_some()
+        || [
+            &raw.macos,
+            &raw.linux,
+            &raw.windows,
+            &raw.ios,
+            &raw.android,
+            &raw.esp32,
+            &raw.wasm,
+        ]
+        .iter()
+        .any(|s| s.as_ref().is_some_and(|s| s.entry.is_some()))
+        || root.join("src").join("main.cplus").is_file();
+    let lib = match (lib, build.prebuild && !package_is_app) {
         (None, true) => {
             let named = root.join("src").join(format!("{name}.cplus"));
             let path = if named.is_file() {
@@ -1306,7 +1346,9 @@ mod tests {
 
     #[test]
     fn minimum_package_only_is_a_library() {
-        // No entry key and no src/main.cplus on disk: a library package.
+        // No entry key and no src/main.cplus on disk: a library package —
+        // and since prebuild defaults to true (2026-08-16), it carries the
+        // synthesized staticlib target without writing a word.
         let text = r#"
             [package]
             name = "hello"
@@ -1319,6 +1361,16 @@ mod tests {
         assert!(m.entry.is_none());
         assert!(!m.entry_declared);
         assert!(!m.is_app());
+        let lib = m.lib.expect("prebuild-by-default synthesizes the lib target");
+        assert!(lib.synthesized);
+        assert!(m.build.prebuild, "prebuild is the default");
+        // An explicit opt-out yields the old shape.
+        let m = parse_in(
+            &fresh_dir("min-optout"),
+            "[package]\nname = \"hello\"\n\n[build]\nprebuild = false\n",
+        )
+        .unwrap();
+        assert!(!m.build.prebuild);
         assert!(m.lib.is_none());
     }
 

@@ -63,6 +63,30 @@ impl Checkout {
         Ok(&self.source_dir)
     }
 
+    /// The commit the checkout is at (`git rev-parse HEAD`) — what the
+    /// release tag resolved to. Recorded in the vendor stamp and the store's
+    /// tag record (D8) so "which bytes is this?" stays answerable and a
+    /// moved tag is detectable.
+    pub fn head_sha(&self) -> Result<String, FetchError> {
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(&self.source_dir)
+            .arg("rev-parse")
+            .arg("HEAD")
+            .output()
+            .map_err(|source| FetchError::Io {
+                path: self.source_dir.clone(),
+                source,
+            })?;
+        if !output.status.success() {
+            return Err(FetchError::Git {
+                command: format!("git -C {} rev-parse HEAD", self.source_dir.display()),
+                stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+            });
+        }
+        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    }
+
     fn git_clone(&self) -> Result<(), FetchError> {
         let output = Command::new("git")
             .arg("clone")
@@ -95,7 +119,7 @@ impl Checkout {
     }
 }
 
-fn sanitize(value: &str) -> String {
+pub(crate) fn sanitize(value: &str) -> String {
     value
         .chars()
         .map(|ch| match ch {
