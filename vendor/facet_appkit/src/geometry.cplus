@@ -82,12 +82,35 @@ fn relayout_root(root: *core::Node, width: f64, height: f64, scale: f64) {
 //
 // The root's OWN view is not touched: the window host sized it when it made
 // the content view, and it fills that view by construction.
-fn reposition(root: *core::Node) {
+// `force` DEFEATS THE SKIP, and the flag it defeats answers a different
+// question than the one a caller here is asking.
+//
+// `layout_changed()` says "the frames this pass computed are bit-identical to
+// last pass's". It is a valid reason to skip only when the VIEWS already agree
+// with those frames — which holds on the resize path (`relayout_root`) and
+// nowhere a row is built. Two callers break it:
+//
+//   * a row whose views were just made by `mount::realise` — brand-new views
+//     sit at their birth size, and no layout pass has ever been pushed onto
+//     them, so "the layout did not change" says nothing about them;
+//   * `place_row` with a stated `row_height`, which runs TWO passes before
+//     repositioning once. The wrap `build_tree_row` puts round the content has
+//     a FIXED height, so the second pass — the one constraining height to
+//     `row_height` — computes exactly what the first did, reports "unchanged",
+//     and the reposition after it returns without walking anything.
+//
+// Measured, on the tree that states `row_height: 34`: both passes produce
+// `box x=4 y=9.5 w=15 h=15`, and the views stayed `w=0 h=0` and `w=4 h=16` —
+// their birth sizes. The row was the right height with its content unplaced
+// inside it, which is the report this closes.
+fn reposition(root: *core::Node, force: bool = false) {
     if root == (0 as *core::Node) { return; }
     // The engine's verdict for the whole tree: false means every frame below
     // is bit-identical to the previous pass (a vertical-only resize of a
     // width-driven tree, say) — nothing to move, so nothing is walked.
-    if { (*root).layout_changed() } == false { return; }
+    if !force {
+        if { (*root).layout_changed() } == false { return; }
+    }
     reposition_children(root, { (*root).frame() });
     return;
 }

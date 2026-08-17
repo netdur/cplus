@@ -716,7 +716,13 @@ fn place_row(cell: *u8, np: *core::Node, w: f64, floor_h: f64 = 1.0f64,
     without_implicit_animation_begin();
     // Before the cell is framed, and reading the LAYOUT frames rather than the
     // views', so the order against the two `setFrame:`s below does not matter.
-    geometry::reposition(np);
+    //
+    // FORCED: a row arrives here either freshly realised (views at their birth
+    // size, never placed) or after the two-pass layout above, whose second pass
+    // reports "unchanged" whenever the wrap already had the stated height. In
+    // both cases the engine's dirty flag is answering about the LAYOUT, and the
+    // views are what need moving. See geometry::reposition.
+    geometry::reposition(np, force: true);
     { msg_void_rect(cell, rt::sel(#str_ptr("setFrame:\0")),
                     rt::Rect { x: 0.0f64, y: 0.0f64, w: w, h: h }) };
     let rv: *u8 = core::view_of(np);
@@ -751,7 +757,7 @@ fn place_row_content(cell: *u8, np: *core::Node, w: f64, h: f64) {
     // Lay out at the cell's width; height is natural so a short label can be
     // centred in `h` the same way place_row does after a fixed row_height.
     { (*np).calculate_layout(width: w) };
-    geometry::reposition(np);
+    geometry::reposition(np, force: true);
     let rv: *u8 = core::view_of(np);
     if rv != (0 as *u8) {
         var content_h: f64 = { (*np).frame().height };
@@ -763,7 +769,7 @@ fn place_row_content(cell: *u8, np: *core::Node, w: f64, h: f64) {
         } else {
             vh = h;
             { (*np).calculate_layout(width: w, height: h) };
-            geometry::reposition(np);
+            geometry::reposition(np, force: true);
         }
         { msg_void_rect(rv, rt::sel(#str_ptr("setFrame:\0")),
                         rt::Rect { x: 0.0f64, y: y, w: w, h: vh }) };

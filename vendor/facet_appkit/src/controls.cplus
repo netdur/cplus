@@ -4593,13 +4593,16 @@ fn build_tree_row(node: *tree::TreeNode, p: *tree::TreeProps) -> core::Node {
     // the fallback below never ran — a tree with no row builder rendered a
     // column of empty rows and the line that says otherwise was decoration.
     let h: f64 = stated_or_default_tree_row_h(p);
+    // Whether `h` came from the APPLICATION or from this file's default — the
+    // wrap treats the two differently, see `center_in_tree_row`.
+    let stated: bool = p != (0 as *tree::TreeProps) && { (*p).row_height } >= 1.0f64;
     if f != tree::no_row {
         // A custom row that does not fill the stated height sits at the TOP of
         // the cell while AppKit centres the disclosure triangle in the full
         // row — the misalignment the gallery catalog showed. Wrap so the
         // content is vertically centred in the same height the triangle uses.
         var content: core::Node = f(node, { (*p).row_ctx });
-        return center_in_tree_row(content, h);
+        return center_in_tree_row(content, h, stated: stated);
     }
     // THE PLAIN ROW NEEDS THE SAME WRAP, and did not get it. `plain_tree_row`
     // answers a label ONE LINE tall on purpose — its own comment says "for
@@ -4609,7 +4612,7 @@ fn build_tree_row(node: *tree::TreeNode, p: *tree::TreeProps) -> core::Node {
     //
     // The height query measures what this returns, so the wrap is what makes
     // `stated_or_default_tree_row_h` the height a default row actually gets.
-    return center_in_tree_row(plain_tree_row(node, h), h);
+    return center_in_tree_row(plain_tree_row(node, h), h, stated: stated);
 }
 
 // A tree with no row builder still shows its shape: the node's own text, keyed
@@ -4640,10 +4643,30 @@ fn stated_or_default_tree_row_h(p: *tree::TreeProps) -> f64 {
     return DEFAULT_TREE_ROW_H;
 }
 
-// Pin content to the vertical centre of a fixed-height row.
-fn center_in_tree_row(take content: core::Node, h: f64) -> core::Node {
+// Pin content to the vertical centre of a row `h` tall.
+//
+// `stated` DECIDES WHETHER `h` IS A CEILING OR A FLOOR, and conflating the two
+// is how a tree row clipped its own content. An application that wrote
+// `row_height: 34` asked for exactly 34 and gets a fixed height. A tree that
+// stated nothing gets `DEFAULT_TREE_ROW_H` — a number this file chose so a
+// default row lines up with the disclosure triangle, NOT a promise the
+// application made — and imposing it as a fixed height forced every taller row
+// into it: two 15pt labels need 30, the wrap said 28, and the content centred
+// at y = (28 - 30) / 2 = -1, one point off the top of its own row and two
+// points of it cut off the bottom.
+//
+// As a MINIMUM the default does the job it was introduced for (a short row is
+// still 28 and still lines up) and stops doing the one it was never meant to.
+fn center_in_tree_row(take content: core::Node, h: f64, stated: bool = true) -> core::Node {
     var b: flex::Builder = flex::Builder::new();
     b.add(content);
+    if !stated {
+        var grown: core::Node = flex::column(b)
+            .justify(flex::Justify::Center)
+            .align(flex::Align::Stretch);
+        grown.set_min_height(flex::StyleLength::points(h));
+        return grown;
+    }
     return flex::column(b)
         .height(h)
         .justify(flex::Justify::Center)
