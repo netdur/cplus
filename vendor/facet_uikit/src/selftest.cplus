@@ -34,6 +34,7 @@ import "facet/elements" as ui;
 import "objc/runtime" as rt;
 import "uikit/uikit" as uik;
 import "./paint" as paint;
+import "./controls" as controls;
 import "./views" as views;
 import "./recycler" as recycler;
 import "./input" as input;
@@ -465,6 +466,83 @@ fn a_swipe_offset_round_trips_through_the_association() -> bool {
     return swipe::offset_of(raw) == 0.0f64;
 }
 
+// ---- the invisible-label report --------------------------------------------------
+// Filed 2026-08-17: "every facet iOS app is textless in dark mode", on the
+// reading that a CODE-created UILabel keeps an opaque-black `textColor` default
+// while the root view takes the adaptive `systemBackgroundColor` — black on
+// black. It does not reproduce: three apps (a probe with no theme, the same
+// probe with the gallery's theme, and the gallery itself) render every label
+// white on the dark appearance.
+//
+// The premise is what was wrong. `textColor` defaults to the ADAPTIVE label
+// colour, so there is nothing to fix — and that is also why the reported fix
+// ("set it to `labelColor`") changed nothing on screen: it assigned the colour
+// the label already had. A null result that looked like "the patch never
+// reached the binary" was really "the patch was a no-op".
+//
+// It is checked rather than argued because the failure it guards against is
+// invisible to every other check in this file: a label with the right text, the
+// right frame and the right font, that a user cannot see. And the repair that
+// would BREAK it — "just set a text colour in `create_label`" — is the obvious
+// thing for the next reader to do.
+
+fn label_color_components(c: uik::Color, style: uik::UserInterfaceStyle) -> f64 {
+    let tc: uik::TraitCollection =
+        uik::TraitCollection::trait_collection_with_user_interface_style(style);
+    let r: uik::Color = c.resolved_color_with_trait_collection(tc);
+    var red: f64 = 0.0f64;
+    var green: f64 = 0.0f64;
+    var blue: f64 = 0.0f64;
+    var alpha: f64 = 0.0f64;
+    let ok: bool = r.get_red(#addr_of(red) as *u8, #addr_of(green) as *u8,
+                             #addr_of(blue) as *u8, #addr_of(alpha) as *u8);
+    if !ok { return 0.0f64 - 1.0f64; }
+    // Unweighted mean is enough: the question is "light or dark", not which
+    // shade, and a weighted luma would only make the number harder to read.
+    return (red + green + blue) / 3.0f64;
+}
+
+// A label built the way `create_label` builds one must be LIGHT on the dark
+// appearance. Asserted through the real function, not a hand-made UILabel, so a
+// `setTextColor:` added there is what fails this.
+fn a_created_label_is_readable_on_the_dark_appearance() -> bool {
+    var n: core::Node = ui::label("x", key: "probe");
+    let v: *u8 = controls::create_label(#addr_of(n));
+    if v == (0 as *u8) { return false; }
+    let l: uik::Label = uik::Label::from_raw(v);
+    let dark: f64 = label_color_components(l.text_color(), uik::UserInterfaceStyle::Dark);
+    // 0.5 is the midpoint between black and white; the adaptive label colour
+    // resolves to ~1.0 in dark and ~0.0 in light, so nothing sits near it.
+    return dark > 0.5f64;
+}
+
+// And DARK on the light one — the same bug with the appearances swapped, which
+// a hard-coded white `textColor` would produce.
+fn a_created_label_is_readable_on_the_light_appearance() -> bool {
+    var n: core::Node = ui::label("x", key: "probe");
+    let v: *u8 = controls::create_label(#addr_of(n));
+    if v == (0 as *u8) { return false; }
+    let l: uik::Label = uik::Label::from_raw(v);
+    let light: f64 = label_color_components(l.text_color(), uik::UserInterfaceStyle::Light);
+    return light >= 0.0f64 && light < 0.5f64;
+}
+
+// The property this rests on, stated once: the label colour ADAPTS. If a future
+// iOS shipped a non-adaptive default, the two checks above would still pass in
+// whichever appearance happened to match, and this is the one that would not.
+fn the_default_label_colour_adapts_to_the_appearance() -> bool {
+    var n: core::Node = ui::label("x", key: "probe");
+    let v: *u8 = controls::create_label(#addr_of(n));
+    if v == (0 as *u8) { return false; }
+    let l: uik::Label = uik::Label::from_raw(v);
+    let c: uik::Color = l.text_color();
+    let dark: f64 = label_color_components(c, uik::UserInterfaceStyle::Dark);
+    let light: f64 = label_color_components(c, uik::UserInterfaceStyle::Light);
+    if dark < 0.0f64 || light < 0.0f64 { return false; }
+    let gap: f64 = if dark > light { dark - light } else { light - dark };
+    return gap > 0.5f64;
+}
+
 // ---- the run --------------------------------------------------------------------
 
 fn run_all() -> i32 {
@@ -472,6 +550,12 @@ fn run_all() -> i32 {
     RAN = 0 as i32;
     io::eprintln(text::from_str("facet_uikit selftest"));
 
+    check("a created label is readable on the dark appearance",
+          a_created_label_is_readable_on_the_dark_appearance());
+    check("a created label is readable on the light appearance",
+          a_created_label_is_readable_on_the_light_appearance());
+    check("the default label colour adapts to the appearance",
+          the_default_label_colour_adapts_to_the_appearance());
     check("a scroll view keeps its clipping", scroll_view_keeps_its_clipping());
     check("a plain view does not start clipping", a_plain_view_does_not_start_clipping());
     check("a radius clips whatever the view is", a_radius_clips_whatever_the_view_is());

@@ -116,6 +116,29 @@ fn attach_root(win: *u8, root: *core::Node) {
     // A first layout, now: UIKit lays out on the next turn of the loop and the
     // tree would otherwise sit at its mount-time size (zero) for one frame.
     scheduler::tick_now();
+    // THE AGENT FOLLOWS THE WINDOW, AND ON THIS PLATFORM THAT LINE LIVES HERE
+    // rather than in the facade. The macOS facade attaches straight after
+    // `open_window`, which works because the mount happened inside that call;
+    // here `open_window` only RECORDS, and the tree does not exist until this
+    // function runs. A facade attaching after its own `open_window` therefore
+    // walked a window with nothing in it — measured, and it answered with the
+    // synthetic app root and no other node.
+    //
+    // One site rather than five: `run`, `run_component`, `run_screen` and
+    // `App::run` all arrive here, and `run` has no launch hook of its own to
+    // hang it on. Inert unless the app called `agent::enable()`.
+    agent_follow(win);
+    return;
+}
+
+// Re-point the agent surface at the window. Every entry that changes what the
+// window SHOWS calls this — a first mount, a screen swap, a pushed screen, a
+// presented sheet, and both of their dismissals — because the surface is a
+// SNAPSHOT of the live view tree, so a screen that came or went after the last
+// walk is a screen the agent cannot see or one it still believes is there.
+fn agent_follow(win: *u8) {
+    if win == (0 as *u8) { return; }
+    app::agent_attach(win);
     return;
 }
 
@@ -178,6 +201,9 @@ fn push_screen(root: *core::Node, title: str, box_: *u8) -> bool {
     let _s: status::Status = STACK.append(Pushed { vc: vc, root: root, box_: box_ });
     { rt::release(vc) };
     scheduler::schedule(0 as *u8);
+    // A pushed screen is what the user is now looking at, so it is what an agent
+    // must see. macOS attaches on a push for the same reason.
+    agent_follow(WINDOW);
     return true;
 }
 
@@ -227,6 +253,10 @@ fn imp_did_show(self_obj: *u8, cmd: *u8, navc: *u8, shown: *u8, animated: i8) {
         { msg_void_i8_i8(navc, rt::sel(#str_ptr("setNavigationBarHidden:animated:\0")),
                          1 as i8, 1 as i8) };
     }
+    // The transition has FINISHED here, which is the earliest the walk sees the
+    // stack an agent should be told about — a re-walk mid-animation would
+    // capture the screen that is on its way out.
+    agent_follow(WINDOW);
     return;
 }
 
@@ -286,6 +316,10 @@ fn present_screen(root: *core::Node, title: str, box_: *u8) -> bool {
     let _s: status::Status = SHEETS.append(Presented { vc: vc, root: root, box_: box_ });
     { rt::release(vc) };
     scheduler::schedule(0 as *u8);
+    // A sheet is the sharp case for the agent surface: it is what the user is
+    // being asked, and a surface still pointed at the screen underneath would
+    // let an agent answer a question it cannot see.
+    agent_follow(WINDOW);
     return true;
 }
 
@@ -308,6 +342,8 @@ fn imp_did_dismiss(self_obj: *u8, cmd: *u8, pc: *u8) {
                 }
                 option::Option[Presented]::None => { }
             }
+            // The sheet is gone; the surface must stop offering its nodes.
+            agent_follow(WINDOW);
             return;
         }
     }

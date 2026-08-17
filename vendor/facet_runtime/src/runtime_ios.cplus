@@ -581,6 +581,12 @@ fn show_route(route: str) -> bool {
     // Tear the previous screen down only once the new one is built: a failed
     // build would otherwise leave the window showing nothing at all.
     drop_current_screen();
+    // NO `agent_attach` HERE, and the macOS facade's matching line is not an
+    // omission. `open_window` on this platform only RECORDS; the tree becomes
+    // live inside facet_uikit's `attach_root`, which is where the attach is —
+    // ONE site, covering `run`, `run_component`, `run_screen` and this one.
+    // `run` in particular has no launch hook of its own to hang a facade-side
+    // attach on, so four call sites here would still have left a hole.
     let _w: *u8 = host::open_window(p, c);
     match box::new::[screen::ScreenBox](sb) {
         option::Option[box::Box[screen::ScreenBox]]::Some(b) => {

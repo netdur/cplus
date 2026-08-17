@@ -144,6 +144,13 @@ fn zero_rect() -> rt::Rect {
 fn create_label(n: *core::Node) -> *u8 {
     let l: ui::Label = ui::Label::new_with_frame(zero_rect());
     l.set_number_of_lines(0 as i64);
+    // NO `setTextColor:` HERE, and it is not an omission — see the label-colour
+    // check in selftest.cplus. A code-created UILabel's `textColor` default IS
+    // the adaptive `labelColor` on every iOS this package supports, so writing
+    // one would replace an adaptive colour with the same adaptive colour, and
+    // writing a NON-adaptive one is how a label goes black-on-black in dark
+    // mode. The app's own colour still lands: `apply_label` writes it when the
+    // node set one.
     return rt::retain(l.as_view().raw());
 }
 
