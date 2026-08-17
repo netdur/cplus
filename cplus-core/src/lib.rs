@@ -10,6 +10,7 @@
 // clarity, so the argument-count lint is allowed crate-wide.
 #![allow(clippy::too_many_arguments)]
 
+pub mod artifact;
 pub mod ast;
 pub mod atomic;
 pub mod attrs;

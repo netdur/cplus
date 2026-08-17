@@ -1711,12 +1711,33 @@ fn ensure_one_slice(
     let archive = slice_dir.join(prebuilt_archive_name(&vm.package.name));
     let stamp = slice_dir.join(format!("{}.fingerprint", vm.package.name));
     let want = prebuild_fingerprint(vendor_dir, link_triple, build_mode)?;
+    // What an archive in this directory must BE. The fingerprint is computed
+    // from inputs and is structurally blind to the artifact's own bytes, so it
+    // cannot notice a slice built for the wrong platform — see `artifact`.
+    let want_tag = cplus_core::artifact::expected_tag(&target::active_target());
+    let mut wrong_slice: Option<String> = None;
     if archive.is_file() {
         if let Ok(have) = fs::read_to_string(&stamp) {
             if have.trim() == want {
-                return Ok(());
+                match (&want_tag, cplus_core::artifact::tag_of_file(&archive)) {
+                    // Positively for another target: the fingerprint says
+                    // "current" and it is lying. Fall through and rebuild.
+                    (Some(w), Some(got)) if &got != w => wrong_slice = Some(got),
+                    // Agreed, or could not tell. "Could not tell" must reuse:
+                    // rebuilding on it would rebuild every time, forever.
+                    _ => return Ok(()),
+                }
             }
         }
+    }
+    if let Some(got) = &wrong_slice {
+        eprintln!(
+            "cpc: `{}`: the slice in lib/{} is {}, not {} — rebuilding",
+            vm.package.name,
+            link_triple,
+            got,
+            want_tag.as_deref().unwrap_or("?"),
+        );
     }
     eprintln!(
         "cpc: prebuilding `{}` for {} ({})",
@@ -1749,17 +1770,58 @@ fn ensure_one_slice(
         let _ = fs::remove_file(&stamp);
         return Err("build failed".to_string());
     }
-    let built = vm
-        .root
-        .join("target")
-        .join(match build_mode {
-            BuildMode::Release => "release",
-            _ => "debug",
-        })
-        .join(prebuilt_archive_name(&vm.package.name));
+    // Read the archive back from the directory `build_lib_project` actually
+    // wrote it to. An explicit target gets its own artifact tree —
+    // `target/<target-name>/<mode>/` — precisely so a host build and a cross
+    // build of one package never overwrite each other; only the host target
+    // uses the bare `target/<mode>/`.
+    //
+    // Reading the host path unconditionally has two failure modes, and the
+    // quiet one is the dangerous half: with no host build present the copy
+    // fails with ENOENT (`cpc build --target ios-arm64-simulator` of the iOS
+    // gallery, where `uikit` had never been built for the host), and WITH one
+    // present it copies an `arm64-apple-darwin` archive into the
+    // `arm64-apple-ios-simulator` slice slot and stamps it with a valid
+    // fingerprint — so the wrong-architecture archive is then reused until
+    // something invalidates it.
+    let built_mode_dir = match build_mode {
+        BuildMode::Release => "release",
+        _ => "debug",
+    };
+    let built_tgt = target::active_target();
+    let built = if built_tgt.is_host() {
+        vm.root.join("target").join(built_mode_dir)
+    } else {
+        vm.root
+            .join("target")
+            .join(built_tgt.name)
+            .join(built_mode_dir)
+    }
+    .join(prebuilt_archive_name(&vm.package.name));
     fs::create_dir_all(&slice_dir).map_err(|e| format!("creating {}: {e}", slice_dir.display()))?;
     fs::copy(&built, &archive)
         .map_err(|e| format!("copying {} to {}: {e}", built.display(), archive.display()))?;
+    // Verify what actually landed before stamping it current. A fingerprint is
+    // a promise that the archive beside it is usable, and writing one over an
+    // artifact built for another platform is how twelve wrong slices went
+    // unnoticed until the linker complained three packages away.
+    //
+    // This is an error rather than a rebuild ON PURPOSE. Reaching here means
+    // the pipeline was asked to build for one target and produced another,
+    // which no amount of retrying fixes — and a retry would loop, because the
+    // reuse check above would reject the result again next time. Stop, with
+    // both tags named.
+    if let (Some(w), Some(got)) = (&want_tag, cplus_core::artifact::tag_of_file(&archive)) {
+        if &got != w {
+            let _ = fs::remove_file(&stamp);
+            let _ = fs::remove_file(&archive);
+            return Err(format!(
+                "built for {w} but the archive is {got}\n    built: {}\n    slice: {}",
+                built.display(),
+                archive.display()
+            ));
+        }
+    }
     fs::write(&stamp, &want).map_err(|e| format!("writing {}: {e}", stamp.display()))?;
     Ok(())
 }
