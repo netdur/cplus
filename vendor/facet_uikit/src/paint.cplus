@@ -396,6 +396,21 @@ fn apply_common(v: *u8, n: *core::Node, dirty: u64) {
     if (dirty & props::C_TRANSFORM) != (0 as u64) {
         apply_transform(view, n);
     }
+    // Focus and blur are COMMANDS, not state: act on the bit, and the sync walk
+    // clears it. THIS BACKEND ACTED ON NEITHER, so `focus()` and `blur()` were
+    // silent no-ops on iOS while facet_appkit honoured both — found by diffing the
+    // two backends' handling of the shared band, not by anyone hitting it.
+    //
+    // UIKit asks the VIEW, not the window. There is no `makeFirstResponder:`
+    // here: a responder accepts or declines for itself, and "nothing is focused"
+    // is that view resigning rather than the window taking the role back, which
+    // is the shape AppKit needs and this does not.
+    if (dirty & props::C_FOCUS) != (0 as u64) {
+        { rt::msg_i8(view.raw(), rt::sel(#str_ptr("becomeFirstResponder\0"))) };
+    }
+    if (dirty & props::C_BLUR) != (0 as u64) {
+        { rt::msg_i8(view.raw(), rt::sel(#str_ptr("resignFirstResponder\0"))) };
+    }
     return;
 }
 

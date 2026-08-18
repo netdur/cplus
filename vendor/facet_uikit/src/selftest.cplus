@@ -232,6 +232,102 @@ fn subview_count(v: *u8) -> u64 {
     return { rt::msg_u64(subs, rt::sel(#str_ptr("count\0"))) };
 }
 
+// ---- focus, blur, and the mislabelled control event -----------------------------
+// Three holes in one place, all found by diffing the two backends rather than by
+// anyone hitting them.
+//
+// `on_focus`/`on_blur` are on facet's SHARED band, so any node may carry them.
+// facet_appkit reports them from two routes; this backend reported them from
+// NEITHER, so an application's focus callbacks were simply silent on iOS.
+// `C_FOCUS`/`C_BLUR` are the matching COMMANDS, and paint acted on neither, so
+// `focus()` was a no-op.
+//
+// And `event_editing_changed()` returned 1 << 16, which is
+// `UIControlEventEditingDidBegin`; `EditingChanged` is 1 << 17 — checked against
+// UIKit's own UIControl.h, not remembered. So the text-changed handler was armed
+// for the event that fires when a field GAINS FOCUS and never for the
+// per-keystroke one: `on_text_changed` fired on tap-in and tap-out and stayed
+// silent while typing, leaving `text()` stale for the whole session.
+//
+// ---- why the arming and the firing are checked SEPARATELY ------------------------
+//
+// `sendActionsForControlEvents:` is the obvious way to exercise this, and it
+// cannot work here: it dispatches through `UIApplication.sharedApplication`, and
+// this runner deliberately never calls `UIApplicationMain` — measured nil. So the
+// checks ask UIControl what is ARMED, and call the imp's shared rule directly for
+// what FIRES. Asserting the event bitmask alone would not do: 1 << 16 was armed
+// before the fix too, just with the wrong action, so the ACTION NAME is what
+// separates a fixed tree from a broken one.
+
+static FOCUS_HITS: i64 = 0 as i64;
+static BLUR_HITS: i64 = 0 as i64;
+
+fn note_focus_hit(sender: *u8, ctx: *u8) { FOCUS_HITS = FOCUS_HITS + (1 as i64); return; }
+fn note_blur_hit(sender: *u8, ctx: *u8) { BLUR_HITS = BLUR_HITS + (1 as i64); return; }
+
+// Is `name` among the actions armed on `v` for `event`, against facet's own
+// shared target? A nil target answers nil here, so the real one is passed.
+fn armed_action(v: *u8, event: u64, name: str) -> bool {
+    let tgt: *u8 = input::target();
+    if tgt == (0 as *u8) { return false; }
+    let acts: *u8 = { rt::msg_id_id_u64(v, rt::sel(#str_ptr("actionsForTarget:forControlEvent:\0")),
+                                        tgt, event) };
+    if acts == (0 as *u8) { return false; }
+    return { rt::msg_i8_id(acts, rt::sel(#str_ptr("containsObject:\0")),
+                           bridge::nsstring(name)) } != (0 as i8);
+}
+
+fn a_field_arms_focus_and_blur_actions() -> bool {
+    var n: core::Node = ui::text_field("", key: "fb:field");
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    if v == (0 as *u8) { return false; }
+    // THE ACTION NAME, not just the event: before the fix `EditingDidBegin` was
+    // armed with `facetEditingChanged:`, so an event-bit assertion would have
+    // passed against the bug.
+    let begin_ok: bool = armed_action(v, input::event_editing_did_begin(),
+                                      "facetEditingDidBegin:");
+    let end_ok: bool = armed_action(v, input::event_editing_did_end(),
+                                    "facetEditingDidEnd:");
+    views::view_release(v);
+    return begin_ok && end_ok;
+}
+
+fn focus_and_blur_fire_once_per_change() -> bool {
+    FOCUS_HITS = 0;
+    BLUR_HITS = 0;
+    let f: fn(*u8, *u8) = note_focus_hit;
+    let b: fn(*u8, *u8) = note_blur_hit;
+    var n: core::Node = ui::text_field("", key: "fb:edge");
+    let p: *core::Node = #addr_of(n);
+    core::set_on_focus(p, f, 0 as *u8);
+    core::set_on_blur(p, b, 0 as *u8);
+    // EDGE-TRIGGERED against `is_focused`: the second begin must not call the
+    // application again, because one user-visible focus change is one callback
+    // whichever route reported it.
+    input::note_focus(p, true);
+    input::note_focus(p, true);
+    input::note_focus(p, false);
+    input::note_focus(p, false);
+    return FOCUS_HITS == (1 as i64) && BLUR_HITS == (1 as i64);
+}
+
+fn the_editing_changed_event_is_the_per_keystroke_one() -> bool {
+    // The constants, against UIControl.h. `changed` was 1 << 16 and is 1 << 17.
+    if input::event_editing_changed() != (131072 as u64) { return false; }
+    if input::event_editing_did_begin() != (65536 as u64) { return false; }
+    var n: core::Node = ui::text_field("", key: "fb:typed");
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    if v == (0 as *u8) { return false; }
+    // The per-keystroke event has an action at all, which it did not before: the
+    // whole editing band was armed except the one that fires while typing.
+    let armed: bool = armed_action(v, input::event_editing_changed(),
+                                   "facetEditingChanged:");
+    views::view_release(v);
+    return armed;
+}
+
 // ---- the scroll node ------------------------------------------------------------
 // FOUND BY DIFFING THE TWO BACKENDS, not by anyone hitting it. facet declares
 // `observe_scrolled` on four kinds; this backend served three. The recycler
@@ -1002,6 +1098,10 @@ fn run_all() -> i32 {
           the_enclosing_scroll_is_the_page_not_the_editor());
     check("a scroll node reports where it is and calls back",
           a_scroll_node_reports_where_it_is_and_calls_back());
+    check("a field arms focus and blur actions", a_field_arms_focus_and_blur_actions());
+    check("focus and blur fire once per change", focus_and_blur_fire_once_per_change());
+    check("the editing-changed event is the per-keystroke one",
+          the_editing_changed_event_is_the_per_keystroke_one());
     check("a viewless root still has backed children",
           a_realised_viewless_root_still_has_backed_children());
     check("a tree's default row is no_row, not null", a_tree_default_row_is_no_row_not_null());

@@ -62,7 +62,16 @@ fn event_touch_down() -> u64 { return 1 as u64; }                             //
 fn event_touch_up_inside() -> u64 { return (1 as u64) * (64 as u64); }        // 1 << 6
 fn event_touch_up_outside() -> u64 { return (1 as u64) * (128 as u64); }      // 1 << 7
 fn event_value_changed() -> u64 { return (1 as u64) * (4096 as u64); }        // 1 << 12
-fn event_editing_changed() -> u64 { return (1 as u64) * (65536 as u64); }     // 1 << 16
+// `EditingChanged` IS 1 << 17, and this said 1 << 16.
+//
+// 1 << 16 is `UIControlEventEditingDidBegin` — checked against
+// UIKit.framework/Headers/UIControl.h rather than remembered. So the
+// text-changed handler was armed for the event that fires when a field GAINS
+// FOCUS, and never for the one that fires per keystroke: `on_text_changed` went
+// off once when you tapped in, once when you tapped out, and not while you
+// typed. The `text()` prop was stale for the whole of an editing session.
+fn event_editing_did_begin() -> u64 { return (1 as u64) * (65536 as u64); }   // 1 << 16
+fn event_editing_changed() -> u64 { return (1 as u64) * (131072 as u64); }    // 1 << 17
 fn event_editing_did_end() -> u64 { return (1 as u64) * (262144 as u64); }    // 1 << 18
 fn event_editing_did_end_on_exit() -> u64 { return (1 as u64) * (524288 as u64); } // 1 << 19
 
@@ -104,6 +113,38 @@ fn imp_tap(self_obj: *u8, cmd: *u8, recogniser: *u8) {
     return;
 }
 
+// The shared band's `on_focus` / `on_blur`, which nothing on this backend fired.
+//
+// facet declares them on the SHARED band, so any node may carry them, and
+// facet_appkit reports them from two places — `becomeFirstResponder` on its armed
+// class for buttons and containers, and the field editor's begin/end editing for
+// text controls. This backend reported them from NEITHER, so an application's
+// focus callbacks were silent on iOS. Found by diffing the two backends' handler
+// wiring, not by anyone hitting it.
+//
+// EDGE-TRIGGERED against `is_focused`, the same rule appkit keeps: one
+// user-visible focus change calls the application once, whichever route reported
+// it. A UITextField sends `EditingDidBegin` and `EditingDidEnd`; a UITextView is
+// not a UIControl and reports the same two through its delegate, in
+// text_input.cplus.
+fn note_focus(n: *core::Node, focused: bool) {
+    if n == (0 as *core::Node) { return; }
+    if core::is_focused(n) == focused { return; }
+    core::set_focused(n, focused);
+    if focused { core::fire_focus_handler(n); } else { core::fire_blur_handler(n); }
+    return;
+}
+
+fn imp_editing_did_begin(self_obj: *u8, cmd: *u8, sender: *u8) {
+    note_focus(node_of(sender), true);
+    return;
+}
+
+fn imp_editing_did_end(self_obj: *u8, cmd: *u8, sender: *u8) {
+    note_focus(node_of(sender), false);
+    return;
+}
+
 fn target_class() -> *u8 {
     if TARGET_CLASS != (0 as *u8) { return TARGET_CLASS; }
     let existing: *u8 = rt::get_class(#str_ptr("FacetUIKitTarget\0"));
@@ -126,6 +167,10 @@ fn target_class() -> *u8 {
                                          imp_pressed, #str_ptr("v@:@\0"));
     let _f: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("facetReleased:\0")),
                                          imp_released, #str_ptr("v@:@\0"));
+    let _g: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("facetEditingDidBegin:\0")),
+                                         imp_editing_did_begin, #str_ptr("v@:@\0"));
+    let _h: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("facetEditingDidEnd:\0")),
+                                         imp_editing_did_end, #str_ptr("v@:@\0"));
     { synth::register_class_pair(cls) };
     TARGET_CLASS = cls;
     return TARGET_CLASS;
@@ -198,7 +243,11 @@ fn arm_text_field(v: *u8, n: *core::Node) {
     bind_node(v, n);
     add_target(v, #str_ptr("facetEditingChanged:\0"), event_editing_changed());
     add_target(v, #str_ptr("facetPrimary:\0"), event_editing_did_end_on_exit());
+    // Still on DidEnd as well as on Changed: the last value is worth syncing even
+    // if a keystroke was somehow missed, and the handler is idempotent.
     add_target(v, #str_ptr("facetEditingChanged:\0"), event_editing_did_end());
+    add_target(v, #str_ptr("facetEditingDidBegin:\0"), event_editing_did_begin());
+    add_target(v, #str_ptr("facetEditingDidEnd:\0"), event_editing_did_end());
     return;
 }
 

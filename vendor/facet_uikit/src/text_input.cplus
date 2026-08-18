@@ -334,6 +334,23 @@ fn byte_offset_of_char(s: str, n: usize) -> usize {
     return bytes;
 }
 
+// The editor half of the shared band's `on_focus` / `on_blur`.
+//
+// A UITextView is NOT a UIControl, so it has no target/action and cannot be armed
+// for `EditingDidBegin`/`EditingDidEnd` the way a UITextField is. Its delegate is
+// where it says the same two things, and without these an editor never reported
+// focus at all. `input::note_focus` is the shared edge-triggered rule, so a field
+// and an editor cannot disagree about what one focus change means.
+fn imp_text_view_did_begin(self_obj: *u8, cmd: *u8, tv: *u8) {
+    input::note_focus(input::node_of(tv), true);
+    return;
+}
+
+fn imp_text_view_did_end(self_obj: *u8, cmd: *u8, tv: *u8) {
+    input::note_focus(input::node_of(tv), false);
+    return;
+}
+
 fn text_view_delegate() -> *u8 {
     if TV_DELEGATE != (0 as *u8) { return TV_DELEGATE; }
     if TV_DELEGATE_CLASS == (0 as *u8) {
@@ -351,6 +368,12 @@ fn text_view_delegate() -> *u8 {
             let _b: i8 = synth::add_method_v_1id(cls,
                 rt::sel(#str_ptr("textViewDidChangeSelection:\0")),
                 imp_text_view_did_change_selection, #str_ptr("v@:@\0"));
+            let _c: i8 = synth::add_method_v_1id(cls,
+                rt::sel(#str_ptr("textViewDidBeginEditing:\0")),
+                imp_text_view_did_begin, #str_ptr("v@:@\0"));
+            let _d: i8 = synth::add_method_v_1id(cls,
+                rt::sel(#str_ptr("textViewDidEndEditing:\0")),
+                imp_text_view_did_end, #str_ptr("v@:@\0"));
             { synth::register_class_pair(cls) };
             TV_DELEGATE_CLASS = cls;
         }
