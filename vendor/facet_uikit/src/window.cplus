@@ -41,6 +41,7 @@ import "uikit/uikit" as ui;
 import "./geometry" as geometry;
 import "./scheduler" as scheduler;
 import "./device" as device;
+import "./keyboard" as keyboard;
 import "facet/theme" as theme;
 
 type Chrome = screen::Chrome;
@@ -179,6 +180,11 @@ fn attach_root(win: *u8, root: *core::Node) {
     // one more hidden 0x0 sentinel would be harmless — but `attach_root` is the
     // one place that has the view, so this is where it goes.
     install_appearance_sentinel(content);
+    // The keyboard listener, for the same reason and in the same place: a
+    // software keyboard covers the bottom of the screen and UIKit moves nothing
+    // out from under it. It takes the WINDOW because a keyboard frame arrives in
+    // screen coordinates and has to be converted into one.
+    keyboard::install(win);
     // THE SAFE AREA IS NOT KNOWN UNTIL UIKIT HAS LAID THE VIEW OUT. Measured in
     // the simulator: read inside `didFinishLaunchingWithOptions:` the insets are
     // all zero, and the app drew its first row underneath the status bar and the

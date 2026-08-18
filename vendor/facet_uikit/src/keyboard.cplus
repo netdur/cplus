@@ -1,0 +1,239 @@
+// facet_uikit keyboard — the software keyboard is a window over the app, and
+// something has to move out from under it.
+//
+// THE PROBLEM. Tapping a field on iOS raises a keyboard that covers the bottom
+// of the screen. UIKit does not move anything for you: a field under it stays
+// under it, and the caret blinks somewhere the user cannot see. Reported from
+// the gallery on an iPad — "when I hit field to write and keyboard appears, the
+// field does not scroll into view" — and it was not a bug so much as an absence.
+// facet_uikit had no keyboard code at all beyond WHICH keyboard to show.
+//
+// ---- what this does, and what it deliberately does not ------------------------
+//
+// On `UIKeyboardWillShowNotification` it finds the first responder, finds the
+// scroll view around it, and gives that scroll view a BOTTOM CONTENT INSET equal
+// to however much of it the keyboard covers — then scrolls the responder's own
+// rect visible. On will-hide it puts the inset back.
+//
+// It does NOT move views. Insetting a scroll view is the one approach that
+// survives rotation, a hardware keyboard attaching mid-session, the keyboard
+// resizing itself for a candidate bar, and an interactive dismissal — because
+// every one of those arrives as another will-show with a different frame, and
+// the arithmetic is the same each time. Translating a view by a remembered
+// delta needs all four of those cases written separately.
+//
+// ---- the two things that are easy to get wrong ---------------------------------
+//
+// A UITextView IS A UISCROLLVIEW. UITextView subclasses it, and facet's
+// `text_area` is a bare UITextView, so walking up from the responder and taking
+// the FIRST scroll view finds the editor itself — insetting the thing the user
+// is typing into rather than the page around it. The walk therefore starts at the
+// responder's SUPERVIEW and takes the OUTERMOST scroll view it passes.
+//
+// THE KEYBOARD FRAME IS IN SCREEN COORDINATES, and the scroll view's is not. Both
+// are converted into the window before they are compared; subtracting them raw
+// is right only when the scroll view happens to start at the top of the screen,
+// which is exactly the case a developer tests first.
+
+import "stdlib/option" as option;
+import "objc/runtime" as rt;
+import "objc/bridge" as bridge;
+import "objc/synthesis" as synth;
+import "uikit/uikit" as ui;
+
+#[link_name = "objc_msgSend"]
+extern fn msg_void_4id(recv: *u8, sel: *u8, a: *u8, b: *u8, c: *u8, d: *u8);
+#[link_name = "objc_msgSend_stret"]
+extern fn msg_rect_stret(out: *rt::Rect, recv: *u8, sel: *u8);
+
+// The scroll view currently inset, and what its bottom inset was before we
+// touched it. Held rather than recomputed: will-hide has to put back the
+// application's OWN inset, and "0" is a guess that silently eats a tab bar's
+// worth of padding on any app that set one.
+static KB_SCROLL: *u8 = 0 as *u8;
+static KB_SAVED_BOTTOM: f64 = 0.0f64;
+static KB_SAVED_INDICATOR: f64 = 0.0f64;
+static KB_ACTIVE: bool = false;
+static KB_CLASS: *u8 = 0 as *u8;
+static KB_OBSERVER: *u8 = 0 as *u8;
+// THE WINDOW IS HANDED IN rather than imported. `window.cplus` is what installs
+// this, so asking it for `window_native()` here would be an import cycle — and
+// the window is the one thing the handler cannot derive, because it is the space
+// the keyboard's screen rectangle has to be converted into.
+static KB_WINDOW: *u8 = 0 as *u8;
+
+fn is_kind(obj: *u8, class_name: *u8) -> bool {
+    if obj == (0 as *u8) { return false; }
+    let cls: *u8 = rt::get_class(class_name);
+    if cls == (0 as *u8) { return false; }
+    return { rt::msg_i8_id(obj, rt::sel(#str_ptr("isKindOfClass:\0")), cls) } != (0 as i8);
+}
+
+// The first responder, by asking every view in the window whether it is one.
+//
+// UIKit has no public accessor — `[window firstResponder]` is private — and the
+// usual workaround (`sendAction:to:nil` and catch the target) needs a category.
+// A walk is public, obvious, and runs once per keyboard appearance rather than
+// per frame.
+fn first_responder_under(v: *u8) -> *u8 {
+    if v == (0 as *u8) { return 0 as *u8; }
+    if { rt::msg_i8(v, rt::sel(#str_ptr("isFirstResponder\0"))) } != (0 as i8) { return v; }
+    let subs: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("subviews\0"))) };
+    if subs == (0 as *u8) { return 0 as *u8; }
+    let n: u64 = { rt::msg_u64(subs, rt::sel(#str_ptr("count\0"))) };
+    var i: u64 = 0 as u64;
+    while i < n {
+        let child: *u8 = { rt::msg_id_u64(subs, rt::sel(#str_ptr("objectAtIndex:\0")), i) };
+        let found: *u8 = first_responder_under(child);
+        if found != (0 as *u8) { return found; }
+        i = i +% (1 as u64);
+    }
+    return 0 as *u8;
+}
+
+// The OUTERMOST scroll view above `v`, which is the page rather than the editor.
+// See the header: a UITextView is itself a UIScrollView, so this starts above the
+// responder and keeps the last one it finds instead of the first.
+fn enclosing_scroll(v: *u8) -> *u8 {
+    var cur: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("superview\0"))) };
+    var best: *u8 = 0 as *u8;
+    while cur != (0 as *u8) {
+        if is_kind(cur, #str_ptr("UIScrollView\0")) { best = cur; }
+        cur = { rt::msg_id(cur, rt::sel(#str_ptr("superview\0"))) };
+    }
+    return best;
+}
+
+// The keyboard's END frame — where it is going, not where it started. The BEGIN
+// frame is the offscreen position on the way in, and using it insets by zero.
+fn keyboard_end_frame(note: *u8) -> option::Option[rt::Rect] {
+    let info: *u8 = { rt::msg_id(note, rt::sel(#str_ptr("userInfo\0"))) };
+    if info == (0 as *u8) { return option::Option[rt::Rect]::None; }
+    // Matched by STRING EQUALITY, not by pointer: an NSDictionary hashes its
+    // keys. (The run-loop mode constants in scheduler.cplus need dlsym for the
+    // opposite reason — CFRunLoop compares those by identity.)
+    let val: *u8 = { rt::msg_id_id(info, rt::sel(#str_ptr("objectForKey:\0")),
+                                   bridge::nsstring("UIKeyboardFrameEndUserInfoKey")) };
+    if val == (0 as *u8) { return option::Option[rt::Rect]::None; }
+    return option::Option[rt::Rect]::Some({ rt::msg_rect(val, rt::sel(#str_ptr("CGRectValue\0"))) });
+}
+
+fn set_bottom_inset(sv: *u8, bottom: f64, indicator: f64) {
+    let cur: ui::EdgeInsets = ui::ScrollView::from_raw(sv).content_inset();
+    ui::ScrollView::from_raw(sv).set_content_inset(ui::EdgeInsets {
+        top: cur.top, left: cur.left, bottom: bottom, right: cur.right });
+    let ind: ui::EdgeInsets = ui::EdgeInsets {
+        top: cur.top, left: cur.left, bottom: indicator, right: cur.right };
+    ui::ScrollView::from_raw(sv).set_vertical_scroll_indicator_insets(ind);
+    return;
+}
+
+fn imp_keyboard_will_show(self_obj: *u8, cmd: *u8, note: *u8) {
+    let win: *u8 = KB_WINDOW;
+    if win == (0 as *u8) { return; }
+    let responder: *u8 = first_responder_under(win);
+    if responder == (0 as *u8) { return; }
+    let sv: *u8 = enclosing_scroll(responder);
+    if sv == (0 as *u8) { return; }
+    match keyboard_end_frame(note) {
+        option::Option[rt::Rect]::Some(kb_screen) => {
+            // Screen -> window, then the scroll view's own bounds -> window, so
+            // the two rectangles are in one space before they are compared.
+            let kb: rt::Rect = { rt::msg_rect_rect_id(win,
+                rt::sel(#str_ptr("convertRect:fromWindow:\0")), kb_screen, 0 as *u8) };
+            let b: rt::Rect = ui::View::from_raw(sv).bounds();
+            let sv_in_win: rt::Rect = { rt::msg_rect_rect_id(sv,
+                rt::sel(#str_ptr("convertRect:toView:\0")), b, 0 as *u8) };
+            let overlap: f64 = (sv_in_win.y + sv_in_win.h) - kb.y;
+            if overlap <= 0.0f64 { return; }
+            // SAVED ONCE. A second will-show — the candidate bar appearing, a
+            // rotation, a hardware keyboard attaching — must not record the
+            // inset we ourselves just wrote as the application's own.
+            if KB_ACTIVE == false {
+                let cur: ui::EdgeInsets = ui::ScrollView::from_raw(sv).content_inset();
+                KB_SAVED_BOTTOM = cur.bottom;
+                KB_SAVED_INDICATOR = cur.bottom;
+                KB_ACTIVE = true;
+            }
+            KB_SCROLL = sv;
+            set_bottom_inset(sv, KB_SAVED_BOTTOM + overlap, KB_SAVED_INDICATOR + overlap);
+            // And put the field where it can be seen. Its rect in the scroll
+            // view's own space is what `scrollRectToVisible:` wants.
+            let rb: rt::Rect = ui::View::from_raw(responder).bounds();
+            let target: rt::Rect = { rt::msg_rect_rect_id(responder,
+                rt::sel(#str_ptr("convertRect:toView:\0")), rb, sv) };
+            ui::ScrollView::from_raw(sv).scroll_rect_to_visible(target, true);
+        }
+        option::Option[rt::Rect]::None => { }
+    }
+    return;
+}
+
+fn imp_keyboard_will_hide(self_obj: *u8, cmd: *u8, note: *u8) {
+    if KB_ACTIVE == false { return; }
+    if KB_SCROLL != (0 as *u8) {
+        set_bottom_inset(KB_SCROLL, KB_SAVED_BOTTOM, KB_SAVED_INDICATOR);
+    }
+    KB_SCROLL = 0 as *u8;
+    KB_ACTIVE = false;
+    return;
+}
+
+fn observer_class() -> *u8 {
+    if KB_CLASS != (0 as *u8) { return KB_CLASS; }
+    let existing: *u8 = rt::get_class(#str_ptr("FacetUIKitKeyboardObserver\0"));
+    if existing != (0 as *u8) { KB_CLASS = existing; return KB_CLASS; }
+    let base: *u8 = rt::get_class(#str_ptr("NSObject\0"));
+    if base == (0 as *u8) { return 0 as *u8; }
+    let cls: *u8 = { synth::allocate_class_pair(base,
+        #str_ptr("FacetUIKitKeyboardObserver\0"), 0 as usize) };
+    if cls == (0 as *u8) { return 0 as *u8; }
+    let _a: i8 = synth::add_method_v_1id(cls,
+        rt::sel(#str_ptr("facetKeyboardWillShow:\0")),
+        imp_keyboard_will_show, #str_ptr("v@:@\0"));
+    let _b: i8 = synth::add_method_v_1id(cls,
+        rt::sel(#str_ptr("facetKeyboardWillHide:\0")),
+        imp_keyboard_will_hide, #str_ptr("v@:@\0"));
+    { synth::register_class_pair(cls) };
+    KB_CLASS = cls;
+    return KB_CLASS;
+}
+
+fn notification_center() -> *u8 {
+    return { rt::msg_id(rt::get_class(#str_ptr("NSNotificationCenter\0")),
+                        rt::sel(#str_ptr("defaultCenter\0"))) };
+}
+
+// Install once, from the scene setup. Idempotent: a second call finds the
+// observer already made and leaves it, because a notification centre holds its
+// observers UNRETAINED and registering twice would fire the handler twice and
+// inset by double.
+fn install(win: *u8) {
+    // The window is refreshed on every call; the OBSERVER is made once. A second
+    // `open_window` replaces the tree under a new window, and the handler must
+    // convert against that one — but registering again would fire twice.
+    KB_WINDOW = win;
+    if KB_OBSERVER != (0 as *u8) { return; }
+    let cls: *u8 = observer_class();
+    if cls == (0 as *u8) { return; }
+    let o: *u8 = { synth::alloc_init_class(cls) };
+    if o == (0 as *u8) { return; }
+    // The observer is a process-lifetime singleton held in a static, which is
+    // what keeps the centre's unretained reference valid. Nothing ever removes
+    // it, and that is correct here: it outlives every scene.
+    KB_OBSERVER = o;
+    let c: *u8 = notification_center();
+    if c == (0 as *u8) { return; }
+    { msg_void_4id(c, rt::sel(#str_ptr("addObserver:selector:name:object:\0")),
+                   o, rt::sel(#str_ptr("facetKeyboardWillShow:\0")),
+                   bridge::nsstring("UIKeyboardWillShowNotification"), 0 as *u8) };
+    { msg_void_4id(c, rt::sel(#str_ptr("addObserver:selector:name:object:\0")),
+                   o, rt::sel(#str_ptr("facetKeyboardWillHide:\0")),
+                   bridge::nsstring("UIKeyboardWillHideNotification"), 0 as *u8) };
+    return;
+}
+
+// ---- what the checks can reach -------------------------------------------------
+
+fn observer_installed() -> bool { return KB_OBSERVER != (0 as *u8); }
+fn inset_is_active() -> bool { return KB_ACTIVE; }
