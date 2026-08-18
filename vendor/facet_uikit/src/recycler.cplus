@@ -60,11 +60,51 @@ fn cell_root(cell: *u8) -> *core::Node {
 // Drop whatever this cell was showing: unmount its views, then free the tree.
 // Both halves matter — unmounting takes the native views out of the cell, and
 // freeing releases the node's own storage and every view it retained.
+// The exact inverse of `add_backed`, and it has to be, because a row's views do
+// not hang off one root view.
+//
+// `add_backed` walks down past every VIEWLESS node and adds each backed
+// descendant as a SEPARATE subview of the cell's content view — a row of three
+// labels puts three subviews there, siblings, with nothing above them to remove.
+// So taking `core::view_of(root)` away is not a teardown for that shape; it is a
+// no-op, because a row built as `ui::row(...)` is unkeyed and viewless and
+// answers 0. That is the ordinary case, not the exotic one.
+//
+// What that cost: the nodes were dropped and their views released, but a UIView
+// is owned by its SUPERVIEW, so every label stayed in the content view and the
+// next fill added a fresh set on top. Two rows' text drawn over each other,
+// worse on every reuse — photographed on an iPad as "Row 29" and "Row 19" in one
+// cell. facet_appkit never had it: that backend empties the cell by walking its
+// `subviews`, which is why the same list is clean on macOS.
+//
+// Mirroring `add_backed` rather than emptying `subviews` wholesale removes
+// exactly what was added and nothing UIKit put there itself.
+fn remove_backed(n: *core::Node) {
+    var i: usize = 0 as usize;
+    let count: usize = core::child_count_of(n);
+    while i < count {
+        match core::child_of(n, i) {
+            option::Option[*core::Node]::Some(c) => {
+                let v: *u8 = core::view_of(c);
+                if v != (0 as *u8) { ui::View::from_raw(v).remove_from_superview(); }
+                else { remove_backed(c); }
+            }
+            option::Option[*core::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return;
+}
+
 fn clear_cell(cell: *u8) {
     let old: *core::Node = cell_root(cell);
     if old == (0 as *core::Node) { return; }
+    // THE SAME BRANCH `fill_cell` TOOK, in reverse. A backed root put one view
+    // in the cell and a viewless one put its backed descendants there; undoing
+    // the wrong half leaves the other half behind.
     let v: *u8 = core::view_of(old);
     if v != (0 as *u8) { ui::View::from_raw(v).remove_from_superview(); }
+    else { remove_backed(old); }
     // THE MATCHING TEARDOWN. `realise` fired on_attach over this subtree; this
     // is what fires on_detach and clears the attach state. Dropping the box
     // without it would free nodes that facet still believes are attached.

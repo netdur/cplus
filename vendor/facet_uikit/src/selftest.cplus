@@ -48,6 +48,8 @@ import "./swipe" as swipe;
 import "facet/services" as services;
 import "facet/gestures" as gestures;
 import "objc/bridge" as bridge;
+import "objc/synthesis" as synth;
+import "stdlib/box" as box;
 import "stdlib/vec" as vec;
 import "agent_uikit/agent_uikit" as agent;
 import "agent_core/identity" as identity;
@@ -169,6 +171,64 @@ fn no_handler_is_a_real_function_not_null() -> bool {
 // `mount::mount` opens a WINDOW, and the recycler called it for every cell —
 // so each row became a window, and the entry dangled when the cell was
 // recycled. `realise` is the same walk minus the window.
+
+// A RECYCLED CELL GIVES BACK EVERY VIEW IT TOOK, and it used not to.
+//
+// `add_backed` walks past every viewless node and adds each backed descendant as
+// a SEPARATE sibling subview of the cell's content view, so a row of two labels
+// puts TWO views there with nothing above them to remove. `clear_cell` removed
+// only `core::view_of(root)` — which a viewless row answers 0 for — so it removed
+// nothing at all. The nodes were dropped and their views released, but a UIView
+// is owned by its SUPERVIEW, so the labels stayed and the next fill added a fresh
+// set on top of them. Photographed on an iPad as "Row 29" and "Row 19" drawn over
+// each other in one cell, worse on every reuse.
+//
+// IT GOES THROUGH `clear_cell`, NOT THROUGH `remove_backed`. The first version of
+// this check called the helper directly and PASSED against the unfixed backend,
+// because the defect was never in the helper — it was in which branch the caller
+// took. A check that cannot fail on the bug it names is worse than no check.
+//
+// So the setup mirrors `fill_cell` exactly: a boxed root, realised, added with
+// `add_backed`, and the association `clear_cell` reads to find it again. The box
+// matters — `clear_cell` takes ownership back with `box::from_raw`, and handing
+// it a stack address would free something it does not own.
+fn a_cleared_cell_gives_back_every_view_it_took() -> bool {
+    var b: flex::Builder = flex::Builder::new();
+    b.add(ui::label("one", key: "rb:one", font_size: 12.0f64));
+    b.add(ui::label("two", key: "rb:two", font_size: 12.0f64));
+    var row: core::Node = ui::row(b);
+    // The whole bug lives in this shape. If the row were backed, the check would
+    // pass while exercising the other branch.
+    if views::wants_view(#addr_of(row)) { return false; }
+    let host: uik::View = uik::View::new_with_frame(
+        rt::Rect { x: 0.0f64, y: 0.0f64, w: 100.0f64, h: 40.0f64 });
+    match box::new::[core::Node](row) {
+        option::Option[box::Box[core::Node]]::Some(bx) => {
+            let root: *core::Node = bx.into_raw() as *core::Node;
+            let rv: *u8 = mount::realise(root);
+            // 0 IS THE ORDINARY ANSWER for a viewless root, and the branch under
+            // test. Anything else means the row shape changed.
+            if rv != (0 as *u8) { return false; }
+            recycler::add_backed(host, root);
+            // Asserting the add as well as the remove: a teardown that silently
+            // found nothing would pass a remove-only check.
+            if subview_count(host.raw()) != (2 as u64) { return false; }
+            // `host` stands in for the cell. `clear_cell` only needs an object it
+            // can carry the association on, and `remove_from_superview` needs no
+            // parent, so one view serves as both cell and content view here.
+            synth::set_associated(host.raw(), recycler::cell_root_key(), root as *u8);
+            recycler::clear_cell(host.raw());
+            return subview_count(host.raw()) == (0 as u64);
+        }
+        option::Option[box::Box[core::Node]]::None => { return false; }
+    }
+}
+
+fn subview_count(v: *u8) -> u64 {
+    let subs: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("subviews\0"))) };
+    if subs == (0 as *u8) { return 0 as u64; }
+    return { rt::msg_u64(subs, rt::sel(#str_ptr("count\0"))) };
+}
 
 fn realising_a_subtree_opens_no_window() -> bool {
     let before: usize = app::window_count();
@@ -845,6 +905,8 @@ fn run_all() -> i32 {
     check("a plain view does not start clipping", a_plain_view_does_not_start_clipping());
     check("a radius clips whatever the view is", a_radius_clips_whatever_the_view_is());
     check("an unkeyed row has no view of its own", an_unkeyed_row_has_no_view_of_its_own());
+    check("a cleared cell gives back every view it took",
+          a_cleared_cell_gives_back_every_view_it_took());
     check("a viewless root still has backed children",
           a_realised_viewless_root_still_has_backed_children());
     check("a tree's default row is no_row, not null", a_tree_default_row_is_no_row_not_null());
