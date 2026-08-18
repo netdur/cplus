@@ -37,6 +37,8 @@ playground
 # Local build wiring: a package's `vendor/` symlink into the repo's own
 # vendor tree, so `cpc build` resolves imports without a copy. Machine-local.
 /examples/*/vendor
+/examples/**/ios/build
 # NOTE deliberately removed (2026-08-17): /vendor/stdlib/stdlib — the broken
 # self-symlink was deleted, and hiding the path meant a recreated one never
 # showed in `git status`. If it reappears, something recreates it: find out.
+

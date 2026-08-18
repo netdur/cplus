@@ -188,7 +188,23 @@
 				TARGETED_DEVICE_FAMILY = "1,2";
 				HEADER_SEARCH_PATHS = "$(SRCROOT)/../target/ios-arm64/debug";
 				LIBRARY_SEARCH_PATHS = "$(SRCROOT)/../target/ios-arm64/debug";
-				OTHER_LDFLAGS = "-lfacet_gallery_ios";
+				OTHER_LDFLAGS = (
+					"-lfacet_gallery_ios",
+					"$(SRCROOT)/../../../vendor/agent_core/lib/arm64-apple-ios/libagent_core.a",
+					"$(SRCROOT)/../../../vendor/agent_inapp/lib/arm64-apple-ios/libagent_inapp.a",
+					"$(SRCROOT)/../../../vendor/agent_mcp/lib/arm64-apple-ios/libagent_mcp.a",
+					"$(SRCROOT)/../../../vendor/agent_uikit/lib/arm64-apple-ios/libagent_uikit.a",
+					"$(SRCROOT)/../../../vendor/events/lib/arm64-apple-ios/libevents.a",
+					"$(SRCROOT)/../../../vendor/facet_agent/lib/arm64-apple-ios/libfacet_agent.a",
+					"$(SRCROOT)/../../../vendor/facet_runtime/lib/arm64-apple-ios/libfacet_runtime.a",
+					"$(SRCROOT)/../../../vendor/flex_layout/lib/arm64-apple-ios/libflex_layout.a",
+					"$(SRCROOT)/../../../vendor/json/lib/arm64-apple-ios/libjson.a",
+					"$(SRCROOT)/../../../vendor/objc/lib/arm64-apple-ios/libobjc.a",
+					"$(SRCROOT)/../../../vendor/quartzcore/lib/arm64-apple-ios/libquartzcore.a",
+					"$(SRCROOT)/../../../vendor/stdlib/lib/arm64-apple-ios/libstdlib.a",
+					"$(SRCROOT)/../../../vendor/uikit/lib/arm64-apple-ios/libuikit.a",
+					"$(SRCROOT)/../../../vendor/webkit/lib/arm64-apple-ios/libwebkit.a",
+				);
 				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = NO;
 			};
 			name = Debug;
@@ -211,7 +227,23 @@
 				TARGETED_DEVICE_FAMILY = "1,2";
 				HEADER_SEARCH_PATHS = "$(SRCROOT)/../target/ios-arm64/debug";
 				LIBRARY_SEARCH_PATHS = "$(SRCROOT)/../target/ios-arm64/debug";
-				OTHER_LDFLAGS = "-lfacet_gallery_ios";
+				OTHER_LDFLAGS = (
+					"-lfacet_gallery_ios",
+					"$(SRCROOT)/../../../vendor/agent_core/lib/arm64-apple-ios/libagent_core.a",
+					"$(SRCROOT)/../../../vendor/agent_inapp/lib/arm64-apple-ios/libagent_inapp.a",
+					"$(SRCROOT)/../../../vendor/agent_mcp/lib/arm64-apple-ios/libagent_mcp.a",
+					"$(SRCROOT)/../../../vendor/agent_uikit/lib/arm64-apple-ios/libagent_uikit.a",
+					"$(SRCROOT)/../../../vendor/events/lib/arm64-apple-ios/libevents.a",
+					"$(SRCROOT)/../../../vendor/facet_agent/lib/arm64-apple-ios/libfacet_agent.a",
+					"$(SRCROOT)/../../../vendor/facet_runtime/lib/arm64-apple-ios/libfacet_runtime.a",
+					"$(SRCROOT)/../../../vendor/flex_layout/lib/arm64-apple-ios/libflex_layout.a",
+					"$(SRCROOT)/../../../vendor/json/lib/arm64-apple-ios/libjson.a",
+					"$(SRCROOT)/../../../vendor/objc/lib/arm64-apple-ios/libobjc.a",
+					"$(SRCROOT)/../../../vendor/quartzcore/lib/arm64-apple-ios/libquartzcore.a",
+					"$(SRCROOT)/../../../vendor/stdlib/lib/arm64-apple-ios/libstdlib.a",
+					"$(SRCROOT)/../../../vendor/uikit/lib/arm64-apple-ios/libuikit.a",
+					"$(SRCROOT)/../../../vendor/webkit/lib/arm64-apple-ios/libwebkit.a",
+				);
 				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = NO;
 			};
 			name = Release;

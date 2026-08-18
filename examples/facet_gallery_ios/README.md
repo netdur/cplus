@@ -54,6 +54,24 @@ bundle is Xcode's and the code is cpc's.
    > `Vec[T]` instantiated over a dependency's type, because a generic has no
    > object code until a consumer instantiates it and the instantiation calls
    > a concrete method that lives only in that dependency's slice.
+
+   > **`ios/Gallery.xcodeproj` already carries this list**, so the recipe above
+   > is what to do when building your own project rather than something you
+   > must repeat here. Two things about how it is written:
+   >
+   > Each archive is named by **full path**, not by `-l<name>`. `vendor/objc`
+   > builds `libobjc.a`, and the same link line needs the SYSTEM `libobjc` —
+   > `-lobjc` cannot mean both, and which one it finds depends on search-path
+   > order. A path is unambiguous.
+   >
+   > It is a HAND-KEPT LIST, and that is a known cost rather than a preference.
+   > Every shell recipe in this tree globs instead, specifically because a glob
+   > "cannot drift out of step with the manifest the way a hand-kept list does" —
+   > but a pbxproj has no glob. So **if this app's dependency closure changes,
+   > this list has to change with it**, and the symptom of forgetting is the
+   > undefined-symbol failure described above. The list is only the packages
+   > that PREBUILD: the facet family opts out, so `facet` and `facet_uikit`
+   > are already inside the app's own archive and are correctly absent.
 5. **Build Settings → Header Search Paths**: the `target/<triple>/debug/`
    directory, so `#import "facet_gallery_ios.h"` resolves.
 6. **Library Search Paths**: the same directory. Point the simulator
