@@ -1,0 +1,3 @@
+# The driver builds the .app and keeps the run's log here rather than in a
+# mktemp dir, so a failed run leaves its readings somewhere findable.
+build/

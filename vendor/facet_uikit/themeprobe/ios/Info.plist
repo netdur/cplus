@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDisplayName</key><string>theme probe</string>
+	<key>CFBundleExecutable</key><string>FacetThemeProbe</string>
+	<key>CFBundleIdentifier</key><string>dev.cplus.facetthemeprobe</string>
+	<key>CFBundleName</key><string>FacetThemeProbe</string>
+	<key>CFBundlePackageType</key><string>APPL</string>
+	<key>CFBundleShortVersionString</key><string>1.0</string>
+	<key>CFBundleVersion</key><string>1</string>
+	<key>LSRequiresIPhoneOS</key><true/>
+	<key>MinimumOSVersion</key><string>14.0</string>
+
+	<!-- NO `UIUserInterfaceStyle` KEY, and its absence is the whole point.
+	     Setting it to Light or Dark pins the app's appearance and makes it
+	     IGNORE the system setting — so a bundle carrying it would sail through
+	     every check below by never changing at all. -->
+
+	<!-- Both families: without it iOS runs the bundle as an iPhone app in
+	     compatibility mode, so an iPad run would silently be a phone run.
+	     WINDOWING.md §5. -->
+	<key>UIDeviceFamily</key>
+	<array>
+		<integer>1</integer>
+		<integer>2</integer>
+	</array>
+
+	<!-- A scene manifest with a delegate class name and NO storyboard: the
+	     storyboard is what makes UIKit wait for a nib facet does not have,
+	     leaving the screen black. -->
+	<key>UIApplicationSceneManifest</key>
+	<dict>
+		<key>UIApplicationSupportsMultipleScenes</key>
+		<false/>
+		<key>UISceneConfigurations</key>
+		<dict>
+			<key>UIWindowSceneSessionRoleApplication</key>
+			<array>
+				<dict>
+					<key>UISceneConfigurationName</key>
+					<string>Default Configuration</string>
+					<key>UISceneDelegateClassName</key>
+					<string>FacetUIKitSceneDelegate</string>
+				</dict>
+			</array>
+		</dict>
+	</dict>
+
+	<key>UILaunchScreen</key><dict/>
+	<key>UISupportedInterfaceOrientations</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+		<string>UIInterfaceOrientationLandscapeLeft</string>
+		<string>UIInterfaceOrientationLandscapeRight</string>
+	</array>
+</dict>
+</plist>

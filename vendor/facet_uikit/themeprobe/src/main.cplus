@@ -1,0 +1,400 @@
+// facet_uikit theme probe — the trait matrix, measured instead of looked at.
+//
+// A live app that paints a fixed set of swatches and, on every trait change and
+// on a slow timer, PRINTS what each one actually ended up filled with. It never
+// asserts anything itself: `tools/run_theme_matrix.sh` drives the device
+// settings with `xcrun simctl ui` and does the asserting from outside, because
+// the whole question is what happens to a running app when the OS changes
+// underneath it — and an app that could ask itself that question would be
+// testing its own override path instead of the system one.
+//
+// ---- why the swatches are what they are ---------------------------------------
+//
+// UIKit's semantic colours (`labelColor`, `systemBackground`, …) are DYNAMIC
+// objects: they re-resolve themselves when the trait collection changes, with
+// no help from facet at all. So a screen painted from facet's semantic roles
+// follows a dark-mode flip PERFECTLY EVEN WHEN THE FLIP IS COMPLETELY UNWIRED.
+// That is not a hypothetical — a previous session flipped the appearance under
+// a semantic-token probe, watched it re-theme, checked the process id to be
+// sure it had not relaunched, and nearly reported an unwired implementation as
+// working.
+//
+// Only FLATTENED values tell the truth. `paint.cplus` resolves an `adaptive`
+// literal pair (token 254) to ONE static UIColor for whichever trait collection
+// was current when it was applied, and anything that reached a CGColor — a
+// gradient stop, a border, a shadow — is frozen the same way. Those are the
+// three swatches that can fail. The semantic one is here as a POSITIVE CONTROL:
+// it passes against a broken implementation, so the driver treats it as proof
+// the harness itself is wired, never as evidence about facet.
+//
+// ---- and why they are read from the LAYER --------------------------------------
+//
+// The bug this exists to catch is a repaint that never happened: the model
+// holds the new colour and the layer still shows the old one. Reading facet's
+// own node back would report the model and pass. So every reading below comes
+// off the native object — `layer.backgroundColor`, the label's `textColor`, the
+// gradient sublayer's first stop — which is the same thing a screenshot would
+// see, minus the screenshot.
+//
+// Components are printed as 0-255 integers, deliberately, so a reading here and
+// a pixel sampled out of `simctl io screenshot` are in the SAME units and can
+// be compared directly. stdlib has no float formatter; this would have wanted
+// one anyway.
+
+import "facet/facet" as facet;
+import "facet/elements" as elements;
+import "facet/component" as component;
+import "facet/screen" as screen;
+import "facet/services" as services;
+import "facet/theme" as theme;
+import "facet/vocabulary" as vocab;
+import "facet/mount" as mount;
+import "facet_runtime/runtime" as runtime;
+import "stdlib/io" as io;
+import "stdlib/text" as text;
+import "stdlib/option" as option;
+import "stdlib/vec" as vec;
+import "objc/runtime" as rt;
+import "objc/bridge" as bridge;
+import "objc/synthesis" as synth;
+import "uikit/uikit" as uik;
+import "quartzcore/quartzcore" as quartz;
+
+#[link_name = "CGColorGetComponents"]
+extern fn cg_components(c: *u8) -> *f64;
+#[link_name = "CGColorGetNumberOfComponents"]
+extern fn cg_component_count(c: *u8) -> usize;
+#[link_name = "getpid"]
+extern fn c_getpid() -> i32;
+
+// The accessibility switches, which are C functions rather than traits.
+//
+// THIS IS NOT REDUNDANT WITH THE TRAIT LINE. Measured on iOS 26.1: turning
+// Increase Contrast on with `simctl ui <dev> increase_contrast enabled` leaves
+// `UITraitCollection.accessibilityContrast` reading 1 ("normal") — on a live
+// app AND on a cold start — while the device itself reports the setting as
+// enabled. So for this axis the trait is not the door; the accessibility
+// predicate is. Requirement 3 needs to know which of these two surfaces each
+// setting actually arrives on, and guessing produced a wrong answer once already.
+#[link_name = "UIAccessibilityDarkerSystemColorsEnabled"]
+extern fn ax_darker_system_colors() -> i8;
+#[link_name = "UIAccessibilityIsReduceMotionEnabled"]
+extern fn ax_reduce_motion() -> i8;
+#[link_name = "UIAccessibilityIsReduceTransparencyEnabled"]
+extern fn ax_reduce_transparency() -> i8;
+#[link_name = "UIAccessibilityShouldDifferentiateWithoutColor"]
+extern fn ax_differentiate_without_color() -> i8;
+#[link_name = "UIAccessibilityIsBoldTextEnabled"]
+extern fn ax_bold_text() -> i8;
+
+// ---- reading a CGColor ---------------------------------------------------------
+
+// A CGColor's component count depends on its COLOUR SPACE, which is not a
+// detail that can be assumed away here: a grey (`systemBackground` resolves to
+// one on some paths) carries two components — white, alpha — and an RGB carries
+// four. Reading `[0],[1],[2]` off a grey would report its alpha as green and
+// then read one slot past the end.
+struct Rgba { r: i64, g: i64, b: i64, a: i64, ok: bool }
+
+fn byte_of(v: f64) -> i64 {
+    var x: f64 = v;
+    if x < 0.0f64 { x = 0.0f64; }
+    if x > 1.0f64 { x = 1.0f64; }
+    return { (x * 255.0f64 + 0.5f64) as i64 };
+}
+
+fn comp_at(p: *f64, i: usize) -> f64 {
+    let q: *f64 = { ({ p as usize } +% (i *% (8 as usize))) as *f64 };
+    return { *q };
+}
+
+fn read_cgcolor(cg: *u8) -> Rgba {
+    if cg == (0 as *u8) { return Rgba { r: 0, g: 0, b: 0, a: 0, ok: false }; }
+    let n: usize = cg_component_count(cg);
+    let p: *f64 = cg_components(cg);
+    if p == (0 as *f64) { return Rgba { r: 0, g: 0, b: 0, a: 0, ok: false }; }
+    if n >= (4 as usize) {
+        return Rgba {
+            r: byte_of(comp_at(p, 0 as usize)),
+            g: byte_of(comp_at(p, 1 as usize)),
+            b: byte_of(comp_at(p, 2 as usize)),
+            a: byte_of(comp_at(p, 3 as usize)),
+            ok: true,
+        };
+    }
+    if n == (2 as usize) {
+        let w: i64 = byte_of(comp_at(p, 0 as usize));
+        return Rgba { r: w, g: w, b: w, a: byte_of(comp_at(p, 1 as usize)), ok: true };
+    }
+    return Rgba { r: 0, g: 0, b: 0, a: 0, ok: false };
+}
+
+fn print_color(key: str, c: Rgba) {
+    if c.ok == false {
+        io::eprintln(text::from_str("TM color ${key} - - - - unset"));
+        return;
+    }
+    let r: i64 = c.r;
+    let g: i64 = c.g;
+    let b: i64 = c.b;
+    let a: i64 = c.a;
+    io::eprintln(text::from_str("TM color ${key} ${r} ${g} ${b} ${a} ok"));
+    return;
+}
+
+// ---- finding the native object behind a key ------------------------------------
+
+fn view_for(key: str) -> *u8 {
+    match mount::find(key) {
+        option::Option[*facet::Node]::Some(n) => { return facet::view_of(n); }
+        option::Option[*facet::Node]::None => { return 0 as *u8; }
+    }
+}
+
+fn layer_fill(key: str) -> Rgba {
+    let v: *u8 = view_for(key);
+    if v == (0 as *u8) { return Rgba { r: 0, g: 0, b: 0, a: 0, ok: false }; }
+    match uik::View::from_raw(v).layer().background_color() {
+        option::Option[*u8]::Some(cg) => { return read_cgcolor(cg); }
+        option::Option[*u8]::None => { return Rgba { r: 0, g: 0, b: 0, a: 0, ok: false }; }
+    }
+}
+
+// A label's colour is a PER-KIND prop (`label::P_TEXT_COLOR`), not a shared-band
+// one — which is precisely why it was the second bug: a repaint walk that
+// touched only the shared band left an adaptive text colour frozen at whichever
+// side it was mounted with, under a background that had correctly followed.
+fn label_text_color(key: str) -> Rgba {
+    let v: *u8 = view_for(key);
+    if v == (0 as *u8) { return Rgba { r: 0, g: 0, b: 0, a: 0, ok: false }; }
+    let uc: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("textColor\0"))) };
+    if uc == (0 as *u8) { return Rgba { r: 0, g: 0, b: 0, a: 0, ok: false }; }
+    // `-CGColor` on a UIColor resolves it against the CURRENT trait collection,
+    // which is what makes this reading the honest one: a dynamic colour answers
+    // for the appearance in force right now, and a flattened one answers with
+    // whatever it was frozen at.
+    let cg: *u8 = { rt::msg_id(uc, rt::sel(#str_ptr("CGColor\0"))) };
+    return read_cgcolor(cg);
+}
+
+// paint.cplus keeps one CAGradientLayer per view on an associated key — 29060,
+// named `gradient_key()` there — because CALayer has no gradient and a re-apply
+// must not stack a second one. Reading the first stop is enough: both stops are
+// flattened by the same code on the same path.
+fn gradient_first_stop(key: str) -> Rgba {
+    let v: *u8 = view_for(key);
+    if v == (0 as *u8) { return Rgba { r: 0, g: 0, b: 0, a: 0, ok: false }; }
+    let host: *u8 = uik::View::from_raw(v).layer().raw();
+    if host == (0 as *u8) { return Rgba { r: 0, g: 0, b: 0, a: 0, ok: false }; }
+    let g: *u8 = { synth::get_associated(host, 29060 as *u8) };
+    if g == (0 as *u8) { return Rgba { r: 0, g: 0, b: 0, a: 0, ok: false }; }
+    let arr: *u8 = { rt::msg_id(g, rt::sel(#str_ptr("colors\0"))) };
+    if arr == (0 as *u8) { return Rgba { r: 0, g: 0, b: 0, a: 0, ok: false }; }
+    if { rt::msg_u64(arr, rt::sel(#str_ptr("count\0"))) } == (0 as u64) {
+        return Rgba { r: 0, g: 0, b: 0, a: 0, ok: false };
+    }
+    let cg: *u8 = { rt::msg_id_u64(arr, rt::sel(#str_ptr("objectAtIndex:\0")), 0 as u64) };
+    return read_cgcolor(cg);
+}
+
+// ---- the trait axes ------------------------------------------------------------
+
+// Reported so the driver can tell "facet did not react" apart from "the setting
+// never arrived". Those are different failures with different fixes, and only
+// one of them is facet's.
+// A REAL VIEW's trait collection, not `UITraitCollection.currentTraitCollection`.
+//
+// That class property is only guaranteed meaningful inside a view update. Read
+// from a timer callback it comes back with axes UNSPECIFIED — measured here at
+// `contrast=0` while the device had Increase Contrast switched on, and at 1
+// ("normal") on a later read with the same setting — so a probe trusting it
+// would report a setting as missing when it had merely asked the wrong object.
+// A view's own `traitCollection` is fully specified and is what UIKit resolves
+// the view against, which makes it the same answer the pixels get.
+//
+// Colour readings are a different matter and deliberately still go through the
+// current collection: `-CGColor` on a dynamic UIColor resolves against it, and
+// that path is correct — the semantic swatch tracks a flip exactly.
+fn current_traits() -> *u8 {
+    let v: *u8 = view_for("tm:bg");
+    if v != (0 as *u8) {
+        let tc: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("traitCollection\0"))) };
+        if tc != (0 as *u8) { return tc; }
+    }
+    let cls: *u8 = rt::get_class(#str_ptr("UITraitCollection\0"));
+    if cls == (0 as *u8) { return 0 as *u8; }
+    return { rt::msg_id(cls, rt::sel(#str_ptr("currentTraitCollection\0"))) };
+}
+
+fn trait_i64(tc: *u8, name: *u8) -> i64 {
+    if tc == (0 as *u8) { return -1; }
+    return { rt::msg_i64(tc, rt::sel(name)) };
+}
+
+fn report_axes() {
+    let tc: *u8 = current_traits();
+    // 0 unspecified, 1 light, 2 dark.
+    let style: i64 = trait_i64(tc, #str_ptr("userInterfaceStyle\0"));
+    // 0 unspecified, 1 normal, 2 high.
+    let contrast: i64 = trait_i64(tc, #str_ptr("accessibilityContrast\0"));
+    // 0 unspecified, 1 regular, 2 bold.
+    let bold: i64 = trait_i64(tc, #str_ptr("legibilityWeight\0"));
+    let idiom: i64 = trait_i64(tc, #str_ptr("userInterfaceIdiom\0"));
+    io::eprintln(text::from_str(
+        "TM axis style=${style} contrast=${contrast} bold=${bold} idiom=${idiom}"));
+
+    // Dynamic Type arrives as a STRING category, not a number, and it is the one
+    // axis with no macOS counterpart — which is the asymmetry the theme season
+    // has to make a deliberate decision about rather than let accrete.
+    var cat: text::Text = text::from_str("<none>");
+    if tc != (0 as *u8) {
+        let ns: *u8 = { rt::msg_id(tc, rt::sel(#str_ptr("preferredContentSizeCategory\0"))) };
+        if ns != (0 as *u8) { cat = bridge::to_text(ns); }
+    }
+    let cv: str = cat.view();
+    io::eprintln(text::from_str("TM csize ${cv}"));
+
+    let darker: i64 = { ax_darker_system_colors() as i64 };
+    let motion: i64 = { ax_reduce_motion() as i64 };
+    let transp: i64 = { ax_reduce_transparency() as i64 };
+    let nocol: i64 = { ax_differentiate_without_color() as i64 };
+    let axbold: i64 = { ax_bold_text() as i64 };
+    io::eprintln(text::from_str(
+        "TM ax darker=${darker} motion=${motion} transparency=${transp} nocolor=${nocol} bold=${axbold}"));
+    return;
+}
+
+// ---- the swatches --------------------------------------------------------------
+
+fn swatch_height() -> f64 { return 56.0f64; }
+
+fn adaptive_pair(lr: f64, lg: f64, lb: f64, dr: f64, dg: f64, db: f64) -> vocab::Color {
+    return vocab::Color::adaptive(
+        light: vocab::Color::rgba(lr, lg, lb, 1.0f64),
+        dark:  vocab::Color::rgba(dr, dg, db, 1.0f64));
+}
+
+fn swatches() -> facet::Node {
+    var b: facet::Builder = facet::Builder::new();
+
+    // 1. THE ADAPTIVE FILL. Red in light, blue in dark — two colours far apart
+    //    in every channel, so "did it change" needs no tolerance argument and
+    //    stays legible to a reader who cannot distinguish red from green.
+    var fill: facet::Node =
+        elements::hstack(facet::Builder::new(), key: "tm:bg").height(swatch_height());
+    fill.set_background_color(adaptive_pair(
+        1.0f64, 0.0f64, 0.0f64,
+        0.0f64, 0.0f64, 1.0f64));
+    b.add(fill);
+
+    // 2. THE ADAPTIVE TEXT COLOUR — the per-kind prop, and the bug that hid
+    //    behind the first one.
+    b.add(elements::label("ADAPTIVE TEXT", key: "tm:text",
+                          font_size: 28.0f64,
+                          font_weight: vocab::FontWeight::Bold,
+                          text_color: adaptive_pair(
+                              1.0f64, 0.0f64, 0.0f64,
+                              1.0f64, 1.0f64, 0.0f64)));
+
+    // 3. THE GRADIENT — the CGColor path, frozen at apply time on a sublayer.
+    var grad: facet::Node =
+        elements::hstack(facet::Builder::new(), key: "tm:grad").height(swatch_height());
+    grad.set_background(vocab::Brush {
+        start: adaptive_pair(1.0f64, 0.0f64, 0.0f64, 0.0f64, 1.0f64, 0.0f64),
+        end:   adaptive_pair(1.0f64, 0.5f64, 0.0f64, 0.0f64, 0.5f64, 1.0f64),
+        angle: 0.0f64,
+        is_gradient: true,
+    });
+    b.add(grad);
+
+    // 4. THE POSITIVE CONTROL. A platform semantic token, which UIKit re-resolves
+    //    on its own. If this one ever fails to follow, the fault is in the
+    //    harness or the simulator and not in facet — and if it is the ONLY one
+    //    that follows, facet is broken and looks fine.
+    var sem: facet::Node =
+        elements::hstack(facet::Builder::new(), key: "tm:semantic").height(swatch_height());
+    sem.set_background_color(vocab::Color::window_background());
+    b.add(sem);
+
+    return elements::column(b, key: "tm:col").gap(10.0f64);
+}
+
+// ---- the report ----------------------------------------------------------------
+
+static SEQ: i64 = 0 as i64;
+static TIMER: services::Cancellable = #zero::[services::Cancellable]();
+
+fn report(tag: str) {
+    SEQ = SEQ + 1;
+    let n: i64 = SEQ;
+    let pid: i64 = { c_getpid() as i64 };
+    // THE PID IS ON EVERY REPORT, not printed once at launch. A setting change
+    // that quietly relaunched the app would produce a perfect-looking before and
+    // after out of two different processes, which is the failure this cannot be
+    // allowed to score as a pass.
+    io::eprintln(text::from_str("TM begin ${n} ${tag} pid=${pid}"));
+    report_axes();
+    print_color("bg", layer_fill("tm:bg"));
+    print_color("text", label_text_color("tm:text"));
+    print_color("grad", gradient_first_stop("tm:grad"));
+    print_color("semantic", layer_fill("tm:semantic"));
+    io::eprintln(text::from_str("TM end ${n}"));
+    return;
+}
+
+fn tick(ctx: *u8) {
+    report("tick");
+    TIMER = services::after(0.5f64, tick);
+    return;
+}
+
+struct Probe { n: i64 }
+
+impl Probe: component::Component {
+    fn build(ref this) -> facet::Node {
+        var body: facet::Builder = facet::Builder::new();
+        body.add(elements::label("theme probe", key: "tm:title",
+                                 font_size: 24.0f64,
+                                 font_weight: vocab::FontWeight::Bold));
+        body.add(swatches());
+        body.add(elements::label("Every TM line is one reading. Drive this with tools/run_theme_matrix.sh.",
+                                 key: "tm:caption", font_size: 13.0f64));
+        return facet::column(body).padding(20.0f64).gap(14.0f64);
+    }
+}
+
+impl Probe: component::Lifecycle {
+    // The timer is held in a STATIC because `services::Cancellable` is an RAII
+    // handle whose drop cancels — a `let` here arms a timer and revokes it at
+    // the end of the scope, which is how a probe comes to print exactly one line.
+    fn on_attach(ref this) {
+        report("attach");
+        TIMER = services::after(0.5f64, tick);
+        return;
+    }
+    fn on_detach(ref this) { return; }
+}
+
+impl Probe: screen::Screen {
+    fn chrome(this) -> screen::Chrome {
+        return screen::Chrome::new(
+            title: "theme probe",
+            subtitle: "facet_uikit",
+            width: 390.0f64,
+            height: 844.0f64,
+            bar: screen::Bar::Native,
+        );
+    }
+    fn menu_items(this) -> vec::Vec[screen::MenuItem] {
+        return vec::new::[screen::MenuItem]();
+    }
+}
+
+export extern fn facet_uikit_themeprobe_main() -> i32 {
+    // NO `set_theme` CALL, deliberately. Every swatch above states its own
+    // colour, so the readings are about the flip and the repaint walk and not
+    // about how a theme role resolved. The theme tier gets its own probe when
+    // requirement 1 has a design to check.
+    let _p: Probe = runtime::run_screen(Probe { n: 0 });
+    return 0;
+}

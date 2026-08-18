@@ -288,6 +288,53 @@ clipping bug back and watching it report 8 passed / 1 failed.
 
 Every check in it is a bug that happened. It is not a survey of the package.
 
+### The theme matrix runs on a device too
+
+The appearance flip cannot be checked in `tests/`. That runner is in-process, so
+the most it could do is set `overrideUserInterfaceStyle` on a window — which
+exercises the path an app takes when it FORCES its own appearance, not the path
+a system setting takes into a running app. The two do not share the code that
+broke.
+
+So there is a second harness: `themeprobe/` is a live app that paints flattened
+swatches and prints what each one actually ended up filled with, and
+
+```
+vendor/facet_uikit/tools/run_theme_matrix.sh [device-udid]
+```
+
+changes the device's own settings with `xcrun simctl ui` and does the asserting
+from outside. It restores every setting it touched on the way out, including
+after a failure.
+
+**Every assertion is read off a FLATTENED value.** UIKit's semantic colours are
+dynamic objects that re-resolve themselves on a flip with no help from facet, so
+a probe painted from semantic roles passes against a completely unwired
+implementation — which is what nearly happened when this was verified by eye. The
+three that can actually fail are an `adaptive` literal pair, an adaptive TEXT
+colour (a per-kind prop, and the bug that hid behind the first one), and a
+gradient stop that reached a CGColor. The semantic swatch is asserted as a
+positive control only: it proves the harness is wired and is never evidence about
+facet. The process id is on every reading, because a setting change that quietly
+relaunched the app would otherwise produce a perfect before and after taken from
+two different processes.
+
+Green on an iPad and an iPhone, 2026-08-18.
+
+Two things it measured that are not documented anywhere else:
+
+- **`simctl ui <dev> increase_contrast enabled` does not drive
+  `UITraitCollection.accessibilityContrast` on iOS 26.1.** It reads 1 ("normal")
+  on a live app and on a cold start alike, while
+  `UIAccessibilityDarkerSystemColorsEnabled()` flips correctly. For that axis the
+  accessibility predicate is the door and the trait is not.
+- **`UITraitCollection.currentTraitCollection` is not a reliable read outside a
+  view update.** From a timer callback its axes come back unspecified. A view's
+  own `traitCollection` is fully specified and is what UIKit resolves that view
+  against. Note that `paint::is_dark_now()` reads the class property — which is
+  correct there, because it is called from inside the repaint walk, where UIKit
+  has set it. It would not be correct anywhere else.
+
 Each of those is zero fields rather than three of five, which keeps facet's
 portable no-op — a struct half filled would look installed and behave randomly.
 
