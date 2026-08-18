@@ -1137,8 +1137,22 @@ fn apply_toggle(v: *u8, n: *core::Node, dirty: u64) {
             let f: fn(*u8, *u8) = toggle_action;
             compose::apply_drawn_switch(v, { (*p).on }, #addr_of(TOGGLE_COLORS), f, n as *u8);
         }
-        if (dirty & props::C_IS_ENABLED) != (0 as u64) || dirty == paint::all_bits() {
-            ak::View::from_raw(v).set_hidden(core::is_visible(n) == false);
+        // THE SAME RULE PAINT USES, and it was two different rules.
+        //
+        // `core::is_hidden` is the OR of the two verbs that mean off-screen —
+        // `set_visible(false)`, which hides a node that keeps its space, and
+        // `Display::None`, which takes it out of layout. facet states it once in
+        // the model precisely "so two backends cannot disagree and two writers of
+        // the same platform flag cannot race each other", and this was the second
+        // writer disagreeing: it read `is_visible` alone, so a drawn switch
+        // ignored `Display::None` and reappeared whenever paint and this line
+        // wrote in the wrong order.
+        //
+        // It was also gated on the wrong bit — `C_IS_ENABLED` — so a visibility
+        // change did nothing at all until something unrelated happened to dirty
+        // the enabled flag.
+        if (dirty & props::C_IS_VISIBLE) != (0 as u64) || dirty == paint::all_bits() {
+            ak::View::from_raw(v).set_hidden(core::is_hidden(n));
         }
         return;
     }
@@ -1356,11 +1370,19 @@ fn apply_stepper(v: *u8, n: *core::Node, dirty: u64) {
 
 fn create_text_button(n: *core::Node) -> *u8 {
     let b: ak::Button = ak::Button::from_raw(rt::alloc_init(#str_ptr("NSButton\0")));
-    // MomentaryChange, like icon_button: MomentaryPushIn draws a pushed-in
-    // BEZEL on press, which is exactly what this control exists not to have.
+    // MomentaryPushIn, and NOT MomentaryChange.
+    //
+    // MomentaryChange swaps the title for the ALTERNATE title while pressed, and
+    // a text button never sets one — so pressing it changed nothing at all and
+    // the control had no click feedback whatsoever. Reported from the gallery.
+    //
+    // The reason it was chosen was that MomentaryPushIn draws a pushed-in BEZEL,
+    // which is exactly what this control exists not to have. That is true of a
+    // BORDERED button; `setBordered:false` on the next line is what makes it not
+    // apply here, and the cell draws the title in its pressed state instead.
     // A toggling button asks for PushOnPushOff in `apply` instead, where the
     // prop is readable.
-    b.set_button_type(ak::ButtonType::MomentaryChange);
+    b.set_button_type(ak::ButtonType::MomentaryPushIn);
     b.set_bordered(false);
     return rt::retain(b.as_view().raw());
 }
@@ -1434,7 +1456,7 @@ fn apply_text_button(v: *u8, n: *core::Node, dirty: u64) {
     // is borderless either way.
     if (dirty & text_button::P_TOGGLES) != (0 as u64) || dirty == paint::all_bits() {
         if { (*p).toggles } { b.set_button_type(ak::ButtonType::PushOnPushOff); }
-        else { b.set_button_type(ak::ButtonType::MomentaryChange); }
+        else { b.set_button_type(ak::ButtonType::MomentaryPushIn); }
         // set_button_type resets `bordered` on some AppKit versions; restate it.
         b.set_bordered(false);
     }
@@ -1492,7 +1514,7 @@ fn apply_icon_button(v: *u8, n: *core::Node, dirty: u64) {
     // outline back without turning it into a bezelled push button.
     if (dirty & icon_button::P_TOGGLES) != (0 as u64) || dirty == paint::all_bits() {
         if { (*p).toggles } { b.set_button_type(ak::ButtonType::PushOnPushOff); }
-        else { b.set_button_type(ak::ButtonType::MomentaryChange); }
+        else { b.set_button_type(ak::ButtonType::MomentaryPushIn); }
         b.set_bordered(false);
     }
     if (dirty & icon_button::P_ON) != (0 as u64) || dirty == paint::all_bits() {

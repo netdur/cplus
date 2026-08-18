@@ -761,7 +761,8 @@ fn apply_common(v: *u8, n: *core::Node, dirty: u64) {
     // node has to clip or the corners are paint over square content. The clip
     // shape is the richer verb, so it goes first and this corrects it.
     if (dirty & props::C_CORNER_RADIUS) != (0 as u64) {
-        apply_corner_radius(view, core::corner_radius(n), { core::clip(n).kind } != (0 as i64));
+        apply_corner_radius(view, core::corner_radius(n), { core::clip(n).kind } != (0 as i64),
+                            shadow_is_drawn(core::shadow(n)));
     }
     if (dirty & props::C_TRANSFORM) != (0 as u64) {
         apply_transform(view, n);
@@ -836,12 +837,40 @@ fn apply_flow_direction(view: ak::View, n: *core::Node) {
 // paint, which is not what anyone means by rounded. Zero clears both, and asks
 // for no layer if there is none — the rule `apply_background` and `apply_border`
 // follow, and the one whose absence made every button flat.
-fn apply_corner_radius(view: ak::View, c: vocab::Corners, has_clip: bool) {
+// Does this shadow draw anything? The same test `apply_shadow` makes before it
+// touches a layer, named so the radius below can ask the question too.
+fn shadow_is_drawn(s: vocab::Shadow) -> bool {
+    if s.opacity <= 0.0f64 { return false; }
+    return s.color.is_set();
+}
+
+fn apply_corner_radius(view: ak::View, c: vocab::Corners, has_clip: bool,
+                       has_shadow: bool) {
     let r: f64 = largest_corner(c);
     if r > 0.0f64 {
         view.set_wants_layer(true);
         let l: quartz::Layer = view.layer();
         l.set_corner_radius(r);
+        // `masksToBounds` AND A SHADOW ARE THE SAME LAYER'S TWO ANSWERS to one
+        // question, and only one of them can win. A shadow is drawn OUTSIDE the
+        // layer bounds, so a mask erases it completely — a card with a radius and
+        // a shadow rendered with no shadow at all, which is what the gallery's
+        // Shadow demo did on every preset.
+        //
+        // The shadow wins when there is one, because it is the verb the app asked
+        // for explicitly and the mask is a side effect of the radius.
+        // `cornerRadius` on its own still rounds the layer's BACKGROUND and its
+        // border — masking is only needed to clip CONTENT, so a plain card looks
+        // identical either way and only overflowing children can tell.
+        //
+        // An app that needs both keeps the clip: `clip` is the explicit verb, it
+        // sets `masksToBounds` itself, and asking for it back alongside a shadow
+        // is asking for the shadow to be eaten. That is the documented
+        // interaction `apply_shadow` already names.
+        if has_shadow && has_clip == false {
+            l.set_masks_to_bounds(false);
+            return;
+        }
         l.set_masks_to_bounds(true);
         return;
     }

@@ -6193,6 +6193,50 @@ fn a_text_area_receives_its_text_colour() {
     return;
 }
 
+// THE SAME QUESTION WITH NO COLOUR NAMED, which is the ordinary case and the one
+// that was broken. `ui::text_area("...", key: ...)` names no colour, and the
+// gallery's does not.
+//
+// `rich_attributes` omits the colour key when none is set — correct for a label,
+// which is not replacing anything — but the editor band hands that dict to
+// `setTypingAttributes:` and `setAttributes:range:` over the WHOLE storage. So
+// omitting did not mean "leave it alone", it meant "strip the colour off this
+// text". Measured on a dark appearance: `textColor` came back nil and the first
+// character carried no NSColor at all, so the text system drew flat black on a
+// 30,30,30 background — reported as "the text area shows in black", and
+// unreadable rather than merely wrong.
+//
+// Asserted as "has a colour at all", not as a specific value: the answer is the
+// platform's `labelColor`, which is white-ish on a dark appearance and black on
+// a light one, and pinning either would make this test a thing that fails when
+// the CI machine's appearance changes. Nil is the bug; a colour is the fix.
+#[test]
+fn a_text_area_with_no_colour_named_still_gets_one() {
+    backend::install();
+    var n: core::Node = text_area::text_area(text: "hello", key: "ta:nocolour")
+        .height(60.0f64);
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    assert v != (0 as *u8);
+    let doc: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("documentView\0"))) };
+    assert doc != (0 as *u8);
+    // NIL HERE IS THE BUG. Not "some default the text view kept" — there was
+    // none, which is exactly why the fallback reached black.
+    assert { rt::msg_id(doc, rt::sel(#str_ptr("textColor\0"))) } != (0 as *u8);
+    // And the text itself carries it, which is the half a `textColor` read alone
+    // would not have caught: the storage is what the layout manager draws from.
+    let ts: *u8 = { rt::msg_id(doc, rt::sel(#str_ptr("textStorage\0"))) };
+    assert ts != (0 as *u8);
+    assert { rt::msg_u64(ts, rt::sel(#str_ptr("length\0"))) } > (0 as u64);
+    let attrs: *u8 = { rt::msg_id_u64_id(ts, rt::sel(#str_ptr("attributesAtIndex:effectiveRange:\0")),
+                                         0 as u64, 0 as *u8) };
+    assert attrs != (0 as *u8);
+    assert { rt::msg_id_id(attrs, rt::sel(#str_ptr("objectForKey:\0")),
+                           bridge::nsstring("NSColor")) } != (0 as *u8);
+    views::view_release(v);
+    return;
+}
+
 // The same question with the nesting iris actually has: the text area is the
 // content of a vertical scroll (the card sheet's prose column, new project's
 // form). A text area is itself an NSScrollView, so this is a scroll inside a

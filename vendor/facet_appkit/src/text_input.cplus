@@ -1078,8 +1078,32 @@ fn band_wants_rich(iv: *props::InputViewProps) -> bool {
                              vocab::TextDecoration::None);
 }
 
+// The colour these attributes MUST carry, even when the application named none.
+//
+// `rich_attributes` omits the colour key when the colour is unset, which is
+// right for a label: nothing is replaced, so the control keeps drawing in its
+// own default. An editor is the opposite case. Both callers below hand the dict
+// to a WHOLESALE replace — `setTypingAttributes:` plus `setAttributes:range:`
+// over the entire storage — so an omitted colour does not mean "leave it alone",
+// it means "remove whatever colour this text had".
+//
+// Measured on a dark appearance before this existed: `textColor` came back nil
+// AND the first character carried no NSColor attribute, so the text system fell
+// back to flat black on a 30,30,30 background. Reported from the gallery as "the
+// text area shows in black", and it was unreadable rather than merely wrong.
+//
+// `Color::text()` is the platform's own label colour — `labelColor` on this
+// backend — so unset still means "whatever the OS says", which is the same
+// discipline every unset theme role keeps. It is a dynamic NSColor, so it
+// follows an appearance flip on its own as well as through the restyle walk.
+fn band_text_color(iv: *props::InputViewProps) -> vocab::Color {
+    let c: vocab::Color = { (*iv).text_color };
+    if c.is_set() { return c; }
+    return vocab::Color::text();
+}
+
 fn band_attributes(iv: *props::InputViewProps, align: vocab::TextAlign) -> *u8 {
-    return paint::rich_attributes(band_font(iv), { (*iv).text_color },
+    return paint::rich_attributes(band_font(iv), band_text_color(iv),
                                   { (*iv).character_spacing }, 0.0f64,
                                   asked_align(align), vocab::TextDecoration::None);
 }
@@ -1297,7 +1321,9 @@ fn apply_style_runs(tv: ak::TextView, runs: *vocab::StyleRuns,
     { rt::msg_void(storage, rt::sel(#str_ptr("beginEditing\0"))) };
     // Back to one colour for everything. `addAttribute:` layered over whatever
     // the last set of runs left would leave a deleted run coloured forever.
-    let base: *u8 = paint::rich_attributes(editor_font(iv), { (*iv).text_color },
+    // Same wholesale replace, same reason it cannot omit the colour — see
+    // `band_text_color`.
+    let base: *u8 = paint::rich_attributes(editor_font(iv), band_text_color(iv),
                                            { (*iv).character_spacing }, 0.0f64,
                                            option::Option[vocab::TextAlign]::None,
                                            vocab::TextDecoration::None);
