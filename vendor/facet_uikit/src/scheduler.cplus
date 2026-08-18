@@ -165,6 +165,16 @@ fn layout_window(root: *core::Node) {
     let content: *u8 = content_view_of(win);
     if content == (0 as *u8) { return; }
     let cv: ui::View = ui::View::from_raw(content);
+    // THE BOUNDS, deliberately, and zoom is the reason it matters.
+    //
+    // facet_appkit reads the content view's FRAME here, because its zoom shrinks
+    // the host's BOUNDS to magnify what is drawn in them — AppKit's frame and
+    // bounds are independent. UIKit's are NOT: `frame.size` and `bounds.size` are
+    // the same value modulo the transform, measured — setting bounds to 100x50 on
+    // a 200x100 view moved the frame to 100x50 as well, shrinking the view
+    // instead of magnifying its content. So `zoom.cplus` scales the LAYER
+    // TRANSFORM instead, which leaves the bounds alone; the bounds stay the
+    // layout space and this must keep reading them.
     let f: rt::Rect = cv.bounds();
     let ins: ui::EdgeInsets = safe_insets(cv, root);
     let w: f64 = f.w - ins.left - ins.right;

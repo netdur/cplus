@@ -42,6 +42,7 @@ import "./geometry" as geometry;
 import "./scheduler" as scheduler;
 import "./device" as device;
 import "./keyboard" as keyboard;
+import "./zoom" as zoom;
 import "facet/theme" as theme;
 
 type Chrome = screen::Chrome;
@@ -93,6 +94,9 @@ static WANT_MAX_H: f64 = 0.0f64;
 // luck.
 static WANT_BAR: screen::Bar = #zero::[screen::Bar]();
 static WANT_MINIMIZABLE: bool = true;
+static WANT_ZOOMABLE: bool = false;
+static WANT_MIN_ZOOM: f64 = 1.0f64;
+static WANT_MAX_ZOOM: f64 = 4.0f64;
 static WANT_TITLE: *u8 = 0 as *u8;
 static WANT_SUBTITLE: *u8 = 0 as *u8;
 
@@ -139,6 +143,13 @@ fn open_window(root: *core::Node, take chrome: Chrome,
     WANT_MAX_H = chrome.max_height;
     WANT_BAR = chrome.bar;
     WANT_MINIMIZABLE = chrome.minimizable;
+    // The zoom trio, which this backend recorded as absent on the grounds that it
+    // was "a desktop window's vocabulary" — decided while reading a table of
+    // window-chrome fields. `zoomable` is content magnification, not a window
+    // state, and a pinch is more native to a touch screen than to a trackpad.
+    WANT_ZOOMABLE = chrome.zoomable;
+    WANT_MIN_ZOOM = chrome.min_zoom;
+    WANT_MAX_ZOOM = chrome.max_zoom;
     // RELEASE BEFORE OVERWRITE. `open_window` runs a second time when a running
     // app replaces what its one window shows, and a `+1` string dropped on the
     // floor there is a leak per call rather than a one-off.
@@ -185,6 +196,11 @@ fn attach_root(win: *u8, root: *core::Node) {
     // out from under it. It takes the WINDOW because a keyboard frame arrives in
     // screen coordinates and has to be converted into one.
     keyboard::install(win);
+    // Content magnification, on the same view for the same reason: it is the
+    // host whose bounds the pinch scales, and `attach_root` is the one place
+    // that has it. Idempotent, so a second `open_window` re-states the range
+    // rather than stacking a second recogniser.
+    if WANT_ZOOMABLE { zoom::install(content, WANT_MIN_ZOOM, WANT_MAX_ZOOM); }
     // THE SAFE AREA IS NOT KNOWN UNTIL UIKIT HAS LAID THE VIEW OUT. Measured in
     // the simulator: read inside `didFinishLaunchingWithOptions:` the insets are
     // all zero, and the app drew its first row underneath the status bar and the

@@ -504,10 +504,46 @@ states the rule.
 | `minimizable` | ❌ | ❌ | see below |
 | `maximizable` | ❌ | ❌ | see below |
 | `width` / `height` | ❌ | ❌ | see below |
-| the pinch-zoom trio | ❌ | ❌ | a desktop window's vocabulary |
+| the pinch-zoom trio | ✅ | ✅ | `zoom.cplus` — see below |
 
 On a phone every one of those objects is nil, so the whole replay is a few null
 checks and the screen is still the window.
+
+### The pinch-zoom trio was recorded as absent, and that was wrong
+
+It sat in the table above as ❌/❌ with the reason "a desktop window's
+vocabulary". The mistake is visible in where it was written down: this is a table
+of WINDOW CHROME fields, and beside `minimizable`, `maximizable` and
+`width`/`height` — all genuinely desktop-window ideas — `zoomable` reads like
+another one. It is not. It is CONTENT MAGNIFICATION, and a pinch belongs to a
+touch screen more than to a trackpad. The touch reading was never considered.
+
+`zoom.cplus` fills it. One platform difference and one platform trap:
+
+- `NSMagnificationGestureRecognizer` reports magnification as an OFFSET since the
+  gesture began, 0 meaning unchanged, so facet_appkit computes `base * (1 + m)`.
+  `UIPinchGestureRecognizer` reports `scale` as a MULTIPLIER, 1.0 meaning
+  unchanged. Copying appkit's arithmetic magnifies by 2x on the first callback of
+  a pinch that has not moved.
+- **appkit magnifies by shrinking the host's BOUNDS, and that does not port.** An
+  NSView's frame and bounds are independent, so a smaller bounds over the same
+  frame means "show less content in the same space" — magnification with no
+  layout pass. UIKit keeps `frame.size` and `bounds.size` equal modulo the
+  transform: measured, setting bounds to 100x50 on a 200x100 view moved the FRAME
+  to 100x50 as well, so the view shrank and its content did not grow. This
+  backend scales the LAYER TRANSFORM instead, which leaves the bounds — and
+  therefore everything flex laid out — untouched. That is also why
+  `scheduler::layout_window` keeps reading the content view's bounds where
+  facet_appkit reads its frame: the two backends put the zoom in different places,
+  so the layout has to read the one that does not move.
+
+`set_zoom` is the programmatic path, and it is not optional: an agent has no
+hands, so a pinch-only feature would be a feature no agent could reach.
+
+`run_component` now forwards the trio too. It built a Chrome naming only
+title/width/height, so magnification was unreachable from the simple entry on
+BOTH platforms — an app had to adopt `screen::Screen` to ask for something that
+has nothing to do with screens.
 
 `bar` maps onto `UISceneWindowingControlStyle`: `Blended` and `Custom` →
 `unified`, `Native` and `Hidden` → `minimal`, and nothing → `automatic`.

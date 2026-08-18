@@ -1,0 +1,302 @@
+// facet_uikit zoom — content magnification by pinch, NO reflow.
+//
+// `Chrome::new(zoomable: true)` lets the end user pinch to magnify a screen's
+// content — read small text — the way Safari's pinch scales a page: the picture
+// scales up AS LAID OUT (no reflow, no rewrap; the overflow clips at the host)
+// and the point under the fingers stays put.
+//
+// ---- why this exists on iOS, having been recorded as absent ---------------------
+//
+// MANIFEST.md listed "the pinch-zoom trio" as ❌/❌ with the reason "a desktop
+// window's vocabulary", and that was wrong. It was decided while reading a table
+// of WINDOW CHROME fields — minimizable, maximizable, width/height — where a
+// zoomable WINDOW really is a desktop idea. But `zoomable` is not about the
+// window; it is content magnification, and a pinch is more native to a touch
+// screen than to a trackpad. The touch reading was never considered.
+//
+// ---- the one platform difference that matters ----------------------------------
+//
+// `NSMagnificationGestureRecognizer` reports magnification as an OFFSET
+// accumulated since the gesture began — 0 means unchanged — so facet_appkit
+// computes `base * (1 + m)`. `UIPinchGestureRecognizer` reports `scale` as a
+// MULTIPLIER, where 1.0 means unchanged. Copying appkit's arithmetic would make
+// an untouched pinch magnify by 2x on the first callback. `zoom_target` below
+// takes the multiplier convention and says so.
+//
+// Everything else — the anchor arithmetic, the frame/bounds split, the healed
+// range — is the same on both platforms because it is Core Animation geometry
+// rather than anything AppKit or UIKit decides.
+
+import "stdlib/option" as option;
+import "stdlib/box" as box;
+import "objc/runtime" as rt;
+import "objc/synthesis" as synth;
+import "uikit/uikit" as ui;
+import "quartzcore/quartzcore" as quartz;
+import "./paint" as paint;
+
+#[link_name = "objc_msgSend"]
+extern fn msg_id_id_sel(recv: *u8, sel: *u8, a: *u8, b: *u8) -> *u8;
+#[link_name = "objc_msgSend"]
+extern fn msg_point_id(recv: *u8, sel: *u8, a: *u8) -> rt::Point;
+// `CATransform3DMakeScale(1,1,1)` IS the identity, so no separate identity call.
+#[link_name = "CATransform3DMakeScale"]
+extern fn CATransform3DMakeScale(sx: f64, sy: f64, sz: f64) -> quartz::Transform3D;
+
+// A zoomable host. `host` is BORROWED — the window owns its content view, and an
+// entry outlives nothing.
+struct HostZoom {
+    opaque host: *u8,
+    // The factor a gesture compounds FROM, captured when the pinch begins, so
+    // consecutive pinches multiply instead of each restarting from 1.
+    base: f64,
+    zoom: f64,
+    min: f64,
+    max: f64,
+}
+
+// THE ENTRY LIVES ON THE HOST, not in a global list keyed by its address.
+//
+// facet_appkit keeps a `Vec[HostZoom]` and finds entries by comparing the raw
+// `host` pointer, which is safe there for the reason its comment gives: a host is
+// a window's content view and outlives everything. It is still a hazard, and the
+// checks proved it — a freed view's address gets reused by the next allocation,
+// so a brand-new view was found to be "already zoomable" and inherited a zoom
+// nobody installed on it. In an app that never happens; in a test it happens
+// immediately, and "only reachable in tests" is not the same as "not a bug".
+//
+// An associated object cannot outlive its host, so the question "does this view
+// have a zoom" answers itself. It is also O(1) rather than a scan.
+//
+// The box is never freed. One per zoomable host, and a host is a window's content
+// view — the same lifetime the Vec assumed, made explicit instead of load-bearing.
+fn zoom_key() -> *u8 { return 41011 as *u8; }
+
+static TARGET: *u8 = 0 as *u8;
+static TARGET_CLASS: *u8 = 0 as *u8;
+
+fn entry_of(host: *u8) -> option::Option[*HostZoom] {
+    if host == (0 as *u8) { return option::Option[*HostZoom]::None; }
+    let p: *HostZoom = { synth::get_associated(host, zoom_key()) } as *HostZoom;
+    if p == (0 as *HostZoom) { return option::Option[*HostZoom]::None; }
+    return option::Option[*HostZoom]::Some(p);
+}
+
+// ---- the arithmetic ------------------------------------------------------------
+// Pure, and separated out because it is the part worth testing without fingers.
+// Every NaN path is deliberate: a gesture stream that reports one must leave the
+// picture alone rather than amplify it.
+
+// A MULTIPLIER, not an offset — see the header. 1.0 leaves the zoom where it is.
+fn zoom_target(base: f64, scale: f64, min_zoom: f64, max_zoom: f64) -> f64 {
+    var target: f64 = base;
+    if scale == scale { target = base * scale; }
+    // Written as a failed `>` rather than `<`, so NaN collapses to the floor
+    // instead of falling through as "in range".
+    if (target > min_zoom) == false { target = min_zoom; }
+    if target > max_zoom { target = max_zoom; }
+    return target;
+}
+
+// Where the scaled content's origin lands so the point under the fingers stays
+// where it was: the anchor keeps its FRACTION of the visible span across the
+// change.
+fn zoom_origin(anchor: f64, old_origin: f64, old_visible: f64, new_visible: f64) -> f64 {
+    if (old_visible > 0.0f64) == false { return 0.0f64; }
+    let fraction: f64 = (anchor - old_origin) / old_visible;
+    return anchor - (fraction * new_visible);
+}
+
+// A degenerate range is HEALED rather than rejected: min floors at 1, and a max
+// below min locks the zoom there. An application that says `max_zoom: 0` gets a
+// screen that does not zoom, not one that inverts.
+fn heal_min(v: f64) -> f64 {
+    if (v > 0.0f64) == false { return 1.0f64; }
+    return v;
+}
+
+fn heal_max(lo: f64, hi: f64) -> f64 {
+    if (hi >= lo) == false { return lo; }
+    return hi;
+}
+
+// ---- applying it ---------------------------------------------------------------
+
+// Scale `host` to `target`, keeping the content point (ax, ay) fixed.
+//
+// A LAYER TRANSFORM, not a bounds change, and that is a real platform difference
+// rather than a preference. facet_appkit magnifies by SHRINKING the host's
+// bounds: an NSView's frame and bounds are independent, so a smaller bounds over
+// the same frame means "show less content in the same space", which is
+// magnification for free with no layout pass.
+//
+// UIKit's frame and bounds are NOT independent — `frame.size` is `bounds.size`
+// modulo the transform. Measured: setting bounds to 100x50 on a 200x100 view
+// moved the FRAME to 100x50 too, so the view shrank on screen and its content did
+// not grow. The bounds trick does not port.
+//
+// Scaling the layer transform gets the same result the right way round: the
+// bounds — and therefore everything flex laid out — are untouched, so there is no
+// reflow and no rewrap, and `scheduler::layout_window` keeps reading the bounds
+// as its layout space.
+//
+// THE ANCHOR IS THE LAYER'S ANCHOR POINT. A transform scales about it, so putting
+// it under the fingers is what keeps the point under the fingers still — no
+// compensating translation to derive or accumulate.
+// `paint::set_anchor_keeping_place` moves it without moving the picture.
+fn apply(host: *u8, target: f64, ax: f64, ay: f64) {
+    match entry_of(host) {
+        option::Option[*HostZoom]::Some(zp) => {
+            let v: ui::View = ui::View::from_raw(host);
+            let l: quartz::Layer = v.layer();
+            let b: rt::Rect = v.bounds();
+            if { b.w } > 0.0f64 && { b.h } > 0.0f64 {
+                paint::set_anchor_keeping_place(l,
+                    (ax - { b.x }) / { b.w },
+                    (ay - { b.y }) / { b.h });
+            }
+            l.set_transform({ CATransform3DMakeScale(target, target, 1.0f64) });
+            { (*zp).zoom = target };
+        }
+        option::Option[*HostZoom]::None => { }
+    }
+    return;
+}
+
+// The visible cut's centre — the anchor when there is no gesture location (a
+// programmatic zoom, or a recogniser not yet attached to a view).
+fn centre_of(host: *u8) -> rt::Point {
+    let b: rt::Rect = ui::View::from_raw(host).bounds();
+    return rt::Point { x: b.x + (b.w / 2.0f64), y: b.y + (b.h / 2.0f64) };
+}
+
+// ---- the gesture ---------------------------------------------------------------
+// UIGestureRecognizerState: 0 possible, 1 began, 2 changed, 3 ended, 4 cancelled.
+
+fn imp_pinch(self_obj: *u8, cmd: *u8, g: *u8) {
+    if g == (0 as *u8) { return; }
+    let host: *u8 = { rt::msg_id(g, rt::sel(#str_ptr("view\0"))) };
+    if host == (0 as *u8) { return; }
+    match entry_of(host) {
+        option::Option[*HostZoom]::Some(zp) => {
+            let state: i64 = { rt::msg_i64(g, rt::sel(#str_ptr("state\0"))) };
+            // THE BASE IS CAPTURED ON `began`, not carried from the last frame.
+            // `scale` is cumulative for the whole gesture, so compounding it per
+            // callback would cube the magnification over three frames.
+            if state == (1 as i64) { { (*zp).base = { (*zp).zoom } }; return; }
+            if state != (2 as i64) { return; }
+            let scale: f64 = { rt::msg_f64(g, rt::sel(#str_ptr("scale\0"))) };
+            let target: f64 = zoom_target({ (*zp).base }, scale, { (*zp).min }, { (*zp).max });
+            // The anchor is where the fingers are, in the HOST's own coordinate
+            // space — which is bounds space, and therefore already the space the
+            // arithmetic wants.
+            let a: rt::Point = { msg_point_id(g, rt::sel(#str_ptr("locationInView:\0")), host) };
+            apply(host, target, { a.x }, { a.y });
+        }
+        option::Option[*HostZoom]::None => { }
+    }
+    return;
+}
+
+fn target_class() -> *u8 {
+    if TARGET_CLASS != (0 as *u8) { return TARGET_CLASS; }
+    let existing: *u8 = rt::get_class(#str_ptr("FacetUIKitZoomTarget\0"));
+    if existing != (0 as *u8) { TARGET_CLASS = existing; return TARGET_CLASS; }
+    let base: *u8 = rt::get_class(#str_ptr("NSObject\0"));
+    if base == (0 as *u8) { return 0 as *u8; }
+    let cls: *u8 = { synth::allocate_class_pair(base,
+        #str_ptr("FacetUIKitZoomTarget\0"), 0 as usize) };
+    if cls == (0 as *u8) { return 0 as *u8; }
+    let _a: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("facetPinch:\0")),
+                                         imp_pinch, #str_ptr("v@:@\0"));
+    { synth::register_class_pair(cls) };
+    TARGET_CLASS = cls;
+    return TARGET_CLASS;
+}
+
+fn shared_target() -> *u8 {
+    if TARGET != (0 as *u8) { return TARGET; }
+    let cls: *u8 = target_class();
+    if cls == (0 as *u8) { return 0 as *u8; }
+    TARGET = { synth::alloc_init_class(cls) };
+    return TARGET;
+}
+
+// ---- the surface ---------------------------------------------------------------
+
+// Idempotent, because `open_window` runs again when a running app replaces what
+// its one window shows: a second call updates the range and does NOT add a
+// second recogniser, which would apply the pinch twice per frame.
+fn install(host: *u8, min_zoom: f64 = 1.0f64, max_zoom: f64 = 4.0f64) {
+    if host == (0 as *u8) { return; }
+    let lo: f64 = heal_min(min_zoom);
+    let hi: f64 = heal_max(lo, max_zoom);
+    match entry_of(host) {
+        option::Option[*HostZoom]::Some(zp) => {
+            { (*zp).min = lo };
+            { (*zp).max = hi };
+            return;
+        }
+        option::Option[*HostZoom]::None => { }
+    }
+    match box::new::[HostZoom](HostZoom { host: host, base: 1.0f64, zoom: 1.0f64,
+                                         min: lo, max: hi }) {
+        option::Option[box::Box[HostZoom]]::Some(b) => {
+            synth::set_associated(host, zoom_key(), b.into_raw() as *u8);
+        }
+        option::Option[box::Box[HostZoom]]::None => { return; }
+    }
+    // Scaled content overflows the host; clip it there. A UIView's
+    // `clipsToBounds` defaults to NO, so without this the magnified picture
+    // bleeds over the status bar.
+    ui::View::from_raw(host).set_clips_to_bounds(true);
+    let t: *u8 = shared_target();
+    if t == (0 as *u8) { return; }
+    let cls: *u8 = rt::get_class(#str_ptr("UIPinchGestureRecognizer\0"));
+    if cls == (0 as *u8) { return; }
+    let alloced: *u8 = { rt::msg_id(cls, rt::sel(#str_ptr("alloc\0"))) };
+    if alloced == (0 as *u8) { return; }
+    let g: *u8 = { msg_id_id_sel(alloced, rt::sel(#str_ptr("initWithTarget:action:\0")),
+                                 t, rt::sel(#str_ptr("facetPinch:\0"))) };
+    if g == (0 as *u8) { return; }
+    { rt::msg_void_id(host, rt::sel(#str_ptr("addGestureRecognizer:\0")), g) };
+    { rt::release(g) };
+    return;
+}
+
+// The programmatic path — a menu item, a shortcut, a test, an AGENT. It drives
+// exactly what the gesture drives, anchored at the visible cut's centre.
+//
+// This is the standing rule in one function: an agent has no hands, so a
+// pinch-only feature would be a feature no agent could reach. Answers the factor
+// actually applied (1.0 where no zoom is installed).
+fn set_zoom(host: *u8, zoom: f64) -> f64 {
+    match entry_of(host) {
+        option::Option[*HostZoom]::Some(zp) => {
+            // Scale of 1.0 against a base of the REQUESTED factor, which is the
+            // clamp-only path through the same arithmetic the gesture uses.
+            let target: f64 = zoom_target(zoom, 1.0f64, { (*zp).min }, { (*zp).max });
+            { (*zp).base = target };
+            let a: rt::Point = centre_of(host);
+            apply(host, target, { a.x }, { a.y });
+            return target;
+        }
+        option::Option[*HostZoom]::None => { return 1.0f64; }
+    }
+}
+
+// The zoom currently applied to a host. 1.0 when none was ever installed, so a
+// caller never has to ask whether there is one first.
+fn zoom_of(host: *u8) -> f64 {
+    match entry_of(host) {
+        option::Option[*HostZoom]::Some(zp) => { return { (*zp).zoom }; }
+        option::Option[*HostZoom]::None => { return 1.0f64; }
+    }
+}
+
+fn is_zoomable(host: *u8) -> bool {
+    match entry_of(host) {
+        option::Option[*HostZoom]::Some(zp) => { return true; }
+        option::Option[*HostZoom]::None => { return false; }
+    }
+}

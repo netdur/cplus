@@ -35,6 +35,11 @@ export extern fn facet_gallery_ios_main() -> i32 {
         title: "facet gallery",
         width: 390.0f64,
         height: 844.0f64,
+        // Pinch to magnify, which this backend recorded as absent until it was
+        // pointed out that a pinch belongs to a touch screen more than to a
+        // trackpad. The desktop gallery can turn the same flag on.
+        zoomable: true,
+        max_zoom: 3.0f64,
     );
     return 0;
 }

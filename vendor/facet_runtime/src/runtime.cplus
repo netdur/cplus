@@ -104,6 +104,14 @@ fn run_component[C: component::Component + component::Lifecycle](
     title: str = "facet",
     width: f64 = 480.0f64,
     height: f64 = 360.0f64,
+    // The zoom trio, forwarded like the other three. `run_component` built a
+    // Chrome naming only title/width/height, so content magnification was
+    // unreachable from the simple entry on BOTH platforms however well the
+    // backend implemented it — an app had to adopt `screen::Screen` to ask for a
+    // feature that has nothing to do with screens.
+    zoomable: bool = false,
+    min_zoom: f64 = 1.0f64,
+    max_zoom: f64 = 4.0f64,
     take menu: AppMenu = screen::empty_app_menu(),
 ) -> C {
     var owned: C = component_v;
