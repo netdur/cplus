@@ -42,6 +42,7 @@ import "./keys" as keys;
 import "./window" as window;
 import "./device" as device;
 import "./keyboard" as keyboard;
+import "./scrolling" as scrolling;
 import "facet/screen" as screen;
 import "facet/window_chrome" as chrome;
 import "./dialogs" as dialogs;
@@ -229,6 +230,49 @@ fn subview_count(v: *u8) -> u64 {
     let subs: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("subviews\0"))) };
     if subs == (0 as *u8) { return 0 as u64; }
     return { rt::msg_u64(subs, rt::sel(#str_ptr("count\0"))) };
+}
+
+// ---- the scroll node ------------------------------------------------------------
+// FOUND BY DIFFING THE TWO BACKENDS, not by anyone hitting it. facet declares
+// `observe_scrolled` on four kinds; this backend served three. The recycler
+// points a table's and a collection's scroll delegate at its own imp and a
+// carousel rides the same one — but `create_scroll` made a bare UIScrollView and
+// set NO DELEGATE, so the one kind whose entire purpose is scrolling never
+// reported that it had.
+//
+// `scroll_x()`/`scroll_y()` were the same hole from the other side: `apply_scroll`
+// WRITES them out with `setContentOffset:` and nothing wrote back, so they
+// answered the last value set rather than where the user is. facet_appkit fixed
+// exactly this in its own scrolling.cplus and the fix never crossed.
+
+static SCROLLED_FIRED: bool = false;
+
+fn note_scrolled(sender: *u8, ctx: *u8) { SCROLLED_FIRED = true; return; }
+
+fn a_scroll_node_reports_where_it_is_and_calls_back() -> bool {
+    SCROLLED_FIRED = false;
+    let cb: fn(*u8, *u8) = note_scrolled;
+    var n: core::Node = ui::scroll(key: "sc:probe", observe_scrolled: cb);
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    if v == (0 as *u8) { return false; }
+    // THE BUG ITSELF: there was no delegate at all.
+    if scrolling::delegate_installed(v) == false { views::view_release(v); return false; }
+    // A real move, not a hand-called delegate method: `setContentOffset:` is what
+    // UIKit delivers `scrollViewDidScroll:` for, so this exercises the wiring
+    // rather than the handler in isolation.
+    uik::ScrollView::from_raw(v).set_content_offset(rt::Point { x: 12.0f64, y: 34.0f64 });
+    let ok_fired: bool = SCROLLED_FIRED;
+    var ok_recorded: bool = false;
+    let d: *core::Data = core::node_data(p);
+    if d != (0 as *core::Data) {
+        let sp: *props::ScrollProps = { (*d).props } as *props::ScrollProps;
+        if sp != (0 as *props::ScrollProps) {
+            ok_recorded = { (*sp).scroll_x } == 12.0f64 && { (*sp).scroll_y } == 34.0f64;
+        }
+    }
+    views::view_release(v);
+    return ok_fired && ok_recorded;
 }
 
 // ---- the keyboard ---------------------------------------------------------------
@@ -956,6 +1000,8 @@ fn run_all() -> i32 {
           the_keyboard_observer_answers_both_hooks());
     check("the enclosing scroll is the page, not the editor",
           the_enclosing_scroll_is_the_page_not_the_editor());
+    check("a scroll node reports where it is and calls back",
+          a_scroll_node_reports_where_it_is_and_calls_back());
     check("a viewless root still has backed children",
           a_realised_viewless_root_still_has_backed_children());
     check("a tree's default row is no_row, not null", a_tree_default_row_is_no_row_not_null());

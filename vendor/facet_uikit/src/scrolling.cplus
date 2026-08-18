@@ -1,0 +1,114 @@
+// facet_uikit scrolling — `observe_scrolled` and the recorded offset, for the
+// plain `scroll` node.
+//
+// THE GAP THIS FILLS. facet declares `observe_scrolled` on four kinds and this
+// backend served three of them: the recycler points a table's and a collection's
+// scroll delegate at its own `imp_scrolled`, and a carousel rides the same imp.
+// A plain `scroll` node had NO DELEGATE AT ALL — `create_scroll` made a bare
+// UIScrollView and returned it — so `observe_scrolled` never fired on iOS, on
+// the one kind whose entire purpose is scrolling.
+//
+// `scroll_x()` and `scroll_y()` were the same omission read from the other side.
+// `apply_scroll` WRITES them to the view with `setContentOffset:`, and nothing
+// ever wrote back, so the props answered whatever the application last set —
+// never where the user actually is. facet_appkit fixed exactly this in its own
+// `scrolling.cplus` and the fix did not cross: "the two fields existed and no
+// code on either side of the boundary ever touched them".
+//
+// Found by diffing the two backends against each other rather than by anyone
+// hitting it, which is the point of doing that.
+//
+// ---- shape ---------------------------------------------------------------------
+//
+// One STATELESS delegate singleton, exactly like the recycler's `DS`: the node
+// is recovered from the view with `input::node_of`, so one object serves every
+// scroll view in the process. It lives in a static because a UIScrollView's
+// `delegate` is an UNRETAINED reference — an autoreleased delegate would be a
+// dangling pointer on the next scroll.
+
+import "facet/facet" as core;
+import "facet/props" as props;
+import "objc/runtime" as rt;
+import "objc/synthesis" as synth;
+import "uikit/uikit" as ui;
+import "./input" as input;
+
+static DELEGATE: *u8 = 0 as *u8;
+static DELEGATE_CLASS: *u8 = 0 as *u8;
+
+// Where the scroll IS, written back into the props.
+//
+// A DIRECT FIELD WRITE, with no `core::touch`. Marking the prop dirty would send
+// the value straight back out through `apply_scroll`'s `setContentOffset:` on
+// the next sync — the view telling the model telling the view — and a scroll
+// that fights the user is worse than one that cannot be read.
+fn record_offset(n: *core::Node, sv: *u8) {
+    if n == (0 as *core::Node) || sv == (0 as *u8) { return; }
+    let d: *core::Data = core::node_data(n);
+    if d == (0 as *core::Data) { return; }
+    if { (*d).kind } != props::K_SCROLL { return; }
+    let p: *props::ScrollProps = { (*d).props } as *props::ScrollProps;
+    if p == (0 as *props::ScrollProps) { return; }
+    let off: rt::Point = ui::ScrollView::from_raw(sv).content_offset();
+    { (*p).scroll_x = { off.x } };
+    { (*p).scroll_y = { off.y } };
+    return;
+}
+
+fn imp_scrolled(self_obj: *u8, cmd: *u8, sv: *u8) {
+    let n: *core::Node = input::node_of(sv);
+    if n == (0 as *core::Node) { return; }
+    // Recorded BEFORE the handler runs, so an application that reads
+    // `scroll_y()` from inside its own callback sees this scroll and not the
+    // one before it.
+    record_offset(n, sv);
+    let d: *core::Data = core::node_data(n);
+    if d == (0 as *core::Data) { return; }
+    if { (*d).kind } != props::K_SCROLL { return; }
+    let p: *props::ScrollProps = { (*d).props } as *props::ScrollProps;
+    if p == (0 as *props::ScrollProps) { return; }
+    let h: fn(*u8, *u8) = { (*p).observe_scrolled };
+    if h != props::no_handler { h(sv, { (*p).observe_scrolled_ctx }); }
+    return;
+}
+
+fn delegate_class() -> *u8 {
+    if DELEGATE_CLASS != (0 as *u8) { return DELEGATE_CLASS; }
+    let existing: *u8 = rt::get_class(#str_ptr("FacetUIKitScrollDelegate\0"));
+    if existing != (0 as *u8) { DELEGATE_CLASS = existing; return DELEGATE_CLASS; }
+    let base: *u8 = rt::get_class(#str_ptr("NSObject\0"));
+    if base == (0 as *u8) { return 0 as *u8; }
+    let cls: *u8 = { synth::allocate_class_pair(base,
+        #str_ptr("FacetUIKitScrollDelegate\0"), 0 as usize) };
+    if cls == (0 as *u8) { return 0 as *u8; }
+    let _a: i8 = synth::add_method_v_1id(cls,
+        rt::sel(#str_ptr("scrollViewDidScroll:\0")),
+        imp_scrolled, #str_ptr("v@:@\0"));
+    { synth::register_class_pair(cls) };
+    DELEGATE_CLASS = cls;
+    return DELEGATE_CLASS;
+}
+
+fn shared_delegate() -> *u8 {
+    if DELEGATE != (0 as *u8) { return DELEGATE; }
+    let cls: *u8 = delegate_class();
+    if cls == (0 as *u8) { return 0 as *u8; }
+    DELEGATE = { synth::alloc_init_class(cls) };
+    return DELEGATE;
+}
+
+// Called from `create_scroll`. Binds the node to the view — which is what makes
+// the stateless delegate work — and points the view at the shared delegate.
+fn install(view: *u8, n: *core::Node) {
+    if view == (0 as *u8) || n == (0 as *core::Node) { return; }
+    input::bind_node(view, n);
+    let d: *u8 = shared_delegate();
+    if d == (0 as *u8) { return; }
+    { rt::msg_void_id(view, rt::sel(#str_ptr("setDelegate:\0")), d) };
+    return;
+}
+
+fn delegate_installed(view: *u8) -> bool {
+    if view == (0 as *u8) { return false; }
+    return { rt::msg_id(view, rt::sel(#str_ptr("delegate\0"))) } != (0 as *u8);
+}

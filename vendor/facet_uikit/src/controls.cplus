@@ -59,6 +59,7 @@ import "./drawing" as drawing;
 import "./input" as input;
 import "./text_input" as ti;
 import "./dates" as dates;
+import "./scrolling" as scrolling;
 
 fn props_of(n: *core::Node, kind: u32) -> *u8 {
     let d: *core::Data = core::node_data(n);
@@ -1048,6 +1049,10 @@ fn apply_symbol_config(v: *u8, size: f64, fill: f64) {
 
 fn create_scroll(n: *core::Node) -> *u8 {
     let s: ui::ScrollView = ui::ScrollView::new_with_frame(zero_rect());
+    // The scroll delegate, which this kind had none of: `observe_scrolled` never
+    // fired on a plain scroll node and `scroll_x()`/`scroll_y()` answered the
+    // last value WRITTEN rather than where the user is. See scrolling.cplus.
+    scrolling::install(s.as_view().raw(), n);
     return rt::retain(s.as_view().raw());
 }
 
