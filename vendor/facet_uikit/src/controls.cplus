@@ -98,8 +98,12 @@ fn swipe_kind(kind: u32) -> bool { return kind == props::K_SWIPE_ITEM; }
 // DECIDED, NOT MISSING. Every entry here is a thing iOS does not have, and
 // MANIFEST.md carries the reason and the alternative for each one.
 fn decided_absent(kind: u32) -> bool {
-    // A window's close/minimise/zoom buttons. An iOS window is the screen.
-    if kind == chrome::K_WINDOW_BUTTONS { return true; }
+    // `K_WINDOW_BUTTONS` WAS HERE, on the reasoning that "an iOS window is the
+    // screen". That stopped being true on an iPad in iPadOS 26: a windowed app
+    // gets a real close/minimise/zoom pill, photographed at x 19.5-60pt,
+    // y 20.5-40pt from the window's corner. The kind is answered in views.cplus
+    // now — it reserves that corner so an application's own bar lays out beside
+    // the controls instead of underneath them. See MANIFEST.md §1.
     // A draggable split divider is a pointer idiom. UISplitViewController is a
     // navigation container with a fixed sidebar, not a resizable pane pair, so
     // rendering the two panes stacked is the honest answer rather than pretending

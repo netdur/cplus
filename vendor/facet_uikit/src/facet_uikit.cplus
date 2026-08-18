@@ -39,6 +39,7 @@ import "facet/theme" as theme;
 import "facet/application" as app;
 import "objc/runtime" as rt;
 import "./views" as views;
+import "./paint" as paint;
 import "./input" as input;
 import "./keys" as keys;
 import "./scheduler" as scheduler;
@@ -152,8 +153,27 @@ fn theme_changed() {
 }
 
 fn repaint_walk(n: *core::Node) {
-    core::touch(n, props::C_BACKGROUND_COLOR | props::C_BACKGROUND
-                   | props::C_SHADOW | props::C_CORNER_RADIUS);
+    // EVERY STATE BIT, not a hand-picked four.
+    //
+    // This used to name `C_BACKGROUND_COLOR | C_BACKGROUND | C_SHADOW |
+    // C_CORNER_RADIUS`, which is a list of "which props are colours" — the exact
+    // second copy the comment above says not to keep. It was wrong by omission:
+    // a colour on a control is a PER-KIND prop, not a shared-band one, so a
+    // label carrying `adaptive(light: red, dark: green)` as its TEXT colour was
+    // never marked and stayed red through a flip to dark. Photographed beside a
+    // background and a gradient that both followed correctly.
+    //
+    // `C_RESTYLE` is `~C_COMMANDS` with one bit withheld — every fact and no
+    // verb — so it reaches `label::P_TEXT_COLOR` and every other per-kind colour
+    // without naming any of them, and cannot re-fire `C_FOCUS` / `C_BLUR` /
+    // `C_FLUSH` and steal a caret mid-word.
+    //
+    // NOT `all_bits()`, and the difference is a bug that shipped. That value is
+    // also the CREATE SENTINEL: 76 sites test `dirty == paint::all_bits()` to
+    // mean "this is the create pass". Passing it here made every appearance flip
+    // look like a create, and a recycling list answered by clearing every
+    // measured height and scrolling back to the top. See `props::C_RESTYLE`.
+    core::touch(n, paint::restyle_bits());
     var i: usize = 0 as usize;
     let count: usize = core::child_count_of(n);
     while i < count {

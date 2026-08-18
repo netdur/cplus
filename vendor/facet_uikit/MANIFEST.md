@@ -35,14 +35,14 @@ now exists and why both are printed together.
 
 ### Window buttons
 
-`window_buttons` describes a macOS titlebar's close / minimise / zoom. An iOS
-window is the screen: there is nothing to close it into, no other window to
-minimise beneath, and no zoom state. The kind gets a plain backing view so a
-custom titlebar row still lays out, and nothing is hosted in it.
+**MOVED OUT OF THIS SECTION.** `window_buttons` was listed here as decided
+absent, on the reasoning that "an iOS window is the screen: there is nothing to
+close it into, no other window to minimise beneath, and no zoom state". That
+stopped being true on an iPad in iPadOS 26. It is answered now — §7 has it.
 
-**Instead:** a navigation bar (`UINavigationItem`) is the iOS affordance for
-"what this screen can do", and facet's `toolbar_item` is the vocabulary that
-should reach it once the chrome tier is ported.
+The menu-bar half of the old entry stands: a navigation bar (`UINavigationItem`)
+is the iOS affordance for "what this screen can do", and facet's `toolbar_item`
+is the vocabulary that should reach it once the chrome tier is ported.
 
 ### The menu bar
 
@@ -404,18 +404,31 @@ UIKit reads the bundle and the launch options from the app bundle rather than
 from argv. **This is the first thing to check when the package is first run on a
 device**, because its failure mode is the app not starting at all.
 
-### The appearance flip is not wired
+### The appearance flip — WIRED
 
-UIKit has no application-level "the appearance changed" hook — a dark-mode flip
-arrives as a trait change on views and controllers. `facet_uikit.cplus` has the
-repaint walk ready and nothing fires it; the missing piece is a
-`traitCollectionDidChange:` override on the root view controller. This is the
-one place UIKit is poorer than AppKit, which has
-`viewDidChangeEffectiveAppearance`.
+UIKit has no application-level "the appearance changed" hook: a dark-mode flip
+arrives as a TRAIT CHANGE, delivered to views. So the signal is taken by an
+invisible 0x0 sentinel subview whose `traitCollectionDidChange:` forwards to
+`theme::notify_appearance_changed` — the same shape facet_appkit uses for
+`viewDidChangeEffectiveAppearance`, which keeps one problem one design across
+the two backends.
 
-Most colours do not need it: UIKit's semantic colours are dynamic objects and
-re-resolve themselves. What does not follow on its own is an `adaptive` literal
-pair and anything flattened to a CGColor.
+It filters on the light/dark axis. `traitCollectionDidChange:` also fires for
+size class, dynamic type and layout direction, and a whole-tree repaint on every
+rotation would be a real cost for no reason.
+
+**Why this was invisible for so long, and worth remembering.** Most colours
+never needed it: UIKit's semantic colours are dynamic objects that re-resolve
+themselves, so a screen painted from facet's semantic roles followed a flip with
+no help at all — and looked completely correct. What did NOT follow was anything
+facet had flattened: an `adaptive` literal pair (token 254), which paint.cplus
+resolves to one static UIColor for whichever trait collection was current when
+it was applied, and anything that reached a CGColor.
+
+Photographed before the fix: a row of `adaptive(light: red, dark: blue)` stayed
+**red** through a flip to dark while the semantic row beside it went black on
+its own. After: red → blue, live, same process id. The repaint walk had been
+correct the whole time; nothing called it.
 
 ### A navigation leaks one screen
 
@@ -425,14 +438,152 @@ which it can do because its loop returned. There is no such moment here, so the
 honest choice was to leak one screen per navigation rather than free something a
 queued apply still holds. The fix is a settle that runs ON the loop.
 
-### `Chrome` is almost entirely inert
+### `Chrome` is inert on a phone and mostly live on an iPad
 
-`width`, `height`, `min_*`, `max_*`, `maximizable`, `minimizable`, `title` and
-the pinch-zoom trio describe a desktop window. The screen is the window here.
-Only what the tree itself draws survives.
+This section used to say "almost entirely inert", and that sentence was true of
+a phone and false of an iPad. Since iPadOS 26 an iPad app lives in a window the
+user resizes and places beside other apps, and most of `Chrome` has somewhere to
+land. What lands is decided per field by asking the running scene, never by
+testing the device — `window.cplus` says why at length, and `device.cplus`
+states the rule.
+
+| field | iPad | iPhone | how |
+|---|---|---|---|
+| `title_text` | ✅ | — | `UIScene.title` |
+| `subtitle_text` | ✅ | — | `UIScene.subtitle` |
+| `min_width` / `min_height` | ✅ | — | `UISceneSizeRestrictions.minimumSize` |
+| `max_width` / `max_height` | ✅ | — | `UISceneSizeRestrictions.maximumSize` |
+| `bar` | ✅ | — | the scene's windowing control style |
+| `minimizable` | ❌ | ❌ | see below |
+| `maximizable` | ❌ | ❌ | see below |
+| `width` / `height` | ❌ | ❌ | see below |
+| the pinch-zoom trio | ❌ | ❌ | a desktop window's vocabulary |
+
+On a phone every one of those objects is nil, so the whole replay is a few null
+checks and the screen is still the window.
+
+`bar` maps onto `UISceneWindowingControlStyle`: `Blended` and `Custom` →
+`unified`, `Native` and `Hidden` → `minimal`, and nothing → `automatic`.
+
+The rule is **`unified` only for an app that draws a top bar with room in it;
+`minimal` for everything else** — and it is measured rather than reasoned.
+Windowed on an iPad, only `minimal` puts the system's close/minimise/zoom pill
+outside `safeAreaInsets`; under `unified` and `automatic` the pill is drawn over
+the app's own top-left corner and nothing tells the app it happened. `automatic`
+is unused because it is what UIKit picks when the delegate does not implement
+the method at all. WINDOWING.md §4 and §9 have the numbers and the photographs.
+The mapping is pinned by two checks rather than left to a reader.
+
+**Three cannots, and they are cannots rather than not-yets.**
+
+`minimizable` has nowhere to land ON IOS AT ALL. `UISceneWindowingBehaviors`
+carries `closable` and `miniaturizable`, and its header describes them as the
+buttons "on the NSWindow associated with this scene" — Mac Catalyst's window,
+not an iPad's. Measured on iPadOS 26.1: `windowScene.windowingBehaviors` is
+**nil**, on iPad and iPhone alike. The code reads the property and writes
+nothing when it is nil, which is the right behaviour and also why this was
+invisible until it was measured.
+
+`maximizable` has no counterpart even where behaviours exist: the object carries
+no third bit. It is dropped rather than mapped onto `closable`, because "may
+this window be zoomed" and "may this window be closed" are different questions
+and answering one with the other is a lie a reader cannot see.
+
+`width` / `height` cannot be requested. `UIWindowSceneGeometryPreferencesIOS` —
+the object `requestGeometryUpdate` takes — carries `interfaceOrientations` and
+nothing else on iOS. An app that wants a fixed size sets `min_*` and `max_*` to
+the same value.
 
 ### `nav::push` / `nav::pop` are refused
 
 A pushed screen is a modal presentation on iOS — the same tier `alert`,
 `prompt`, `choose` and `present_window` wait on. They answer `false` rather than
 doing nothing silently, which is what their callers check.
+
+---
+
+## 7. `window_buttons`, and writing one toolbar for two platforms
+
+The kind that moved out of §1. An iPad in iPadOS 26 windowed mode draws a real
+close / minimise / zoom pill, so the platform this backend said had no window
+buttons has window buttons.
+
+### What the kind does here
+
+It **reserves the corner**, and hosts nothing.
+
+Hosting is what facet_appkit does: `CplusExtWindowButtonsView` re-parents the
+window's real traffic lights into itself, so the group lands wherever the
+application puts the node. That is not available here and not merely unbuilt —
+the pill is drawn by the system outside the app's view hierarchy. A windowed
+app's tree was walked to check, and it is four full-bleed views deep with no
+control in it. No API vends the pill's frame either.
+
+So the node occupies the space instead, and the application's own bar lays out
+beside the controls rather than underneath them.
+
+| condition | reserved |
+|---|---|
+| no windowing (every iPhone) | **0 × 0** |
+| iPad **full screen** | **0 × 0** |
+| `minimal` or `automatic` style | **0 × 0** |
+| `unified`, and actually in a window | **60 × 40 pt** |
+
+The zeroes are the part worth checking, and are checked. A phone has no window
+controls; neither does a full-screen iPad, where they move up into the menu bar
+and the app's top-left is its own again. Under `minimal` the controls sit
+*above* the safe area — measured — so the app is already clear of them and
+reserving would open the same gap twice.
+
+**The gap appears and disappears with the window**, which was not the first
+design. This reserved on "the platform can window" alone, and the cost showed up
+the moment it ran: a full-screen iPad drew 60pt of empty toolbar with nothing
+behind it. The reflow was the thing being avoided, but a reflow here is correct
+— the controls really do appear at that moment. `UIWindowScene.isFullScreen` is
+macCatalyst-only, so the test is the window's bounds against the screen's, and
+`windowScene:didUpdateEffectiveGeometry:` re-marks the trees when it changes.
+
+**60 × 40pt is the one hardcoded metric in this package**, and it is hardcoded
+because nothing can be read: photographed on an iPad running iPadOS 26.6, the
+pill occupied x 19.5–60pt and y 20.5–40pt from the window's top-left corner.
+WINDOWING.md §9 has the picture.
+
+Two consequences worth stating outright:
+
+- **The node must be the leading item in the application's bar.** The pill is
+  placed relative to the WINDOW, not to this node, so a reservation pushed
+  inboard by the bar's own padding does not cover it.
+- **Full screen is not detected.** `UIWindowScene.isFullScreen` is
+  macCatalyst-only, so the only available test is comparing the window's bounds
+  against the screen's — and a toolbar that reflows the moment the user drags
+  the window off full screen is a worse artefact than a constant 60pt of
+  leading space.
+
+### The same source on both platforms
+
+This is the point of answering the kind at all rather than telling applications
+to branch. **Both backends now size the node themselves**, so the toolbar an
+application writes is the same text on macOS and iPadOS:
+
+```cplus
+b.add(ui::window_buttons(key: "app:window-buttons").height(BAR_H));
+```
+
+No width, and no `#platform()`. The width comes from the backend:
+
+| | width | from |
+|---|---|---|
+| facet_appkit | 74pt | `fittingSize` on the hosting view |
+| facet_uikit, in a window + `unified` | 60pt | the measured reservation |
+| facet_uikit, anywhere else | 0pt | there are no controls to avoid |
+
+The height stays the application's, because it is a statement about the
+application's bar rather than about the buttons — facet_appkit centres the real
+traffic lights on the host's midline, and a host left at its natural height has
+no midline to centre against.
+
+A `.width(74.0)` written at the call site still works and still wins, but it is
+now a macOS number hardcoded into portable source: it makes the iPad reserve
+74pt where it needs 60, and an iPhone reserve 74pt where it needs none. iris
+carries one from before either backend measured this kind, and dropping it is
+the whole migration.

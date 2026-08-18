@@ -35,6 +35,9 @@ import "./controls" as controls;
 import "./swipe" as swipe;
 import "./web" as web;
 import "./recycler" as recycler;
+// For the window-buttons reservation only — window.cplus owns the windowing
+// metric, and it does not import this file, so there is no cycle.
+import "./window" as window;
 
 type Node = flex::Node;
 
@@ -155,7 +158,24 @@ fn create(ctx: *u8, n: *core::Node) -> *u8 {
         { (*n).set_context(v) };
         { (*n).set_measure(measure_view) };
     }
+    // The window buttons measure from the WINDOWING STATE rather than from the
+    // view: there is no view to ask. UIKit draws the control pill itself, over
+    // the app's content and outside its hierarchy, so what this node does is
+    // hold the corner open. window.cplus owns the metric and the reasoning.
+    if kind == chrome::K_WINDOW_BUTTONS {
+        { (*n).set_context(v) };
+        { (*n).set_measure(measure_window_buttons) };
+    }
     return v;
+}
+
+// Ignores `ctx` — see above, there is nothing on the view to ask. It still takes
+// the flex measure shape because that is the seam, and answering 0x0 where the
+// platform has no window controls is a real answer rather than a missing one.
+fn measure_window_buttons(ctx: *u8, avail_w: f64, wm: flex::MeasureMode,
+                          avail_h: f64, hm: flex::MeasureMode) -> flex::Size {
+    let r: window::Reservation = window::window_buttons_reservation_now();
+    return flex::Size { width: r.width, height: r.height };
 }
 
 // The one door for "write these props onto this view". `create` uses it with
@@ -302,6 +322,10 @@ fn create_for_kind(kind: u32, n: *core::Node) -> *u8 {
     if kind == tree::K_TREE { return recycler::create_recycling_tree(n); }
     if kind == props::K_WEB { return web::create_web(n); }
     if kind == props::K_HYBRID_WEB { return web::create_hybrid_web(n); }
+    // A plain view that draws nothing and OCCUPIES the corner the system
+    // will draw its window controls over. The size comes from the measure
+    // callback attached in `create`, not from here.
+    if kind == chrome::K_WINDOW_BUTTONS { return backing_view(); }
     // Decided, not missing: MANIFEST.md records why these have no iOS
     // equivalent and what to use instead. They get a plain backing view so
     // their content still renders — and SILENTLY, because a warning for
@@ -401,6 +425,7 @@ fn has_body(kind: u32) -> bool {
         || kind == props::K_DATE_PICKER || kind == props::K_TIME_PICKER
         || kind == props::K_REFRESHABLE
         || kind == props::K_WEB || kind == props::K_HYBRID_WEB
+        || kind == chrome::K_WINDOW_BUTTONS
         || kind == props::K_LIST || kind == props::K_TABLE || kind == tree::K_TREE
         || kind == props::K_COLLECTION || kind == props::K_CAROUSEL;
 }
@@ -643,10 +668,53 @@ fn an_unbounded_axis_asks_for_a_large_extent_not_zero() {
 
 #[test]
 fn the_desktop_window_tier_is_decided_absent_not_unbuilt() {
-    // An iOS window has no close / minimise / zoom buttons, and no menu bar.
-    assert controls::decided_absent(chrome::K_WINDOW_BUTTONS);
+    // The menu bar. There is none, on any iOS device.
     assert controls::decided_absent(props::K_MENU);
     // A draggable split divider is a pointer idiom.
+    //
+    // `K_WINDOW_BUTTONS` USED TO BE ASSERTED HERE, on the reasoning that an iOS
+    // window is the screen and has nothing to close, minimise or zoom. iPadOS 26
+    // gave a windowed app a real control pill, so the kind left BOTH ledgers: it
+    // is neither absent nor unbuilt, it is answered.
+    assert controls::decided_absent(chrome::K_WINDOW_BUTTONS) == false;
+    assert controls::not_yet_built(chrome::K_WINDOW_BUTTONS) == false;
+    assert has_body(chrome::K_WINDOW_BUTTONS);
+    return;
+}
+
+// ---- the window-buttons reservation ---------------------------------------------
+// What the kind answers, and the answers that matter are the ZEROES: a phone has
+// no window controls, and reserving a corner of every toolbar to serve the iPad
+// would make the common platform worse. WINDOWING.md §9 has the measurements.
+
+#[test]
+fn a_platform_without_windowing_reserves_nothing() {
+    let u: window::Reservation =
+        window::window_buttons_reservation(window::ControlStyle::Unified, false);
+    assert u.width == 0.0f64;
+    assert u.height == 0.0f64;
+    let m: window::Reservation =
+        window::window_buttons_reservation(window::ControlStyle::Minimal, false);
+    assert m.width == 0.0f64;
+    return;
+}
+
+// Only `unified` puts the controls in the app's own content. Under `minimal`
+// they sit ABOVE the safe area — measured — so the app is already clear of them
+// and a reservation would double-count the same gap.
+#[test]
+fn only_the_unified_style_reserves_the_corner() {
+    let u: window::Reservation =
+        window::window_buttons_reservation(window::ControlStyle::Unified, true);
+    assert u.width > 0.0f64;
+    assert u.height > 0.0f64;
+    let m: window::Reservation =
+        window::window_buttons_reservation(window::ControlStyle::Minimal, true);
+    assert m.width == 0.0f64;
+    assert m.height == 0.0f64;
+    let a: window::Reservation =
+        window::window_buttons_reservation(window::ControlStyle::Automatic, true);
+    assert a.width == 0.0f64;
     return;
 }
 
@@ -659,7 +727,6 @@ fn an_unbuilt_kind_is_audible_and_a_decided_one_is_silent() {
     assert controls::not_yet_built(props::K_WEB);
     assert controls::decided_absent(props::K_LIST) == false;
     assert controls::decided_absent(props::K_WEB) == false;
-    assert controls::not_yet_built(chrome::K_WINDOW_BUTTONS) == false;
     assert controls::not_yet_built(split::K_SPLIT) == false;
     return;
 }

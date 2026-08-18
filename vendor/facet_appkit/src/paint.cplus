@@ -630,6 +630,13 @@ fn transformed(s: str, t: vocab::TextTransform) -> text::Text {
 // and `core::touch_all` must exclude the SAME mask or that test stops matching.
 fn all_bits() -> u64 { return props::C_ALL_STATE; }
 
+// The word a THEME REPAINT passes, which is deliberately NOT `all_bits()`.
+//
+// `all_bits()` doubles as the create sentinel — see `props::C_RESTYLE` for the
+// full reasoning and the bug it caused. This is that value with `C_AGENT`
+// withheld: every per-kind colour bit still raised, `== all_bits()` false.
+fn restyle_bits() -> u64 { return props::C_RESTYLE; }
+
 // THE ACCESSIBLE FACTS, which are the agent's facts too.
 //
 // `accessibilityLabel` is what VoiceOver announces and what the agent surface

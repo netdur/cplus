@@ -1,0 +1,200 @@
+// facet_uikit device tier — which machine this is, and what it may be asked.
+//
+// ---- TWO QUESTIONS THAT LOOK LIKE ONE ----------------------------------------
+//
+// "Is this an iPad?" and "does this app get a window?" are different questions,
+// and answering the second with the first is the mistake this file exists to
+// prevent.
+//
+// The IDIOM is a device class. It is fixed for the life of the process, it can
+// be read before UIKit has a scene or a window, and it is what an application
+// asks when it wants to lay out differently on a tablet — a sidebar instead of
+// a tab bar, a popover instead of a sheet. It is not a capability.
+//
+// A CAPABILITY is what the running scene will actually accept, and UIKit
+// answers it the same way every time: the property is nil where the platform
+// does not support the feature. `UIWindowScene.sizeRestrictions` is documented
+// as nil "on platforms that don't support scene resizing" and
+// `windowingBehaviors` as nil "on unsupported platforms". Asking the object is
+// exact where guessing from the idiom is a prediction that ages badly — the
+// iPad gained real windowing in iPadOS 26 without changing its idiom by one
+// bit, and Mac Catalyst reports Pad in one packaging mode and Mac in another.
+//
+// So: capability gates ask the OBJECT, layout decisions ask the IDIOM, and
+// neither stands in for the other. Everything in this file is one or the other,
+// and each function says which.
+//
+// ---- THE IDIOM IS NOT THE HARDWARE -------------------------------------------
+//
+// `userInterfaceIdiom` reports what the app is being RUN AS, not what it is
+// running on. An iPhone-only bundle on an iPad — one whose `Info.plist` omits
+// `UIDeviceFamily`, or names only `1` — runs in compatibility mode and reports
+// Phone on iPad hardware.
+//
+// That is the correct answer and this file does not correct it: an app in
+// compatibility mode is handed a phone's canvas and should behave as a phone.
+// It is also a real trap, because it presents as "the text is too big" and the
+// fix is a missing plist key rather than anything in this package. Every iOS
+// run of this project before 2026-08-18, device and simulator alike, was a
+// phone-width run for exactly that reason — WINDOWING.md §5 records it.
+
+import "uikit/uikit" as ui;
+import "objc/runtime" as rt;
+
+type Idiom = ui::UserInterfaceIdiom;
+
+// ---- the idiom ----------------------------------------------------------------
+
+// Cached, because the answer cannot change while the process lives and the read
+// is an `objc_msgSend` on a path that layout code may reach.
+//
+// The sentinel is -2 rather than 0: 0 is Phone and -1 is Unspecified, so
+// neither is free to mean "not read yet". And Unspecified is deliberately NOT
+// cached — it is what a read gets back when UIKit has nothing to say, and
+// freezing that would turn one early read into a wrong answer for the life of
+// the process.
+const IDIOM_UNREAD: i64 = -2 as i64;
+static IDIOM_RAW: i64 = -2 as i64;
+
+fn idiom_raw() -> i64 {
+    if IDIOM_RAW != IDIOM_UNREAD { return IDIOM_RAW; }
+    let cls: *u8 = rt::get_class(#str_ptr("UIDevice\0"));
+    if cls == (0 as *u8) { return -1 as i64; }
+    let dev: *u8 = { rt::msg_id(cls, rt::sel(#str_ptr("currentDevice\0"))) };
+    if dev == (0 as *u8) { return -1 as i64; }
+    let raw: i64 = { rt::msg_i64(dev, rt::sel(#str_ptr("userInterfaceIdiom\0"))) };
+    if raw == (-1 as i64) { return raw; }
+    IDIOM_RAW = raw;
+    return raw;
+}
+
+// The device class this app is running as. LAYOUT QUESTION — see the header:
+// do not gate a UIKit call on this, gate it on the object that would take the
+// call.
+fn idiom() -> Idiom {
+    return ui::user_interface_idiom_from_raw(idiom_raw());
+}
+
+fn is_phone() -> bool {
+    return match idiom() {
+        ui::UserInterfaceIdiom::Phone => true,
+        ui::UserInterfaceIdiom::Unspecified => false,
+        ui::UserInterfaceIdiom::Pad => false,
+        ui::UserInterfaceIdiom::TV => false,
+        ui::UserInterfaceIdiom::CarPlay => false,
+        ui::UserInterfaceIdiom::Mac => false,
+        ui::UserInterfaceIdiom::Vision => false,
+    };
+}
+
+fn is_pad() -> bool {
+    return match idiom() {
+        ui::UserInterfaceIdiom::Pad => true,
+        ui::UserInterfaceIdiom::Unspecified => false,
+        ui::UserInterfaceIdiom::Phone => false,
+        ui::UserInterfaceIdiom::TV => false,
+        ui::UserInterfaceIdiom::CarPlay => false,
+        ui::UserInterfaceIdiom::Mac => false,
+        ui::UserInterfaceIdiom::Vision => false,
+    };
+}
+
+fn is_mac() -> bool {
+    return match idiom() {
+        ui::UserInterfaceIdiom::Mac => true,
+        ui::UserInterfaceIdiom::Unspecified => false,
+        ui::UserInterfaceIdiom::Phone => false,
+        ui::UserInterfaceIdiom::Pad => false,
+        ui::UserInterfaceIdiom::TV => false,
+        ui::UserInterfaceIdiom::CarPlay => false,
+        ui::UserInterfaceIdiom::Vision => false,
+    };
+}
+
+// A short, stable name for a log line or an agent read. Not localised and not
+// shown to a user — it names the idiom, so it uses the idiom's own words.
+fn idiom_name(i: Idiom) -> str {
+    return match i {
+        ui::UserInterfaceIdiom::Phone => "phone",
+        ui::UserInterfaceIdiom::Pad => "pad",
+        ui::UserInterfaceIdiom::TV => "tv",
+        ui::UserInterfaceIdiom::CarPlay => "carplay",
+        ui::UserInterfaceIdiom::Mac => "mac",
+        ui::UserInterfaceIdiom::Vision => "vision",
+        ui::UserInterfaceIdiom::Unspecified => "unspecified",
+    };
+}
+
+// ---- what an idiom EXPECTS, which is a prediction and is labelled as one ------
+//
+// PURE, and it is policy rather than measurement: it says which device classes
+// hand an app a window someone else's controls also live in. Use it only where
+// there is no scene to ask — before launch, in a log line, or to decide whether
+// a missing capability is worth reporting.
+//
+// Pad is true because iPadOS 26 gives every app a resizable window. Mac and
+// Vision are true for the same reason on their own terms. Phone, TV and CarPlay
+// are false: the screen is the window, and there is nothing to negotiate.
+// Unspecified is false because the conservative answer — behave as though the
+// screen is the window — is the one that cannot overlap anything.
+fn idiom_expects_windowing(i: Idiom) -> bool {
+    return match i {
+        ui::UserInterfaceIdiom::Pad => true,
+        ui::UserInterfaceIdiom::Mac => true,
+        ui::UserInterfaceIdiom::Vision => true,
+        ui::UserInterfaceIdiom::Phone => false,
+        ui::UserInterfaceIdiom::TV => false,
+        ui::UserInterfaceIdiom::CarPlay => false,
+        ui::UserInterfaceIdiom::Unspecified => false,
+    };
+}
+
+// ---- capabilities, which ask the object ---------------------------------------
+
+// Does this scene let the app state a minimum and maximum size?
+//
+// AUTHORITATIVE, where `idiom_expects_windowing` is a guess. UIKit returns nil
+// from `sizeRestrictions` where the platform does not support scene resizing,
+// so the nil check IS the support check and needs no version test beside it.
+fn scene_supports_resizing(scene: *u8) -> bool {
+    return size_restrictions_of(scene) != (0 as *u8);
+}
+
+fn size_restrictions_of(scene: *u8) -> *u8 {
+    if scene == (0 as *u8) { return 0 as *u8; }
+    return { rt::msg_id(scene, rt::sel(#str_ptr("sizeRestrictions\0"))) };
+}
+
+// Does this scene carry the closable / miniaturizable pair?
+//
+// Same nil convention, and a SEPARATE question from resizing: the header calls
+// these "additional window behaviors which may be platform specific", and a
+// platform that resizes need not also offer window buttons.
+fn scene_supports_behaviors(scene: *u8) -> bool {
+    return windowing_behaviors_of(scene) != (0 as *u8);
+}
+
+fn windowing_behaviors_of(scene: *u8) -> *u8 {
+    if scene == (0 as *u8) { return 0 as *u8; }
+    return { rt::msg_id(scene, rt::sel(#str_ptr("windowingBehaviors\0"))) };
+}
+
+// Is the windowing-control-style vocabulary in this process at all?
+//
+// THE OS VERSION TEST, done by asking the runtime rather than by comparing
+// version numbers. `UISceneWindowingControlStyle` arrived in iOS 26; on
+// anything older `objc_getClass` answers null, which is the same answer a
+// version comparison would reach and cannot drift from the SDK the binary was
+// built against.
+fn windowing_controls_available() -> bool {
+    return rt::get_class(#str_ptr("UISceneWindowingControlStyle\0")) != (0 as *u8);
+}
+
+// The scene a window belongs to, or null before one is connected. Null is the
+// ordinary answer on a phone and for any window built before its scene arrived
+// — which is every window this package makes, since `didFinishLaunching` runs
+// before `scene:willConnectToSession:`.
+fn scene_of_window(w: *u8) -> *u8 {
+    if w == (0 as *u8) { return 0 as *u8; }
+    return { rt::msg_id(w, rt::sel(#str_ptr("windowScene\0"))) };
+}

@@ -40,6 +40,9 @@ import "./recycler" as recycler;
 import "./input" as input;
 import "./keys" as keys;
 import "./window" as window;
+import "./device" as device;
+import "facet/screen" as screen;
+import "facet/window_chrome" as chrome;
 import "./dialogs" as dialogs;
 import "./swipe" as swipe;
 import "facet/services" as services;
@@ -543,6 +546,288 @@ fn the_default_label_colour_adapts_to_the_appearance() -> bool {
     return gap > 0.5f64;
 }
 
+// ---- the device tier --------------------------------------------------------------
+//
+// EVERY IOS RUN OF THIS PROJECT BEFORE 2026-08-18 WAS A PHONE-WIDTH RUN. Neither
+// Info.plist in the tree declared `UIDeviceFamily`, so iOS read both bundles as
+// iPhone-only and ran them on an iPad in compatibility mode: a phone canvas
+// scaled up, and `userInterfaceIdiom` answering Phone on iPad hardware. It
+// presented as "the text is too big" and it silently invalidated every earlier
+// measurement — including this suite's, which is why the runner's plist now
+// declares the family and why these checks exist at all.
+//
+// They are cheap and they are the only automated thing that can tell an iPad run
+// from a phone run.
+
+fn the_idiom_is_a_real_read() -> bool {
+    return match device::idiom() {
+        uik::UserInterfaceIdiom::Unspecified => false,
+        uik::UserInterfaceIdiom::Phone => true,
+        uik::UserInterfaceIdiom::Pad => true,
+        uik::UserInterfaceIdiom::TV => true,
+        uik::UserInterfaceIdiom::CarPlay => true,
+        uik::UserInterfaceIdiom::Mac => true,
+        uik::UserInterfaceIdiom::Vision => true,
+    };
+}
+
+// The cache does not leak its own sentinel. `idiom_raw` parks -2 for "not read
+// yet", and a second call that answered -2 — or anything other than the first
+// answer — would mean the sentinel escaped into a real read.
+fn the_idiom_is_stable_across_reads() -> bool {
+    let a: i64 = device::idiom_raw();
+    let b: i64 = device::idiom_raw();
+    if a != b { return false; }
+    return a >= (-1 as i64);
+}
+
+// TWO INDEPENDENT APIS, ASKED THE SAME QUESTION. `UIDevice` and the process's
+// current `UITraitCollection` both carry `userInterfaceIdiom`, and they are
+// separate paths to the same fact — so a disagreement means the read or the
+// cache is wrong, and neither would show up any other way.
+fn the_idiom_agrees_with_the_trait_collection() -> bool {
+    let cls: *u8 = rt::get_class(#str_ptr("UITraitCollection\0"));
+    if cls == (0 as *u8) { return false; }
+    let tc: *u8 = { rt::msg_id(cls, rt::sel(#str_ptr("currentTraitCollection\0"))) };
+    if tc == (0 as *u8) { return false; }
+    let from_traits: i64 = { rt::msg_i64(tc, rt::sel(#str_ptr("userInterfaceIdiom\0"))) };
+    return from_traits == device::idiom_raw();
+}
+
+// The three predicates name three different machines and cannot both be true.
+fn the_idiom_predicates_are_exclusive() -> bool {
+    var n: i32 = 0 as i32;
+    if device::is_phone() { n = n + (1 as i32); }
+    if device::is_pad() { n = n + (1 as i32); }
+    if device::is_mac() { n = n + (1 as i32); }
+    return n <= (1 as i32);
+}
+
+// PURE POLICY, pinned. The split is the whole point of the tier: a machine whose
+// screen IS the window has nothing to negotiate, and one that hands the app a
+// window beside other apps' windows does.
+fn windowing_expectation_splits_the_idioms() -> bool {
+    if device::idiom_expects_windowing(uik::UserInterfaceIdiom::Phone) { return false; }
+    if device::idiom_expects_windowing(uik::UserInterfaceIdiom::TV) { return false; }
+    if device::idiom_expects_windowing(uik::UserInterfaceIdiom::CarPlay) { return false; }
+    // Unspecified takes the conservative side: behaving as though the screen is
+    // the window is the answer that cannot overlap anything.
+    if device::idiom_expects_windowing(uik::UserInterfaceIdiom::Unspecified) { return false; }
+    if !device::idiom_expects_windowing(uik::UserInterfaceIdiom::Pad) { return false; }
+    if !device::idiom_expects_windowing(uik::UserInterfaceIdiom::Mac) { return false; }
+    return device::idiom_expects_windowing(uik::UserInterfaceIdiom::Vision);
+}
+
+// A capability question with no scene to ask answers NO, and answers it without
+// dereferencing anything. This is the phone path: `windowScene` is null there
+// for every window this package builds, and it is also the path taken by every
+// window before its scene connects.
+fn a_null_scene_supports_nothing() -> bool {
+    if device::scene_supports_resizing(0 as *u8) { return false; }
+    if device::scene_supports_behaviors(0 as *u8) { return false; }
+    if device::size_restrictions_of(0 as *u8) != (0 as *u8) { return false; }
+    if device::windowing_behaviors_of(0 as *u8) != (0 as *u8) { return false; }
+    return device::scene_of_window(0 as *u8) == (0 as *u8);
+}
+
+// ---- the windowing control style --------------------------------------------------
+//
+// facet's `Bar` decides the style, and this pins the mapping. It is pinned
+// because it was WRONG first: the original went by the three header sentences —
+// `Native` sounds like `automatic`, `Blended`'s wording is nearly `unified`'s —
+// and photographed on an iPad it put the system's close/minimise/zoom pill on
+// top of the app's own title. Only `minimal` moves the controls out of the safe
+// area; the other two draw them over the app's top-left corner and tell it
+// nothing. WINDOWING.md §9.
+//
+// So: `unified` ONLY where the app draws a bar with room in it, `minimal`
+// everywhere else, and nothing maps to `automatic` — that is what UIKit uses
+// when the method is not implemented at all.
+
+fn the_bar_decides_the_control_style() -> bool {
+    let native: window::ControlStyle = window::control_style_for(screen::Bar::Native);
+    let blended: window::ControlStyle = window::control_style_for(screen::Bar::Blended);
+    let hidden: window::ControlStyle = window::control_style_for(screen::Bar::Hidden);
+    let custom: window::ControlStyle = window::control_style_for(screen::Bar::Custom);
+    if !is_style(native, window::ControlStyle::Minimal) { return false; }
+    if !is_style(hidden, window::ControlStyle::Minimal) { return false; }
+    if !is_style(blended, window::ControlStyle::Unified) { return false; }
+    return is_style(custom, window::ControlStyle::Unified);
+}
+
+// NO BAR VALUE ASKS FOR `automatic`, and that is load-bearing rather than
+// incidental: `automatic` is what UIKit uses when the delegate does not
+// implement the method, so choosing it would be a long way to say nothing —
+// and it measured identical to `unified`, which is the overlapping one.
+fn no_bar_asks_for_the_do_nothing_style() -> bool {
+    if is_style(window::control_style_for(screen::Bar::Native),
+                window::ControlStyle::Automatic) { return false; }
+    if is_style(window::control_style_for(screen::Bar::Blended),
+                window::ControlStyle::Automatic) { return false; }
+    if is_style(window::control_style_for(screen::Bar::Hidden),
+                window::ControlStyle::Automatic) { return false; }
+    return is_style(window::control_style_for(screen::Bar::Custom),
+                    window::ControlStyle::Automatic) == false;
+}
+
+fn style_index(s: window::ControlStyle) -> i32 {
+    return match s {
+        window::ControlStyle::Automatic => 0 as i32,
+        window::ControlStyle::Unified => 1 as i32,
+        window::ControlStyle::Minimal => 2 as i32,
+    };
+}
+
+fn is_style(a: window::ControlStyle, b: window::ControlStyle) -> bool {
+    return style_index(a) == style_index(b);
+}
+
+// ---- the window-buttons reservation ----------------------------------------------
+//
+// `window_buttons` was classified `decided_absent` on this backend — "an iOS
+// window is the screen: there is nothing to close it into". iPadOS 26 gave a
+// windowed app a real close/minimise/zoom pill, photographed at x 19.5-60pt,
+// y 20.5-40pt from the window's corner, so the kind left both ledgers and now
+// holds that corner open for an application's own bar.
+//
+// THE ZEROES ARE THE IMPORTANT PART. A phone has no window controls, and a 60pt
+// hole in every toolbar to serve the iPad would make the common platform worse
+// — so these checks are mostly about what is NOT reserved. They matter here
+// rather than only in views.cplus's `#[test]` blocks because `cpc test` cannot
+// link UIKit on macOS: those compile, and only this runs.
+
+fn a_platform_without_windowing_reserves_nothing() -> bool {
+    let u: window::Reservation =
+        window::window_buttons_reservation(window::ControlStyle::Unified, false);
+    if u.width != 0.0f64 || u.height != 0.0f64 { return false; }
+    let m: window::Reservation =
+        window::window_buttons_reservation(window::ControlStyle::Minimal, false);
+    return m.width == 0.0f64 && m.height == 0.0f64;
+}
+
+// Only `unified` puts the controls into the app's own content. Under `minimal`
+// they sit ABOVE the safe area — measured, WINDOWING.md §4 — so the app is
+// already clear of them and reserving would open the same gap twice.
+fn only_the_unified_style_reserves_the_corner() -> bool {
+    let u: window::Reservation =
+        window::window_buttons_reservation(window::ControlStyle::Unified, true);
+    if !(u.width > 0.0f64) || !(u.height > 0.0f64) { return false; }
+    let m: window::Reservation =
+        window::window_buttons_reservation(window::ControlStyle::Minimal, true);
+    if m.width != 0.0f64 || m.height != 0.0f64 { return false; }
+    let a: window::Reservation =
+        window::window_buttons_reservation(window::ControlStyle::Automatic, true);
+    return a.width == 0.0f64 && a.height == 0.0f64;
+}
+
+// The live reservation, asked of the running process. In this runner there is no
+// scene and no window at all, so the honest answer is zero — the same answer a
+// phone gives, and the path every app takes before its scene connects.
+fn the_live_reservation_is_zero_without_a_scene() -> bool {
+    let r: window::Reservation = window::window_buttons_reservation_now();
+    return r.width == 0.0f64 && r.height == 0.0f64;
+}
+
+// A FULL SCREEN WINDOW IS NOT WINDOWED, which is the check that stops a
+// full-screen iPad drawing 60pt of empty toolbar. The first version of the
+// reservation reserved on "the platform can window" alone and did exactly that.
+fn a_full_screen_window_is_not_windowed() -> bool {
+    // Exactly the screen: full screen.
+    if window::is_windowed_size(1194.0f64, 834.0f64, 1194.0f64, 834.0f64) { return false; }
+    // Off by less than a point is still full screen — these are floats, and a
+    // rounding difference in the last bit is not a user placing a window.
+    if window::is_windowed_size(1193.5f64, 834.0f64, 1194.0f64, 834.0f64) { return false; }
+    // The real windowed reading from the iPad.
+    if !window::is_windowed_size(400.0f64, 505.0f64, 1194.0f64, 834.0f64) { return false; }
+    // Narrower but full height, and shorter but full width, both count.
+    if !window::is_windowed_size(600.0f64, 834.0f64, 1194.0f64, 834.0f64) { return false; }
+    return window::is_windowed_size(1194.0f64, 500.0f64, 1194.0f64, 834.0f64);
+}
+
+// Nonsense in, zero out — a window or screen that has not been sized yet must
+// not read as windowed, because at launch both are briefly zero.
+fn an_unsized_window_is_not_windowed() -> bool {
+    if window::is_windowed_size(0.0f64, 0.0f64, 1194.0f64, 834.0f64) { return false; }
+    return window::is_windowed_size(400.0f64, 505.0f64, 0.0f64, 0.0f64) == false;
+}
+
+// The kind is answered rather than parked: in NEITHER ledger, and with a body.
+fn window_buttons_left_both_ledgers() -> bool {
+    if controls::decided_absent(chrome::K_WINDOW_BUTTONS) { return false; }
+    if controls::not_yet_built(chrome::K_WINDOW_BUTTONS) { return false; }
+    return views::has_body(chrome::K_WINDOW_BUTTONS);
+}
+
+// ---- the appearance flip ---------------------------------------------------------
+//
+// UIKit has no application-level "the appearance changed" hook — a dark-mode
+// flip arrives as a TRAIT CHANGE on views — so the signal is taken by an
+// invisible sentinel subview, the same shape facet_appkit uses for
+// `viewDidChangeEffectiveAppearance`.
+//
+// THE GAP THIS CLOSED was invisible for a specific reason: UIKit's semantic
+// colours are dynamic objects that re-resolve themselves, so a screen painted
+// from facet's semantic roles followed a flip with no help and looked fine. What
+// did not follow was anything facet FLATTENED — an `adaptive` literal pair, and
+// anything that reached a CGColor. Photographed: a row of
+// `adaptive(light: red, dark: blue)` stayed RED through a flip to dark while the
+// semantic row beside it went black on its own.
+//
+// The flip itself needs a real trait change and cannot run here. What CAN be
+// checked is that the class exists and answers the selector — which is the part
+// that fails silently, because a misspelled selector on a synthesized class
+// compiles, links, runs and never fires.
+
+fn the_appearance_sentinel_class_exists() -> bool {
+    return window::appearance_sentinel_class() != (0 as *u8);
+}
+
+fn the_appearance_sentinel_answers_the_trait_hook() -> bool {
+    let cls: *u8 = window::appearance_sentinel_class();
+    if cls == (0 as *u8) { return false; }
+    // `instancesRespondToSelector:` — the METHOD is on instances, so asking the
+    // class object whether IT responds would answer no and prove nothing.
+    let sel: *u8 = rt::sel(#str_ptr("traitCollectionDidChange:\0"));
+    return { rt::msg_i8_id(cls, rt::sel(#str_ptr("instancesRespondToSelector:\0")), sel) }
+        != (0 as i8);
+}
+
+// A synthesized class must still BE a UIView, or adding it to the content view
+// would be an ObjC exception rather than a listener.
+fn the_appearance_sentinel_is_a_view() -> bool {
+    let cls: *u8 = window::appearance_sentinel_class();
+    if cls == (0 as *u8) { return false; }
+    let view_cls: *u8 = rt::get_class(#str_ptr("UIView\0"));
+    if view_cls == (0 as *u8) { return false; }
+    return { rt::msg_i8_id(cls, rt::sel(#str_ptr("isSubclassOfClass:\0")), view_cls) }
+        != (0 as i8);
+}
+
+// THE SELECTORS ARE REAL ONES. A misspelled class-property name is the classic
+// ObjC failure that compiles, links, runs and does nothing — and this one would
+// do nothing visible until someone put a window into the windowed state on an
+// iPad, which is the hardest state in this package to reach. Asking the class
+// whether it responds costs nothing and closes that gap.
+//
+// Skipped where the class is absent: these are iOS 26 properties, and a run on
+// an older simulator should not fail for not having them.
+fn the_control_style_selectors_resolve() -> bool {
+    if !device::windowing_controls_available() { return true; }
+    let cls: *u8 = rt::get_class(#str_ptr("UISceneWindowingControlStyle\0"));
+    if cls == (0 as *u8) { return false; }
+    if !class_responds(cls, window::control_style_selector(window::ControlStyle::Automatic)) {
+        return false;
+    }
+    if !class_responds(cls, window::control_style_selector(window::ControlStyle::Unified)) {
+        return false;
+    }
+    return class_responds(cls, window::control_style_selector(window::ControlStyle::Minimal));
+}
+
+fn class_responds(cls: *u8, selector: *u8) -> bool {
+    return { rt::msg_i8_id(cls, rt::sel(#str_ptr("respondsToSelector:\0")), selector) } != (0 as i8);
+}
+
 // ---- the run --------------------------------------------------------------------
 
 fn run_all() -> i32 {
@@ -595,6 +880,38 @@ fn run_all() -> i32 {
           runs_are_read_from_a_labels_attributed_text());
     check("a swipe offset round-trips through the association",
           a_swipe_offset_round_trips_through_the_association());
+
+    // PRINTED, not asserted. The suite cannot know which simulator it was
+    // pointed at, so it says what it found and lets the reader see whether the
+    // run was a phone run or an iPad run — the distinction that was invisible
+    // for as long as neither plist declared a device family.
+    let who: str = device::idiom_name(device::idiom());
+    io::eprintln(text::from_str("  --   running as: ${who}"));
+    check("the idiom is a real read", the_idiom_is_a_real_read());
+    check("the idiom is stable across reads", the_idiom_is_stable_across_reads());
+    check("the idiom agrees with the trait collection",
+          the_idiom_agrees_with_the_trait_collection());
+    check("phone, pad and mac are mutually exclusive",
+          the_idiom_predicates_are_exclusive());
+    check("windowing expectation splits the idioms",
+          windowing_expectation_splits_the_idioms());
+    check("a null scene supports nothing", a_null_scene_supports_nothing());
+    check("the bar decides the control style", the_bar_decides_the_control_style());
+    check("no bar asks for the do-nothing style", no_bar_asks_for_the_do_nothing_style());
+    check("the control style selectors resolve", the_control_style_selectors_resolve());
+    check("a platform without windowing reserves nothing",
+          a_platform_without_windowing_reserves_nothing());
+    check("only the unified style reserves the corner",
+          only_the_unified_style_reserves_the_corner());
+    check("the live reservation is zero without a scene",
+          the_live_reservation_is_zero_without_a_scene());
+    check("window_buttons left both ledgers", window_buttons_left_both_ledgers());
+    check("a full screen window is not windowed", a_full_screen_window_is_not_windowed());
+    check("an unsized window is not windowed", an_unsized_window_is_not_windowed());
+    check("the appearance sentinel class exists", the_appearance_sentinel_class_exists());
+    check("the appearance sentinel answers the trait hook",
+          the_appearance_sentinel_answers_the_trait_hook());
+    check("the appearance sentinel is a view", the_appearance_sentinel_is_a_view());
 
     let ran: i32 = RAN;
     let failed: i32 = FAILED;

@@ -264,6 +264,31 @@ const C_COMMANDS: u64 = 2017619230131748864u64;         // FOCUS|BLUR|FLUSH|ANIM
 // Every bit a blanket touch may raise: all of them except the verbs.
 const C_ALL_STATE: u64 = 16429124843577802751u64;
 
+// ---- a restyle is not a create -------------------------------------------------
+// `C_ALL_STATE` is also a SENTINEL. Seventy-six sites across the two backends
+// test `dirty == paint::all_bits()` and mean "this is the create pass" — two of
+// them name the result `first_pass` and `creating` — because until the
+// appearance flip was wired, `create` and the reclass path were the only things
+// that ever raised every bit at once.
+//
+// So when the dark/light repaint walk started raising it too, every one of those
+// comparisons became true on every flip. A recycling list rebuilt its refresh
+// state, cleared every measured row height and scrolled the user back to the
+// top; the flip looked like a create because it was indistinguishable from one.
+// Reported from the gallery as "switch from dark to light, I lost scroll
+// position", which is what that bug looks like from a chair.
+//
+// The restyle word is therefore `C_ALL_STATE` with ONE bit withheld, and
+// `C_AGENT` is the bit: high in the shared band, not a colour on any kind, and a
+// value an appearance change cannot alter. Every per-kind colour bit is still
+// raised — reaching them without naming them is the whole point of a blanket
+// word — while `== C_ALL_STATE` is false, so create-only work stays at create.
+//
+// The subtraction is written out because the constants are literals here: this
+// is `C_ALL_STATE - C_AGENT`, and it is a subtraction rather than a mask because
+// C_AGENT is known to be set in C_ALL_STATE.
+const C_RESTYLE: u64 = 16429116047484780543u64;
+
 // ---- GroupableItemsView — shared by every control the ledger derives from it 
 
 struct GroupableItemsViewProps {

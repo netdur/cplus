@@ -33,6 +33,7 @@ import "facet/component" as component;
 import "facet/theme" as theme;
 import "facet/application" as app;
 import "./views" as views;
+import "./paint" as paint;
 import "./input" as input;
 import "./scheduler" as scheduler;
 import "./controls" as controls;
@@ -118,7 +119,25 @@ fn theme_changed() {
 }
 
 fn repaint_walk(n: *core::Node) {
-    core::touch(n, props::C_BACKGROUND_COLOR | props::C_BACKGROUND);
+    // EVERY STATE BIT, not the two shared-band colours.
+    //
+    // Found while fixing the same omission in facet_uikit, and it was worse
+    // here: a colour on a CONTROL is a per-kind prop, so a label carrying an
+    // `adaptive` pair as its TEXT colour was never marked and kept the side it
+    // was mounted with across an appearance flip. Shadows and corner radii were
+    // not marked either.
+    //
+    // `C_RESTYLE` is `~C_COMMANDS` with one bit withheld — every fact and no
+    // verb — so it reaches every per-kind colour without this file keeping a
+    // second copy of "which props are colours", and cannot re-fire `C_FOCUS` /
+    // `C_BLUR` / `C_FLUSH` and take a caret mid-word.
+    //
+    // NOT `all_bits()`, and the difference is a bug that shipped. That value is
+    // also the CREATE SENTINEL: 76 sites test `dirty == paint::all_bits()` to
+    // mean "this is the create pass". Passing it here made every appearance flip
+    // look like a create, and a recycling list answered by clearing every
+    // measured height and scrolling back to the top. See `props::C_RESTYLE`.
+    core::touch(n, paint::restyle_bits());
     var i: usize = 0 as usize;
     let count: usize = core::child_count_of(n);
     while i < count {

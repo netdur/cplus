@@ -40,6 +40,8 @@ import "objc/synthesis" as synth;
 import "uikit/uikit" as ui;
 import "./geometry" as geometry;
 import "./scheduler" as scheduler;
+import "./device" as device;
+import "facet/theme" as theme;
 
 type Chrome = screen::Chrome;
 
@@ -69,20 +71,80 @@ fn set_launched(f: fn(*u8), ctx: *u8) {
 fn default_should_close(ctx: *u8) -> bool { return true; }
 fn default_will_close(ctx: *u8) { return; }
 
+// What the application asked for, held until there is a scene to tell.
+//
+// `open_window` runs BEFORE `UIApplicationMain`, so at the moment the
+// application states its chrome there is no window, no scene and no UIKit — the
+// same inversion the rest of this file is about. Every field a scene can be
+// told is parked here and replayed in `apply_scene_chrome` once one connects.
+//
+// The two strings are RETAINED. `bridge::nsstring` hands back an autoreleased
+// +0 string, and the pool between `open_window` and the scene connecting is not
+// one this package controls.
+static WANT_MIN_W: f64 = 0.0f64;
+static WANT_MIN_H: f64 = 0.0f64;
+static WANT_MAX_W: f64 = 0.0f64;
+static WANT_MAX_H: f64 = 0.0f64;
+// `#zero` rather than `Bar::Native`, which a static initializer cannot name
+// (E0911). It IS Native — the first variant, discriminant zero — and that is
+// also what `Chrome::new` defaults to, so the pre-`open_window` value and the
+// unstated-by-the-app value are the same one rather than two that agree by
+// luck.
+static WANT_BAR: screen::Bar = #zero::[screen::Bar]();
+static WANT_MINIMIZABLE: bool = true;
+static WANT_TITLE: *u8 = 0 as *u8;
+static WANT_SUBTITLE: *u8 = 0 as *u8;
+
 // Record the root. Answers 0, not a window: there is no window yet, and
 // inventing a handle that is not one would be worse than the honest null — the
 // facade assigns it to `_w` on every platform anyway.
 //
-// `chrome` is taken and mostly dropped. A phone window has no title bar, no
-// resizable frame and no minimum size, so `width`, `height`, `min_*`, `max_*`,
-// `maximizable` and `minimizable` describe nothing here. The screen is the
-// window. MANIFEST.md records that the whole Chrome record is inert on iOS
-// except for what the tree itself draws.
+// `chrome` is taken and RECORDED, where it used to be taken and dropped. On a
+// phone the screen really is the window and every windowing field describes
+// nothing — but the phone is no longer the only machine this backend runs on.
+// Since iPadOS 26 an iPad app lives in a window the user resizes and places
+// beside other apps, and most of `Chrome` finally has somewhere to land:
+//
+//   title / subtitle      UIScene.title / .subtitle
+//   min_* / max_*         UIWindowScene.sizeRestrictions
+//   minimizable           UIWindowScene.windowingBehaviors.miniaturizable
+//   bar                   the scene's windowing control style
+//
+// Recording is unconditional and APPLYING is not — see `apply_scene_chrome`,
+// which asks each object whether it exists before telling it anything. On a
+// phone every one of those is nil and the whole replay is a few null checks.
+//
+// TWO FIELDS STAY INERT, and neither is an oversight.
+//
+// `width` / `height`: UIKit offers no way to ask for a size.
+// `UIWindowSceneGeometryPreferencesIOS` — the object `requestGeometryUpdate`
+// takes — carries `interfaceOrientations` and nothing else on iOS, checked
+// against the iPhoneOS26.5 headers. An app that wants a fixed size says so by
+// setting min and max to the same value.
+//
+// `maximizable`: UIKit's behaviours object carries `closable` and
+// `miniaturizable`, and no third. There is no "may this window be zoomed" bit
+// to write, so the field is dropped rather than mapped onto `closable` — those
+// are different questions and answering one with the other would be a lie a
+// reader could not see. MANIFEST.md §6 records it as a cannot, not a not-yet.
 fn open_window(root: *core::Node, take chrome: Chrome,
                should_close: fn(*u8) -> bool = default_should_close,
                should_close_ctx: *u8 = 0 as *u8,
                will_close: fn(*u8) = default_will_close,
                will_close_ctx: *u8 = 0 as *u8) -> *u8 {
+    WANT_MIN_W = chrome.min_width;
+    WANT_MIN_H = chrome.min_height;
+    WANT_MAX_W = chrome.max_width;
+    WANT_MAX_H = chrome.max_height;
+    WANT_BAR = chrome.bar;
+    WANT_MINIMIZABLE = chrome.minimizable;
+    // RELEASE BEFORE OVERWRITE. `open_window` runs a second time when a running
+    // app replaces what its one window shows, and a `+1` string dropped on the
+    // floor there is a leak per call rather than a one-off.
+    if WANT_TITLE != (0 as *u8) { { rt::release(WANT_TITLE) }; }
+    WANT_TITLE = retained_string(chrome.title());
+    if WANT_SUBTITLE != (0 as *u8) { { rt::release(WANT_SUBTITLE) }; }
+    WANT_SUBTITLE = retained_string(chrome.subtitle());
     let _c: Chrome = chrome;
     if root == (0 as *core::Node) { return 0 as *u8; }
     PENDING_ROOT = root;
@@ -91,6 +153,11 @@ fn open_window(root: *core::Node, take chrome: Chrome,
     // second would hide the first with no way back to it.
     if WINDOW != (0 as *u8) {
         attach_root(WINDOW, root);
+        // The scene is already connected on this path, so the chrome just
+        // recorded has somewhere to go immediately — a second `open_window`
+        // that renamed the window or changed its size limits would otherwise
+        // record them and never send them.
+        apply_scene_chrome(WINDOW);
         return WINDOW;
     }
     return 0 as *u8;
@@ -106,6 +173,12 @@ fn attach_root(win: *u8, root: *core::Node) {
     // The root's own view was inserted nowhere by the mount walk — the facade
     // puts it in the window, which is here.
     if mounted { add_root_views(ui::View::from_raw(content), root); }
+    // The light/dark flip listener. Here rather than at window construction
+    // because it wants the content view, and idempotent enough to re-run: a
+    // second `open_window` replaces the tree under the same content view, and
+    // one more hidden 0x0 sentinel would be harmless — but `attach_root` is the
+    // one place that has the view, so this is where it goes.
+    install_appearance_sentinel(content);
     // THE SAFE AREA IS NOT KNOWN UNTIL UIKIT HAS LAID THE VIEW OUT. Measured in
     // the simulator: read inside `didFinishLaunchingWithOptions:` the insets are
     // all zero, and the app drew its first row underneath the status bar and the
@@ -149,6 +222,93 @@ fn nav_controller() -> *u8 { return NAV; }
 // navigation controller's own. The nav controller's view hosts the bar and the
 // stack; putting content directly in it would put the primary screen behind
 // every pushed one.
+// ---- the appearance flip -------------------------------------------------------
+//
+// WHY A SENTINEL VIEW. UIKit has no application-level "the appearance changed"
+// hook: a dark-mode flip arrives as a TRAIT CHANGE, delivered to views and view
+// controllers. So the signal is taken the way facet_appkit takes its own — an
+// invisible subview whose callback forwards — which keeps the two backends the
+// same shape for the same problem.
+//
+// MOST COLOURS DO NOT NEED THIS, and that is what made the gap hard to see. A
+// UIKit semantic colour (`labelColor`, `systemBackground`, …) is a DYNAMIC
+// object that re-resolves itself when the trait collection changes, so a screen
+// painted from facet's semantic roles follows a flip with no help at all. What
+// does not follow is anything facet FLATTENED: an `adaptive` literal pair
+// (token 254), which paint.cplus resolves to one static UIColor for whichever
+// trait collection was current when it was applied, and anything that reached a
+// CGColor — a gradient stop, a border, a shadow.
+//
+// Photographed before this existed: a row with `adaptive(light: red, dark:
+// blue)` stayed RED through a flip to dark while the semantic row beside it went
+// black on its own. The repaint walk existed and was correct; nothing called it.
+static APPEARANCE_SENTINEL_CLASS: *u8 = 0 as *u8;
+
+// The last light/dark value seen, so the walk runs on a FLIP and not on every
+// trait change. `traitCollectionDidChange:` also fires for size class, dynamic
+// type and layout direction, and a whole-tree repaint on every rotation would
+// be a real cost for no reason. -1 is "not read yet"; the styles are 0, 1, 2.
+static LAST_UI_STYLE: i64 = -1 as i64;
+
+fn imp_trait_collection_did_change(self_obj: *u8, cmd: *u8, previous: *u8) {
+    let tc: *u8 = { rt::msg_id(self_obj, rt::sel(#str_ptr("traitCollection\0"))) };
+    if tc == (0 as *u8) { return; }
+    let style: i64 = { rt::msg_i64(tc, rt::sel(#str_ptr("userInterfaceStyle\0"))) };
+    if style == LAST_UI_STYLE { return; }
+    LAST_UI_STYLE = style;
+    // `notify_appearance_changed` rather than the repaint alone: it runs the
+    // backend's repaint walk AND the application's own appearance callback, and
+    // an app that registered one is entitled to hear about this too.
+    theme::notify_appearance_changed();
+    return;
+}
+
+fn appearance_sentinel_class() -> *u8 {
+    if APPEARANCE_SENTINEL_CLASS != (0 as *u8) { return APPEARANCE_SENTINEL_CLASS; }
+    let existing: *u8 = rt::get_class(#str_ptr("FacetUIKitAppearanceSentinel\0"));
+    if existing != (0 as *u8) {
+        APPEARANCE_SENTINEL_CLASS = existing;
+        return APPEARANCE_SENTINEL_CLASS;
+    }
+    let base: *u8 = rt::get_class(#str_ptr("UIView\0"));
+    if base == (0 as *u8) { return 0 as *u8; }
+    let cls: *u8 = { synth::allocate_class_pair(base, #str_ptr("FacetUIKitAppearanceSentinel\0"), 0 as usize) };
+    if cls == (0 as *u8) { return 0 as *u8; }
+    let _a: i8 = synth::add_method_v_1id(cls,
+        rt::sel(#str_ptr("traitCollectionDidChange:\0")),
+        imp_trait_collection_did_change, #str_ptr("v@:@\0"));
+    { synth::register_class_pair(cls) };
+    APPEARANCE_SENTINEL_CLASS = cls;
+    return APPEARANCE_SENTINEL_CLASS;
+}
+
+// One zero-sized, hidden, non-interactive view in the content view.
+//
+// It is in the hierarchy purely to be TOLD: a trait collection propagates to
+// every view under the window whatever its size, so a 0x0 view hears the flip
+// as well as a full-screen one and costs nothing to lay out. Hidden and
+// `userInteractionEnabled = NO` so it can never take a touch or draw a pixel.
+fn install_appearance_sentinel(content: *u8) {
+    if content == (0 as *u8) { return; }
+    let cls: *u8 = appearance_sentinel_class();
+    if cls == (0 as *u8) { return; }
+    // By NAME, because that is the door `objc/runtime` offers and the class was
+    // just registered under exactly this one.
+    let v: *u8 = { rt::alloc_init(#str_ptr("FacetUIKitAppearanceSentinel\0")) };
+    if v == (0 as *u8) { return; }
+    { rt::msg_void_i8(v, rt::sel(#str_ptr("setHidden:\0")), 1 as i8) };
+    { rt::msg_void_i8(v, rt::sel(#str_ptr("setUserInteractionEnabled:\0")), 0 as i8) };
+    { rt::msg_void_id(content, rt::sel(#str_ptr("addSubview:\0")), v) };
+    { rt::release(v) };
+    // Seed the remembered style from where we start, so the FIRST real flip is
+    // a change and the install itself is not.
+    let tc: *u8 = { rt::msg_id(content, rt::sel(#str_ptr("traitCollection\0"))) };
+    if tc != (0 as *u8) {
+        LAST_UI_STYLE = { rt::msg_i64(tc, rt::sel(#str_ptr("userInterfaceStyle\0"))) };
+    }
+    return;
+}
+
 fn content_view_of(win: *u8) -> *u8 {
     if BASE_VC != (0 as *u8) { return { rt::msg_id(BASE_VC, rt::sel(#str_ptr("view\0"))) }; }
     let vc: *u8 = { rt::msg_id(win, rt::sel(#str_ptr("rootViewController\0"))) };
@@ -463,6 +623,102 @@ static DELEGATE_CLASS: *u8 = 0 as *u8;
 static NAV: *u8 = 0 as *u8;
 static BASE_VC: *u8 = 0 as *u8;
 
+// A +1 NSString, or null for an empty view.
+//
+// Null rather than an empty string on purpose: `UIScene.title` is
+// `null_resettable` and its header gives nil and "" the same meaning — "the
+// system will not display a title" — so null already says "the app named
+// nothing" and no second flag is needed to carry it.
+fn retained_string(s: str) -> *u8 {
+    if #str_len(s) == (0 as usize) { return 0 as *u8; }
+    return { rt::retain(bridge::nsstring(s)) };
+}
+
+// ---- replaying the chrome onto a scene -----------------------------------------
+//
+// EVERY ONE OF THESE ASKS BEFORE IT TELLS, and the question always has the same
+// shape: the property is nil where the platform does not support the feature.
+// That is UIKit's own convention — `sizeRestrictions` is documented nil "on
+// platforms that don't support scene resizing", `windowingBehaviors` nil "on
+// unsupported platforms" — and it is a better gate than an idiom test for two
+// reasons. It cannot be wrong about a device this code has never run on, and it
+// stays right when a device changes class underneath it, which is exactly what
+// the iPad did in iPadOS 26 without its idiom moving by one bit.
+//
+// So there is deliberately no `if device::is_pad()` below. device.cplus states
+// the rule at length and this is the place that keeps it: capability gates ask
+// the object, layout decisions ask the idiom. Writing an idiom check here would
+// be a regression dressed as a clarification.
+//
+// On a phone every object below is nil and the whole replay is four null checks.
+
+// The sizes this app can live at.
+//
+// Zero means UNSET on both pairs, the reading `screen::Chrome` documents for its
+// maximums — a maximum nobody asked for must not become a maximum of nothing,
+// and a minimum reads the same way. Both dimensions must be given before either
+// is sent, because CGSize is one value and half of one is not a size.
+fn apply_size_restrictions(scene: *u8) {
+    let sr: *u8 = device::size_restrictions_of(scene);
+    if sr == (0 as *u8) { return; }
+    if WANT_MIN_W > 0.0f64 && WANT_MIN_H > 0.0f64 {
+        { rt::msg_void_size(sr, rt::sel(#str_ptr("setMinimumSize:\0")),
+                            rt::Size { w: WANT_MIN_W, h: WANT_MIN_H }) };
+    }
+    if WANT_MAX_W > 0.0f64 && WANT_MAX_H > 0.0f64 {
+        { rt::msg_void_size(sr, rt::sel(#str_ptr("setMaximumSize:\0")),
+                            rt::Size { w: WANT_MAX_W, h: WANT_MAX_H }) };
+    }
+    return;
+}
+
+// The window buttons the user gets.
+//
+// ONLY `miniaturizable` IS WRITTEN. The object carries `closable` too, and facet
+// has no field that means it: `Chrome.maximizable` is a different question, and
+// mapping it here would make "may this window be zoomed" silently decide "may
+// this window be closed". `closable` is left at UIKit's default, which is what
+// an app that never mentioned it should get — and taking the close button away
+// from a window the user opened is a thing to do on purpose or not at all.
+fn apply_windowing_behaviors(scene: *u8) {
+    let wb: *u8 = device::windowing_behaviors_of(scene);
+    if wb == (0 as *u8) { return; }
+    { rt::msg_void_i8(wb, rt::sel(#str_ptr("setMiniaturizable:\0")),
+                      WANT_MINIMIZABLE as i8) };
+    return;
+}
+
+// What the system calls this window — in the app switcher, and in the menu bar
+// of an iPad running it full screen.
+//
+// `UIScene`, not `UIWindowScene`: both properties are on the base class and
+// have been since iOS 13 and 15, so this is the one part of the replay that is
+// not a windowing feature at all. It is skipped when the app named nothing
+// rather than written as nil, because `subtitle` is a plain `copy` property
+// where `title` is `null_resettable`, and the two do not take a nil alike.
+fn apply_scene_titles(scene: *u8) {
+    if scene == (0 as *u8) { return; }
+    if WANT_TITLE != (0 as *u8) {
+        { rt::msg_void_id(scene, rt::sel(#str_ptr("setTitle:\0")), WANT_TITLE) };
+    }
+    if WANT_SUBTITLE != (0 as *u8) {
+        { rt::msg_void_id(scene, rt::sel(#str_ptr("setSubtitle:\0")), WANT_SUBTITLE) };
+    }
+    return;
+}
+
+// Everything `open_window` recorded, replayed onto whatever scene the window
+// ended up in. Safe to call more than once and safe to call with no scene:
+// every step re-reads the statics and every step checks its own object.
+fn apply_scene_chrome(w: *u8) {
+    let scene: *u8 = device::scene_of_window(w);
+    if scene == (0 as *u8) { return; }
+    apply_scene_titles(scene);
+    apply_size_restrictions(scene);
+    apply_windowing_behaviors(scene);
+    return;
+}
+
 fn imp_did_finish_launching(self_obj: *u8, cmd: *u8, application: *u8, options: *u8) -> i8 {
     let screen_bounds: rt::Rect = ui::Screen::main_screen().bounds();
     let win: ui::Window = ui::Window::new_with_frame(screen_bounds);
@@ -503,6 +759,15 @@ fn imp_did_finish_launching(self_obj: *u8, cmd: *u8, application: *u8, options: 
     // view, so its safe-area insets read as zero and its bounds are whatever
     // the frame said — both of which the first facet layout depends on.
     { rt::msg_void(w, rt::sel(#str_ptr("makeKeyAndVisible\0"))) };
+    // AFTER key, because the scene is what carries all of this and a window that
+    // has not been shown is not attached to one yet.
+    //
+    // USUALLY A NO-OP, and kept anyway. UIKit calls this delegate hook BEFORE
+    // `scene:willConnectToSession:`, so a scene-manifest app has no scene here
+    // and the real replay happens when the scene connects. It stays because
+    // `makeKeyAndVisible` is also what adopts a scene UIKit created on its own,
+    // and a window that acquired one this way would otherwise never be told.
+    apply_scene_chrome(w);
     if PENDING_ROOT != (0 as *core::Node) { attach_root(w, PENDING_ROOT); }
     // NOW the tree is live, so `on_attach` can find what it was written to
     // find. This is the seam the facade hangs its lifecycle on.
@@ -616,6 +881,349 @@ fn imp_will_terminate(self_obj: *u8, cmd: *u8, application: *u8) {
     return;
 }
 
+// ---- the scene delegate ------------------------------------------------------
+//
+// WHY THERE IS ONE AT ALL. Everything iPadOS lets an app say about its own
+// window hangs off `UIWindowScene` or its delegate — the windowing control
+// style, the closable/miniaturizable pair, the size restrictions, the geometry
+// callback. An app with no scene does not get a worse answer to those questions;
+// it is never asked. `preferredWindowingControlStyleForScene:` says so in the
+// header: "automaticStyle will be used if this method is not implemented", and
+// `automatic` is what puts the traffic lights on top of the app's own top-left
+// corner. See WINDOWING.md.
+//
+// ADDITIVE ON PURPOSE. The window is still built in
+// `application:didFinishLaunchingWithOptions:` exactly as it was, and this
+// delegate ADOPTS it rather than building its own. An app whose Info.plist names
+// no scene manifest never connects a scene, never runs a line of this, and
+// behaves precisely as before — which matters because every app scaffolded
+// before today has such a plist, and the failure mode of getting window
+// construction wrong is a black screen.
+
+static SCENE_DELEGATE_CLASS: *u8 = 0 as *u8;
+
+// The three styles iOS 26 offers for the system's window controls, quoted from
+// `UISceneWindowingControlStyle.h`:
+//
+//   Automatic  "Windowing controls will use the default system style"
+//   Unified    "Windowing controls will appear as part of the scene's content"
+//   Minimal    "Windowing controls will occupy as little of the scene's space
+//              as possible"
+enum ControlStyle { Automatic, Unified, Minimal }
+
+// WHICH ONE, decided by facet rather than by this file — and decided by
+// MEASUREMENT rather than by reading the three header sentences.
+//
+// The first version of this mapping went by the words: `Native` -> `automatic`
+// because both mean "the stock thing", `Blended` -> `unified` because their two
+// sentences are nearly identical. Photographed on an iPad running iPadOS 26.6,
+// windowed, that was wrong in the way that matters. WINDOWING.md §9 has the
+// pictures; the numbers, at one window size with only the style changed:
+//
+//   style       safe top   the controls sit at   result
+//   automatic   10pt       20 - 40pt             ON the app's content
+//   unified     10pt       20 - 40pt             ON the app's content
+//   minimal     32pt        5 - 26pt             above the safe area, clear
+//
+// **Only `minimal` puts the controls outside the safe area.** Under the other
+// two the system draws its close/minimise/zoom pill over whatever the app has
+// in its top-left corner, and NOTHING tells the app it happened: the pill is
+// not in the view hierarchy, no API vends its frame, and the safe-area insets
+// do not move. An app laying out normally under `unified` has its corner
+// silently covered — which is exactly the bug in WINDOWING.md §0, the controls
+// landing on a tappable `‹ Back`.
+//
+// So the rule is not "match the adjectives", it is:
+//
+//   **`unified` is only correct for an app that draws a top bar and leaves room
+//   in it for the controls.** Everything else gets `minimal`.
+//
+// That is what `Bar` already distinguishes, so the mapping still needs nothing
+// invented at the facet tier — it just runs the other way than it first read:
+//
+//   Native   the platform's stock bar        -> Minimal. On iOS facet hides the
+//                                               navigation bar at the root
+//                                               screen, so "stock bar" means NO
+//                                               visible bar here, and an app
+//                                               that said nothing must not be
+//                                               given the overlapping style.
+//   Hidden   no visible bar                  -> Minimal, for the same reason
+//                                               stated outright.
+//   Blended  "the bar shares the content's   -> Unified. The app HAS a bar and
+//            surface"                           the controls join it — the
+//                                               Contacts arrangement, where the
+//                                               sidebar button sits beside them
+//                                               rather than under them.
+//   Custom   the application draws the bar   -> Unified. Same case, more so.
+//
+// A `unified` app must keep the first ~60 x 40pt of its bar clear. facet has
+// the vocabulary for that — `window_buttons()`, which iris already places as
+// the first item in its own toolbar row — and MANIFEST.md §1 records what this
+// backend does with it.
+//
+// AND NOTE WHAT IS NOT HERE. Nothing maps to `Automatic`, deliberately.
+// `automatic` is precisely what UIKit uses when the delegate method is NOT
+// implemented — "automaticStyle will be used if this method is not
+// implemented" — so answering with it would be an elaborate way to say nothing,
+// and measured identical to `unified` besides. The method earns its place only
+// by saying something better than the default.
+//
+// PURE, and separated from the call that applies it so a test can pin it —
+// facet_appkit splits `wants_full_size_content` from the window it configures
+// for the same reason. Nothing here can run under `cpc test` (macOS has no
+// UIKit), so the parts that CAN be checked without a device are worth keeping
+// checkable.
+fn control_style_for(bar: screen::Bar) -> ControlStyle {
+    return match bar {
+        screen::Bar::Native => ControlStyle::Minimal,
+        screen::Bar::Hidden => ControlStyle::Minimal,
+        screen::Bar::Blended => ControlStyle::Unified,
+        screen::Bar::Custom => ControlStyle::Unified,
+    };
+}
+
+// ---- the room the system's controls need ---------------------------------------
+//
+// THE ONE HARDCODED METRIC IN THIS PACKAGE, and it is hardcoded because the
+// platform vends nothing else. The close/minimise/zoom pill is not in the app's
+// view hierarchy (a windowed app's tree was walked: four full-bleed views and
+// no pill), no API returns its frame, and `safeAreaInsets` does not move for it
+// under `unified`. There is nothing to read, so there is a number.
+//
+// MEASURED, not guessed: photographed on an iPad running iPadOS 26.6, windowed,
+// the pill occupied x 19.5 - 60pt and y 20.5 - 40pt from the window's top-left
+// corner. These are the far edges, rounded up to whole points — the reservation
+// is "how much of the corner is spoken for", not the pill's own size.
+const CONTROL_PILL_W: f64 = 60.0f64;
+const CONTROL_PILL_H: f64 = 40.0f64;
+
+// A width and a height, kept local so the pure function below owes nothing to
+// flex — this file is the windowing tier and does not otherwise know about it.
+struct Reservation {
+    width: f64,
+    height: f64,
+}
+
+// How much of the app's leading top corner the system has taken.
+//
+// PURE, so a test can pin it without a device — which matters more here than
+// usual, because the interesting answers are the ZEROES and those are what a
+// phone gets.
+//
+//   not windowed        zero. An iPhone has no window controls at all, and
+//                       neither does a FULL SCREEN iPad — the controls move up
+//                       into the menu bar and the app's top-left is its own
+//                       again (WINDOWING.md §0). Reserving there is a 60pt hole
+//                       in the toolbar with nothing behind it.
+//   Minimal / Automatic zero. Measured: under `minimal` the controls sit ABOVE
+//                       the safe area and the app's content is already clear of
+//                       them. Reserving as well would double-count.
+//   Unified             the pill. This is the style that puts the controls in
+//                       the app's own content, and the whole point of choosing
+//                       it is that the app has a bar to put them in.
+//
+// THE GAP APPEARS AND DISAPPEARS WITH THE WINDOW, which was not the first
+// design. This reserved on "the platform can window" alone, and the cost was
+// visible the moment it ran: a full-screen iPad drew 60pt of empty toolbar. The
+// reflow was the thing being avoided — but a reflow here is CORRECT, because
+// the controls really do appear at that moment, and facet relayouts on window
+// size already. `UIWindowScene.isFullScreen` is macCatalyst-only, so the test
+// is the window's bounds against the screen's, which is exact enough: a
+// full-screen window IS screen-sized, and a windowed one measured 400x505
+// against a 1194x834 screen.
+//
+// THE NODE MUST BE THE LEADING ITEM IN THE APP'S BAR for this to line up: the
+// pill is placed relative to the WINDOW, not to this node, so a reservation
+// pushed inboard by the bar's own padding does not cover it. That is how iris
+// already places `window_buttons()` on macOS, and it is the same shape here —
+// which is the point, since the application's code should not have to know
+// which platform it is on.
+fn window_buttons_reservation(style: ControlStyle, windowed: bool) -> Reservation {
+    if !windowed { return Reservation { width: 0.0f64, height: 0.0f64 }; }
+    return match style {
+        ControlStyle::Unified => Reservation { width: CONTROL_PILL_W, height: CONTROL_PILL_H },
+        ControlStyle::Minimal => Reservation { width: 0.0f64, height: 0.0f64 },
+        ControlStyle::Automatic => Reservation { width: 0.0f64, height: 0.0f64 },
+    };
+}
+
+// Is this window smaller than the screen it is on — i.e. is it in a window the
+// user placed, rather than filling the display?
+//
+// PURE, so the comparison itself is pinned. A tolerance rather than an equality:
+// these are floating point and a window that fills the screen should not read as
+// windowed because of a rounding difference in the last bit.
+fn is_windowed_size(win_w: f64, win_h: f64, screen_w: f64, screen_h: f64) -> bool {
+    if screen_w <= 0.0f64 || screen_h <= 0.0f64 { return false; }
+    if win_w <= 0.0f64 || win_h <= 0.0f64 { return false; }
+    if (screen_w - win_w) > 1.0f64 { return true; }
+    return (screen_h - win_h) > 1.0f64;
+}
+
+// The same question asked of the running app rather than of two arguments: does
+// this app have window controls drawn over its content RIGHT NOW.
+//
+// Both halves are needed. `scene_supports_resizing` rules out every iPhone, and
+// the size comparison rules out a full-screen iPad — where the platform does
+// window but this app is not in a window.
+fn window_is_windowed() -> bool {
+    if !device::scene_supports_resizing(device::scene_of_window(WINDOW)) { return false; }
+    if WINDOW == (0 as *u8) { return false; }
+    let wb: rt::Rect = { rt::msg_rect(WINDOW, rt::sel(#str_ptr("bounds\0"))) };
+    let sb: rt::Rect = ui::Screen::main_screen().bounds();
+    return is_windowed_size(wb.w, wb.h, sb.w, sb.h);
+}
+
+fn window_buttons_reservation_now() -> Reservation {
+    return window_buttons_reservation(control_style_for(WANT_BAR), window_is_windowed());
+}
+
+// The class property that vends each style. All three are `+` properties on
+// `UISceneWindowingControlStyle`, so the selector IS the style.
+fn control_style_selector(s: ControlStyle) -> *u8 {
+    return match s {
+        ControlStyle::Automatic => rt::sel(#str_ptr("automaticStyle\0")),
+        ControlStyle::Unified => rt::sel(#str_ptr("unifiedStyle\0")),
+        ControlStyle::Minimal => rt::sel(#str_ptr("minimalStyle\0")),
+    };
+}
+
+// The style this app wants for its window controls, asked once per scene.
+//
+// NEVER REACHED WITHOUT THE CLASS. `scene_delegate_class` only adds this method
+// when `UISceneWindowingControlStyle` resolves, so the null branch below is a
+// belt on a class that cannot be missing — which matters, because the header
+// declares a nonnull return and handing UIKit a nil would be worse than not
+// answering at all. Not implementing the method is the supported way to say
+// nothing: "automaticStyle will be used if this method is not implemented".
+fn imp_preferred_control_style(self_obj: *u8, cmd: *u8, scene: *u8) -> *u8 {
+    let cls: *u8 = rt::get_class(#str_ptr("UISceneWindowingControlStyle\0"));
+    if cls == (0 as *u8) { return 0 as *u8; }
+    return { rt::msg_id(cls, control_style_selector(control_style_for(WANT_BAR))) };
+}
+
+// The scene arrived. Hand it the window that already exists, then tell it
+// everything `open_window` recorded.
+//
+// `setWindowScene:` is the load-bearing line: the window was made in the app
+// delegate before any scene existed, and this is what puts it INTO the scene so
+// the system treats it as a real window — border, resize grabber, controls —
+// and so `sizeRestrictions` and the rest have somewhere to land. Applying the
+// chrome before this call is what made the earlier attempt inert.
+fn imp_scene_will_connect(self_obj: *u8, cmd: *u8, scene: *u8, session: *u8, options: *u8) {
+    if WINDOW == (0 as *u8) { return; }
+    if scene == (0 as *u8) { return; }
+    { rt::msg_void_id(WINDOW, rt::sel(#str_ptr("setWindowScene:\0")), scene) };
+    apply_scene_chrome(WINDOW);
+    // AND RE-MEASURE, or the window-buttons reservation is inert.
+    //
+    // `run_screen` calls `build()` BEFORE `open_window`, and the tree is mounted
+    // and laid out inside `didFinishLaunching` — both of which happen before any
+    // scene exists. A `window_buttons` node measured in that window answers 0,
+    // correctly, because at that moment this app genuinely has no window
+    // controls. The scene arriving is what changes the answer, and nothing else
+    // in the pipeline knows that: flex caches a measurement whose inputs have
+    // not changed, and from flex's side nothing has.
+    relayout_all();
+    return;
+}
+
+// Mark every mounted tree for a fresh layout.
+//
+// WHOLE-TREE ON PURPOSE, and cheap because it happens ONCE — a scene connects
+// at launch and not again. The alternative is finding just the nodes whose
+// measurement depends on the windowing state, which today is one kind and would
+// be a second list to keep in step with the first.
+fn relayout_all() {
+    var i: usize = 0 as usize;
+    let n: usize = app::window_count();
+    while i < n {
+        let r: *core::Node = app::window_root(i);
+        if r != (0 as *core::Node) { relayout_walk(r); }
+        i = i +% (1 as usize);
+    }
+    return;
+}
+
+fn relayout_walk(n: *core::Node) {
+    core::relayout(n);
+    var i: usize = 0 as usize;
+    let count: usize = core::child_count_of(n);
+    while i < count {
+        match core::child_of(n, i) {
+            option::Option[*core::Node]::Some(c) => { relayout_walk(c); }
+            option::Option[*core::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return;
+}
+
+// The window's geometry changed — it was resized, moved between screens, or
+// went in or out of full screen.
+//
+// IT EARNS ITS PLACE FOR ONE REASON. `window_buttons` reserves the corner only
+// while the app is actually in a window, so the reservation's answer changes at
+// exactly this moment and at no other. `layoutSubviews` already re-lays the tree
+// on a resize, but flex re-measures a leaf only when its own inputs changed, and
+// from flex's side nothing about that node did — the windowing state is not
+// something it can see. So this marks the trees and lets the ordinary pass do
+// the rest.
+//
+// iOS 26. On anything older the method is never called and there is nothing to
+// re-measure, because there is no windowing to leave.
+fn imp_scene_geometry_changed(self_obj: *u8, cmd: *u8, scene: *u8, previous: *u8) {
+    relayout_all();
+    return;
+}
+
+fn scene_delegate_class() -> *u8 {
+    if SCENE_DELEGATE_CLASS != (0 as *u8) { return SCENE_DELEGATE_CLASS; }
+    let existing: *u8 = rt::get_class(#str_ptr("FacetUIKitSceneDelegate\0"));
+    if existing != (0 as *u8) {
+        SCENE_DELEGATE_CLASS = existing;
+        return SCENE_DELEGATE_CLASS;
+    }
+    let base: *u8 = rt::get_class(#str_ptr("UIResponder\0"));
+    if base == (0 as *u8) { return 0 as *u8; }
+    let cls: *u8 = { synth::allocate_class_pair(base, #str_ptr("FacetUIKitSceneDelegate\0"), 0 as usize) };
+    if cls == (0 as *u8) { return 0 as *u8; }
+    let _a: i8 = synth::add_method_v_3id(cls,
+        rt::sel(#str_ptr("scene:willConnectToSession:options:\0")),
+        imp_scene_will_connect, #str_ptr("v@:@@@\0"));
+    let _g: i8 = synth::add_method_v_2id(cls,
+        rt::sel(#str_ptr("windowScene:didUpdateEffectiveGeometry:\0")),
+        imp_scene_geometry_changed, #str_ptr("v@:@@\0"));
+    // ONLY WHERE THE VOCABULARY EXISTS. `UISceneWindowingControlStyle` arrived
+    // in iOS 26; on anything older there is no object to answer with, and the
+    // header declares the method nonnull. UIKit's documented way to say nothing
+    // is to not implement it — "automaticStyle will be used if this method is
+    // not implemented" — so on an older system the method is simply absent and
+    // the app gets the same default it would have got anyway.
+    //
+    // This is the ONE version gate in the package, and it is still a question
+    // asked of the runtime rather than a version number compared: a class that
+    // does not resolve is the same fact, and cannot drift from the SDK this
+    // binary was built against.
+    if device::windowing_controls_available() {
+        let _b: i8 = synth::add_method_id_1id(cls,
+            rt::sel(#str_ptr("preferredWindowingControlStyleForScene:\0")),
+            imp_preferred_control_style, #str_ptr("@@:@\0"));
+    }
+    // CONFORMANCE, not merely the methods. UIKit checks the protocol list and
+    // refuses a delegate class that answers every message while claiming
+    // nothing: 'representation's delegateClass must conform to UISceneDelegate
+    // protocol', thrown out of `-[UIScene initWithSession:connectionOptions:]`
+    // before a line of ours runs. Both are claimed — the window-scene protocol
+    // is the one carrying the methods above, and it refines the scene protocol
+    // the error names.
+    let _p1: i8 = synth::conform(cls, #str_ptr("UISceneDelegate\0"));
+    let _p2: i8 = synth::conform(cls, #str_ptr("UIWindowSceneDelegate\0"));
+    { synth::register_class_pair(cls) };
+    SCENE_DELEGATE_CLASS = cls;
+    return SCENE_DELEGATE_CLASS;
+}
+
 fn delegate_class() -> *u8 {
     if DELEGATE_CLASS != (0 as *u8) { return DELEGATE_CLASS; }
     let existing: *u8 = rt::get_class(#str_ptr("FacetUIKitAppDelegate\0"));
@@ -668,12 +1276,93 @@ extern fn UIApplicationMain(argc: i32, argv: *u8, principal: *u8, delegate: *u8)
 fn run_loop() {
     let cls: *u8 = delegate_class();
     if cls == (0 as *u8) { return; }
+    // BEFORE `UIApplicationMain`, because UIKit resolves the scene delegate by
+    // NAME out of the Info.plist and a class that is not registered yet is a
+    // class that does not exist. Registered unconditionally: an app whose plist
+    // names no scene manifest simply never has it looked up.
+    let _sc: *u8 = scene_delegate_class();
     let name: *u8 = bridge::nsstring("FacetUIKitAppDelegate");
     let _rc: i32 = { UIApplicationMain(0 as i32, 0 as *u8, 0 as *u8, name) };
     return;
 }
 
 fn window_native() -> *u8 { return WINDOW; }
+
+// ---- what the windowing state actually is -------------------------------------
+//
+// WRITTEN BECAUSE AN AGENT HAS NO HANDS. The only state where the system's
+// window controls can collide with an app's own top-left is the WINDOWED state,
+// and nothing in this toolchain can put a window into it: `simctl` cannot drag a
+// resize grabber, and `UIWindowSceneGeometryPreferencesIOS` carries
+// `interfaceOrientations` and nothing else on iOS, so the app cannot resize
+// itself either. A screenshot shows what a window looks like; it does not say
+// which of these facts produced it.
+//
+// So this reports them. One line, every value read live rather than remembered,
+// and safe to call at any moment — before a scene, on a phone, on an OS with no
+// windowing vocabulary at all. Point values are rounded to whole points: this
+// answers "is there an inset and roughly how big", not "lay out against this".
+//
+// The two questions §4 of WINDOWING.md exists to settle are `safe=` and the
+// `win=` / `screen=` pair: whether the controls contribute to the safe area,
+// and whether the window is smaller than the screen at the moment it was asked.
+fn windowing_report() -> text::Text {
+    let who: str = device::idiom_name(device::idiom());
+    let scene: *u8 = device::scene_of_window(WINDOW);
+    let has_scene: str = if scene == (0 as *u8) { "no" } else { "yes" };
+    let resizing: str = if device::scene_supports_resizing(scene) { "yes" } else { "no" };
+    let behaviors: str = if device::scene_supports_behaviors(scene) { "yes" } else { "no" };
+    let vocab_there: str = if device::windowing_controls_available() { "yes" } else { "no" };
+    let style: str = control_style_name(control_style_for(WANT_BAR));
+    // READ BACK, not remembered: the scene is asked what its title is now, so a
+    // `setTitle:` that never landed reads `titled=no` here even though the app
+    // named one.
+    var titled: str = "no";
+    if scene != (0 as *u8) {
+        if { rt::msg_id(scene, rt::sel(#str_ptr("title\0"))) } != (0 as *u8) { titled = "yes"; }
+    }
+
+    let sb: rt::Rect = ui::Screen::main_screen().bounds();
+    var wb: rt::Rect = rt::Rect { x: 0.0f64, y: 0.0f64, w: 0.0f64, h: 0.0f64 };
+    var ins: ui::EdgeInsets = ui::EdgeInsets {
+        top: 0.0f64, left: 0.0f64, bottom: 0.0f64, right: 0.0f64 };
+    // FRAME AS WELL AS BOUNDS, because a window's ORIGIN is what distinguishes
+    // "the window is small" from "the window has been dragged away from the top
+    // of the screen" — and the safe-area top inset turned out to depend on the
+    // second, which reading only sizes could never have shown.
+    var wf: rt::Rect = rt::Rect { x: 0.0f64, y: 0.0f64, w: 0.0f64, h: 0.0f64 };
+    if WINDOW != (0 as *u8) {
+        wb = { rt::msg_rect(WINDOW, rt::sel(#str_ptr("bounds\0"))) };
+        wf = { rt::msg_rect(WINDOW, rt::sel(#str_ptr("frame\0"))) };
+        ins = { msg_edge_insets(WINDOW, rt::sel(#str_ptr("safeAreaInsets\0"))) };
+    }
+    let fx: i64 = wf.x as i64;
+    let fy: i64 = wf.y as i64;
+    let ww: i64 = wb.w as i64;
+    let wh: i64 = wb.h as i64;
+    let sw: i64 = sb.w as i64;
+    let sh: i64 = sb.h as i64;
+    let it: i64 = ins.top as i64;
+    let il: i64 = ins.left as i64;
+    let ib: i64 = ins.bottom as i64;
+    let ir: i64 = ins.right as i64;
+    // One literal: C+ does not concatenate adjacent string literals, and a
+    // report that has to be assembled from pieces is a report that drifts.
+    return text::from_str("idiom=${who} scene=${has_scene} resizing=${resizing} behaviors=${behaviors} controls=${vocab_there} style=${style} titled=${titled} win=${ww}x${wh} at=${fx},${fy} screen=${sw}x${sh} safe=${it},${il},${ib},${ir}");
+}
+
+fn control_style_name(s: ControlStyle) -> str {
+    return match s {
+        ControlStyle::Automatic => "automatic",
+        ControlStyle::Unified => "unified",
+        ControlStyle::Minimal => "minimal",
+    };
+}
+
+// `safeAreaInsets` is a by-value `UIEdgeInsets` — four doubles in registers, not
+// an `sret` return — so it needs its own `objc_msgSend` shape.
+#[link_name = "objc_msgSend"]
+extern fn msg_edge_insets(recv: *u8, selector: *u8) -> ui::EdgeInsets;
 
 // ---- the desktop verbs, answered honestly -------------------------------------
 // An iOS window cannot be closed, minimised or zoomed by the application: the

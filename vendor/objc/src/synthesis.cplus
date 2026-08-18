@@ -10,6 +10,21 @@ import "./runtime" as rt;
 extern fn objc_allocateClassPair(superclass: *u8, name: *u8, extra_bytes: usize) -> *u8;
 extern fn objc_registerClassPair(cls: *u8);
 
+// PROTOCOL CONFORMANCE, which is not the same thing as having the methods.
+//
+// Some frameworks check `conformsToProtocol:` rather than `respondsToSelector:`
+// and refuse a class that answers every message but claims nothing. UIKit's
+// scene machinery is one: a synthesized class with
+// `scene:willConnectToSession:options:` on it still dies at launch with
+//
+//     'representation's delegateClass must conform to UISceneDelegate protocol'
+//
+// because the check is on the protocol list, not the method list. The methods
+// were all there. `class_addProtocol` is what was missing, and it must be called
+// BEFORE `objc_registerClassPair` — a registered class cannot gain one.
+extern fn objc_getProtocol(name: *u8) -> *u8;
+extern fn class_addProtocol(cls: *u8, protocol: *u8) -> i8;
+
 // `class_addMethod`, one extern per IMP ABI. Every IMP receives (self, _cmd, ...);
 // delegate methods that take only object args use the `v_Nid` shapes (void
 // return, N trailing `id` arguments after self/_cmd).
@@ -75,6 +90,26 @@ fn allocate_class_pair(superclass: *u8, name: *u8, extra_bytes: usize) -> *u8 {
 
 fn register_class_pair(cls: *u8) {
     { objc_registerClassPair(cls); };
+}
+
+// The protocol object of that name, or null if nothing in the process declares
+// one. Null is the normal answer for a protocol whose framework is not linked.
+fn get_protocol(name: *u8) -> *u8 {
+    return { objc_getProtocol(name) };
+}
+
+// Declare that `cls` conforms. BEFORE `register_class_pair` — a registered class
+// cannot gain a protocol, and the call quietly answers false if it is too late.
+fn add_protocol(cls: *u8, protocol: *u8) -> i8 {
+    if protocol == (0 as *u8) { return 0 as i8; }
+    return { class_addProtocol(cls, protocol) };
+}
+
+// Name it and claim it, which is the whole of what a caller wants. False when
+// the protocol is not in the process — an honest answer, since the framework
+// that checks for it is then not there either.
+fn conform(cls: *u8, name: *u8) -> i8 {
+    return add_protocol(cls, get_protocol(name));
 }
 
 fn add_method_v_0id(cls: *u8, selector: *u8, imp: fn(*u8, *u8), types: *u8) -> i8 {

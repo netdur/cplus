@@ -48,6 +48,13 @@ import "uikit/uikit" as ui;
 // not cosmetic.
 fn all_bits() -> u64 { return props::C_ALL_STATE; }
 
+// The word a THEME REPAINT passes, which is deliberately NOT `all_bits()`.
+//
+// `all_bits()` doubles as the create sentinel — see `props::C_RESTYLE` for the
+// full reasoning and the bug it caused. This is that value with `C_AGENT`
+// withheld: every per-kind colour bit still raised, `== all_bits()` false.
+fn restyle_bits() -> u64 { return props::C_RESTYLE; }
+
 // ---- colour ------------------------------------------------------------------
 
 // Is this the dark side? `UITraitCollection.currentTraitCollection`'s

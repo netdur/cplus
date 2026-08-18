@@ -51,6 +51,17 @@ echo "device $dev"
 out="$(mktemp -d)"
 app="$out/FacetUIKitTests.app"
 mkdir -p "$app"
+# `UIDeviceFamily` = [1, 2] IS LOAD-BEARING HERE, not boilerplate.
+#
+# Without it iOS reads the bundle as iPhone-only and runs it on an iPad in
+# COMPATIBILITY MODE — a phone-sized canvas, a phone's width class, and
+# `userInterfaceIdiom` answering Phone on iPad hardware. The device checks in
+# selftest.cplus would then pass on an iPad while testing the phone path, which
+# is worse than not having them.
+#
+# It is also what this runner was already doing wrong: every iOS test run before
+# 2026-08-18 was a phone-width run on whatever simulator it picked. See
+# WINDOWING.md §5.
 cat > "$app/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -64,6 +75,7 @@ cat > "$app/Info.plist" <<'PLIST'
 	<key>CFBundleVersion</key><string>1</string>
 	<key>LSRequiresIPhoneOS</key><true/>
 	<key>MinimumOSVersion</key><string>14.0</string>
+	<key>UIDeviceFamily</key><array><integer>1</integer><integer>2</integer></array>
 	<key>UILaunchScreen</key><dict/>
 </dict>
 </plist>
