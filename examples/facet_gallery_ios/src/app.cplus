@@ -219,6 +219,10 @@ impl Gallery: component::Component {
         // tier before anything has been tapped.
         root.add(ui::tree(catalog::model(), key: "g:catalog",
                           on_select: this.on_pick,
+                          // Every row gets a name an agent can click. See
+                          // catalog::row_key — without it the catalog is the
+                          // one screen MCP can read and cannot drive.
+                          row_id: catalog::row_key,
                           row_height: 44.0f64)
                  .grow(1.0f64)
                  .shrink(1.0f64));

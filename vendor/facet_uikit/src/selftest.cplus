@@ -571,6 +571,83 @@ fn modifier_flags_map_onto_facets_bits() -> bool {
     return keys::modifiers_of_flags(0 as u64) == (0 as u64);
 }
 
+// ---- what a keystroke reaches ----------------------------------------------------
+// A UITextField's typing had NOWHERE TO GO on this backend. `imp_editing_changed`
+// routes it into `read_back`, and `read_back` answers for a switch, a slider, a
+// stepper, a popup, tabs, page dots and both pickers — and for no text control
+// at all. So `text()` answered whatever the app last SET and `on_text_changed`
+// was never called. Only a text AREA worked, because a UITextView is not a
+// UIControl and its keystrokes arrive through a delegate that does this.
+//
+// Found through the agent surface rather than by typing: `set_text` over MCP put
+// a string into the gallery's field, on screen, and the echo label under it —
+// written by the app's own handler — still said "(nothing typed)". A finger goes
+// down the same path.
+
+static TYPED_HITS: i64 = 0 as i64;
+fn note_typed_hit(sender: *u8, ctx: *u8) { TYPED_HITS = TYPED_HITS + (1 as i64); return; }
+
+fn a_fields_keystroke_reaches_the_props() -> bool {
+    var n: core::Node = ui::text_field("", key: "wb:field");
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    if v == (0 as *u8) { return false; }
+    // The control holds the truth — this is what a keystroke leaves behind.
+    { rt::msg_void_id(v, rt::sel(#str_ptr("setText:\0")), bridge::nsstring("typed")) };
+    input::write_back_field(p, v);
+    let fp: *props::TextFieldProps =
+        recycler::props_of(p, props::K_TEXT_FIELD) as *props::TextFieldProps;
+    views::view_release(v);
+    if fp == (0 as *props::TextFieldProps) { return false; }
+    return { (*fp).input_view.text.view() } == "typed";
+}
+
+fn a_fields_keystroke_reaches_the_app() -> bool {
+    TYPED_HITS = 0 as i64;
+    var n: core::Node = ui::text_field("", key: "wb:handler",
+                                       on_text_changed: note_typed_hit);
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    if v == (0 as *u8) { return false; }
+    { rt::msg_void_id(v, rt::sel(#str_ptr("setText:\0")), bridge::nsstring("x")) };
+    input::write_back_field(p, v);
+    views::view_release(v);
+    return TYPED_HITS == (1 as i64);
+}
+
+fn max_length_is_enforced_where_the_text_arrives() -> bool {
+    var n: core::Node = ui::text_field("", key: "wb:max", max_length: 3 as i64);
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    if v == (0 as *u8) { return false; }
+    { rt::msg_void_id(v, rt::sel(#str_ptr("setText:\0")), bridge::nsstring("abcdef")) };
+    input::write_back_field(p, v);
+    // Cut on the CONTROL as well as in the props, or the next keystroke starts
+    // from the over-long string again.
+    let back: text::Text = bridge::to_text({ rt::msg_id(v, rt::sel(#str_ptr("text\0"))) });
+    let fp: *props::TextFieldProps =
+        recycler::props_of(p, props::K_TEXT_FIELD) as *props::TextFieldProps;
+    views::view_release(v);
+    if fp == (0 as *props::TextFieldProps) { return false; }
+    return { (*fp).input_view.text.view() } == "abc" && { back.view() } == "abc";
+}
+
+// NEGATIVE: a control that is not a text control must fall straight through.
+// `write_back_field` runs on every editing action and a kind it does not know
+// has to be a no-op, not a cast through the wrong props struct.
+fn a_non_text_control_is_left_alone_by_the_field_write_back() -> bool {
+    var n: core::Node = ui::toggle(true, key: "wb:switch");
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    if v == (0 as *u8) { return false; }
+    input::write_back_field(p, v);
+    let tp: *props::ToggleProps =
+        recycler::props_of(p, props::K_TOGGLE) as *props::ToggleProps;
+    views::view_release(v);
+    if tp == (0 as *props::ToggleProps) { return false; }
+    return { (*tp).on };
+}
+
 // ---- the agent surface -----------------------------------------------------------
 // The reader walks a live UIView tree into agent_core's identity registry. It
 // runs here rather than in agent_uikit's own suite for the reason everything
@@ -637,6 +714,121 @@ fn a_control_is_clickable_and_a_bare_view_is_not() -> bool {
     let v: uik::View = uik::View::new_with_frame(
         rt::Rect { x: 0.0f64, y: 0.0f64, w: 10.0f64, h: 10.0f64 });
     return agent::view_clickable(v.raw()) == false;
+}
+
+// A ROW IS THE ONE NODE AN APPLICATION CANNOT KEY. The row is CONTENT, mounted
+// inside a cell `recycler.cplus` makes and owns, so a `key:` on what `row:`
+// builds lands on the label — and the cell, which is what a click has to reach,
+// carries nothing. facet_appkit has tagged its outline cells from `row_id`
+// since it was written; this backend never did, so the gallery's catalog was a
+// list an agent could see and could not enter.
+fn ri_row_id(n: *tree::TreeNode, ctx: *u8) -> text::Text {
+    if n == (0 as *tree::TreeNode) { return text::new(); }
+    let id: str = { (*n).id_of() };
+    return "row:${id}";
+}
+
+fn a_tree_row_carries_the_apps_row_id() -> bool {
+    var root: tree::TreeNode = tree::TreeNode::new("", id: "root", is_branch: true);
+    var t: core::Node = ui::tree(root, key: "ri", row_id: ri_row_id);
+    let p: *tree::TreeProps = recycler::props_of(#addr_of(t), tree::K_TREE) as *tree::TreeProps;
+    if p == (0 as *tree::TreeProps) { return false; }
+    var leaf: tree::TreeNode = tree::TreeNode::new("Leaf", id: "leaf");
+    let cls: *u8 = rt::get_class(#str_ptr("UITableViewCell\0"));
+    if cls == (0 as *u8) { return false; }
+    let cell: *u8 = rt::alloc_init(#str_ptr("UITableViewCell\0"));
+    if cell == (0 as *u8) { return false; }
+    recycler::tag_tree_row(p, #addr_of(leaf), cell);
+    let got: text::Text = bridge::to_text(
+        { rt::msg_id(cell, rt::sel(#str_ptr("accessibilityIdentifier\0"))) });
+    let ok: bool = { got.view() } == "row:leaf";
+    { rt::release(cell) };
+    return ok;
+}
+
+// NEGATIVE, and it is the sharper half. The cell pool is RECYCLED: a cell that
+// kept the id of the row it used to hold would answer to a name that is now
+// somewhere else on screen — which looks like it worked. A tree that names no
+// `row_id` must leave the cell unnamed rather than inherit one.
+fn a_tree_with_no_row_id_leaves_its_cell_unnamed() -> bool {
+    var root: tree::TreeNode = tree::TreeNode::new("", id: "root", is_branch: true);
+    var t: core::Node = ui::tree(root, key: "ri2");
+    let p: *tree::TreeProps = recycler::props_of(#addr_of(t), tree::K_TREE) as *tree::TreeProps;
+    if p == (0 as *tree::TreeProps) { return false; }
+    var leaf: tree::TreeNode = tree::TreeNode::new("Leaf", id: "leaf");
+    let cell: *u8 = rt::alloc_init(#str_ptr("UITableViewCell\0"));
+    if cell == (0 as *u8) { return false; }
+    recycler::tag_tree_row(p, #addr_of(leaf), cell);
+    let ns: *u8 = { rt::msg_id(cell, rt::sel(#str_ptr("accessibilityIdentifier\0"))) };
+    let unnamed: bool = ns == (0 as *u8) || { bridge::to_text(ns).view() } == "";
+    { rt::release(cell) };
+    return unnamed;
+}
+
+// A UITableViewCell is not a UIControl and carries no recogniser of its own —
+// the table owns the touch — so both of `view_clickable`'s other tests say no
+// about the one node in a list an agent has any reason to click.
+fn a_row_cell_is_clickable_to_an_agent() -> bool {
+    let cell: *u8 = rt::alloc_init(#str_ptr("UITableViewCell\0"));
+    if cell == (0 as *u8) { return false; }
+    let table: *u8 = rt::alloc_init(#str_ptr("UITableView\0"));
+    if table == (0 as *u8) { { rt::release(cell) }; return false; }
+    uik::View::from_raw(table).add_subview(uik::View::from_raw(cell));
+    let ok: bool = agent::view_clickable(cell);
+    // ...and a bare view outside any table is still not clickable, or the rule
+    // would have made everything on screen look actionable.
+    let loose: *u8 = rt::alloc_init(#str_ptr("UIView\0"));
+    let not_ok: bool = agent::view_clickable(loose) == false;
+    { rt::release(loose) };
+    { rt::release(table) };
+    return ok && not_ok;
+}
+
+// THE TWO PACKAGES MUST AGREE ABOUT THE EVENT. agent_uikit's `set_text` tells
+// the application by sending the control event facet_uikit armed — and it sent
+// 1 << 16, which is `EditingDidBegin`, the event a field sends when it GAINS
+// FOCUS. So an agent's write landed on screen and the app was told the field
+// had been tapped into. `input.cplus` had already made this exact mistake and
+// corrected it; agent_uikit carried the old number.
+fn the_agent_and_the_backend_name_the_same_events() -> bool {
+    if agent::editing_changed_mask() != input::event_editing_changed() { return false; }
+    if agent::value_changed_mask() != input::event_value_changed() { return false; }
+    if agent::touch_up_inside_mask() != input::event_touch_up_inside() { return false; }
+    // And the one it is NOT, spelled out: the two differ by a single bit and
+    // the wrong one is a real event that fires at a plausible moment.
+    return agent::editing_changed_mask() != input::event_editing_did_begin();
+}
+
+// The main-thread hop's far side. Every write verb rides
+// `performSelectorOnMainThread:`, which delivers to the RECEIVER — so the
+// selectors have to exist on UIView or the send is an unrecognized selector on
+// the main thread, which is a crash rather than a refusal.
+fn the_agents_main_thread_shims_are_installed() -> bool {
+    agent::ensure_shims();
+    let v: *u8 = rt::alloc_init(#str_ptr("UIView\0"));
+    if v == (0 as *u8) { return false; }
+    let a: bool = agent::responds_to(v, #str_ptr("cplusAgentTouchUp:\0"));
+    let b: bool = agent::responds_to(v, #str_ptr("cplusAgentEditingChanged:\0"));
+    let c: bool = agent::responds_to(v, #str_ptr("cplusAgentSelectRow:\0"));
+    { rt::release(v) };
+    return a && b && c;
+}
+
+// The walk is what an agent reads, and a snapshot taken before UIKit realised a
+// table's cells is a list with no rows in it — for the LIFE of the screen,
+// because a snapshot does not notice. `refresh_surface` is why describe answers
+// the truth; this is the layout it forces on the way.
+fn the_agent_refresh_lays_the_window_out_first() -> bool {
+    let win: *u8 = rt::alloc_init(#str_ptr("UIWindow\0"));
+    if win == (0 as *u8) { return false; }
+    var s: agent::Surface = agent::open(win);
+    // A surface opened on a window can be re-opened in place — the serve worker
+    // holds this address for the app's life, so a refresh that replaced the
+    // value rather than its contents would leave the worker on a dead one.
+    agent::refresh_in_place(#addr_of(s) as *u8);
+    let ok: bool = { s.view_of(1 as usize) } == win;
+    { rt::release(win) };
+    return ok;
 }
 
 // ---- the caret and the runs ---------------------------------------------------
@@ -1221,6 +1413,26 @@ fn run_all() -> i32 {
     check("focus and blur fire once per change", focus_and_blur_fire_once_per_change());
     check("the editing-changed event is the per-keystroke one",
           the_editing_changed_event_is_the_per_keystroke_one());
+    check("a field's keystroke reaches the props",
+          a_fields_keystroke_reaches_the_props());
+    check("a field's keystroke reaches the app",
+          a_fields_keystroke_reaches_the_app());
+    check("max_length is enforced where the text arrives",
+          max_length_is_enforced_where_the_text_arrives());
+    check("a non-text control is left alone by the field write-back",
+          a_non_text_control_is_left_alone_by_the_field_write_back());
+    check("a tree row carries the app's row_id",
+          a_tree_row_carries_the_apps_row_id());
+    check("a tree with no row_id leaves its cell unnamed",
+          a_tree_with_no_row_id_leaves_its_cell_unnamed());
+    check("a row cell is clickable to an agent",
+          a_row_cell_is_clickable_to_an_agent());
+    check("the agent and the backend name the same events",
+          the_agent_and_the_backend_name_the_same_events());
+    check("the agent's main-thread shims are installed",
+          the_agents_main_thread_shims_are_installed());
+    check("the agent refresh lays the window out first",
+          the_agent_refresh_lays_the_window_out_first());
     check("a viewless root still has backed children",
           a_realised_viewless_root_still_has_backed_children());
     check("a tree's default row is no_row, not null", a_tree_default_row_is_no_row_not_null());

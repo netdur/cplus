@@ -70,6 +70,163 @@ fn class_name_text(view: *u8) -> text::Text {
     return bridge::to_text(ns);
 }
 
+// ---- the main thread -------------------------------------------------------------
+//
+// UIKIT IS MAIN-THREAD ONLY, and the realistic deployment of this surface is not
+// the main thread: `agent_mcp::serve_tcp` runs its accept loop on a worker, so
+// every verb below arrives off-main. `agent_appkit` hops for exactly this
+// reason; this package did not, and on iOS that is the sharper omission —
+// UIKit's main thread checker traps a call from a socket thread rather than
+// merely racing with the run loop.
+//
+// C+ has no closures (so no `dispatch_async(^{...})`) and no extern globals (so
+// no `dispatch_get_main_queue()`); the closure-free path is Foundation's
+// `performSelectorOnMainThread:withObject:waitUntilDone:`, which carries a
+// selector plus one `id`. `waitUntilDone:YES` keeps the hop SYNCHRONOUS, so the
+// Outcome the verb returns is the one that actually happened rather than a
+// promise that it was queued.
+//
+// READS ARE NOT HOPPED, and that is the same line agent_appkit draws: `describe`
+// touches every node in the tree and hopping it would serialize the whole walk
+// against the frame the app is drawing. What is hopped is everything that
+// MUTATES — which is every verb an agent can use to change the app.
+
+fn on_main_thread() -> bool {
+    let ns_thread: *u8 = rt::get_class(#str_ptr("NSThread\0"));
+    if is_null(ns_thread) { return true; }
+    return { rt::msg_i8(ns_thread, rt::sel(#str_ptr("isMainThread\0"))) } != (0 as i8);
+}
+
+// Send `[target action:arg]` on the main thread — directly when already there,
+// which is the in-app session's case and the one the headless tests exercise.
+fn perform_on_main(target: *u8, action: *u8, arg: *u8) {
+    if is_null(target) { return; }
+    if on_main_thread() {
+        { rt::msg_void_id(target, action, arg) };
+        return;
+    }
+    { rt::msg_void_id_id_i8(
+        target,
+        rt::sel(#str_ptr("performSelectorOnMainThread:withObject:waitUntilDone:\0")),
+        action, arg, 1 as i8) };
+    return;
+}
+
+// A selector taking anything OTHER than one `id` cannot ride
+// `performSelectorOnMainThread:`, so each one this package needs is added to
+// UIView as a one-`id` method that unpacks on the far side. The same device
+// agent_appkit uses for `selectRowIndexes:` and for the NSRect scroll.
+//
+// On UIView rather than on a class of our own: the receiver has to BE the view,
+// because that is what `performSelectorOnMainThread:` delivers to.
+static SHIMS_REGISTERED: bool = false;
+
+// UIControlEventTouchUpInside = 1 << 6 — the event facet_uikit arms its primary
+// action on.
+fn cplus_agent_touch_up(view: *u8, _cmd: *u8, _arg: *u8) {
+    { msg_void_u64(view, rt::sel(#str_ptr("sendActionsForControlEvents:\0")),
+                   touch_up_inside_mask()) };
+    return;
+}
+
+// UIControlEventEditingChanged = 1 << 17 and UIControlEventValueChanged = 1 << 12.
+// Both, because a UITextField reports the first and a UISlider the second, and
+// `set_text` cannot know which control it landed on.
+//
+// 1 << 17, NOT 1 << 16, and this line had it wrong. 1 << 16 is
+// `UIControlEventEditingDidBegin` — the event a field sends when it GAINS
+// FOCUS. So an agent's `set_text` put the text on screen and told the
+// application the field had been tapped into, which is not the same news:
+// facet_uikit's `on_text_changed` never fired and the app's own state never
+// moved. Measured on the gallery's Fields demo — the field read
+// "hello from mcp" and the echo under it still said "(nothing typed)".
+//
+// `input.cplus` in facet_uikit carries the same correction against the same
+// header, and had already paid for it once.
+// NAMED, so a check can assert them against `facet_uikit::input`'s own
+// constants rather than against a number written twice. The divergence IS the
+// bug this pair had.
+fn editing_changed_mask() -> u64 { return (1 as u64) * (131072 as u64); }
+fn value_changed_mask() -> u64 { return (1 as u64) * (4096 as u64); }
+fn touch_up_inside_mask() -> u64 { return (1 as u64) * (64 as u64); }
+
+fn cplus_agent_editing_changed(view: *u8, _cmd: *u8, _arg: *u8) {
+    { msg_void_u64(view, rt::sel(#str_ptr("sendActionsForControlEvents:\0")),
+                   editing_changed_mask()) };
+    { msg_void_u64(view, rt::sel(#str_ptr("sendActionsForControlEvents:\0")),
+                   value_changed_mask()) };
+    return;
+}
+
+// SELECT THE ROW THIS CELL IS, and then tell the delegate — which is the one
+// place UIKit is not AppKit. `selectRowIndexes:` posts a notification the
+// widget's delegate hears, so agent_appkit is finished once it has selected;
+// `selectRowAtIndexPath:animated:scrollPosition:` is DOCUMENTED not to call
+// `tableView:didSelectRowAtIndexPath:`, on the ground that a programmatic
+// selection is not a user selection. A click that stopped at the selection
+// would highlight the row and run none of the application's code, which is the
+// failure that reads as success.
+fn cplus_agent_select_row(cell: *u8, _cmd: *u8, _arg: *u8) {
+    let table: *u8 = enclosing_table(cell);
+    if is_null(table) { return; }
+    let ip: *u8 = { rt::msg_id_id(table, rt::sel(#str_ptr("indexPathForCell:\0")), cell) };
+    if is_null(ip) { return; }
+    // UITableViewScrollPositionNone = 0, animated NO — an agent's click is not
+    // a scroll, and `scroll_to` is the verb for that.
+    { msg_void_id_i8_i64(table,
+        rt::sel(#str_ptr("selectRowAtIndexPath:animated:scrollPosition:\0")),
+        ip, 0 as i8, 0 as i64) };
+    let d: *u8 = { rt::msg_id(table, rt::sel(#str_ptr("delegate\0"))) };
+    if is_null(d) { return; }
+    if !responds_to(d, #str_ptr("tableView:didSelectRowAtIndexPath:\0")) { return; }
+    { rt::msg_void_id_id(d, rt::sel(#str_ptr("tableView:didSelectRowAtIndexPath:\0")),
+                         table, ip) };
+    return;
+}
+
+fn ensure_shims() {
+    if SHIMS_REGISTERED { return; }
+    let cls: *u8 = rt::get_class(#str_ptr("UIView\0"));
+    if is_null(cls) { return; }
+    rt::add_method_action(cls, rt::sel(#str_ptr("cplusAgentTouchUp:\0")),
+                          cplus_agent_touch_up, #str_ptr("v@:@\0"));
+    rt::add_method_action(cls, rt::sel(#str_ptr("cplusAgentEditingChanged:\0")),
+                          cplus_agent_editing_changed, #str_ptr("v@:@\0"));
+    rt::add_method_action(cls, rt::sel(#str_ptr("cplusAgentSelectRow:\0")),
+                          cplus_agent_select_row, #str_ptr("v@:@\0"));
+    SHIMS_REGISTERED = true;
+    return;
+}
+
+// The nearest enclosing UITableView above `v`, or null. `v` itself counts, so a
+// caller can ask about a cell or about anything inside one.
+fn enclosing_table(v: *u8) -> *u8 {
+    var cur: *u8 = v;
+    var depth: i32 = 0 as i32;
+    while !is_null(cur) && depth < (64 as i32) {
+        if is_kind(cur, #str_ptr("UITableView\0")) { return cur; }
+        if !responds_to(cur, #str_ptr("superview\0")) { return null(); }
+        cur = { rt::msg_id(cur, rt::sel(#str_ptr("superview\0"))) };
+        depth = depth + (1 as i32);
+    }
+    return null();
+}
+
+// The cell at or above `v`, or null. A row's clickable node is the CELL — the
+// content mounted inside it is the application's tree and carries no selection
+// — so both `view_clickable` and `click_view` ask this rather than the view.
+fn enclosing_cell(v: *u8) -> *u8 {
+    var cur: *u8 = v;
+    var depth: i32 = 0 as i32;
+    while !is_null(cur) && depth < (64 as i32) {
+        if is_kind(cur, #str_ptr("UITableViewCell\0")) { return cur; }
+        if !responds_to(cur, #str_ptr("superview\0")) { return null(); }
+        cur = { rt::msg_id(cur, rt::sel(#str_ptr("superview\0"))) };
+        depth = depth + (1 as i32);
+    }
+    return null();
+}
+
 // ---- the agent id, the policy and the affordance -------------------------------
 // The same associated keys facet_uikit writes at mount, so a node's declared
 // tier and role are read here rather than guessed.
@@ -454,16 +611,15 @@ impl Surface {
                 if !responds_to(v, #str_ptr("setText:\0")) {
                     return surface::Outcome::NotActionable;
                 }
-                { rt::msg_void_id(v, rt::sel(#str_ptr("setText:\0")), bridge::nsstring(value)) };
+                ensure_shims();
+                // `setText:` already takes one `id`, so it rides the hop as it
+                // is — no shim needed for this one.
+                perform_on_main(v, rt::sel(#str_ptr("setText:\0")), bridge::nsstring(value));
                 // ...and tell the app. `click` fires the handler it authorizes;
                 // without this, `set_text` is the one verb that drives a control
-                // behind the application's back. UIControlEventEditingChanged
-                // is 1<<16 and UIControlEventValueChanged 1<<12.
+                // behind the application's back.
                 if responds_to(v, #str_ptr("sendActionsForControlEvents:\0")) {
-                    { msg_void_u64(v, rt::sel(#str_ptr("sendActionsForControlEvents:\0")),
-                                   (1 as u64) * (65536 as u64)) };
-                    { msg_void_u64(v, rt::sel(#str_ptr("sendActionsForControlEvents:\0")),
-                                   (1 as u64) * (4096 as u64)) };
+                    perform_on_main(v, rt::sel(#str_ptr("cplusAgentEditingChanged:\0")), null());
                 }
                 this.versions.bump(node);
                 return surface::Outcome::Allowed;
@@ -557,7 +713,13 @@ impl Surface {
 fn view_clickable(view: *u8) -> bool {
     if is_null(view) { return false; }
     if is_kind(view, #str_ptr("UIControl\0")) { return true; }
-    return has_tap_recogniser(view);
+    if has_tap_recogniser(view) { return true; }
+    // A ROW IS CLICKABLE AND ANSWERS NOTHING. A UITableViewCell is not a
+    // control and carries no recogniser of its own — the table owns the touch —
+    // so both tests above say no about the one node in a list an agent has any
+    // reason to click. `click_view` selects it through the table; this reports
+    // what that verb will do.
+    return !is_null(enclosing_cell(view));
 }
 
 fn has_tap_recogniser(view: *u8) -> bool {
@@ -574,10 +736,12 @@ fn has_tap_recogniser(view: *u8) -> bool {
 }
 
 fn click_view(v: *u8) -> surface::Outcome {
+    ensure_shims();
     if is_kind(v, #str_ptr("UIControl\0")) {
-        // TouchUpInside — the event facet_uikit arms its primary action on.
-        { msg_void_u64(v, rt::sel(#str_ptr("sendActionsForControlEvents:\0")),
-                       (1 as u64) * (64 as u64)) };
+        // TouchUpInside — the event facet_uikit arms its primary action on —
+        // sent from the main thread, because the target/action it runs is the
+        // application's own handler and that handler will touch UIKit.
+        perform_on_main(v, rt::sel(#str_ptr("cplusAgentTouchUp:\0")), null());
         return surface::Outcome::Allowed;
     }
     // A tap recogniser's action, fired directly. Not a synthesized touch — the
@@ -594,6 +758,15 @@ fn click_view(v: *u8) -> surface::Outcome {
             }
             i = i +% (1 as u64);
         }
+    }
+    // A ROW: the agent's click IS the user's row selection. Selecting it fires
+    // the table delegate facet_uikit installed, which is `on_select` — the same
+    // path a finger takes. Last, because a control INSIDE a cell is still that
+    // control's click and must not be turned into a selection of its row.
+    let cell: *u8 = enclosing_cell(v);
+    if !is_null(cell) {
+        perform_on_main(cell, rt::sel(#str_ptr("cplusAgentSelectRow:\0")), null());
+        return surface::Outcome::Allowed;
     }
     return surface::Outcome::NotActionable;
 }
@@ -613,7 +786,8 @@ fn fire_recogniser(g: *u8) -> bool {
     let shared: *u8 = { synth::get_associated(g, tap_target_key()) };
     if is_null(shared) { return false; }
     if !responds_to(shared, #str_ptr("facetTap:\0")) { return false; }
-    { rt::msg_void_id(shared, sel, g) };
+    // On the main thread: `facetTap:` runs the application's gesture handler.
+    perform_on_main(shared, sel, g);
     return true;
 }
 
@@ -647,11 +821,92 @@ fn is_at_or_inside(hit: *u8, ancestor: *u8) -> bool {
     return false;
 }
 
+// ---- the surface, re-walked before it is read ------------------------------------
+//
+// THE SURFACE IS A SNAPSHOT and a snapshot goes stale the moment the app does
+// anything. `facet_uikit` re-points it at every navigation, which covers a
+// screen swap, a push, a pop and a sheet — and covers none of what an
+// application does INSIDE a screen: `mount::set_content` into a keyed outlet,
+// a label rewritten, a field typed into. Measured on the gallery: `click` on a
+// catalog row opened the demo and `describe_ui` went on answering the catalog,
+// and a `set_text` that landed on screen read back empty.
+//
+// So describe re-walks first, which is what `agent_appkit` has always done and
+// this package did not. One walk per describe, against a describe that is
+// already O(views) — and the alternative, a dirty bit somewhere in facet, would
+// be a second mechanism for a question the walk already answers.
+//
+// ON THE MAIN THREAD, because the walk reads a live UIView hierarchy while
+// UIKit may be laying it out. This is also the only reason the READS in this
+// package are safe off-main afterwards: what they read is a Vec of retained
+// views and a registry, both built here.
+static REFRESH_TARGET: *u8 = 0 as *u8;
+static REFRESH_METHOD_REGISTERED: bool = false;
+
+// `keeps(nothing)` because a `Surface` is self-referential, not borrowing: its
+// registry is keyed by views into its own storage, so the whole thing is one
+// allocation's worth of lifetime and nothing a caller owns escapes into it. The
+// checker sees a view-carrying value stored through `*Surface` and asks
+// (E0516); this is the answer, and it is the same answer agent_appkit gives.
+#[keeps(nothing)]
+fn refresh_in_place(p: *u8) {
+    let s: *Surface = p as *Surface;
+    // NodeId 0 is the synthetic app root; 1 is the window the surface was
+    // opened on, and re-opening in place is what keeps the serve worker's
+    // pointer valid.
+    let win: *u8 = { (*s).view_of(1 as usize) };
+    if is_null(win) { return; }
+    // A UITableView realises its cells inside its own `layoutSubviews`, which
+    // UIKit runs on the turn after the table is given a size or a `reloadData`.
+    // Without this the walk can catch a list between the two and answer a table
+    // with no rows in it — the AppKit refresh needs no such line because an
+    // NSTableView's rows are made by the same pass that sizes it.
+    { rt::msg_void(win, rt::sel(#str_ptr("layoutIfNeeded\0"))) };
+    { *s = open(win) };
+    return;
+}
+
+fn cplus_agent_refresh(receiver: *u8, _cmd: *u8, _arg: *u8) {
+    let p: *u8 = REFRESH_TARGET;
+    if is_null(p) { return; }
+    refresh_in_place(p);
+    return;
+}
+
+fn ensure_refresh_method() {
+    if REFRESH_METHOD_REGISTERED { return; }
+    let cls: *u8 = rt::get_class(#str_ptr("UIWindow\0"));
+    if is_null(cls) { return; }
+    rt::add_method_action(cls, rt::sel(#str_ptr("cplusAgentRefresh:\0")),
+                          cplus_agent_refresh, #str_ptr("v@:@\0"));
+    REFRESH_METHOD_REGISTERED = true;
+    return;
+}
+
+fn refresh_surface(p: *u8) {
+    if is_null(p) { return; }
+    if on_main_thread() {
+        refresh_in_place(p);
+        return;
+    }
+    let s: *Surface = p as *Surface;
+    let win: *u8 = { (*s).view_of(1 as usize) };
+    if is_null(win) { return; }
+    ensure_refresh_method();
+    REFRESH_TARGET = p;
+    // `waitUntilDone:YES` — the walk has to be FINISHED before the describe
+    // below reads what it built.
+    perform_on_main(win, rt::sel(#str_ptr("cplusAgentRefresh:\0")), null());
+    REFRESH_TARGET = null();
+    return;
+}
+
 // ---- the MCP vtable ---------------------------------------------------------------
 // `p` is a `*Surface` the runtime keeps alive for the app's life.
 
 fn mcp_describe(p: *u8, grant: auth::Grant) -> vec::Vec[mcpb::UiNode] {
     if is_null(p) { return vec::new::[mcpb::UiNode](); }
+    refresh_surface(p);
     return { (*(p as *Surface)).describe(grant) };
 }
 
@@ -662,6 +917,7 @@ fn mcp_describe(p: *u8, grant: auth::Grant) -> vec::Vec[mcpb::UiNode] {
 // `is_hidden` is READ off the live view rather than reported as false.
 fn mcp_describe_exposed(p: *u8, grant: auth::Grant) -> vec::Vec[mcpb::UiNode] {
     if is_null(p) { return vec::new::[mcpb::UiNode](); }
+    refresh_surface(p);
     let s: *Surface = p as *Surface;
     let views: vec::Vec[identity::NodeView] = { (*s).reg.describe(grant) };
     var out: vec::Vec[mcpb::UiNode] = vec::new::[mcpb::UiNode]();
@@ -735,7 +991,12 @@ fn mcp_navigate(p: *u8, grant: auth::Grant, id: str) -> surface::Outcome {
             let v: *u8 = { (*s).view_of(node) };
             if is_detached(v) { return surface::Outcome::Stale; }
             if responds_to(v, #str_ptr("becomeFirstResponder\0")) {
-                let _b: i8 = { rt::msg_i8(v, rt::sel(#str_ptr("becomeFirstResponder\0"))) };
+                // Focus is a UIKit mutation like any other — and this one moves
+                // the keyboard, so off-main it is the most visible of them.
+                // The selector takes no argument, which
+                // `performSelectorOnMainThread:` allows; the return is dropped
+                // either way.
+                perform_on_main(v, rt::sel(#str_ptr("becomeFirstResponder\0")), null());
             }
             return surface::Outcome::Allowed;
         }
@@ -817,7 +1078,7 @@ fn place_caret(v: *u8, at: u64, length: u64) -> bool {
     let r: *u8 = { msg_id_2id(v, rt::sel(#str_ptr("textRangeFromPosition:toPosition:\0")),
                               from, to) };
     if is_null(r) { return false; }
-    { rt::msg_void_id(v, rt::sel(#str_ptr("setSelectedTextRange:\0")), r) };
+    perform_on_main(v, rt::sel(#str_ptr("setSelectedTextRange:\0")), r);
     return true;
 }
 
@@ -1008,6 +1269,8 @@ extern fn msg_id_u64_rangep(recv: *u8, sel: *u8, i: u64, r: *rt::Range) -> *u8;
 extern fn msg_i8_4ptr(recv: *u8, sel: *u8, r: *f64, g: *f64, b: *f64, a: *f64) -> i8;
 #[link_name = "objc_msgSend"]
 extern fn msg_void_u64(recv: *u8, sel: *u8, a: u64);
+#[link_name = "objc_msgSend"]
+extern fn msg_void_id_i8_i64(recv: *u8, sel: *u8, a: *u8, b: i8, c: i64);
 #[link_name = "objc_msgSend"]
 extern fn msg_point_point_id(recv: *u8, sel: *u8, p: rt::Point, v: *u8) -> rt::Point;
 #[link_name = "objc_msgSend"]

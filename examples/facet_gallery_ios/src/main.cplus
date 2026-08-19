@@ -11,6 +11,8 @@
 // and a reader comparing the two should see the same shape.
 
 import "facet_runtime/runtime" as runtime;
+import "facet_agent/agent" as agent;
+import "facet/application" as application;
 import "facet/theme" as theme;
 import "facet/vocabulary" as vocab;
 import "./app" as app;
@@ -26,6 +28,19 @@ export extern fn facet_gallery_ios_main() -> i32 {
             dark: vocab::Color::rgba(0.11f64, 0.11f64, 0.13f64, 1.0f64),
         ),
     ));
+
+    // The agent surface, served over MCP. Two lines, and they are ordered:
+    // `enable` installs the hooks facet calls, and the window attach happens
+    // inside facet_uikit's `attach_root` — which `run_component` reaches below
+    // — so the hooks have to be in place BEFORE the tree is built, or the
+    // first screen would never be walked into the surface.
+    //
+    // The argument is a PORT, not a path. A Unix socket lives inside the app
+    // sandbox, where nothing on the development machine can reach it, and to a
+    // real device there is no shared filesystem at all — so this backend binds
+    // TCP on loopback and the Mac reaches it over usbmux. See DEPLOYING.md.
+    agent::enable();
+    application::agent_serve_once("8787");
 
     // Width and height describe nothing on a phone — the screen is the window
     // — but the parameters are the facade's shape on both platforms and the

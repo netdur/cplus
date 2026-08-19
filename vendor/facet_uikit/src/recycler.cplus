@@ -1028,6 +1028,37 @@ fn imp_tree_rows(self_obj: *u8, cmd: *u8, tv: *u8, section: i64) -> i64 {
     return TREE_FLAT.count() as i64;
 }
 
+// THE ROW'S NAME ON THE AGENT SURFACE, and the AppKit backend's `tag_tree_row`
+// is the same function for the same reason — this one was simply never written.
+//
+// A tree row is the one control an application cannot key. The row it builds is
+// CONTENT, mounted inside a cell THIS file makes and owns, so no application
+// key ever lands on the cell — and the cell is the node an agent has to name,
+// because selecting it is what fires `on_select`. Without this the gallery's
+// catalog is a list an agent can see and cannot enter: `describe_ui` answers
+// `g:catalog` and thirty anonymous groups under it, none of them addressable.
+//
+// The id is the accessibilityIdentifier, which is what a key already is
+// everywhere else in this backend (`views::create`): one token for facet's
+// address, the agent surface's id and the platform's a11y id. No dependency on
+// the agent packages falls out of that, which is the point.
+//
+// SET ON EVERY PASS, including to empty. The cell pool is recycled, so a cell
+// that kept the id of the row it used to hold would answer to a name that is
+// now somewhere else on screen — the one failure that is worse than no id at
+// all, because it looks like it worked.
+fn tag_tree_row(p: *tree::TreeProps, node: *tree::TreeNode, cell: *u8) {
+    if cell == (0 as *u8) { return; }
+    if node == (0 as *tree::TreeNode) { return; }
+    let f: fn(*tree::TreeNode, *u8) -> text::Text = { (*p).row_id };
+    // Against `no_row_id` by NAME, like every other absent handler here.
+    if f == tree::no_row_id { return; }
+    let id: text::Text = f(node, { (*p).row_id_ctx });
+    { rt::msg_void_id(cell, rt::sel(#str_ptr("setAccessibilityIdentifier:\0")),
+                      bridge::nsstring({ id.view() })) };
+    return;
+}
+
 fn imp_tree_cell(self_obj: *u8, cmd: *u8, tv: *u8, index_path: *u8) -> *u8 {
     let n: *core::Node = input::node_of(tv);
     if n == (0 as *core::Node) { return 0 as *u8; }
@@ -1057,6 +1088,7 @@ fn imp_tree_cell(self_obj: *u8, cmd: *u8, tv: *u8, index_path: *u8) -> *u8 {
     match TREE_FLAT.at_ptr(row as usize) {
         option::Option[**tree::TreeNode]::Some(slot) => {
             let node: *tree::TreeNode = { (*slot) };
+            tag_tree_row(p, node, cell);
             let content: *u8 = { rt::msg_id(cell, rt::sel(#str_ptr("contentView\0"))) };
             if content == (0 as *u8) { return cell; }
             var built: core::Node = plain_tree_row(node);

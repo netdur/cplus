@@ -236,6 +236,55 @@ UIFontDescriptor rather than the NSFontManager iOS does not have.
 
 `invoke_menu` remains the one verb that is unreachable rather than unbuilt.
 
+**It was served and it had never been RUN.** Pointing a client at it (the iOS
+gallery, 2026-08-19) found four things, and none of them were in the protocol:
+
+*The walk was one layout pass too early.* facet's own tick gives every mounted
+view its frame; a UITableView realises its CELLS inside its own
+`layoutSubviews`, on the turn after it is handed a size. A snapshot taken
+between the two sees a table with no rows in it — and because the surface is a
+snapshot, it goes on seeing none for the life of the screen. `attach_root` now
+flushes the tick AND forces a layout before it walks.
+
+*The rows had no names.* `facet_appkit` has tagged its outline cells from the
+application's `row_id` since it was written and this backend never did. A tree
+row is CONTENT, mounted inside a cell `recycler.cplus` owns, so no application
+key ever lands on the node a click has to reach. `tag_tree_row` is the missing
+half.
+
+*Every verb ran on the socket thread.* `agent_appkit` hops to the main thread
+and this package did not, which on iOS is the sharper omission — UIKit's main
+thread checker traps a call from a worker rather than merely racing. The write
+verbs now ride `performSelectorOnMainThread:withObject:waitUntilDone:`, with
+one-`id` shims on UIView for the selectors that take anything else.
+
+*A row could not be clicked at all.* A UITableViewCell is not a UIControl and
+carries no recogniser — the table owns the touch. `click` now selects the row
+AND calls `tableView:didSelectRowAtIndexPath:`, which is where UIKit differs
+from AppKit: `selectRowIndexes:` posts a notification the delegate hears, while
+`selectRowAtIndexPath:` is documented NOT to call the delegate, on the ground
+that a programmatic selection is not a user selection. Stopping at the selection
+would highlight the row and run none of the application's code.
+
+`describe_ui` now re-walks the surface first, on the main thread, which is what
+`agent_appkit::refresh_surface` has always done. Without it a `set_text` that
+landed on screen read back empty, and a `click` that swapped an outlet's content
+left the agent describing the screen it had just left. The protocol that falls
+out is describe → act → describe → act.
+
+`examples/facet_gallery_ios/tools/mcp_check.py` is the check: 25 assertions over
+the transport, both describe modes, click, set_text, the caret, the runs, the
+tier gate and every refusal. It runs unchanged against the simulator and against
+a device behind a usbmuxd forward, and **both pass** — simulator 2026-08-19,
+iPad Pro 11-inch (3rd gen) on iOS 26.6 the same day. The USB hop the deploying
+notes called the one untaken link is taken.
+
+A device run is only a device run if you PROVE it: a simulator shares the Mac's
+network stack, so a gallery left running in one holds the same loopback port,
+the forwarder fails to bind, and the check quietly grades the simulator. The
+proof is to terminate the app ON THE DEVICE and watch the socket stop
+answering.
+
 ### The key band and the sender readers ARE filled
 
 Both were recorded here as unfillable and both were wrong, in the same way "iOS

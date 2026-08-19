@@ -1,0 +1,2 @@
+# `mcp_check.py` imports `mcpc`, so running it leaves bytecode behind.
+__pycache__/

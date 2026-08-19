@@ -233,6 +233,21 @@ fn attach_root(win: *u8, root: *core::Node) {
 // walk is a screen the agent cannot see or one it still believes is there.
 fn agent_follow(win: *u8) {
     if win == (0 as *u8) { return; }
+    // FLUSH, LAY OUT, THEN WALK — and the order is the whole of it.
+    //
+    // `tick_now` applies facet's pending work: an app that expanded a tree or
+    // swapped an outlet has only marked it, and the mount that follows is this
+    // tick. `layout_if_needed` is UIKit's half: a UITableView realises its
+    // cells inside its OWN `layoutSubviews`, on the turn after it is given a
+    // size, so a walk between the two sees a table with no rows in it.
+    //
+    // Measured on the simulator, gallery catalog. With neither: `g:catalog` and
+    // two anonymous groups, which were the scroll indicators, against seventeen
+    // rows on screen. With the layout alone: the eight COLLAPSED sections,
+    // because the app expands them from `on_attach` and that expand is a mark,
+    // not a reload.
+    scheduler::tick_now();
+    ui::View::from_raw(win).layout_if_needed();
     app::agent_attach(win);
     return;
 }
@@ -795,6 +810,19 @@ fn imp_did_finish_launching(self_obj: *u8, cmd: *u8, application: *u8, options: 
     // find. This is the seam the facade hangs its lifecycle on.
     let f: fn(*u8) = LAUNCHED_FN;
     if f != (0 as fn(*u8)) { f(LAUNCHED_CTX); }
+    // AND THE AGENT WALKS AFTER IT, not before. `attach_root` above already
+    // walked, and on this platform that walk is too early by one seam: the
+    // launch hook IS where an application fills its first screen in — the
+    // gallery expands its catalog and swaps its first demo in from `on_attach`
+    // — so a surface taken before it is a surface of the screen the app was
+    // about to finish building. Measured: the walk answered the eight collapsed
+    // section rows while the screen showed thirty.
+    //
+    // The first walk is not removed: `attach_root` is also reached from
+    // `open_window` while the app is already running, where there is no launch
+    // hook to follow it. Walking twice at launch costs one tree walk and is
+    // paid once.
+    agent_follow(w);
     return 1 as i8;
 }
 

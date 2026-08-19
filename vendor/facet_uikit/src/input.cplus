@@ -99,6 +99,12 @@ fn imp_editing_changed(self_obj: *u8, cmd: *u8, sender: *u8) {
     let n: *core::Node = node_of(sender);
     if n == (0 as *core::Node) { return; }
     read_back(n, sender);
+    // `read_back` answers for every control that carries a VALUE and for no
+    // text control — see `text_input::write_back_field`, which is the half that
+    // was missing. Kept separate rather than folded into `read_back` because a
+    // field's write-back also enforces `max_length` and fires a handler, which
+    // no other read-back does.
+    write_back_field(n, sender);
     return;
 }
 
@@ -555,6 +561,83 @@ fn read_back(n: *core::Node, sender: *u8) {
         return;
     }
     return;
+}
+
+// THE SAME WRITE-BACK FOR A FIELD, and its absence was the bug.
+//
+// `imp_editing_changed` in input.cplus routes every text control's keystroke
+// into `read_back`, and `read_back` answers for a switch, a slider, a stepper,
+// a popup, tabs, page dots and both pickers — and for no text control at all.
+// So on this backend a UITextField's typing reached nothing: `text()` answered
+// whatever the app had last SET, and `on_text_changed` was never called. Only
+// the text AREA worked, because a UITextView is not a UIControl and its
+// keystrokes arrive through the delegate above instead, which does this.
+//
+// Found through the agent surface: `set_text` over MCP put "hello from mcp"
+// into the gallery's field, on screen, and the echo label under it — written by
+// the app's own `on_text_changed` — still said "(nothing typed)". A finger
+// types down the identical path.
+//
+// A UISearchBar is the same shape (`input_view` embedded, its own props) and
+// gets the same treatment, so the two fields cannot drift apart.
+fn write_back_field(n: *core::Node, v: *u8) {
+    let d: *core::Data = core::node_data(n);
+    if d == (0 as *core::Data) { return; }
+    let raw: *u8 = { (*d).props };
+    if raw == (0 as *u8) { return; }
+    let kind: u32 = { (*d).kind };
+    var iv: *props::InputViewProps = 0 as *props::InputViewProps;
+    if kind == props::K_TEXT_FIELD {
+        iv = { #addr_of((*(raw as *props::TextFieldProps)).input_view) };
+    } else if kind == props::K_SEARCH_FIELD {
+        iv = { #addr_of((*(raw as *props::SearchFieldProps)).input_view) };
+    } else {
+        return;
+    }
+    // A UISearchBar holds its string on the bar itself (`text` is the search
+    // bar's own property), so the same getter serves both.
+    let s: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("text\0"))) };
+    var typed: text::Text = bridge::to_text(s);
+    let max: i64 = { (*iv).max_length };
+    if max > (0 as i64) && { typed.view().char_count() } > (max as usize) {
+        typed = prefix_chars(typed.view(), max as usize);
+        { rt::msg_void_id(v, rt::sel(#str_ptr("setText:\0")), bridge::nsstring(typed.view())) };
+    }
+    { (*iv).text = typed };
+    let h: fn(*u8, *u8) = { (*iv).on_text_changed };
+    if h != (0 as fn(*u8, *u8)) { h(v, { (*iv).on_text_changed_ctx }); }
+    return;
+}
+
+// A continuation byte is 0b10xxxxxx; every other byte starts a character.
+fn prefix_chars(s: str, n: usize) -> text::Text {
+    var out: text::Text = text::from_str(s);
+    let cut: usize = byte_offset_of_char(s, n);
+    out.truncate(cut);
+    return out;
+}
+
+// The BYTE offset at which character `n` begins. A continuation byte is
+// 0b10xxxxxx; every other byte starts a character.
+fn byte_offset_of_char(s: str, n: usize) -> usize {
+    var chars: usize = 0 as usize;
+    var i: usize = 0 as usize;
+    let bytes: usize = { s.count() };
+    while i < bytes {
+        // `byte_at` answers an Option — an index past the end is not a byte,
+        // and the type says so rather than handing back a zero.
+        match { s.byte_at(i) } {
+            option::Option[u8]::Some(b) => {
+                if (b & (192 as u8)) != (128 as u8) {
+                    if chars == n { return i; }
+                    chars = chars +% (1 as usize);
+                }
+            }
+            option::Option[u8]::None => { return bytes; }
+        }
+        i = i +% (1 as usize);
+    }
+    return bytes;
 }
 
 // ---- the radio group --------------------------------------------------------

@@ -4,20 +4,19 @@
 // platform that package does not exist.
 //
 // `agent.cplus` is written against `agent_appkit`, which walks an NSWindow's
-// live view tree into a surface an MCP worker serves. There is no
-// `agent_uikit`. Nothing here is hard about iOS — a UIWindow's tree walks the
-// same way and the whole agent stack below the backend (agent_core, agent_mcp,
-// agent_inapp) is portable — it simply has not been written.
+// live view tree into a surface an MCP worker serves. `agent_uikit` is the
+// sibling that does the same for a UIWindow, and this file is the same facade
+// over it — nothing here refuses. (It USED to: this module was written while
+// `agent_uikit` did not exist, and kept the surface compiling by answering no.
+// The header said so for a while after it stopped being true.)
 //
-// So this file keeps the surface compiling and REFUSES LOUDLY, which is the
-// posture runtime.cplus takes for a platform with no backend. The alternative
-// was leaving `import "facet_agent/agent"` a hard error on iOS, which would make an
-// app that serves an agent on the Mac fail to build for the phone at the import
-// line, with nothing said about why.
+// The whole stack below the backend — agent_core, agent_mcp, agent_inapp — is
+// portable and is the same code on both platforms. What differs is the reader
+// and the transport, and the transport is the interesting half; see below.
 //
-// `policy_for` is the exception and is a real answer: it is facet's vocabulary
-// translated into agent_core's, and agent_core is portable, so the one function
-// here that does not touch a platform keeps working.
+// `policy_for` is shared rather than merely similar: it is facet's vocabulary
+// translated into agent_core's, identical to the AppKit module's on purpose. A
+// second translation table would be the thing that drifts.
 
 import "facet/application" as app;
 import "facet/vocabulary" as vocab;

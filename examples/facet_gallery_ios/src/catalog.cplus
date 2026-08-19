@@ -113,6 +113,23 @@ fn demo_for(id: str) -> i64 {
     return DEMO_NONE;
 }
 
+// ---- the row's name on the agent surface -------------------------------------
+//
+// A tree row is the one node an application cannot key. The row IS content, and
+// the backend mounts it inside a cell it makes and owns — so a `key:` on what
+// `row:` builds lands on the label, not on the thing a click has to reach.
+// `row_id` is the hook for that, and a tree without one is a list an agent can
+// see and cannot enter: `describe_ui` answers `g:catalog` and thirty anonymous
+// groups beneath it.
+//
+// Prefixed rather than bare, so a row id can never collide with a `key:`
+// somewhere else in the app — the two share one namespace on the surface.
+fn row_key(node: *tree::TreeNode, ctx: *u8) -> text::Text {
+    if node == (0 as *tree::TreeNode) { return text::new(); }
+    let id: str = { (*node).id_of() };
+    return "row:${id}";
+}
+
 fn section(title: str, id: str) -> tree::TreeNode {
     return tree::TreeNode::new(title, id: id, is_branch: true);
 }

@@ -289,7 +289,7 @@ fn write_back_text_area(n: *core::Node, tv: *u8) {
     // `maxLength`, so the only place it can live is the moment after a change.
     let max: i64 = { (*iv).max_length };
     if max > (0 as i64) && { typed.view().char_count() } > (max as usize) {
-        typed = prefix_chars(typed.view(), max as usize);
+        typed = input::prefix_chars(typed.view(), max as usize);
         { rt::msg_void_id(tv, rt::sel(#str_ptr("setText:\0")), bridge::nsstring(typed.view())) };
     }
     { (*iv).text = typed };
@@ -303,37 +303,6 @@ fn write_back_text_area(n: *core::Node, tv: *u8) {
 // forward over UTF-8 lead bytes rather than slicing at a byte offset and
 // halving a character.
 //
-// A continuation byte is 0b10xxxxxx; every other byte starts a character.
-fn prefix_chars(s: str, n: usize) -> text::Text {
-    var out: text::Text = text::from_str(s);
-    let cut: usize = byte_offset_of_char(s, n);
-    out.truncate(cut);
-    return out;
-}
-
-// The BYTE offset at which character `n` begins. A continuation byte is
-// 0b10xxxxxx; every other byte starts a character.
-fn byte_offset_of_char(s: str, n: usize) -> usize {
-    var chars: usize = 0 as usize;
-    var i: usize = 0 as usize;
-    let bytes: usize = { s.count() };
-    while i < bytes {
-        // `byte_at` answers an Option — an index past the end is not a byte,
-        // and the type says so rather than handing back a zero.
-        match { s.byte_at(i) } {
-            option::Option[u8]::Some(b) => {
-                if (b & (192 as u8)) != (128 as u8) {
-                    if chars == n { return i; }
-                    chars = chars +% (1 as usize);
-                }
-            }
-            option::Option[u8]::None => { return bytes; }
-        }
-        i = i +% (1 as usize);
-    }
-    return bytes;
-}
-
 // The editor half of the shared band's `on_focus` / `on_blur`.
 //
 // A UITextView is NOT a UIControl, so it has no target/action and cannot be armed

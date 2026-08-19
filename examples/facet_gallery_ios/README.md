@@ -12,7 +12,15 @@ the app to point at a simulator when `facet_uikit` is run for the first time.
 > picker, card surfaces, the safe area, scrolling and the value write-back are
 > all correct on screen.
 >
-> Never on a device.
+> **It runs on a device, and it serves MCP there.** iPad Pro 11-inch (3rd gen),
+> iOS 26.6, 2026-08-19 — the first device run this app has had. All 25 checks in
+> `tools/mcp_check.py` pass over the simulator's loopback and over a usbmuxd
+> forward to the iPad, from the same script.
+>
+> The iPad window came up at 423.5 × 719 (iPadOS 26 windows an app rather than
+> giving it the screen), so that run was COMPACT width — the regular-width tree
+> an iPad uniquely reaches is still unexercised. DEPLOYING.md is precise about
+> what has and has not been run.
 
 ## Build
 
@@ -96,6 +104,88 @@ approximations the last page names.
 | **Motion** | `animate_*`, plus the entrance pattern and one button that is deliberately wrong (the dead snap) so its stderr line can be seen |
 | **Gaps** | what is NOT built, shown rather than described: a `list` that warns once, a `split` that is silent because it is answered, and the approximations |
 
+## The MCP surface — read and drive this app over a socket
+
+The gallery serves its agent surface, and it is two lines in
+[src/main.cplus](src/main.cplus):
+
+```
+agent::enable();                        // import "facet_agent/agent" as agent;
+application::agent_serve_once("8787");  // import "facet/application" as application;
+```
+
+**The argument is a PORT, not a path**, and that is the whole iOS story. A Unix
+socket lives inside the app's sandbox where nothing on the development machine
+can reach it, and to a real device there is no shared filesystem at all — so
+`facet_agent`'s iOS facade reads the string as a port number and
+`agent_mcp::serve_tcp` binds it on **loopback**, never on every interface. This
+surface can read a UI and press its buttons; it is not something to put on a
+network.
+
+Ordering matters and is why both lines are before `run_component`: the window
+walk happens inside `facet_uikit`'s `attach_root`, so the hooks have to be
+installed before the tree is built.
+
+### Talking to it
+
+The wire is newline-delimited JSON-RPC — one request object per line, one
+response per line. There is a client and a check in [tools/](tools/):
+
+```
+xcrun simctl launch <sim-udid> dev.cplus.facetgalleryios
+tools/mcp_check.py                       # 25 checks, exits non-zero on any
+```
+
+or by hand:
+
+```
+$ nc 127.0.0.1 8787
+{"method":"describe_ui","params":{},"id":1}
+{"jsonrpc":"2.0","id":1,"result":[{"id":"g:title","role":"text","text":"facet_uikit",…}]}
+{"method":"click","params":{"id":"row:button"},"id":2}
+{"jsonrpc":"2.0","id":2,"result":{"outcome":"allowed"}}
+```
+
+`describe_ui` defaults to the **exposed** view — the nodes the app keyed, which
+is a small high-signal tree. `{"mode":"full"}` is the whole walk with frames and
+class names, which is a diagnostic dump rather than something to feed a model.
+
+**The surface is a SNAPSHOT that re-walks on `describe_ui`.** So the protocol is
+describe → act → describe → act: an agent that navigates and then writes without
+looking again is addressing the screen it left, and gets `not_found`. That is
+the honest answer rather than a stale write.
+
+**Rows have to be named by the app.** A tree row is content mounted inside a cell
+the backend owns, so no `key:` you write lands on the thing a click reaches —
+`row_id:` is the hook, and [src/catalog.cplus](src/catalog.cplus)'s `row_key`
+is what makes every catalog row addressable as `row:<id>`. A tree without one is
+a list an agent can see and cannot enter.
+
+### On a real device, over USB
+
+The port is on the device's loopback, so it is reached through usbmuxd — the same
+mechanism Flutter's Dart VM Service and Chrome's remote debugging use:
+
+```
+tools/mcp_check_device.sh          # launch + forward + the same check, in one
+```
+
+which is:
+
+```
+iproxy 8787 8787 <25-char-UDID>                      # brew install libimobiledevice
+pymobiledevice3 usbmux forward 8787 8787             # or: pip install pymobiledevice3
+tools/mcp_check.py                                   # unchanged — that is the point
+```
+
+The device must be **plugged in and unlocked**: usbmuxd sees nothing over Wi-Fi
+alone, and a locked device refuses the launch outright
+(`FBSOpenApplicationErrorDomain error 7 … Locked`).
+
+**The app has to be in the FOREGROUND.** iOS suspends a backgrounded app, and a
+suspended app stops accepting on its socket — the symptom is a connect that
+hangs rather than a refusal, which reads like a bug in the bridge.
+
 ## The one layout trap, written down because it cost an evening
 
 **flex defaults `flex_shrink` to 0** — Yoga's deviation from CSS, inherited by
@@ -122,12 +212,14 @@ cpc build --target ios-arm64-simulator
 
 # Every prebuilt dependency slice, as step 4 explains. Globbing over-links,
 # which costs nothing: an archive nothing references contributes no bytes.
-slices=$(find ../../vendor -maxdepth 4 -path '*/lib/arm64-apple-ios-simulator/*.a')
-
+#
+# INLINE, not through a variable: zsh does not word-split an unquoted `$var`,
+# so `slices=$(find ...)` then `$slices` hands clang one argument with newlines
+# in it. Unquoted `$(...)` splits in both shells.
 xcrun -sdk iphonesimulator clang -arch arm64 -mios-simulator-version-min=14.0 \
   -I target/ios-arm64-simulator/debug \
   ios/main.m target/ios-arm64-simulator/debug/libfacet_gallery_ios.a \
-  $slices \
+  $(find ../../vendor -maxdepth 4 -path '*/lib/arm64-apple-ios-simulator/*.a') \
   -framework UIKit -framework QuartzCore -framework Foundation \
   -framework CoreGraphics -framework WebKit -lobjc -o Gallery.app/Gallery
 # Gallery.app also needs the Info.plist from the Xcode recipe above.
