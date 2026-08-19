@@ -5691,7 +5691,14 @@ usage:
                     the symbol Xcode's/Gradle's own main calls); everything
                     else gets a normal `fn main`.
 
+                    --platform ios scaffolds a facet APP, not a hello-world:
+                    iOS has no console and no window a `fn main` could open, so
+                    a printing entry is a black rectangle on a phone. You get
+                    src/app.cplus (one screen, shared by every platform named),
+                    the iOS entry, and ios/ with main.m + Info.plist for Xcode.
+
 writes: Cplus.toml, src/main*.cplus, .gitignore, SKILL.md
+   ios: + src/app.cplus, ios/main.m, ios/Info.plist
 ";
 
 /// `cpc init [--platform P]... [NAME]`.
@@ -5797,19 +5804,74 @@ fn run_init(args: &[OsString]) -> ExitCode {
     // is an `export extern fn` the platform's own main calls — those
     // targets produce a staticlib, and a library has no entry the system
     // knows to call).
-    let mut sections = String::new();
-    for (i, p) in platforms.iter().enumerate() {
-        let file = if i == 0 {
-            "src/main.cplus".to_string()
+    // Which platform owns the plain `src/main.cplus`. Normally the first named,
+    // but NOT iOS when a self-linked platform is also named: `cpc build` for
+    // that platform would then report the iOS entry as unreachable (W0005),
+    // because the warning's exemption keys on the `main_<platform>.cplus`
+    // convention rather than on "is declared as some platform's entry". A
+    // fresh scaffold must not warn on its first build.
+    let main_owner: Option<&String> = platforms
+        .iter()
+        .find(|p| p.as_str() != "ios")
+        .or_else(|| platforms.first());
+    let entry_file = |p: &str| -> String {
+        if Some(p) == main_owner.map(String::as_str) {
+            "main.cplus".to_string()
         } else {
-            format!("src/main_{p}.cplus")
-        };
-        sections.push_str(&format!("[{p}]\nentry = \"{file}\"\n\n"));
+            format!("main_{p}.cplus")
+        }
+    };
+
+    let mut sections = String::new();
+    for p in platforms.iter() {
+        sections.push_str(&format!("[{p}]\nentry = \"src/{}\"\n\n", entry_file(p)));
     }
-    let manifest_toml = format!(
-        "[package]\nname    = \"{proj_name}\"\nversion = \"0.0.1\"\nedition = \"2026\"\n\n\
-         {sections}[dependencies]\nstdlib = \"*\"\n"
-    );
+    // iOS has no console and no window a `fn main` could open: an iOS target
+    // builds a STATICLIB that an app bundle links, and the first thing the
+    // shell's `main.m` calls has to put a UI on screen or the app is a black
+    // rectangle. So `--platform ios` scaffolds a facet APP — a screen, the
+    // runtime that hosts it, and the Xcode-side shell — rather than the
+    // hello-world that serves every self-linked platform fine.
+    let ios = platforms.iter().any(|p| p == "ios");
+
+    let manifest_toml = if ios {
+        // The backend and its transitive closure. The resolver validates every
+        // import in the build against ONE flat set taken from THIS manifest —
+        // it does not read a dependency's own — so facet_uikit's deps are
+        // named here too. This is the minimum that links: `webkit` is not
+        // optional, because facet_uikit's `web.cplus` imports it unconditionally.
+        format!(
+            "[package]\nname    = \"{proj_name}\"\nversion = \"0.0.1\"\nedition = \"2026\"\n\n\
+             {sections}[dependencies]\n\
+             stdlib        = \"*\"\n\
+             facet         = \"*\"\n\
+             facet_runtime = \"*\"\n\
+             flex_layout   = \"*\"\n\n\
+             # facet's iOS backend and everything it imports. The resolver checks\n\
+             # every import against this one flat set, so the closure is named here.\n\
+             [ios.dependencies]\n\
+             facet_uikit = \"*\"\n\
+             uikit       = \"*\"\n\
+             objc        = \"*\"\n\
+             quartzcore  = \"*\"\n\
+             webkit      = \"*\"\n{macos_deps}"
+        , macos_deps = if platforms.iter().any(|p| p == "macos") {
+            "\n# The same app on the desktop: facet's AppKit backend and its closure.\n\
+             [macos.dependencies]\n\
+             facet_appkit = \"*\"\n\
+             appkit       = \"*\"\n\
+             objc         = \"*\"\n\
+             quartzcore   = \"*\"\n\
+             webkit       = \"*\"\n"
+        } else {
+            ""
+        })
+    } else {
+        format!(
+            "[package]\nname    = \"{proj_name}\"\nversion = \"0.0.1\"\nedition = \"2026\"\n\n\
+             {sections}[dependencies]\nstdlib = \"*\"\n"
+        )
+    };
 
     let desktop_main = "import \"stdlib/io\" as io;\n\n\
          fn main() -> i32 {\n    io::println(\"hello from C+\");\n    return 0;\n}\n";
@@ -5829,6 +5891,181 @@ fn run_init(args: &[OsString]) -> ExitCode {
              export extern fn {sym}_main() -> i32 {{\n    io::println(\"hello from C+\");\n    return 0;\n}}\n"
         )
     };
+    // ---- the facet app scaffold (only when `--platform ios` is named) -------
+    //
+    // Three files, and the split is the point: `app.cplus` is the app and is
+    // shared by every platform, while each entry is only the door its platform
+    // knows how to open. iOS enters through an `export extern fn` the bundle's
+    // `main.m` calls; a self-linked platform enters through `fn main`. Neither
+    // installs a backend — `facet_runtime` picks its own per-platform file and
+    // does that itself.
+    let facet_app = format!(
+        "// {proj_name} — the app: one screen, and the runtime that hosts it.\n\
+         //\n\
+         // facet is RETAINED and NOT reactive: `build` runs once, at mount, and\n\
+         // returns a live tree. To change what is on screen, find the node by key\n\
+         // and set the property — never rebuild. `cpc skill` prints facet's own\n\
+         // reference (this project depends on facet, so it is included).\n\n\
+         import \"flex_layout/flex_layout\" as flex;\n\
+         import \"facet/facet\" as core;\n\
+         import \"facet/elements\" as ui;\n\
+         import \"facet/component\" as component;\n\
+         import \"facet/label\" as label;\n\
+         import \"facet/screen\" as screen;\n\
+         import \"facet/vocabulary\" as vocab;\n\
+         import \"facet_runtime/runtime\" as runtime;\n\
+         import \"stdlib/option\" as option;\n\
+         import \"stdlib/status\" as status;\n\
+         import \"stdlib/vec\" as vec;\n\n\
+         struct Home {{\n    taps: i64,\n}}\n\n\
+         impl Home {{\n\
+         \x20   fn new() -> Home {{ return Home {{ taps: 0 as i64 }}; }}\n\n\
+         \x20   // A handler is a bound METHOD — `on_click: this.on_tap` wires it, and\n\
+         \x20   // the compiler fills the context slot. Never hand-roll `#addr_of(this)`.\n\
+         \x20   fn on_tap(ref this, sender: *u8) {{\n\
+         \x20       this.taps = this.taps + (1 as i64);\n\
+         \x20       this.show_taps();\n\
+         \x20       return;\n\
+         \x20   }}\n\n\
+         \x20   // The live tree, reached through a TYPED cursor. A label is not a\n\
+         \x20   // button: the wrong kind of `find` answers None and does nothing.\n\
+         \x20   fn show_taps(this) {{\n\
+         \x20       let n: i64 = this.taps;\n\
+         \x20       if let option::Option::Some(l) = label::find(\"taps\") {{\n\
+         \x20           let _l: label::Label = l.set_text(\"tapped ${{n}}\");\n\
+         \x20       }}\n\
+         \x20       return;\n\
+         \x20   }}\n\
+         }}\n\n\
+         impl Home: component::Component {{\n\
+         \x20   fn build(ref this) -> core::Node {{\n\
+         \x20       return @ui {{\n\
+         \x20           column {{\n\
+         \x20               label(\"Hello from C+\", key: \"hello\",\n\
+         \x20                     font_size: 28.0f64,\n\
+         \x20                     font_weight: vocab::FontWeight::Bold)\n\
+         \x20               label(\"tapped 0\", key: \"taps\")\n\
+         \x20               button(\"Tap me\", key: \"tap\", on_click: this.on_tap)\n\
+         \x20           }}\n\
+         \x20               .grow(1.0f64)\n\
+         \x20               .gap(12.0f64)\n\
+         \x20               .padding(24.0f64)\n\
+         \x20               .align(flex::Align::Center)\n\
+         \x20               .justify(flex::Justify::Center)\n\
+         \x20       }};\n\
+         \x20   }}\n\
+         }}\n\n\
+         impl Home: component::Lifecycle {{\n\
+         \x20   fn on_attach(ref this) {{ return; }}\n\
+         \x20   fn on_detach(ref this) {{ return; }}\n\
+         }}\n\n\
+         impl Home: screen::Screen {{\n\
+         \x20   fn chrome(this) -> screen::Chrome {{\n\
+         \x20       // Width and height describe nothing on a phone — the screen IS the\n\
+         \x20       // window — but they are the same facade on both platforms and the\n\
+         \x20       // iOS backend drops them.\n\
+         \x20       return screen::Chrome::new(title: \"{proj_name}\",\n\
+         \x20                                  width: 390.0f64, height: 844.0f64);\n\
+         \x20   }}\n\
+         \x20   fn menu_items(this) -> vec::Vec[screen::MenuItem] {{\n\
+         \x20       return vec::new::[screen::MenuItem]();\n\
+         \x20   }}\n\
+         }}\n\n\
+         fn boxed() -> screen::ScreenBox {{ return screen::screen_box(Home::new()); }}\n\n\
+         // Every entry — iOS and desktop alike — comes through here.\n\
+         fn run() -> i32 {{\n\
+         \x20   var app: runtime::App = runtime::App::new(\"{proj_name}\");\n\
+         \x20   app.screen(\"home\", boxed);\n\
+         \x20   match app.run(\"home\") {{\n\
+         \x20       status::Status::Ok => {{ return 0 as i32; }}\n\
+         \x20       _other => {{ return 1 as i32; }}\n\
+         \x20   }}\n\
+         }}\n"
+    );
+
+    let facet_ios_entry = format!(
+        "// {proj_name} — the entry point the iOS app shell calls.\n\
+         //\n\
+         // `export extern fn` gives the symbol a stable, unmangled C name and puts\n\
+         // it in the generated header. A `fn main` would not do: this target\n\
+         // produces a STATICLIB, and a library has no entry the system knows to\n\
+         // call. It does not return — `UIApplicationMain` owns the process from\n\
+         // here — so the value below is unreachable in a running app.\n\n\
+         import \"./app\" as app;\n\n\
+         export extern fn {sym}_main() -> i32 {{\n    return app::run();\n}}\n"
+    );
+
+    let facet_desktop_entry = format!(
+        "// {proj_name} — the desktop entry. The same `app::run` the iOS shell\n\
+         // calls; `facet_runtime` selects its own per-platform backend, so there\n\
+         // is nothing to install here.\n\n\
+         import \"./app\" as app;\n\n\
+         fn main() -> i32 {{\n    return app::run();\n}}\n"
+    );
+
+    // The bundle's `main` hands the process to C+ and never gets it back:
+    // `UIApplicationMain` owns it from there. There is no AppDelegate.m and no
+    // storyboard — facet_uikit synthesizes `FacetUIKitAppDelegate` at runtime
+    // and builds the UIWindow in didFinishLaunchingWithOptions, which is why
+    // the plist below names neither.
+    let ios_main_m = format!(
+        "// The app bundle's entry point: `main` hands the process to C+, and\n\
+         // {sym}_main never comes back — it calls UIApplicationMain, which owns\n\
+         // the process from there. facet_uikit synthesizes its own delegate class\n\
+         // at runtime, so Info.plist must NOT name a storyboard or scene manifest.\n\n\
+         #import \"{proj_name}.h\"   // generated by cpc into target/<triple>/debug/\n\n\
+         int main(int argc, char *argv[]) {{\n    return {sym}_main();\n}}\n"
+    );
+
+    // A bundle display name has to start somewhere; the package name with its
+    // first letter raised reads better on a home screen than `myapp`.
+    let display = {
+        let mut c = proj_name.chars();
+        match c.next() {
+            Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
+            None => proj_name.clone(),
+        }
+    };
+    let ios_plist = format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
+         <!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n\
+         <plist version=\"1.0\">\n\
+         <dict>\n\
+         \x20   <key>CFBundleDisplayName</key>\n\
+         \x20   <string>{display}</string>\n\
+         \x20   <key>CFBundleExecutable</key>\n\
+         \x20   <string>{display}</string>\n\
+         \x20   <key>CFBundleIdentifier</key>\n\
+         \x20   <string>dev.cplus.{proj_name}</string>\n\
+         \x20   <key>CFBundleName</key>\n\
+         \x20   <string>{display}</string>\n\
+         \x20   <key>CFBundlePackageType</key>\n\
+         \x20   <string>APPL</string>\n\
+         \x20   <key>CFBundleShortVersionString</key>\n\
+         \x20   <string>1.0</string>\n\
+         \x20   <key>CFBundleVersion</key>\n\
+         \x20   <string>1</string>\n\
+         \x20   <key>LSRequiresIPhoneOS</key>\n\
+         \x20   <true/>\n\
+         \x20   <key>MinimumOSVersion</key>\n\
+         \x20   <string>14.0</string>\n\
+         \x20   <key>UIDeviceFamily</key>\n\
+         \x20   <array>\n\
+         \x20       <integer>1</integer>\n\
+         \x20       <integer>2</integer>\n\
+         \x20   </array>\n\
+         \x20   <key>UILaunchScreen</key>\n\
+         \x20   <dict/>\n\
+         \x20   <key>UISupportedInterfaceOrientations</key>\n\
+         \x20   <array>\n\
+         \x20       <string>UIInterfaceOrientationPortrait</string>\n\
+         \x20       <string>UIInterfaceOrientationLandscapeLeft</string>\n\
+         \x20       <string>UIInterfaceOrientationLandscapeRight</string>\n\
+         \x20   </array>\n\
+         </dict>\n\
+         </plist>\n"
+    );
+
     let entry_body = |p: &str| -> String {
         if matches!(p, "ios" | "android") {
             external_main(p)
@@ -5841,14 +6078,30 @@ fn run_init(args: &[OsString]) -> ExitCode {
     let mut files: Vec<(PathBuf, String)> = vec![(manifest, manifest_toml)];
     if platforms.is_empty() {
         files.push((src.join("main.cplus"), desktop_main.to_string()));
-    } else {
-        for (i, p) in platforms.iter().enumerate() {
-            let file = if i == 0 {
-                "main.cplus".to_string()
+    } else if ios {
+        // The shared app, then one door per platform.
+        files.push((src.join("app.cplus"), facet_app));
+        for p in platforms.iter() {
+            let body = if p == "ios" {
+                facet_ios_entry.clone()
             } else {
-                format!("main_{p}.cplus")
+                facet_desktop_entry.clone()
             };
-            files.push((src.join(file), entry_body(p)));
+            files.push((src.join(entry_file(p)), body));
+        }
+        // The Xcode side. `main.m` is the whole of the Objective-C in a facet
+        // app; the Info.plist must NOT name a storyboard or a scene manifest,
+        // because facet_uikit synthesizes its own delegate at runtime.
+        let ios_dir = root.join("ios");
+        if let Err(e) = std::fs::create_dir_all(&ios_dir) {
+            eprintln!("cpc init: could not create {}: {e}", ios_dir.display());
+            return ExitCode::FAILURE;
+        }
+        files.push((ios_dir.join("main.m"), ios_main_m.clone()));
+        files.push((ios_dir.join("Info.plist"), ios_plist.clone()));
+    } else {
+        for p in platforms.iter() {
+            files.push((src.join(entry_file(p)), entry_body(p)));
         }
     }
     files.push((root.join(".gitignore"), gitignore.to_string()));
@@ -5874,8 +6127,13 @@ fn run_init(args: &[OsString]) -> ExitCode {
         println!("  cd {}", name.as_deref().unwrap());
     }
     println!("  cpc pm install       # fetch dependencies into the store");
-    if platforms.iter().any(|p| p == "ios") {
-        println!("  cpc build --target ios-arm64-simulator   # then: examples/DEPLOYING.md");
+    if ios {
+        println!("  cpc build --target ios-arm64-simulator   # -> lib{proj_name}.a + {proj_name}.h");
+        println!();
+        println!("ios/ holds the Xcode side: main.m (calls {sym}_main) and Info.plist.");
+        println!("Point an Xcode app target at them, link the .a, and add the header's");
+        println!("directory to the header search path — examples/DEPLOYING.md has the recipe.");
+        println!("The app is src/app.cplus; `cpc skill` prints facet's reference with it.");
     }
     if platforms.iter().any(|p| p == "android") {
         println!("  cpc build --target <android target>      # see examples/DEPLOYING.md");
@@ -5885,7 +6143,7 @@ fn run_init(args: &[OsString]) -> ExitCode {
             .iter()
             .any(|p| !matches!(p.as_str(), "ios" | "android"))
     {
-        println!("  cpc build            # compile and link");
+        println!("  cpc build            # compile and link the desktop entry");
     }
     println!();
     println!(

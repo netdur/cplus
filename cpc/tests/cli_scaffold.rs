@@ -143,6 +143,127 @@ fn skill_write_reports_which_package_skills_it_bundled() {
     assert!(body.contains("# WIDGETS SKILL"), "the written file must carry it too");
 }
 
+// ---- cpc init: the iOS scaffold ----
+//
+// iOS has no console and no window a `fn main` could open, so `--platform ios`
+// scaffolds a facet APP (a screen + the runtime) and the Xcode-side shell,
+// rather than the hello-world every self-linked platform gets. These pin the
+// shape; `cpc build --target ios-*` proving it LINKS is a separate, heavier
+// check that needs the facet packages in the store.
+
+#[test]
+fn init_ios_scaffolds_the_app_and_the_xcode_shell() {
+    let dir = tempfile::tempdir().unwrap();
+    let out = Command::new(cpc())
+        .arg("init").arg("--platform").arg("ios").arg("myapp")
+        .current_dir(dir.path())
+        .output()
+        .expect("run cpc init");
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let root = dir.path().join("myapp");
+
+    // The app, the entry, and the Xcode side.
+    for f in ["src/app.cplus", "src/main.cplus", "ios/main.m", "ios/Info.plist"] {
+        assert!(root.join(f).is_file(), "missing {f}");
+    }
+
+    // The entry is the external-builder shape, and main.m calls exactly it.
+    let entry = std::fs::read_to_string(root.join("src/main.cplus")).unwrap();
+    assert!(entry.contains("export extern fn myapp_main()"), "entry:\n{entry}");
+    assert!(entry.contains("app::run()"), "the entry must go through the shared app");
+    let m = std::fs::read_to_string(root.join("ios/main.m")).unwrap();
+    assert!(m.contains("return myapp_main();"), "main.m must call the exported symbol:\n{m}");
+    assert!(m.contains("#import \"myapp.h\""), "main.m must include the generated header:\n{m}");
+
+    // facet_uikit synthesizes its own delegate, so the plist must name neither
+    // a storyboard nor a scene manifest — either one takes the window away.
+    let plist = std::fs::read_to_string(root.join("ios/Info.plist")).unwrap();
+    assert!(!plist.contains("UIMainStoryboardFile"), "plist must not name a storyboard");
+    assert!(!plist.contains("UIApplicationSceneManifest"), "plist must not name a scene manifest");
+    assert!(plist.contains("LSRequiresIPhoneOS"), "plist:\n{plist}");
+
+    // The manifest carries the backend closure — the resolver checks every
+    // import against this one flat set, and `webkit` is not optional.
+    let toml = std::fs::read_to_string(root.join("Cplus.toml")).unwrap();
+    assert!(toml.contains("[ios.dependencies]"), "toml:\n{toml}");
+    for dep in ["facet", "facet_runtime", "facet_uikit", "uikit", "objc", "quartzcore", "webkit"] {
+        assert!(toml.contains(dep), "manifest must declare `{dep}`:\n{toml}");
+    }
+
+    // The app is a facet component, written the way the facet skill says.
+    let app = std::fs::read_to_string(root.join("src/app.cplus")).unwrap();
+    assert!(app.contains("component::Component"), "app must implement Component");
+    assert!(app.contains("on_click: this.on_tap"), "handlers bind as METHODS:\n{app}");
+    assert!(!app.contains("#addr_of(this) as *u8"), "a scaffold must not hand-roll the ctx slot");
+}
+
+#[test]
+fn init_ios_alongside_a_desktop_platform_yields_main_cplus() {
+    // The iOS entry must NOT claim `src/main.cplus` when a self-linked platform
+    // is also named: building for that platform would then report the iOS entry
+    // as unreachable (W0005), and a fresh scaffold must not warn on first build.
+    let dir = tempfile::tempdir().unwrap();
+    let out = Command::new(cpc())
+        .arg("init").arg("--platform").arg("ios").arg("--platform").arg("macos").arg("both")
+        .current_dir(dir.path())
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    let root = dir.path().join("both");
+
+    let toml = std::fs::read_to_string(root.join("Cplus.toml")).unwrap();
+    assert!(toml.contains("entry = \"src/main_ios.cplus\""), "ios yields main.cplus:\n{toml}");
+    assert!(toml.contains("entry = \"src/main.cplus\""), "macos takes it:\n{toml}");
+    assert!(root.join("src/main_ios.cplus").is_file());
+    assert!(root.join("src/main.cplus").is_file());
+    assert!(toml.contains("[macos.dependencies]"), "the desktop backend closure too:\n{toml}");
+
+    // One app, two doors.
+    let desktop = std::fs::read_to_string(root.join("src/main.cplus")).unwrap();
+    assert!(desktop.contains("fn main() -> i32"), "desktop entry is a real main:\n{desktop}");
+    assert!(desktop.contains("app::run()"), "and shares the app");
+    assert_eq!(
+        root.join("src/app.cplus").is_file(),
+        true,
+        "the app is shared, not duplicated per platform"
+    );
+}
+
+#[test]
+fn init_ios_alone_keeps_main_cplus_and_no_desktop_entry() {
+    let dir = tempfile::tempdir().unwrap();
+    let out = Command::new(cpc())
+        .arg("init").arg("--platform").arg("ios").arg("solo")
+        .current_dir(dir.path())
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    let root = dir.path().join("solo");
+    let toml = std::fs::read_to_string(root.join("Cplus.toml")).unwrap();
+    assert!(toml.contains("entry = \"src/main.cplus\""), "nothing to yield to:\n{toml}");
+    assert!(!toml.contains("[macos.dependencies]"), "no desktop backend when none was asked for");
+    assert!(!root.join("src/main_ios.cplus").exists());
+}
+
+#[test]
+fn init_without_ios_stays_a_hello_world() {
+    // The macOS/host scaffold is deliberately unchanged: no facet, no ios/.
+    let dir = tempfile::tempdir().unwrap();
+    let out = Command::new(cpc())
+        .arg("init").arg("--platform").arg("macos").arg("desk")
+        .current_dir(dir.path())
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    let root = dir.path().join("desk");
+    assert!(!root.join("ios").exists(), "no ios/ for a desktop-only project");
+    assert!(!root.join("src/app.cplus").exists(), "no facet app either");
+    let main = std::fs::read_to_string(root.join("src/main.cplus")).unwrap();
+    assert!(main.contains("hello from C+"), "main:\n{main}");
+    let toml = std::fs::read_to_string(root.join("Cplus.toml")).unwrap();
+    assert!(!toml.contains("facet"), "a hello-world must not pull in facet:\n{toml}");
+}
+
 // ---- cpc explain ----
 
 #[test]
