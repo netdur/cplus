@@ -44,6 +44,105 @@ fn skill_write_creates_file_and_refuses_overwrite() {
     assert!(forced.status.success());
 }
 
+// ---- cpc skill: per-package skills ----
+//
+// The language reference cannot teach a package's correct use, and package
+// misuse COMPILES — so a dependency may ship its own `SKILL.md` and `cpc skill`
+// appends it. These pin the three behaviours: it is picked up, `--lang-only`
+// suppresses it, and a dep without one changes nothing.
+
+/// Build a throwaway project whose `vendor/<name>/` holds a package with the
+/// given `SKILL.md` body (or none, when `skill` is `None`).
+fn project_with_dep(dir: &Path, dep: &str, skill: Option<&str>) {
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        format!(
+            "[package]\nname = \"host\"\nversion = \"0.0.1\"\nedition = \"2026\"\n\n[dependencies]\n{dep} = \"*\"\n"
+        ),
+    )
+    .unwrap();
+    let vd = dir.join("vendor").join(dep);
+    std::fs::create_dir_all(vd.join("src")).unwrap();
+    std::fs::write(
+        vd.join("Cplus.toml"),
+        format!("[package]\nname = \"{dep}\"\nversion = \"0.0.1\"\nedition = \"2026\"\n"),
+    )
+    .unwrap();
+    if let Some(body) = skill {
+        std::fs::write(vd.join("SKILL.md"), body).unwrap();
+    }
+}
+
+#[test]
+fn skill_appends_a_dependencys_own_skill() {
+    let dir = tempfile::tempdir().unwrap();
+    project_with_dep(dir.path(), "widgets", Some("# WIDGETS SKILL\n\nrule one.\n"));
+
+    let out = Command::new(cpc())
+        .arg("skill")
+        .current_dir(dir.path())
+        .output()
+        .expect("run cpc skill");
+    assert!(out.status.success());
+    let s = String::from_utf8_lossy(&out.stdout);
+    assert!(s.contains("SKILL — writing C+ source"), "language reference must still lead");
+    assert!(s.contains("# WIDGETS SKILL"), "dependency skill must be appended:\n{s}");
+    assert!(
+        s.contains("package skill: widgets"),
+        "the appended skill must say where it came from"
+    );
+}
+
+#[test]
+fn skill_lang_only_suppresses_package_skills() {
+    let dir = tempfile::tempdir().unwrap();
+    project_with_dep(dir.path(), "widgets", Some("# WIDGETS SKILL\n"));
+
+    let out = Command::new(cpc())
+        .arg("skill")
+        .arg("--lang-only")
+        .current_dir(dir.path())
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    let s = String::from_utf8_lossy(&out.stdout);
+    assert!(s.contains("SKILL — writing C+ source"));
+    assert!(!s.contains("# WIDGETS SKILL"), "--lang-only must print the language reference alone");
+}
+
+#[test]
+fn skill_is_unchanged_when_no_dependency_ships_one() {
+    let dir = tempfile::tempdir().unwrap();
+    project_with_dep(dir.path(), "widgets", None);
+
+    let with = Command::new(cpc()).arg("skill").current_dir(dir.path()).output().unwrap();
+    let bare = Command::new(cpc()).arg("skill").arg("--lang-only").current_dir(dir.path()).output().unwrap();
+    assert!(with.status.success() && bare.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&with.stdout),
+        String::from_utf8_lossy(&bare.stdout),
+        "a dep with no SKILL.md must add nothing"
+    );
+}
+
+#[test]
+fn skill_write_reports_which_package_skills_it_bundled() {
+    let dir = tempfile::tempdir().unwrap();
+    project_with_dep(dir.path(), "widgets", Some("# WIDGETS SKILL\n"));
+    let dest = dir.path().join("OUT.md");
+
+    let out = Command::new(cpc())
+        .arg("skill").arg("--write").arg(&dest)
+        .current_dir(dir.path())
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    let said = String::from_utf8_lossy(&out.stdout);
+    assert!(said.contains("widgets"), "should name the bundled skill:\n{said}");
+    let body = std::fs::read_to_string(&dest).unwrap();
+    assert!(body.contains("# WIDGETS SKILL"), "the written file must carry it too");
+}
+
 // ---- cpc explain ----
 
 #[test]

@@ -45,6 +45,8 @@ usage:
                                     a dense, self-contained guide to writing C+, embedded
                                     in this binary (version-matched, no network). If you
                                     are an agent about to write or edit C+, read this first.
+                                    Inside a project it also prints the SKILL.md of every
+                                    dependency that ships one (`--lang-only` to suppress).
   cpc explain [CODE]                explain a diagnostic (e.g. `cpc explain E0502`): cause,
                                     fix, example. No CODE (or --list): list every code.
   cpc FILE [-o OUT]                 compile single-file FILE.cplus to a binary (default OUT: ./a.out)
@@ -5363,17 +5365,82 @@ usage:
   cpc skill                 print the reference to stdout
   cpc skill --write [PATH]  write it into the project (default: ./SKILL.md)
   cpc skill --write --force overwrite an existing file
+  cpc skill --lang-only     the language reference alone, no package skills
+
+Run inside a project, the language reference is followed by the SKILL.md of
+every dependency that ships one — so a project that depends on `facet` gets
+facet's guidance without anyone wiring it up.
 ";
+
+/// A dependency's own agent reference, if it ships one.
+///
+/// The language reference tells an agent how to write C+; it cannot tell it how
+/// to use a package correctly, and a package's misuse usually COMPILES — which
+/// is exactly the class of mistake no diagnostic will catch. So a package may
+/// ship `SKILL.md` in its root, and `cpc skill` appends it for every dependency
+/// the manifest declares. Resolution is `vendor_dir_for`, the same path the
+/// linker and the import resolver use, so the skill read is the package built.
+///
+/// Platform-scoped deps are included regardless of the active platform: an
+/// agent writing the iOS half of a project needs `facet_uikit`'s rules while
+/// building for macOS.
+fn package_skills() -> Vec<(String, String)> {
+    let cwd = match std::env::current_dir() {
+        Ok(d) => d,
+        Err(_) => return Vec::new(),
+    };
+    let Some(manifest_path) = find_manifest_upward(&cwd) else {
+        return Vec::new();
+    };
+    let Ok(m) = manifest::load(&manifest_path) else {
+        return Vec::new();
+    };
+    let mut out: Vec<(String, String)> = Vec::new();
+    let mut seen: Vec<String> = Vec::new();
+    for dep in &m.dependencies {
+        if seen.iter().any(|n| n == &dep.name) {
+            continue;
+        }
+        seen.push(dep.name.clone());
+        let Some(dir) = vendor_dir_for(&m, &dep.name) else {
+            continue;
+        };
+        if let Ok(text) = std::fs::read_to_string(dir.join("SKILL.md")) {
+            out.push((dep.name.clone(), text));
+        }
+    }
+    out
+}
+
+/// The language reference plus every dependency skill, in manifest order.
+fn full_skill(lang_only: bool) -> String {
+    let mut s = String::from(SKILL_MD);
+    if lang_only {
+        return s;
+    }
+    for (name, text) in package_skills() {
+        if !s.ends_with('\n') {
+            s.push('\n');
+        }
+        s.push_str(&format!(
+            "\n---\n\n<!-- package skill: {name} (from vendor/{name}/SKILL.md) -->\n\n"
+        ));
+        s.push_str(&text);
+    }
+    s
+}
 
 /// `cpc skill [--write [PATH]] [--force]`.
 fn run_skill(args: &[OsString]) -> ExitCode {
     let mut write = false;
     let mut force = false;
+    let mut lang_only = false;
     let mut dest: Option<PathBuf> = None;
     for a in args {
         match a.to_str() {
             Some("--write") | Some("-w") => write = true,
             Some("--force") | Some("-f") => force = true,
+            Some("--lang-only") => lang_only = true,
             Some("-h") | Some("--help") => {
                 print!("{SKILL_USAGE}");
                 return ExitCode::SUCCESS;
@@ -5389,8 +5456,10 @@ fn run_skill(args: &[OsString]) -> ExitCode {
         }
     }
 
+    let text = full_skill(lang_only);
+
     if !write {
-        print!("{SKILL_MD}");
+        print!("{text}");
         return ExitCode::SUCCESS;
     }
 
@@ -5402,9 +5471,15 @@ fn run_skill(args: &[OsString]) -> ExitCode {
         );
         return ExitCode::FAILURE;
     }
-    match std::fs::write(&path, SKILL_MD) {
+    match std::fs::write(&path, &text) {
         Ok(()) => {
-            println!("wrote {}", path.display());
+            let extra = package_skills();
+            if lang_only || extra.is_empty() {
+                println!("wrote {}", path.display());
+            } else {
+                let names: Vec<&str> = extra.iter().map(|(n, _)| n.as_str()).collect();
+                println!("wrote {} (language + {})", path.display(), names.join(", "));
+            }
             ExitCode::SUCCESS
         }
         Err(e) => {

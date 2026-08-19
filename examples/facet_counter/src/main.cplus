@@ -1,0 +1,7 @@
+import "./app" as app;
+import "facet_appkit/facet_appkit" as backend;
+
+fn main() -> i32 {
+    backend::install();
+    return app::run();
+}
