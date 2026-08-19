@@ -484,6 +484,13 @@ impl Gallery: screen::Screen {
             height: 680.0f64,
             min_width: 720.0f64,
             min_height: 480.0f64,
+            // Pinch to magnify — the same flag the iOS gallery sets. Zoom is a
+            // SCALE on the content view, never a relayout: the tree keeps its
+            // sizes and the magnification rides on top, so a zoomed gallery is
+            // the same tree bigger, not a reflowed one.
+            zoomable: true,
+            min_zoom: 1.0f64,
+            max_zoom: 3.0f64,
         );
     }
     fn menu_items(this) -> vec::Vec[screen::MenuItem] {
