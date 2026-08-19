@@ -242,19 +242,6 @@ fn subview_count(v: *u8) -> u64 {
 // trackpad. Reversed on request, and these are the parts that can be checked
 // without fingers.
 
-fn a_pinch_multiplier_of_one_changes_nothing() -> bool {
-    // THE ONE PLATFORM DIFFERENCE. `NSMagnificationGestureRecognizer` reports an
-    // OFFSET since the gesture began (0 = unchanged) so appkit computes
-    // `base * (1 + m)`; `UIPinchGestureRecognizer` reports a MULTIPLIER
-    // (1.0 = unchanged). Copying appkit's arithmetic here would magnify by 2x on
-    // the first callback of a pinch that had not moved — this is that check.
-    if zoom::zoom_target(2.0f64, 1.0f64, 1.0f64, 8.0f64) != 2.0f64 { return false; }
-    if zoom::zoom_target(1.0f64, 2.0f64, 1.0f64, 8.0f64) != 2.0f64 { return false; }
-    // A gesture stream reporting NaN must leave the picture alone, not amplify it.
-    let nan: f64 = 0.0f64 / 0.0f64;
-    return zoom::zoom_target(3.0f64, nan, 1.0f64, 8.0f64) == 3.0f64;
-}
-
 fn a_zoom_range_is_healed_rather_than_inverted() -> bool {
     // `min_zoom: 0` floors at 1 instead of letting the picture shrink away.
     if zoom::heal_min(0.0f64) != 1.0f64 { return false; }
@@ -264,39 +251,61 @@ fn a_zoom_range_is_healed_rather_than_inverted() -> bool {
     return zoom::heal_max(1.0f64, 4.0f64) == 4.0f64;
 }
 
-// THE PROPERTY THAT MAKES IT A MAGNIFICATION AND NOT A REFLOW: the BOUNDS must
-// not move. They are the space flex laid the tree out in, so changing them would
-// re-run layout at the zoomed size and rewrap the text instead of enlarging it.
-// The magnification lives in the layer transform.
+// THE PROPERTY THAT MAKES IT A MAGNIFICATION AND NOT A REFLOW: the layout
+// space must not move. The canvas's BOUNDS are what flex laid the tree out in,
+// so a zoom that changed them would re-run layout at the zoomed size and rewrap
+// the text instead of enlarging it. The magnification lives in the transform
+// UIScrollView manages, which the canvas's FRAME carries.
 //
-// THIS CHECK ALREADY EARNED ITS PLACE. The first implementation copied
-// facet_appkit and magnified by shrinking the host's bounds, which works there
-// because an NSView's frame and bounds are independent. This check failed with
-// frame=100x50 bounds=100x50 on a 200x100 view — UIKit keeps `frame.size` and
-// `bounds.size` equal modulo the transform, so the view had shrunk on screen
-// rather than magnified its content, and the port was simply wrong.
-fn zoom_scales_the_layer_and_leaves_the_bounds() -> bool {
+// THE MECHANISM CHANGED UNDER THIS CHECK ONCE, and the report is why it reads
+// the way it does. The first port scaled the host's layer transform and moved
+// the anchor under the fingers; on a device it drifted, could not pan, and left
+// a MARGIN on the way out — geometry that depends on the path taken cannot
+// return to where it started (bugs/facet-uikit-zoom-drifts-cannot-pan-and-
+// leaves-a-margin.md). UIScrollView owns the geometry now, and the last third
+// of this check is that margin, pinned: at 1x the canvas sits at the origin and
+// the offset is zero BY READING THEM, not by trusting the arithmetic.
+fn zoom_scales_the_canvas_and_leaves_the_layout_space() -> bool {
     let host: uik::View = uik::View::new_with_frame(
         rt::Rect { x: 0.0f64, y: 0.0f64, w: 200.0f64, h: 100.0f64 });
     zoom::install(host.raw(), 1.0f64, 3.0f64);
     if zoom::is_zoomable(host.raw()) == false { return false; }
+    // The tree mounts on the CANVAS: a real view, inside a scroll view, inside
+    // the host — not the host itself.
+    let canvas: *u8 = zoom::mount_host_of(host.raw());
+    if canvas == host.raw() { return false; }
+    if canvas == (0 as *u8) { return false; }
+    let sv: *u8 = match uik::View::from_raw(canvas).superview() {
+        option::Option[uik::View]::Some(s) => s.raw(),
+        option::Option[uik::View]::None => 0 as *u8,
+    };
+    if sv == (0 as *u8) { return false; }
     if zoom::set_zoom(host.raw(), 2.0f64) != 2.0f64 { return false; }
-    // The layout space is untouched — no reflow.
-    let b: rt::Rect = host.bounds();
-    if { b.w } != 200.0f64 { return false; }
-    if { b.h } != 100.0f64 { return false; }
-    // And the magnification is really applied, on the layer's own matrix.
-    let m: quartz::Transform3D = host.layer().transform();
-    if { m.m11 } != 2.0f64 { return false; }
-    if { m.m22 } != 2.0f64 { return false; }
+    // The layout spaces are untouched — no reflow, on the host or the canvas.
+    let hb: rt::Rect = host.bounds();
+    if { hb.w } != 200.0f64 { return false; }
+    if { hb.h } != 100.0f64 { return false; }
+    let cb: rt::Rect = uik::View::from_raw(canvas).bounds();
+    if { cb.w } != 200.0f64 { return false; }
+    if { cb.h } != 100.0f64 { return false; }
+    // And the magnification is really applied: the canvas's frame — bounds
+    // through the managed transform — is twice the size.
+    let cf: rt::Rect = uik::View::from_raw(canvas).frame();
+    if { cf.w } != 400.0f64 { return false; }
+    if { cf.h } != 200.0f64 { return false; }
     if zoom::zoom_of(host.raw()) != 2.0f64 { return false; }
     // Clamped to the installed ceiling, not to whatever was asked for.
     if zoom::set_zoom(host.raw(), 99.0f64) != 3.0f64 { return false; }
     if zoom::set_zoom(host.raw(), 1.0f64) != 1.0f64 { return false; }
-    // Back to 1 is back to the identity, not a 1x scale left lying around as a
-    // transform the compositor still has to apply.
-    let id: quartz::Transform3D = host.layer().transform();
-    return { id.m11 } == 1.0f64 && { id.m22 } == 1.0f64;
+    // THE MARGIN, PINNED. Back at 1x the canvas is exactly where it started —
+    // frame at the origin, natural size, no content offset left behind.
+    let back: rt::Rect = uik::View::from_raw(canvas).frame();
+    if { back.x } != 0.0f64 { return false; }
+    if { back.y } != 0.0f64 { return false; }
+    if { back.w } != 200.0f64 { return false; }
+    if { back.h } != 100.0f64 { return false; }
+    let off: rt::Point = uik::ScrollView::from_raw(sv).content_offset();
+    return { off.x } == 0.0f64 && { off.y } == 0.0f64;
 }
 
 // An agent has no hands, so a pinch-only feature would be a feature no agent
@@ -1399,12 +1408,10 @@ fn run_all() -> i32 {
           the_enclosing_scroll_is_the_page_not_the_editor());
     check("a scroll node reports where it is and calls back",
           a_scroll_node_reports_where_it_is_and_calls_back());
-    check("a pinch multiplier of one changes nothing",
-          a_pinch_multiplier_of_one_changes_nothing());
     check("a zoom range is healed rather than inverted",
           a_zoom_range_is_healed_rather_than_inverted());
-    check("zoom scales the layer and leaves the bounds",
-          zoom_scales_the_layer_and_leaves_the_bounds());
+    check("zoom scales the canvas and leaves the layout space",
+          zoom_scales_the_canvas_and_leaves_the_layout_space());
     check("set_zoom answers one where none is installed",
           set_zoom_answers_one_where_none_is_installed());
     check("a late end-display does not clear a refilled cell",

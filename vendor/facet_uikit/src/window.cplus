@@ -180,11 +180,18 @@ fn open_window(root: *core::Node, take chrome: Chrome,
 fn attach_root(win: *u8, root: *core::Node) {
     let content: *u8 = content_view_of(win);
     if content == (0 as *u8) { return; }
+    // Content magnification FIRST, because it decides where the tree mounts: a
+    // zoomable host puts a UIScrollView over itself and the tree lives on the
+    // scroll view's canvas, so the canvas has to exist before the root views
+    // are added. Idempotent — a second `open_window` re-states the range
+    // rather than stacking a second scroll view.
+    if WANT_ZOOMABLE { zoom::install(content, WANT_MIN_ZOOM, WANT_MAX_ZOOM); }
     let mounted: bool = mount::mount(root);
     app::set_window_native(root, win);
     // The root's own view was inserted nowhere by the mount walk — the facade
-    // puts it in the window, which is here.
-    if mounted { add_root_views(ui::View::from_raw(content), root); }
+    // puts it in the window, which is here. `mount_host_of` answers the zoom
+    // canvas where one was just built and the content view everywhere else.
+    if mounted { add_root_views(ui::View::from_raw(zoom::mount_host_of(content)), root); }
     // The light/dark flip listener. Here rather than at window construction
     // because it wants the content view, and idempotent enough to re-run: a
     // second `open_window` replaces the tree under the same content view, and
@@ -196,11 +203,6 @@ fn attach_root(win: *u8, root: *core::Node) {
     // out from under it. It takes the WINDOW because a keyboard frame arrives in
     // screen coordinates and has to be converted into one.
     keyboard::install(win);
-    // Content magnification, on the same view for the same reason: it is the
-    // host whose bounds the pinch scales, and `attach_root` is the one place
-    // that has it. Idempotent, so a second `open_window` re-states the range
-    // rather than stacking a second recogniser.
-    if WANT_ZOOMABLE { zoom::install(content, WANT_MIN_ZOOM, WANT_MAX_ZOOM); }
     // THE SAFE AREA IS NOT KNOWN UNTIL UIKIT HAS LAID THE VIEW OUT. Measured in
     // the simulator: read inside `didFinishLaunchingWithOptions:` the insets are
     // all zero, and the app drew its first row underneath the status bar and the
