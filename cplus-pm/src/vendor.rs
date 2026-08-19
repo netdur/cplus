@@ -262,8 +262,33 @@ pub fn install(
         // Present at this exact pin (sha recorded, manifest loads)? Leave it
         // byte-for-byte; still walk its deps below. A missing sha line is a
         // pre-D8 stamp: reinstall once to record provenance.
+        //
+        // An existing directory with NO stamp at all was not created by this
+        // package manager, and is NEVER ours to delete. It is a hand-maintained
+        // package — or, as on 2026-08-18, a store whose `vendor/` is a SYMLINK
+        // into a checkout of the toolchain itself, where the install path's
+        // `remove_dir_all` + copy silently replaced 2600 lines of live source
+        // with a published snapshot and took the working tree's uncommitted
+        // work with it. Adopt what is there, say so, and let the human decide;
+        // the escape hatch is to delete the directory yourself.
         let present = match read_stamp(&dest) {
             Some((stored_pin, Some(_))) if stored_pin == pin => Manifest::load_dir(&dest).ok(),
+            None if dest.exists() => {
+                let adopted = Manifest::load_dir(&dest).ok();
+                if adopted.is_some() {
+                    report.warnings.push(format!(
+                        "{}: {} already holds a package this tool did not install \
+                         (no {} stamp) — using it as-is instead of overwriting it. \
+                         Delete that directory if you want {}@{} fetched.",
+                        dep.name,
+                        dest.display(),
+                        VENDOR_STAMP,
+                        dep.repo,
+                        dep.version,
+                    ));
+                }
+                adopted
+            }
             _ => None,
         };
 
@@ -832,28 +857,38 @@ mod tests {
     }
 
     #[test]
-    fn a_missing_or_sha_less_stamp_triggers_reinstall() {
+    fn a_sha_less_stamp_reinstalls_but_a_missing_one_does_not() {
+        // The two cases are NOT the same, and treating them alike is what cost
+        // a working tree on 2026-08-18 (see
+        // `an_unstamped_package_dir_is_adopted_never_overwritten`).
+        //
+        //   pin line, no sha  -> a pre-D8 stamp WE wrote: ours, reinstall to
+        //                        record provenance.
+        //   no stamp at all   -> never installed by us: not ours to delete.
         let (_repo, project, store, options) = appkit_project();
         install(project.path(), &options).unwrap();
         let sv = store_vendor(&store);
 
-        // No stamp at all (a hand-copied dir).
         fs::remove_file(sv.join("stdlib").join(VENDOR_STAMP)).unwrap();
-        // A pre-D8 stamp: pin line only, no recorded commit.
+        write(&sv.join("stdlib/src/lib/io.cplus"), "// EDITED BY HAND\n");
         let (pin, _) = read_stamp(&sv.join("objc")).unwrap();
         fs::write(sv.join("objc").join(VENDOR_STAMP), format!("{pin}\n")).unwrap();
 
         let again = install(project.path(), &options).unwrap();
-        let mut fresh: Vec<&str> = again
+        let fresh: Vec<&str> = again
             .packages
             .iter()
             .filter(|r| r.fresh)
             .map(|r| r.name.as_str())
             .collect();
-        fresh.sort();
-        assert_eq!(fresh, vec!["objc", "stdlib"]);
+        assert_eq!(fresh, vec!["objc"], "only the sha-less stamp reinstalls");
         // The migration reinstall recorded the sha.
         assert!(read_stamp(&sv.join("objc")).unwrap().1.is_some());
+        // The unstamped one kept the hand edit.
+        assert_eq!(
+            fs::read_to_string(sv.join("stdlib/src/lib/io.cplus")).unwrap(),
+            "// EDITED BY HAND\n"
+        );
     }
 
     #[test]
@@ -904,6 +939,70 @@ mod tests {
         );
         assert_eq!(report.warnings.len(), 1);
         assert!(report.warnings[0].contains("vendoring locally"));
+    }
+
+    #[test]
+    fn an_unstamped_package_dir_is_adopted_never_overwritten() {
+        // 2026-08-18: `~/.cplus/<tier>/vendor` was a SYMLINK into a checkout of
+        // the toolchain itself, so installing into "the store" wrote into a live
+        // working tree. The install path deleted any dir it did not recognise
+        // and copied the published snapshot over it, taking ~2600 lines of
+        // uncommitted work with it. A directory without our stamp is somebody
+        // else's; adopt it and warn, never `remove_dir_all` it.
+        let (_repo, project, store, options) = appkit_project();
+
+        let sv = store_vendor(&store);
+        let hand = sv.join("appkit");
+        fs::create_dir_all(hand.join("src")).unwrap();
+        write(
+            &hand.join("Cplus.toml"),
+            "[package]\nname = \"appkit\"\nversion = \"0.0.1\"\nedition = \"2026\"\n",
+        );
+        write(&hand.join("src/appkit.cplus"), "// PRECIOUS UNCOMMITTED WORK\n");
+
+        let report = install(project.path(), &options).unwrap();
+
+        assert_eq!(
+            fs::read_to_string(hand.join("src/appkit.cplus")).unwrap(),
+            "// PRECIOUS UNCOMMITTED WORK\n",
+            "an unstamped package dir must survive an install"
+        );
+        assert!(
+            !hand.join(VENDOR_STAMP).exists(),
+            "adopting must not stamp a directory we do not own"
+        );
+        let entry = report
+            .packages
+            .iter()
+            .find(|p| p.name == "appkit")
+            .expect("appkit resolved");
+        assert!(!entry.fresh, "adopted, not fetched");
+        assert!(
+            report.warnings.iter().any(|w| w.contains("did not install")),
+            "the adoption must be said out loud: {:?}",
+            report.warnings
+        );
+    }
+
+    #[test]
+    fn an_unstamped_dir_without_a_manifest_is_still_replaced() {
+        // The complement: debris from an interrupted copy has no manifest and
+        // is not a package, so the normal fetch path still owns it.
+        let (_repo, project, store, options) = appkit_project();
+        let sv = store_vendor(&store);
+        let junk = sv.join("appkit");
+        fs::create_dir_all(&junk).unwrap();
+        write(&junk.join("stray.txt"), "not a package\n");
+
+        let report = install(project.path(), &options).unwrap();
+
+        assert!(junk.join(MANIFEST_NAME).is_file(), "a real package landed");
+        assert!(!junk.join("stray.txt").exists(), "the debris was replaced");
+        assert!(report
+            .packages
+            .iter()
+            .find(|p| p.name == "appkit")
+            .is_some_and(|p| p.fresh));
     }
 
     #[test]
