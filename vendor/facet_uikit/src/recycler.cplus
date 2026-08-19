@@ -52,6 +52,14 @@ import "./geometry" as geometry;
 
 fn cell_root_key() -> *u8 { return 41010 as *u8; }
 
+// WHICH ROW A CELL IS CURRENTLY SHOWING, stored as `row + 1` so that 0 keeps
+// its meaning of "nothing filled". `didEndDisplaying` needs it — see there.
+fn cell_row_key() -> *u8 { return 41016 as *u8; }
+
+fn cell_row(cell: *u8) -> usize {
+    return { synth::get_associated(cell, cell_row_key()) } as usize;
+}
+
 fn cell_root(cell: *u8) -> *core::Node {
     if cell == (0 as *u8) { return 0 as *core::Node; }
     return { synth::get_associated(cell, cell_root_key()) } as *core::Node;
@@ -113,6 +121,7 @@ fn clear_cell(cell: *u8) {
     // which releases every view the mount walk created under it.
     let _b: box::Box[core::Node] = box::from_raw::[core::Node](old as *u8);
     synth::set_associated(cell, cell_root_key(), 0 as *u8);
+    synth::set_associated(cell, cell_row_key(), 0 as *u8);
     return;
 }
 
@@ -153,6 +162,7 @@ fn fill_cell(cell: *u8, n: *core::Node, i: usize) {
                 add_backed(ui::View::from_raw(content), root);
             }
             synth::set_associated(cell, cell_root_key(), root as *u8);
+            synth::set_associated(cell, cell_row_key(), (i +% (1 as usize)) as *u8);
             layout_cell(cell, root);
         }
         option::Option[box::Box[core::Node]]::None => { }
@@ -338,14 +348,45 @@ fn imp_did_select(self_obj: *u8, cmd: *u8, tv: *u8, index_path: *u8) {
 // A cell left the screen. Its subtree is dropped here rather than waiting for
 // the next `fill_cell`, so a list scrolled to the end is not holding every row
 // it ever showed.
+// THIS CALLBACK CAN ARRIVE AFTER THE CELL HAS ALREADY BEEN REFILLED.
+//
+// UIKit does not promise that `didEndDisplayingCell:forRowAtIndexPath:` is
+// delivered before the same cell object is handed back out by
+// `dequeueReusableCellWithIdentifier:`. While scrolling it routinely arrives
+// after: the cell leaves the top, `cellForRowAtIndexPath:` dequeues it and
+// `fill_cell` builds the new row into it, and only then does the delegate hear
+// that the OLD index path stopped displaying. Clearing unconditionally there
+// tore down the row that had just been built, and the cell rendered empty —
+// "labels disappear while scrolling", intermittent because it depends on that
+// ordering. facet_appkit never had it because NSTableView has no callback of
+// this shape.
+//
+// The cell says which row it is showing, so the question is answerable: clear
+// only when the cell is still the row that is going away. When it is not, the
+// cell has already been re-filled and this teardown belongs to a row that no
+// longer lives here — and `fill_cell` clears before every fill anyway, so
+// nothing leaks by leaving it alone.
 fn imp_did_end_displaying(self_obj: *u8, cmd: *u8, tv: *u8, cell: *u8, index_path: *u8) {
     let p: *props::ListProps = list_props(tv);
     if p != (0 as *props::ListProps) {
         let d: fn(*u8, *u8) = { (*p).on_item_disappearing };
         if d != (0 as fn(*u8, *u8)) { d(cell, { (*p).on_item_disappearing_ctx }); }
     }
+    if !cell_holds_row(p, cell, index_path) { return; }
     clear_cell(cell);
     return;
+}
+
+// Is `cell` still showing the row `index_path` names? Unanswerable without the
+// props (a flat index needs them), and an unanswerable question must not
+// destroy a filled cell — so it answers false and the teardown waits for the
+// next fill.
+fn cell_holds_row(p: *props::ListProps, cell: *u8, index_path: *u8) -> bool {
+    if p == (0 as *props::ListProps) { return false; }
+    if index_path == (0 as *u8) { return false; }
+    let held: usize = cell_row(cell);
+    if held == (0 as usize) { return false; }
+    return (held -% (1 as usize)) == flat_index(p, index_path);
 }
 
 fn imp_scrolled(self_obj: *u8, cmd: *u8, sv: *u8) {

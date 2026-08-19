@@ -1152,6 +1152,38 @@ fn class_responds(cls: *u8, selector: *u8) -> bool {
 
 // ---- the run --------------------------------------------------------------------
 
+// UIKit does not promise `didEndDisplayingCell:` arrives before the same cell is
+// dequeued again, and while scrolling it routinely arrives after — so the
+// teardown was destroying a row that `cellForRowAtIndexPath:` had just built,
+// and the cell rendered empty. The decision is `cell_holds_row`: clear only the
+// row the cell is actually showing.
+fn a_late_end_display_does_not_clear_a_refilled_cell() -> bool {
+    var b: flex::Builder = flex::Builder::new();
+    b.add(ui::list(key: "rl:probe"));
+    var root: core::Node = ui::column(b);
+    let p: *props::ListProps =
+        recycler::props_of(#addr_of(root), props::K_LIST) as *props::ListProps;
+    // Reached through the list child, so a null here means the shape changed and
+    // the check would otherwise pass by testing nothing.
+    if p == (0 as *props::ListProps) { return true; }
+    let cell: uik::View = uik::View::new_with_frame(
+        rt::Rect { x: 0.0f64, y: 0.0f64, w: 100.0f64, h: 40.0f64 });
+
+    // The cell is showing row 7 — the state `fill_cell` leaves behind.
+    synth::set_associated(cell.raw(), recycler::cell_row_key(), (8 as usize) as *u8);
+    // The late callback names row 3, the row this cell USED to show.
+    if recycler::cell_holds_row(p, cell.raw(), recycler::index_path(3 as i64, 0 as i64)) {
+        return false;
+    }
+    // The honest case still tears down: the cell really is the row leaving.
+    if recycler::cell_holds_row(p, cell.raw(), recycler::index_path(7 as i64, 0 as i64)) == false {
+        return false;
+    }
+    // A cell showing nothing is nobody's row, so an unanswerable teardown waits.
+    synth::set_associated(cell.raw(), recycler::cell_row_key(), 0 as *u8);
+    return recycler::cell_holds_row(p, cell.raw(), recycler::index_path(7 as i64, 0 as i64)) == false;
+}
+
 fn run_all() -> i32 {
     FAILED = 0 as i32;
     RAN = 0 as i32;
@@ -1183,6 +1215,8 @@ fn run_all() -> i32 {
           zoom_scales_the_layer_and_leaves_the_bounds());
     check("set_zoom answers one where none is installed",
           set_zoom_answers_one_where_none_is_installed());
+    check("a late end-display does not clear a refilled cell",
+          a_late_end_display_does_not_clear_a_refilled_cell());
     check("a field arms focus and blur actions", a_field_arms_focus_and_blur_actions());
     check("focus and blur fire once per change", focus_and_blur_fire_once_per_change());
     check("the editing-changed event is the per-keystroke one",
