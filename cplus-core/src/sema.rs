@@ -9575,6 +9575,12 @@ impl SemaCx<'_> {
             // an import the platform doesn't have (that is what the file
             // override is for).
             "platform" => self.check_intrinsic_platform(type_args, args, ret_ty, span),
+            // `#arch()` / `#target()` — the other two axes of the active
+            // target, same resolution and the same value-level-only rule.
+            // `#arch` crosses `#platform` rather than refining it; `#target`
+            // is the only one that separates the iOS simulator from a device.
+            "arch" => self.check_intrinsic_arch(type_args, args, ret_ty, span),
+            "target" => self.check_intrinsic_target(type_args, args, ret_ty, span),
             "size_of" => self.check_intrinsic_layout("size_of", type_args, args, ret_ty, span),
             "align_of" => self.check_intrinsic_layout("align_of", type_args, args, ret_ty, span),
             // v0.0.12 G-028 (llama.cplus G-026): `#zero::[T]()` returns a
@@ -10234,11 +10240,83 @@ impl SemaCx<'_> {
         ret_ty: Option<&Type>,
         span: ByteSpan,
     ) -> Ty {
+        self.check_intrinsic_target_fact(
+            "platform",
+            crate::target::active_platform(),
+            type_args,
+            args,
+            ret_ty,
+            span,
+        )
+    }
+
+    /// `#arch()` — the ACTIVE TARGET's architecture name as a `str` constant:
+    /// one of `crate::target::ARCHES` ("aarch64", "x86_64", "xtensa",
+    /// "riscv32", "wasm32").
+    ///
+    /// Orthogonal to `#platform()` rather than a refinement of it: `macos`
+    /// and `ios` are both `aarch64` on Apple silicon, and `android-arm64`
+    /// shares the arch while sharing no platform. Value-level only, exactly
+    /// as `#platform()` is.
+    fn check_intrinsic_arch(
+        &mut self,
+        type_args: &[Type],
+        args: &[Expr],
+        ret_ty: Option<&Type>,
+        span: ByteSpan,
+    ) -> Ty {
+        self.check_intrinsic_target_fact(
+            "arch",
+            crate::target::active_arch(),
+            type_args,
+            args,
+            ret_ty,
+            span,
+        )
+    }
+
+    /// `#target()` — the ACTIVE TARGET's `--target` spec name as a `str`
+    /// constant ("host", "ios-arm64", "ios-arm64-simulator", ...).
+    ///
+    /// The one axis that separates the iOS simulator from an iOS device:
+    /// both are `TargetOs::Ios` and both are `aarch64`, so `#platform()` and
+    /// `#arch()` collapse them and only the spec name tells them apart.
+    /// Value-level only.
+    fn check_intrinsic_target(
+        &mut self,
+        type_args: &[Type],
+        args: &[Expr],
+        ret_ty: Option<&Type>,
+        span: ByteSpan,
+    ) -> Ty {
+        self.check_intrinsic_target_fact(
+            "target",
+            crate::target::active_target_name(),
+            type_args,
+            args,
+            ret_ty,
+            span,
+        )
+    }
+
+    /// Shared checker for the zero-argument target-fact intrinsics
+    /// (`#platform`, `#arch`, `#target`). Each resolves at check time into
+    /// the same span-keyed table `#env` uses, so codegen lowers all of them
+    /// through one arm.
+    fn check_intrinsic_target_fact(
+        &mut self,
+        name: &str,
+        value: &str,
+        type_args: &[Type],
+        args: &[Expr],
+        ret_ty: Option<&Type>,
+        span: ByteSpan,
+    ) -> Ty {
         if !type_args.is_empty() {
             self.err(
                 "E0903",
                 format!(
-                    "`#platform` takes no type arguments, got {}",
+                    "`#{name}` takes no type arguments, got {}",
                     type_args.len()
                 ),
                 span,
@@ -10247,14 +10325,14 @@ impl SemaCx<'_> {
         if ret_ty.is_some() {
             self.err(
                 "E0903",
-                "`#platform` does not accept a `-> T` return-type ascription".to_string(),
+                format!("`#{name}` does not accept a `-> T` return-type ascription"),
                 span,
             );
         }
         if !args.is_empty() {
             self.err(
                 "E0903",
-                format!("`#platform` takes 0 arguments, got {}", args.len()),
+                format!("`#{name}` takes 0 arguments, got {}", args.len()),
                 span,
             );
             for a in args {
@@ -10265,8 +10343,8 @@ impl SemaCx<'_> {
         self.env_vars_table.insert(
             span,
             EnvVarEntry {
-                name: "platform".to_string(),
-                value: crate::target::active_platform().to_string(),
+                name: name.to_string(),
+                value: value.to_string(),
             },
         );
         Ty::Str
@@ -22486,6 +22564,53 @@ mod tests {
     // server past 4 GB in ~2.5 s — with no diagnostic, because
     // `INSTANTIATION_LIMIT` counts instantiations and this exhausts memory
     // inside a couple of dozen of them.
+
+    // ---- `#arch()` / `#target()`: the target-fact intrinsics ----
+    //
+    // All three (`#platform` included) share one checker, so the arity and
+    // ascription rules must hold identically for each — a regression in the
+    // shared path would otherwise only show up on whichever one had tests.
+
+    #[test]
+    fn target_fact_intrinsics_take_no_arguments() {
+        for name in ["platform", "arch", "target"] {
+            let src = format!("fn main() -> i32 {{ let s: str = #{name}(1); return 0; }}\n");
+            let ds = check_src(&src);
+            assert!(
+                codes_of(&ds).contains(&"E0903"),
+                "`#{name}` with an argument must raise E0903, got: {:?}",
+                codes_of(&ds)
+            );
+        }
+    }
+
+    #[test]
+    fn target_fact_intrinsics_take_no_type_arguments() {
+        for name in ["platform", "arch", "target"] {
+            let src =
+                format!("fn main() -> i32 {{ let s: str = #{name}::[i32](); return 0; }}\n");
+            let ds = check_src(&src);
+            assert!(
+                codes_of(&ds).contains(&"E0903"),
+                "`#{name}` with a type argument must raise E0903, got: {:?}",
+                codes_of(&ds)
+            );
+        }
+    }
+
+    #[test]
+    fn target_fact_intrinsics_are_str_and_take_no_ascription() {
+        // Well-formed: no diagnostics at all, and the result is `str`.
+        for name in ["platform", "arch", "target"] {
+            let src = format!("fn main() -> i32 {{ let s: str = #{name}(); return 0; }}\n");
+            let ds = check_src(&src);
+            assert!(
+                ds.is_empty(),
+                "`#{name}()` assigned to `str` must be clean, got: {:?}",
+                codes_of(&ds)
+            );
+        }
+    }
 
     // ---- W0824: the ctx-slot lint, on METHODS and on one-param predicates ----
 

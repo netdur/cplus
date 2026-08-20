@@ -397,6 +397,41 @@ pub fn active_platform() -> &'static str {
     platform_name(active_target().os)
 }
 
+/// Every name [`arch_name`] can return, in the order the docs list them.
+/// The `#arch()` vocabulary, and the `Arch` enum `stdlib/platform` mirrors.
+pub const ARCHES: &[&str] = &["aarch64", "x86_64", "xtensa", "riscv32", "wasm32"];
+
+/// The architecture name for a [`TargetArch`]. Total, so a new variant forces
+/// a decision here at compile time — the same contract as [`platform_name`].
+///
+/// Unlike the platform axis, this is orthogonal to the OS: `macos` and `ios`
+/// are both `aarch64` on Apple silicon, and `android-arm64` shares the arch
+/// with them while sharing no platform.
+pub fn arch_name(arch: TargetArch) -> &'static str {
+    match arch {
+        TargetArch::Aarch64 => "aarch64",
+        TargetArch::X86_64 => "x86_64",
+        TargetArch::Xtensa => "xtensa",
+        TargetArch::Riscv32 => "riscv32",
+        TargetArch::Wasm32 => "wasm32",
+    }
+}
+
+/// The active target's architecture name — what `#arch()` resolves to.
+pub fn active_arch() -> &'static str {
+    arch_name(active_target().arch)
+}
+
+/// The active target's `--target` spec name (`host`, `ios-arm64`,
+/// `ios-arm64-simulator`, ...) — what `#target()` resolves to.
+///
+/// This is the one axis that separates the iOS simulator from an iOS device:
+/// both are [`TargetOs::Ios`] and both are `aarch64`, so neither
+/// [`platform_name`] nor [`arch_name`] can tell them apart.
+pub fn active_target_name() -> &'static str {
+    active_target().name
+}
+
 /// Comma-joined list of the names `--target` accepts, for diagnostics.
 pub fn supported_names() -> String {
     SUPPORTED
@@ -553,6 +588,48 @@ mod tests {
         assert_eq!(platform_name(TargetOs::Ios), "ios");
         assert_eq!(platform_name(TargetOs::EspIdf), "esp32");
         assert_eq!(platform_name(TargetOs::Unknown), "wasm");
+    }
+
+    #[test]
+    fn arch_name_is_total_and_matches_the_arch_vocabulary() {
+        // Same contract as platform_name: a new TargetArch variant must be
+        // given a name here, and that name must be one `#arch()` documents.
+        for arch in [
+            TargetArch::Aarch64,
+            TargetArch::X86_64,
+            TargetArch::Xtensa,
+            TargetArch::Riscv32,
+            TargetArch::Wasm32,
+        ] {
+            let name = arch_name(arch);
+            assert!(
+                ARCHES.contains(&name),
+                "arch_name({arch:?}) = `{name}` missing from ARCHES"
+            );
+        }
+        assert_eq!(arch_name(TargetArch::X86_64), "x86_64");
+        assert_eq!(arch_name(TargetArch::Riscv32), "riscv32");
+    }
+
+    #[test]
+    fn arch_is_orthogonal_to_platform() {
+        // The two axes cross: iOS device and simulator share an arch AND a
+        // platform, while android-arm64 shares the arch but not the platform.
+        assert_eq!(arch_name(IOS_ARM64.arch), arch_name(IOS_ARM64_SIMULATOR.arch));
+        assert_eq!(arch_name(IOS_ARM64.arch), arch_name(ANDROID_ARM64.arch));
+        assert_ne!(platform_name(IOS_ARM64.os), platform_name(ANDROID_ARM64.os));
+        for spec in SUPPORTED {
+            assert!(ARCHES.contains(&arch_name(spec.arch)));
+        }
+    }
+
+    #[test]
+    fn target_name_is_the_only_axis_separating_simulator_from_device() {
+        // platform_name and arch_name both collapse them; the spec name is
+        // what `#target()` exists for.
+        assert_eq!(platform_name(IOS_ARM64.os), platform_name(IOS_ARM64_SIMULATOR.os));
+        assert_eq!(arch_name(IOS_ARM64.arch), arch_name(IOS_ARM64_SIMULATOR.arch));
+        assert_ne!(IOS_ARM64.name, IOS_ARM64_SIMULATOR.name);
     }
 
     #[test]
