@@ -29,6 +29,14 @@ Cross-module use inside stdlib is normal (`vec` imports `option`, `status`,
 | `status` | Fallible mutator outcome (`Ok`, OOM, bounds, …) |
 | `marker` | Docs anchor for blessed `Send` / `Sync` (compiler-known) |
 
+### The machine
+
+| Module | Role |
+|---|---|
+| `platform` | `Os` / `Arch` / `Version` — what this binary was built for, and what it is running on |
+| `env` | Environment variables and argv |
+| `bundle` | The running executable's path, and resources beside it |
+
 ### Collections and text
 
 | Module | Role |
@@ -126,9 +134,17 @@ The package resolver substitutes platform files by suffix:
 |---|---|---|
 | `stdlib/netsys` | `netsys.cplus` | `netsys_linux`, `netsys_windows` |
 | `stdlib/reactor` | `reactor.cplus` (kqueue) | `reactor_linux` (epoll), `reactor_windows` |
+| `stdlib/platform_sys` | `platform_sys.cplus` (sysctl) | `platform_sys_linux` (uname) |
 
 App code always imports the short name. Do not import `*_linux` paths
 yourself unless you know you need them.
+
+**This is the mechanism `stdlib/platform` does NOT replace.** `platform::os()`
+branches on BEHAVIOUR at a value level: both arms are compiled and both must
+link, so it cannot gate code that names a symbol another platform lacks. That
+is what the file suffix is for — and `platform_sys.cplus` is the worked
+example, since `sysconf`'s `_SC_NPROCESSORS_ONLN` is 58 on Darwin and 84 on
+glibc. The calls are POSIX; the constants are not.
 
 ## Async shape
 

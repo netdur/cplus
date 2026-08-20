@@ -1,0 +1,65 @@
+// stdlib/platform_sys.cplus — the macOS/BSD half of `stdlib/platform`'s
+// runtime tier: the handful of facts that need a syscall and a per-OS
+// constant, split out so `platform.cplus` itself stays single-source and
+// portable.
+//
+// `platform_sys_linux.cplus` shadows this file on Linux through the
+// resolver's `_linux` platform override — the same split `netsys.cplus` uses
+// and for the same reason: the calls are POSIX, the CONSTANTS are not.
+//
+// Everything here returns a raw, unparsed answer with an explicit failure
+// value ("" or 0). `platform.cplus` owns the typed wrapping, so a new
+// platform half only has to produce the raw facts.
+
+import "./text" as text;
+
+// sysctl by name: `sysctlbyname(const char*, void*, size_t*, void*, size_t)`.
+// Called twice — once with a null buffer to learn the length, once to fill.
+extern fn sysctlbyname(name: *u8, oldp: *u8, oldlenp: *usize, newp: *u8, newlen: usize) -> i32;
+// POSIX runtime configuration query.
+extern fn sysconf(name: i32) -> i64;
+extern fn malloc(n: usize) -> *u8;
+extern fn free(p: *u8);
+
+// `_SC_NPROCESSORS_ONLN`, from Darwin's <unistd.h>. Linux spells the same
+// query 84 — that divergence is exactly why the constant sits on this side
+// of the platform split instead of in `platform.cplus`.
+fn nprocessors_onln() -> i32 { return 58 as i32; }
+
+// Online CPU count, or 0 when the query fails.
+fn cpu_count_raw() -> usize {
+    let n: i64 = { sysconf(nprocessors_onln()) };
+    if n < (1 as i64) { return 0 as usize; }
+    return n as usize;
+}
+
+// The macOS/iOS PRODUCT version as the OS reports it ("26.6.2"), or "" when
+// the query fails.
+//
+// NOT the Darwin kernel version, and the difference is not cosmetic: this
+// machine reports product 26.6.2 on kernel 25.6.0. An availability check
+// written against `uname -r` is off by a whole major release, every release
+// — which is why this reads `kern.osproductversion` and why no caller should
+// "simplify" it to uname.
+fn os_version_raw() -> text::Text {
+    let key: str = "kern.osproductversion";
+    let empty: text::Text = text::from_str("");
+
+    // Probe: a null buffer makes sysctl write the required length (incl. NUL).
+    var len: usize = 0 as usize;
+    let probe: i32 = { sysctlbyname(#str_ptr(key), 0 as *u8, #addr_of(len), 0 as *u8, 0 as usize) };
+    if probe != (0 as i32) { return empty; }
+    if len == (0 as usize) { return empty; }
+
+    let buf: *u8 = { malloc(len) };
+    if buf == (0 as *u8) { return empty; }
+    let rc: i32 = { sysctlbyname(#str_ptr(key), buf, #addr_of(len), 0 as *u8, 0 as usize) };
+    if rc != (0 as i32) { free(buf); return empty; }
+
+    // sysctl counts the trailing NUL; a C+ `str` is ptr+len and must not.
+    var n: usize = len;
+    if n > (0 as usize) { n = n -% (1 as usize); }
+    let out: text::Text = { #str_from_raw_parts(buf, n) }.to_text();
+    free(buf);
+    return out;
+}

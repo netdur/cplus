@@ -45,3 +45,4 @@ import "./base64" as base64;
 import "./crypto" as crypto;
 import "./netsys" as netsys;
 import "./net" as net;
+import "./platform" as platform;

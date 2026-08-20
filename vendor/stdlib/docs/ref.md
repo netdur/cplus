@@ -29,6 +29,7 @@ Source of truth for edge cases: the header comment and impl in
 | [`net`](#net) | `TcpStream`, `TcpListener` |
 | [`netsys`](#netsys) | platform errno / constants (for `net`) |
 | [`env`](#env) | `var`, `argc`, `arg` |
+| [`platform`](#platform) | `Os`, `Arch`, `Version`, `os` / `arch` / `os_version` / `cpu_count` |
 | [`flags`](#flags) | `Flags` option-set over u64 bits |
 | [`slice`](#slice) | checked sub-views over `T[]` |
 | [`hash_map`](#hash_map) | `HashMap[K, V]` |
@@ -53,7 +54,8 @@ Source of truth for edge cases: the header comment and impl in
 | [`stdlib`](#stdlib-test-entry) | test umbrella only |
 
 Platform override sources (not imported by short name): `netsys_linux`,
-`netsys_windows`, `reactor_linux`, `reactor_windows`.
+`netsys_windows`, `reactor_linux`, `reactor_windows`, `platform_sys`,
+`platform_sys_linux`.
 
 ---
 
@@ -336,6 +338,79 @@ fn arg(index: usize) -> option::Option[text::Text]
 ```
 
 Owned `Text` for values; `None` if unset / out of range.
+
+---
+
+## platform
+
+What this binary was built for, and what it is running on.
+
+```cplus
+enum Os   { Macos, Linux, Windows, Ios, Android, Esp32, Wasm }
+enum Arch { Aarch64, X86_64, Xtensa, Riscv32, Wasm32 }
+struct Version { major: i32, minor: i32, patch: i32 }
+```
+
+Build facts — these fold to constants, so a branch on one is free and the
+untaken arm is deleted at `--release`:
+
+```cplus
+fn os() -> Os
+fn arch() -> Arch
+fn target() -> str                  // "host", "ios-arm64", "ios-arm64-simulator", ...
+fn is_simulator() -> bool
+fn pointer_width() -> usize
+fn is_little_endian() -> bool
+fn path_separator() -> str          // "\\" on Windows, "/" elsewhere
+fn line_terminator() -> str         // "\r\n" on Windows, "\n" elsewhere
+```
+
+OS families — each groups more than one `Os`, which is why they are functions
+rather than a single comparison:
+
+```cplus
+fn is_apple() -> bool               // Macos | Ios — one kernel, one libc, Mach-O
+fn is_posix() -> bool               // hosted POSIX userland
+fn is_hosted() -> bool              // has a filesystem, threads, a usable heap
+```
+
+Runtime facts — a call, and they can fail:
+
+```cplus
+fn os_version() -> option::Option[Version]
+fn os_version_string() -> text::Text        // "" if unavailable
+fn cpu_count() -> option::Option[usize]     // ONLINE count, for sizing a pool
+```
+
+Names, both directions. `os_from_name` / `arch_from_name` return `None`
+outside the vocabulary rather than defaulting, so a name read from a config
+file cannot silently become `Wasm`:
+
+```cplus
+fn os_name(v: Os) -> str            fn arch_name(v: Arch) -> str
+fn os_from_name(name: str) -> option::Option[Os]
+fn arch_from_name(name: str) -> option::Option[Arch]
+```
+
+`Version::compare` / `at_least` order component-wise, so 15.10 is correctly
+newer than 15.9 — which a string compare gets wrong.
+
+**What `os_version` MEANS is per-platform**, deliberately. On Apple it is the
+PRODUCT version (`kern.osproductversion`) — macOS 26.6.2, not Darwin 25.6.0;
+an availability check written against `uname -r` is a whole major release out.
+On Linux it is the KERNEL release, because Linux has no single product version
+and the kernel is what predicts syscall behaviour. Windows returns `None`
+(needs `RtlGetVersion`, unbuilt); `esp32` and `wasm` have no OS to version.
+`None` rather than a `0.0.0` sentinel, so "no answer" cannot be read as "very
+old" by an `at_least` check.
+
+**This is for behaviour branching, not symbol gating.** Both arms of an
+`if platform::os() == ...` are compiled and must resolve. Code naming a symbol
+that does not exist elsewhere belongs in a per-platform FILE (`<name>_<platform>.cplus`),
+which is what `platform_sys_linux.cplus` is.
+
+Not restated here because stdlib already has them: the environment is
+[`env`](#env); the running executable's path is `bundle`.
 
 ---
 

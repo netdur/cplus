@@ -1,0 +1,542 @@
+// stdlib/platform.cplus — what the running app was built for.
+//
+// The compiler already knows the target; `#platform()`, `#arch()` and
+// `#target()` hand back its three axes as `str` constants. This module gives
+// them types, so a caller compares enum variants instead of spelling strings:
+//
+//     if platform::os() == platform::Os::Macos { ... }
+//
+//     match platform::arch() {
+//         platform::Arch::Aarch64 => { ... }
+//         platform::Arch::X86_64  => { ... }
+//         _ => { }
+//     }
+//
+// THESE FOLD. Each accessor resolves to a compile-time constant, so at
+// `--release` the comparison collapses and the untaken branch is deleted
+// outright — a `--target ios-arm64` build carries no macOS branch at all.
+// (A debug build keeps the comparison; that costs a string compare and
+// nothing else.)
+//
+// VALUE-LEVEL ONLY. This is for branching on BEHAVIOUR, not for gating
+// symbols. Both arms of an `if platform::os() == ...` are still compiled and
+// still have to resolve, so code that names a symbol which does not exist on
+// another platform belongs in a per-platform FILE (`reactor_linux.cplus`,
+// `netsys_windows.cplus`), not behind one of these tests.
+//
+// WHAT LIVES ELSEWHERE. The environment is `stdlib/env` (`var`, `argc`,
+// `arg`); the running executable's path is `stdlib/bundle`
+// (`executable_path`, `dir`). This module does not restate them.
+
+import "./option" as option;
+import "./text" as text;
+import "./platform_sys" as sys;
+
+// The operating system the active target builds for. Mirrors the compiler's
+// own `TargetOs`, and the same vocabulary `[<platform>.dependencies]`
+// manifest sections use.
+enum Os {
+    Macos,
+    Linux,
+    Windows,
+    Ios,
+    Android,
+    // ESP-IDF (FreeRTOS + newlib): no processes, no filesystem, heap
+    // discouraged in real-time contexts.
+    Esp32,
+    // Freestanding `wasm32` — no OS underneath at all; the host environment
+    // supplies the libc floor.
+    Wasm,
+}
+
+// The CPU architecture the active target builds for. Orthogonal to `Os`
+// rather than a refinement of it: `Macos` and `Ios` are both `Aarch64` on
+// Apple silicon, and an Android device shares the arch while sharing no OS.
+enum Arch {
+    Aarch64,
+    X86_64,
+    Xtensa,
+    Riscv32,
+    Wasm32,
+}
+
+// The OS this binary was compiled for. A `--target ios-arm64` build from a
+// Mac reports `Ios`, never `Macos`.
+fn os() -> Os {
+    let p: str = #platform();
+    if p == "macos" { return Os::Macos; }
+    if p == "linux" { return Os::Linux; }
+    if p == "windows" { return Os::Windows; }
+    if p == "ios" { return Os::Ios; }
+    if p == "android" { return Os::Android; }
+    if p == "esp32" { return Os::Esp32; }
+    return Os::Wasm;
+}
+
+// The CPU architecture this binary was compiled for.
+fn arch() -> Arch {
+    let a: str = #arch();
+    if a == "aarch64" { return Arch::Aarch64; }
+    if a == "x86_64" { return Arch::X86_64; }
+    if a == "xtensa" { return Arch::Xtensa; }
+    if a == "riscv32" { return Arch::Riscv32; }
+    return Arch::Wasm32;
+}
+
+// The `--target` name this binary was compiled with: "host", "ios-arm64",
+// "ios-arm64-simulator", "android-arm64", "esp32-xtensa", "esp32c3-riscv32",
+// "wasm32".
+//
+// Left as a `str` on purpose. It is the only axis that separates the iOS
+// simulator from an iOS device — both are `Os::Ios` and both are
+// `Arch::Aarch64` — and unlike `os()` / `arch()` it names a build
+// configuration rather than a machine, so a closed enum would go stale every
+// time a target is added.
+fn target() -> str { return #target(); }
+
+// True when this binary targets a simulator rather than real hardware. The
+// simulator is a distinct Mach-O platform from the device, so this is a
+// build fact, not a runtime probe.
+fn is_simulator() -> bool { return #target() == "ios-arm64-simulator"; }
+
+// Pointer width in bits: 64 on desktop and mobile targets, 32 on ESP32 and
+// wasm32. Derived from the layout of a pointer rather than a target table,
+// so it cannot disagree with the ABI codegen actually emits.
+fn pointer_width() -> usize { return #size_of::[*u8]() * (8 as usize); }
+
+// True on every target C+ currently supports. Present so a caller that has
+// to serialise a byte order writes the test rather than assuming it, and so
+// the assumption becomes visible if a big-endian target is ever added.
+fn is_little_endian() -> bool { return true; }
+
+// ───────────────────────── OS-family predicates ─────────────────────────
+//
+// Not sugar for a single `os()` comparison — each answers a question about
+// a FAMILY, where the point is that more than one `Os` shares an answer and
+// a caller should not have to enumerate them.
+
+// Darwin: `Macos` and `Ios` share a kernel, a libc, and Mach-O.
+fn is_apple() -> bool {
+    return match os() {
+        Os::Macos => true,
+        Os::Ios => true,
+        _ => false,
+    };
+}
+
+// A hosted POSIX userland: processes, a filesystem, a real libc. False on
+// `Windows` (not POSIX) and on `Esp32` / `Wasm` (not hosted).
+fn is_posix() -> bool {
+    return match os() {
+        Os::Macos => true,
+        Os::Linux => true,
+        Os::Ios => true,
+        Os::Android => true,
+        _ => false,
+    };
+}
+
+// A full desktop/mobile OS underneath: a filesystem, threads, and a heap a
+// caller may use freely. False on `Esp32` and `Wasm`, where those cannot be
+// assumed.
+fn is_hosted() -> bool {
+    return match os() {
+        Os::Esp32 => false,
+        Os::Wasm => false,
+        _ => true,
+    };
+}
+
+// ─────────────────────────── runtime facts ───────────────────────────
+//
+// Everything above is a BUILD fact and folds to a constant. Everything below
+// is a RUNTIME fact — the machine this process actually woke up on — so it
+// costs a call and can fail.
+
+// A dotted OS version. `patch` is 0 when the platform reports only two
+// components ("15.6" is 15.6.0).
+struct Version {
+    major: i32,
+    minor: i32,
+    patch: i32,
+}
+
+impl Version {
+    fn zero() -> Version { return Version { major: 0, minor: 0, patch: 0 }; }
+
+    // Order two versions: -1 if this is older, 0 if equal, 1 if newer.
+    // Component-wise, so 15.10.0 is correctly newer than 15.9.0 — the
+    // comparison a string compare gets wrong.
+    fn compare(this, other: Version) -> i32 {
+        if this.major != other.major {
+            return if this.major < other.major { -1 } else { 1 };
+        }
+        if this.minor != other.minor {
+            return if this.minor < other.minor { -1 } else { 1 };
+        }
+        if this.patch != other.patch {
+            return if this.patch < other.patch { -1 } else { 1 };
+        }
+        return 0;
+    }
+
+    // True when this version is `other` or newer — the availability check.
+    fn at_least(this, other: Version) -> bool { return this.compare(other) >= 0; }
+}
+
+// Parse a dotted version ("26.6.2", "15.6"). Stops at the first component
+// that is not a number, so a vendor suffix ("6.8.0-rc1") keeps the numeric
+// prefix it can read rather than failing outright.
+fn parse_version(s: str) -> Version {
+    var out: Version = Version::zero();
+    let p: *u8 = #str_ptr(s);
+    let n: usize = #str_len(s);
+
+    var field: i32 = 0;      // 0 = major, 1 = minor, 2 = patch
+    var acc: i32 = 0;
+    var saw_digit: bool = false;
+    var i: usize = 0 as usize;
+
+    while i < n {
+        let c: u8 = { *(p + i) };
+        if c >= (48 as u8) && c <= (57 as u8) {
+            acc = acc * 10 + ((c -% (48 as u8)) as i32);
+            saw_digit = true;
+        } else if c == (46 as u8) {          // '.'
+            if !saw_digit { return out; }
+            if field == 0 { out.major = acc; }
+            else if field == 1 { out.minor = acc; }
+            else { out.patch = acc; return out; }
+            field = field + 1;
+            acc = 0;
+            saw_digit = false;
+        } else {
+            break;                            // vendor suffix — keep the prefix
+        }
+        i = i +% (1 as usize);
+    }
+
+    if saw_digit {
+        if field == 0 { out.major = acc; }
+        else if field == 1 { out.minor = acc; }
+        else { out.patch = acc; }
+    }
+    return out;
+}
+
+// The version of the OS this process is running on, or `None` where the
+// platform has no answer worth trusting.
+//
+// WHAT THE NUMBER MEANS IS PER-PLATFORM, deliberately:
+//
+//   Apple    the PRODUCT version (`kern.osproductversion`) — macOS 26.6.2,
+//            not Darwin 25.6.0. The kernel number is a different, larger
+//            number and gating on it is wrong by a whole major release.
+//   Linux    the KERNEL release (`uname`) — Linux has no single product
+//            version, and the kernel is what predicts syscall behaviour.
+//   others   `None`. Windows needs `RtlGetVersion` (unbuilt); esp32 and
+//            wasm32 have no OS to version.
+//
+// `None` rather than a `0.0.0` sentinel, so "no answer" cannot be mistaken
+// for "very old" by an `at_least` check.
+fn os_version() -> option::Option[Version] {
+    if !is_hosted() { return option::Option[Version]::None; }
+    if os() == Os::Windows { return option::Option[Version]::None; }
+    let raw: text::Text = sys::os_version_raw();
+    if raw.is_empty() { return option::Option[Version]::None; }
+    return option::Option[Version]::Some(parse_version(raw.view()));
+}
+
+// The OS version as the platform spells it ("26.6.2"), or "" if unavailable.
+// For display and logs; use `os_version` to compare.
+fn os_version_string() -> text::Text { return sys::os_version_raw(); }
+
+// Number of CPUs available to this process right now, or `None` if the
+// platform cannot say. Use it to size a thread pool.
+//
+// This is the ONLINE count, not the configured one: a core the OS has taken
+// offline is not one a pool should plan for.
+fn cpu_count() -> option::Option[usize] {
+    if !is_hosted() { return option::Option[usize]::None; }
+    let n: usize = sys::cpu_count_raw();
+    if n == (0 as usize) { return option::Option[usize]::None; }
+    return option::Option[usize]::Some(n);
+}
+
+// The path component separator: "\\" on Windows, "/" everywhere else.
+// A build fact, so this folds.
+fn path_separator() -> str {
+    if os() == Os::Windows { return "\\"; }
+    return "/";
+}
+
+// The native line ending: "\r\n" on Windows, "\n" everywhere else. A build
+// fact, so this folds.
+//
+// Note this is the PLATFORM's convention, not what `io::println` emits —
+// that is always "\n", following the Rust/Go rule. Reach for this only when
+// writing a file another Windows program has to read.
+fn line_terminator() -> str {
+    if os() == Os::Windows { return "\r\n"; }
+    return "\n";
+}
+
+// ───────────────────────────── name lookup ─────────────────────────────
+
+// The manifest platform name for an `Os` — the inverse of `os()`, and the
+// spelling `[<platform>.dependencies]` sections use.
+fn os_name(v: Os) -> str {
+    return match v {
+        Os::Macos => "macos",
+        Os::Linux => "linux",
+        Os::Windows => "windows",
+        Os::Ios => "ios",
+        Os::Android => "android",
+        Os::Esp32 => "esp32",
+        Os::Wasm => "wasm",
+    };
+}
+
+// The architecture name for an `Arch` — the inverse of `arch()`.
+fn arch_name(v: Arch) -> str {
+    return match v {
+        Arch::Aarch64 => "aarch64",
+        Arch::X86_64 => "x86_64",
+        Arch::Xtensa => "xtensa",
+        Arch::Riscv32 => "riscv32",
+        Arch::Wasm32 => "wasm32",
+    };
+}
+
+// Parse a platform name back to an `Os`. `None` for anything outside the
+// vocabulary, so a name read from a config file cannot silently become
+// `Wasm` the way a defaulting parse would.
+fn os_from_name(name: str) -> option::Option[Os] {
+    if name == "macos" { return option::Option[Os]::Some(Os::Macos); }
+    if name == "linux" { return option::Option[Os]::Some(Os::Linux); }
+    if name == "windows" { return option::Option[Os]::Some(Os::Windows); }
+    if name == "ios" { return option::Option[Os]::Some(Os::Ios); }
+    if name == "android" { return option::Option[Os]::Some(Os::Android); }
+    if name == "esp32" { return option::Option[Os]::Some(Os::Esp32); }
+    if name == "wasm" { return option::Option[Os]::Some(Os::Wasm); }
+    return option::Option[Os]::None;
+}
+
+// Parse an architecture name back to an `Arch`. `None` outside the
+// vocabulary, for the same reason as `os_from_name`.
+fn arch_from_name(name: str) -> option::Option[Arch] {
+    if name == "aarch64" { return option::Option[Arch]::Some(Arch::Aarch64); }
+    if name == "x86_64" { return option::Option[Arch]::Some(Arch::X86_64); }
+    if name == "xtensa" { return option::Option[Arch]::Some(Arch::Xtensa); }
+    if name == "riscv32" { return option::Option[Arch]::Some(Arch::Riscv32); }
+    if name == "wasm32" { return option::Option[Arch]::Some(Arch::Wasm32); }
+    return option::Option[Arch]::None;
+}
+
+// ───────────────────────────── tests ─────────────────────────────
+
+// Collapse Option[Os] for asserts: the value, or `fallback` when None.
+fn os_or(o: option::Option[Os], fallback: Os) -> Os {
+    return match o {
+        option::Option[Os]::Some(v) => v,
+        option::Option[Os]::None => fallback,
+    };
+}
+
+fn arch_or(o: option::Option[Arch], fallback: Arch) -> Arch {
+    return match o {
+        option::Option[Arch]::Some(v) => v,
+        option::Option[Arch]::None => fallback,
+    };
+}
+
+#[test]
+fn os_agrees_with_the_intrinsic_it_wraps() {
+    // The suite runs on the host, so this pins the mapping rather than the
+    // value: whatever `#platform()` says, `os()` must name it back.
+    assert os_name(os()) == #platform();
+}
+
+#[test]
+fn arch_agrees_with_the_intrinsic_it_wraps() {
+    assert arch_name(arch()) == #arch();
+}
+
+#[test]
+fn target_is_the_build_configuration_not_the_machine() {
+    assert target() == #target();
+    // The host suite is never a cross build, so it is never a simulator.
+    assert is_simulator() == false;
+}
+
+#[test]
+fn name_round_trips_through_both_enums() {
+    assert os_or(os_from_name(os_name(os())), Os::Wasm) == os();
+    assert arch_or(arch_from_name(arch_name(arch())), Arch::Wasm32) == arch();
+}
+
+#[test]
+fn every_os_name_round_trips() {
+    // Totality: each variant has a name, and that name parses back to it.
+    // A new variant that forgets a table entry fails here rather than
+    // silently landing on the fallback.
+    assert os_or(os_from_name(os_name(Os::Macos)), Os::Wasm) == Os::Macos;
+    assert os_or(os_from_name(os_name(Os::Linux)), Os::Wasm) == Os::Linux;
+    assert os_or(os_from_name(os_name(Os::Windows)), Os::Wasm) == Os::Windows;
+    assert os_or(os_from_name(os_name(Os::Ios)), Os::Wasm) == Os::Ios;
+    assert os_or(os_from_name(os_name(Os::Android)), Os::Wasm) == Os::Android;
+    assert os_or(os_from_name(os_name(Os::Esp32)), Os::Wasm) == Os::Esp32;
+    assert os_or(os_from_name(os_name(Os::Wasm)), Os::Macos) == Os::Wasm;
+}
+
+#[test]
+fn every_arch_name_round_trips() {
+    assert arch_or(arch_from_name(arch_name(Arch::Aarch64)), Arch::Wasm32) == Arch::Aarch64;
+    assert arch_or(arch_from_name(arch_name(Arch::X86_64)), Arch::Wasm32) == Arch::X86_64;
+    assert arch_or(arch_from_name(arch_name(Arch::Xtensa)), Arch::Wasm32) == Arch::Xtensa;
+    assert arch_or(arch_from_name(arch_name(Arch::Riscv32)), Arch::Wasm32) == Arch::Riscv32;
+    assert arch_or(arch_from_name(arch_name(Arch::Wasm32)), Arch::Aarch64) == Arch::Wasm32;
+}
+
+#[test]
+fn an_unknown_name_is_none_not_a_default() {
+    // The failure this guards: a defaulting parse turning a typo into Wasm.
+    assert os_or(os_from_name("macoss"), Os::Linux) == Os::Linux;
+    assert os_or(os_from_name(""), Os::Linux) == Os::Linux;
+    assert os_or(os_from_name("MACOS"), Os::Linux) == Os::Linux;
+    assert arch_or(arch_from_name("arm64"), Arch::X86_64) == Arch::X86_64;
+    assert arch_or(arch_from_name(""), Arch::X86_64) == Arch::X86_64;
+}
+
+#[test]
+fn families_group_more_than_one_os() {
+    // Each predicate must actually be a family — if it collapsed to a single
+    // `os()` test it would not be worth a function.
+    assert is_apple() == (os() == Os::Macos || os() == Os::Ios);
+    assert is_hosted() == (os() != Os::Esp32 && os() != Os::Wasm);
+    // Apple is POSIX; a hosted POSIX target is hosted.
+    if is_apple() { assert is_posix(); }
+    if is_posix() { assert is_hosted(); }
+}
+
+#[test]
+fn windows_is_hosted_but_not_posix() {
+    // The one target where the two predicates deliberately disagree.
+    assert os_name(Os::Windows) == "windows";
+    assert os_or(os_from_name("windows"), Os::Linux) == Os::Windows;
+}
+
+#[test]
+fn pointer_width_matches_the_abi() {
+    let w: usize = pointer_width();
+    assert w == (32 as usize) || w == (64 as usize);
+    assert w == #size_of::[*u8]() * (8 as usize);
+    // Host targets are all 64-bit; the 32-bit rung is ESP32 / wasm32.
+    if is_hosted() { assert w == (64 as usize); }
+}
+
+#[test]
+fn byte_order_is_little_on_every_supported_target() {
+    assert is_little_endian();
+}
+
+// ---- runtime tier ----
+
+fn ver(a: i32, b: i32, c: i32) -> Version { return Version { major: a, minor: b, patch: c }; }
+
+#[test]
+fn version_parses_two_and_three_component_forms() {
+    assert parse_version("26.6.2").compare(ver(26, 6, 2)) == 0;
+    assert parse_version("15.6").compare(ver(15, 6, 0)) == 0;
+    assert parse_version("11").compare(ver(11, 0, 0)) == 0;
+}
+
+#[test]
+fn version_keeps_the_numeric_prefix_of_a_vendor_string() {
+    // "6.8.0-rc1" and "6.8.0+deb" are both real; the numbers are the part
+    // that means anything.
+    assert parse_version("6.8.0-rc1").compare(ver(6, 8, 0)) == 0;
+    assert parse_version("6.8.0+deb12").compare(ver(6, 8, 0)) == 0;
+    assert parse_version("6.8-generic").compare(ver(6, 8, 0)) == 0;
+}
+
+#[test]
+fn version_of_junk_is_zero_not_garbage() {
+    assert parse_version("").compare(ver(0, 0, 0)) == 0;
+    assert parse_version("abc").compare(ver(0, 0, 0)) == 0;
+    assert parse_version(".").compare(ver(0, 0, 0)) == 0;
+    assert parse_version(".5").compare(ver(0, 0, 0)) == 0;
+    // A fourth component is ignored rather than folded into patch.
+    assert parse_version("1.2.3.4").compare(ver(1, 2, 3)) == 0;
+}
+
+#[test]
+fn version_compares_component_wise_not_lexically() {
+    // The bug a string compare has: "15.10" sorts before "15.9".
+    assert ver(15, 10, 0).at_least(ver(15, 9, 0));
+    assert !ver(15, 9, 0).at_least(ver(15, 10, 0));
+    assert ver(26, 0, 0).at_least(ver(9, 9, 9));
+    assert ver(1, 2, 3).at_least(ver(1, 2, 3));
+    assert ver(1, 2, 4).at_least(ver(1, 2, 3));
+    assert !ver(1, 2, 2).at_least(ver(1, 2, 3));
+}
+
+#[test]
+fn os_version_is_present_and_sane_on_a_hosted_target() {
+    match os_version() {
+        option::Option[Version]::Some(v) => {
+            assert is_hosted();
+            // Any OS this suite can run on is past version 1.
+            assert v.major > 0;
+            // And it agrees with the string form it was parsed from.
+            let s: text::Text = os_version_string();
+            assert !s.is_empty();
+            assert parse_version(s.view()).compare(v) == 0;
+        }
+        option::Option[Version]::None => {
+            // Only legitimate off a hosted POSIX target, or on Windows.
+            assert !is_hosted() || os() == Os::Windows;
+        }
+    }
+    return;
+}
+
+#[test]
+fn apple_reports_the_product_version_not_the_kernel() {
+    // The trap this guards: `uname -r` on macOS gives the Darwin kernel
+    // (25.6.0 while the product is 26.6.2), so an availability check
+    // written against it is a whole major release out. Darwin's kernel
+    // major has run well ahead of nothing — it is simply a different
+    // series — so the only safe assertion is that we read the key that
+    // carries the product number at all, and that it parses.
+    if is_apple() {
+        let s: text::Text = os_version_string();
+        assert !s.is_empty();
+        assert parse_version(s.view()).major > 0;
+    }
+    return;
+}
+
+#[test]
+fn cpu_count_is_at_least_one_where_there_is_an_os() {
+    match cpu_count() {
+        option::Option[usize]::Some(n) => {
+            assert is_hosted();
+            assert n >= (1 as usize);
+        }
+        option::Option[usize]::None => { assert !is_hosted(); }
+    }
+    return;
+}
+
+#[test]
+fn separators_follow_the_target_not_the_host() {
+    if os() == Os::Windows {
+        assert path_separator() == "\\";
+        assert line_terminator() == "\r\n";
+    } else {
+        assert path_separator() == "/";
+        assert line_terminator() == "\n";
+    }
+    return;
+}

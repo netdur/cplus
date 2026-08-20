@@ -1,7 +1,8 @@
 # stdlib
 
 The C+ standard library: collections, text, errors, I/O, concurrency, async
-runtime pieces, and platform shims.
+runtime pieces, and platform shims — including `platform`, which names the OS,
+architecture and OS version the app is actually on.
 
 ```toml
 [dependencies]

@@ -1,0 +1,60 @@
+// stdlib/platform_sys_linux.cplus — the Linux half of `stdlib/platform`'s
+// runtime tier. Shadows `platform_sys.cplus` through the resolver's `_linux`
+// platform override.
+//
+// Same two facts, same raw-answer contract ("" or 0 on failure); different
+// constants and a different source for the version.
+
+import "./text" as text;
+
+// `uname(2)`. `struct utsname` is five NUL-terminated char arrays laid out
+// back to back; on Linux each is `_UTSNAME_LENGTH` == 65 bytes. The buffer is
+// treated as opaque bytes here and indexed by field offset rather than
+// declared as a struct, because the layout is the ABI and a mis-declared
+// struct would be a silent buffer overrun.
+extern fn uname(buf: *u8) -> i32;
+extern fn sysconf(name: i32) -> i64;
+extern fn strlen(s: *u8) -> usize;
+extern fn malloc(n: usize) -> *u8;
+extern fn free(p: *u8);
+
+// `_SC_NPROCESSORS_ONLN` on glibc. Darwin spells the same query 58; see the
+// note in `platform_sys.cplus`.
+fn nprocessors_onln() -> i32 { return 84 as i32; }
+
+// One `struct utsname` field, in bytes.
+fn utsname_field() -> usize { return 65 as usize; }
+// sysname, nodename, release, version, machine — five fields.
+fn utsname_size() -> usize { return utsname_field() * (5 as usize); }
+
+// Online CPU count, or 0 when the query fails.
+fn cpu_count_raw() -> usize {
+    let n: i64 = { sysconf(nprocessors_onln()) };
+    if n < (1 as i64) { return 0 as usize; }
+    return n as usize;
+}
+
+// The KERNEL release ("6.8.0"), or "" when the query fails.
+//
+// Deliberately the kernel and not the distribution: Linux has no single
+// product version, and the kernel number is the one that actually predicts
+// what a syscall or an interface will do. A distribution version lives in
+// /etc/os-release and answers a different question — which packages exist,
+// not which kernel features do.
+//
+// This is why `platform::os_version` documents its meaning per platform
+// rather than promising one universal number: on Apple the product version
+// is the useful one, on Linux the kernel is.
+fn os_version_raw() -> text::Text {
+    let empty: text::Text = text::from_str("");
+    let buf: *u8 = { malloc(utsname_size()) };
+    if buf == (0 as *u8) { return empty; }
+    let rc: i32 = { uname(buf) };
+    if rc != (0 as i32) { free(buf); return empty; }
+
+    // Third field: sysname, nodename, then release.
+    let release: *u8 = { buf + (utsname_field() * (2 as usize)) };
+    let out: text::Text = { #str_from_raw_parts(release, strlen(release)) }.to_text();
+    free(buf);
+    return out;
+}
