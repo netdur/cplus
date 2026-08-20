@@ -94,6 +94,35 @@ fn zoom_origin(anchor: f64, old_origin: f64, old_visible: f64, new_visible: f64)
     return anchor - (fraction * new_visible);
 }
 
+// Clamp one axis of a bounds origin into the pannable range [0, content -
+// visible]. The content extent is the FRAME size: the tree is laid out once at
+// natural size and never re-laid out for zoom, so it spans 0..frame in bounds
+// coordinates whatever the factor is.
+//
+// This is the missing half of `zoom_origin`, and its absence is a bug that was
+// reported by hand. Pinching IN walks the cut in from the origin; pinching back
+// OUT with the fingers somewhere else — the ordinary case, since a hand does not
+// return to the pixel it started from — asks for an origin LEFT of the content,
+// and the unclamped write took it. A negative x draws the picture inset from the
+// host's left edge, which is the reported margin, and nothing brought it back:
+// the frame walk never runs for a zoom, so the origin is the whole state, and
+// every later gesture scaled the same offset forward.
+//
+// Clamping makes the geometry path-INdependent: at zoom 1 the span is 0, so 1.0
+// restores the origin EXACTLY rather than nearly, however the user got there.
+// The pre-regen generation had this as `zoom_clamp_origin` and the re-port left
+// it behind (see the header) — the bug is the port's, not the design's.
+//
+// A visible span wider than the content has nothing to pan; centre it. NaN
+// collapses to 0 by the same failed-`>` trick used above.
+fn clamp_origin(desired: f64, content: f64, visible: f64) -> f64 {
+    let span: f64 = content - visible;
+    if span < 0.0f64 { return span / 2.0f64; }
+    if (desired > 0.0f64) == false { return 0.0f64; }
+    if desired > span { return span; }
+    return desired;
+}
+
 // One axis of a pan while zoomed. The bounds-space step is the wheel delta over
 // the zoom (window points -> scaled points); the caller fixes the sign.
 fn pan_origin(origin: f64, delta: f64, zoom: f64) -> f64 {
@@ -130,8 +159,8 @@ fn apply(host: *u8, target: f64, ax: f64, ay: f64) {
             let nw: f64 = f.w / target;
             let nh: f64 = f.h / target;
             v.set_bounds(rt::Rect {
-                x: zoom_origin(ax, b.x, b.w, nw),
-                y: zoom_origin(ay, b.y, b.h, nh),
+                x: clamp_origin(zoom_origin(ax, b.x, b.w, nw), f.w, nw),
+                y: clamp_origin(zoom_origin(ay, b.y, b.h, nh), f.h, nh),
                 w: nw,
                 h: nh,
             });
@@ -204,16 +233,13 @@ fn pan_filter(ctx: *u8, event: *u8) -> *u8 {
                             let f: rt::Rect = content.frame();
                             // Scrolling DOWN moves the cut down, so the y delta
                             // is subtracted; x follows the wheel directly.
-                            var nx: f64 = pan_origin(b.x, 0.0f64 - e.scrolling_delta_x(), z);
-                            var ny: f64 = pan_origin(b.y, 0.0f64 - e.scrolling_delta_y(), z);
-                            // Clamp to the content: panning past the edge of a
-                            // magnified picture shows nothing and feels broken.
-                            let maxx: f64 = f.w - b.w;
-                            let maxy: f64 = f.h - b.h;
-                            if (nx > 0.0f64) == false { nx = 0.0f64; }
-                            if (ny > 0.0f64) == false { ny = 0.0f64; }
-                            if nx > maxx { nx = maxx; }
-                            if ny > maxy { ny = maxy; }
+                            // Clamp to the content through the same rule the
+                            // zoom uses: panning past the edge of a magnified
+                            // picture shows nothing and feels broken.
+                            let nx: f64 = clamp_origin(
+                                pan_origin(b.x, 0.0f64 - e.scrolling_delta_x(), z), f.w, b.w);
+                            let ny: f64 = clamp_origin(
+                                pan_origin(b.y, 0.0f64 - e.scrolling_delta_y(), z), f.h, b.h);
                             content.set_bounds_origin(rt::Point { x: nx, y: ny });
                             return 0 as *u8;
                         }

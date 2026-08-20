@@ -10451,6 +10451,28 @@ fn the_anchor_keeps_its_fraction_of_the_visible_span() {
 }
 
 #[test]
+fn the_origin_is_clamped_to_the_content_so_zoom_1_resets_exactly() {
+    // The reported bug: `zoom_origin` alone will happily answer an origin off
+    // the end of the content, and a NEGATIVE one draws the picture inset from
+    // the left with a band of empty window beside it. The clamp is what keeps
+    // the geometry path-independent.
+    assert zoom::clamp_origin(50.0f64, 400.0f64, 200.0f64) == 50.0f64;
+    assert zoom::clamp_origin(999.0f64, 400.0f64, 200.0f64) == 200.0f64;
+    assert zoom::clamp_origin(0.0f64 - 5.0f64, 400.0f64, 200.0f64) == 0.0f64;
+    // At zoom 1 the span is zero: whatever the anchor asked for, the origin is
+    // 0 EXACTLY. This is the assertion the margin bug would have failed.
+    assert zoom::clamp_origin(120.0f64, 400.0f64, 400.0f64) == 0.0f64;
+    assert zoom::clamp_origin(0.0f64 - 120.0f64, 400.0f64, 400.0f64) == 0.0f64;
+    // Nothing to pan: a cut wider than the content is centred, not pinned.
+    assert zoom::clamp_origin(50.0f64, 400.0f64, 800.0f64) == 0.0f64 - 200.0f64;
+    // A gesture stream that reports NaN must leave the picture at the origin
+    // rather than send it somewhere unreachable.
+    let zero: f64 = 0.0f64;
+    assert zoom::clamp_origin(zero / zero, 400.0f64, 200.0f64) == 0.0f64;
+    return;
+}
+
+#[test]
 fn a_zoomable_window_installs_and_a_plain_one_does_not() {
     backend::install();
     app::reset_default_for_tests();
@@ -10520,6 +10542,79 @@ fn the_programmatic_path_scales_the_bounds_and_clamps_to_the_range() {
     window::close_window(win);
     backend::uninstall();
     app::reset_default_for_tests();
+    return;
+}
+
+// ---- the margin bug ----------------------------------------------------------
+//
+// Reported by hand on macOS after the desktop gallery turned `zoomable` on:
+// pinch in, pinch back out, and the content sat inset from the left. `apply`
+// derived the origin from the ANCHOR and wrote it unclamped, so an anchor near
+// an edge asked for a cut that runs off the content and got it — negative x
+// means the picture is drawn to the RIGHT of the host's left edge, which is
+// the margin. Returning to 1.0 did not clear it either: the same anchor
+// arithmetic just scaled the offset back up.
+//
+// The frame walk never runs for zoom, so nothing downstream would have
+// corrected it; the origin is the whole state.
+#[test]
+fn zooming_at_an_edge_and_back_leaves_no_margin() {
+    backend::install();
+    app::reset_default_for_tests();
+    zoom::reset_for_tests();
+    var n: core::Node = core::column(core::Builder::new(), key: "zoomy4");
+    let win: *u8 = window::open_window(#addr_of(n), screen::Chrome::new(
+        title: "z4", width: 400.0f64, height: 300.0f64,
+        zoomable: true, min_zoom: 1.0f64, max_zoom: 3.0f64));
+    match ak::Window::from_raw(win).content_view() {
+        option::Option[ak::View]::Some(cv) => {
+            let host: *u8 = cv.raw();
+            let f: rt::Rect = cv.frame();
+            // Pinch in about the middle, which is where a two-finger spread
+            // starts: the cut walks in from the origin.
+            zoom::apply(host, 2.0f64, f.w / 2.0f64, f.h / 2.0f64);
+            let inb: rt::Rect = cv.bounds();
+            assert inb.x > 0.0f64 - 0.001f64;
+            assert inb.x < (f.w - inb.w) + 0.001f64;
+            assert inb.y > 0.0f64 - 0.001f64;
+            assert inb.y < (f.h - inb.h) + 0.001f64;
+            // Now pinch back OUT with the fingers somewhere else — the far
+            // corner of the cut. That is the path that broke: the anchor
+            // arithmetic asks for an origin left of the content, and the
+            // unclamped write took it.
+            zoom::apply(host, 1.0f64, inb.x + inb.w, inb.y + inb.h);
+            let out: rt::Rect = cv.bounds();
+            assert out.x == 0.0f64;
+            assert out.y == 0.0f64;
+            // ...and the programmatic path lands in the same place, so an
+            // agent checking for the margin sees what the hand sees.
+            zoom::apply(host, 3.0f64, 0.0f64, 0.0f64);
+            assert zoom::set_zoom(host, 1.0f64) == 1.0f64;
+            let back: rt::Rect = cv.bounds();
+            assert back.x == 0.0f64;
+            assert back.y == 0.0f64;
+        }
+        option::Option[ak::View]::None => { assert false; }
+    }
+    window::close_window(win);
+    backend::uninstall();
+    app::reset_default_for_tests();
+    return;
+}
+
+// A pan is clamped to the same range, so a flick at the edge of a magnified
+// picture stops at the edge instead of scrolling empty window into view.
+#[test]
+fn a_pan_cannot_push_the_cut_off_the_content() {
+    // Left/top edge: a desire below zero pins at zero.
+    assert zoom::clamp_origin(zoom::pan_origin(0.0f64, 0.0f64 - 40.0f64, 2.0f64),
+                              400.0f64, 200.0f64) == 0.0f64;
+    // Right/bottom edge: a desire past the span pins at the span.
+    assert zoom::clamp_origin(zoom::pan_origin(200.0f64, 40.0f64, 2.0f64),
+                              400.0f64, 200.0f64) == 200.0f64;
+    // In the middle it is the wheel delta over the zoom, untouched.
+    assert zoom::clamp_origin(zoom::pan_origin(100.0f64, 40.0f64, 2.0f64),
+                              400.0f64, 200.0f64) == 120.0f64;
     return;
 }
 
