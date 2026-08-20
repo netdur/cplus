@@ -1857,10 +1857,40 @@ impl Node {
         };
     }
 
+    // A `display: none` child is collapsed HERE rather than laid out, so this
+    // is the one path that writes a frame without going through
+    // `apply_layout` — and `_layout_fresh` must be written with it.
+    //
+    // Leaving it alone told the adapter "this node was just re-laid out, walk
+    // into it", about a node whose DESCENDANTS still hold the absolute frames
+    // of the last pass that placed them. The walk then computes each one
+    // host-relative against a zero frame, so every descendant view is moved by
+    // the node's whole former offset — off screen, in the case this was found
+    // in (a 280pt sidebar placard whose labels went to x=638). Nothing brings
+    // them back either: `_cached_box` is untouched here, so re-showing the
+    // node hits the layout cache, reports unchanged, and the adapter prunes
+    // the subtree it would have fixed. A hidden panel with a visible-again
+    // parent stayed empty.
+    //
+    // Zeroing is not a layout of the subtree, so it says so: false means
+    // "every descendant frame is exactly where the last pass left it", which
+    // is true, and the adapter skips a subtree whose views already agree.
+    //
+    // The style snapshot is the other half, and it is what brings the node
+    // BACK. `aggregate_changed` compares `style` against `_cached_style`, and
+    // only `apply_layout` — which this path skips — ever writes that. So the
+    // cache remembered the node as displayed for as long as it was hidden:
+    // every pass re-read a change that was already applied, and the pass that
+    // set `display` back to what the cache still held saw NO change at all,
+    // skipped the node, and left it collapsed at 0x0 forever. Recording the
+    // collapsed style makes hiding quiet and showing loud, which is the way
+    // round it should have been.
     fn zero_child(ref this, index: usize) {
         match this.child_ptr(index) {
             option::Option[*Node]::Some(p) => {
                 { (*p)._layout = Frame { left: 0.0f64, top: 0.0f64, width: 0.0f64, height: 0.0f64 }; }
+                { (*p)._layout_fresh = false; }
+                { (*p)._cached_style = { (*p).style }; }
             }
             option::Option[*Node]::None => {}
         }
@@ -2881,6 +2911,55 @@ fn absolute_and_hidden_children_together_leave_the_flow_alone() {
     assert approx(must(root.child_frame(2 as usize)).height, 12.0f64);
     assert approx(must(root.child_frame(3 as usize)).height, 24.0f64);
     assert approx(root.frame().height, 36.0f64);
+}
+
+// Hiding a subtree must not claim its descendants were re-laid out. An adapter
+// reads `layout_changed()` to decide whether to walk INTO a node, and a walk
+// into a collapsed node places every descendant against a zero frame — which
+// moved a hidden sidebar placard's labels out by the whole offset of the panel
+// and left them there, because re-showing it hit the layout cache, reported
+// unchanged, and the adapter pruned the subtree that needed correcting.
+#[test]
+fn hiding_a_subtree_does_not_report_it_as_freshly_laid_out() {
+    var root: Node = Node::new();
+    root.set_width(pts(280.0f64));
+    root.set_height(pts(100.0f64));
+    var panel: Node = Node::new();
+    panel.set_width(pts(280.0f64));
+    panel.set_height(pts(100.0f64));
+    panel.add_child(leaf(40.0f64, 20.0f64));
+    root.add_child(panel);
+    root.calculate_layout(280.0f64, 100.0f64, Direction::LTR);
+    assert approx(grandchild(root, 0 as usize, 0 as usize).width, 40.0f64);
+
+    set_child_display(root, 0 as usize, Display::None);
+    root.calculate_layout(280.0f64, 100.0f64, Direction::LTR);
+    assert approx(must(root.child_frame(0 as usize)).width, 0.0f64);
+    assert child_fresh(root, 0 as usize) == false;
+    assert approx(grandchild(root, 0 as usize, 0 as usize).width, 40.0f64);
+
+    // Shown again at the same box: the frames it kept are the right ones, so a
+    // cache hit that prunes the subtree leaves it correct.
+    set_child_display(root, 0 as usize, Display::Flex);
+    root.calculate_layout(280.0f64, 100.0f64, Direction::LTR);
+    assert approx(must(root.child_frame(0 as usize)).width, 280.0f64);
+    assert approx(grandchild(root, 0 as usize, 0 as usize).width, 40.0f64);
+}
+
+// did the last pass re-lay this child out?
+fn child_fresh(root: Node, at: usize) -> bool {
+    return match root.child_ptr(at) {
+        option::Option[*Node]::Some(p) => { (*p)._layout_fresh },
+        option::Option[*Node]::None => false,
+    };
+}
+
+fn set_child_display(root: Node, at: usize, d: Display) {
+    match root.child_ptr(at) {
+        option::Option[*Node]::Some(p) => { { (*p).set_display(d) }; }
+        option::Option[*Node]::None => {}
+    }
+    return;
 }
 
 #[test]
