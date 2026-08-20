@@ -1,7 +1,7 @@
 # Guide
 
-How the layout engine is meant to be used: node model, flex, grid, measure,
-DSL/HIG, and adapter gotchas. Fast start: [tutorial.md](tutorial.md).
+How the layout engine is meant to be used: node model, flex, grid, bands,
+measure, DSL/HIG, and adapter gotchas. Fast start: [tutorial.md](tutorial.md).
 Signatures: [ref.md](ref.md).
 
 ## The node model
@@ -296,46 +296,105 @@ root.round_to_pixel(2.0f64);   // retina half-points
 Re-calling `calculate_layout` skips unchanged subtrees when style/grid/children
 match the last pass. Deep mutations invalidate correctly — nothing to opt in.
 
-## Responsive configuration
+## Conditional visibility — bands
 
-The flex/grid engine intentionally does not identify devices or own global
-screen state. The optional `flex_layout/responsive` module converts viewport
-numbers supplied by a host into application-defined layout classes:
+A node states when it should be present; the layout pass enforces it. There is
+no size observer to arm, no callback to keep alive, and nothing to re-run on
+resize.
 
 ```cplus
-import "flex_layout/responsive" as responsive;
+import "flex_layout/bands" as bands;
 
-var screens: responsive::ResponsiveConfig =
-    responsive::ResponsiveConfig::new("desktop");
-screens.add_breakpoint("mobile", up_to: 300.0f64);
-screens.add_breakpoint("tablet", up_to: 900.0f64);
+var set: bands::BandSet = bands::BandSet::defaults();
 
-let env: responsive::LayoutEnvironment =
-    screens.resolve(viewport_width, viewport_height);
+var sidebar: flex::Node = flex::Node::new().hide("compact");
+// or, after the fact: sidebar.add_rule("compact", hide: true);
 
-var root: flex::Node = if env.is("mobile") {
-    compact_layout()
-} else {
-    regular_layout()
-};
-root.calculate_layout(width: env.width(), height: env.height());
+root.calculate_layout(width: w, height: h, bands: #addr_of(set));
 ```
 
-Each breakpoint is an inclusive maximum width. The smallest matching maximum
-wins, independent of registration order; the fallback applies above all
-breakpoints. Names such as `mobile`, `compact`, or `sidebar` have no built-in
-meaning.
+### What a band is
 
-Thresholds are expressed in the same logical unit as `viewport_width`: AppKit
-points, CSS pixels, or another unit selected by the host. The module does not
-perform DPI conversion or inspect a physical display.
+A named box constraint. Each edge is optional and an omitted one is
+**unbounded**, not zero:
 
-On resize, resolve again. When `next.is_same_class(previous)` is true, the
-existing tree can be passed straight to `calculate_layout`. When it is false,
-reapply the
-new class's styles or rebuild the tree before layout. This split keeps ordinary
-fluid resizing cheap while leaving structural adaptation under application or
-adapter control.
+```cplus
+set.set("watch", max_width: 120.0f64, max_height: 120.0f64);
+set.set("wide", min_width: 1400.0f64);
+```
+
+Bounds are half-open (`min <= v < max`), which is what lets a ladder tile a
+range exactly with no gap and no double-match. Re-using a name updates it
+rather than adding a second entry, so reloading a configuration is idempotent.
+
+Six bands ship pre-registered, Material 3's window size classes with Compact
+split at 300 so a watch face is not lumped in with a 599pt phone:
+
+| Band | Width |
+|---|---|
+| `tiny` | < 300 |
+| `compact` | 300–599 |
+| `medium` | 600–839 |
+| `expanded` | 840–1199 |
+| `large` | 1200–1599 |
+| `xlarge` | ≥ 1600 |
+
+They are width-only on purpose: a one-axis ladder tiles, so every box lands in
+exactly one. Adding a height bound to a default would open a gap — a 200×800
+box would be too tall for a height-bounded `tiny` and too narrow for
+`compact`, and match nothing. Height belongs in bands you define yourself,
+which is what `watch` above is.
+
+Names are `str`, so **the compiler cannot catch a typo**: `hide("compat")`
+simply never fires. `is_registered` is there for a startup check.
+
+### Which box a rule is measured against
+
+The node's nearest **contained** ancestor — the closest box up the tree whose
+size does not depend on its own contents. Never the window: an app in Split
+View, on half a foldable, or in a resized window has been handed a box, and
+the screen's size answers a question nobody asked.
+
+**A node never queries itself.** A sidebar pinned to 400pt is 400pt wide in
+every window, so a self-query would make `hide("compact")` a constant. The
+useful question is "is the space I was given narrow", and only an ancestor can
+answer it. (CSS has the same rule, for the same reason.)
+
+A size is contained when the style pins it (an explicit point length, a
+percent of a definite parent, or `min == max`), or the parent stretches the
+node across its cross axis from a definite box. Anything else falls through to
+the next ancestor up. This is deliberately conservative: a flex item growing
+from a definite basis is genuinely contained too, but proving it needs
+reasoning about siblings, and claiming containment wrongly costs correctness
+while falling through only costs a larger box.
+
+If no ancestor is contained on an axis — a fully content-sized tree, say — a
+band constraining that axis will not match, and rules stay inert rather than
+guessing.
+
+### Why it settles in two passes
+
+A band tests a container's resolved size, which is not known until layout has
+run. So the order is: lay out, evaluate, lay out again.
+
+That is not an iteration with a bail-out. Because a container's size cannot
+depend on its own contents, hiding or showing anything inside it cannot change
+it, so the second pass resolves every container to the box the first one did
+and every rule re-evaluates the same way. It converges in exactly two passes,
+always. This is the same reason CSS requires `container-type` to impose size
+containment — the difference is that the engine works it out instead of making
+you declare it.
+
+The second pass goes through the incremental cache like any other, so on a
+resize that does not cross a threshold nothing changed and it is nearly free.
+A whole extra layout is paid only on the frame a band actually flips.
+
+### Rules
+
+`add_rule(band, hide:)` and the fluent `hide(band)` / `show(band)`. **The last
+matching rule wins**, so a broad hide followed by a narrow show reads the way
+it is written. When no rule matches, the node returns to its parked display —
+`Grid` if it has grid tracks, otherwise `Flex` — so a hide is never permanent.
 
 ## Adapter sketch
 

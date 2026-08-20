@@ -25,14 +25,36 @@ are easy to rediscover the hard way. Signatures: [ref.md](ref.md).
 | `StyleLength::undef()` | `StyleLength::undefined()` |
 | `.width_pct` / `.height_pct` (DSL) | `.width_percent` / `.height_percent` |
 | `node.children` (public field) | private — use `child_ptr(at:)` |
-| `add_breakpoint(name, f64) -> bool` | `add_breakpoint(name, up_to:) -> Status` |
-| `set_fallback(n) -> bool` | `-> Status` |
-| `remove_breakpoint(n) -> bool` | `-> Option[f64]` (the threshold it had) |
-| `breakpoint()` + `matched_breakpoint()` | `breakpoint_width() -> Option[f64]` |
-| `same_class(other)` | `is_same_class(other)` |
 
 Labels are optional in C+, so adding parameter names and defaults broke no
 positional call site. Only the table above is breaking.
+
+## `flex_layout/responsive` is gone (2026-08-20)
+
+`ResponsiveConfig` / `LayoutEnvironment` are removed, superseded by
+`flex_layout/bands` — see [guide.md](guide.md), "Conditional visibility".
+
+The old module classified a caller-supplied viewport into a named class and
+left the host to reapply styles; it had no consumers, because that split is
+the work. A `BandSet` is the same idea with two differences that matter: a
+band is a box constraint rather than one max-width, and the ENGINE evaluates
+it during layout, so a node carrying `hide("compact")` needs no observer, no
+key lookup and no re-run on resize.
+
+| Old | New |
+|---|---|
+| `ResponsiveConfig::new(fallback)` | `BandSet::defaults()` (six bands) or `BandSet::new()` |
+| `add_breakpoint(name, up_to:)` | `set(name, min_width:, max_width:, min_height:, max_height:)` |
+| `remove_breakpoint(name)` | `remove(name) -> bool` |
+| `resolve(w, h)` + `env.is(name)` | `matches(name, w, h)` |
+| `env.is_same_class(other)` | — (the pass re-decides; nothing to compare) |
+| `LayoutEnvironment::orientation()` | — removed: device pose is not a layout input |
+
+`Orientation` is gone rather than renamed. A phone in landscape, a tablet in
+Split View and a foldable's outer screen can hand you the same box, so the
+pose was never the question — the box is. A band constraining `max_height`
+says the useful half of what portrait/landscape was reaching for, without
+asking what the hardware is doing.
 
 ## Not yet migrated
 

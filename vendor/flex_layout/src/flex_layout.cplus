@@ -33,6 +33,7 @@ import "stdlib/option" as option;
 import "stdlib/text" as text;
 import "stdlib/box" as box;
 import "stdlib/status" as status;
+import "./bands" as bands;
 
 // ==========================================================================
 // Enums — flexbox / grid property values
@@ -308,6 +309,20 @@ impl Attachment {
 // Node — persistent, mutable
 // ==========================================================================
 
+// One conditional-visibility rule: what this node does while the box it is
+// measured against falls in the band called `band`.
+//
+// Rules are stored OUTSIDE `Style` on purpose. Every `Style` field is held
+// twice per node and compared on every pass (see `aggregate_changed`), so
+// widening it costs memory and time on every layout of every tree, forever —
+// while a rule is read only when a `BandSet` is actually supplied. What a
+// rule DOES is write `style.display`, which the cache already watches.
+struct Rule {
+    band: text::Text,
+    // true = Display::None while the band matches, false = Display::Flex.
+    hide: bool,
+}
+
 struct Frame {
     left: f64,
     top: f64,
@@ -322,6 +337,10 @@ struct Node {
     // whole style against last pass's snapshot instead of trusting setters.
     style: Style,
     _children: vec::Vec[box::Box[Node]],
+    // Conditional visibility, evaluated only when `calculate_layout` is given
+    // a `BandSet`. Empty on almost every node; `Vec` allocates nothing until
+    // the first rule, so the cost on a tree that uses none is one header.
+    _rules: vec::Vec[Rule],
     _measure: fn(*u8, f64, MeasureMode, f64, MeasureMode) -> Size,
     _has_measure: bool,
     _baseline: fn(*u8, f64, f64) -> f64,   // ascent from top, given (ctx, width, height)
@@ -384,6 +403,7 @@ impl Node {
         return Node {
             style: Style::new(),
             _children: vec::new::[box::Box[Node]](),
+            _rules: vec::new::[Rule](),
             _measure: measure_none,
             _has_measure: false,
             _baseline: baseline_none,
@@ -563,6 +583,58 @@ impl Node {
     }
     fn set_position_type(ref this, position: PositionType) { this.style.position_type = position; return; }
     fn set_display(ref this, display: Display) { this.style.display = display; return; }
+
+    // ---- conditional visibility (see `flex_layout/bands`) ----
+    //
+    // A rule says what this node does while the box it is measured against
+    // falls in a named band. Rules fire only when `calculate_layout` is given
+    // a `BandSet`; without one they are inert and cost nothing.
+    //
+    //     sidebar.add_rule("compact", hide: true);
+    //
+    // The box a node is measured against is its nearest CONTAINED ancestor,
+    // itself included — see `apply_bands_walk`. Not the window: an app in
+    // Split View or on half a foldable has been handed a box, and querying
+    // the screen would answer a question nobody asked.
+    //
+    // LAST MATCHING RULE WINS. Rules are applied in the order they were
+    // added, so a broad hide followed by a narrow show reads the way it is
+    // written. Adding the same band twice replaces the earlier entry rather
+    // than stacking, which keeps a rebuild idempotent.
+    fn add_rule(ref this, band: str, hide: bool) -> status::Status {
+        if #str_len(band) == (0 as usize) { return status::Status::InvalidInput; }
+        let n: usize = this._rules.count();
+        var i: usize = 0 as usize;
+        while i < n {
+            match this._rules.at_ptr(i) {
+                option::Option[*Rule]::Some(p) => {
+                    if { (*p).band.equals(band) } { { (*p).hide = hide; } return status::Status::Ok; }
+                }
+                option::Option[*Rule]::None => { }
+            }
+            i = i +% (1 as usize);
+        }
+        return this._rules.append(Rule { band: text::from_str(band), hide: hide });
+    }
+
+    fn clear_rules(ref this) { this._rules.remove_all(); return; }
+    fn rule_count(this) -> usize { return this._rules.count(); }
+
+    // The band named by rule `at`, or "" past the end. For an inspector, and
+    // for the unknown-band report a `str` vocabulary needs.
+    fn rule_band(this, at: usize) -> str {
+        return match this._rules.at_ptr(at) {
+            option::Option[*Rule]::Some(p) => { (*p).band.view() },
+            option::Option[*Rule]::None => "",
+        };
+    }
+
+    fn rule_hides(this, at: usize) -> bool {
+        return match this._rules.at_ptr(at) {
+            option::Option[*Rule]::Some(p) => { (*p).hide },
+            option::Option[*Rule]::None => false,
+        };
+    }
     fn set_z_index(ref this, z: i32) { this.style.z_index = z; return; }
     fn set_box_sizing(ref this, sizing: BoxSizing) { this.style.box_sizing = sizing; return; }
 
@@ -839,7 +911,46 @@ impl Node {
     //
     //   root.calculate_layout(width: 1024.0f64, height: 768.0f64);
     //   root.calculate_layout();                       // fully content-sized
-    fn calculate_layout(ref this, width: f64 = undefined(), height: f64 = undefined(), direction: Direction = Direction::Inherit) {
+    //
+    // `bands` opts a tree into conditional visibility: nodes carrying rules
+    // (`add_rule`) are hidden or shown according to the box they sit in. Null
+    // — the default — skips the whole mechanism, so every existing call site
+    // behaves exactly as before.
+    //
+    //   root.calculate_layout(width: w, height: h, bands: #addr_of(my_bands));
+    //
+    // TWO PASSES, AND WHY IT TERMINATES. A band tests a container's resolved
+    // size, and that is not known until layout has run — so rules cannot be
+    // evaluated before the pass that produces the number. The order is
+    // therefore: lay out, evaluate, lay out again.
+    //
+    // That second pass is not a fixpoint iteration with a bail-out counter.
+    // A node only qualifies as a query container when its size does NOT
+    // depend on its own contents (`self_contained_*` below), so hiding or
+    // showing anything inside a container cannot change that container's
+    // size. Pass two therefore resolves every container to the box pass one
+    // did, every rule re-evaluates the same way, and it converges — always,
+    // in exactly two passes. This is the same reason CSS requires
+    // `container-type` to impose size containment.
+    //
+    // It is also cheap in the common case: the second pass runs through
+    // `aggregate_changed` like any other, so on a resize that does not cross
+    // a threshold nothing changed, the cache holds, and it is nearly free.
+    // A whole extra layout is paid only on the frame a band actually flips.
+    fn calculate_layout(ref this, width: f64 = undefined(), height: f64 = undefined(),
+                        direction: Direction = Direction::Inherit,
+                        bands: *bands::BandSet = 0 as *bands::BandSet) {
+        this.layout_pass(width, height, direction);
+        if bands.is_null() { return; }
+        if this.apply_bands(bands, width, height) {
+            this.layout_pass(width, height, direction);
+        }
+        return;
+    }
+
+    // One layout pass — the whole of what `calculate_layout` was before
+    // bands existed, unchanged.
+    fn layout_pass(ref this, width: f64, height: f64, direction: Direction) {
         let dir: Direction = resolve_dir(this.style.direction, direction);
         this.aggregate_changed();     // stamp subtree_changed across the tree
         this.clear_measure_cache();   // measurement memo is per-pass; start clean
@@ -865,6 +976,185 @@ impl Node {
 
         this.apply_layout(Frame { left: 0.0f64, top: 0.0f64, width: w, height: h }, dir);
         return;
+    }
+
+    // ---- band evaluation ----------------------------------------------
+    //
+    // CONTAINMENT, and why it is a real check rather than a comment.
+    //
+    // If a node's rules were measured against a box whose size depends on
+    // that node's own contents, the layout would not be well-founded: hiding
+    // a child shrinks a content-sized parent, the smaller parent puts the
+    // child back, and the two passes disagree forever. CSS solves this by
+    // making a query container declare `container-type`, which imposes size
+    // containment. We do not make the author declare it — the engine already
+    // knows which sizes are content-derived, so it works it out.
+    //
+    // A node's size on an axis is CONTAINED (independent of its own subtree)
+    // when the style pins it, or its parent hands it one:
+    //
+    //   * an explicit point length,
+    //   * a percent length, if the parent's box is itself definite,
+    //   * min == max on that axis (pinned from both sides),
+    //   * stretched by the parent across the parent's cross axis, when the
+    //     parent's box is definite.
+    //
+    // Everything else is treated as NOT contained and falls through to the
+    // nearest ancestor that is. That is deliberately conservative: a flex
+    // item that grows from a definite basis is genuinely contained too, but
+    // proving it requires reasoning about its siblings, and being wrong here
+    // reintroduces the oscillation this exists to prevent. Falling through
+    // costs a rule the wrong (larger) box; claiming containment wrongly
+    // costs correctness.
+    //
+    // Grid children are never treated as filled for the same reason — a
+    // track's size can depend on the items in it.
+
+    // Is this node's width independent of its own contents? `parent_w` is
+    // the parent's resolved width, or undefined when the parent is not
+    // itself contained; `filled` says the parent stretches this node.
+    fn self_contained_width(this, parent_w: f64, filled: bool) -> bool {
+        if match this.style.width.unit { Unit::Point => true, _ => false } { return true; }
+        if match this.style.width.unit { Unit::Percent => true, _ => false } {
+            return is_defined(parent_w);
+        }
+        if this.style.min_width.is_defined() && this.style.max_width.is_defined()
+            && bits_eq(this.style.min_width.value, this.style.max_width.value) { return true; }
+        return filled && is_defined(parent_w);
+    }
+
+    fn self_contained_height(this, parent_h: f64, filled: bool) -> bool {
+        if match this.style.height.unit { Unit::Point => true, _ => false } { return true; }
+        if match this.style.height.unit { Unit::Percent => true, _ => false } {
+            return is_defined(parent_h);
+        }
+        if this.style.min_height.is_defined() && this.style.max_height.is_defined()
+            && bits_eq(this.style.min_height.value, this.style.max_height.value) { return true; }
+        return filled && is_defined(parent_h);
+    }
+
+    // Does this container stretch `child` across the given axis? Only the
+    // CROSS axis stretches: a column stretches children's widths, a row
+    // stretches their heights. An absolutely-positioned child is placed by
+    // its insets instead, and a grid places into tracks, so neither counts.
+    fn stretches_child(this, child: *Node, want_width: bool) -> bool {
+        if match this.style.display { Display::Grid => true, _ => false } { return false; }
+        if match { (*child).style.position_type } { PositionType::Absolute => true, _ => false } {
+            return false;
+        }
+        let is_col: bool = match this.style.flex_direction {
+            FlexDirection::Column => true, FlexDirection::ColumnReverse => true, _ => false };
+        // Column cross axis is width; row cross axis is height.
+        if want_width != is_col { return false; }
+        let a: Align = match { (*child).style.align_self } {
+            Align::Auto => this.style.align_items,
+            _ => { (*child).style.align_self },
+        };
+        return match a { Align::Stretch => true, _ => false };
+    }
+
+    // Evaluate every rule in the tree and write the displays they imply.
+    // Returns true when any display actually changed — the signal that a
+    // second layout pass is needed.
+    fn apply_bands(ref this, bs: *bands::BandSet, avail_w: f64, avail_h: f64) -> bool {
+        // The root is contained on an axis when it was handed a definite
+        // available size, or its own style pins one. Laid out unconstrained
+        // it has no box, and nothing below it can query anything.
+        var rw: f64 = undefined();
+        var rh: f64 = undefined();
+        if is_defined(avail_w) || this.style.width.is_defined() { rw = this._layout.width; }
+        if is_defined(avail_h) || this.style.height.is_defined() { rh = this._layout.height; }
+        // The root has no ancestor, so its own rules have nothing to query.
+        return this.apply_bands_walk(bs, undefined(), undefined(), rw, rh);
+    }
+
+    // `qw` / `qh` is the box THIS node's rules are measured against: the
+    // nearest contained STRICT ancestor's. `own_w` / `own_h` is this node's
+    // own resolved size when this node is itself contained, undefined when
+    // it is not — that is what its children will query.
+    //
+    // A NODE NEVER QUERIES ITSELF, which is the same rule CSS has and for
+    // the same reason: the useful question is "is the space I was given
+    // narrow", not "am I narrow". A sidebar pinned to 400pt is 400pt wide in
+    // every window, so a self-query would make `hide("compact")` a constant.
+    // Asking the container asks about the space, which is the thing that
+    // actually changes.
+    //
+    // An undefined axis means no ancestor was contained there, so any band
+    // constraining that axis simply will not match — rules stay inert rather
+    // than guessing against a box that does not exist.
+    fn apply_bands_walk(ref this, bs: *bands::BandSet,
+                        qw: f64, qh: f64, own_w: f64, own_h: f64) -> bool {
+        var changed: bool = false;
+
+        // Last matching rule wins, so scan forward and keep overwriting.
+        let rn: usize = this._rules.count();
+        if rn > (0 as usize) {
+            var want: Display = this.style.display;
+            var matched: bool = false;
+            var i: usize = 0 as usize;
+            while i < rn {
+                match this._rules.at_ptr(i) {
+                    option::Option[*Rule]::Some(p) => {
+                        if { (*bs).matches({ (*p).band.view() }, qw, qh) } {
+                            matched = true;
+                            want = if { (*p).hide } { Display::None } else { Display::Flex };
+                        }
+                    }
+                    option::Option[*Rule]::None => { }
+                }
+                i = i +% (1 as usize);
+            }
+            // A node whose display a rule owns is restored when no rule
+            // matches — otherwise a hide would be permanent, and growing the
+            // window back would leave the node collapsed.
+            if !matched { want = this.parked_display(); }
+            if di_disc(want) != di_disc(this.style.display) {
+                this.style.display = want;
+                changed = true;
+            }
+        }
+
+        // What this node's children query: this node's own box when it is
+        // contained, otherwise whatever this node was querying.
+        var cq_w: f64 = qw;
+        var cq_h: f64 = qh;
+        if is_defined(own_w) { cq_w = own_w; }
+        if is_defined(own_h) { cq_h = own_h; }
+
+        let n: usize = this._children.count();
+        var k: usize = 0 as usize;
+        while k < n {
+            match this.child_ptr(k) {
+                option::Option[*Node]::Some(c) => {
+                    // Containment is decided here, by the parent, because it
+                    // takes both the parent's box and the parent's alignment.
+                    var c_own_w: f64 = undefined();
+                    var c_own_h: f64 = undefined();
+                    if { (*c).self_contained_width(own_w, this.stretches_child(c, true)) } {
+                        c_own_w = { (*c)._layout.width };
+                    }
+                    if { (*c).self_contained_height(own_h, this.stretches_child(c, false)) } {
+                        c_own_h = { (*c)._layout.height };
+                    }
+                    if { (*c).apply_bands_walk(bs, cq_w, cq_h, c_own_w, c_own_h) } { changed = true; }
+                }
+                option::Option[*Node]::None => { }
+            }
+            k = k +% (1 as usize);
+        }
+        return changed;
+    }
+
+    // What a rule-governed node goes back to when nothing matches. A grid
+    // container must return to Grid, not Flex — restoring the wrong one
+    // would silently reflow the whole subtree the first time a band stopped
+    // matching.
+    fn parked_display(this) -> Display {
+        if this._grid_cols.count() > (0 as usize) || this._grid_rows.count() > (0 as usize) {
+            return Display::Grid;
+        }
+        return Display::Flex;
     }
 
     // Compute `subtree_changed` for this node and its descendants (bottom-up):
@@ -2383,6 +2673,17 @@ impl Node {
     fn padding_edge(take this, e: Edge, v: f64) -> Node { var n: Node = this; n.set_padding(e, StyleLength::points(v)); return n; }
     fn margin_edge(take this, e: Edge, v: f64) -> Node { var n: Node = this; n.set_margin(e, StyleLength::points(v)); return n; }
     fn gap(take this, v: f64) -> Node { var n: Node = this; n.set_gap(Gutter::All, StyleLength::points(v)); return n; }
+
+    // Conditional visibility, fluent — the build-time spelling of `add_rule`,
+    // so a rule sits on the node it governs instead of in a callback:
+    //
+    //     b.add(pane("Detail").hide("compact"));
+    //
+    // The band is measured against the nearest CONTAINED ancestor, never this
+    // node itself; `bands` must be passed to `calculate_layout` for either to
+    // do anything. Chain them for more than one band.
+    fn hide(take this, band: str) -> Node { var n: Node = this; n.add_rule(band, hide: true); return n; }
+    fn show(take this, band: str) -> Node { var n: Node = this; n.add_rule(band, hide: false); return n; }
     fn justify(take this, v: Justify) -> Node { var n: Node = this; n.style.justify_content = v; return n; }
     fn align(take this, v: Align) -> Node { var n: Node = this; n.style.align_items = v; return n; }
     fn wrap(take this, v: Wrap) -> Node { var n: Node = this; n.style.flex_wrap = v; return n; }
@@ -4744,4 +5045,345 @@ fn test_zstack_does_not_sum_its_children() {
     root.calculate_layout();
     assert approx(root.frame().width, 80.0f64);
     assert approx(root.frame().height, 0.0f64);   // out of flow: nothing to stack
+}
+
+// ==========================================================================
+// Conditional visibility — bands, containment, and the two-pass evaluation
+// ==========================================================================
+
+// A stretchy child: no explicit width, so a column parent stretches it and it
+// becomes contained on the width axis.
+fn stretchy(h: f64) -> Node {
+    var c: Node = Node::new();
+    c.set_height(pts(h));
+    return c;
+}
+
+fn std_bands() -> bands::BandSet { return bands::BandSet::defaults(); }
+
+#[test]
+fn test_band_hides_a_child_when_the_root_box_matches() {
+    var bs: bands::BandSet = std_bands();
+    var root: Node = Node::new();
+    root.set_flex_direction(FlexDirection::Row);
+
+    var a: Node = leaf(50.0f64, 20.0f64);
+    var b: Node = leaf(40.0f64, 20.0f64);
+    b.add_rule("compact", hide: true);
+    root.add_child(a);
+    root.add_child(b);
+
+    // 420 wide is "compact": b is hidden, and collapses out of flow.
+    root.calculate_layout(width: 420.0f64, height: 100.0f64, bands: #addr_of(bs));
+    assert approx(must(root.child_frame(0 as usize)).width, 50.0f64);
+    assert approx(must(root.child_frame(1 as usize)).width, 0.0f64);
+}
+
+#[test]
+fn test_band_shows_it_again_when_the_box_leaves_the_band() {
+    // The `zero_child` regression, exactly: hiding writes a zero frame and a
+    // cached style, and the pass that un-hides has to be LOUD enough for the
+    // cache to re-lay the node out. Growing the window must bring it back.
+    var bs: bands::BandSet = std_bands();
+    var root: Node = Node::new();
+    root.set_flex_direction(FlexDirection::Row);
+    root.add_child(leaf(50.0f64, 20.0f64));
+    var b: Node = leaf(40.0f64, 20.0f64);
+    b.add_rule("compact", hide: true);
+    root.add_child(b);
+
+    root.calculate_layout(width: 420.0f64, height: 100.0f64, bands: #addr_of(bs));
+    assert approx(must(root.child_frame(1 as usize)).width, 0.0f64);
+
+    // Same tree, wider box: "compact" no longer matches.
+    root.calculate_layout(width: 1000.0f64, height: 100.0f64, bands: #addr_of(bs));
+    assert approx(must(root.child_frame(1 as usize)).width, 40.0f64);
+    assert approx(must(root.child_frame(1 as usize)).left, 50.0f64);
+
+    // And back down again — the cycle has to be repeatable, not one-way.
+    root.calculate_layout(width: 420.0f64, height: 100.0f64, bands: #addr_of(bs));
+    assert approx(must(root.child_frame(1 as usize)).width, 0.0f64);
+    root.calculate_layout(width: 1000.0f64, height: 100.0f64, bands: #addr_of(bs));
+    assert approx(must(root.child_frame(1 as usize)).width, 40.0f64);
+}
+
+#[test]
+fn test_rules_are_inert_without_a_bandset() {
+    // Every existing call site passes no bands; a tree carrying rules must
+    // lay out exactly as it did before the feature existed.
+    var root: Node = Node::new();
+    root.set_flex_direction(FlexDirection::Row);
+    root.add_child(leaf(50.0f64, 20.0f64));
+    var b: Node = leaf(40.0f64, 20.0f64);
+    b.add_rule("compact", hide: true);
+    root.add_child(b);
+
+    root.calculate_layout(width: 420.0f64, height: 100.0f64);
+    assert approx(must(root.child_frame(1 as usize)).width, 40.0f64);
+}
+
+#[test]
+fn test_last_matching_rule_wins() {
+    // A broad hide then a narrow show reads the way it is written.
+    var bs: bands::BandSet = std_bands();
+    bs.set("watch", max_width: 120.0f64);
+
+    var root: Node = Node::new();
+    var b: Node = leaf(40.0f64, 20.0f64);
+    b.add_rule("tiny", hide: true);
+    b.add_rule("watch", hide: false);
+    root.add_child(b);
+
+    // 110 is both "tiny" and "watch"; the later rule shows it.
+    root.calculate_layout(width: 110.0f64, height: 100.0f64, bands: #addr_of(bs));
+    assert approx(must(root.child_frame(0 as usize)).width, 40.0f64);
+
+    // 200 is "tiny" but not "watch" — only the hide matches.
+    root.calculate_layout(width: 200.0f64, height: 100.0f64, bands: #addr_of(bs));
+    assert approx(must(root.child_frame(0 as usize)).width, 0.0f64);
+}
+
+#[test]
+fn test_re_adding_a_band_replaces_rather_than_stacks() {
+    var b: Node = leaf(40.0f64, 20.0f64);
+    assert b.add_rule("compact", hide: true) == status::Status::Ok;
+    assert b.rule_count() == (1 as usize);
+    assert b.add_rule("compact", hide: false) == status::Status::Ok;
+    assert b.rule_count() == (1 as usize);
+    assert b.rule_band(0 as usize) == "compact";
+    assert b.rule_hides(0 as usize) == false;
+    assert b.add_rule("", hide: true) == status::Status::InvalidInput;
+    b.clear_rules();
+    assert b.rule_count() == (0 as usize);
+    assert b.rule_band(0 as usize) == "";
+}
+
+#[test]
+fn test_an_unregistered_band_leaves_the_node_alone() {
+    // A typo makes a rule inert. It must not hide the node, and must not
+    // hide some other node either.
+    var bs: bands::BandSet = std_bands();
+    var root: Node = Node::new();
+    var b: Node = leaf(40.0f64, 20.0f64);
+    b.add_rule("compat", hide: true);
+    root.add_child(b);
+    root.calculate_layout(width: 420.0f64, height: 100.0f64, bands: #addr_of(bs));
+    assert approx(must(root.child_frame(0 as usize)).width, 40.0f64);
+}
+
+// ---- containment: which box a rule is actually measured against ----
+
+#[test]
+fn test_a_rule_queries_its_nearest_contained_ancestor_not_the_root() {
+    // THE POINT OF THE WHOLE FEATURE. The root is 1200 wide (expanded), but
+    // the card sits in a 400pt sidebar — so a rule inside the card must see
+    // 400 and read "compact", not 1200.
+    var bs: bands::BandSet = std_bands();
+
+    var root: Node = Node::new();
+    root.set_flex_direction(FlexDirection::Row);
+
+    var sidebar: Node = Node::new();
+    sidebar.set_width(pts(400.0f64));          // explicit: contained
+    var inner: Node = leaf(40.0f64, 20.0f64);
+    inner.add_rule("compact", hide: true);
+    sidebar.add_child(inner);
+    root.add_child(sidebar);
+
+    root.calculate_layout(width: 1200.0f64, height: 400.0f64, bands: #addr_of(bs));
+    match root.child_ptr(0 as usize) {
+        option::Option[*Node]::Some(sp) => {
+            // Hidden: the sidebar's 400 is compact even though the window is not.
+            assert approx(must({ (*sp).child_frame(0 as usize) }).width, 0.0f64);
+        }
+        option::Option[*Node]::None => { assert false; }
+    }
+}
+
+#[test]
+fn test_a_node_never_queries_its_own_size() {
+    // The rule CSS has, and the reason it has it. `card` is pinned to 200pt,
+    // which is "tiny" — but a self-query would make `hide("tiny")` a
+    // constant, true in every window forever. What the author means is "hide
+    // me when the space I was given is tiny", so the query goes to the
+    // container: 1200, expanded, and the card stays.
+    var bs: bands::BandSet = std_bands();
+    var root: Node = Node::new();
+    root.set_flex_direction(FlexDirection::Row);
+
+    var card: Node = Node::new();
+    card.set_width(pts(200.0f64));
+    card.set_height(pts(100.0f64));
+    card.add_rule("tiny", hide: true);
+    root.add_child(card);
+
+    root.calculate_layout(width: 1200.0f64, height: 400.0f64, bands: #addr_of(bs));
+    assert approx(must(root.child_frame(0 as usize)).width, 200.0f64);
+
+    // Shrink the CONTAINER into the band and the same rule fires.
+    root.calculate_layout(width: 250.0f64, height: 400.0f64, bands: #addr_of(bs));
+    assert approx(must(root.child_frame(0 as usize)).width, 0.0f64);
+}
+
+#[test]
+fn test_a_stretched_child_inherits_a_definite_width() {
+    // A column stretches its children, so a child with no explicit width is
+    // still contained — this is the common facet shape and it must resolve
+    // against the stretched box, not fall through to the root.
+    var bs: bands::BandSet = std_bands();
+
+    var root: Node = Node::new();                 // column, align-items stretch
+    var pane: Node = Node::new();
+    pane.set_width(pts(500.0f64));                // contained
+    var stretched: Node = stretchy(50.0f64);      // takes pane's 500
+    var inner: Node = leaf(30.0f64, 10.0f64);
+    inner.add_rule("compact", hide: true);        // 500 is compact -> hidden
+    stretched.add_child(inner);
+    pane.add_child(stretched);
+    root.add_child(pane);
+
+    root.calculate_layout(width: 1400.0f64, height: 600.0f64, bands: #addr_of(bs));
+    match root.child_ptr(0 as usize) {
+        option::Option[*Node]::Some(pp) => {
+            match { (*pp).child_ptr(0 as usize) } {
+                option::Option[*Node]::Some(sp) => {
+                    assert approx(must({ (*sp).child_frame(0 as usize) }).width, 0.0f64);
+                }
+                option::Option[*Node]::None => { assert false; }
+            }
+        }
+        option::Option[*Node]::None => { assert false; }
+    }
+}
+
+#[test]
+fn test_a_content_sized_parent_is_not_a_container() {
+    // OSCILLATION GUARD. `holder` is a row whose width comes from its
+    // children, so its size DOES depend on what the rule hides. If it were
+    // treated as a container, hiding would shrink it, shrinking would
+    // un-hide, and the two passes would disagree forever.
+    //
+    // Containment refuses it, so the rule falls through to the root's 1000
+    // (expanded), "compact" does not match, and the child stays visible —
+    // a stable answer rather than a flapping one.
+    var bs: bands::BandSet = std_bands();
+
+    var root: Node = Node::new();
+    root.set_flex_direction(FlexDirection::Row);
+    root.set_align_items(Align::FlexStart);       // do NOT stretch: stays content-sized
+
+    var holder: Node = Node::new();
+    holder.set_flex_direction(FlexDirection::Row);
+    var child: Node = leaf(400.0f64, 20.0f64);
+    child.add_rule("compact", hide: true);
+    holder.add_child(child);
+    root.add_child(holder);
+
+    root.calculate_layout(width: 1000.0f64, height: 200.0f64, bands: #addr_of(bs));
+    match root.child_ptr(0 as usize) {
+        option::Option[*Node]::Some(hp) => {
+            assert approx(must({ (*hp).child_frame(0 as usize) }).width, 400.0f64);
+        }
+        option::Option[*Node]::None => { assert false; }
+    }
+
+    // And it is STABLE: laying out again must not flip it.
+    root.calculate_layout(width: 1000.0f64, height: 200.0f64, bands: #addr_of(bs));
+    match root.child_ptr(0 as usize) {
+        option::Option[*Node]::Some(hp) => {
+            assert approx(must({ (*hp).child_frame(0 as usize) }).width, 400.0f64);
+        }
+        option::Option[*Node]::None => { assert false; }
+    }
+}
+
+#[test]
+fn test_an_unconstrained_root_has_no_box_to_query() {
+    // Content-sized layout: there is no available size, so no band that
+    // constrains width can match, and rules stay inert rather than guessing.
+    var bs: bands::BandSet = std_bands();
+    var root: Node = Node::new();
+    root.set_flex_direction(FlexDirection::Row);
+    var b: Node = leaf(40.0f64, 20.0f64);
+    b.add_rule("tiny", hide: true);      // would match a 40pt box if it queried itself's parent
+    root.add_child(b);
+
+    root.calculate_layout(bands: #addr_of(bs));
+    assert approx(must(root.child_frame(0 as usize)).width, 40.0f64);
+}
+
+#[test]
+fn test_a_grid_container_returns_to_grid_not_flex() {
+    // Restoring the wrong display would silently reflow a grid into a
+    // column the first time its band stopped matching.
+    var bs: bands::BandSet = std_bands();
+    var root: Node = Node::new();
+    root.set_width(pts(1000.0f64));
+
+    var g: Node = Node::new();
+    g.set_display(Display::Grid);
+    g.add_grid_column(GridTrack::points(100.0f64));
+    g.add_grid_column(GridTrack::points(100.0f64));
+    g.set_width(pts(400.0f64));
+    g.set_height(pts(100.0f64));
+    g.add_rule("tiny", hide: true);     // 400 is not tiny -> no match -> park
+    g.add_child(leaf(50.0f64, 20.0f64));
+    g.add_child(leaf(50.0f64, 20.0f64));
+    root.add_child(g);
+
+    root.calculate_layout(width: 1000.0f64, height: 400.0f64, bands: #addr_of(bs));
+    match root.child_ptr(0 as usize) {
+        option::Option[*Node]::Some(gp) => {
+            assert match { (*gp).display() } { Display::Grid => true, _ => false };
+            // Two point tracks side by side: the second starts at x=100.
+            assert approx(must({ (*gp).child_frame(1 as usize) }).left, 100.0f64);
+        }
+        option::Option[*Node]::None => { assert false; }
+    }
+}
+
+#[test]
+fn test_two_passes_converge_on_a_deep_chain() {
+    // A hide near the root must not leave descendants of a re-shown sibling
+    // stale: every frame in the tree has to agree after the single extra
+    // pass, with no third pass available to fix it up.
+    var bs: bands::BandSet = std_bands();
+
+    var root: Node = Node::new();
+    root.set_flex_direction(FlexDirection::Row);
+
+    var gone: Node = leaf(300.0f64, 40.0f64);
+    gone.add_rule("compact", hide: true);
+    root.add_child(gone);
+
+    var rest: Node = Node::new();
+    rest.set_flex_grow(1.0f64);
+    rest.set_flex_basis(pts(0.0f64));
+    var deep: Node = leaf(60.0f64, 30.0f64);
+    rest.add_child(deep);
+    root.add_child(rest);
+
+    // Compact: `gone` collapses, so `rest` starts at 0 and takes the width.
+    root.calculate_layout(width: 500.0f64, height: 100.0f64, bands: #addr_of(bs));
+    assert approx(must(root.child_frame(0 as usize)).width, 0.0f64);
+    assert approx(must(root.child_frame(1 as usize)).left, 0.0f64);
+    assert approx(must(root.child_frame(1 as usize)).width, 500.0f64);
+    match root.child_ptr(1 as usize) {
+        option::Option[*Node]::Some(rp) => {
+            assert approx(must({ (*rp).child_frame(0 as usize) }).left, 0.0f64);
+        }
+        option::Option[*Node]::None => { assert false; }
+    }
+
+    // Wide: `gone` is back at 300 and `rest` is pushed right — including the
+    // descendant, which is the frame a missed second pass would strand.
+    root.calculate_layout(width: 1000.0f64, height: 100.0f64, bands: #addr_of(bs));
+    assert approx(must(root.child_frame(0 as usize)).width, 300.0f64);
+    assert approx(must(root.child_frame(1 as usize)).left, 300.0f64);
+    match root.child_ptr(1 as usize) {
+        option::Option[*Node]::Some(rp) => {
+            assert approx(must({ (*rp).child_frame(0 as usize) }).left, 300.0f64);
+        }
+        option::Option[*Node]::None => { assert false; }
+    }
 }

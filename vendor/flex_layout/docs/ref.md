@@ -76,11 +76,49 @@ struct Handle { node: *flex::Node, seen: u64 }        // capture: removal_count(
 // use: if h.seen == flex::removal_count() { deref } else { re-find by key }
 ```
 
+### Conditional visibility
+
+Concepts and the containment rule: [guide.md](guide.md), "Conditional
+visibility — bands".
+
+| Method | Signature |
+|---|---|
+| `hide` | `(take this, band: str) -> Node` — fluent; hide while `band` matches |
+| `show` | `(take this, band: str) -> Node` — fluent; show while `band` matches |
+| `add_rule` | `(ref this, band: str, hide: bool) -> Status` — mutating form; empty name is `InvalidInput`. Re-using a band replaces its entry |
+| `clear_rules` | `(ref this)` |
+| `rule_count` | `(this) -> usize` |
+| `rule_band` | `(this, at: usize) -> str` — `""` past the end |
+| `rule_hides` | `(this, at: usize) -> bool` |
+
+Rules fire only when `calculate_layout` is given a `bands:` set. **The last
+matching rule wins**; when none matches the node returns to `Grid` if it has
+grid tracks, else `Flex`.
+
+### `bands::BandSet` (module `flex_layout/bands`)
+
+| Item | Signature |
+|---|---|
+| `BandSet::new` | `-> BandSet` — empty; nothing matches |
+| `BandSet::defaults` | `-> BandSet` — `tiny` `compact` `medium` `expanded` `large` `xlarge` |
+| `set` | `(ref this, name: str, min_width: f64 = unset(), max_width: f64 = unset(), min_height: f64 = unset(), max_height: f64 = unset()) -> Status` |
+| `remove` | `(ref this, name: str) -> bool` |
+| `count` | `(this) -> usize` |
+| `is_registered` | `(this, name: str) -> bool` |
+| `matches` | `(this, name: str, width: f64, height: f64) -> bool` |
+| `bands::unset` | `() -> f64` — the NaN "edge not set" sentinel |
+
+Bounds are half-open (`min <= v < max`). An unset edge is **unbounded**, not
+zero. `set` rejects an empty name, a band constraining nothing, and a min at
+or above its max on the same axis. An **unregistered name never matches** —
+band names are `str`, so a typo makes a rule inert rather than a compile
+error.
+
 ### Layout & read-back
 
 | Method | Signature |
 |---|---|
-| `calculate_layout` | `(ref this, width: f64 = undefined(), height: f64 = undefined(), direction: Direction = Inherit)` |
+| `calculate_layout` | `(ref this, width: f64 = undefined(), height: f64 = undefined(), direction: Direction = Inherit, bands: *bands::BandSet = null)` |
 | `round_to_pixel` | `(ref this, scale: f64 = 1.0)` — post-pass; snap frames to a pixel grid |
 | `frame` | `(this) -> Frame` — the computed frame |
 | `child_frame` | `(this, at: usize) -> Option[Frame]` |

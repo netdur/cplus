@@ -1,5 +1,6 @@
-// Test root: keep the platform-neutral responsive layer separate from the core
-// engine while including both modules in package-wide test discovery.
+// Test root: pull every module of the package into test discovery. The core
+// engine and the band vocabulary it evaluates live in separate files so the
+// vocabulary stays testable with no layout at all.
 
 import "./flex_layout" as flex;
-import "./responsive" as responsive;
+import "./bands" as bands;

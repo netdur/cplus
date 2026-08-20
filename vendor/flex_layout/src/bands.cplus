@@ -1,0 +1,392 @@
+// flex_layout/bands — named size bands, the vocabulary conditional layout
+// speaks.
+//
+// A BAND is a named box constraint: a minimum and maximum on each axis, any
+// of which may be left unset. A box is "in" a band when every constraint the
+// band actually sets holds:
+//
+//     var bands: BandSet = BandSet::defaults();
+//     bands.set("watch", max_width: 120.0f64, max_height: 120.0f64);
+//
+//     bands.matches("compact", 420.0f64, 900.0f64)   // true
+//
+// WHY NAMES AND NOT NUMBERS AT THE CALL SITE. A threshold written where it
+// is used drifts: one screen collapses its nav at 768 and the sidebar it
+// overlaps collapses at 800, and nothing connects them. A band is defined
+// once and referenced by name, so retuning the vocabulary retunes every
+// screen at once. That is the whole reason this type exists — the matching
+// itself is four comparisons.
+//
+// WHY A BOX AND NOT A THRESHOLD. Putting both axes in the DEFINITION is what
+// lets a call site stay one word. A watch is genuinely "narrow *and* short";
+// saying so once in the band beats repeating an `and` at every use.
+//
+// NO DEVICES. A band describes a box, never a machine. A phone in landscape,
+// a tablet in Split View and a foldable's outer screen can all hand you the
+// same box, and a layout has no business asking which one it got. Device
+// identity is `stdlib/platform`, a different question in a different module.
+//
+// NO GLOBAL STATE. A `BandSet` is a value the host owns and passes to
+// `calculate_layout`, not a registry this module hides. The engine stays a
+// function of its inputs.
+
+import "stdlib/vec" as vec;
+import "stdlib/option" as option;
+import "stdlib/text" as text;
+import "stdlib/status" as status;
+
+// The NaN sentinel meaning "this edge is unset", shared with `StyleLength`.
+fn unset() -> f64 { let z: f64 = 0.0f64; return z / z; }
+fn is_set(v: f64) -> bool { return v == v; }
+
+// One named box constraint. An unset edge is unbounded in that direction.
+struct Band {
+    name: text::Text,
+    min_width: f64,
+    max_width: f64,
+    min_height: f64,
+    max_height: f64,
+}
+
+impl Band {
+    fn name(this) -> str { return this.name.view(); }
+
+    // Does `width` x `height` satisfy every constraint this band sets?
+    //
+    // Bounds are HALF-OPEN: `min <= v < max`. That is what lets a ladder of
+    // bands tile a range exactly — [0,300) [300,600) [600,840) leaves no gap
+    // and no overlap, and no one has to write 599.98 to avoid double-matching
+    // the way inclusive-both-ends forces.
+    //
+    // Every test is written as a POSITIVE predicate so a NaN dimension fails
+    // it rather than passing by accident: an axis laid out unconstrained has
+    // no size, and a band must not claim a box that does not exist.
+    fn contains(this, width: f64, height: f64) -> bool {
+        if is_set(this.min_width) && !(width >= this.min_width) { return false; }
+        if is_set(this.max_width) && !(width < this.max_width) { return false; }
+        if is_set(this.min_height) && !(height >= this.min_height) { return false; }
+        if is_set(this.max_height) && !(height < this.max_height) { return false; }
+        return true;
+    }
+
+    // True when the band constrains nothing at all — it would match every
+    // box, including one with no size. `set` rejects these.
+    fn is_unbounded(this) -> bool {
+        return !is_set(this.min_width) && !is_set(this.max_width)
+            && !is_set(this.min_height) && !is_set(this.max_height);
+    }
+}
+
+// The six blessed width bands, in order. Material 3's published window size
+// classes, with one addition: Material's Compact is everything under 600,
+// which lumps a 120pt watch face in with a 599pt phone. Those are not the
+// same layout, so Compact is split at 300 and the lower half is `tiny`.
+//
+// Width only, deliberately. A ladder on one axis tiles exactly, so every box
+// lands in exactly one band. Adding a height constraint to a default would
+// open gaps — a 200x800 box would be too tall for a height-bounded `tiny`
+// and too narrow for `compact`, and match nothing. Height belongs in bands a
+// host defines for itself, which is what the `watch` example above is.
+const BAND_TINY: str = "tiny";
+const BAND_COMPACT: str = "compact";
+const BAND_MEDIUM: str = "medium";
+const BAND_EXPANDED: str = "expanded";
+const BAND_LARGE: str = "large";
+const BAND_XLARGE: str = "xlarge";
+
+// A host's band vocabulary. Order of definition does not matter: `matches`
+// asks a named band whether it contains the box, it does not classify.
+struct BandSet {
+    _bands: vec::Vec[Band],
+}
+
+impl BandSet {
+    // An empty vocabulary. Nothing matches until something is set — useful
+    // when a host wants only its own names and none of the blessed ones.
+    fn new() -> BandSet {
+        return BandSet { _bands: vec::new::[Band]() };
+    }
+
+    // The blessed vocabulary, pre-registered. An app that never calls `set`
+    // still gets coherent behaviour, which is the point: the failure a shared
+    // vocabulary prevents is every screen inventing its own numbers.
+    fn defaults() -> BandSet {
+        var s: BandSet = BandSet::new();
+        s.set(BAND_TINY, max_width: 300.0f64);
+        s.set(BAND_COMPACT, min_width: 300.0f64, max_width: 600.0f64);
+        s.set(BAND_MEDIUM, min_width: 600.0f64, max_width: 840.0f64);
+        s.set(BAND_EXPANDED, min_width: 840.0f64, max_width: 1200.0f64);
+        s.set(BAND_LARGE, min_width: 1200.0f64, max_width: 1600.0f64);
+        s.set(BAND_XLARGE, min_width: 1600.0f64);
+        return s;
+    }
+
+    // Define or redefine a band. Re-setting a name UPDATES it rather than
+    // adding a second entry, so reloading a configuration is idempotent.
+    //
+    // Every edge defaults to unset, and labels pass in free order, so a
+    // caller writes only the edges that matter:
+    //
+    //     bands.set("watch", max_width: 120.0f64, max_height: 120.0f64);
+    //     bands.set("wide", min_width: 1400.0f64);
+    //
+    // Rejected as `InvalidInput`: an empty name; a band that constrains
+    // nothing (it would match every box, including a sizeless one); and a
+    // min at or above its max on the same axis (unsatisfiable — almost
+    // always a swapped pair of arguments).
+    fn set(ref this, name: str,
+           min_width: f64 = unset(), max_width: f64 = unset(),
+           min_height: f64 = unset(), max_height: f64 = unset()) -> status::Status {
+        if #str_len(name) == (0 as usize) { return status::Status::InvalidInput; }
+
+        let candidate: Band = Band {
+            name: text::from_str(name),
+            min_width: min_width, max_width: max_width,
+            min_height: min_height, max_height: max_height,
+        };
+        if candidate.is_unbounded() { return status::Status::InvalidInput; }
+        if is_set(min_width) && is_set(max_width) && !(min_width < max_width) {
+            return status::Status::InvalidInput;
+        }
+        if is_set(min_height) && is_set(max_height) && !(min_height < max_height) {
+            return status::Status::InvalidInput;
+        }
+
+        let n: usize = this._bands.count();
+        var i: usize = 0 as usize;
+        while i < n {
+            match this._bands.at_ptr(i) {
+                option::Option[*Band]::Some(p) => {
+                    if { (*p).name.equals(name) } {
+                        { (*p).min_width = min_width; }
+                        { (*p).max_width = max_width; }
+                        { (*p).min_height = min_height; }
+                        { (*p).max_height = max_height; }
+                        return status::Status::Ok;
+                    }
+                }
+                option::Option[*Band]::None => { }
+            }
+            i = i +% (1 as usize);
+        }
+
+        return this._bands.append(candidate);
+    }
+
+    // Forget a band. True if it was there. A rule naming a removed band
+    // simply stops firing — it is not an error.
+    fn remove(ref this, name: str) -> bool {
+        let n: usize = this._bands.count();
+        var i: usize = 0 as usize;
+        while i < n {
+            match this._bands.at_ptr(i) {
+                option::Option[*Band]::Some(p) => {
+                    if { (*p).name.equals(name) } {
+                        let _gone: option::Option[Band] = this._bands.remove(i);
+                        return true;
+                    }
+                }
+                option::Option[*Band]::None => { }
+            }
+            i = i +% (1 as usize);
+        }
+        return false;
+    }
+
+    fn count(this) -> usize { return this._bands.count(); }
+
+    // Is `name` defined? The check behind an unknown-band report: a `str`
+    // name cannot be typo-checked by the compiler, so a tool that wants to
+    // flag `hide("compat")` asks here.
+    fn is_registered(this, name: str) -> bool {
+        return this.find(name).is_not_null();
+    }
+
+    // The named band, or null. Borrowed — valid until the set is edited.
+    fn find(this, name: str) -> *Band {
+        let n: usize = this._bands.count();
+        var i: usize = 0 as usize;
+        while i < n {
+            match this._bands.at_ptr(i) {
+                option::Option[*Band]::Some(p) => {
+                    if { (*p).name.equals(name) } { return p; }
+                }
+                option::Option[*Band]::None => { }
+            }
+            i = i +% (1 as usize);
+        }
+        return 0 as *Band;
+    }
+
+    // Does the box `width` x `height` fall in the band called `name`?
+    //
+    // An UNREGISTERED name is false, never a match. That is the cost of
+    // `str` names and it is deliberate: a typo makes a rule inert, which
+    // shows up as "the node did not hide" on the first resize, rather than
+    // matching some other band and hiding the wrong thing.
+    fn matches(this, name: str, width: f64, height: f64) -> bool {
+        let b: *Band = this.find(name);
+        if b.is_null() { return false; }
+        return { (*b).contains(width, height) };
+    }
+}
+
+// ==========================================================================
+// Tests
+// ==========================================================================
+
+fn ok(s: status::Status) -> bool { return s == status::Status::Ok; }
+
+#[test]
+fn defaults_tile_the_width_axis_with_no_gap_and_no_overlap() {
+    let s: BandSet = BandSet::defaults();
+    assert s.count() == (6 as usize);
+
+    // One band per box, all the way up the ladder.
+    assert s.matches(BAND_TINY, 120.0f64, 120.0f64);
+    assert s.matches(BAND_COMPACT, 420.0f64, 900.0f64);
+    assert s.matches(BAND_MEDIUM, 700.0f64, 900.0f64);
+    assert s.matches(BAND_EXPANDED, 1024.0f64, 768.0f64);
+    assert s.matches(BAND_LARGE, 1440.0f64, 900.0f64);
+    assert s.matches(BAND_XLARGE, 2560.0f64, 1440.0f64);
+}
+
+#[test]
+fn band_bounds_are_half_open_so_a_boundary_lands_in_exactly_one() {
+    let s: BandSet = BandSet::defaults();
+    // 300 is the tiny/compact seam: excluded above, included below.
+    assert !s.matches(BAND_TINY, 300.0f64, 400.0f64);
+    assert s.matches(BAND_COMPACT, 300.0f64, 400.0f64);
+    // And 299.9 is still tiny.
+    assert s.matches(BAND_TINY, 299.9f64, 400.0f64);
+    assert !s.matches(BAND_COMPACT, 299.9f64, 400.0f64);
+    // Same at the 600 seam.
+    assert !s.matches(BAND_COMPACT, 600.0f64, 400.0f64);
+    assert s.matches(BAND_MEDIUM, 600.0f64, 400.0f64);
+}
+
+#[test]
+fn every_default_box_lands_in_exactly_one_band() {
+    // The tiling property, asserted rather than assumed: sweep widths and
+    // count how many of the six claim each one.
+    let s: BandSet = BandSet::defaults();
+    var w: f64 = 0.0f64;
+    while w < 2000.0f64 {
+        var hits: i32 = 0;
+        if s.matches(BAND_TINY, w, 800.0f64) { hits = hits + 1; }
+        if s.matches(BAND_COMPACT, w, 800.0f64) { hits = hits + 1; }
+        if s.matches(BAND_MEDIUM, w, 800.0f64) { hits = hits + 1; }
+        if s.matches(BAND_EXPANDED, w, 800.0f64) { hits = hits + 1; }
+        if s.matches(BAND_LARGE, w, 800.0f64) { hits = hits + 1; }
+        if s.matches(BAND_XLARGE, w, 800.0f64) { hits = hits + 1; }
+        assert hits == 1;
+        w = w + 7.0f64;
+    }
+}
+
+#[test]
+fn a_custom_band_may_constrain_both_axes() {
+    var s: BandSet = BandSet::defaults();
+    assert ok(s.set("watch", max_width: 120.0f64, max_height: 120.0f64));
+    assert s.matches("watch", 100.0f64, 100.0f64);
+    // Narrow but tall is NOT a watch — that is the point of the second axis.
+    assert !s.matches("watch", 100.0f64, 800.0f64);
+    // Short but wide is not either.
+    assert !s.matches("watch", 800.0f64, 100.0f64);
+}
+
+#[test]
+fn custom_and_blessed_bands_coexist_and_may_overlap() {
+    // Overlap is legal: bands are predicates, not a classification. A watch
+    // box is both "watch" and "tiny", and both rules fire.
+    var s: BandSet = BandSet::defaults();
+    assert ok(s.set("watch", max_width: 120.0f64, max_height: 120.0f64));
+    assert s.matches("watch", 110.0f64, 110.0f64);
+    assert s.matches(BAND_TINY, 110.0f64, 110.0f64);
+    assert s.count() == (7 as usize);
+}
+
+#[test]
+fn setting_a_name_twice_updates_it_rather_than_duplicating() {
+    var s: BandSet = BandSet::defaults();
+    assert s.count() == (6 as usize);
+    assert ok(s.set(BAND_TINY, max_width: 400.0f64));
+    assert s.count() == (6 as usize);
+    // The new threshold is live, the old one is gone.
+    assert s.matches(BAND_TINY, 350.0f64, 800.0f64);
+    assert !s.matches(BAND_TINY, 450.0f64, 800.0f64);
+}
+
+#[test]
+fn an_unset_edge_is_unbounded_not_zero() {
+    var s: BandSet = BandSet::new();
+    assert ok(s.set("wide", min_width: 1400.0f64));
+    // No max, no height constraints: any box at least 1400 wide qualifies.
+    assert s.matches("wide", 1400.0f64, 10.0f64);
+    assert s.matches("wide", 99999.0f64, 99999.0f64);
+    assert !s.matches("wide", 1399.0f64, 800.0f64);
+}
+
+#[test]
+fn invalid_band_definitions_are_rejected() {
+    var s: BandSet = BandSet::new();
+    assert s.set("", min_width: 10.0f64) == status::Status::InvalidInput;
+    // Constrains nothing — would match every box, including a sizeless one.
+    assert s.set("everything") == status::Status::InvalidInput;
+    // Unsatisfiable: almost always a swapped argument pair.
+    assert s.set("backwards", min_width: 600.0f64, max_width: 300.0f64)
+        == status::Status::InvalidInput;
+    assert s.set("degenerate", min_width: 300.0f64, max_width: 300.0f64)
+        == status::Status::InvalidInput;
+    assert s.set("tall_backwards", min_height: 900.0f64, max_height: 100.0f64)
+        == status::Status::InvalidInput;
+    assert s.count() == (0 as usize);
+}
+
+#[test]
+fn an_unregistered_name_never_matches() {
+    // The accepted cost of `str` names: a typo makes a rule inert. It must
+    // NOT quietly match something else.
+    let s: BandSet = BandSet::defaults();
+    assert !s.matches("compat", 420.0f64, 900.0f64);
+    assert !s.matches("", 420.0f64, 900.0f64);
+    assert !s.matches("COMPACT", 420.0f64, 900.0f64);
+    assert s.is_registered(BAND_COMPACT);
+    assert !s.is_registered("compat");
+}
+
+#[test]
+fn a_sizeless_axis_matches_nothing() {
+    // An unconstrained (content-sized) axis has no size. A band must not
+    // claim a box that does not exist — the positive-predicate comparisons
+    // are what make NaN fail rather than pass.
+    let s: BandSet = BandSet::defaults();
+    let nan: f64 = unset();
+    assert !s.matches(BAND_TINY, nan, 800.0f64);
+    assert !s.matches(BAND_COMPACT, nan, 800.0f64);
+    assert !s.matches(BAND_XLARGE, nan, 800.0f64);
+    // A NaN height only matters to a band that constrains height.
+    var t: BandSet = BandSet::new();
+    assert ok(t.set("short", max_height: 400.0f64));
+    assert !t.matches("short", 500.0f64, nan);
+}
+
+#[test]
+fn a_removed_band_stops_matching() {
+    var s: BandSet = BandSet::defaults();
+    assert s.matches(BAND_TINY, 120.0f64, 120.0f64);
+    assert s.remove(BAND_TINY);
+    assert !s.remove(BAND_TINY);
+    assert !s.matches(BAND_TINY, 120.0f64, 120.0f64);
+    assert s.count() == (5 as usize);
+    // Removing one band leaves the rest alone.
+    assert s.matches(BAND_COMPACT, 420.0f64, 900.0f64);
+}
+
+#[test]
+fn an_empty_set_matches_nothing_at_all() {
+    let s: BandSet = BandSet::new();
+    assert s.count() == (0 as usize);
+    assert !s.matches(BAND_COMPACT, 420.0f64, 900.0f64);
+    assert !s.is_registered(BAND_COMPACT);
+}
