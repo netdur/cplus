@@ -85,6 +85,23 @@ impl Remote {
     fn faulted(this) -> bool { return !this._fault.is_empty(); }
 }
 
+// ---- tests ------------------------------------------------------------------
+
+#[test]
+fn a_port_target_is_told_from_a_path() {
+    // What an iOS target looks like.
+    assert port_of("9123") == (9123 as i32);
+    assert port_of("8787") == (8787 as i32);
+    // ...and what a desktop one looks like. Every one of these is a path, and
+    // a path that happened to parse as a number would be connected to as a
+    // port, which is why the test is the discrimination and not the parse.
+    assert port_of("/tmp/iris-inspect-42.sock") < (0 as i32);
+    assert port_of("") < (0 as i32);
+    assert port_of("91x3") < (0 as i32);
+    assert port_of("70000") < (0 as i32);
+    assert port_of("0") < (0 as i32);
+}
+
 // Is anything listening at `path`? One connect, closed again — the cheap
 // question a host asks BEFORE switching a panel to a target, so the switch
 // happens on evidence rather than on a socket file somebody forgot to unlink
@@ -117,7 +134,56 @@ fn backend_of(r: *Remote) -> insp::Backend {
 
 // ---- transport -----------------------------------------------------------------
 
+// Is this target a PORT rather than a socket path? Digits only, and in range.
+//
+// It exists because a Unix socket cannot cross into a simulator: the app's
+// `/tmp` is inside its own container, and a real device shares no filesystem
+// with the Mac at all. That backend therefore serves the inspector over TCP on
+// loopback — the same answer, for the same reason, that the agent surface
+// already reached — so the target an IDE holds for an iOS app is "9123", not a
+// path, and this is where the two shapes part.
+fn port_of(target: str) -> i32 {
+    let n: usize = #str_len(target);
+    if n == (0 as usize) || n > (5 as usize) { return - 1 as i32; }
+    let b: *u8 = #str_ptr(target);
+    var v: i32 = 0 as i32;
+    var i: usize = 0 as usize;
+    while i < n {
+        let c: u8 = { *(b + i) };
+        if c < (48 as u8) || c > (57 as u8) { return - 1 as i32; }
+        v = v * (10 as i32) + ({ (c as i32) } - (48 as i32));
+        i = i +% (1 as usize);
+    }
+    if v <= (0 as i32) || v > (65535 as i32) { return - 1 as i32; }
+    return v;
+}
+
+// AF_INET = 2, and `sockaddr_in` is { uint8 sin_len; uint8 sin_family;
+// uint16 sin_port (BIG endian); uint8 sin_addr[4]; uint8 sin_zero[8] } — 16
+// bytes, built the same way the Unix one below is. Loopback only: an inspector
+// that could be pointed at another machine's app is a different feature with a
+// different security story, and nothing here asks for one.
+fn connect_tcp(port: i32) -> i32 {
+    var addr: [u8; 16] = [0 as u8; 16];
+    addr[0] = 16 as u8;
+    addr[1] = 2 as u8;
+    addr[2] = { ((port / (256 as i32)) & (255 as i32)) as u8 };
+    addr[3] = { (port & (255 as i32)) as u8 };
+    addr[4] = 127 as u8;
+    addr[7] = 1 as u8;
+    let fd: i32 = { socket(2 as i32, 1 as i32, 0 as i32) };
+    if fd < (0 as i32) { return - 1 as i32; }
+    let rc: i32 = { connect(fd, #addr_of(addr[0]), 16 as u32) };
+    if rc != (0 as i32) {
+        { close(fd) };
+        return - 2 as i32;
+    }
+    return fd;
+}
+
 fn connect_to(path: str) -> i32 {
+    let port: i32 = port_of(path);
+    if port > (0 as i32) { return connect_tcp(port); }
     let plen: usize = #str_len(path);
     if plen > (100 as usize) { return - 4 as i32; }
     var addr: [u8; 110] = [0 as u8; 110];

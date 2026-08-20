@@ -7,7 +7,10 @@ edition = "2026"
 #
 # - inspector/inspector: the neutral surface (Handle, Value, Prop, Backend vtable)
 # - inspector/tree:      the facet-tree walker and the typed get/set dispatch
-# - inspector/appkit:    highlight overlay and point picking (macOS)
+# - inspector/appkit:    highlight overlay and native rows (macOS)
+# - inspector/uikit:     the same two, on iOS — and `serve_if_asked` there takes
+#                        a PORT, because a Unix socket inside the app sandbox is
+#                        unreachable from the machine running the IDE
 # - inspector/widget:    the facet-facing inspector UI applications embed
 #
 # This is NOT the agent surface. The agent surface is curated and permissioned;
@@ -36,3 +39,13 @@ facet_appkit = "*"
 webkit       = "*"
 agent_appkit = "*"
 agent_inapp  = "*"
+
+# The iOS half. `uikit.cplus` is only ever compiled by a build that imports it —
+# an iOS entry — so these are named for that build rather than for this
+# package's own, which is macOS and never reaches the file.
+[ios.dependencies]
+facet_uikit = "*"
+uikit       = "*"
+webkit      = "*"
+agent_uikit = "*"
+agent_inapp = "*"

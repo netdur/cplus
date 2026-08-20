@@ -1,0 +1,260 @@
+// uikit — the same one thing facet's tree cannot answer, on the phone.
+//
+// This file is the UIKit twin of `appkit.cplus`, and the twinning is the point:
+// everything else in this package is portable, so a second platform costs one
+// overlay, one native-props reader and one serve entry. Read that file first —
+// the reasoning for the layer-not-a-view overlay, the main-thread hop and the
+// borrowed `view` pointer is written out there and is identical here.
+//
+// TWO DIFFERENCES, both from UIKit rather than from the inspector:
+//
+//   * NO FLIP. AppKit asks `isFlipped` because a view can put its origin at
+//     either corner; every UIView is top-left, which is flex's own convention,
+//     so the coordinate branch that file carries has nothing to decide here.
+//   * THE TARGET IS A PORT, not a socket path. A Unix socket lives inside the
+//     app sandbox where nothing on the development machine can reach it, and a
+//     real device shares no filesystem at all — so `serve_if_asked` hands the
+//     value straight to `agent_serve_once`, which on this backend binds TCP on
+//     loopback. It is the choice the agent surface already made, for the same
+//     reason, and it is why the value is not called `path` anywhere below.
+
+import "stdlib/vec" as vec;
+import "stdlib/text" as text;
+import "stdlib/option" as option;
+import "stdlib/status" as status;
+import "stdlib/env" as env;
+import "flex_layout/flex_layout" as flex;
+import "objc/runtime" as rt;
+import "objc/bridge" as bridge;
+import "uikit/uikit" as uik;
+import "quartzcore/quartzcore" as qc;
+import "facet/facet" as core;
+import "facet/mount" as mount;
+import "facet/application" as runtime;
+import "facet_agent/agent" as agent;
+import "./inspector" as insp;
+import "./tree" as tree;
+import "./mcp" as mcp;
+
+// ---- the hop to the UI thread --------------------------------------------------
+// `mount::install` records the thread it ran on and `core::touch` asserts on
+// it, so a write arriving from the socket server's worker ABORTS. Same shape,
+// same libdispatch, same reason as the AppKit half.
+extern fn dlsym(handle: *u8, symbol: *u8) -> *u8;
+extern fn dispatch_sync_f(queue: *u8, ctx: *u8, work: fn(*u8));
+
+fn main_queue() -> *u8 {
+    let rtld_default: *u8 = { ((0 as usize) -% (2 as usize)) as *u8 };
+    return { dlsym(rtld_default, #str_ptr("_dispatch_main_q\0")) };
+}
+
+fn on_main_thread() -> bool {
+    let ns_thread: *u8 = rt::get_class(#str_ptr("NSThread\0"));
+    if ns_thread == (0 as *u8) { return true; }
+    return rt::msg_i8(ns_thread, rt::sel(#str_ptr("isMainThread\0"))) != (0 as i8);
+}
+
+fn run_on_main_sync(ctx: *u8, work: fn(*u8)) {
+    if on_main_thread() { work(ctx); return; }
+    let q: *u8 = main_queue();
+    if q == (0 as *u8) { work(ctx); return; }
+    { dispatch_sync_f(q, ctx, work) };
+    return;
+}
+
+#[link_name = "CGColorCreateGenericRGB"]
+extern fn cg_rgba(r: f64, g: f64, b: f64, a: f64) -> *u8;
+
+#[link_name = "NSStringFromClass"]
+extern fn ns_string_from_class(c: *u8) -> *u8;
+
+static OVERLAY: *u8 = 0 as *u8;
+static FILL: *u8 = 0 as *u8;
+static STROKE: *u8 = 0 as *u8;
+
+fn ensure_colours() {
+    if FILL == (0 as *u8) {
+        FILL = cg_rgba(0.13f64, 0.47f64, 1.0f64, 0.22f64);
+        STROKE = cg_rgba(0.13f64, 0.47f64, 1.0f64, 0.95f64);
+    }
+    return;
+}
+
+fn overlay_layer() -> qc::Layer {
+    ensure_colours();
+    if OVERLAY == (0 as *u8) {
+        let l: qc::Layer = qc::Layer::new();
+        l.set_background_color(FILL);
+        l.set_border_color(STROKE);
+        l.set_border_width(1.0f64);
+        l.set_corner_radius(2.0f64);
+        l.set_z_position(10000.0f64);
+        OVERLAY = rt::retain(l.raw());
+        return l;
+    }
+    return qc::Layer::from_raw(OVERLAY);
+}
+
+// ---- resolving a node to a rectangle -----------------------------------------
+
+// Borrowed, exactly as the AppKit half documents: the backend that mounted the
+// view owns it, and this struct is a short-lived answer rather than a second
+// owner.
+struct Placed {
+    opaque view: *u8,
+    rect: rt::Rect,
+    found: bool,
+}
+
+fn place(n: *core::Node) -> Placed {
+    let none: Placed = Placed {
+        view: 0 as *u8,
+        rect: rt::Rect { x: 0.0f64, y: 0.0f64, w: 0.0f64, h: 0.0f64 },
+        found: false,
+    };
+    if n == (0 as *core::Node) { return none; }
+
+    let own: *u8 = core::view_of(n);
+    if own != (0 as *u8) {
+        let b: rt::Rect = { uik::View::from_raw(own).bounds() };
+        return Placed { view: own, rect: b, found: true };
+    }
+
+    // A viewless node is not a node without a place — it is a node drawn inside
+    // someone else's view, so its flex offsets accumulate up to the nearest
+    // backed ancestor and the answer is a rect in THAT view.
+    let f: flex::Frame = core::frame_of(n);
+    var x: f64 = f.left;
+    var y: f64 = f.top;
+    let w: f64 = f.width;
+    let h: f64 = f.height;
+
+    var cur: *core::Node = n;
+    var steps: usize = 0 as usize;
+    while steps < (256 as usize) {
+        let p: *core::Node = match mount::parent_of(cur) {
+            option::Option[*core::Node]::Some(q) => q,
+            option::Option[*core::Node]::None => 0 as *core::Node,
+        };
+        if p == (0 as *core::Node) { return none; }
+        let pv: *u8 = core::view_of(p);
+        if pv != (0 as *u8) {
+            // No flip branch: every UIView's origin is its top-left, which is
+            // flex's own, so the accumulated offset IS the view-space rect.
+            return Placed {
+                view: pv,
+                rect: rt::Rect { x: x, y: y, w: w, h: h },
+                found: true,
+            };
+        }
+        let pf: flex::Frame = core::frame_of(p);
+        x = x + pf.left;
+        y = y + pf.top;
+        cur = p;
+        steps = steps +% (1 as usize);
+    }
+    return none;
+}
+
+// ---- highlight ---------------------------------------------------------------
+
+fn clear_highlight(_s: *u8) {
+    if OVERLAY == (0 as *u8) { return; }
+    let l: qc::Layer = qc::Layer::from_raw(OVERLAY);
+    l.remove_from_superlayer();
+    return;
+}
+
+fn highlight(s: *u8, h: insp::Handle) {
+    clear_highlight(s);
+    if !h.is_live() { return; }
+    let p: Placed = place(h.node);
+    if !p.found { return; }
+
+    let target: uik::View = uik::View::from_raw(p.view);
+    let win: uik::Window = match target.window() {
+        option::Option[uik::Window]::Some(w) => w,
+        option::Option[uik::Window]::None => { return; }
+    };
+    // The WINDOW is the host here, where AppKit uses its content view: a
+    // UIWindow is itself a UIView, so it is both the top of the hierarchy and
+    // a perfectly ordinary place to hang a layer.
+    let host_view: uik::View = win.as_view();
+    let r: rt::Rect = target.convert_rect(p.rect, host_view);
+    let host: qc::Layer = host_view.layer();
+    if host.raw() == (0 as *u8) { return; }
+
+    let l: qc::Layer = overlay_layer();
+    l.set_frame(r);
+    host.add_sublayer(l);
+    return;
+}
+
+// ---- native rows -------------------------------------------------------------
+
+fn native_props(n: *core::Node) -> vec::Vec[insp::Prop] {
+    var out: vec::Vec[insp::Prop] = vec::new::[insp::Prop]();
+    let v: *u8 = core::view_of(n);
+    if v == (0 as *u8) {
+        let _a: status::Status = out.append(insp::Prop::read_only(
+            "native_class", insp::Value::Str(text::from_str("(drawn by an ancestor)"))));
+        return out;
+    }
+
+    let cls: *u8 = rt::msg_id(v, rt::sel(#str_ptr("class\0")));
+    let name: text::Text = bridge::to_text(ns_string_from_class(cls));
+    let _b: status::Status = out.append(insp::Prop::read_only(
+        "native_class", insp::Value::Str(name)));
+
+    let view: uik::View = uik::View::from_raw(v);
+    let _c: status::Status = out.append(insp::Prop::read_only(
+        "native_hidden", insp::Value::Bool(view.is_hidden())));
+
+    let f: rt::Rect = view.frame();
+    var geom: text::Text = text::from_str("");
+    let _d: status::Status = geom.append({ (f.x as i64) }.to_text().view());
+    let _e: status::Status = geom.append(", ");
+    let _f2: status::Status = geom.append({ (f.y as i64) }.to_text().view());
+    let _g: status::Status = geom.append(", ");
+    let _h: status::Status = geom.append({ (f.w as i64) }.to_text().view());
+    let _i: status::Status = geom.append(", ");
+    let _j: status::Status = geom.append({ (f.h as i64) }.to_text().view());
+    let _k: status::Status = out.append(insp::Prop::read_only(
+        "native_frame", insp::Value::Str(geom)));
+
+    // UIKit asks the view itself, where AppKit asks the window whose one
+    // first responder it is. Same question, and this is the phrasing this
+    // toolkit ships.
+    let _l: status::Status = out.append(insp::Prop::read_only(
+        "first_responder", insp::Value::Bool(view.as_responder().is_first_responder())));
+    return out;
+}
+
+// ---- installation ------------------------------------------------------------
+
+fn install() {
+    tree::install_platform(highlight, clear_highlight);
+    tree::set_native_fn(native_props);
+    mcp::set_marshal(run_on_main_sync);
+    return;
+}
+
+// Serve the inspector IF the environment asks — the one line an iOS app adds to
+// be inspectable by the tool that launched it.
+//
+// `FACET_INSPECT` carries a PORT here, and `simctl launch` is how it arrives:
+// the launcher sets `SIMCTL_CHILD_FACET_INSPECT` and simctl passes the
+// unprefixed variable to the app. Launched any other way there is no variable
+// and this costs one getenv.
+fn serve_if_asked() {
+    let port: text::Text = match env::var("FACET_INSPECT") {
+        option::Option[text::Text]::Some(p) => p,
+        option::Option[text::Text]::None => { return; }
+    };
+    if port.is_empty() { return; }
+    install();
+    mcp::arm(tree::local_backend());
+    agent::enable();
+    runtime::agent_serve_once(port.view());
+    return;
+}

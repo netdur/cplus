@@ -1,0 +1,20 @@
+// serve — "make this app inspectable, if the launcher asked", per platform.
+//
+// ONE NAME an application calls, on any platform, so a shared entry does not
+// have to know which toolkit it was compiled for. The resolver's platform
+// override picks the real one: `serve_macos.cplus` on macOS and
+// `serve_ios.cplus` on iOS, both siblings of this file.
+//
+// A target with neither lands HERE, and the honesty matters more than the
+// convenience: an app that calls `serve_if_asked` on a platform with no
+// inspector backend still compiles and still runs, and simply is not
+// inspectable. The alternative — resolving to some other platform's file —
+// would be a link error at best and an inspector drawing into a window that
+// does not exist at worst.
+//
+// The macOS implementation lives in `inspector/appkit`, which is also still
+// importable by that name: it is the PLATFORM half (overlay, native rows, the
+// UI-thread hop), where this is the entry an app calls. `serve_macos.cplus` is
+// the seam between the two and is three lines long.
+
+fn serve_if_asked() { return; }

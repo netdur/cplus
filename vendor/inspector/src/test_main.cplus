@@ -25,6 +25,9 @@ import "./inspector" as insp;
 import "./tree" as tree;
 import "./widget" as widget;
 import "./appkit" as platform;
+// Pulled in for its own `#[test]`s: without an import the module is not in the
+// test binary at all, and its checks silently do not run.
+import "./remote" as remote;
 import "./mcp" as mcp;
 import "agent_mcp/agent_mcp" as bridge;
 import "agent_core/events" as aevents;
