@@ -1,19 +1,32 @@
-// Responsive — the layout following the width it actually has.
+// Responsive — the layout following the box it actually has.
 //
-// The desktop gallery's version of this demo SIMULATES the width with three
-// buttons, because AppKit's size observer was the only one wired and the demo
-// predates it. This one reads the real number: `services::observe_size` is
-// filled on this backend now, so the class changes when the thing changes —
-// rotate the simulator (⌘→) and watch it move.
+// The desktop gallery's version SIMULATES the width with three buttons. This
+// one reads the real number, and — since bands landed — mostly does not read
+// it at all: a node states its own condition and the layout pass enforces it.
 //
-// The three classes are the ones a phone actually has:
+//   cards.add(pane("B", ...).hide("tiny").hide("compact"));
 //
-//   < 480   compact   one column. A phone upright.
-//   < 720   regular   two columns. A phone on its side, or a small window.
-//   ≥ 720   wide      three columns and a rail. An iPad.
+// That is the whole rule. No `mount::find` by key, no threshold constant, no
+// `Cancellable` to keep alive, no re-evaluation on resize — `calculate_layout`
+// carries the app's `BandSet` (facet/bands) and re-decides every pass. Rotate
+// the simulator with ⌘← / ⌘→ and the cards come and go on their own.
+//
+// The band is measured against the node's nearest CONTAINED ancestor, not the
+// window. On an iPad in Split View this app has half the screen, and half the
+// screen is the honest answer — the screen's own width would be a lie.
+//
+// WHAT BANDS STILL CANNOT SAY, and it is deliberate that this shows: the card
+// row turns into a column when the box is compact. That is a style change,
+// not a visibility change, so it still needs the observer below. If this turns
+// out to be what every screen reaches for, that is the argument for a general
+// per-band style patch — see plans/plan.responsive.md, "Deliberately cut".
+//
+// The observer also feeds the live readout, which asks the band vocabulary
+// itself rather than keeping a second copy of the thresholds.
 
 import "facet/facet" as core;
 import "facet/elements" as ui;
+import "facet/bands" as bands;
 import "facet/component" as component;
 import "facet/label" as label;
 import "facet/mount" as mount;
@@ -23,77 +36,62 @@ import "flex_layout/flex_layout" as flex;
 import "stdlib/option" as option;
 import "../shell" as shell;
 
-const BP_COMPACT: f64 = 480.0f64;
-const BP_REGULAR: f64 = 720.0f64;
-
 struct Responsive {
     // THE HANDLE HAS TO BE HELD. `services::Cancellable` cancels on DROP, so a
-    // `let` here would stop the observation on the way out of `on_attach` and
-    // the layout would never hear about a rotation.
+    // `let` here would stop the observation on the way out of `on_attach`.
+    // Still needed — but only for the readout and the row/column flip now,
+    // not for a single visibility decision.
     watch: services::Cancellable,
-    mode: i64,
 }
 
 impl Responsive {
     fn new() -> Responsive {
-        return Responsive { watch: services::Cancellable::none(), mode: 0 as i64 };
+        return Responsive { watch: services::Cancellable::none() };
     }
 }
 
-fn mode_name(m: i64) -> str {
-    if m == (0 as i64) { return "compact"; }
-    if m == (2 as i64) { return "wide"; }
-    return "regular";
+// The name of the band this box falls in — asked of the SAME vocabulary the
+// rules use, so the readout cannot drift from the behaviour it describes.
+// Bands are predicates rather than a classification, so a caller that wants
+// one name walks them narrowest-first.
+fn class_of(w: f64, h: f64) -> str {
+    if bands::matches("tiny", w, h) { return "tiny"; }
+    if bands::matches("compact", w, h) { return "compact"; }
+    if bands::matches("medium", w, h) { return "medium"; }
+    if bands::matches("expanded", w, h) { return "expanded"; }
+    if bands::matches("large", w, h) { return "large"; }
+    return "xlarge";
 }
 
-// The one place the width becomes a decision. Called from the size observer,
-// which is called from the observed view's own `layoutSubviews`.
+// Everything the bands cannot express, which is now two things: the number on
+// screen, and one axis flip.
 fn reclassify(ctx: *u8) {
     match mount::find("rp:root") {
         option::Option[*core::Node]::Some(n) => {
             let w: f64 = core::width_of(n);
             if w <= 0.0f64 { return; }
-            var m: i64 = 2 as i64;
-            if w < BP_COMPACT { m = 0 as i64; }
-            else if w < BP_REGULAR { m = 1 as i64; }
-            paint(m, w);
-        }
-        option::Option[*core::Node]::None => { }
-    }
-    return;
-}
+            let h: f64 = core::height_of(n);
+            let px: i64 = w as i64;
+            let name: str = class_of(w, h);
 
-fn paint(m: i64, w: f64) {
-    let px: i64 = w as i64;
-    let name: str = mode_name(m);
-    match label::find("rp:mode") {
-        option::Option[label::Label]::Some(l) => {
-            let _l: label::Label = l.set_text("${name}  ·  ${px}pt wide");
-        }
-        option::Option[label::Label]::None => { }
-    }
-    // The layout itself: which cards exist, and whether they sit in a row or a
-    // column. `set_display` rather than `set_visible` — a hidden card that kept
-    // its width would leave a hole where the wide layout used to be.
-    show("rp:b", m >= (1 as i64));
-    show("rp:c", m >= (2 as i64));
-    show("rp:rail", m >= (2 as i64));
-    match mount::find("rp:cards") {
-        option::Option[*core::Node]::Some(n) => {
-            var flow: flex::FlexDirection = flex::FlexDirection::Row;
-            if m == (0 as i64) { flow = flex::FlexDirection::Column; }
-            core::set_flow(n, flow);
-        }
-        option::Option[*core::Node]::None => { }
-    }
-    return;
-}
+            match label::find("rp:mode") {
+                option::Option[label::Label]::Some(l) => {
+                    let _l: label::Label = l.set_text("${name}  ·  ${px}pt wide");
+                }
+                option::Option[label::Label]::None => { }
+            }
 
-fn show(key: str, on: bool) {
-    match mount::find(key) {
-        option::Option[*core::Node]::Some(n) => {
-            if on { core::set_display(n, flex::Display::Flex); }
-            else { core::set_display(n, flex::Display::None); }
+            // The style change bands have no verb for.
+            match mount::find("rp:cards") {
+                option::Option[*core::Node]::Some(c) => {
+                    var flow: flex::FlexDirection = flex::FlexDirection::Row;
+                    if bands::matches("tiny", w, h) || bands::matches("compact", w, h) {
+                        flow = flex::FlexDirection::Column;
+                    }
+                    core::set_flow(c, flow);
+                }
+                option::Option[*core::Node]::None => { }
+            }
         }
         option::Option[*core::Node]::None => { }
     }
@@ -122,25 +120,35 @@ impl Responsive: component::Component {
         var live: flex::Builder = flex::Builder::new();
         live.add(ui::label("measuring…", key: "rp:mode", font_size: 17.0f64,
                            font_weight: vocab::FontWeight::Semibold));
-        live.add(shell::caption("Rotate the simulator with ⌘← / ⌘→. This number is the width the layout below was actually given — not a guess, and not a button pretending to be one."));
+        live.add(shell::caption("Rotate the simulator with ⌘← / ⌘→. This is the band the layout below was actually given, and the width it was measured from — not a guess, and not a button pretending to be one."));
         body.add(shell::card("WIDTH CLASS", live));
 
+        // The rules live on the nodes they govern. Everything below is
+        // declarative: nothing re-runs it, and nothing has to remember to.
         var cards: flex::Builder = flex::Builder::new();
         cards.add(pane("A", "Always here.", vocab::Color::system_teal(), "rp:a"));
-        cards.add(pane("B", "From regular up.", vocab::Color::system_indigo(), "rp:b"));
-        cards.add(pane("C", "Wide only.", vocab::Color::system_purple(), "rp:c"));
+        cards.add(pane("B", "Gone on a phone upright.", vocab::Color::system_indigo(), "rp:b")
+                    .hide("tiny").hide("compact"));
+        cards.add(pane("C", "Tablet-width and up.", vocab::Color::system_purple(), "rp:c")
+                    .hide("tiny").hide("compact").hide("medium"));
+
         var group: flex::Builder = flex::Builder::new();
         group.add(ui::row(cards, key: "rp:cards").gap(10.0f64).height(150.0f64));
-        group.add(pane("Side rail", "Wide only — an iPad has room for it and a phone does not.",
-                       vocab::Color::fill(), "rp:rail"));
+        group.add(pane("Side rail", "Tablet-width and up — an iPad has room for it and a phone does not.",
+                       vocab::Color::fill(), "rp:rail")
+                    .hide("tiny").hide("compact").hide("medium"));
         body.add(shell::card("THE LAYOUT", group));
 
         var note: flex::Builder = flex::Builder::new();
-        note.add(shell::caption("`observe_size` was one of the seams this backend left empty — AppKit posts a frame notification and UIKit posts nothing. What UIKit does is CALL a method, so the observer is `layoutSubviews` added to the observed view's own class, one subclass per observed view through `object_setClass`. That is why a scroll view stays a scroll view."));
-        body.add(shell::card("HOW IT KNOWS", note));
+        note.add(shell::caption("A band is a NAMED box constraint — `compact` is 300–600pt wide — defined once in `facet/bands` and referenced by name everywhere. That indirection is the point: a threshold written at the place it is used drifts, and two screens end up disagreeing about where a phone stops being a phone."));
+        body.add(shell::card("WHAT A BAND IS", note));
+
+        var how: flex::Builder = flex::Builder::new();
+        how.add(shell::caption("The rule is measured against the nearest ancestor whose size does not depend on its own contents — never the window. Hiding a child inside a content-sized box would shrink it, which would un-hide the child, forever; refusing those boxes is what makes one extra layout pass enough to settle."));
+        body.add(shell::card("WHICH BOX IT ASKS", how));
 
         var root: core::Node = shell::page("Responsive",
-            "The layout following the width it actually has, live.",
+            "The layout following the box it actually has, live.",
             body, "rp:root");
         return root;
     }
@@ -154,9 +162,10 @@ impl Responsive: component::Lifecycle {
             }
             option::Option[*core::Node]::None => { }
         }
-        // The first classification does not wait for a resize: the view has a
-        // size the moment it is laid out, and nothing will resize it if the
-        // reader never rotates.
+        // The readout does not wait for a resize: the view has a size the
+        // moment it is laid out, and nothing will resize it if the reader
+        // never rotates. The card visibility needs no such priming — the
+        // layout pass that placed the tree already applied it.
         reclassify(0 as *u8);
         return;
     }
