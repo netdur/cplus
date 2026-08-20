@@ -191,9 +191,10 @@ fn layout_window(root: *core::Node) {
     // BACKED descendants in the window instead — and those are the views the
     // inset has to move, or a DSL-authored screen ignores the safe area that a
     // keyed one honours.
-    if ins.left != 0.0f64 || ins.top != 0.0f64 {
-        offset_root_views(root, ins.left, ins.top);
-    }
+    //
+    // Unconditional, because it PLACES rather than nudges: with a zero inset it
+    // writes the frames the walk just computed, which is what they already are.
+    place_root_views(root, ins.left, ins.top);
     return;
 }
 
@@ -215,8 +216,25 @@ fn safe_insets(cv: ui::View, root: *core::Node) -> ui::EdgeInsets {
     return cv.safe_area_insets();
 }
 
-// The topmost backed descendants of a viewless root, nudged by the inset.
-fn offset_root_views(n: *core::Node, dx: f64, dy: f64) {
+// The topmost backed descendants of a viewless root, PLACED inside the safe box.
+//
+// ABSOLUTE, NOT A NUDGE, and that is the whole of the fix. This used to add
+// (dx, dy) to whatever frame the view already carried, which is only right when
+// the frame walk rewrote that frame in the SAME pass — and it does not:
+// `geometry::reposition` prunes a subtree whose layout the engine reports
+// unchanged, so a second pass over an idle tree added the inset a second time,
+// and a third added a third.
+//
+// A launch runs at least two: `attach_root` forces one so the tree is not
+// zero-sized for a frame, and UIKit lays out again on the next turn of the
+// loop. So a fresh app opened with its content a notch and a half down the
+// screen and stayed there — until anything dirtied the layout, at which point
+// the walk rewrote the frames and one inset landed on top. Reported exactly
+// that way: "content was pushing down till I tapped, then it corrected".
+//
+// The node's own frame is the truth here. It is absolute in the root's space,
+// the host is the content view, and the inset is the offset between the two.
+fn place_root_views(n: *core::Node, dx: f64, dy: f64) {
     var i: usize = 0 as usize;
     let count: usize = core::child_count_of(n);
     while i < count {
@@ -224,11 +242,11 @@ fn offset_root_views(n: *core::Node, dx: f64, dy: f64) {
             option::Option[*core::Node]::Some(c) => {
                 let v: *u8 = core::view_of(c);
                 if v != (0 as *u8) {
-                    let f: rt::Rect = ui::View::from_raw(v).frame();
-                    geometry::set_view_frame(v, rt::Rect { x: f.x + dx, y: f.y + dy,
-                                                           w: f.w, h: f.h });
+                    let cf: flex::Frame = { (*c).frame() };
+                    geometry::set_view_frame(v, rt::Rect { x: cf.left + dx, y: cf.top + dy,
+                                                           w: cf.width, h: cf.height });
                 } else {
-                    offset_root_views(c, dx, dy);
+                    place_root_views(c, dx, dy);
                 }
             }
             option::Option[*core::Node]::None => { }

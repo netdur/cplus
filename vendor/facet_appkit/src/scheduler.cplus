@@ -554,14 +554,22 @@ fn safe_insets(content: ak::View, root: *core::Node) -> ak::EdgeInsets {
 #[link_name = "objc_msgSend"]
 extern fn msg_insets(recv: *u8, sel: *u8) -> ak::EdgeInsets;
 
-// Shift the topmost backed views of a pass-through root by the inset. Mirrors
-// `window::add_root_views`, which chose them.
+// Place the topmost backed views of a pass-through root inside the safe box.
+// Mirrors `window::add_root_views`, which chose them.
+//
+// FROM THE NODE'S FRAME, not from the view's. Adding the inset to whatever the
+// view already carried is only right when the frame walk rewrote it this pass,
+// and `geometry::reposition` prunes a subtree the engine reports unchanged — so
+// a second pass over an idle tree applied the inset twice. It never showed here
+// because a Mac window's safe-area insets are zero unless it is on a notched
+// display; facet_uikit hit it on every launch, where the inset is the notch.
 fn offset_root_views(n: *core::Node, dx: f64, dy: f64) {
     if n == (0 as *core::Node) { return; }
     let v: *u8 = core::view_of(n);
     if v != (0 as *u8) {
-        let b: rt::Rect = { rt::msg_rect(v, rt::sel(#str_ptr("frame\0"))) };
-        geometry::set_view_frame(v, rt::Rect { x: b.x + dx, y: b.y + dy, w: b.w, h: b.h });
+        let cf: flex::Frame = { (*n).frame() };
+        geometry::set_view_frame(v, rt::Rect { x: cf.left + dx, y: cf.top + dy,
+                                               w: cf.width, h: cf.height });
         return;
     }
     var i: usize = 0 as usize;
