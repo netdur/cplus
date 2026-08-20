@@ -6121,6 +6121,33 @@ fn run_init(args: &[OsString]) -> ExitCode {
          \x20   <true/>\n\
          \x20   <key>MinimumOSVersion</key>\n\
          \x20   <string>14.0</string>\n\
+         \x20   <!-- A SCENE, because every windowing API on iPadOS hangs off one:\n\
+         \x20        the control style, the geometry callback, the size\n\
+         \x20        restrictions. An app with no manifest is not answering them\n\
+         \x20        badly, it is never asked. facet_uikit synthesizes\n\
+         \x20        `FacetUIKitSceneDelegate` before UIApplicationMain and ADOPTS\n\
+         \x20        the window the app delegate already built, so naming it here\n\
+         \x20        changes nothing about how the app starts.\n\
+         \x20        No UISceneStoryboardFile: a storyboard makes UIKit wait for a\n\
+         \x20        nib facet does not have, and the screen stays black. That is\n\
+         \x20        the key that was correctly avoided; this one is not it. -->\n\
+         \x20   <key>UIApplicationSceneManifest</key>\n\
+         \x20   <dict>\n\
+         \x20       <key>UIApplicationSupportsMultipleScenes</key>\n\
+         \x20       <false/>\n\
+         \x20       <key>UISceneConfigurations</key>\n\
+         \x20       <dict>\n\
+         \x20           <key>UIWindowSceneSessionRoleApplication</key>\n\
+         \x20           <array>\n\
+         \x20               <dict>\n\
+         \x20                   <key>UISceneConfigurationName</key>\n\
+         \x20                   <string>Default Configuration</string>\n\
+         \x20                   <key>UISceneDelegateClassName</key>\n\
+         \x20                   <string>FacetUIKitSceneDelegate</string>\n\
+         \x20               </dict>\n\
+         \x20           </array>\n\
+         \x20       </dict>\n\
+         \x20   </dict>\n\
          \x20   <key>UIDeviceFamily</key>\n\
          \x20   <array>\n\
          \x20       <integer>1</integer>\n\
@@ -6128,9 +6155,25 @@ fn run_init(args: &[OsString]) -> ExitCode {
          \x20   </array>\n\
          \x20   <key>UILaunchScreen</key>\n\
          \x20   <dict/>\n\
+         \x20   <!-- ALL FOUR, and this is not a preference. iPadOS grants an app a\n\
+         \x20        real, resizable window only if it supports every orientation;\n\
+         \x20        with three it hands out a FULL-SCREEN-SIZED canvas and scales\n\
+         \x20        that into whatever window the user drags. Measured on an iPad\n\
+         \x20        Pro 11: with three orientations the app was told 834x1194 while\n\
+         \x20        its window was 504x722 — a 0.60 scale, which reads as \"the text\n\
+         \x20        is too big\" and hides every layout bug behind it. With four it\n\
+         \x20        is told 507x727, the size it actually has. -->\n\
          \x20   <key>UISupportedInterfaceOrientations</key>\n\
          \x20   <array>\n\
          \x20       <string>UIInterfaceOrientationPortrait</string>\n\
+         \x20       <string>UIInterfaceOrientationPortraitUpsideDown</string>\n\
+         \x20       <string>UIInterfaceOrientationLandscapeLeft</string>\n\
+         \x20       <string>UIInterfaceOrientationLandscapeRight</string>\n\
+         \x20   </array>\n\
+         \x20   <key>UISupportedInterfaceOrientations~ipad</key>\n\
+         \x20   <array>\n\
+         \x20       <string>UIInterfaceOrientationPortrait</string>\n\
+         \x20       <string>UIInterfaceOrientationPortraitUpsideDown</string>\n\
          \x20       <string>UIInterfaceOrientationLandscapeLeft</string>\n\
          \x20       <string>UIInterfaceOrientationLandscapeRight</string>\n\
          \x20   </array>\n\

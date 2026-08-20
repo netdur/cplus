@@ -213,6 +213,12 @@ fn attach_root(win: *u8, root: *core::Node) {
     // A first layout, now: UIKit lays out on the next turn of the loop and the
     // tree would otherwise sit at its mount-time size (zero) for one frame.
     scheduler::tick_now();
+    // ...and every layout after it that a SIZE CHANGE asks for. Rotation and,
+    // on iPadOS, a window the user drags: UIKit tells a view by calling
+    // `layoutSubviews` on it and posts nothing, so without this the tree keeps
+    // the size it launched at forever. Idempotent per host — a second
+    // `open_window` re-states the watch on the same view.
+    let _w: u64 = scheduler::watch_host_size(content, root);
     // THE AGENT FOLLOWS THE WINDOW, AND ON THIS PLATFORM THAT LINE LIVES HERE
     // rather than in the facade. The macOS facade attaches straight after
     // `open_window`, which works because the mount happened inside that call;
@@ -1248,7 +1254,29 @@ fn relayout_walk(n: *core::Node) {
 //
 // iOS 26. On anything older the method is never called and there is nothing to
 // re-measure, because there is no windowing to leave.
+//
+// ONLY WHEN THE ANSWER CHANGED, and that is the whole of the second version.
+//
+// This fires for every frame of a DRAG, and `relayout_all` marks every node in
+// the tree content-changed — so a drag was re-measuring the entire tree dozens
+// of times a second, with no cache hit possible, while `layoutSubviews` was
+// already laying the same tree out correctly in the same frames. The two
+// answers came from different instants of an animating window, and the content
+// wobbled between them: reported as the text "wiggling like rubber", which is
+// what two positions a few tenths of a point apart look like at 60Hz.
+//
+// The reservation is a function of the control style and ONE BOOLEAN — is this
+// app in a window — and neither moves while a window changes size. So the
+// invalidation happens when that pair changes, which is entering or leaving the
+// windowed state, and a resize inside it costs nothing.
+static LAST_RESERVED_W: f64 = 0.0f64 - 1.0f64;
+static LAST_RESERVED_H: f64 = 0.0f64 - 1.0f64;
+
 fn imp_scene_geometry_changed(self_obj: *u8, cmd: *u8, scene: *u8, previous: *u8) {
+    let r: Reservation = window_buttons_reservation_now();
+    if r.width == LAST_RESERVED_W && r.height == LAST_RESERVED_H { return; }
+    LAST_RESERVED_W = r.width;
+    LAST_RESERVED_H = r.height;
     relayout_all();
     return;
 }

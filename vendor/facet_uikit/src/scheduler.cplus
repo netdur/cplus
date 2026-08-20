@@ -433,6 +433,12 @@ fn observe_size(n: *core::Node, cb: fn(*u8), ctx: *u8) -> u64 {
     // that ancestor's frame is the one to watch. facet_appkit reaches the same
     // rule; a screen root is exactly such a node.
     if v == (0 as *u8) { v = nearest_backed_view(n); }
+    return watch_view_size(v, cb, ctx);
+}
+
+// The same observer, given the VIEW rather than a node — because the one this
+// backend needs most is the window's content view, which is nobody's node.
+fn watch_view_size(v: *u8, cb: fn(*u8), ctx: *u8) -> u64 {
     if v == (0 as *u8) { return 0 as u64; }
     WATCH_SEQ = WATCH_SEQ +% (1 as u64);
     let cls: *u8 = watch_class_for(v);
@@ -442,6 +448,51 @@ fn observe_size(n: *core::Node, cb: fn(*u8), ctx: *u8) -> u64 {
         view: v, cb: cb, ctx: ctx, live: true,
     });
     return WATCH_SEQ;
+}
+
+// ---- the host's own size --------------------------------------------------
+//
+// THE WINDOW CHANGES SIZE AND THE TREE HAS TO HEAR ABOUT IT. AppKit posts a
+// notification and `facet_appkit` rides it; UIKit posts nothing, and until this
+// existed nothing in this backend asked — so `tick` never ran, because `tick`
+// only runs when something raised SYNC_PENDING, and a resize raised nothing.
+//
+// The symptom, measured on a paired iPad (iPadOS 26, resizable windows): an app
+// launched in landscape and then rotated kept laying out at 1194x777 inside an
+// 834x1194 window. Its content sat where the OLD box had centred it — right of
+// centre and high — and the tree reported the launch-time size to anything that
+// asked, including the inspector. A phone rotation is the same bug with fewer
+// ways to notice.
+//
+// IT LAYS OUT HERE, synchronously, and the first version did not — which is
+// the difference between a resize that tracks and one that flickers.
+//
+// Raising the flag and letting the run loop's `beforeWaiting` observer do the
+// work is the path every other change in this backend takes, and for a change
+// an app makes it is the right one: it coalesces. A RESIZE is not that. UIKit
+// has already committed the window's new size by the time the observer runs, so
+// the frame the user sees shows the PREVIOUS layout, and the next one snaps to
+// the new one. Dragging a window is dozens of those in a row, and it reads as
+// the content flickering between two positions — reported exactly that way, and
+// against a Mac that is smooth, because AppKit lays out inside the resize.
+//
+// `layoutSubviews` is where a view is told to place its subviews, so placing
+// them is what happens here. The recursion it was avoiding is not there to
+// avoid: this writes the frames of views INSIDE the host, and a subview's frame
+// does not re-trigger its host's `layoutSubviews`. Only setting the host's own
+// frame would, and nothing here does.
+fn on_host_resized(ctx: *u8) {
+    let root: *core::Node = ctx as *core::Node;
+    if root == (0 as *core::Node) { return; }
+    layout_window(root);
+    return;
+}
+
+// The root is carried as the watch's context so the callback lays out THIS
+// window rather than every window: a phone has one, but the seam should not
+// make that an assumption.
+fn watch_host_size(content: *u8, root: *core::Node) -> u64 {
+    return watch_view_size(content, on_host_resized, root as *u8);
 }
 
 // Cancelled by INDEX, and the entry stays: the view keeps its subclass (moving
