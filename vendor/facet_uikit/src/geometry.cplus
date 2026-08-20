@@ -49,6 +49,48 @@ fn set_view_frame(v: *u8, r: rt::Rect) {
     return;
 }
 
+// ---- no implicit animation while a layout is PUSHED ---------------------------
+//
+// THIS IS THE ONE PLACE THE APPKIT PORT COULD NOT BE COPIED, because the
+// default is inverted between the two frameworks and copying preserved the
+// AppKit default rather than the AppKit BEHAVIOUR.
+//
+// `-[NSView setFrame:]` is never implicitly animated. Motion on that side is
+// opt-in and explicit — the `animator` proxy inside an `NSAnimationContext`
+// grouping, which is what `paint::apply_animate` deliberately reaches for. So
+// facet_appkit's frame walk needs no guard on the window path and it has none.
+//
+// `-[UIView setFrame:]` is implicitly animated whenever it runs inside an
+// ambient animation, because UIKit's `-actionForLayer:forKey:` returns NSNull
+// only OUTSIDE one. And this walk runs inside one on every frame of an iPad
+// window drag: UIKit drives a scene geometry change as an animated transition
+// and calls `layoutSubviews` from within it, so every frame this pass writes
+// inherits that animation's duration and curve. Each drag frame then retargets
+// an interpolation the previous frame started, and content that should track
+// the window edge trails it on a spring instead — reported as the text
+// "wiggling, like rubber", macOS smooth, iPad only.
+//
+// The layout pass is a PLACEMENT, not a move. facet has a verb for motion and
+// this is not it: `animate_*` drives explicit layer animations in `paint`, and
+// nothing about a frame walk should interpolate. So actions are off for the
+// walk, which is the same claim `facet_appkit`'s `without_implicit_animation_
+// begin` makes about a row being placed — the same two msgsends, made here for
+// a platform where they are load-bearing rather than cheap insurance.
+fn without_implicit_animation_begin() {
+    let cls: *u8 = rt::get_class(#str_ptr("CATransaction\0"));
+    if cls == (0 as *u8) { return; }
+    { rt::msg_void(cls, rt::sel(#str_ptr("begin\0"))) };
+    { rt::msg_void_i8(cls, rt::sel(#str_ptr("setDisableActions:\0")), 1 as i8) };
+    return;
+}
+
+fn without_implicit_animation_end() {
+    let cls: *u8 = rt::get_class(#str_ptr("CATransaction\0"));
+    if cls == (0 as *u8) { return; }
+    { rt::msg_void(cls, rt::sel(#str_ptr("commit\0"))) };
+    return;
+}
+
 // Lay `root` out at the host's size, then push the frames onto the views.
 // `scale` is the screen scale (2.0 / 3.0 on iOS): snapping frames to the device
 // pixel grid keeps text crisp AND keeps the numbers bit-stable pass to pass,
@@ -57,7 +99,11 @@ fn relayout_root(root: *core::Node, width: f64, height: f64, scale: f64) {
     if root == (0 as *core::Node) { return; }
     { (*root).calculate_layout(width: width, height: height) };
     if scale > 0.0f64 { { (*root).round_to_pixel(scale) }; }
+    // The walk only — `calculate_layout` and `round_to_pixel` touch no view, and
+    // a transaction is held for as few statements as it can be.
+    without_implicit_animation_begin();
     reposition(root);
+    without_implicit_animation_end();
     return;
 }
 

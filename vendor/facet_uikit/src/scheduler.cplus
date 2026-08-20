@@ -180,21 +180,33 @@ fn layout_window(root: *core::Node) {
     let w: f64 = f.w - ins.left - ins.right;
     let h: f64 = f.h - ins.top - ins.bottom;
     geometry::relayout_root(root, w, h, geometry::screen_scale());
+    // GUARDED FOR THE SAME REASON THE WALK IS, and separately because the walk's
+    // transaction has already committed by here. These are the frames
+    // `relayout_root` does NOT write — the root's own view, or the topmost
+    // backed views of a pass-through root — and on a drag they are the ones
+    // carrying the whole tree, so an implicit animation on them moves
+    // everything. See `geometry::without_implicit_animation_begin`.
+    //
+    // An `else` rather than the early return this used to take: the commit has
+    // to run down both arms, and C+ has no defer to hang it on.
+    geometry::without_implicit_animation_begin();
     // The root's own view fills the safe box: mount inserted it nowhere (the
     // facade did), so the frame walk never sizes it.
     let rv: *u8 = core::view_of(root);
     if rv != (0 as *u8) {
         geometry::set_view_frame(rv, rt::Rect { x: ins.left, y: ins.top, w: w, h: h });
-        return;
+    } else {
+        // A pass-through root has no view of its own, so the facade put its
+        // topmost BACKED descendants in the window instead — and those are the
+        // views the inset has to move, or a DSL-authored screen ignores the safe
+        // area that a keyed one honours.
+        //
+        // Unconditional, because it PLACES rather than nudges: with a zero inset
+        // it writes the frames the walk just computed, which is what they
+        // already are.
+        place_root_views(root, ins.left, ins.top);
     }
-    // A pass-through root has no view of its own, so the facade put its topmost
-    // BACKED descendants in the window instead — and those are the views the
-    // inset has to move, or a DSL-authored screen ignores the safe area that a
-    // keyed one honours.
-    //
-    // Unconditional, because it PLACES rather than nudges: with a zero inset it
-    // writes the frames the walk just computed, which is what they already are.
-    place_root_views(root, ins.left, ins.top);
+    geometry::without_implicit_animation_end();
     return;
 }
 
