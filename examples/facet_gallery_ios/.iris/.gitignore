@@ -1,0 +1,4 @@
+# The project database is local state, not source: a binary blob in
+# git grows on every edit and cannot be merged.
+iris.db
+iris.db-*
