@@ -6069,6 +6069,26 @@ fn run_init(args: &[OsString]) -> ExitCode {
          int main(int argc, char *argv[]) {{\n    return {sym}_main();\n}}\n"
     );
 
+    // THE BUNDLE ID IS NOT THE PACKAGE NAME. Apple builds an App ID *name* out
+    // of the identifier — `dev.cplus.test_app` becomes "XC dev cplus test_app"
+    // — and rejects the result if it holds anything but alphanumerics, spaces,
+    // hyphens and periods. A C+ package name is full of underscores, so the
+    // obvious substitution mints nothing:
+    //
+    //     error: An attribute in the provided entity has invalid value:
+    //            The attribute 'name' is invalid: 'XC dev cplus test_app'
+    //     error: No profiles for 'dev.cplus.test_app' were found
+    //
+    // Measured against a real iPad. The failure arrives at signing time, weeks
+    // after `init`, and reads as a provisioning problem rather than as a name
+    // this file chose — which is why the rule lives here rather than in advice.
+    // iris's own scaffold reduces the same way, so a project made by either
+    // route gets the same id.
+    let app_id: String = {
+        let cleaned: String = proj_name.chars().filter(|c| c.is_ascii_alphanumeric()).collect();
+        if cleaned.is_empty() { "app".to_string() } else { cleaned }
+    };
+
     // A bundle display name has to start somewhere; the package name with its
     // first letter raised reads better on a home screen than `myapp`.
     let display = {
@@ -6088,7 +6108,7 @@ fn run_init(args: &[OsString]) -> ExitCode {
          \x20   <key>CFBundleExecutable</key>\n\
          \x20   <string>{display}</string>\n\
          \x20   <key>CFBundleIdentifier</key>\n\
-         \x20   <string>dev.cplus.{proj_name}</string>\n\
+         \x20   <string>dev.cplus.{app_id}</string>\n\
          \x20   <key>CFBundleName</key>\n\
          \x20   <string>{display}</string>\n\
          \x20   <key>CFBundlePackageType</key>\n\
