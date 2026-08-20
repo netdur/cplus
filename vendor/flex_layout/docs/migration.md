@@ -25,6 +25,11 @@ are easy to rediscover the hard way. Signatures: [ref.md](ref.md).
 | `StyleLength::undef()` | `StyleLength::undefined()` |
 | `.width_pct` / `.height_pct` (DSL) | `.width_percent` / `.height_percent` |
 | `node.children` (public field) | private — use `child_ptr(at:)` |
+| `add_breakpoint(name, f64) -> bool` | `add_breakpoint(name, up_to:) -> Status` |
+| `set_fallback(n) -> bool` | `-> Status` |
+| `remove_breakpoint(n) -> bool` | `-> Option[f64]` (the threshold it had) |
+| `breakpoint()` + `matched_breakpoint()` | `breakpoint_width() -> Option[f64]` |
+| `same_class(other)` | `is_same_class(other)` |
 
 Labels are optional in C+, so adding parameter names and defaults broke no
 positional call site. Only the table above is breaking.

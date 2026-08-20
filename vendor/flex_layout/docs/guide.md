@@ -396,13 +396,52 @@ matching rule wins**, so a broad hide followed by a narrow show reads the way
 it is written. When no rule matches, the node returns to its parked display —
 `Grid` if it has grid tracks, otherwise `Flex` — so a hide is never permanent.
 
-### The older `flex_layout/responsive`
+## Responsive configuration (superseded)
 
-`ResponsiveConfig` / `LayoutEnvironment` still ship and still work; they are
-superseded, not removed. They classify a size the HOST supplies into a name
-and stop there, leaving the observer and the reapply to the caller — which is
-most of the job, and what bands do for you. `Orientation` has no equivalent on
-purpose: device pose is not a layout input.
+`flex_layout/responsive` still ships and still works. Prefer bands above in
+new code — this section is here for callers that already use it.
+
+It converts viewport numbers supplied by a host into application-defined
+layout classes, and stops there: the observer and the reapply stay the
+caller's job, which is most of the work bands now do for you.
+
+```cplus
+import "flex_layout/responsive" as responsive;
+
+var screens: responsive::ResponsiveConfig =
+    responsive::ResponsiveConfig::new("desktop");
+screens.add_breakpoint("mobile", up_to: 300.0f64);
+screens.add_breakpoint("tablet", up_to: 900.0f64);
+
+let env: responsive::LayoutEnvironment =
+    screens.resolve(viewport_width, viewport_height);
+
+var root: flex::Node = if env.is("mobile") {
+    compact_layout()
+} else {
+    regular_layout()
+};
+root.calculate_layout(width: env.width(), height: env.height());
+```
+
+Each breakpoint is an inclusive maximum width. The smallest matching maximum
+wins, independent of registration order; the fallback applies above all
+breakpoints. Names such as `mobile`, `compact`, or `sidebar` have no built-in
+meaning.
+
+Thresholds are expressed in the same logical unit as `viewport_width`: AppKit
+points, CSS pixels, or another unit selected by the host. The module does not
+perform DPI conversion or inspect a physical display.
+
+On resize, resolve again. When `next.is_same_class(previous)` is true, the
+existing tree can be passed straight to `calculate_layout`. When it is false,
+reapply the new class's styles or rebuild the tree before layout.
+
+Two differences from bands decide which to reach for. This classifies a
+viewport the HOST supplies; a band is measured against the node's nearest
+contained ancestor, which is not the window whenever the app has been handed
+part of one. And `Orientation` has no band equivalent on purpose: device pose
+is not a layout input.
 
 ## Adapter sketch
 

@@ -57,10 +57,31 @@ the screen's width would answer a question nobody asked.
 Passing no `bands` skips the mechanism entirely, so rules cost nothing until
 a set is supplied.
 
-`flex_layout/responsive` (`ResponsiveConfig`, `LayoutEnvironment`) still ships
-for existing callers. It classifies a viewport the host supplies and leaves
-reapplying styles to the caller; bands do that part for you. Prefer bands in
-new code.
+## Responsive configuration (superseded)
+
+`flex_layout/responsive` still ships for existing callers; prefer bands above
+in new code. The host supplies the viewport size and chooses every class name
+and threshold, and reapplying the styles stays the host's job:
+
+```cplus
+import "flex_layout/responsive" as responsive;
+
+var screens: responsive::ResponsiveConfig =
+    responsive::ResponsiveConfig::new("desktop");
+screens.add_breakpoint("mobile", 300.0f64);  // width <= 300
+screens.add_breakpoint("tablet", 900.0f64);  // 300 < width <= 900
+
+let env: responsive::LayoutEnvironment = screens.resolve(view_width, view_height);
+if env.is("mobile") {
+    // Configure/build the compact form.
+}
+```
+
+The module knows no devices, platforms, windows, or UI toolkits. On resize,
+resolve again. If `next.is_same_class(previous)` is true, recalculate the
+existing fluid layout; otherwise reapply class-specific styles or rebuild it.
+Thresholds use the same logical unit as the supplied viewport (points, CSS
+pixels, or another host-selected unit), never physical-screen detection.
 
 ## Docs
 

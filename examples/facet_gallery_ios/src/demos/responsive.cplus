@@ -147,6 +147,12 @@ impl Responsive: component::Component {
         how.add(shell::caption("The rule is measured against the nearest ancestor whose size does not depend on its own contents — never the window. Hiding a child inside a content-sized box would shrink it, which would un-hide the child, forever; refusing those boxes is what makes one extra layout pass enough to settle."));
         body.add(shell::card("WHICH BOX IT ASKS", how));
 
+        // The observer is still here for the readout and the axis flip, so how
+        // it works on this backend is still worth knowing.
+        var seam: flex::Builder = flex::Builder::new();
+        seam.add(shell::caption("`observe_size` was one of the seams this backend left empty — AppKit posts a frame notification and UIKit posts nothing. What UIKit does is CALL a method, so the observer is `layoutSubviews` added to the observed view's own class, one subclass per observed view through `object_setClass`. That is why a scroll view stays a scroll view."));
+        body.add(shell::card("HOW IT KNOWS", seam));
+
         var root: core::Node = shell::page("Responsive",
             "The layout following the box it actually has, live.",
             body, "rp:root");
