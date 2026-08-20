@@ -29,17 +29,24 @@ are easy to rediscover the hard way. Signatures: [ref.md](ref.md).
 Labels are optional in C+, so adding parameter names and defaults broke no
 positional call site. Only the table above is breaking.
 
-## `flex_layout/responsive` is gone (2026-08-20)
+## `flex_layout/responsive` is superseded, not removed (2026-08-21)
 
-`ResponsiveConfig` / `LayoutEnvironment` are removed, superseded by
-`flex_layout/bands` — see [guide.md](guide.md), "Conditional visibility".
+`ResponsiveConfig` / `LayoutEnvironment` still ship and still work. Prefer
+`flex_layout/bands` in new code — see [guide.md](guide.md), "Conditional
+visibility — bands".
 
-The old module classified a caller-supplied viewport into a named class and
-left the host to reapply styles; it had no consumers, because that split is
-the work. A `BandSet` is the same idea with two differences that matter: a
-band is a box constraint rather than one max-width, and the ENGINE evaluates
-it during layout, so a node carrying `hide("compact")` needs no observer, no
-key lookup and no re-run on resize.
+The old module classifies a caller-supplied viewport into a named class and
+leaves the host to reapply styles, which is most of the work. A `BandSet` is
+the same idea with two differences that matter: a band is a box constraint
+rather than one max-width, and the ENGINE evaluates it during layout against
+the node's nearest contained ancestor, so a node carrying `hide("compact")`
+needs no observer, no key lookup and no re-run on resize.
+
+It was briefly deleted on 2026-08-20 on the grounds that it had no consumers.
+That was wrong: the search covered this repository only, and `vendor/` is
+symlinked into others — `iris`'s `width_class` component builds on it. A
+module in a shared vendor tree is public whatever this repo's own grep says,
+so it gets deprecated, not deleted.
 
 | Old | New |
 |---|---|
@@ -50,11 +57,11 @@ key lookup and no re-run on resize.
 | `env.is_same_class(other)` | — (the pass re-decides; nothing to compare) |
 | `LayoutEnvironment::orientation()` | — removed: device pose is not a layout input |
 
-`Orientation` is gone rather than renamed. A phone in landscape, a tablet in
-Split View and a foldable's outer screen can hand you the same box, so the
-pose was never the question — the box is. A band constraining `max_height`
-says the useful half of what portrait/landscape was reaching for, without
-asking what the hardware is doing.
+`Orientation` has no band equivalent, deliberately. A phone in landscape, a
+tablet in Split View and a foldable's outer screen can hand you the same box,
+so the pose was never the question — the box is. A band constraining
+`max_height` says the useful half of what portrait/landscape was reaching for,
+without asking what the hardware is doing.
 
 ## Not yet migrated
 

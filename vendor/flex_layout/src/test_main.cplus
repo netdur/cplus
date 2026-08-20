@@ -4,3 +4,4 @@
 
 import "./flex_layout" as flex;
 import "./bands" as bands;
+import "./responsive" as responsive;   // superseded by bands; still shipped

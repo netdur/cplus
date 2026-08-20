@@ -396,6 +396,14 @@ matching rule wins**, so a broad hide followed by a narrow show reads the way
 it is written. When no rule matches, the node returns to its parked display —
 `Grid` if it has grid tracks, otherwise `Flex` — so a hide is never permanent.
 
+### The older `flex_layout/responsive`
+
+`ResponsiveConfig` / `LayoutEnvironment` still ship and still work; they are
+superseded, not removed. They classify a size the HOST supplies into a name
+and stop there, leaving the observer and the reapply to the caller — which is
+most of the job, and what bands do for you. `Orientation` has no equivalent on
+purpose: device pose is not a layout input.
+
 ## Adapter sketch
 
 Walk the node tree with your view tree; set frames from `frame()`; apply

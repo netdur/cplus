@@ -57,6 +57,11 @@ the screen's width would answer a question nobody asked.
 Passing no `bands` skips the mechanism entirely, so rules cost nothing until
 a set is supplied.
 
+`flex_layout/responsive` (`ResponsiveConfig`, `LayoutEnvironment`) still ships
+for existing callers. It classifies a viewport the host supplies and leaves
+reapplying styles to the caller; bands do that part for you. Prefer bands in
+new code.
+
 ## Docs
 
 | File | Role |
