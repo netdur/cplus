@@ -5854,7 +5854,16 @@ fn run_init(args: &[OsString]) -> ExitCode {
              uikit       = \"*\"\n\
              objc        = \"*\"\n\
              quartzcore  = \"*\"\n\
-             webkit      = \"*\"\n{macos_deps}"
+             webkit      = \"*\"\n\n\
+             # What `serve_if_asked` in src/main_ios.cplus links, named here for\n\
+             # the same flat-set reason as the backend's own closure.\n\
+             inspector   = \"*\"\n\
+             facet_agent = \"*\"\n\
+             agent_uikit = \"*\"\n\
+             agent_core  = \"*\"\n\
+             agent_inapp = \"*\"\n\
+             agent_mcp   = \"*\"\n\
+             json        = \"*\"\n{macos_deps}"
         , macos_deps = if platforms.iter().any(|p| p == "macos") {
             "\n# The same app on the desktop: facet's AppKit backend and its closure.\n\
              [macos.dependencies]\n\
@@ -5862,7 +5871,18 @@ fn run_init(args: &[OsString]) -> ExitCode {
              appkit       = \"*\"\n\
              objc         = \"*\"\n\
              quartzcore   = \"*\"\n\
-             webkit       = \"*\"\n"
+             webkit       = \"*\"\n\n\
+             # What `serve_if_asked` in src/main.cplus links. Named here for the\n\
+             # same reason the backend's closure is: the resolver checks every\n\
+             # import against this one flat set. Delete these with that line if\n\
+             # you would rather the binary could not be inspected.\n\
+             inspector    = \"*\"\n\
+             facet_agent  = \"*\"\n\
+             agent_appkit = \"*\"\n\
+             agent_core   = \"*\"\n\
+             agent_inapp  = \"*\"\n\
+             agent_mcp    = \"*\"\n\
+             json         = \"*\"\n"
         } else {
             ""
         })
@@ -5991,17 +6011,49 @@ fn run_init(args: &[OsString]) -> ExitCode {
          // produces a STATICLIB, and a library has no entry the system knows to\n\
          // call. It does not return — `UIApplicationMain` owns the process from\n\
          // here — so the value below is unreachable in a running app.\n\n\
-         import \"./app\" as app;\n\n\
-         export extern fn {sym}_main() -> i32 {{\n    return app::run();\n}}\n"
+         import \"./app\" as app;\n\
+         import \"inspector/serve\" as inspect;\n\n\
+         export extern fn {sym}_main() -> i32 {{\n\
+         \x20   // Inspectable ON REQUEST, the same line the desktop entry has.\n\
+         \x20   // `FACET_INSPECT` carries a PORT here — a Unix socket would sit\n\
+         \x20   // inside the app sandbox where the launcher cannot reach it — and\n\
+         \x20   // `simctl launch` passes it in as `SIMCTL_CHILD_FACET_INSPECT`.\n\
+         \x20   inspect::serve_if_asked();\n\
+         \x20   return app::run();\n}}\n"
     );
 
-    let facet_desktop_entry = format!(
-        "// {proj_name} — the desktop entry. The same `app::run` the iOS shell\n\
-         // calls; `facet_runtime` selects its own per-platform backend, so there\n\
-         // is nothing to install here.\n\n\
-         import \"./app\" as app;\n\n\
-         fn main() -> i32 {{\n    return app::run();\n}}\n"
-    );
+    // macOS gets one line the other desktops do not: the inspector is an
+    // AppKit package, and `serve_if_asked` is what makes a launched binary
+    // inspectable BY THE LAUNCHER. An IDE (iris's Run) sets FACET_INSPECT to a
+    // socket path and connects a remote backend to it; without this call the
+    // variable arrives at a process that serves nothing, and the IDE's inspect
+    // pane sits empty against an app that is running perfectly. Scaffolded in
+    // because a fresh project's first Run is exactly when that reads as broken.
+    let facet_desktop_entry = |p: &str| -> String {
+        if p == "macos" {
+            format!(
+                "// {proj_name} — the desktop entry. The same `app::run` the iOS shell\n\
+                 // calls; `facet_runtime` selects its own per-platform backend, so there\n\
+                 // is nothing to install here.\n\n\
+                 import \"./app\" as app;\n\
+                 import \"inspector/serve\" as inspect;\n\n\
+                 fn main() -> i32 {{\n\
+                 \x20   // Inspectable ON REQUEST. `FACET_INSPECT` names a socket the\n\
+                 \x20   // launcher is listening on; started any other way there is no\n\
+                 \x20   // variable and this costs one getenv.\n\
+                 \x20   inspect::serve_if_asked();\n\
+                 \x20   return app::run();\n}}\n"
+            )
+        } else {
+            format!(
+                "// {proj_name} — the desktop entry. The same `app::run` the iOS shell\n\
+                 // calls; `facet_runtime` selects its own per-platform backend, so there\n\
+                 // is nothing to install here.\n\n\
+                 import \"./app\" as app;\n\n\
+                 fn main() -> i32 {{\n    return app::run();\n}}\n"
+            )
+        }
+    };
 
     // The bundle's `main` hands the process to C+ and never gets it back:
     // `UIApplicationMain` owns it from there. There is no AppDelegate.m and no
@@ -6085,7 +6137,7 @@ fn run_init(args: &[OsString]) -> ExitCode {
             let body = if p == "ios" {
                 facet_ios_entry.clone()
             } else {
-                facet_desktop_entry.clone()
+                facet_desktop_entry(p)
             };
             files.push((src.join(entry_file(p)), body));
         }
