@@ -996,15 +996,25 @@ fn a_swipe_offset_round_trips_through_the_association() -> bool {
 // Filed 2026-08-17: "every facet iOS app is textless in dark mode", on the
 // reading that a CODE-created UILabel keeps an opaque-black `textColor` default
 // while the root view takes the adaptive `systemBackgroundColor` — black on
-// black. It does not reproduce: three apps (a probe with no theme, the same
-// probe with the gallery's theme, and the gallery itself) render every label
-// white on the dark appearance.
+// black. Half of that was right, and the half that was wrong is what closed the
+// report as not-reproducible.
 //
-// The premise is what was wrong. `textColor` defaults to the ADAPTIVE label
-// colour, so there is nothing to fix — and that is also why the reported fix
-// ("set it to `labelColor`") changed nothing on screen: it assigned the colour
-// the label already had. A null result that looked like "the patch never
-// reached the binary" was really "the patch was a no-op".
+// `textColor` DOES default to the adaptive label colour — the three apps tried
+// (a probe with no theme, the same probe with the gallery's theme, and the
+// gallery itself) render every label white on the dark appearance, and the
+// reported fix ("set it to `labelColor`") changed nothing because it assigned
+// the colour the label already had. Those checks are below and they stand.
+//
+// THE ROOT VIEW WAS THE OTHER HALF, and it did not take `systemBackgroundColor`
+// at all: `push_screen` and `present_screen` each wrote that colour onto the
+// controller they made, and the BASE controller — the primary screen, the one
+// an app that never pushes anything lives on for its whole life — was never
+// given one. A UIViewController's view starts NIL and draws the window's black.
+// So the app was black in the LIGHT appearance too, with black adaptive labels
+// on it, which is why every theme-setting app tried here looked fine and a bare
+// `cpc init --platform ios` app showed its button and neither of its labels.
+// Fixed 2026-08-20 in `window::dress_screen`, asserted at the bottom of this
+// block.
 //
 // It is checked rather than argued because the failure it guards against is
 // invisible to every other check in this file: a label with the right text, the
@@ -1051,6 +1061,30 @@ fn a_created_label_is_readable_on_the_light_appearance() -> bool {
     let l: uik::Label = uik::Label::from_raw(v);
     let light: f64 = label_color_components(l.text_color(), uik::UserInterfaceStyle::Light);
     return light >= 0.0f64 && light < 0.5f64;
+}
+
+// The other half of the same report, at the layer it actually lived on: the
+// controller this package makes for a screen must carry an ADAPTIVE background,
+// or a correct label is drawn on black in both appearances. Asserted through
+// `dress_screen`, so deleting the call is what fails this.
+fn a_screen_controller_gets_an_adaptive_background() -> bool {
+    let vc: *u8 = { rt::alloc_init(#str_ptr("UIViewController\0")) };
+    if vc == (0 as *u8) { return false; }
+    window::dress_screen(vc);
+    let v: *u8 = { rt::msg_id(vc, rt::sel(#str_ptr("view\0"))) };
+    if v == (0 as *u8) { return false; }
+    let bg: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("backgroundColor\0"))) };
+    // NIL is the failure this exists for: it is the state the base controller
+    // was in, and it reads as black rather than as "no colour".
+    if bg == (0 as *u8) { return false; }
+    let c: uik::Color = uik::Color::from_raw(bg);
+    let dark: f64 = label_color_components(c, uik::UserInterfaceStyle::Dark);
+    let light: f64 = label_color_components(c, uik::UserInterfaceStyle::Light);
+    if dark < 0.0f64 || light < 0.0f64 { return false; }
+    // Light background under the light appearance, dark under the dark one —
+    // the opposite way round from the label, which is the whole point of a pair
+    // that has to stay legible together.
+    return light > 0.5f64 && dark < 0.5f64;
 }
 
 // The property this rests on, stated once: the label colour ADAPTS. If a future
@@ -1396,6 +1430,8 @@ fn run_all() -> i32 {
           a_created_label_is_readable_on_the_light_appearance());
     check("the default label colour adapts to the appearance",
           the_default_label_colour_adapts_to_the_appearance());
+    check("a screen controller gets an adaptive background",
+          a_screen_controller_gets_an_adaptive_background());
     check("a scroll view keeps its clipping", scroll_view_keeps_its_clipping());
     check("a plain view does not start clipping", a_plain_view_does_not_start_clipping());
     check("a radius clips whatever the view is", a_radius_clips_whatever_the_view_is());

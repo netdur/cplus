@@ -378,6 +378,27 @@ static POPPED_FN: fn(*u8) = 0 as fn(*u8);
 
 fn set_popped(f: fn(*u8)) { POPPED_FN = f; return; }
 
+// A screen's own background, which every controller this package makes has to
+// be given: a UIViewController's view starts with a NIL background colour and
+// draws the window's black through it, in the light appearance as much as the
+// dark one.
+//
+// It is a FUNCTION because the primary screen went without it for a release —
+// pushed and presented screens each wrote the colour inline and the base
+// controller did not — and the symptom was read as a label bug for months:
+// black text (the adaptive label colour, resolving correctly for a LIGHT
+// appearance) on a black root, so a fresh `cpc init --platform ios` app showed
+// its button and neither of its labels. See the report in selftest.cplus,
+// which asserts this.
+fn dress_screen(vc: *u8) {
+    if vc == (0 as *u8) { return; }
+    let v: *u8 = { rt::msg_id(vc, rt::sel(#str_ptr("view\0"))) };
+    if v == (0 as *u8) { return; }
+    { rt::msg_void_id(v, rt::sel(#str_ptr("setBackgroundColor:\0")),
+                      ui::Color::system_background_color().raw()) };
+    return;
+}
+
 // Push `root` as a new screen. `box_` is the facade's own handle, handed back
 // to `set_popped` when this screen goes away by any route.
 fn push_screen(root: *core::Node, title: str, box_: *u8) -> bool {
@@ -385,10 +406,9 @@ fn push_screen(root: *core::Node, title: str, box_: *u8) -> bool {
     let vc: *u8 = { rt::alloc_init(#str_ptr("UIViewController\0")) };
     if vc == (0 as *u8) { return false; }
     { rt::msg_void_id(vc, rt::sel(#str_ptr("setTitle:\0")), bridge::nsstring(title)) };
+    dress_screen(vc);
     let view: *u8 = { rt::msg_id(vc, rt::sel(#str_ptr("view\0"))) };
     if view != (0 as *u8) {
-        { rt::msg_void_id(view, rt::sel(#str_ptr("setBackgroundColor:\0")),
-                          ui::Color::system_background_color().raw()) };
         add_root_views(ui::View::from_raw(view), root);
     }
     // THE BAR COMES BACK for a pushed screen: it carries the back button, and
@@ -497,10 +517,9 @@ fn present_screen(root: *core::Node, title: str, box_: *u8) -> bool {
     let vc: *u8 = { rt::alloc_init(#str_ptr("UIViewController\0")) };
     if vc == (0 as *u8) { return false; }
     { rt::msg_void_id(vc, rt::sel(#str_ptr("setTitle:\0")), bridge::nsstring(title)) };
+    dress_screen(vc);
     let view: *u8 = { rt::msg_id(vc, rt::sel(#str_ptr("view\0"))) };
     if view != (0 as *u8) {
-        { rt::msg_void_id(view, rt::sel(#str_ptr("setBackgroundColor:\0")),
-                          ui::Color::system_background_color().raw()) };
         add_root_views(ui::View::from_raw(view), root);
     }
     // The sheet's own delegate, so a PULL-DOWN dismissal is reported. Without
@@ -773,6 +792,11 @@ fn imp_did_finish_launching(self_obj: *u8, cmd: *u8, application: *u8, options: 
     // the primary screen and is never popped.
     let base: *u8 = { rt::alloc_init(#str_ptr("UIViewController\0")) };
     if base != (0 as *u8) {
+        // THE SAME BACKGROUND EVERY OTHER SCREEN GETS. The primary one used to
+        // skip this, and skipping it is not a lighter default — a plain
+        // UIViewController's view has a NIL background colour, which draws as
+        // the window's black in BOTH appearances.
+        dress_screen(base);
         let navc: *u8 = { rt::msg_id(rt::get_class(#str_ptr("UINavigationController\0")),
                                      rt::sel(#str_ptr("alloc\0"))) };
         if navc != (0 as *u8) {
