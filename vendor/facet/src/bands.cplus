@@ -1,0 +1,141 @@
+// facet/bands — the application's size-band vocabulary.
+//
+// `flex_layout/bands` defines what a band IS and deliberately owns no global
+// state: the engine takes a `BandSet` as an argument so it stays a function of
+// its inputs. Something still has to hold one, though, and that something is
+// the host — which is this package. An app configures once at startup and
+// every backend's layout pass reads the same set:
+//
+//     bands::configure("watch", max_width: 120.0f64, max_height: 120.0f64);
+//
+//     sidebar.hide("compact");     // on the node, at build time
+//
+// An app that configures nothing still gets the six blessed bands, because
+// the point of a shared vocabulary is defeated the moment using it requires
+// setup: `tiny`, `compact`, `medium`, `expanded`, `large`, `xlarge`.
+//
+// WHAT A BAND IS MEASURED AGAINST is the node's nearest CONTAINED ancestor —
+// the closest box up the tree whose size does not depend on its own contents
+// — not the window. An app in Split View, on half a foldable, or in a resized
+// window has been handed a box, and the screen's size answers a question
+// nobody asked. See `flex_layout/bands` and `Node::apply_bands_walk`.
+
+import "flex_layout/bands" as fb;
+import "stdlib/status" as status;
+
+// The one set every layout pass reads. Zero-initialised — a zeroed `Vec` is a
+// valid empty one — and filled with the defaults on first touch, because a
+// `static` initialiser cannot run code.
+static APP_BANDS: fb::BandSet = #zero::[fb::BandSet]();
+static BANDS_READY: bool = false;
+
+// The app's band set, defaults installed on first call. Backends pass this
+// straight to `calculate_layout(bands:)`.
+fn bands() -> *fb::BandSet {
+    if !BANDS_READY {
+        BANDS_READY = true;
+        APP_BANDS = fb::BandSet::defaults();
+    }
+    return #addr_of(APP_BANDS);
+}
+
+// Define or retune a band. Re-using a name updates it rather than adding a
+// second entry, so calling this on every launch — or on a settings reload —
+// is idempotent.
+//
+// Edges are labelled and independently optional, so a caller writes only what
+// matters. An omitted edge is UNBOUNDED, not zero.
+//
+//     bands::configure("compact", max_width: 700.0f64);          // retune
+//     bands::configure("watch", max_width: 120.0f64,
+//                               max_height: 120.0f64);           // add
+fn configure(name: str,
+             min_width: f64 = fb::unset(), max_width: f64 = fb::unset(),
+             min_height: f64 = fb::unset(), max_height: f64 = fb::unset())
+             -> status::Status {
+    let p: *fb::BandSet = bands();
+    return { (*p).set(name, min_width: min_width, max_width: max_width,
+                            min_height: min_height, max_height: max_height) };
+}
+
+// Forget a band. Rules naming it stop firing; that is not an error.
+fn remove(name: str) -> bool {
+    let p: *fb::BandSet = bands();
+    return { (*p).remove(name) };
+}
+
+// Is `name` defined? Band names are `str`, so the compiler cannot catch a
+// typo — this is what a startup check or an inspector asks to catch
+// `hide("compat")` before someone hunts a node that never disappears.
+fn is_registered(name: str) -> bool {
+    let p: *fb::BandSet = bands();
+    return { (*p).is_registered(name) };
+}
+
+fn count() -> usize {
+    let p: *fb::BandSet = bands();
+    return { (*p).count() };
+}
+
+// Which band a box falls in, for a caller that wants to ask directly rather
+// than attach a rule — a screen choosing which of two subtrees to build, say.
+// Bands are predicates and may overlap, so this asks about ONE band rather
+// than classifying.
+fn matches(name: str, width: f64, height: f64) -> bool {
+    let p: *fb::BandSet = bands();
+    return { (*p).matches(name, width, height) };
+}
+
+// ───────────────────────────── tests ─────────────────────────────
+
+#[test]
+fn defaults_are_installed_without_configuration() {
+    // An app that never calls `configure` still has the vocabulary.
+    assert count() >= (6 as usize);
+    assert is_registered("compact");
+    assert is_registered("expanded");
+    assert !is_registered("compat");
+}
+
+#[test]
+fn the_set_is_shared_across_calls() {
+    // Every accessor must reach the SAME set — a per-call copy would mean an
+    // app's configuration never reached the layout pass.
+    let a: *fb::BandSet = bands();
+    let b: *fb::BandSet = bands();
+    assert a == b;
+}
+
+#[test]
+fn configure_retunes_a_blessed_band_in_place() {
+    let before: usize = count();
+    assert matches("compact", 420.0f64, 800.0f64);
+    assert configure("compact", min_width: 300.0f64, max_width: 400.0f64) == status::Status::Ok;
+    assert count() == before;                       // updated, not appended
+    assert !matches("compact", 420.0f64, 800.0f64); // new threshold is live
+    // Put it back so test order cannot matter.
+    assert configure("compact", min_width: 300.0f64, max_width: 600.0f64) == status::Status::Ok;
+    assert matches("compact", 420.0f64, 800.0f64);
+}
+
+#[test]
+fn a_custom_band_can_be_added_and_removed() {
+    assert !is_registered("watch");
+    assert configure("watch", max_width: 120.0f64, max_height: 120.0f64) == status::Status::Ok;
+    assert is_registered("watch");
+    assert matches("watch", 100.0f64, 100.0f64);
+    assert !matches("watch", 100.0f64, 800.0f64);   // tall is not a watch
+    assert remove("watch");
+    assert !remove("watch");
+    assert !is_registered("watch");
+}
+
+#[test]
+fn an_invalid_band_is_rejected_and_changes_nothing() {
+    let before: usize = count();
+    assert configure("") == status::Status::InvalidInput;
+    assert configure("nothing") == status::Status::InvalidInput;
+    assert configure("backwards", min_width: 900.0f64, max_width: 100.0f64)
+        == status::Status::InvalidInput;
+    assert count() == before;
+}

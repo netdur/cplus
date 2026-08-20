@@ -154,6 +154,10 @@ impl HybridWeb {
     fn display(this) -> flex::Display { return core::display_of(this._p); }
     fn set_shown(this, v: bool) -> HybridWeb { core::set_shown(this._p, v); return this; }
     fn is_hidden(this) -> bool { return core::is_hidden(this._p); }
+    fn hide_in(this, band: str) -> HybridWeb { core::hide_in(this._p, band); return this; }
+    fn show_in(this, band: str) -> HybridWeb { core::show_in(this._p, band); return this; }
+    fn clear_rules(this) -> HybridWeb { core::clear_rules(this._p); return this; }
+    fn rule_count(this) -> usize { return core::rule_count_of(this._p); }
     fn set_input_transparent(this, v: bool) -> HybridWeb { core::set_input_transparent(this._p, v); return this; }
     fn input_transparent(this) -> bool { return core::input_transparent(this._p); }
     fn set_flow_direction(this, v: vocab::FlowDirection) -> HybridWeb { core::set_flow_direction(this._p, v); return this; }

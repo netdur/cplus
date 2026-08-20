@@ -70,6 +70,7 @@ import "./theme" as theme;
 // facet whose wrong answer is a leak rather than a bug.
 import "./mount" as mount;
 import "./application" as app;
+import "./bands" as bands;
 
 fn approx(a: f64, b: f64) -> bool {
     let d: f64 = a - b;

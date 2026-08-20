@@ -30,6 +30,12 @@ Anything flex supports but facet does not wrap is reached with `node()`.
 
 `display: none` is how a node leaves the layout without leaving the tree.
 
+A node can also decide that for itself, by naming a size band instead of a
+number — `sidebar.hide_in("compact")`. The layout pass re-decides on every
+pass, against the box the node actually sits in rather than the window, so
+there is no size observer to arm and nothing to re-run on resize. See
+`facet/bands` in [ref.md](ref.md).
+
 ## Keys
 
 A key is an ADDRESS. `find("save")` resolves it, the agent surface uses it as

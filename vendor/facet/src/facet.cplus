@@ -501,6 +501,42 @@ fn parked_display_of(n: *Node) -> flex::Display {
 // to reach past facet into flex, where a setter raises no dirty bit, and then
 // remember `relayout()` by hand. Every other runtime layout write —
 // set_width, set_padding, set_grow — asks for the pass for you.
+// Conditional visibility: hide or show this node while the box it sits in
+// falls in a named band. The runtime half of the fluent `hide`/`show` used at
+// build time — same rules, same store, reachable after mount.
+//
+// The rule is resolved against the node's nearest CONTAINED ancestor during
+// the layout pass, so unlike `set_display` there is nothing to re-evaluate by
+// hand on resize: the pass that already runs does it. `facet/bands` holds the
+// vocabulary and ships six bands whether or not an app configures any.
+fn hide_in(n: *Node, band: str) {
+    if n == (0 as *Node) { return; }
+    { (*n).add_rule(band, hide: true) };
+    touch(n, props::C_LAYOUT);
+    return;
+}
+
+fn show_in(n: *Node, band: str) {
+    if n == (0 as *Node) { return; }
+    { (*n).add_rule(band, hide: false) };
+    touch(n, props::C_LAYOUT);
+    return;
+}
+
+// Drop every rule on this node. Its display stops being governed by bands and
+// keeps whatever it had — an explicit `set_display` still works either way.
+fn clear_rules(n: *Node) {
+    if n == (0 as *Node) { return; }
+    { (*n).clear_rules() };
+    touch(n, props::C_LAYOUT);
+    return;
+}
+
+fn rule_count_of(n: *Node) -> usize {
+    if n == (0 as *Node) { return 0 as usize; }
+    return { (*n).rule_count() };
+}
+
 fn set_display(n: *Node, v: flex::Display) {
     if n == (0 as *Node) { return; }
     { (*n).set_display(v) };
@@ -1888,6 +1924,12 @@ impl flex::Node {
     fn is_enabled(this) -> bool { return is_enabled(#addr_of(this)); }
     fn set_visible(ref this, v: bool) { set_visible(#addr_of(this), v); return; }
     fn set_shown(ref this, v: bool) { set_shown(#addr_of(this), v); return; }
+    // The band pair. `flex::Node` has fluent `hide`/`show` of its own for
+    // the build-time chain; these are the mutating spelling, and they raise
+    // the layout bit the fluent ones cannot (a node being built is not yet
+    // mounted, so there is nothing to touch).
+    fn hide_in(ref this, band: str) { hide_in(#addr_of(this), band); return; }
+    fn show_in(ref this, band: str) { show_in(#addr_of(this), band); return; }
     fn set_padding_edge(ref this, edge: flex::Edge, v: f64) { set_padding_edge(#addr_of(this), edge, v); return; }
     fn set_margin_edge(ref this, edge: flex::Edge, v: f64) { set_margin_edge(#addr_of(this), edge, v); return; }
     fn is_hidden(this) -> bool { return is_hidden(#addr_of(this)); }

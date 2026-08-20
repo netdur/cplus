@@ -345,6 +345,33 @@ if on { core::relayout(n); }        // REQUIRED — see below
 and restoring the display does not invalidate that: it comes back visible and
 0×0, drawing its children on top of whatever took its place.
 
+### Show/hide by SIZE — say the rule, not the callback
+
+When the thing being toggled depends on how much room there is, do not observe
+the size and toggle by hand. Name a **band** on the node and the layout pass
+decides, every pass:
+
+```cplus
+cards.add(pane("Detail", ...).hide("tiny").hide("compact"));
+sidebar.hide_in("compact");                 // same rule, on a cursor
+```
+
+Six bands are pre-registered — `tiny` (<300pt wide), `compact` (300–599),
+`medium` (600–839), `expanded` (840–1199), `large` (1200–1599), `xlarge`
+(≥1600) — and `bands::configure(name, max_width: …, max_height: …)` retunes
+one or adds your own. Use the names, not raw numbers: a threshold written
+where it is used drifts, and two screens end up disagreeing about where a
+phone stops being a phone.
+
+The band is measured against the node's nearest ancestor whose size does not
+depend on its own contents — **not the window**. In Split View the app has
+half the screen, and half the screen is the honest answer. A node never
+queries itself, so a pinned 400pt sidebar still asks about the space it was
+given.
+
+No `relayout` is needed here and no `Cancellable` has to be kept alive: this
+is not a runtime write, it is a rule the pass already re-reads.
+
 ### The one exception
 
 **A text field being EDITED cannot be written** — its field editor owns the

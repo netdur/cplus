@@ -47,6 +47,7 @@
 import "stdlib/option" as option;
 import "flex_layout/flex_layout" as flex;
 import "facet/facet" as core;
+import "facet/bands" as bands;
 import "objc/runtime" as rt;
 import "appkit/appkit" as ak;
 
@@ -70,7 +71,10 @@ fn set_view_frame(v: *u8, r: rt::Rect) {
 // pass, which is what lets the layout cache report a hit at an unchanged size.
 fn relayout_root(root: *core::Node, width: f64, height: f64, scale: f64) {
     if root == (0 as *core::Node) { return; }
-    { (*root).calculate_layout(width: width, height: height) };
+    // The app's band vocabulary rides along, so a node carrying `hide`/`show`
+    // rules is resolved against the box it actually sits in — as part of THIS
+    // pass, not by a size observer firing a second one afterwards.
+    { (*root).calculate_layout(width: width, height: height, bands: bands::bands()) };
     if scale > 0.0f64 { { (*root).round_to_pixel(scale) }; }
     reposition(root);
     return;

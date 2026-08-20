@@ -648,6 +648,10 @@ type exists.
 | `display()` | flex::Display |
 | `set_shown(v:)` | the cursor, so writes chain |
 | `is_hidden()` | bool |
+| `hide_in(band:)` | the cursor, so writes chain |
+| `show_in(band:)` | the cursor, so writes chain |
+| `clear_rules()` | the cursor, so writes chain |
+| `rule_count()` | usize |
 | `set_input_transparent(v:)` | the cursor, so writes chain |
 | `input_transparent()` | bool |
 | `set_flow_direction(v:)` | the cursor, so writes chain |

@@ -2633,6 +2633,15 @@ SHARED_FORWARDS = [
     ("display", "", "return core::display_of(this._p)", "flex::Display"),
     ("set_shown", "v: bool", "core::set_shown(this._p, v)", None),
     ("is_hidden", "", "return core::is_hidden(this._p)", "bool"),
+    # Conditional visibility. `set_display` is the imperative verb an app
+    # calls when it has decided; these are the DECLARATIVE pair — the node
+    # states the condition once and the layout pass re-decides on every
+    # resize, so there is no size observer to arm and no callback to keep
+    # alive. Band names come from `facet/bands`.
+    ("hide_in", "band: str", "core::hide_in(this._p, band)", None),
+    ("show_in", "band: str", "core::show_in(this._p, band)", None),
+    ("clear_rules", "", "core::clear_rules(this._p)", None),
+    ("rule_count", "", "return core::rule_count_of(this._p)", "usize"),
     ("set_input_transparent", "v: bool", "core::set_input_transparent(this._p, v)", None),
     ("input_transparent", "", "return core::input_transparent(this._p)", "bool"),
     ("set_flow_direction", "v: vocab::FlowDirection", "core::set_flow_direction(this._p, v)", None),

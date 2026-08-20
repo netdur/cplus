@@ -283,6 +283,51 @@ current appearance.
 `set_theme(t)` repaints live. `is_dark()` reads the current appearance, and
 `on_appearance_change(cb, ctx:)` observes it.
 
+## facet/bands
+
+The app's size-band vocabulary. A **band** is a named box constraint; a node
+carrying a rule is hidden or shown while the box it sits in matches, decided
+by the layout pass itself.
+
+```cplus
+sidebar.hide_in("compact");                         // on a cursor, after build
+cards.add(pane(...).hide("tiny").hide("compact"));  // fluent, at build time
+```
+
+Six bands ship pre-registered, so an app that configures nothing still has a
+shared vocabulary: `tiny` (<300pt wide), `compact` (300–599), `medium`
+(600–839), `expanded` (840–1199), `large` (1200–1599), `xlarge` (≥1600).
+
+```cplus
+fn configure(name: str, min_width: f64 = …, max_width: f64 = …,
+                        min_height: f64 = …, max_height: f64 = …) -> Status
+fn remove(name: str) -> bool
+fn is_registered(name: str) -> bool
+fn count() -> usize
+fn matches(name: str, width: f64, height: f64) -> bool
+fn bands() -> *BandSet          // what the backends pass to calculate_layout
+```
+
+Edges are independently optional and an omitted one is UNBOUNDED, not zero.
+Re-using a name updates it, so a settings reload is idempotent.
+
+**The band is measured against the node's nearest CONTAINED ancestor** — the
+closest box up the tree whose size does not depend on its own contents —
+never the window. An app in Split View or on half a foldable was handed a box,
+and the screen's width answers a question nobody asked. A node never queries
+itself: a sidebar pinned to 400pt is 400pt wide in every window, so that would
+make the rule a constant.
+
+Nothing re-runs a rule by hand. `relayout_root` passes the set on every pass,
+so visibility tracks the box with no size observer and no callback to keep
+alive. Band names are `str`, so a typo is not a compile error — it makes the
+rule inert. `is_registered` is there for a startup check.
+
+Node verbs: `hide_in(band)` / `show_in(band)` (mutating, raise the layout bit)
+and `clear_rules()` / `rule_count()`. Generated onto every control cursor, so
+they chain. **The last matching rule wins.** Depth: `flex_layout`'s
+[guide](../../flex_layout/docs/guide.md), "Conditional visibility — bands".
+
 ## facet/mount
 
 The backend seam.
