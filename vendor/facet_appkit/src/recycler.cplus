@@ -511,19 +511,25 @@ fn cell_perform_click_imp(self_obj: *u8, cmd: *u8, sender: *u8) {
     let item: *u8 = { synth::get_associated(self_obj, cell_item_key()) };
     let ov: *u8 = { synth::get_associated(self_obj, cell_owner_key()) };
     if item != (0 as *u8) && ov != (0 as *u8) {
-        if { rt::msg_i8_id(ov, rt::sel(#str_ptr("isExpandable:\0")), item) } != (0 as i8) {
-            // A BRANCH TOGGLES. Selection is the only click a leaf row has, but
-            // a folder already has one that means something else — and an agent
-            // that could only select could never open a folder to reach what is
-            // inside it. The ordinary did-expand write-back records it, so the
-            // model ends up saying what a user's disclosure click would leave.
-            if { rt::msg_i8_id(ov, rt::sel(#str_ptr("isItemExpanded:\0")), item) } != (0 as i8) {
-                { rt::msg_void_id(ov, rt::sel(#str_ptr("collapseItem:\0")), item) };
-            } else {
-                { rt::msg_void_id(ov, rt::sel(#str_ptr("expandItem:\0")), item) };
-            }
-            return;
-        }
+        // EVERY ROW SELECTS, branch and leaf alike, because that is what a
+        // click on a row DOES to a person — and this selector is the agent's
+        // only door, so the two must not answer differently.
+        //
+        // A branch used to TOGGLE here instead, and never select. The argument
+        // for it was real: an agent that could only select could never open a
+        // folder to reach what is inside it. But it bought expansion by
+        // spending selection, and every operation that acts on a selection —
+        // rename a folder, delete it, make a file inside it — became
+        // unreachable to an agent in an IDE whose premise is that the agent
+        // does what the user does. A person clicking a folder's NAME selects
+        // it; only the disclosure triangle toggles, and a synthesized click
+        // carries no coordinate that could have landed on one.
+        //
+        // Expansion did not go away, it got its own address:
+        // `agent_appkit` exposes the triangle as the row's `:disclosure` part,
+        // which is the same shape a search field's `:clear` uses. So both
+        // affordances a person has are reachable, each by the thing a person
+        // would have clicked.
         select_table_row(ov, { rt::msg_i64_id(ov, rt::sel(#str_ptr("rowForItem:\0")), item) });
         return;
     }
@@ -2935,6 +2941,27 @@ fn tree_row_count_of(v: *u8) -> i64 {
 
 // The cell for a row index, the way the outline view asks for one — the suite's
 // way in, since it cannot scroll.
+// Open or close a row, the way its disclosure triangle does. The suite's way
+// in: the agent reaches this through `agent_appkit`'s `:disclosure` part, which
+// this package cannot import, and a person reaches it by clicking a triangle
+// this package has no pointer to. The write-back below is facet's either way,
+// so it has to be drivable from here.
+fn tree_toggle_row(v: *u8, row: i64) -> bool {
+    let ov: *u8 = table_of(v);
+    if ov == (0 as *u8) { return false; }
+    let item: *u8 = { rt::msg_id_i64(ov, rt::sel(#str_ptr("itemAtRow:\0")), row) };
+    if item == (0 as *u8) { return false; }
+    if { rt::msg_i8_id(ov, rt::sel(#str_ptr("isExpandable:\0")), item) } == (0 as i8) {
+        return false;
+    }
+    if { rt::msg_i8_id(ov, rt::sel(#str_ptr("isItemExpanded:\0")), item) } != (0 as i8) {
+        { rt::msg_void_id(ov, rt::sel(#str_ptr("collapseItem:\0")), item) };
+    } else {
+        { rt::msg_void_id(ov, rt::sel(#str_ptr("expandItem:\0")), item) };
+    }
+    return true;
+}
+
 // Would the outline open this row? The suite's way in: `isExpandable:` is what
 // `performClick:` asks before choosing disclosure over selection, so a test
 // that means to pin that choice has to be able to ask the same question.

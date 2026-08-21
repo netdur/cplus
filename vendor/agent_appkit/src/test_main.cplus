@@ -217,6 +217,83 @@ fn click_on_view_without_performclick_reports_notactionable_not_raise() {
     assert surface::outcome_eq(s.click(auth::operator(), "plain-view"), surface::Outcome::NotActionable);
 }
 
+// ---- the disclosure part -----------------------------------------------------
+//
+// A folder row has TWO affordances — click the name to select it, click the
+// triangle to open it — and a synthesized click carries no coordinate that
+// could tell them apart. So the row's own click selects, like a person's, and
+// the triangle gets its own address: `<row-id>:disclosure`, the same shape a
+// search field's `:clear` uses.
+//
+// THE PART IS ONLY CREATED FOR A ROW THAT HAS ONE. That gate is `row_is_
+// expandable`, and it is the whole reason this cannot advertise a press that
+// does not exist — the bug the `clickable` field was added to remove. These
+// pin the gate from the outside, where every answer must be NO.
+
+#[test]
+fn nothing_that_is_not_an_outline_row_grows_a_disclosure_part() {
+    // A tagged view in a plain window is not a row of anything. If the gate
+    // were loose this is where a phantom `:disclosure` would appear, on every
+    // keyed node in every app.
+    let win = fixture_window(300.0f64, 200.0f64);
+    let content = content_of(win);
+    let plain = ak::View::new(rt::Rect { x: 5.0, y: 5.0, w: 40.0, h: 20.0 });
+    content.add_subview(ak::View::from_raw(plain.raw()));
+    agent::set_agent_id(plain.raw(), "notarow");
+
+    assert agent::row_is_expandable(plain.raw()) == false;
+
+    var s: agent::Surface = agent::open(win.raw());
+    let nodes: vec::Vec[agent::AppKitNode] = s.describe(auth::operator());
+    // window + content + plain, and NOTHING else.
+    assert nodes.count() == (3 as usize);
+    var i: usize = 0 as usize;
+    while i < nodes.count() {
+        match nodes.at_ptr(i) {
+            option::Option[*agent::AppKitNode]::Some(n) => {
+                assert { (*n).id.view() } != "notarow:disclosure";
+            }
+            option::Option[*agent::AppKitNode]::None => { assert false; }
+        }
+        i = i +% (1 as usize);
+    }
+    return;
+}
+
+#[test]
+fn a_disclosure_press_with_no_outline_under_it_refuses_rather_than_pretending() {
+    // The other end of the same guarantee. If a part is ever minted for a view
+    // that turns out not to be a row — recycled away, or the tree replaced
+    // between describe and click — the press must REFUSE. `allowed` for a
+    // toggle that did not happen is the exact silent failure this whole entry
+    // came from.
+    let win = fixture_window(300.0f64, 200.0f64);
+    let content = content_of(win);
+    let plain = ak::View::new(rt::Rect { x: 5.0, y: 5.0, w: 40.0, h: 20.0 });
+    content.add_subview(ak::View::from_raw(plain.raw()));
+
+    assert surface::outcome_eq(agent::click_part(plain.raw(), agent::PART_DISCLOSURE),
+                               surface::Outcome::NotActionable);
+    return;
+}
+
+#[test]
+fn the_capability_flag_names_the_disclosure_part_too() {
+    // `view_clickable` mirrors `click`'s body branch for branch, and a part
+    // wired into `part_of` without an arm in BOTH would advertise a press that
+    // does not exist. This is the pairing, asserted rather than assumed.
+    let win = fixture_window(300.0f64, 200.0f64);
+    let content = content_of(win);
+    let plain = ak::View::new(rt::Rect { x: 5.0, y: 5.0, w: 40.0, h: 20.0 });
+    content.add_subview(ak::View::from_raw(plain.raw()));
+    assert agent::view_clickable(plain.raw(), agent::PART_DISCLOSURE);
+    // And an unknown part is still refused by both halves.
+    assert agent::view_clickable(plain.raw(), 99u32) == false;
+    assert surface::outcome_eq(agent::click_part(plain.raw(), 99u32),
+                               surface::Outcome::NotActionable);
+    return;
+}
+
 #[test]
 fn declared_affordance_overrides_native_classify() {
     // Phase 2: a plain NSView classifies as Group by type, but a declared

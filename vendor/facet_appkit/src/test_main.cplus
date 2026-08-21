@@ -4168,11 +4168,15 @@ fn clicking_a_leaf_row_selects_it() {
 }
 
 #[test]
-fn clicking_an_expandable_row_toggles_it_instead() {
+fn clicking_a_row_SELECTS_it_whether_or_not_it_is_a_branch() {
     backend::install();
-    // Selection is the only click a leaf row has, but a BRANCH already has one
-    // that means something else — and an agent that could only ever select
-    // could never open a folder to reach what is inside it.
+    // ONE ANSWER FOR EVERY ROW. `performClick:` is the agent's only door, and a
+    // click on a row is a selection to a person — on a folder as much as on a
+    // file. This used to toggle disclosure for a branch and never select, which
+    // bought expansion by spending selection: every operation that acts on a
+    // selection (rename a folder, delete it, make a file inside it) became
+    // unreachable to an agent. Expansion got its own address instead —
+    // agent_appkit's `:disclosure` part — so nothing was lost to buy this back.
     var t: core::Node = ri_tree(true);
     let tp: *core::Node = #addr_of(t);
     let v: *u8 = views::create(0 as *u8, tp);
@@ -4182,12 +4186,17 @@ fn clicking_an_expandable_row_toggles_it_instead() {
     let cell: *u8 = recycler::tree_view_for_row(v, 0 as i64);
     assert cell != (0 as *u8);
     assert recycler::tree_rows_of(v) == (2 as i64);
-    recycler::perform_click_on(cell);
-    // Opened: the child is a row now, and the row was NOT selected.
-    assert recycler::tree_rows_of(v) == (3 as i64);
     assert recycler::tree_selected_row_of(v) == (-1 as i64);
-    // And it closes again.
+    // The BRANCH selects, and does NOT open — a synthesized click carries no
+    // coordinate that could have landed on the triangle.
     recycler::perform_click_on(cell);
+    assert recycler::tree_selected_row_of(v) == (0 as i64);
+    assert recycler::tree_rows_of(v) == (2 as i64);
+    // And the LEAF selects through the same door, the same way.
+    let leaf: *u8 = recycler::tree_view_for_row(v, 1 as i64);
+    assert leaf != (0 as *u8);
+    recycler::perform_click_on(leaf);
+    assert recycler::tree_selected_row_of(v) == (1 as i64);
     assert recycler::tree_rows_of(v) == (2 as i64);
     return;
 }
@@ -4638,18 +4647,18 @@ fn a_branch_row_carries_its_agent_id_and_opening_it_through_that_door_works() {
                            rt::sel(#str_ptr("performClick:\0"))) } != (0 as i8);
     { rt::msg_void_id(branch_cell, rt::sel(#str_ptr("performClick:\0")), 0 as *u8) };
 
-    // (c) THE FOLDER OPENED. Three rows now, and the row was NOT selected — a
-    // branch's click is the disclosure, not a selection.
-    assert recycler::tree_rows_of(v) == (3 as i64);
-    assert recycler::tree_selected_row_of(v) == (-1 as i64);
+    // (c) THE FOLDER IS SELECTED — which is what a person clicking its name
+    // gets, and what every operation acting on a selection needs. It did NOT
+    // open: opening is the triangle's job and the triangle has its own address.
+    assert recycler::tree_selected_row_of(v) == (0 as i64);
+    assert recycler::tree_rows_of(v) == (2 as i64);
 
-    // A LEAF through the same door selects, which is the only click a leaf row
-    // has. Row 2 now that the branch is open: root's second child.
-    let leaf_cell: *u8 = recycler::tree_view_for_row(v, 2 as i64);
+    // A LEAF through the same door answers identically. One rule for rows.
+    let leaf_cell: *u8 = recycler::tree_view_for_row(v, 1 as i64);
     assert leaf_cell != (0 as *u8);
     assert agent_id_of(leaf_cell).equals("row:skill");
     { rt::msg_void_id(leaf_cell, rt::sel(#str_ptr("performClick:\0")), 0 as *u8) };
-    assert recycler::tree_selected_row_of(v) >= (0 as i64);
+    assert recycler::tree_selected_row_of(v) == (1 as i64);
     return;
 }
 
@@ -4662,9 +4671,10 @@ fn an_agents_expansion_is_written_back_so_it_survives_a_rebuild() {
     // folder would appear to never open at all. That is indistinguishable from
     // a click that did nothing, which is how it was reported.
     //
-    // The user's own disclosure click has always been written back. This pins
-    // the AGENT's door to the same guarantee: `performClick:` on the cell, not
-    // a triangle nobody can press over a socket.
+    // Driven through the TRIANGLE's door rather than the row's. A click on the
+    // row selects it; opening is `agent_appkit`'s `:disclosure` part for an
+    // agent and the triangle itself for a person, and both land here. The
+    // write-back is facet's whichever one caused it.
     backend::install();
     var t: core::Node = ri_tree(true);
     let tp: *core::Node = #addr_of(t);
@@ -4678,9 +4688,7 @@ fn an_agents_expansion_is_written_back_so_it_survives_a_rebuild() {
         option::Option[tree::Tree]::None => { assert false; }
     }
 
-    let cell: *u8 = recycler::tree_view_for_row(v, 0 as i64);
-    assert cell != (0 as *u8);
-    { rt::msg_void_id(cell, rt::sel(#str_ptr("performClick:\0")), 0 as *u8) };
+    assert recycler::tree_toggle_row(v, 0 as i64);
     assert recycler::tree_rows_of(v) == (3 as i64);
 
     // THE MODEL KNOWS. Without this the open is AppKit's alone and the next
@@ -4695,7 +4703,7 @@ fn an_agents_expansion_is_written_back_so_it_survives_a_rebuild() {
 
     // And closing it again takes the id back out, so a collapse is not a
     // no-op that leaves the model claiming it is open.
-    { rt::msg_void_id(cell, rt::sel(#str_ptr("performClick:\0")), 0 as *u8) };
+    assert recycler::tree_toggle_row(v, 0 as i64);
     assert recycler::tree_rows_of(v) == (2 as i64);
     match tree::find("ri", tp) {
         option::Option[tree::Tree]::Some(c) => { assert c.is_expanded("src") == false; }
@@ -4739,12 +4747,11 @@ fn a_node_that_SAYS_it_is_a_branch_is_expandable_before_its_children_arrive() {
     // The declaration is what the outline answers to.
     assert recycler::tree_item_is_expandable(v, 0 as i64);
 
-    // A click on it is the DISCLOSURE, not a selection — the same rule every
-    // other branch follows, so an agent gets one answer for folders rather
-    // than one per folder's contents.
+    // And a click SELECTS it, the same as any other row — the expandability
+    // above is what gives it a triangle, not what changes the meaning of a
+    // click on its name.
     { rt::msg_void_id(cell, rt::sel(#str_ptr("performClick:\0")), 0 as *u8) };
-    assert recycler::tree_selected_row_of(v) == (-1 as i64);
-    // Still one row: it opened onto nothing, which is what an empty folder is.
+    assert recycler::tree_selected_row_of(v) == (0 as i64);
     assert recycler::tree_rows_of(v) == (1 as i64);
     return;
 }

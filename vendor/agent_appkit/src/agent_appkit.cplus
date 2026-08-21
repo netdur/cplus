@@ -887,6 +887,12 @@ fn subview_at(view: *u8, i: usize) -> *u8 {
 const PART_SELF: u32 = 0u32;
 const PART_SEARCH: u32 = 1u32;
 const PART_CLEAR: u32 = 2u32;
+// THE DISCLOSURE TRIANGLE of an outline row. A person has two affordances on a
+// folder row — click the name to select it, click the triangle to open it — and
+// an agent's `click` carries no coordinate that could tell them apart. So the
+// triangle gets its own address, the same way a search field's cancel glyph
+// does, and the row's own click means what a click on a row means: select.
+const PART_DISCLOSURE: u32 = 3u32;
 
 struct ViewRef {
     opaque p: *u8,
@@ -962,7 +968,35 @@ fn click_part(v: *u8, part: u32) -> surface::Outcome {
         perform_on_main(v, rt::sel(#str_ptr("cplusAgentSendAction:\0")), null());
         return surface::Outcome::Allowed;
     }
+    if part == PART_DISCLOSURE {
+        // `toggle_expand_row` asks the outline through `rowForView:`, which
+        // only knows a view the table has DISPLAYED — true of anything an
+        // agent found in a describe, and the reason this is not the path the
+        // cell's own `performClick:` takes.
+        let table: *u8 = enclosing_table(v);
+        if is_null(table) { return surface::Outcome::NotActionable; }
+        if toggle_expand_row(table, v) { return surface::Outcome::Allowed; }
+        return surface::Outcome::NotActionable;
+    }
     return surface::Outcome::NotActionable;
+}
+
+// Is `v` a row of an outline view whose item can be opened? The read-only half
+// of `toggle_expand_row`, asked during the describe walk to decide whether this
+// row has a disclosure triangle to expose. Answers false for a list row, for a
+// leaf, and for anything the table has not displayed.
+fn row_is_expandable(v: *u8) -> bool {
+    let table: *u8 = enclosing_table(v);
+    if is_null(table) { return false; }
+    let ov_cls: *u8 = rt::get_class(#str_ptr("NSOutlineView\0"));
+    if rt::msg_i8_id(table, rt::sel(#str_ptr("isKindOfClass:\0")), ov_cls) == (0 as i8) {
+        return false;
+    }
+    let row: i64 = rt::msg_i64_id(table, rt::sel(#str_ptr("rowForView:\0")), v);
+    if row < (0 as i64) { return false; }
+    let item: *u8 = rt::msg_id_i64(table, rt::sel(#str_ptr("itemAtRow:\0")), row);
+    if is_null(item) { return false; }
+    return rt::msg_i8_id(table, rt::sel(#str_ptr("isExpandable:\0")), item) != (0 as i8);
 }
 
 // One sub-control of `owner`, exposed as its own addressable node. The id is
@@ -1057,6 +1091,20 @@ fn walk(ref reg: identity::Registry, ref views: vec::Vec[ViewRef], view: *u8, pa
             }
             option::Option[text::Text]::None => { }
         }
+    }
+    // A FOLDER ROW HAS TWO AFFORDANCES and a synthesized click can only carry
+    // one. The row itself selects, like a person clicking the name; the
+    // triangle opens it, like a person clicking the triangle. Only on a row
+    // that HAS one — a leaf gets no part, so the surface never advertises a
+    // disclosure that does not exist.
+    match get_agent_id(view) {
+        option::Option[text::Text]::Some(base) => {
+            if row_is_expandable(view) {
+                add_part(reg, views, view, reg_node, { base.view() }, PART_DISCLOSURE,
+                         ":disclosure", "Disclosure");
+            }
+        }
+        option::Option[text::Text]::None => { }
     }
 
     let n: usize = subview_count(view);
@@ -1816,16 +1864,22 @@ fn view_clickable(v: *u8, part: u32) -> bool {
     // field declares drive_text, so checking the drive first would refuse a
     // button that is genuinely a button.
     //
-    // Which parts, exactly: `click_part` answers `Allowed` for these two and
+    // Which parts, exactly: `click_part` answers `Allowed` for these three and
     // `NotActionable` for anything else, so this names them rather than
     // saying "not SELF". The set is complete today — it is the whole of the
-    // PART_ constants — and that is the reason to spell it: a fourth part
+    // PART_ constants — and that is the reason to spell it: a fifth part
     // wired into `part_of` without a `click_part` arm would otherwise
     // advertise a press that does not exist, which is the exact bug this
     // field was added to remove. Failing the other way costs a missed
     // capability until someone teaches both, and a missed capability is a
     // thing an agent can discover by trying.
-    if part != PART_SELF { return part == PART_SEARCH || part == PART_CLEAR; }
+    //
+    // A disclosure part is only ever created for a row that HAS one, so
+    // answering true here is not a claim taken on trust — `row_is_expandable`
+    // asked the outline before the node existed.
+    if part != PART_SELF {
+        return part == PART_SEARCH || part == PART_CLEAR || part == PART_DISCLOSURE;
+    }
     match get_declared_drive(v) {
         option::Option[u32]::Some(d) => {
             if d != identity::drive_click() { return false; }
