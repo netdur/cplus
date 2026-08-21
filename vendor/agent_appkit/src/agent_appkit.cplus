@@ -1985,44 +1985,126 @@ fn mcp_read_runs(p: *u8, grant: auth::Grant, id: str) -> surface::Runs {
 // the answer to a disabled one is `NotActionable` — the same word a node gets.
 // `performActionForItemAtIndex:` is AppKit's own "the user picked this",
 // validation and all; nothing here synthesizes a click at a coordinate.
+// THE WHOLE VERB IS ONE HOP, and that is the fix rather than a tidy-up.
+//
+// `update` is what a menu does before it opens — it runs the validation an
+// autoenabling menu's items answer to — and AppKit refuses it off the main
+// thread when the menu is part of the main menu. Not with a return value:
+//
+//     NSInternalInconsistencyException: API misuse: modification of a menu's
+//     items on a non-main thread when the menu is part of the main menu.
+//
+// Uncaught, so abort(), from a verb whose entire purpose is to be driven by
+// something that is not a person. The enabled check used to run on the caller's
+// thread while `performActionForItemAtIndex:` hopped correctly one line below
+// it, so the verb knew it was off-main and hopped for the ACTION but not for the
+// QUESTION it asks first — and the question is the half that touches the item
+// array. It only fired when the menu was FOUND (a bad path answers NotFound
+// before reaching `update`), which made it read as intermittent and
+// path-dependent, and meant the crash arrived on the FIRST menu an agent ever
+// successfully addressed.
+//
+// So nothing below asks NSMenu anything from the socket's thread. The path
+// crosses as an NSString because `withObject:` carries exactly one `id` — which
+// is why it is the whole "Menu/Item" path, split on the far side rather than
+// here — and the answer comes back in a static, which is sound because
+// `waitUntilDone:` is YES and the hop is therefore synchronous. Same shape as
+// `CARET_RANGE` and for the same reason: C+ has no closures, so a registered
+// trampoline plus a static is what a `dispatch_async` block would have been.
+
+const MENU_R_NOT_FOUND: u32 = 0 as u32;
+const MENU_R_NOT_ACTIONABLE: u32 = 1 as u32;
+const MENU_R_ALLOWED: u32 = 2 as u32;
+
+static MENU_RESULT: u32 = 0 as u32;
+static MENU_METHOD_REGISTERED: bool = false;
+
+// The verb itself, and it runs ONLY on the main thread — directly when the
+// caller is already there, through `cplusInvokeMenuPath:` when it is not.
+// `ns_path` is the "Menu/Item" path as an NSString; the outcome lands in
+// MENU_RESULT because a `void` trampoline is all `performSelectorOnMainThread:`
+// will carry.
+fn cplus_invoke_menu_path(app: *u8, _cmd: *u8, ns_path: *u8) {
+    MENU_RESULT = MENU_R_NOT_FOUND;
+    if is_null(app) { return; }
+    if is_null(ns_path) { return; }
+    let root: *u8 = { rt::msg_id(app, rt::sel(#str_ptr("mainMenu\0"))) };
+    if is_null(root) { return; }
+    // A NAMED owner, because every `str` below is a view into it.
+    let path_t: text::Text = bridge::to_text(ns_path);
+    let path: str = { path_t.view() };
+    let cut: usize = match path.find("/") {
+        option::Option[usize]::Some(i) => i,
+        option::Option[usize]::None => { return; }
+    };
+    let menu_title: str = match path.slice(0 as usize, cut) {
+        option::Option[str]::Some(s) => s,
+        option::Option[str]::None => { return; }
+    };
+    let item_title: str = match path.slice(cut +% (1 as usize), #str_len(path)) {
+        option::Option[str]::Some(s) => s,
+        option::Option[str]::None => { return; }
+    };
+    let menu: *u8 = submenu_titled(root, menu_title);
+    if is_null(menu) { return; }
+    let idx: i64 = { rt::msg_i64_id(menu, rt::sel(#str_ptr("indexOfItemWithTitle:\0")),
+                                    bridge::nsstring(item_title)) };
+    if idx < (0 as i64) { return; }
+    let item: *u8 = { rt::msg_id_i64(menu, rt::sel(#str_ptr("itemAtIndex:\0")), idx) };
+    if is_null(item) { return; }
+    // An item is enabled by its own flag AND, for an autoenabling menu, by
+    // whatever validates it — `update` is what a menu does before it opens, so
+    // asking after it is asking the question the user's click would ask. This
+    // is the line that used to abort the process.
+    { rt::msg_void(menu, rt::sel(#str_ptr("update\0"))) };
+    if { rt::msg_i8(item, rt::sel(#str_ptr("isEnabled\0"))) } == (0 as i8) {
+        MENU_RESULT = MENU_R_NOT_ACTIONABLE;
+        return;
+    }
+    // `performActionForItemAtIndex:` is AppKit's own "the user picked this",
+    // validation and all; nothing here synthesizes a click at a coordinate.
+    { rt::msg_void_i64(menu, rt::sel(#str_ptr("performActionForItemAtIndex:\0")), idx) };
+    MENU_RESULT = MENU_R_ALLOWED;
+    return;
+}
+
+fn ensure_menu_method() {
+    if MENU_METHOD_REGISTERED { return; }
+    let cls: *u8 = rt::get_class(#str_ptr("NSApplication\0"));
+    if !is_null(cls) {
+        let _ok: i8 = add_method_caret(cls, rt::sel(#str_ptr("cplusInvokeMenuPath:\0")),
+                                       cplus_invoke_menu_path, #str_ptr("v@:@\0"));
+    }
+    MENU_METHOD_REGISTERED = true;
+    return;
+}
+
 fn mcp_invoke_menu(p: *u8, grant: auth::Grant, path: str) -> surface::Outcome {
     let app: *u8 = { rt::msg_id(rt::get_class(#str_ptr("NSApplication\0")),
                                 rt::sel(#str_ptr("sharedApplication\0"))) };
     if is_null(app) { return surface::Outcome::NotFound; }
-    let root: *u8 = { rt::msg_id(app, rt::sel(#str_ptr("mainMenu\0"))) };
-    if is_null(root) { return surface::Outcome::NotFound; }
-    let cut: usize = match path.find("/") {
-        option::Option[usize]::Some(i) => i,
-        option::Option[usize]::None => { return surface::Outcome::NotFound; }
-    };
-    let menu_title: str = match path.slice(0 as usize, cut) {
-        option::Option[str]::Some(s) => s,
-        option::Option[str]::None => { return surface::Outcome::NotFound; }
-    };
-    let item_title: str = match path.slice(cut +% (1 as usize), #str_len(path)) {
-        option::Option[str]::Some(s) => s,
-        option::Option[str]::None => { return surface::Outcome::NotFound; }
-    };
-    let menu: *u8 = submenu_titled(root, menu_title);
-    if is_null(menu) { return surface::Outcome::NotFound; }
-    let idx: i64 = { rt::msg_i64_id(menu, rt::sel(#str_ptr("indexOfItemWithTitle:\0")),
-                                    bridge::nsstring(item_title)) };
-    if idx < (0 as i64) { return surface::Outcome::NotFound; }
-    let item: *u8 = { rt::msg_id_i64(menu, rt::sel(#str_ptr("itemAtIndex:\0")), idx) };
-    if is_null(item) { return surface::Outcome::NotFound; }
-    // An item is enabled by its own flag AND, for an autoenabling menu, by
-    // whatever validates it — `update` is what a menu does before it opens, so
-    // asking after it is asking the question the user's click would ask.
-    { rt::msg_void(menu, rt::sel(#str_ptr("update\0"))) };
-    if { rt::msg_i8(item, rt::sel(#str_ptr("isEnabled\0"))) } == (0 as i8) {
-        return surface::Outcome::NotActionable;
+    // Minted on the CALLER's thread, which is fine — an NSString is not a menu.
+    let ns_path: *u8 = bridge::nsstring(path);
+    if is_null(ns_path) { return surface::Outcome::NotFound; }
+    if on_main_thread() {
+        cplus_invoke_menu_path(app, null(), ns_path);
+    } else {
+        ensure_menu_method();
+        rt::msg_void_id_id_i8(
+            app,
+            rt::sel(#str_ptr("performSelectorOnMainThread:withObject:waitUntilDone:\0")),
+            rt::sel(#str_ptr("cplusInvokeMenuPath:\0")),
+            ns_path,
+            1 as i8,
+        );
     }
-    perform_menu_action_on_main(menu, idx);
-    return surface::Outcome::Allowed;
+    if MENU_RESULT == MENU_R_ALLOWED { return surface::Outcome::Allowed; }
+    if MENU_RESULT == MENU_R_NOT_ACTIONABLE { return surface::Outcome::NotActionable; }
+    return surface::Outcome::NotFound;
 }
 
 // The submenu under a top-level title. The title lives on the ITEM; the menu
-// hanging off it is what holds the commands.
+// hanging off it is what holds the commands. Main-thread only, by its callers.
 fn submenu_titled(root: *u8, title: str) -> *u8 {
     let n: i64 = { rt::msg_i64(root, rt::sel(#str_ptr("numberOfItems\0"))) };
     var i: i64 = 0 as i64;
@@ -2038,40 +2120,6 @@ fn submenu_titled(root: *u8, title: str) -> *u8 {
         i = i +% (1 as i64);
     }
     return null();
-}
-
-// `performActionForItemAtIndex:` takes an index, not an object, so the main-
-// thread hop carries it in a static the same way the caret's range does.
-static MENU_INDEX: i64 = 0;
-static MENU_METHOD_REGISTERED: bool = false;
-
-fn cplus_perform_menu_index(menu: *u8, _cmd: *u8, _sender: *u8) {
-    rt::msg_void_i64(menu, rt::sel(#str_ptr("performActionForItemAtIndex:\0")), MENU_INDEX);
-    return;
-}
-
-fn perform_menu_action_on_main(menu: *u8, idx: i64) {
-    if on_main_thread() {
-        rt::msg_void_i64(menu, rt::sel(#str_ptr("performActionForItemAtIndex:\0")), idx);
-        return;
-    }
-    MENU_INDEX = idx;
-    if !MENU_METHOD_REGISTERED {
-        let cls: *u8 = rt::get_class(#str_ptr("NSMenu\0"));
-        if !is_null(cls) {
-            let _ok: i8 = add_method_caret(cls, rt::sel(#str_ptr("cplusPerformMenuIndex:\0")),
-                                           cplus_perform_menu_index, #str_ptr("v@:@\0"));
-        }
-        MENU_METHOD_REGISTERED = true;
-    }
-    rt::msg_void_id_id_i8(
-        menu,
-        rt::sel(#str_ptr("performSelectorOnMainThread:withObject:waitUntilDone:\0")),
-        rt::sel(#str_ptr("cplusPerformMenuIndex:\0")),
-        null(),
-        1 as i8,
-    );
-    return;
 }
 
 fn mcp_backend() -> mcpb::Backend {

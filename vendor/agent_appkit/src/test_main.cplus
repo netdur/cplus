@@ -17,6 +17,7 @@ import "stdlib/vec" as vec;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
 import "stdlib/io" as io;
+import "stdlib/thread" as thread;   // the off-main invoke_menu regression below needs a real second thread
 import "./agent_appkit" as agent;
 
 fn main() -> i32 { return 0; }
@@ -509,6 +510,105 @@ fn a_menu_item_can_be_invoked_by_the_name_a_person_reads() {
     // A path with no menu in it is not a path.
     assert surface::outcome_eq(agent::mcp_invoke_menu(0 as *u8, auth::operator(), "Save"),
                                surface::Outcome::NotFound);
+    assert MENU_FIRED == 1;
+}
+
+// ---- and the same verb from the thread it is actually driven on -------------
+//
+// THIS IS THE VERB'S REAL CALLER. `invoke_menu` exists to be driven by something
+// that is not a person, so it arrives on the socket worker's thread and never on
+// AppKit's — and it used to abort() there. The enabled check ran
+// `[menu update]` on the caller's thread, which AppKit answers with an uncaught
+// NSInternalInconsistencyException ("modification of a menu's items on a
+// non-main thread when the menu is part of the main menu") while the
+// `performActionForItemAtIndex:` one line below it hopped correctly. So the verb
+// knew it was off-main, and hopped for the ACTION but not for the QUESTION it
+// asks first.
+//
+// It only fired when the menu was FOUND — a bad path answers NotFound before
+// reaching `update` — so the test above passes either way and this one is the
+// only thing that can fail.
+//
+// THE MAIN THREAD HAS TO PUMP. `performSelectorOnMainThread:waitUntilDone:YES`
+// enqueues onto the main run loop and blocks the worker until it runs; main is
+// sitting in `join()` with no run loop of its own, so without the pump the two
+// deadlock and this hangs instead of failing. The spin bound is what turns a
+// regression back into a failure rather than a hang.
+
+static OFFMAIN_RESULT: i32 = -1;
+static OFFMAIN_DONE: i32 = 0;
+static OFFMAIN_WAS_MAIN: i32 = -1;
+
+fn invoke_menu_worker() -> i32 {
+    // ASSERTED, not assumed. If this worker ran on the main thread the verb
+    // would take its direct branch, the hop would never be exercised, and this
+    // test would pass while proving nothing.
+    if rt::msg_i8(rt::get_class(#str_ptr("NSThread\0")),
+                  rt::sel(#str_ptr("isMainThread\0"))) != (0 as i8) {
+        OFFMAIN_WAS_MAIN = 1;
+    } else {
+        OFFMAIN_WAS_MAIN = 0;
+    }
+    let oc: surface::Outcome = agent::mcp_invoke_menu(0 as *u8, auth::operator(), "File/Save");
+    if surface::outcome_eq(oc, surface::Outcome::Allowed) {
+        OFFMAIN_RESULT = 1;
+    } else {
+        OFFMAIN_RESULT = 0;
+    }
+    OFFMAIN_DONE = 1;
+    return 0 as i32;
+}
+
+// One bounded turn of the main run loop. NSDefaultRunLoopMode IS the string
+// "kCFRunLoopDefaultMode", which is how a package with no extern globals names
+// it.
+fn pump_main_runloop_once() {
+    let rl: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSRunLoop\0")),
+                             rt::sel(#str_ptr("mainRunLoop\0")));
+    if rl == (0 as *u8) { return; }
+    let until: *u8 = rt::msg_id_f64(rt::get_class(#str_ptr("NSDate\0")),
+                                    rt::sel(#str_ptr("dateWithTimeIntervalSinceNow:\0")),
+                                    0.01f64);
+    let _ran: i8 = rt::msg_i8_id_id(rl, rt::sel(#str_ptr("runMode:beforeDate:\0")),
+                                    bridge::nsstring("kCFRunLoopDefaultMode"), until);
+    return;
+}
+
+#[test]
+fn a_menu_invoked_off_the_main_thread_does_not_abort() {
+    MENU_FIRED = 0;
+    OFFMAIN_RESULT = -1;
+    OFFMAIN_DONE = 0;
+    OFFMAIN_WAS_MAIN = -1;
+    let app: ak::Application = ak::Application::shared_application();
+    let root: ak::Menu = ak::Menu::new("MainMenu");
+    let file_item: ak::MenuItem = ak::MenuItem::new("File", 0 as *u8, "");
+    let file_menu: ak::Menu = ak::Menu::new("File");
+    let save: ak::MenuItem = ak::MenuItem::new("Save", 0 as *u8, "s");
+    save.set_on_action(on_menu_command);
+    file_menu.add_item(save);
+    file_menu.set_autoenables_items(false);
+    root.add_item(file_item);
+    root.set_submenu(file_menu, file_item);
+    app.set_main_menu(root);
+
+    // A NAMED fn-typed binding: a bare fn name is not a value here (E0312).
+    let worker: fn() -> i32 = invoke_menu_worker;
+    var h: thread::JoinHandle[i32] = thread::spawn(worker);
+    var spins: i32 = 0;
+    while OFFMAIN_DONE == 0 && spins < 600 {
+        pump_main_runloop_once();
+        spins = spins + 1;
+    }
+    let _rc: i32 = h.join();
+
+    // Reached the end at all: before the fix this line was never executed,
+    // because the process had aborted inside `[menu update]`.
+    assert OFFMAIN_DONE == 1;
+    // The hop was really exercised.
+    assert OFFMAIN_WAS_MAIN == 0;
+    assert OFFMAIN_RESULT == 1;
+    // And the action really ran — on the main thread, once.
     assert MENU_FIRED == 1;
 }
 
