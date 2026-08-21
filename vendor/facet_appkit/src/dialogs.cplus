@@ -241,13 +241,74 @@ fn dismiss(h: *AlertHost, answer: i32) {
 
 // The sheet's own tree. Plain facet — nothing here is special, which is the
 // point: an agent walks it like any other screen.
+// ---- how tall a sheet has to be ---------------------------------------------
+//
+// THE BUG THIS FIXES. Every sheet took a fixed height — `alert` a flat 140,
+// `choose` 110 + 34 per option — computed as though the message were one line,
+// and the message label carried no `line_break`, so it CLIPPED rather than
+// wrapped. A three-line message therefore appeared as three lines each ending in
+// "…", and on `choose` the last button was cut off by the bottom edge: the
+// caller could see neither what it was agreeing to nor the option to decline.
+//
+// Measured rather than guessed would be better and needs a text-measurement hop
+// this file does not have. This estimate is deliberately generous — too tall is
+// a little empty space, too short is unreadable text and an unreachable button,
+// and those are not the same mistake.
+//
+// 380pt wide less 20pt padding a side leaves 340; at 13pt the average glyph runs
+// about 6.4pt, so ~53 characters to a line. Explicit newlines count as breaks of
+// their own, because a caller that wrote a paragraph break meant one.
+fn message_lines(message: str) -> f64 {
+    if message == "" { return 0.0f64; }
+    let per_line: usize = 53 as usize;
+    var total: f64 = 0.0f64;
+    // The owner is bound before the split: a view into a temporary would dangle
+    // at the end of the statement (E0513).
+    let owner: text::Text = text::from_str(message);
+    let segments: vec::Vec[str] = owner.split("\n");
+    var i: usize = 0 as usize;
+    while i < segments.count() {
+        match segments.at_ptr(i) {
+            option::Option[*str]::Some(sp) => {
+                let n: usize = #str_len({ (*sp) });
+                var lines: usize = n / per_line;
+                if n % per_line != (0 as usize) { lines = lines +% (1 as usize); }
+                if lines == (0 as usize) { lines = 1 as usize; }   // a blank line is still a line
+                total = total + (lines as f64);
+            }
+            option::Option[*str]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return total;
+}
+
+// The vertical space a message needs, gap included. 17pt a line at 13pt text.
+fn message_height(message: str) -> f64 {
+    if message == "" { return 0.0f64; }
+    return 12.0f64 + (message_lines(message) * 17.0f64);
+}
+
+// A sheet taller than the screen is worse than a clipped one — it cannot be
+// dismissed. Callers with more to say than this should use a screen, not a
+// sheet.
+fn capped(h: f64) -> f64 {
+    if h > 560.0f64 { return 560.0f64; }
+    return h;
+}
+
 fn alert_tree(title: str, message: str, primary: str, secondary: str) -> core::Node {
     var b: core::Builder = core::Builder::new();
     b.add(label::label(title, key: "alert:title", font_size: 15.0f64,
                        font_weight: vocab::FontWeight::Bold,
                        text_align: vocab::TextAlign::Start));
     if message != "" {
+        // WRAP, do not clip. Without these two the label renders one line and
+        // ends it in "…", which is how a sheet came to hide the sentence it
+        // existed to show.
         b.add(label::label(message, key: "alert:message", font_size: 13.0f64,
+                           line_break: vocab::LineBreak::WordWrap,
+                           max_lines: 0 as i64,
                            text_align: vocab::TextAlign::Start));
     }
     var row: core::Builder = core::Builder::new();
@@ -265,7 +326,12 @@ fn choose_tree(title: str, message: str, take options: vec::Vec[text::Text]) -> 
                        font_weight: vocab::FontWeight::Bold,
                        text_align: vocab::TextAlign::Start));
     if message != "" {
+        // WRAP, do not clip. Without these two the label renders one line and
+        // ends it in "…", which is how a sheet came to hide the sentence it
+        // existed to show.
         b.add(label::label(message, key: "choose:message", font_size: 13.0f64,
+                           line_break: vocab::LineBreak::WordWrap,
+                           max_lines: 0 as i64,
                            text_align: vocab::TextAlign::Start));
     }
     // One button per option, stacked: a row of six buttons is unreadable and a
@@ -294,7 +360,12 @@ fn prompt_tree(title: str, message: str, placeholder: str, primary: str, seconda
                        font_weight: vocab::FontWeight::Bold,
                        text_align: vocab::TextAlign::Start));
     if message != "" {
+        // WRAP, do not clip. Without these two the label renders one line and
+        // ends it in "…", which is how a sheet came to hide the sentence it
+        // existed to show.
         b.add(label::label(message, key: "prompt:message", font_size: 13.0f64,
+                           line_break: vocab::LineBreak::WordWrap,
+                           max_lines: 0 as i64,
                            text_align: vocab::TextAlign::Start));
     }
     // A real facet text_field, which is what makes the prompt agent-drivable:
@@ -317,7 +388,9 @@ fn no_typed(v: str, ctx: *u8) { return; }
 fn alert_sheet(title: str, message: str, primary: str, secondary: str = "",
                on_answer: fn(i32, *u8) = 0 as fn(i32, *u8),
                on_answer_ctx: *u8 = 0 as *u8) {
-    present_sheet(alert_tree(title, message, primary, secondary), 140.0f64,
+    // Title, buttons and padding, plus however many lines the message runs to.
+    present_sheet(alert_tree(title, message, primary, secondary),
+                  capped(116.0f64 + message_height(message)),
                   on_answer, on_answer_ctx, no_typed, 0 as *u8);
     return;
 }
@@ -326,9 +399,13 @@ fn alert_sheet(title: str, message: str, primary: str, secondary: str = "",
 fn choose_sheet(title: str, message: str, take options: vec::Vec[text::Text],
                 on_answer: fn(i32, *u8) = 0 as fn(i32, *u8),
                 on_answer_ctx: *u8 = 0 as *u8) {
-    // Tall enough for the buttons it actually has.
+    // Tall enough for the buttons it actually has AND the message it actually
+    // carries. The second half was missing, so a two-line message pushed the
+    // last option off the bottom edge — on a sheet whose last option is
+    // typically the one that says no.
     let n: f64 = options.count() as f64;
-    present_sheet(choose_tree(title, message, options), 110.0f64 + (n * 34.0f64),
+    present_sheet(choose_tree(title, message, options),
+                  capped(78.0f64 + (n * 34.0f64) + message_height(message)),
                   on_answer, on_answer_ctx, no_typed, 0 as *u8);
     return;
 }
@@ -339,7 +416,8 @@ fn prompt_sheet(title: str, message: str, placeholder: str, primary: str,
                 on_answer: fn(i32, *u8) = 0 as fn(i32, *u8),
                 on_answer_ctx: *u8 = 0 as *u8) {
     present_sheet(prompt_tree(title, message, placeholder, primary, secondary),
-                  175.0f64, on_answer, on_answer_ctx, on_typed, on_typed_ctx);
+                  capped(151.0f64 + message_height(message)),
+                  on_answer, on_answer_ctx, on_typed, on_typed_ctx);
     return;
 }
 
