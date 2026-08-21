@@ -210,16 +210,18 @@ Faster than the GUI, and how everything above was verified:
 cd examples/facet_gallery_ios
 cpc build --target ios-arm64-simulator
 
-# Every prebuilt dependency slice, as step 4 explains. Globbing over-links,
-# which costs nothing: an archive nothing references contributes no bytes.
+# Every prebuilt dependency slice, as step 4 explains — asked of cpc rather
+# than guessed from the layout. `--print-link-args` resolves them the way the
+# compiler does and brings them up to date first, so each path is a file that
+# exists and is current.
 #
 # INLINE, not through a variable: zsh does not word-split an unquoted `$var`,
-# so `slices=$(find ...)` then `$slices` hands clang one argument with newlines
+# so `slices=$(cpc ...)` then `$slices` hands clang one argument with newlines
 # in it. Unquoted `$(...)` splits in both shells.
 xcrun -sdk iphonesimulator clang -arch arm64 -mios-simulator-version-min=14.0 \
   -I target/ios-arm64-simulator/debug \
   ios/main.m target/ios-arm64-simulator/debug/libfacet_gallery_ios.a \
-  $(find ../../vendor -maxdepth 4 -path '*/lib/arm64-apple-ios-simulator/*.a') \
+  $(cpc build --target ios-arm64-simulator --print-link-args) \
   -framework UIKit -framework QuartzCore -framework Foundation \
   -framework CoreGraphics -framework WebKit -lobjc -o Gallery.app/Gallery
 # Gallery.app also needs the Info.plist from the Xcode recipe above.

@@ -31,22 +31,30 @@ cpc build --target ios-arm64-simulator
 
 S=/tmp/GalleryApp && mkdir -p $S/Gallery.app && cp ios/Info.plist $S/Gallery.app/
 
-# Every prebuilt dependency slice. NOT optional since `prebuild` became the
-# default on 2026-08-16: a dependency's object code lives in its own
+# ASK CPC WHAT TO LINK. NOT optional since `prebuild` became the default on
+# 2026-08-16: a dependency's object code lives in its own
 # `vendor/<pkg>/lib/<triple>/` archive rather than inside this app's, so
-# leaving these out fails the link on symbols nothing defines. Globbing
-# over-links, which costs nothing — an archive nothing references contributes
-# no bytes. README.md step 4 says the same for the Xcode route.
+# leaving these out fails the link on symbols nothing defines — and the error
+# names whichever package resolves first, which reads as a bug in that package
+# and is not one.
+#
+# `--print-link-args` prints exactly that list, one argument per line, from the
+# same walk the compiler links a host build with: project `vendor/`, then a
+# sibling, then `~/.cplus/<tier>/vendor`, then `lib/<triple>`. It brings the
+# slices up to date first, so every path it prints is a file that exists and is
+# current. It replaces a `find` over `vendor/`, which over-linked, hard-coded
+# the layout, and silently missed a slice living in the store rather than the
+# project. README.md step 4 says the same for the Xcode route.
 #
 # INLINE, not through a variable, and that is a zsh fact rather than a style.
-# zsh does not word-split an unquoted `$var`, so `slices=$(find ...)` followed
+# zsh does not word-split an unquoted `$var`, so `slices=$(cpc ...)` followed
 # by `$slices` hands clang ONE argument with newlines in it — "no such file or
 # directory" naming every archive at once. Unquoted `$(...)` does split, in
 # both shells.
 xcrun -sdk iphonesimulator clang -arch arm64 -mios-simulator-version-min=14.0 \
   -I target/ios-arm64-simulator/debug \
   ios/main.m target/ios-arm64-simulator/debug/libfacet_gallery_ios.a \
-  $(find ../../vendor -maxdepth 4 -path '*/lib/arm64-apple-ios-simulator/*.a') \
+  $(cpc build --target ios-arm64-simulator --print-link-args) \
   -framework UIKit -framework QuartzCore -framework Foundation \
   -framework CoreGraphics -framework WebKit -lobjc \
   -o $S/Gallery.app/Gallery

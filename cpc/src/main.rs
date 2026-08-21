@@ -123,6 +123,9 @@ debug / introspection (single-file):
   cpc --emit-header FILE            C header for every C-ABI-representable `export` item
                                     in FILE. Prints to stdout; redirect with `> out.h`.
   cpc --emit-ll-project             multi-file: print the merged IR to stdout (uses ./Cplus.toml)
+  cpc build --print-link-args       print the link line the DEPENDENCIES contribute, one arg per
+                                    line, and build nothing. What a cross target's consumer (Xcode,
+                                    Gradle, ESP-IDF) must add beside the app's own archive.
 
 other:
   --diagnostics=MODE                diagnostics output: human (default) | short | json
@@ -233,6 +236,27 @@ cpc --emit-ll-project
 
 Multi-file: run the build pipeline as `cpc build` would, but print the
 merged LLVM IR to stdout instead of invoking clang. Uses ./Cplus.toml.
+"
+        }
+        Some(Subcommand::PrintLinkArgs) => {
+            "\
+cpc build --print-link-args [--target NAME] [--release]
+
+Print the link line this project's DEPENDENCIES contribute, one argument
+per line, and build nothing else. Reads ./Cplus.toml.
+
+For a cross target (`--target ios-arm64-simulator`, android, esp32) cpc
+emits ONE archive: the entry package and the generics it instantiated.
+Every dependency's object code is in its own prebuilt slice beside the
+package, and the external build system — Xcode, Gradle, ESP-IDF — has to
+name all of them. This is that list, resolved the same way the compiler
+resolves it, so nothing downstream has to re-derive it and drift.
+
+Dependency slices are brought up to date first, so every path printed is
+a file that exists and is current.
+
+  cpc build --target ios-arm64-simulator
+  cpc build --target ios-arm64-simulator --print-link-args
 "
         }
         Some(Subcommand::Graph) => {
@@ -482,6 +506,10 @@ fn main() -> ExitCode {
             }
             Some("--emit-ll-project") => {
                 subcommand = Some(Subcommand::EmitLlProject);
+                i += 1;
+            }
+            Some("--print-link-args") => {
+                subcommand = Some(Subcommand::PrintLinkArgs);
                 i += 1;
             }
             Some("--timings") => {
@@ -789,6 +817,7 @@ fn main() -> ExitCode {
             build_project(out, diag_mode, build_mode, fp_contract, &sanitizers)
         }
         (Some(Subcommand::EmitLlProject), _) => emit_ll_project(diag_mode, build_mode, fp_contract),
+        (Some(Subcommand::PrintLinkArgs), _) => print_link_args(diag_mode, build_mode),
         (Some(Subcommand::Fmt), _) => run_fmt(fmt_inputs, fmt_opts, diag_mode),
         (Some(Subcommand::Test), _) => {
             run_test(test_input, test_opts, diag_mode, build_mode, &sanitizers, fp_contract)
@@ -827,6 +856,19 @@ enum Subcommand {
     /// generic has no object code until a consumer instantiates it.
     Headers,
     EmitLlProject,
+    /// `cpc build --print-link-args` — print the link line this project's
+    /// DEPENDENCIES contribute, one argument per line, and build nothing.
+    ///
+    /// A cross target hands its consumer one archive: the entry package and
+    /// the generics it instantiated. Every dependency's object code is in its
+    /// own prebuilt slice beside the package, and the external build system —
+    /// Xcode, Gradle, ESP-IDF — has to name all of them or the link fails with
+    /// hundreds of undefined symbols that look like a bug in whichever package
+    /// happens to be named first. cpc already resolves that list to link a HOST
+    /// build; for a cross target it stopped at the archive and exposed the list
+    /// nowhere, so every consumer re-derived it. iris did, with `find -L` over
+    /// two roots, which is a resolution this tool owns.
+    PrintLinkArgs,
     Fmt,
     Test,
     Lsp,
@@ -1623,6 +1665,58 @@ fn vendor_dir_for(m: &manifest::Manifest, dep_name: &str) -> Option<PathBuf> {
 /// this — checking should not spend a clang invocation on a dependency, and
 /// resolution falls back to `src/` per module when a header is absent.
 ///
+/// `cpc build --print-link-args` — the link line the DEPENDENCIES contribute,
+/// one argument per line, on stdout. Builds nothing else.
+///
+/// THE ARTIFACT WAS ALWAYS FINE AND THE RECIPE WAS INCOMPLETE. A cross target
+/// (`--target ios-arm64-simulator` and friends) emits ONE archive — the entry
+/// package plus the generics it instantiated — and every dependency's object
+/// code lives in its own slice at `<vendor>/<pkg>/lib/<triple>/lib<pkg>.a`.
+/// Linking the app's archive alone leaves hundreds of undefined symbols, named
+/// after whichever package resolves first, which reads as a bug in that package
+/// and is not one. `prebuild` becoming the default (2026-08-16) moved a
+/// dependency's object code OUT of the consuming app's archive and so broke
+/// every hand-written iOS link recipe at once.
+///
+/// cpc has always computed this list — `collect_dep_link_args` is the same walk
+/// a host build links with. For a cross target it stopped at the archive and
+/// exposed the list nowhere, so every external build system re-derived a
+/// resolution this tool owns (project `vendor/`, then a sibling, then
+/// `~/.cplus/<tier>/vendor`, then `lib/<link_triple>`). iris re-derived it with
+/// `find -L` over two roots and said in its own comment that it would drift the
+/// moment the layout changed.
+///
+/// THE SLICES ARE BROUGHT UP TO DATE FIRST. Printing a path to an archive that
+/// is not there yet would just move the failure into the consumer's build, and
+/// a stale one is worse than that — see `prebuild_fingerprint`.
+///
+/// ONE ARGUMENT PER LINE because that is what a build system can consume
+/// (`$(cpc build --print-link-args)`, `xargs`, an Xcode script phase) without
+/// anyone having to guess a quoting rule. Nothing is printed to stdout but the
+/// arguments; diagnostics go to stderr as usual.
+fn print_link_args(diag_mode: DiagMode, build_mode: BuildMode) -> ExitCode {
+    let manifest_path = PathBuf::from("Cplus.toml");
+    let m = match manifest::load(&manifest_path) {
+        Ok(m) => m,
+        Err(e) => {
+            emit_diag(&e.to_diagnostic(), diag_mode, "");
+            return ExitCode::FAILURE;
+        }
+    };
+    if let Err(code) = ensure_prebuilt_deps(&m, build_mode, diag_mode, &mut Vec::new()) {
+        return code;
+    }
+    match collect_dep_link_args(&m, diag_mode) {
+        Ok(args) => {
+            for a in &args {
+                println!("{a}");
+            }
+            ExitCode::SUCCESS
+        }
+        Err(code) => code,
+    }
+}
+
 /// A dep that is `dev = true`, or that ships author-built binaries, is skipped:
 /// the first is being worked on, the second already has its answer.
 fn ensure_prebuilt_deps(
@@ -1886,35 +1980,152 @@ fn write_package_entry(vendor_dir: &Path, pkg: &str) -> Result<PathBuf, String> 
 }
 
 /// What the cached archive was built from. Any change here rebuilds it:
-/// package source, the triple, debug-vs-release, and the compiler itself.
+/// package source, the triple, debug-vs-release, the compiler itself — and the
+/// source of every package this one is compiled AGAINST.
 ///
 /// Build mode is inside the fingerprint rather than splitting the cache into
 /// per-mode directories, so a package has exactly one slice layout —
 /// alternating `cpc build` and `cpc build --release` rebuilds rather than
 /// silently linking the other mode's code, which is the bug this replaces.
-fn prebuild_fingerprint(vendor_dir: &Path, link_triple: &str, build_mode: BuildMode) -> Result<String, String> {
+///
+/// THE DEPENDENCY HALF IS LOAD-BEARING, and it was missing until 2026-08-21. A
+/// slice carries its own copy of every generic it instantiated — six copies of
+/// `Box[flex::Node].drop` across six archives in one iris binary — and each
+/// copy holds the field offsets that were current when THAT package was
+/// compiled. Hashing a package's own source alone leaves every slice built
+/// against an older `flex::Node` "current"; archive linking then takes the
+/// first definition that resolves a symbol and ignores the rest, with no
+/// duplicate-symbol error, so ONE stale copy serves the whole program. iris
+/// built its nodes with the current layout and dropped them with the previous
+/// one — every offset from `_rules` up short by 0x18 — and freed a word
+/// AppKit's mouse-tracking stack had left behind. It ran a fortnight first:
+/// every field the two layouts disagree about is a `Vec` header, and a stale
+/// word only aborts when it happens to be non-zero. Filed and resolved as iris
+/// `components_done/prebuilt-slice-outlives-its-layout.txt`.
+fn prebuild_fingerprint(
+    vendor_dir: &Path,
+    link_triple: &str,
+    build_mode: BuildMode,
+) -> Result<String, String> {
     use std::collections::hash_map::DefaultHasher;
     use std::hash::{Hash, Hasher};
-
-    let src_dir = vendor_dir.join("src");
-    let mut files: Vec<PathBuf> = fs::read_dir(&src_dir)
-        .map_err(|e| format!("reading {}: {e}", src_dir.display()))?
-        .filter_map(|e| e.ok().map(|e| e.path()))
-        .filter(|p| p.extension().and_then(|s| s.to_str()) == Some("cplus"))
-        .collect();
-    files.sort();
 
     let mut h = DefaultHasher::new();
     env!("CARGO_PKG_VERSION").hash(&mut h);
     link_triple.hash(&mut h);
     matches!(build_mode, BuildMode::Release).hash(&mut h);
+    package_input_digest(vendor_dir, &mut Vec::new())?.hash(&mut h);
+    Ok(format!("{:016x}", h.finish()))
+}
+
+/// One package's inputs folded into a single number: its own `src/`, then the
+/// same answer for every dependency active on this platform.
+///
+/// Memoised for the life of the process. `stdlib` sits under twenty packages
+/// and the vendor tree is twenty-odd megabytes of source, so the plain
+/// recursion reads it once per consumer. Nothing writes `src/` during a build
+/// — `generate_headers_for` writes `lib/include/`, `write_package_entry`
+/// writes `target/` — which is what makes the cache sound.
+///
+/// A CYCLE IS BROKEN, NOT REJECTED. A manifest cycle is legal as long as one
+/// side sets `prebuild = false`, which `ensure_one_prebuilt` says in its own
+/// error, and a fingerprint has no standing to refuse what the build accepts.
+/// Re-entering a package contributes its name and stops. Nothing is cached
+/// after a break, because a digest taken across one depends on where the walk
+/// entered the cycle and caching it would hand that answer to a different
+/// entry.
+fn package_input_digest(dir: &Path, stack: &mut Vec<PathBuf>) -> Result<u64, String> {
+    use std::collections::hash_map::DefaultHasher;
+    use std::collections::HashMap;
+    use std::hash::{Hash, Hasher};
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Mutex;
+
+    static MEMO: OnceLock<Mutex<HashMap<PathBuf, u64>>> = OnceLock::new();
+    static BROKE_A_CYCLE: AtomicBool = AtomicBool::new(false);
+    let memo = MEMO.get_or_init(|| Mutex::new(HashMap::new()));
+
+    // Canonical, because one package is reachable under several spellings:
+    // `vendor/` carries a symlink loop (`agent_uikit/vendor -> ../../vendor`)
+    // and `vendor_dir_for`'s sibling fallback reaches the same directory from
+    // inside a vendor package. Two paths to one package have to be one key, or
+    // the cycle guard never fires and the cache never hits.
+    let key = dir.canonicalize().unwrap_or_else(|_| dir.to_path_buf());
+    if let Some(hit) = memo.lock().ok().and_then(|m| m.get(&key).copied()) {
+        return Ok(hit);
+    }
+    if stack.contains(&key) {
+        BROKE_A_CYCLE.store(true, Ordering::Relaxed);
+        let mut h = DefaultHasher::new();
+        "cycle".hash(&mut h);
+        key.file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .hash(&mut h);
+        return Ok(h.finish());
+    }
+
+    let mut h = DefaultHasher::new();
+    let src_dir = dir.join("src");
+    // An absent `src/` contributes nothing rather than failing: a package can
+    // ship only author-built binaries. Unreadable is still an error — that is
+    // a fingerprint the build must not stamp over an archive.
+    let mut files: Vec<PathBuf> = match fs::read_dir(&src_dir) {
+        Ok(rd) => rd
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .filter(|p| p.extension().and_then(|s| s.to_str()) == Some("cplus"))
+            .collect(),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+        Err(e) => return Err(format!("reading {}: {e}", src_dir.display())),
+    };
+    files.sort();
     for f in &files {
-        f.file_name().map(|n| n.to_string_lossy().into_owned()).hash(&mut h);
+        f.file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .hash(&mut h);
         fs::read(f)
             .map_err(|e| format!("reading {}: {e}", f.display()))?
             .hash(&mut h);
     }
-    Ok(format!("{:016x}", h.finish()))
+
+    // Dependencies, by name so a reordered `[dependencies]` table is not a
+    // rebuild. A dep whose directory is missing or whose manifest will not
+    // parse still contributes its NAME — declaring one has to invalidate the
+    // slice even before it resolves — and the dep walk reports the absence,
+    // which is not this function's job. Inactive platforms are skipped, the
+    // same filter `ensure_prebuilt_deps` links by.
+    stack.push(key.clone());
+    let walked = (|| -> Result<Vec<(String, u64)>, String> {
+        let Ok(m) = manifest::load(&dir.join("Cplus.toml")) else {
+            return Ok(Vec::new());
+        };
+        let platform = target::active_platform();
+        let mut names: Vec<String> = m
+            .dependencies
+            .iter()
+            .filter(|d| d.active_on(platform))
+            .map(|d| d.name.clone())
+            .collect();
+        names.sort();
+        let mut out = Vec::new();
+        for name in names {
+            let digest = match vendor_dir_for(&m, &name) {
+                Some(p) => package_input_digest(&p, stack)?,
+                None => 0,
+            };
+            out.push((name, digest));
+        }
+        Ok(out)
+    })();
+    stack.pop();
+    walked?.hash(&mut h);
+
+    let digest = h.finish();
+    if !BROKE_A_CYCLE.load(Ordering::Relaxed) {
+        if let Ok(mut m) = memo.lock() {
+            m.insert(key, digest);
+        }
+    }
+    Ok(digest)
 }
 
 /// The triple that names a binary slice's directory for the build in progress.
@@ -5674,7 +5885,7 @@ const INIT_USAGE: &str = "\
 cpc init - scaffold a new C+ project
 
 usage:
-  cpc init [--platform P]... [NAME]
+  cpc init [--kind K] [--platform P]... [NAME]
                     create a project. With NAME, scaffold into NAME/; without,
                     scaffold in the current directory (name = directory name).
 
@@ -5691,23 +5902,67 @@ usage:
                     the symbol Xcode's/Gradle's own main calls); everything
                     else gets a normal `fn main`.
 
-                    --platform ios scaffolds a facet APP, not a hello-world:
-                    iOS has no console and no window a `fn main` could open, so
-                    a printing entry is a black rectangle on a phone. You get
-                    src/app.cplus (one screen, shared by every platform named),
-                    the iOS entry, and ios/ with main.m + Info.plist for Xcode.
+  --kind cli        a program with a `fn main` that prints. The default for a
+                    project that names no platform, and for desktop platforms.
 
-writes: Cplus.toml, src/main*.cplus, .gitignore, SKILL.md
-   ios: + src/app.cplus, ios/main.m, ios/Info.plist
+  --kind gui        a facet APP: src/app.cplus (one screen, shared by every
+                    platform named), one entry per platform, and the backend's
+                    full dependency closure in the manifest — no hand edits
+                    between `init` and a window on screen.
+
+                    WITHOUT --kind, the PLATFORM decides. --platform ios is
+                    gui and cannot be anything else: iOS has no console and no
+                    window a `fn main` could open, so a printing entry is a
+                    black rectangle on a phone. Everything else defaults to
+                    cli, because a desktop platform can legitimately be either
+                    and only you know which — which is exactly the question
+                    --kind exists to answer. `--kind cli --platform ios` is
+                    refused rather than obeyed.
+
+                    Backends: macOS gets facet_appkit, iOS gets facet_uikit.
+                    A gui project naming a platform with no facet backend
+                    scaffolds the shared app and says which entry you will have
+                    to finish yourself.
+
+writes: Cplus.toml, src/main*.cplus, .gitignore, SKILL.md,
+        AGENTS.md, .mcp.json
+   gui: + src/app.cplus
+   ios: + ios/main.m, ios/Info.plist
 ";
 
-/// `cpc init [--platform P]... [NAME]`.
+/// What kind of program this project is. Not a boolean: C+ targets printing
+/// programs, facet apps and (one day) firmware, and those are different
+/// templates with different entries — a `--gui` flag could only ever name two
+/// of the three.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum InitKind {
+    Cli,
+    Gui,
+}
+
+/// `cpc init [--kind K] [--platform P]... [NAME]`.
 fn run_init(args: &[OsString]) -> ExitCode {
     let mut name: Option<String> = None;
     let mut platforms: Vec<String> = Vec::new();
     let mut want_platform = false;
+    let mut want_kind = false;
+    let mut kind: Option<InitKind> = None;
     for a in args {
         match a.to_str() {
+            _ if want_kind => {
+                kind = match a.to_str() {
+                    Some("cli") => Some(InitKind::Cli),
+                    Some("gui") => Some(InitKind::Gui),
+                    other => {
+                        eprintln!(
+                            "cpc init: unknown kind `{}`; one of: cli, gui",
+                            other.unwrap_or("<non-utf8>")
+                        );
+                        return ExitCode::FAILURE;
+                    }
+                };
+                want_kind = false;
+            }
             _ if want_platform => {
                 let p = match a.to_str() {
                     Some(p) => p,
@@ -5729,6 +5984,7 @@ fn run_init(args: &[OsString]) -> ExitCode {
                 want_platform = false;
             }
             Some("--platform") => want_platform = true,
+            Some("--kind") | Some("--template") => want_kind = true,
             Some("-h") | Some("--help") => {
                 print!("{INIT_USAGE}");
                 return ExitCode::SUCCESS;
@@ -5744,6 +6000,10 @@ fn run_init(args: &[OsString]) -> ExitCode {
 
     if want_platform {
         eprintln!("cpc init: --platform requires a value");
+        return ExitCode::FAILURE;
+    }
+    if want_kind {
+        eprintln!("cpc init: --kind requires a value (cli or gui)");
         return ExitCode::FAILURE;
     }
 
@@ -5826,66 +6086,134 @@ fn run_init(args: &[OsString]) -> ExitCode {
     for p in platforms.iter() {
         sections.push_str(&format!("[{p}]\nentry = \"src/{}\"\n\n", entry_file(p)));
     }
-    // iOS has no console and no window a `fn main` could open: an iOS target
-    // builds a STATICLIB that an app bundle links, and the first thing the
-    // shell's `main.m` calls has to put a UI on screen or the app is a black
-    // rectangle. So `--platform ios` scaffolds a facet APP — a screen, the
-    // runtime that hosts it, and the Xcode-side shell — rather than the
-    // hello-world that serves every self-linked platform fine.
     let ios = platforms.iter().any(|p| p == "ios");
 
-    let manifest_toml = if ios {
-        // The backend and its transitive closure. The resolver validates every
-        // import in the build against ONE flat set taken from THIS manifest —
-        // it does not read a dependency's own — so facet_uikit's deps are
-        // named here too. This is the minimum that links: `webkit` is not
-        // optional, because facet_uikit's `web.cplus` imports it unconditionally.
+    // Which template. iOS has no console and no window a `fn main` could open:
+    // an iOS target builds a STATICLIB that an app bundle links, and the first
+    // thing the shell's `main.m` calls has to put a UI on screen or the app is
+    // a black rectangle. So iOS IMPLIES gui and cannot be told otherwise.
+    //
+    // Every other platform can legitimately be either, and nothing in a
+    // platform name says which — so the default is the printing program (the
+    // smaller, more surprising-if-wrong answer) and `--kind gui` is how you say
+    // otherwise. Before this flag existed a desktop-only facet project fell
+    // through to the hello-world and took three rounds of manifest edits to
+    // reach a window, which is the gap this closes.
+    let gui = match kind {
+        Some(InitKind::Gui) => {
+            if platforms.is_empty() {
+                // The backend closure is written into a `[<platform>.dependencies]`
+                // section, so a facet app has to know which platform it is for.
+                // A `[dependencies] facet_appkit` would be a lie the moment
+                // anyone built the same manifest for anything else.
+                eprintln!(
+                    "cpc init: --kind gui needs at least one --platform — a facet app's backend\n\
+                     (facet_appkit, facet_uikit) is named per platform in the manifest, and\n\
+                     there is no platform-agnostic way to write it. Try:\n\
+                     \n    cpc init --kind gui --platform macos"
+                );
+                return ExitCode::FAILURE;
+            }
+            true
+        }
+        Some(InitKind::Cli) => {
+            if ios {
+                eprintln!(
+                    "cpc init: --kind cli cannot be combined with --platform ios — iOS has no\n\
+                     console and no window a `fn main` could open, so a printing entry is a\n\
+                     black rectangle on a phone. Drop --kind, or drop --platform ios."
+                );
+                return ExitCode::FAILURE;
+            }
+            false
+        }
+        None => ios,
+    };
+
+    // The platforms a facet backend is scaffolded for. A gui project naming
+    // anything else still gets `src/app.cplus` and an entry that calls it —
+    // the app is portable, the BACKEND is what is missing — and is told so
+    // rather than being handed a manifest that fails to resolve at build time
+    // with no hint about why.
+    let backed: Vec<&String> = platforms
+        .iter()
+        .filter(|p| matches!(p.as_str(), "macos" | "ios"))
+        .collect();
+    if gui {
+        let unbacked: Vec<&str> = platforms
+            .iter()
+            .map(String::as_str)
+            .filter(|p| !matches!(*p, "macos" | "ios"))
+            .collect();
+        if !unbacked.is_empty() {
+            eprintln!(
+                "cpc init: no facet backend is scaffolded for {} — src/app.cplus and the entry\n\
+                 are written, but you will have to name a backend for {} in Cplus.toml yourself.",
+                unbacked.join(", "),
+                if unbacked.len() == 1 { "it" } else { "them" }
+            );
+        }
+    }
+
+    // The backend and its transitive closure, per platform. The resolver
+    // validates every import in the build against ONE flat set taken from THIS
+    // manifest — it does not read a dependency's own — so facet_appkit's and
+    // facet_uikit's deps are named here too. This is the minimum that links:
+    // `webkit` is not optional, because each backend's `web.cplus` imports it
+    // unconditionally.
+    let backend_deps = |p: &str| -> String {
+        match p {
+            "ios" => "\n# facet's iOS backend and everything it imports. The resolver checks\n\
+                      # every import against this one flat set, so the closure is named here.\n\
+                      [ios.dependencies]\n\
+                      facet_uikit = \"*\"\n\
+                      uikit       = \"*\"\n\
+                      objc        = \"*\"\n\
+                      quartzcore  = \"*\"\n\
+                      webkit      = \"*\"\n\n\
+                      # What `serve_if_asked` in src/main_ios.cplus links, named here for\n\
+                      # the same flat-set reason as the backend's own closure.\n\
+                      inspector   = \"*\"\n\
+                      facet_agent = \"*\"\n\
+                      agent_uikit = \"*\"\n\
+                      agent_core  = \"*\"\n\
+                      agent_inapp = \"*\"\n\
+                      agent_mcp   = \"*\"\n\
+                      json        = \"*\"\n"
+                .to_string(),
+            "macos" => "\n# facet's AppKit backend and its closure.\n\
+                        [macos.dependencies]\n\
+                        facet_appkit = \"*\"\n\
+                        appkit       = \"*\"\n\
+                        objc         = \"*\"\n\
+                        quartzcore   = \"*\"\n\
+                        webkit       = \"*\"\n\n\
+                        # What `serve_if_asked` in the desktop entry links. Named here for\n\
+                        # the same reason the backend's closure is: the resolver checks every\n\
+                        # import against this one flat set. Delete these with that line if\n\
+                        # you would rather the binary could not be inspected.\n\
+                        inspector    = \"*\"\n\
+                        facet_agent  = \"*\"\n\
+                        agent_appkit = \"*\"\n\
+                        agent_core   = \"*\"\n\
+                        agent_inapp  = \"*\"\n\
+                        agent_mcp    = \"*\"\n\
+                        json         = \"*\"\n"
+                .to_string(),
+            _ => String::new(),
+        }
+    };
+
+    let manifest_toml = if gui {
+        let closures: String = backed.iter().map(|p| backend_deps(p)).collect();
         format!(
             "[package]\nname    = \"{proj_name}\"\nversion = \"0.0.1\"\nedition = \"2026\"\n\n\
              {sections}[dependencies]\n\
              stdlib        = \"*\"\n\
              facet         = \"*\"\n\
              facet_runtime = \"*\"\n\
-             flex_layout   = \"*\"\n\n\
-             # facet's iOS backend and everything it imports. The resolver checks\n\
-             # every import against this one flat set, so the closure is named here.\n\
-             [ios.dependencies]\n\
-             facet_uikit = \"*\"\n\
-             uikit       = \"*\"\n\
-             objc        = \"*\"\n\
-             quartzcore  = \"*\"\n\
-             webkit      = \"*\"\n\n\
-             # What `serve_if_asked` in src/main_ios.cplus links, named here for\n\
-             # the same flat-set reason as the backend's own closure.\n\
-             inspector   = \"*\"\n\
-             facet_agent = \"*\"\n\
-             agent_uikit = \"*\"\n\
-             agent_core  = \"*\"\n\
-             agent_inapp = \"*\"\n\
-             agent_mcp   = \"*\"\n\
-             json        = \"*\"\n{macos_deps}"
-        , macos_deps = if platforms.iter().any(|p| p == "macos") {
-            "\n# The same app on the desktop: facet's AppKit backend and its closure.\n\
-             [macos.dependencies]\n\
-             facet_appkit = \"*\"\n\
-             appkit       = \"*\"\n\
-             objc         = \"*\"\n\
-             quartzcore   = \"*\"\n\
-             webkit       = \"*\"\n\n\
-             # What `serve_if_asked` in src/main.cplus links. Named here for the\n\
-             # same reason the backend's closure is: the resolver checks every\n\
-             # import against this one flat set. Delete these with that line if\n\
-             # you would rather the binary could not be inspected.\n\
-             inspector    = \"*\"\n\
-             facet_agent  = \"*\"\n\
-             agent_appkit = \"*\"\n\
-             agent_core   = \"*\"\n\
-             agent_inapp  = \"*\"\n\
-             agent_mcp    = \"*\"\n\
-             json         = \"*\"\n"
-        } else {
-            ""
-        })
+             flex_layout   = \"*\"\n{closures}"
+        )
     } else {
         format!(
             "[package]\nname    = \"{proj_name}\"\nversion = \"0.0.1\"\nedition = \"2026\"\n\n\
@@ -5911,7 +6239,7 @@ fn run_init(args: &[OsString]) -> ExitCode {
              export extern fn {sym}_main() -> i32 {{\n    io::println(\"hello from C+\");\n    return 0;\n}}\n"
         )
     };
-    // ---- the facet app scaffold (only when `--platform ios` is named) -------
+    // ---- the facet app scaffold (`--kind gui`, implied by --platform ios) ---
     //
     // Three files, and the split is the point: `app.cplus` is the app and is
     // shared by every platform, while each entry is only the door its platform
@@ -6063,8 +6391,11 @@ fn run_init(args: &[OsString]) -> ExitCode {
     let ios_main_m = format!(
         "// The app bundle's entry point: `main` hands the process to C+, and\n\
          // {sym}_main never comes back — it calls UIApplicationMain, which owns\n\
-         // the process from there. facet_uikit synthesizes its own delegate class\n\
-         // at runtime, so Info.plist must NOT name a storyboard or scene manifest.\n\n\
+         // the process from there. facet_uikit synthesizes both its delegate class\n\
+         // and its scene delegate at runtime, so Info.plist NAMES the scene (every\n\
+         // windowing API on iPadOS hangs off one) and must not name a storyboard\n\
+         // (UIKit would wait for a nib facet has not got, and the screen stays\n\
+         // black).\n\n\
          #import \"{proj_name}.h\"   // generated by cpc into target/<triple>/debug/\n\n\
          int main(int argc, char *argv[]) {{\n    return {sym}_main();\n}}\n"
     );
@@ -6190,10 +6521,85 @@ fn run_init(args: &[OsString]) -> ExitCode {
     };
 
     let gitignore = "/target\n/vendor\n";
+
+    // ---- what the AGENT is handed ------------------------------------------
+    //
+    // A new language has no training corpus, so an agent writes C+ from
+    // whatever it already knows and re-derives the language from build failures
+    // every session. The answer is that THE COMPILER IS THE CORPUS — `cpc
+    // skill` prints the language reference and every dependency's,
+    // version-matched and offline; `cpc explain` turns a code into a cause and
+    // a worked example; `cpc query` and `cpc mcp` answer "where is X / who
+    // calls X / what is the type here" from the resolved graph rather than from
+    // grep. All four existed and nothing pointed an agent at any of them.
+    //
+    // AGENTS.md, not CLAUDE.md: it is the cross-agent filename, and Codex reads
+    // it too. Claude Code auto-loads it; SKILL.md it does not.
+    //
+    // POINT AT THE COMMAND, NOT THE FILE. A checked-in SKILL.md drifts from the
+    // compiler that scaffolded it — measured at 21KB of missing language
+    // surface on one repo, including a builtin. `cpc skill` cannot drift,
+    // because it IS the compiler answering.
+    //
+    // This is cpc's section because WHICH SUBCOMMANDS EXIST is a fact about the
+    // binary, and a pointer file naming one the toolchain dropped is worse than
+    // no pointer file. An IDE appends its own section below; see the marker.
+    let agents_md = format!(
+        "# {proj_name}\n\n\
+         This is a C+ project. C+ is a young language, so **do not write it from\n\
+         memory** — the toolchain answers every question about it, offline and\n\
+         version-matched to this project.\n\n\
+         ## Before you write any C+\n\n\
+         Run `cpc skill`. It prints the language reference, and inside a project\n\
+         it also prints the reference of every dependency that ships one — facet\n\
+         contributes several hundred lines about its retained, non-reactive model\n\
+         and the mistakes that compile anyway. Read it rather than a checked-in\n\
+         copy: a file drifts from the compiler, this cannot.\n\n\
+         `cpc skill --lang-only` is the language alone, if that is all you need.\n\n\
+         ## When the compiler says no\n\n\
+         Run `cpc explain <CODE>` before you guess. Every diagnostic code has a\n\
+         cause, a fix and a worked example behind it — `cpc explain E0613` is\n\
+         faster and more reliable than inferring from the message.\n\n\
+         ## Navigating this code\n\n\
+         **Do not grep for definitions.** C+ has no dynamic dispatch, so every\n\
+         call to a named function resolves and the graph's answer is COMPLETE —\n\
+         which grep's never is:\n\n\
+         ```\n\
+         cpc query definition <symbol>     where is it\n\
+         cpc query references <symbol>     everywhere it is used\n\
+         cpc query callers <symbol>        who calls it\n\
+         cpc query symbols <file>          the outline of a file\n\
+         ```\n\n\
+         The same graph is available as MCP tools — see `.mcp.json`, which points\n\
+         at `cpc mcp`. Prefer either over reading files to find things.\n\n\
+         ## Building\n\n\
+         ```\n\
+         cpc build          compile and link\n\
+         cpc test           run the tests\n\
+         cpc fmt            canonical formatting\n\
+         ```\n\n\
+         <!-- Sections below this line are written by your IDE and are rewritten\n\
+              when it opens the project. Edit above the line, not below it. -->\n"
+    );
+
+    // The code graph as MCP, for an agent the user runs in their own terminal
+    // with no IDE in the picture. cpc's rather than an IDE's for that reason:
+    // making it the IDE's would withhold a C+ feature from C+ users.
+    //
+    // THE ABSOLUTE PATH, not a bare `cpc`. An MCP client is launched by whatever
+    // spawned the agent, and a GUI-launched one inherits an environment where a
+    // bare name does not resolve — the same trap that made an IDE's whole code
+    // intelligence layer silently answer nothing.
+    let cpc_path = env::current_exe()
+        .ok()
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "cpc".to_string());
+    let mcp_json = format!(
+        "{{\n  \"mcpServers\": {{\n    \"cplus\": {{\n      \"command\": \"{cpc_path}\",\n      \"args\": [\"mcp\"]\n    }}\n  }}\n}}\n"
+    );
+
     let mut files: Vec<(PathBuf, String)> = vec![(manifest, manifest_toml)];
-    if platforms.is_empty() {
-        files.push((src.join("main.cplus"), desktop_main.to_string()));
-    } else if ios {
+    if gui {
         // The shared app, then one door per platform.
         files.push((src.join("app.cplus"), facet_app));
         for p in platforms.iter() {
@@ -6204,16 +6610,20 @@ fn run_init(args: &[OsString]) -> ExitCode {
             };
             files.push((src.join(entry_file(p)), body));
         }
-        // The Xcode side. `main.m` is the whole of the Objective-C in a facet
-        // app; the Info.plist must NOT name a storyboard or a scene manifest,
-        // because facet_uikit synthesizes its own delegate at runtime.
-        let ios_dir = root.join("ios");
-        if let Err(e) = std::fs::create_dir_all(&ios_dir) {
-            eprintln!("cpc init: could not create {}: {e}", ios_dir.display());
-            return ExitCode::FAILURE;
+        if ios {
+            // The Xcode side. `main.m` is the whole of the Objective-C in a
+            // facet app; facet_uikit synthesizes its own delegate at runtime,
+            // and the plist below names the scene it synthesizes with it.
+            let ios_dir = root.join("ios");
+            if let Err(e) = std::fs::create_dir_all(&ios_dir) {
+                eprintln!("cpc init: could not create {}: {e}", ios_dir.display());
+                return ExitCode::FAILURE;
+            }
+            files.push((ios_dir.join("main.m"), ios_main_m.clone()));
+            files.push((ios_dir.join("Info.plist"), ios_plist.clone()));
         }
-        files.push((ios_dir.join("main.m"), ios_main_m.clone()));
-        files.push((ios_dir.join("Info.plist"), ios_plist.clone()));
+    } else if platforms.is_empty() {
+        files.push((src.join("main.cplus"), desktop_main.to_string()));
     } else {
         for p in platforms.iter() {
             files.push((src.join(entry_file(p)), entry_body(p)));
@@ -6222,6 +6632,8 @@ fn run_init(args: &[OsString]) -> ExitCode {
     files.push((root.join(".gitignore"), gitignore.to_string()));
     // The agent reference, so the fresh project is immediately LLM-ready.
     files.push((root.join("SKILL.md"), SKILL_MD.to_string()));
+    files.push((root.join("AGENTS.md"), agents_md));
+    files.push((root.join(".mcp.json"), mcp_json));
     for (path, content) in files {
         if let Err(e) = std::fs::write(&path, content) {
             eprintln!("cpc init: could not write {}: {e}", path.display());

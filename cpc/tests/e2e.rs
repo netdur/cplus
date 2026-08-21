@@ -24393,6 +24393,89 @@ fn prebuilt_enum_and_str_methods_resolve_from_the_archive() {
 }
 
 #[test]
+fn print_link_args_names_every_dependency_slice_and_builds_nothing() {
+    // WHAT A CROSS TARGET'S CONSUMER HAS TO LINK, from the tool that resolves
+    // it. `cpc build --target ios-...` emits ONE archive — the entry package
+    // and the generics it instantiated — and every dependency's object code is
+    // in its own slice beside the package. Xcode/Gradle/ESP-IDF have to name
+    // them all, cpc always computed the list to link a HOST build, and for a
+    // cross target it stopped at the archive and exposed the list nowhere. So
+    // every consumer re-derived a resolution this tool owns; iris did it with
+    // `find -L` over two roots and wrote in its own comment that it would drift
+    // the moment the layout changed.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    prebuild_fixture(&dir, "", 7);
+
+    let out = build_app(cpc, &dir, &["--print-link-args"]);
+    assert!(
+        out.status.success(),
+        "--print-link-args failed:\nstderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout).to_string();
+
+    // The dep's slice is named, by an absolute path to a file that EXISTS —
+    // printing a path to an archive nobody built yet would only move the
+    // failure into the consumer's build.
+    let named: Vec<&str> = stdout
+        .lines()
+        .filter(|l| l.ends_with("libmathy.a"))
+        .collect();
+    assert_eq!(named.len(), 1, "exactly one mathy slice, got:\n{stdout}");
+    let slice = std::path::Path::new(named[0]);
+    assert!(slice.is_absolute(), "a build system needs an absolute path");
+    assert!(
+        slice.is_file(),
+        "the slice must be on disk, not merely named: {}",
+        slice.display()
+    );
+
+    // ONE ARGUMENT PER LINE, and nothing else on stdout — that is what makes
+    // `$(cpc build --print-link-args)` and `xargs` work without a quoting rule.
+    for line in stdout.lines() {
+        assert!(!line.is_empty(), "no blank lines in the arg list");
+        assert!(
+            !line.contains(char::is_whitespace),
+            "one argument per line, got `{line}`"
+        );
+    }
+
+    // AND IT BUILT NOTHING ELSE. The flag is a question, not a build: asking
+    // what to link must not cost an app link, and must not be the thing that
+    // produces the binary a caller then thinks is current.
+    assert!(
+        !dir.join("target/debug/app").exists(),
+        "--print-link-args must not link the app"
+    );
+}
+
+#[test]
+fn print_link_args_is_empty_and_succeeds_for_a_project_with_no_dependencies() {
+    // The negative half. A project that depends on nothing contributes no link
+    // arguments, and the honest answer is an empty list and exit 0 — not an
+    // error, and not a build. A consumer scripting this must be able to run it
+    // unconditionally.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(dir.join("Cplus.toml"), "[package]\nname = \"app\"\n").unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(dir.join("src/main.cplus"), "fn main() -> i32 { return 0; }\n").unwrap();
+
+    let out = build_app(cpc, &dir, &["--print-link-args"]);
+    assert!(
+        out.status.success(),
+        "no deps is not an error:\nstderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&out.stdout).trim().is_empty(),
+        "nothing to link, so nothing printed"
+    );
+    assert!(!dir.join("target/debug/app").exists());
+}
+
+#[test]
 fn prebuild_compiles_the_dep_once_and_links_the_slice() {
     // `[build] prebuild = true` is the whole opt-in: no `[lib]`, no `[link]`,
     // no triple. The first consumer build produces the slice and its headers;
@@ -24474,6 +24557,104 @@ fn prebuild_rebuilds_when_the_package_source_changes() {
     assert_eq!(run.code(), Some(33), "the consumer must see the new code");
 }
 
+#[test]
+fn prebuild_rebuilds_when_a_dependency_changes() {
+    // A slice's fingerprint covered the package's OWN source and nothing
+    // else, so a struct that changed shape in `base` left every slice
+    // compiled against the old shape valid. Archive linking takes the first
+    // definition that resolves a symbol and reports no duplicate, so one
+    // stale copy then served the whole program: iris built a `flex::Node`
+    // with the current layout, dropped it through a slice that had the
+    // previous one, and freed a word AppKit's mouse-tracking stack had left
+    // behind (iris `components_done/prebuilt-slice-outlives-its-layout.txt`).
+    //
+    // The layout change here SWAPS two fields rather than inserting one, on
+    // purpose: both versions are the same size, so the call ABI is identical
+    // and the only thing that can differ is the offset `mid` compiled in.
+    // Stale answers `pad` (9), current answers `mark` (42) — nothing about
+    // which is left to the platform.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    // The app declares the whole closure, which is what `cpc add` writes.
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"app\"\n\n[dependencies]\nbase = \"*\"\nmid = \"*\"\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"mid/mid\" as mid;\nfn main() -> i32 { return mid::marker(); }\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("vendor/base/src")).unwrap();
+    std::fs::write(
+        dir.join("vendor/base/Cplus.toml"),
+        "[package]\nname = \"base\"\n",
+    )
+    .unwrap();
+    let base = |fields: &str, init: &str| {
+        format!(
+            "struct P {{ f0: i32, f1: i32, f2: i32, f3: i32, f4: i32, f5: i32, {fields} }}\n\
+             fn make() -> P {{\n    return P {{ f0: 0, f1: 0, f2: 0, f3: 0, f4: 0, f5: 0, {init} }};\n}}\n"
+        )
+    };
+    std::fs::write(
+        dir.join("vendor/base/src/base.cplus"),
+        base("pad: i32, mark: i32", "pad: 9, mark: 42"),
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("vendor/mid/src")).unwrap();
+    std::fs::write(
+        dir.join("vendor/mid/Cplus.toml"),
+        "[package]\nname = \"mid\"\n\n[dependencies]\nbase = \"*\"\n",
+    )
+    .unwrap();
+    // `mid` reads the field through base's HEADER, so the offset it resolves
+    // is baked into mid's archive and nothing in mid's own source names it.
+    std::fs::write(
+        dir.join("vendor/mid/src/mid.cplus"),
+        "import \"base/base\" as base;\n\
+         fn marker() -> i32 {\n    let p: base::P = base::make();\n    return p.mark;\n}\n",
+    )
+    .unwrap();
+
+    let out = build_app(cpc, &dir, &[]);
+    assert!(
+        out.status.success(),
+        "first build failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let run = Command::new(dir.join("target/debug/app")).status().expect("run");
+    assert_eq!(run.code(), Some(42), "the first layout must read `mark`");
+
+    std::fs::write(
+        dir.join("vendor/base/src/base.cplus"),
+        base("mark: i32, pad: i32", "mark: 42, pad: 9"),
+    )
+    .unwrap();
+    let out = build_app(cpc, &dir, &[]);
+    assert!(
+        out.status.success(),
+        "rebuild failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("prebuilding `base`"),
+        "the edited package must rebuild: {stderr}"
+    );
+    assert!(
+        stderr.contains("prebuilding `mid`"),
+        "the package COMPILED AGAINST it must rebuild too: {stderr}"
+    );
+    let run = Command::new(dir.join("target/debug/app")).status().expect("run");
+    assert_eq!(
+        run.code(),
+        Some(42),
+        "a stale `mid` reads the old offset and answers `pad` (9)"
+    );
+}
 #[test]
 fn prebuild_rebuilds_when_the_build_mode_changes() {
     // Debug and release share one slice path, so the mode is in the

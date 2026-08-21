@@ -175,11 +175,19 @@ fn init_ios_scaffolds_the_app_and_the_xcode_shell() {
     assert!(m.contains("return myapp_main();"), "main.m must call the exported symbol:\n{m}");
     assert!(m.contains("#import \"myapp.h\""), "main.m must include the generated header:\n{m}");
 
-    // facet_uikit synthesizes its own delegate, so the plist must name neither
-    // a storyboard nor a scene manifest — either one takes the window away.
+    // NO STORYBOARD, BUT A SCENE. The two were once refused together and they
+    // are not the same key: a storyboard makes UIKit wait for a nib facet does
+    // not have and the screen stays black, while a scene is what every
+    // windowing API on iPadOS hangs off — without a manifest the app is not
+    // answering the geometry callbacks badly, it is never asked, and it gets a
+    // full-screen-sized canvas scaled into whatever window the user drags.
+    // facet_uikit synthesizes `FacetUIKitSceneDelegate` before
+    // UIApplicationMain and adopts the window the app delegate already built,
+    // so naming it changes nothing about how the app starts.
     let plist = std::fs::read_to_string(root.join("ios/Info.plist")).unwrap();
     assert!(!plist.contains("UIMainStoryboardFile"), "plist must not name a storyboard");
-    assert!(!plist.contains("UIApplicationSceneManifest"), "plist must not name a scene manifest");
+    assert!(plist.contains("UIApplicationSceneManifest"), "plist must name a scene manifest");
+    assert!(plist.contains("FacetUIKitSceneDelegate"), "and the delegate facet synthesizes");
     assert!(plist.contains("LSRequiresIPhoneOS"), "plist:\n{plist}");
 
     // The manifest carries the backend closure — the resolver checks every
@@ -262,6 +270,88 @@ fn init_without_ios_stays_a_hello_world() {
     assert!(main.contains("hello from C+"), "main:\n{main}");
     let toml = std::fs::read_to_string(root.join("Cplus.toml")).unwrap();
     assert!(!toml.contains("facet"), "a hello-world must not pull in facet:\n{toml}");
+}
+
+// ---- cpc init --kind ----
+
+#[test]
+fn kind_gui_scaffolds_a_facet_app_for_a_desktop_only_project() {
+    // The case that fell through before --kind existed: a macOS-only facet
+    // project got the printing hello-world, and reaching a window from there
+    // took three rounds of manifest edits. It is also the DEFAULT selection in
+    // iris's New Project form, so it is the common case, not a corner.
+    let dir = tempfile::tempdir().unwrap();
+    let out = Command::new(cpc())
+        .arg("init").arg("--kind").arg("gui").arg("--platform").arg("macos").arg("deskgui")
+        .current_dir(dir.path())
+        .output()
+        .expect("run");
+    assert!(out.status.success());
+    let root = dir.path().join("deskgui");
+    assert!(root.join("src/app.cplus").exists(), "the shared screen");
+    assert!(!root.join("ios").exists(), "no ios/ for a macOS-only project");
+    let main = std::fs::read_to_string(root.join("src/main.cplus")).unwrap();
+    assert!(main.contains("app::run()"), "the entry opens the app:\n{main}");
+    assert!(!main.contains("hello from C+"), "not the printing template:\n{main}");
+    let toml = std::fs::read_to_string(root.join("Cplus.toml")).unwrap();
+    // The whole closure, because the resolver checks every import against one
+    // flat set — a manifest that needs hand edits is the bug this fixes.
+    for dep in ["facet_runtime", "[macos.dependencies]", "facet_appkit", "appkit", "webkit"] {
+        assert!(toml.contains(dep), "missing {dep}:\n{toml}");
+    }
+    assert!(!toml.contains("[ios.dependencies]"), "no iOS backend was asked for:\n{toml}");
+}
+
+#[test]
+fn kind_cli_is_refused_for_ios() {
+    // iOS has no console: a printing entry is a black rectangle on a phone, so
+    // the platform has already answered and the flag has nothing to say.
+    let dir = tempfile::tempdir().unwrap();
+    let out = Command::new(cpc())
+        .arg("init").arg("--kind").arg("cli").arg("--platform").arg("ios").arg("nope")
+        .current_dir(dir.path())
+        .output()
+        .expect("run");
+    assert!(!out.status.success(), "must refuse rather than obey");
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("black rectangle"), "says why:\n{err}");
+    assert!(!dir.path().join("nope/Cplus.toml").exists(), "nothing written");
+}
+
+#[test]
+fn kind_gui_needs_a_platform() {
+    // The backend closure is written per platform; there is no
+    // platform-agnostic way to name facet_appkit without lying about linux.
+    let dir = tempfile::tempdir().unwrap();
+    let out = Command::new(cpc())
+        .arg("init").arg("--kind").arg("gui").arg("solo")
+        .current_dir(dir.path())
+        .output()
+        .expect("run");
+    assert!(!out.status.success());
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("--platform macos"), "suggests the fix:\n{err}");
+}
+
+#[test]
+fn no_kind_keeps_every_existing_default() {
+    // The flag is additive. Absent, the platform decides exactly as before:
+    // ios implies the facet app, everything else is the hello-world.
+    let dir = tempfile::tempdir().unwrap();
+    for (args, wants_app) in [
+        (vec!["--platform", "macos"], false),
+        (vec!["--platform", "ios"], true),
+        (vec!["--platform", "macos", "--platform", "ios"], true),
+    ] {
+        let name = format!("p{}", args.join("").replace("--platform", ""));
+        let mut c = Command::new(cpc());
+        c.arg("init");
+        for a in &args { c.arg(a); }
+        let out = c.arg(&name).current_dir(dir.path()).output().expect("run");
+        assert!(out.status.success(), "{args:?}");
+        let has_app = dir.path().join(&name).join("src/app.cplus").exists();
+        assert_eq!(has_app, wants_app, "{args:?} changed its template");
+    }
 }
 
 // ---- cpc explain ----
