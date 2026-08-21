@@ -11,6 +11,39 @@
 // surface is closed until the developer arms a policy. This module is the
 // protocol + serialization core (pure, no sockets); `serve.cplus` layers the
 // UDS-by-PID transport on top.
+//
+// ---- MCP, and why the flat names stayed -------------------------------------
+//
+// THE PACKAGE WAS NAMED agent_mcp AND DID NOT SPEAK MCP. It spoke JSON-RPC 2.0
+// with its own method names, which is a different thing: JSON-RPC is the
+// ENVELOPE (`{"jsonrpc","id","method","params"}` in, `result` or `error` back)
+// and MCP is a VOCABULARY written in that envelope — `initialize`, `tools/list`,
+// `tools/call` — plus a handshake and a lifecycle. All MCP is JSON-RPC; almost
+// no JSON-RPC is MCP. So an MCP client's first message, `initialize`, took
+// -32601 and it gave up, and NO MCP CLIENT COULD CONNECT TO A FACET APP AT ALL.
+// Measured against a running iris: initialize / tools/list / tools/call all
+// -32601, `describe_ui` fine. The envelope was understood; the vocabulary was
+// absent.
+//
+// BOTH VOCABULARIES NOW, over one dispatch. `tools/call` unwraps
+// `{"name","arguments"}` and falls through to the very same verb branch the flat
+// name reaches, so nothing below this comment had to change and every existing
+// client — iris's own 42-flow board sweep among them — keeps working verbatim.
+//
+// THE SCHEMAS LIVE BESIDE THE VERBS THEY DESCRIBE, which is the whole reason
+// this belongs here rather than in an app. A `tools/list` entry for `set_text`
+// is this file's knowledge: it changes when this file changes. A copy kept in an
+// IDE would drift the way two hand-synced Info.plist templates drift, and the
+// first symptom would be a client calling a parameter that no longer exists.
+// Every app that links this package now gets the framing for free.
+//
+// AN EXTENSION DESCRIBES ITS OWN VERBS. The `inspector.` namespace adds twelve
+// methods through `arm_extension`, and a tools/list that knew only the nine core
+// ones would make the extension invisible to exactly the clients that need to be
+// told what exists — the same "the agent sees less than the user" bug in a new
+// place. But this module must not know what an inspector IS (the dependency runs
+// the other way, and that is deliberate), so registration takes a DESCRIBER
+// beside the handler and the namespace answers for itself.
 
 import "stdlib/vec" as vec;
 import "stdlib/text" as text;
@@ -314,6 +347,128 @@ fn err_response(id: f64, code: f64, msg: str) -> json::Value {
     return json::Value::Object(m);
 }
 
+// ---- MCP: describing a verb --------------------------------------------------
+//
+// A tool descriptor is `{name, description, inputSchema}` where inputSchema is
+// JSON Schema. This is the part that earns MCP its keep: a client learns the
+// verb exists and how to call it FROM THE WIRE, instead of the caller having to
+// already know. iris's board sweep works today only because it was written by
+// someone who knew `describe_ui` takes a `mode`; nothing on the wire said so.
+
+// One property of an input schema.
+fn prop(name: str, ty: str, description: str) -> json::Member {
+    var p: vec::Vec[json::Member] = vec::new::[json::Member]();
+    p.append(member("type", jstr(ty)));
+    p.append(member("description", jstr(description)));
+    return member(name, json::Value::Object(p));
+}
+
+// One tool. `required` is the subset of `props` a call must carry — and it is
+// load-bearing rather than documentation: absent and empty are the same value
+// to every reader here (`""` for text, `0` for numbers), which is how a
+// `set_text` sent with the wrong parameter name once answered "allowed" and
+// wrote an empty string. Naming the requirement lets the CLIENT catch that
+// before the call is made.
+fn tool(name: str, description: str, take props: vec::Vec[json::Member],
+        take required: vec::Vec[json::Value]) -> json::Value {
+    var schema: vec::Vec[json::Member] = vec::new::[json::Member]();
+    schema.append(member("type", jstr("object")));
+    schema.append(member("properties", json::Value::Object(props)));
+    schema.append(member("required", json::Value::Array(required)));
+    var t: vec::Vec[json::Member] = vec::new::[json::Member]();
+    t.append(member("name", jstr(name)));
+    t.append(member("description", jstr(description)));
+    t.append(member("inputSchema", json::Value::Object(schema)));
+    return json::Value::Object(t);
+}
+
+fn no_props() -> vec::Vec[json::Member] { return vec::new::[json::Member](); }
+fn no_required() -> vec::Vec[json::Value] { return vec::new::[json::Value](); }
+
+fn required1(a: str) -> vec::Vec[json::Value] {
+    var r: vec::Vec[json::Value] = vec::new::[json::Value]();
+    r.append(jstr(a));
+    return r;
+}
+
+fn required2(a: str, b: str) -> vec::Vec[json::Value] {
+    var r: vec::Vec[json::Value] = vec::new::[json::Value]();
+    r.append(jstr(a));
+    r.append(jstr(b));
+    return r;
+}
+
+// THE NINE VERBS. Descriptions are written for the model that will read them —
+// they say what the verb is FOR and what the answer means, because a name and a
+// type alone leave a client guessing at exactly the points where guessing is
+// expensive.
+//
+// Nothing app-shaped appears here, and that is the design: a board, a card and
+// a lane are addressed entirely by KEY, so the verb set stays generic and one
+// `describe_ui` teaches a client the whole application. Adding board tools would
+// trade that for a surface that has to grow with every screen.
+fn core_tools() -> vec::Vec[json::Value] {
+    var out: vec::Vec[json::Value] = vec::new::[json::Value]();
+
+    var p_describe: vec::Vec[json::Member] = no_props();
+    p_describe.append(prop("mode", "string",
+        "\"exposed\" (default) is the curated set the developer chose to expose — small and high-signal. \"full\" is the whole walked tree including auto-keyed structural nodes, and is a superset."));
+    out.append(tool("describe_ui",
+        "The live UI as a flat list of nodes: id, role, text, hidden, actionable, clickable, parent. Read this FIRST — a node's id is its address for every other verb, and the id path is the application's schema.",
+        p_describe, no_required()));
+
+    var p_click: vec::Vec[json::Member] = no_props();
+    p_click.append(prop("id", "string", "The node id, from describe_ui."));
+    out.append(tool("click",
+        "Activate a control the way a person clicking it would. Answers an outcome: \"allowed\", \"not_actionable\" (disabled or not a control), or \"not_found\".",
+        p_click, required1("id")));
+
+    var p_set_text: vec::Vec[json::Member] = no_props();
+    p_set_text.append(prop("id", "string", "The node id of a text input."));
+    p_set_text.append(prop("value", "string", "The text to place in it. An explicit empty string clears the field."));
+    out.append(tool("set_text",
+        "Replace the contents of a text input. \"value\" is required: absent would read as an empty string and silently clear the field.",
+        p_set_text, required2("id", "value")));
+
+    var p_hit: vec::Vec[json::Member] = no_props();
+    p_hit.append(prop("id", "string", "The node id to test."));
+    out.append(tool("hit_test",
+        "Whether this node is the one that would actually receive a click at its own position, or whether something else is over it. Use when a click reports allowed but nothing happens.",
+        p_hit, required1("id")));
+
+    var p_caret: vec::Vec[json::Member] = no_props();
+    p_caret.append(prop("id", "string", "The node id of a text control."));
+    p_caret.append(prop("at", "number", "Offset in BYTES of the control's own text."));
+    p_caret.append(prop("length", "number", "Selection length in bytes; 0 (default) is an insertion point."));
+    out.append(tool("set_caret",
+        "Place the caret, or select a range, inside a text control.",
+        p_caret, required2("id", "at")));
+
+    var p_runs: vec::Vec[json::Member] = no_props();
+    p_runs.append(prop("id", "string", "The node id of a text control."));
+    out.append(tool("read_runs",
+        "The styled runs of a text control — the text with its attributes, rather than the flattened string describe_ui reports.",
+        p_runs, required1("id")));
+
+    var p_menu: vec::Vec[json::Member] = no_props();
+    p_menu.append(prop("path", "string", "\"Menu/Item\", by the titles as built — for example \"File/Save\"."));
+    out.append(tool("invoke_menu",
+        "Pick a menu item, validation and all. A menu item is not a node and cannot be reached by id; a disabled one answers \"not_actionable\", the same word a node gets.",
+        p_menu, required1("path")));
+
+    var p_scroll: vec::Vec[json::Member] = no_props();
+    p_scroll.append(prop("id", "string", "The node id to bring into view."));
+    out.append(tool("scroll_to",
+        "Scroll a node into view. Needed before interacting with something outside a scroll container's visible region.",
+        p_scroll, required1("id")));
+
+    out.append(tool("poll_event",
+        "The next queued semantic event, or null when there is none. This is the asynchronous half: it is how an agent notices that the USER did something while it was working.",
+        no_props(), no_required()));
+
+    return out;
+}
+
 // ---- a second namespace -------------------------------------------------------
 //
 // One server process, two capability models.
@@ -343,12 +498,48 @@ static EXT_HANDLER: fn(str, json::Value, f64, auth::Grant) -> json::Value =
 // is not a mistake this module should be able to punish.
 static EXT_PREFIX: text::Text = #zero::[text::Text]();
 static EXT_ARMED: bool = false;
+// How the namespace lists its own verbs for `tools/list`. Separate from the
+// handler because answering a call and describing what can be called are
+// different questions, and an extension may reasonably do the first without the
+// second.
+static EXT_DESCRIBER: fn() -> vec::Vec[json::Value] =
+    #zero::[fn() -> vec::Vec[json::Value]]();
 
-fn arm_extension(prefix: str, h: fn(str, json::Value, f64, auth::Grant) -> json::Value) {
+// `describe` is optional and defaults to none — an extension armed without one
+// still WORKS, it is simply not listed by `tools/list`. That is the honest
+// degradation: the verbs answer, and a client that was told about them out of
+// band can still call them. Supplying one is what makes the namespace
+// discoverable, and every namespace should.
+fn arm_extension(prefix: str, h: fn(str, json::Value, f64, auth::Grant) -> json::Value,
+                 describe: fn() -> vec::Vec[json::Value] = 0 as fn() -> vec::Vec[json::Value]) {
     EXT_PREFIX = text::from_str(prefix);
     EXT_HANDLER = h;
+    EXT_DESCRIBER = describe;
     EXT_ARMED = true;
     return;
+}
+
+// Every tool this server offers: the nine core verbs, plus whatever an armed
+// extension says it has. Built per request rather than cached, because arming
+// can happen after the first client connects and a cached list would then be
+// wrong in the direction that hides things.
+fn all_tools() -> vec::Vec[json::Value] {
+    var out: vec::Vec[json::Value] = core_tools();
+    if !EXT_ARMED { return out; }
+    let d: fn() -> vec::Vec[json::Value] = EXT_DESCRIBER;
+    if d == (0 as fn() -> vec::Vec[json::Value]) { return out; }
+    // DRAINED, not copied: `json::Value` owns its payloads and has no clone —
+    // a descriptor tree is Vecs of Vecs, and duplicating one would mean a deep
+    // copy this has no reason to make. The extension handed us its list; we
+    // move it across, front first so the order it wrote survives.
+    var extra: vec::Vec[json::Value] = d();
+    while extra.count() > (0 as usize) {
+        match extra.remove(0 as usize) {
+            option::Option[json::Value]::Some(v) => { out.append(v); }
+            option::Option[json::Value]::None => { return out; }
+        }
+    }
+    return out;
 }
 
 // Close the namespace again. The handler is cleared too, so a disarm cannot be
@@ -356,6 +547,7 @@ fn arm_extension(prefix: str, h: fn(str, json::Value, f64, auth::Grant) -> json:
 fn disarm_extension() {
     EXT_ARMED = false;
     EXT_HANDLER = #zero::[fn(str, json::Value, f64, auth::Grant) -> json::Value]();
+    EXT_DESCRIBER = #zero::[fn() -> vec::Vec[json::Value]]();
     EXT_PREFIX = text::new();
     return;
 }
@@ -384,6 +576,47 @@ fn is_extension_method(method: str) -> bool {
 fn token_of(params: json::Value) -> text::Text {
     if !params.has("token") { return text::new(); }
     return val_as_text(obj_get(params, "token"));
+}
+
+// ---- who is calling ----------------------------------------------------------
+//
+// A Unix socket carries no identity: `getpeereid` gives a uid, which on a
+// single-user Mac is the same uid for every agent and for the user. So the only
+// thing that can say WHICH agent is connected is the agent itself — and MCP
+// already asks. `initialize` carries `clientInfo: {name, version}`, and that is
+// what a consent policy needs in order to say "always allow THIS one" rather
+// than "always allow anything that connects".
+//
+// NOT A CREDENTIAL, AND IT MUST NOT BE READ AS ONE. A client picks its own name
+// and can pick any name, so this is an identity in the sense a From: header is:
+// it is what makes a prompt legible and a remembered answer specific, not what
+// makes it safe. An app that wants unforgeable identity uses `token` and a
+// policy that checks it. Saying so here because "remembered per client name"
+// looks like authentication from a distance and is not.
+//
+// PER CONNECTION, cleared when one opens. `serve_fd` handles one connection at
+// a time, so a static is the connection's own scope; without the reset a second
+// agent would inherit the first's name and, with it, the first's consent.
+static CLIENT_NAME: text::Text = #zero::[text::Text]();
+
+fn forget_client() { CLIENT_NAME = text::new(); return; }
+
+// The connected client's self-reported name, or "" before `initialize`.
+fn current_client() -> str { return CLIENT_NAME.view(); }
+
+// Read `clientInfo.name` off an initialize request. Called from
+// `handle_request` BEFORE dispatch, because the consent gate runs inside
+// dispatch and the whole point is that it can ask who this is — including on
+// the initialize that introduces them.
+fn note_client(req: json::Value) {
+    let m: text::Text = val_as_text(obj_get(req, "method"));
+    if { m.view() } != "initialize" { return; }
+    let params: json::Value = obj_get(req, "params");
+    let info: json::Value = obj_get(params, "clientInfo");
+    let name: text::Text = val_as_text(obj_get(info, "name"));
+    if name.count() == (0 as usize) { return; }
+    CLIENT_NAME = name;
+    return;
 }
 
 // ---- the dispatch -----------------------------------------------------------
@@ -419,9 +652,88 @@ fn dispatch(
         return err_response(id, - 32001 as f64, "consent denied");
     }
 
-    // After the gate, before the surface. An extension namespace is a second
-    // capability model over the same transport, and it is behind consent like
-    // everything else — arming opens a namespace, not a bypass.
+    // ---- MCP framing ----------------------------------------------------
+    //
+    // BEHIND THE SAME GATE as everything else, deliberately. A closed surface
+    // should look closed: an app that has not armed a policy refuses the
+    // handshake rather than advertising a verb list it will not honour. A
+    // client that needs to present a credential does it the way every other
+    // request does — a `token` on params — which for `tools/call` means inside
+    // `arguments`, and which is a transport shim's job to inject.
+    if method == "initialize" {
+        var caps_tools: vec::Vec[json::Member] = vec::new::[json::Member]();
+        caps_tools.append(member("listChanged", json::Value::Bool(false)));
+        var caps: vec::Vec[json::Member] = vec::new::[json::Member]();
+        caps.append(member("tools", json::Value::Object(caps_tools)));
+        var info: vec::Vec[json::Member] = vec::new::[json::Member]();
+        info.append(member("name", jstr("facet-agent-surface")));
+        info.append(member("version", jstr("0.0.27")));
+        var r: vec::Vec[json::Member] = vec::new::[json::Member]();
+        // The version this server was written against. Echoing the CLIENT's
+        // would be a lie the moment they differ, and the client is required to
+        // handle a server naming a different one.
+        r.append(member("protocolVersion", jstr("2024-11-05")));
+        r.append(member("capabilities", json::Value::Object(caps)));
+        r.append(member("serverInfo", json::Value::Object(info)));
+        return ok_response(id, json::Value::Object(r));
+    }
+    if method == "tools/list" {
+        var r: vec::Vec[json::Member] = vec::new::[json::Member]();
+        r.append(member("tools", json::Value::Array(all_tools())));
+        return ok_response(id, json::Value::Object(r));
+    }
+    if method == "tools/call" {
+        if !params.has("name") { return missing_param(id, "tools/call", "name"); }
+        let name: text::Text = val_as_text(obj_get(params, "name"));
+        let n: str = { name.view() };
+        // No recursion, and no reaching the framing through itself: `tools/`
+        // is this layer's own namespace and is not a verb.
+        if text::from_str(n).has_prefix("tools/") || n == "initialize" {
+            let bad: text::Text = "tools/call: \"${n}\" is not a tool";
+            return err_response(id, - 32602 as f64, bad.view());
+        }
+        // The tool's own arguments ARE the verb's params, which is what lets
+        // one verb table serve both spellings.
+        let args: json::Value = obj_get(params, "arguments");
+        let inner: json::Value = dispatch_verb(surf, vt, sub, grant, n, args, id);
+        return to_content(id, inner);
+    }
+
+    return dispatch_verb(surf, vt, sub, grant, method, params, id);
+}
+
+// MCP wants a tool result as CONTENT BLOCKS, not as a bare value. An error
+// stays a JSON-RPC error — that is a valid MCP response and it keeps the
+// diagnosable ones (missing parameter, consent denied) diagnosable, rather than
+// flattening them into prose inside a success.
+fn to_content(id: f64, take inner: json::Value) -> json::Value {
+    if inner.has("error") { return inner; }
+    let payload: json::Value = obj_get(inner, "result");
+    var block: vec::Vec[json::Member] = vec::new::[json::Member]();
+    block.append(member("type", jstr("text")));
+    block.append(member("text", json::Value::Text(payload.to_text())));
+    var arr: vec::Vec[json::Value] = vec::new::[json::Value]();
+    arr.append(json::Value::Object(block));
+    var r: vec::Vec[json::Member] = vec::new::[json::Member]();
+    r.append(member("content", json::Value::Array(arr)));
+    r.append(member("isError", json::Value::Bool(false)));
+    return ok_response(id, json::Value::Object(r));
+}
+
+// The verb table, reached by a flat method name or through `tools/call`. The
+// grant is already minted and already checked; this only routes.
+fn dispatch_verb(
+    surf: *u8,
+    vt: backend::Backend,
+    ref sub: events::Subscriber,
+    grant: auth::Grant,
+    method: str,
+    params: json::Value,
+    id: f64,
+) -> json::Value {
+    // An extension namespace is a second capability model over the same
+    // transport, and it is behind consent like everything else — arming opens a
+    // namespace, not a bypass.
     //
     // THE GRANT GOES WITH IT. An extension that only learned "consent was not
     // empty" would be a namespace where every credential is equal — which for
@@ -530,11 +842,26 @@ fn handle_request(
 ) -> text::Text {
     let out: text::Text = match json::Value::parse(line) {
         result::Result[json::Value, json::ParseError]::Ok(req) => {
+            // BEFORE the gate runs, so a policy asked to admit `initialize`
+            // already knows who is introducing themselves.
+            note_client(req);
             let method_t: text::Text = val_as_text(obj_get(req, "method"));
-            let id: f64 = val_as_number(obj_get(req, "id"));
-            let params: json::Value = obj_get(req, "params");
-            let resp: json::Value = dispatch(surf, vt, sub, gate, method_t.view(), params, id);
-            resp.to_text()
+            // A NOTIFICATION HAS NO id, AND MUST GET NO REPLY. JSON-RPC has
+            // always said so and nothing here sent one because nothing sent
+            // notifications; MCP's handshake ends with
+            // `notifications/initialized`, so the first well-behaved MCP client
+            // would have been answered a response it never asked for, carrying
+            // `"id": 0` — a message it is entitled to treat as a protocol
+            // violation and hang up on. Empty means "write nothing"; see
+            // `serve_fd`.
+            if !req.has("id") {
+                text::new()
+            } else {
+                let id: f64 = val_as_number(obj_get(req, "id"));
+                let params: json::Value = obj_get(req, "params");
+                let resp: json::Value = dispatch(surf, vt, sub, gate, method_t.view(), params, id);
+                resp.to_text()
+            }
         }
         result::Result[json::Value, json::ParseError]::Err(_e) => {
             err_response(0 as f64, - 32700 as f64, "parse error").to_text()
@@ -710,6 +1037,10 @@ fn serve_fd(
     policy: fn(auth::Request) -> auth::Grant,
     fd: i32,
 ) -> i32 {
+    // A NEW CONNECTION IS A NEW CALLER. Without this, a second agent inherits
+    // the first's self-reported name — and therefore whatever the user decided
+    // about the first.
+    forget_client();
     var buf: [u8; 8192] = [0 as u8; 8192];
     loop {
         let len: i64 = read_line(fd, { #addr_of(buf[0]) }, 8192 as usize);
@@ -718,10 +1049,14 @@ fn serve_fd(
         }
         let line: str = { #str_from_raw_parts(#addr_of(buf[0]), len as usize) };
         let resp: text::Text = handle_request(surf, vt, sub, auth::serve(policy), line);
-        let rs: str = { resp };
-        write_all(fd, #str_ptr(rs), #str_len(rs));
-        let nl: u8 = '\n' as u8;
-        write_all(fd, { #addr_of(nl) }, 1 as usize);
+        // Empty is a NOTIFICATION, which is entitled to no reply — not even a
+        // blank line, which a line-delimited client would read as a message.
+        if resp.count() > (0 as usize) {
+            let rs: str = { resp };
+            write_all(fd, #str_ptr(rs), #str_len(rs));
+            let nl: u8 = '\n' as u8;
+            write_all(fd, { #addr_of(nl) }, 1 as usize);
+        }
     }
     return 0;
 }
@@ -1058,6 +1393,144 @@ fn allow_protected(req: auth::Request) -> auth::Grant { return auth::protected_o
 
 // Nothing at all — an un-served surface, or a caller the policy does not know.
 fn allow_nothing(req: auth::Request) -> auth::Grant { return auth::nothing(); }
+
+// ---- MCP framing -------------------------------------------------------------
+
+fn ext_probe(method: str, params: json::Value, id: f64, grant: auth::Grant) -> json::Value {
+    return ok_response(id, jstr("ext"));
+}
+
+fn ext_describes_two() -> vec::Vec[json::Value] {
+    var out: vec::Vec[json::Value] = vec::new::[json::Value]();
+    out.append(tool("probe.one", "first", no_props(), no_required()));
+    out.append(tool("probe.two", "second", no_props(), required1("x")));
+    return out;
+}
+
+#[test]
+fn an_mcp_client_can_complete_a_handshake() {
+    // THE BUG THIS PINS. The package was called agent_mcp and did not speak
+    // MCP: `initialize` is the first message every client sends, it took -32601,
+    // and the client gave up — so no MCP client could reach a facet app at all.
+    var sub: events::Subscriber = events::subscriber(events::everything(), 4 as usize);
+    let surf: *u8 = #addr_of(FAKE_SURF) as *u8;
+    let r: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(allow_all),
+        "{\"jsonrpc\":\"2.0\",\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2024-11-05\"},\"id\":1}");
+    assert r.contains("protocolVersion");
+    assert r.contains("serverInfo");
+    assert r.contains("capabilities");
+    assert r.contains("32601") == false;
+}
+
+#[test]
+fn tools_list_describes_every_verb_including_an_extensions() {
+    // The half that earns MCP its keep: a client learns the verb exists AND how
+    // to call it from the wire, instead of the caller having to already know.
+    var sub: events::Subscriber = events::subscriber(events::everything(), 4 as usize);
+    let surf: *u8 = #addr_of(FAKE_SURF) as *u8;
+    disarm_extension();
+    let bare: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(allow_all),
+        "{\"method\":\"tools/list\",\"id\":1}");
+    assert bare.contains("describe_ui");
+    assert bare.contains("inputSchema");
+    assert bare.contains("poll_event");
+    assert bare.contains("probe.one") == false;
+
+    // A NAMESPACE ANSWERS FOR ITSELF. This module must not know what an
+    // extension is; without a describer the twelve inspector verbs would be
+    // invisible to exactly the clients that need telling.
+    arm_extension("probe.", ext_probe, ext_describes_two);
+    let armed: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(allow_all),
+        "{\"method\":\"tools/list\",\"id\":2}");
+    assert armed.contains("describe_ui");
+    assert armed.contains("probe.one");
+    assert armed.contains("probe.two");
+    disarm_extension();
+}
+
+#[test]
+fn an_extension_armed_without_a_describer_still_works() {
+    // Honest degradation: the verbs answer, they are simply not listed. A
+    // describer is what makes a namespace discoverable, not what makes it run.
+    var sub: events::Subscriber = events::subscriber(events::everything(), 4 as usize);
+    let surf: *u8 = #addr_of(FAKE_SURF) as *u8;
+    arm_extension("probe.", ext_probe);
+    let listed: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(allow_all),
+        "{\"method\":\"tools/list\",\"id\":1}");
+    assert listed.contains("probe.one") == false;
+    let called: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(allow_all),
+        "{\"method\":\"probe.anything\",\"id\":2}");
+    assert called.contains("ext");
+    disarm_extension();
+}
+
+#[test]
+fn tools_call_reaches_the_same_verb_the_flat_name_does() {
+    // One verb table, two spellings. This is what let the whole existing client
+    // base — iris's 42-flow board sweep among them — keep working unchanged.
+    var sub: events::Subscriber = events::subscriber(events::everything(), 4 as usize);
+    let surf: *u8 = #addr_of(FAKE_SURF) as *u8;
+    let flat: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(allow_all),
+        "{\"method\":\"describe_ui\",\"params\":{\"mode\":\"full\"},\"id\":1}");
+    let wrapped: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(allow_all),
+        "{\"method\":\"tools/call\",\"params\":{\"name\":\"describe_ui\",\"arguments\":{\"mode\":\"full\"}},\"id\":2}");
+    assert flat.contains("structural-node");
+    // Same answer, inside an MCP content block rather than bare.
+    assert wrapped.contains("structural-node");
+    assert wrapped.contains("content");
+    assert wrapped.contains("isError");
+}
+
+#[test]
+fn a_tools_call_error_stays_an_error() {
+    // Flattening a refusal into a successful content block would hide exactly
+    // the diagnosable ones — a missing parameter, a denied consent.
+    var sub: events::Subscriber = events::subscriber(events::everything(), 4 as usize);
+    let surf: *u8 = #addr_of(FAKE_SURF) as *u8;
+    let missing: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(allow_all),
+        "{\"method\":\"tools/call\",\"params\":{\"name\":\"click\",\"arguments\":{}},\"id\":1}");
+    assert missing.contains("32602");
+    assert missing.contains("missing required parameter");
+    assert missing.contains("isError") == false;
+    // `tools/` is this layer's own namespace, not a verb — no reaching the
+    // framing through itself.
+    let loop_: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(allow_all),
+        "{\"method\":\"tools/call\",\"params\":{\"name\":\"tools/call\",\"arguments\":{}},\"id\":2}");
+    assert loop_.contains("is not a tool");
+}
+
+#[test]
+fn a_notification_is_answered_with_silence() {
+    // A message with no `id` is a notification and JSON-RPC has always said it
+    // gets no reply. Nothing here sent one because nothing sent notifications —
+    // and then MCP's handshake ends with `notifications/initialized`, so the
+    // first well-behaved client would have been handed a response it never
+    // asked for, carrying "id": 0, which it may treat as a protocol violation.
+    var sub: events::Subscriber = events::subscriber(events::everything(), 4 as usize);
+    let surf: *u8 = #addr_of(FAKE_SURF) as *u8;
+    let quiet: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(allow_all),
+        "{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\"}");
+    assert quiet.count() == (0 as usize);
+    // An id present, even on the same method name, is a request and is answered.
+    let loud: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(allow_all),
+        "{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\",\"id\":7}");
+    assert loud.count() > (0 as usize);
+}
+
+#[test]
+fn the_framing_is_behind_consent_like_everything_else() {
+    // A closed surface should LOOK closed: an app that never armed a policy
+    // refuses the handshake rather than advertising a verb list it will not
+    // honour.
+    var sub: events::Subscriber = events::subscriber(events::everything(), 4 as usize);
+    let surf: *u8 = #addr_of(FAKE_SURF) as *u8;
+    let init: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(allow_nothing),
+        "{\"method\":\"initialize\",\"id\":1}");
+    assert init.contains("consent denied");
+    let list: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(allow_nothing),
+        "{\"method\":\"tools/list\",\"id\":2}");
+    assert list.contains("consent denied");
+}
 
 #[test]
 fn describe_ui_mode_selects_the_view() {

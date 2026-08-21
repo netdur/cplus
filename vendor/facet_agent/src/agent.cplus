@@ -153,6 +153,34 @@ fn admit(req: auth::Request) -> auth::Grant {
     return auth::operator();
 }
 
+// THE APP'S OWN POLICY, if it has one.
+//
+// `admit` above is a DEFAULT, and its comment argues carefully for why that
+// default is `operator()` and not something wider. What it could not do is let
+// an app be narrower — there was no way to supply a policy at all, so every
+// facet app that called `app.agent_mcp(path)` served every connection the same
+// grant with no way to say otherwise. An app that wants to ask its user first,
+// or to check a token, or to refuse outright, had nowhere to put that.
+//
+// A function pointer and not a closure, matching `auth::AuthGate`: C+ has no
+// closures, and per-caller behaviour comes from the `Request` rather than from
+// captured state.
+//
+// SET IT BEFORE `enable()`. The serve thread reads it once when it starts; a
+// policy installed afterwards would leave a window in which the default served.
+static AGENT_POLICY: fn(auth::Request) -> auth::Grant =
+    #zero::[fn(auth::Request) -> auth::Grant]();
+
+fn set_policy(f: fn(auth::Request) -> auth::Grant) {
+    AGENT_POLICY = f;
+    return;
+}
+
+fn effective_policy() -> fn(auth::Request) -> auth::Grant {
+    if AGENT_POLICY == (0 as fn(auth::Request) -> auth::Grant) { return admit; }
+    return AGENT_POLICY;
+}
+
 struct AgentServe {
     path: text::Text,
 }
@@ -160,7 +188,7 @@ struct AgentServe {
 fn serve_main(take job: AgentServe) -> i32 {
     var sub: events::Subscriber = events::subscriber(events::everything(), 64 as usize);
     let surf: *u8 = #addr_of(AGENT_SURFACE) as *u8;
-    return mcp::serve_uds(surf, agent_appkit::mcp_backend(), sub, admit, job.path.view());
+    return mcp::serve_uds(surf, agent_appkit::mcp_backend(), sub, effective_policy(), job.path.view());
 }
 
 // Start the serve worker exactly once per process. The accept loop lives for

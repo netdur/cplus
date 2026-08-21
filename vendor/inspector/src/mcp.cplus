@@ -279,8 +279,100 @@ fn snapshot_count() -> usize { return SNAPSHOT.count(); }
 fn arm(take b: insp::Backend) {
     BACKEND = b;
     ARMED = true;
-    bridge::arm_extension("inspector.", handle);
+    bridge::arm_extension("inspector.", handle, describe_tools);
     return;
+}
+
+// ---- what this namespace tells `tools/list` ---------------------------------
+//
+// A namespace describes its OWN verbs. `agent_mcp` must not know what an
+// inspector is — the dependency runs this way on purpose, so that arming an
+// extension is the only coupling — and a tools/list that knew only the nine
+// core verbs would leave these twelve invisible to exactly the clients that
+// have to be told what exists. Same rule the surface keeps everywhere else:
+// nothing the developer can reach should be unreachable to the agent.
+//
+// THESE ARE A DEVELOPER SURFACE, and the descriptions say so. The agent surface
+// is curated and permissioned — it hides unexposed nodes and refuses
+// point-addressed operations; the inspector is the opposite of all three by
+// design, which is why the two capability models stay separate and only the
+// transport is shared. A model reading this list should be able to tell which
+// one it is holding.
+fn tools_prop(name: str, ty: str, description: str) -> json::Member {
+    return bridge::prop(name, ty, description);
+}
+
+fn describe_tools() -> vec::Vec[json::Value] {
+    var out: vec::Vec[json::Value] = vec::new::[json::Value]();
+
+    out.append(bridge::tool("inspector.describe",
+        "The live view tree as the DEVELOPER sees it: every node, keyed or not, with its index. Unlike describe_ui this is not curated — it is the whole tree, and node indices from here are what every other inspector verb addresses.",
+        bridge::no_props(), bridge::no_required()));
+
+    var p_node: vec::Vec[json::Member] = bridge::no_props();
+    p_node.append(tools_prop("node", "number", "Node index, from inspector.describe."));
+    out.append(bridge::tool("inspector.inspect",
+        "One node WHOLE — every property, control properties included. This is a content read, so a node behind a privacy tier is refused unless the grant carries it.",
+        p_node, bridge::required1("node")));
+
+    var p_set: vec::Vec[json::Member] = bridge::no_props();
+    p_set.append(tools_prop("node", "number", "Node index."));
+    p_set.append(tools_prop("property", "string", "Property name, as inspector.vocabulary lists it."));
+    p_set.append(tools_prop("value", "string", "New value: a number, a boolean or a string."));
+    out.append(bridge::tool("inspector.set",
+        "Write one property on one node, live. Undoable with inspector.undo.",
+        p_set, bridge::required2("node", "property")));
+
+    var p_reset: vec::Vec[json::Member] = bridge::no_props();
+    p_reset.append(tools_prop("node", "number", "Node index."));
+    p_reset.append(tools_prop("property", "string", "Property to return to its built value."));
+    out.append(bridge::tool("inspector.reset",
+        "Undo one property back to what the app built it with.",
+        p_reset, bridge::required2("node", "property")));
+
+    var p_insert: vec::Vec[json::Member] = bridge::no_props();
+    p_insert.append(tools_prop("node", "number", "Node index to insert relative to."));
+    p_insert.append(tools_prop("element", "string", "Element kind to create."));
+    out.append(bridge::tool("inspector.insert",
+        "Add a new element to the live tree. A developer edit, not something a user could do.",
+        p_insert, bridge::required2("node", "element")));
+
+    var p_remove: vec::Vec[json::Member] = bridge::no_props();
+    p_remove.append(tools_prop("node", "number", "Node index to remove."));
+    out.append(bridge::tool("inspector.remove",
+        "Remove a node from the live tree.",
+        p_remove, bridge::required1("node")));
+
+    var p_rep: vec::Vec[json::Member] = bridge::no_props();
+    p_rep.append(tools_prop("node", "number", "Node index to move."));
+    p_rep.append(tools_prop("parent", "number", "Node index of its new parent."));
+    out.append(bridge::tool("inspector.reparent",
+        "Move a node under a different parent.",
+        p_rep, bridge::required2("node", "parent")));
+
+    out.append(bridge::tool("inspector.undo",
+        "Undo the last inspector mutation.",
+        bridge::no_props(), bridge::no_required()));
+
+    var p_hi: vec::Vec[json::Member] = bridge::no_props();
+    p_hi.append(tools_prop("node", "number", "Node index to outline on screen."));
+    out.append(bridge::tool("inspector.highlight",
+        "Draw an overlay around a node on the running app's screen — how you show a person which node you mean.",
+        p_hi, bridge::required1("node")));
+
+    out.append(bridge::tool("inspector.clear_highlight",
+        "Remove the highlight overlay.",
+        bridge::no_props(), bridge::no_required()));
+
+    out.append(bridge::tool("inspector.vocabulary",
+        "Which properties exist and what types they take. Read this before inspector.set rather than guessing a property name.",
+        bridge::no_props(), bridge::no_required()));
+
+    out.append(bridge::tool("inspector.journal",
+        "The log of inspector mutations made this session.",
+        bridge::no_props(), bridge::no_required()));
+
+    return out;
 }
 
 fn disarm() {
