@@ -557,7 +557,12 @@ impl Surface {
             // PER-GRANT, not per-node: the same window answers two agents
             // differently, and the value is read off the widget only for the
             // one entitled to it.
-            let may_read: bool = this.reg.can_read_value(grant, node);
+            //
+            // `can_read_value_walked`, not `can_read_value`: this view LISTS
+            // untagged structural nodes, so the tier and exclusion gate the
+            // read and curation does not — otherwise every auto-keyed label
+            // reports `text: ""` while it is drawing a title.
+            let may_read: bool = this.reg.can_read_value_walked(grant, node);
             let f: rt::Rect = { rt::msg_rect(view, rt::sel(#str_ptr("frame\0"))) };
             out.append(mcpb::UiNode {
                 id: text::from_str(this.reg.resolved_id(node)),

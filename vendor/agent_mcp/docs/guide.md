@@ -44,10 +44,28 @@ JSON-RPC **2.0** envelopes:
 
 ### `describe_ui`
 
-Calls `Backend.describe` → JSON array of nodes:
+`params.mode` picks the view. Default (and `"exposed"`) calls
+`Backend.describe_exposed` — the curated tree: developer-tagged nodes only, no
+`class`, no `frame`. `"full"` calls `Backend.describe` — the whole walked tree,
+auto-keyed structural nodes included, with geometry.
 
-`id`, `role`, `class`, `frame` `{x,y,w,h}`, `hidden`, `text`, `actionable`,
-`parent` (index or null).
+Either way, a JSON array of nodes:
+
+`id`, `role`, `hidden`, `text`, `actionable`, `clickable`, `parent` (index or
+null), plus `class` and `frame` `{x,y,w,h}` in `"full"`.
+
+Three fields ride along only when they say something: `name` (the accessibility
+label — omitted when empty, and omitted when it merely repeats `text`),
+`description` (dev-authored intent), and `tier` (omitted at `open`).
+
+`text` is empty when the node has nothing to say **or** when this grant may not
+read it, so a blank one carries `readable` to say which: `readable` is on the
+wire whenever it is false, and beside `tier` whenever the node is gated. A
+`text: ""` with no `readable` is a node that is genuinely empty.
+
+`"full"` is a superset of what `"exposed"` reports, not a way around it: a node
+whose content is tiered, or which is inside an `exclude`d subtree, answers the
+same in both.
 
 ### `click` / `scroll_to`
 

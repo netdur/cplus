@@ -1160,6 +1160,82 @@ fn describe_reports_a_text_drive_as_not_clickable() {
 }
 
 #[test]
+fn the_walked_view_reports_an_untagged_node_own_text() {
+    // iris/components.txt: `mode: full` returns three times the nodes of
+    // `mode: exposed` and DROPPED the text that makes them mean anything — a
+    // card whose face reads "Card 1" answered "" in the mode that shows the
+    // most of the screen. One predicate did it: the walked view asked
+    // `can_read_value`, which folds the CURATION bit into a CONTENT question,
+    // so the mode that exists to show untagged structure blanked all of it.
+    //
+    // It protected nothing even before this: the walk stores a non-sensitive
+    // node's own text as its registry NAME, and the walked view has always
+    // carried `name`. The blank `text` only made the field lie — and since
+    // `readable` reaches the wire on a gated node only, nothing said so.
+    let win = fixture_window(300.0f64, 200.0f64);
+    let content = content_of(win);
+    let card = ak::View::new(rt::Rect { x: 5.0, y: 5.0, w: 200.0, h: 60.0 });
+    content.add_subview(ak::View::from_raw(card.raw()));
+    agent::set_agent_id(card.raw(), "card:1");
+    // The title the card DRAWS, on a node nobody tagged — the shape of every
+    // structural label in a real tree.
+    let title = ak::TextField::label_with_string("Card 1");
+    card.add_subview(title.as_view());
+
+    var s: agent::Surface = agent::open(win.raw());
+    let nodes: vec::Vec[agent::AppKitNode] = s.describe(auth::operator());
+    // window, content group, card, title.
+    assert nodes.count() == (4 as usize);
+    match nodes.at_ptr(3 as usize) {
+        option::Option[*agent::AppKitNode]::Some(n) => {
+            assert identity::role_eq({ (*n).role }, identity::Role::Text);
+            // Still not exposed and still not actionable — curation is
+            // untouched. Only the content question changed its answer.
+            assert !{ (*n).actionable };
+            assert { (*n).text.view() } == "Card 1";
+            assert { (*n).readable };
+        }
+        option::Option[*agent::AppKitNode]::None => { assert false; }
+    };
+    return;
+}
+
+#[test]
+fn the_walked_view_is_not_a_way_around_an_exclusion() {
+    // The other half of `is_exposed`, and the half that IS a content gate: an
+    // excluded subtree is not the application's content, so the walked view
+    // withholds what it says however wide the grant. It stays LISTED — it is on
+    // screen and it has a frame — and `readable: false` is what says the blank
+    // is a refusal rather than an empty label.
+    let win = fixture_window(300.0f64, 200.0f64);
+    let content = content_of(win);
+    let panel = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 200.0, h: 100.0 });
+    content.add_subview(ak::View::from_raw(panel.raw()));
+    agent::set_agent_id(panel.raw(), "assistant");
+    agent::set_agent_policy(panel.raw(), identity::policy_exclude());
+    let line = ak::TextField::label_with_string("thinking about your card");
+    panel.add_subview(line.as_view());
+
+    var s: agent::Surface = agent::open(win.raw());
+    let nodes: vec::Vec[agent::AppKitNode] = s.describe(auth::protected_operator());
+    assert nodes.count() == (4 as usize);
+    match nodes.at_ptr(3 as usize) {
+        option::Option[*agent::AppKitNode]::Some(n) => {
+            assert { (*n).text.view() } == "";
+            assert !{ (*n).readable };
+            // AND NOT THE OTHER WAY EITHER. The walk's name fallback stores a
+            // node's own text as its registry NAME, and the walked view carries
+            // `name` — so the line arrived in the model's context with `text`
+            // blanked beside it. `set_content_name` refuses an excluded node
+            // now, the same way it refuses a tiered one.
+            assert { (*n).name.view() } == "";
+        }
+        option::Option[*agent::AppKitNode]::None => { assert false; }
+    };
+    return;
+}
+
+#[test]
 fn describe_carries_the_accessibility_label_as_the_node_name() {
     // The walk already read the label into the registry's name — the curated
     // view has always reported it — but the full view dropped it, so a group

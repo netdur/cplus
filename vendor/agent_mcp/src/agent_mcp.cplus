@@ -171,6 +171,15 @@ fn node_to_json(p: *backend::UiNode, with_geometry: bool) -> json::Value {
     if { (*p).tier } != identity::tier_open() {
         m.append(member("tier", jstr(tier_to_str({ (*p).tier }))));
         m.append(member("readable", jbool({ (*p).readable })));
+    } else if { (*p).readable } == false {
+        // Open tier and STILL not readable: the node is inside an excluded
+        // subtree (or the grant carries no `read` at all). The walked view
+        // lists it — it is on screen and it has a frame — and withholds what
+        // it says, so the withholding has to be on the wire too. Without this
+        // the node goes out as `text: ""` with no `tier` and no `readable`,
+        // which is character-for-character what a genuinely empty label looks
+        // like, and no client can tell the two apart.
+        m.append(member("readable", jbool(false)));
     }
     // The accessibility label, under the same "absent when there is nothing to
     // say" rule as `description`: omitted when empty, and omitted when it only
@@ -920,11 +929,34 @@ fn fake_secret_node(id: str, grant: auth::Grant) -> backend::UiNode {
     };
 }
 
+// Two nodes that say nothing, for two different reasons. The walked view lists
+// both — same role, same empty `text` — and a client has to be able to tell
+// "this label is blank" from "this content is not yours".
+fn fake_blank_node(id: str, readable: bool) -> backend::UiNode {
+    return backend::UiNode {
+        id: text::from_str(id),
+        role: identity::Role::Text,
+        class_name: text::new(),
+        frame: backend::Rect { x: 0.0f64, y: 0.0f64, w: 120.0f64, h: 18.0f64 },
+        is_hidden: false,
+        text: text::new(),
+        name: text::new(),
+        description: text::new(),
+        tier: identity::tier_open(),
+        readable: readable,
+        actionable: false,
+        clickable: false,
+        parent: option::Option[usize]::None,
+    };
+}
+
 fn fake_describe_full(p: *u8, grant: auth::Grant) -> vec::Vec[backend::UiNode] {
     var out: vec::Vec[backend::UiNode] = vec::new::[backend::UiNode]();
     out.append(fake_node("exposed-node"));
     out.append(fake_node("structural-node"));
     out.append(fake_secret_node("payment:card", grant));
+    out.append(fake_blank_node("empty-label", true));
+    out.append(fake_blank_node("assistant:line", false));
     return out;
 }
 
@@ -1592,6 +1624,28 @@ fn the_full_view_is_not_a_way_around_a_tier() {
     assert r.contains("payment:card");
     assert r.contains("\"tier\":\"protected\"");
     assert r.contains("4242") == false;
+    return;
+}
+
+#[test]
+fn a_blank_text_says_whether_it_was_withheld() {
+    // iris/components.txt: `text: ""` was the answer to two different
+    // questions and nothing on the wire separated them. `readable` used to ride
+    // along only on a TIERED node, so the walked view's other blank — a node
+    // inside an excluded subtree — went out character-for-character like a
+    // label that is genuinely empty, and a model reading it fills in the form
+    // field that is not there.
+    var sub: events::Subscriber = events::subscriber(events::everything(), 4 as usize);
+    let surf: *u8 = #addr_of(FAKE_SURF) as *u8;
+    let r: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(allow_all),
+        "{\"method\":\"describe_ui\",\"params\":{\"mode\":\"full\"},\"id\":1}");
+    // The withheld one says so, and without inventing a tier it does not have.
+    assert r.contains("\"id\":\"assistant:line\",\"role\":\"text\"");
+    assert r.contains("\"text\":\"\",\"readable\":false");
+    // The genuinely empty one stays quiet — the field is absent, which is what
+    // keeps it meaningful where it does appear.
+    assert r.contains("\"id\":\"empty-label\"");
+    assert r.contains("\"text\":\"\",\"actionable\":false");
     return;
 }
 

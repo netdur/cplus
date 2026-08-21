@@ -1185,7 +1185,14 @@ impl Surface {
             // Per-GRANT, not per-node: the same window answers two agents
             // differently, and the value is read off the widget only for the
             // one entitled to it.
-            let may_read: bool = this.reg.can_read_value(grant, node);
+            //
+            // `can_read_value_walked`, not `can_read_value`: this is the view
+            // that LISTS untagged structural nodes, so the tier and exclusion
+            // gate the read but curation does not. Gating on curation blanked
+            // every auto-keyed label — a third of iris's board reported
+            // `text: ""` while drawing a card title, and since `readable`
+            // only reaches the wire on a gated node, nothing said so.
+            let may_read: bool = this.reg.can_read_value_walked(grant, node);
             out.append(AppKitNode {
                 id: text::from_str(this.reg.resolved_id(node)),
                 role: role,

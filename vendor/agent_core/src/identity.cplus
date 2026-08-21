@@ -498,6 +498,14 @@ impl Registry {
         // because names are identity, not content. A grant-holder gets the
         // value through the live `text` read, which is checked per request.
         if this.is_sensitive(node) { return; }
+        // AND an excluded subtree, for the same reason and a different gate.
+        // Exclusion is a content gate too — the assistant's own panel is not
+        // the application's content — but it is not a TIER, so `is_sensitive`
+        // answers false for it and the fallback ran. The panel's transcript
+        // then reached the walked view as the node's NAME: `text` was blanked
+        // by the read gate and `name` carried the line anyway, which is the
+        // one-setter leak arriving through the other door.
+        if this.in_excluded_subtree(node) { return; }
         this.names.set(text::from_str(name), node);
         return;
     }
@@ -629,6 +637,32 @@ impl Registry {
     fn can_read_value(this, grant: auth::Grant, node: usize) -> bool {
         assert this.is_valid(node);
         if !this.is_exposed(node) { return false; }
+        return grant.has(read_caps_for_tier(this.tier_of(node)));
+    }
+
+    // May this grant read this node's content in the WALKED (diagnostic) view,
+    // where curation is not the question?
+    //
+    // `is_exposed` folds two different things together on purpose — the
+    // developer's CURATION (an auto-keyed node was never tagged) and the
+    // privacy EXCLUSION (`policy_exclude` takes a subtree out of the agent's
+    // world). That fold is right for the curated tree and for every action,
+    // which is why `can_read_value` and `can_act` both use it. It is wrong for
+    // the full view, which LISTS auto-keyed nodes: gating their text on the
+    // curation bit blanks the content of exactly the nodes the mode exists to
+    // show, and a label reports `text: ""` while it is drawing a title.
+    //
+    // It was never a content gate there in any case — the walk stores a
+    // non-sensitive node's own text as its registry NAME (`set_content_name`),
+    // and the full view has always carried `name`. So the blank `text` withheld
+    // nothing; it only made the field lie.
+    //
+    // The two halves that ARE content gates still hold, and they are the whole
+    // of this predicate: an excluded subtree answers false, and so does a tier
+    // this grant does not carry.
+    fn can_read_value_walked(this, grant: auth::Grant, node: usize) -> bool {
+        assert this.is_valid(node);
+        if this.in_excluded_subtree(node) { return false; }
         return grant.has(read_caps_for_tier(this.tier_of(node)));
     }
 
@@ -1339,6 +1373,59 @@ fn a_content_name_never_lands_on_a_sensitive_node() {
     // The dev-authored label is a different door and stays open.
     r.set_name(card, "Card number");
     assert r.name_of(card) == "Card number";
+    return;
+}
+
+#[test]
+fn a_content_name_never_lands_inside_an_excluded_subtree_either() {
+    // The same leak through the other gate. Exclusion is not a tier, so
+    // `is_sensitive` said false and the walk's name fallback ran: the
+    // assistant's own transcript line was stored as the node's NAME, and the
+    // walked view carries `name` — so blanking its `text` moved the content one
+    // field to the left rather than stopping it.
+    var r: Registry = new();
+    let panel: usize = r.add_child(r.root(), option::Option[str]::Some("assistant"), Role::Group);
+    let line: usize = r.add_child(panel, option::Option[str]::None, Role::Text);
+    r.set_excluded(panel, true);
+    r.set_content_name(line, "thinking about your card");
+    assert r.name_of(line) == "";
+    // The dev-authored label is the other door and is unchanged — an excluded
+    // panel may still be called "Assistant"; that is not the user's data.
+    r.set_name(panel, "Assistant");
+    assert r.name_of(panel) == "Assistant";
+    return;
+}
+
+#[test]
+fn the_walked_read_gate_drops_curation_and_keeps_the_two_that_are_content() {
+    // What separates the two read gates. `can_read_value` answers for the
+    // CURATED tree, where an untagged node is not there at all; the walked view
+    // lists untagged nodes, so asking it the curation question blanks the text
+    // of every structural label on screen.
+    var r: Registry = new();
+    let plain: usize = r.add_child(r.root(), option::Option[str]::None, Role::Text);
+    let keyed: usize = r.add_child(r.root(), option::Option[str]::Some("title"), Role::Text);
+    let panel: usize = r.add_child(r.root(), option::Option[str]::Some("assistant"), Role::Group);
+    let mine: usize = r.add_child(panel, option::Option[str]::Some("assistant:send"), Role::Button);
+    let card: usize = r.add_child(r.root(), option::Option[str]::Some("card"), Role::Input);
+    r.set_excluded(panel, true);
+    r.set_tier(card, tier_protected());
+
+    // Untagged: invisible to the curated tree, readable in the walked one.
+    assert r.can_read_value(auth::operator(), plain) == false;
+    assert r.can_read_value_walked(auth::operator(), plain);
+    // Tagged: both, unchanged.
+    assert r.can_read_value(auth::operator(), keyed);
+    assert r.can_read_value_walked(auth::operator(), keyed);
+
+    // The two that ARE content gates hold in both. An excluded subtree is not
+    // the application's content — the assistant's own panel — and the widest
+    // grant the app ever mints does not open it.
+    assert r.can_read_value_walked(auth::protected_operator(), panel) == false;
+    assert r.can_read_value_walked(auth::protected_operator(), mine) == false;
+    // ...and a tier is still a tier in the mode an agent chooses for itself.
+    assert r.can_read_value_walked(auth::operator(), card) == false;
+    assert r.can_read_value_walked(auth::protected_operator(), card);
     return;
 }
 
