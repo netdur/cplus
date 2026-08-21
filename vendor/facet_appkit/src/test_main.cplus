@@ -4579,6 +4579,195 @@ fn a_recycled_rows_content_is_placed_again_on_every_reuse() {
 }
 
 // The tree runs the same helper now, so its rows are placed on the same terms.
+// ---- what the AGENT actually does to a row ----------------------------------
+//
+// The tests above drive a cell the suite already has in hand. An agent does not
+// have one: it finds a view by `accessibilityIdentifier` — which is where
+// `tag_tree_row` writes `row_id`'s answer — and sends it `performClick:`. Two
+// different questions, and only this one covers the tagging.
+//
+// iris reported a BRANCH row answering `allowed` and doing nothing: no
+// selection, no disclosure, three times running. That is this path.
+//
+// THE ID IS CHECKED ON THE VENDED CELL, not by walking `subviews` from the
+// outline view, and that is a property of a suite with no window rather than a
+// shortcut. AppKit parents a vended cell when it DISPLAYS the row; nothing
+// displays here, so a subview walk finds no cells at all — the same reason
+// `hit_test` answers `reachable:false` for anything in a realised row. Walking
+// for it measures the harness, not the backend.
+
+// The agent id on a view, or "" — `tag_tree_row` writes it as the
+// accessibilityIdentifier, which is what a key already is everywhere else in
+// this backend.
+fn agent_id_of(v: *u8) -> text::Text {
+    if v == (0 as *u8) { return text::new(); }
+    if { rt::msg_i8_id(v, rt::sel(#str_ptr("respondsToSelector:\0")),
+                       rt::sel(#str_ptr("accessibilityIdentifier\0"))) } == (0 as i8) {
+        return text::new();
+    }
+    let ident: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("accessibilityIdentifier\0"))) };
+    if ident == (0 as *u8) { return text::new(); }
+    return bridge::to_text(ident);
+}
+
+#[test]
+fn a_branch_row_carries_its_agent_id_and_opening_it_through_that_door_works() {
+    backend::install();
+    var t: core::Node = ri_tree(true);
+    let tp: *core::Node = #addr_of(t);
+    let v: *u8 = views::create(0 as *u8, tp);
+    core::set_view(tp, v, views::view_release);
+    views::apply(0 as *u8, tp);
+    recycler::set_column_width(v, 300.0f64);
+    assert recycler::tree_rows_of(v) == (2 as i64);
+
+    // (a) THE ID IS ON THE CELL. Without it a tree reports no rows at all and
+    // cannot be driven: the row a builder returns is CONTENT, mounted inside a
+    // cell this backend owns, so nothing the application writes ever names the
+    // row itself. Written on EVERY vend, because the cell is recycled and an id
+    // written once names the item that happened to build it.
+    let branch_cell: *u8 = recycler::tree_view_for_row(v, 0 as i64);
+    assert branch_cell != (0 as *u8);
+    assert agent_id_of(branch_cell).equals("row:src");
+
+    // (b) AND THE CELL ANSWERS THE AGENT'S ONE VERB. `click` sends
+    // `performClick:` and nothing else; a view that does not answer it is
+    // reported not actionable, and one that answers and does nothing is the
+    // silent failure iris measured.
+    assert { rt::msg_i8_id(branch_cell, rt::sel(#str_ptr("respondsToSelector:\0")),
+                           rt::sel(#str_ptr("performClick:\0"))) } != (0 as i8);
+    { rt::msg_void_id(branch_cell, rt::sel(#str_ptr("performClick:\0")), 0 as *u8) };
+
+    // (c) THE FOLDER OPENED. Three rows now, and the row was NOT selected — a
+    // branch's click is the disclosure, not a selection.
+    assert recycler::tree_rows_of(v) == (3 as i64);
+    assert recycler::tree_selected_row_of(v) == (-1 as i64);
+
+    // A LEAF through the same door selects, which is the only click a leaf row
+    // has. Row 2 now that the branch is open: root's second child.
+    let leaf_cell: *u8 = recycler::tree_view_for_row(v, 2 as i64);
+    assert leaf_cell != (0 as *u8);
+    assert agent_id_of(leaf_cell).equals("row:skill");
+    { rt::msg_void_id(leaf_cell, rt::sel(#str_ptr("performClick:\0")), 0 as *u8) };
+    assert recycler::tree_selected_row_of(v) >= (0 as i64);
+    return;
+}
+
+#[test]
+fn an_agents_expansion_is_written_back_so_it_survives_a_rebuild() {
+    // THE HALF THAT MAKES AN OPEN FOLDER STAY OPEN. Expansion is facet's state
+    // (`TreeProps.expanded`, a set of ids) and AppKit's (per-item). A click that
+    // opened only AppKit's would be undone by the next `set_root` — and an app
+    // whose tree refreshes when anything changes rebuilds constantly, so the
+    // folder would appear to never open at all. That is indistinguishable from
+    // a click that did nothing, which is how it was reported.
+    //
+    // The user's own disclosure click has always been written back. This pins
+    // the AGENT's door to the same guarantee: `performClick:` on the cell, not
+    // a triangle nobody can press over a socket.
+    backend::install();
+    var t: core::Node = ri_tree(true);
+    let tp: *core::Node = #addr_of(t);
+    let v: *u8 = views::create(0 as *u8, tp);
+    core::set_view(tp, v, views::view_release);
+    views::apply(0 as *u8, tp);
+    recycler::set_column_width(v, 300.0f64);
+
+    match tree::find("ri", tp) {
+        option::Option[tree::Tree]::Some(c) => { assert c.expanded_count() == (0 as usize); }
+        option::Option[tree::Tree]::None => { assert false; }
+    }
+
+    let cell: *u8 = recycler::tree_view_for_row(v, 0 as i64);
+    assert cell != (0 as *u8);
+    { rt::msg_void_id(cell, rt::sel(#str_ptr("performClick:\0")), 0 as *u8) };
+    assert recycler::tree_rows_of(v) == (3 as i64);
+
+    // THE MODEL KNOWS. Without this the open is AppKit's alone and the next
+    // rebuild throws it away.
+    match tree::find("ri", tp) {
+        option::Option[tree::Tree]::Some(c) => {
+            assert c.expanded_count() == (1 as usize);
+            assert c.is_expanded("src");
+        }
+        option::Option[tree::Tree]::None => { assert false; }
+    }
+
+    // And closing it again takes the id back out, so a collapse is not a
+    // no-op that leaves the model claiming it is open.
+    { rt::msg_void_id(cell, rt::sel(#str_ptr("performClick:\0")), 0 as *u8) };
+    assert recycler::tree_rows_of(v) == (2 as i64);
+    match tree::find("ri", tp) {
+        option::Option[tree::Tree]::Some(c) => { assert c.is_expanded("src") == false; }
+        option::Option[tree::Tree]::None => { assert false; }
+    }
+    return;
+}
+
+fn eb_row_id(n: *tree::TreeNode, ctx: *u8) -> text::Text {
+    return text::from_str("row:${{ (*n).id_of() }}");
+}
+
+#[test]
+fn a_node_that_SAYS_it_is_a_branch_is_expandable_before_its_children_arrive() {
+    // TWO SOURCES OF TRUTH, and they disagreed. `TreeNode` carries `is_branch`
+    // — the application declaring "this is a folder" — and the outline view's
+    // `isItemExpandable:` answered `child_count > 0` and never read it. So a
+    // declared branch with nothing under it yet drew as a folder and refused
+    // to open: no disclosure triangle for a person, and for an agent a click
+    // that answers `allowed` and does nothing, because `performClick:` asks
+    // `isExpandable:` and takes the leaf path when it says no.
+    //
+    // Which makes a LAZY tree impossible to write — and lazy is what a file
+    // tree is: you cannot walk a disk to answer whether a directory should
+    // have a triangle.
+    backend::install();
+    var root: tree::TreeNode = tree::TreeNode::new("root", id: "root");
+    let _b: status::Status = root.add_child(
+        tree::TreeNode::new("empty", id: "empty", is_branch: true));
+    var t: core::Node = tree::tree(root, key: "eb", row: rp_tree_row, row_id: eb_row_id);
+    let tp: *core::Node = #addr_of(t);
+    let v: *u8 = views::create(0 as *u8, tp);
+    core::set_view(tp, v, views::view_release);
+    views::apply(0 as *u8, tp);
+    recycler::set_column_width(v, 300.0f64);
+    assert recycler::tree_rows_of(v) == (1 as i64);
+
+    let cell: *u8 = recycler::tree_view_for_row(v, 0 as i64);
+    assert cell != (0 as *u8);
+    assert agent_id_of(cell).equals("row:empty");
+    // The declaration is what the outline answers to.
+    assert recycler::tree_item_is_expandable(v, 0 as i64);
+
+    // A click on it is the DISCLOSURE, not a selection — the same rule every
+    // other branch follows, so an agent gets one answer for folders rather
+    // than one per folder's contents.
+    { rt::msg_void_id(cell, rt::sel(#str_ptr("performClick:\0")), 0 as *u8) };
+    assert recycler::tree_selected_row_of(v) == (-1 as i64);
+    // Still one row: it opened onto nothing, which is what an empty folder is.
+    assert recycler::tree_rows_of(v) == (1 as i64);
+    return;
+}
+
+#[test]
+fn a_leaf_is_still_not_expandable() {
+    // The negative half, and the reason `is_branch` is read rather than
+    // ignored in the other direction too: a FILE must never get a triangle,
+    // however the tree was built.
+    backend::install();
+    var root: tree::TreeNode = tree::TreeNode::new("root", id: "root");
+    let _b: status::Status = root.add_child(tree::TreeNode::new("f.txt", id: "f"));
+    var t: core::Node = tree::tree(root, key: "lf", row: rp_tree_row);
+    let tp: *core::Node = #addr_of(t);
+    let v: *u8 = views::create(0 as *u8, tp);
+    core::set_view(tp, v, views::view_release);
+    views::apply(0 as *u8, tp);
+    recycler::set_column_width(v, 300.0f64);
+    assert recycler::tree_rows_of(v) == (1 as i64);
+    assert recycler::tree_item_is_expandable(v, 0 as i64) == false;
+    return;
+}
+
 fn rp_tree_row(n: *tree::TreeNode, ctx: *u8) -> core::Node {
     var b: core::Builder = core::Builder::new();
     b.add(label::label("first line", key: "a"));

@@ -2023,9 +2023,28 @@ fn tree_child_imp(self_obj: *u8, cmd: *u8, ov: *u8, index: i64, item: *u8) -> *u
     };
 }
 
+// A NODE THAT SAYS IT IS A BRANCH IS ONE, whether or not its children have
+// arrived yet.
+//
+// This answered `child_count > 0` alone and never read `is_branch` — two
+// sources of truth for the same question, disagreeing. A declared branch with
+// nothing under it yet drew as a folder and refused to open: no disclosure
+// triangle for a person, and for an agent a `click` that answers `allowed` and
+// does nothing, because `performClick:` asks this before choosing between
+// disclosure and selection and takes the leaf path when it says no. Silent both
+// ways, which is the worst shape a wrong answer has.
+//
+// It also made a LAZY tree impossible to write, and lazy is what a file tree
+// IS: you cannot walk a disk to decide whether a directory deserves a triangle,
+// and an empty directory is still a directory.
+//
+// `child_count > 0` stays as the second half rather than being replaced, so a
+// tree built without ever setting `is_branch` — every tree that existed before
+// the flag did — answers exactly as it did.
 fn tree_expandable_imp(self_obj: *u8, cmd: *u8, ov: *u8, item: *u8) -> i8 {
     let n: *tree::TreeNode = unbox_item(item);
     if n == (0 as *tree::TreeNode) { return 0 as i8; }
+    if { (*n).is_branch } { return 1 as i8; }
     if { (*n).child_count() } > (0 as usize) { return 1 as i8; }
     return 0 as i8;
 }
@@ -2916,6 +2935,17 @@ fn tree_row_count_of(v: *u8) -> i64 {
 
 // The cell for a row index, the way the outline view asks for one — the suite's
 // way in, since it cannot scroll.
+// Would the outline open this row? The suite's way in: `isExpandable:` is what
+// `performClick:` asks before choosing disclosure over selection, so a test
+// that means to pin that choice has to be able to ask the same question.
+fn tree_item_is_expandable(v: *u8, row: i64) -> bool {
+    let ov: *u8 = table_of(v);
+    if ov == (0 as *u8) { return false; }
+    let item: *u8 = { rt::msg_id_i64(ov, rt::sel(#str_ptr("itemAtRow:\0")), row) };
+    if item == (0 as *u8) { return false; }
+    return { rt::msg_i8_id(ov, rt::sel(#str_ptr("isExpandable:\0")), item) } != (0 as i8);
+}
+
 fn tree_view_for_row(v: *u8, row: i64) -> *u8 {
     let ov: *u8 = table_of(v);
     if ov == (0 as *u8) { return 0 as *u8; }
