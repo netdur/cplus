@@ -1559,7 +1559,8 @@ fn drag_origin_of(self_obj: *u8) -> rt::Point {
 // snapshot of the drag view itself, so a 20pt rail drags a 20pt sliver of
 // nothing; once the card can be the source, its own snapshot is the ghost and
 // the preview is right without any new API.
-// components.txt gap 1 (a) + (b)
+// Both halves — the press/threshold sequence and the drag preview — were iris
+// gaps once. They landed here; the entry is gone and the behaviour is this.
 fn drag_mousedown_imp(self_obj: *u8, cmd: *u8, event: *u8) {
     let ns: *u8 = synth::get_associated(self_obj, drag_text_key());
     if { ns as *u8 } == { 0 as *u8 } { return; }
@@ -1987,4 +1988,80 @@ fn new_window_buttons_view() -> ak::View {
     let alloced: *u8 = rt::msg_id(window_buttons_view_class(), rt::sel(#str_ptr("alloc\0")));
     let inited: *u8 = rt::msg_id_rect(alloced, rt::sel(#str_ptr("initWithFrame:\0")), rt::Rect { x: 0.0, y: 0.0, w: 74.0, h: 16.0 });
     return ak::View::from_raw(rt::autorelease(inited));
+}
+
+// ==========================================================================
+// applicationShouldTerminate: — the only place an app can say "not yet"
+//
+// ⌘Q and the Quit item both go through `-[NSApplication terminate:]`, which
+// NEVER RETURNS to whoever called the run loop. Every seam on the far side of
+// that return is therefore dead on the path people actually use — which is how
+// an app can have a quit hook that never runs on quit.
+//
+// `applicationShouldTerminate:` runs BEFORE that, and it is a delegate method
+// rather than a notification precisely because it has a return value. It is the
+// hook an app with a subprocess, an unsaved buffer or an open transaction
+// needs: not to be told it is dying, but to hold the moment and finish.
+//
+//     NSApplicationTerminateReply — 0 Cancel, 1 Now, 2 Later.
+//
+// THE DELEGATE IS A WEAK REFERENCE. `-[NSApplication setDelegate:]` does not
+// retain, so the object below is kept alive by the static that holds it and by
+// nothing else; releasing it would leave NSApp pointing at freed memory the
+// next time anyone quits.
+
+static SHOULD_TERMINATE_FN: fn(*u8) -> i8 = #zero::[fn(*u8) -> i8]();
+static SHOULD_TERMINATE_CTX: *u8 = #zero::[*u8]();
+static APP_DELEGATE: *u8 = #zero::[*u8]();
+
+fn app_should_terminate_imp(_self: *u8, _cmd: *u8, _sender: *u8) -> u64 {
+    let f: fn(*u8) -> i8 = SHOULD_TERMINATE_FN;
+    // No handler: terminate the way an app with no delegate would.
+    if f == (0 as fn(*u8) -> i8) { return 1 as u64; }
+    if f(SHOULD_TERMINATE_CTX) != (0 as i8) { return 1 as u64; }
+    return 0 as u64;
+}
+
+fn app_delegate_class() -> *u8 {
+    let cls_name: *u8 = #str_ptr("CplusExt_AppDelegate\0");
+    var cls: *u8 = rt::get_class(cls_name);
+    if cls == { 0 as *u8 } {
+        cls = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")), cls_name, 0 as usize);
+        if cls == { 0 as *u8 } { return 0 as *u8; }
+        let _ok: i8 = synth::add_method_u64_1id(cls,
+            rt::sel(#str_ptr("applicationShouldTerminate:\0")),
+            app_should_terminate_imp, #str_ptr("Q@:@\0"));
+        synth::register_class_pair(cls);
+    }
+    return cls;
+}
+
+// Ask `f(ctx)` before the app terminates. Answering 0 holds the quit; anything
+// else lets it through. False when the seam could not be taken, which is one
+// case and it is deliberate: THE APPLICATION'S OWN DELEGATE WINS. An app that
+// set one is answering `applicationShouldTerminate:` itself, or wants to, and
+// replacing it would silently break whatever else it answers. Re-arming with a
+// new handler after the delegate is installed just swaps the function.
+fn install_should_terminate(f: fn(*u8) -> i8, ctx: *u8) -> bool {
+    SHOULD_TERMINATE_FN = f;
+    SHOULD_TERMINATE_CTX = ctx;
+    if APP_DELEGATE != { 0 as *u8 } { return true; }
+    let app: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSApplication\0")),
+                              rt::sel(#str_ptr("sharedApplication\0")));
+    if app == { 0 as *u8 } { return false; }
+    if rt::msg_id(app, rt::sel(#str_ptr("delegate\0"))) != { 0 as *u8 } { return false; }
+    let cls: *u8 = app_delegate_class();
+    if cls == { 0 as *u8 } { return false; }
+    let d: *u8 = synth::alloc_init_class(cls);
+    if d == { 0 as *u8 } { return false; }
+    rt::msg_void_id(app, rt::sel(#str_ptr("setDelegate:\0")), d);
+    // Held, not released: see the weak-reference note above.
+    APP_DELEGATE = d;
+    return true;
+}
+
+// Whether this process's terminate seam is ours. Read by the tests, and by
+// anything that needs to know an application delegate took it first.
+fn should_terminate_installed() -> bool {
+    return APP_DELEGATE != { 0 as *u8 };
 }

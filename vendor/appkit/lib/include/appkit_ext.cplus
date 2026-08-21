@@ -780,7 +780,8 @@ fn drag_origin_of(self_obj: *u8) -> rt::Point ;
 // snapshot of the drag view itself, so a 20pt rail drags a 20pt sliver of
 // nothing; once the card can be the source, its own snapshot is the ghost and
 // the preview is right without any new API.
-// components.txt gap 1 (a) + (b)
+// Both halves — the press/threshold sequence and the drag preview — were iris
+// gaps once. They landed here; the entry is gone and the behaviour is this.
 fn drag_mousedown_imp(self_obj: *u8, cmd: *u8, event: *u8) ;
 
 // Past the threshold ⇒ this is a drag. Begins the session with the CURRENT
@@ -959,3 +960,43 @@ fn window_buttons_view_class() -> *u8 ;
 // once it enters a window. Frame is set by the layout pass; drop it in the custom
 // toolbar (pair with a `wants_native_buttons` window so the buttons stay visible).
 fn new_window_buttons_view() -> ak::View ;
+
+// ==========================================================================
+// applicationShouldTerminate: — the only place an app can say "not yet"
+//
+// ⌘Q and the Quit item both go through `-[NSApplication terminate:]`, which
+// NEVER RETURNS to whoever called the run loop. Every seam on the far side of
+// that return is therefore dead on the path people actually use — which is how
+// an app can have a quit hook that never runs on quit.
+//
+// `applicationShouldTerminate:` runs BEFORE that, and it is a delegate method
+// rather than a notification precisely because it has a return value. It is the
+// hook an app with a subprocess, an unsaved buffer or an open transaction
+// needs: not to be told it is dying, but to hold the moment and finish.
+//
+//     NSApplicationTerminateReply — 0 Cancel, 1 Now, 2 Later.
+//
+// THE DELEGATE IS A WEAK REFERENCE. `-[NSApplication setDelegate:]` does not
+// retain, so the object below is kept alive by the static that holds it and by
+// nothing else; releasing it would leave NSApp pointing at freed memory the
+// next time anyone quits.
+
+static SHOULD_TERMINATE_FN: fn(*u8) -> i8 = #zero::[fn(*u8) -> i8]();
+static SHOULD_TERMINATE_CTX: *u8 = #zero::[*u8]();
+static APP_DELEGATE: *u8 = #zero::[*u8]();
+
+fn app_should_terminate_imp(_self: *u8, _cmd: *u8, _sender: *u8) -> u64 ;
+
+fn app_delegate_class() -> *u8 ;
+
+// Ask `f(ctx)` before the app terminates. Answering 0 holds the quit; anything
+// else lets it through. False when the seam could not be taken, which is one
+// case and it is deliberate: THE APPLICATION'S OWN DELEGATE WINS. An app that
+// set one is answering `applicationShouldTerminate:` itself, or wants to, and
+// replacing it would silently break whatever else it answers. Re-arming with a
+// new handler after the delegate is installed just swaps the function.
+fn install_should_terminate(f: fn(*u8) -> i8, ctx: *u8) -> bool ;
+
+// Whether this process's terminate seam is ours. Read by the tests, and by
+// anything that needs to know an application delegate took it first.
+fn should_terminate_installed() -> bool ;
