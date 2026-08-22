@@ -112,6 +112,18 @@ impl Widget {
         return;
     }
 
+    // Empty the pane: the screen and the scrollback both, without sending the
+    // shell a thing. An app that runs its builds here calls it before the first
+    // command of a run, so what the user reads is that run and nothing older —
+    // and unlike typing `clear`, the command line about to be echoed survives.
+    //
+    // A command that is still running is NOT stopped and its screen is emptied
+    // under it. Ask `command_state` first if that matters.
+    fn clear(this) {
+        this._backend.clear();
+        return;
+    }
+
     fn has_integration(this) -> bool { return this._backend.has_integration(); }
     fn command_state(this) -> terminal::CommandState { return this._backend.command_state(); }
     fn command_id(this) -> u64 { return this._backend.command_id(); }

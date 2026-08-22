@@ -4617,6 +4617,47 @@ fn cross_file_private_fn_emits_e0403() {
     assert!(!out.status.success());
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("E0403"), "expected E0403, got: {stderr}");
+    assert!(
+        stderr.contains("leading `_`"),
+        "a `_` name gets the `_` advice: {stderr}"
+    );
+}
+
+/// An `extern fn` is module-private however it is spelled, so E0403 must not
+/// tell the reader to drop a leading `_` that is not there — no rename exports
+/// an extern, and the advice has to say what does.
+#[test]
+fn cross_file_extern_fn_e0403_does_not_blame_a_leading_underscore() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(dir.join("Cplus.toml"), "[package]\nname = \"x\"\n").unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(
+        dir.join("src/libc.cplus"),
+        "extern fn abs(n: i32) -> i32;\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"./libc\" as libc;\nfn main() -> i32 { return libc::abs(-7 as i32); }\n",
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .output()
+        .expect("invoke cpc");
+    assert!(!out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("E0403"), "expected E0403, got: {stderr}");
+    assert!(
+        !stderr.contains("leading `_`"),
+        "`abs` has no leading `_`; that advice is nonsense here: {stderr}"
+    );
+    assert!(
+        stderr.contains("extern fn"),
+        "the message should name the real rule: {stderr}"
+    );
 }
 
 /// Slice 4C: a sema diagnostic whose error site sits in an *imported*
@@ -7284,17 +7325,17 @@ fn orphan_source_file_warns_w0005_and_success_prints_module_count() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();
     std::fs::create_dir_all(dir.join("src")).unwrap();
-    std::fs::write(
-        dir.join("Cplus.toml"),
-        "[package]\nname = \"orph\"\n",
-    )
-    .unwrap();
+    std::fs::write(dir.join("Cplus.toml"), "[package]\nname = \"orph\"\n").unwrap();
     std::fs::write(
         dir.join("src/main.cplus"),
         "import \"./used\" as used;\nfn main() -> i32 { return used::zero(); }\n",
     )
     .unwrap();
-    std::fs::write(dir.join("src/used.cplus"), "fn zero() -> i32 { return 0; }\n").unwrap();
+    std::fs::write(
+        dir.join("src/used.cplus"),
+        "fn zero() -> i32 { return 0; }\n",
+    )
+    .unwrap();
     // The orphan carries an undefined call on purpose: nothing checks it,
     // which is exactly what the warning exists to say.
     std::fs::write(
@@ -12733,8 +12774,9 @@ fn phase11_asan_attaches_function_attr() {
         String::from_utf8_lossy(&out.stderr)
     );
     let ir = String::from_utf8_lossy(&out.stdout);
+    // The module-wide attributes lead; the sanitizer attribute follows them.
     assert!(
-        ir.contains("i32 @main() sanitize_address"),
+        ir.contains("i32 @main() \"frame-pointer\"=\"non-leaf\" sanitize_address"),
         "main should carry sanitize_address attr: {ir}"
     );
 }
@@ -20023,6 +20065,538 @@ fn mcp_server_handshake_and_tool_call() {
 }
 
 #[test]
+fn query_scope_at_lists_what_is_typable_and_rejects_a_bad_position() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = graph_project();
+    let out = Command::new(cpc)
+        .args(["query", "scope-at", "src/main.cplus:7:8"])
+        .current_dir(&dir)
+        .output()
+        .expect("invoke cpc query scope-at");
+    assert!(out.status.success());
+    let j: serde_json::Value = serde_json::from_slice(&out.stdout).expect("JSON on stdout");
+    assert_eq!(j["kind"], "scope-at");
+    assert_eq!(j["context"], "g.src.main::main");
+    let names: Vec<&str> = j["bindings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| e["name"].as_str().unwrap())
+        .collect();
+    assert!(names.contains(&"p"), "the local: {names:?}");
+    assert!(names.contains(&"Point"), "a module item: {names:?}");
+
+    let bad = Command::new(cpc)
+        .args(["query", "scope-at", "src/main.cplus"])
+        .current_dir(&dir)
+        .output()
+        .expect("invoke cpc query scope-at");
+    assert!(!bad.status.success(), "a malformed position exits non-zero");
+    assert!(String::from_utf8_lossy(&bad.stderr).contains("FILE:LINE:COL"));
+}
+
+/// An interactive `cpc mcp` server: one line in, one line out, with the
+/// process alive between calls. Interactive on purpose — the whole point of
+/// the resident server is what it does *between* two requests, and a helper
+/// that writes a script and then reads the output can't observe that.
+struct McpServer {
+    child: std::process::Child,
+    out: std::io::Lines<std::io::BufReader<std::process::ChildStdout>>,
+    next_id: u32,
+}
+
+impl McpServer {
+    fn start(dir: &std::path::Path) -> McpServer {
+        use std::io::BufRead;
+        let cpc = env!("CARGO_BIN_EXE_cpc");
+        let mut child = Command::new(cpc)
+            .arg("mcp")
+            .current_dir(dir)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .expect("spawn cpc mcp");
+        let out = std::io::BufReader::new(child.stdout.take().expect("stdout")).lines();
+        McpServer {
+            child,
+            out,
+            next_id: 1,
+        }
+    }
+
+    /// Send one `tools/call` and read its response.
+    fn call(&mut self, name: &str, args: serde_json::Value) -> serde_json::Value {
+        use std::io::Write;
+        let id = self.next_id;
+        self.next_id += 1;
+        let msg = tool_call(id, name, args);
+        {
+            let stdin = self.child.stdin.as_mut().expect("stdin");
+            writeln!(stdin, "{msg}").expect("write");
+            stdin.flush().expect("flush");
+        }
+        let line = self
+            .out
+            .next()
+            .expect("a response line")
+            .expect("readable response");
+        let v: serde_json::Value = serde_json::from_str(&line).expect("a JSON-RPC line");
+        assert_eq!(v["id"], id, "response out of order: {v}");
+        v
+    }
+
+    /// The text payload of a call, which every tool here returns as JSON.
+    fn json(&mut self, name: &str, args: serde_json::Value) -> serde_json::Value {
+        let resp = self.call(name, args);
+        let text = resp["result"]["content"][0]["text"]
+            .as_str()
+            .unwrap_or_else(|| panic!("no text content in {resp}"));
+        serde_json::from_str(text).unwrap_or_else(|_| panic!("tool text is not JSON: {text}"))
+    }
+
+    /// The text payload, unparsed — for the tools that answer with a bare
+    /// array or an error sentence.
+    fn text(&mut self, name: &str, args: serde_json::Value) -> String {
+        let resp = self.call(name, args);
+        resp["result"]["content"][0]["text"]
+            .as_str()
+            .unwrap_or("")
+            .to_string()
+    }
+}
+
+impl Drop for McpServer {
+    fn drop(&mut self) {
+        // Closing stdin ends the server loop.
+        drop(self.child.stdin.take());
+        let _ = self.child.wait();
+    }
+}
+
+fn tool_call(id: u32, name: &str, args: serde_json::Value) -> String {
+    serde_json::json!({
+        "jsonrpc": "2.0", "id": id, "method": "tools/call",
+        "params": { "name": name, "arguments": args },
+    })
+    .to_string()
+}
+
+/// Ask 1: the resident graph refreshes. One server, one file rewritten under
+/// it — the answer before the rewrite is not the answer after `reload`.
+#[test]
+fn mcp_reload_picks_up_a_file_that_changed_on_disk() {
+    let dir = graph_project();
+    let mut s = McpServer::start(&dir);
+
+    let before = s.text("find_definition", serde_json::json!({"symbol": "added"}));
+    assert_eq!(
+        before.trim(),
+        "[]",
+        "the symbol does not exist yet: {before}"
+    );
+
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        concat!(
+            "struct Point { x: i32, y: i32 }\n",
+            "impl Point {\n",
+            "    fn sum(this) -> i32 { return this.x +% this.y; }\n",
+            "}\n",
+            "fn added() -> i32 { return 9; }\n",
+            "fn main() -> i32 {\n",
+            "    let p: Point = Point { x: 1, y: 2 };\n",
+            "    return p.sum();\n",
+            "}\n",
+        ),
+    )
+    .unwrap();
+
+    // Still the startup graph: a resident server does not watch the disk.
+    let stale = s.text("find_definition", serde_json::json!({"symbol": "added"}));
+    assert_eq!(
+        stale.trim(),
+        "[]",
+        "without `reload` the graph is the one built at startup: {stale}"
+    );
+
+    let st = s.json("reload", serde_json::json!({}));
+    assert_eq!(st["kind"], "reload");
+    assert_eq!(st["stale"], false, "a clean project reloads clean: {st}");
+    assert!(st["nodes"].as_u64().unwrap() > 0);
+
+    let after = s.text("find_definition", serde_json::json!({"symbol": "added"}));
+    assert!(
+        after.contains("\"name\": \"added\""),
+        "reload sees the new symbol: {after}"
+    );
+}
+
+/// Ask 2: an unsaved buffer, handed over, is what later queries answer about —
+/// and it never touches disk.
+#[test]
+fn mcp_did_change_answers_about_the_buffer_not_the_file() {
+    let dir = graph_project();
+    let mut s = McpServer::start(&dir);
+    let buffer = concat!(
+        "struct Point { x: i32, y: i32 }\n",
+        "impl Point {\n",
+        "    fn sum(this) -> i32 { return this.x +% this.y; }\n",
+        "}\n",
+        "fn only_in_the_buffer() -> i32 { return 3; }\n",
+        "fn main() -> i32 {\n",
+        "    let p: Point = Point { x: 1, y: 2 };\n",
+        "    return p.sum();\n",
+        "}\n",
+    );
+
+    let ch = s.json(
+        "did_change",
+        serde_json::json!({"file": "src/main.cplus", "text": buffer}),
+    );
+    assert_eq!(ch["kind"], "did-change");
+    assert_eq!(ch["changed"], true);
+    assert_eq!(
+        ch["pending_rebuild"], true,
+        "the rebuild runs on a worker, not inline: {ch}"
+    );
+
+    // Asking to wait is how a client says "the next answer must be about this".
+    let waited = s.json(
+        "did_change",
+        serde_json::json!({"file": "src/main.cplus", "text": buffer, "wait": true}),
+    );
+    assert_eq!(waited["pending_rebuild"], false, "waited for it: {waited}");
+    assert_eq!(waited["building"], false);
+
+    let found = s.text(
+        "find_definition",
+        serde_json::json!({"symbol": "only_in_the_buffer"}),
+    );
+    assert!(
+        found.contains("only_in_the_buffer"),
+        "the buffer's new symbol is visible: {found}"
+    );
+
+    let st = s.json("graph_status", serde_json::json!({}));
+    assert_eq!(st["overlays"].as_array().unwrap().len(), 1);
+    assert_eq!(st["pending_rebuild"], false);
+    assert_eq!(st["stale"], false);
+
+    let closed = s.json(
+        "did_close",
+        serde_json::json!({"file": "src/main.cplus", "wait": true}),
+    );
+    assert_eq!(closed["dropped"], true);
+    let gone = s.text(
+        "find_definition",
+        serde_json::json!({"symbol": "only_in_the_buffer"}),
+    );
+    assert_eq!(
+        gone.trim(),
+        "[]",
+        "with the overlay dropped, the symbol is gone again"
+    );
+
+    // The buffer never reached the filesystem.
+    let on_disk = std::fs::read_to_string(dir.join("src/main.cplus")).unwrap();
+    assert!(!on_disk.contains("only_in_the_buffer"));
+}
+
+/// A burst of edits costs one rebuild, not one per edit — the reason
+/// `did_change` defers instead of building on the spot.
+#[test]
+fn mcp_a_burst_of_edits_collapses_into_one_rebuild() {
+    let dir = graph_project();
+    let mut s = McpServer::start(&dir);
+    for i in 0..3 {
+        let text = format!("fn main() -> i32 {{ return {i}; }}\n");
+        let ch = s.json(
+            "did_change",
+            serde_json::json!({"file": "src/main.cplus", "text": text}),
+        );
+        assert_eq!(ch["changed"], true, "edit {i} is a change: {ch}");
+    }
+    // The last edit wins, and one wait settles the whole burst.
+    let settled = s.json(
+        "did_change",
+        serde_json::json!({"file": "src/main.cplus", "text": "fn main() -> i32 { return 9; }\n", "wait": true}),
+    );
+    assert_eq!(settled["pending_rebuild"], false, "{settled}");
+    assert_eq!(settled["stale"], false);
+
+    // Re-sending identical text is not a change and starts no build.
+    let same = s.json(
+        "did_change",
+        serde_json::json!({"file": "src/main.cplus", "text": "fn main() -> i32 { return 9; }\n"}),
+    );
+    assert_eq!(
+        same["changed"], false,
+        "an unchanged buffer is a no-op: {same}"
+    );
+    assert_eq!(same["pending_rebuild"], false);
+    assert_eq!(same["building"], false);
+}
+
+/// A read issued while a rebuild is in flight answers from the previous graph
+/// instead of waiting for it. This is what makes the resident server usable
+/// behind one stdio pipe: a 2 s rebuild on a real project would otherwise
+/// freeze every other query for 2 s.
+#[test]
+fn mcp_a_read_does_not_wait_for_a_rebuild_in_flight() {
+    let dir = graph_project();
+    // Enough files that a rebuild is measurably slower than a lookup.
+    let mut imports = String::new();
+    for i in 0..40 {
+        std::fs::write(
+            dir.join(format!("src/m{i}.cplus")),
+            format!("struct T{i} {{ v: i32 }}\nfn f{i}(x: i32) -> i32 {{ return x +% {i}; }}\n"),
+        )
+        .unwrap();
+        imports.push_str(&format!("import \"./m{i}\" as m{i};\n"));
+    }
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        format!("{imports}struct Point {{ x: i32, y: i32 }}\nfn main() -> i32 {{ return 0; }}\n"),
+    )
+    .unwrap();
+
+    let mut s = McpServer::start(&dir);
+    // Calibrate: how long does a full rebuild actually take here?
+    let t = std::time::Instant::now();
+    s.json("reload", serde_json::json!({}));
+    let build_ms = t.elapsed().as_millis();
+
+    // A buffer that deletes `Point`, handed over WITHOUT waiting.
+    let ch = s.json(
+        "did_change",
+        serde_json::json!({"file": "src/main.cplus", "text": "fn main() -> i32 { return 0; }\n"}),
+    );
+    assert_eq!(ch["building"], true, "the worker is running: {ch}");
+    assert_eq!(ch["pending_rebuild"], true);
+
+    let t = std::time::Instant::now();
+    let during = s.text("find_definition", serde_json::json!({"symbol": "Point"}));
+    let read_ms = t.elapsed().as_millis();
+    assert!(
+        during.contains("\"name\": \"Point\""),
+        "the previous graph answers while the new one builds: {during}"
+    );
+    // Only meaningful if the rebuild is slow enough to notice; on a fixture
+    // this small it may already be done, and that is not a failure.
+    if build_ms > 150 {
+        assert!(
+            read_ms * 3 < build_ms,
+            "the read ({read_ms} ms) should not have waited for the build ({build_ms} ms)"
+        );
+    }
+
+    // And once it lands, `Point` is gone, without anyone having blocked.
+    let after = s.json(
+        "did_change",
+        serde_json::json!({
+            "file": "src/main.cplus", "text": "fn main() -> i32 { return 0; }\n", "wait": true
+        }),
+    );
+    assert_eq!(after["pending_rebuild"], false, "{after}");
+    let gone = s.text("find_definition", serde_json::json!({"symbol": "Point"}));
+    assert_eq!(gone.trim(), "[]", "the buffer removed it: {gone}");
+}
+
+/// The normal state during completion: the buffer does not parse. The server
+/// must keep answering from the last good graph and say why.
+#[test]
+fn mcp_a_buffer_that_does_not_parse_keeps_the_last_good_graph() {
+    let dir = graph_project();
+    let mut s = McpServer::start(&dir);
+    s.json(
+        "did_change",
+        serde_json::json!({"file": "src/main.cplus", "text": "fn main() -> i32 { return", "wait": true}),
+    );
+    let found = s.text("find_definition", serde_json::json!({"symbol": "Point"}));
+    assert!(
+        found.contains("\"name\": \"Point\""),
+        "the previous graph still answers: {found}"
+    );
+    let st = s.json("graph_status", serde_json::json!({}));
+    assert_eq!(st["stale"], true, "and it says so: {st}");
+    assert!(
+        !st["error"].as_str().unwrap_or("").is_empty(),
+        "with the reason: {st}"
+    );
+
+    // Repairing the buffer clears the staleness without a respawn.
+    let ok = s.json(
+        "did_change",
+        serde_json::json!({"file": "src/main.cplus", "text": "fn main() -> i32 { return 0; }\n", "wait": true}),
+    );
+    assert_eq!(ok["stale"], false, "a parsing buffer recovers: {ok}");
+    assert!(ok["error"].is_null());
+}
+
+/// Ask 3, over MCP: the names typable at a position.
+#[test]
+fn mcp_scope_at_reports_locals_params_self_items_and_aliases() {
+    let dir = graph_project();
+    let mut s = McpServer::start(&dir);
+    // Inside `main`, on `p` in `    return p.sum();`.
+    let j = s.json(
+        "scope_at",
+        serde_json::json!({"file": "src/main.cplus", "line": 7, "col": 8}),
+    );
+    assert_eq!(j["kind"], "scope-at");
+    assert_eq!(j["context"], "g.src.main::main");
+    let by: std::collections::BTreeMap<String, serde_json::Value> = j["bindings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| (e["name"].as_str().unwrap().to_string(), e.clone()))
+        .collect();
+    assert_eq!(by["p"]["kind"], "local");
+    assert_eq!(by["p"]["type"], "Point");
+    assert_eq!(by["Point"]["kind"], "item");
+    assert_eq!(by["main"]["kind"], "item");
+    assert!(
+        !by.contains_key("this"),
+        "`this` is not typable in a free function: {j}"
+    );
+
+    // Inside the method, `this` is, and `p` is not.
+    let m = s.json(
+        "scope_at",
+        serde_json::json!({"file": "src/main.cplus", "line": 3, "col": 34}),
+    );
+    let names: Vec<&str> = m["bindings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| e["name"].as_str().unwrap())
+        .collect();
+    assert!(names.contains(&"this"), "in a method: {m}");
+    assert!(
+        !names.contains(&"p"),
+        "another function's local is not in scope: {m}"
+    );
+}
+
+/// The member-completion chain the editor actually runs, end to end on one
+/// resident server: hand over the buffer, ask what the receiver is, ask what
+/// that type has.
+#[test]
+fn mcp_completion_chain_runs_against_an_unsaved_buffer() {
+    let dir = graph_project();
+    let mut s = McpServer::start(&dir);
+    // Line 8 col 12 is `q` in `    return q.sum();`.
+    let buffer = concat!(
+        "struct Point { x: i32, y: i32 }\n",
+        "impl Point {\n",
+        "    fn sum(this) -> i32 { return this.x +% this.y; }\n",
+        "    fn scaled(this, k: i32) -> i32 { return this.sum() *% k; }\n",
+        "}\n",
+        "fn main() -> i32 {\n",
+        "    let q: Point = Point { x: 1, y: 2 };\n",
+        "    return q.sum();\n",
+        "}\n",
+    );
+    s.json(
+        "did_change",
+        serde_json::json!({"file": "src/main.cplus", "text": buffer, "wait": true}),
+    );
+
+    // `q` exists only in the buffer — the file on disk calls it `p`.
+    let scope = s.json(
+        "scope_at",
+        serde_json::json!({"file": "src/main.cplus", "line": 8, "col": 12}),
+    );
+    let names: Vec<String> = scope["bindings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| e["name"].as_str().unwrap().to_string())
+        .collect();
+    assert!(
+        names.contains(&"q".to_string()),
+        "buffer-only local: {names:?}"
+    );
+
+    let ty = s.json(
+        "type_at",
+        serde_json::json!({"file": "src/main.cplus", "line": 8, "col": 12}),
+    );
+    assert_eq!(ty["type"], "Point");
+
+    let members = s.text("find_members", serde_json::json!({"type": "Point"}));
+    for m in [
+        "\"name\": \"x\"",
+        "\"name\": \"sum\"",
+        "\"name\": \"scaled\"",
+    ] {
+        assert!(members.contains(m), "{m} missing from members: {members}");
+    }
+    // `scaled` exists only in the buffer, which is the whole point.
+    let on_disk = std::fs::read_to_string(dir.join("src/main.cplus")).unwrap();
+    assert!(!on_disk.contains("scaled"));
+}
+
+/// Negative: the position verbs reject what they cannot resolve, rather than
+/// answering about the wrong place.
+#[test]
+fn mcp_position_verbs_report_a_bad_file_or_position() {
+    let dir = graph_project();
+    let mut s = McpServer::start(&dir);
+    let cases = [
+        (
+            serde_json::json!({"file": "src/nope.cplus", "line": 1, "col": 1}),
+            "no source file matching",
+        ),
+        (
+            serde_json::json!({"file": "src/main.cplus", "line": 9999, "col": 1}),
+            "out of range",
+        ),
+        (
+            serde_json::json!({"file": "src/main.cplus"}),
+            "missing required argument",
+        ),
+    ];
+    for (args, needle) in cases {
+        let resp = s.call("scope_at", args.clone());
+        assert_eq!(resp["result"]["isError"], true, "{args}: {resp}");
+        let text = resp["result"]["content"][0]["text"].as_str().unwrap();
+        assert!(text.contains(needle), "expected `{needle}` in: {text}");
+    }
+    let resp = s.call("did_change", serde_json::json!({"file": "src/main.cplus"}));
+    assert_eq!(resp["result"]["isError"], true);
+    assert!(resp["result"]["content"][0]["text"]
+        .as_str()
+        .unwrap()
+        .contains("missing required argument"));
+}
+
+/// A `did_change` for a file the project does not import is recorded but
+/// changes nothing — the server must not fall over on it.
+#[test]
+fn mcp_did_change_for_an_unrelated_file_is_harmless() {
+    let dir = graph_project();
+    let mut s = McpServer::start(&dir);
+    let ch = s.json(
+        "did_change",
+        serde_json::json!({"file": "src/scratch.cplus", "text": "fn nothing() -> i32 { return 0; }\n", "wait": true}),
+    );
+    assert_eq!(ch["kind"], "did-change");
+    let st = s.json("graph_status", serde_json::json!({}));
+    assert_eq!(
+        st["stale"], false,
+        "an unreachable overlay is not an error: {st}"
+    );
+    let found = s.text("find_definition", serde_json::json!({"symbol": "nothing"}));
+    assert_eq!(
+        found.trim(),
+        "[]",
+        "a file nothing imports contributes no symbols: {found}"
+    );
+}
+
+#[test]
 fn query_call_hierarchy_and_unknown_fn() {
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = graph_project();
@@ -25748,4 +26322,105 @@ fn run_cancel_destroys_the_frame_tree_and_runs_drops_end_to_end() {
         String::from_utf8_lossy(&run.stderr),
     );
     assert_eq!(String::from_utf8_lossy(&run.stdout), "async-cancel-ok\n");
+}
+
+/// `cpc build` reports the project's problems, not its dependencies'.
+///
+/// A warning about a dependency is advice for that dependency's author: the
+/// reader did not write it, a vendored copy is replaced on the next sync, and
+/// the same text arrives on every build forever — which teaches people to skim
+/// past warnings. Measured on a real project, this was 498 warnings on a cold
+/// build, none of them actionable by the person reading them.
+///
+/// Three things have to hold at once: dependency warnings are hidden, the
+/// project's OWN warnings are not, and dependency ERRORS are never hidden —
+/// an error stops the build and the reader has to see it even though the fix
+/// is upstream. `--warn-deps` brings the warnings back.
+#[test]
+fn build_hides_dependency_warnings_but_never_dependency_errors() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::create_dir_all(dir.join("vendor/dep/src")).unwrap();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"app\"\nversion = \"0.0.1\"\nedition = \"2026\"\n\
+         \n[dependencies]\ndep = \"*\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("vendor/dep/Cplus.toml"),
+        "[package]\nname = \"dep\"\nversion = \"0.0.1\"\nedition = \"2026\"\n\
+         \n[build]\nprebuild = true\n",
+    )
+    .unwrap();
+    // The dependency carries a W0002: a conditional release the compiler
+    // cannot prove always runs. Correct, deliberate, and none of the
+    // consumer's business.
+    std::fs::write(
+        dir.join("vendor/dep/src/dep.cplus"),
+        "extern fn malloc(n: usize) -> *u8;\n\
+         extern fn free(p: *u8);\n\
+         struct DepBuf { _p: *u8, _live: bool }\n\
+         impl DepBuf {\n\
+             fn drop(ref this) { if this._live { free(this._p); } }\n\
+         }\n\
+         fn give() -> i32 { return 1; }\n",
+    )
+    .unwrap();
+    // The consumer carries one of its own, which must always be reported.
+    let own = "import \"dep/dep\" as dep;\n\
+               extern fn malloc(n: usize) -> *u8;\n\
+               extern fn free(p: *u8);\n\
+               struct OwnBuf { _p: *u8, _live: bool }\n\
+               impl OwnBuf {\n\
+                   fn drop(ref this) { if this._live { free(this._p); } }\n\
+               }\n\
+               fn main() -> i32 {\n\
+                   var b: OwnBuf = OwnBuf { _p: { malloc(8 as usize) }, _live: true };\n\
+                   return dep::give() - 1;\n\
+               }\n";
+    std::fs::write(dir.join("src/main.cplus"), own).unwrap();
+
+    let build = |args: &[&str]| -> String {
+        let out = Command::new(cpc)
+            .args(args)
+            .current_dir(&dir)
+            .output()
+            .expect("invoke cpc build");
+        String::from_utf8_lossy(&out.stderr).to_string()
+    };
+
+    // Default: the consumer's own warning, and nothing from the dependency.
+    let _ = std::fs::remove_dir_all(dir.join("vendor/dep/lib"));
+    let quiet = build(&["build"]);
+    assert!(
+        quiet.contains("src/main.cplus") && quiet.contains("W0002"),
+        "the project's OWN warning must always be reported:\n{quiet}"
+    );
+    assert!(
+        !quiet.contains("dep.cplus"),
+        "a dependency's warning must not reach the consumer:\n{quiet}"
+    );
+
+    // `--warn-deps`: the dependency's warning comes back.
+    let _ = std::fs::remove_dir_all(dir.join("vendor/dep/lib"));
+    let loud = build(&["build", "--warn-deps"]);
+    assert!(
+        loud.contains("dep.cplus") && loud.contains("W0002"),
+        "--warn-deps must restore dependency warnings:\n{loud}"
+    );
+
+    // An ERROR in the dependency is reported either way — it stops the build.
+    std::fs::write(
+        dir.join("vendor/dep/src/dep.cplus"),
+        "fn give() -> i32 { return \"not an int\"; }\n",
+    )
+    .unwrap();
+    let _ = std::fs::remove_dir_all(dir.join("vendor/dep/lib"));
+    let broken = build(&["build"]);
+    assert!(
+        broken.contains("dep.cplus") && broken.contains("E0302"),
+        "a dependency's ERROR must never be suppressed:\n{broken}"
+    );
 }

@@ -937,6 +937,8 @@ document is in error — please report it.
 - `cpc fmt` — canonical formatter; if source does not round-trip, it is
   syntactically off.
 - `cpc query` / `cpc mcp` / `cpc lsp` — the resolved, typed
-  code-knowledge graph for editors and agents.
+  code-knowledge graph for editors and agents. `cpc mcp` is resident: it
+  builds once, takes unsaved buffers (`did_change`), and refreshes on
+  demand (`reload`).
 - `cpc doc` — extract public (non-`_`) items and their `///` docs.
 ```

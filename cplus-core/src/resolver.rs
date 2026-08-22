@@ -251,15 +251,16 @@ impl std::fmt::Display for ResolveError {
                     PrivateKind::Const => "const",
                     PrivateKind::Static => "static",
                 };
+                let why = private_reason(name);
                 match kind {
                     PrivateKind::Method => write!(
                         f,
-                        "[E0403] {}: {what} `{owner}::{name}` is private (its leading `_` marks it module-private; drop the `_` to export)",
+                        "[E0403] {}: {what} `{owner}::{name}` is private ({why})",
                         file.display(),
                     ),
                     _ => write!(
                         f,
-                        "[E0403] {}: {what} `{name}` (in module `{owner}`) is private (its leading `_` marks it module-private; drop the `_` to export)",
+                        "[E0403] {}: {what} `{name}` (in module `{owner}`) is private ({why})",
                         file.display(),
                     ),
                 }
@@ -483,11 +484,13 @@ pub fn load_project_full(
             })
         }
     };
+    let (merged, import_aliases) = merged;
     Ok(LoadedProject {
         program: merged,
         entry_file_id,
         files: file_sources,
         imports: edges,
+        import_aliases,
     })
 }
 
@@ -688,13 +691,12 @@ impl LoadFailure {
                     PrivateKind::Const => "const",
                     PrivateKind::Static => "static",
                 };
+                let why = private_reason(name);
                 let msg = match kind {
-                    PrivateKind::Method => format!(
-                        "{what} `{owner}::{name}` is private (its leading `_` marks it module-private; drop the `_` to export)",
-                    ),
-                    _ => format!(
-                        "{what} `{name}` is private (its leading `_` marks it module-private in `{owner}`; drop the `_` to export)",
-                    ),
+                    PrivateKind::Method => {
+                        format!("{what} `{owner}::{name}` is private ({why})")
+                    }
+                    _ => format!("{what} `{name}` is private in `{owner}` ({why})"),
                 };
                 ("E0403", msg, span_in(file, *span))
             }
@@ -957,6 +959,25 @@ pub struct LoadedProject {
     /// imported — so sema needs the edges the merge walked. Every loaded file
     /// has an entry (empty when it imports nothing).
     pub imports: std::collections::BTreeMap<String, Vec<String>>,
+    /// v0.0.26 completion: the *named* import edges, `file_id → the aliases
+    /// that file bound`. `imports` above is the same graph with the names
+    /// thrown away — enough for EXT.2's visibility question, not enough to
+    /// answer "what does `text::` mean in this file". `scope_at` reports these
+    /// so an editor never has to parse an import line or re-derive a module id
+    /// from a path. `as _` imports bind no name and are absent here (the file
+    /// still appears in `imports`). Every loaded file has an entry.
+    pub import_aliases: std::collections::BTreeMap<String, Vec<ImportAlias>>,
+}
+
+/// v0.0.26 completion: one `import "path" as NAME;` edge, kept by name.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ImportAlias {
+    /// The name bound in the importing file (`text` in `as text`).
+    pub alias: String,
+    /// The file id the alias resolves to (`stdlib.text`).
+    pub module: String,
+    /// Span of the alias name, in the *importing* file.
+    pub span: Span,
 }
 
 // ---------------- internals ----------------
@@ -1867,6 +1888,24 @@ fn exported_name(name: &str) -> bool {
 /// A plain (non-`export`) `extern fn` FFI import (`free`, `read`, `write`) is the
 /// scoped case: private to its declaring module, so importers don't inherit libc
 /// names bare into their namespace.
+/// Why a name is module-private, for E0403.
+///
+/// Two different rules land in the same error and they need different advice.
+/// A `_` prefix is a choice the author made and can unmake. An `extern fn` is
+/// private *whatever* it is called: the linker symbol it binds is global, the
+/// C+ name is not, so no rename exports it — the fix is to declare the extern
+/// where it is used, or wrap it in a plain `fn`. Telling that reader to "drop
+/// the `_`" names a `_` that is not there.
+fn private_reason(name: &str) -> &'static str {
+    if name.starts_with('_') {
+        "its leading `_` marks it module-private; drop the `_` to export"
+    } else {
+        "an `extern fn` is private to its declaring module — only the linker \
+         symbol is global, not the C+ name; declare it in this file too, or \
+         wrap it in a plain `fn` the module exports"
+    }
+}
+
 fn extern_stays_global(f: &Function) -> bool {
     f.is_extern
         && (f.is_pub
@@ -1883,7 +1922,7 @@ fn merge(
     deps: &BTreeSet<String>,
     own_package: Option<&str>,
     project_mode: bool,
-) -> Result<Program, ResolveError> {
+) -> Result<(Program, BTreeMap<String, Vec<ImportAlias>>), ResolveError> {
     // Pre-pass: collect each file's local item names (used by the
     // rewriter to qualify unqualified references) AND its **public**
     // surface (slice 4B: gates cross-file access via E0403).
@@ -2009,8 +2048,11 @@ fn merge(
     }
 
     let mut imports_by_file: BTreeMap<String, BTreeMap<String, String>> = BTreeMap::new();
+    // v0.0.26 completion: the same edges kept by name + span, for `scope_at`.
+    let mut aliases_by_file: BTreeMap<String, Vec<ImportAlias>> = BTreeMap::new();
     for (fid, unit) in &files {
         let mut imports_map: BTreeMap<String, String> = BTreeMap::new();
+        let mut alias_list: Vec<ImportAlias> = Vec::new();
         let mut first_span_for: BTreeMap<String, Span> = BTreeMap::new();
         for imp in &unit.program.imports {
             // STRM v3 (2026-08-01): `as _` binds no name — skip the alias
@@ -2050,11 +2092,17 @@ fn merge(
                 .find(|(_, u)| u.canonical_path == target_canon)
                 .map(|(id, _)| id.clone())
             {
+                alias_list.push(ImportAlias {
+                    alias: imp.as_name.name.clone(),
+                    module: target_id.clone(),
+                    span: imp.as_name.span,
+                });
                 imports_map.insert(imp.as_name.name.clone(), target_id);
                 first_span_for.insert(imp.as_name.name.clone(), imp.as_name.span);
             }
         }
         imports_by_file.insert(fid.clone(), imports_map);
+        aliases_by_file.insert(fid.clone(), alias_list);
     }
 
     let mut alias_targets: BTreeMap<String, BTreeMap<String, AliasTarget>> = BTreeMap::new();
@@ -2101,10 +2149,13 @@ fn merge(
         }
     }
 
-    Ok(Program {
-        imports: Vec::new(),
-        items: merged_items,
-    })
+    Ok((
+        Program {
+            imports: Vec::new(),
+            items: merged_items,
+        },
+        aliases_by_file,
+    ))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -1,0 +1,315 @@
+C+ — a 20-episode video tutorial
+================================
+
+Scope: the LANGUAGE and its toolchain. No facet, no UI. Every episode ends
+with a program that builds and runs with the local compiler
+(`./target/release/cpc`), and each one carries the episode before it forward.
+
+Running example: `inv` — a small inventory CLI. It starts as a hello-world in
+episode 1 and is a multi-module, tested, C-linked, threaded tool by episode 20.
+
+
+ 1. What C+ is, and your first build
+    Values with C's runtime shape, ownership checked at compile time, LLVM
+    backend, one-way C ABI. No GC, no runtime, no hidden allocation.
+    `cpc init inv && cd inv`, the four files it writes, `Cplus.toml`,
+    `cpc build`, `./target/debug/inv`. Debug traps vs `--release`.
+    Where deps come from: `vendor/<name>/` first, then `~/.cplus`.
+    Demo: an empty project that compiles in under a second.
+
+ 2. Hello, imports, and interpolation
+    `import "stdlib/io" as io;` — quoted path, mandatory alias, `./helpers`
+    for a file next door. `io::println("hello, ${name}")`, and why `${}`
+    needs `stdlib/text` in the build (E0613). Sink printing allocates
+    nothing. `return` is explicit at function level, always (E0333).
+    Demo: `inv` greets you and prints its version.
+
+ 3. Bindings and numbers
+    The 2x2 with no `mut`: `let`/`var` for locals, `const`/`static` at module
+    scope. `let` freezes the whole value — a struct behind `let` rejects
+    field writes (E0328). Numbers never convert silently: every width change
+    is spelled `as`. `+` traps on overflow in debug; `+% -% *%` wrap on
+    purpose. The trap that costs an hour: integer literals wrap through i32
+    before `as`, so big masks get built arithmetically.
+    Demo: a price/quantity calculator that refuses to lie about overflow.
+
+ 4. Control flow, and blocks that are expressions
+    `if`/`else`, `while`, `loop`, `for x in`, labelled `break`. A block is an
+    expression; a `match` is an expression. The one place `return` is
+    optional: a unit fn ending in `if`/`match`/block. `defer` for the
+    end-of-scope job. No ternary, no `?`, no exceptions to reach for.
+    Demo: the argv loop that will grow into the command dispatcher.
+
+ 5. Structs, impl, and receivers
+    A struct is a value type; literals name every field, no shorthand.
+    Methods live in `impl T`, the receiver is always `this`, and the prefix
+    states the relation: `this` reads, `ref this` writes back to the caller's
+    `var`, `take this` consumes. `::` reaches types and associated fns, `.`
+    reaches instances. `#[derive]`-free equality: blessed `Eq`/`Ord`/`Hash`/
+    `Clone`/`ToText`.
+    Demo: `struct Item { name, price, stock }` with `new`, `worth`, `restock`.
+
+ 6. Enums and match, and `guard let`
+    Payload variants, exhaustive `match`, `if let` / `while let`. `guard let
+    … else { … }` is the dominant idiom, and the complement form
+    `else |Pat|` hands the failure value to the else block instead of losing
+    it. Why the short pattern (`Option::Some(v)`) beats restating the type
+    args in an arm: one type change would otherwise break every arm.
+    Demo: a command enum, parsed from argv, dispatched in one `match`.
+
+ 7. Error handling without exceptions
+    No `try`/`catch`/`throw`/`?`, no `panic()`. Three shapes and when each is
+    right: `Status` for a mutator, `Option[T]` for a read, `Result[T, E]` or
+    your own enum when the value AND the reason matter. The rule that trips
+    everyone coming from Rust: Result and Option have NO combinators — no
+    `unwrap`, `map`, `is_ok`. `match`/`if let`/`guard let` only. `assert` is
+    the program-is-wrong stop. Propagating by hand, with no error wrapping.
+    Demo: `inv add` reports every failure path without a single crash.
+
+ 8. Ownership in ten lines
+    One value, one owner; when the owner's scope ends the value frees itself.
+    Moves vs copies, and why you never write `Copy` — it is structural.
+    Return values move. Auto field-drop, drop ORDER, and `defer` as the
+    escape hatch. What replaces `unique_ptr` and the GC at once.
+    Demo: watch a `Text` field free itself under `--asan`, with zero leaks.
+
+ 9. Parameter modes: bare, `ref`, `take`
+    The whole decision in signature order: bare `x: T` borrows (yes, even a
+    big struct — there is no pass-by-value tax), `ref x: T` mutates the
+    caller's value, `take x: T` when the value must escape. E0337 is the
+    "you borrowed it and then kept it" error, and its two fixes — `take` when
+    the caller is done, `.clone()` when both sides need one — are a real
+    design fork, not a syntax choice.
+    Demo: the same function written three ways; the compiler picks the winner.
+
+10. The borrow checker, and views
+    Aliasing XOR mutability. Views: `t.trim()` is a window into `t`'s buffer,
+    and while the view lives `t` is write-locked — the borrow ends at the
+    view's LAST USE, not at the end of scope. What to do when the checker
+    says no: restructure, don't fight. The fix ladder, cheapest first —
+    shorten the borrow with a `{ }` scope, make the binding `var`, reorder
+    reads before writes, `.clone()` and accept the visible allocation,
+    restructure ownership. The last rung is real: some conflicts are the
+    design telling you two things want to own one value.
+
+    Five breaks and five fixes, in recording order. Every pair below was run
+    against the compiler — the error text is what the screen will show, and
+    each fix builds and prints. Run `cpc explain E0513` on camera once: the
+    diagnostics are the designed teaching surface, and that one prints the
+    whole rule.
+
+    (a) A view at a binding needs a NAMED owner — E0513
+
+        let t: text::Text = text::from_str("  widget  ");
+        let s: str = t.clone();               // <-- error
+        io::println(s);
+
+        error[E0513]: cannot bind a view of a temporary `Text`: the coercion
+        spills the owner to an anonymous slot that nothing frees and nothing
+        keeps [...] Bind the owner first, or keep the binding owned
+
+        The clone is a temporary. It has no lifetime to lend, so name it:
+
+        let owner: text::Text = t.clone();    // name the owner...
+        let s: str = owner.view();            // ...then view it
+
+        The same temporary in ARGUMENT position is fine — it outlives the
+        call. Show both on one screen, because this is the line that makes
+        the rule click:
+
+        show("x = ${n}");                     // fine
+        show(t.clone().view());               // fine
+        let s: str = t.clone();               // E0513
+
+    (b) A live view write-locks the owner — E0381
+
+        var t: text::Text = text::from_str("  widget  ");
+        let v: str = t.trim();
+        let _s: status::Status = t.append("!");   // <-- error
+        io::println(v);
+
+        error[E0381]: cannot call `t.append(...)` while `t` is
+        shared-borrowed by `v`
+          note: `v` borrows `t` here
+
+        Nothing here needs a clone. The borrow ends at the view's LAST USE,
+        so moving the read up is the whole fix:
+
+        let v: str = t.trim();
+        io::println(v);                       // last use — borrow ends here
+        let _s: status::Status = t.append("!");   // now fine
+
+        This is rung 3 of the ladder, and it is the one that surprises
+        people: the compiler is not asking for a copy, it is asking you to
+        finish reading before you write.
+
+    (c) The borrow that "won't die" — a late use pins it
+
+        var t: text::Text = text::from_str("row");
+        let v: str = t.view();
+        var i: i32 = 0;
+        while i < 3 {
+            io::println(v);                   // a use INSIDE the loop...
+            let _s: status::Status = t.append("!");   // <-- E0381
+            i = i +% 1;
+        }
+
+        Same error, different cause: the use inside the loop pins the borrow
+        across every iteration, so (b)'s reorder can't help. Don't hold the
+        view — re-take it each time round:
+
+        while i < 3 {
+            io::println(t.view());            // fresh view, dies immediately
+            let _s: status::Status = t.append("!");
+            i = i +% 1;
+        }
+        // row / row! / row!!
+
+        Rule for the whole episode: when a borrow won't die, look for the
+        LATE USE — in a loop, in a `defer`, or in a block tail.
+
+    (d) A struct that carries a view carries the borrow — E0381
+
+        struct Row { title: str, qty: i64 }
+
+        var t: text::Text = text::from_str("widget");
+        let r: Row = Row { title: t.view(), qty: 3 };
+        let _s: status::Status = t.append("!");   // <-- error
+
+        error[E0381]: cannot call `t.append(...)` while `t` is
+        shared-borrowed by `r`
+
+        Read the error out loud: it names `r`, not `r.title`. The struct
+        inherited the borrow. A `str` field is a decision — this Row cannot
+        outlive that Text. If it should, the field must own, and leaving the
+        borrow costs exactly one spelled copy:
+
+        struct Row { title: text::Text, qty: i64 }
+        let r: Row = Row { title: t.to_text(), qty: 3 };   // fine
+        let _s: status::Status = t.append("!");            // fine
+
+    (e) Returning a view of a local — E0513, the other shape
+
+        fn label(n: i64) -> str {
+            let t: text::Text = text::from_str("item #");
+            return t.view();                  // <-- error
+        }
+
+        error[E0513]: cannot return a borrow of local `t`: it owns heap that
+        is freed when the function returns, so the returned view would
+        dangle. Return an owned value (`Text` / `Vec[T]`) instead, or borrow
+        from a non-`take` parameter
+
+        This is the one that would have been a use-after-free in C, caught
+        at compile time with no annotation written anywhere. The signature
+        was the bug:
+
+        fn label(n: i64) -> text::Text {
+            return text::from_str("item #${n}");
+        }
+
+    Close the episode on the pattern behind all five: a view is a borrow
+    with no syntax of its own. `str` is not a small string — it is a window,
+    and every question the checker asks is "who owns the glass".
+
+11. Strings: `str`, `Text`, and C bytes
+    `str` is the borrowed view and every read method lives there; `Text` owns
+    and is what a field or a returned string is. `s.to_text()` /
+    `text::from_str(s)` cross over (`Text::from` does not exist). `c"..."`,
+    `#str_ptr`, `#str_len` for the C side. Interpolation, `count` not `len`,
+    and why a Text→str fallthrough is three-sided.
+    Demo: name normalisation and a formatted table, allocation-counted.
+
+12. Collections
+    `Vec[T]` and its Drop-on-scope-exit, `HashMap[K, V]`, arrays and the
+    fill-array literal, and checked sub-views through `stdlib/slice`. The
+    gotcha with a name: there is NO array→slice coercion — you go through
+    `Vec::as_slice`. Borrowing accessors (`each_ref`, `fold_ref`) and why
+    `ref` is a mode, not a type.
+    Demo: the inventory becomes a `Vec[Item]` plus a name→index `HashMap`.
+
+13. Generics and bounds
+    `fn max[T: Ord]`, `struct Pair[A, B]`, turbofish `::[T]` at the call.
+    Bounds are `Ord`/`Eq`/`Hash` and interfaces. Where type args are
+    REQUIRED (constructing a generic enum value) and where they are noise
+    (matching one — the scrutinee already fixed it). Never write mangled
+    names in source (E0405).
+    Demo: a generic `find_by` over the inventory, one implementation.
+
+14. Interfaces, and callbacks without closures
+    `impl T: I` — type first, no macros. Default method bodies. There is no
+    dynamic dispatch and no `dyn`: bounds are monomorphised, and the erased
+    fn-pointer vtable is the escape hatch. Callbacks are `recv.method`, a
+    bound method value — and the ownership convention rides along:
+    `fn(R)` borrows, `fn(take R)` consumes (E0312).
+    Demo: a pluggable sort/report interface, two implementations, no closure.
+
+15. Newtypes, contracts, and attributes
+    `type UserId = distinct i64` — same ABI, separate type, so mixing two
+    id kinds is E0302 instead of a silent bug. Construct by casting in, leave
+    by casting out; brands survive into `Vec[UserId]`. Then the attribute
+    surface, all pure metadata: `#[requires]` / `#[ensures]` as checked
+    contracts, `#[repr(C)]`, `#[inline]`, `#[deprecated]` (a warning at each
+    USE, so a rename can land before it breaks anyone).
+    Demo: `ItemId` and `OrderId` stop being interchangeable i64s.
+
+16. FFI — the C boundary, both directions
+    `extern fn` IS the marker; there is no `unsafe` block because every
+    dangerous operation is already loud. The three traps that outrank
+    everything else. Making a struct C-true with `#[repr(C)]`, `packed`, and
+    `#[bits(n)]`. Who frees what at the boundary. `#[link_name]` and linking
+    a system library. Then the other direction: `export` so lldb, a C test
+    harness, or any C caller can call INTO C+.
+    Demo: `inv` reads the clock through libc and exposes one C entry point.
+
+17. Compile-time intrinsics
+    Everything spelled `#name(...)`: `#size_of` / `#align_of`, `#addr_of` for
+    an out-parameter, `#zero`, `#include_bytes` / `#include_str` to embed data
+    instead of loading it, `#env` resolved at sema (E0876 if unset), and
+    `#platform()` — value-level only, both branches still compile. Inline
+    `#asm` in its three tiers, ending at `#[naked]`.
+    Demo: the report template is embedded in the binary; no data files ship.
+
+18. Threads
+    The idiomatic path first: partition + join, no shared memory, no race —
+    `thread::spawn_with::[I, O]` and `JoinHandle::join`. Then scoped threads,
+    which LEND a local instead of moving it and join before the loan ends, so
+    three classic mistakes are compile errors (E0514, E0381) rather than
+    races. Shared state exists (`mutex`, `atomic`, `arc`) and is the last
+    resort. Cancellation: a worker is ASKED to stop — `cancel()` +
+    `thread::cancelled()` — never killed.
+    Demo: the inventory report, computed in parallel, cancellable mid-run.
+
+19. async / await
+    `async fn`, `await`, and `executor::block_on` at the entry — there is no
+    async `main`. Why borrow-shaped parameters (`str`, `T[]`, `ref x`) are
+    rejected in an `async fn` (E0900) and what to pass instead. Futures,
+    cancellation, and the thread↔async bridge. When async is the wrong tool
+    and episode 18's partition+join is the right one.
+    Demo: two fetch-and-parse jobs overlapped, then cancelled on Ctrl-C.
+
+20. Packages, tests, and the toolchain — plus the capstone
+    Modules are files and imports are paths; the manifest's entry model
+    decides the artifact; platform-variant code lives in `_macos.cplus` /
+    `_linux.cplus` file overrides, not in `#if`. Full test discipline:
+    `#[test]`, doctests, e2e and negative tests, `cpc test`. Then the tools
+    that make the loop fast: `cpc fmt`, `cpc check`, `--emit-ll`, the
+    sanitizers (`--asan` / `--ubsan` / `--tsan` / `--msan`), and the code
+    graph — `cpc query def|refs|callers|context`, `cpc lsp`, `cpc mcp`.
+    Because there is no dynamic dispatch, every named call resolves: an
+    `unresolved` count of zero means the answer is COMPLETE, and grep is the
+    fallback, never the default.
+    Demo: `inv` shipped — multi-module, green suite, clean under asan,
+    navigated entirely through the graph.
+
+
+Notes for recording
+-------------------
+- Always the local compiler: `cargo build --release`, then
+  `./target/release/cpc`. A Homebrew `cpc` on PATH is stale.
+- Single-file mode (`cpc FILE.cplus -o BIN`) has NO imports — every episode
+  from 2 on is a `cpc build` project.
+- Read `docs/lang/skill.md` before writing any snippet; `docs/lang/tour.md`
+  is the shape of episodes 1-8, `guide.md` the shape of 9-14.
+- Error codes shown on screen should be run through `cpc explain Exxxx` —
+  the diagnostics are the designed teaching surface.

@@ -825,6 +825,23 @@ impl Widget {
         return;
     }
 
+    // Empty the pane — the visible screen AND the scrollback, the way a
+    // terminal's own Clear does it. NOTHING GOES DOWN THE PTY: the shell is
+    // not asked to print anything and is not interrupted, so the next thing on
+    // screen is whatever the host sends next. That is the whole difference
+    // between this and running `clear`, which arrives too late to spare the
+    // command line it was typed on and wipes that as well.
+    //
+    // The caller decides whether it is allowed to: a command still running owns
+    // the screen it is drawing on, and this does not ask.
+    fn clear(this) {
+        let c: *TerminalContext = this._ctx;
+        if c == (0 as *TerminalContext) { return; }
+        { (*c).screen.clear(); }
+        render(c);
+        return;
+    }
+
     // Whether the shell reports prompt and command marks at all. False means
     // `command_state` never leaves Idle on its own and `run` falls back to
     // bracketing commands itself.

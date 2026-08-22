@@ -1580,8 +1580,8 @@ lang = "cplus"
 verified = true
 emit_site = "cplus-core/src/resolver.rs:624"
 test = "cpc/tests/e2e.rs:cross_file_private_fn_emits_e0403"
-cause = "A cross-file reference touched a function, type, field, method, const, static, type alias, or interface whose name begins with `_` (module-private) in its declaring file."
-fix = "Remove the leading `_` from the name to make it public (or `export` it for the C ABI). (Requires an imported module; `math.cplus` declares `fn _square` as private.)"
+cause = "A cross-file reference touched a function, type, field, method, const, static, type alias, or interface whose name begins with `_` (module-private) in its declaring file — or an `extern fn`, whose C+ name is module-private however it is spelled (only the linker symbol it binds is global)."
+fix = "Remove the leading `_` from the name to make it public (or `export` it for the C ABI). For an `extern fn`, no rename exports it: declare the extern in the file that calls it, or wrap it in a plain `fn` the module exports. (Requires an imported module; `math.cplus` declares `fn _square` as private.)"
 example = '''
 import "./math" as math;
 fn main() -> i32 { return math::square(7); }

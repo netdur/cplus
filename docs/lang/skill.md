@@ -1073,11 +1073,13 @@ cpc fmt --check DIR            # CI mode
 cpc test                       # run #[test] + doctests
 cpc lsp                        # language server — goto-def / references / hover / outline served from the graph
 cpc graph                      # whole-project code knowledge graph as JSON
-cpc query def|refs|callers|callees|call-hierarchy|members|symbols|context|type-at  # resolved navigation
+cpc query def|refs|callers|callees|call-hierarchy|members|symbols|context|type-at|scope-at  # resolved navigation
 cpc mcp                        # resident MCP server over the graph (point an agent's MCP client here)
 cpc --emit-ll FILE             # pre-opt LLVM IR
 cpc --emit-ll-opt FILE         # post-opt LLVM IR
 cpc --emit-asm FILE            # native asm
+cpc build --warn-deps          # also report warnings from dependencies
+                               # (default: only this project's own `src/`)
 cpc --diagnostics=json         # machine-readable (NDJSON)
 cpc --release                  # -O2 (default: debug -O0 with overflow traps)
 cpc build --asan               # AddressSanitizer (also -g, --ubsan / --tsan / --msan)
@@ -1101,13 +1103,14 @@ cpc test  --asan                 # run the test suite under a sanitizer
 
 ### Navigating C+ code: query the graph, don't grep
 
-To locate or trace a symbol, use the code graph — it is **resolved and typed**, `grep` is neither (it can't tell the `Point` type from a local `point`, follow `prefix::Item` to its module, or list real callers). `cpc query def|refs|callers|callees|context|type-at …` answer by symbol with clickable `file:line:col`, as JSON, and state their own coverage via `unresolved`/`scope`. Because C+ has no dynamic dispatch, every call to a *named* function or method resolves — so `unresolved` counts only genuine **function-pointer indirections** (`let f: fn(...) = ...; f(x)`), and a **zero count means the answer is complete** (no `grep` fallback needed). The same graph backs `cpc lsp`. In an agent loop, run `cpc mcp` once and call the tools (`find_definition`, `find_references`, `find_callers`, `code_context`, `type_at`, …) instead of spawning `cpc query` per lookup. Reach for the graph before reaching for `grep`.
+To locate or trace a symbol, use the code graph — it is **resolved and typed**, `grep` is neither (it can't tell the `Point` type from a local `point`, follow `prefix::Item` to its module, or list real callers). `cpc query def|refs|callers|callees|context|type-at …` answer by symbol with clickable `file:line:col`, as JSON, and state their own coverage via `unresolved`/`scope`. Because C+ has no dynamic dispatch, every call to a *named* function or method resolves — so `unresolved` counts only genuine **function-pointer indirections** (`let f: fn(...) = ...; f(x)`), and a **zero count means the answer is complete** (no `grep` fallback needed). The same graph backs `cpc lsp`. In an agent loop, run `cpc mcp` once and call the tools (`find_definition`, `find_references`, `find_callers`, `code_context`, `type_at`, `scope_at`, …) instead of spawning `cpc query` per lookup — one `cpc query` pays ~2 s to build the graph and answers in microseconds, so the resident server is ~1000× cheaper per question. It also keeps the graph live: `did_change` hands over an unsaved buffer, `reload` picks up files that changed on disk, and `graph_status` says what the server is holding. Reach for the graph before reaching for `grep`.
 
 **Why this saves you (the model) work — fewer tokens, less reasoning.** A `grep` gives you raw text hits that you then have to *reason* about: is this `area` the method or a local? does this `parse` call bind to `json::parse` or another? which of 30 hits are real callers? The graph has already done that disambiguation in the compiler. So the graph replaces *both* the search passes **and** the chain of inference you'd run over their results:
 
 - `cpc query context FN` returns, in **one** call, the function's signature + callers + callees + the types it references — the whole edit-neighborhood, resolved. That's several `grep`s plus the work of stitching them together, collapsed into one authoritative answer you can paste straight back (symbol ids are source names like `src.geo::Shape::area`, never mangled).
 - `cpc query type-at FILE:LINE:COL` gives the resolved type at a cursor — no reading surrounding code to infer it.
 - `cpc query def SYMBOL` jumps to the real definition — no guessing which same-named thing matched.
+- `cpc query scope-at FILE:LINE:COL` lists every name you can actually type at that position: the locals and parameters in scope with their types, `this`, the file's import aliases and the module each resolves to, and the file's own items. Shadowed names are already removed. Before writing a line, this is the difference between calling something that exists and guessing.
 
 Net: prefer one graph query over `grep` + manual reasoning. It is cheaper for you and the answer is correct by construction, not by your inference.
 

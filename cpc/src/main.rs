@@ -85,6 +85,8 @@ build flags (apply to `cpc FILE` and `cpc build`):
   --fp-contract=off|on|fast         float contraction policy; `off` keeps `a*b+c` as
                                     fmul+fadd for bit-identical-to-C output (default: on).
                                     Place before --emit-ll/--emit-asm/--emit-obj FILE.
+  --warn-deps                       report warnings from dependencies too
+                                    (default: only this project's own `src/`)
   --timings                         print build cost to stderr: per phase
                                     (resolve+sema+borrowck / codegen / prune / clang+link)
                                     then per package (each prebuilt dependency,
@@ -277,8 +279,11 @@ cpc query <kind> [args...]
 Answer one code-graph query as JSON. Kinds: `def SYMBOL`, `members TYPE`,
 `symbols [FILE]`, `refs SYMBOL`, `callers FN`, `callees FN`,
 `call-hierarchy FN [--depth N]`, `context FN`, `type-at FILE:LINE:COL`,
-`value-refs FILE:LINE:COL`.
+`value-refs FILE:LINE:COL`, `scope-at FILE:LINE:COL`.
 Reads ./Cplus.toml; exit code signals found / not-found.
+
+Every kind pays the whole-project graph build (~2s). An editor asking on a
+keystroke wants `cpc mcp`, which builds once and answers from memory.
 "
         }
         Some(Subcommand::Mcp) => {
@@ -289,6 +294,12 @@ Resident MCP server over the code knowledge graph: builds the graph once
 from ./Cplus.toml, then answers MCP tool calls over stdio (newline-
 delimited JSON-RPC 2.0) until stdin closes. Point an MCP client at
 `cpc mcp` to give an agent resolved, typed C+ navigation in place of grep.
+
+The graph is live, not a snapshot: `did_change` hands the server an unsaved
+buffer, `did_close` drops it, `reload` rebuilds from disk, and `graph_status`
+says what the server is currently holding. A rebuild that fails to parse keeps
+the last good graph and reports the error rather than going blind, so an editor
+can keep querying through a half-typed line.
 "
         }
     }
@@ -299,6 +310,77 @@ enum DiagMode {
     Human,
     Short,
     Json,
+}
+
+/// Whose problems this invocation reports.
+///
+/// `cpc build` in a project prints diagnostics about THAT project. A warning
+/// about a dependency is advice for that dependency's author: the reader did
+/// not write the code, usually cannot edit it (a vendored copy is replaced on
+/// the next sync, a generated header on the next prebuild), and gets the same
+/// text on every build forever. stdlib's refcounted `Channel` is the standing
+/// example — a W0002 that is correct, deliberate, and useless to everyone
+/// except stdlib. Left on, that noise teaches people to skim past warnings,
+/// which is the opposite of what a warning is for.
+///
+/// So dependency WARNINGS are dropped unless `--warn-deps` asks for them.
+/// ERRORS are never dropped: an error anywhere stops the build, and the reader
+/// has to see it even when the fix is upstream.
+///
+/// "The project" is `<root>/src/` — not `<root>`, because `cpc pm` copies
+/// dependencies to `<root>/vendor/<name>`, which is inside the root but is
+/// somebody else's code.
+///
+/// Set ONCE, from the top-level invocation. A dependency prebuilt as part of
+/// this build is still a dependency: running `cpc build` in an app should not
+/// print the UI toolkit's warnings just because the toolkit happened to need
+/// recompiling on the way.
+mod diagpolicy {
+    use std::path::{Path, PathBuf};
+    use std::sync::OnceLock;
+
+    static OWN_SRC: OnceLock<PathBuf> = OnceLock::new();
+    static WARN_DEPS: OnceLock<()> = OnceLock::new();
+
+    /// Name the project whose diagnostics are the reader's own. First call
+    /// wins — see the note on prebuilt dependencies above.
+    pub fn set_project_root(root: &Path) {
+        let src = root.join("src");
+        let src = std::fs::canonicalize(&src).unwrap_or(src);
+        let _ = OWN_SRC.set(src);
+    }
+
+    pub fn warn_about_dependencies() {
+        let _ = WARN_DEPS.set(());
+    }
+
+    /// Should a warning about this file be withheld from the reader?
+    ///
+    /// Two ways to be somebody else's problem, one flag governing both, so
+    /// `--warn-deps` means exactly "show me dependency diagnostics too":
+    ///
+    /// 1. A GENERATED HEADER (`<pkg>/lib/include/...`). Never the reader's,
+    ///    even when it belongs to the project being built — it is rewritten by
+    ///    the next prebuild, and its contents were already reported against
+    ///    the real `src/` path.
+    /// 2. Anything outside this project's own `src/`.
+    ///
+    /// False when no project has been named (single-file builds,
+    /// `cpc check FILE`), so those keep reporting everything.
+    pub fn suppress_warning(file: &Path) -> bool {
+        if WARN_DEPS.get().is_some() {
+            return false;
+        }
+        if crate::diag::is_generated_header(file) {
+            return true;
+        }
+        let own = match OWN_SRC.get() {
+            Some(o) => o,
+            None => return false,
+        };
+        let f = std::fs::canonicalize(file).unwrap_or_else(|_| file.to_path_buf());
+        !f.starts_with(own)
+    }
 }
 
 fn emit_diag(d: &Diagnostic, mode: DiagMode, src: &str) {
@@ -312,12 +394,23 @@ fn emit_diag(d: &Diagnostic, mode: DiagMode, src: &str) {
 
 /// `emit_diag` for multi-module pipelines: snippets quote the file each
 /// span names (via the loader's per-file source map), not the entry file.
+///
+/// A WARNING about a dependency's generated header is dropped here — see
+/// `diag::is_generated_header`. It is advice for that package's author, it was
+/// already delivered against the real `src/` path when that package was built,
+/// and it names a file the reader must not edit. Errors are never dropped: an
+/// error in a header is a genuine incompatibility between this build and the
+/// slice it is compiling against, and the reader has to know even though the
+/// fix is upstream.
 fn emit_diag_multi(
     d: &Diagnostic,
     mode: DiagMode,
     src: &str,
     files: &std::collections::BTreeMap<String, (PathBuf, String)>,
 ) {
+    if matches!(d.severity, Severity::Warning) && diagpolicy::suppress_warning(&d.primary.file) {
+        return;
+    }
     let line = match mode {
         DiagMode::Human => d.render_human_multi(src, files),
         DiagMode::Short => d.render_short(),
@@ -516,6 +609,10 @@ fn main() -> ExitCode {
             }
             Some("--timings") => {
                 timings::enable();
+                i += 1;
+            }
+            Some("--warn-deps") => {
+                diagpolicy::warn_about_dependencies();
                 i += 1;
             }
             Some("--release") => {
@@ -2396,6 +2493,9 @@ fn build_project(
             return ExitCode::FAILURE;
         }
     };
+    // Whose warnings this build reports. Set before the prebuild pass below,
+    // so a dependency compiled on the way stays a dependency.
+    diagpolicy::set_project_root(&m.root);
     // Dependencies that ask to be compiled once (`[build] prebuild = true`)
     // are brought up to date here, BEFORE the entry file is resolved: the
     // resolver reads `lib/include/` for them and the link line names the
@@ -4274,39 +4374,75 @@ fn run_realtime_report(json: bool) -> ExitCode {
 /// resolution), returning the resolved program for graph construction. On any
 /// failure it renders a diagnostic and returns the exit code to bubble up.
 fn load_project_for_graph(diag_mode: DiagMode) -> Result<resolver::LoadedProject, ExitCode> {
+    match load_project_for_graph_with(&Default::default()) {
+        Ok(loaded) => Ok(loaded),
+        Err(GraphLoadError::Diagnostic(d)) => {
+            emit_diag(&d, diag_mode, "");
+            Err(ExitCode::FAILURE)
+        }
+        Err(GraphLoadError::Message(msg)) => {
+            eprintln!("cpc: {msg}");
+            Err(ExitCode::FAILURE)
+        }
+    }
+}
+
+/// Why a graph load failed, kept structured rather than printed.
+///
+/// `cpc query` prints it and exits; `cpc mcp` has to *survive* it — a resident
+/// server reloading a buffer the user is halfway through typing will fail to
+/// parse constantly, and the right answer there is to keep the last good graph
+/// and hand the client the reason, not to go dark.
+enum GraphLoadError {
+    // Boxed: a `Diagnostic` carries its spans and notes, and this is the cold
+    // path of a `Result` the hot path returns a whole project through.
+    Diagnostic(Box<Diagnostic>),
+    Message(String),
+}
+
+impl GraphLoadError {
+    /// One line, for a JSON-RPC reply. `render_short` is the diagnostic form
+    /// that already fits on one.
+    fn to_line(&self) -> String {
+        match self {
+            GraphLoadError::Diagnostic(d) => d.render_short(),
+            GraphLoadError::Message(m) => m.clone(),
+        }
+    }
+}
+
+/// The reloadable half of `load_project_for_graph`: re-reads `Cplus.toml` and
+/// re-resolves from disk, with `overlays` (canonical path → unsaved buffer)
+/// standing in for the files an editor has dirty.
+///
+/// Re-reading the manifest each time is deliberate — a dependency added while
+/// the server is resident should take effect on the next reload.
+fn load_project_for_graph_with(
+    overlays: &std::collections::BTreeMap<PathBuf, String>,
+) -> Result<resolver::LoadedProject, GraphLoadError> {
     let manifest_path = PathBuf::from("Cplus.toml");
-    let m = match manifest::load(&manifest_path) {
-        Ok(m) => m,
-        Err(e) => {
-            emit_diag(&e.to_diagnostic(), diag_mode, "");
-            return Err(ExitCode::FAILURE);
+    let m = manifest::load(&manifest_path)
+        .map_err(|e| GraphLoadError::Diagnostic(Box::new(e.to_diagnostic())))?;
+    let (entry_path, is_lib_pkg) = match m
+        .resolve_source_entry(cplus_core::target::active_platform())
+    {
+        Some(pair) => pair,
+        None => {
+            return Err(GraphLoadError::Message(format!(
+                    "no source entry — expected an app entry, a `[library]` target, `src/test_main.cplus`, or `src/{}.cplus`",
+                    m.package.name
+                )));
         }
     };
-    let (entry_path, is_lib_pkg) =
-        match m.resolve_source_entry(cplus_core::target::active_platform()) {
-            Some(pair) => pair,
-            None => {
-                eprintln!(
-                    "cpc: no source entry — expected an app entry, a `[library]` target, `src/test_main.cplus`, or `src/{}.cplus`",
-                    m.package.name
-                );
-                return Err(ExitCode::FAILURE);
-            }
-        };
     let dep_names: Vec<String> = active_dep_names(&m);
-    match resolver::load_project_full(
+    resolver::load_project_full(
         &entry_path,
         &m.root,
         is_lib_pkg,
         Some(&dep_names),
-        Default::default(),
-    ) {
-        Ok(loaded) => Ok(loaded),
-        Err(e) => {
-            emit_diag(&e.to_diagnostic(), diag_mode, "");
-            Err(ExitCode::FAILURE)
-        }
-    }
+        overlays.clone(),
+    )
+    .map_err(|e| GraphLoadError::Diagnostic(Box::new(e.to_diagnostic())))
 }
 
 /// `cpc graph` — build the project's code knowledge graph and print it as JSON
@@ -4325,12 +4461,14 @@ fn run_graph(diag_mode: DiagMode) -> ExitCode {
 /// (stdio JSON-RPC) until stdin closes. Resident: the graph stays warm for the
 /// whole session.
 fn run_mcp(diag_mode: DiagMode) -> ExitCode {
+    let t = std::time::Instant::now();
     let loaded = match load_project_for_graph(diag_mode) {
         Ok(l) => l,
         Err(code) => return code,
     };
-    let g = cplus_core::graph::CodeGraph::build(&loaded);
-    mcp::serve(&g, &loaded)
+    mcp::serve(loaded, t.elapsed().as_millis(), |overlays| {
+        load_project_for_graph_with(overlays).map_err(|e| e.to_line())
+    })
 }
 
 /// `cpc query <kind> [args...]` — answer one graph query as JSON on stdout.
@@ -4339,7 +4477,10 @@ fn run_mcp(diag_mode: DiagMode) -> ExitCode {
 /// reference / type queries land in later phases and report so explicitly.
 fn run_query(kind: Option<String>, args: Vec<String>, diag_mode: DiagMode) -> ExitCode {
     let Some(kind) = kind else {
-        eprintln!("cpc query: expected a query kind (def | members | symbols)");
+        eprintln!(
+            "cpc query: expected a query kind (def | members | symbols | refs | callers | \
+             callees | call-hierarchy | context | type-at | value-refs | scope-at)"
+        );
         return ExitCode::FAILURE;
     };
     let loaded = match load_project_for_graph(diag_mode) {
@@ -4530,10 +4671,41 @@ fn run_query(kind: Option<String>, args: Vec<String>, diag_mode: DiagMode) -> Ex
                 }
             };
         }
+        "scope-at" => {
+            let Some(pos) = arg0 else {
+                eprintln!("cpc query scope-at: expected FILE:LINE:COL");
+                return ExitCode::FAILURE;
+            };
+            let parts: Vec<&str> = pos.rsplitn(3, ':').collect(); // [col, line, file]
+            if parts.len() != 3 {
+                eprintln!("cpc query scope-at: expected FILE:LINE:COL (got `{pos}`)");
+                return ExitCode::FAILURE;
+            }
+            let (Ok(col), Ok(line)) = (parts[0].parse::<u32>(), parts[1].parse::<u32>()) else {
+                eprintln!("cpc query scope-at: LINE and COL must be numbers");
+                return ExitCode::FAILURE;
+            };
+            let file = parts[2];
+            let Some((fid, (_, src))) = loaded
+                .files
+                .iter()
+                .find(|(_, (path, _))| path.ends_with(file) || path.to_string_lossy() == *file)
+            else {
+                eprintln!("cpc query scope-at: no source file matching `{file}`");
+                return ExitCode::FAILURE;
+            };
+            let Some(byte) = cplus_core::graph::byte_offset(src, line, col) else {
+                eprintln!("cpc query scope-at: position {line}:{col} is out of range");
+                return ExitCode::FAILURE;
+            };
+            println!("{}", g.scope_at_json(fid, byte));
+            return ExitCode::SUCCESS;
+        }
         other => {
             eprintln!(
                 "cpc query: unknown query kind `{other}` (expected: def | members | symbols | \
-                 refs | callers | callees | call-hierarchy | context | type-at | value-refs)"
+                 refs | callers | callees | call-hierarchy | context | type-at | value-refs | \
+                 scope-at)"
             );
             return ExitCode::FAILURE;
         }
@@ -5132,7 +5304,9 @@ mod timings {
             .lock()
             .map(|mut i| std::mem::take(&mut *i))
             .unwrap_or_default();
-        let Ok(mut rows) = PACKAGES.lock() else { return };
+        let Ok(mut rows) = PACKAGES.lock() else {
+            return;
+        };
         // Nothing but the project itself: the phase table already said it all.
         if rows.is_empty() && inlined.is_empty() {
             return;
@@ -6923,9 +7097,13 @@ fn run_init(args: &[OsString]) -> ExitCode {
          cpc query references <symbol>     everywhere it is used\n\
          cpc query callers <symbol>        who calls it\n\
          cpc query symbols <file>          the outline of a file\n\
+         cpc query scope-at <file:line:col> what you can type right there\n\
          ```\n\n\
          The same graph is available as MCP tools — see `.mcp.json`, which points\n\
-         at `cpc mcp`. Prefer either over reading files to find things.\n\n\
+         at `cpc mcp`. Prefer either over reading files to find things. Each\n\
+         `cpc query` rebuilds the whole graph (~seconds on a large project) and\n\
+         throws it away; the MCP server builds once and answers in microseconds,\n\
+         so use it for anything more than a single lookup.\n\n\
          ## Building\n\n\
          ```\n\
          cpc build          compile and link\n\

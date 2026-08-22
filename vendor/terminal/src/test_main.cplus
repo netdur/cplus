@@ -927,6 +927,57 @@ fn the_widget_runs_a_command_and_reports_how_it_ended() {
     return;
 }
 
+#[test]
+fn clear_empties_the_widget_without_disturbing_the_shell() {
+    // WHAT A RUN PRESS DOES BEFORE IT SENDS THE BUILD: empty the pane, so that
+    // everything in it afterwards belongs to the run the user just asked for.
+    // Nothing goes down the pty, which is the half worth testing — the ledger
+    // keeps counting and the next command still reports itself, so a caller
+    // that cleared is not a caller that lost track of its own build.
+    match terminal_ui::start() {
+        option::Option[terminal_ui::Widget]::Some(w) => {
+            var i: i32 = 0 as i32;
+            while i < (200 as i32) && !w.has_integration() {
+                pump(1 as i32);
+                i = i +% (1 as i32);
+            }
+            assert w.has_integration();
+
+            let first: u64 = w.run("printf 'old\\n'");
+            assert first == (1 as u64);
+            var j: i32 = 0 as i32;
+            while j < (400 as i32) && w.finished_count() == (0 as u64) {
+                pump(1 as i32);
+                j = j +% (1 as i32);
+            }
+            assert w.finished_count() == (1 as u64);
+            let before: text::Text = w.text();
+            assert before.count() > (0 as usize);
+
+            w.clear();
+            assert w.text().count() == (0 as usize);
+
+            // Still the same session, and still the same ledger: the next
+            // command gets the NEXT id rather than starting the count again,
+            // and it ends where the caller is already listening.
+            let second: u64 = w.run("printf 'new\\n'");
+            assert second == (2 as u64);
+            var k: i32 = 0 as i32;
+            while k < (400 as i32) && w.finished_count() < (2 as u64) {
+                pump(1 as i32);
+                k = k +% (1 as i32);
+            }
+            assert w.finished_count() == (2 as u64);
+            let out: text::Text = w.output();
+            assert out.equals("new\n");
+
+            w.stop();
+        }
+        option::Option[terminal_ui::Widget]::None => { assert false; }
+    };
+    return;
+}
+
 // Counter for the test below. Separate from COMMAND_ENDED so the two tests
 // cannot read each other's tally.
 static EARLY_ENDED: i32 = 0;

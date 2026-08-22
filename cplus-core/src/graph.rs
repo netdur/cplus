@@ -155,6 +155,43 @@ pub struct CodeGraph {
     /// `cpc graph` JSON surface).
     #[serde(skip)]
     pub value_flows: Vec<ValueFlow>,
+    /// v0.0.26 completion: every local binding with the byte range over which
+    /// its name is in scope, backing the `scope-at` query. Internal.
+    #[serde(skip)]
+    pub scope_bindings: Vec<ScopeBinding>,
+    /// v0.0.26 completion: `file_id → the import aliases that file bound`,
+    /// carried over from the resolver so `scope-at` can answer what `text::`
+    /// means here without the caller parsing an import line. Internal.
+    #[serde(skip)]
+    pub import_aliases: BTreeMap<String, Vec<crate::resolver::ImportAlias>>,
+}
+
+/// v0.0.26 completion: one name you can type at a position, and the byte range
+/// over which you can type it.
+///
+/// Distinct from `TypeSpot` (which answers "what is the thing *at* this span")
+/// and from `ValueFlow` (which answers "where does this binding's value go").
+/// This is the third question an editor asks and the only one the graph could
+/// not answer: *what is in scope here*.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScopeBinding {
+    pub fid: String,
+    pub name: String,
+    /// `parameter` | `local` | `self` | `match binding` | `loop variable`.
+    pub kind: &'static str,
+    /// The binding's type where it is known — an annotation, or the inferred
+    /// type of its initializer. `None` is honest, not a placeholder: a `match`
+    /// payload binding has no locally-derivable type.
+    pub ty: Option<String>,
+    pub location: Location,
+    /// Byte range in which the name resolves to *this* definition. Starts
+    /// after the definition (so `let x = x;` reads the outer `x`) and ends
+    /// with the enclosing block/arm/loop.
+    pub visible: Span,
+    /// The enclosing function or method's symbol id.
+    pub context: String,
+    /// The definition's own span, for shadow ordering.
+    pub def_span: Span,
 }
 
 /// A source span with a locally-known type, for `type-at`. `what` names the
@@ -302,7 +339,14 @@ impl CodeGraph {
                         name,
                         location: resolve(&fid, f.name.span),
                         signature: Some(fn_signature(f)),
-                        is_pub: name_is_public(&f.name.name),
+                        // An `extern fn` is never exported by name: the linker
+                        // symbol it binds is global, the C+ name is private to
+                        // its module (`resolver::merge` gates `pubs` on
+                        // `!f.is_extern`), so `alias::free` is E0403. Reporting
+                        // it as public put every libc declaration a module
+                        // happens to make into the list of things you can call
+                        // through that module — `text::malloc` and 40 others.
+                        is_pub: !f.is_extern && name_is_public(&f.name.name),
                     });
                     g.edges.push(Edge {
                         from: fid.clone(),
@@ -524,7 +568,11 @@ impl CodeGraph {
             );
             g.add_inferred_type_spots(&mono.value_types, proj, &linemaps);
             g.collect_value_flows(&lowered, proj, &linemaps);
+            // Runs last: unannotated bindings take their type from the spots
+            // the two passes above just recorded.
+            g.collect_scope_bindings(&lowered, proj, &linemaps);
         }
+        g.import_aliases = proj.import_aliases.clone();
         g
     }
 
@@ -734,6 +782,246 @@ impl CodeGraph {
                 what: "expression".to_string(),
             });
         }
+    }
+
+    /// v0.0.26 completion: record every local binding together with the byte
+    /// range over which its name is in scope.
+    ///
+    /// Runs over the *lowered* program, like the two passes before it: `if let`
+    /// / `guard let` / `while let` are sugar, and after lowering their bindings
+    /// are ordinary `match`-arm bindings the one walker below already sees.
+    /// Lowering preserves spans for everything it does not rewrite, so the
+    /// ranges still index the source the editor is showing. Names lowering
+    /// invented for itself (`__b12`, `__var7_x`) are not names anyone can type,
+    /// and are dropped.
+    fn collect_scope_bindings(
+        &mut self,
+        program: &crate::ast::Program,
+        proj: &LoadedProject,
+        linemaps: &BTreeMap<String, LineMap>,
+    ) {
+        for item in &program.items {
+            let fid = item
+                .origin_file
+                .clone()
+                .unwrap_or_else(|| proj.entry_file_id.clone());
+            match &item.kind {
+                ItemKind::Function(f) if !f.is_extern => {
+                    let context = format!("{fid}::{}", short_name(&f.name.name));
+                    self.scopes_for_body(
+                        &fid, &context, None, None, &f.params, &f.body, proj, linemaps,
+                    );
+                }
+                ItemKind::Impl(b) => {
+                    let target = short_name(&b.target.name).to_string();
+                    for m in &b.methods {
+                        let context = format!("{fid}::{target}::{}", short_name(&m.name.name));
+                        let recv = m.receiver.as_ref().map(|_| m.name.span);
+                        self.scopes_for_body(
+                            &fid,
+                            &context,
+                            Some(&target),
+                            recv,
+                            &m.params,
+                            &m.body,
+                            proj,
+                            linemaps,
+                        );
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn scopes_for_body(
+        &mut self,
+        fid: &str,
+        context: &str,
+        self_type: Option<&str>,
+        receiver_span: Option<Span>,
+        params: &[Param],
+        body: &Block,
+        proj: &LoadedProject,
+        linemaps: &BTreeMap<String, LineMap>,
+    ) {
+        let resolve = |span: Span| -> Option<Location> {
+            let (path, src) = proj.files.get(fid)?;
+            let lm = linemaps.get(fid)?;
+            let pos = lm.position(span.start, src);
+            Some(Location {
+                file: path.display().to_string(),
+                line: pos.line,
+                col: pos.col,
+            })
+        };
+
+        let mut w = ScopeWalk::new();
+        // The parameter scope spans the body: a param is in scope from the
+        // first byte of `{` to the last.
+        w.push_scope();
+        // `this` is a name the source can type even though the AST spells the
+        // receiver as a keyword with no span of its own; anchor it on the
+        // method name so "go to definition" lands somewhere real.
+        if let (Some(st), Some(span)) = (self_type, receiver_span) {
+            w.define(
+                "this",
+                "self",
+                span,
+                body.span.start,
+                Some(st.to_string()),
+                None,
+            );
+        }
+        for p in params {
+            w.define(
+                &p.name.name,
+                "parameter",
+                p.name.span,
+                body.span.start,
+                Some(type_to_string(&p.ty)),
+                None,
+            );
+        }
+        w.walk_block(body);
+        w.close_scope(body.span.end);
+
+        for b in w.out {
+            if b.name.starts_with("__") {
+                continue;
+            }
+            let Some(location) = resolve(b.def_span) else {
+                continue;
+            };
+            let ty = b.ty.or_else(|| {
+                let hint = b.ty_from?;
+                self.type_spots
+                    .iter()
+                    .find(|s| s.fid == fid && s.span == hint)
+                    .or_else(|| {
+                        self.type_spots
+                            .iter()
+                            .filter(|s| {
+                                s.fid == fid && s.span.start >= hint.start && s.span.end <= hint.end
+                            })
+                            .max_by_key(|s| s.span.end.saturating_sub(s.span.start))
+                    })
+                    .map(|s| s.ty.clone())
+            });
+            self.scope_bindings.push(ScopeBinding {
+                fid: fid.to_string(),
+                name: b.name,
+                kind: b.kind,
+                ty,
+                location,
+                visible: Span {
+                    start: b.vis_start,
+                    end: b.vis_end,
+                    ..b.def_span
+                },
+                context: context.to_string(),
+                def_span: b.def_span,
+            });
+        }
+    }
+
+    /// v0.0.26 completion: the local bindings in scope at a byte offset,
+    /// innermost first, with shadowed definitions removed — a shadowed name is
+    /// not visible, and reporting it would put a name in the list that resolves
+    /// to something else.
+    pub fn scope_at(&self, fid: &str, byte: u32) -> Vec<&ScopeBinding> {
+        let mut hits: Vec<&ScopeBinding> = self
+            .scope_bindings
+            .iter()
+            .filter(|b| b.fid == fid && byte >= b.visible.start && byte < b.visible.end)
+            .collect();
+        // Innermost = narrowest visible range; a tie (two `let`s in one block)
+        // goes to the later definition, which is the one that shadows.
+        hits.sort_by_key(|b| {
+            (
+                b.visible.end.saturating_sub(b.visible.start),
+                u32::MAX - b.def_span.start,
+            )
+        });
+        let mut seen: BTreeSet<&str> = BTreeSet::new();
+        hits.retain(|b| seen.insert(b.name.as_str()));
+        hits
+    }
+
+    /// `cpc query scope-at` / the `scope_at` MCP tool — every name that can be
+    /// typed at a position: the locals and parameters in scope, `this`, the
+    /// file's import aliases, and its module-level items.
+    ///
+    /// One flat list, because that is the question ("what can I type here"),
+    /// and each entry carries the `kind` that tells them apart. A local
+    /// shadows a module item of the same name and the item is dropped; an
+    /// alias is never dropped, because `text::x` and a local `text` are
+    /// different namespaces.
+    pub fn scope_at_json(&self, fid: &str, byte: u32) -> String {
+        let locals = self.scope_at(fid, byte);
+        let mut out: Vec<ScopeEntry> = Vec::new();
+        let context = locals.first().map(|b| b.context.clone()).or_else(|| {
+            // Outside any binding's range we can still name the enclosing item
+            // if the cursor sits inside one.
+            self.scope_bindings
+                .iter()
+                .find(|b| b.fid == fid && byte >= b.visible.start && byte < b.visible.end)
+                .map(|b| b.context.clone())
+        });
+        let mut taken: BTreeSet<String> = BTreeSet::new();
+        for b in &locals {
+            taken.insert(b.name.clone());
+            out.push(ScopeEntry {
+                name: b.name.clone(),
+                kind: b.kind.to_string(),
+                ty: b.ty.clone(),
+                id: None,
+                module: None,
+                signature: None,
+                location: Some(b.location.clone()),
+            });
+        }
+        // Module-level items of this file, which are typable unqualified.
+        for e in self
+            .edges
+            .iter()
+            .filter(|e| e.from == fid && e.kind == EdgeKind::Defines)
+        {
+            let Some(n) = self.nodes.iter().find(|n| n.id == e.to) else {
+                continue;
+            };
+            if !taken.insert(n.name.clone()) {
+                continue;
+            }
+            out.push(ScopeEntry {
+                name: n.name.clone(),
+                kind: "item".to_string(),
+                ty: None,
+                id: Some(n.id.clone()),
+                module: None,
+                signature: n.signature.clone(),
+                location: n.location.clone(),
+            });
+        }
+        // Import aliases: the answer to "what does `text::` mean in this file".
+        for a in self.import_aliases.get(fid).into_iter().flatten() {
+            out.push(ScopeEntry {
+                name: a.alias.clone(),
+                kind: "alias".to_string(),
+                ty: None,
+                id: None,
+                module: Some(a.module.clone()),
+                signature: None,
+                location: None,
+            });
+        }
+        let res = ScopeAtResult {
+            kind: "scope-at".to_string(),
+            context,
+            bindings: out,
+        };
+        serde_json::to_string_pretty(&res).unwrap_or_else(|_| "{}".to_string())
     }
 
     /// Serialize the whole graph as pretty JSON (`cpc graph`).
@@ -1128,6 +1416,34 @@ struct ContextResult {
     /// Named-type uses inside the target (the types it touches), with locations.
     type_refs: Vec<Reference>,
     unresolved: u32,
+}
+
+/// JSON shape for one name `scope-at` reports. `kind` says which of the five
+/// name sources it came from; the optional fields are the ones that only apply
+/// to some of them (`type` to a binding, `module` to an alias, `id` and
+/// `signature` to a module item).
+#[derive(Serialize)]
+struct ScopeEntry {
+    name: String,
+    kind: String,
+    #[serde(rename = "type", skip_serializing_if = "Option::is_none")]
+    ty: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    module: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    signature: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    location: Option<Location>,
+}
+
+#[derive(Serialize)]
+struct ScopeAtResult {
+    kind: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    context: Option<String>,
+    bindings: Vec<ScopeEntry>,
 }
 
 /// JSON shape for `type-at`: the resolved type, what kind of place it is, and
@@ -2116,6 +2432,300 @@ impl ScopedFlows {
     }
 }
 
+// ---- v0.0.26 completion: scope-extent walk (backs `scope-at`) ----
+
+/// One binding as the walk sees it, before types and locations are resolved.
+struct RawBinding {
+    name: String,
+    kind: &'static str,
+    def_span: Span,
+    /// First byte at which the name resolves to this definition.
+    vis_start: u32,
+    /// Last byte + 1. Filled when the enclosing scope closes.
+    vis_end: u32,
+    /// A type read straight off an annotation.
+    ty: Option<String>,
+    /// Where to look one up when there was no annotation: the span of the
+    /// initializer, matched against the type spots sema recorded.
+    ty_from: Option<Span>,
+}
+
+/// Walks a body recording, for every binding, the byte range over which its
+/// name is in scope.
+///
+/// The sibling walk (`ScopedFlows`) tracks the same scopes to attribute *uses*;
+/// this one keeps their *extents*, which is the part a cursor position needs.
+/// They are separate because the questions diverge on the two things that
+/// matter: a use is a point and a scope is an interval, and a binding whose
+/// scope has closed still owns its accumulated uses but must not appear in a
+/// completion list.
+struct ScopeWalk {
+    out: Vec<RawBinding>,
+    /// Indices into `out`, one group per open scope.
+    open: Vec<Vec<usize>>,
+}
+
+impl ScopeWalk {
+    fn new() -> Self {
+        ScopeWalk {
+            out: Vec::new(),
+            open: Vec::new(),
+        }
+    }
+
+    fn push_scope(&mut self) {
+        self.open.push(Vec::new());
+    }
+
+    /// Close the innermost scope, ending every name it opened at `end`.
+    fn close_scope(&mut self, end: u32) {
+        if let Some(group) = self.open.pop() {
+            for i in group {
+                self.out[i].vis_end = end;
+            }
+        }
+    }
+
+    fn define(
+        &mut self,
+        name: &str,
+        kind: &'static str,
+        def_span: Span,
+        vis_start: u32,
+        ty: Option<String>,
+        ty_from: Option<Span>,
+    ) {
+        let idx = self.out.len();
+        self.out.push(RawBinding {
+            name: name.to_string(),
+            kind,
+            def_span,
+            vis_start,
+            vis_end: vis_start,
+            ty,
+            ty_from,
+        });
+        if let Some(top) = self.open.last_mut() {
+            top.push(idx);
+        }
+    }
+
+    fn walk_block(&mut self, b: &Block) {
+        self.push_scope();
+        for s in &b.stmts {
+            self.walk_stmt(s, b.span.end);
+        }
+        if let Some(t) = &b.tail {
+            self.walk_expr(t);
+        }
+        self.close_scope(b.span.end);
+    }
+
+    /// `block_end` is where the enclosing block closes — a `let`'s scope runs
+    /// from the end of its own statement to there.
+    fn walk_stmt(&mut self, s: &Stmt, block_end: u32) {
+        match &s.kind {
+            StmtKind::Let { name, ty, init, .. } => {
+                // Walk the initializer first: it is evaluated before the name
+                // exists, which is what makes `let x = x;` read the outer `x`.
+                if let Some(e) = init {
+                    self.walk_expr(e);
+                }
+                self.define(
+                    &name.name,
+                    "local",
+                    name.span,
+                    s.span.end,
+                    ty.as_ref().map(type_to_string),
+                    init.as_ref().map(|e| e.span),
+                );
+                if let Some(top) = self.open.last_mut() {
+                    if let Some(&i) = top.last() {
+                        self.out[i].vis_end = block_end;
+                    }
+                }
+            }
+            StmtKind::LetDestructure { fields, init, .. } => {
+                self.walk_expr(init);
+                for f in fields {
+                    // Each field becomes its own binding; its type is the
+                    // field's, which this pass does not resolve.
+                    self.define(&f.name, "local", f.span, s.span.end, None, None);
+                    if let Some(top) = self.open.last_mut() {
+                        if let Some(&i) = top.last() {
+                            self.out[i].vis_end = block_end;
+                        }
+                    }
+                }
+            }
+            StmtKind::Return(Some(e))
+            | StmtKind::Expr(e)
+            | StmtKind::Defer(e)
+            | StmtKind::Assert(e) => self.walk_expr(e),
+            StmtKind::While { cond, body, .. } => {
+                self.walk_expr(cond);
+                self.walk_block(body);
+            }
+            StmtKind::For(fl, _) => match fl {
+                ForLoop::CStyle {
+                    init,
+                    cond,
+                    update,
+                    body,
+                } => {
+                    // The header binding is visible to cond/update/body and
+                    // nowhere after, so it gets a scope the size of the `for`.
+                    self.push_scope();
+                    if let Some(init_stmt) = init {
+                        self.walk_stmt(init_stmt, s.span.end);
+                    }
+                    if let Some(c) = cond {
+                        self.walk_expr(c);
+                    }
+                    for u in update {
+                        self.walk_expr(u);
+                    }
+                    self.walk_block(body);
+                    self.close_scope(s.span.end);
+                }
+                ForLoop::Range { var, iter, body } => {
+                    self.walk_expr(iter);
+                    self.push_scope();
+                    self.define(
+                        &var.name,
+                        "loop variable",
+                        var.span,
+                        body.span.start,
+                        None,
+                        None,
+                    );
+                    self.walk_block(body);
+                    self.close_scope(body.span.end);
+                }
+            },
+            StmtKind::Loop(b, _) => self.walk_block(b),
+            _ => {}
+        }
+    }
+
+    fn walk_expr(&mut self, e: &Expr) {
+        match &e.kind {
+            ExprKind::Call { callee, args, .. } => {
+                self.walk_expr(callee);
+                for a in args {
+                    self.walk_expr(a);
+                }
+            }
+            ExprKind::StructLit { fields, .. }
+            | ExprKind::InferredStructLit { fields }
+            | ExprKind::GenericStructLit { fields, .. } => {
+                for f in fields {
+                    self.walk_expr(&f.value);
+                }
+            }
+            ExprKind::GenericEnumCall { args, .. } | ExprKind::ArrayLit { elements: args } => {
+                for a in args {
+                    self.walk_expr(a);
+                }
+            }
+            ExprKind::Match { scrutinee, arms } => {
+                self.walk_expr(scrutinee);
+                for a in arms {
+                    // An arm's pattern bindings are visible over its body and
+                    // nothing else — this is where a lowered `if let` /
+                    // `while let` / `guard let` binding lands.
+                    self.push_scope();
+                    self.define_pattern(&a.pattern, a.body.span.start);
+                    self.walk_expr(&a.body);
+                    self.close_scope(a.body.span.end);
+                }
+            }
+            ExprKind::Field { receiver, .. } => self.walk_expr(receiver),
+            ExprKind::Index { receiver, index } => {
+                self.walk_expr(receiver);
+                self.walk_expr(index);
+            }
+            ExprKind::Binary { lhs, rhs, .. } => {
+                self.walk_expr(lhs);
+                self.walk_expr(rhs);
+            }
+            ExprKind::Unary { operand, .. } => self.walk_expr(operand),
+            ExprKind::Cast { expr, .. } => self.walk_expr(expr),
+            ExprKind::Assign { target, value, .. } => {
+                self.walk_expr(target);
+                self.walk_expr(value);
+            }
+            ExprKind::Block(b) => self.walk_block(b),
+            ExprKind::If {
+                cond,
+                then,
+                else_branch,
+            } => {
+                self.walk_expr(cond);
+                self.walk_block(then);
+                if let Some(eb) = else_branch {
+                    self.walk_expr(eb);
+                }
+            }
+            ExprKind::Await(inner) | ExprKind::Yield(inner) => self.walk_expr(inner),
+            ExprKind::Range { start, end, .. } => {
+                if let Some(st) = start {
+                    self.walk_expr(st);
+                }
+                if let Some(en) = end {
+                    self.walk_expr(en);
+                }
+            }
+            ExprKind::Intrinsic { args, .. } => {
+                for a in args {
+                    self.walk_expr(a);
+                }
+            }
+            ExprKind::Asm { operands, .. } => {
+                for op in operands {
+                    self.walk_expr(&op.value);
+                }
+            }
+            ExprKind::InterpStr { parts } => {
+                for p in parts {
+                    if let InterpStrPart::Expr(inner) = p {
+                        self.walk_expr(inner);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn define_pattern(&mut self, p: &Pattern, vis_start: u32) {
+        match &p.kind {
+            PatternKind::Binding(name) => self.define(
+                &name.name,
+                "match binding",
+                name.span,
+                vis_start,
+                None,
+                None,
+            ),
+            PatternKind::Variant { payload, .. } => {
+                for pp in payload {
+                    if let PatternKind::Binding(name) = &pp.kind {
+                        self.define(
+                            &name.name,
+                            "match binding",
+                            name.span,
+                            vis_start,
+                            None,
+                            None,
+                        );
+                    }
+                }
+            }
+            PatternKind::Wildcard | PatternKind::Lit(_) => {}
+        }
+    }
+}
+
 /// v0.0.15 inter-procedural flow: collect every `let BINDING = f(...)` in `b`
 /// (including nested blocks / `if` / `match` arms / loops), as
 /// `(callee_fn_name, binding_name, binding_name_span)`. Only direct
@@ -2257,6 +2867,7 @@ mod tests {
             entry_file_id: "src".to_string(),
             files,
             imports: BTreeMap::new(),
+            import_aliases: BTreeMap::new(),
         }
     }
 
@@ -2314,6 +2925,18 @@ mod tests {
     /// private top-level item in every multi-file project as public. Privacy is
     /// a property of the item's own name, so the test runs on the leaf.
     #[test]
+    fn an_extern_fn_is_never_public() {
+        // `extern fn free` is module-private however it is spelled — an
+        // importer gets E0403, so it must not show up as part of a module's
+        // callable surface.
+        let src = "extern fn free(p: *u8);\n\
+                   fn release(p: *u8) { free(p); return; }";
+        let g = CodeGraph::build(&project(src));
+        assert!(!node(&g, "src::free").is_pub, "extern fn is not exported");
+        assert!(node(&g, "src::release").is_pub, "a plain fn still is");
+    }
+
+    #[test]
     fn qualified_names_do_not_hide_the_privacy_marker() {
         let src = "fn gt.src.util._secret() -> i32 { return 1; }\n\
                    fn gt.src.util.open() -> i32 { return 2; }\n";
@@ -2339,6 +2962,7 @@ mod tests {
             entry_file_id: "src".to_string(),
             files,
             imports: BTreeMap::new(),
+            import_aliases: BTreeMap::new(),
         });
         assert!(
             !node(&g, "src::_secret").is_pub,
@@ -2962,5 +3586,268 @@ mod tests {
             "discarded result should record no destination, got {:?}",
             r.returns_into
         );
+    }
+    // ---- v0.0.26 completion: scope-at ----
+
+    /// Byte offset of the first occurrence of `needle` in `src`, plus
+    /// `needle.len()` — i.e. a cursor sitting just after it.
+    fn after(src: &str, needle: &str) -> u32 {
+        (src.find(needle).expect("needle in source") + needle.len()) as u32
+    }
+
+    fn names_at(g: &CodeGraph, byte: u32) -> Vec<(String, &'static str)> {
+        g.scope_at("src", byte)
+            .into_iter()
+            .map(|b| (b.name.clone(), b.kind))
+            .collect()
+    }
+
+    #[test]
+    fn scope_at_reports_params_self_and_locals_with_types() {
+        let src = "struct Point { x: i32 }\n\
+                   impl Point {\n\
+                     fn shift(this, by: i32) -> i32 {\n\
+                       let sum: i32 = this.x;\n\
+                       return sum + by;\n\
+                     }\n\
+                   }";
+        let g = CodeGraph::build(&project(src));
+        let at = after(src, "return sum");
+        let got = g.scope_at("src", at);
+        let by_name = |n: &str| {
+            got.iter()
+                .find(|b| b.name == n)
+                .map(|b| (b.kind, b.ty.clone()))
+        };
+
+        assert_eq!(by_name("this"), Some(("self", Some("Point".to_string()))));
+        assert_eq!(by_name("by"), Some(("parameter", Some("i32".to_string()))));
+        assert_eq!(by_name("sum"), Some(("local", Some("i32".to_string()))));
+    }
+
+    #[test]
+    fn scope_at_takes_the_type_of_an_unannotated_let_from_its_initializer() {
+        // No annotation on `p` — the type comes from the spot sema recorded for
+        // the `mk()` call, which is the whole point of running this pass last.
+        let src = "struct Point { x: i32 }\n\
+                   fn mk() -> Point { return Point { x: 1 }; }\n\
+                   fn run() -> i32 {\n\
+                     let p = mk();\n\
+                     return p.x;\n\
+                   }";
+        let g = CodeGraph::build(&project(src));
+        let at = after(src, "return p");
+        let p = g
+            .scope_at("src", at)
+            .into_iter()
+            .find(|b| b.name == "p")
+            .expect("p in scope");
+        assert_eq!(p.ty.as_deref(), Some("Point"));
+    }
+
+    #[test]
+    fn a_binding_is_not_in_scope_before_its_own_let() {
+        // The classic: `let x = x;` reads the OUTER x, so at the initializer the
+        // new binding does not exist yet.
+        let src = "fn run(x: i32) -> i32 {\n\
+                     let y: i32 = x;\n\
+                     return y;\n\
+                   }";
+        let g = CodeGraph::build(&project(src));
+        let before = after(src, "let y: i32 = ");
+        assert!(
+            !names_at(&g, before).iter().any(|(n, _)| n == "y"),
+            "y must not be visible inside its own initializer"
+        );
+        let plain_after = after(src, "return y");
+        assert!(names_at(&g, plain_after).iter().any(|(n, _)| n == "y"));
+    }
+
+    #[test]
+    fn a_binding_leaves_scope_with_its_block() {
+        let src = "fn run() -> i32 {\n\
+                     {\n\
+                       let inner: i32 = 1;\n\
+                       #println(inner);\n\
+                     }\n\
+                     return 0;\n\
+                   }";
+        let g = CodeGraph::build(&project(src));
+        let inside = after(src, "#println(inner");
+        assert!(names_at(&g, inside).iter().any(|(n, _)| n == "inner"));
+        let outside = after(src, "return 0");
+        assert!(
+            !names_at(&g, outside).iter().any(|(n, _)| n == "inner"),
+            "a name whose block closed is not typable — reporting it would \
+             offer a completion that does not compile"
+        );
+    }
+
+    #[test]
+    fn a_shadowed_name_reports_only_the_innermost_definition() {
+        let src = "fn run() -> i32 {\n\
+                     let v: i32 = 1;\n\
+                     {\n\
+                       let v: bool = true;\n\
+                       return probe(v);\n\
+                     }\n\
+                   }\n\
+                   fn probe(b: bool) -> i32 { return 0; }";
+        let g = CodeGraph::build(&project(src));
+        let at = after(src, "return probe(v");
+        let vs: Vec<_> = g
+            .scope_at("src", at)
+            .into_iter()
+            .filter(|b| b.name == "v")
+            .collect();
+        assert_eq!(vs.len(), 1, "one visible `v`, got {vs:?}");
+        assert_eq!(vs[0].ty.as_deref(), Some("bool"));
+    }
+
+    #[test]
+    fn a_loop_variable_is_in_scope_only_inside_the_loop() {
+        let src = "fn run() -> i32 {\n\
+                     for i in 0..3 {\n\
+                       #println(i);\n\
+                     }\n\
+                     return 0;\n\
+                   }";
+        let g = CodeGraph::build(&project(src));
+        let inside = after(src, "#println(i");
+        assert!(names_at(&g, inside)
+            .iter()
+            .any(|(n, k)| n == "i" && *k == "loop variable"));
+        let outside = after(src, "return 0");
+        assert!(!names_at(&g, outside).iter().any(|(n, _)| n == "i"));
+    }
+
+    #[test]
+    fn a_match_arm_binding_is_in_scope_only_in_that_arm() {
+        let src = "enum E { A(i32), B }\n\
+                   fn run(e: E) -> i32 {\n\
+                     let out: i32 = match e {\n\
+                       E::A(v) => v,\n\
+                       E::B => 0,\n\
+                     };\n\
+                     return out;\n\
+                   }";
+        let g = CodeGraph::build(&project(src));
+        let in_arm = (src.find("E::A(v) => v").unwrap() + "E::A(v) => ".len()) as u32;
+        assert!(names_at(&g, in_arm)
+            .iter()
+            .any(|(n, k)| n == "v" && *k == "match binding"));
+        let other_arm = (src.find("E::B => 0").unwrap() + "E::B => ".len()) as u32;
+        assert!(
+            !names_at(&g, other_arm).iter().any(|(n, _)| n == "v"),
+            "an arm's payload binding must not leak into its siblings"
+        );
+    }
+
+    #[test]
+    fn an_if_let_binding_survives_lowering_into_the_scope_index() {
+        // `if let` is sugar; the walk runs after lowering, so the binding shows
+        // up as a match binding rather than disappearing.
+        let src = "enum E { A(i32), B }\n\
+                   fn run(e: E) -> i32 {\n\
+                     if let E::A(v) = e {\n\
+                       return v;\n\
+                     }\n\
+                     return 0;\n\
+                   }";
+        let g = CodeGraph::build(&project(src));
+        let at = after(src, "return v");
+        assert!(
+            names_at(&g, at).iter().any(|(n, _)| n == "v"),
+            "if-let binding should be in scope in the then-branch, got {:?}",
+            names_at(&g, at)
+        );
+    }
+
+    #[test]
+    fn scope_at_json_carries_items_and_context_and_no_synthetic_names() {
+        let src = "const LIMIT: i32 = 4;\n\
+                   fn helper() -> i32 { return 1; }\n\
+                   fn run() -> i32 {\n\
+                     let a: i32 = 1;\n\
+                     return a;\n\
+                   }";
+        let g = CodeGraph::build(&project(src));
+        let at = after(src, "return a");
+        let j: serde_json::Value = serde_json::from_str(&g.scope_at_json("src", at)).unwrap();
+        assert_eq!(j["kind"], "scope-at");
+        assert_eq!(j["context"], "src::run");
+        let entries: Vec<(String, String)> = j["bindings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|e| {
+                (
+                    e["name"].as_str().unwrap().to_string(),
+                    e["kind"].as_str().unwrap().to_string(),
+                )
+            })
+            .collect();
+        assert!(entries.contains(&("a".to_string(), "local".to_string())));
+        assert!(entries.contains(&("LIMIT".to_string(), "item".to_string())));
+        assert!(entries.contains(&("helper".to_string(), "item".to_string())));
+        assert!(
+            !entries.iter().any(|(n, _)| n.starts_with("__")),
+            "lowering's own temporaries are not names anyone can type: {entries:?}"
+        );
+    }
+
+    #[test]
+    fn scope_at_outside_a_function_has_no_locals_but_still_has_items() {
+        let src = "const LIMIT: i32 = 4;\n\
+                   fn run(x: i32) -> i32 { return x; }";
+        let g = CodeGraph::build(&project(src));
+        let j: serde_json::Value = serde_json::from_str(&g.scope_at_json("src", 0)).unwrap();
+        assert!(j["context"].is_null(), "byte 0 is not inside any body");
+        let kinds: Vec<&str> = j["bindings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|e| e["kind"].as_str().unwrap())
+            .collect();
+        assert!(kinds.iter().all(|k| *k == "item" || *k == "alias"));
+        assert!(kinds.contains(&"item"));
+    }
+
+    #[test]
+    fn scope_at_reports_import_aliases_with_the_module_they_resolve_to() {
+        let src = "fn run() -> i32 { return 0; }";
+        let mut proj = project(src);
+        proj.import_aliases.insert(
+            "src".to_string(),
+            vec![crate::resolver::ImportAlias {
+                alias: "text".to_string(),
+                module: "stdlib.src.text".to_string(),
+                span: Span {
+                    start: 0,
+                    end: 4,
+                    file: 0,
+                },
+            }],
+        );
+        let g = CodeGraph::build(&proj);
+        let at = after(src, "return 0");
+        let j: serde_json::Value = serde_json::from_str(&g.scope_at_json("src", at)).unwrap();
+        let alias = j["bindings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|e| e["kind"] == "alias")
+            .expect("the alias is reported");
+        assert_eq!(alias["name"], "text");
+        assert_eq!(alias["module"], "stdlib.src.text");
+    }
+
+    #[test]
+    fn scope_at_in_an_unknown_file_is_empty_not_a_panic() {
+        let src = "fn run(x: i32) -> i32 { return x; }";
+        let g = CodeGraph::build(&project(src));
+        assert!(g.scope_at("src.nope", 10).is_empty());
+        let j: serde_json::Value = serde_json::from_str(&g.scope_at_json("src.nope", 10)).unwrap();
+        assert!(j["bindings"].as_array().unwrap().is_empty());
     }
 }

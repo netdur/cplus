@@ -1629,14 +1629,14 @@ fn use_it() -> i32 { return g::value(); }
 
 ### E0403 · Private item accessed across a file boundary
 
-A cross-file reference touched a function, type, field, method, const, static, type alias, or interface whose name begins with `_` (module-private) in its declaring file.
+A cross-file reference touched a function, type, field, method, const, static, type alias, or interface whose name begins with `_` (module-private) in its declaring file — or an `extern fn`, whose C+ name is module-private however it is spelled (only the linker symbol it binds is global).
 
 ```cplus
 import "./math" as math;
 fn main() -> i32 { return math::square(7); }
 ```
 
-**Fix.** Remove the leading `_` from the name to make it public (or `export` it for the C ABI). (Requires an imported module; `math.cplus` declares `fn _square` as private.)
+**Fix.** Remove the leading `_` from the name to make it public (or `export` it for the C ABI). For an `extern fn`, no rename exports it: declare the extern in the file that calls it, or wrap it in a plain `fn` the module exports. (Requires an imported module; `math.cplus` declares `fn _square` as private.)
 
 <sub>repro: scenario · cplus-core/src/resolver.rs:624 · test cpc/tests/e2e.rs:cross_file_private_fn_emits_e0403</sub>
 

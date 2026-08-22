@@ -147,6 +147,25 @@ fn interrupt(this)
 
 Interrupts whatever is running, as `^C` does.
 
+#### `Widget::clear`
+
+```cplus
+fn clear(this)
+```
+
+Empties the pane — the visible screen and the scrollback both — without sending
+the shell anything at all.
+
+An app that runs builds in a pane calls it before the first command of a run, so
+what the user reads afterwards is that run and nothing older. That is why it
+does not go through the shell: running `clear` arrives too late to spare the
+command line it was typed on and wipes that as well, leaving a pane whose output
+nobody can attribute to a command.
+
+A command that is still running is NOT stopped, and its screen is emptied under
+it — which is wrong for a full-screen program the user is in the middle of. Ask
+`command_state` first when the pane is one a user can type into.
+
 #### `Widget::command_state`
 
 ```cplus

@@ -64,6 +64,35 @@ pub struct Suggestion {
     pub applicability: Applicability,
 }
 
+/// Is this path a package's GENERATED slice header (`<pkg>/lib/include/...`)?
+///
+/// A header is not authored source. It is regenerated from `src/` every time
+/// the package is prebuilt, and — because generic bodies have to travel for a
+/// consumer to monomorphize them — it carries real code, which every phase
+/// then re-checks in every consumer that imports the package.
+///
+/// Whatever those checks find was ALREADY REPORTED when the package itself was
+/// built, against the `src/` path, to the one person who can act on it. Saying
+/// it again downstream names a file the reader must not edit (their next build
+/// regenerates it), about code they do not own, and says the same thing on
+/// every build forever. `stdlib`'s refcounted `Channel` is the standing
+/// example: a W0002 that is correct, intended, and useless to everyone except
+/// stdlib.
+///
+/// `lib/` ALONE is the compiled-slice directory and is not this — only
+/// `lib/include/` holds headers.
+pub fn is_generated_header(p: &Path) -> bool {
+    let comps: Vec<std::path::Component<'_>> = p.components().collect();
+    let i = match comps
+        .iter()
+        .rposition(|c| c.as_os_str() == std::ffi::OsStr::new("include"))
+    {
+        Some(i) => i,
+        None => return false,
+    };
+    i > 0 && comps[i - 1].as_os_str() == std::ffi::OsStr::new("lib")
+}
+
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct Diagnostic {
     pub severity: Severity,
@@ -705,6 +734,43 @@ mod tests {
             suggestions: Vec::new(),
         };
         assert_eq!(d.render_short(), "foo.cplus:12:5: error[E0001]: boom");
+    }
+
+    #[test]
+    fn generated_headers_are_recognised_by_the_lib_include_pair() {
+        // The consumer-side copy of a dependency's code: re-parsed by every
+        // downstream build, regenerated on every prebuild, never edited.
+        assert!(is_generated_header(Path::new(
+            "/x/vendor/stdlib/lib/include/channel.cplus"
+        )));
+        assert!(is_generated_header(Path::new(
+            "/x/vendor/p/lib/include/sub/mod.cplus"
+        )));
+    }
+
+    #[test]
+    fn authored_source_is_never_a_generated_header() {
+        // The `src/` path a warning must keep naming — the one the package's
+        // own author sees, which has to stay visible.
+        assert!(!is_generated_header(Path::new(
+            "/x/vendor/stdlib/src/channel.cplus"
+        )));
+        assert!(!is_generated_header(Path::new("/x/iris/src/main.cplus")));
+    }
+
+    #[test]
+    fn lib_alone_is_the_slice_directory_not_headers() {
+        // `lib/<triple>/libstdlib.a` is the compiled slice; only `lib/include/`
+        // holds headers. Same distinction the resolver draws.
+        assert!(!is_generated_header(Path::new(
+            "/x/vendor/stdlib/lib/aarch64-apple-darwin/libstdlib.a"
+        )));
+        // An `include` directory NOT under `lib/` is somebody's own source
+        // tree, and its warnings are theirs to see.
+        assert!(!is_generated_header(Path::new(
+            "/x/proj/include/thing.cplus"
+        )));
+        assert!(!is_generated_header(Path::new("include/thing.cplus")));
     }
 }
 
