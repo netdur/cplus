@@ -18,6 +18,7 @@ import "./future" as future;
 // netsys.cplus; Linux ones in netsys_linux.cplus (selected by the
 // resolver's `_linux` override). Keeps this file platform-neutral.
 import "./netsys" as netsys;
+import "./thread" as thread;
 
 extern fn socket(domain: i32, ty: i32, protocol: i32) -> i32;
 extern fn connect(fd: i32, addr: *u8, len: u32) -> i32;
@@ -88,6 +89,9 @@ fn connect_tcp(ip: str, port: u16) -> result::Result[TcpStream, result::IoError]
         { netsys::close_fd(fd); }
         return result::io_err::[TcpStream](result::IoError::ConnectionRefused);
     }
+    // A peer that goes away must make our writes FAIL, not kill this process
+    // (see netsys::set_nosigpipe).
+    let _np: i32 = netsys::set_nosigpipe(fd);
     return result::io_ok::[TcpStream](TcpStream { _fd: fd });
 }
 
@@ -146,8 +150,17 @@ impl TcpStream {
             return result::io_err::[vec::Vec[u8]](result::IoError::Other);
         }
         loop {
+            // Cancellable park (stdlib/thread.cplus): a plain EINTR retries,
+            // a cancellation kick surfaces as `IoError::Cancelled`.
+            if thread::park_begin() {
+                { thread::park_end(); }
+                { free(chunk); }
+                return result::io_err::[vec::Vec[u8]](result::IoError::Cancelled);
+            }
             let n: isize = { netsys::recv_fd(this._fd, chunk, chunk_size) };
+            { thread::park_end(); }
             if n < (0 as isize) {
+                if netsys::errno() == netsys::eintr() { continue; }
                 { free(chunk); }
                 return result::io_err::[vec::Vec[u8]](result::IoError::ConnectionReset);
             }
@@ -176,10 +189,18 @@ impl TcpStream {
         let p: *u8 = { #slice_ptr(slice) };
         var written: usize = 0 as usize;
         while written < n {
+            if thread::park_begin() {
+                { thread::park_end(); }
+                return result::io_err::[usize](result::IoError::Cancelled);
+            }
             let remaining: usize = n -% written;
             let q: *u8 = { p + written };
             let w: isize = { netsys::send_fd(this._fd, q, remaining) };
+            { thread::park_end(); }
             if w <= (0 as isize) {
+                if w < (0 as isize) {
+                    if netsys::errno() == netsys::eintr() { continue; }
+                }
                 return result::io_err::[usize](result::IoError::BrokenPipe);
             }
             written = written +% (w as usize);
@@ -256,11 +277,22 @@ impl TcpListener {
         // + caller-side parsing). Pass NULL pointers so accept skips it.
         let null_ptr: *u8 = { 0 as *u8 };
         let null_len: *u32 = { 0 as *u32 };
-        let cfd: i32 = { accept(this._fd, null_ptr, null_len) };
-        if cfd < (0 as i32) {
-            return result::io_err::[TcpStream](result::IoError::Other);
+        loop {
+            if thread::park_begin() {
+                { thread::park_end(); }
+                return result::io_err::[TcpStream](result::IoError::Cancelled);
+            }
+            let cfd: i32 = { accept(this._fd, null_ptr, null_len) };
+            { thread::park_end(); }
+            if cfd < (0 as i32) {
+                if netsys::errno() == netsys::eintr() { continue; }
+                return result::io_err::[TcpStream](result::IoError::Other);
+            }
+            // An accepted client that disconnects mid-response must not be
+            // able to kill this server (see netsys::set_nosigpipe).
+            let _np: i32 = netsys::set_nosigpipe(cfd);
+            return result::io_ok::[TcpStream](TcpStream { _fd: cfd });
         }
-        return result::io_ok::[TcpStream](TcpStream { _fd: cfd });
     }
 
     fn close(ref this) {
@@ -398,6 +430,66 @@ async fn accept_fd_async(listener_fd: i32) -> i32 {
 }
 
 // ───────────────────────────── tests ─────────────────────────────
+
+extern fn usleep(us: u32) -> i32;
+extern fn socketpair(domain: i32, ty: i32, proto: i32, fds: *i32) -> i32;
+
+// A write to a socket whose peer has gone away must REPORT the dead peer,
+// not raise SIGPIPE — whose default disposition terminates the process with
+// no crash report and no flushed output. A server dying because a client
+// pressed ^C is what this pins; it cost an IDE and the app under test
+// (demo/bugs/02-iris-terminated-without-crash-report.md).
+//
+// This test proves itself: if the protection regresses, this process is
+// KILLED here rather than failing an assertion, and the suite reports the
+// test binary's signal death.
+#[test]
+fn a_write_to_a_departed_peer_reports_instead_of_killing_us() {
+    var fds: [i32; 2] = [0, 0];
+    assert { socketpair(1 as i32, 1 as i32, 0 as i32, #addr_of(fds) as *i32) } == 0;
+    assert netsys::set_nosigpipe(fds[0]) == (0 as i32);
+    { netsys::close_fd(fds[1]); }               // the peer goes away
+    var buf: [u8; 8] = [65u8; 8];
+    var i: i32 = 0;
+    while i < 4 {
+        let n: isize = { netsys::send_fd(fds[0], #addr_of(buf) as *u8, 8 as usize) };
+        assert n < (0 as isize);                // EPIPE, reported not raised
+        i = i +% 1;
+    }
+    { netsys::close_fd(fds[0]); }
+}
+
+// Parks in accept() on a listener nobody connects to; only cancellation
+// ends it. Returns 5 on the cancel path.
+fn _accept_until_cancelled(take l: TcpListener) -> i64 {
+    var srv: TcpListener = l;
+    match srv.accept() {
+        result::Result[TcpStream, result::IoError]::Ok(s) => {
+            var c: TcpStream = s;
+            c.close();
+            return (0 - 1) as i64;
+        }
+        result::Result[TcpStream, result::IoError]::Err(e) => {
+            if e == result::IoError::Cancelled { return 5 as i64; }
+            return (0 - 2) as i64;
+        }
+    }
+}
+
+#[test]
+fn net_accept_reports_cancellation_instead_of_blocking() {
+    match listen_tcp(0 as u16) {
+        result::Result[TcpListener, result::IoError]::Ok(l) => {
+            let h: thread::JoinHandle[i64] =
+                thread::spawn_with::[TcpListener, i64](l, _accept_until_cancelled);
+            usleep(3000 as u32);
+            h.cancel();
+            assert h.join() == (5 as i64);
+        }
+        result::Result[TcpListener, result::IoError]::Err(e) => { assert false; }
+    }
+    return;
+}
 
 #[test]
 fn net_listen_tcp_binds_on_ephemeral_port() {

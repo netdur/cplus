@@ -8232,9 +8232,19 @@ fn memory_model_aliasing_hardening() {
     //      (previously compiled: receiver was not an intra-call claim).
     //  (b) method `ref` args are now flag-checked (method calls used to run
     //      the intra-call walk with no flags at all).
-    //  (c) `ref`-on-Copy params may alias BY DESIGN (§2.9: local
-    //      mutability, not a borrow) — codegen no longer emits `noalias`
-    //      for them, so `bump2(x, x)` is defined and runs.
+    //  (c) `ref`-on-Copy params may NOT alias (2026-08-22). This clause used
+    //      to say the opposite, citing §2.9's "for a Copy type, every mode
+    //      passes by value". It does not: `ref a: i32` lowers to a `ptr`,
+    //      which is the only way "writes reach the caller" can be true, so
+    //      `bump2(x, x)` hands the callee two exclusive pointers to one
+    //      stack slot exactly as a non-Copy struct would. §4 of
+    //      memory-model.md has been corrected and E0380 now fires.
+    //
+    //      Codegen still does NOT promise `noalias` on those params, and
+    //      that pairing is deliberate: the borrow checker refuses the
+    //      aliasing, and the IR does not additionally assert its absence,
+    //      so a case that slips past the checker stays DEFINED rather than
+    //      miscompiling at -O3. The `noalias` assertion below guards it.
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();
     let bad = dir.join("bad.cplus");
@@ -8267,18 +8277,37 @@ fn memory_model_aliasing_hardening() {
     assert!(!out.status.success(), "receiver/method-arg aliasing must reject");
     assert!(all.contains("E0381"), "expected E0381, got: {all}");
 
-    let ok = dir.join("ok.cplus");
+    // Aliased Copy `ref` args: refused, same as the non-Copy pair above.
+    let aliased = dir.join("aliased.cplus");
     std::fs::write(
-        &ok,
+        &aliased,
         "fn bump2(ref a: i32, ref b: i32) { a = a + 1; b = b + 1; return; }\n\
          fn main() -> i32 { var x: i32 = 0; bump2(x, x); return x; }\n",
     )
     .unwrap();
+    let out = Command::new(cpc).arg("check").arg(&aliased).output().expect("cpc");
+    let all = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(!out.status.success(), "aliased Copy `ref` args must reject");
+    assert!(all.contains("E0380"), "expected E0380, got: {all}");
+
+    // Two distinct places: compiles, runs, and the IR still declines to
+    // promise `noalias` on the Copy `ref` params.
+    let ok = dir.join("ok.cplus");
+    std::fs::write(
+        &ok,
+        "fn bump2(ref a: i32, ref b: i32) { a = a + 1; b = b + 1; return; }\n\
+         fn main() -> i32 { var x: i32 = 0; var y: i32 = 0; bump2(x, y); return x + y; }\n",
+    )
+    .unwrap();
     let bin = dir.join("ok");
     let st = Command::new(cpc).arg(&ok).arg("-o").arg(&bin).status().expect("cpc");
-    assert!(st.success(), "Copy ref aliasing is legal (Section 2.9)");
+    assert!(st.success(), "two distinct Copy places are fine");
     let run = Command::new(&bin).output().expect("run");
-    assert_eq!(run.status.code(), Some(2), "aliased increments are DEFINED");
+    assert_eq!(run.status.code(), Some(2), "each place incremented once");
     let ll = Command::new(cpc).arg("--emit-ll").arg(&ok).output().expect("ll");
     let ir = String::from_utf8_lossy(&ll.stdout);
     let bump_line = ir.lines().find(|l| l.contains("define") && l.contains("bump2")).unwrap();
@@ -25540,4 +25569,183 @@ fn an_associated_fn_can_be_a_fn_pointer_value_and_runs() {
         String::from_utf8_lossy(&out.stdout),
         String::from_utf8_lossy(&out.stderr)
     );
+}
+
+/// v0.0.29 cancellation, end to end through codegen: the spawn trampoline
+/// extends the ctx with the 48-byte cancel block (result slot moves to
+/// offset 64) and installs the per-thread cancel slot around the worker
+/// call; `JoinHandle::cancel` kicks the worker out of a real read(2) park
+/// via the SIGURG-until-ack protocol; `join` returns the worker's value.
+/// Exercises the whole pipeline: ctx layout, trampoline install/clear,
+/// the linkonce_odr cancel-slot accessors, and stdlib's park protocol.
+#[test]
+fn thread_cancel_unparks_a_blocking_read_end_to_end() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"cancelread\"\n\n[dependencies]\nstdlib = \"*\"\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::os::unix::fs::symlink(
+        format!("{}/../vendor", env!("CARGO_MANIFEST_DIR")),
+        dir.join("vendor"),
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"stdlib/io\" as io;\n\
+         import \"stdlib/thread\" as thread;\n\
+         import \"stdlib/netsys\" as netsys;\n\
+         \n\
+         extern fn pipe(fds: *i32) -> i32;\n\
+         extern fn usleep(us: u32) -> i32;\n\
+         \n\
+         fn worker(take rfd: i64) -> i64 {\n\
+             var buf: [u8; 8] = [0u8; 8];\n\
+             loop {\n\
+                 if thread::park_begin() { thread::park_end(); return 7 as i64; }\n\
+                 let n: isize = netsys::recv_fd(rfd as i32, #addr_of(buf) as *u8, 8 as usize);\n\
+                 thread::park_end();\n\
+                 if n < (0 as isize) {\n\
+                     if netsys::errno() == netsys::eintr() { continue; }\n\
+                     return (0 - 2) as i64;\n\
+                 }\n\
+                 return (0 - 3) as i64;\n\
+             }\n\
+         }\n\
+         \n\
+         fn main() -> i32 {\n\
+             var fds: [i32; 2] = [0, 0];\n\
+             if pipe(#addr_of(fds) as *i32) != 0 { return 10; }\n\
+             let h: thread::JoinHandle[i64] = thread::spawn_with::[i64, i64](fds[0] as i64, worker);\n\
+             usleep(2000 as u32);\n\
+             h.cancel();\n\
+             let r: i64 = h.join();\n\
+             netsys::close_fd(fds[0]);\n\
+             netsys::close_fd(fds[1]);\n\
+             if r == (7 as i64) { io::println(\"cancelled-ok\"); return 0; }\n\
+             return 1;\n\
+         }\n",
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .output()
+        .expect("invoke cpc build");
+    assert!(
+        out.status.success(),
+        "cancellation e2e must build: {}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr),
+    );
+    let run = Command::new(dir.join("target/debug/cancelread"))
+        .output()
+        .expect("run cancelread");
+    assert_eq!(
+        run.status.code(),
+        Some(0),
+        "worker must report the cancel path: stdout={} stderr={}",
+        String::from_utf8_lossy(&run.stdout),
+        String::from_utf8_lossy(&run.stderr),
+    );
+    assert_eq!(String::from_utf8_lossy(&run.stdout), "cancelled-ok\n");
+}
+
+/// v0.0.29 phase 2, end to end through codegen: cancelling a thread that
+/// drives async work with `executor::run` destroys the suspended frame tree
+/// through the awaits' cancel edges — running the drops of locals live
+/// across the await — unregisters the reactor entries, tears down the
+/// thread's reactor, and reports `Cancelled`; `join` still returns.
+/// Exercises: the await/park destroy edges, `#coro_promise`/`#coro_destroy`,
+/// the pending-queue purge, and the phase-1 kick unparking kevent.
+#[test]
+fn run_cancel_destroys_the_frame_tree_and_runs_drops_end_to_end() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"cancelasync\"\n\n[dependencies]\nstdlib = \"*\"\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::os::unix::fs::symlink(
+        format!("{}/../vendor", env!("CARGO_MANIFEST_DIR")),
+        dir.join("vendor"),
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"stdlib/io\" as io;\n\
+         import \"stdlib/executor\" as executor;\n\
+         import \"stdlib/thread\" as thread;\n\
+         import \"stdlib/atomic\" as atomic;\n\
+         \n\
+         extern fn usleep(us: u32) -> i32;\n\
+         \n\
+         static DROPS: u64 = 0u64;\n\
+         \n\
+         struct Probe { _v: i64 }\n\
+         impl Probe {\n\
+             fn drop(ref this) {\n\
+                 atomic::fetch_add_u64(#addr_of(DROPS), 1 as u64, atomic::Ordering::AcqRel);\n\
+                 return;\n\
+             }\n\
+         }\n\
+         \n\
+         async fn long_nap() {\n\
+             { #reactor_wait_timer(3600000 as u64); }\n\
+             return;\n\
+         }\n\
+         \n\
+         async fn sleepy() -> i32 {\n\
+             let p: Probe = Probe { _v: 5 as i64 };\n\
+             await long_nap();\n\
+             return p._v as i32;\n\
+         }\n\
+         \n\
+         fn worker(take x: i64) -> i64 {\n\
+             return match executor::run::[i32](sleepy()) {\n\
+                 executor::RunResult::Done(v) => { (v as i64) }\n\
+                 executor::RunResult::Cancelled => { 77 as i64 }\n\
+             };\n\
+         }\n\
+         \n\
+         fn main() -> i32 {\n\
+             let h: thread::JoinHandle[i64] = thread::spawn_with::[i64, i64](0 as i64, worker);\n\
+             usleep(20000 as u32);\n\
+             h.cancel();\n\
+             let r: i64 = h.join();\n\
+             let d: u64 = atomic::load_u64(#addr_of(DROPS), atomic::Ordering::Acquire);\n\
+             if r != (77 as i64) { return 1; }\n\
+             if d != (1 as u64) { return 2; }\n\
+             io::println(\"async-cancel-ok\");\n\
+             return 0;\n\
+         }\n",
+    )
+    .unwrap();
+    let out = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .output()
+        .expect("invoke cpc build");
+    assert!(
+        out.status.success(),
+        "phase-2 cancellation e2e must build: {}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr),
+    );
+    let run = Command::new(dir.join("target/debug/cancelasync"))
+        .output()
+        .expect("run cancelasync");
+    assert_eq!(
+        run.status.code(),
+        Some(0),
+        "cancelled run must report Cancelled and run the probe drop: stdout={} stderr={}",
+        String::from_utf8_lossy(&run.stdout),
+        String::from_utf8_lossy(&run.stderr),
+    );
+    assert_eq!(String::from_utf8_lossy(&run.stdout), "async-cancel-ok\n");
 }

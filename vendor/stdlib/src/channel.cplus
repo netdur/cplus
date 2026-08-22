@@ -32,6 +32,7 @@
 import "./atomic" as atomic;
 import "./option" as option;
 import "./status" as status;
+import "./thread" as thread;
 
 extern fn malloc(n: usize) -> *u8;
 extern fn realloc(p: *u8, n: usize) -> *u8;
@@ -62,9 +63,21 @@ impl Channel[T: Send]: Send {}
 impl Channel[T: Send]: Sync {}
 
 // Outcome of a receive: Value carries a popped element; Closed signals the
-// channel was closed and the buffer drained.
+// channel was closed and the buffer drained; Cancelled means the CALLING
+// thread was asked to stop (`JoinHandle::cancel`) while it would otherwise
+// have blocked. Data wins over cancellation: a receive that finds a value
+// buffered returns it even mid-cancel — Cancelled is only ever returned in
+// place of blocking. The channel itself is unaffected and stays usable.
 enum ReceiveResult[T] {
     Value(T),
+    Closed,
+    Cancelled,
+}
+
+// Outcome of a non-blocking receive attempt (`try_receive`).
+enum TryReceiveResult[T] {
+    Value(T),
+    Empty,
     Closed,
 }
 
@@ -189,8 +202,19 @@ impl Channel[T] {
         return status::Status::Ok;
     }
 
-    // Blocking receive. Returns Value(v) on a pop, Closed when the
-    // channel is closed AND the buffer is empty.
+    // Blocking receive. Returns Value(v) on a pop, Closed when the channel
+    // is closed AND the buffer is empty, Cancelled when this thread was
+    // asked to stop and the receive would otherwise block (data wins: a
+    // buffered value is delivered even mid-cancel).
+    //
+    // Cancellation protocol (stdlib/thread.cplus): the condvar + mutex are
+    // published as this thread's wake verb BEFORE the mutex is taken (lock
+    // order rule), the flag is re-checked under the mutex as a bare atomic
+    // load, and the verb is un-published AFTER the mutex is released. The
+    // canceller broadcasts the condvar under this same mutex, so the wait
+    // loop cannot miss the wake: while the canceller holds the mutex, this
+    // thread is either blocked inside `pthread_cond_wait` (the broadcast
+    // reaches it) or outside it and will see the flag at the next check.
     fn receive(this) -> ReceiveResult[T] {
         let mutex_ptr: *u8 = { this._ctrl + off_mutex() };
         let cond_ptr: *u8 = { this._ctrl + off_cond() };
@@ -198,6 +222,7 @@ impl Channel[T] {
         let tail_ptr: *usize = { (this._ctrl + off_tail()) as *usize };
         let buf_ptr_slot: **u8 = { (this._ctrl + off_buffer()) as **u8 };
         let closed_ptr: *u64 = { (this._ctrl + off_closed()) as *u64 };
+        let _pre: bool = { thread::park_begin_cond(cond_ptr, mutex_ptr) };
         let _e1: i32 = { pthread_mutex_lock(mutex_ptr) };
         loop {
             let head: usize = { *head_ptr };
@@ -209,15 +234,51 @@ impl Channel[T] {
                 let v: T = { #take::[T](slot) };
                 { *head_ptr = head +% (1 as usize); }
                 let _eu: i32 = { pthread_mutex_unlock(mutex_ptr) };
+                { thread::park_end(); }
                 return ReceiveResult[T]::Value(v);
             }
             let closed: u64 = { *closed_ptr };
             if closed != (0 as u64) {
                 let _eu: i32 = { pthread_mutex_unlock(mutex_ptr) };
+                { thread::park_end(); }
                 return ReceiveResult[T]::Closed;
+            }
+            if thread::cancelled() {
+                let _eu: i32 = { pthread_mutex_unlock(mutex_ptr) };
+                { thread::park_end(); }
+                return ReceiveResult[T]::Cancelled;
             }
             let _ew: i32 = { pthread_cond_wait(cond_ptr, mutex_ptr) };
         }
+    }
+
+    // Non-blocking receive: pop a buffered value if one is there, report
+    // Closed when closed-and-drained, Empty otherwise — never parks. The
+    // building block for pollers (stdlib/executor's async bridge).
+    fn try_receive(this) -> TryReceiveResult[T] {
+        let mutex_ptr: *u8 = { this._ctrl + off_mutex() };
+        let head_ptr: *usize = { (this._ctrl + off_head()) as *usize };
+        let tail_ptr: *usize = { (this._ctrl + off_tail()) as *usize };
+        let buf_ptr_slot: **u8 = { (this._ctrl + off_buffer()) as **u8 };
+        let closed_ptr: *u64 = { (this._ctrl + off_closed()) as *u64 };
+        let _e1: i32 = { pthread_mutex_lock(mutex_ptr) };
+        let head: usize = { *head_ptr };
+        let tail: usize = { *tail_ptr };
+        if head < tail {
+            let buf: *u8 = { *buf_ptr_slot };
+            let elem_bytes: usize = #size_of::[T]();
+            let slot: *T = { (buf + (head *% elem_bytes)) as *T };
+            let v: T = { #take::[T](slot) };
+            { *head_ptr = head +% (1 as usize); }
+            let _eu: i32 = { pthread_mutex_unlock(mutex_ptr) };
+            return TryReceiveResult[T]::Value(v);
+        }
+        let closed: u64 = { *closed_ptr };
+        let _eu: i32 = { pthread_mutex_unlock(mutex_ptr) };
+        if closed != (0 as u64) {
+            return TryReceiveResult[T]::Closed;
+        }
+        return TryReceiveResult[T]::Empty;
     }
 
     // Mark the channel closed; wake every blocked receiver. Senders
@@ -277,6 +338,8 @@ impl Channel[T] {
 
 // ───────────────────────────── tests ─────────────────────────────
 
+extern fn usleep(us: u32) -> i32;
+
 #[test]
 fn channel_send_then_recv() {
     match new::[i32]() {
@@ -285,6 +348,7 @@ fn channel_send_then_recv() {
             match ch.receive() {
                 ReceiveResult[i32]::Value(v) => { assert v == 7; }
                 ReceiveResult[i32]::Closed => { assert false; }
+                ReceiveResult[i32]::Cancelled => { assert false; }
             }
         }
         option::Option[Channel[i32]]::None => { assert false; }
@@ -300,7 +364,66 @@ fn channel_close_then_recv_is_closed() {
             match ch.receive() {
                 ReceiveResult[i32]::Value(v) => { assert false; }
                 ReceiveResult[i32]::Closed => { assert true; }
+                ReceiveResult[i32]::Cancelled => { assert false; }
             }
+        }
+        option::Option[Channel[i32]]::None => { assert false; }
+    }
+    return;
+}
+
+// ---- cancellation ----
+
+// Parks in the condvar (empty channel, never closed); only cancellation
+// ends it. Returns 5 on the cancel path.
+fn _recv_until_cancelled(take ch: Channel[i32]) -> i64 {
+    match ch.receive() {
+        ReceiveResult[i32]::Value(v) => { return v as i64; }
+        ReceiveResult[i32]::Closed => { return (0 - 1) as i64; }
+        ReceiveResult[i32]::Cancelled => { return 5 as i64; }
+    }
+}
+
+// Started with the cancel flag already set (or about to be): buffered data
+// must still be delivered first; only the EMPTY receive reports Cancelled.
+fn _recv_after_precancel(take ch: Channel[i32]) -> i64 {
+    var first: i64 = 0 as i64;
+    match ch.receive() {
+        ReceiveResult[i32]::Value(v) => { first = v as i64; }
+        ReceiveResult[i32]::Closed => { return (0 - 1) as i64; }
+        ReceiveResult[i32]::Cancelled => { return (0 - 2) as i64; }
+    }
+    match ch.receive() {
+        ReceiveResult[i32]::Value(_) => { return (0 - 3) as i64; }
+        ReceiveResult[i32]::Closed => { return (0 - 4) as i64; }
+        ReceiveResult[i32]::Cancelled => { return first +% (100 as i64); }
+    }
+}
+
+#[test]
+fn channel_receive_reports_cancellation_instead_of_blocking() {
+    match new::[i32]() {
+        option::Option[Channel[i32]]::Some(ch) => {
+            let h: thread::JoinHandle[i64] =
+                thread::spawn_with::[Channel[i32], i64](ch.clone(), _recv_until_cancelled);
+            usleep(3000 as u32);
+            h.cancel();
+            assert h.join() == (5 as i64);
+        }
+        option::Option[Channel[i32]]::None => { assert false; }
+    }
+    return;
+}
+
+#[test]
+fn channel_data_wins_over_cancellation() {
+    match new::[i32]() {
+        option::Option[Channel[i32]]::Some(ch) => {
+            assert ch.send(42) == status::Status::Ok;
+            let h: thread::JoinHandle[i64] =
+                thread::spawn_with::[Channel[i32], i64](ch.clone(), _recv_after_precancel);
+            h.cancel();
+            assert h.join() == (142 as i64);
         }
         option::Option[Channel[i32]]::None => { assert false; }
     }

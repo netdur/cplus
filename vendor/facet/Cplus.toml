@@ -17,9 +17,32 @@ edition = "2026"
 # address-taken function `weak_odr`, so it has one address whichever way the
 # package is consumed, and facet_appkit ships as a slice again.
 #
-# Prebuilding facet as well is a live option and purely a build-time win; it is
-# left off only because nothing has measured it. Enabling it is a one-line
-# change plus a suite run, not a risk to reason about.
+# Prebuilding facet as well was left open as "a live option and purely a
+# build-time win, left off only because nothing has measured it".
+#
+# MEASURED 2026-08-22, against iris (208 modules, 57 of them facet's), three
+# warm builds each on a 10-core M-series:
+#
+#     prebuild = false   wall 11.36 / 10.47 / 10.96s   codegen 1.27s
+#     prebuild = true    wall 11.60 / 11.80 / 11.78s   codegen 1.12s
+#
+# It is NOT a win — it is about 0.8s SLOWER. Prebuilding does remove facet's
+# codegen from the consumer (1.27s -> 1.12s, the 57 modules), but the
+# consumer still parses the whole declared surface, so the front end does not
+# get cheaper: `resolve+sema+borrowck` is unmoved at ~1.8s either way. What
+# does move is the per-package bookkeeping — manifests, dep walk, slice
+# loading — which grows ~0.7s and more than eats the codegen saving.
+#
+# So the question that comment posed is answered, and the answer is to leave
+# this alone. The general lesson is worth more than the setting: prebuilding
+# pays for packages a consumer barely reads, and facet is the one package
+# every consumer reads all of.
+#
+# One trap if you re-run this: flipping back to `false` does NOT restore the
+# previous state on its own. The built `lib/<triple>/libfacet.a` stays on
+# disk and the next build fails with E0861 ("ships a slice the manifest
+# doesn't declare"), which reads like a manifest bug rather than a leftover.
+# `rm -rf vendor/facet/lib` after flipping back.
 [build]
 prebuild = false
 

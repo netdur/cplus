@@ -37,6 +37,7 @@
 // remedy — and the fault line carries the sentence.
 
 import "stdlib/text" as text;
+import "stdlib/netsys" as netsys;
 import "stdlib/vec" as vec;
 import "stdlib/option" as option;
 import "stdlib/status" as status;
@@ -202,16 +203,25 @@ fn connect_to(path: str) -> i32 {
         { close(fd) };
         return - 2 as i32;
     }
+    // The app under test dying must make OUR next write fail, not kill the
+    // IDE holding this connection (netsys::set_nosigpipe). Without it the
+    // failure cascades the wrong way: the inspected app goes away, and the
+    // inspector process is terminated by SIGPIPE with no crash report.
+    let _np: i32 = netsys::set_nosigpipe(fd);
     return fd;
 }
 
+// Through `netsys::send_fd` rather than bare `write` — on Linux that carries
+// MSG_NOSIGNAL, the only protection there against a dead peer raising
+// SIGPIPE and terminating this process (Darwin uses SO_NOSIGPIPE, set on
+// connect above).
 fn send_all(fd: i32, line: str) -> bool {
     let total: usize = #str_len(line);
     let base: *u8 = #str_ptr(line);
     var off: usize = 0 as usize;
     while off < total {
-        let n: i64 = { write(fd, base + off, total -% off) };
-        if n <= (0 as i64) { return false; }
+        let n: isize = { netsys::send_fd(fd, base + off, total -% off) };
+        if n <= (0 as isize) { return false; }
         off = off +% (n as usize);
     }
     return true;

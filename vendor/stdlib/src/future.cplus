@@ -16,6 +16,8 @@
 // shouldn't depend on the layout — it may shift when sret-aware
 // return rewriting lands.
 
+import "./reactor" as reactor;
+
 // `#[lang("future")]` is how the backend RECOGNIZES an instantiation of this
 // struct as a coroutine future — see the note on `Iterator[T]`; classifying
 // by the substring `Future__` in the mangled name hijacked any user generic
@@ -25,6 +27,38 @@ struct Future[T] {
     // The LLVM coroutine frame, managed by the executor/coro runtime — not
     // freed by this struct (same as `Iterator.handle`). Hence `opaque`.
     opaque _handle: *u8,
+}
+
+// The codegen-emitted stable wrapper around `llvm.coro.destroy` (see the
+// preamble in cplus-core/src/codegen.rs).
+#[runtime_abi]
+extern fn __cplus_coro_destroy(hdl: *u8);
+
+impl Future[T] {
+    // The raw coroutine frame handle — surface for the executor
+    // (stdlib/executor.cplus's drive loops), not for user code.
+    fn raw_handle(this) -> *u8 {
+        return this._handle;
+    }
+
+    // v0.0.29 phase 2: EXPLICIT drop-to-cancel. Destroys the suspended
+    // frame; each suspend point's cancel edge runs the drops of the locals
+    // live there, transitively through whatever this future was awaiting —
+    // so cancelling a future cannot skip a drop. Consumes the future; safe
+    // on an already-completed frame (destroy at final suspend just frees).
+    //
+    // A future that is merely DROPPED — never awaited, driven, or
+    // cancelled — still leaks its frame: wiring this into implicit drop
+    // glue is the recorded follow-up in the cancellation report.
+    fn cancel(take this) {
+        if this._handle.is_not_null() {
+            // If another drive on this thread pumped the reactor, this frame
+            // may have been notified into the pending queue — purge first.
+            reactor::unregister_pending(this._handle);
+            __cplus_coro_destroy(this._handle);
+        }
+        return;
+    }
 }
 
 // The result of polling a `Future[T]`. The executor's poll loop

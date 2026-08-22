@@ -36,6 +36,11 @@ fn o_nonblock() -> i32 { return 0 as i32; }
 // EAGAIN analogue: WSAEWOULDBLOCK = 10035.
 fn eagain() -> i32 { return 10035 as i32; }
 
+// EINTR analogue: WSAEINTR = 10004. (Signal-based cancellation kicks do not
+// exist on Windows — see the report's platform note — but the constant keeps
+// EINTR-checking loops single-source.)
+fn eintr() -> i32 { return 10004 as i32; }
+
 // setsockopt level / optname for SO_REUSEADDR. Winsock: SOL_SOCKET=0xffff,
 // SO_REUSEADDR=0x4 (same values as BSD/macOS).
 fn sol_socket() -> i32 { return 0xffff as i32; }
@@ -50,6 +55,14 @@ fn sa_family_byte1() -> u8 { return 0 as u8; }
 // recv/send/closesocket shims — net.cplus routes its read/write/close
 // through these so the POSIX backends can use read/write/close while
 // Windows uses the Winsock calls that actually work on a SOCKET.
+// Windows has no SIGPIPE — a send to a dead peer already returns an error
+// (WSAECONNRESET / WSAESHUTDOWN) rather than signalling. Present so callers
+// get one portable line; see the Darwin variant's `set_nosigpipe` note.
+fn set_nosigpipe(fd: i32) -> i32 {
+    let _unused: i32 = fd;
+    return 0 as i32;
+}
+
 fn recv_fd(fd: i32, buf: *u8, count: usize) -> isize {
     let n: i32 = { recv(fd, buf, count as i32, 0 as i32) };
     return n as isize;

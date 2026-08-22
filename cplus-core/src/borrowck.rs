@@ -483,27 +483,40 @@ impl CopyOracle {
                     ItemKind::Struct(s) => {
                         let info = oracle.types.get(&s.name.name).cloned();
                         let Some(info) = info else { continue };
-                        if !info.is_copy {
-                            continue;
-                        }
-                        let all_copy = s.fields.iter().all(|f| oracle.is_type_copy_internal(&f.ty));
-                        if !all_copy {
+                        let all_copy = info.is_copy
+                            && s.fields.iter().all(|f| oracle.is_type_copy_internal(&f.ty));
+                        if !all_copy && info.is_copy {
                             oracle.types.get_mut(&s.name.name).unwrap().is_copy = false;
+                            changed = true;
+                        }
+                        // A destructor reached through a FIELD runs at this
+                        // type's scope exit just as an own `drop` would, and
+                        // `has_destructor` is asked "can a loan this value
+                        // holds still be observed after its last mention"
+                        // — for which the reachable destructor is what
+                        // matters, not who declared it.
+                        if !info.is_drop && s.fields.iter().any(|f| oracle.type_has_drop(&f.ty)) {
+                            oracle.types.get_mut(&s.name.name).unwrap().is_drop = true;
                             changed = true;
                         }
                     }
                     ItemKind::Enum(e) => {
                         let info = oracle.types.get(&e.name.name).cloned();
                         let Some(info) = info else { continue };
-                        if !info.is_copy {
-                            continue;
-                        }
-                        let all_copy = e
-                            .variants
+                        let all_copy = info.is_copy
+                            && e.variants
                             .iter()
                             .all(|v| v.payload.iter().all(|t| oracle.is_type_copy_internal(t)));
-                        if !all_copy {
+                        if !all_copy && info.is_copy {
                             oracle.types.get_mut(&e.name.name).unwrap().is_copy = false;
+                            changed = true;
+                        }
+                        if !info.is_drop
+                            && e.variants
+                                .iter()
+                                .any(|v| v.payload.iter().any(|t| oracle.type_has_drop(t)))
+                        {
+                            oracle.types.get_mut(&e.name.name).unwrap().is_drop = true;
                             changed = true;
                         }
                     }
@@ -591,6 +604,34 @@ impl CopyOracle {
     /// `definitely_non_copy` to avoid firing on truly unknown types.
     pub fn is_copy(&self, ty: &Type) -> bool {
         self.is_type_copy_internal(ty)
+    }
+
+    /// True iff a value of `ty` runs a destructor when it goes out of
+    /// scope — its own `drop`, or one reachable through a field or payload
+    /// (the fixpoint in `new` propagates the flag upward).
+    ///
+    /// This is the DROP-LIVENESS oracle, not the Copy one. NLL ends a
+    /// borrower's loans at its last textual mention, which is sound only if
+    /// nothing can observe the loan afterwards — and a destructor runs after
+    /// the last mention by construction. `thread::Scope::drop` joins the
+    /// workers it lent to, so its loans have to survive to scope exit or the
+    /// whole guarantee is a comment.
+    pub fn type_has_drop(&self, ty: &Type) -> bool {
+        match &ty.kind {
+            TypeKind::Path(name) => self.types.get(name).map(|i| i.is_drop).unwrap_or(false),
+            // A generic base with a destructor has one for every
+            // instantiation (`Vec[i32]`, `Vec[str]`); the type args cannot
+            // take it away.
+            TypeKind::Generic { name, .. } => {
+                self.types.get(name).map(|i| i.is_drop).unwrap_or(false)
+            }
+            TypeKind::Array { elem, .. } => self.type_has_drop(elem),
+            // Views, raw pointers and fn pointers own nothing and drop
+            // nothing; a tuple's shape is not resolved here, so stay
+            // conservative-in-the-permissive-direction and let the existing
+            // scope-exit release handle it.
+            _ => false,
+        }
     }
 
     /// True iff `ty` resolves to a user-defined type whose `is_copy`
@@ -6270,7 +6311,40 @@ fn analyze_with_diags(prog: &Program) -> (ProgramAnalysis, Vec<(Option<String>, 
             | ItemKind::ModuleAsm(_) => {}
         }
     }
+    dedupe_conflicts_at_one_span(&mut all_diags);
     (analysis, all_diags)
+}
+
+/// ONE CONFLICT, ONE DIAGNOSTIC.
+///
+/// A place expression is analysed as a read wherever it appears, including as
+/// an assignment TARGET and as a `ref` ARGUMENT — positions where it is not a
+/// read at all. While an exclusive loan is live that produced two errors on
+/// one span, the read-flavoured one first and wrongly:
+///
+/// ```text
+/// d.n = 5;    E0374 cannot READ `d.n` while it overlaps ... exclusive borrow
+///             E0381 cannot write to `d` while it is borrowed by `s`
+/// touch(d);   E0381 cannot borrow `d` exclusively while it is borrowed by `s`
+///             E0383 cannot READ `d` while it is exclusively borrowed by `s`
+/// ```
+///
+/// Both members of each pair describe the same conflict, so the claim-flavoured
+/// code (which names what the code was actually trying to do) wins and the
+/// read-flavoured one is dropped. Nothing is suppressed that stands alone: a
+/// genuine read of an exclusively-borrowed place is the only diagnostic at its
+/// span and survives untouched.
+fn dedupe_conflicts_at_one_span(diags: &mut Vec<(Option<String>, RawDiag)>) {
+    const CLAIM: [&str; 4] = ["E0370", "E0380", "E0381", "E0382"];
+    const READ: [&str; 2] = ["E0374", "E0383"];
+    let claimed: std::collections::BTreeSet<(u32, u32)> = diags
+        .iter()
+        .filter(|(_, d)| CLAIM.contains(&d.code))
+        .map(|(_, d)| (d.primary.start, d.primary.end))
+        .collect();
+    diags.retain(|(_, d)| {
+        !READ.contains(&d.code) || !claimed.contains(&(d.primary.start, d.primary.end))
+    });
 }
 
 // ---------------------------------------------------------------------------
@@ -6329,7 +6403,7 @@ impl Analyzer<'_> {
             state: state.clone(),
         });
 
-        let nll = Self::nll_release_schedule(body);
+        let nll = self.nll_release_schedule(body);
         for (i, stmt) in body.stmts.iter().enumerate() {
             self.apply_stmt(stmt, &mut state);
             // NLL: end borrows whose last mention was this statement.
@@ -6540,7 +6614,20 @@ impl Analyzer<'_> {
     /// its `let` releases immediately — the borrow was never observable.
     /// Scope-exit cleanup still runs for everything scheduled here;
     /// `drop_borrower` is idempotent.
-    fn nll_release_schedule(b: &Block) -> Vec<Vec<String>> {
+    ///
+    /// DROP LIVENESS (2026-08-22). A binding whose type runs a destructor is
+    /// never released early, because the destructor is a use that happens
+    /// after every textual mention. `thread::Scope` is the case that made
+    /// this a soundness hole rather than a precision one: its `drop` joins
+    /// the workers, so between `s.lend(c, w)` and the end of the scope the
+    /// worker is still writing `c` — but `s` is not MENTIONED again, so the
+    /// loan was released at the lend and the parent could read, write and
+    /// re-lend `c` freely. The three refusals `thread.cplus` documents were
+    /// reachable only by naming the scope again afterwards.
+    ///
+    /// This is the same rule Rust's NLL applies to a type with a `Drop` impl,
+    /// and it can only ever HOLD a loan longer than before.
+    fn nll_release_schedule(&self, b: &Block) -> Vec<Vec<String>> {
         use std::collections::BTreeSet;
         let n = b.stmts.len();
         let mut schedule: Vec<Vec<String>> = vec![Vec::new(); n];
@@ -6577,7 +6664,20 @@ impl Analyzer<'_> {
         }
         for (i, s) in b.stmts.iter().enumerate() {
             let names: Vec<String> = match &s.kind {
-                StmtKind::Let { name, .. } => vec![name.name.clone()],
+                StmtKind::Let { name, ty, init, .. } => {
+                    // A destructor runs after the last mention, so a binding
+                    // that has one is never released early. The type comes
+                    // from the STATEMENT, not from `binding_type`: this
+                    // schedule is computed before the block is walked, so
+                    // nothing declared in it has been recorded yet.
+                    let declared = ty.clone().or_else(|| {
+                        init.as_ref().and_then(|e| self.infer_expr_type(e))
+                    });
+                    if declared.is_some_and(|t| self.oracle.type_has_drop(&t)) {
+                        continue;
+                    }
+                    vec![name.name.clone()]
+                }
                 StmtKind::LetDestructure { fields, .. } => {
                     fields.iter().map(|f| f.name.clone()).collect()
                 }
@@ -6607,7 +6707,7 @@ impl Analyzer<'_> {
         state: &mut BTreeMap<Place, PlaceState>,
         outer: &BTreeMap<Place, PlaceState>,
     ) {
-        let nll = Self::nll_release_schedule(b);
+        let nll = self.nll_release_schedule(b);
         for (i, s) in b.stmts.iter().enumerate() {
             self.apply_stmt(s, state);
             // NLL: this statement was the last mention of these borrowers —
@@ -7426,6 +7526,40 @@ impl Analyzer<'_> {
                 if !view_flags.get(i).copied().unwrap_or(false) {
                     continue;
                 }
+                // WHAT KIND OF LOAN a kept position establishes is the
+                // parameter's mode, not the argument's type (2026-08-22).
+                //
+                // A `ref` parameter is EXCLUSIVE access, and it is passed BY
+                // POINTER for every type — that is what makes a callee's
+                // writes visible to the caller at all. Both halves were
+                // missing here, and each cost a guarantee:
+                //
+                //   * the flavour was always `Shared`, so a READ of a place
+                //     lent exclusively to a worker was admitted (E0383 never
+                //     saw an exclusive state to fire on);
+                //   * the Copy gate below dropped the tie ENTIRELY for a Copy
+                //     argument, so `struct Cell { n: i64 }` recorded no loan
+                //     at all and `thread::Scope` lost all three of the
+                //     guarantees `thread.cplus` documents — while the same
+                //     program with a `Text` in the struct was checked
+                //     correctly. The Copy ones are the values a scope is FOR.
+                //
+                // §2.9's "`ref` on a Copy type is local mutability, not a
+                // borrow" holds for a call that RETURNS; it stops holding the
+                // moment the receiver KEEPS the pointer, which is exactly
+                // what `#[keeps(this)]` declares.
+                //
+                // A non-`ref` kept position still ties Shared: `names.push(t)`
+                // stores a VIEW of `t`, and reading `t` afterwards is sound.
+                let ref_param = mut_flags
+                    .as_ref()
+                    .and_then(|v| v.get(i).copied())
+                    .unwrap_or(false);
+                let flavor = if ref_param {
+                    BorrowFlavor::Exclusive
+                } else {
+                    BorrowFlavor::Shared
+                };
                 // A view-producing call argument (`h.set(t.view())`)
                 // classifies to its owner places directly. A bare place
                 // argument is either the owner itself (coercion:
@@ -7436,11 +7570,11 @@ impl Analyzer<'_> {
                     if let Some(place) = place_from_expr(arg) {
                         if let Some(owners) = self.binding_borrows_from.get(&place.root) {
                             for o in owners.clone() {
-                                arg_sources.push((o, BorrowFlavor::Shared));
+                                arg_sources.push((o, flavor));
                             }
                         }
-                        if self.binding_is_non_copy(&place.root) {
-                            arg_sources.push((place, BorrowFlavor::Shared));
+                        if ref_param || self.binding_is_non_copy(&place.root) {
+                            arg_sources.push((place, flavor));
                         }
                     }
                 }
@@ -7511,9 +7645,18 @@ impl Analyzer<'_> {
         mut_flags: &Option<Vec<bool>>,
         receiver: Option<(ClaimKind, &Expr)>,
     ) {
-        // Build per-arg claims. Copy bindings, non-place exprs, and
-        // unknown-type bindings (binding_is_non_copy returns false) all
-        // produce no claim — they carry no aliasing constraint.
+        // Build per-arg claims. Non-place exprs produce no claim, and so
+        // does a MOVE claim on a Copy binding — a Copy argument is copied,
+        // not moved, so it constrains nothing.
+        //
+        // An EXCLUSIVE claim is different and used to be gated the same way
+        // (2026-08-22). `ref` passes a POINTER to the caller's storage for
+        // every type — that is what makes a callee's writes visible to the
+        // caller at all — so `f(ref a, ref a)` hands the callee two aliasing
+        // exclusive pointers whether or not `a` is Copy, and E0380/E0381/
+        // E0374 all went silent on the Copy half of the family. The
+        // sibling of this gate, on the `#[keeps(this)]` tie, is what cost
+        // `thread::Scope` its guarantees.
         let claims: Vec<Option<ArgClaim>> = args
             .iter()
             .enumerate()
@@ -7540,8 +7683,12 @@ impl Analyzer<'_> {
                 match kind {
                     ClaimKind::Move | ClaimKind::Exclusive => {
                         let place = place_from_expr(arg)?;
-                        // Only non-Copy bindings carry borrow constraints.
-                        if !self.binding_is_non_copy(&place.root) {
+                        // A Copy place cannot be moved out of, so a `take`
+                        // argument of one constrains nothing. A `ref` one
+                        // aliases the caller's storage either way.
+                        if matches!(kind, ClaimKind::Move)
+                            && !self.binding_is_non_copy(&place.root)
+                        {
                             return None;
                         }
                         Some(ArgClaim {
@@ -7789,14 +7936,21 @@ impl Analyzer<'_> {
             return;
         };
         let root = Place::root(&place.root);
-        if !matches!(state.get(&root), Some(PlaceState::BorrowedShared(_))) {
+        // Either flavour of loan conflicts with a fresh exclusive claim. The
+        // exclusive arm is not decoration: a `ref` position of a
+        // `#[keeps(this)]` call now records `BorrowedExclusive`, which is the
+        // state a second `s.lend(c, w2)` has to see.
+        if !matches!(
+            state.get(&root),
+            Some(PlaceState::BorrowedShared(_)) | Some(PlaceState::BorrowedExclusive(_))
+        ) {
             return;
         }
-        // A Copy binding's `ref` is local mutability, not a borrow (§2.9),
-        // and nothing can be aliasing it.
-        if !self.binding_is_non_copy(&place.root) {
-            return;
-        }
+        // NO COPY GATE. §2.9's "`ref` on a Copy type is local mutability, not
+        // a borrow" describes a call that returns; a live loan on the place
+        // means someone is still holding the pointer, and `ref` is
+        // by-pointer for every type. Gating this on non-Copy is what let two
+        // workers take `struct Cell { n: i64 }` exclusively at once.
         let Some((borrower, borrow_span)) = self
             .live_borrows
             .get(&root)
@@ -7808,7 +7962,7 @@ impl Analyzer<'_> {
         self.diags.push(RawDiag {
             code: "E0381",
             message: format!(
-                "cannot lend `{name}` exclusively while it is borrowed by `{borrower}`"
+                "cannot borrow `{name}` exclusively while it is borrowed by `{borrower}`"
             ),
             primary: arg.span,
             suggestion: Some((
@@ -7840,7 +7994,13 @@ impl Analyzer<'_> {
             return;
         }
         let root = Place::root(&place.root);
-        if !matches!(state.get(&root), Some(PlaceState::BorrowedShared(_))) {
+        // A write conflicts with a loan of either flavour. (An exclusive loan
+        // reaches the dedicated E0383 path only for READS; the write path is
+        // here, so both states have to be named.)
+        if !matches!(
+            state.get(&root),
+            Some(PlaceState::BorrowedShared(_)) | Some(PlaceState::BorrowedExclusive(_))
+        ) {
             return;
         }
         let Some((borrower, borrow_span)) = self
@@ -8299,6 +8459,128 @@ mod tests {
              fn main() -> i32 {{\n                 var s: Scope = Scope {{ c: 0 }};\n                 var a: Data = Data {{ n: 1 }};\n                 var b: Data = Data {{ n: 2 }};\n                 s.lend(a);\n                 s.lend(b);\n                 return 0;\n             }}"
         ));
         assert!(codes.is_empty(), "two locals, two workers: {codes:?}");
+    }
+
+    // ---- 2026-08-22: the two holes the guarantees above were leaking
+    // through. Both were filed against `thread::Scope`; neither is about
+    // threads.
+    //
+    // `SCOPE_MOCK`'s `Data` is non-Copy (it declares `fn drop`) and every
+    // test above names the scope again after the offending line. Removing
+    // either of those two accidents removed the diagnostic:
+    //
+    //   * a Copy argument recorded NO LOAN AT ALL, because the §5 tie was
+    //     gated on `binding_is_non_copy` — so the same program with
+    //     `struct Cell { n: i64 }` lost all three guarantees, and a plain
+    //     counter is exactly what a scope is for;
+    //   * a scope not mentioned again had its loan released at the lend by
+    //     NLL last-use, so read, write and re-lend were all admitted after
+    //     it.
+    //
+    // `COP` is `SCOPE_MOCK`'s `Data` with the destructor removed and nothing
+    // else changed: every pair below is the same program, twice.
+
+    const COP: &str = "struct Cop { n: i32 }\n         struct CScope { c: i32 }\n         impl CScope {\n             #[keeps(this)]\n             fn lend(ref this, ref d: Cop) { this.c = this.c + 1; }\n             fn drop(ref this) { return; }\n         }\n         fn touch(ref d: Cop) { d.n = d.n + 1; return; }\n";
+
+    #[test]
+    fn lending_a_copy_place_twice_is_rejected() {
+        let codes = check_src(&format!(
+            "{COP}\
+             fn main() -> i32 {{\n                 var s: CScope = CScope {{ c: 0 }};\n                 var d: Cop = Cop {{ n: 1 }};\n                 s.lend(d);\n                 s.lend(d);\n                 return 0;\n             }}"
+        ));
+        assert!(
+            codes.iter().any(|c| c == "E0381"),
+            "a Copy place is still a place: two exclusive lends must be refused; got {codes:?}"
+        );
+    }
+
+    #[test]
+    fn writing_a_lent_copy_place_is_rejected() {
+        let codes = check_src(&format!(
+            "{COP}\
+             fn main() -> i32 {{\n                 var s: CScope = CScope {{ c: 0 }};\n                 var d: Cop = Cop {{ n: 1 }};\n                 s.lend(d);\n                 d.n = 5;\n                 return 0;\n             }}"
+        ));
+        assert!(
+            codes.iter().any(|c| c == "E0381"),
+            "`ref` is by-pointer for every type, Copy included; got {codes:?}"
+        );
+    }
+
+    #[test]
+    fn a_copy_place_dying_before_its_scope_is_rejected() {
+        let codes = check_src(&format!(
+            "{COP}\
+             fn main() -> i32 {{\n                 var s: CScope = CScope {{ c: 0 }};\n                 {{ var d: Cop = Cop {{ n: 1 }}; s.lend(d); }}\n                 return 0;\n             }}"
+        ));
+        assert!(
+            codes.iter().any(|c| c == "E0514"),
+            "the worker holds the address of a dead stack slot; got {codes:?}"
+        );
+    }
+
+    #[test]
+    fn reading_a_lent_place_is_rejected() {
+        // The row the borrow checker had no state for: the §5 tie recorded
+        // `BorrowedShared` for a `ref` parameter, and a shared loan admits
+        // reads. A `ref` position is EXCLUSIVE, so E0383 has something to
+        // fire on — and a read racing a worker's write is what TSan reports.
+        let codes = check_src(&format!(
+            "{SCOPE_MOCK}\
+             fn main() -> i32 {{\n                 var s: Scope = Scope {{ c: 0 }};\n                 var d: Data = Data {{ n: 1 }};\n                 s.lend(d);\n                 let v: i32 = d.n;\n                 return v;\n             }}"
+        ));
+        assert!(
+            codes.iter().any(|c| c == "E0383" || c == "E0374"),
+            "a lent place cannot be read while a worker may be writing it; got {codes:?}"
+        );
+    }
+
+    #[test]
+    fn a_plain_ref_call_on_a_lent_place_is_rejected() {
+        // The one that costs memory safety rather than tidiness: a plain
+        // `ref` argument is exactly as much of an exclusive borrow as `lend`
+        // is, so this program had two live exclusive borrows of one place on
+        // two threads — the state memory-model.md §4 says cannot exist.
+        // It is also the natural way to write a two-way split, which is why
+        // "put a Text in the struct" was no defence.
+        let codes = check_src(&format!(
+            "{COP}\
+             fn main() -> i32 {{\n                 var s: CScope = CScope {{ c: 0 }};\n                 var d: Cop = Cop {{ n: 1 }};\n                 s.lend(d);\n                 touch(d);\n                 return 0;\n             }}"
+        ));
+        assert!(
+            codes.iter().any(|c| c == "E0381"),
+            "the parent may not take the lent place exclusively too; got {codes:?}"
+        );
+    }
+
+    #[test]
+    fn a_non_ref_keeps_position_still_admits_reads() {
+        // The boundary. `#[keeps(this)]` on a BY-VALUE position stores a
+        // VIEW of the argument (`names.push(t)`), which is a shared loan —
+        // reading the owner afterwards is sound and must stay admitted.
+        // Every other `#[keeps(this)]` in vendor/ is this shape; only
+        // `Scope::lend` has a `ref` parameter, which is why the flavour is
+        // read off the parameter mode rather than applied to the attribute.
+        let src = "struct Holder { s: str }\n\
+             impl Holder {\n\
+                 #[keeps(this)]\n\
+                 fn set(ref this, k: str) { this.s = k; }\n\
+                 fn drop(ref this) { return; }\n\
+             }\n\
+             struct Owner { n: i32 }\n\
+             impl Owner { fn drop(ref this) { return; } }\n\
+             fn view(o: Owner) -> str { return \"x\"; }\n\
+             fn main() -> i32 {\n\
+                 var o: Owner = Owner { n: 1 };\n\
+                 var h: Holder = Holder { s: \"\" };\n\
+                 h.set(view(o));\n\
+                 let v: i32 = o.n;\n\
+                 return v;\n\
+             }";
+        let codes = check_src(src);
+        assert!(
+            !codes.iter().any(|c| c == "E0383"),
+            "a stored view is a SHARED loan; reads of the owner stay legal; got {codes:?}"
+        );
     }
 
     #[test]
@@ -10061,8 +10343,18 @@ fn caller() {
     }
 
     #[test]
-    fn e0380_does_not_fire_on_two_mut_copy_args() {
-        // `ref x: i32` is local-mutability for Copy types, not a borrow.
+    fn e0380_fires_on_two_mut_copy_args() {
+        // This asserted the opposite until 2026-08-22, on the strength of
+        // memory-model.md §4's "for a Copy type, every mode passes by value".
+        // It does not. `ref a: i32` lowers to
+        //
+        //     define ... @takes_ref_scalar(ptr nonnull align 4 %0)
+        //
+        // — a pointer, which is the only way "writes reach the caller" can be
+        // true. So `modify_both(y, y)` hands the callee two aliasing
+        // exclusive pointers to one stack slot, exactly as it would for a
+        // non-Copy struct, and E0380 is the right answer for both. The doc
+        // paragraph has been corrected.
         let src = "\
 fn modify_both(ref a: i32, ref b: i32) { return; }
 fn caller() {
@@ -10072,8 +10364,28 @@ fn caller() {
 }";
         let codes = check_src(src);
         assert!(
-            !codes.iter().any(|c| c == "E0380"),
-            "E0380 should not fire on Copy bindings; got {codes:?}"
+            codes.iter().any(|c| c == "E0380"),
+            "`ref` is by-pointer for every type; got {codes:?}"
+        );
+    }
+
+    #[test]
+    fn take_of_a_copy_arg_still_carries_no_claim() {
+        // The other half of the correction, and the reason the Copy gate is
+        // kept for MOVE claims: `take` on a Copy type consumes nothing —
+        // the callee gets a copy — so naming one place in a `take` slot and
+        // a read slot is not a conflict. Only `ref` aliases.
+        let src = "\
+fn consume_and_read(take a: i32, b: i32) { return; }
+fn caller() {
+  let y: i32 = 1;
+  consume_and_read(y, y);
+  return;
+}";
+        let codes = check_src(src);
+        assert!(
+            codes.is_empty(),
+            "a Copy `take` is a copy, not a move; got {codes:?}"
         );
     }
 
@@ -10116,7 +10428,10 @@ fn caller() {
     }
 
     #[test]
-    fn e0381_does_not_fire_on_copy_binding() {
+    fn e0381_fires_on_copy_binding() {
+        // Same correction as `e0380_fires_on_two_mut_copy_args`: the `ref`
+        // slot is a pointer to `y`, and the sibling argument reads `y`
+        // through it while the callee may be writing.
         let src = "\
 fn write_thing(ref a: i32, n: i32) { return; }
 fn peek(x: i32) -> i32 { return x; }
@@ -10127,8 +10442,8 @@ fn caller() {
 }";
         let codes = check_src(src);
         assert!(
-            !codes.iter().any(|c| c == "E0381"),
-            "E0381 should not fire on Copy bindings; got {codes:?}"
+            codes.iter().any(|c| c == "E0381"),
+            "an exclusive Copy slot conflicts with a sibling read; got {codes:?}"
         );
     }
 
@@ -10375,10 +10690,29 @@ fn caller() {
     // ---- 2026-08-13 — NLL borrow ends: a borrow ends after the statement
     // (of its declaring block) containing its last mention, not at scope
     // exit. Relaxations are positive tests; the pins (loop / defer / block
-    // tail) keep the borrow live where a release would be unsound. ----
+    // tail) keep the borrow live where a release would be unsound.
+    //
+    // 2026-08-22 — DROP LIVENESS. The relaxation applies only to a borrower
+    // with NO destructor. A destructor is a use that happens after every
+    // textual mention, so releasing such a borrower at its last mention is
+    // unsound, and the three tests below used to assert exactly that: each
+    // borrows a `struct B` that declares `fn drop`, then moves or writes the
+    // owner while `B::drop` is still owed a run. `thread::Scope` is the case
+    // that made it matter — its `drop` JOINS the workers it lent to, so
+    // between the lend and the scope's end a worker is writing the lent
+    // place, and the parent could read, write and re-lend it freely because
+    // the scope was not mentioned again.
+    //
+    // `nll_view_borrower_without_a_destructor_still_relaxes` is the case the
+    // relaxation was built for and it is untouched: a `str` view of a `Text`
+    // owns nothing and drops nothing. ----
 
     #[test]
-    fn nll_move_after_borrowers_last_use_is_admitted() {
+    fn nll_move_under_a_borrower_with_a_destructor_is_rejected() {
+        // `r` borrows `x` and declares `fn drop`. Its destructor runs at the
+        // end of `caller`, AFTER the move — so `B::drop(r)` would run against
+        // storage `drain` has taken. The last textual mention of `r` is not
+        // its last use.
         let src = "\
 struct B { x: i32 }
 impl B { fn drop(ref this) { return; } }
@@ -10393,25 +10727,57 @@ fn caller() {
 }";
         let codes = check_src(src);
         assert!(
-            !codes.iter().any(|c| c == "E0372"),
-            "`r` is dead at the move — NLL must admit it; got {codes:?}"
+            codes.iter().any(|c| c == "E0372"),
+            "`r`'s destructor still has to run — the move must be refused; got {codes:?}"
         );
     }
 
     #[test]
-    fn nll_write_after_borrowers_last_use_is_admitted() {
+    fn nll_view_borrower_without_a_destructor_still_relaxes() {
+        // The case the relaxation exists for, and the one that must keep
+        // working: a `str` view owns nothing and drops nothing, so once it
+        // is dead the owner is free again. If drop-liveness ever widened to
+        // "any non-Copy borrower", this test is what would catch it.
+        let src = "\
+struct Owner { n: i32 }
+impl Owner { fn drop(ref this) { return; } }
+fn view(o: Owner) -> str { return \"x\"; }
+fn caller() {
+  var o: Owner = Owner { n: 1 };
+  let v: str = view(o);
+  let w: str = v;
+  o.n = 5;
+  return;
+}";
+        let codes = check_src(src);
+        assert!(
+            !codes.iter().any(|c| c == "E0381" || c == "E0383" || c == "E0372"),
+            "a dead view borrower must release its owner; got {codes:?}"
+        );
+    }
+
+    #[test]
+    fn nll_write_under_a_scope_that_has_not_joined_is_rejected() {
+        // The bug report's shape, and the sharpest instance of the rule:
+        // the scope is never mentioned after the lend, so under last-use
+        // release its loan on `d` was already gone and this write compiled.
+        // `Scope::drop` is what joins the worker — until it has run, the
+        // worker is still writing `d`.
         let codes = check_src(&format!(
             "{SCOPE_MOCK}\
              fn main() -> i32 {{\n                 var s: Scope = Scope {{ c: 0 }};\n                 var d: Data = Data {{ n: 1 }};\n                 s.lend(d);\n                 d.n = 5;\n                 return 0;\n             }}"
         ));
         assert!(
-            !codes.iter().any(|c| c == "E0381"),
-            "`s` is dead at the write — NLL must admit it; got {codes:?}"
+            codes.iter().any(|c| c == "E0381"),
+            "the loan ends where the scope does, not at its last mention; got {codes:?}"
         );
     }
 
     #[test]
-    fn nll_never_used_borrower_releases_immediately() {
+    fn a_never_used_borrower_with_a_destructor_still_holds_its_claim() {
+        // "Never mentioned again" is not "never used": `cur` has a
+        // destructor, so its claim on `v` is observable at exactly one point
+        // no source line names.
         let src = "\
 struct B { x: i32 }
 impl B { fn drop(ref this) { return; } }
@@ -10425,8 +10791,8 @@ fn caller() {
 }";
         let codes = check_src(src);
         assert!(
-            !codes.iter().any(|c| c == "E0372" || c == "E0383"),
-            "an unused borrower's claim was never observable; got {codes:?}"
+            codes.iter().any(|c| c == "E0372" || c == "E0383"),
+            "a borrower with a destructor is never dead early; got {codes:?}"
         );
     }
 

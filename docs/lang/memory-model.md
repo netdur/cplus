@@ -62,9 +62,24 @@ The default — a bare `x: T` — is a **read-only borrow**, not a move.
 | `ref x: T`     | by pointer | exclusive borrow     | still owned by caller | read and write through the pointer |
 | `take x: T`    | by value   | move (consumed)      | invalid               | own it, return it, store it |
 
-For a `Copy` type, every mode passes by value; the markers only affect whether
-the parameter is locally reassignable and (for `ref`) whether writes reach the
-caller. A bare `Copy` parameter is an ordinary by-value copy.
+For a `Copy` type, `x: T` and `take x: T` both pass by value: a bare `Copy`
+parameter is an ordinary by-value copy, and `take` on one consumes nothing,
+because a `Copy` value cannot be moved out of.
+
+`ref x: T` is the exception, and it is not a special case for `Copy` — it is
+the same rule the table above states. **`ref` passes by pointer for every
+type**, `Copy` included; that is what "writes reach the caller" means, and
+there is no other mechanism by which they could. So a `ref` argument is an
+exclusive borrow of the caller's place whatever the type is, and §5's rule
+applies to it unchanged: the same place may not be `ref`-ed twice in one call,
+nor `ref`-ed while something else borrows it.
+
+(This paragraph used to say every mode passes by value, then note that `ref`
+writes reach the caller — two claims that cannot both hold. The
+implementation had resolved it the first way for aliasing and the second way
+for codegen, so `thread::Scope` refused two lends of a `struct Cell { n: i64,
+t: Text }` and admitted two lends of a `struct Cell { n: i64 }`, which then
+raced. Fixed 2026-08-22.)
 
 ```cplus
 fn read(b: B)      -> i32 { return b.x; }                // shared borrow: read only

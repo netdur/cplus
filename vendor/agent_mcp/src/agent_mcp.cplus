@@ -50,6 +50,8 @@ import "stdlib/text" as text;
 import "stdlib/option" as option;
 import "stdlib/result" as result;
 import "stdlib/status" as status;
+import "stdlib/thread" as thread;
+import "stdlib/netsys" as netsys;
 import "json/json" as json;
 import "agent_core/backend" as backend;
 import "agent_core/identity" as identity;
@@ -175,10 +177,16 @@ fn verb_to_str(v: events::Verb) -> str {
 // because every frame came back zero), so the lean view now OMITS `frame` and
 // `class` instead of filling them with placeholders. Same rule as
 // `description` below: absent when there is nothing to say.
-fn node_to_json(p: *backend::UiNode, with_geometry: bool) -> json::Value {
-    let parent_val: json::Value = match { (*p).parent } {
-        option::Option[usize]::Some(pi) => jnum(pi as f64),
-        option::Option[usize]::None => json::Value::Null,
+// `parent_index` is the node's parent POSITION IN THIS ANSWER, or -1 for
+// none. It is not always the parent's position in the walked tree: under a
+// `prefix` filter the answer is a subset, and `parent` has to be renumbered
+// into it (see `describe_to_json`) or it would point at whatever node happens
+// to sit at that offset in a shorter array.
+fn node_to_json(p: *backend::UiNode, with_geometry: bool, parent_index: i64) -> json::Value {
+    let parent_val: json::Value = if parent_index < (0 as i64) {
+        json::Value::Null
+    } else {
+        jnum(parent_index as f64)
     };
 
     var m: vec::Vec[json::Member] = vec::new::[json::Member]();
@@ -241,16 +249,110 @@ fn node_to_json(p: *backend::UiNode, with_geometry: bool) -> json::Value {
     return json::Value::Object(m);
 }
 
-// The whole describe_ui snapshot as a JSON array of node objects.
-fn describe_to_json(nodes: vec::Vec[backend::UiNode], with_geometry: bool) -> json::Value {
+// This node's parent index in the walked tree, or None for the window root.
+fn parent_of(nodes: vec::Vec[backend::UiNode], i: usize) -> option::Option[usize] {
+    return match nodes.at_ptr(i) {
+        option::Option[*backend::UiNode]::Some(p) => { (*p).parent }
+        option::Option[*backend::UiNode]::None => option::Option[usize]::None,
+    };
+}
+
+// Does this node's key match the filter? An empty prefix matches everything,
+// which is what makes the parameter optional and the default unchanged.
+fn node_matches(nodes: vec::Vec[backend::UiNode], i: usize, prefix: str) -> bool {
+    if prefix == "" { return true; }
+    return match nodes.at_ptr(i) {
+        option::Option[*backend::UiNode]::Some(p) => {
+            let idp: *text::Text = { #addr_of((*p).id) };
+            { (*idp).view() }.has_prefix(prefix)
+        }
+        option::Option[*backend::UiNode]::None => false,
+    };
+}
+
+// Where each walked node lands in the filtered answer: its new index, or -1
+// when the filter drops it.
+fn filtered_positions(nodes: vec::Vec[backend::UiNode], prefix: str) -> vec::Vec[i64] {
+    var out: vec::Vec[i64] = vec::new::[i64]();
+    var next: i64 = 0 as i64;
+    var i: usize = 0 as usize;
+    while i < nodes.count() {
+        if node_matches(nodes, i, prefix) {
+            let _s: status::Status = out.append(next);
+            next = next +% (1 as i64);
+        } else {
+            let _s: status::Status = out.append((0 as i64) -% (1 as i64));
+        }
+        i = i +% (1 as usize);
+    }
+    return out;
+}
+
+// The nearest ancestor of `start` that survived the filter, as its index in
+// the ANSWER; -1 when no ancestor did. Walking up rather than giving up at
+// the immediate parent keeps the subset a tree: a match whose parent was
+// dropped re-attaches to the nearest match above it, and only a node with no
+// surviving ancestor at all comes back parentless.
+fn kept_parent_index(
+    nodes: vec::Vec[backend::UiNode],
+    pos: vec::Vec[i64],
+    start: usize,
+) -> i64 {
+    var cur: option::Option[usize] = parent_of(nodes, start);
+    loop {
+        match cur {
+            option::Option[usize]::Some(pi) => {
+                match pos.at(pi) {
+                    option::Option[i64]::Some(np) => {
+                        if np >= (0 as i64) { return np; }
+                    }
+                    option::Option[i64]::None => { return (0 as i64) -% (1 as i64); }
+                }
+                cur = parent_of(nodes, pi);
+            }
+            option::Option[usize]::None => { return (0 as i64) -% (1 as i64); }
+        }
+    }
+}
+
+// The describe_ui snapshot as a JSON array of node objects, optionally
+// narrowed to the nodes whose key starts with `prefix`.
+//
+// WHY THE FILTER IS HERE and not in the client: the caller's cost is the
+// payload, not the walk. A whole-tree answer against a real application is
+// tens of thousands of characters — enough that an agent harness refuses it
+// outright — spent whether the question was "what is on screen" or "is there
+// a `board:detail:*` node". Filtering after the fact means receiving it
+// first, which is the cost itself. An agent that notices will go around the
+// verb instead, and one did, taking an IDE and the app under test with it
+// (demo/bugs/04-describe-verbs-cannot-be-scoped.md).
+//
+// This narrows an ALREADY-PERMITTED read; it is not a permission gate. Every
+// node here passed the same grant checks it would have without a prefix, so
+// nothing becomes readable that was not, and nothing off-screen becomes
+// reachable. What changes is how much of the answer crosses the wire.
+fn describe_to_json(
+    nodes: vec::Vec[backend::UiNode],
+    with_geometry: bool,
+    prefix: str,
+) -> json::Value {
+    let pos: vec::Vec[i64] = filtered_positions(nodes, prefix);
     var arr: vec::Vec[json::Value] = vec::new::[json::Value]();
     var i: usize = 0 as usize;
     while i < nodes.count() {
-        match nodes.at_ptr(i) {
-            option::Option[*backend::UiNode]::Some(p) => {
-                arr.append(node_to_json(p, with_geometry));
+        var keep: bool = false;
+        match pos.at(i) {
+            option::Option[i64]::Some(np) => { if np >= (0 as i64) { keep = true; } }
+            option::Option[i64]::None => {}
+        }
+        if keep {
+            match nodes.at_ptr(i) {
+                option::Option[*backend::UiNode]::Some(p) => {
+                    let pidx: i64 = kept_parent_index(nodes, pos, i);
+                    let _s: status::Status = arr.append(node_to_json(p, with_geometry, pidx));
+                }
+                option::Option[*backend::UiNode]::None => {}
             }
-            option::Option[*backend::UiNode]::None => {}
         }
         i = i +% (1 as usize);
     }
@@ -260,6 +362,28 @@ fn describe_to_json(nodes: vec::Vec[backend::UiNode], with_geometry: bool) -> js
 fn outcome_result(o: surface::Outcome) -> json::Value {
     var m: vec::Vec[json::Member] = vec::new::[json::Member]();
     m.append(member("outcome", jstr(outcome_to_str(o))));
+    return json::Value::Object(m);
+}
+
+// The same answer, plus — on `not_found` — WHERE TO LOOK NEXT.
+//
+// `{"outcome":"not_found"}` alone is a dead end. It says the id is not here
+// and nothing about where "here" is, so the two things that actually produce
+// it are indistinguishable: an id that has gone stale, and an agent driving
+// the wrong application entirely. The second is the expensive one — the verb
+// answers a well-formed no, the agent believes the UI it is looking at, and
+// the round trips that follow are all spent against the wrong process. It is
+// worth a sentence, because a hint on the failure arrives exactly when it is
+// needed and costs nothing on the success path (see
+// demo/bugs/06-agent-facing-docs-omit-what-costs-agents-time.md, A.2).
+fn outcome_result_for(o: surface::Outcome, target: str) -> json::Value {
+    var m: vec::Vec[json::Member] = vec::new::[json::Member]();
+    m.append(member("outcome", jstr(outcome_to_str(o))));
+    if surface::outcome_eq(o, surface::Outcome::NotFound) {
+        let hint: text::Text =
+            "no node \"${target}\" in the UI of the application serving this endpoint. Re-read describe_ui — ids change as the UI does — and note that an app launched BY this one has its own agent endpoint: this one only ever answers for its own UI.";
+        m.append(member("hint", jstr({ hint.view() })));
+    }
     return json::Value::Object(m);
 }
 
@@ -413,8 +537,10 @@ fn core_tools() -> vec::Vec[json::Value] {
     var p_describe: vec::Vec[json::Member] = no_props();
     p_describe.append(prop("mode", "string",
         "\"exposed\" (default) is the curated set the developer chose to expose — small and high-signal. \"full\" is the whole walked tree including auto-keyed structural nodes, and is a superset."));
+    p_describe.append(prop("prefix", "string",
+        "Answer only with nodes whose id starts with this, e.g. \"board:detail:\". Absent means the whole view. Use it: a whole-tree answer runs to tens of thousands of characters, and the id path is a path, so the question you are asking almost always has a prefix."));
     out.append(tool("describe_ui",
-        "The live UI as a flat list of nodes: id, role, text, hidden, actionable, clickable, parent. Read this FIRST — a node's id is its address for every other verb, and the id path is the application's schema.",
+        "The live UI of THE APPLICATION SERVING THIS ENDPOINT, as a flat list of nodes: id, role, text, hidden, actionable, clickable, parent. If that application launched another one, the launched app has its own endpoint and does NOT appear here. Read this FIRST — a node's id is its address for every other verb, and the id path is the schema. Pass \"prefix\" to ask about one part of it.",
         p_describe, no_required()));
 
     var p_click: vec::Vec[json::Member] = no_props();
@@ -751,16 +877,23 @@ fn dispatch_verb(
         // default) is the curated developer-exposed set — small, high-signal;
         // "full" is the whole walked tree incl. auto-keyed structural nodes.
         let mode: text::Text = val_as_text(obj_get(params, "mode"));
+        // ...and how much of it to send. `prefix` narrows the answer to the
+        // keys under one path — the shape agents actually ask in, because the
+        // key path IS the schema. Absent or "" means the whole view, exactly
+        // as before.
+        let prefix: text::Text = val_as_text(obj_get(params, "prefix"));
         if { mode.view() } == "full" {
-            return ok_response(id, describe_to_json((vt.describe)(surf, grant), true));
+            return ok_response(id,
+                describe_to_json((vt.describe)(surf, grant), true, { prefix.view() }));
         }
-        return ok_response(id, describe_to_json((vt.describe_exposed)(surf, grant), false));
+        return ok_response(id,
+            describe_to_json((vt.describe_exposed)(surf, grant), false, { prefix.view() }));
     }
     if method == "click" {
         if !params.has("id") { return missing_param(id, "click", "id"); }
         let target: text::Text = val_as_text(obj_get(params, "id"));
         let o: surface::Outcome = (vt.click)(surf, grant, { target });
-        return ok_response(id, outcome_result(o));
+        return ok_response(id, outcome_result_for(o, { target.view() }));
     }
     if method == "hit_test" {
         if !params.has("id") { return missing_param(id, "hit_test", "id"); }
@@ -778,7 +911,7 @@ fn dispatch_verb(
         let at: u64 = val_as_number(obj_get(params, "at")) as u64;
         let len: u64 = val_as_number(obj_get(params, "length")) as u64;
         let o: surface::Outcome = (vt.set_caret)(surf, grant, { target }, at, len);
-        return ok_response(id, outcome_result(o));
+        return ok_response(id, outcome_result_for(o, { target.view() }));
     }
     // READ BACK WHAT IS DRAWN — one run per stretch of uniform attributes.
     if method == "read_runs" {
@@ -792,13 +925,13 @@ fn dispatch_verb(
         if !params.has("path") { return missing_param(id, "invoke_menu", "path"); }
         let path: text::Text = val_as_text(obj_get(params, "path"));
         let o: surface::Outcome = (vt.invoke_menu)(surf, grant, { path });
-        return ok_response(id, outcome_result(o));
+        return ok_response(id, outcome_result_for(o, { path.view() }));
     }
     if method == "scroll_to" {
         if !params.has("id") { return missing_param(id, "scroll_to", "id"); }
         let target: text::Text = val_as_text(obj_get(params, "id"));
         let o: surface::Outcome = (vt.navigate)(surf, grant, { target });
-        return ok_response(id, outcome_result(o));
+        return ok_response(id, outcome_result_for(o, { target.view() }));
     }
     if method == "set_text" {
         if !params.has("id") { return missing_param(id, "set_text", "id"); }
@@ -807,7 +940,7 @@ fn dispatch_verb(
         let value: text::Text = val_as_text(obj_get(params, "value"));
         let base: u64 = val_as_number(obj_get(params, "base_version")) as u64;
         let o: surface::Outcome = (vt.set_text)(surf, grant, { target }, { value }, base);
-        return ok_response(id, outcome_result(o));
+        return ok_response(id, outcome_result_for(o, { target.view() }));
     }
     if method == "poll_event" {
         let ev: option::Option[events::Event] = sub.poll();
@@ -990,8 +1123,12 @@ fn current_pid() -> i32 {
 }
 
 // Read one newline-terminated line into `buf` (without the newline). Returns the
-// byte length, or -1 on EOF before any byte was read. A line longer than `cap`
-// is truncated at `cap`.
+// byte length, -1 on EOF before any byte was read, or -2 when this thread was
+// CANCELLED (`JoinHandle::cancel`) — the fix for the report's "a worker parked
+// in read_line on a socket nobody will write to again is parked for the life
+// of the process". A line longer than `cap` is truncated at `cap`. A partial
+// line at the moment of cancellation is discarded: the server is shutting
+// down, not answering.
 fn read_line(fd: i32, buf_ptr: *u8, cap: usize) -> i64 {
     var n: usize = 0 as usize;
     loop {
@@ -999,8 +1136,18 @@ fn read_line(fd: i32, buf_ptr: *u8, cap: usize) -> i64 {
             break;
         }
         var byte: u8 = 0 as u8;
+        if thread::park_begin() {
+            thread::park_end();
+            return - 2 as i64;
+        }
         let r: i64 = { read(fd, #addr_of(byte), 1 as usize) };
+        thread::park_end();
         if r <= (0 as i64) {
+            if r < (0 as i64) {
+                if netsys::errno() == netsys::eintr() {
+                    continue;               // the loop's park_begin re-checks
+                }
+            }
             if n == (0 as usize) {
                 return - 1 as i64;
             }
@@ -1015,11 +1162,20 @@ fn read_line(fd: i32, buf_ptr: *u8, cap: usize) -> i64 {
     return n as i64;
 }
 
+// Writes go through `netsys::send_fd`, not bare `write`: on Linux that is
+// `send(..., MSG_NOSIGNAL)`, which is the only way to keep a dead peer from
+// raising SIGPIPE there (Darwin's socket-scoped `SO_NOSIGPIPE` is set on the
+// connection instead — see `serve_fd`). Between the two, a client that
+// vanishes mid-response ends this write with an error rather than ending the
+// process.
 fn write_all(fd: i32, ptr: *u8, len: usize) {
     var off: usize = 0 as usize;
     while off < len {
-        let w: i64 = { write(fd, ptr + off, len -% off) };
-        if w <= (0 as i64) {
+        let w: isize = { netsys::send_fd(fd, ptr + off, len -% off) };
+        if w <= (0 as isize) {
+            if w < (0 as isize) {
+                if netsys::errno() == netsys::eintr() { continue; }
+            }
             return;
         }
         off = off +% (w as usize);
@@ -1029,7 +1185,8 @@ fn write_all(fd: i32, ptr: *u8, len: usize) {
 
 // Serve one connected stream socket: read requests line by line, dispatch each
 // (re-arming a fresh gate from `policy` per request), and write the response
-// line, until the peer closes (EOF). The connection fd is the caller's to close.
+// line, until the peer closes (EOF) or this thread is cancelled. The
+// connection fd is the caller's to close. Returns 0 on EOF, 1 on cancellation.
 fn serve_fd(
     surf: *u8,
     vt: backend::Backend,
@@ -1037,6 +1194,10 @@ fn serve_fd(
     policy: fn(auth::Request) -> auth::Grant,
     fd: i32,
 ) -> i32 {
+    // Belt and braces with the accept loops: a caller handing us an fd
+    // directly gets the same protection from a peer that goes away
+    // (netsys::set_nosigpipe — a no-op on a non-socket fd).
+    let _np: i32 = netsys::set_nosigpipe(fd);
     // A NEW CONNECTION IS A NEW CALLER. Without this, a second agent inherits
     // the first's self-reported name — and therefore whatever the user decided
     // about the first.
@@ -1044,6 +1205,9 @@ fn serve_fd(
     var buf: [u8; 8192] = [0 as u8; 8192];
     loop {
         let len: i64 = read_line(fd, { #addr_of(buf[0]) }, 8192 as usize);
+        if len == (- 2 as i64) {
+            return 1;                       // cancelled — the caller stops accepting
+        }
         if len < (0 as i64) {
             break;
         }
@@ -1091,12 +1255,28 @@ fn serve_uds(
         return - 3 as i32;
     }
     loop {
+        if thread::park_begin() {
+            thread::park_end();
+            break;                          // cancelled while about to accept
+        }
         let conn: i32 = { accept(fd, 0 as *u8, 0 as *u32) };
+        thread::park_end();
         if conn < (0 as i32) {
+            if netsys::errno() == netsys::eintr() { continue; }
             break;
         }
-        serve_fd(surf, vt, sub, policy, conn);
+        // A CLIENT GOING AWAY MUST NOT KILL THE SERVER. Without this, a
+        // write to a disconnected client raises SIGPIPE, whose default
+        // disposition terminates the process — no crash report, no log, the
+        // whole application gone because an agent pressed ^C on a `nc`.
+        // See netsys::set_nosigpipe and
+        // demo/bugs/02-iris-terminated-without-crash-report.md.
+        let _np: i32 = netsys::set_nosigpipe(conn);
+        let served: i32 = serve_fd(surf, vt, sub, policy, conn);
         { close(conn); }
+        if served == (1 as i32) {
+            break;                          // cancelled mid-connection
+        }
     }
     { close(fd); }
     unlink_bound_socket();
@@ -1174,10 +1354,28 @@ fn serve_tcp(
     let fd: i32 = bind_tcp(port);
     if fd < (0 as i32) { return fd; }
     loop {
+        if thread::park_begin() {
+            thread::park_end();
+            break;                          // cancelled while about to accept
+        }
         let conn: i32 = { accept(fd, 0 as *u8, 0 as *u32) };
-        if conn < (0 as i32) { break; }
-        serve_fd(surf, vt, sub, policy, conn);
+        thread::park_end();
+        if conn < (0 as i32) {
+            if netsys::errno() == netsys::eintr() { continue; }
+            break;
+        }
+        // A CLIENT GOING AWAY MUST NOT KILL THE SERVER. Without this, a
+        // write to a disconnected client raises SIGPIPE, whose default
+        // disposition terminates the process — no crash report, no log, the
+        // whole application gone because an agent pressed ^C on a `nc`.
+        // See netsys::set_nosigpipe and
+        // demo/bugs/02-iris-terminated-without-crash-report.md.
+        let _np: i32 = netsys::set_nosigpipe(conn);
+        let served: i32 = serve_fd(surf, vt, sub, policy, conn);
         { close(conn); }
+        if served == (1 as i32) {
+            break;                          // cancelled mid-connection
+        }
     }
     { close(fd); }
     return 0;
@@ -2191,4 +2389,197 @@ fn an_extension_namespace_is_told_which_capabilities_the_caller_has() {
     assert builder.contains("\"may_edit_tree\":true");
     disarm_extension();
     return;
+}
+
+// ---- cancellation of the transport parks -------------------------------------
+
+extern fn pipe(fds: *i32) -> i32;
+extern fn usleep(us: u32) -> i32;
+
+// Parks in read_line on a pipe nobody writes — the exact shape the
+// cancellation report filed against this package ("a worker parked in
+// read_line on a socket nobody will write to again is parked for the life
+// of the process"). Only `JoinHandle::cancel` ends it; 11 is the cancel path.
+fn _read_line_until_cancelled(take rfd: i64) -> i64 {
+    var buf: [u8; 64] = [0 as u8; 64];
+    let len: i64 = read_line(rfd as i32, { #addr_of(buf[0]) }, 64 as usize);
+    if len == (- 2 as i64) { return 11 as i64; }
+    return len;
+}
+
+#[test]
+fn read_line_reports_cancellation_instead_of_parking_forever() {
+    var fds: [i32; 2] = [0, 0];
+    assert { pipe(#addr_of(fds[0])) } == 0;
+    let h: thread::JoinHandle[i64] =
+        thread::spawn_with::[i64, i64](fds[0] as i64, _read_line_until_cancelled);
+    usleep(3000 as u32);
+    h.cancel();
+    assert h.join() == (11 as i64);
+    { close(fds[0]); }
+    { close(fds[1]); }
+    return;
+}
+
+extern fn socketpair(domain: i32, ty: i32, proto: i32, fds: *i32) -> i32;
+
+// A client that goes away mid-response must not take the SERVER with it.
+// `write_all` is the response path; with the peer closed it has to return
+// having written nothing, leaving this process alive to serve the next
+// client. Before the fix this raised SIGPIPE and terminated the host
+// application silently — no crash report, buffered output lost — which is
+// how an IDE and the app under test were both lost to one `pkill` of a
+// stray `nc` (demo/bugs/02-iris-terminated-without-crash-report.md).
+//
+// Self-proving: a regression KILLS this test process rather than failing an
+// assertion, and the suite reports the signal.
+#[test]
+fn write_all_to_a_departed_client_does_not_kill_the_server() {
+    var fds: [i32; 2] = [0, 0];
+    assert { socketpair(1 as i32, 1 as i32, 0 as i32, #addr_of(fds[0])) } == 0;
+    let _np: i32 = netsys::set_nosigpipe(fds[0]);
+    { close(fds[1]); }                          // the client disconnects
+    var buf: [u8; 16] = [65 as u8; 16];
+    var i: i32 = 0;
+    while i < 4 {
+        write_all(fds[0], { #addr_of(buf[0]) }, 16 as usize);
+        i = i +% 1;
+    }
+    { close(fds[0]); }
+    assert true;                                // reached = we survived
+    return;
+}
+
+// ---- describe_ui `prefix` (demo/bugs/04-describe-verbs-cannot-be-scoped) -----
+
+fn fake_child_node(id: str, parent: usize) -> backend::UiNode {
+    var n: backend::UiNode = fake_node(id);
+    n.parent = option::Option[usize]::Some(parent);
+    return n;
+}
+
+// A tree with real depth, so the `parent` renumbering has something to get
+// wrong: window > board > (col:1 > card:1), (detail:3 > detail:title).
+fn nested_describe(p: *u8, grant: auth::Grant) -> vec::Vec[backend::UiNode] {
+    var out: vec::Vec[backend::UiNode] = vec::new::[backend::UiNode]();
+    out.append(fake_node("window"));                          // 0
+    out.append(fake_child_node("board", 0 as usize));         // 1
+    out.append(fake_child_node("board:col:1", 1 as usize));   // 2
+    out.append(fake_child_node("board:card:1", 2 as usize));  // 3
+    out.append(fake_child_node("board:detail:3", 1 as usize));        // 4
+    out.append(fake_child_node("board:detail:title", 4 as usize));    // 5
+    return out;
+}
+
+fn nested_backend() -> backend::Backend {
+    var b: backend::Backend = fake_backend();
+    b.describe = nested_describe;
+    b.describe_exposed = nested_describe;
+    return b;
+}
+
+#[test]
+fn describe_ui_prefix_narrows_the_answer() {
+    // The question that started the incident: "is there a board:detail:* node,
+    // and what is its id?" — asked without paying for the whole tree.
+    var sub: events::Subscriber = events::subscriber(events::everything(), 4 as usize);
+    let surf: *u8 = #addr_of(FAKE_SURF) as *u8;
+    let scoped: text::Text = handle_request(surf, nested_backend(), sub, auth::serve(allow_all),
+        "{\"method\":\"describe_ui\",\"params\":{\"prefix\":\"board:detail:\"},\"id\":1}");
+    assert scoped.contains("board:detail:3");
+    assert scoped.contains("board:detail:title");
+    // Everything outside the prefix is gone — including the ancestors, which is
+    // the entire point: they are what makes the whole-tree answer expensive.
+    assert scoped.contains("board:col:1") == false;
+    assert scoped.contains("board:card:1") == false;
+    assert scoped.contains("\"window\"") == false;
+}
+
+#[test]
+fn describe_ui_without_a_prefix_is_unchanged() {
+    // The parameter is optional and the default answer must not move.
+    var sub: events::Subscriber = events::subscriber(events::everything(), 4 as usize);
+    let surf: *u8 = #addr_of(FAKE_SURF) as *u8;
+    let all: text::Text = handle_request(surf, nested_backend(), sub, auth::serve(allow_all),
+        "{\"method\":\"describe_ui\",\"id\":1}");
+    assert all.contains("window");
+    assert all.contains("board:col:1");
+    assert all.contains("board:detail:title");
+    // An explicit empty prefix means the same thing as none.
+    let empty: text::Text = handle_request(surf, nested_backend(), sub, auth::serve(allow_all),
+        "{\"method\":\"describe_ui\",\"params\":{\"prefix\":\"\"},\"id\":2}");
+    assert empty.contains("window");
+    assert empty.contains("board:col:1");
+}
+
+#[test]
+fn a_filtered_answer_renumbers_parent_into_itself() {
+    // `parent` is an INDEX INTO THE ANSWER. Filtering shortens the array, so
+    // carrying the walked tree's indices through would point each node at
+    // whatever now sits at that offset — a wrong parent, silently, which is
+    // worse than no parent at all.
+    //
+    // Here `board:detail:3` (walked index 4) and `board:detail:title` (5) come
+    // back as 0 and 1. The title's parent must be 0 — the detail node's new
+    // position — and the detail node, whose own parent `board` was filtered
+    // out, must come back parentless rather than pointing at index 1.
+    var sub: events::Subscriber = events::subscriber(events::everything(), 4 as usize);
+    let surf: *u8 = #addr_of(FAKE_SURF) as *u8;
+    let scoped: text::Text = handle_request(surf, nested_backend(), sub, auth::serve(allow_all),
+        "{\"method\":\"describe_ui\",\"params\":{\"prefix\":\"board:detail:\"},\"id\":1}");
+    assert scoped.contains("\"parent\":null");
+    assert scoped.contains("\"parent\":0");
+    // 4 and 5 were the WALKED indices; neither may survive into a 2-node answer.
+    assert scoped.contains("\"parent\":4") == false;
+    assert scoped.contains("\"parent\":5") == false;
+}
+
+#[test]
+fn a_deeper_match_reattaches_to_the_nearest_surviving_ancestor() {
+    // `board:` keeps the board and everything under it but drops `window`.
+    // The board's parent is gone, so it comes back parentless; its children
+    // keep pointing at it through its NEW index.
+    var sub: events::Subscriber = events::subscriber(events::everything(), 4 as usize);
+    let surf: *u8 = #addr_of(FAKE_SURF) as *u8;
+    let scoped: text::Text = handle_request(surf, nested_backend(), sub, auth::serve(allow_all),
+        "{\"method\":\"describe_ui\",\"params\":{\"prefix\":\"board\"},\"id\":1}");
+    assert scoped.contains("\"window\"") == false;
+    assert scoped.contains("board:card:1");
+    // board=0, col:1=1, card:1=2, detail:3=3, detail:title=4.
+    assert scoped.contains("\"parent\":null");   // board itself
+    assert scoped.contains("\"parent\":1");      // card under col
+    assert scoped.contains("\"parent\":3");      // title under detail
+}
+
+#[test]
+fn the_prefix_parameter_is_advertised() {
+    // A parameter no client is told about is a parameter no client uses, and
+    // this one exists precisely because agents were reaching for workarounds.
+    var sub: events::Subscriber = events::subscriber(events::everything(), 4 as usize);
+    let surf: *u8 = #addr_of(FAKE_SURF) as *u8;
+    let tools: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(allow_all),
+        "{\"method\":\"tools/list\",\"id\":1}");
+    assert tools.contains("prefix");
+    // And it says whose UI it answers for — the confusion that cost an agent
+    // its first three calls (06 A.1).
+    assert tools.contains("APPLICATION SERVING THIS ENDPOINT");
+}
+
+#[test]
+fn not_found_carries_a_hint_pointing_somewhere() {
+    // `{"outcome":"not_found"}` alone is a dead end; the two causes it conflates
+    // (a stale id, and driving the wrong application) need different next moves.
+    var sub: events::Subscriber = events::subscriber(events::everything(), 4 as usize);
+    let surf: *u8 = #addr_of(FAKE_SURF) as *u8;
+    let miss: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(allow_all),
+        "{\"method\":\"invoke_menu\",\"params\":{\"path\":\"File/Nope\"},\"id\":1}");
+    assert miss.contains("not_found");
+    assert miss.contains("hint");
+    assert miss.contains("File/Nope");           // names what was not found
+    assert miss.contains("own agent endpoint");  // and where else to look
+    // The hint rides the failure only — a success carries no such freight.
+    let hit: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(allow_all),
+        "{\"method\":\"invoke_menu\",\"params\":{\"path\":\"File/Save\"},\"id\":2}");
+    assert hit.contains("allowed");
+    assert hit.contains("hint") == false;
 }

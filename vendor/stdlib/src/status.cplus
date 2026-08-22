@@ -30,6 +30,15 @@ enum Status {
     // (e.g. `Rc::with_mut` / `Arc::with_mut` on a handle whose strong count
     // is above one). Other references exist; no change.
     Shared,
+    // The calling thread's work was asked to stop (`JoinHandle::cancel`,
+    // observed via `thread::cancelled()` or a cancellable blocking call —
+    // see stdlib/thread.cplus). The operation gave up cleanly before its
+    // effect; the receiver is unchanged and valid. Cancellation is a
+    // REQUEST: reporting it, finishing anyway, or checking again later are
+    // all legitimate responses — but a blocking call that returns this has
+    // already un-parked and will keep returning it until the flag owner
+    // joins the thread.
+    Cancelled,
 }
 
 impl Status {

@@ -29,22 +29,71 @@
 // v0.0.4 Phase 2 Slice 2H: JoinHandle::drop switches from blocking
 // pthread_join to true fire-and-forget pthread_detach. Safety is
 // preserved by a refcounted ctx (codegen-side layout: u64 refcount @0,
-// fn_ptr @8, result @16, [optional input @16+sizeof(O)]). Parent's
-// drop atomically decrements; worker's trampoline also decrements
-// after writing the result; whichever thread observes the prev==1
-// transition frees the ctx. pthread_detach tells the OS to reclaim
-// the thread's kernel resources whenever it exits.
+// fn_ptr @8, cancel block @16, result @64, [optional input after the
+// result slot]). Parent's drop atomically decrements; worker's
+// trampoline also decrements after writing the result; whichever
+// thread observes the prev==1 transition frees the ctx. pthread_detach
+// tells the OS to reclaim the thread's kernel resources whenever it
+// exits.
+//
+// v0.0.29 CANCELLATION. Every spawned worker carries a 48-byte CANCEL
+// BLOCK inside its ctx (offset 16; layout below), and the codegen
+// trampoline points the per-thread `@__cplus_cancel_slot` TLS at it for
+// the worker's whole run. That makes the token AMBIENT: no worker
+// signature carries it, `thread::cancelled()` reads it from anywhere in
+// the worker's call tree, and the blocking stdlib calls observe it
+// through the park protocol below.
+//
+// Cancel block layout (offsets relative to the record = ctx+16; this
+// mirrors codegen.rs `TrampolineSpec` and the two must agree):
+//   +0:  flag       u64   1 = cancellation requested   (canceller writes)
+//   +8:  parked     u64   1 = worker inside a cancellable park (worker)
+//   +16: verb_lock  u64   spinlock guarding the verb pointers
+//   +24: verb_cond  *u8   published condvar wake verb, or null
+//   +32: verb_mutex *u8   the mutex that condvar park waits under
+//   +40: reserved   u64
+//
+// The protocol (measured in playground/cancel_spike, 2026-08-22, and in
+// bugs/there-is-no-way-to-cancel-anything.md):
+//   - `JoinHandle::cancel` is a REQUEST, never a kill: it sets the flag,
+//     then kicks the worker out of its CURRENT park — SIGURG for syscall
+//     parks (read/kevent return EINTR; stdlib owns SIGURG and installs a
+//     no-op handler with SA_RESTART stripped), and the published condvar
+//     verb (broadcast under its mutex) for condvar parks. The kick loop
+//     ends when the worker leaves the park; a worker that is not parked
+//     needs no kick and observes the flag at its next check.
+//   - The worker runs its drops and `defer`s and RETURNS on the ordinary
+//     path; `join` still waits for that. Cancellation cannot skip a drop.
+//   - LOCK ORDER RULE: a thread holding a mutex it published as a wake
+//     verb must not call `park_begin*`/`park_end` (they take the verb
+//     spinlock, which a canceller holds while locking that same mutex).
+//     Publish BEFORE locking, unpark AFTER unlocking; `cancelled()` is a
+//     bare atomic load and is safe anywhere, including under the mutex.
 
 import "./atomic" as atomic;
 import "./vec" as vec;
 import "./option" as option;
 import "./status" as status;
+import "./netsys" as netsys;
 
 extern fn pthread_create(tid: *u64, attr: *u8, start: fn(*u8) -> *u8, arg: *u8) -> i32;
 extern fn pthread_join(tid: u64, retval: *u8) -> i32;
 extern fn pthread_detach(tid: u64) -> i32;
+extern fn pthread_kill(tid: u64, sig: i32) -> i32;
+extern fn pthread_mutex_lock(m: *u8) -> i32;
+extern fn pthread_mutex_unlock(m: *u8) -> i32;
+extern fn pthread_cond_broadcast(c: *u8) -> i32;
+extern fn signal(sig: i32, handler: fn(i32)) -> *u8;
+extern fn siginterrupt(sig: i32, flag: i32) -> i32;
+extern fn usleep(us: u32) -> i32;
 extern fn malloc(n: usize) -> *u8;
 extern fn free(p: *u8);
+
+// The per-thread cancel slot, emitted linkonce_odr by codegen in every
+// module and coalesced to one per image; the spawn trampolines point it at
+// the worker ctx's cancel block. Reached as `#cancel_get_slot()`.
+#[runtime_abi]
+extern fn __cplus_cancel_get_slot() -> *u8;
 
 // `#[lang("join_handle")]` designates the type `#thread_spawn` returns — see
 // the note on `Option` in stdlib/option.cplus for why a name match is not
@@ -107,6 +156,56 @@ impl JoinHandle[O] {
         return { #thread_join::[O](this) };
     }
 
+    // True when the worker has finished: its result is written and its side
+    // of the ctx released, so `join` will return without blocking. The
+    // refcount drops to 1 (the parent's ref alone) exactly then; Acquire
+    // pairs with the worker trampoline's release decrement, making the
+    // result bytes visible to this thread. The async bridge
+    // (`executor::join_worker`) polls this.
+    fn is_finished(this) -> bool {
+        let refct: *u64 = { this._ctx as *u64 };
+        return atomic::load_u64(refct, atomic::Ordering::Acquire) == (1 as u64);
+    }
+
+    // Ask the worker to stop. A REQUEST, never a kill: the worker observes
+    // it at its next `thread::cancelled()` check or cancellable blocking
+    // call, runs its drops and `defer`s, and returns on the ordinary path —
+    // `join` still waits for that and still returns the worker's value.
+    // Idempotent; does not consume the handle; never blocks longer than it
+    // takes the worker to leave its CURRENT park (the kick loop below
+    // forces that, and a worker that is not parked needs no kick at all).
+    fn cancel(this) {
+        _cancel_runtime_init();
+        let rec: *u8 = { this._ctx + (16 as usize) };
+        atomic::store_u64(rec as *u64, 1 as u64, atomic::Ordering::SeqCst);
+        loop {
+            let pp: *u64 = { (rec + _c_off_parked()) as *u64 };
+            let parked: u64 = atomic::load_u64(pp, atomic::Ordering::SeqCst);
+            if parked == (0 as u64) { return; }
+            // Syscall parks: a signal until one lands DURING the park and
+            // forces EINTR (one landing before is consumed by the no-op
+            // handler — hence the loop; measured cost 1 kick, 2 worst).
+            pthread_kill(this._tid, _cancel_signal());
+            // Condvar parks: broadcast the published verb under its mutex.
+            // Holding the verb spinlock across the broadcast is what makes
+            // `park_end`'s clear a hard barrier — after it returns, this
+            // canceller cannot be touching the condvar (lock order rule:
+            // the worker never takes the spinlock while holding `m`).
+            _verb_lock(rec);
+            let cp: **u8 = { (rec + _c_off_verb_cond()) as **u8 };
+            let c: *u8 = { *cp };
+            if c.is_not_null() {
+                let mp: **u8 = { (rec + _c_off_verb_mutex()) as **u8 };
+                let m: *u8 = { *mp };
+                pthread_mutex_lock(m);
+                pthread_cond_broadcast(c);
+                pthread_mutex_unlock(m);
+            }
+            _verb_unlock(rec);
+            usleep(50 as u32);
+        }
+    }
+
     // Drop an un-joined handle: detach the worker from the OS (so its
     // kernel resources get reaped when it eventually exits), then
     // atomically decrement the ctx refcount. If we were the last
@@ -130,6 +229,151 @@ impl JoinHandle[O] {
         }
         return;
     }
+}
+
+// ═══════════════════════════ cancellation ═══════════════════════════
+//
+// See the header comment for the record layout, the protocol, and the lock
+// order rule. Everything here is offset arithmetic over the record the
+// trampoline installed in this thread's cancel slot; a thread with no slot
+// (the main thread, a `Scope::lend` worker, a foreign thread) reads null
+// and every entry point below degrades to a no-op.
+
+// Record offsets — keep in sync with the header comment and codegen.rs.
+fn _c_off_parked() -> usize { return 8 as usize; }
+fn _c_off_verb_lock() -> usize { return 16 as usize; }
+fn _c_off_verb_cond() -> usize { return 24 as usize; }
+fn _c_off_verb_mutex() -> usize { return 32 as usize; }
+
+// The signal the cancel protocol interrupts blocking syscalls with. SIGURG:
+// ignored by default, meaningless to almost every program (it exists for
+// TCP urgent data), and therefore the conventional choice for exactly this
+// job. stdlib OWNS it — a program that installs its own SIGURG handler
+// forfeits syscall-park cancellation.
+fn _cancel_signal() -> i32 {
+    if #platform() == "linux" { return 23; }
+    return 16;                                  // Darwin
+}
+
+fn _cancel_sig_noop(sig: i32) {
+    return;
+}
+
+// One-time, process-wide install of the no-op SIGURG handler, with
+// SA_RESTART stripped (BSD `signal()` sets it; a restarting park never
+// reports EINTR and the kick would be invisible). Runs before the first
+// signal is ever sent, from `cancel()` — installation is process-global, so
+// installing on the canceller's thread is enough for every target thread.
+static _CANCEL_SIG_STATE: i32 = 0;
+
+fn _cancel_runtime_init() {
+    loop {
+        let s: i32 = atomic::load_i32(#addr_of(_CANCEL_SIG_STATE), atomic::Ordering::Acquire);
+        if s == 2 { return; }
+        if s == 0 {
+            let prev: i32 = atomic::compare_exchange_i32(
+                #addr_of(_CANCEL_SIG_STATE), 0, 1, atomic::Ordering::AcqRel);
+            if prev == 0 {
+                signal(_cancel_signal(), _cancel_sig_noop);
+                siginterrupt(_cancel_signal(), 1);
+                atomic::store_i32(#addr_of(_CANCEL_SIG_STATE), 2, atomic::Ordering::Release);
+                return;
+            }
+        }
+        #cpu_relax();
+    }
+}
+
+fn _verb_lock(rec: *u8) {
+    let lp: *u64 = { (rec + _c_off_verb_lock()) as *u64 };
+    loop {
+        let prev: u64 = atomic::compare_exchange_u64(
+            lp, 0 as u64, 1 as u64, atomic::Ordering::AcqRel);
+        if prev == (0 as u64) { return; }
+        #cpu_relax();
+    }
+}
+
+fn _verb_unlock(rec: *u8) {
+    let lp: *u64 = { (rec + _c_off_verb_lock()) as *u64 };
+    atomic::store_u64(lp, 0 as u64, atomic::Ordering::Release);
+    return;
+}
+
+// True when this thread's work has been asked to stop. A bare atomic load:
+// safe to call anywhere — compute loops, under a mutex, inside a drop. On a
+// thread nobody can cancel it is constantly false.
+fn cancelled() -> bool {
+    let rec: *u8 = { #cancel_get_slot() };
+    if rec.is_null() { return false; }
+    let f: u64 = atomic::load_u64(rec as *u64, atomic::Ordering::SeqCst);
+    return f != (0 as u64);
+}
+
+// Mark this thread as entering a cancellable SYSCALL park (a blocking call
+// that a signal interrupts with EINTR: read, accept, kevent, ...). Returns
+// true when cancellation was already requested — the caller must NOT enter
+// the syscall and should surface `Cancelled` instead. The publish-then-check
+// order pairs with cancel()'s set-then-kick: at least one side always sees
+// the other.
+//
+// Callers wrap each park attempt:
+//     loop {
+//         if thread::park_begin() { thread::park_end(); return CANCELLED; }
+//         let n = read(...);
+//         thread::park_end();
+//         if n < 0 && errno == EINTR { continue; }   // loop re-checks
+//         ...
+//     }
+fn park_begin() -> bool {
+    let rec: *u8 = { #cancel_get_slot() };
+    if rec.is_null() { return false; }
+    let pp: *u64 = { (rec + _c_off_parked()) as *u64 };
+    atomic::store_u64(pp, 1 as u64, atomic::Ordering::SeqCst);
+    let f: u64 = atomic::load_u64(rec as *u64, atomic::Ordering::SeqCst);
+    return f != (0 as u64);
+}
+
+// Mark this thread as entering a cancellable CONDVAR park, publishing the
+// condvar + mutex as the wake verb (a condvar is not reliably interrupted
+// by signals — POSIX lets the implementation absorb them — so the canceller
+// broadcasts it under its mutex instead). Call this BEFORE locking `m`
+// (lock order rule, header comment); re-check `cancelled()` inside the wait
+// loop, under the mutex; call `park_end` AFTER unlocking.
+fn park_begin_cond(c: *u8, m: *u8) -> bool {
+    let rec: *u8 = { #cancel_get_slot() };
+    if rec.is_null() { return false; }
+    _verb_lock(rec);
+    let cp: **u8 = { (rec + _c_off_verb_cond()) as **u8 };
+    *cp = c;
+    let mp: **u8 = { (rec + _c_off_verb_mutex()) as **u8 };
+    *mp = m;
+    _verb_unlock(rec);
+    let pp: *u64 = { (rec + _c_off_parked()) as *u64 };
+    atomic::store_u64(pp, 1 as u64, atomic::Ordering::SeqCst);
+    let f: u64 = atomic::load_u64(rec as *u64, atomic::Ordering::SeqCst);
+    return f != (0 as u64);
+}
+
+// Leave the park: clear the parked mark and un-publish any wake verb. The
+// verb is cleared under the spinlock so a concurrent canceller can never
+// broadcast a condvar the caller is about to destroy — after `park_end`
+// returns, the canceller is guaranteed to not touch it. Must not be called
+// while holding a published verb mutex (lock order rule).
+fn park_end() {
+    let rec: *u8 = { #cancel_get_slot() };
+    if rec.is_null() { return; }
+    let pp: *u64 = { (rec + _c_off_parked()) as *u64 };
+    atomic::store_u64(pp, 0 as u64, atomic::Ordering::SeqCst);
+    _verb_lock(rec);
+    let cp: **u8 = { (rec + _c_off_verb_cond()) as **u8 };
+    if (*cp).is_not_null() {
+        *cp = 0 as *u8;
+        let mp: **u8 = { (rec + _c_off_verb_mutex()) as **u8 };
+        *mp = 0 as *u8;
+    }
+    _verb_unlock(rec);
+    return;
 }
 
 // ═══════════════════════════ scoped threads ═══════════════════════════
@@ -341,6 +585,127 @@ fn scope_lends_two_different_locals_at_once() {
     }
     assert a.v == 1000000;
     assert b.v == 1000000;
+}
+
+// ---- cancellation ----
+
+extern fn pipe(fds: *i32) -> i32;
+
+static _CANCEL_TEST_DROPS: u64 = 0u64;
+static _CANCEL_TEST_DEFERS: u64 = 0u64;
+
+struct _DropProbe {
+    _v: i64,
+}
+impl _DropProbe {
+    fn drop(ref this) {
+        atomic::fetch_add_u64(#addr_of(_CANCEL_TEST_DROPS), 1 as u64, atomic::Ordering::AcqRel);
+        return;
+    }
+}
+
+fn _mark_defer() {
+    atomic::fetch_add_u64(#addr_of(_CANCEL_TEST_DEFERS), 1 as u64, atomic::Ordering::AcqRel);
+    return;
+}
+
+// A worker that parks in read(2) on a pipe nobody writes; only cancellation
+// can end it. Returns 7 on the cancel path — the canonical syscall-park loop
+// from the `park_begin` docstring.
+fn _read_park_worker(take rfd: i64) -> i64 {
+    let fd: i32 = rfd as i32;
+    var buf: [u8; 16] = [0u8; 16];
+    loop {
+        if park_begin() {
+            park_end();
+            return 7 as i64;
+        }
+        let n: isize = { netsys::recv_fd(fd, #addr_of(buf) as *u8, 16 as usize) };
+        park_end();
+        if n < (0 as isize) {
+            let e: i32 = netsys::errno();
+            if e == netsys::eintr() { continue; }
+            return (0 - 2) as i64;
+        }
+        return (0 - 3) as i64;
+    }
+}
+
+// Same park, but the worker owns a droppable value and a defer — proving
+// the cancel path is an ordinary early return that skips neither.
+fn _drop_probe_worker(take rfd: i64) -> i64 {
+    let p: _DropProbe = _DropProbe { _v: 1 as i64 };
+    defer _mark_defer();
+    let r: i64 = _read_park_worker(rfd);
+    return r +% p._v;
+}
+
+// A compute worker that never parks — it observes cancellation by polling.
+fn _poll_worker(take x: i64) -> i64 {
+    var spins: i64 = 0 as i64;
+    loop {
+        if cancelled() { return 9 as i64; }
+        usleep(100 as u32);
+        spins = spins +% (1 as i64);
+        if spins > (300000 as i64) { return (0 - 9) as i64; }
+    }
+}
+
+#[test]
+fn cancel_interrupts_a_read_park() {
+    var fds: [i32; 2] = [0, 0];
+    assert pipe(#addr_of(fds) as *i32) == 0;
+    let h: JoinHandle[i64] = spawn_with::[i64, i64](fds[0] as i64, _read_park_worker);
+    usleep(2000 as u32);
+    h.cancel();
+    assert h.join() == (7 as i64);
+    netsys::close_fd(fds[0]);
+    netsys::close_fd(fds[1]);
+}
+
+#[test]
+fn cancel_reaches_a_compute_worker_through_cancelled() {
+    let h: JoinHandle[i64] = spawn_with::[i64, i64](0 as i64, _poll_worker);
+    usleep(1000 as u32);
+    h.cancel();
+    assert h.join() == (9 as i64);
+}
+
+#[test]
+fn cancel_is_idempotent() {
+    var fds: [i32; 2] = [0, 0];
+    assert pipe(#addr_of(fds) as *i32) == 0;
+    let h: JoinHandle[i64] = spawn_with::[i64, i64](fds[0] as i64, _read_park_worker);
+    h.cancel();
+    h.cancel();
+    assert h.join() == (7 as i64);
+    netsys::close_fd(fds[0]);
+    netsys::close_fd(fds[1]);
+}
+
+#[test]
+fn cancel_runs_drops_and_defers() {
+    var fds: [i32; 2] = [0, 0];
+    assert pipe(#addr_of(fds) as *i32) == 0;
+    let h: JoinHandle[i64] = spawn_with::[i64, i64](fds[0] as i64, _drop_probe_worker);
+    usleep(2000 as u32);
+    h.cancel();
+    assert h.join() == (8 as i64);
+    let drops: u64 = atomic::load_u64(#addr_of(_CANCEL_TEST_DROPS), atomic::Ordering::Acquire);
+    let defers: u64 = atomic::load_u64(#addr_of(_CANCEL_TEST_DEFERS), atomic::Ordering::Acquire);
+    assert drops == (1 as u64);
+    assert defers == (1 as u64);
+    netsys::close_fd(fds[0]);
+    netsys::close_fd(fds[1]);
+}
+
+#[test]
+fn cancelled_is_false_on_an_uncancellable_thread() {
+    // The test runner's thread has no cancel slot — `cancelled()` and the
+    // park protocol must degrade to no-ops, not crash.
+    assert cancelled() == false;
+    assert park_begin() == false;
+    park_end();
 }
 
 #[test]

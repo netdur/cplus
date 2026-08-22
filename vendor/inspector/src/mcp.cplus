@@ -305,9 +305,12 @@ fn tools_prop(name: str, ty: str, description: str) -> json::Member {
 fn describe_tools() -> vec::Vec[json::Value] {
     var out: vec::Vec[json::Value] = vec::new::[json::Value]();
 
+    var p_desc: vec::Vec[json::Member] = bridge::no_props();
+    p_desc.append(tools_prop("prefix", "string",
+        "Answer only with nodes whose key starts with this, e.g. \"board:detail:\". Absent means the whole tree — which against a real application runs to tens of thousands of characters, large enough that a client may refuse it. Indices are unaffected by filtering: they stay addressable by the other verbs."));
     out.append(bridge::tool("inspector.describe",
-        "The live view tree as the DEVELOPER sees it: every node, keyed or not, with its index. Unlike describe_ui this is not curated — it is the whole tree, and node indices from here are what every other inspector verb addresses.",
-        bridge::no_props(), bridge::no_required()));
+        "The live view tree of THE APPLICATION SERVING THIS ENDPOINT, as the DEVELOPER sees it: every node, keyed or not, with its index. An app launched by this one has its own endpoint and does not appear here. Unlike describe_ui this is not curated — it is the whole tree — so pass \"prefix\" unless you really want all of it. Node indices from here are what every other inspector verb addresses.",
+        p_desc, bridge::no_required()));
 
     var p_node: vec::Vec[json::Member] = bridge::no_props();
     p_node.append(tools_prop("node", "number", "Node index, from inspector.describe."));
@@ -357,7 +360,7 @@ fn describe_tools() -> vec::Vec[json::Value] {
     var p_hi: vec::Vec[json::Member] = bridge::no_props();
     p_hi.append(tools_prop("node", "number", "Node index to outline on screen."));
     out.append(bridge::tool("inspector.highlight",
-        "Draw an overlay around a node on the running app's screen — how you show a person which node you mean.",
+        "Draw an overlay around a node on the screen of the application serving this endpoint — how you show a person which node you mean.",
         p_hi, bridge::required1("node")));
 
     out.append(bridge::tool("inspector.clear_highlight",
@@ -431,6 +434,9 @@ struct Call {
     num: f64,
     flag: bool,
     tag: u32,
+    // The `describe` key filter. Empty means the whole tree, which is what
+    // makes the parameter optional and the old answer unchanged.
+    prefix: text::Text,
     spec: insp::Spec,
     // ---- out ----
     outcome: insp::Outcome,
@@ -452,6 +458,18 @@ fn put_out(take v: json::Value) {
 
 fn take_out() -> option::Option[json::Value] { return OUT.remove_last(); }
 
+// Does this node's key fall under the `describe` filter? An empty prefix
+// matches everything, which is what keeps the parameter optional and the
+// unfiltered answer exactly what it was.
+//
+// Its own function because the layer around it cannot be unit-tested: every
+// verb here hops to the UI thread, so the decision is lifted out to where a
+// test can reach it.
+fn key_matches(key: str, prefix: str) -> bool {
+    if prefix == "" { return true; }
+    return key.has_prefix(prefix);
+}
+
 fn new_call(op: u32) -> Call {
     return Call {
         op: op,
@@ -463,6 +481,7 @@ fn new_call(op: u32) -> Call {
         num: 0.0f64,
         flag: false,
         tag: TAG_NONE,
+        prefix: text::new(),
         spec: insp::Spec::of(""),
         outcome: insp::Outcome::NotFound,
     };
@@ -515,11 +534,23 @@ fn run_call(ctx: *u8) {
 
     if op == OP_DESCRIBE {
         SNAPSHOT = b.describe_now();
+        let pfx: str = { (*c).prefix };
         var arr: vec::Vec[json::Value] = vec::new::[json::Value]();
         var i: usize = 0 as usize;
         while i < SNAPSHOT.count() {
             match SNAPSHOT.at_ptr(i) {
-                option::Option[*insp::Node]::Some(p) => { arr.append(node_json(p, i)); }
+                option::Option[*insp::Node]::Some(p) => {
+                    // `index` and `parent` stay TRUE SNAPSHOT INDICES under a
+                    // filter — unlike describe_ui's positional parent, they are
+                    // this namespace's addressing scheme (`inspect`, `set` and
+                    // `highlight` all take a node index), and SNAPSHOT is kept
+                    // whole server-side. So a filtered listing is a subset with
+                    // every address still valid: a `parent` outside the subset
+                    // still names a node you can inspect. Renumbering here
+                    // would break every verb that follows.
+                    let kp: *text::Text = { #addr_of((*p).key) };
+                    if key_matches({ (*kp).view() }, pfx) { arr.append(node_json(p, i)); }
+                }
                 option::Option[*insp::Node]::None => { }
             }
             i = i +% (1 as usize);
@@ -701,8 +732,14 @@ fn do_answering(id: f64, take c: Call) -> json::Value {
     };
 }
 
-fn do_describe(id: f64) -> json::Value {
-    return do_answering(id, new_call(OP_DESCRIBE));
+fn do_describe(id: f64, params: json::Value) -> json::Value {
+    var c: Call = new_call(OP_DESCRIBE);
+    // Narrow the answer to one key path. Without it this verb hands back the
+    // whole developer tree — measured at 80,477 characters against a real app,
+    // which an agent harness refuses outright, so the verb answered nothing at
+    // all (demo/bugs/04-describe-verbs-cannot-be-scoped.md).
+    c.prefix = as_text(obj_get(params, "prefix"));
+    return do_answering(id, c);
 }
 
 fn do_inspect(id: f64, params: json::Value, grant: auth::Grant) -> json::Value {
@@ -948,7 +985,7 @@ fn handle(method: str, params: json::Value, id: f64, grant: auth::Grant) -> json
         }
     }
 
-    if method == "inspector.describe" { return do_describe(id); }
+    if method == "inspector.describe" { return do_describe(id, params); }
     if method == "inspector.inspect" { return do_inspect(id, params, grant); }
     if method == "inspector.set" { return do_set(id, params); }
     if method == "inspector.reset" { return do_reset(id, params); }

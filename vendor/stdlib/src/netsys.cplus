@@ -20,10 +20,46 @@ fn o_nonblock() -> i32 { return 0x0004 as i32; }
 // EAGAIN (== EWOULDBLOCK on macOS): 35.
 fn eagain() -> i32 { return 35 as i32; }
 
+// EINTR: 4. A blocking syscall interrupted by a signal — the cancellation
+// protocol's kick (stdlib/thread.cplus) surfaces as exactly this.
+fn eintr() -> i32 { return 4 as i32; }
+
 // setsockopt level / optname for SO_REUSEADDR. macOS: SOL_SOCKET=0xffff,
 // SO_REUSEADDR=0x4.
 fn sol_socket() -> i32 { return 0xffff as i32; }
 fn so_reuseaddr() -> i32 { return 0x4 as i32; }
+
+// SO_NOSIGPIPE (Darwin only): 0x1022. See `set_nosigpipe` below.
+fn so_nosigpipe() -> i32 { return 0x1022 as i32; }
+
+// Make writes to this socket REPORT a dead peer instead of KILLING the
+// process.
+//
+// A write to a socket whose peer has gone away raises SIGPIPE, whose default
+// disposition terminates the process — with no crash report, no diagnostic,
+// and buffered stdout lost. That is a server dying silently because a client
+// went away, which is never what a server wants and is impossible to
+// diagnose after the fact (see the incident in
+// demo/bugs/02-iris-terminated-without-crash-report.md: two processes gone,
+// no `.ips` for either).
+//
+// PER SOCKET, deliberately — not a process-wide `signal(SIGPIPE, SIG_IGN)`.
+// A library that changes global signal disposition makes that decision for
+// the whole program, including code that never asked. Darwin has the
+// socket-scoped answer (`SO_NOSIGPIPE`), Linux has the call-scoped one
+// (`MSG_NOSIGNAL`, applied inside `send_fd` there), and Windows has no
+// SIGPIPE at all. Each platform's variant of this file implements whichever
+// it has, so callers get one portable line.
+//
+// With this set, a write to a dead peer returns -1/EPIPE and the caller's
+// existing error path handles it.
+//
+// Returns 0 on success, non-zero if the option could not be set (a
+// non-socket fd, say — harmless, and the caller carries on).
+fn set_nosigpipe(fd: i32) -> i32 {
+    var one: i32 = 1 as i32;
+    return { setsockopt(fd, sol_socket(), so_nosigpipe(), #addr_of(one) as *u8, 4 as u32) };
+}
 
 // First two bytes of `sockaddr_in`. macOS lays it out as
 // `{ uint8_t sin_len; sa_family_t sin_family; ... }`, so byte0 = sin_len
@@ -37,6 +73,7 @@ fn sa_family_byte1() -> u8 { return 2 as u8; }
 extern fn read(fd: i32, buf: *u8, count: usize) -> isize;
 extern fn write(fd: i32, buf: *u8, count: usize) -> isize;
 extern fn close(fd: i32) -> i32;
+extern fn setsockopt(fd: i32, level: i32, optname: i32, optval: *u8, optlen: u32) -> i32;
 // fcntl is variadic in libc — the third arg is read from the variadic area,
 // not a fixed register. Declaring it fixed-arity silently breaks `F_SETFL`
 // on AArch64-darwin where varargs come from the stack.

@@ -819,7 +819,9 @@ fn main() -> ExitCode {
             build_project(out, diag_mode, build_mode, fp_contract, &sanitizers)
         }
         (Some(Subcommand::EmitLlProject), _) => emit_ll_project(diag_mode, build_mode, fp_contract),
-        (Some(Subcommand::PrintLinkArgs), _) => print_link_args(diag_mode, build_mode),
+        (Some(Subcommand::PrintLinkArgs), _) => {
+            print_link_args(diag_mode, build_mode, &sanitizers)
+        }
         (Some(Subcommand::Fmt), _) => run_fmt(fmt_inputs, fmt_opts, diag_mode),
         (Some(Subcommand::Test), _) => {
             run_test(test_input, test_opts, diag_mode, build_mode, &sanitizers, fp_contract)
@@ -1712,7 +1714,7 @@ fn dep_source_dirs(m: &manifest::Manifest) -> Vec<(String, PathBuf)> {
 /// (`$(cpc build --print-link-args)`, `xargs`, an Xcode script phase) without
 /// anyone having to guess a quoting rule. Nothing is printed to stdout but the
 /// arguments; diagnostics go to stderr as usual.
-fn print_link_args(diag_mode: DiagMode, build_mode: BuildMode) -> ExitCode {
+fn print_link_args(diag_mode: DiagMode, build_mode: BuildMode, sanitizers: &[&str]) -> ExitCode {
     let manifest_path = PathBuf::from("Cplus.toml");
     let m = match manifest::load(&manifest_path) {
         Ok(m) => m,
@@ -1721,7 +1723,8 @@ fn print_link_args(diag_mode: DiagMode, build_mode: BuildMode) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    if let Err(code) = ensure_prebuilt_deps(&m, build_mode, diag_mode, &mut Vec::new()) {
+    if let Err(code) = ensure_prebuilt_deps(&m, build_mode, diag_mode, sanitizers, &mut Vec::new())
+    {
         return code;
     }
     match collect_dep_link_args(&m, diag_mode) {
@@ -1741,6 +1744,7 @@ fn ensure_prebuilt_deps(
     m: &manifest::Manifest,
     build_mode: BuildMode,
     diag_mode: DiagMode,
+    sanitizers: &[&str],
     stack: &mut Vec<String>,
 ) -> Result<(), ExitCode> {
     if m.dependencies.is_empty() {
@@ -1771,9 +1775,15 @@ fn ensure_prebuilt_deps(
         if vm.link.as_ref().is_some_and(|l| !l.bundled.is_empty()) {
             continue;
         }
-        if let Err(e) =
-            ensure_one_prebuilt(&vm, &vendor_dir, &link_triple, build_mode, diag_mode, stack)
-        {
+        if let Err(e) = ensure_one_prebuilt(
+            &vm,
+            &vendor_dir,
+            &link_triple,
+            build_mode,
+            diag_mode,
+            sanitizers,
+            stack,
+        ) {
             eprintln!("cpc: prebuilding `{}`: {e}", dep.name);
             return Err(ExitCode::FAILURE);
         }
@@ -1793,6 +1803,7 @@ fn ensure_one_prebuilt(
     link_triple: &str,
     build_mode: BuildMode,
     diag_mode: DiagMode,
+    sanitizers: &[&str],
     stack: &mut Vec<String>,
 ) -> Result<(), String> {
     let name = vm.package.name.clone();
@@ -1803,13 +1814,14 @@ fn ensure_one_prebuilt(
         ));
     }
     stack.push(name.clone());
-    let deps_first = ensure_prebuilt_deps(vm, build_mode, diag_mode, stack)
+    let deps_first = ensure_prebuilt_deps(vm, build_mode, diag_mode, sanitizers, stack)
         .map_err(|_| format!("a dependency of `{}` failed to prebuild", vm.package.name));
     // The stopwatch starts AFTER the dep walk on purpose: each package times
     // its own slice, so the rows sum instead of nesting.
     let t0 = timings::mark();
-    let result = deps_first
-        .and_then(|()| ensure_one_slice(vm, vendor_dir, link_triple, build_mode, diag_mode));
+    let result = deps_first.and_then(|()| {
+        ensure_one_slice(vm, vendor_dir, link_triple, build_mode, diag_mode, sanitizers)
+    });
     stack.pop();
     match result {
         Ok(built) => {
@@ -1833,11 +1845,12 @@ fn ensure_one_slice(
     link_triple: &str,
     build_mode: BuildMode,
     diag_mode: DiagMode,
+    sanitizers: &[&str],
 ) -> Result<bool, String> {
     let slice_dir = vendor_dir.join("lib").join(link_triple);
     let archive = slice_dir.join(prebuilt_archive_name(&vm.package.name));
     let stamp = slice_dir.join(format!("{}.fingerprint", vm.package.name));
-    let want = prebuild_fingerprint(vendor_dir, link_triple, build_mode)?;
+    let want = prebuild_fingerprint(vendor_dir, link_triple, build_mode, sanitizers)?;
     // What an archive in this directory must BE. The fingerprint is computed
     // from inputs and is structurally blind to the artifact's own bytes, so it
     // cannot notice a slice built for the wrong platform — see `artifact`.
@@ -1867,12 +1880,20 @@ fn ensure_one_slice(
         );
     }
     eprintln!(
-        "cpc: prebuilding `{}` for {} ({})",
+        "cpc: prebuilding `{}` for {} ({}{})",
         vm.package.name,
         link_triple,
         match build_mode {
             BuildMode::Release => "release",
             _ => "debug",
+        },
+        // Name the sanitizers in the line that says work is happening: this
+        // is the one place a user sees that flipping `--tsan` invalidated
+        // every slice, and why the build they expected to be cached is not.
+        if sanitizers.is_empty() {
+            String::new()
+        } else {
+            format!(", -fsanitize={}", sanitizers.join(","))
         }
     );
     // Headers first: an archive whose declarations are stale is worse than no
@@ -1889,7 +1910,7 @@ fn ensure_one_slice(
     // Pointing the library pipeline straight at the slice directory also
     // deposits its `.o` and its C header there — half a megabyte of build
     // litter inside what is meant to be the shipped surface.
-    let code = build_lib_project(vm, &lib, None, diag_mode, build_mode, true, false);
+    let code = build_lib_project(vm, &lib, None, diag_mode, build_mode, true, false, sanitizers);
     timings::report_titled(&format!("prebuild {}", vm.package.name));
     if code != ExitCode::SUCCESS {
         // Leave nothing half-built: a stale archive with a fresh fingerprint
@@ -2051,6 +2072,7 @@ fn prebuild_fingerprint(
     vendor_dir: &Path,
     link_triple: &str,
     build_mode: BuildMode,
+    sanitizers: &[&str],
 ) -> Result<String, String> {
     use std::collections::hash_map::DefaultHasher;
     use std::hash::{Hash, Hasher};
@@ -2059,6 +2081,28 @@ fn prebuild_fingerprint(
     env!("CARGO_PKG_VERSION").hash(&mut h);
     link_triple.hash(&mut h);
     matches!(build_mode, BuildMode::Release).hash(&mut h);
+    // THE SANITIZER SET IS PART OF WHAT A SLICE IS. Without it a `--tsan`
+    // build asks for a slice, the fingerprint answers "current", and the
+    // UNINSTRUMENTED archive from the last ordinary build is linked — so
+    // every race inside `stdlib`, `facet` or any vendored package is
+    // invisible to the tool whose entire job is finding them, and invisible
+    // in the direction that reads as clean. (Codegen was never the problem:
+    // it threads `sanitizer_attrs` correctly. Only this key was blind.)
+    //
+    // The slice SLOT stays `lib/<triple>/<name>.a`, so an instrumented and an
+    // ordinary slice share it and flipping `--tsan` on or off rebuilds every
+    // prebuilt dependency. That is deliberate: `build_mode` has exactly this
+    // shape and resolves it the same way, and a suffixed slice directory
+    // would be a second layout convention for `collect_dep_link_args`,
+    // `print_link_args`, the artifact-tag check and every external build
+    // system that consumes the printed link line to learn. A sanitizer build
+    // is a deliberate, occasional act; paying a rebuild for it is the cheaper
+    // side of that trade.
+    //
+    // Sorted so `--asan --ubsan` and `--ubsan --asan` are one slice.
+    let mut sans: Vec<&str> = sanitizers.to_vec();
+    sans.sort_unstable();
+    sans.hash(&mut h);
     package_input_digest(vendor_dir, &mut Vec::new())?.hash(&mut h);
     Ok(format!("{:016x}", h.finish()))
 }
@@ -2356,7 +2400,8 @@ fn build_project(
     // are brought up to date here, BEFORE the entry file is resolved: the
     // resolver reads `lib/include/` for them and the link line names the
     // archive, so both need the slice to already be on disk.
-    if let Err(code) = ensure_prebuilt_deps(&m, build_mode, diag_mode, &mut Vec::new()) {
+    if let Err(code) = ensure_prebuilt_deps(&m, build_mode, diag_mode, sanitizers, &mut Vec::new())
+    {
         return code;
     }
     // A `[library]` (or prebuild-synthesized) target dispatches to the
@@ -2381,7 +2426,16 @@ fn build_project(
         // `--timings` was silently a no-op on the library path, which is where
         // a `prebuild` compile spends its time — the one build whose cost you
         // most want to see, since the cache exists to avoid paying it again.
-        let code = build_lib_project(&m, &lib, out, diag_mode, build_mode, fp_contract, c_abi_entry);
+        let code = build_lib_project(
+            &m,
+            &lib,
+            out,
+            diag_mode,
+            build_mode,
+            fp_contract,
+            c_abi_entry,
+            sanitizers,
+        );
         timings::report_project(&m.package.name);
         return code;
     }
@@ -2438,8 +2492,16 @@ fn build_project(
                     return ExitCode::FAILURE;
                 }
             }
-            let code =
-                build_lib_project(&m, &lib, out, diag_mode, build_mode, fp_contract, false);
+            let code = build_lib_project(
+                &m,
+                &lib,
+                out,
+                diag_mode,
+                build_mode,
+                fp_contract,
+                false,
+                sanitizers,
+            );
             timings::report_project(&m.package.name);
             return code;
         }
@@ -2458,7 +2520,8 @@ fn build_project(
             frameworks: Vec::new(),
             libs: Vec::new(),
         };
-        let code = build_lib_project(&m, &lib, out, diag_mode, build_mode, fp_contract, false);
+        let code =
+            build_lib_project(&m, &lib, out, diag_mode, build_mode, fp_contract, false, sanitizers);
         timings::report_project(&m.package.name);
         return code;
     }
@@ -2658,6 +2721,7 @@ fn build_lib_project(
     build_mode: BuildMode,
     fp_contract: bool,
     c_abi_entry: bool,
+    sanitizers: &[&str],
 ) -> ExitCode {
     if !lib.path.is_file() {
         let d = diag::Diagnostic {
@@ -2771,8 +2835,20 @@ fn build_lib_project(
     }
 
     ensure_coro_end_probed();
+    // The sanitizer list reaches codegen here. It used to be a hardcoded
+    // `&[]`, which made every archive this pipeline produces — every prebuilt
+    // slice, every iOS/Android handoff library — uninstrumented no matter what
+    // the user asked for.
     let ir = timings::phase("codegen", || {
-        codegen::generate_with_mono(&program, build_mode, fp_contract, None, &[], true, &mono)
+        codegen::generate_with_mono(
+            &program,
+            build_mode,
+            fp_contract,
+            None,
+            sanitizers,
+            true,
+            &mono,
+        )
     });
     let ir = timings::phase("prune", || prune_ir(ir));
 
@@ -2824,15 +2900,19 @@ fn build_lib_project(
         BuildMode::Release => "-O3",
     };
     let obj_status = timings::phase("clang -c", || {
-        Command::new(&clang_prog)
-            .arg(opt)
+        let mut cmd = Command::new(&clang_prog);
+        cmd.arg(opt)
             .arg("-Wno-override-module")
-            .args(clang_target_args(&tgt))
-            .arg("-c")
-            .arg(&tmp_ll)
-            .arg("-o")
-            .arg(&obj_path)
-            .status()
+            .args(clang_target_args(&tgt));
+        // Same forwarding `run_clang` does for an executable: clang owns the
+        // instrumentation pass, we name the set. Omitting it here left the
+        // object's own code uninstrumented even when the IR carried the
+        // function attributes.
+        if !sanitizers.is_empty() {
+            cmd.arg(format!("-fsanitize={}", sanitizers.join(",")));
+            cmd.arg("-fno-omit-frame-pointer");
+        }
+        cmd.arg("-c").arg(&tmp_ll).arg("-o").arg(&obj_path).status()
     });
     drop(tmp_ll_handle);
     match obj_status {
@@ -2897,6 +2977,13 @@ fn build_lib_project(
         let dylib_path = target_dir.join(format!("lib{}.{}", lib.name, dylib_ext));
         let mut cmd = Command::new(clang_program());
         cmd.arg("-shared").arg(opt).arg("-Wno-override-module");
+        // A cdylib IS linked here, so it needs the runtime as well as the
+        // instrumentation — a `-fsanitize=` on the link line is what pulls in
+        // libclang_rt.
+        if !sanitizers.is_empty() {
+            cmd.arg(format!("-fsanitize={}", sanitizers.join(",")));
+            cmd.arg("-fno-omit-frame-pointer");
+        }
         for fw in &lib.frameworks {
             cmd.arg("-framework").arg(fw);
         }
@@ -3506,7 +3593,9 @@ fn run_test(
             };
             // Same ordering rule as `build_project`: a prebuilt dependency's
             // slice must exist before anything resolves an import against it.
-            if let Err(code) = ensure_prebuilt_deps(&m, build_mode, diag_mode, &mut Vec::new()) {
+            if let Err(code) =
+                ensure_prebuilt_deps(&m, build_mode, diag_mode, sanitizers, &mut Vec::new())
+            {
                 return code;
             }
             // Resolve the test entry: `src/test_main.cplus` first (a

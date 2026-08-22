@@ -12678,6 +12678,42 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
             let _ = self.check_expr(&args[0], Some(Ty::RawPtr(Box::new(target_ty.clone()))));
             return Some(target_ty);
         }
+        // `#coro_promise::[T](hdl: *u8) -> *T` — the address of a completed
+        // coroutine's promise slot (its return value), given the coroutine
+        // handle. v0.0.29 phase 2: what lets `executor::run` extract a
+        // driven future's value in surface C+ instead of intrinsic IR. The
+        // type argument is required because LLVM's `llvm.coro.promise` takes
+        // the promise ALIGNMENT as a compile-time constant — the T fixes it.
+        if name == "__cplus_coro_promise" {
+            if type_args.len() != 1 {
+                self.err(
+                    "E0501",
+                    format!(
+                        "`#coro_promise` takes exactly 1 type argument, got {}",
+                        type_args.len()
+                    ),
+                    callee.span,
+                );
+                for a in args {
+                    let _ = self.check_expr(a, None);
+                }
+                return Some(Ty::Error);
+            }
+            let target_ty = self.resolve_type(&type_args[0]);
+            if args.len() != 1 {
+                self.err(
+                    "E0308",
+                    format!("`#coro_promise` takes 1 value argument, got {}", args.len()),
+                    call_span,
+                );
+                for a in args {
+                    let _ = self.check_expr(a, None);
+                }
+                return Some(Ty::RawPtr(Box::new(target_ty)));
+            }
+            let _ = self.check_expr(&args[0], Some(Ty::RawPtr(Box::new(Ty::U8))));
+            return Some(Ty::RawPtr(Box::new(target_ty)));
+        }
         // `#drop_in_place::[T](p: *T)` — drop the value at *p in place. Lowers to
         // `T::drop(p)` for the monomorphized T (or a no-op when T has no Drop).
         if name == "__cplus_drop_in_place" {

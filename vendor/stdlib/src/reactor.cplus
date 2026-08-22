@@ -1,10 +1,31 @@
 // stdlib/reactor.cplus — async I/O event loop (v0.0.4 Phase 3 Slice 3A.1).
 //
-// Backed by kqueue on macOS; epoll-on-Linux lands separately. The reactor
-// is a process-global resource lazily initialized on first use. Single-
-// threaded for v0.0.4 — matches tokio's `current_thread` runtime, and
-// sidesteps the Send/Sync design that the multi-threaded executor would
-// need.
+// Backed by kqueue on macOS; epoll-on-Linux lands separately.
+//
+// ONE REACTOR PER THREAD, lazily created on that thread's first use. Single-
+// threaded per executor — matches tokio's `current_thread` runtime, and
+// sidesteps the Send/Sync design that a multi-threaded executor would need.
+//
+// This file said "process-global" until 2026-08-22 and meant it: the state
+// slot really was one pointer for the whole process, with a bare load and a
+// bare store either side of it and no lock, while `executor::block_on` had
+// no thread affinity and `stdlib/thread` will happily start a thread that
+// calls it. Two `block_on`s on two threads therefore shared one kqueue and
+// one set of six realloc-grown arrays, and the lazy init below was the
+// sharpest instance — both threads observing null, both creating a kqueue,
+// both storing, one fd orphaned with its waiters attached to a block nobody
+// polls again. TSan confirmed both races once it could see this package.
+//
+// The fix is that the slot (`@__cplus_reactor_state`, emitted in the codegen
+// preamble) is thread-local, so no path needs a lock: `ensure` cannot be
+// racing another thread for a slot only this thread can see. `block_on` is
+// now honestly callable from any thread.
+//
+// THE COST: a thread that runs an executor and then exits leaves its kqueue
+// fd and six buffers behind — C+ has no thread-exit hook to tear them down
+// from. Bounded by "threads that ran an executor", and a program that
+// spawns many short-lived executor threads wants an explicit teardown call,
+// which does not exist yet.
 //
 // **Architecture.**
 //
@@ -73,9 +94,12 @@
 // coroutines that suspend on fd/timer events stall forever — `block_on`
 // only re-resumes the *outermost* future on each loop pass.
 
+import "./thread" as thread;
+
 extern fn malloc(n: usize) -> *u8;
 extern fn realloc(p: *u8, n: usize) -> *u8;
 extern fn free(p: *u8);
+extern fn close(fd: i32) -> i32;
 
 // kqueue / kevent (macOS).
 extern fn kqueue() -> i32;
@@ -237,6 +261,26 @@ export extern fn stdlib_reactor_notify_completed_v1(awaitee: *u8) {
     return;
 }
 
+// v0.0.29 phase 2: called from each await's DESTROY edge, just before the
+// awaited inner frame is destroyed. Removes every entry naming that frame,
+// so the reactor can never enqueue a dead awaiter after malloc reuses the
+// frame's address.
+export extern fn stdlib_reactor_unregister_awaiter_v1(awaitee: *u8) {
+    unregister_awaiter(awaitee);
+    return;
+}
+
+// v0.0.29 phase 2: remove `hdl` from the pending queue. Called wherever a
+// frame is destroyed (block_on's extract, `run`'s extract, the awaits'
+// cancel edges, `Future::cancel`) — a notified awaiter can be sitting in
+// the queue when the drive loop resumes it directly and destroys it at
+// completion, and the stale entry would make the NEXT executor on this
+// thread call `coro_done` on freed memory (found by ASan, 2026-08-22).
+export extern fn stdlib_reactor_unregister_pending_v1(hdl: *u8) {
+    unregister_pending(hdl);
+    return;
+}
+
 export extern fn stdlib_reactor_enqueue_pending_v1(hdl: *u8) {
     enqueue_pending(hdl);
     return;
@@ -271,9 +315,16 @@ export extern fn stdlib_reactor_poll_one_event_nb_v1() -> i32 {
 // The reactor's kqueue fd. A kqueue is itself pollable — it reads as ready
 // when events are pending — so an external loop (a dispatch source, a
 // select set) can watch this fd and pump only when there is work.
-export extern fn stdlib_reactor_kqfd_v1() -> i32 {
+// This thread's kqueue descriptor, creating the reactor if this is the
+// thread's first use of it. Two threads get two different fds — the state
+// slot is thread-local (see the codegen preamble).
+fn kqfd() -> i32 {
     let state: *u8 = ensure();
     return { *((state + off_kqfd()) as *i32) };
+}
+
+export extern fn stdlib_reactor_kqfd_v1() -> i32 {
+    return kqfd();
 }
 
 // Register fd for read-readiness; record the coroutine handle to wake.
@@ -388,6 +439,53 @@ fn poll_one_event() -> bool {
     return poll_event_with(0 as *u8);   // NULL timeout: block until an event
 }
 
+// v0.0.29 phase 2: `poll_one_event` for a CANCELLABLE executor. The kevent
+// park joins the phase-1 protocol (stdlib/thread.cplus): park_begin refuses
+// to park once cancellation was requested, and while parked the canceller's
+// SIGURG kick makes kevent return EINTR (which `poll_event_with` reports as
+// "nothing resumed"). Returns 1 = a coroutine was resumed, 0 = empty wake
+// (EINTR lands here — the caller's loop re-checks), -2 = cancellation was
+// already requested and nothing was waited on. `block_on` keeps the bare
+// `poll_one_event`: its contract is drive-to-completion, and an unparkable
+// wait is exactly what "cancel does not stop block_on" means.
+fn poll_one_event_cancellable() -> i32 {
+    if thread::park_begin() {
+        thread::park_end();
+        return 0 - 2;
+    }
+    let resumed: bool = poll_one_event();
+    thread::park_end();
+    if resumed { return 1; }
+    return 0;
+}
+
+// v0.0.29 phase 2: tear down this thread's reactor entirely — free the six
+// grown arrays and the kevent buffer, close the kqueue (which atomically
+// de-registers every waiter filter and pending timer with it), free the
+// state block, and null the thread-local slot so a later executor on this
+// thread starts fresh. Frames the arrays referenced are NOT destroyed here:
+// the cancelling executor destroys the task tree it owns (the cascade
+// through the awaits' cancel edges), and this purge is what guarantees no
+// reactor entry can reach those freed frames afterwards. A `spawn_local`
+// task the cascade does not reach is LEAKED by teardown (nobody owns its
+// frame) — recorded in the cancellation report as the phase-2 residual.
+fn teardown() {
+    let cur: *u8 = { #reactor_get_state() };
+    if ptr_is_null(cur) { return; }
+    let kqfd: i32 = { *((cur + off_kqfd()) as *i32) };
+    { close(kqfd); }
+    { free(*((cur + off_waiter_fds()) as **u8)); }
+    { free(*((cur + off_waiter_hdls()) as **u8)); }
+    { free(*((cur + off_pending_hdls()) as **u8)); }
+    { free(*((cur + off_kevent_buf()) as **u8)); }
+    { free(*((cur + off_waiter_filters()) as **u8)); }
+    { free(*((cur + off_awaitee_hdls()) as **u8)); }
+    { free(*((cur + off_awaiter_hdls()) as **u8)); }
+    { free(cur); }
+    { #reactor_set_state(0 as *u8); }
+    return;
+}
+
 // The non-blocking form: a zero timespec makes kevent return immediately
 // when nothing is ready.
 struct PollTimeout {
@@ -487,6 +585,32 @@ fn drain_pending() -> i32 {
     return n;
 }
 
+// v0.0.29 phase 2: drop every pending-queue entry equal to `hdl` — the
+// destroy-side mirror of `enqueue_pending` (see the export's comment).
+fn unregister_pending(hdl: *u8) {
+    let state: *u8 = ensure();
+    let np_slot: *i32 = { (state + off_n_pending()) as *i32 };
+    let ph_slot: **u8 = { (state + off_pending_hdls()) as **u8 };
+    let hdls: **u8 = { *ph_slot as **u8 };
+    var n: i32 = { *np_slot };
+    var i: i32 = 0;
+    while i < n {
+        let cur: *u8 = { *(hdls + (i as usize)) };
+        if cur == hdl {
+            let last_i: i32 = n -% (1 as i32);
+            if i != last_i {
+                let last_h: *u8 = { *(hdls + (last_i as usize)) };
+                { *(hdls + (i as usize)) = last_h; }
+            }
+            n = last_i;
+        } else {
+            i = i +% (1 as i32);
+        }
+    }
+    { *np_slot = n; }
+    return;
+}
+
 // Push a coroutine handle to the spawn_local queue.
 fn enqueue_pending(hdl: *u8) {
     let state: *u8 = ensure();
@@ -551,11 +675,59 @@ fn register_awaiter(awaitee: *u8, awaiter: *u8) {
     }
     let aes: **u8 = { *ae_slot as **u8 };
     let ars: **u8 = { *ar_slot as **u8 };
+    // Idempotent (v0.0.29 phase 2): `block_on` resumes the outermost future
+    // once per drive pass, and every pass re-runs the await's registration.
+    // Appending a duplicate per pass left stale entries whose awaitee
+    // pointer dangles after the extract-path destroy — harmless until
+    // malloc reuses that address, at which point a later notify enqueues a
+    // dead frame. Scan-before-append closes the source; the table is small.
+    var s: i32 = 0;
+    while s < n {
+        let cur_ae: *u8 = { *(aes + (s as usize)) };
+        if cur_ae == awaitee {
+            let cur_ar: *u8 = { *(ars + (s as usize)) };
+            if cur_ar == awaiter { return; }
+        }
+        s = s +% (1 as i32);
+    }
     let aes_dst: **u8 = { aes + (n as usize) };
     { *aes_dst = awaitee; }
     let ars_dst: **u8 = { ars + (n as usize) };
     { *ars_dst = awaiter; }
     { *na_slot = n +% (1 as i32); }
+    return;
+}
+
+// v0.0.29 phase 2: remove EVERY awaiter entry registered on `awaitee` —
+// the mirror of `register_awaiter` for a frame that is being destroyed
+// rather than completing. Loops rather than popping one: duplicates from
+// before the register dedupe (or from a re-registered pair) must all go.
+fn unregister_awaiter(awaitee: *u8) {
+    let state: *u8 = ensure();
+    let na_slot: *i32 = { (state + off_n_awaiters()) as *i32 };
+    let ae_slot: **u8 = { (state + off_awaitee_hdls()) as **u8 };
+    let ar_slot: **u8 = { (state + off_awaiter_hdls()) as **u8 };
+    let aes: **u8 = { *ae_slot as **u8 };
+    let ars: **u8 = { *ar_slot as **u8 };
+    var n: i32 = { *na_slot };
+    var i: i32 = 0;
+    while i < n {
+        let cur_ae: *u8 = { *(aes + (i as usize)) };
+        if cur_ae == awaitee {
+            // Swap-remove; re-check slot i (it now holds the old last).
+            let last_i: i32 = n -% (1 as i32);
+            if i != last_i {
+                let last_ae: *u8 = { *(aes + (last_i as usize)) };
+                let last_ar: *u8 = { *(ars + (last_i as usize)) };
+                { *(aes + (i as usize)) = last_ae; }
+                { *(ars + (i as usize)) = last_ar; }
+            }
+            n = last_i;
+        } else {
+            i = i +% (1 as i32);
+        }
+    }
+    { *na_slot = n; }
     return;
 }
 

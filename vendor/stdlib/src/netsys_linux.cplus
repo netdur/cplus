@@ -17,6 +17,9 @@ fn o_nonblock() -> i32 { return 0x800 as i32; }
 // EAGAIN (== EWOULDBLOCK on Linux): 11.
 fn eagain() -> i32 { return 11 as i32; }
 
+// EINTR: 4 on Linux too.
+fn eintr() -> i32 { return 4 as i32; }
+
 // setsockopt level / optname for SO_REUSEADDR. Linux (asm-generic):
 // SOL_SOCKET=1, SO_REUSEADDR=2.
 fn sol_socket() -> i32 { return 1 as i32; }
@@ -39,12 +42,29 @@ extern fn close(fd: i32) -> i32;
 // on AArch64-darwin where varargs come from the stack.
 extern fn fcntl(fd: i32, cmd: i32, ...) -> i32;
 
+// Linux has no `SO_NOSIGPIPE`; the equivalent is per-CALL (`MSG_NOSIGNAL`
+// on `send`), applied in `send_fd` below. See the long note on
+// `set_nosigpipe` in the Darwin variant for why a socket write that finds a
+// dead peer must not be allowed to kill the process.
+fn send_flags_nosignal() -> i32 { return 0x4000 as i32; }   // MSG_NOSIGNAL
+
+extern fn send(fd: i32, buf: *u8, len: usize, flags: i32) -> isize;
+
+// Nothing socket-scoped to set here — the protection rides on every send
+// instead. Kept so callers have one portable line across platforms.
+fn set_nosigpipe(fd: i32) -> i32 {
+    let _unused: i32 = fd;
+    return 0 as i32;
+}
+
 fn recv_fd(fd: i32, buf: *u8, count: usize) -> isize {
     return { read(fd, buf, count) };
 }
 
+// `send` with MSG_NOSIGNAL rather than `write`: a dead peer must come back
+// as -1/EPIPE, not as a SIGPIPE that terminates the process silently.
 fn send_fd(fd: i32, buf: *u8, count: usize) -> isize {
-    return { write(fd, buf, count) };
+    return { send(fd, buf, count, send_flags_nosignal()) };
 }
 
 fn close_fd(fd: i32) -> i32 {

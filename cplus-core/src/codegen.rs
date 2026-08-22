@@ -372,13 +372,36 @@ impl ModuleMetadata {
 /// **Layout convention (shared by spawn / spawn_with):**
 ///
 /// ```text
-/// offset 0:                fn pointer (8 bytes)
-/// offset 8:                result slot, size_of(O) bytes
-/// offset 8 + size_of(O):   input slot, size_of(I) bytes (spawn_with only)
+/// offset 0:                 refcount, u64 (parent + worker = 2)
+/// offset 8:                 fn pointer (8 bytes)
+/// offset 16:                cancel block, 48 bytes (see below)
+/// offset 64:                result slot, coerce-padded size_of(O) bytes
+/// offset 64 + result_slot:  input slot, size_of(I) bytes (spawn_with only)
 /// ```
-/// Keeping the result at a fixed offset of 8 lets `__cplus_thread_join`
-/// be the same for both forms — it doesn't need to know whether the
-/// thread was spawned with an input.
+/// Keeping the result at a fixed offset lets `__cplus_thread_join` be the
+/// same for both forms — it doesn't need to know whether the thread was
+/// spawned with an input. Keeping the CANCEL BLOCK at a fixed offset lets
+/// `JoinHandle[O]::cancel` in stdlib/thread.cplus find it without knowing
+/// `I` (which the handle type does not carry).
+///
+/// **Cancel block** (v0.0.29; offsets relative to ctx+16, all 8-byte):
+/// ```text
+/// +0:  flag       u64   1 = cancellation requested   (canceller writes)
+/// +8:  parked     u64   1 = worker inside a cancellable park (worker writes)
+/// +16: verb_lock  u64   spinlock guarding the two verb pointers
+/// +24: verb_cond  ptr   published condvar wake verb, or null
+/// +32: verb_mutex ptr   the mutex that condvar parks under
+/// +40: reserved   u64
+/// ```
+/// The trampoline points the per-thread `@__cplus_cancel_slot` TLS at
+/// ctx+16 before calling the worker and clears it after, which is what
+/// makes `thread::cancelled()` and the park protocol ambient — no worker
+/// signature carries a token. Layout is mirrored, by offset, in
+/// stdlib/thread.cplus; the two must agree byte-for-byte.
+const THREAD_CTX_CANCEL_OFF: u64 = 16;
+const THREAD_CTX_CANCEL_BYTES: u64 = 48;
+const THREAD_CTX_RESULT_OFF: u64 = THREAD_CTX_CANCEL_OFF + THREAD_CTX_CANCEL_BYTES;
+
 #[derive(Debug, Clone)]
 enum TrampolineSpec {
     Spawn { o: Ty },
@@ -585,8 +608,9 @@ fn thread_result_slot_size(o_ty: &Ty, types: &TypeTable) -> u64 {
 /// and the trampoline (input load) so the two can never disagree:
 ///   refcount: u64  @ 0
 ///   fn_ptr:        @ 8
-///   result_slot:   @ 16                (coerce-padded, see above)
-///   input_slot:    @ 16 + result_slot  (aligned for both the typed store
+///   cancel block:  @ 16                (48 bytes — see `TrampolineSpec` doc)
+///   result_slot:   @ 64                (coerce-padded, see above)
+///   input_slot:    @ 64 + result_slot  (aligned for both the typed store
 ///                                       and any coerced trampoline load)
 /// Returns `(input_off, total_ctx_size)`.
 fn spawn_with_ctx_layout(i_ty: &Ty, o_ty: &Ty, types: &TypeTable) -> (u64, u64) {
@@ -596,7 +620,7 @@ fn spawn_with_ctx_layout(i_ty: &Ty, o_ty: &Ty, types: &TypeTable) -> (u64, u64) 
         slot_size = slot_size.max(size);
         slot_align = slot_align.max(align);
     }
-    let off_unaligned = 16 + thread_result_slot_size(o_ty, types);
+    let off_unaligned = THREAD_CTX_RESULT_OFF + thread_result_slot_size(o_ty, types);
     let input_off = (off_unaligned + slot_align - 1) & !(slot_align - 1);
     (input_off, input_off + slot_size)
 }
@@ -617,6 +641,13 @@ fn emit_spawn_tramp(out: &mut String, o_ty: &Ty, types: &TypeTable, sanitizer_at
     out.push_str("entry:\n");
     out.push_str("  %fptr = getelementptr inbounds i8, ptr %arg, i64 8\n");
     out.push_str("  %f = load ptr, ptr %fptr, align 8\n");
+    // v0.0.29 cancellation: point this thread's cancel slot at the ctx's
+    // cancel block for the worker's whole run, so `thread::cancelled()` and
+    // the park protocol observe the spawner's `JoinHandle::cancel` requests.
+    out.push_str(&format!(
+        "  %cancel = getelementptr i8, ptr %arg, i64 {THREAD_CTX_CANCEL_OFF}\n"
+    ));
+    out.push_str("  call void @__cplus_cancel_set_slot(ptr %cancel)\n");
     // The call must match the worker's DEFINITION ABI (`tramp_ret_abi`):
     // sret workers take the result pointer as a leading arg, coerced
     // returns come back in the register class, everything else by value.
@@ -626,7 +657,9 @@ fn emit_spawn_tramp(out: &mut String, o_ty: &Ty, types: &TypeTable, sanitizer_at
         }
         TrampRetAbi::Sret => {
             let (sz, al) = static_layout(o_ty, types).expect("sret thread-spawn O has layout");
-            out.push_str("  %slot = getelementptr i8, ptr %arg, i64 16\n");
+            out.push_str(&format!(
+                "  %slot = getelementptr i8, ptr %arg, i64 {THREAD_CTX_RESULT_OFF}\n"
+            ));
             out.push_str(&format!(
                 "  call void %f({})\n",
                 sret_fragment_for(&llvm_t, sz, al, "%slot")
@@ -638,15 +671,23 @@ fn emit_spawn_tramp(out: &mut String, o_ty: &Ty, types: &TypeTable, sanitizer_at
             ..
         } => {
             out.push_str(&format!("  %r = call {cty} %f()\n"));
-            out.push_str("  %slot = getelementptr i8, ptr %arg, i64 16\n");
+            out.push_str(&format!(
+                "  %slot = getelementptr i8, ptr %arg, i64 {THREAD_CTX_RESULT_OFF}\n"
+            ));
             out.push_str(&format!("  store {cty} %r, ptr %slot, align {cal}\n"));
         }
         TrampRetAbi::Value => {
             out.push_str(&format!("  %r = call {llvm_t} %f()\n"));
-            out.push_str("  %slot = getelementptr i8, ptr %arg, i64 16\n");
+            out.push_str(&format!(
+                "  %slot = getelementptr i8, ptr %arg, i64 {THREAD_CTX_RESULT_OFF}\n"
+            ));
             out.push_str(&format!("  store {llvm_t} %r, ptr %slot, align {align}\n"));
         }
     }
+    // Clear the cancel slot before the ctx can be freed — nothing observes
+    // it after the worker fn returned, but a dangling TLS pointer is a trap
+    // for any future thread-exit hook.
+    out.push_str("  call void @__cplus_cancel_set_slot(ptr null)\n");
     // Atomic refcount decrement. AcqRel: release pairs with prior result
     // store; acquire on the decrement-from-1 path ensures the freeing
     // thread sees the parent's last writes (if any) before deallocation.
@@ -683,6 +724,12 @@ fn emit_spawn_with_tramp(
     out.push_str("entry:\n");
     out.push_str("  %fptr = getelementptr inbounds i8, ptr %arg, i64 8\n");
     out.push_str("  %f = load ptr, ptr %fptr, align 8\n");
+    // v0.0.29 cancellation: install this thread's cancel slot (see
+    // `emit_spawn_tramp` for the contract).
+    out.push_str(&format!(
+        "  %cancel = getelementptr i8, ptr %arg, i64 {THREAD_CTX_CANCEL_OFF}\n"
+    ));
+    out.push_str("  call void @__cplus_cancel_set_slot(ptr %cancel)\n");
     out.push_str(&format!(
         "  %input_slot = getelementptr i8, ptr %arg, i64 {input_off}\n"
     ));
@@ -721,7 +768,9 @@ fn emit_spawn_with_tramp(
         }
         TrampRetAbi::Sret => {
             let (sz, al) = static_layout(o_ty, types).expect("sret spawn_with O has layout");
-            out.push_str("  %result_slot = getelementptr i8, ptr %arg, i64 16\n");
+            out.push_str(&format!(
+                "  %result_slot = getelementptr i8, ptr %arg, i64 {THREAD_CTX_RESULT_OFF}\n"
+            ));
             out.push_str(&format!(
                 "  call void %f({}, {in_arg})\n",
                 sret_fragment_for(&o_llvm, sz, al, "%result_slot")
@@ -733,19 +782,25 @@ fn emit_spawn_with_tramp(
             ..
         } => {
             out.push_str(&format!("  %r = call {cty} %f({in_arg})\n"));
-            out.push_str("  %result_slot = getelementptr i8, ptr %arg, i64 16\n");
+            out.push_str(&format!(
+                "  %result_slot = getelementptr i8, ptr %arg, i64 {THREAD_CTX_RESULT_OFF}\n"
+            ));
             out.push_str(&format!(
                 "  store {cty} %r, ptr %result_slot, align {cal}\n"
             ));
         }
         TrampRetAbi::Value => {
             out.push_str(&format!("  %r = call {o_llvm} %f({in_arg})\n"));
-            out.push_str("  %result_slot = getelementptr i8, ptr %arg, i64 16\n");
+            out.push_str(&format!(
+                "  %result_slot = getelementptr i8, ptr %arg, i64 {THREAD_CTX_RESULT_OFF}\n"
+            ));
             out.push_str(&format!(
                 "  store {o_llvm} %r, ptr %result_slot, align {o_align}\n"
             ));
         }
     }
+    // Clear the cancel slot (mirror of emit_spawn_tramp).
+    out.push_str("  call void @__cplus_cancel_set_slot(ptr null)\n");
     // Refcount dec + maybe-free, same shape as emit_spawn_tramp.
     out.push_str("  %prev = atomicrmw sub ptr %arg, i64 1 acq_rel\n");
     out.push_str("  %was_last = icmp eq i64 %prev, 1\n");
@@ -1381,6 +1436,11 @@ fn generate_inner(
         "__cplus_reactor_set_state",
         "__cplus_coro_resume",
         "__cplus_coro_done",
+        "__cplus_coro_destroy",
+        // v0.0.29: cancel-slot accessors, emitted linkonce_odr in every
+        // module; stdlib/thread.cplus re-declares the getter.
+        "__cplus_cancel_get_slot",
+        "__cplus_cancel_set_slot",
     ] {
         emitted_extern_symbols.insert(sym.to_string());
     }
@@ -5195,15 +5255,55 @@ fn write_preamble(out: &mut String, sanitizer_attrs: &str) {
     // extern-fn path. No preamble entry needed; emitting one would
     // collide.
     //
-    // v0.0.4 Phase 3 Slice 3A.1: async reactor state. A single
-    // process-global mutable pointer slot, plus tiny getter/setter
-    // helpers. The actual reactor state struct (kqueue fd, waiter
-    // arrays, pending-task queue) lives at the address this slot
-    // points to and is allocated/managed by stdlib/reactor.cplus.
+    // v0.0.4 Phase 3 Slice 3A.1: async reactor state. A mutable pointer
+    // slot, plus tiny getter/setter helpers. The actual reactor state struct
+    // (kqueue fd, waiter arrays, pending-task queue) lives at the address
+    // this slot points to and is allocated/managed by stdlib/reactor.cplus.
     // We emit the global + accessors here so that C+ source can
     // remain global-free; stdlib calls these as plain extern fns.
-    out.push_str("\n; v0.0.4 Phase 3 Slice 3A.1: reactor state slot.\n");
-    out.push_str("@__cplus_reactor_state = internal global ptr null, align 8\n");
+    //
+    // ONE REACTOR PER THREAD (2026-08-22). This was a process-global with no
+    // lock while `executor::block_on` had — and still has — no thread
+    // affinity, so two `block_on`s on two threads shared one kqueue and one
+    // set of six realloc-grown arrays. TSan, once it could see stdlib, found
+    // the lazy init first, exactly where the bug report predicted:
+    //
+    //     WARNING: ThreadSanitizer: data race
+    //       Write of size 8 ... __cplus_reactor_set_state <- reactor.ensure
+    //       Previous read of size 8 ... __cplus_reactor_get_state <- reactor.ensure
+    //       Location is global '__cplus_reactor_state'
+    //
+    // — both threads observing null, both creating a kqueue, both storing,
+    // one fd orphaned with its waiters attached to a block nobody polls
+    // again. A second race followed on the 96-byte state block itself.
+    //
+    // `thread_local` is the whole fix and it needs no lock on any path:
+    // one reactor per thread is what `reactor.cplus`'s own header has
+    // claimed since v0.0.4 ("single-threaded — matches tokio's
+    // current_thread"), and making the slot per-thread makes that claim true
+    // instead of aspirational. `block_on` becomes honestly callable from any
+    // thread, which `stdlib/thread` already allows.
+    //
+    // NOT A LANGUAGE FEATURE. C+ has no thread-local storage and this does
+    // not add one: there is no parser surface, no type, no attribute, no way
+    // for user code to declare one. This is a single compiler-owned internal
+    // global that the compiler alone reads and writes.
+    //
+    // General-dynamic TLS model, deliberately: `localexec` would be wrong in
+    // the cdylib this same IR is compiled into (facet's shared-library path,
+    // iris plugins), and `initialexec` breaks under `dlopen` on some
+    // platforms. The slot is touched once per await, so the model's cost is
+    // not worth a portability hazard.
+    //
+    // THE COST, named: a thread that calls `block_on` and then exits leaves
+    // its kqueue fd and six buffers behind, because C+ has no thread-exit
+    // hook to run a teardown from. Bounded by "threads that ran an
+    // executor", not by threads; a program that spawns many short-lived
+    // executor threads wants a teardown call, which is the follow-up. What
+    // it replaces is a data race, and a bounded leak is the better half of
+    // that trade.
+    out.push_str("\n; v0.0.4 Phase 3 Slice 3A.1: reactor state slot (per-thread).\n");
+    out.push_str("@__cplus_reactor_state = internal thread_local global ptr null, align 8\n");
     out.push_str(&format!(
         "define internal ptr @__cplus_reactor_get_state(){sanitizer_attrs} {{\n  \
          %p = load ptr, ptr @__cplus_reactor_state, align 8\n  \
@@ -5216,6 +5316,33 @@ fn write_preamble(out: &mut String, sanitizer_attrs: &str) {
          ret void\n\
          }}\n"
     ));
+    // v0.0.29 cancellation: per-thread cancel slot. Unlike the reactor slot
+    // (internal — one module, reactor.cplus, is its only user) this one is
+    // WRITTEN by thread-spawn trampolines emitted into whichever module has
+    // the spawn call site and READ by stdlib/thread.cplus, so `internal`
+    // per-module copies would be different globals. `linkonce_odr hidden`
+    // gives every module its own identical definition and lets the linker
+    // coalesce them into one per image; `hidden` keeps it out of the dynamic
+    // symbol table so two images never fight over one copy (a dlopen'd
+    // plugin gets its own slot, same bounded cost as the reactor slot).
+    // Same general-dynamic TLS model as the reactor slot, for the same
+    // dlopen reasons.
+    out.push_str("\n; v0.0.29: cancellation slot (per-thread), one per image.\n");
+    out.push_str(
+        "@__cplus_cancel_slot = linkonce_odr hidden thread_local global ptr null, align 8\n",
+    );
+    out.push_str(&format!(
+        "define linkonce_odr hidden ptr @__cplus_cancel_get_slot(){sanitizer_attrs} {{\n  \
+         %p = load ptr, ptr @__cplus_cancel_slot, align 8\n  \
+         ret ptr %p\n\
+         }}\n"
+    ));
+    out.push_str(&format!(
+        "define linkonce_odr hidden void @__cplus_cancel_set_slot(ptr %p){sanitizer_attrs} {{\n  \
+         store ptr %p, ptr @__cplus_cancel_slot, align 8\n  \
+         ret void\n\
+         }}\n"
+    ));
     // FFI-callable wrappers around the `llvm.coro.*` intrinsics so
     // stdlib/reactor.cplus can call them as plain extern fns. The
     // intrinsics themselves aren't FFI-callable directly (the LLVM
@@ -5224,6 +5351,16 @@ fn write_preamble(out: &mut String, sanitizer_attrs: &str) {
     out.push_str(&format!(
         "define internal void @__cplus_coro_resume(ptr %h){sanitizer_attrs} {{\n  \
          call void @llvm.coro.resume(ptr %h)\n  \
+         ret void\n\
+         }}\n"
+    ));
+    // v0.0.29 phase 2: FFI-callable destroy — `future::cancel` and the
+    // cancellable executor (`executor::run`) call this to tear down a
+    // suspended frame; the per-suspend cancel blocks make it run the live
+    // locals' drops before freeing.
+    out.push_str(&format!(
+        "define internal void @__cplus_coro_destroy(ptr %h){sanitizer_attrs} {{\n  \
+         call void @llvm.coro.destroy(ptr %h)\n  \
          ret void\n\
          }}\n"
     ));
@@ -14711,6 +14848,20 @@ impl<'a> FnState<'a> {
             self.gen_load(&r, &t, &p_val);
             return Some(Some((r, t)));
         }
+        // `#coro_promise::[T](hdl: *u8) -> *T` → `llvm.coro.promise` with T's
+        // alignment as the constant the intrinsic requires. Must match the
+        // alignment the async-fn lowering allocated the promise with (both
+        // derive it from the same `static_layout`).
+        if name == "__cplus_coro_promise" {
+            let t = ty_from(&type_args[0], self.types);
+            let (h_val, _) = self.gen_expr(&args[0]).expect("coro_promise handle arg");
+            let align = static_layout(&t, self.types).map(|(_, a)| a).unwrap_or(8);
+            let r = self.next_tmp();
+            self.emit(&format!(
+                "{r} = call ptr @llvm.coro.promise(ptr {h_val}, i32 {align}, i1 false)"
+            ));
+            return Some(Some((r, Ty::RawPtr(Box::new(t)))));
+        }
         // `#drop_in_place::[T](p: *T)` → call the monomorphized `T::drop(p)`
         // when T has Drop, else nothing.
         if name == "__cplus_drop_in_place" {
@@ -15215,11 +15366,12 @@ impl<'a> FnState<'a> {
             return Some(("undef".to_string(), self.lookup_join_handle_ty(&o_ty)));
         }
         let tramp_sym = self.tramps.register_spawn(&o_ty, self.types);
-        // v0.0.4 Phase 2 Slice 2H ctx layout:
+        // v0.0.29 ctx layout (see `TrampolineSpec` doc):
         //   refcount: u64       @ 0   (initialized to 2: parent + worker)
         //   fn_ptr:             @ 8
-        //   result_slot:        @ 16  (coerce-padded — see thread_result_slot_size)
-        let total_size = 16 + thread_result_slot_size(&o_ty, self.types);
+        //   cancel block:       @ 16  (48 bytes, zero-initialized)
+        //   result_slot:        @ 64  (coerce-padded — see thread_result_slot_size)
+        let total_size = THREAD_CTX_RESULT_OFF + thread_result_slot_size(&o_ty, self.types);
         let ctx = self.next_tmp();
         self.emit(&format!("{ctx} = call ptr @malloc(i64 {total_size})"));
         // refcount = 2 (plain store — not yet shared with the worker).
@@ -15230,6 +15382,7 @@ impl<'a> FnState<'a> {
             "{fn_slot} = getelementptr inbounds i8, ptr {ctx}, i64 8"
         ));
         self.emit(&format!("store ptr {f_val}, ptr {fn_slot}, align 8"));
+        self.emit_zeroed_cancel_block(&ctx);
         let tid_slot = self.next_tmp();
         self.emit(&format!("{tid_slot} = call ptr @malloc(i64 8)"));
         let err = self.next_tmp();
@@ -15299,12 +15452,13 @@ impl<'a> FnState<'a> {
         }
         let tramp_sym = self.tramps.register_spawn_with(&i_ty, &o_ty);
         let (_i_size, i_align) = static_layout(&i_ty, self.types).unwrap_or((8, 8));
-        // v0.0.4 Phase 2 Slice 2H ctx layout, computed by
-        // `spawn_with_ctx_layout` — shared with `emit_spawn_with_tramp` so
-        // the call site and the trampoline can never disagree:
+        // v0.0.29 ctx layout, computed by `spawn_with_ctx_layout` — shared
+        // with `emit_spawn_with_tramp` so the call site and the trampoline
+        // can never disagree:
         //   refcount: u64       @ 0   (initialized to 2: parent + worker)
         //   fn_ptr:             @ 8
-        //   result_slot:        @ 16  (coerce-padded)
+        //   cancel block:       @ 16  (48 bytes, zero-initialized)
+        //   result_slot:        @ 64  (coerce-padded)
         //   input_slot:         @ input_off
         let (input_off, total_size) = spawn_with_ctx_layout(&i_ty, &o_ty, self.types);
         let ctx = self.next_tmp();
@@ -15317,6 +15471,7 @@ impl<'a> FnState<'a> {
             "{fn_slot} = getelementptr inbounds i8, ptr {ctx}, i64 8"
         ));
         self.emit(&format!("store ptr {f_val}, ptr {fn_slot}, align 8"));
+        self.emit_zeroed_cancel_block(&ctx);
         let input_slot = self.next_tmp();
         self.emit(&format!(
             "{input_slot} = getelementptr i8, ptr {ctx}, i64 {input_off}"
@@ -15494,14 +15649,32 @@ impl<'a> FnState<'a> {
             "  {suspend_v} = call i8 @llvm.coro.suspend(token none, i1 false)\n"
         ));
         // i8 1 = destroy (outer future cancelled while suspended at this await)
-        // → run cleanup, never trap. Same fix as gen_yield_expr. The dead
-        // `{trap_bb}` block below is left unreferenced (valid, DCE'd). Note: the
-        // registered inner awaiter (`inner_hdl`) is not torn down on this
-        // cancellation path yet — it leaks rather than crashes; full cancel
-        // semantics are a follow-up (no executor cancellation API exists today).
+        // → the per-await cancel path (v0.0.29 phase 2): unregister the
+        // (inner → self) awaiter entries so the reactor can never enqueue this
+        // frame again (frame addresses get reused by malloc — a stale entry is
+        // a use-after-free, not just a leak), destroy the awaited inner frame
+        // (which cascades: ITS await/park suspend sites route their destroy
+        // edges the same way), run the drops of the locals live at this await
+        // (same machinery as gen_yield_expr), then free the frame via
+        // `.coro.cleanup`. The dead `{trap_bb}` block below is left
+        // unreferenced (valid, DCE'd).
+        let cancel_bb = self.next_block_label();
         self.body.push_str(&format!(
-            "  switch i8 {suspend_v}, label %{ramp_bb} [i8 0, label %{loop_bb} i8 1, label %.coro.cleanup]\n"
+            "  switch i8 {suspend_v}, label %{ramp_bb} [i8 0, label %{loop_bb} i8 1, label %{cancel_bb}]\n"
         ));
+        self.body.push_str(&format!("{cancel_bb}:\n"));
+        self.terminated = false;
+        self.body.push_str(&format!(
+            "  call void @stdlib_reactor_unregister_awaiter_v1(ptr {inner_hdl})\n"
+        ));
+        self.body.push_str(&format!(
+            "  call void @stdlib_reactor_unregister_pending_v1(ptr {inner_hdl})\n"
+        ));
+        self.body.push_str(&format!(
+            "  call void @llvm.coro.destroy(ptr {inner_hdl})\n"
+        ));
+        self.emit_coro_cancel_drops();
+        self.emit_terminator("br label %.coro.cleanup");
 
         // Ramp-return path — exited via the surrounding fn's coro.end.
         // We branch to .coro.final_suspend? No — we need to return
@@ -15625,7 +15798,11 @@ impl<'a> FnState<'a> {
         self.body.push_str(&format!("  br label %{loop_skip}\n"));
         self.body.push_str(&format!("{loop_skip}:\n"));
         self.body.push_str(&format!("  br label %{loop_bb}\n"));
-        // Extract path: read the outer's promise, destroy the frame.
+        // Extract path: read the outer's promise, destroy the frame. The
+        // frame may still sit in the reactor's pending queue (a notified
+        // awaiter this loop then resumed DIRECTLY — block_on always resumes
+        // the outermost each pass) — purge that entry, or the next executor
+        // on this thread reads freed memory (ASan, 2026-08-22).
         self.body.push_str(&format!("{extract_bb}:\n"));
         self.terminated = false;
         let prom = self.next_tmp();
@@ -15635,6 +15812,9 @@ impl<'a> FnState<'a> {
         let result = self.next_tmp();
         self.emit(&format!(
             "{result} = load {t_llvm}, ptr {prom}, align {t_align}"
+        ));
+        self.emit(&format!(
+            "call void @stdlib_reactor_unregister_pending_v1(ptr {hdl})"
         ));
         self.emit(&format!("call void @llvm.coro.destroy(ptr {hdl})"));
         Some((result, t_ty))
@@ -15701,12 +15881,20 @@ impl<'a> FnState<'a> {
         self.emit(&format!(
             "{suspend_v} = call i8 @llvm.coro.suspend(token none, i1 false)"
         ));
+        // i8 1 = destroy (coroutine cancelled mid-suspend) → per-park cancel
+        // block (v0.0.29 phase 2): drop the locals live at this suspend, then
+        // free the frame. Same machinery as gen_yield_expr. The reactor entry
+        // that still names this frame (waiter / timer / pending) is the
+        // executor teardown's job to purge — see `reactor::teardown`. The
+        // dead `{trap_bb}` block below is left unreferenced (valid, DCE'd).
+        let cancel_bb = self.next_block_label();
         self.emit_terminator(&format!(
-            // i8 1 = destroy (coroutine cancelled mid-suspend) → run cleanup,
-            // never trap. Same fix as gen_yield_expr; see its note. The dead
-            // `{trap_bb}` block below is left unreferenced (valid, DCE'd).
-            "switch i8 {suspend_v}, label %{ramp_bb} [i8 0, label %{resume_bb} i8 1, label %.coro.cleanup]"
+            "switch i8 {suspend_v}, label %{ramp_bb} [i8 0, label %{resume_bb} i8 1, label %{cancel_bb}]"
         ));
+        self.body.push_str(&format!("{cancel_bb}:\n"));
+        self.terminated = false;
+        self.emit_coro_cancel_drops();
+        self.emit_terminator("br label %.coro.cleanup");
         self.body.push_str(&format!("{ramp_bb}:\n"));
         self.body.push_str("  br label %.coro.end\n");
         self.body.push_str(&format!("{trap_bb}:\n"));
@@ -15734,12 +15922,20 @@ impl<'a> FnState<'a> {
         self.emit(&format!(
             "{suspend_v} = call i8 @llvm.coro.suspend(token none, i1 false)"
         ));
+        // i8 1 = destroy (coroutine cancelled mid-suspend) → per-park cancel
+        // block (v0.0.29 phase 2): drop the locals live at this suspend, then
+        // free the frame. Same machinery as gen_yield_expr. The reactor entry
+        // that still names this frame (waiter / timer / pending) is the
+        // executor teardown's job to purge — see `reactor::teardown`. The
+        // dead `{trap_bb}` block below is left unreferenced (valid, DCE'd).
+        let cancel_bb = self.next_block_label();
         self.emit_terminator(&format!(
-            // i8 1 = destroy (coroutine cancelled mid-suspend) → run cleanup,
-            // never trap. Same fix as gen_yield_expr; see its note. The dead
-            // `{trap_bb}` block below is left unreferenced (valid, DCE'd).
-            "switch i8 {suspend_v}, label %{ramp_bb} [i8 0, label %{resume_bb} i8 1, label %.coro.cleanup]"
+            "switch i8 {suspend_v}, label %{ramp_bb} [i8 0, label %{resume_bb} i8 1, label %{cancel_bb}]"
         ));
+        self.body.push_str(&format!("{cancel_bb}:\n"));
+        self.terminated = false;
+        self.emit_coro_cancel_drops();
+        self.emit_terminator("br label %.coro.cleanup");
         self.body.push_str(&format!("{ramp_bb}:\n"));
         self.body.push_str("  br label %.coro.end\n");
         self.body.push_str(&format!("{trap_bb}:\n"));
@@ -15794,12 +15990,20 @@ impl<'a> FnState<'a> {
         self.emit(&format!(
             "{suspend_v} = call i8 @llvm.coro.suspend(token none, i1 false)"
         ));
+        // i8 1 = destroy (coroutine cancelled mid-suspend) → per-park cancel
+        // block (v0.0.29 phase 2): drop the locals live at this suspend, then
+        // free the frame. Same machinery as gen_yield_expr. The reactor entry
+        // that still names this frame (waiter / timer / pending) is the
+        // executor teardown's job to purge — see `reactor::teardown`. The
+        // dead `{trap_bb}` block below is left unreferenced (valid, DCE'd).
+        let cancel_bb = self.next_block_label();
         self.emit_terminator(&format!(
-            // i8 1 = destroy (coroutine cancelled mid-suspend) → run cleanup,
-            // never trap. Same fix as gen_yield_expr; see its note. The dead
-            // `{trap_bb}` block below is left unreferenced (valid, DCE'd).
-            "switch i8 {suspend_v}, label %{ramp_bb} [i8 0, label %{resume_bb} i8 1, label %.coro.cleanup]"
+            "switch i8 {suspend_v}, label %{ramp_bb} [i8 0, label %{resume_bb} i8 1, label %{cancel_bb}]"
         ));
+        self.body.push_str(&format!("{cancel_bb}:\n"));
+        self.terminated = false;
+        self.emit_coro_cancel_drops();
+        self.emit_terminator("br label %.coro.cleanup");
         self.body.push_str(&format!("{ramp_bb}:\n"));
         self.body.push_str("  br label %.coro.end\n");
         self.body.push_str(&format!("{trap_bb}:\n"));
@@ -15853,13 +16057,30 @@ impl<'a> FnState<'a> {
         };
         let slot = self.next_tmp();
         let result = self.next_tmp();
-        // Result slot at offset 16 (after refcount@0 + fn_ptr@8).
-        self.emit(&format!("{slot} = getelementptr i8, ptr {ctx}, i64 16"));
+        // Result slot after refcount@0 + fn_ptr@8 + cancel block@16.
+        self.emit(&format!(
+            "{slot} = getelementptr i8, ptr {ctx}, i64 {THREAD_CTX_RESULT_OFF}"
+        ));
         self.emit(&format!(
             "{result} = load {llvm_t}, ptr {slot}, align {align}"
         ));
         self.emit_refcount_dec_and_maybe_free(&ctx);
         Some((result, o_ty))
+    }
+
+    /// v0.0.29 cancellation: zero the 48-byte cancel block at ctx+16
+    /// (flag / parked / verb_lock / verb_cond / verb_mutex / reserved).
+    /// Plain stores — the ctx is not yet shared with the worker.
+    fn emit_zeroed_cancel_block(&mut self, ctx: &str) {
+        let mut off = THREAD_CTX_CANCEL_OFF;
+        while off < THREAD_CTX_CANCEL_OFF + THREAD_CTX_CANCEL_BYTES {
+            let slot = self.next_tmp();
+            self.emit(&format!(
+                "{slot} = getelementptr i8, ptr {ctx}, i64 {off}"
+            ));
+            self.emit(&format!("store i64 0, ptr {slot}, align 8"));
+            off += 8;
+        }
     }
 
     /// v0.0.4 Phase 2 Slice 2H helper: atomically decrement the u64
@@ -25103,11 +25324,12 @@ fn main() -> i32 {\n\
 
     #[test]
     fn thread_spawn_with_input_stored_after_result_slot() {
-        // v0.0.4 Phase 2 Slice 2H ctx layout:
-        //   refcount:    @ 0  (u64, 8 bytes)
-        //   fn_ptr:      @ 8
-        //   result_slot: @ 16 (i32, 4 bytes — slot ends at 20)
-        //   input_slot:  @ 20 (i32, aligned)
+        // v0.0.29 ctx layout:
+        //   refcount:     @ 0  (u64, 8 bytes)
+        //   fn_ptr:       @ 8
+        //   cancel block: @ 16 (48 bytes)
+        //   result_slot:  @ 64 (i32, 4 bytes — slot ends at 68)
+        //   input_slot:   @ 68 (i32, aligned)
         let src = "#[lang(\"join_handle\")] struct JoinHandle[O] { tid: u64, opaque ctx: *u8 } \
                    fn double(x: i32) -> i32 { return x +% x; } \
                    fn main() -> i32 { \
@@ -25116,17 +25338,18 @@ fn main() -> i32 {\n\
                    }";
         let ir = gen_src_mono(src);
         let tramp_idx = ir.find("@__cplus_thread_tramp_with_0(").unwrap();
-        let tramp = &ir[tramp_idx..(tramp_idx + 500).min(ir.len())];
+        let tramp = &ir[tramp_idx..(tramp_idx + 700).min(ir.len())];
         assert!(
-            tramp.contains("getelementptr i8, ptr %arg, i64 20"),
-            "expected input slot at offset 20, got:\n{tramp}"
+            tramp.contains("%input_slot = getelementptr i8, ptr %arg, i64 68"),
+            "expected input slot at offset 68, got:\n{tramp}"
         );
     }
 
     #[test]
-    fn thread_spawn_with_for_i64_input_lives_at_offset_16() {
-        // i64 result is 8 bytes; result slot at offset 8..16. i64
-        // input aligned to 8 = offset 16.
+    fn thread_spawn_with_for_i64_input_lives_after_the_result_slot() {
+        // i64 result is 8 bytes; result slot at offset 64..72. i64 input
+        // aligned to 8 = offset 72. The trampoline must also install the
+        // per-thread cancel slot (ctx+16) around the worker call.
         let src = "#[lang(\"join_handle\")] struct JoinHandle[O] { tid: u64, opaque ctx: *u8 } \
                    fn negate(x: i64) -> i64 { return (0 as i64) -% x; } \
                    fn main() -> i32 { \
@@ -25135,14 +25358,26 @@ fn main() -> i32 {\n\
                    }";
         let ir = gen_src_mono(src);
         let tramp_idx = ir.find("@__cplus_thread_tramp_with_0(").unwrap();
-        let tramp = &ir[tramp_idx..(tramp_idx + 500).min(ir.len())];
+        let tramp = &ir[tramp_idx..(tramp_idx + 900).min(ir.len())];
         assert!(
-            tramp.contains("getelementptr i8, ptr %arg, i64 16"),
-            "expected input slot at offset 16, got:\n{tramp}"
+            tramp.contains("%input_slot = getelementptr i8, ptr %arg, i64 72"),
+            "expected input slot at offset 72, got:\n{tramp}"
         );
         assert!(
             tramp.contains("call i64 %f(i64 %i)"),
             "trampoline must call f(i64 i), got:\n{tramp}"
+        );
+        assert!(
+            tramp.contains("%cancel = getelementptr i8, ptr %arg, i64 16"),
+            "trampoline must locate the cancel block at ctx+16, got:\n{tramp}"
+        );
+        assert!(
+            tramp.contains("call void @__cplus_cancel_set_slot(ptr %cancel)"),
+            "trampoline must install the cancel slot before the worker call, got:\n{tramp}"
+        );
+        assert!(
+            tramp.contains("call void @__cplus_cancel_set_slot(ptr null)"),
+            "trampoline must clear the cancel slot after the worker call, got:\n{tramp}"
         );
     }
 
@@ -25309,7 +25544,7 @@ fn main() -> i32 {\n\
         // A 12-byte Copy struct O coerces to a 16-byte register class; the
         // trampoline stores the FULL coerced value into the ctx result slot.
         // Both the spawn malloc and the spawn_with layout must pad the slot
-        // to the coerce size (16+16=32, not 16+12=28) or the store tramples
+        // to the coerce size (64+16=80, not 64+12=76) or the store tramples
         // the bytes after the slot (the input, or heap metadata).
         let src = format!(
             "{SPAWN_ABI_PRELUDE}fn make_odd() -> Odd {{ return Odd {{ a: 1, b: 2, c: 3 }}; }} \
@@ -25320,8 +25555,8 @@ fn main() -> i32 {\n\
         );
         let ir = gen_src_mono(&src);
         assert!(
-            ir.contains("call ptr @malloc(i64 32)"),
-            "spawn ctx must pad a coerced 12-byte result slot to 16 (16+16=32):\n{ir}"
+            ir.contains("call ptr @malloc(i64 80)"),
+            "spawn ctx must pad a coerced 12-byte result slot to 16 (64+16=80):\n{ir}"
         );
     }
     #[test]

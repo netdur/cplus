@@ -2712,3 +2712,29 @@ fn rewriting_the_tree_costs_a_capability_nothing_else_carries() {
     assert ok.contains("edit_tree") == false;
     return;
 }
+
+// ---- inspector.describe `prefix` (demo/bugs/04-describe-verbs-cannot-be-scoped)
+
+#[test]
+fn describe_prefix_matches_a_key_path_and_nothing_else() {
+    // The filter that lets a client ask about one part of the tree instead of
+    // receiving all of it — 80,477 characters against a real app, which an
+    // agent harness refuses outright, leaving the verb answering nothing.
+    assert mcp::key_matches("board:detail:3", "board:detail:");
+    assert mcp::key_matches("board:detail:title", "board:detail:");
+    assert mcp::key_matches("board:col:1", "board:detail:") == false;
+    assert mcp::key_matches("window", "board:detail:") == false;
+    // A prefix is a prefix, not a segment matcher: `board:` takes the subtree.
+    assert mcp::key_matches("board:col:1", "board:");
+    assert mcp::key_matches("boardroom", "board");        // deliberate, documented
+}
+
+#[test]
+fn an_absent_describe_prefix_keeps_the_whole_tree() {
+    // The parameter is optional, and its absence must not change the answer —
+    // including for the unkeyed nodes this verb exists to show.
+    assert mcp::key_matches("board:detail:3", "");
+    assert mcp::key_matches("", "");                      // unkeyed node, no filter
+    // ...and an unkeyed node is correctly NOT matched by a real prefix.
+    assert mcp::key_matches("", "board:") == false;
+}

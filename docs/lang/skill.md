@@ -757,12 +757,12 @@ fn raw_add(a: i64, b: i64) -> i64 { #asm("add x0, x0, x1\nret"); }
 | `fs` | File I/O |
 | `net` | TCP (IPv4, numeric IPs only) |
 | `env` | env vars + argv |
-| `thread` | `spawn::[T](fn)` / `spawn_with::[I, O](data, fn)` / `JoinHandle[T]` |
+| `thread` | `spawn::[T](fn)` / `spawn_with::[I, O](data, fn)` / `JoinHandle[T]`; cancellation: `JoinHandle::cancel()` + `thread::cancelled()` (§10) |
 | `atomic` | `atomic_fetch_add_*` + `Ordering::{Relaxed,Acquire,Release,AcqRel,SeqCst}` |
 | `mutex` | pthread-backed, internally refcounted (no separate reference-count wrapper) |
 | `box` / `arc` / `rc` | Owned-on-heap: `Box` one owner, `Arc` atomic-refcount shared, `Rc` non-atomic shared. `Arc`/`Rc` add `downgrade() -> Weak[T]` for cycle-breaking back-pointers |
 | `channel` | typed MPMC message passing |
-| `future` / `executor` / `reactor` / `time` | `async fn`, `await`, kqueue reactor |
+| `future` / `executor` / `reactor` / `time` | `async fn`, `await`, kqueue reactor; `executor::run` = cancellable drive, `Future::cancel`, `join_worker`/`receive_or_cancel` bridge (§10) |
 | `iterator` | `gen fn` + adapters (`map`, `filter`, `take`) |
 | `cow` | clone-on-write `Text` |
 | `range` | `0..n` lowers to `Range[i32]` |
@@ -823,6 +823,63 @@ fn main() -> i32 { return executor::block_on::[i32](outer()); }
 Borrow-shaped params (`str`, `T[]`, `ref x: NonCopy`) are rejected in `async fn` (E0900). Use `Text`, `Vec[T]`.
 
 Shared mutable state exists (`mutex`, `atomic`, `arc`), but prefer partition+join. `Mutex[T]` is internally refcounted (no separate wrapper needed) — reach for it directly only when message-passing or partitioning won't do.
+
+### Cancellation (v0.0.29)
+
+A spawned worker can be asked to stop — asked, never killed:
+
+```cplus
+let h = thread::spawn_with::[i64, i64](fd, serve);
+h.cancel();               // request: sets the flag, kicks the current park
+let r = h.join();         // still waits; still returns the worker's value
+```
+
+- `h.cancel()` is idempotent, non-consuming, and returns as soon as the worker
+  leaves its *current* blocking call. The worker observes it, runs its drops
+  and `defer`s, and returns normally — cancellation cannot skip a drop.
+- In the worker, `thread::cancelled()` is the ambient check for compute loops
+  (a bare atomic load, safe anywhere). No token threads through signatures.
+- Blocking stdlib calls surface it as a value instead of blocking forever:
+  `Channel::receive` → `ReceiveResult::Cancelled` (buffered data still wins),
+  `TcpStream::read_to_end` / `write_all` / `TcpListener::accept` →
+  `IoError::Cancelled`, and mutators report `Status::Cancelled`.
+- Wrapping your own blocking FFI call: `thread::park_begin()` before the
+  syscall (returns true = already cancelled, don't park), the syscall, then
+  `thread::park_end()`; retry on `EINTR` (`netsys::eintr()`). For a
+  `pthread_cond_wait` park use `park_begin_cond(cond, mutex)` *before* taking
+  the mutex, re-check `cancelled()` in the wait loop, and `park_end()` *after*
+  releasing it. stdlib owns SIGURG for the syscall kick.
+- Cancellation does not cross a process boundary (a PTY child, a `Process`) —
+  those still stop via signals (`interrupt`/`terminate`).
+
+**Async cancellation (v0.0.29 phase 2).** The same request reaches async code:
+
+```cplus
+// In a worker that should be stoppable, drive with `run`, not `block_on`:
+fn worker(take x: i64) -> i64 {
+    return match executor::run::[i32](serve()) {
+        executor::RunResult::Done(v) => { (v as i64) }
+        executor::RunResult::Cancelled => { 0 - 1 }   // stopped on request
+    };
+}
+```
+
+- `executor::run[T](take f) -> RunResult[T]` is the cancellable drive: on a
+  cancel request it destroys the suspended frame tree — every `await`'s
+  destroy edge runs the drops of the locals live there, transitively — then
+  tears down the thread's reactor and reports `Cancelled`. Cancellation
+  cannot skip a drop. `block_on` stays the drive-to-completion form: a
+  cancel request does not stop it (same doctrine as a compute loop that
+  never checks `cancelled()`).
+- `Future::cancel(take this)` is explicit drop-to-cancel for a future you
+  will not drive. A future that is merely *dropped* still leaks its frame —
+  consume it with `await`, `block_on`, `run`, or `cancel`.
+- The async↔thread bridge: `executor::join_worker[O](take h)` awaits a
+  spawned thread's result without blocking the executor;
+  `executor::receive_or_cancel[T](take ch)` is an async channel receive that
+  surfaces `ReceiveResult::Cancelled`. Both poll on the reactor's timer.
+- `thread::cancelled()` works inside `async fn` bodies too — the token is
+  ambient to the thread, not to the coroutine.
 
 ### Interface default method bodies
 

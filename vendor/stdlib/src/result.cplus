@@ -19,6 +19,11 @@ enum IoError {
     AddrInUse,
     BrokenPipe,
     TimedOut,
+    // The calling thread was asked to stop (`JoinHandle::cancel`) while this
+    // operation would otherwise have blocked. Distinct from `Interrupted`
+    // (a plain EINTR, which blocking stdlib calls retry internally): this one
+    // means STOP — unwind, run your drops, return. See stdlib/thread.cplus.
+    Cancelled,
     Other,
 }
 
