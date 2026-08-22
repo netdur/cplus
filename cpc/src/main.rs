@@ -85,8 +85,10 @@ build flags (apply to `cpc FILE` and `cpc build`):
   --fp-contract=off|on|fast         float contraction policy; `off` keeps `a*b+c` as
                                     fmul+fadd for bit-identical-to-C output (default: on).
                                     Place before --emit-ll/--emit-asm/--emit-obj FILE.
-  --timings                         print per-phase build cost to stderr
+  --timings                         print build cost to stderr: per phase
                                     (resolve+sema+borrowck / codegen / prune / clang+link)
+                                    then per package (each prebuilt dependency,
+                                    the project itself, and the unaccounted rest)
   -g | --debug-info                 emit DWARF debug metadata + pass -g to clang
   --asan | --ubsan | --tsan | --msan
                                     enable the matching LLVM sanitizer (asan/tsan/msan are
@@ -1656,6 +1658,22 @@ fn vendor_dir_for(m: &manifest::Manifest, dep_name: &str) -> Option<PathBuf> {
     store.join("Cplus.toml").is_file().then_some(store)
 }
 
+/// Where each active dependency's sources live: name -> canonical `src/`.
+/// `--timings` uses it to tell a dependency compiled from source apart from
+/// the project's own code — see `timings::inlined_from`, which cannot answer
+/// that from a path shape. Resolution mirrors `vendor_dir_for`, so a sibling
+/// checkout and a store package are found the same way the build finds them.
+fn dep_source_dirs(m: &manifest::Manifest) -> Vec<(String, PathBuf)> {
+    active_dep_names(m)
+        .into_iter()
+        .filter_map(|name| {
+            let src = vendor_dir_for(m, &name)?.join("src");
+            let src = fs::canonicalize(&src).unwrap_or(src);
+            Some((name, src))
+        })
+        .collect()
+}
+
 /// Bring every `[build] prebuild = true` dependency's slice up to date, before
 /// anything resolves an import.
 ///
@@ -1784,25 +1802,38 @@ fn ensure_one_prebuilt(
             stack.join(" -> ")
         ));
     }
-    stack.push(name);
+    stack.push(name.clone());
     let deps_first = ensure_prebuilt_deps(vm, build_mode, diag_mode, stack)
         .map_err(|_| format!("a dependency of `{}` failed to prebuild", vm.package.name));
+    // The stopwatch starts AFTER the dep walk on purpose: each package times
+    // its own slice, so the rows sum instead of nesting.
+    let t0 = timings::mark();
     let result = deps_first
         .and_then(|()| ensure_one_slice(vm, vendor_dir, link_triple, build_mode, diag_mode));
     stack.pop();
-    result
+    match result {
+        Ok(built) => {
+            timings::package(&name, t0, built);
+            Ok(())
+        }
+        Err(e) => Err(e),
+    }
 }
 
 /// Compile one package into `lib/<triple>/<name>.a` if the recorded
 /// fingerprint doesn't match the current inputs, and generate its headers
 /// alongside. A match is the fast path: nothing runs.
+///
+/// `Ok(true)` means it compiled, `Ok(false)` that the slice on disk was
+/// reused — `--timings` reports the two differently, and a zero-cost row is
+/// only readable if it says which one it was.
 fn ensure_one_slice(
     vm: &manifest::Manifest,
     vendor_dir: &Path,
     link_triple: &str,
     build_mode: BuildMode,
     diag_mode: DiagMode,
-) -> Result<(), String> {
+) -> Result<bool, String> {
     let slice_dir = vendor_dir.join("lib").join(link_triple);
     let archive = slice_dir.join(prebuilt_archive_name(&vm.package.name));
     let stamp = slice_dir.join(format!("{}.fingerprint", vm.package.name));
@@ -1821,7 +1852,7 @@ fn ensure_one_slice(
                     (Some(w), Some(got)) if &got != w => wrong_slice = Some(got),
                     // Agreed, or could not tell. "Could not tell" must reuse:
                     // rebuilding on it would rebuild every time, forever.
-                    _ => return Ok(()),
+                    _ => return Ok(false),
                 }
             }
         }
@@ -1919,7 +1950,7 @@ fn ensure_one_slice(
         }
     }
     fs::write(&stamp, &want).map_err(|e| format!("writing {}: {e}", stamp.display()))?;
-    Ok(())
+    Ok(true)
 }
 
 /// Write the entry a `prebuild` package is actually compiled from: one that
@@ -1954,6 +1985,20 @@ fn write_package_entry(vendor_dir: &Path, pkg: &str) -> Result<PathBuf, String> 
     // live case). So: import base names only and let the resolver pick the
     // active variant; keep a suffixed module only when it has no base file
     // (nothing else would reach it) and its platform is the active one.
+    // The TEST ROOT is not part of the library. `src/test_main.cplus` is a
+    // package's test entry by cpc's own convention (`Manifest::test_entry`),
+    // and `cpc test` compiles it directly — so importing it here put every
+    // `#[test]` function into the shipped archive (124 of them in `inspector`,
+    // 54 in `terminal`) and, worse, made the archive's LINK REQUIREMENTS a
+    // function of what the TESTS import. That is how it broke: inspector's
+    // suite imports `./appkit` to exercise the macOS overlay, so an iOS slice
+    // built from this entry referenced the appkit package — which is a
+    // `[macos.dependencies]` and is not linked for iOS — and a facet app on the
+    // simulator failed to link on 59 symbols named after a package it never
+    // asked for. A consumer cannot import another package's test root, so
+    // nothing is lost by leaving it out.
+    modules.retain(|m| m != "test_main");
+
     let stems: std::collections::HashSet<String> = modules.iter().cloned().collect();
     let active_suffix = format!("_{}", target::active_platform());
     modules.retain(|m| {
@@ -2337,7 +2382,7 @@ fn build_project(
         // a `prebuild` compile spends its time — the one build whose cost you
         // most want to see, since the cache exists to avoid paying it again.
         let code = build_lib_project(&m, &lib, out, diag_mode, build_mode, fp_contract, c_abi_entry);
-        timings::report();
+        timings::report_project(&m.package.name);
         return code;
     }
     // WHAT A BUILD PRODUCES IS THE TARGET'S FACT, not the manifest's. The
@@ -2395,7 +2440,7 @@ fn build_project(
             }
             let code =
                 build_lib_project(&m, &lib, out, diag_mode, build_mode, fp_contract, false);
-            timings::report();
+            timings::report_project(&m.package.name);
             return code;
         }
     };
@@ -2414,7 +2459,7 @@ fn build_project(
             libs: Vec::new(),
         };
         let code = build_lib_project(&m, &lib, out, diag_mode, build_mode, fp_contract, false);
-        timings::report();
+        timings::report_project(&m.package.name);
         return code;
     }
     if !entry.is_file() {
@@ -2498,6 +2543,7 @@ fn build_project(
     // test was vacuously clean. The single-file path (`compile_file`)
     // already plumbed sanitizers; this matches.
     warn_orphan_sources(&loaded_paths, &m.root, diag_mode);
+    timings::inlined_from(&loaded_paths, &dep_source_dirs(&m));
     ensure_coro_end_probed();
     let ir = timings::phase("codegen", || {
         codegen::generate_with_mono(&program, build_mode, fp_contract, None, sanitizers, false, &mono)
@@ -2567,7 +2613,7 @@ fn build_project(
     let status = timings::phase("clang + link", || {
         run_clang(&tmp, &out_path, build_mode, false, sanitizers, &link_args)
     });
-    timings::report();
+    timings::report_project(&m.package.name);
     drop(tmp_handle); // explicit cleanup on the secure temp path
     if status == ExitCode::SUCCESS {
         // One line on success. The only signal used to be the exit code,
@@ -2668,7 +2714,7 @@ fn build_lib_project(
         }
     };
     let dep_names: Vec<String> = active_dep_names(&m);
-    let (program, _entry_file_id, mono, _loaded_paths) = match timings::phase("resolve+sema+borrowck", || {
+    let (program, _entry_file_id, mono, loaded_paths) = match timings::phase("resolve+sema+borrowck", || {
         load_and_check_project_full(
             &lib.path,
             &m.root,
@@ -2681,6 +2727,7 @@ fn build_lib_project(
         Ok(p) => p,
         Err(code) => return code,
     };
+    timings::inlined_from(&loaded_paths, &dep_source_dirs(&m));
 
     // Phase 2 Slice 2C: dep walk runs even for library targets — a `.dylib`
     // baked from a package that itself depends on something must record
@@ -3430,6 +3477,9 @@ fn run_test(
     // bugs/cpc-test-asan-does-not-instrument.md
     fp_contract: bool,
 ) -> ExitCode {
+    // Named for the package table: `cpc test` reaches here from a manifest
+    // (a package suite) or from a bare file, and only the first has a name.
+    let mut project_name: Option<String> = None;
     let (program, _src_for_diags, mono, link_args) = match file {
         Some(path) => {
             let src = match fs::read_to_string(&path) {
@@ -3490,17 +3540,22 @@ fn run_test(
                 return code;
             }
             let dep_names: Vec<String> = active_dep_names(&m);
-            let (program, _, mono, _loaded_paths) = match load_and_check_project_full(
-                &entry_path,
-                &m.root,
-                diag_mode,
-                is_lib_pkg,
-                Some(&dep_names),
-                m.realtime_profile.as_ref(),
-            ) {
-                Ok(p) => p,
-                Err(code) => return code,
-            };
+            let (program, _, mono, loaded_paths) =
+                match timings::phase("resolve+sema+borrowck", || {
+                    load_and_check_project_full(
+                        &entry_path,
+                        &m.root,
+                        diag_mode,
+                        is_lib_pkg,
+                        Some(&dep_names),
+                        m.realtime_profile.as_ref(),
+                    )
+                }) {
+                    Ok(p) => p,
+                    Err(code) => return code,
+                };
+            timings::inlined_from(&loaded_paths, &dep_source_dirs(&m));
+            project_name = Some(m.package.name.clone());
             // G-029: tests must link the same frameworks/libs as a real
             // `cpc build` would — consumer's manifest first, then each
             // dependency's `[link]` contribution. Without this, vendor
@@ -3555,9 +3610,12 @@ fn run_test(
         return ExitCode::SUCCESS;
     }
     ensure_coro_end_probed();
-    let ir = prune_ir(codegen::generate_test_binary(
-        &program, build_mode, &tests, opts.json, &mono, fp_contract, sanitizers,
-    ));
+    let ir = timings::phase("codegen", || {
+        codegen::generate_test_binary(
+            &program, build_mode, &tests, opts.json, &mono, fp_contract, sanitizers,
+        )
+    });
+    let ir = timings::phase("prune", || prune_ir(ir));
     // Debug hook: `CPC_TEST_IR=path` writes the generated test-driver IR out.
     // The driver module is otherwise unreachable — it exists only inside this
     // function and its temp file is deleted — so a crash in it (a release-mode
@@ -3597,11 +3655,16 @@ fn run_test(
     // floor here (a hardcoded empty slice), so `cpc test --asan` silently ran an
     // uninstrumented binary — the one place where catching UB matters most,
     // since tests are where UB is reachable on demand.
-    let clang_status = run_clang(&tmp, &bin_out, build_mode, false, sanitizers, &link_args);
+    let clang_status = timings::phase("clang + link", || {
+        run_clang(&tmp, &bin_out, build_mode, false, sanitizers, &link_args)
+    });
     drop(tmp_handle);
     if !matches!(clang_status, ExitCode::SUCCESS) {
         return clang_status;
     }
+    // Before the binary runs: this is what BUILDING the suite cost, and
+    // printing it after would bury it under the test output.
+    timings::report_project(project_name.as_deref().unwrap_or("this build"));
     // Run the test binary. Its stdout is what `cpc test` prints; its exit
     // code equals the number of failing tests (clamped into [0, 255] so the
     // process-exit-code-as-u8 convention still fits).
@@ -4544,15 +4607,17 @@ fn compile_file(
             return ExitCode::FAILURE;
         }
     };
-    let ir = match build_ir(
-        &input,
-        &src,
-        mode,
-        build_mode,
-        fp_contract,
-        debug_info,
-        sanitizers,
-    ) {
+    let ir = match timings::phase("front end + codegen", || {
+        build_ir(
+            &input,
+            &src,
+            mode,
+            build_mode,
+            fp_contract,
+            debug_info,
+            sanitizers,
+        )
+    }) {
         Ok(ir) => ir,
         Err(code) => return code,
     };
@@ -4564,7 +4629,10 @@ fn compile_file(
         }
     };
     let tmp = tmp_handle.path().to_path_buf();
-    let status = run_clang(&tmp, &out, build_mode, debug_info, sanitizers, &[]);
+    let status = timings::phase("clang + link", || {
+        run_clang(&tmp, &out, build_mode, debug_info, sanitizers, &[])
+    });
+    timings::report_project(&input.file_stem().unwrap_or_default().to_string_lossy());
     drop(tmp_handle);
     status
 }
@@ -4784,16 +4852,61 @@ fn build_ir(
 /// Exists because the phase split had to be reverse-engineered by hand — three
 /// separate runs plus arithmetic — to learn that clang is 73% of a debug build
 /// and 99% of a release one. That should be one flag, not a research project.
+///
+/// Two tables come out of it. The phase table answers "where does a compile
+/// go"; the package table answers "which package am I paying for". An app on
+/// the facet stack prebuilds a dozen dependencies before it compiles a line of
+/// its own, and the only way to see that split used to be reading the
+/// interleaved prebuild tables and adding them up by hand.
 mod timings {
+    use std::collections::BTreeMap;
+    use std::path::PathBuf;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Mutex;
     use std::time::{Duration, Instant};
 
     static ENABLED: AtomicBool = AtomicBool::new(false);
     static PHASES: Mutex<Vec<(&'static str, Duration)>> = Mutex::new(Vec::new());
+    /// One row per package this build paid for, in the order they finished —
+    /// which is dependency order, since a package prebuilds after its deps.
+    static PACKAGES: Mutex<Vec<Row>> = Mutex::new(Vec::new());
+    /// Dependencies compiled from source INSIDE the current compile
+    /// (`prebuild = false`): name -> modules loaded out of its `src/`.
+    static INLINED: Mutex<Vec<(String, usize)>> = Mutex::new(Vec::new());
+    /// When the flag was seen. The rows are a breakdown of this, and what they
+    /// do NOT account for is worth seeing too.
+    static START: Mutex<Option<Instant>> = Mutex::new(None);
+
+    struct Row {
+        name: String,
+        cost: Cost,
+    }
+
+    enum Cost {
+        /// Compiled now into `lib/<triple>/<name>.a`.
+        Built(Duration),
+        /// Its fingerprint matched — the archive on disk was reused.
+        Cached(Duration),
+        /// Compiled from source as part of the project's own compile.
+        Inlined(usize),
+        /// The project itself: everything the phase table measured.
+        Project(Duration),
+    }
+
+    impl Row {
+        fn secs(&self) -> f64 {
+            match self.cost {
+                Cost::Built(d) | Cost::Cached(d) | Cost::Project(d) => d.as_secs_f64(),
+                Cost::Inlined(_) => 0.0,
+            }
+        }
+    }
 
     pub fn enable() {
         ENABLED.store(true, Ordering::Relaxed);
+        if let Ok(mut s) = START.lock() {
+            *s = Some(Instant::now());
+        }
     }
 
     fn on() -> bool {
@@ -4813,22 +4926,94 @@ mod timings {
         out
     }
 
-    /// Print the breakdown to stderr, longest-running phase share first.
-    pub fn report() {
-        report_titled("");
+    /// Start a stopwatch, or `None` when timing is off — so a caller can time
+    /// a package without branching on the flag itself.
+    pub fn mark() -> Option<Instant> {
+        on().then(Instant::now)
+    }
+
+    /// Record what one dependency cost, measured from `started`. `built` is
+    /// false when the fingerprint matched and nothing ran: a zero row that
+    /// SAYS "up to date" is the evidence the prebuild cache is working, and
+    /// dropping it would make a warm build look like it had no dependencies.
+    ///
+    /// Folded by name. The prebuild walk has no visited set — it re-enters a
+    /// package once per edge naming it, so `stdlib` alone arrives fifteen
+    /// times in a facet app — and a row per visit buries the table it is
+    /// supposed to be. The row keeps the first visit's position (deepest
+    /// dependency first) and sums; one real compile among the visits makes
+    /// the whole row `prebuilt`.
+    pub fn package(name: &str, started: Option<Instant>, built: bool) {
+        let Some(t0) = started else { return };
+        let d = t0.elapsed();
+        let Ok(mut p) = PACKAGES.lock() else { return };
+        if let Some(row) = p.iter_mut().find(|r| r.name == name) {
+            let sum = Duration::from_secs_f64(row.secs()) + d;
+            let was_built = matches!(row.cost, Cost::Built(_));
+            row.cost = if built || was_built {
+                Cost::Built(sum)
+            } else {
+                Cost::Cached(sum)
+            };
+            return;
+        }
+        p.push(Row {
+            name: name.to_string(),
+            cost: if built { Cost::Built(d) } else { Cost::Cached(d) },
+        });
+    }
+
+    /// Note the dependencies whose SOURCE this compile pulled in. A package
+    /// with `prebuild = false` is recompiled from scratch inside every
+    /// consumer, so it has no cost of its own to report — its share sits
+    /// inside the project's row, and there is no honest way to split it out:
+    /// resolve, sema, borrowck and codegen all run over one merged program,
+    /// not per package. Naming it with its module count is what can be said
+    /// truthfully, and saying nothing would read as "this build had no such
+    /// dependency".
+    ///
+    /// `deps` is name -> canonical `src/` directory, from the manifest. The
+    /// path SHAPE cannot answer this on its own: a vendor package built from
+    /// inside itself sits at `.../vendor/<name>/src/` exactly like a
+    /// dependency would, and a dependency can equally resolve to a sibling
+    /// directory or the per-user store, where no `vendor/` segment appears at
+    /// all. A prebuilt dependency contributes only `lib/include/`
+    /// declarations, never `src/`, so it cannot land here twice.
+    ///
+    /// Called by every compile; the last call wins, which is the root
+    /// project's — prebuilds all run before it.
+    pub fn inlined_from(loaded: &[PathBuf], deps: &[(String, PathBuf)]) {
+        if !on() {
+            return;
+        }
+        let mut counts: BTreeMap<&str, usize> = BTreeMap::new();
+        for p in loaded {
+            if let Some((name, _)) = deps.iter().find(|(_, src)| p.starts_with(src)) {
+                *counts.entry(name.as_str()).or_insert(0) += 1;
+            }
+        }
+        if let Ok(mut i) = INLINED.lock() {
+            *i = counts
+                .into_iter()
+                .map(|(n, c)| (n.to_string(), c))
+                .collect();
+        }
     }
 
     /// `report`, with a heading and a reset. A `prebuild` compile runs nested
     /// inside a consumer's build, and without clearing, its phases land in the
     /// consumer's table as a second set of identically-named rows whose
     /// percentages are computed over both builds at once.
-    pub fn report_titled(title: &str) {
+    ///
+    /// Returns the measured total, which is the compile's own cost — the
+    /// package roll-up uses it for the project's row.
+    pub fn report_titled(title: &str) -> f64 {
         if !on() {
-            return;
+            return 0.0;
         }
-        let Ok(mut p) = PHASES.lock() else { return };
+        let Ok(mut p) = PHASES.lock() else { return 0.0 };
         if p.is_empty() {
-            return;
+            return 0.0;
         }
         let total: f64 = p.iter().map(|(_, d)| d.as_secs_f64()).sum();
         if title.is_empty() {
@@ -4843,6 +5028,86 @@ mod timings {
         }
         eprintln!("  {:<26} {total:>7.2}s", "measured total");
         p.clear();
+        total
+    }
+
+    /// The phase table for the build that just finished, then the per-package
+    /// roll-up: every dependency compiled or reused, the project's own cost,
+    /// and the wall clock none of it accounted for.
+    pub fn report_project(project: &str) {
+        let own = report_titled("");
+        if !on() {
+            return;
+        }
+        let inlined = INLINED
+            .lock()
+            .map(|mut i| std::mem::take(&mut *i))
+            .unwrap_or_default();
+        let Ok(mut rows) = PACKAGES.lock() else { return };
+        // Nothing but the project itself: the phase table already said it all.
+        if rows.is_empty() && inlined.is_empty() {
+            return;
+        }
+        for (name, modules) in inlined {
+            rows.push(Row {
+                name,
+                cost: Cost::Inlined(modules),
+            });
+        }
+        rows.push(Row {
+            name: project.to_string(),
+            cost: Cost::Project(Duration::from_secs_f64(own)),
+        });
+        let accounted: f64 = rows.iter().map(Row::secs).sum();
+        let elapsed = START
+            .lock()
+            .ok()
+            .and_then(|s| *s)
+            .map(|t| t.elapsed().as_secs_f64())
+            .unwrap_or(accounted);
+        let total = elapsed.max(accounted);
+        eprintln!("cpc timings by package:");
+        for r in rows.iter() {
+            let pct = if total > 0.0 {
+                100.0 * r.secs() / total
+            } else {
+                0.0
+            };
+            match &r.cost {
+                Cost::Built(d) => eprintln!(
+                    "  {:<26} {:>7.2}s  {pct:>4.0}%  prebuilt",
+                    r.name,
+                    d.as_secs_f64()
+                ),
+                Cost::Cached(d) => eprintln!(
+                    "  {:<26} {:>7.2}s  {pct:>4.0}%  up to date",
+                    r.name,
+                    d.as_secs_f64()
+                ),
+                Cost::Project(d) => eprintln!(
+                    "  {:<26} {:>7.2}s  {pct:>4.0}%  this project",
+                    r.name,
+                    d.as_secs_f64()
+                ),
+                Cost::Inlined(n) => eprintln!(
+                    "  {:<26} {:>8}  {:>5}  compiled inside `{project}` ({n} modules)",
+                    r.name, "—", ""
+                ),
+            }
+        }
+        // Manifest loads, the dep-link walk, header generation outside a
+        // prebuild, archive copies. Small, but it is the difference between a
+        // table that adds up and one that quietly doesn't.
+        let other = total - accounted;
+        if other > 0.005 {
+            eprintln!(
+                "  {:<26} {other:>7.2}s  {:>4.0}%  manifests, dep walk, glue",
+                "(unattributed)",
+                100.0 * other / total
+            );
+        }
+        eprintln!("  {:<26} {total:>7.2}s", "wall clock");
+        rows.clear();
     }
 }
 

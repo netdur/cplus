@@ -241,6 +241,55 @@ fn platform_suffix_module_shadows_the_base_file() {
 }
 
 #[test]
+fn prebuilt_slice_excludes_the_packages_test_root() {
+    // `src/test_main.cplus` is a package's TEST entry — `cpc test` compiles it
+    // directly (`Manifest::test_entry`) — and it has no business in the
+    // library. Importing it into the synthesized entry made the archive's LINK
+    // REQUIREMENTS a function of what the TESTS import: `inspector`'s suite
+    // imports its macOS overlay in order to exercise it, so the iOS slice
+    // referenced the `appkit` package — a `[macos.dependencies]`, not linked
+    // for iOS — and a facet app on the simulator failed to link on 59 symbols
+    // named after a package it never asked for (2026-08-22).
+    //
+    // The test root below calls a C symbol nothing defines. Compiled into the
+    // slice that is an undefined reference the app link cannot satisfy — a
+    // package is ONE object, so pulling any of it pulls all of it. Left out, the
+    // app builds and runs.
+    let dir = tempfile::tempdir().unwrap();
+    let project = dir.path();
+    write(
+        &project.join("vendor/plat/Cplus.toml"),
+        "[package]\nname = \"plat\"\nversion = \"0.0.1\"\n\n[build]\nprebuild = true\n",
+    );
+    write(
+        &project.join("vendor/plat/src/eng.cplus"),
+        "fn answer() -> i32 {\n    return 4;\n}\n",
+    );
+    write(
+        &project.join("vendor/plat/src/test_main.cplus"),
+        "import \"./eng\" as eng;\n\n         extern fn plat_nothing_defines_this_v1();\n\n         fn reaches_outside_the_library() {\n    { plat_nothing_defines_this_v1(); }\n    return;\n}\n\n         #[test]\nfn the_suite_calls_it() {\n    reaches_outside_the_library();\n    assert eng::answer() == 4;\n}\n",
+    );
+    write(
+        &project.join("Cplus.toml"),
+        "[package]\nname = \"app\"\nversion = \"0.0.1\"\nedition = \"2026\"\n\n\
+         [dependencies]\nplat = \"*\"\n",
+    );
+    write(
+        &project.join("src/main.cplus"),
+        "import \"plat/eng\" as eng;\n\nfn main() -> i32 {\n    return eng::answer();\n}\n",
+    );
+
+    let out = build(project);
+    assert!(
+        out.status.success(),
+        "a package's test root reached the library slice:\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(run_built(project), 4, "the library itself still links and runs");
+}
+
+#[test]
 fn prebuilt_slice_excludes_foreign_platform_variants() {
     // A `[build] prebuild = true` package with two platform-variant module
     // families, every file exporting a C symbol of the same name as its

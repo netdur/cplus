@@ -93,7 +93,21 @@ not one. A control is a constructor plus a typed cursor, and every verb on that
 cursor is an imperative API in the sense this page means, so the guideline
 applies to it in full.
 
-## Current state (2026-08-03)
+## Current state (2026-08-22)
+
+- http (pass done 2026-08-22, written against this page rather than retrofitted):
+  the two audit findings were a leaked surface and two bare positional pairs.
+  Every transport identifier — the block struct, the slot, `perform`, `harvest`,
+  `build_ns_request`, the descriptor static — is `_`-prefixed, so `http::` offers
+  the documented surface and nothing else (verified: a consumer calling
+  `http::perform` now gets E0405). `extern fn` declarations needed no prefix —
+  they are already module-private. The constructor takes its content with the
+  rest defaulted, `Request::new(url, method: = Get, timeout_seconds: = 60.0)`,
+  which collapses what would have been three constructors and makes `get(url)`
+  literally `send(Request::new(url))`. `set_header(name, value)` became
+  `set_header(name, to: value)` — "set header Accept to application/json", the
+  `Vec::set(value, at:)` shape — because two same-typed positional strings are
+  swappable at the call site and a label is the fix the language already has.
 
 - facet (pass done 2026-08-03): the contract's 362 verbs are generated against
   this page rather than transcribed from MAUI. The rename table is

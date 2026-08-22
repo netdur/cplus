@@ -927,6 +927,65 @@ fn the_widget_runs_a_command_and_reports_how_it_ended() {
     return;
 }
 
+// Counter for the test below. Separate from COMMAND_ENDED so the two tests
+// cannot read each other's tally.
+static EARLY_ENDED: i32 = 0;
+fn note_early_ended(_ctx: *u8) {
+    EARLY_ENDED = EARLY_ENDED + 1;
+    return;
+}
+
+#[test]
+fn a_command_sent_before_the_first_prompt_still_reports_its_own_end() {
+    // THE CASE EVERY IDE PANE IS: a build starts the moment the pane opens, so
+    // the first command is sent before the shell has drawn a prompt and
+    // therefore before any mark could have arrived. The test above waits for
+    // `has_integration` first, which is precisely the wait a real caller does
+    // not do — and the wait that hid this: with the shim installed but not yet
+    // heard from, `run` bracketed the command with printf marks of its own,
+    // those marks opened a SECOND command on top of the shim's, and the id
+    // promised here was never the id that ended. The caller's build finished on
+    // screen and its status chip said "Building" for the rest of the session.
+    match terminal_ui::start() {
+        option::Option[terminal_ui::Widget]::Some(w) => {
+            EARLY_ENDED = 0;
+            w.on_command_end(note_early_ended, 0 as *u8);
+
+            // No pump: nothing has been read, so no mark has been seen. This is
+            // the state a first Run press actually finds.
+            assert !w.has_integration();
+
+            let id: u64 = w.run("printf 'early\\n'; (exit 3)");
+            assert id == (1 as u64);
+
+            var j: i32 = 0 as i32;
+            while j < (400 as i32) && w.finished_count() == (0 as u64) {
+                pump(1 as i32);
+                j = j +% (1 as i32);
+            }
+
+            // The id the caller was promised is the id that ended — the whole
+            // contract, and the half that was broken.
+            assert w.finished_count() == (1 as u64);
+            assert w.command_id() == id;
+            assert match w.exit_code() {
+                option::Option[i32]::Some(c) => c == (3 as i32),
+                option::Option[i32]::None => false,
+            };
+            assert w.output().equals("early\n");
+            assert EARLY_ENDED == (1 as i32);
+
+            // And nothing of ours was typed at the user: the shim marks the
+            // command, so the pane holds what a developer would have typed.
+            assert !w.text().contains("133;C");
+
+            w.stop();
+        }
+        option::Option[terminal_ui::Widget]::None => { assert false; }
+    };
+    return;
+}
+
 #[test]
 fn the_widget_refuses_to_run_over_a_busy_shell() {
     // The id `run` returns is only a sound promise if nothing else can claim it

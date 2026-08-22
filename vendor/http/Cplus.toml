@@ -1,0 +1,21 @@
+[package]
+name    = "http"
+version = "0.0.1"
+edition = "2026"
+
+# http — HTTP(S) requests over the OS stack.
+#
+# Darwin only today: NSURLSession, which is Foundation, so one backend serves
+# both AppKit (macOS) and UIKit (iOS). Blocking, Result-typed, tiny: `get`,
+# `send`, `Response`. No TLS, DNS or framing of our own — the OS ships all
+# three and this package binds them. See docs/.
+
+[dependencies]
+stdlib = "*"
+objc   = "*"
+
+# Foundation, NOT AppKit — that is what keeps this building for iOS. `objc`
+# already pulls Foundation in; naming it here says it is this package's own
+# requirement and not a borrowed one.
+[link]
+frameworks = ["Foundation"]

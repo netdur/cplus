@@ -84,6 +84,9 @@ struct Session {
     // code after the widget has already torn the session down.
     _reaped: bool,
     _status: i32,
+    // Whether this shell was handed the OSC 133 shim. Answered from the
+    // INSTALLATION, not from having seen a mark — see `start`.
+    _marks: bool,
 }
 
 // WIFEXITED / WEXITSTATUS, plus the 128+signal convention a shell itself
@@ -367,6 +370,22 @@ fn start(shell: str = "/bin/zsh", cwd: str = "", rows: u16 = 24 as u16, cols: u1
     // Installed for BOTH history dispositions, because the command marks are
     // not a history feature — a caller that opted into the user's real history
     // still needs to know when a build finished.
+    //
+    // AND REMEMBERED, because "will this shell report marks" is a question the
+    // installer can answer and an observer cannot answer YET. `Widget::run` has
+    // to choose between sending a bare command and bracketing it with printfs
+    // of its own at the moment the FIRST command is sent — which, for a pane
+    // that builds as soon as it opens, is before the shell has drawn a prompt
+    // and therefore before any mark could have arrived. Inferring "no
+    // integration" from that silence is wrong twice over: the bracketing
+    // printfs are echoed at the user, and their marks INTERLEAVE with the
+    // shim's own, so the ledger hands out ids that no longer match the one
+    // `run` promised and the command's end is never recognised — a build that
+    // finishes while the caller waits for it forever.
+    //
+    // zsh only: ZDOTDIR is a zsh mechanism, so a bash pane genuinely has no
+    // marks, which is the case the bracketing path handles correctly.
+    var marks: bool = false;
     match integration_zdotdir(save_history == false) {
         option::Option[text::Text]::Some(dir) => {
             let dir_c: text::CString = match dir.c_str() {
@@ -374,6 +393,7 @@ fn start(shell: str = "/bin/zsh", cwd: str = "", rows: u16 = 24 as u16, cols: u1
                 option::Option[text::CString]::None => { return option::Option[Session]::None; }
             };
             let _zd: i32 = { setenv(#str_ptr("ZDOTDIR\0"), dir_c.as_ptr(), 1 as i32) };
+            marks = shell_text.has_suffix("zsh");
         }
         // Could not build the shim: run the shell unmodified rather than
         // half-configured. The pane still works; it just cannot report exit
@@ -401,6 +421,7 @@ fn start(shell: str = "/bin/zsh", cwd: str = "", rows: u16 = 24 as u16, cols: u1
         _closed: false,
         _reaped: false,
         _status: -1 as i32,
+        _marks: marks,
     });
 }
 
@@ -408,6 +429,12 @@ impl Session {
     fn master_fd(this) -> i32 { return this._master; }
     fn pid(this) -> i32 { return this._pid; }
     fn is_open(this) -> bool { return !this._closed; }
+
+    // Does this shell report OSC 133 marks? True from the instant the session
+    // starts, where `Screen::has_integration` can only become true once a mark
+    // has actually arrived — which is one prompt too late for a caller that
+    // runs a command immediately.
+    fn expects_marks(this) -> bool { return this._marks; }
 
     fn read_into(this, buffer: *u8, capacity: usize) -> ReadResult {
         if this._closed || capacity == (0 as usize) { return ReadResult::Closed; }

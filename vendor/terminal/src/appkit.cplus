@@ -791,7 +791,16 @@ impl Widget {
         if c == (0 as *TerminalContext) || { (*c).cancel_requested } { return 0 as u64; }
         if { (*c).screen.command_state() } == terminal::CommandState::Running { return 0 as u64; }
         let next: u64 = { (*c).screen.command_id() } +% (1 as u64);
-        if { (*c).screen.has_integration() } {
+        // ASKED OF THE SESSION AS WELL, and this is the whole of why: the
+        // screen can only say "integrated" once a mark has ARRIVED, and the
+        // first command of a pane is routinely sent before the shell has drawn
+        // its first prompt. Reading that silence as "no integration" sent the
+        // bracketing printfs into a shell that was about to mark the command
+        // itself: our `133;C` opened a SECOND command on top of the shim's, so
+        // the ledger's ids ran ahead of the `next` promised above and the end
+        // this returns an id for never matched. A build finished, the pane said
+        // so, and the caller waited on it for the rest of the session.
+        if { (*c).screen.has_integration() } || { (*c).session.expects_marks() } {
             send(c, command);
             send(c, "\r");
         } else {
