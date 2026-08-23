@@ -56,9 +56,13 @@ type JavaVM = *JNIInvokeInterface;
 
 // JNI's `jvalue` is a C union. C+ does not expose C unions yet, so this
 // binding models each argument slot as the union's ABI size: one 8-byte word.
-// This is enough for object/int/boolean arguments used by the first Android
-// View wrapper slice. Float/double helpers should be added with real bit casts
-// when the package needs them.
+//
+// Float and double are carried too, and they need a REINTERPRET rather than a
+// conversion: `1.0f32 as jlong` is the integer 1, but the JVM reads the slot's
+// raw bits as an IEEE float. C+ has no bitcast intrinsic, so the constructors
+// punt through a pointer. Without these, `setTextSize`, `setAlpha`,
+// `setTranslationX` and `setElevation` are unreachable from C+ — which is
+// exactly where the first Android probe stopped.
 //
 // The raw 8-byte word is hidden behind `_bits`; construct a `JValue` through a
 // role-named constructor that takes its content, and read the word back with
@@ -90,6 +94,25 @@ impl JValue {
         return JValue { _bits: value };
     }
 
+    // A `jvalue` carrying a Java `float`. The JVM reads the low four bytes of
+    // the slot as IEEE-754, so the bits are REINTERPRETED, not converted, and
+    // the high word is left zero rather than sign-extended — it is padding the
+    // callee does not read, and a negative float would otherwise fill it with
+    // ones for no reason.
+    fn of_float(value: jfloat) -> JValue {
+        var v: jfloat = value;
+        let p: *u32 = { #addr_of(v) as *u32 };
+        let raw: u32 = { *p };
+        return JValue { _bits: { (raw as u64) as jlong } };
+    }
+
+    // A `jvalue` carrying a Java `double`: all eight bytes, reinterpreted.
+    fn of_double(value: jdouble) -> JValue {
+        var v: jdouble = value;
+        let p: *jlong = { #addr_of(v) as *jlong };
+        return JValue { _bits: { *p } };
+    }
+
     // The raw 8-byte argument word as the JVM ABI sees it.
     fn bits(this) -> jlong {
         return this._bits;
@@ -112,6 +135,14 @@ fn arg_bool(v: jboolean) -> JValue {
 
 fn arg_long(v: jlong) -> JValue {
     return JValue::of_long(v);
+}
+
+fn arg_float(v: jfloat) -> JValue {
+    return JValue::of_float(v);
+}
+
+fn arg_double(v: jdouble) -> JValue {
+    return JValue::of_double(v);
 }
 
 // The core JNI environment struct.
@@ -156,31 +187,31 @@ struct JNINativeInterface {
     GetMethodID: fn(*JNIEnv, jclass, *u8, *u8) -> jmethodID,
     CallObjectMethod: fn(*JNIEnv, jobject, jmethodID) -> jobject,
     CallObjectMethodV: fn(*JNIEnv, jobject, jmethodID, *u8) -> jobject,
-    CallObjectMethodA: fn(*JNIEnv, jobject, jmethodID, *u8) -> jobject,
+    CallObjectMethodA: fn(*JNIEnv, jobject, jmethodID, *JValue) -> jobject,
     CallBooleanMethod: fn(*JNIEnv, jobject, jmethodID) -> jboolean,
     CallBooleanMethodV: fn(*JNIEnv, jobject, jmethodID, *u8) -> jboolean,
-    CallBooleanMethodA: fn(*JNIEnv, jobject, jmethodID, *u8) -> jboolean,
+    CallBooleanMethodA: fn(*JNIEnv, jobject, jmethodID, *JValue) -> jboolean,
     CallByteMethod: fn(*JNIEnv, jobject, jmethodID) -> jbyte,
     CallByteMethodV: fn(*JNIEnv, jobject, jmethodID, *u8) -> jbyte,
-    CallByteMethodA: fn(*JNIEnv, jobject, jmethodID, *u8) -> jbyte,
-    opaque reserved_call_char_method: *u8,
-    opaque reserved_call_char_method_v: *u8,
-    opaque reserved_call_char_method_a: *u8,
-    opaque reserved_call_short_method: *u8,
-    opaque reserved_call_short_method_v: *u8,
-    opaque reserved_call_short_method_a: *u8,
+    CallByteMethodA: fn(*JNIEnv, jobject, jmethodID, *JValue) -> jbyte,
+    CallCharMethod: fn(*JNIEnv, jobject, jmethodID) -> jchar,
+    CallCharMethodV: fn(*JNIEnv, jobject, jmethodID, *u8) -> jchar,
+    CallCharMethodA: fn(*JNIEnv, jobject, jmethodID, *JValue) -> jchar,
+    CallShortMethod: fn(*JNIEnv, jobject, jmethodID) -> jshort,
+    CallShortMethodV: fn(*JNIEnv, jobject, jmethodID, *u8) -> jshort,
+    CallShortMethodA: fn(*JNIEnv, jobject, jmethodID, *JValue) -> jshort,
     CallIntMethod: fn(*JNIEnv, jobject, jmethodID) -> jint,
     CallIntMethodV: fn(*JNIEnv, jobject, jmethodID, *u8) -> jint,
     CallIntMethodA: fn(*JNIEnv, jobject, jmethodID, *JValue) -> jint,
-    opaque reserved_call_long_method: *u8,
-    opaque reserved_call_long_method_v: *u8,
-    opaque reserved_call_long_method_a: *u8,
-    opaque reserved_call_float_method: *u8,
-    opaque reserved_call_float_method_v: *u8,
-    opaque reserved_call_float_method_a: *u8,
-    opaque reserved_call_double_method: *u8,
-    opaque reserved_call_double_method_v: *u8,
-    opaque reserved_call_double_method_a: *u8,
+    CallLongMethod: fn(*JNIEnv, jobject, jmethodID) -> jlong,
+    CallLongMethodV: fn(*JNIEnv, jobject, jmethodID, *u8) -> jlong,
+    CallLongMethodA: fn(*JNIEnv, jobject, jmethodID, *JValue) -> jlong,
+    CallFloatMethod: fn(*JNIEnv, jobject, jmethodID) -> jfloat,
+    CallFloatMethodV: fn(*JNIEnv, jobject, jmethodID, *u8) -> jfloat,
+    CallFloatMethodA: fn(*JNIEnv, jobject, jmethodID, *JValue) -> jfloat,
+    CallDoubleMethod: fn(*JNIEnv, jobject, jmethodID) -> jdouble,
+    CallDoubleMethodV: fn(*JNIEnv, jobject, jmethodID, *u8) -> jdouble,
+    CallDoubleMethodA: fn(*JNIEnv, jobject, jmethodID, *JValue) -> jdouble,
     CallVoidMethod: fn(*JNIEnv, jobject, jmethodID),
     CallVoidMethodV: fn(*JNIEnv, jobject, jmethodID, *u8),
     CallVoidMethodA: fn(*JNIEnv, jobject, jmethodID, *JValue),
@@ -214,75 +245,82 @@ struct JNINativeInterface {
     opaque reserved_call_nonvirtual_void_method: *u8,
     opaque reserved_call_nonvirtual_void_method_v: *u8,
     opaque reserved_call_nonvirtual_void_method_a: *u8,
-    opaque reserved_get_field_id: *u8,
-    opaque reserved_get_object_field: *u8,
-    opaque reserved_get_boolean_field: *u8,
-    opaque reserved_get_byte_field: *u8,
-    opaque reserved_get_char_field: *u8,
-    opaque reserved_get_short_field: *u8,
-    opaque reserved_get_int_field: *u8,
-    opaque reserved_get_long_field: *u8,
-    opaque reserved_get_float_field: *u8,
-    opaque reserved_get_double_field: *u8,
-    opaque reserved_set_object_field: *u8,
-    opaque reserved_set_boolean_field: *u8,
-    opaque reserved_set_byte_field: *u8,
-    opaque reserved_set_char_field: *u8,
-    opaque reserved_set_short_field: *u8,
-    opaque reserved_set_int_field: *u8,
-    opaque reserved_set_long_field: *u8,
-    opaque reserved_set_float_field: *u8,
-    opaque reserved_set_double_field: *u8,
-    opaque reserved_get_static_method_id: *u8,
-    opaque reserved_call_static_object_method: *u8,
-    opaque reserved_call_static_object_method_v: *u8,
-    opaque reserved_call_static_object_method_a: *u8,
-    opaque reserved_call_static_boolean_method: *u8,
-    opaque reserved_call_static_boolean_method_v: *u8,
-    opaque reserved_call_static_boolean_method_a: *u8,
-    opaque reserved_call_static_byte_method: *u8,
-    opaque reserved_call_static_byte_method_v: *u8,
-    opaque reserved_call_static_byte_method_a: *u8,
-    opaque reserved_call_static_char_method: *u8,
-    opaque reserved_call_static_char_method_v: *u8,
-    opaque reserved_call_static_char_method_a: *u8,
-    opaque reserved_call_static_short_method: *u8,
-    opaque reserved_call_static_short_method_v: *u8,
-    opaque reserved_call_static_short_method_a: *u8,
-    opaque reserved_call_static_int_method: *u8,
-    opaque reserved_call_static_int_method_v: *u8,
-    opaque reserved_call_static_int_method_a: *u8,
-    opaque reserved_call_static_long_method: *u8,
-    opaque reserved_call_static_long_method_v: *u8,
-    opaque reserved_call_static_long_method_a: *u8,
-    opaque reserved_call_static_float_method: *u8,
-    opaque reserved_call_static_float_method_v: *u8,
-    opaque reserved_call_static_float_method_a: *u8,
-    opaque reserved_call_static_double_method: *u8,
-    opaque reserved_call_static_double_method_v: *u8,
-    opaque reserved_call_static_double_method_a: *u8,
-    opaque reserved_call_static_void_method: *u8,
-    opaque reserved_call_static_void_method_v: *u8,
-    opaque reserved_call_static_void_method_a: *u8,
-    opaque reserved_get_static_field_id: *u8,
-    opaque reserved_get_static_object_field: *u8,
-    opaque reserved_get_static_boolean_field: *u8,
-    opaque reserved_get_static_byte_field: *u8,
-    opaque reserved_get_static_char_field: *u8,
-    opaque reserved_get_static_short_field: *u8,
-    opaque reserved_get_static_int_field: *u8,
-    opaque reserved_get_static_long_field: *u8,
-    opaque reserved_get_static_float_field: *u8,
-    opaque reserved_get_static_double_field: *u8,
-    opaque reserved_set_static_object_field: *u8,
-    opaque reserved_set_static_boolean_field: *u8,
-    opaque reserved_set_static_byte_field: *u8,
-    opaque reserved_set_static_char_field: *u8,
-    opaque reserved_set_static_short_field: *u8,
-    opaque reserved_set_static_int_field: *u8,
-    opaque reserved_set_static_long_field: *u8,
-    opaque reserved_set_static_float_field: *u8,
-    opaque reserved_set_static_double_field: *u8,
+    // 94-112: instance fields. `DisplayMetrics.density` is an instance
+    // FIELD, which is how a backend reads dp without the sp trick.
+    GetFieldID: fn(*JNIEnv, jclass, *u8, *u8) -> jfieldID,
+    GetObjectField: fn(*JNIEnv, jobject, jfieldID) -> jobject,
+    GetBooleanField: fn(*JNIEnv, jobject, jfieldID) -> jboolean,
+    GetByteField: fn(*JNIEnv, jobject, jfieldID) -> jbyte,
+    GetCharField: fn(*JNIEnv, jobject, jfieldID) -> jchar,
+    GetShortField: fn(*JNIEnv, jobject, jfieldID) -> jshort,
+    GetIntField: fn(*JNIEnv, jobject, jfieldID) -> jint,
+    GetLongField: fn(*JNIEnv, jobject, jfieldID) -> jlong,
+    GetFloatField: fn(*JNIEnv, jobject, jfieldID) -> jfloat,
+    GetDoubleField: fn(*JNIEnv, jobject, jfieldID) -> jdouble,
+    SetObjectField: fn(*JNIEnv, jobject, jfieldID, jobject),
+    SetBooleanField: fn(*JNIEnv, jobject, jfieldID, jboolean),
+    SetByteField: fn(*JNIEnv, jobject, jfieldID, jbyte),
+    SetCharField: fn(*JNIEnv, jobject, jfieldID, jchar),
+    SetShortField: fn(*JNIEnv, jobject, jfieldID, jshort),
+    SetIntField: fn(*JNIEnv, jobject, jfieldID, jint),
+    SetLongField: fn(*JNIEnv, jobject, jfieldID, jlong),
+    SetFloatField: fn(*JNIEnv, jobject, jfieldID, jfloat),
+    SetDoubleField: fn(*JNIEnv, jobject, jfieldID, jdouble),
+    // 113-143: the static call surface. `Choreographer.getInstance`,
+    // `TypedValue.applyDimension`, `Color.argb` and most of
+    // android.graphics are static; leaving these reserved is what made
+    // the first Android probe build its MeasureSpec constants by hand.
+    GetStaticMethodID: fn(*JNIEnv, jclass, *u8, *u8) -> jmethodID,
+    CallStaticObjectMethod: fn(*JNIEnv, jclass, jmethodID) -> jobject,
+    CallStaticObjectMethodV: fn(*JNIEnv, jclass, jmethodID, *u8) -> jobject,
+    CallStaticObjectMethodA: fn(*JNIEnv, jclass, jmethodID, *JValue) -> jobject,
+    CallStaticBooleanMethod: fn(*JNIEnv, jclass, jmethodID) -> jboolean,
+    CallStaticBooleanMethodV: fn(*JNIEnv, jclass, jmethodID, *u8) -> jboolean,
+    CallStaticBooleanMethodA: fn(*JNIEnv, jclass, jmethodID, *JValue) -> jboolean,
+    CallStaticByteMethod: fn(*JNIEnv, jclass, jmethodID) -> jbyte,
+    CallStaticByteMethodV: fn(*JNIEnv, jclass, jmethodID, *u8) -> jbyte,
+    CallStaticByteMethodA: fn(*JNIEnv, jclass, jmethodID, *JValue) -> jbyte,
+    CallStaticCharMethod: fn(*JNIEnv, jclass, jmethodID) -> jchar,
+    CallStaticCharMethodV: fn(*JNIEnv, jclass, jmethodID, *u8) -> jchar,
+    CallStaticCharMethodA: fn(*JNIEnv, jclass, jmethodID, *JValue) -> jchar,
+    CallStaticShortMethod: fn(*JNIEnv, jclass, jmethodID) -> jshort,
+    CallStaticShortMethodV: fn(*JNIEnv, jclass, jmethodID, *u8) -> jshort,
+    CallStaticShortMethodA: fn(*JNIEnv, jclass, jmethodID, *JValue) -> jshort,
+    CallStaticIntMethod: fn(*JNIEnv, jclass, jmethodID) -> jint,
+    CallStaticIntMethodV: fn(*JNIEnv, jclass, jmethodID, *u8) -> jint,
+    CallStaticIntMethodA: fn(*JNIEnv, jclass, jmethodID, *JValue) -> jint,
+    CallStaticLongMethod: fn(*JNIEnv, jclass, jmethodID) -> jlong,
+    CallStaticLongMethodV: fn(*JNIEnv, jclass, jmethodID, *u8) -> jlong,
+    CallStaticLongMethodA: fn(*JNIEnv, jclass, jmethodID, *JValue) -> jlong,
+    CallStaticFloatMethod: fn(*JNIEnv, jclass, jmethodID) -> jfloat,
+    CallStaticFloatMethodV: fn(*JNIEnv, jclass, jmethodID, *u8) -> jfloat,
+    CallStaticFloatMethodA: fn(*JNIEnv, jclass, jmethodID, *JValue) -> jfloat,
+    CallStaticDoubleMethod: fn(*JNIEnv, jclass, jmethodID) -> jdouble,
+    CallStaticDoubleMethodV: fn(*JNIEnv, jclass, jmethodID, *u8) -> jdouble,
+    CallStaticDoubleMethodA: fn(*JNIEnv, jclass, jmethodID, *JValue) -> jdouble,
+    CallStaticVoidMethod: fn(*JNIEnv, jclass, jmethodID),
+    CallStaticVoidMethodV: fn(*JNIEnv, jclass, jmethodID, *u8),
+    CallStaticVoidMethodA: fn(*JNIEnv, jclass, jmethodID, *JValue),
+    // 144-162: static fields.
+    GetStaticFieldID: fn(*JNIEnv, jclass, *u8, *u8) -> jfieldID,
+    GetStaticObjectField: fn(*JNIEnv, jclass, jfieldID) -> jobject,
+    GetStaticBooleanField: fn(*JNIEnv, jclass, jfieldID) -> jboolean,
+    GetStaticByteField: fn(*JNIEnv, jclass, jfieldID) -> jbyte,
+    GetStaticCharField: fn(*JNIEnv, jclass, jfieldID) -> jchar,
+    GetStaticShortField: fn(*JNIEnv, jclass, jfieldID) -> jshort,
+    GetStaticIntField: fn(*JNIEnv, jclass, jfieldID) -> jint,
+    GetStaticLongField: fn(*JNIEnv, jclass, jfieldID) -> jlong,
+    GetStaticFloatField: fn(*JNIEnv, jclass, jfieldID) -> jfloat,
+    GetStaticDoubleField: fn(*JNIEnv, jclass, jfieldID) -> jdouble,
+    SetStaticObjectField: fn(*JNIEnv, jclass, jfieldID, jobject),
+    SetStaticBooleanField: fn(*JNIEnv, jclass, jfieldID, jboolean),
+    SetStaticByteField: fn(*JNIEnv, jclass, jfieldID, jbyte),
+    SetStaticCharField: fn(*JNIEnv, jclass, jfieldID, jchar),
+    SetStaticShortField: fn(*JNIEnv, jclass, jfieldID, jshort),
+    SetStaticIntField: fn(*JNIEnv, jclass, jfieldID, jint),
+    SetStaticLongField: fn(*JNIEnv, jclass, jfieldID, jlong),
+    SetStaticFloatField: fn(*JNIEnv, jclass, jfieldID, jfloat),
+    SetStaticDoubleField: fn(*JNIEnv, jclass, jfieldID, jdouble),
     opaque reserved_new_string: *u8,
     opaque reserved_get_string_length: *u8,
     opaque reserved_get_string_chars: *u8,
@@ -394,6 +432,57 @@ fn jni_interface_layout_sizes() {
     assert #align_of::[JNINativeInterface]() == (8 as usize);
 }
 
+// The size test above pins the field COUNT; it cannot see a field that moved.
+// This one checks placement BY NAME: build a synthetic table whose word `i`
+// holds `i`, then read named fields back and assert each answers its own index
+// in the NDK's jni.h. Any field inserted, dropped or reordered shifts every
+// later slot and fails here with the name of the first one that moved.
+//
+// The expected indices are ground truth from
+// `offsetof(struct JNINativeInterface, f) / sizeof(void*)` against NDK r29's
+// jni.h, not from reading this file.
+#[test]
+fn table_fields_sit_at_their_jni_h_indices() {
+    var words: [usize; 233] = #zero::[[usize; 233]]();
+    var i: usize = 0 as usize;
+    while i < (233 as usize) {
+        words[i] = i;
+        i = i +% (1 as usize);
+    }
+    let t: *JNINativeInterface = { #addr_of(words[0]) as *JNINativeInterface };
+
+    // The slots that existed before the static/field blocks were filled — if
+    // these move, the fill went in at the wrong place.
+    assert { (*t).GetVersion as usize } == (4 as usize);
+    assert { (*t).GetMethodID as usize } == (33 as usize);
+    assert { (*t).CallVoidMethodA as usize } == (63 as usize);
+    assert { (*t).NewStringUTF as usize } == (167 as usize);
+    assert { (*t).RegisterNatives as usize } == (215 as usize);
+    assert { (*t).ExceptionCheck as usize } == (228 as usize);
+
+    // The instance calls filled for float/double reads (getAlpha, getX).
+    assert { (*t).CallCharMethodA as usize } == (45 as usize);
+    assert { (*t).CallFloatMethodA as usize } == (57 as usize);
+    assert { (*t).CallDoubleMethodA as usize } == (60 as usize);
+
+    // The instance field block: DisplayMetrics.density is a FIELD read.
+    assert { (*t).GetFieldID as usize } == (94 as usize);
+    assert { (*t).GetIntField as usize } == (100 as usize);
+    assert { (*t).GetFloatField as usize } == (102 as usize);
+    assert { (*t).SetDoubleField as usize } == (112 as usize);
+
+    // The static call block: Choreographer.getInstance, Color.argb.
+    assert { (*t).GetStaticMethodID as usize } == (113 as usize);
+    assert { (*t).CallStaticObjectMethodA as usize } == (116 as usize);
+    assert { (*t).CallStaticIntMethodA as usize } == (131 as usize);
+    assert { (*t).CallStaticVoidMethodA as usize } == (143 as usize);
+
+    // The static field block.
+    assert { (*t).GetStaticFieldID as usize } == (144 as usize);
+    assert { (*t).SetStaticDoubleField as usize } == (162 as usize);
+    return;
+}
+
 // ---------------- JValue constructor / accessor tests ----------------
 
 // `JValue` is a one-word `#[repr(C)]` mirror of `jvalue`; pin its size so a
@@ -454,6 +543,48 @@ fn jvalue_of_object_carries_address() {
     assert v.bits() != (0 as jlong);
 }
 
+// A float is REINTERPRETED, never converted. This is the whole reason
+// `of_float` exists: `1.0f32 as jlong` is the integer 1, and the JVM would read
+// the slot as a denormal near zero. 1.0f is 0x3F800000.
+#[test]
+fn jvalue_of_float_reinterprets_rather_than_converts() {
+    let v: JValue = JValue::of_float(1.0f32);
+    assert v.bits() == (1065353216 as jlong);      // 0x3F800000
+    assert v.bits() != (1 as jlong);               // the conversion bug
+    return;
+}
+
+// Negative case: the high word is PADDING and must stay zero. A sign-extending
+// cast of a negative float's bit pattern would fill it with ones.
+#[test]
+fn jvalue_of_float_leaves_the_high_word_zero() {
+    let v: JValue = JValue::of_float(-1.0f32);   // -1.0f = 0xBF800000
+    assert v.bits() == (3212836864 as jlong);             // zero-extended
+    assert v.bits() > (0 as jlong);
+    return;
+}
+
+#[test]
+fn jvalue_of_float_zero_is_a_zero_word() {
+    assert JValue::of_float(0.0f32).bits() == (0 as jlong);
+    return;
+}
+
+// A double is all eight bytes. 1.0 is 0x3FF0000000000000.
+#[test]
+fn jvalue_of_double_reinterprets_the_whole_word() {
+    let v: JValue = JValue::of_double(1.0f64);
+    assert v.bits() == (4607182418800017408 as jlong);
+    assert v.bits() != (1 as jlong);
+    return;
+}
+
+#[test]
+fn jvalue_of_double_zero_is_a_zero_word() {
+    assert JValue::of_double(0.0f64).bits() == (0 as jlong);
+    return;
+}
+
 // The `arg_*` package shims must produce exactly what the `JValue::of_*`
 // constructors do — `android_view` relies on the equivalence.
 #[test]
@@ -462,4 +593,6 @@ fn arg_shims_match_constructors() {
     assert arg_bool(1 as jboolean).bits() == JValue::of_bool(1 as jboolean).bits();
     assert arg_long(123456789 as jlong).bits() == JValue::of_long(123456789 as jlong).bits();
     assert arg_object({ 0 as jobject }).bits() == JValue::of_object({ 0 as jobject }).bits();
+    assert arg_float(2.5f32).bits() == JValue::of_float(2.5f32).bits();
+    assert arg_double(2.5f64).bits() == JValue::of_double(2.5f64).bits();
 }
