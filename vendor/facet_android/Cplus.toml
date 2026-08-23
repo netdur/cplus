@@ -1,0 +1,43 @@
+[package]
+name    = "facet_android"
+version = "0.0.1"
+edition = "2026"
+
+# facet_android — facet's Android backend, the third sibling of facet_appkit
+# and facet_uikit.
+#
+# It reads facet's contract and implements it with android.view/android.widget,
+# or states plainly in MANIFEST.md that Android cannot. Nothing else lives here:
+# no second vocabulary, no side door that looks portable.
+#
+# The registration surface is the one the other two fill, and no wider:
+#   mount::install(Renderer)                 create / apply / insert / remove / schedule
+#   services::install_scheduler(Scheduler)   run_on_main / after / observe_size
+#   theme::set_is_dark_fn / set_theme_changed_fn
+# A hook family appearing outside those is drift by definition.
+#
+# WHAT MAKES THIS BACKEND DIFFERENT from the other two, and it is one fact: the
+# toolkit lives behind a managed runtime. Three consequences shape every file:
+#
+#   1. Every view is reached through JNI. Calls route through
+#      `rt::Env::method`, which caches the class and method id — resolving per
+#      call measured 2x slower on a 400-node mount (plans/plan.android.md).
+#   2. The JVM owns view lifetime. `Data.view` holds a JNI GLOBAL ref.
+#   3. AN ACTIVITY CAN BE DESTROYED AND RECREATED UNDER A LIVE TREE. C+ state
+#      survives, every jobject does not. Recreation therefore re-runs the mount
+#      walk with an all-ones dirty word — which is what facet's `create` already
+#      is. See window.cplus.
+#
+# Not prebuilt while the backend is young: source mode is the configuration
+# every change is verified in, and the slice/source ObjC trap that bit
+# facet_appkit (bugs/closed/facet-appkit-slice-runtime-crash.md) has a JNI
+# analogue nobody has looked for yet.
+[build]
+prebuild = false
+
+[dependencies]
+stdlib       = "*"
+jni          = "*"
+android_view = "*"
+flex_layout  = "*"
+facet        = "*"

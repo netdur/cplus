@@ -1,0 +1,176 @@
+// The scheduler: facet's `schedule` verb, plus the services tier's
+// run_on_main / after / observe_size.
+//
+// `schedule` is `View.postOnAnimation`, which puts the work on the
+// Choreographer's ANIMATION queue — the slot just before the frame commits.
+// This is the direct analogue of facet_appkit's CFRunLoop BeforeWaiting
+// observer, and it is chosen for the same reason: a sync that lands after the
+// frame has been composed shows its result one frame late, and during a drag
+// that is the difference between tracking the finger and lagging it.
+//
+// `Handler.post` would also run "soon" and would be wrong in exactly that way.
+
+import "jni/jni" as jni;
+import "android_view/runtime" as rt;
+import "android_view/widgets" as w;
+import "facet/facet" as core;
+import "facet/mount" as mount;
+import "facet/services" as services;
+import "./env" as e;
+import "./paint" as paint;
+import "./dex" as dex;
+import "./geometry" as geometry;
+import "./log" as log;
+
+static PENDING: bool = false;
+static TICKER: usize = 0;
+static TICKS: u64 = 0;
+
+fn ticks() -> u64 { return TICKS; }
+fn sync_pending() -> bool { return PENDING; }
+
+// Coalescing is the backend's job (mount.cplus M5): many writes in one turn
+// must produce ONE sync.
+fn schedule(ctx: *u8) {
+    if PENDING { return; }
+    if !e::have_env() { return; }
+    if !e::have_host() { return; }
+    PENDING = true;
+    post_tick();
+    return;
+}
+
+fn post_tick() {
+    let env: rt::Env = e::env();
+    if TICKER == 0 {
+        let t: jni::jobject = dex::new_no_args(env, dex::tick_class());
+        TICKER = { #addr(env.new_global_ref(t)) };
+        env.delete_local_ref(t);
+    }
+    var host: w::View = paint::wrap(e::host());
+    host.post_on_animation({ TICKER as *u8 });
+    paint::unwrap_keep(host);
+    return;
+}
+
+// The Choreographer called back. Apply every dirty node, then re-run layout and
+// push frames — in that order, because a prop write can change what a node
+// measures, and laying out against the old measurement is how a label ends up
+// clipped to its previous string.
+fn tick() {
+    PENDING = false;
+    TICKS = TICKS +% (1 as u64);
+    mount::sync();
+    relayout_current();
+    return;
+}
+
+static WIDTH: f64 = 0.0f64;
+static HEIGHT: f64 = 0.0f64;
+
+fn set_size(wd: f64, ht: f64) { WIDTH = wd; HEIGHT = ht; return; }
+fn width() -> f64 { return WIDTH; }
+fn height() -> f64 { return HEIGHT; }
+
+fn relayout_current() {
+    if WIDTH <= 0.0f64 { return; }
+    let root: *core::Node = mount::mounted_root();
+    if root == (0 as *core::Node) { return; }
+    geometry::relayout_root(root, WIDTH, HEIGHT);
+    return;
+}
+
+// ---- the services tier -------------------------------------------------------
+
+// Already on the UI thread — this backend installs from `onCreate` and facet
+// asserts every tree write happens on the installing thread. So the hop is the
+// identity, and being honest about that is better than routing through a
+// Handler to look busy.
+fn run_on_main(work: fn(*u8), ctx: *u8) {
+    if work != (0 as fn(*u8)) { work(ctx); }
+    return;
+}
+
+// A delayed callback. The token identifies it so `cancel_after` can find it.
+static NEXT_TOKEN: u64 = 1 as u64;
+const MAX_TIMERS: usize = 64;
+// `work` is a fn-pointer array, not a usize one: `#addr` takes a raw
+// pointer and a fn is not one, and round-tripping it through an integer
+// would be a cast the compiler is right to refuse.
+struct Timers { token: [u64; 64], work: [fn(*u8); 64], ctx: [usize; 64] }
+static TIMERS: Timers = #zero::[Timers]();
+
+fn after(seconds: f64, work: fn(*u8), ctx: *u8) -> u64 {
+    if !e::have_env() { return 0 as u64; }
+    if !e::have_host() { return 0 as u64; }
+    let token: u64 = NEXT_TOKEN;
+    NEXT_TOKEN = NEXT_TOKEN +% (1 as u64);
+    var slot: usize = 0 as usize;
+    var found: bool = false;
+    while slot < MAX_TIMERS {
+        if TIMERS.token[slot] == (0 as u64) { found = true; break; }
+        slot = slot +% (1 as usize);
+    }
+    if !found {
+        log::warn(#str_ptr("facet_android: more than 64 pending timers; `after` dropped\0"));
+        return 0 as u64;
+    }
+    TIMERS.token[slot] = token;
+    TIMERS.work[slot] = work;
+    TIMERS.ctx[slot] = { #addr(ctx) };
+
+    let env: rt::Env = e::env();
+    let post: jni::jobject = dex::new_with_token(env, dex::post_class(), { token as i64 });
+    var host: w::View = paint::wrap(e::host());
+    host.post_delayed(post, { (seconds * 1000.0f64) as i64 });
+    paint::unwrap_keep(host);
+    env.delete_local_ref(post);
+    return token;
+}
+
+fn cancel_after(token: u64) {
+    var i: usize = 0 as usize;
+    while i < MAX_TIMERS {
+        if TIMERS.token[i] == token {
+            // The Runnable is left queued and fires into nothing: Android's
+            // removeCallbacks needs the SAME Runnable object, and holding one
+            // global ref per pending timer to enable that costs more than a
+            // no-op wake. `fire_after` checks the slot before calling.
+            TIMERS.token[i] = 0 as u64;
+            return;
+        }
+        i = i +% (1 as usize);
+    }
+    return;
+}
+
+fn fire_after(token: i64) {
+    let t: u64 = { token as u64 };
+    var i: usize = 0 as usize;
+    while i < MAX_TIMERS {
+        if TIMERS.token[i] == t {
+            let f: fn(*u8) = TIMERS.work[i];
+            let c: *u8 = { TIMERS.ctx[i] as *u8 };
+            TIMERS.token[i] = 0 as u64;
+            if f != (0 as fn(*u8)) { f(c); }
+            return;
+        }
+        i = i +% (1 as usize);
+    }
+    return;
+}
+
+// Not built. Android's answer is addOnLayoutChangeListener on the node's view,
+// which needs a fifth DEX adapter; MANIFEST.md section 2 carries it.
+fn observe_size(n: *core::Node, work: fn(*u8), ctx: *u8) -> u64 { return 0 as u64; }
+fn cancel_observe_size(handle: u64) { return; }
+
+fn scheduler() -> services::Scheduler {
+    return services::Scheduler {
+        run_on_main: run_on_main,
+        after: after,
+        cancel_after: cancel_after,
+        observe_size: observe_size,
+        cancel_observe_size: cancel_observe_size,
+    };
+}

@@ -1,0 +1,157 @@
+// The layout pass, and the frame walk that follows it.
+//
+// facet holds zero layout code and the Renderer has no geometry verb: the
+// backend owns this. flex computes the frames; this module puts them on the
+// Android views. Same division as facet_appkit, and the same optimisation is
+// preserved — nothing is rebuilt, flex's incremental cache gets hits, and the
+// walk prunes itself on the cache's verdict.
+//
+// Android is EASIER here than AppKit was: a View's coordinate space is
+// top-left origin, the same as flex's, so there is no flip math anywhere. flex
+// frames are ABSOLUTE in the root's space, so a child's native frame is simply
+// `child.frame - host.frame` in origin.
+//
+// One Android-specific obligation: a View must be MEASURED before it is laid
+// out, or its internal state (a TextView's text Layout, built in onMeasure) is
+// never created and it draws nothing. So every placement is measure-then-layout
+// with EXACTLY specs — the size is flex's answer, not the widget's.
+
+import "stdlib/option" as option;
+import "jni/jni" as jni;
+import "flex_layout/flex_layout" as flex;
+import "android_view/runtime" as rt;
+import "android_view/widgets" as w;
+import "facet/facet" as core;
+import "./env" as e;
+import "./paint" as paint;
+
+type Node = flex::Node;
+
+// MeasureSpec, read from the platform rather than hardcoded.
+static MODE_EXACTLY: i32 = 0;
+static MODE_AT_MOST: i32 = 0;
+static MODES_READ: bool = false;
+
+fn read_modes() {
+    if MODES_READ { return; }
+    MODES_READ = true;
+    let env: rt::Env = e::env();
+    let cls: jni::jclass = env.find_class(#str_ptr("android/view/View$MeasureSpec\0"));
+    let f1: jni::jfieldID = env.static_field_id(cls, #str_ptr("EXACTLY\0"), #str_ptr("I\0"));
+    let f2: jni::jfieldID = env.static_field_id(cls, #str_ptr("AT_MOST\0"), #str_ptr("I\0"));
+    MODE_EXACTLY = { (*(*env.raw())).GetStaticIntField(env.raw(), cls, f1) };
+    MODE_AT_MOST = { (*(*env.raw())).GetStaticIntField(env.raw(), cls, f2) };
+    env.delete_local_ref(cls);
+    return;
+}
+
+fn spec_exactly(size: i32) -> i32 { read_modes(); return size | MODE_EXACTLY; }
+fn spec_at_most(size: i32) -> i32 { read_modes(); return size | MODE_AT_MOST; }
+
+// Ask a view how big it wants to be. This is what flex's `set_measure` hook
+// routes to for the kinds that have intrinsic size (a label, a button).
+//
+// A JNI round trip inside flex's layout pass is the one shape this backend has
+// that the others do not, and it is the thing to watch if a large tree ever
+// feels slow — a batched pre-measure sweep is the intended answer and is not
+// built. Cheap enough at the sizes measured so far.
+// flex's measure hook. `ctx` is the view, put there by `set_context` at create
+// time.
+//
+// The modes matter: `Exactly` means flex has already decided that axis and the
+// answer must be taken as given, `AtMost` is a bound to fit within, and
+// `Undefined` is unbounded — which for a View means "measure at your natural
+// size", spelled as an enormous AT_MOST rather than UNSPECIFIED, because a
+// TextView given UNSPECIFIED lays its text out on ONE line however long it is.
+fn measure_node(ctx: *u8, avail_w: f64, wm: flex::MeasureMode,
+                avail_h: f64, hm: flex::MeasureMode) -> flex::Size {
+    if ctx == (0 as *u8) { return flex::Size { width: 0.0f64, height: 0.0f64 }; }
+    let big: f64 = 1000000.0f64;
+    var w_spec: i32 = spec_at_most({ big as i32 });
+    var h_spec: i32 = spec_at_most({ big as i32 });
+    match wm {
+        flex::MeasureMode::Exactly => { w_spec = spec_exactly({ avail_w as i32 }); }
+        flex::MeasureMode::AtMost => { w_spec = spec_at_most({ avail_w as i32 }); }
+        flex::MeasureMode::Undefined => { }
+    }
+    match hm {
+        flex::MeasureMode::Exactly => { h_spec = spec_exactly({ avail_h as i32 }); }
+        flex::MeasureMode::AtMost => { h_spec = spec_at_most({ avail_h as i32 }); }
+        flex::MeasureMode::Undefined => { }
+    }
+    var view: w::View = paint::wrap(ctx);
+    view.measure(w_spec, h_spec);
+    let mw: i32 = view.get_measured_width();
+    let mh: i32 = view.get_measured_height();
+    paint::unwrap_keep(view);
+    return flex::Size { width: { mw as f64 }, height: { mh as f64 } };
+}
+
+fn measure_intrinsic(v: *u8, max_w: f64, max_h: f64) -> flex::Size {
+    var view: w::View = paint::wrap(v);
+    view.measure(spec_at_most({ max_w as i32 }), spec_at_most({ max_h as i32 }));
+    let mw: i32 = view.get_measured_width();
+    let mh: i32 = view.get_measured_height();
+    paint::unwrap_keep(view);
+    return flex::Size { width: { mw as f64 }, height: { mh as f64 } };
+}
+
+fn place(v: *u8, x: f64, y: f64, wd: f64, ht: f64) {
+    var view: w::View = paint::wrap(v);
+    let iw: i32 = { wd as i32 };
+    let ih: i32 = { ht as i32 };
+    let ix: i32 = { x as i32 };
+    let iy: i32 = { y as i32 };
+    // MEASURE THEN LAYOUT, always. A View that was never measured has no
+    // internal layout — a TextView builds its text Layout in onMeasure — and
+    // draws nothing at whatever rect it is given.
+    view.measure(spec_exactly(iw), spec_exactly(ih));
+    view.layout(ix, iy, ix +% iw, iy +% ih);
+    paint::unwrap_keep(view);
+    return;
+}
+
+// Re-run the layout for a root at a given size, then push every frame.
+fn relayout_root(root: *core::Node, width: f64, height: f64) {
+    if root == (0 as *core::Node) { return; }
+    { (*root).calculate_layout(width, height) };
+    reposition(root);
+    return;
+}
+
+// The frame walk. A node WITH a view is placed and becomes the host for its
+// subtree; a node WITHOUT one contributes nothing of its own and its children
+// are placed against the same host — which is exactly how a pure-layout column
+// inside a real scroll view costs no view.
+fn reposition(root: *core::Node) {
+    if root == (0 as *core::Node) { return; }
+    let f: flex::Frame = core::frame_of(root);
+    reposition_children(root, f);
+    return;
+}
+
+fn reposition_children(node: *core::Node, host_abs: flex::Frame) {
+    var i: usize = 0 as usize;
+    let count: usize = core::child_count_of(node);
+    while i < count {
+        match core::child_of(node, i) {
+            option::Option[*core::Node]::Some(c) => {
+                let cf: flex::Frame = core::frame_of(c);
+                let v: *u8 = core::view_of(c);
+                if v != (0 as *u8) {
+                    // Host-relative: flex frames are absolute in the root's
+                    // space, so subtract the host's origin.
+                    place(v, cf.left - host_abs.left, cf.top - host_abs.top, cf.width, cf.height);
+                    reposition_children(c, cf);
+                } else {
+                    // Viewless: pass the SAME host down, so a keyless container
+                    // does not shift its children's coordinate space.
+                    reposition_children(c, host_abs);
+                }
+            }
+            option::Option[*core::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return;
+}

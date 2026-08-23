@@ -1,0 +1,112 @@
+// The shared band — the props every node carries, applied the same way whatever
+// the control is. facet_appkit and facet_uikit both keep this apart from the
+// per-kind bodies for the same reason: a background colour means the same thing
+// on a label and on a box, and writing it twice is how the two drift.
+
+import "stdlib/option" as option;
+import "jni/jni" as jni;
+import "android_view/runtime" as rt;
+import "android_view/widgets" as w;
+import "facet/facet" as core;
+import "facet/props" as props;
+import "facet/vocabulary" as vocab;
+import "./env" as e;
+
+// Every bit set. `create` configures a view WHOLE by calling the same body with
+// this, so a control cannot be correct on mount and wrong on its first update.
+// It is also what an Activity recreation replays — see window.cplus, where it
+// is the difference between a restored screen and one showing construction
+// defaults.
+fn all_bits() -> u64 { return props::C_ALL_STATE; }
+
+// A facet Color -> Android's packed ARGB int (A<<24|R<<16|G<<8|B).
+//
+// Built arithmetically on purpose: an integer literal wraps through i32 before
+// `as`, so a shifted 0xFF000000 written as a literal is not the mask it looks
+// like. The repo CLAUDE.md names this as a thing that costs hours.
+fn argb_of(c: vocab::Color) -> i32 {
+    let a: i32 = { (c.a * 255.0f64) as i32 };
+    let r: i32 = { (c.r * 255.0f64) as i32 };
+    let g: i32 = { (c.g * 255.0f64) as i32 };
+    let b: i32 = { (c.b * 255.0f64) as i32 };
+    return (a *% (16777216 as i32)) +% (r *% (65536 as i32)) +% (g *% (256 as i32)) +% b;
+}
+
+// Copy a `str` into a NUL-terminated buffer.
+//
+// Needed because the two disagree: a `str` is a borrowed {ptr, len} with no
+// terminator, and `NewStringUTF` reads until NUL. Handing it a bare `#str_ptr`
+// reads past the end into whatever follows — which is exactly the kind of bug
+// that looks like a JVM problem.
+fn cstr(s: str, buf: *u8, cap: usize) -> bool {
+    let n: usize = s.count();
+    if (n +% (1 as usize)) > cap { return false; }
+    let src: *u8 = { #str_ptr(s) };
+    var i: usize = 0 as usize;
+    while i < n {
+        let d: *u8 = { ({ #addr(buf) } +% i) as *u8 };
+        let p: *u8 = { ({ #addr(src) } +% i) as *u8 };
+        { (*d) = (*p) };
+        i = i +% (1 as usize);
+    }
+    let term: *u8 = { ({ #addr(buf) } +% n) as *u8 };
+    { (*term) = 0 as u8 };
+    return true;
+}
+
+// A NON-OWNING wrapper over a view facet already owns.
+//
+// The generated wrappers own a global ref and free it on drop, which is right
+// for a wrapper that made the view and wrong for one that merely borrows
+// facet's. `into_raw` disarms the drop; every borrowed view in this backend goes
+// through this pair so nobody has to remember.
+fn wrap(v: *u8) -> w::View { return w::View::from_global(e::env(), v); }
+
+fn unwrap_keep(take b: w::View) {
+    var owned: w::View = b;
+    let _kept: jni::jobject = owned.into_raw();
+    return;
+}
+
+// Apply the shared band to any view.
+fn configure(v: *u8, n: *core::Node, dirty: u64) {
+    let env: rt::Env = e::env();
+    var view: w::View = wrap(v);
+
+    if (dirty & props::C_BACKGROUND_COLOR) != (0 as u64) {
+        let c: vocab::Color = core::background_color(n);
+        if c.is_set() { view.set_background_color(argb_of(c)); }
+    }
+    if (dirty & props::C_OPACITY) != (0 as u64) {
+        view.set_alpha({ core::opacity(n) as f32 });
+    }
+    if (dirty & props::C_IS_VISIBLE) != (0 as u64) {
+        // INVISIBLE (4), never GONE (8): facet's `is_visible` is the hide that
+        // KEEPS the node's space — flex's `display: none` is the other one, and
+        // conflating them silently reflows the tree.
+        if core::is_visible(n) { view.set_visibility(0 as i32); }
+        else { view.set_visibility(4 as i32); }
+    }
+    if (dirty & props::C_IS_ENABLED) != (0 as u64) {
+        view.set_enabled(core::is_enabled(n));
+    }
+
+    // THE KEY. On the other two backends it is also the platform's
+    // accessibilityIdentifier — one token, three jobs. Android has no such
+    // property (MANIFEST.md §1), so it rides `setTag`, which is the identity
+    // slot rather than the a11y one. Deliberately NOT contentDescription: that
+    // is what a screen reader reads aloud, and an address is not a description.
+    let k: str = { (*n).key() };
+    if k != "" {
+        var buf: [u8; 160] = #zero::[[u8; 160]]();
+        let base: *u8 = { #addr_of(buf[0]) };
+        if cstr(k, base, 160 as usize) {
+            let js: jni::jstring = env.new_string_utf(base);
+            view.set_tag_object(js);
+            env.delete_local_ref(js);
+        }
+    }
+
+    unwrap_keep(view);
+    return;
+}

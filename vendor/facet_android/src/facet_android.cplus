@@ -1,0 +1,87 @@
+// facet_android — facet's Android backend.
+//
+// This file is the whole registration surface: `install()`, and nothing else a
+// backend could smuggle a hook through.
+//
+//   mount::install(Renderer)                 create / apply / insert / remove / schedule
+//   services::install_scheduler(Scheduler)   run_on_main / after / observe_size
+//   theme::set_is_dark_fn                    the system appearance read
+//
+// A hook family appearing outside those is drift by definition.
+
+import "jni/jni" as jni;
+import "android_view/runtime" as rt;
+import "facet/facet" as core;
+import "facet/mount" as mount;
+import "facet/services" as services;
+import "facet/theme" as theme;
+import "./views" as views;
+import "./scheduler" as scheduler;
+import "./controls" as controls;
+import "./window" as window;
+import "./env" as e;
+
+fn renderer() -> mount::Renderer {
+    return mount::Renderer {
+        ctx: 0 as *u8,
+        create: views::create,
+        view_release: views::view_release,
+        apply: views::apply,
+        insert: views::insert,
+        remove: views::remove,
+        schedule: scheduler::schedule,
+    };
+}
+
+static INSTALLED: bool = false;
+
+// Idempotent: a facade doing belt-and-braces registration must not double-arm.
+fn install() {
+    if INSTALLED { return; }
+    INSTALLED = true;
+    // mount::install also arms M5 (touch -> schedule) and M6 (this thread
+    // becomes THE UI thread; every tree write asserts it).
+    mount::install(renderer());
+    services::install_scheduler(scheduler::scheduler());
+    theme::set_is_dark_fn(window::is_dark);
+    return;
+}
+
+fn installed() -> bool { return INSTALLED; }
+
+fn uninstall() {
+    mount::uninstall();
+    services::uninstall_scheduler();
+    theme::set_is_dark_fn(0 as fn() -> bool);
+    INSTALLED = false;
+    return;
+}
+
+// ---- the JVM callbacks -------------------------------------------------------
+// Bound by RegisterNatives (dex.cplus), because ART resolves a native method by
+// symbol only through a classloader's own native-library namespace and an
+// in-memory loader has none.
+
+export extern fn facet_android_tick(envp: *jni::JNIEnv, cls: jni::jobject) {
+    e::set_env(rt::from_native(envp));
+    scheduler::tick();
+    return;
+}
+
+export extern fn facet_android_click(envp: *jni::JNIEnv, cls: jni::jobject, token: i64) {
+    e::set_env(rt::from_native(envp));
+    controls::fire_click(token);
+    return;
+}
+
+export extern fn facet_android_after(envp: *jni::JNIEnv, cls: jni::jobject, token: i64) {
+    e::set_env(rt::from_native(envp));
+    scheduler::fire_after(token);
+    return;
+}
+
+export extern fn facet_android_size_changed(envp: *jni::JNIEnv, cls: jni::jobject, wd: i32, ht: i32) {
+    e::set_env(rt::from_native(envp));
+    window::size_changed(wd, ht);
+    return;
+}

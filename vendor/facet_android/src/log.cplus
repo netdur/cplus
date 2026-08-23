@@ -1,0 +1,24 @@
+// Logging, and why it is not `io::eprintln`.
+//
+// facet_uikit's MANIFEST says every unbuilt kind "warns once on stderr". On
+// Android that would be a warning nobody ever sees: an app's stdout and stderr
+// go to /dev/null unless someone has run `setprop log.redirect-stdio true`.
+// The platform's own channel is liblog, so that is what this backend uses —
+// `adb logcat -s facet` is the equivalent of watching stderr on the other two.
+
+// int __android_log_write(int prio, const char* tag, const char* text)
+#[link_name = "__android_log_write"]
+extern fn android_log_write(prio: i32, tag: *u8, text: *u8) -> i32;
+
+fn prio_warn() -> i32 { return 5 as i32; }
+fn prio_info() -> i32 { return 4 as i32; }
+
+fn warn(text: *u8) {
+    let _r: i32 = { android_log_write(prio_warn(), #str_ptr("facet\0"), text) };
+    return;
+}
+
+fn info(text: *u8) {
+    let _r: i32 = { android_log_write(prio_info(), #str_ptr("facet\0"), text) };
+    return;
+}

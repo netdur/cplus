@@ -1,0 +1,227 @@
+// The Renderer's five verbs. This is the whole of what facet calls.
+//
+// The per-kind work is controls.cplus, the kind-independent work is paint.cplus,
+// and neither is visible to facet.
+
+import "stdlib/option" as option;
+import "jni/jni" as jni;
+import "android_view/runtime" as rt;
+import "android_view/widgets" as w;
+import "flex_layout/flex_layout" as flex;
+import "facet/facet" as core;
+import "facet/props" as props;
+import "facet/gestures" as gestures;
+import "facet/vocabulary" as vocab;
+import "./env" as e;
+import "./paint" as paint;
+import "./controls" as controls;
+import "./geometry" as geometry;
+import "./dex" as dex;
+import "./log" as log;
+
+// Does this node get a view?
+//
+// A control always does. A plain container does when it carries a KEY, because
+// a key is an address: `find("body")` must reach something. An unkeyed
+// pure-layout container gets nothing and passes its children through to the
+// nearest host — which is how a column inside a scroll view costs no view.
+//
+// Same rule as the other two backends, and the fake renderer in facet's own
+// suite, so the headless conformance tests and this backend agree on the shape
+// of the native tree.
+fn wants_view(n: *core::Node) -> bool {
+    let kind: u32 = core::kind_of(n);
+    if kind != core::K_NODE { return true; }
+    if gestures::has_gestures(n) { return true; }
+    if wants_painting(n) { return true; }
+    return { (*n).key() } != "";
+}
+
+// Is this node asking for something only a view can express?
+//
+// The test is deliberately the WHOLE painted band rather than the props someone
+// needed on the day: an incomplete rule here fails the same silent way, one
+// prop later. facet_appkit learned that the expensive way — every filled pill
+// on a card sheet rendered as bare floating words.
+fn wants_painting(n: *core::Node) -> bool {
+    if core::background_color(n).is_set() { return true; }
+    if core::opacity(n) != 1.0f64 { return true; }
+    if !core::is_visible(n) { return true; }
+    return false;
+}
+
+fn create(ctx: *u8, n: *core::Node) -> *u8 {
+    if n == (0 as *core::Node) { return 0 as *u8; }
+    if !e::have_env() { return 0 as *u8; }
+    if !wants_view(n) { return 0 as *u8; }
+    let kind: u32 = core::kind_of(n);
+    let v: *u8 = create_for_kind(kind, n);
+    if v == (0 as *u8) { return 0 as *u8; }
+    // BEFORE anything is written to it — `setText` dereferences LayoutParams.
+    // See controls::attach_layout_params.
+    controls::attach_layout_params(v);
+    // INTRINSIC SIZE. flex sizes a node from its style, its children, or — for
+    // a leaf that knows its own content — a measure callback. A label and a
+    // button have no children and no explicit height, so without this they lay
+    // out at HEIGHT ZERO: the views exist, are parented, carry the right text,
+    // and occupy `Rect(32, 359 - 1312, 359)`. Nothing errors. The screen is
+    // simply blank, which is exactly what it did.
+    if has_intrinsic_size(kind) {
+        { (*n).set_context(v) };
+        { (*n).set_measure(geometry::measure_node) };
+    }
+    // Configure it WHOLE: the shared band, then the kind's own body with every
+    // bit set. One code path with apply, so the two cannot drift.
+    paint::configure(v, n, paint::all_bits());
+    apply_for_kind(kind, v, n, paint::all_bits());
+    return v;
+}
+
+fn create_for_kind(kind: u32, n: *core::Node) -> *u8 {
+    if kind == core::K_NODE { return controls::create_container(n); }
+    if kind == props::K_LABEL { return controls::create_label(n); }
+    if kind == props::K_BUTTON { return controls::create_button(n); }
+    if kind == props::K_BOX { return controls::create_container(n); }
+    // Not built yet. A backend that silently substituted a blank container for
+    // a control it does not have would be indistinguishable from a finished
+    // one, so MANIFEST.md §2 names every kind that lands here and each warns
+    // once — see unimplemented_kind.
+    unimplemented_kind(kind);
+    return controls::create_container(n);
+}
+
+fn apply(ctx: *u8, n: *core::Node) {
+    if n == (0 as *core::Node) { return; }
+    if !e::have_env() { return; }
+    let v: *u8 = core::view_of(n);
+    if v == (0 as *u8) { return; }
+    let d: u64 = core::dirty_of(n);
+    if d == (0 as u64) { return; }
+    paint::configure(v, n, d);
+    apply_for_kind(core::kind_of(n), v, n, d);
+    // A node that measures ITSELF has just been written to, so its measurement
+    // is stale — and nothing else in the pipeline knows that. flex's
+    // incremental cache prunes a subtree whose STYLE is unchanged, and
+    // `set_text` changes no style: it changes what the view would answer if
+    // asked again. Without this the label keeps the box it was given for its
+    // OLD string.
+    if has_intrinsic_size(core::kind_of(n)) { { (*n).mark_content_changed() }; }
+    return;
+}
+
+fn apply_for_kind(kind: u32, v: *u8, n: *core::Node, dirty: u64) {
+    if kind == props::K_LABEL { controls::apply_label(v, n, dirty); return; }
+    if kind == props::K_BUTTON { controls::apply_button(v, n, dirty); return; }
+    return;
+}
+
+fn has_intrinsic_size(kind: u32) -> bool {
+    if kind == props::K_LABEL { return true; }
+    if kind == props::K_BUTTON { return true; }
+    return false;
+}
+
+// The view facet hands back is a JNI GLOBAL ref, so releasing it is a
+// DeleteGlobalRef — M1's pairing, honoured with the JVM's own ownership rule.
+fn view_release(v: *u8) {
+    if v == (0 as *u8) { return; }
+    if !e::have_env() { return; }
+    e::env().delete_global_ref(v);
+    return;
+}
+
+fn insert(ctx: *u8, host: *u8, child: *u8, slot: usize) {
+    if host == (0 as *u8) { return; }
+    if child == (0 as *u8) { return; }
+    if !e::have_env() { return; }
+    let env: rt::Env = e::env();
+    var h: w::ViewGroup = w::ViewGroup::from_global(env, host);
+    h.add_view_view_i(child, { slot as i32 });
+    var hv: w::View = w::View::from_global(env, h.into_raw());
+    paint::unwrap_keep(hv);
+    return;
+}
+
+fn remove(ctx: *u8, host: *u8, child: *u8) {
+    if host == (0 as *u8) { return; }
+    if child == (0 as *u8) { return; }
+    if !e::have_env() { return; }
+    let env: rt::Env = e::env();
+    var h: w::ViewGroup = w::ViewGroup::from_global(env, host);
+    h.remove_view(child);
+    var hv: w::View = w::View::from_global(env, h.into_raw());
+    paint::unwrap_keep(hv);
+    return;
+}
+
+// ---- the gap ledger ----------------------------------------------------------
+// A kind with no body warns ONCE. Silence would make an unfinished backend look
+// finished, and a warning every mount would train a reader to ignore warnings
+// that mean something.
+
+static WARNED_LO: u64 = 0;
+static WARNED_HI: u64 = 0;
+
+fn unimplemented_kind(kind: u32) {
+    let bit: u64 = 1u64 << ({ (kind & (63 as u32)) as u64 });
+    if kind < (64 as u32) {
+        if (WARNED_LO & bit) != (0 as u64) { return; }
+        WARNED_LO = WARNED_LO | bit;
+    } else {
+        if (WARNED_HI & bit) != (0 as u64) { return; }
+        WARNED_HI = WARNED_HI | bit;
+    }
+    // The kind number, not a name: facet's kind tags are u32 constants spread
+    // across modules and this backend has no table of them. `cpc query` maps a
+    // number back to its K_ constant, and inventing a partial name table here
+    // would be one more thing to keep in step.
+    var buf: [u8; 96] = #zero::[[u8; 96]]();
+    let base: *u8 = { #addr_of(buf[0]) };
+    var i: usize = 0 as usize;
+    i = put_str(base, i, #str_ptr("no body for control kind \0"));
+    i = put_int(base, i, { kind as i32 });
+    i = put_str(base, i, #str_ptr(" - rendering an empty container (MANIFEST.md section 2)\0"));
+    put_byte(base, i, 0 as u8);
+    log::warn(base);
+    return;
+}
+
+// A minimal builder, so a warning can carry the number it is about. stdlib's
+// Text would do it in one line and allocate; a diagnostic path should not.
+fn put_byte(buf: *u8, at: usize, b: u8) {
+    let p: *u8 = { ({ #addr(buf) } +% at) as *u8 };
+    { (*p) = b };
+    return;
+}
+
+fn put_str(buf: *u8, at: usize, src: *u8) -> usize {
+    var i: usize = at;
+    var k: usize = 0 as usize;
+    var c: u8 = { (*({ ({ #addr(src) } +% k) as *u8 })) };
+    while c != (0 as u8) {
+        put_byte(buf, i, c);
+        i = i +% (1 as usize);
+        k = k +% (1 as usize);
+        c = { (*({ ({ #addr(src) } +% k) as *u8 })) };
+    }
+    return i;
+}
+
+fn put_int(buf: *u8, at: usize, v: i32) -> usize {
+    var i: usize = at;
+    if v == (0 as i32) { put_byte(buf, i, 48 as u8); return i +% (1 as usize); }
+    var digits: [u8; 12] = #zero::[[u8; 12]]();
+    var c: usize = 0 as usize;
+    var nv: i32 = v;
+    while nv > (0 as i32) {
+        digits[c] = ((48 as i32) +% (nv % (10 as i32))) as u8;
+        c = c +% (1 as usize);
+        nv = nv / (10 as i32);
+    }
+    while c > (0 as usize) {
+        c = c -% (1 as usize);
+        put_byte(buf, i, digits[c]);
+        i = i +% (1 as usize);
+    }
+    return i;
+}

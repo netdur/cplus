@@ -1,0 +1,177 @@
+// The per-kind bodies. facet never sees these — Stage 2's rule is that facet
+// grows no verb table, so the ~N per-kind functions live INSIDE the backend's
+// create and apply, dispatched on `Data.kind`.
+//
+// `create` and `apply` share every body: create calls the same `apply_<kind>`
+// with an all-ones dirty word, so a control cannot be correct on mount and
+// wrong on its first update.
+
+import "stdlib/text" as text;
+import "jni/jni" as jni;
+import "android_view/runtime" as rt;
+import "android_view/widgets" as w;
+import "facet/facet" as core;
+import "facet/props" as props;
+import "facet/label" as label;
+import "facet/button" as button;
+import "facet/vocabulary" as vocab;
+import "./env" as e;
+import "./paint" as paint;
+import "./dex" as dex;
+
+fn props_of(n: *core::Node, kind: u32) -> *u8 {
+    let d: *core::Data = core::node_data(n);
+    if d == (0 as *core::Data) { return 0 as *u8; }
+    if { (*d).kind } != kind { return 0 as *u8; }
+    return { (*d).props };
+}
+
+// Every created view is handed to facet as a GLOBAL ref: it has to outlive the
+// native call that made it, and a local ref does not.
+fn global_of(local: jni::jobject) -> *u8 {
+    return e::env().retain_local_as_global(local);
+}
+
+// EVERY view gets LayoutParams the moment it is created, before anything is
+// written to it.
+//
+// This is not tidiness. facet's mount walk (mount.cplus M3) creates a view
+// FULLY CONFIGURED and inserts it afterwards — top-down, insert-as-created —
+// and `TextView.setText` calls `checkForRelayout()`, which dereferences
+// `getLayoutParams()`. A view that has never been added to a parent has none,
+// so the very first `set_text` on a freshly created label threw
+//
+//   NullPointerException: Attempt to read from field
+//   'int android.view.ViewGroup$LayoutParams.width' ...
+//   at android.widget.TextView.checkForRelayout
+//
+// AppKit and UIKit do not care about the order; Android does. Reordering
+// facet's walk to insert-then-configure would be the wrong fix — M3 is the
+// same on every backend and the walk needs a host view to exist first — so the
+// backend satisfies the platform's precondition instead.
+//
+// WRAP_CONTENT (-2) for both axes: the values are never consulted, because this
+// backend measures and lays out every child explicitly (geometry.cplus). What
+// matters is only that the object is not null.
+fn attach_layout_params(v: *u8) {
+    let env: rt::Env = e::env();
+    let cls: jni::jclass = env.class_cached(#str_ptr("android/view/ViewGroup$LayoutParams\0"));
+    let ctor: jni::jmethodID = env.method_id(cls, #str_ptr("<init>\0"), #str_ptr("(II)V\0"));
+    let wrap: i32 = (0 as i32) -% (2 as i32);
+    var args: [jni::JValue; 2] = [rt::arg_int(wrap), rt::arg_int(wrap)];
+    let lp: jni::jobject = {
+        (*(*env.raw())).NewObjectA(env.raw(), cls, ctor, #addr_of(args[0]))
+    };
+    var view: w::View = paint::wrap(v);
+    view.set_layout_params(lp);
+    paint::unwrap_keep(view);
+    env.delete_local_ref(lp);
+    return;
+}
+
+// ---- label -------------------------------------------------------------------
+
+fn create_label(n: *core::Node) -> *u8 {
+    var tv: w::TextView = w::TextView::new_context(e::env(), e::context());
+    return tv.into_raw();
+}
+
+fn apply_label(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *props::LabelProps = props_of(n, props::K_LABEL) as *props::LabelProps;
+    if p == (0 as *props::LabelProps) { return; }
+    let env: rt::Env = e::env();
+    var tv: w::TextView = w::TextView::from_global(env, v);
+
+    if (dirty & label::P_TEXT) != (0 as u64) {
+        var buf: [u8; 1024] = #zero::[[u8; 1024]]();
+        let base: *u8 = { #addr_of(buf[0]) };
+        if paint::cstr({ (*p).text.view() }, base, 1024 as usize) {
+            tv.set_text_str(base);
+        }
+    }
+    if (dirty & label::P_FONT_SIZE) != (0 as u64) {
+        let s: f64 = { (*p).font_size };
+        // 0 means "the platform's own", which is what a TextView already has.
+        if s > 0.0f64 { tv.set_text_size_f({ s as f32 }); }
+    }
+    if (dirty & label::P_TEXT_COLOR) != (0 as u64) {
+        let c: vocab::Color = { (*p).text_color };
+        if c.is_set() { tv.set_text_color_i(paint::argb_of(c)); }
+    }
+
+    var borrowed: w::View = w::View::from_global(env, tv.into_raw());
+    paint::unwrap_keep(borrowed);
+    return;
+}
+
+// ---- button ------------------------------------------------------------------
+
+fn create_button(n: *core::Node) -> *u8 {
+    let env: rt::Env = e::env();
+    var b: w::Button = w::Button::new_context(env, e::context());
+    let raw: *u8 = b.into_raw();
+    // The click adapter carries the NODE ADDRESS as its token, so one hook
+    // routes every button in the tree and no side table is needed.
+    let listener: jni::jobject = dex::new_with_token(env, dex::click_class(), { #addr(n) as i64 });
+    var view: w::View = w::View::from_global(env, raw);
+    view.set_on_click_listener(listener);
+    paint::unwrap_keep(view);
+    env.delete_local_ref(listener);
+    return raw;
+}
+
+fn apply_button(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *props::ButtonProps = props_of(n, props::K_BUTTON) as *props::ButtonProps;
+    if p == (0 as *props::ButtonProps) { return; }
+    let env: rt::Env = e::env();
+    // A Button declares no setText of its own — javap lists DECLARED members
+    // only — so the inherited surface is reached through the typed upcast. The
+    // upcast takes its own global ref, which is why it is released separately.
+    var b: w::Button = w::Button::from_global(env, v);
+    var tv: w::TextView = b.as_text_view();
+
+    if (dirty & button::P_TITLE) != (0 as u64) {
+        var buf: [u8; 512] = #zero::[[u8; 512]]();
+        let base: *u8 = { #addr_of(buf[0]) };
+        if paint::cstr({ (*p).title.view() }, base, 512 as usize) {
+            tv.set_text_str(base);
+        }
+    }
+    if (dirty & button::P_FONT_SIZE) != (0 as u64) {
+        let s: f64 = { (*p).font_size };
+        if s > 0.0f64 { tv.set_text_size_f({ s as f32 }); }
+    }
+    if (dirty & button::P_TEXT_COLOR) != (0 as u64) {
+        let c: vocab::Color = { (*p).text_color };
+        if c.is_set() { tv.set_text_color_i(paint::argb_of(c)); }
+    }
+
+    // `tv` owns a ref of its own (the upcast made one) — let it drop. `b`
+    // borrows facet's, so disarm that one.
+    var bv: w::View = w::View::from_global(env, b.into_raw());
+    paint::unwrap_keep(bv);
+    return;
+}
+
+// A tap arrived. The token IS the node, so the handler is read from the node's
+// own props — no registry, nothing to keep in step.
+fn fire_click(token: i64) {
+    let n: *core::Node = { token as *core::Node };
+    if n == (0 as *core::Node) { return; }
+    let p: *props::ButtonProps = props_of(n, props::K_BUTTON) as *props::ButtonProps;
+    if p == (0 as *props::ButtonProps) { return; }
+    let h: fn(*u8, *u8) = { (*p).on_click };
+    if h != props::no_handler { h(core::view_of(n), { (*p).on_click_ctx }); }
+    return;
+}
+
+// ---- box / plain container ---------------------------------------------------
+// A `box` and a keyed container are the same thing to Android: a FacetHost with
+// the shared band applied. Nothing kind-specific to write, which is the point —
+// the band already said everything a box can say.
+
+fn create_container(n: *core::Node) -> *u8 {
+    return global_of(dex::new_host(e::env(), e::context()));
+}
+
+fn apply_container(v: *u8, n: *core::Node, dirty: u64) { return; }

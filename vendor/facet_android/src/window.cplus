@@ -1,0 +1,152 @@
+// The Activity handoff, and the one thing about this backend that has no
+// analogue on macOS or iOS.
+//
+// AN ACTIVITY CAN BE DESTROYED AND RECREATED UNDER A LIVE TREE. Rotate the
+// device, change the locale, resize a split screen: Android tears down the
+// Activity and every View in it, IN THE SAME PROCESS, and calls the entry point
+// again. C+ statics survive. Every jobject does not.
+//
+// This was measured before the backend existed: a counter read `taps 0` on
+// screen while the state behind it was still 5, because the fresh TextView
+// carried its construction-time text and nothing re-pushed the real value.
+// Nothing warns, nothing crashes, and the code still reads as correct.
+//
+// The fix is facet's own rule, and here it is not a nicety: `create` IS `apply`
+// with an all-ones dirty word, so re-running the mount walk against the fresh
+// Activity restores everything. `attach_root` below is that walk.
+
+import "stdlib/option" as option;
+import "jni/jni" as jni;
+import "android_view/runtime" as rt;
+import "android_view/widgets" as w;
+import "flex_layout/flex_layout" as flex;
+import "facet/facet" as core;
+import "facet/mount" as mount;
+import "./env" as e;
+import "./paint" as paint;
+import "./dex" as dex;
+import "./scheduler" as scheduler;
+import "./log" as log;
+
+// Build the native tree for `root` under a fresh Activity and answer the View
+// the Activity should call `setContentView` with.
+//
+// Called once per Activity lifetime — including every recreation.
+fn attach_root(env: rt::Env, activity: jni::jobject, root: *core::Node) -> jni::jobject {
+    e::set_env(env);
+    e::set_activity(env.new_global_ref(activity));
+
+    // A view is needed before the dex loader can reach a Context, and the dex
+    // is needed before a FacetHost can be made. Break the cycle with one plain
+    // View, which needs neither.
+    var seed: w::View = w::View::new_context(env, activity);
+    dex::ensure_loaded(env, seed.as_obj());
+
+    let host_local: jni::jobject = dex::new_host(env, activity);
+    let host: jni::jobject = env.new_global_ref(host_local);
+    e::set_host(host);
+    env.delete_local_ref(host_local);
+
+    // RE-MOUNT. If this Activity is a recreation, the tree is already marked
+    // attached from the previous one and every node still points at a dead
+    // jobject — so the attach state is cleared first and the whole tree is
+    // walked again with every bit dirty.
+    if core::is_attached(root) { mount::unmount(root); }
+    touch_all_walk(root);
+    let _ok: bool = mount::mount(root);
+
+    // The root's own view is inserted nowhere by the walk (mount.cplus says so:
+    // the caller puts it into a window), so it goes in here.
+    add_root_views(env, host, root);
+    return host;
+}
+
+// The root's view — or, when the root is a KEYLESS PASS-THROUGH, its topmost
+// BACKED descendants, which is what the mount walk left unhosted.
+//
+// Both cases are real and the second is the common one: `core::column(b)` with
+// no key wants no view of its own (views.cplus `wants_view`), so `mount` walks
+// it with host = 0 and never inserts its children anywhere. The screen comes up
+// EMPTY, with no error — the tree is mounted, the views exist, and nothing is in
+// the hierarchy.
+//
+// facet_uikit's `add_root_views` is the same function for the same reason.
+fn add_root_views(env: rt::Env, host: jni::jobject, root: *core::Node) {
+    let rv: *u8 = core::view_of(root);
+    if rv != (0 as *u8) {
+        add_one(env, host, rv);
+        return;
+    }
+    add_backed_descendants(env, host, root);
+    return;
+}
+
+fn add_backed_descendants(env: rt::Env, host: jni::jobject, n: *core::Node) {
+    var i: usize = 0 as usize;
+    let count: usize = core::child_count_of(n);
+    while i < count {
+        match core::child_of(n, i) {
+            option::Option[*core::Node]::Some(c) => {
+                let v: *u8 = core::view_of(c);
+                if v != (0 as *u8) { add_one(env, host, v); }
+                else { add_backed_descendants(env, host, c); }
+            }
+            option::Option[*core::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return;
+}
+
+fn add_one(env: rt::Env, host: jni::jobject, v: *u8) {
+    var hg: w::ViewGroup = w::ViewGroup::from_global(env, host);
+    hg.add_view_view(v);
+    var hv: w::View = w::View::from_global(env, hg.into_raw());
+    paint::unwrap_keep(hv);
+    return;
+}
+
+// Mark every node's whole state dirty. This is what makes recreation
+// survivable; see the file header.
+fn touch_all_walk(n: *core::Node) {
+    if n == (0 as *core::Node) { return; }
+    core::touch_all(n);
+    var i: usize = 0 as usize;
+    let count: usize = core::child_count_of(n);
+    while i < count {
+        match core::child_of(n, i) {
+            option::Option[*core::Node]::Some(c) => { touch_all_walk(c); }
+            option::Option[*core::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return;
+}
+
+// The host learned its size. This is the only place a layout pass can start
+// from: inside the entry point the host has no size at all, so laying out there
+// would size the whole tree against zero.
+fn size_changed(wd: i32, ht: i32) {
+    scheduler::set_size({ wd as f64 }, { ht as f64 });
+    scheduler::relayout_current();
+    return;
+}
+
+// The system appearance. `Configuration.uiMode & UI_MODE_NIGHT_MASK`.
+fn is_dark() -> bool {
+    if !e::have_env() { return false; }
+    let env: rt::Env = e::env();
+    let res: jni::jobject = env.call_object_0(
+        e::activity(), #str_ptr("android/content/Context\0"), #str_ptr("getResources\0"),
+        #str_ptr("()Landroid/content/res/Resources;\0"));
+    let cfg: jni::jobject = env.call_object_0(
+        res, #str_ptr("android/content/res/Resources\0"), #str_ptr("getConfiguration\0"),
+        #str_ptr("()Landroid/content/res/Configuration;\0"));
+    let cls: jni::jclass = env.class_cached(#str_ptr("android/content/res/Configuration\0"));
+    let fid: jni::jfieldID = env.field_id(cls, #str_ptr("uiMode\0"), #str_ptr("I\0"));
+    let ui: i32 = { (*(*env.raw())).GetIntField(env.raw(), cfg, fid) };
+    env.delete_local_ref(cfg);
+    env.delete_local_ref(res);
+    // UI_MODE_NIGHT_MASK = 0x30, UI_MODE_NIGHT_YES = 0x20.
+    return (ui & (48 as i32)) == (32 as i32);
+}
