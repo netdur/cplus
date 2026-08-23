@@ -120,3 +120,120 @@ fn free(p: *u8) {
     { g_free(p); }
     return;
 }
+
+// ====================================================================
+// Tests
+//
+// Against a REAL libgobject, on a real GObject — not a stand-in. Every
+// assertion below is about what the C library actually does with a handle we
+// created, because the failure mode this file guards against is an `extern fn`
+// whose declared shape disagrees with the symbol's (a `GType` narrowed to 32
+// bits, a `gboolean` read as a bool). A mock would agree with the declaration
+// and prove nothing.
+//
+// The whole GTK stack rests on these: a wrong ref/unref pairing is a leak or a
+// double-free, and a wrong `is_a` is an unchecked downcast.
+// ====================================================================
+
+// `gpointer g_object_new(GType, const gchar *first_property_name, ...)`.
+// Variadic, and DECLARED variadic — a fixed-arity declaration passes the
+// sentinel in the wrong place on some ABIs (see the note in stdlib/fs).
+#[link_name = "g_object_new"]
+extern fn g_object_new(gtype: usize, first_property: *u8, ...) -> *u8;
+
+// G_TYPE_INITIALLY_UNOWNED is NOT a compile-time constant like G_TYPE_OBJECT
+// (80) — it is whatever id the runtime registered, so it has to be asked for.
+#[link_name = "g_initially_unowned_get_type"]
+extern fn g_initially_unowned_get_type() -> usize;
+
+// G_TYPE_OBJECT: fundamental 20, shifted left by G_TYPE_FUNDAMENTAL_SHIFT (2).
+fn _g_type_object() -> usize { return 80 as usize; }
+
+#[test]
+fn a_plain_gobject_refs_and_unrefs() {
+    let o: *u8 = { g_object_new(_g_type_object(), 0 as *u8) };
+    assert o != { 0 as *u8 };
+    // `object_ref` returns the SAME handle — the chaining contract. A binding
+    // that returned a copy would break `let w = ref(make())` everywhere.
+    assert object_ref(o) == o;
+    object_unref(o);       // drop the +1 we just took
+    object_unref(o);       // drop the construction ref; the object dies here
+    return;
+}
+
+#[test]
+fn a_plain_gobject_is_not_floating_but_an_initially_unowned_one_is() {
+    // THE STATE OBJC DOES NOT HAVE, and the reason this module exists rather
+    // than each binding calling g_object_ref inline. A fresh GtkWidget is a
+    // GInitiallyUnowned: it carries a floating ref that a container sinks. Get
+    // this backwards and you either leak every widget or free one the
+    // container still owns.
+    let plain: *u8 = { g_object_new(_g_type_object(), 0 as *u8) };
+    assert !object_is_floating(plain);
+    object_unref(plain);
+
+    let floaty: *u8 = { g_object_new({ g_initially_unowned_get_type() }, 0 as *u8) };
+    assert object_is_floating(floaty);
+    // Sinking claims it: the floating ref becomes a real one that we now owe.
+    assert object_ref_sink(floaty) == floaty;
+    assert !object_is_floating(floaty);
+    object_unref(floaty);
+    return;
+}
+
+#[test]
+fn type_from_name_resolves_registered_types_and_rejects_unknown_ones() {
+    assert type_from_name(#str_ptr("GObject\0")) == _g_type_object();
+    assert type_from_name(#str_ptr("GInitiallyUnowned\0"))
+        == { g_initially_unowned_get_type() };
+    // NEGATIVE: 0 for a name nothing registered — the documented "its module
+    // was never loaded" answer, not a crash and not a garbage id. `is_a` leans
+    // on this to fail closed.
+    assert type_from_name(#str_ptr("NoSuchTypeExistsHere\0")) == (0 as usize);
+    assert type_from_name(#str_ptr("\0")) == (0 as usize);
+    return;
+}
+
+#[test]
+fn is_a_accepts_the_type_and_its_parents_and_refuses_everything_else() {
+    let u: *u8 = { g_object_new({ g_initially_unowned_get_type() }, 0 as *u8) };
+    assert object_is_floating(u);
+    assert is_a(u, #str_ptr("GInitiallyUnowned\0"));   // its own type
+    assert is_a(u, #str_ptr("GObject\0"));             // and its parent
+    // NEGATIVE: a real, registered, UNRELATED type must be refused — this is
+    // the half that makes a downcast safe.
+    assert !is_a(u, #str_ptr("GBinding\0"));
+    // NEGATIVE: an unregistered name fails closed rather than passing because
+    // the lookup returned 0.
+    assert !is_a(u, #str_ptr("NoSuchTypeExistsHere\0"));
+    object_ref_sink(u);
+    object_unref(u);
+    return;
+}
+
+#[test]
+fn instance_type_name_reports_the_runtime_type() {
+    let o: *u8 = { g_object_new(_g_type_object(), 0 as *u8) };
+    let name: *u8 = instance_type_name(o);
+    assert name != { 0 as *u8 };
+    // Borrowed, per the contract — read it, do not free it.
+    assert { #str_from_raw_parts(name, 7 as usize) } == "GObject";
+    object_unref(o);
+    return;
+}
+
+#[test]
+fn user_data_round_trips_and_is_null_when_unset() {
+    let o: *u8 = { g_object_new(_g_type_object(), 0 as *u8) };
+    var payload: i64 = 0x5eed as i64;
+    let p: *u8 = #addr_of(payload) as *u8;
+    set_data(o, #str_ptr("cplus-test\0"), p);
+    assert get_data(o, #str_ptr("cplus-test\0")) == p;
+    // ...and it is the SAME memory, not a copy of the pointer's target.
+    assert { *(get_data(o, #str_ptr("cplus-test\0")) as *i64) } == (0x5eed as i64);
+    // NEGATIVE: an unset key is null. Signal handlers recover context this
+    // way, so "never set" must be distinguishable rather than garbage.
+    assert get_data(o, #str_ptr("never-set\0")) == { 0 as *u8 };
+    object_unref(o);
+    return;
+}

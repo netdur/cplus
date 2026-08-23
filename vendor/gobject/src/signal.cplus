@@ -9,9 +9,22 @@
 // signal: the receiving instance first, then the signal's own arguments, then
 // the `user_data` pointer last. Like ObjC's per-shape `objc_msgSend` aliases,
 // each distinct handler shape is a separate typed alias of the one underlying
-// symbol; the two most common shapes are provided here (void-returning and
-// gboolean-returning, instance + user_data). Add a shape by aliasing
-// `g_signal_connect_data` with the exact handler `fn(...)` type.
+// symbol.
+//
+// WHAT LIVES HERE IS ONLY THE ARGUMENT-FREE PAIR — `fn(instance, user_data)`
+// void- and gboolean-returning. That is not a gap to fill in: a signal that
+// carries arguments needs a shape per argument list, and `cpc-bindgen
+// --gobject` already emits those into the package that needs them, as
+// `__sigc_i32_v`, `__sigc_f64f64_v`, `__sigc_p_v` and friends, straight beside
+// the `connect_*` wrapper that uses each one (gtk4 alone has ~30 distinct
+// shapes). Adding more aliases HERE would not be picked up by any of them —
+// the generated wrappers do not route through this module. Change the
+// generator, not this file.
+//
+// The two aliases below share one `#[link_name]`, and codegen collapses them
+// to a single `declare i64 @g_signal_connect_data(ptr, ptr, ptr, ptr, ptr,
+// i32)` with the handler as an untyped `ptr` — so the typing is a C+-side
+// contract on the call, not a claim about distinct symbols.
 //
 // `user_data` flows back to the handler untouched — stash a C+ context pointer
 // there (or via `runtime::set_data`) to recover state inside the callback.
@@ -61,5 +74,173 @@ extern fn g_signal_handler_disconnect(instance: *u8, handler_id: u64);
 // Tear down a connection made by `connect` / `connect_bool`, by its handler id.
 fn disconnect(instance: *u8, handler_id: u64) {
     { g_signal_handler_disconnect(instance, handler_id); }
+    return;
+}
+
+// ====================================================================
+// Tests
+//
+// These EMIT. A test that only checks `connect` returned a non-zero id proves
+// the symbol resolved and nothing else — and the thing most likely to be wrong
+// in this file is the handler's ABI, which only shows up when GLib actually
+// calls one. So each test registers a real signal on G_TYPE_OBJECT with
+// `g_signal_new`, connects through the module's own `connect`, emits, and
+// checks what the handler received.
+//
+// Passing a NULL marshaller makes GLib use its generic libffi marshaller,
+// which builds the call frame from the signal's declared types — so a handler
+// whose declared C+ shape disagreed with `fn(instance, user_data)` would be
+// called wrongly here, not silently tolerated.
+// ====================================================================
+
+#[link_name = "g_object_new"]
+extern fn g_object_new(gtype: usize, first_property: *u8, ...) -> *u8;
+
+// guint g_signal_new(name, itype, flags, class_offset, accumulator, accu_data,
+//                    c_marshaller, return_type, n_params, ...)
+#[link_name = "g_signal_new"]
+extern fn g_signal_new(name: *u8, itype: usize, flags: i32, class_offset: u32,
+                       accumulator: *u8, accu_data: *u8, c_marshaller: *u8,
+                       return_type: usize, n_params: u32, ...) -> u32;
+
+#[link_name = "g_signal_emit_by_name"]
+extern fn g_signal_emit_by_name(instance: *u8, detailed_signal: *u8, ...);
+
+fn _g_type_object() -> usize { return 80 as usize; }
+fn _g_type_none() -> usize { return 4 as usize; }
+fn _g_type_boolean() -> usize { return 20 as usize; }
+fn _g_signal_run_last() -> i32 { return 2 as i32; }
+
+// What the handlers record, so a test can prove one actually ran.
+static _CALLS: i64 = 0;
+static _LAST_INSTANCE: usize = 0;
+static _LAST_USER: usize = 0;
+
+fn _void_handler(instance: *u8, user: *u8) {
+    _CALLS = _CALLS +% (1 as i64);
+    _LAST_INSTANCE = { #addr(instance) };
+    _LAST_USER = { #addr(user) };
+    return;
+}
+
+fn _bool_handler(instance: *u8, user: *u8) -> i32 {
+    _CALLS = _CALLS +% (1 as i64);
+    _LAST_USER = { #addr(user) };
+    return 1 as i32;
+}
+
+#[test]
+fn a_connected_void_handler_runs_with_its_instance_and_user_data() {
+    let sig: u32 = { g_signal_new(#str_ptr("cplus-test-void\0"), _g_type_object(),
+                                  _g_signal_run_last(), 0 as u32,
+                                  0 as *u8, 0 as *u8, 0 as *u8,
+                                  _g_type_none(), 0 as u32) };
+    assert sig != (0 as u32);
+
+    let o: *u8 = { g_object_new(_g_type_object(), 0 as *u8) };
+    var token: i64 = 0x1234 as i64;
+    let user: *u8 = #addr_of(token) as *u8;
+
+    _CALLS = 0 as i64;
+    let id: u64 = connect(o, #str_ptr("cplus-test-void\0"), _void_handler, user);
+    assert id != (0 as u64);
+
+    { g_signal_emit_by_name(o, #str_ptr("cplus-test-void\0")); }
+
+    assert _CALLS == (1 as i64);
+    // The two arguments are the whole contract: the instance FIRST and the
+    // user_data LAST. Swap them in the extern and this is where it shows.
+    assert _LAST_INSTANCE == { #addr(o) };
+    assert _LAST_USER == { #addr(user) };
+    assert { *(_LAST_USER as *i64) } == (0x1234 as i64);
+
+    object_unref_local(o);
+    return;
+}
+
+#[test]
+fn a_bool_handler_is_called_through_its_own_typed_alias() {
+    // The gboolean-returning shape is a SEPARATE extern alias of the same C
+    // symbol. It has to be, because the handler fn type is part of the
+    // signature — and a `-> i32` handler installed through the void alias
+    // would be called with the wrong frame.
+    let sig: u32 = { g_signal_new(#str_ptr("cplus-test-bool\0"), _g_type_object(),
+                                  _g_signal_run_last(), 0 as u32,
+                                  0 as *u8, 0 as *u8, 0 as *u8,
+                                  _g_type_boolean(), 0 as u32) };
+    assert sig != (0 as u32);
+
+    let o: *u8 = { g_object_new(_g_type_object(), 0 as *u8) };
+    var token: i64 = 0x99 as i64;
+    let user: *u8 = #addr_of(token) as *u8;
+
+    _CALLS = 0 as i64;
+    let id: u64 = connect_bool(o, #str_ptr("cplus-test-bool\0"), _bool_handler, user);
+    assert id != (0 as u64);
+
+    var ret: i32 = 0 as i32;
+    { g_signal_emit_by_name(o, #str_ptr("cplus-test-bool\0"), #addr_of(ret) as *u8); }
+
+    assert _CALLS == (1 as i64);
+    assert _LAST_USER == { #addr(user) };
+    // The handler's TRUE came back out through the return slot — proof the
+    // return type crossed the boundary, not just the arguments.
+    assert ret == (1 as i32);
+
+    object_unref_local(o);
+    return;
+}
+
+#[test]
+fn a_disconnected_handler_stops_running() {
+    // NEGATIVE, and the one that matters for lifetime: a handler left
+    // connected to an object that outlives its context fires into freed
+    // memory. `disconnect` is how a binding takes it back.
+    let sig: u32 = { g_signal_new(#str_ptr("cplus-test-off\0"), _g_type_object(),
+                                  _g_signal_run_last(), 0 as u32,
+                                  0 as *u8, 0 as *u8, 0 as *u8,
+                                  _g_type_none(), 0 as u32) };
+    assert sig != (0 as u32);
+
+    let o: *u8 = { g_object_new(_g_type_object(), 0 as *u8) };
+    _CALLS = 0 as i64;
+    let id: u64 = connect(o, #str_ptr("cplus-test-off\0"), _void_handler, 0 as *u8);
+    { g_signal_emit_by_name(o, #str_ptr("cplus-test-off\0")); }
+    assert _CALLS == (1 as i64);
+
+    disconnect(o, id);
+    { g_signal_emit_by_name(o, #str_ptr("cplus-test-off\0")); }
+    assert _CALLS == (1 as i64);        // unchanged: it did not run again
+
+    object_unref_local(o);
+    return;
+}
+
+#[test]
+fn two_connections_get_distinct_ids_and_both_fire() {
+    let sig: u32 = { g_signal_new(#str_ptr("cplus-test-two\0"), _g_type_object(),
+                                  _g_signal_run_last(), 0 as u32,
+                                  0 as *u8, 0 as *u8, 0 as *u8,
+                                  _g_type_none(), 0 as u32) };
+    assert sig != (0 as u32);
+
+    let o: *u8 = { g_object_new(_g_type_object(), 0 as *u8) };
+    _CALLS = 0 as i64;
+    let a: u64 = connect(o, #str_ptr("cplus-test-two\0"), _void_handler, 0 as *u8);
+    let b: u64 = connect(o, #str_ptr("cplus-test-two\0"), _void_handler, 0 as *u8);
+    // Ids identify ONE connection, not the pair — disconnecting by a shared id
+    // would tear down the wrong handler.
+    assert a != b;
+    { g_signal_emit_by_name(o, #str_ptr("cplus-test-two\0")); }
+    assert _CALLS == (2 as i64);
+
+    object_unref_local(o);
+    return;
+}
+
+// Local unref so these tests don't depend on the runtime module's test-only
+// helpers; `rt` is already imported for the real code path.
+fn object_unref_local(o: *u8) {
+    rt::object_unref(o);
     return;
 }

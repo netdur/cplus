@@ -72,3 +72,133 @@ fn free_cstring(p: *u8) {
     { free(p); }
     return;
 }
+
+
+// ====================================================================
+// Tests
+//
+// This package had none until 2026-08-23, and it is the single hottest
+// dependency in the GTK stack: `str_to_cstring` / `free_cstring` alone are
+// called from ~1500 sites across the generated bindings, and every one of them
+// is a malloc/free pair around a pointer handed to C. It had also never been
+// RUN — the packages that use it type-check on macOS but link `libgtk-4`, so
+// nothing executed this code until a Linux host was available.
+//
+// libgobject/libglib are real here, so `cstr_to_text_full` is tested against an
+// actual `g_strdup` allocation rather than a stand-in — that call frees its
+// argument with `g_free`, and pairing the wrong allocator with the wrong free
+// is exactly the bug a fake would hide.
+// ====================================================================
+
+// A real glib-allocated (transfer-full) string, for the `_full` path.
+#[link_name = "g_strdup"]
+extern fn g_strdup(s: *u8) -> *u8;
+
+#[test]
+fn c_strlen_stops_at_the_terminator_not_the_buffer() {
+    assert c_strlen(#str_ptr("abc\0")) == (3 as usize);
+    assert c_strlen(#str_ptr("\0")) == (0 as usize);
+    // A NUL in the MIDDLE ends the string — the C rule, and the reason
+    // `str_to_cstring` cannot round-trip a `str` that contains one.
+    var buf: [u8; 6] = ['a' as u8, 'b' as u8, 0u8, 'x' as u8, 'y' as u8, 0u8];
+    assert c_strlen(#addr_of(buf) as *u8) == (2 as usize);
+    return;
+}
+
+#[test]
+fn cstr_to_text_copies_and_is_null_safe() {
+    assert cstr_to_text(#str_ptr("hello\0")).view() == "hello";
+    assert cstr_to_text(#str_ptr("\0")).view() == "";
+    // Null is "" rather than a crash: GTK getters return NULL for an unset
+    // string constantly (gtk_label_get_text on a fresh label, ...), so every
+    // one of the ~400 generated call sites would need its own guard.
+    assert cstr_to_text(0 as *u8).view() == "";
+    return;
+}
+
+#[test]
+fn cstr_to_text_carries_utf8_through_unchanged() {
+    // The GTK stack is UTF-8 end to end. The bridge must be byte-transparent —
+    // it counts BYTES to the NUL, and multibyte sequences contain none.
+    let t: text::Text = cstr_to_text(#str_ptr("héllo — ok\0"));
+    assert t.view() == "héllo — ok";
+    assert t.count() == (13 as usize);   // bytes, not characters
+    return;
+}
+
+#[test]
+fn cstr_to_text_full_copies_then_frees_the_source() {
+    // transfer-full: the callee allocated with g_malloc and we must g_free it.
+    let owned: *u8 = { g_strdup(#str_ptr("transfer full\0")) };
+    assert owned != { 0 as *u8 };
+    let t: text::Text = cstr_to_text_full(owned);
+    // The copy is independent of the freed buffer — reading it here is the
+    // whole point of copying BEFORE the free.
+    assert t.view() == "transfer full";
+    assert cstr_to_text_full(0 as *u8).view() == "";
+    return;
+}
+
+#[test]
+fn cstr_to_str_unsafe_views_without_copying() {
+    var buf: [u8; 4] = ['h' as u8, 'i' as u8, '!' as u8, 0u8];
+    let v: str = cstr_to_str_unsafe(#addr_of(buf) as *u8);
+    assert v == "hi!";
+    assert v.count() == (3 as usize);
+    return;
+}
+
+#[test]
+fn str_to_cstring_round_trips_and_terminates() {
+    let p: *u8 = str_to_cstring("round trip");
+    assert p != { 0 as *u8 };
+    // The terminator is the contract: C reads until it finds one.
+    assert { *(p + (10 as usize)) } == (0 as u8);
+    assert c_strlen(p) == (10 as usize);
+    assert cstr_to_text(p).view() == "round trip";
+    free_cstring(p);
+    return;
+}
+
+#[test]
+fn str_to_cstring_handles_the_empty_string() {
+    // len 0 still allocates one byte and writes the terminator — a caller
+    // handed "" must get a valid empty C string, not null and not a stray
+    // pointer. GTK setters are called with "" routinely (clearing a label).
+    let p: *u8 = str_to_cstring("");
+    assert p != { 0 as *u8 };
+    assert { *p } == (0 as u8);
+    assert c_strlen(p) == (0 as usize);
+    free_cstring(p);
+    return;
+}
+
+#[test]
+fn str_to_cstring_truncates_at_an_interior_nul() {
+    // NEGATIVE: a `str` may hold a NUL; a C string may not. The copy is
+    // faithful but C stops reading at the NUL, so the callee sees a SHORTER
+    // string. Pinned rather than fixed: the alternative is rejecting the call,
+    // and no generated call site is written to handle a failure. Know that a
+    // path which can produce interior NULs must screen them itself.
+    var raw: [u8; 5] = ['a' as u8, 'b' as u8, 0u8, 'c' as u8, 'd' as u8];
+    let s: str = { #str_from_raw_parts(#addr_of(raw) as *u8, 5 as usize) };
+    assert s.count() == (5 as usize);
+    let p: *u8 = str_to_cstring(s);
+    assert c_strlen(p) == (2 as usize);          // C sees "ab"
+    assert cstr_to_text(p).view() == "ab";
+    // ...and the bytes past the NUL really were copied, so this is a reading
+    // limit, not a copying bug.
+    assert { *(p + (3 as usize)) } == ('c' as u8);
+    free_cstring(p);
+    return;
+}
+
+#[test]
+fn a_str_survives_the_full_round_trip_through_c() {
+    // The shape every generated setter/getter pair performs.
+    let p: *u8 = str_to_cstring("Open Project…");
+    let back: text::Text = cstr_to_text(p);
+    free_cstring(p);
+    assert back.view() == "Open Project…";
+    return;
+}

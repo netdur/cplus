@@ -83,3 +83,21 @@ Hand-written, `cpc check`-clean. This is the runtime foundation a future
 `cpc-bindgen --gobject` (GIR-driven) generator would target — GTK/Adwaita
 wrapper structs calling the direct method symbols while delegating lifetime,
 signals, and strings here.
+
+## Testing
+
+    cd vendor/gobject && cpc test
+
+19 tests, and they run against the **real** libgobject/libglib — a GObject is
+constructed, reffed, sunk and unreffed; a signal is registered with
+`g_signal_new`, connected through this module's `connect`, and emitted; a
+`g_strdup` allocation goes through the transfer-full bridge and is freed with
+`g_free`. Nothing here is mocked, because the failure this package is exposed to
+is an `extern fn` whose declared shape disagrees with the symbol's, and a mock
+agrees with the declaration by construction.
+
+That means the suite needs a host with the GObject libraries — it will not run
+on macOS. Until 2026-08-23 this package had no tests and had never been
+executed at all: everything that depends on it (the generated GTK stack,
+`facet_gtk`, `agent_gtk`) type-checks anywhere but links `libgtk-4`, so nothing
+ran this code until a Linux host was available.
