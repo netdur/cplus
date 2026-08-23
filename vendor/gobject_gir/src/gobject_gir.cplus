@@ -108,154 +108,154 @@ fn boxed_free(boxed_type: usize, boxed: *u8) {
 // SKIPPED fn `boxed_type_register_static`: param `boxed_copy` — unmapped type `BoxedCopyFunc`
 #[link_name = "g_cclosure_marshal_BOOLEAN__BOXED_BOXED"]
 extern fn __c_g_cclosure_marshal_BOOLEAN__BOXED_BOXED(closure: *u8, return_value: *u8, n_param_values: u32, param_values: *u8, invocation_hint: *u8, marshal_data: *u8);
-fn cclosure_marshal_BOOLEAN__BOXED_BOXED(closure: Closure, return_value: Value, n_param_values: u32, param_values: Value, invocation_hint: *u8, marshal_data: *u8) {
+fn cclosure_marshal_BOOLEAN_BOXED_BOXED(closure: Closure, return_value: Value, n_param_values: u32, param_values: Value, invocation_hint: *u8, marshal_data: *u8) {
     { __c_g_cclosure_marshal_BOOLEAN__BOXED_BOXED(closure.raw(), return_value.raw(), n_param_values, param_values.raw(), invocation_hint, marshal_data) };
     return;
 }
 
 #[link_name = "g_cclosure_marshal_BOOLEAN__FLAGS"]
 extern fn __c_g_cclosure_marshal_BOOLEAN__FLAGS(closure: *u8, return_value: *u8, n_param_values: u32, param_values: *u8, invocation_hint: *u8, marshal_data: *u8);
-fn cclosure_marshal_BOOLEAN__FLAGS(closure: Closure, return_value: Value, n_param_values: u32, param_values: Value, invocation_hint: *u8, marshal_data: *u8) {
+fn cclosure_marshal_BOOLEAN_FLAGS(closure: Closure, return_value: Value, n_param_values: u32, param_values: Value, invocation_hint: *u8, marshal_data: *u8) {
     { __c_g_cclosure_marshal_BOOLEAN__FLAGS(closure.raw(), return_value.raw(), n_param_values, param_values.raw(), invocation_hint, marshal_data) };
     return;
 }
 
 #[link_name = "g_cclosure_marshal_STRING__OBJECT_POINTER"]
 extern fn __c_g_cclosure_marshal_STRING__OBJECT_POINTER(closure: *u8, return_value: *u8, n_param_values: u32, param_values: *u8, invocation_hint: *u8, marshal_data: *u8);
-fn cclosure_marshal_STRING__OBJECT_POINTER(closure: Closure, return_value: Value, n_param_values: u32, param_values: Value, invocation_hint: *u8, marshal_data: *u8) {
+fn cclosure_marshal_STRING_OBJECT_POINTER(closure: Closure, return_value: Value, n_param_values: u32, param_values: Value, invocation_hint: *u8, marshal_data: *u8) {
     { __c_g_cclosure_marshal_STRING__OBJECT_POINTER(closure.raw(), return_value.raw(), n_param_values, param_values.raw(), invocation_hint, marshal_data) };
     return;
 }
 
 #[link_name = "g_cclosure_marshal_VOID__BOOLEAN"]
 extern fn __c_g_cclosure_marshal_VOID__BOOLEAN(closure: *u8, return_value: *u8, n_param_values: u32, param_values: *u8, invocation_hint: *u8, marshal_data: *u8);
-fn cclosure_marshal_VOID__BOOLEAN(closure: Closure, return_value: Value, n_param_values: u32, param_values: Value, invocation_hint: *u8, marshal_data: *u8) {
+fn cclosure_marshal_VOID_BOOLEAN(closure: Closure, return_value: Value, n_param_values: u32, param_values: Value, invocation_hint: *u8, marshal_data: *u8) {
     { __c_g_cclosure_marshal_VOID__BOOLEAN(closure.raw(), return_value.raw(), n_param_values, param_values.raw(), invocation_hint, marshal_data) };
     return;
 }
 
 #[link_name = "g_cclosure_marshal_VOID__BOXED"]
 extern fn __c_g_cclosure_marshal_VOID__BOXED(closure: *u8, return_value: *u8, n_param_values: u32, param_values: *u8, invocation_hint: *u8, marshal_data: *u8);
-fn cclosure_marshal_VOID__BOXED(closure: Closure, return_value: Value, n_param_values: u32, param_values: Value, invocation_hint: *u8, marshal_data: *u8) {
+fn cclosure_marshal_VOID_BOXED(closure: Closure, return_value: Value, n_param_values: u32, param_values: Value, invocation_hint: *u8, marshal_data: *u8) {
     { __c_g_cclosure_marshal_VOID__BOXED(closure.raw(), return_value.raw(), n_param_values, param_values.raw(), invocation_hint, marshal_data) };
     return;
 }
 
 #[link_name = "g_cclosure_marshal_VOID__CHAR"]
 extern fn __c_g_cclosure_marshal_VOID__CHAR(closure: *u8, return_value: *u8, n_param_values: u32, param_values: *u8, invocation_hint: *u8, marshal_data: *u8);
-fn cclosure_marshal_VOID__CHAR(closure: Closure, return_value: Value, n_param_values: u32, param_values: Value, invocation_hint: *u8, marshal_data: *u8) {
+fn cclosure_marshal_VOID_CHAR(closure: Closure, return_value: Value, n_param_values: u32, param_values: Value, invocation_hint: *u8, marshal_data: *u8) {
     { __c_g_cclosure_marshal_VOID__CHAR(closure.raw(), return_value.raw(), n_param_values, param_values.raw(), invocation_hint, marshal_data) };
     return;
 }
 
 #[link_name = "g_cclosure_marshal_VOID__DOUBLE"]
 extern fn __c_g_cclosure_marshal_VOID__DOUBLE(closure: *u8, return_value: *u8, n_param_values: u32, param_values: *u8, invocation_hint: *u8, marshal_data: *u8);
-fn cclosure_marshal_VOID__DOUBLE(closure: Closure, return_value: Value, n_param_values: u32, param_values: Value, invocation_hint: *u8, marshal_data: *u8) {
+fn cclosure_marshal_VOID_DOUBLE(closure: Closure, return_value: Value, n_param_values: u32, param_values: Value, invocation_hint: *u8, marshal_data: *u8) {
     { __c_g_cclosure_marshal_VOID__DOUBLE(closure.raw(), return_value.raw(), n_param_values, param_values.raw(), invocation_hint, marshal_data) };
     return;
 }
 
 #[link_name = "g_cclosure_marshal_VOID__ENUM"]
 extern fn __c_g_cclosure_marshal_VOID__ENUM(closure: *u8, return_value: *u8, n_param_values: u32, param_values: *u8, invocation_hint: *u8, marshal_data: *u8);
-fn cclosure_marshal_VOID__ENUM(closure: Closure, return_value: Value, n_param_values: u32, param_values: Value, invocation_hint: *u8, marshal_data: *u8) {
+fn cclosure_marshal_VOID_ENUM(closure: Closure, return_value: Value, n_param_values: u32, param_values: Value, invocation_hint: *u8, marshal_data: *u8) {
     { __c_g_cclosure_marshal_VOID__ENUM(closure.raw(), return_value.raw(), n_param_values, param_values.raw(), invocation_hint, marshal_data) };
     return;
 }
 
 #[link_name = "g_cclosure_marshal_VOID__FLAGS"]
 extern fn __c_g_cclosure_marshal_VOID__FLAGS(closure: *u8, return_value: *u8, n_param_values: u32, param_values: *u8, invocation_hint: *u8, marshal_data: *u8);
-fn cclosure_marshal_VOID__FLAGS(closure: Closure, return_value: Value, n_param_values: u32, param_values: Value, invocation_hint: *u8, marshal_data: *u8) {
+fn cclosure_marshal_VOID_FLAGS(closure: Closure, return_value: Value, n_param_values: u32, param_values: Value, invocation_hint: *u8, marshal_data: *u8) {
     { __c_g_cclosure_marshal_VOID__FLAGS(closure.raw(), return_value.raw(), n_param_values, param_values.raw(), invocation_hint, marshal_data) };
     return;
 }
 
 #[link_name = "g_cclosure_marshal_VOID__FLOAT"]
 extern fn __c_g_cclosure_marshal_VOID__FLOAT(closure: *u8, return_value: *u8, n_param_values: u32, param_values: *u8, invocation_hint: *u8, marshal_data: *u8);
-fn cclosure_marshal_VOID__FLOAT(closure: Closure, return_value: Value, n_param_values: u32, param_values: Value, invocation_hint: *u8, marshal_data: *u8) {
+fn cclosure_marshal_VOID_FLOAT(closure: Closure, return_value: Value, n_param_values: u32, param_values: Value, invocation_hint: *u8, marshal_data: *u8) {
     { __c_g_cclosure_marshal_VOID__FLOAT(closure.raw(), return_value.raw(), n_param_values, param_values.raw(), invocation_hint, marshal_data) };
     return;
 }
 
 #[link_name = "g_cclosure_marshal_VOID__INT"]
 extern fn __c_g_cclosure_marshal_VOID__INT(closure: *u8, return_value: *u8, n_param_values: u32, param_values: *u8, invocation_hint: *u8, marshal_data: *u8);
-fn cclosure_marshal_VOID__INT(closure: Closure, return_value: Value, n_param_values: u32, param_values: Value, invocation_hint: *u8, marshal_data: *u8) {
+fn cclosure_marshal_VOID_INT(closure: Closure, return_value: Value, n_param_values: u32, param_values: Value, invocation_hint: *u8, marshal_data: *u8) {
     { __c_g_cclosure_marshal_VOID__INT(closure.raw(), return_value.raw(), n_param_values, param_values.raw(), invocation_hint, marshal_data) };
     return;
 }
 
 #[link_name = "g_cclosure_marshal_VOID__LONG"]
 extern fn __c_g_cclosure_marshal_VOID__LONG(closure: *u8, return_value: *u8, n_param_values: u32, param_values: *u8, invocation_hint: *u8, marshal_data: *u8);
-fn cclosure_marshal_VOID__LONG(closure: Closure, return_value: Value, n_param_values: u32, param_values: Value, invocation_hint: *u8, marshal_data: *u8) {
+fn cclosure_marshal_VOID_LONG(closure: Closure, return_value: Value, n_param_values: u32, param_values: Value, invocation_hint: *u8, marshal_data: *u8) {
     { __c_g_cclosure_marshal_VOID__LONG(closure.raw(), return_value.raw(), n_param_values, param_values.raw(), invocation_hint, marshal_data) };
     return;
 }
 
 #[link_name = "g_cclosure_marshal_VOID__OBJECT"]
 extern fn __c_g_cclosure_marshal_VOID__OBJECT(closure: *u8, return_value: *u8, n_param_values: u32, param_values: *u8, invocation_hint: *u8, marshal_data: *u8);
-fn cclosure_marshal_VOID__OBJECT(closure: Closure, return_value: Value, n_param_values: u32, param_values: Value, invocation_hint: *u8, marshal_data: *u8) {
+fn cclosure_marshal_VOID_OBJECT(closure: Closure, return_value: Value, n_param_values: u32, param_values: Value, invocation_hint: *u8, marshal_data: *u8) {
     { __c_g_cclosure_marshal_VOID__OBJECT(closure.raw(), return_value.raw(), n_param_values, param_values.raw(), invocation_hint, marshal_data) };
     return;
 }
 
 #[link_name = "g_cclosure_marshal_VOID__PARAM"]
 extern fn __c_g_cclosure_marshal_VOID__PARAM(closure: *u8, return_value: *u8, n_param_values: u32, param_values: *u8, invocation_hint: *u8, marshal_data: *u8);
-fn cclosure_marshal_VOID__PARAM(closure: Closure, return_value: Value, n_param_values: u32, param_values: Value, invocation_hint: *u8, marshal_data: *u8) {
+fn cclosure_marshal_VOID_PARAM(closure: Closure, return_value: Value, n_param_values: u32, param_values: Value, invocation_hint: *u8, marshal_data: *u8) {
     { __c_g_cclosure_marshal_VOID__PARAM(closure.raw(), return_value.raw(), n_param_values, param_values.raw(), invocation_hint, marshal_data) };
     return;
 }
 
 #[link_name = "g_cclosure_marshal_VOID__POINTER"]
 extern fn __c_g_cclosure_marshal_VOID__POINTER(closure: *u8, return_value: *u8, n_param_values: u32, param_values: *u8, invocation_hint: *u8, marshal_data: *u8);
-fn cclosure_marshal_VOID__POINTER(closure: Closure, return_value: Value, n_param_values: u32, param_values: Value, invocation_hint: *u8, marshal_data: *u8) {
+fn cclosure_marshal_VOID_POINTER(closure: Closure, return_value: Value, n_param_values: u32, param_values: Value, invocation_hint: *u8, marshal_data: *u8) {
     { __c_g_cclosure_marshal_VOID__POINTER(closure.raw(), return_value.raw(), n_param_values, param_values.raw(), invocation_hint, marshal_data) };
     return;
 }
 
 #[link_name = "g_cclosure_marshal_VOID__STRING"]
 extern fn __c_g_cclosure_marshal_VOID__STRING(closure: *u8, return_value: *u8, n_param_values: u32, param_values: *u8, invocation_hint: *u8, marshal_data: *u8);
-fn cclosure_marshal_VOID__STRING(closure: Closure, return_value: Value, n_param_values: u32, param_values: Value, invocation_hint: *u8, marshal_data: *u8) {
+fn cclosure_marshal_VOID_STRING(closure: Closure, return_value: Value, n_param_values: u32, param_values: Value, invocation_hint: *u8, marshal_data: *u8) {
     { __c_g_cclosure_marshal_VOID__STRING(closure.raw(), return_value.raw(), n_param_values, param_values.raw(), invocation_hint, marshal_data) };
     return;
 }
 
 #[link_name = "g_cclosure_marshal_VOID__UCHAR"]
 extern fn __c_g_cclosure_marshal_VOID__UCHAR(closure: *u8, return_value: *u8, n_param_values: u32, param_values: *u8, invocation_hint: *u8, marshal_data: *u8);
-fn cclosure_marshal_VOID__UCHAR(closure: Closure, return_value: Value, n_param_values: u32, param_values: Value, invocation_hint: *u8, marshal_data: *u8) {
+fn cclosure_marshal_VOID_UCHAR(closure: Closure, return_value: Value, n_param_values: u32, param_values: Value, invocation_hint: *u8, marshal_data: *u8) {
     { __c_g_cclosure_marshal_VOID__UCHAR(closure.raw(), return_value.raw(), n_param_values, param_values.raw(), invocation_hint, marshal_data) };
     return;
 }
 
 #[link_name = "g_cclosure_marshal_VOID__UINT"]
 extern fn __c_g_cclosure_marshal_VOID__UINT(closure: *u8, return_value: *u8, n_param_values: u32, param_values: *u8, invocation_hint: *u8, marshal_data: *u8);
-fn cclosure_marshal_VOID__UINT(closure: Closure, return_value: Value, n_param_values: u32, param_values: Value, invocation_hint: *u8, marshal_data: *u8) {
+fn cclosure_marshal_VOID_UINT(closure: Closure, return_value: Value, n_param_values: u32, param_values: Value, invocation_hint: *u8, marshal_data: *u8) {
     { __c_g_cclosure_marshal_VOID__UINT(closure.raw(), return_value.raw(), n_param_values, param_values.raw(), invocation_hint, marshal_data) };
     return;
 }
 
 #[link_name = "g_cclosure_marshal_VOID__UINT_POINTER"]
 extern fn __c_g_cclosure_marshal_VOID__UINT_POINTER(closure: *u8, return_value: *u8, n_param_values: u32, param_values: *u8, invocation_hint: *u8, marshal_data: *u8);
-fn cclosure_marshal_VOID__UINT_POINTER(closure: Closure, return_value: Value, n_param_values: u32, param_values: Value, invocation_hint: *u8, marshal_data: *u8) {
+fn cclosure_marshal_VOID_UINT_POINTER(closure: Closure, return_value: Value, n_param_values: u32, param_values: Value, invocation_hint: *u8, marshal_data: *u8) {
     { __c_g_cclosure_marshal_VOID__UINT_POINTER(closure.raw(), return_value.raw(), n_param_values, param_values.raw(), invocation_hint, marshal_data) };
     return;
 }
 
 #[link_name = "g_cclosure_marshal_VOID__ULONG"]
 extern fn __c_g_cclosure_marshal_VOID__ULONG(closure: *u8, return_value: *u8, n_param_values: u32, param_values: *u8, invocation_hint: *u8, marshal_data: *u8);
-fn cclosure_marshal_VOID__ULONG(closure: Closure, return_value: Value, n_param_values: u32, param_values: Value, invocation_hint: *u8, marshal_data: *u8) {
+fn cclosure_marshal_VOID_ULONG(closure: Closure, return_value: Value, n_param_values: u32, param_values: Value, invocation_hint: *u8, marshal_data: *u8) {
     { __c_g_cclosure_marshal_VOID__ULONG(closure.raw(), return_value.raw(), n_param_values, param_values.raw(), invocation_hint, marshal_data) };
     return;
 }
 
 #[link_name = "g_cclosure_marshal_VOID__VARIANT"]
 extern fn __c_g_cclosure_marshal_VOID__VARIANT(closure: *u8, return_value: *u8, n_param_values: u32, param_values: *u8, invocation_hint: *u8, marshal_data: *u8);
-fn cclosure_marshal_VOID__VARIANT(closure: Closure, return_value: Value, n_param_values: u32, param_values: Value, invocation_hint: *u8, marshal_data: *u8) {
+fn cclosure_marshal_VOID_VARIANT(closure: Closure, return_value: Value, n_param_values: u32, param_values: Value, invocation_hint: *u8, marshal_data: *u8) {
     { __c_g_cclosure_marshal_VOID__VARIANT(closure.raw(), return_value.raw(), n_param_values, param_values.raw(), invocation_hint, marshal_data) };
     return;
 }
 
 #[link_name = "g_cclosure_marshal_VOID__VOID"]
 extern fn __c_g_cclosure_marshal_VOID__VOID(closure: *u8, return_value: *u8, n_param_values: u32, param_values: *u8, invocation_hint: *u8, marshal_data: *u8);
-fn cclosure_marshal_VOID__VOID(closure: Closure, return_value: Value, n_param_values: u32, param_values: Value, invocation_hint: *u8, marshal_data: *u8) {
+fn cclosure_marshal_VOID_VOID(closure: Closure, return_value: Value, n_param_values: u32, param_values: Value, invocation_hint: *u8, marshal_data: *u8) {
     { __c_g_cclosure_marshal_VOID__VOID(closure.raw(), return_value.raw(), n_param_values, param_values.raw(), invocation_hint, marshal_data) };
     return;
 }
