@@ -1,8 +1,9 @@
 # Packages and platforms — how a project grows
 
-The decision this page settles: **how code is organized past one file, and
-how one project targets more than one OS.** Manifest keys in table form are
-in [ref.md](ref.md); this page is the model.
+The decision this page settles: **how code is organized past one file.**
+Manifest keys in table form are in [ref.md](ref.md); targeting more than one
+OS is [platforms.md](platforms.md); the commands are
+[tooling.md](tooling.md).
 
 ## 1. Modules are files; imports are paths
 
@@ -139,19 +140,20 @@ missing, or an undeclared one present, is an error — the manifest is truth).
 
 ## 6. Platform-variant code
 
-Two mechanisms, two axes — they compose and don't compete:
+Three mechanisms, three axes — they compose and don't compete:
 
 - **File override** (compile-time, import-level): a sibling
   `<module>_<platform>.cplus` shadows `<module>.cplus` when building for
   that platform — same public surface, different implementation. This is
   the only way to vary *imports* per platform (kqueue vs epoll, AppKit vs
   UIKit), because C+ has no in-source `#if`: the unit of platform variation
-  is the whole file.
-- **`#platform()`** (value-level): a `str` that is the active target's
-  platform name — `"macos"`, `"ios"`, `"linux"`, `"android"`, `"windows"`,
-  `"esp32"`, `"wasm"` — the same vocabulary the manifest sections use. Both
-  branches of an `if` on it still compile, so it can pick a padding or a
-  port, never an import.
+  is the whole file. The base file is optional, and an `android` build
+  falls back to a `_linux` variant when there is no `_android` one.
+- **`[<platform>.dependencies]`** (manifest-level): a package that exists
+  only on that platform.
+- **`#platform()` / `#arch()` / `#target()`** (value-level): `str`
+  constants naming the active target. Both branches of an `if` on one still
+  compile, so they can pick a padding or a port, never an import.
 
 Off-platform imports fail honestly: importing a `[macos.dependencies]`
 package in an iOS build is E0866 naming the platform it was declared for.
@@ -159,6 +161,10 @@ package in an iOS build is E0866 naming the platform it was declared for.
 The rule of thumb from the framework work: OS decides *files* (backends,
 syscalls), form factor decides *values* (a phone-shaped shell is portable
 facet code — pick it at runtime, not per-OS).
+
+The full model — the resolution order, the Android fallback, which
+variants a library archive keeps, the target list, and the external-builder
+handoff — is [platforms.md](platforms.md).
 
 ## 7. Tests
 
@@ -173,6 +179,8 @@ and runs them; the entry is resolved by a ladder, first match wins:
 
 House discipline: every module ships unit, e2e, and negative tests; a
 package is testable from its own directory with `cd <pkg> && cpc test`.
+Discovery covers the whole resolved import tree, so a dependency's tests
+run alongside yours — see [testing.md](testing.md).
 
 ## 8. The commands that read all this
 

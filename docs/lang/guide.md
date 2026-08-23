@@ -5,15 +5,20 @@ would compile. For a first sitting read [tour.md](tour.md); for exact shapes,
 [ref.md](ref.md); for the rules themselves, [spec.md](spec.md) and
 [memory-model.md](memory-model.md).
 
-The guide's spine is on this page. Four topics are large enough to stand
+The guide's spine is on this page. These topics are large enough to stand
 alone:
 
 | Topic | File | The decision it settles |
 |---|---|---|
 | Ownership | [ownership.md](ownership.md) | who owns a value, and how it travels |
 | Errors | [error-handling.md](error-handling.md) | what a fallible function returns |
-| Packages & platforms | [packages.md](packages.md) | how a project grows past one file, and onto more than one OS |
+| Packages | [packages.md](packages.md) | how a project grows past one file |
+| Platforms | [platforms.md](platforms.md) | where a per-OS difference belongs: a file, a dependency, or a value |
+| Concurrency | [concurrency.md](concurrency.md) | threads, async, generators — which shape the work wants |
 | FFI | [ffi.md](ffi.md) | what crossing the C boundary costs and promises |
+| Standard library | [stdlib.md](stdlib.md) | which module answers a need |
+| Testing | [testing.md](testing.md) | what to write, where it runs, what it cannot check |
+| Tooling | [tooling.md](tooling.md) | which command answers the question you have |
 
 ## 1. How to think in C+
 
@@ -126,10 +131,12 @@ The order is deliberate: prefer the top. Most designs that reach for
 4. **`Arc` + `Mutex[T]`** last. Two guards in one scope deadlock — scope
    each lock.
 
-`async fn` + `executor::block_on` exist for I/O-bound work over the kqueue
-reactor. Borrow-shaped types (`str`, slices, `ref` params) are rejected in
-`async fn` signatures (E0900) — pass owned `Text` / `Vec`. The entry point is
-always a plain `fn main` that calls `block_on`.
+`async fn` + `executor::block_on` exist for I/O-bound work over the
+platform's reactor (kqueue on Darwin, epoll on Linux and Android).
+Borrow-shaped types (`str`, slices, `ref` params) are rejected in `async fn`
+signatures (E0900) — pass owned `Text` / `Vec`. The entry point is always a
+plain `fn main` that calls `block_on`. Cancellation, scoped lends, channels,
+and the async↔thread bridge are [concurrency.md](concurrency.md).
 
 ## 7. Callbacks without closures
 
@@ -178,6 +185,12 @@ explanations live in the linked topic file.
 - **Two mutex guards in one scope deadlock.** Scope each lock.
 - **`cpc check FILE` cannot see imports.** Any code with an `import` goes
   through `cpc build` / project-mode `cpc check` (E0852 otherwise).
+- **`#platform()` cannot gate an import.** Both arms of an `if` on it
+  compile on every platform; varying imports is what a `_<platform>.cplus`
+  file is for. ([platforms.md](platforms.md))
+- **A ` ```cplus ` fence inside a `///` comment is not a doctest.** Only a
+  bare three-backtick fence is extracted, so a tagged example silently
+  never runs. ([testing.md](testing.md))
 
 ## 9. Style that the compiler doesn't enforce
 

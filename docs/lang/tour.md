@@ -305,8 +305,15 @@ The complete list of things that stop a first program from compiling:
 
 ## Where next
 
-- [guide.md](guide.md) — which construct to reach for, and the traps.
+- [guide.md](guide.md) — which construct to reach for, and the traps. It
+  indexes every topic file.
 - [ownership.md](ownership.md) — the full ownership model; read it early.
+- [stdlib.md](stdlib.md) — which module to import for what.
 - [ref.md](ref.md) — every construct, one entry each.
+- [testing.md](testing.md) — `#[test]`, doctests, and what a test cannot
+  check.
+- [platforms.md](platforms.md) — when your program needs a second OS.
+- [tooling.md](tooling.md) — the whole `cpc` surface, including the code
+  graph you should use instead of grep.
 - `cpc explain E0xxx` — any diagnostic, explained offline.
 - `docs/examples/recipes/` — task-shaped programs that all compile and run.

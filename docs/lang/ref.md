@@ -6,15 +6,59 @@ behavior only — learning path in [tour.md](tour.md), judgment in
 [memory-model.md](memory-model.md). Error codes: `cpc explain E0xxx` or
 [errors.md](errors.md).
 
-Sections: [Types](#types) · [Literals](#literals) · [Bindings](#bindings) ·
-[Operators](#operators) · [Control flow](#control-flow) ·
-[Functions](#functions) · [Structs](#structs) · [Enums](#enums) ·
-[Patterns](#patterns) · [Generics & interfaces](#generics--interfaces) ·
-[Strings](#strings) · [Arrays & slices](#arrays--slices) ·
-[Pointers](#pointers) · [Modules & imports](#modules--imports) ·
+Sections: [Lexical](#lexical) · [Types](#types) · [Literals](#literals) ·
+[Bindings](#bindings) · [Operators](#operators) ·
+[Control flow](#control-flow) · [Functions](#functions) ·
+[Structs](#structs) · [Unions](#unions) · [Enums](#enums) ·
+[Tuples](#tuples) · [Patterns](#patterns) ·
+[Generics & interfaces](#generics--interfaces) · [Strings](#strings) ·
+[Arrays & slices](#arrays--slices) · [Pointers](#pointers) ·
+[Modules & imports](#modules--imports) ·
+[Platform-variant files](#platform-variant-files) ·
 [Attributes](#attributes) · [Intrinsics](#intrinsics) ·
 [Builder blocks](#builder-blocks) · [Async & threads](#async--threads) ·
-[Manifest](#manifest) · [CLI](#cli)
+[Tests & doctests](#tests--doctests) · [Manifest](#manifest) · [CLI](#cli)
+
+## Lexical
+
+```cplus
+// line comment
+/* block comment — nests */
+/// doc comment: published by `cpc doc`, and a bare ``` fence in one
+/// becomes a test (see Tests & doctests)
+```
+
+Identifiers are ASCII `[A-Za-z_][A-Za-z0-9_]*`. A leading `_` is privacy,
+not a wildcard.
+
+**Keywords:** `fn let const static if else while for in return true false
+as extern struct enum union match impl export import this This defer break
+continue loop assert guard opaque interface type async gen yield await
+restrict`.
+
+**Contextual keywords** — not reserved as tokens, but rejected as binding
+names: `var`, `ref`, `take`.
+
+**Reserved with a targeted rejection** — kept reserved so a habit from
+another language gets a precise hint rather than a confusing parse error:
+
+| Written | Diagnostic says |
+|---|---|
+| `mut` | retired — a mutating receiver is `ref this` |
+| `move` | retired — a consuming receiver is `take this` |
+| `borrow` | retired — a bare parameter `x: T` is already a read-only borrow |
+| `trait` | C+ has no `trait`; declare a method contract with `interface` |
+| `use` | C+ has no `use`; `import "path" as alias;` |
+| `mod` | C+ has no `mod` and no module tree |
+| `try` | there is no try / `?` propagation construct |
+| `unsafe` | removed — write the block or operation directly |
+| `pub` | retired — visibility is name-based; `export` marks the C-ABI surface |
+
+The last two are **E0100**; the rest are parse errors carrying the same
+kind of hint.
+
+There are no loop labels: `break` and `continue` bind to the innermost
+loop.
 
 ## Types
 
@@ -34,7 +78,7 @@ Sections: [Types](#types) · [Literals](#literals) · [Bindings](#bindings) ·
 | `(T, U)` | tuple type; literal `(a, b)` |
 | `type X = T;` | transparent alias |
 | `type X = distinct I;` | nominal integer brand: same ABI as `I`, separate type — construct/leave by `as`; comparison, `Hash`/`Eq`/`Copy` work; arithmetic rejected (cast out); mixing brands is E0302 |
-| SIMD | `f32x4 f64x2 …` nineteen widths + `mask{N}x{M}`; `splat/new/load/from_array/to_array`, lane-typed methods; never crosses `extern fn` (round-trip `[f32; N]`) |
+| SIMD | `f32x4 f64x2 …` nineteen widths + `mask{N}x{M}`; `splat/new/load/from_array/to_array`, lane-typed methods; never crosses `extern fn` (round-trip `[f32; N]`). `sum()`/`product()` over narrow integer lanes wraps silently — W0001 |
 
 ## Literals
 
@@ -141,7 +185,8 @@ impl Point {
     fn into_x(take this) -> i32 { … }        // consuming
 }
 
-impl Point: Drop { fn drop(ref this) { … } } // destructor; forces non-Copy
+impl Point { fn drop(ref this) { … } }       // destructor: a method NAMED drop,
+                                             // not an interface impl; forces non-Copy
 ```
 
 `Copy` is structural and never written: all components Copy and no `drop` →
@@ -149,6 +194,26 @@ Copy. Owning fields drop automatically in reverse declaration order after
 the user `drop`; fields cannot be moved out of an owning aggregate (E0509).
 Every `*T` field must be accounted for: freeing `drop` or `opaque _p: *T`
 (E0510; conditional frees warn W0002).
+
+## Unions
+
+```cplus
+#[repr(C)] union FloatBits { f: f32, bits: u32 }   // C layout, for binding headers
+union Word { i: i32, u: u32 }                      // repr optional
+
+var w: Word = Word { i: -1 };                      // exactly ONE member named
+let bits: u32 = w.u;                               // reading another member reinterprets
+```
+
+One storage, several typed views, **no tag**. Consequences, both **E0925**:
+
+- Every member type must be `Copy`. Without a tag the compiler cannot know
+  which member is live, so no destructor could ever run.
+- A union literal names exactly one member. Naming two is an error, not a
+  last-write-wins.
+
+Unions are for binding C headers. An either/or value in ordinary code is an
+`enum`, which has a tag and can own its payload.
 
 ## Enums
 
@@ -168,6 +233,19 @@ full (`option::Option[i64]::Some(v)`). An owning enum's payload drops via
 tag switch; a `match` that binds a name consumes the enum
 ([ownership.md](ownership.md) §6).
 
+## Tuples
+
+```cplus
+fn pair() -> (i32, i32) { return (1, 2); }
+
+let t: (i32, i32) = pair();
+let a: i32 = t.0;                     // positional access with `.`, zero-based
+```
+
+A structural product type: no name, no methods, no field labels. Use it for
+a two-value return; anything with meaning to convey gets a `struct` with
+named fields. Tuples inside a type are not derivable (E0920).
+
 ## Patterns
 
 ```cplus
@@ -179,7 +257,7 @@ if let Maybe[i32]::Some(v) = m { }
 while let option::Option[i64]::Some(v) = it.next() { }
 guard let Read::Ok(v) = r else { return 1; };            // else must diverge
 guard let Read::Ok(v) = r else |Read::Err(c)| { … };     // complement form: else binds the rest;
-                                                         // both patterns together cover the enum (E0349)
+                                                         // both patterns together must cover the enum (E0340)
 ```
 
 All four take `var` in place of `let` for mutable bindings. `Some(_)` binds
@@ -265,9 +343,36 @@ import "stdlib/str" as _;      // discard alias: extension methods only
 
 Alias mandatory; `alias::item` is the only access path. `_`-prefixed items,
 fields, and methods are module-private (E0403). Extensions on foreign types
-apply only in files that import the defining module. Platform-variant
-implementation: `<module>_<platform>.cplus` shadows `<module>.cplus` for
-that target ([packages.md](packages.md) §6).
+apply only in files that import the defining module. Imports are
+file-leading: an `import` after the first non-import item is an error.
+
+A `.cplus` file under `src/` that no import reaches is **W0005** — it never
+compiles, so nothing it declares is checked.
+
+## Platform-variant files
+
+```
+src/reactor.cplus          # the base
+src/reactor_linux.cplus    # shadows it when the target's platform is linux
+```
+
+`<module>_<platform>.cplus` shadows `<module>.cplus` for that target;
+importers always write the base name (`import "./reactor" as reactor;`).
+Platform names: `macos linux windows ios android esp32 wasm`.
+
+| Rule | Detail |
+|---|---|
+| suffix source | the **target**'s platform (`--target ios-arm64` looks for `_ios`, never `_macos`) |
+| android | tries `_android` first, then falls back to `_linux` — every other platform tries one suffix |
+| base file | optional; a module may exist only as variants |
+| no variant, no base | **E0401**, naming the *base* path |
+| already suffixed | a `_linux` file is never re-suffixed |
+| orphan check | platform-suffixed files are exempt from W0005 |
+| library archive | the synthesized package entry imports base names only; a suffixed module with no base is kept only when its suffix names the active platform |
+
+This is the only way to vary *imports* per platform. `#platform()` is
+value-level and compiles both arms. Full model:
+[platforms.md](platforms.md).
 
 ## Attributes
 
@@ -284,10 +389,14 @@ that target ([packages.md](packages.md) §6).
 | `#[unroll(N)]` / `#[vectorize_width(N)]` | loop | optimizer hints |
 | `#[deprecated("msg")]` | item | W0006 at each use |
 | `#[naked]` | fn | asm-only body, no prologue/epilogue |
-| `#[keeps(this)]` | param | the receiver retains the borrow (library-authoring tier) |
+| `#[keeps(this)]` / `#[keeps(nothing)]` | fn/method | declared view-flow summary for a body the checker cannot read through: `this` = view arguments survive inside the receiver (lifts E0515); `nothing` = the function copies what it needs, so its return borrows no argument. Trusted, not verified |
+| `#[watch]` | struct | field-write barrier: every store to a field is followed by `this.on_value(field_name)`. The struct must supply `fn on_value(ref this, field: str)` — missing is E0361, wrong signature is E0362, and an `on_value` on a struct *without* the attribute is W0004 (a hook that never fires) |
+| `#[runtime_abi]` | extern fn | this declaration names a symbol the compiler generates (`__cplus_*`). The prefix is reserved; a declaration under it without the marker is E0919 |
+| `#[lang("name")]` | struct/enum | marks the one stdlib declaration the compiler treats as a well-known type (`Text`, `Iterator`, `Future`, `Option`, `JoinHandle`). stdlib-authoring only |
 
-Unknown attributes are rejected (E0354); attributes never generate code by
-themselves.
+Attribute-shape diagnostics: unknown name **E0354**, bad argument shape
+**E0355**, wrong target **E0356**, illegal duplicate **E0357**. Attributes
+never generate code by themselves — a pass reads the mark.
 
 ## Intrinsics
 
@@ -303,12 +412,18 @@ All spelled `#name(...)`:
 | `#include_str("path")` | `str` | embedded, UTF-8 checked at build |
 | `#env("NAME")` | `str` | build-time env var; E0876 if unset |
 | `#platform()` | `str` | active *target's* platform name (`macos ios linux android windows esp32 wasm`); value-level only — both branches compile |
+| `#arch()` | `str` | `aarch64` `x86_64` `xtensa` `riscv32` `wasm32` — crosses `#platform()`, does not refine it |
+| `#target()` | `str` | the `--target` spec name (`host`, `ios-arm64`, `ios-arm64-simulator`, …) — the only axis that separates the iOS simulator from a device |
 | `#println(x)` | `()` | type-dispatched primitive print; interpolation sinks |
 | `#cpu_relax()` | `()` | spin-loop hint |
 | `#asm("tmpl", name = in/out/inout(reg\|"x0") expr, clobber("r"))` | `()` | inline asm tiers 1–2; tier 3 is `#[naked]` |
 | `#selector("name")` / `#msg_send(recv, "sel", …) -> R` | `*u8` / `R` | the ObjC tier |
 | `#compile_shader("f.metal", "msl")` | `*[u8; N]` | platform shader compiler at build time |
-| `#str_ptr` `#str_len` `#str_from_raw_parts` `#slice_ptr` `#slice_len` `#bswap32` … | — | FFI/byte tier |
+| `#str_ptr(s)` `#str_len(s)` `#str_from_raw_parts(p, n)` | `*u8` / `usize` / `str` | the `str` ↔ C bridge |
+| `#slice_ptr(s)` `#slice_len(s)` `#slice_from_raw_parts(p, n)` | `*T` / `usize` / `T[]` | the slice ↔ C bridge |
+| `#bswap16` `#bswap32` `#bswap64` · `#htons` `#htonl` `#ntohs` `#ntohl` | same width in | byte-order tier |
+
+An unknown `#name(...)` is **E0905**.
 
 ## Builder blocks
 
@@ -343,13 +458,41 @@ fn main() -> i32 { return executor::block_on::[i32](fetch()); }   // main is nev
 
 let h = thread::spawn_with::[In, Out](data, worker);  // moves data in; h.join() -> Out
 var s: thread::Scope = thread::scope();               // s.lend::[T](local, f) — joined at scope drop
-gen fn nums() -> i32 { yield 1; yield 2; }            // iterator; map/filter/take adapters
+gen fn nums() -> i32 { yield 1; yield 2; }            // -> Iterator[i32]
+// adapters: it.filter(pred) · it.prefix(n) · iterator::map::[T, U](it, f)
 ```
 
 Borrow-shaped types are rejected in `async fn` signatures (E0900) — pass
 `Text`/`Vec`. `spawn` requires `Send` payloads (E0502). Shared state:
 `mutex::Mutex[T]` (internally refcounted; guards scope-per-lock),
 `stdlib/atomic`, `arc::Arc[T]`, `channel` MPMC.
+
+## Tests & doctests
+
+```cplus
+#[test] fn name() { assert cond; }          // fails by trapping
+#[test] fn name() -> i32 { return 0; }      // fails on a nonzero return
+```
+
+Signature must be `fn()` or `fn() -> i32` (**E0358**). Free functions only:
+on a method it is **E0356**, on an `export` fn **E0359**.
+
+A fence inside a `///` comment becomes a test named
+`DOC_TEST::<item>::<index>`:
+
+````text
+/// ```
+/// assert add(2, 3) == 5;
+/// ```
+````
+
+The fence opens **only** on a line that trims to exactly three backticks —
+a ` ```cplus ` fence is not extracted and its example silently never runs.
+
+`cpc test` entry ladder, first match wins: `src/test_main.cplus` → the
+platform's app entry → the `[library]` target → `src/<package>.cplus`.
+Discovery covers the whole resolved import tree, dependencies included.
+Exit 0 on all-pass, 2 on any failure. Details: [testing.md](testing.md).
 
 ## Manifest
 
@@ -362,9 +505,15 @@ Borrow-shaped types are rejected in `async fn` signatures (E0900) — pass
 | `[<platform>] entry` | per-platform entry; declaring any scopes the app (E0413 elsewhere). Platforms: `macos linux windows ios android esp32 wasm` |
 | `[dependencies]` / `[<platform>.dependencies]` | flat, complete; `name = "*"` or a tree-URL spec |
 | `[library] kind/entry/name` | C-ABI product: `staticlib`(default)/`cdylib`/`both`; explicit `entry` = bare C names |
-| `[link] frameworks/libs/search-paths/extra-objects` | the app's link surface; `${VAR}` expansion in paths |
+| `[link] frameworks/libs/search-paths/extra-objects` | the link surface; `${VAR}` expansion in paths. A dependency's `[link]` travels to its consumers |
+| `[link] bundled` | basenames of binaries this package ships at `lib/<triple>/`; the triple is derived, never declared. Declared-but-missing is E0860, undeclared-but-present is E0861 |
+| `[library] name/frameworks/libs` | the product library's output name and its own link additions |
 | `[build] prebuild/dev` | prebuild defaults ON; `prebuild = false` opts out, `dev = true` = work-on-it override |
-| `[profile.realtime] deny-alloc/deny-block/deny-unknown-extern/stack-limit` | project-wide real-time contracts |
+| `[profile.realtime] deny-alloc/deny-block/deny-unknown-extern/stack-limit` | project-wide real-time contracts, synthesized onto every fn in *this* package |
+
+Keys are kebab-case and the schema is closed: an unknown key or a misspelled
+platform section is **E0406**, never a silently-ignored line. `[[bin]]` and
+`[lib]` were removed — they parse into **E0408** carrying the migration.
 
 What a build produces is the target's: self-linked platforms → executable
 (entry has `fn main`, E0414); external-builder → `lib<name>.a` + header
@@ -374,23 +523,58 @@ archive of all of `src/`.
 ## CLI
 
 ```bash
-cpc init [--platform P]... [NAME]  # scaffold; --platform scopes the app ([ios] entry, E0413 elsewhere)
-cpc build [--release] [--target NAME] [--asan|--ubsan|--tsan|--msan] [-g]
-cpc FILE.cplus -o BIN           # single file, no imports
-cpc check [FILE]                # front-end only; project mode reads Cplus.toml
-cpc test [FILE] [--json]        # #[test] discovery + run
-cpc fmt FILE | --check DIR
-cpc explain E0xxx | --list      # offline diagnostic manual
-cpc skill                       # print the agent reference (docs/lang/skill.md)
-cpc graph | query … | mcp | lsp # the resolved code graph — prefer it over grep
-cpc headers                     # C+ declaration files for a package
-cpc --emit-ll|--emit-ll-opt|--emit-asm|--emit-obj|--emit-header FILE
-cpc --diagnostics=json          # NDJSON diagnostics
-cpc --realtime-report[=json]
-cpc pm …                        # install deps into the per-user store (~/.cplus); add/update/remove
+# build and run
+cpc build [-o OUT]                  # multi-file: reads ./Cplus.toml, walks imports
+cpc FILE.cplus [-o BIN]             # single file, no imports, no manifest
+cpc check [FILE]                    # no FILE: whole project, front end only
+cpc test [FILE] [--json]            # #[test] + doctest discovery and run
+cpc init [--kind cli|gui] [--platform P]... [NAME]
+
+# build flags (apply to `cpc FILE`, `cpc build`, `cpc test`)
+--release | --debug                 # -O3 wrapping | -O0 trapping (default)
+-g | --debug-info                   # DWARF
+--asan | --ubsan | --tsan | --msan  # asan/tsan/msan mutually exclusive
+--target NAME [--min-os VERSION]    # cross-compile; --min-os goes AFTER --target
+--fp-contract=off|on|fast           # `off` = bit-identical-to-C float output
+--warn-deps                         # dependencies' warnings too (default: own src/ only)
+--timings                           # per-phase and per-package build cost
+--diagnostics=human|short|json
+
+# the code graph — prefer it over grep
+cpc mcp                             # resident MCP server: live overlays, non-blocking reads
+cpc query <kind> [args]             # def · members · symbols · refs · callers · callees
+                                    # call-hierarchy [--depth N] · context
+                                    # type-at/value-refs/scope-at FILE:LINE:COL
+cpc graph                           # the whole graph as JSON
+cpc lsp [--log PATH]
+
+# source, docs, diagnostics
+cpc fmt FILE|DIR [--check|--emit|--stdin]
+cpc doc FILE                        # -> target/doc/<basename>.md
+cpc headers                         # -> lib/include/ for this package
+cpc explain E0xxx | --list          # offline diagnostic manual
+cpc skill [--lang-only]             # the agent reference, embedded in the binary
+
+# packages
+cpc pm install|update [DIR]         # resolve deps into the store (~/.cplus)
+cpc pm add DIR NAME [SPEC] [--platform P]...
+cpc pm remove DIR NAME
+cpc pm manifest [DIR]               # normalized JSON
+#   flags: --local --store DIR --cache DIR --repo-url URL
+
+# introspection
+cpc --tokens|--ast|--emit-ll|--emit-ll-opt|--emit-asm FILE
+cpc --emit-obj FILE -o OUT.o
+cpc --emit-header FILE              # C header for export items
+cpc --emit-ll-project               # merged IR for the project
+cpc build --print-link-args         # what the DEPENDENCIES add to the link line
+cpc --realtime-report[=json]        # contract digest; non-zero on any violation
 ```
 
 Targets: `host` (default), `ios-arm64`, `ios-arm64-simulator`,
-`android-arm64`, `esp32-xtensa`, `esp32c3-riscv32`. Place `--target` before
-inline emit flags. Debug builds are `-O0` with overflow traps; `--release`
-is optimized with wrapping arithmetic.
+`android-arm64`, `esp32-xtensa`, `esp32c3-riscv32`. Place `--target` and
+`--fp-contract` before an inline emit flag and its file. Cross-target
+artifacts land in `target/<target-name>/<mode>/`.
+
+`cpc check FILE` does not read the manifest — a file with any `import`
+fails there with E0852. Full model: [tooling.md](tooling.md).

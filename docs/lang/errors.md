@@ -526,16 +526,16 @@ fn main() -> i32 { let _a: [Owner; 2] = [mk(); 2]; return 0; }
 
 <sub>repro: checked · cplus-core/src/sema.rs:6892 · test cplus-core/src/sema.rs:array_fill_noncopy_element_rejected_e0339</sub>
 
-### E0361 · Enum has no variants
+### E0361 · Enum has no variants, or a `#[watch]` struct has no `on_value` hook
 
-An enum is declared with zero variants. Such a type is uninhabited (no value can ever be constructed), but match exhaustiveness treats it as vacuously covered and the tag ABI lowers it as a plain i32. C+ has no uninhabited / never type.
+Two declaration shapes share this code. (1) An enum is declared with zero variants. Such a type is uninhabited (no value can ever be constructed), but match exhaustiveness treats it as vacuously covered and the tag ABI lowers it as a plain i32 — C+ has no uninhabited / never type. (2) A struct carries `#[watch]` but declares no `on_value` hook. The attribute installs a write barrier that calls the hook after every field store, so a `#[watch]` struct without one would mark a feature active that does nothing.
 
 ```cplus
 enum Void {}
 fn main() -> i32 { return 0; }
 ```
 
-**Fix.** Declare at least one variant, or remove the enum.
+**Fix.** For the enum: declare at least one variant, or remove the enum. For the `#[watch]` struct: add `impl Name { fn on_value(ref this, field: str) { ... } }` — the signature is exact, and a wrong one is E0362.
 
 <sub>repro: checked · cplus-core/src/sema.rs:1456 · test cplus-core/src/sema.rs:empty_enum_rejected_e0361</sub>
 

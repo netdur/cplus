@@ -95,6 +95,19 @@ pub struct Node {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub signature: Option<String>,
     pub is_pub: bool,
+    /// True for a `#[test]` function. Test functions stay IN the graph — they
+    /// are real definitions, real callers of the helpers they exercise, and a
+    /// legitimate entry in a file outline — but they are never something a
+    /// person is about to type, so `scope-at` (the completion query) drops
+    /// them and this flag lets any other consumer do the same.
+    #[serde(skip_serializing_if = "is_false")]
+    pub is_test: bool,
+}
+
+/// Serde predicate: omit a `bool` field that is false, so the JSON surface
+/// only grows for the nodes the flag is true of.
+fn is_false(b: &bool) -> bool {
+    !*b
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -302,6 +315,7 @@ impl CodeGraph {
                 }),
                 signature: None,
                 is_pub: true,
+                is_test: false,
             });
         }
 
@@ -347,6 +361,7 @@ impl CodeGraph {
                         // happens to make into the list of things you can call
                         // through that module — `text::malloc` and 40 others.
                         is_pub: !f.is_extern && name_is_public(&f.name.name),
+                        is_test: crate::attrs::is_test(&f.attributes),
                     });
                     g.edges.push(Edge {
                         from: fid.clone(),
@@ -388,6 +403,7 @@ impl CodeGraph {
                         location: resolve(&fid, s.name.span),
                         signature: None,
                         is_pub: name_is_public(&s.name.name),
+                        is_test: false,
                     });
                     g.edges.push(Edge {
                         from: fid.clone(),
@@ -403,6 +419,7 @@ impl CodeGraph {
                             location: resolve(&fid, field.name.span),
                             signature: Some(type_to_string(&field.ty)),
                             is_pub: name_is_public(&field.name.name),
+                            is_test: false,
                         });
                         g.edges.push(Edge {
                             from: id.clone(),
@@ -431,6 +448,7 @@ impl CodeGraph {
                         location: resolve(&fid, e.name.span),
                         signature: None,
                         is_pub: name_is_public(&e.name.name),
+                        is_test: false,
                     });
                     g.edges.push(Edge {
                         from: fid.clone(),
@@ -452,6 +470,7 @@ impl CodeGraph {
                             location: resolve(&fid, v.name.span),
                             signature: sig,
                             is_pub: name_is_public(&e.name.name),
+                            is_test: false,
                         });
                         g.edges.push(Edge {
                             from: id.clone(),
@@ -483,6 +502,7 @@ impl CodeGraph {
                         location: resolve(&fid, it.name.span),
                         signature: None,
                         is_pub: name_is_public(&it.name.name),
+                        is_test: false,
                     });
                     g.edges.push(Edge {
                         from: fid.clone(),
@@ -500,6 +520,7 @@ impl CodeGraph {
                         location: resolve(&fid, a.name.span),
                         signature: Some(type_to_string(&a.target)),
                         is_pub: name_is_public(&a.name.name),
+                        is_test: false,
                     });
                     push_type_refs(&a.target, &fid, &id, &resolve, &mut sig_type_refs);
                     g.edges.push(Edge {
@@ -518,6 +539,7 @@ impl CodeGraph {
                         location: resolve(&fid, c.name.span),
                         signature: Some(type_to_string(&c.ty)),
                         is_pub: name_is_public(&c.name.name),
+                        is_test: false,
                     });
                     push_type_refs(&c.ty, &fid, &id, &resolve, &mut sig_type_refs);
                     g.edges.push(Edge {
@@ -536,6 +558,7 @@ impl CodeGraph {
                         location: resolve(&fid, s.name.span),
                         signature: Some(type_to_string(&s.ty)),
                         is_pub: name_is_public(&s.name.name),
+                        is_test: false,
                     });
                     push_type_refs(&s.ty, &fid, &id, &resolve, &mut sig_type_refs);
                     g.edges.push(Edge {
@@ -957,7 +980,9 @@ impl CodeGraph {
     /// and each entry carries the `kind` that tells them apart. A local
     /// shadows a module item of the same name and the item is dropped; an
     /// alias is never dropped, because `text::x` and a local `text` are
-    /// different namespaces.
+    /// different namespaces. `#[test]` functions are excluded — they are
+    /// module-level functions the resolver treats like any other, but nobody
+    /// types one.
     pub fn scope_at_json(&self, fid: &str, byte: u32) -> String {
         let locals = self.scope_at(fid, byte);
         let mut out: Vec<ScopeEntry> = Vec::new();
@@ -983,6 +1008,13 @@ impl CodeGraph {
             });
         }
         // Module-level items of this file, which are typable unqualified.
+        // `#[test]` functions are skipped: this query answers "what am I about
+        // to type", and a test function is never that. It takes no arguments,
+        // the harness is the only thing that calls it, and in a suite-carrying
+        // module the tests outnumber the API — so offering them buries the
+        // handful of names the caller actually wanted. They stay in the graph
+        // (`symbols`, `refs`, `callers` all still find them); only the
+        // completion surface drops them.
         for e in self
             .edges
             .iter()
@@ -991,6 +1023,9 @@ impl CodeGraph {
             let Some(n) = self.nodes.iter().find(|n| n.id == e.to) else {
                 continue;
             };
+            if n.is_test {
+                continue;
+            }
             if !taken.insert(n.name.clone()) {
                 continue;
             }
@@ -1477,6 +1512,11 @@ fn add_impl_methods<'a>(
             location: resolve(fid, m.name.span),
             signature: Some(method_signature(m)),
             is_pub: name_is_public(&m.name.name),
+            // `#[test]` on a method is E0356, so this is normally false — but
+            // the graph is built from a parse, not from a clean sema run, so
+            // an in-progress buffer can hold one and it should not surface as
+            // a completion either.
+            is_test: crate::attrs::is_test(&m.attributes),
         });
         g.edges.push(Edge {
             from: type_id.clone(),
@@ -3793,6 +3833,49 @@ mod tests {
         assert!(
             !entries.iter().any(|(n, _)| n.starts_with("__")),
             "lowering's own temporaries are not names anyone can type: {entries:?}"
+        );
+    }
+
+    #[test]
+    fn scope_at_omits_test_functions_but_the_graph_keeps_them() {
+        // A `#[test]` fn is a module-level fn like any other to the resolver,
+        // so without an explicit rule it lands in completion — where it is
+        // never what anyone is typing, and where a suite-carrying module
+        // buries the real API under its own tests.
+        let src = "fn helper() -> i32 { return 1; }\n\
+                   #[test]\n\
+                   fn helper_returns_one() { assert helper() == 1; }\n\
+                   fn run() -> i32 {\n\
+                     let a: i32 = helper();\n\
+                     return a;\n\
+                   }";
+        let g = CodeGraph::build(&project(src));
+        let at = after(src, "return a");
+        let j: serde_json::Value = serde_json::from_str(&g.scope_at_json("src", at)).unwrap();
+        let names: Vec<&str> = j["bindings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|e| e["name"].as_str().unwrap())
+            .collect();
+        assert!(names.contains(&"helper"), "the real API is still offered: {names:?}");
+        assert!(
+            !names.contains(&"helper_returns_one"),
+            "a `#[test]` fn is not a completion candidate: {names:?}"
+        );
+
+        // …but it is still a definition, and still a caller of what it
+        // exercises. Dropping it from the graph would make `callers` lie.
+        let n = node(&g, "src::helper_returns_one");
+        assert!(n.is_test, "the node carries the flag the query filters on");
+        let callers: Vec<&str> = g
+            .callers("helper")
+            .iter()
+            .map(|n| n.name.as_str())
+            .collect();
+        assert!(
+            callers.contains(&"helper_returns_one"),
+            "a test calling a helper is a real call edge: {callers:?}"
         );
     }
 

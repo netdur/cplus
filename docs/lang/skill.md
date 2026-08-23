@@ -76,6 +76,43 @@ optional `entry` whose top-level names become the bare C ABI. An app's link
 surface is the `[link]` table (`frameworks`, `libs`, `search-paths`,
 `extra-objects`).
 
+### Platform variation — three mechanisms, never `#if`
+
+C+ has no conditional compilation. A per-OS difference goes in exactly one
+of three places, and the platform vocabulary is the same in all three:
+`macos linux windows ios android esp32 wasm`.
+
+```
+src/reactor.cplus          # the base
+src/reactor_linux.cplus    # SHADOWS it when the target's platform is linux
+```
+
+1. **A `_<platform>.cplus` sibling file** shadows `<module>.cplus` for that
+   target. Importers always write the base name (`import "./reactor" as
+   reactor;`). This is the **only** way to vary *imports* per platform
+   (kqueue vs epoll, AppKit vs UIKit). Rules: the suffix comes from the
+   `--target`, not the host; **`android` tries `_android` then falls back to
+   `_linux`** (its kernel is Linux — without the fallback an Android build
+   silently picks the Darwin base and fails at `dlopen` naming functions the
+   app never called); every other platform tries one suffix; the base file is
+   OPTIONAL (a module may exist only as variants), and a platform with
+   neither a variant nor a base is E0401 naming the *base* path.
+   Platform-suffixed files are exempt from the W0005 orphan warning. Nothing
+   checks that variants declare the same names — only a build per platform
+   does.
+2. **`[<platform>.dependencies]`** in `Cplus.toml` for a package that exists
+   only there. Importing an off-platform package is E0866 naming the
+   platform it was declared for. A misspelled platform section is E0406, not
+   a silently-ignored table.
+3. **`#platform()` / `#arch()` / `#target()`** — `str` constants for the
+   active target. Value-level only: both arms of an `if` on one compile
+   everywhere, so they can pick a padding or a port, never an import.
+   `#arch()` crosses `#platform()` (macos and ios are both aarch64);
+   `#target()` is the only axis separating the iOS simulator from a device.
+   The runtime, matchable counterpart is `stdlib/platform`.
+
+Rule of thumb: **OS decides files, form factor decides values.**
+
 ---
 
 ## 2. Locked principles — never propose violating
@@ -578,7 +615,8 @@ fn handle(s: str) -> i32 {
 
 // When the failure payload matters, capture it with the complement form
 // `else |Pat|` — the else block receives the failure value instead of
-// losing it. The two patterns together must cover the enum (E0349).
+// losing it. The two patterns together must cover the enum — the form lowers
+// to a match, so a gap is reported as E0340 (an overlap is E0350).
 enum ReadResult { Ok(i32), Err(i32) }
 
 fn handle_or_report(s: str) -> i32 {
@@ -762,9 +800,18 @@ fn raw_add(a: i64, b: i64) -> i64 { #asm("add x0, x0, x1\nret"); }
 | `mutex` | pthread-backed, internally refcounted (no separate reference-count wrapper) |
 | `box` / `arc` / `rc` | Owned-on-heap: `Box` one owner, `Arc` atomic-refcount shared, `Rc` non-atomic shared. `Arc`/`Rc` add `downgrade() -> Weak[T]` for cycle-breaking back-pointers |
 | `channel` | typed MPMC message passing |
-| `future` / `executor` / `reactor` / `time` | `async fn`, `await`, kqueue reactor; `executor::run` = cancellable drive, `Future::cancel`, `join_worker`/`receive_or_cancel` bridge (§10) |
-| `iterator` | `gen fn` + adapters (`map`, `filter`, `take`) |
-| `cow` | clone-on-write `Text` |
+| `future` / `executor` / `reactor` / `time` | `async fn`, `await`, the platform reactor (kqueue on Darwin, epoll on Linux/Android); `executor::run` = cancellable drive, `Future::cancel`, `join_worker`/`receive_or_cancel` bridge (§10) |
+| `iterator` | `gen fn` + adapters: `it.filter(pred)` / `it.prefix(n)` methods, free `iterator::map::[T, U](it, f)`. The name is `prefix`, not `take` (`take` is the ownership keyword) |
+| `cow` | clone-on-write `Text` (`CowStr`) |
+| `hash_set` / `string_set` | `HashSet[T: Copy]` / `StringSet` — plus `is_subset`/`is_superset`/`is_disjoint`/`union_with`/`intersection`/`difference` |
+| `string_map` | `StringMap[V]` — **owns** its string keys. `HashMap` needs `Copy` keys, so a `Text`-keyed map is this one |
+| `process` | `spawn` / `capture` → `Child` / `Output`; `wait` `write_stdin` `signal` `interrupt` `terminate` `kill_now` |
+| `pty` | `PtyChild`: `spawn` `read` `write` `resize` `wait` + the same signal set |
+| `date` | `DateTime` · `now` `today` `yesterday` `from_unix` `to_unix` `parse_iso8601` `format_iso8601` |
+| `base64` | `encode` / `decode` (+ `_url`, `_bytes` variants); decode returns `Option` |
+| `crypto` | `sha256` `sha512` `hmac_sha256` `hmac_sha512` `random_bytes` `random_hex`; `Digest::hex` / constant-time `equals` |
+| `bundle` | files beside the binary: `executable_path` `dir` `resource(name)` `find_up(marker)` |
+| `platform` | runtime target facts as enums: `os()` `arch()` `is_simulator()` `pointer_width()` `cpu_count()` `os_version()` `path_separator()` — the matchable counterpart to `#platform()` |
 | `range` | `0..n` lowers to `Range[i32]` |
 | `marker` | Copy / Send / Sync framework |
 
@@ -977,7 +1024,29 @@ fn parse() -> i32 { return 1; }                  // declaration; the string is o
                                                  // list consumers work through and break a
                                                  // release later. On fn/method/struct/enum/
                                                  // field/variant
+#[no_block] / #[bounded_recursion] /             // the rest of the real-time set; #[realtime]
+#[max_stack(4096)] / #[realtime]                 // bundles no_alloc + no_block + bounded (§15)
+#[naked] fn stub() { #asm("..."); }              // no prologue/epilogue; body must be #asm (E0909)
+#[keeps(this)] / #[keeps(nothing)]               // declared view-flow summary for a body the
+fn store(ref this, s: str) { ... }               // checker can't read through. `this` = view args
+                                                 // survive in the receiver (lifts E0515);
+                                                 // `nothing` = the fn copies what it needs, so
+                                                 // its return borrows no argument. TRUSTED, not
+                                                 // verified — same model as `opaque`
+#[watch] struct Model { count: i32 }             // field-write barrier: every store to a field
+impl Model {                                     // calls on_value(field_name) after it. Missing
+  fn on_value(ref this, field: str) { ... }      // hook = E0361, wrong signature = E0362.
+}                                                // An on_value WITHOUT #[watch] is W0004 —
+                                                 // a hook that silently never fires
+#[runtime_abi] extern fn __cplus_x();            // deliberately claims a compiler-generated
+                                                 // symbol; the `__cplus_` prefix is reserved
+                                                 // and claiming it without this is E0919
+#[lang("iterator")] struct Iterator[T] { ... }   // stdlib-authoring only: designates the ONE
+                                                 // declaration the compiler treats as a
+                                                 // well-known type
 ```
+
+Shape diagnostics: unknown name **E0354**, bad argument shape **E0355**, wrong target **E0356**, illegal duplicate **E0357**. No attribute is legal on an `interface` — one there is E0356, not a no-op.
 
 ---
 
@@ -1070,7 +1139,10 @@ cpc check                      # whole-project front-end (reads Cplus.toml + [pr
 cpc --realtime-report[=json]   # whole-project real-time contract digest (profile + per-contract violations)
 cpc fmt FILE                   # format in place
 cpc fmt --check DIR            # CI mode
-cpc test                       # run #[test] + doctests
+cpc test                       # run #[test] + doctests. A doctest fence in a `///`
+                               # comment opens ONLY on a line that is exactly three
+                               # backticks — a ```cplus fence is NOT extracted and its
+                               # example silently never runs. Exit 0 all-pass, 2 on failure
 cpc lsp                        # language server — goto-def / references / hover / outline served from the graph
 cpc graph                      # whole-project code knowledge graph as JSON
 cpc query def|refs|callers|callees|call-hierarchy|members|symbols|context|type-at|scope-at  # resolved navigation
@@ -1110,7 +1182,7 @@ To locate or trace a symbol, use the code graph — it is **resolved and typed**
 - `cpc query context FN` returns, in **one** call, the function's signature + callers + callees + the types it references — the whole edit-neighborhood, resolved. That's several `grep`s plus the work of stitching them together, collapsed into one authoritative answer you can paste straight back (symbol ids are source names like `src.geo::Shape::area`, never mangled).
 - `cpc query type-at FILE:LINE:COL` gives the resolved type at a cursor — no reading surrounding code to infer it.
 - `cpc query def SYMBOL` jumps to the real definition — no guessing which same-named thing matched.
-- `cpc query scope-at FILE:LINE:COL` lists every name you can actually type at that position: the locals and parameters in scope with their types, `this`, the file's import aliases and the module each resolves to, and the file's own items. Shadowed names are already removed. Before writing a line, this is the difference between calling something that exists and guessing.
+- `cpc query scope-at FILE:LINE:COL` lists every name you can actually type at that position: the locals and parameters in scope with their types, `this`, the file's import aliases and the module each resolves to, and the file's own items. Shadowed names are already removed, and so are `#[test]` functions — nobody completes one (`cpc query symbols` still lists them, marked `is_test: true`, and `callers` still reports a test as a caller of what it exercises). Before writing a line, this is the difference between calling something that exists and guessing.
 
 Net: prefer one graph query over `grep` + manual reasoning. It is cheaper for you and the answer is correct by construction, not by your inference.
 

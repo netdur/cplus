@@ -99,6 +99,18 @@ pub fn deprecation_note(attrs: &[Attribute]) -> Option<Option<String>> {
     }))
 }
 
+/// True iff `attrs` carries `#[test]`.
+///
+/// One predicate, three consumers: [`discover_tests`] (which functions the
+/// harness runs), the code graph (which nodes are test-only), and anything
+/// else that needs the distinction. A test function is an ordinary module-level
+/// function to the resolver — nothing else in the pipeline separates it — so
+/// re-deriving the check inline is how the two ideas of "is this a test" drift
+/// apart.
+pub fn is_test(attrs: &[Attribute]) -> bool {
+    attrs.iter().any(|a| a.path.name == "test")
+}
+
 /// Memory-model contract §5 (docs/compiler/design/memory-model.md): true iff `attrs`
 /// carries `#[keeps(ARG)]` for the given argument (`"this"` / `"nothing"`).
 /// Shared by sema (E0515 exemption, return-tie suppression) and borrowck
@@ -1032,7 +1044,7 @@ pub fn discover_tests(prog: &Program) -> Vec<TestFn> {
         let ItemKind::Function(f) = &item.kind else {
             continue;
         };
-        if !f.attributes.iter().any(|a| a.path.name == "test") {
+        if !is_test(&f.attributes) {
             continue;
         }
         let qualified_name = f.name.name.clone();

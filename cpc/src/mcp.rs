@@ -536,7 +536,7 @@ fn tool_defs() -> Value {
         },
         {
             "name": "file_symbols",
-            "description": "Outline the symbols of a file (or the whole project if `file` is omitted).",
+            "description": "Outline the symbols of a file (or the whole project if `file` is omitted). A `#[test]` function carries `is_test: true` — keep them for an outline, drop them when completing a name.",
             "inputSchema": json!({
                 "type": "object",
                 "properties": { "file": { "type": "string", "description": "Optional file id, e.g. `src.main`." } },
@@ -554,7 +554,7 @@ fn tool_defs() -> Value {
         },
         {
             "name": "scope_at",
-            "description": "Every name you can type at a position: the locals and parameters in scope (with their types where known), `this`, the file's import aliases and what module each resolves to, and the file's own module-level items. Shadowed names are already removed. This is the \"what can I call here\" question — pair it with `find_members` after a `.` and `file_symbols` after an alias `::`.",
+            "description": "Every name you can type at a position: the locals and parameters in scope (with their types where known), `this`, the file's import aliases and what module each resolves to, and the file's own module-level items. Shadowed names are already removed, and so are `#[test]` functions — nobody completes one. This is the \"what can I call here\" question — pair it with `find_members` after a `.` and `file_symbols` after an alias `::`.",
             "inputSchema": pos_schema(),
         },
         {
