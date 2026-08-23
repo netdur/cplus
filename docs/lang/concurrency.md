@@ -255,9 +255,10 @@ Adapters: `it.filter(pred)` and `it.prefix(count)` are methods;
 introduce a type parameter of its own). The name is `prefix`, not `take` —
 `take` is the ownership keyword and cannot be an identifier.
 
-`Iterator[T]` is the only thing `while let … = it.next()` drives. Arrays,
-`Vec`, and slices are **not** `for … in` iterable (E0312): index them over
-`0..n`.
+`Iterator[T]` is the only thing `while let … = it.next()` drives, and
+`for … in` takes exactly a range or an `Iterator[T]` (E0312). `Vec` supplies
+one — `for x in v.iter()` — while arrays and slices have no `iter()` and are
+indexed over `0..n`.
 
 ## 9. Gotchas
 

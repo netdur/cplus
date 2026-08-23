@@ -4,7 +4,7 @@
 
 Every C+ diagnostic carries a numbered code, a source span, and often a machine-applicable suggestion. `cpc --diagnostics=json` emits the same information in a machine-readable shape for editors and agents. Codes prefixed with **W** are non-fatal warnings; the build continues. The normative ranges and what each phase owns are fixed in [§20 of the language specification](/docs/spec).
 
-This is the complete index — **192 codes**. Each entry gives the meaning, a minimal example that triggers it, and the typical fix. **150** of the examples are reproduced directly by `cpc check`; the rest need a multi-file project, a `--target`, or a build-time file, and say so in the example.
+This is the complete index — **193 codes**. Each entry gives the meaning, a minimal example that triggers it, and the typical fix. **151** of the examples are reproduced directly by `cpc check`; the rest need a multi-file project, a `--target`, or a build-time file, and say so in the example.
 
 ## Lexical
 
@@ -252,7 +252,7 @@ A function name is used as a bare value (or another unsupported form such as `&x
 fn main() -> i32 { let x = 1; let y = &x; return 0; }
 ```
 
-**Fix.** Assign it to a `fn(...)`-typed binding (or pass it where one is expected) to take the address. For a method, pass a bound method reference to a handler slot instead — the `*u8` after it carries the receiver.
+**Fix.** Assign the function to a `fn(...)`-typed binding to take its address. For a method, pass `recv.method` where a handler pair is expected. C+ has no `&T` / `&mut T` at all — the caller relation is a prefix on the PARAMETER (`ref` / `take` / bare), and `#addr_of(place)` is the raw-pointer form. Use a range only in a `for` header.
 
 <sub>repro: checked · cplus-core/src/sema.rs:13138 · test cplus-core/src/sema.rs:ref_not_supported_e0312</sub>
 
@@ -292,15 +292,15 @@ fn main() -> i32 { let _b: bool = 1 as bool; return 0; }
 
 <sub>repro: checked · cplus-core/src/sema.rs:7654 · test cplus-core/src/sema.rs:cast_int_to_bool_rejected_e0315</sub>
 
-### E0316 · Modulo on float types
+### E0316 · Modulo on a non-numeric type
 
-The `%` operator was applied to a floating-point operand, which is not supported.
+The `%` operator was applied to an operand that is neither an integer nor a float. Float `%` is supported and lowers to `frem` — the IEEE remainder C spells `fmod`, sign of the dividend and all.
 
 ```cplus
 fn main() -> i32 { let x: f64 = 1.0 % 2.0; let _y: f64 = x; return 0; }
 ```
 
-**Fix.** Use integer operands, or compute the remainder another way.
+**Fix.** Use numeric operands.
 
 <sub>repro: checked · cplus-core/src/sema.rs:11568 · test cplus-core/src/sema.rs:float_modulo_rejected_e0316</sub>
 
@@ -499,15 +499,15 @@ fn main() -> i32 { let x: i32 = 5; return x[0 as usize]; }
 
 <sub>repro: checked · cplus-core/src/sema.rs:6991 · test cplus-core/src/sema.rs:indexing_non_array_e0331</sub>
 
-### E0332 · Empty array literal
+### E0332 · Empty array literal with no zero-length type to take
 
-An empty array literal `[]` was written, which is not supported.
+An empty array literal `[]` was written where the expected type is not a zero-length array. `[]` carries no element type of its own, so it is well-formed only where the position already fixes one and that type has length zero.
 
 ```cplus
 fn main() -> i32 { let _xs: [i32; 0] = []; return 0; }
 ```
 
-**Fix.** Provide at least one element.
+**Fix.** Annotate a zero-length array (`let a: [i32; 0] = [];`), or supply the elements the expected type calls for.
 
 <sub>repro: checked · cplus-core/src/sema.rs:6809 · test cplus-core/src/sema.rs:empty_array_literal_e0332</sub>
 
@@ -872,9 +872,9 @@ fn main() -> i32 {
 
 <sub>repro: checked · cplus-core/src/sema.rs:13097 · test cplus-core/src/sema.rs:phase5_implicit_non_copy_param_consumes_e0335</sub>
 
-### E0338 · Destructor `drop` has the wrong signature
+### E0338 · Destructor declared on an enum
 
-A `drop` method has a signature other than `fn drop(ref this)` (extra parameters, a return type, or a non-`ref this` receiver), or a `drop` was written on an enum.
+An `impl` block on an enum declares a method named `drop`. An owning enum tears its payload down through a compiler-synthesized per-variant drop, so a hand-written enum destructor has nothing to do and would run in addition to it.
 
 ```cplus
 struct B { x: i32 }
@@ -882,7 +882,7 @@ impl B { fn drop(this) {} }
 fn main() -> i32 { return 0; }
 ```
 
-**Fix.** Declare it exactly `fn drop(ref this)` — no extra parameters, no return type; enums get a compiler-synthesized destructor instead.
+**Fix.** Delete the method. When a release genuinely has to be explicit, wrap the enum in a struct and put `drop` on the struct.
 
 <sub>repro: checked · cplus-core/src/sema.rs:2214 · test cplus-core/src/sema.rs:drop_wrong_receiver_e0338</sub>
 
@@ -901,13 +901,13 @@ fn main() -> i32 { let m: M = M::A; return match m { M::A => 0 }; }
 
 ### E0341 · Pattern type does not match the scrutinee
 
-A `match` scrutinee is not an enum, a pattern names a different enum than the scrutinee, or a nested variant pattern appears in a payload position.
+A pattern does not fit the scrutinee. Three shapes: the pattern names a different enum than the value has; a payload position holds a LITERAL (`Some(0)`), which is not supported — the literal desugar only handles a top-level literal arm; or a payload position holds a variant pattern while that position is not an enum.
 
 ```cplus
 fn main() -> i32 { let x: i32 = 5; return match x { _ => 0 }; }
 ```
 
-**Fix.** Match on an enum value, and make each pattern name the scrutinee's enum (payload patterns must be `_` or a binding).
+**Fix.** Name the scrutinee's own enum. For a literal payload, bind the payload to a name and compare it in the arm body. Nested VARIANT patterns are supported and count toward exhaustiveness (`Ok(Some(v))`), but only where the position is itself an enum — elsewhere use `_` or a binding name.
 
 <sub>repro: checked · cplus-core/src/sema.rs:7023 · test cplus-core/src/sema.rs:match_on_non_enum_e0341</sub>
 
@@ -2009,9 +2009,9 @@ fn main() -> i32 {
 
 <sub>repro: checked · cplus-core/src/sema.rs:5551</sub>
 
-### E1002 · Named arguments not supported yet
+### E1002 · Named argument on a callee with no known parameter list
 
-A call used a named argument (`f(name: value)`). The parser accepts the syntax, but the argument-matching pass that reorders named arguments into positional order and splices defaults is not implemented yet (see docs/compiler/design/named-params-and-defaults.md). This is a temporary guard so a labeled call is rejected cleanly rather than silently bound by position.
+Named arguments work: `lower_named_call` reorders them into positional order and splices defaults for every callee whose parameter list it can identify — free functions, methods, and associated functions. This code fires for the two callees that resolve to no single parameter list. A fn-pointer VALUE records parameter types without their names, so there is nothing to match a label against. An ambiguous method name — two types declaring `go` with the labels in different positions — cannot be resolved without the receiver's type (identical signatures are fine: every candidate yields the same order). The callee is the problem, not the feature.
 
 ```cplus
 fn add(n1: i32, n2: i32) -> i32 { return n1 +% n2; }
@@ -2020,7 +2020,7 @@ fn main() -> i32 {
 }
 ```
 
-**Fix.** Pass the arguments positionally for now: `f(value)`.
+**Fix.** Pass these particular arguments positionally. Everywhere else, named arguments and defaults are available as normal.
 
 <sub>repro: checked · cplus-core/src/sema.rs</sub>
 
@@ -2778,6 +2778,18 @@ fn main() -> i32 { return parse(); }
 **Fix.** Move to the replacement the note names. Nothing breaks until the item is actually removed, so a warning list can be worked through at leisure; that is the point of the attribute over a hard rename.
 
 <sub>repro: checked · cplus-core/src/sema.rs:warn_if_deprecated · test cplus-core/src/sema.rs:deprecated_fn_and_method_uses_warn_w0006</sub>
+
+### W0007 · Constant expression that silently loses its value
+
+A constant expression does not produce the value it reads as, and nothing rejects it. Two shapes. (1) A shift whose distance is a literal at or past the bit width of its LEFT operand: every bit is shifted out. (2) An arithmetic expression over integer literals whose result does not fit the type it is computed in: it wraps. Both are made quiet by the same rule — an unsuffixed integer literal is `i32` BEFORE any cast — so `(1 << 40) as u64` is 256 and `(1000000 * 1000000) as i64` is not 10^12. The overflow form traps in debug and wraps in RELEASE; the shift form never traps.
+
+```cplus
+fn main() -> i32 { let m: u64 = (1 << 40) as u64; return 0; }
+```
+
+**Fix.** Widen the LEFT operand before the operation rather than casting after it: suffix the literal (`1u64 << 40`, `1000000i64 * 1000000i64`) or cast it (`(1 as u64) << 40`). A `const` is the other blessed form and the one to reach for with a named value — it folds at the DECLARED width, so `const MASK: u64 = (1u64 << 40) - 1u64;` and `const N: i64 = 1000000 * 1000000;` are both correct.
+
+<sub>repro: checked · cplus-core/src/sema.rs:check_binary · test cplus-core/src/sema.rs:constant_expressions_that_lose_their_value_warn_w0007</sub>
 
 ### W0824 · Handler parameter cannot receive a bound method
 

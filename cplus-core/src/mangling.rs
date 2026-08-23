@@ -204,7 +204,6 @@ pub fn render_ast(t: &Type) -> String {
         TypeKind::Path(name) if name == "()" => "unit".to_string(),
         TypeKind::Path(name) => name.clone(),
         TypeKind::Array { elem, len, .. } => format!("arr{}_{}", len, render_ast(elem)),
-        TypeKind::Borrowed { inner, .. } => render_ast(inner),
         TypeKind::RawPtr(inner) => format!("ptr_{}", render_ast(inner)),
         TypeKind::Slice(inner) => format!("slice_{}", render_ast(inner)),
         TypeKind::FnPtr {
