@@ -204,12 +204,12 @@ fn block_on_drives_async_to_completion() {
 // found this got the right answer eight times out of eight).
 
 fn _kqfd_here(take _ignored: i32) -> i32 {
-    return reactor::kqfd();
+    return reactor::reactor_fd();
 }
 
 #[test]
 fn each_thread_gets_its_own_reactor() {
-    let mine: i32 = reactor::kqfd();
+    let mine: i32 = reactor::reactor_fd();
     var a: thread::JoinHandle[i32] =
         thread::spawn_with::[i32, i32](0 as i32, _kqfd_here);
     var b: thread::JoinHandle[i32] =

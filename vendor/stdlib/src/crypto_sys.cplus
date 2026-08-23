@@ -1,0 +1,39 @@
+// The four platform primitives `crypto` is built on — the ONLY part of that
+// module that is not portable arithmetic.
+//
+// This file is the DARWIN base (CommonCrypto, from libSystem);
+// `crypto_sys_linux.cplus` shadows it on Linux and Android.
+//
+// Split for the reason recorded in `exe_path.cplus`: cpc emits one object per
+// package, so `CC_SHA256` declared in `crypto.cplus` was an undefined Darwin
+// symbol in the ANDROID slice, and every Android app failed to link over
+// functions it never called. Everything else in `crypto` — the Digest types,
+// the hex encoder, the constant-time compare — is portable and stays shared.
+
+// CommonCrypto. `CC_LONG` is `uint32_t`; the digest functions write into a
+// caller-supplied buffer and return it.
+extern fn CC_SHA256(data: *u8, len: u32, md: *u8) -> *u8;
+extern fn CC_SHA512(data: *u8, len: u32, md: *u8) -> *u8;
+extern fn CCHmac(algorithm: u32, key: *u8, key_len: usize,
+                 data: *u8, data_len: usize, mac_out: *u8);
+// CCRNGStatus, `kCCSuccess` == 0. Seeded and maintained by the kernel.
+extern fn CCRandomGenerateBytes(bytes: *u8, count: usize) -> i32;
+
+fn sha256_into(p: *u8, n: usize, out: *u8) {
+    let _r: *u8 = { CC_SHA256(p, n as u32, out) };
+    return;
+}
+
+fn sha512_into(p: *u8, n: usize, out: *u8) {
+    let _r: *u8 = { CC_SHA512(p, n as u32, out) };
+    return;
+}
+
+fn hmac_into(alg: u32, key: *u8, key_len: usize, msg: *u8, msg_len: usize, out: *u8) {
+    { CCHmac(alg, key, key_len, msg, msg_len, out) };
+    return;
+}
+
+fn random_into(p: *u8, n: usize) -> bool {
+    return { CCRandomGenerateBytes(p, n) } == (0 as i32);
+}

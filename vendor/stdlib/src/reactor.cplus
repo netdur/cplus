@@ -318,6 +318,16 @@ export extern fn stdlib_reactor_poll_one_event_nb_v1() -> i32 {
 // This thread's kqueue descriptor, creating the reactor if this is the
 // thread's first use of it. Two threads get two different fds — the state
 // slot is thread-local (see the codegen preamble).
+// The blessed, platform-neutral name for "this thread's reactor descriptor".
+//
+// `kqfd` is what it was called, and that is a Darwin word: the Linux reactor
+// holds an epoll fd and the Windows one holds its own handle. The name leaked
+// into `executor.cplus`, so neither of those modules could satisfy it and both
+// non-Darwin targets failed to build the moment anything reached for it. Found
+// by the Android port (E0405), which is the first build to link a non-Darwin
+// reactor.
+fn reactor_fd() -> i32 { return kqfd(); }
+
 fn kqfd() -> i32 {
     let state: *u8 = ensure();
     return { *((state + off_kqfd()) as *i32) };

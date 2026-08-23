@@ -1,0 +1,26 @@
+// Process argv — the ONE platform-specific part of `env`, split out so the rest
+// of that module stays shared.
+//
+// This file is the DARWIN base. `argv_sys_linux.cplus` shadows it on Linux and
+// Android through the resolver's platform override.
+//
+// Split for the reason recorded in `exe_path.cplus`: cpc emits one object per
+// package, so an ungated `_NSGetArgc` in `env.cplus` was an undefined Darwin
+// symbol in the ANDROID slice of stdlib, and every Android app failed to link
+// over a function it never called.
+
+extern fn _NSGetArgc() -> *i32;
+extern fn _NSGetArgv() -> ***u8;
+
+fn argc() -> usize {
+    let c: i32 = { *_NSGetArgc() };
+    return c as usize;
+}
+
+// argv[index], or null when out of range — the caller bounds-checks against
+// `argc`.
+fn argv_at(index: usize) -> *u8 {
+    let argv: **u8 = { *_NSGetArgv() };
+    let pp: **u8 = { argv + index };
+    return { *pp };
+}

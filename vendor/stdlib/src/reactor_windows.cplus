@@ -513,3 +513,10 @@ fn notify_completed(awaitee: *u8) {
     }
     return;
 }
+
+// This thread's reactor descriptor. See the note on `reactor_fd` in
+// reactor.cplus for why the name is not `kqfd`.
+fn reactor_fd() -> i32 {
+    let state: *u8 = ensure();
+    return { *((state + off_kqfd()) as *i32) };
+}

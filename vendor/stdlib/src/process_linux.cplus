@@ -1,0 +1,49 @@
+// stdlib/process_linux.cplus — subprocess spawning, Linux/Android.
+//
+// NOT PORTED, and this file exists so that says so at the right moment.
+//
+// `process.cplus` is written against Darwin's `posix_spawn`, and two things in
+// it are not merely differently-spelled on Linux:
+//
+//   * `posix_spawn_file_actions_t` and `posix_spawnattr_t` are POINTER-SIZED
+//     opaques on Darwin, and the shared file allocates them with `malloc(8)`.
+//     On glibc they are 80 and 336 bytes. The same code would scribble past
+//     both allocations — a memory bug, not a missing symbol.
+//   * `posix_spawn_file_actions_addchdir_np` is a Darwin/glibc extension.
+//     Bionic added it in API 34; the rest of the family arrived in API 28.
+//
+// So a real port is a real port, not a rename, and it belongs here rather than
+// as `#platform` branches inside the shared file.
+//
+// Nothing calls this on Android today — the consumers are `terminal` and
+// `agent_appkit`, both macOS-only. It exists because cpc emits ONE OBJECT PER
+// PACKAGE: the Darwin body's undefined symbols would otherwise land in the
+// Android slice of stdlib and fail the link of an app that never spawns
+// anything. See plans/plan.android.md.
+
+import "./option" as option;
+import "./text" as text;
+
+extern fn write(fd: i32, buf: *u8, n: usize) -> i64;
+extern fn strlen(s: *u8) -> usize;
+
+// True where subprocess spawning works. `false` here, so a caller can ask
+// instead of discovering it by crashing — the shape `pty::supported` already
+// uses.
+fn supported() -> bool { return false; }
+
+fn unsupported(what: *u8) {
+    let a: *u8 = #str_ptr("stdlib/process: not ported to this platform: \0");
+    let _x: i64 = { write(2 as i32, a, strlen(a)) };
+    let _y: i64 = { write(2 as i32, what, strlen(what)) };
+    let b: *u8 = #str_ptr("\n  (see stdlib/src/process_linux.cplus; ask process::supported() first)\n\0");
+    let _z: i64 = { write(2 as i32, b, strlen(b)) };
+    return;
+}
+
+// The one verb worth keeping callable, because its failure is expressible:
+// `None` is already what `capture` answers for a spawn that did not run.
+fn capture(argv: *u8, argc: usize) -> option::Option[text::Text] {
+    unsupported(#str_ptr("capture\0"));
+    return option::Option[text::Text]::None;
+}

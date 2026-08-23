@@ -1,0 +1,68 @@
+// Linux/Android crypto primitives.
+//
+// RANDOMNESS IS REAL. `/dev/urandom` is the kernel CSPRNG on every Linux and on
+// Android; it is the one primitive here that must never be approximated,
+// because a silently unfilled buffer is a token everyone can guess.
+//
+// HASHING IS NOT IMPLEMENTED, AND IT ABORTS RATHER THAN RETURNING SOMETHING.
+// There is no CommonCrypto here and no libcrypto in the public NDK, so SHA-256
+// and SHA-512 need a real portable implementation — about 250 lines, and
+// correctness is not eyeballable. `crypto.cplus` already carries the FIPS 180-4
+// and RFC 4231 vectors as tests, so the port is verifiable the moment it is
+// written; until then, calling a hash here is a bug and says so.
+//
+// It aborts deliberately. The alternative — returning `zero_digest()` — would
+// make every signature compare equal, every HMAC verify against a constant, and
+// every content hash collide, silently. A crash naming the reason is strictly
+// safer than a hash that is not one.
+
+extern fn open(path: *u8, flags: i32) -> i32;
+extern fn read(fd: i32, buf: *u8, n: usize) -> i64;
+extern fn close(fd: i32) -> i32;
+extern fn write(fd: i32, buf: *u8, n: usize) -> i64;
+extern fn abort();
+extern fn strlen(s: *u8) -> usize;
+
+fn not_implemented(what: *u8) {
+    let msg: *u8 = #str_ptr("stdlib/crypto: not implemented on this platform: \0");
+    let _a: i64 = { write(2 as i32, msg, strlen(msg)) };
+    let _b: i64 = { write(2 as i32, what, strlen(what)) };
+    let nl: *u8 = #str_ptr("\n  (see crypto_sys_linux.cplus - returning a zero digest would be worse)\n\0");
+    let _c: i64 = { write(2 as i32, nl, strlen(nl)) };
+    { abort(); }
+    return;
+}
+
+fn sha256_into(p: *u8, n: usize, out: *u8) {
+    not_implemented(#str_ptr("sha256\0"));
+    return;
+}
+
+fn sha512_into(p: *u8, n: usize, out: *u8) {
+    not_implemented(#str_ptr("sha512\0"));
+    return;
+}
+
+fn hmac_into(alg: u32, key: *u8, key_len: usize, msg: *u8, msg_len: usize, out: *u8) {
+    not_implemented(#str_ptr("hmac\0"));
+    return;
+}
+
+// The kernel CSPRNG. Reads in a loop: a short read is legal, and treating one
+// as success would hand back a partially-filled buffer.
+fn random_into(p: *u8, n: usize) -> bool {
+    if n == (0 as usize) { return true; }
+    // O_RDONLY is 0 on every Linux ABI.
+    let fd: i32 = { open(#str_ptr("/dev/urandom\0"), 0 as i32) };
+    if fd < (0 as i32) { return false; }
+    var got: usize = 0 as usize;
+    while got < n {
+        let want: usize = n -% got;
+        let dst: *u8 = { ({ #addr(p) } +% got) as *u8 };
+        let r: i64 = { read(fd, dst, want) };
+        if r <= (0 as i64) { let _c: i32 = { close(fd) }; return false; }
+        got = got +% (r as usize);
+    }
+    let _c: i32 = { close(fd) };
+    return true;
+}

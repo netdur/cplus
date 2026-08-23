@@ -1,0 +1,42 @@
+// stdlib/pty_linux.cplus — pseudo-terminal sessions, Linux/Android.
+//
+// NOT PORTED, and this file exists so that says so at the right moment.
+//
+// `pty.cplus` builds on the same Darwin `posix_spawn` surface as
+// `process.cplus`, with the same struct-size problem (see process_linux.cplus),
+// plus `TIOCSWINSZ` and the `openpty`/`login_tty` family whose header and
+// library differ on bionic (`<pty.h>`, and bionic folds it into libc rather
+// than a separate `libutil`).
+//
+// Nothing calls this on Android today — the consumers are `terminal` and
+// `agent_appkit`, both macOS-only. It exists because cpc emits ONE OBJECT PER
+// PACKAGE: the Darwin body's undefined symbols would otherwise land in the
+// Android slice of stdlib and fail the link of an app that never spawns
+// anything. See plans/plan.android.md.
+
+import "./option" as option;
+import "./text" as text;
+
+extern fn write(fd: i32, buf: *u8, n: usize) -> i64;
+extern fn strlen(s: *u8) -> usize;
+
+// True where subprocess spawning works. `false` here, so a caller can ask
+// instead of discovering it by crashing — the shape `pty::supported` already
+// uses.
+fn supported() -> bool { return false; }
+
+fn unsupported(what: *u8) {
+    let a: *u8 = #str_ptr("stdlib/pty: not ported to this platform: \0");
+    let _x: i64 = { write(2 as i32, a, strlen(a)) };
+    let _y: i64 = { write(2 as i32, what, strlen(what)) };
+    let b: *u8 = #str_ptr("\n  (see stdlib/src/pty_linux.cplus; ask pty::supported() first)\n\0");
+    let _z: i64 = { write(2 as i32, b, strlen(b)) };
+    return;
+}
+
+// A caller is expected to gate on `supported()`; `start` answering None is the
+// same shape the Darwin body uses when the fork fails.
+fn start(argv: *u8, argc: usize) -> option::Option[text::Text] {
+    unsupported(#str_ptr("start\0"));
+    return option::Option[text::Text]::None;
+}

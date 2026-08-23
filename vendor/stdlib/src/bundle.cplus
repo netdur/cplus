@@ -6,46 +6,24 @@
 // process-global side effect every subsequent path silently depends on. Here the
 // paths are RETURNED; nothing global changes.
 //
-// macOS today (via _NSGetExecutablePath + realpath). Swift lens: Bundle.main.
+// Swift lens: Bundle.main.
+//
+// The one platform-specific call — resolving the running executable — lives in
+// `./exe_path`, which has per-platform override files. It is NOT inlined here:
+// cpc emits one object per package, so an ungated `_NSGetExecutablePath` in
+// this module was an undefined Darwin symbol in the ANDROID slice, and every
+// Android app failed at `dlopen` naming a function it never called.
 
 import "./text" as text;
 import "./option" as option;
 import "./result" as result;
 import "./fs" as fs;
-
-// dyld: copy the executable path into `buf`. Returns 0 on success; -1 if `buf` is
-// too small, writing the required size (incl. NUL) back through `size`.
-extern fn _NSGetExecutablePath(buf: *u8, size: *u32) -> i32;
-// libc: canonicalize `path` (resolve symlinks, `.` and `..`) into `resolved`
-// (>= PATH_MAX). Returns `resolved` on success, 0 on error.
-extern fn realpath(path: *u8, resolved: *u8) -> *u8;
-extern fn malloc(n: usize) -> *u8;
-extern fn free(p: *u8);
-extern fn strlen(s: *u8) -> usize;
+import "./exe_path" as exe_path;
 
 // Full, canonical path of the running executable. "" only if dyld refuses (never
 // seen in practice).
 fn executable_path() -> text::Text {
-    // Probe for the required buffer size (dyld sets it when buf is too small).
-    var size: u32 = 0 as u32;
-    let _probe: i32 = { _NSGetExecutablePath(0 as *u8, #addr_of(size)) };
-    if size == (0 as u32) { size = 4096 as u32; }
-    let buf: *u8 = { malloc((size as usize) + (1 as usize)) };
-    if buf == (0 as *u8) { return text::from_str(""); }
-    let rc: i32 = { _NSGetExecutablePath(buf, #addr_of(size)) };
-    if rc != (0 as i32) { free(buf); return text::from_str(""); }
-    // Canonicalize; fall back to the raw (possibly symlinked) path if realpath fails.
-    let canon: *u8 = { malloc(4096 as usize) };
-    let rp: *u8 = { realpath(buf, canon) };
-    var out: text::Text = text::from_str("");
-    if rp != (0 as *u8) {
-        out = { #str_from_raw_parts(canon, strlen(canon)) }.to_text();
-    } else {
-        out = { #str_from_raw_parts(buf, strlen(buf)) }.to_text();
-    }
-    free(canon);
-    free(buf);
-    return out;
+    return exe_path::executable_path();
 }
 
 // The directory containing `path` — everything before the last '/'. A path with

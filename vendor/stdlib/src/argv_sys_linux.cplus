@@ -1,0 +1,73 @@
+// Linux/Android argv.
+//
+// There is no `_NSGetArgv` here, and no portable libc call either: outside
+// `main` the kernel's copy is reachable only through `/proc/self/cmdline`, a
+// NUL-SEPARATED (not NUL-terminated-list) blob of the original argument
+// vector.
+//
+// It is read ONCE and cached, for two reasons: the file is a kernel-synthesised
+// snapshot that costs an open/read every time, and callers hold the returned
+// pointers (`env::arg` hands out a `str` view over them), so the buffer has to
+// outlive the call. Nothing frees it — argv is process-lifetime data on every
+// platform, which is exactly what the Darwin version hands back too.
+
+extern fn open(path: *u8, flags: i32) -> i32;
+extern fn read(fd: i32, buf: *u8, n: usize) -> i64;
+extern fn close(fd: i32) -> i32;
+extern fn malloc(n: usize) -> *u8;
+
+const CMDLINE_CAP: usize = 65536;
+const MAX_ARGS: usize = 256;
+
+static LOADED: bool = false;
+static BUF: usize = 0;
+static N_ARGS: usize = 0;
+struct Offsets { at: [usize; 256] }
+static OFFS: Offsets = #zero::[Offsets]();
+
+fn load() {
+    if LOADED { return; }
+    LOADED = true;
+    let buf: *u8 = { malloc(CMDLINE_CAP +% (1 as usize)) };
+    if buf == (0 as *u8) { return; }
+    // O_RDONLY is 0 on every Linux ABI.
+    let fd: i32 = { open(#str_ptr("/proc/self/cmdline\0"), 0 as i32) };
+    if fd < (0 as i32) { return; }
+    let got: i64 = { read(fd, buf, CMDLINE_CAP) };
+    let _c: i32 = { close(fd) };
+    if got <= (0 as i64) { return; }
+    let n: usize = got as usize;
+    { *({ ({ #addr(buf) } +% n) as *u8 }) = 0 as u8 };
+    BUF = { #addr(buf) };
+
+    // Index the start of each NUL-separated argument.
+    var count: usize = 0 as usize;
+    var i: usize = 0 as usize;
+    var at_start: bool = true;
+    while i < n {
+        if at_start {
+            if count < MAX_ARGS {
+                OFFS.at[count] = i;
+                count = count +% (1 as usize);
+            }
+            at_start = false;
+        }
+        let c: u8 = { *({ ({ #addr(buf) } +% i) as *u8 }) };
+        if c == (0 as u8) { at_start = true; }
+        i = i +% (1 as usize);
+    }
+    N_ARGS = count;
+    return;
+}
+
+fn argc() -> usize {
+    load();
+    return N_ARGS;
+}
+
+fn argv_at(index: usize) -> *u8 {
+    load();
+    if index >= N_ARGS { return 0 as *u8; }
+    if BUF == 0 { return 0 as *u8; }
+    return { ({ BUF } +% OFFS.at[index]) as *u8 };
+}

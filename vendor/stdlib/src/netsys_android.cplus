@@ -1,0 +1,104 @@
+// stdlib/netsys_android.cplus — bionic variant of netsys.cplus.
+//
+// Android IS Linux and the resolver falls back to `_linux` for it, so this file
+// exists only because of ONE symbol: glibc publishes the thread's errno slot as
+// `__errno_location`, and bionic calls it `__errno`. Everything else below is
+// `netsys_linux.cplus` unchanged — the constants are the kernel's, not the
+// libc's.
+//
+// The failure without this file is a link error naming `__errno_location`, in a
+// build that never mentioned errno.
+
+// bionic errno location: `volatile int *__errno(void)`.
+extern fn __errno() -> *i32;
+
+// Current thread's errno value.
+fn errno() -> i32 {
+    let p: *i32 = { __errno() };
+    return { *p };
+}
+
+// O_NONBLOCK for fcntl(F_SETFL). Linux: 04000 octal = 0x800.
+fn o_nonblock() -> i32 { return 0x800 as i32; }
+
+// EAGAIN (== EWOULDBLOCK on Linux): 11.
+fn eagain() -> i32 { return 11 as i32; }
+
+// EINTR: 4 on Linux too.
+fn eintr() -> i32 { return 4 as i32; }
+
+// setsockopt level / optname for SO_REUSEADDR. Linux (asm-generic):
+// SOL_SOCKET=1, SO_REUSEADDR=2.
+fn sol_socket() -> i32 { return 1 as i32; }
+fn so_reuseaddr() -> i32 { return 2 as i32; }
+
+// First two bytes of `sockaddr_in`. Linux has no `sin_len`: the struct
+// starts with `sa_family_t sin_family` (a 2-byte field), so for AF_INET=2
+// the little-endian bytes are [2, 0].
+fn sa_family_byte0() -> u8 { return 2 as u8; }
+fn sa_family_byte1() -> u8 { return 0 as u8; }
+
+// POSIX raw-syscall shims used by net.cplus. Splitting these behind netsys
+// keeps net.cplus platform-neutral: the Windows variant routes them to
+// Winsock (recv/send/closesocket/ioctlsocket) instead.
+extern fn read(fd: i32, buf: *u8, count: usize) -> isize;
+extern fn write(fd: i32, buf: *u8, count: usize) -> isize;
+extern fn close(fd: i32) -> i32;
+// fcntl is variadic in libc — the third arg is read from the variadic area,
+// not a fixed register. Declaring it fixed-arity silently breaks `F_SETFL`
+// on AArch64-darwin where varargs come from the stack.
+extern fn fcntl(fd: i32, cmd: i32, ...) -> i32;
+
+// Linux has no `SO_NOSIGPIPE`; the equivalent is per-CALL (`MSG_NOSIGNAL`
+// on `send`), applied in `send_fd` below. See the long note on
+// `set_nosigpipe` in the Darwin variant for why a socket write that finds a
+// dead peer must not be allowed to kill the process.
+fn send_flags_nosignal() -> i32 { return 0x4000 as i32; }   // MSG_NOSIGNAL
+
+extern fn send(fd: i32, buf: *u8, len: usize, flags: i32) -> isize;
+
+// Nothing socket-scoped to set here — the protection rides on every send
+// instead. Kept so callers have one portable line across platforms.
+fn set_nosigpipe(fd: i32) -> i32 {
+    let _unused: i32 = fd;
+    return 0 as i32;
+}
+
+fn recv_fd(fd: i32, buf: *u8, count: usize) -> isize {
+    return { read(fd, buf, count) };
+}
+
+// `send` with MSG_NOSIGNAL rather than `write`: a dead peer must come back
+// as -1/EPIPE, not as a SIGPIPE that terminates the process silently.
+fn send_fd(fd: i32, buf: *u8, count: usize) -> isize {
+    return { send(fd, buf, count, send_flags_nosignal()) };
+}
+
+fn close_fd(fd: i32) -> i32 {
+    return { close(fd) };
+}
+
+// F_GETFL / F_SETFL are 3 / 4 on both macOS and Linux.
+fn f_getfl() -> i32 { return 3 as i32; }
+fn f_setfl() -> i32 { return 4 as i32; }
+
+// Flip O_NONBLOCK on fd via fcntl. Returns 0 on success, -1 on error.
+// Idempotent — safe to call repeatedly on the same fd.
+fn set_nonblocking(fd: i32) -> i32 {
+    let flags: i32 = { fcntl(fd, f_getfl(), 0 as i32) };
+    if flags < (0 as i32) {
+        return 0 -% 1 as i32;
+    }
+    let new_flags: i32 = flags|o_nonblock();
+    if new_flags == flags {
+        return 0 as i32;
+    }
+    let rc: i32 = { fcntl(fd, f_setfl(), new_flags) };
+    if rc < (0 as i32) {
+        return 0 -% 1 as i32;
+    }
+    return 0 as i32;
+}
+
+// Socket subsystem init — a no-op on POSIX (matches Winsock's WSAStartup).
+fn startup() -> i32 { return 0 as i32; }

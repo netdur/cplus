@@ -40,15 +40,11 @@
 
 import "./option" as option;
 import "./text" as text;
+import "./crypto_sys" as sys;
 
-// CommonCrypto, from libSystem. `CC_LONG` is `uint32_t`; the digest functions
-// write into a caller-supplied buffer and return it.
-extern fn CC_SHA256(data: *u8, len: u32, md: *u8) -> *u8;
-extern fn CC_SHA512(data: *u8, len: u32, md: *u8) -> *u8;
-extern fn CCHmac(algorithm: u32, key: *u8, key_len: usize,
-                 data: *u8, data_len: usize, mac_out: *u8);
-// CCRNGStatus, `kCCSuccess` == 0. Seeded and maintained by the kernel.
-extern fn CCRandomGenerateBytes(bytes: *u8, count: usize) -> i32;
+// The four platform primitives live in `./crypto_sys`, which has per-platform
+// override files. Everything in THIS module is portable: the Digest types, the
+// hex encoder, the constant-time compare, and the choice of algorithm.
 
 // `CCHmacAlgorithm`. Only the two this module exposes are named; the rest of
 // the enum is MD5/SHA1/SHA224/SHA384, and nothing here should encourage them.
@@ -199,7 +195,7 @@ impl Digest512 {
 // SHA-256 of a byte range.
 fn sha256_bytes(p: *u8, n: usize) -> Digest {
     var d: Digest = zero_digest();
-    let _r: *u8 = { CC_SHA256(p, n as u32, #addr_of(d._bytes) as *u8) };
+    sys::sha256_into(p, n, #addr_of(d._bytes) as *u8);
     return d;
 }
 
@@ -211,7 +207,7 @@ fn sha256(data: str) -> Digest {
 
 fn sha512_bytes(p: *u8, n: usize) -> Digest512 {
     var d: Digest512 = zero_digest512();
-    let _r: *u8 = { CC_SHA512(p, n as u32, #addr_of(d._bytes) as *u8) };
+    sys::sha512_into(p, n, #addr_of(d._bytes) as *u8);
     return d;
 }
 
@@ -226,7 +222,7 @@ fn sha512(data: str) -> Digest512 {
 // one is zero-padded), so there is no length a caller has to pre-arrange.
 fn hmac_sha256_bytes(key: *u8, key_len: usize, msg: *u8, msg_len: usize) -> Digest {
     var d: Digest = zero_digest();
-    { CCHmac(hmac_alg_sha256(), key, key_len, msg, msg_len, #addr_of(d._bytes) as *u8) };
+    sys::hmac_into(hmac_alg_sha256(), key, key_len, msg, msg_len, #addr_of(d._bytes) as *u8);
     return d;
 }
 
@@ -238,7 +234,7 @@ fn hmac_sha256(key: str, msg: str) -> Digest {
 
 fn hmac_sha512_bytes(key: *u8, key_len: usize, msg: *u8, msg_len: usize) -> Digest512 {
     var d: Digest512 = zero_digest512();
-    { CCHmac(hmac_alg_sha512(), key, key_len, msg, msg_len, #addr_of(d._bytes) as *u8) };
+    sys::hmac_into(hmac_alg_sha512(), key, key_len, msg, msg_len, #addr_of(d._bytes) as *u8);
     return d;
 }
 
@@ -256,7 +252,7 @@ fn hmac_sha512(key: str, msg: str) -> Digest512 {
 // This is the kernel's generator, not `rand()`. Use it for session ids, nonces
 // and anything a person must not be able to predict.
 fn random_bytes(p: *u8, n: usize) -> bool {
-    return { CCRandomGenerateBytes(p, n) } == (0 as i32);
+    return sys::random_into(p, n);
 }
 
 // `n` random bytes as lowercase hex (2n characters), or None if the generator

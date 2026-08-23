@@ -1,0 +1,51 @@
+// The running executable's own path — the ONE platform-specific call in
+// `bundle`, split out so the other 150 lines of that module stay shared.
+//
+// This file is the DARWIN base; `exe_path_linux.cplus` and
+// `exe_path_android.cplus` shadow it through the resolver's platform override,
+// the same way `netsys_linux.cplus` shadows `netsys.cplus`.
+//
+// It is split for a reason that cost a debugging session: cpc emits ONE OBJECT
+// PER PACKAGE, so an `extern` in ANY stdlib module is an undefined symbol in
+// the whole slice. `_NSGetExecutablePath` sitting ungated in `bundle.cplus`
+// therefore made every Android link fail at dlopen —
+//
+//     cannot locate symbol "_NSGetExecutablePath"
+//
+// — in an app that never called it, from a module it never imported. Any
+// platform-specific extern in this package needs an override file, not a
+// runtime branch.
+
+import "./text" as text;
+
+// dyld: copy the executable path into `buf`. Returns 0 on success; -1 if `buf`
+// is too small, writing the required size (incl. NUL) back through `size`.
+extern fn _NSGetExecutablePath(buf: *u8, size: *u32) -> i32;
+extern fn realpath(path: *u8, resolved: *u8) -> *u8;
+extern fn malloc(n: usize) -> *u8;
+extern fn free(p: *u8);
+extern fn strlen(s: *u8) -> usize;
+
+fn executable_path() -> text::Text {
+    // Probe for the required buffer size (dyld sets it when buf is too small).
+    var size: u32 = 0 as u32;
+    let _probe: i32 = { _NSGetExecutablePath(0 as *u8, #addr_of(size)) };
+    if size == (0 as u32) { size = 4096 as u32; }
+    let buf: *u8 = { malloc((size as usize) + (1 as usize)) };
+    if buf == (0 as *u8) { return text::from_str(""); }
+    let rc: i32 = { _NSGetExecutablePath(buf, #addr_of(size)) };
+    if rc != (0 as i32) { free(buf); return text::from_str(""); }
+    // Canonicalize; fall back to the raw (possibly symlinked) path if realpath
+    // fails.
+    let canon: *u8 = { malloc(4096 as usize) };
+    let rp: *u8 = { realpath(buf, canon) };
+    var out: text::Text = text::from_str("");
+    if rp != (0 as *u8) {
+        out = { #str_from_raw_parts(canon, strlen(canon)) }.to_text();
+    } else {
+        out = { #str_from_raw_parts(buf, strlen(buf)) }.to_text();
+    }
+    free(canon);
+    free(buf);
+    return out;
+}

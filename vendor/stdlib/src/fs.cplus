@@ -12,6 +12,7 @@ import "./status" as status;
 // fd-readiness path. Phase 3 Slice 3D's File::lines is sync but
 // the gen-method machinery needs Iterator[T] in scope.
 import "./net" as net;
+import "./netsys" as netsys;
 import "./iterator" as iterator;
 import "./text" as text;
 
@@ -35,7 +36,6 @@ extern fn unlink(path: *u8) -> i32;
 extern fn opendir(path: *u8) -> *u8;
 extern fn readdir(dirp: *u8) -> *u8;
 extern fn closedir(dirp: *u8) -> i32;
-extern fn __error() -> *i32;
 extern fn strlen(s: *u8) -> usize;
 // Darwin arm64 exposes the 64-bit-inode stat as the bare `stat` symbol (on
 // x86_64 it is `stat$INODE64`; this build targets arm64 macOS).
@@ -138,7 +138,7 @@ fn metadata(path: str) -> result::Result[Metadata, result::IoError] {
             if buf == (0 as *u8) { return result::io_err::[Metadata](result::IoError::Other); }
             let rc: i32 = { stat(cp.as_ptr(), buf) };
             if rc != (0 as i32) {
-                let err: i32 = { *(__error()) };
+                let err: i32 = errno();
                 free(buf);
                 if err == (2 as i32) { return result::io_err::[Metadata](result::IoError::NotFound); }
                 if err == (13 as i32) { return result::io_err::[Metadata](result::IoError::PermissionDenied); }
@@ -358,9 +358,16 @@ impl File {
 
 // errno as an `IoError`. Only the file-system-relevant codes are named; the
 // rest collapse to `Other`.
+// Reached through `netsys` rather than by declaring `__error()` here.
+//
+// `__error` is DARWIN's name for the thread's errno slot; glibc calls it
+// `__errno_location` and bionic calls it `__errno`. This module has no platform
+// override — it is 888 lines and only one line of it is platform-specific — so
+// declaring the Darwin symbol here put it in the stdlib slice for EVERY target
+// and broke the Android link. `netsys` already has the three spellings behind
+// one name; use it.
 fn errno() -> i32 {
-    let p: *i32 = { __error() };
-    return { *p };
+    return netsys::errno();
 }
 fn errno_as_ioerror() -> result::IoError {
     let e: i32 = errno();

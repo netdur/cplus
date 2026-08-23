@@ -1,0 +1,24 @@
+// Android: bionic is Linux, so the same /proc symlink answers. Kept as its own
+// file rather than shared with linux because the resolver matches on the exact
+// platform name.
+//
+// Original note — the kernel publishes the answer as a symlink. No dyld, so
+// `_NSGetExecutablePath` must not even be DECLARED here — see exe_path.cplus.
+
+import "./text" as text;
+
+extern fn readlink(path: *u8, buf: *u8, bufsiz: usize) -> i64;
+extern fn malloc(n: usize) -> *u8;
+extern fn free(p: *u8);
+
+fn executable_path() -> text::Text {
+    let cap: usize = 4096 as usize;
+    let buf: *u8 = { malloc(cap +% (1 as usize)) };
+    if buf == (0 as *u8) { return text::from_str(""); }
+    // readlink does NOT NUL-terminate, and returns the byte count.
+    let n: i64 = { readlink(#str_ptr("/proc/self/exe\0"), buf, cap) };
+    if n <= (0 as i64) { free(buf); return text::from_str(""); }
+    let out: text::Text = { #str_from_raw_parts(buf, n as usize) }.to_text();
+    free(buf);
+    return out;
+}
