@@ -1,0 +1,107 @@
+// facet_gtk/scheduler — the Renderer's `schedule` verb and facet's Scheduler
+// service, both over the GLib main loop.
+//
+// facet coalesces: a handler that writes ten props marks ten bits and asks for
+// ONE sync. `schedule` is that ask, and it must be idempotent within a turn —
+// so a pending flag, not a queue.
+//
+// `g_idle_add` runs the callback when the loop next goes idle, which is after
+// the current event is fully dispatched. That is exactly the AppKit backend's
+// "run loop observer" position: every write from one event lands, then one
+// layout and one frame walk.
+
+import "facet/facet" as core;
+import "facet/mount" as mount;
+import "facet/services" as services;
+import "./window" as window;
+
+// `guint g_idle_add(GSourceFunc, gpointer)` — the callback returns FALSE to be
+// removed after one run, which is what a one-shot needs.
+#[link_name = "g_idle_add"]
+extern fn g_idle_add(f: fn(*u8) -> i32, data: *u8) -> u32;
+
+// `guint g_timeout_add(guint interval_ms, GSourceFunc, gpointer)`.
+#[link_name = "g_timeout_add"]
+extern fn g_timeout_add(interval: u32, f: fn(*u8) -> i32, data: *u8) -> u32;
+
+#[link_name = "g_source_remove"]
+extern fn g_source_remove(tag: u32) -> i32;
+
+// One pending sync at a time — see the header.
+static PENDING: bool = false;
+
+fn drain(user: *u8) -> i32 {
+    PENDING = false;
+    mount::sync();
+    // Layout is facet's, but PLACING the results is ours, and it has to happen
+    // in the same turn as the sync or the frame the user sees is one write
+    // behind.
+    window::relayout_all();
+    return 0 as i32;   // G_SOURCE_REMOVE
+}
+
+fn schedule(ctx: *u8) {
+    if PENDING { return; }
+    PENDING = true;
+    let _t: u32 = { g_idle_add(drain, 0 as *u8) };
+    return;
+}
+
+// ---- the Scheduler service ---------------------------------------------------
+
+// The GTK main loop IS the main thread here, and facet only ever calls this
+// from it, so "run on main" is "run now". A backend with a worker tier would
+// hand this to `g_idle_add`; this one would only be adding a turn's latency to
+// something already on the right thread.
+fn run_on_main(f: fn(*u8), ctx: *u8) {
+    f(ctx);
+    return;
+}
+
+// A one-shot timer. facet's unit is SECONDS and GLib's is milliseconds.
+// A null fn-pointer rather than a no-op sentinel: a static initializer must be
+// a literal, and `is_not_null` is the blessed test on a fn pointer anyway.
+static AFTER_F: fn(*u8) = 0 as fn(*u8);
+static AFTER_CTX: usize = 0;
+
+fn after_fire(user: *u8) -> i32 {
+    let f: fn(*u8) = AFTER_F;
+    let c: *u8 = AFTER_CTX as *u8;
+    if f.is_not_null() { f(c); }
+    return 0 as i32;
+}
+
+fn after(seconds: f64, f: fn(*u8), ctx: *u8) -> u64 {
+    // ONE outstanding timer, and that is a stated limit rather than a bug: the
+    // slot is a static pair, so a second `after` before the first fires
+    // replaces it. facet's own uses are one-at-a-time (a debounce, a settle);
+    // MANIFEST.md records the limit so a caller that needs more finds it
+    // written down instead of discovering it.
+    AFTER_F = f;
+    AFTER_CTX = { #addr(ctx) };
+    let ms: f64 = seconds * (1000.0 as f64);
+    return { g_timeout_add(ms as u32, after_fire, 0 as *u8) } as u64;
+}
+
+fn cancel_after(tag: u64) {
+    if tag == (0 as u64) { return; }
+    let _r: i32 = { g_source_remove(tag as u32) };
+    return;
+}
+
+// NOT IMPLEMENTED, and answering 0 is the honest shape: facet reads the return
+// as a cancellation token, and 0 is "nothing was registered". A size observer
+// needs GtkWidget::notify::width-request or a size-allocate hook per node;
+// recorded in MANIFEST.md rather than half-wired.
+fn observe_size(n: *core::Node, f: fn(*u8), ctx: *u8) -> u64 { return 0 as u64; }
+fn cancel_observe_size(tag: u64) { return; }
+
+fn scheduler() -> services::Scheduler {
+    return services::Scheduler {
+        run_on_main: run_on_main,
+        after: after,
+        cancel_after: cancel_after,
+        observe_size: observe_size,
+        cancel_observe_size: cancel_observe_size,
+    };
+}

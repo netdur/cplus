@@ -3,26 +3,29 @@ name    = "facet_gtk"
 version = "0.0.1"
 edition = "2026"
 
-# facet_gtk — facet's GTK 4 backend. Same contract as facet_appkit:
-#   facet_gtk   the facet Renderer ops (one per kind) + set_identity
-#               + mount/mount_into (flex tree -> GtkFixed frames)
-#               + a window host (GtkApplication) and a component re-render helper.
-# facet owns the tree walk and all layout (shared flex engine); this package
-# maps each Node kind onto the typed gtk4 binding.
+# facet_gtk — facet's GTK 4 backend, the Linux/BSD counterpart of
+# facet_appkit. facet owns the description tree and all layout (the shared
+# flex_layout engine); this package answers the contract's verbs with GTK, and
+# records in MANIFEST.md the ones GTK cannot.
 #
-# STATUS: type-checked (`cpc check`) against the gtk4 binding on any host, but
-# NOT built or run here — it links libgtk-4, which needs a Linux/GTK host.
-# facet_appkit is the reference implementation. See README.md.
+#   facet_gtk   the registration surface: install() and nothing else
+#   views       the Renderer's five verbs
+#   controls    one GTK body per node kind
+#   paint       the shared band (background / radius / opacity / enabled / tooltip)
+#   geometry    computed frames -> GtkFixed placements
+#   scheduler   schedule + the Scheduler service, over the GLib main loop
+#   window      the GtkWindow host a root is laid into
+#
+# STATUS is a MEASUREMENT, not a claim: `python3 tools/parity.py` prints the
+# share of facet's declared prop bits this backend references, beside appkit
+# and uikit. Read MANIFEST.md before trusting any adjective about it.
+#
+# Built and RUN on Linux/GTK. That is new as of 2026-08-23: the previous
+# generation of this package could only ever be type-checked, because the GTK
+# stack did not link.
 
-# Test root (structural, host-independent tests; runtime tests need a GTK host).
-
-# Not prebuilt (2026-08-17): with this backend as a SLICE (facet as source),
-# facet_gallery segfaults at first window order-front — a ~8 MB single stack
-# frame inside flex_layout Node code reached from AppKit's key-view walk
-# (write into the stack guard). Source mode is the verified-alive
-# configuration; see bugs/facet-appkit-slice-runtime-crash.md before
-# re-enabling. The facet <-> backend CYCLE is gone (facet_runtime owns the
-# facades) — this opt-out is about the mixed slice/source ObjC path only.
+# Not prebuilt: this backend is early and changes constantly, and a stale slice
+# is worse than a slower build. Revisit when the coverage number settles.
 [build]
 prebuild = false
 
@@ -30,7 +33,6 @@ prebuild = false
 stdlib      = "*"
 flex_layout = "*"
 facet       = "*"
-agent_core  = "*"
 # GTK 4 typed binding + its transitive stack (flat-vendor: the closure the
 # build touches must be declared here, resolved from sibling vendor/ dirs).
 gtk4        = "*"

@@ -1,0 +1,90 @@
+// facet_gtk/geometry — frames, and the one coordinate fact that differs.
+//
+// facet owns ALL layout: `flex_layout` computes an absolute frame for every
+// node and the backend's only job is to put the widget there. On AppKit that
+// is `setFrame:`; GTK 4 has no such call, because a GTK widget's geometry
+// belongs to its parent's layout manager.
+//
+// So a host is a `GtkFixed` — the one GTK container that takes an explicit
+// position — and a frame becomes `put` (or `move`, once the child is in) plus
+// `set_size_request` for the size. GtkFixed neither clips nor negotiates for
+// space, which is exactly what a container under an external layout engine
+// must not do.
+//
+// ORIGIN. flex and GTK both put (0,0) at the TOP-LEFT with y growing downward,
+// so unlike the AppKit backend there is no flip anywhere in this file. Said
+// out loud because AppKit's `geometry` is mostly flip arithmetic and a reader
+// arriving from it will look for the same.
+
+import "stdlib/option" as option;
+import "flex_layout/flex_layout" as flex;
+import "facet/facet" as core;
+import "gtk4/gtk4" as gtk;
+
+// A frame is fractional; a size request is not. ROUND rather than truncate: a
+// 99.6pt column truncated to 99 loses a pixel at every nesting level, and
+// facet's trees nest deeply enough for that to be visible as drift.
+fn round_i32(v: f64) -> i32 {
+    if v <= (0.0 as f64) { return 0 as i32; }
+    return (v + (0.5 as f64)) as i32;
+}
+
+// The parent widget pointer, or null — tells "already placed" from "first
+// placement". `gtk_fixed_put` on a widget that already has a parent is a GTK
+// warning and a no-op, which would silently pin every widget to its first
+// frame.
+fn parent_raw(child: *u8) -> *u8 {
+    match gtk::Widget::from_raw(child).get_parent() {
+        option::Option[gtk::Widget]::Some(p) => { return p.raw(); }
+        option::Option[gtk::Widget]::None => { return 0 as *u8; }
+    }
+}
+
+// Place `child` in `host` (a GtkFixed) at a host-relative rect. Idempotent.
+fn place(host: *u8, child: *u8, x: f64, y: f64, w: f64, h: f64) {
+    if host == (0 as *u8) { return; }
+    if child == (0 as *u8) { return; }
+    let cw: gtk::Widget = gtk::Widget::from_raw(child);
+    // Size first: a Fixed asks its child for a size request, and a widget that
+    // has never been sized answers with its own natural size instead of ours.
+    cw.set_size_request(round_i32(w), round_i32(h));
+    if parent_raw(child) == host {
+        gtk::Fixed::from_raw(host).move_(cw, x, y);
+        return;
+    }
+    gtk::Fixed::from_raw(host).put(cw, x, y);
+    return;
+}
+
+// Walk the computed frames onto the widgets, host-relative, exactly as the
+// AppKit backend's `reposition_children` does — including the two rules that
+// are not obvious:
+//
+//   * an UNBACKED node passes its children through to the SAME host, against
+//     the same host frame. That mirrors mount_walk, where their widgets were
+//     inserted into that host in the first place.
+//   * `Display::None` gives flex a zero frame, and a zero-sized GtkFixed child
+//     still draws. Hidden is carried on the widget, not inferred from the box.
+fn reposition_children(node: *core::Node, host: *u8, host_abs: flex::Frame) {
+    var i: usize = 0 as usize;
+    let count: usize = core::child_count_of(node);
+    while i < count {
+        match core::child_of(node, i) {
+            option::Option[*core::Node]::Some(c) => {
+                let cf: flex::Frame = { (*c).frame() };
+                let v: *u8 = core::view_of(c);
+                if v != (0 as *u8) {
+                    gtk::Widget::from_raw(v).set_visible(!core::is_hidden(c));
+                    place(host, v, cf.left - host_abs.left, cf.top - host_abs.top,
+                          cf.width, cf.height);
+                    reposition_children(c, v, cf);
+                } else {
+                    reposition_children(c, host, host_abs);
+                }
+            }
+            option::Option[*core::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return;
+}

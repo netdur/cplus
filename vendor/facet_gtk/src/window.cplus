@@ -1,0 +1,136 @@
+// facet_gtk/window — the host: a GtkWindow whose content is a GtkFixed that
+// facet's root tree is laid into.
+//
+// facet's `mount` inserts a root with a NULL host, so nothing places it; the
+// window tier is what gives a root somewhere to be. Same division as the
+// AppKit backend, where the window makes the content view and `insert` never
+// sees a null host.
+//
+// ONE WINDOW PER ROOT, tracked in a parallel pair of statics rather than a map:
+// facet's own `application` module already owns the root list and its order,
+// and a second index would be a copy of it that can disagree.
+
+import "stdlib/option" as option;
+import "flex_layout/flex_layout" as flex;
+import "facet/facet" as core;
+import "facet/application" as app;
+import "gtk4/gtk4" as gtk;
+import "gobject/runtime" as g;
+import "./geometry" as geometry;
+import "./paint" as paint;
+
+const MAX_WINDOWS: usize = 8;
+
+static N_WINDOWS: usize = 0;
+static ROOTS: [usize; MAX_WINDOWS] = [0; MAX_WINDOWS];
+static FIXEDS: [usize; MAX_WINDOWS] = [0; MAX_WINDOWS];
+static WINDOWS: [usize; MAX_WINDOWS] = [0; MAX_WINDOWS];
+
+// Open a real window for a mounted root and lay the tree into it.
+//
+// The caller has already run `mount::mount(root)`, so every backed node owns
+// its widget and the widgets are in each other's hosts — everything except the
+// ROOT, which had no host to go into. That is what this supplies.
+fn open(root: *core::Node, title: str, width: f64, height: f64) -> bool {
+    if root == (0 as *core::Node) { return false; }
+    if N_WINDOWS >= MAX_WINDOWS { return false; }
+    var win: gtk::Window = gtk::Window::new();
+    win.set_title(title);
+    win.set_default_size(geometry::round_i32(width), geometry::round_i32(height));
+    // The content host. A Fixed because facet computes every frame — see
+    // geometry.cplus.
+    let fixed: gtk::Fixed = gtk::Fixed::new();
+    win.set_child(fixed.upcast());
+    // The root's own widget, if it has one, goes in first; a keyless container
+    // root has none, and its children were inserted into... nothing. So the
+    // Fixed becomes their host and the layout walk places them against it.
+    let rv: *u8 = core::view_of(root);
+    if rv != (0 as *u8) {
+        gtk::Fixed::from_raw(fixed.raw()).put(gtk::Widget::from_raw(rv), 0.0f64, 0.0f64);
+    }
+    let slot: usize = N_WINDOWS;
+    ROOTS[slot] = { #addr(root as *u8) };
+    FIXEDS[slot] = { #addr(fixed.raw()) };
+    WINDOWS[slot] = { #addr(win.raw()) };
+    N_WINDOWS = N_WINDOWS +% (1 as usize);
+    relayout(slot, width, height);
+    win.present();
+    return true;
+}
+
+// The host a root's children are placed into: its own widget when it has one,
+// the window's Fixed when it does not. Mirrors mount_walk's pass-through.
+fn host_for(slot: usize) -> *u8 {
+    let root: *core::Node = ROOTS[slot] as *core::Node;
+    let rv: *u8 = core::view_of(root);
+    if rv != (0 as *u8) { return rv; }
+    return FIXEDS[slot] as *u8;
+}
+
+// One layout pass and one frame walk for a window.
+fn relayout(slot: usize, width: f64, height: f64) {
+    let root: *core::Node = ROOTS[slot] as *core::Node;
+    if root == (0 as *core::Node) { return; }
+    { (*root).calculate_layout(width: width, height: height) };
+    let rf: flex::Frame = { (*root).frame() };
+    let rv: *u8 = core::view_of(root);
+    if rv != (0 as *u8) {
+        geometry::place(FIXEDS[slot] as *u8, rv, 0.0f64, 0.0f64, width, height);
+    }
+    geometry::reposition_children(root, host_for(slot), rf);
+    return;
+}
+
+// Re-lay every open window at its current size. The sync path calls this after
+// applying dirty bits — a write that changes a measured control changes the
+// layout, and nothing else in the pipeline knows that.
+fn relayout_all() {
+    var i: usize = 0 as usize;
+    while i < N_WINDOWS {
+        let w: *u8 = WINDOWS[i] as *u8;
+        if w != (0 as *u8) {
+            let ww: gtk::Widget = gtk::Widget::from_raw(w);
+            var cw: f64 = { ww.get_width() } as f64;
+            var ch: f64 = { ww.get_height() } as f64;
+            // Before the first present the window has no allocation yet; its
+            // default size is the honest answer then.
+            if cw <= (0.0 as f64) { cw = 640.0f64; }
+            if ch <= (0.0 as f64) { ch = 480.0f64; }
+            relayout(i, cw, ch);
+        }
+        i = i +% (1 as usize);
+    }
+    return;
+}
+
+// ---- appearance --------------------------------------------------------------
+
+// HAND-BOUND, the same way this package hand-binds anything the generated
+// binding does not carry. `gtk_settings_get_default` is a real exported symbol
+// (verified with `nm -D`) that the GIR does not present as a bindable
+// namespace function, so cpc-bindgen never emitted it.
+#[link_name = "gtk_settings_get_default"]
+extern fn gtk_settings_get_default() -> *u8;
+
+// `gboolean` out-param via g_object_get. GTK exposes the dark preference as a
+// GtkSettings PROPERTY; there is no getter function for it.
+#[link_name = "g_object_get"]
+extern fn g_object_get(obj: *u8, first: *u8, ...);
+
+// Is the running theme dark? Read from GtkSettings rather than guessed from a
+// colour, because a GTK theme states it.
+fn is_dark() -> bool {
+    let s: *u8 = { gtk_settings_get_default() };
+    if s == (0 as *u8) { return false; }
+    var v: i32 = 0 as i32;
+    { g_object_get(s, #str_ptr("gtk-application-prefer-dark-theme\0"),
+                   #addr_of(v) as *u8, 0 as *u8) };
+    return v != (0 as i32);
+}
+
+// Push the current appearance into the paint tier, which resolves adaptive
+// colour pairs against it.
+fn sync_appearance() {
+    paint::set_dark(is_dark());
+    return;
+}

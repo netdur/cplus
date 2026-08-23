@@ -1,0 +1,175 @@
+// facet_gtk/paint — the SHARED BAND: the props every backed node honours,
+// whatever kind it is.
+//
+// Split from the per-kind bodies for the reason `facet_appkit/paint` is: these
+// verbs are declared once on the contract and answered once here, so a control
+// gaining a view gains the whole band with it and cannot answer half of it.
+//
+// TWO MECHANISMS, and which one a verb uses is not a style choice.
+//
+//   * `opacity`, `is_visible`, `is_enabled`, `tooltip` are GtkWidget
+//     PROPERTIES. Direct calls, no CSS, no parsing.
+//   * `background_color`, `corner_radius`, `border` are CSS in GTK 4 — there
+//     is no `gtk_widget_set_background_color`, by design. So each backed
+//     widget carries its OWN GtkCssProvider, added to its style context once
+//     and reloaded whenever one of its bits is dirty.
+//
+// WHY A PROVIDER PER WIDGET rather than one document with a rule per node: a
+// shared provider has to be re-parsed in full on any single change, and it
+// needs a unique selector per widget, which means inventing names and keeping
+// them alive. A provider bound to the widget it styles has neither problem and
+// dies with the widget. The cost is one GObject per backed node; GTK's own
+// widgets carry more than that.
+//
+// COLOUR TOKENS. `vocab::Color` carries an `adaptive` pair (token 254) whose
+// second half is the dark-appearance colour. AppKit resolves that by drawing
+// inside an appearance; GTK has no such scope, so the side is chosen HERE from
+// the current theme — see `window::is_dark`. That makes an appearance flip a
+// re-apply, which is exactly what `theme::set_theme_changed_fn` is for.
+
+import "stdlib/text" as text;
+import "facet/facet" as core;
+import "facet/props" as props;
+import "facet/vocabulary" as vocab;
+import "gtk4/gtk4" as gtk;
+import "gobject/runtime" as g;
+
+// Every state bit — the CREATE pass. Matches `facet_appkit::paint::all_bits`.
+fn all_bits() -> u64 { return props::C_ALL_STATE; }
+
+// Every FACT and no verb: what a theme flip re-reads. NOT `all_bits`, which is
+// also the create sentinel — see the note in facet_appkit's `repaint_walk`.
+fn restyle_bits() -> u64 { return props::C_RESTYLE; }
+
+// The band's own bits, so a caller can ask "is any of this dirty?" without
+// keeping a second copy of the list.
+fn band_bits() -> u64 {
+    return props::C_OPACITY | props::C_BACKGROUND_COLOR | props::C_CORNER_RADIUS
+         | props::C_IS_ENABLED | props::C_IS_VISIBLE | props::C_TOOLTIP
+         | props::C_SHADOW | props::C_CLIP;
+}
+
+// Which side of an adaptive pair is live. Set by the window tier at install
+// and on every appearance change; read here.
+static DARK: bool = false;
+
+fn set_dark(v: bool) { DARK = v; return; }
+fn is_dark() -> bool { return DARK; }
+
+// `Color` -> a CSS `rgba(...)`. Resolves the adaptive pair against `DARK`.
+fn css_rgba(c: vocab::Color) -> text::Text {
+    var r: f64 = c.r;
+    var gg: f64 = c.g;
+    var b: f64 = c.b;
+    var a: f64 = c.a;
+    if c.token == (254 as u32) {
+        if DARK { r = c.r2; gg = c.g2; b = c.b2; a = c.a2; }
+    }
+    let ri: i32 = (r * (255.0 as f64) + (0.5 as f64)) as i32;
+    let gi: i32 = (gg * (255.0 as f64) + (0.5 as f64)) as i32;
+    let bi: i32 = (b * (255.0 as f64) + (0.5 as f64)) as i32;
+    // GTK's CSS parser takes a decimal alpha; three digits is past what an
+    // 8-bit channel can show.
+    let ai: i32 = (a * (1000.0 as f64) + (0.5 as f64)) as i32;
+    return "rgba(${ri},${gi},${bi},0.${ai})";
+}
+
+// The per-widget provider, keyed on the widget itself. `g_object_set_data`
+// is the standard place to hang a companion object off a GObject, and it is
+// what keeps the provider alive exactly as long as the widget.
+fn provider_key() -> *u8 { return #str_ptr("facet-gtk-css\0"); }
+
+fn provider_for(v: *u8) -> gtk::CssProvider {
+    let existing: *u8 = g::get_data(v, provider_key());
+    if existing != (0 as *u8) { return gtk::CssProvider::from_raw(existing); }
+    let p: gtk::CssProvider = gtk::CssProvider::new();
+    // GTK_STYLE_PROVIDER_PRIORITY_APPLICATION (600): above the theme, below a
+    // user stylesheet. facet is the application here.
+    gtk::Widget::from_raw(v).get_style_context()
+        .add_provider(gtk::StyleProvider::from_raw(p.raw()), 600 as u32);
+    g::set_data(v, provider_key(), p.raw());
+    return p;
+}
+
+// The band's own CSS, derived from the node. Rebuilt rather than cached: it
+// is short, and a cache is a second copy of the truth that can disagree with
+// the node.
+fn band_css(n: *core::Node) -> text::Text {
+    var body: text::Text = text::from_str("");
+    let bg: vocab::Color = core::background_color(n);
+    if bg.is_set() {
+        let rgba: text::Text = css_rgba(bg);
+        body = body.appending("background-color: ${rgba};");
+    }
+    let cr: vocab::Corners = core::corner_radius(n);
+    if cr.top_leading > (0.0 as f64) || cr.top_trailing > (0.0 as f64)
+        || cr.bottom_leading > (0.0 as f64) || cr.bottom_trailing > (0.0 as f64) {
+        // CSS order is TL TR BR BL; facet's is leading/trailing per edge. In a
+        // left-to-right flow they coincide; RTL is a `C_FLOW_DIRECTION` job and
+        // is recorded in MANIFEST.md rather than guessed at here.
+        let tl: i32 = cr.top_leading as i32;
+        let tr: i32 = cr.top_trailing as i32;
+        let br: i32 = cr.bottom_trailing as i32;
+        let bl: i32 = cr.bottom_leading as i32;
+        body = body.appending("border-radius: ${tl}px ${tr}px ${br}px ${bl}px;");
+    }
+    return body;
+}
+
+// Load a document of exactly the band plus `extra`, whole.
+//
+// ALWAYS THE WHOLE DOCUMENT, and always rebuilt from the node — a
+// GtkCssProvider has no per-declaration edit, so a control writing its font
+// would otherwise drop the background the band wrote. The kind bodies call
+// this with their text styling; nothing else appends.
+fn set_css(v: *u8, n: *core::Node, extra: str) {
+    var body: text::Text = band_css(n);
+    if extra != "" { body = body.appending(extra); }
+    if body.count() == (0 as usize) {
+        // Nothing to say. Load an EMPTY document rather than skipping: a widget
+        // that HAD a background and lost it must lose it on screen too.
+        provider_for(v).load_from_string("");
+        return;
+    }
+    let doc: text::Text = "* { ${body} }";
+    provider_for(v).load_from_string(doc.view());
+    return;
+}
+
+// The kind bodies' door: their own declarations, on top of the live band.
+fn append_css(v: *u8, n: *core::Node, extra: str) {
+    set_css(v, n, extra);
+    return;
+}
+
+fn reload_css(v: *u8, n: *core::Node) {
+    set_css(v, n, "");
+    return;
+}
+
+// Apply the band. `d` is the dirty word; every write is gated on its bit so a
+// re-apply touches only what changed — except on the create pass, where `d` is
+// `all_bits()` and everything lands.
+fn band(v: *u8, n: *core::Node, d: u64) {
+    if v == (0 as *u8) { return; }
+    let w: gtk::Widget = gtk::Widget::from_raw(v);
+    if (d & props::C_OPACITY) != (0 as u64) {
+        w.set_opacity(core::opacity(n));
+    }
+    if (d & props::C_IS_VISIBLE) != (0 as u64) {
+        w.set_visible(core::is_visible(n));
+    }
+    if (d & props::C_IS_ENABLED) != (0 as u64) {
+        // GTK's word is "sensitive", and it is inherited by descendants — the
+        // same semantics AppKit gives `enabled` on a container.
+        w.set_sensitive(core::is_enabled(n));
+    }
+    if (d & props::C_TOOLTIP) != (0 as u64) {
+        let t: str = core::tooltip(n);
+        if t != "" { w.set_tooltip_text(t); }
+    }
+    if (d & (props::C_BACKGROUND_COLOR | props::C_CORNER_RADIUS)) != (0 as u64) {
+        reload_css(v, n);
+    }
+    return;
+}
