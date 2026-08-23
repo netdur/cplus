@@ -9,28 +9,52 @@
 // namespace, which an in-memory loader does not have, so explicit binding
 // is the only correct path.
 //
-// Contract: importing this module obligates the app to export the hook
+// THE HOOK IS INSTALLED, NOT EXPORTED — and that changed for a measured
+// reason.
 //
-//     export extern fn cplus_on_click(envp: *jni::JNIEnv, token: i64, view: jni::jobject)
+// This module used to declare `extern fn cplus_on_click(...)` and oblige the
+// app to define it. That contract was worse than it read: cpc emits ONE OBJECT
+// PER PACKAGE, so the undefined symbol rides in `android_view.o` and **linking
+// this package at all** demands it — whether or not any module of it was
+// imported. Bionic binds eagerly, so the failure is
 //
-// (bionic binds eagerly at System.loadLibrary, so a missing hook fails at
-// library load). The `token` passed to `set_on_click` routes any number of
-// controls through the single hook.
+//     dlopen failed: cannot locate symbol "cplus_on_click"
+//
+// at `System.loadLibrary`, naming a module the app never used. It cost two
+// separate debugging sessions: once for a raw-JNI probe that used its own
+// adapter class, and again for facet_android, which has no interest in this
+// module at all and merely depends on the package.
+//
+// So the symbol is DEFINED here, defaulting to a no-op, and a consumer that
+// wants clicks calls `set_click_hook`. Nothing is obliged; nothing fails at
+// load. The `token` passed to `set_on_click` routes any number of controls
+// through the single hook.
 
 import "jni/jni" as jni;
 import "./runtime" as rt;
 
-extern fn cplus_on_click(envp: *jni::JNIEnv, token: i64, view: jni::jobject);
+// The installed hook. Zero until someone sets one, so a consumer that never
+// asks for clicks owes this package nothing.
+//
+// Zero rather than a named no-op because a static cannot be initialised to a
+// function (E0911: a static initializer must be a literal or `#zero`), which is
+// a known compiler gap. The call site null-checks, which it would have to do
+// anyway.
+static CLICK_HOOK: fn(*jni::JNIEnv, i64, jni::jobject) = #zero::[fn(*jni::JNIEnv, i64, jni::jobject)]();
+
+fn set_click_hook(f: fn(*jni::JNIEnv, i64, jni::jobject)) { CLICK_HOOK = f; return; }
+fn click_hook() -> fn(*jni::JNIEnv, i64, jni::jobject) { return CLICK_HOOK; }
 
 // The registered JNI target: `static native void nativeOnClick(long, View)`
-// receives (env, class, token, view); forward to the app's hook.
+// receives (env, class, token, view); forward to whatever was installed.
 export extern fn cplus_av_native_on_click(
     envp: *jni::JNIEnv,
     cls: jni::jobject,
     token: i64,
     view: jni::jobject,
 ) {
-    { cplus_on_click(envp, token, view); }
+    let h: fn(*jni::JNIEnv, i64, jni::jobject) = CLICK_HOOK;
+    if h != (0 as fn(*jni::JNIEnv, i64, jni::jobject)) { h(envp, token, view); }
     return;
 }
 

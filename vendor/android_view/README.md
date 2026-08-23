@@ -5,16 +5,38 @@ the example below renders on a Pixel emulator (API 36) — the staticlib from
 `cpc build --target android-arm64`, linked into `libapp.so` by the NDK's
 clang, loaded by the two-method `MainActivity` host below.
 
-This mirrors the AppKit/UIKit package shape:
+This mirrors the AppKit/UIKit package shape — and, like `vendor/appkit`, it is
+**half generated**:
 
-- `runtime`: JNI environment helpers, method calls, UTF strings, global refs.
-- `activity`: borrowed `Activity` wrapper and `setContentView`.
-- `view`: `View` and `LinearLayout`.
-- `controls`: `TextView` and `Button` (text + `set_on_click`).
-- `listener`: self-contained click handling (package-shipped DEX adapter);
-  imported separately, not via the umbrella, because it obligates the app
-  to export the `cplus_on_click` hook.
+- `runtime`: HAND-WRITTEN. `Env`, the JNI helpers, and the class/method-id
+  resolve cache. Caching is not an optimisation detail: resolving per call
+  measured a clean 2x slower on a 400-node mount
+  (`plans/plan.android.md` rung 1).
+- `widgets`: **GENERATED** by `tools/regen.sh` (`cpc-bindgen --java` over
+  `android.jar`) — `View`, `ViewGroup`, `TextView`, `Button`, `EditText`,
+  `ImageView`, `ProgressBar`. **Do not edit it**; the next regen wins.
+- `android_view_ext`: HAND-WRITTEN, survives regen. What a generator cannot
+  know — currently `set_on_click_raw`, because Java interfaces cannot be
+  implemented from native code and the adapter class is a packaging decision,
+  not a fact about the SDK.
+- `activity`: HAND-WRITTEN. The borrowed `Activity` wrapper and
+  `setContentView`.
+- `listener`: HAND-WRITTEN. Self-contained click handling (package-shipped DEX
+  adapter). Note it obligates the app to export `cplus_on_click` — and not
+  merely when imported: cpc emits ONE OBJECT PER PACKAGE, so **linking this
+  package at all** demands the symbol, and bionic binds eagerly, so a missing
+  hook fails at `System.loadLibrary`.
 - `android_view`: umbrella module.
+
+The layout containers (`LinearLayout`, `RelativeLayout`, `ConstraintLayout`,
+`GridLayout`) are deliberately **not** bound: facet owns geometry on Android and
+positions children itself, so nothing calls them.
+
+### Regenerating
+
+```sh
+tools/regen.sh          # needs a JDK (JAVA_HOME) + $ANDROID_HOME
+```
 
 ## Host Contract
 
@@ -48,7 +70,7 @@ import "jni/jni" as jni;
 // `nativeCreateView` is a *static* native method, so JNI passes
 // (env, class, args...): the second parameter is the jclass, the third
 // is the MainActivity argument.
-pub extern fn Java_com_example_MainActivity_nativeCreateView(
+export extern fn Java_com_example_MainActivity_nativeCreateView(
     envp: *jni::JNIEnv,
     cls: jni::jobject,
     activity_obj: jni::jobject,
@@ -56,12 +78,11 @@ pub extern fn Java_com_example_MainActivity_nativeCreateView(
     let env: av::Env = av::from_native(envp);
     let act: av::Activity = av::Activity::from_borrowed(env, activity_obj);
 
-    var root: av::LinearLayout = av::LinearLayout::new(env, act.as_context());
-    root.set_orientation(av::orientation_vertical());
+    var root: av::ViewGroup = av::ViewGroup::from_local(env, /* your host view */);
 
-    let title: av::TextView = av::TextView::new(env, act.as_context());
-    title.set_text(#str_ptr("Hello from C+\0"));
-    root.add_view(title.as_view_obj());
+    var title: av::TextView = av::TextView::new_context(env, act.as_context());
+    title.set_text_str(#str_ptr("Hello from C+\0"));
+    root.add_view_view(title.as_obj());
 
     return root.into_raw();
 }
@@ -106,7 +127,7 @@ import "android_view/listener" as listener;
 listener::set_on_click(env, button.as_view_obj(), 1 as i64);
 
 // every adapter click lands here; `token` routes controls:
-pub extern fn cplus_on_click(envp: *jni::JNIEnv, token: i64, view: jni::jobject) { ... }
+export extern fn cplus_on_click(envp: *jni::JNIEnv, token: i64, view: jni::jobject) { ... }
 ```
 
 Validated on the emulator: taps reach the hook and a `setText` from C+
@@ -132,7 +153,7 @@ The C+ side wires it with `button.set_on_click(#str_ptr("com/example/app/NativeC
 and exports the matching `Java_..._nativeOnClick` handler:
 
 ```cplus
-pub extern fn Java_com_example_app_NativeClickListener_nativeOnClick(
+export extern fn Java_com_example_app_NativeClickListener_nativeOnClick(
     envp: *jni::JNIEnv,
     cls: jni::jobject,
     token: i64,

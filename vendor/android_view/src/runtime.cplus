@@ -30,6 +30,43 @@ fn from_native(envp: *jni::JNIEnv) -> Env {
     return Env { _env: envp };
 }
 
+// ---- the resolve cache -------------------------------------------------
+// MEASURED (plan.android.md rung 1): resolving a class and a method on every
+// call cost a clean 2x on a 400-node mount — 21.8 ms against 10.4 ms for the
+// same JNI calls with ids held. `method()` is the single door every wrapper in
+// this package goes through, so caching here fixes all of them at once and
+// changes no call site.
+//
+// The keys are POINTER IDENTITY on the descriptor strings, not their contents.
+// Every call site passes a `#str_ptr("...\0")` literal, which lives in .rodata
+// at one fixed address, so the same site always hashes to the same slot and two
+// different sites that happen to spell the same class simply get two entries.
+// Comparing bytes would be correct too, and slower for no gain.
+//
+// Never evicted: the set of call sites in a program is finite and small. A full
+// table falls back to the old uncached path rather than thrashing.
+//
+// UI-THREAD ONLY, like everything else here. A JNIEnv is per-thread and
+// `FindClass` resolves against the calling thread's classloader; this table
+// has no lock and wants none.
+
+const CLS_SLOTS: usize = 64;
+const MID_SLOTS: usize = 256;
+
+struct ClassCache { key: [usize; 64], val: [usize; 64] }
+struct MethodCache { ka: [usize; 256], kb: [usize; 256], kc: [usize; 256], val: [usize; 256] }
+
+static CLASSES: ClassCache = #zero::[ClassCache]();
+static METHODS: MethodCache = #zero::[MethodCache]();
+
+fn mix3(a: usize, b: usize, c: usize) -> usize {
+    var h: usize = a >> (4 as usize);
+    h = h ^ (b >> (3 as usize));
+    h = h ^ (c >> (5 as usize));
+    h = h ^ (h >> (11 as usize));
+    return h & (MID_SLOTS -% (1 as usize));
+}
+
 impl Env {
     fn raw(this) -> *jni::JNIEnv {
         return this._env;
@@ -45,6 +82,20 @@ impl Env {
 
     fn method_id(this, cls: jni::jclass, name: *u8, sig: *u8) -> jni::jmethodID {
         return { (*(*this._env)).GetMethodID(this._env, cls, name, sig) };
+    }
+
+    // The static counterpart. Unreachable before the interface table's static
+    // block was typed (plan.android.md rung 0).
+    fn method_id_static(this, cls: jni::jclass, name: *u8, sig: *u8) -> jni::jmethodID {
+        return { (*(*this._env)).GetStaticMethodID(this._env, cls, name, sig) };
+    }
+
+    fn field_id(this, cls: jni::jclass, name: *u8, sig: *u8) -> jni::jfieldID {
+        return { (*(*this._env)).GetFieldID(this._env, cls, name, sig) };
+    }
+
+    fn static_field_id(this, cls: jni::jclass, name: *u8, sig: *u8) -> jni::jfieldID {
+        return { (*(*this._env)).GetStaticFieldID(this._env, cls, name, sig) };
     }
 
     fn pending_exception(this) -> jni::jthrowable {
@@ -73,32 +124,75 @@ impl Env {
         return { (*(*this._env)).NewStringUTF(this._env, utf8) };
     }
 
+    // A class, resolved once and held as a GLOBAL ref — which is also what
+    // keeps every jmethodID derived from it valid, since a method id dies with
+    // its class.
+    fn class_cached(this, class_name: *u8) -> jni::jclass {
+        let k: usize = { #addr(class_name) };
+        var i: usize = (k >> (4 as usize)) & (CLS_SLOTS -% (1 as usize));
+        var probes: usize = 0 as usize;
+        while probes < CLS_SLOTS {
+            let key: usize = CLASSES.key[i];
+            if key == k { return { CLASSES.val[i] as *u8 }; }
+            if key == (0 as usize) {
+                let local: jni::jclass = this.find_class(class_name);
+                let g: jni::jobject = this.retain_local_as_global(local);
+                CLASSES.key[i] = k;
+                CLASSES.val[i] = { #addr(g) };
+                return g;
+            }
+            i = (i +% (1 as usize)) & (CLS_SLOTS -% (1 as usize));
+            probes = probes +% (1 as usize);
+        }
+        return this.find_class(class_name);
+    }
+
     fn method(this, class_name: *u8, name: *u8, sig: *u8) -> jni::jmethodID {
-        let cls: jni::jclass = this.find_class(class_name);
-        let mid: jni::jmethodID = this.method_id(cls, name, sig);
-        this.delete_local_ref(cls);
-        return mid;
+        let ka: usize = { #addr(class_name) };
+        let kb: usize = { #addr(name) };
+        let kc: usize = { #addr(sig) };
+        var i: usize = mix3(ka, kb, kc);
+        var probes: usize = 0 as usize;
+        while probes < MID_SLOTS {
+            if METHODS.ka[i] == ka {
+                if METHODS.kb[i] == kb {
+                    if METHODS.kc[i] == kc { return { METHODS.val[i] as *u8 }; }
+                }
+            }
+            if METHODS.ka[i] == (0 as usize) {
+                let cls: jni::jclass = this.class_cached(class_name);
+                let mid: jni::jmethodID = this.method_id(cls, name, sig);
+                METHODS.ka[i] = ka;
+                METHODS.kb[i] = kb;
+                METHODS.kc[i] = kc;
+                METHODS.val[i] = { #addr(mid) };
+                return mid;
+            }
+            i = (i +% (1 as usize)) & (MID_SLOTS -% (1 as usize));
+            probes = probes +% (1 as usize);
+        }
+        // Table full — the old uncached path, still correct.
+        let cls2: jni::jclass = this.find_class(class_name);
+        let mid2: jni::jmethodID = this.method_id(cls2, name, sig);
+        this.delete_local_ref(cls2);
+        return mid2;
     }
 
     fn new_object_0(this, class_name: *u8, ctor_sig: *u8) -> jni::jobject {
-        let cls: jni::jclass = this.find_class(class_name);
-        let ctor: jni::jmethodID = this.method_id(cls, #str_ptr("<init>\0"), ctor_sig);
-        let obj: jni::jobject = {
+        let cls: jni::jclass = this.class_cached(class_name);
+        let ctor: jni::jmethodID = this.method(class_name, #str_ptr("<init>\0"), ctor_sig);
+        return {
             (*(*this._env)).NewObjectA(this._env, cls, ctor, 0 as *jni::JValue)
         };
-        this.delete_local_ref(cls);
-        return obj;
     }
 
     fn new_object_1(this, class_name: *u8, ctor_sig: *u8, arg0: jni::JValue) -> jni::jobject {
-        let cls: jni::jclass = this.find_class(class_name);
-        let ctor: jni::jmethodID = this.method_id(cls, #str_ptr("<init>\0"), ctor_sig);
+        let cls: jni::jclass = this.class_cached(class_name);
+        let ctor: jni::jmethodID = this.method(class_name, #str_ptr("<init>\0"), ctor_sig);
         var args: [jni::JValue; 1] = [arg0];
-        let obj: jni::jobject = {
+        return {
             (*(*this._env)).NewObjectA(this._env, cls, ctor, #addr_of(args[0]))
         };
-        this.delete_local_ref(cls);
-        return obj;
     }
 
     fn call_void_0(this, obj: jni::jobject, class_name: *u8, name: *u8, sig: *u8) {
@@ -128,14 +222,14 @@ impl Env {
 
     fn call_object_0(this, obj: jni::jobject, class_name: *u8, name: *u8, sig: *u8) -> jni::jobject {
         let mid: jni::jmethodID = this.method(class_name, name, sig);
-        return { (*(*this._env)).CallObjectMethodA(this._env, obj, mid, 0 as *u8) };
+        return { (*(*this._env)).CallObjectMethodA(this._env, obj, mid, 0 as *jni::JValue) };
     }
 
     fn call_object_1(this, obj: jni::jobject, class_name: *u8, name: *u8, sig: *u8, arg0: jni::JValue) -> jni::jobject {
         let mid: jni::jmethodID = this.method(class_name, name, sig);
         var args: [jni::JValue; 1] = [arg0];
         return {
-            (*(*this._env)).CallObjectMethodA(this._env, obj, mid, #addr_of(args[0]) as *u8)
+            (*(*this._env)).CallObjectMethodA(this._env, obj, mid, #addr_of(args[0]))
         };
     }
 
@@ -171,6 +265,45 @@ fn arg_bool(v: bool) -> jni::JValue {
 
 fn arg_long(v: i64) -> jni::JValue {
     return jni::arg_long(v as jni::jlong);
+}
+
+// The cache's index maths is pure and testable without a JVM; the lookup
+// itself needs one and is proved on-device by the rung-1 bench.
+
+#[test]
+fn mix3_stays_inside_the_table() {
+    // Every index must land in [0, MID_SLOTS) or the probe loop walks off the
+    // arrays. Includes the degenerate all-zero key and a high-bit address.
+    assert mix3(0 as usize, 0 as usize, 0 as usize) < MID_SLOTS;
+    assert mix3(1 as usize, 2 as usize, 3 as usize) < MID_SLOTS;
+    let high: usize = { 18446744073709551615u64 as usize };
+    assert mix3(high, high, high) < MID_SLOTS;
+    return;
+}
+
+#[test]
+fn mix3_is_deterministic() {
+    // The same call site must hash to the same slot every time, or the cache
+    // would miss forever and silently do nothing but cost memory.
+    let a: usize = 140737488355328 as usize;
+    let b: usize = 140737488355360 as usize;
+    let c: usize = 140737488355400 as usize;
+    assert mix3(a, b, c) == mix3(a, b, c);
+    return;
+}
+
+#[test]
+fn mix3_separates_sites_that_share_two_keys() {
+    // Negative case: two methods of the SAME class differing only in name must
+    // not collapse to one index, or `setText` would return `setTextSize`'s id.
+    // (A collision would still be CORRECT — the probe compares all three keys —
+    // but it would cost a probe on every lookup.)
+    let cls: usize = 140737488355328 as usize;
+    let sig: usize = 140737488355600 as usize;
+    let n1: usize = 140737488355360 as usize;
+    let n2: usize = 140737488355392 as usize;
+    assert mix3(cls, n1, sig) != mix3(cls, n2, sig);
+    return;
 }
 
 // Host-runnable tests for the pure arg-encoding boundary (no JVM needed):
