@@ -154,6 +154,47 @@ provide:
 Requires an SDK shipping the framework (e.g. CoreAI needs Xcode 27+); select it
 with `DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer`.
 
+### Java / Android classes (`--java`)
+
+```
+cpc-bindgen --java --java-classpath $ANDROID_HOME/platforms/android-36/android.jar \
+    android.view.View android.view.ViewGroup android.widget.TextView android.widget.Button \
+    > bindings.cplus
+```
+
+The metadata source is `javap -s`, shelled out to the way C/ObjC mode shells out
+to clang. Java's metadata is *more* machine-readable than ObjC's, not less: a
+class file stores the JVM descriptor verbatim, so `(Ljava/lang/String;)V` — the
+exact string `GetMethodID` wants — is **read, never synthesized**.
+
+Requires a JDK. `JAVA_HOME` is honoured; otherwise `javap` must be on `PATH`.
+(Android Studio ships one at
+`/Applications/Android Studio.app/Contents/jbr/Contents/Home`.)
+
+Emits, per class, a struct owning a JNI **global** ref — so an instance stays
+valid after the native call that created it returns — plus `drop`,
+`from_local`, `from_global`, `as_obj`, `into_raw`, and one function per
+constructor, method and primitive field. Output depends on `vendor/jni` and
+`vendor/android_view` (for `rt::Env`).
+
+Three behaviours worth knowing:
+
+- **Calls route through `rt::Env::method`, which caches.** Emitting a bare
+  `FindClass` + `GetMethodID` per call site measured a clean 2x slower on a
+  400-node mount (`plans/plan.android.md` rung 1). A test pins this.
+- **Overloads all get a parameter-type suffix**, never just the extra ones:
+  `setText(CharSequence)` and `setText(int)` become `set_text_str` and
+  `set_text_i`, and neither is `set_text`. A later SDK adding an overload
+  therefore cannot silently change what an existing binding means.
+- **`javap` lists DECLARED members only**, so `TextView` has no `setVisibility`
+  of its own. When a superclass is part of the same run it becomes a typed
+  upcast — `text_view.as_view().set_visibility(0)` — the same shape the ObjC
+  mode uses. Name the superclasses you need.
+
+Measured on `android-36`: `View`, `ViewGroup`, `TextView`, `Button` produce
+9,415 lines, 1,380 items, 59 `// SKIPPED` (all of them object-typed static
+fields, which are reachable through their accessors).
+
 ## Flags
 
 - `--objc`: Objective-C mode. Without it the input is treated as C.

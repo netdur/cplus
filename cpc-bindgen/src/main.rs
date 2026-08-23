@@ -24,6 +24,7 @@
 
 mod framework;
 mod gir;
+mod java;
 mod objc;
 mod swift;
 
@@ -50,6 +51,11 @@ fn main() {
     let mut c_headers: Vec<String> = Vec::new();
     let mut c_links: Vec<String> = Vec::new();
     let mut c_search_paths: Vec<String> = Vec::new();
+    // `--java` binds JVM classes through `javap -s` — the Android/JVM analog
+    // of --objc (clang AST) and --gobject (GIR).
+    let mut java_mode = false;
+    let mut java_classpath = String::new();
+    let mut java_runtime = "android_view/runtime".to_string();
     let mut swift_mode = false;
     let mut bridge_mode = false;
     let mut bridge_spec_path: Option<String> = None;
@@ -211,6 +217,31 @@ fn main() {
                 i += 1;
                 continue;
             }
+            if a == "--java" {
+                java_mode = true;
+                i += 1;
+                continue;
+            }
+            if a == "--java-classpath" {
+                java_classpath = raw.get(i + 1).cloned().unwrap_or_default();
+                i += 2;
+                continue;
+            }
+            if let Some(p) = a.strip_prefix("--java-classpath=") {
+                java_classpath = p.to_string();
+                i += 1;
+                continue;
+            }
+            if a == "--java-runtime" {
+                java_runtime = raw.get(i + 1).cloned().unwrap_or_default();
+                i += 2;
+                continue;
+            }
+            if let Some(p) = a.strip_prefix("--java-runtime=") {
+                java_runtime = p.to_string();
+                i += 1;
+                continue;
+            }
             if a == "--prefix" {
                 prefix = raw.get(i + 1).cloned().unwrap_or_default();
                 i += 2;
@@ -280,6 +311,34 @@ fn main() {
         clang_args.push(a.clone());
         i += 1;
     }
+    // Java mode: bind JVM classes (no clang; `javap -s` is the metadata source,
+    // and a class file already stores the exact JNI descriptor).
+    if java_mode {
+        let mut classes: Vec<String> = Vec::new();
+        if let Some(h) = &header {
+            classes.push(h.clone());
+        }
+        for a in &clang_args {
+            if !a.starts_with('-') {
+                classes.push(a.clone());
+            }
+        }
+        if classes.is_empty() {
+            eprintln!("cpc-bindgen --java: name at least one class (e.g. android.widget.TextView)");
+            std::process::exit(2);
+        }
+        match java::generate(&java_classpath, &classes, &java_runtime) {
+            Ok(src) => {
+                print!("{src}");
+                std::process::exit(0);
+            }
+            Err(e) => {
+                eprintln!("cpc-bindgen --java: {e}");
+                std::process::exit(1);
+            }
+        }
+    }
+
     // Framework mode: generate a whole package from an Apple system framework
     // (no single header — the framework's umbrella header drives discovery).
     if let Some(fw) = &framework {
