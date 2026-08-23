@@ -22,7 +22,7 @@ document fixes the *categories* and the load-bearing error codes
 it are deliberate and ship as versioned, archived releases. v0.0.24
 realigned the core vocabulary; most new capability otherwise lives in
 packages and tooling rather than the core language. This document
-describes the surface as of v0.0.24.
+describes the surface as of the version stamped above.
 
 ### 0.1 Notation
 
@@ -54,11 +54,28 @@ rules.
 ```
 // line comment — to end of line
 /* block comment — nests */
+/// doc comment — to end of line
 ```
 
 Block comments nest. An unterminated block comment is an error
 (**E0002**). Comments are trivia (discarded), except that `cpc fmt`
 preserves them.
+
+A line beginning (after leading whitespace) with `///` is a **doc
+comment**. It is trivia to the grammar, but it has two defined effects:
+
+1. `cpc doc FILE` publishes it, attached to the next item, as Markdown.
+2. A fenced block inside it is extracted as a test. A fence opens and
+   closes on a line that trims to exactly three backticks; the fence body
+   becomes the body of a synthesized `#[test]` function named
+   `__doctest_<item>_<index>`, appended to the end of the file and
+   compiled with it. Discovery reports it as `DOC_TEST::<item>::<index>`.
+   A fence line carrying an info string (` ```cplus `) does **not** open a
+   fence, and an unterminated fence is discarded.
+
+The item a doc comment attaches to is the next `fn`, `struct`, `enum`, or
+`impl` header, skipping blank lines, ordinary comments, and attribute
+lines.
 
 ### 1.3 Tokens
 
@@ -307,6 +324,43 @@ build driver (`cpc build`, reading `Cplus.toml`) performs resolution;
 `cpc check FILE` does not read the manifest and rejects imported modules
 (**E0852**) — it is for single-file, import-free snippets.
 
+Imports are file-leading: an `import` appearing after the first
+non-import item is an error.
+
+#### Platform-variant resolution
+
+Every resolved import path is subject to one final rewrite. Let *P* be the
+active target's platform name (§19) and *S* the ordered suffix list for
+*P*: `["_android", "_linux"]` when *P* is `android`, and `["_" + P]`
+otherwise. For a resolved path whose file stem is *stem*:
+
+1. If *stem* already ends with any suffix in *S*, the path is used as-is.
+2. Otherwise, for each suffix in order, if a file named
+   `<stem><suffix>.cplus` exists in the same directory, that file is the
+   resolved module.
+3. Otherwise the original path is used.
+
+The rewrite is transparent: the importing file names the base module and
+is compiled against exactly one variant. The base file need not exist — a
+module may be present only as platform variants — in which case a platform
+matching no suffix fails with the ordinary not-found diagnostic
+(**E0401**) naming the base path.
+
+Nothing checks that the variants declare the same names. A name present in
+only one variant is a resolution error on the platforms that lack it, and
+is not diagnosed when compiling for a platform that has it.
+
+The suffix is a property of the **target**, not of the compiling host: a
+`--target ios-arm64` build performed on macOS selects `_ios` variants.
+The Android fallback to `_linux` exists because Android's kernel interface
+is Linux's; a real `_android` file takes precedence where the platforms
+genuinely differ.
+
+A `.cplus` file under a package's `src/` that no import reaches is
+reported (**W0005**). Files whose stem ends in any platform suffix are
+exempt from that report, since being unreachable on the current target is
+their purpose.
+
 ### 3.2 Paths
 
 A qualified name uses `::`: `math::area`, `Color::Red`,
@@ -525,8 +579,10 @@ Three sugar forms bind patterns outside `match`; all are lowered to
 - **`while let PAT = E { ... }`** — loops while the pattern matches.
 - **`guard let PAT = E else { ... };`** — the else block MUST diverge
   (**E0348**); on success the bindings live in the enclosing scope. The
-  `else |COMPLEMENT|` form must cover the scrutinee exhaustively
-  (**E0349**/**E0350**).
+  `else |COMPLEMENT|` form must cover the scrutinee exhaustively and must
+  not overlap the success pattern. The form lowers to a `let` + `match`
+  pair (§18), so exhaustiveness is reported by the `match` check
+  (**E0340**); an overlapping complement is **E0350**.
 
 Each form also takes `var` in place of `let`, mirroring plain local
 bindings: `let` bindings are frozen, `var` bindings are mutable. `guard
@@ -640,13 +696,33 @@ and/or a return-type ascription. An unknown intrinsic is **E0905**.
 | Intrinsic | Result |
 |---|---|
 | `#size_of::[T]()` / `#align_of::[T]()` | layout of `T` (`usize`) |
+| `#zero::[T]()` | a value of `T` with every byte zero |
 | `#addr_of(place)` | address of a place as a `*T` |
 | `#addr(p)` | raw pointer → `usize` (the loud ptr-to-int form) |
-| `#str_ptr(s)` / `#str_from_raw_parts(p, n)` | `str` ↔ raw parts |
+| `#str_ptr(s)` / `#str_len(s)` / `#str_from_raw_parts(p, n)` | `str` ↔ raw parts |
 | `#slice_ptr(s)` / `#slice_len(s)` / `#slice_from_raw_parts(p, n)` | slice parts |
-| `#msg_send(recv, "sel") -> T` | Objective-C message send (interop) |
+| `#bswap16/32/64`, `#htons`, `#htonl`, `#ntohs`, `#ntohl` | byte-order builtins |
+| `#selector("name")` / `#msg_send(recv, "sel") -> T` | Objective-C selector and message send (interop) |
 | `#asm("tmpl", ...)` | inline assembly (Tier 1 bare, Tier 2 operands) |
+| `#cpu_relax()` | spin-loop hint; per-arch lowering, no-op where absent |
 | `#println(...)` / `#print(...)` | formatted output builtins |
+| `#compile_shader("path", "lang")` | run the platform shader compiler at build time → `*[u8; N]` |
+
+Three intrinsics report the **active target** (§19) as a `str` constant,
+resolved at type-check time:
+
+| Intrinsic | Value |
+|---|---|
+| `#platform()` | the target's platform name — one of `macos`, `linux`, `windows`, `ios`, `android`, `esp32`, `wasm` |
+| `#arch()` | the target's architecture — one of `aarch64`, `x86_64`, `xtensa`, `riscv32`, `wasm32` |
+| `#target()` | the target's spec name, e.g. `host`, `ios-arm64`, `ios-arm64-simulator` |
+
+Each is value-level: both arms of a conditional over one are compiled for
+every target, so no such conditional can suppress an import. Varying the
+set of imports across platforms is the file-resolution rule of §3.1.
+`#arch()` is orthogonal to `#platform()` rather than a refinement of it,
+and `#target()` is the only one of the three that distinguishes an iOS
+simulator target from an iOS device target.
 
 Three compile-time *file* builtins read at build time, resolving paths
 relative to the containing source file:
@@ -691,22 +767,34 @@ Attributes are `#[name]` or `#[name(args)]`, attached to items (or, for
 loop hints, to loop statements). They are **pure metadata** read by
 compiler passes or tools; they never themselves transform the AST.
 
-| Attribute | Effect |
-|---|---|
-| `#[test]` | marks a test fn for `cpc test` |
-| `#[inline]` | inlining hint |
-| `#[repr(C)]` | C-compatible struct layout |
-| `#[no_alloc]` | forbid heap allocation in the fn (compile-checked) |
-| `#[no_block]` | forbid blocking calls |
-| `#[bounded_recursion]` | require statically-bounded recursion |
-| `#[max_stack(N)]` | bound stack usage |
-| `#[realtime]` | compose the real-time contract set (§15) |
-| `#[naked]` | naked function (no prologue/epilogue) |
-| `#[unroll(N)]` / `#[vectorize_width(N)]` | loop-statement hints |
-| `#[deprecated("...")]` / `#[link(...)]` | metadata |
+| Attribute | Legal on | Effect |
+|---|---|---|
+| `#[test]` | fn | marks a test fn for `cpc test`; signature `fn()` or `fn() -> i32` (**E0358**), not `export` (**E0359**) |
+| `#[inline]` / `(always)` / `(never)` | fn, method | inlining hint |
+| `#[repr(...)]` | struct, union, enum | `C`, `packed`, `packed = N` for aggregates; an integer width for a payload-free enum |
+| `#[bits(N)]` | integer field | C bitfield inside a `#[repr(C)]` aggregate |
+| `#[link_name = "sym"]` | extern fn | bind the declaration to a specific linker symbol |
+| `#[requires(expr)]` / `#[ensures(expr)]` | fn, method | contracts checked at entry / at every return; `result` names the return value. The expression must be pure (**E0924**) |
+| `#[no_alloc]` | fn, method | forbid heap allocation in the fn and everything it calls |
+| `#[no_block]` | fn, method | forbid blocking calls, transitively |
+| `#[bounded_recursion]` | fn, method | require statically-bounded recursion |
+| `#[max_stack(N)]` | fn, method | bound the estimated stack frame |
+| `#[realtime]` | fn, method | compose the real-time contract set (§15) |
+| `#[naked]` | fn, method | no prologue/epilogue; the body must be inline `#asm` (**E0909**) |
+| `#[unroll(N)]` / `#[vectorize_width(N)]` | loop statement | optimizer hints |
+| `#[keeps(this)]` / `#[keeps(nothing)]` | fn, method | declared view-flow summary for a body the checker cannot read through (§6.2). Trusted, not verified |
+| `#[watch]` | struct | every store to a field is followed by a call to the struct's `fn on_value(ref this, field: str)`. A missing hook is **E0361**; a wrong signature is **E0362** |
+| `#[runtime_abi]` | fn | the declaration deliberately names a compiler-generated `__cplus_*` symbol. The prefix is reserved; claiming it without the marker is **E0919** |
+| `#[lang("name")]` | struct, enum | designates the one declaration the compiler treats as a well-known type. The recognized names are fixed |
+| `#[deprecated]` / `#[deprecated("note")]` | fn, method, struct, enum, field, variant | **W0006** at each use, carrying the note |
 
-Invalid attribute placement or arguments are the **E09xx** attribute
-family.
+No attribute is legal on an `interface`.
+
+Attribute-shape diagnostics are: unknown name **E0354** (with a
+did-you-mean), bad argument shape **E0355**, wrong target **E0356**,
+illegal duplicate **E0357**. Rules that need type information — a
+`#[test]` signature, a `#[watch]` hook, a `#[naked]` body — are checked
+later and carry their own codes.
 
 ---
 
@@ -893,7 +981,18 @@ under `target/<target-name>/<mode>/`.
 
 The **embedded package profile** (32-bit targets) gates stdlib modules
 that require an OS thread/reactor (**E0866**) and rejects `async fn`
-(**E0867**).
+(**E0867**). The gated set for the ESP32 targets is `thread`, `mutex`,
+`channel`, `env`, `net`, `netsys`, `reactor`, `executor`, `time`, `fs`.
+
+Every target also has a **platform name** — `macos`, `linux`, `windows`,
+`ios`, `android`, `esp32`, `wasm` — which is an OS family rather than a
+target: `ios-arm64` and `ios-arm64-simulator` are both `ios`. The platform
+name is the vocabulary of three separate mechanisms, and they use it
+identically: the `_<platform>.cplus` file-resolution rule (§3.1), a
+manifest's `[<platform>]` and `[<platform>.dependencies]` sections, and
+the `#platform()` intrinsic (§12). Importing a package a manifest declares
+for other platforms only is **E0866**; building an app for a platform that
+declares no entry, when any platform entry is declared, is **E0413**.
 
 ---
 
@@ -907,7 +1006,7 @@ span, and optional labels/notes/suggestions. Codes group by phase:
 | `E0001`–`E0005` | lexical (unexpected char, unterminated comment/string, bad number) |
 | `E00XX`, `E01XX` | parser (generic), builder-block parse |
 | `E0300`–`E033x` | types, inference, casts, fields, calls (`E0302` type mismatch, `E0315` illegal cast, `E0320` no such field, `E0333` missing return) |
-| `E0340`–`E0360` | `match`, pattern-let, `break`/`continue` context (`E0347`–`E0352` pattern-let, `E0353` break/continue outside loop) |
+| `E0340`–`E0360` | `match`, pattern-let, `break`/`continue` context (`E0347`–`E0352` pattern-let, `E0353` break/continue outside loop). `E0349` and `E0360` are reserved and unused |
 | `E0370`–`E0385` | borrow conflicts, moves |
 | `E0401`–`E0412` | modules, paths, visibility (`E0403` private, `E0404`/`E0405` unknown item) |
 | `E0500`–`E0513` | ownership/borrow checker, `Send` (`E0502`), raw-pointer accountability (`E0510`), escaping view (`E0513`) |
@@ -932,8 +1031,9 @@ document is in error — please report it.
 
 ### 21.1 Tooling surface (informative)
 
-- `cpc build` / `cpc check` / `cpc run` — compile / type-check / run.
-- `cpc test` — run `#[test]` functions.
+- `cpc build` / `cpc check` — compile / type-check. There is no `cpc run`:
+  a build writes an artifact and you invoke it.
+- `cpc test` — run `#[test]` functions and doctests.
 - `cpc fmt` — canonical formatter; if source does not round-trip, it is
   syntactically off.
 - `cpc query` / `cpc mcp` / `cpc lsp` — the resolved, typed
@@ -941,4 +1041,8 @@ document is in error — please report it.
   builds once, takes unsaved buffers (`did_change`), and refreshes on
   demand (`reload`).
 - `cpc doc` — extract public (non-`_`) items and their `///` docs.
-```
+- `cpc explain CODE` — the diagnostic catalog (§20), offline.
+- `cpc headers` — `lib/include/` declaration files for a package.
+- `cpc pm` — resolve dependencies into the per-user store.
+
+The complete surface, with flags, is `docs/lang/tooling.md`.

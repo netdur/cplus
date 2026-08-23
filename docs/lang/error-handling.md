@@ -74,7 +74,8 @@ fn load(path: str) -> i32 {
 - The `else` must diverge: `return`, `break`, `continue`, or a trap.
 - When the failure payload matters, take the **complement form** — the else
   receives what the primary pattern didn't match, and the two patterns
-  together must cover the enum (E0349):
+  together must cover the enum — checked on the lowered `match`, so a gap
+is reported as E0340 and an overlap as E0350:
 
 ```cplus
 guard let Read::Ok(v) = read(s) else |Read::Err(code)| {

@@ -282,6 +282,9 @@ Answer one code-graph query as JSON. Kinds: `def SYMBOL`, `members TYPE`,
 `value-refs FILE:LINE:COL`, `scope-at FILE:LINE:COL`.
 Reads ./Cplus.toml; exit code signals found / not-found.
 
+`scope-at` is the completion query and omits `#[test]` functions. Every
+other kind still finds them; in `symbols` they carry `is_test: true`.
+
 Every kind pays the whole-project graph build (~2s). An editor asking on a
 keystroke wants `cpc mcp`, which builds once and answers from memory.
 "
