@@ -1257,13 +1257,7 @@ fn native_get_for_surface(surface: gdk::Surface) -> option::Option[Native] {
     return option::some(Native::from_raw(__r));
 }
 
-#[link_name = "gtk_ordering_from_cmpfunc"]
-extern fn __c_gtk_ordering_from_cmpfunc(cmpfunc_result: i32) -> i32;
-fn ordering_from_cmpfunc(cmpfunc_result: i32) -> i32 {
-    let __r: i32 = { __c_gtk_ordering_from_cmpfunc(cmpfunc_result) };
-    return __r;
-}
-
+// SKIPPED fn `ordering_from_cmpfunc`: `gtk_ordering_from_cmpfunc` is not exported by libgtk-4.so.1
 #[link_name = "gtk_paper_size_get_default"]
 extern fn __c_gtk_paper_size_get_default() -> *u8;
 fn paper_size_get_default() -> text::Text {
@@ -32267,4 +32261,4 @@ impl WindowHandle {
 }
 
 
-// cpc-bindgen --gobject: 5150 items emitted, 361 SKIPPED.
+// cpc-bindgen --gobject: 5149 items emitted, 362 SKIPPED.

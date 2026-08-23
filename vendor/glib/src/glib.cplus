@@ -3929,20 +3929,8 @@ fn thread_get_initialized() -> bool {
     return __r != (0 as i32);
 }
 
-#[link_name = "g_thread_init"]
-extern fn __c_g_thread_init(vtable: *u8);
-fn thread_init(vtable: *u8) {
-    { __c_g_thread_init(vtable) };
-    return;
-}
-
-#[link_name = "g_thread_init_with_errorcheck_mutexes"]
-extern fn __c_g_thread_init_with_errorcheck_mutexes(vtable: *u8);
-fn thread_init_with_errorcheck_mutexes(vtable: *u8) {
-    { __c_g_thread_init_with_errorcheck_mutexes(vtable) };
-    return;
-}
-
+// SKIPPED fn `thread_init`: `g_thread_init` is not exported by libgobject-2.0.so.0, libglib-2.0.so.0
+// SKIPPED fn `thread_init_with_errorcheck_mutexes`: `g_thread_init_with_errorcheck_mutexes` is not exported by libgobject-2.0.so.0, libglib-2.0.so.0
 #[link_name = "g_thread_pool_get_max_idle_time"]
 extern fn __c_g_thread_pool_get_max_idle_time() -> u32;
 fn thread_pool_get_max_idle_time() -> u32 {
@@ -9414,4 +9402,4 @@ impl VariantType {
 // === Classes ===
 
 
-// cpc-bindgen --gobject: 1704 items emitted, 412 SKIPPED.
+// cpc-bindgen --gobject: 1702 items emitted, 414 SKIPPED.

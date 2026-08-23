@@ -3024,7 +3024,7 @@ fn set_union(set: set_t, other: set_t) {
 
 // SKIPPED fn `shape`: param `features` — no <type> (array, callback, or varargs)
 // SKIPPED fn `shape_full`: param `features` — no <type> (array, callback, or varargs)
-// SKIPPED fn `shape_justify`: param `features` — no <type> (array, callback, or varargs)
+// SKIPPED fn `shape_justify`: `hb_shape_justify` is not exported by libharfbuzz-gobject.so.0, libharfbuzz.so.0
 // SKIPPED fn `shape_list_shapers`: return type — no <type> (array, callback, or varargs)
 // SKIPPED fn `shape_plan_create`: param `user_features` — no <type> (array, callback, or varargs)
 // SKIPPED fn `shape_plan_create2`: param `user_features` — no <type> (array, callback, or varargs)

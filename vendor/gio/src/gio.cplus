@@ -9112,10 +9112,8 @@ impl FilterOutputStream {
 
 #[link_name = "g_io_module_new"]
 extern fn __c_g_io_module_new(filename: *u8) -> *u8;
-#[link_name = "g_io_module_load"]
-extern fn __c_g_io_module_load(__recv: *u8);
-#[link_name = "g_io_module_unload"]
-extern fn __c_g_io_module_unload(__recv: *u8);
+// SKIPPED method `IOModule::load`: `g_io_module_load` is not exported by libgio-2.0.so.0
+// SKIPPED method `IOModule::unload`: `g_io_module_unload` is not exported by libgio-2.0.so.0
 // `IOModule` — GObject wrapper (non-owning handle); parent `GObject.TypeModule`.
 struct IOModule {
     opaque _raw: *u8,
@@ -9130,16 +9128,6 @@ impl IOModule {
         let __r: *u8 = { __c_g_io_module_new(__cs_filename) };
         bridge::free_cstring(__cs_filename);
         return IOModule::from_raw(__r);
-    }
-
-    fn load(this) {
-        { __c_g_io_module_load(this._raw) };
-        return;
-    }
-
-    fn unload(this) {
-        { __c_g_io_module_unload(this._raw) };
-        return;
     }
 
     // upcast to parent `GObject.TypeModule` (safe; the handle is-a GObject.TypeModule).
@@ -14503,4 +14491,4 @@ impl ZlibDecompressor {
 }
 
 
-// cpc-bindgen --gobject: 2097 items emitted, 384 SKIPPED.
+// cpc-bindgen --gobject: 2095 items emitted, 386 SKIPPED.

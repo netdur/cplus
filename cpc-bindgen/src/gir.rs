@@ -297,6 +297,133 @@ fn find_gir_file(arg: &str) -> Option<PathBuf> {
     None
 }
 
+/// The set of symbols a namespace's shared libraries actually EXPORT, plus a
+/// human-readable list of the libraries consulted. `None` when the check cannot
+/// be performed (no `shared-library` in the GIR, none of the libraries found, or
+/// no `nm` on this host) — the caller then binds everything, as before.
+///
+/// WHY THIS EXISTS. A GIR is not a symbol table. `g-ir-scanner` records the API
+/// a library DECLARES, from its headers and sources, and three kinds of entry
+/// come out the other side with a `c:identifier` that no `.so` ever exports:
+///
+///   - a `static inline` function the library deliberately shows the scanner.
+///     GTK does this on purpose and says so in `gtkenums.h`: under
+///     `__GI_SCANNER__` it declares a prototype for `gtk_ordering_from_cmpfunc`
+///     and otherwise defines it `static inline`.
+///   - a deprecated function REMOVED from the library whose GIR entry stayed
+///     (`g_thread_init`, gone since GLib 2.32).
+///   - the plugin side of an ABI, declared in the host's headers because a
+///     module must implement it (`g_io_module_load`), never defined by the host.
+///
+/// Binding one of those emits an `extern fn` for a symbol that does not exist.
+/// Nothing catches it until link time — and because cpc emits ONE OBJECT PER
+/// PACKAGE, the failure is not confined to the caller: any program that calls
+/// ANY function in the package drags in the whole object and fails on the dead
+/// reference. One bad binding breaks every consumer of the binding.
+///
+/// The GIR flag `introspectable="0"` is on all of these and is NOT a usable
+/// filter on its own — across GLib/Gio/Gtk it marks 469 functions, of which 464
+/// really do exist (variadics like `g_strdup_printf` carry it). Filtering on it
+/// would delete 464 working bindings to catch 5 broken ones. The library's own
+/// dynamic symbol table is the only ground truth, so that is what we read.
+fn exported_symbols(ns: &Node) -> Option<(HashSet<String>, String)> {
+    let attr = ns.attr("shared-library")?;
+    let direct: Vec<String> = attr
+        .split(',')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+    if direct.is_empty() {
+        return None;
+    }
+
+    // The closure over DT_NEEDED, not just the libraries the GIR names. A
+    // namespace routinely binds symbols that live in a sibling its own library
+    // depends on: cairo's GIR declares only `libcairo-gobject.so.2`, while
+    // `cairo_image_surface_create` is in `libcairo.so.2` underneath it. Reading
+    // only the named library would call that function nonexistent and delete a
+    // working binding — the one failure mode this check must not have, since a
+    // false positive silently removes API and a false negative only restores
+    // the status quo.
+    let mut syms = HashSet::new();
+    let mut queue: Vec<String> = direct.clone();
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut read_any = false;
+    while let Some(so) = queue.pop() {
+        if !seen.insert(so.clone()) {
+            continue;
+        }
+        let Some(path) = find_shared_library(&so) else {
+            continue;
+        };
+        let Ok(out) = std::process::Command::new("nm")
+            .args(["-D", "--defined-only", &path])
+            .output()
+        else {
+            return None; // no `nm` here — disable rather than guess
+        };
+        if !out.status.success() {
+            return None;
+        }
+        for line in String::from_utf8_lossy(&out.stdout).lines() {
+            let mut parts = line.split_whitespace();
+            let count = line.split_whitespace().count();
+            if count >= 3 {
+                if let Some(name) = parts.next_back() {
+                    syms.insert(name.split('@').next().unwrap_or(name).to_string());
+                }
+            }
+        }
+        read_any = true;
+        // Walk one hop further. If the dependency list cannot be read the
+        // closure is incomplete, and an incomplete closure produces exactly the
+        // false positives described above — so give up on the whole check.
+        let Ok(dp) = std::process::Command::new("objdump").args(["-p", &path]).output() else {
+            return None;
+        };
+        if !dp.status.success() {
+            return None;
+        }
+        for line in String::from_utf8_lossy(&dp.stdout).lines() {
+            let t = line.trim();
+            if let Some(rest) = t.strip_prefix("NEEDED") {
+                let need = rest.trim();
+                if !need.is_empty() {
+                    queue.push(need.to_string());
+                }
+            }
+        }
+    }
+    if !read_any || syms.is_empty() {
+        return None;
+    }
+    Some((syms, direct.join(", ")))
+}
+
+/// Locate a shared library by its soname (`libgtk-4.so.1`). Absolute or already
+/// on the loader path in the usual multiarch places; `None` when it is not
+/// installed, which is the normal case when generating on a host that does not
+/// have the GNOME stack.
+fn find_shared_library(so: &str) -> Option<String> {
+    let p = PathBuf::from(so);
+    if p.is_file() {
+        return Some(so.to_string());
+    }
+    for d in [
+        "/usr/lib/x86_64-linux-gnu",
+        "/usr/lib/aarch64-linux-gnu",
+        "/usr/lib64",
+        "/usr/lib",
+        "/usr/local/lib",
+    ] {
+        let c = PathBuf::from(d).join(so);
+        if c.is_file() {
+            return Some(c.to_string_lossy().into_owned());
+        }
+    }
+    None
+}
+
 /// Parse a GIR version stem (`"4.0"`, `"2.0"`) into comparable numeric parts;
 /// non-numeric segments sort as 0 so a numeric compare orders 4.0 > 2.0 > 1.
 fn parse_version(v: &str) -> Vec<u32> {
@@ -497,6 +624,10 @@ struct Emitter<'a> {
     /// Foreign namespaces mapped in via `--use` (namespace name -> its wrapper/
     /// enum sets + import alias), so `Gtk.Widget` resolves to `gtk4::Widget`.
     foreign: HashMap<String, Foreign>,
+    /// Symbols this namespace's shared libraries actually export, and the list
+    /// of libraries read. `None` disables the check (library not installed, or
+    /// no `nm`) — see `exported_symbols` for why the check exists at all.
+    symbols: Option<(HashSet<String>, String)>,
     /// In-namespace boxed `<record>` names (those with a `glib:type-name`).
     /// They're bound as opaque handles, but only where the C ABI passes them by
     /// pointer (`c:type` ends with `*`) — a by-value value-struct must not become
@@ -577,6 +708,7 @@ impl<'a> Emitter<'a> {
             seen_types: HashSet::new(),
             enum_types,
             foreign,
+            symbols: exported_symbols(ns),
             record_types,
             imported: Vec::new(),
             sig_shapes: HashSet::new(),
@@ -744,6 +876,21 @@ impl<'a> Emitter<'a> {
         }
     }
 
+    /// True (and records a SKIP) when `cid` is a symbol the shared library does
+    /// not export — see `exported_symbols`. False when the check is disabled,
+    /// so a host without the libraries generates exactly what it did before.
+    fn symbol_missing(&mut self, kind: &str, label: &str, cid: &str) -> bool {
+        let Some((syms, libs)) = &self.symbols else {
+            return false;
+        };
+        if syms.contains(cid) {
+            return false;
+        }
+        let libs = libs.clone();
+        self.skip(kind, label, &format!("`{cid}` is not exported by {libs}"));
+        true
+    }
+
     fn skip(&mut self, kind: &str, name: &str, reason: &str) {
         self.out.push_str(&format!("// SKIPPED {kind} `{name}`: {reason}\n"));
         self.skips += 1;
@@ -789,6 +936,9 @@ impl<'a> Emitter<'a> {
                 return;
             }
         };
+        if self.symbol_missing("fn", name, cid) {
+            return;
+        }
         // Return type.
         let rv = match f.child_named("return-value") {
             Some(r) => r,
@@ -1138,6 +1288,9 @@ impl<'a> Emitter<'a> {
             Some(c) => c,
             None => return,
         };
+        if self.symbol_missing("ctor", &format!("{ty}::{name}"), cid) {
+            return;
+        }
         let wname = ident(name);
         if !methods.insert(wname.clone()) {
             self.skip("ctor", &format!("{ty}::{name}"), &format!("method name `{wname}` already defined"));
@@ -1174,6 +1327,9 @@ impl<'a> Emitter<'a> {
             None => return,
         };
         let label = format!("{class}::{name}");
+        if self.symbol_missing("method", &label, cid) {
+            return;
+        }
         let rv = match m.child_named("return-value") {
             Some(r) => r,
             None => {
@@ -1703,6 +1859,85 @@ mod tests {
         let repo = root.child_named("repository").unwrap();
         let ns = repo.child_named("namespace").unwrap();
         Emitter::new(ns, "test.gir", foreign).run()
+    }
+
+    /// A GIR whose `shared-library` is real, declaring one function that the
+    /// library exports and one it does not. `strlen` is in every libc; the
+    /// other name cannot be.
+    const REAL_LIB: &str = r#"<?xml version="1.0"?>
+<repository>
+  <namespace name="Probe" version="1.0" shared-library="libc.so.6" c:identifier-prefixes="Probe">
+    <function name="len" c:identifier="strlen">
+      <return-value><type name="guint64" c:type="gsize"/></return-value>
+      <parameters><parameter name="s"><type name="guint64" c:type="gsize"/></parameter></parameters>
+    </function>
+    <function name="ghost" c:identifier="probe_symbol_that_cannot_exist_9f3a">
+      <return-value><type name="guint64" c:type="gsize"/></return-value>
+    </function>
+  </namespace>
+</repository>"#;
+
+    #[test]
+    fn a_c_identifier_the_library_does_not_export_is_skipped() {
+        // THE BUG THIS CLOSES: a GIR declares API, not symbols. GTK shows the
+        // scanner a prototype for `gtk_ordering_from_cmpfunc` and then defines
+        // it `static inline`; GLib kept `g_thread_init` in the GIR after
+        // deleting it; Gio declares `g_io_module_load`, which modules
+        // implement and libgio never defines. Each bound to an `extern fn` for
+        // a symbol that is not there, and since cpc emits one object per
+        // package, ONE of them fails the link of every program that calls
+        // anything in the package.
+        if find_shared_library("libc.so.6").is_none() {
+            return; // not a glibc host; the check is disabled there anyway
+        }
+        let out = emit(REAL_LIB);
+        assert!(
+            out.contains("// SKIPPED fn `ghost`"),
+            "a non-exported c:identifier must be skipped; got:\n{out}"
+        );
+        assert!(
+            out.contains("is not exported by libc.so.6"),
+            "the skip must name the library it consulted; got:\n{out}"
+        );
+        // ...and it must not be BOUND — the name may appear in the skip
+        // comment (that is the point of the comment), but never as a
+        // `#[link_name]` extern or an ergonomic wrapper.
+        assert!(!out.contains("#[link_name = \"probe_symbol_that_cannot_exist_9f3a\"]"));
+        assert!(!out.contains("fn ghost("));
+        // The real one is unaffected — this filter must not cost coverage.
+        assert!(out.contains("strlen"), "an exported symbol must still bind; got:\n{out}");
+    }
+
+    #[test]
+    fn the_symbol_check_disables_itself_when_it_cannot_run() {
+        // Generation must not depend on the target's libraries being installed
+        // on the GENERATOR's host: cpc-bindgen runs on macOS against GIRs that
+        // describe Linux libraries. With no `shared-library`, or one that is
+        // not installed, every declaration binds exactly as it did before.
+        let root = parse(MINI);
+        let ns = root
+            .child_named("repository")
+            .unwrap()
+            .child_named("namespace")
+            .unwrap();
+        assert!(exported_symbols(ns).is_none(), "no shared-library => no check");
+
+        let absent = MINI.replace(
+            "<namespace name=\"Test\"",
+            "<namespace shared-library=\"libnot_installed_9f3a.so.7\" name=\"Test\"",
+        );
+        let root = parse(&absent);
+        let ns = root
+            .child_named("repository")
+            .unwrap()
+            .child_named("namespace")
+            .unwrap();
+        assert!(
+            exported_symbols(ns).is_none(),
+            "an uninstalled library must disable the check, not skip everything"
+        );
+        // and the emitted output is unchanged by its presence
+        assert_eq!(emit(&absent), emit(MINI));
     }
 
     #[test]
