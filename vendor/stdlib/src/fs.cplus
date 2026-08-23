@@ -15,6 +15,10 @@ import "./net" as net;
 import "./netsys" as netsys;
 import "./iterator" as iterator;
 import "./text" as text;
+// The kernel-ABI half — `open` flag values, `mode_t`'s width, and the byte
+// layout of `struct stat` / `struct dirent`. Platform-overridden; everything in
+// THIS file is portable POSIX.
+import "./fs_sys" as fsys;
 
 // `open` is variadic in libc — mode is only consumed when O_CREAT is in
 // flags. The variadic decl matches the platform ABI exactly (on
@@ -27,19 +31,16 @@ extern fn close(fd: i32) -> i32;
 extern fn malloc(n: usize) -> *u8;
 extern fn free(p: *u8);
 
-// Directory + path ops. `mode_t` is `__uint16_t` on Darwin; `__error()` returns
-// the address of `errno` (the thread-local). `readdir` yields the 64-bit-inode
-// `struct dirent` (the default layout on modern macOS / Apple Silicon).
+// Directory + path ops. These take the same arguments and return the same
+// things on every target this package builds for. `mkdir` and `stat` do NOT —
+// their argument width and result layout are the platform's — so they live in
+// `./fs_sys` behind `make_dir` / `stat_*`.
 extern fn access(path: *u8, amode: i32) -> i32;
-extern fn mkdir(path: *u8, mode: u16) -> i32;
 extern fn unlink(path: *u8) -> i32;
 extern fn opendir(path: *u8) -> *u8;
 extern fn readdir(dirp: *u8) -> *u8;
 extern fn closedir(dirp: *u8) -> i32;
 extern fn strlen(s: *u8) -> usize;
-// Darwin arm64 exposes the 64-bit-inode stat as the bare `stat` symbol (on
-// x86_64 it is `stat$INODE64`; this build targets arm64 macOS).
-extern fn stat(path: *u8, buf: *u8) -> i32;
 
 // Owned file handle. `fd == -1` is the invalid / closed state (disarms Drop).
 struct File {
@@ -77,11 +78,10 @@ fn open_read(path: str) -> result::Result[File, result::IoError] {
 
 // Open `path` for writing, creating + truncating if missing. Mode 0o644.
 //
-// macOS flags: O_WRONLY = 0x001, O_CREAT = 0x200, O_TRUNC = 0x400.
-// Combined: 0x601 = 1537. (Linux numbers differ — Linux build is a Phase 1
-// stretch; see plan.md non-goals.)
+// The flag VALUES are per-platform (`./fs_sys`) — O_CREAT alone differs by a
+// factor of eight between Darwin and Linux.
 fn create(path: str) -> result::Result[File, result::IoError] {
-    let flags: i32 = 1537 as i32;
+    let flags: i32 = fsys::create_flags();
     let mode: i32 = 420 as i32;
     match c_path(path) {
         option::Option[text::CString]::Some(cp) => {
@@ -98,11 +98,8 @@ fn create(path: str) -> result::Result[File, result::IoError] {
 }
 
 // Open `path` for appending, creating it if missing. Mode 0o644.
-//
-// macOS flags: O_WRONLY = 0x001, O_CREAT = 0x200, O_APPEND = 0x008.
-// Combined: 0x209 = 521. (Linux numbers differ — same caveat as `create`.)
 fn open_append(path: str) -> result::Result[File, result::IoError] {
-    let flags: i32 = 521 as i32;
+    let flags: i32 = fsys::append_flags();
     let mode: i32 = 420 as i32;
     match c_path(path) {
         option::Option[text::CString]::Some(cp) => {
@@ -128,15 +125,16 @@ struct Metadata {
     is_dir: bool,   // (st_mode & S_IFMT) == S_IFDIR
 }
 
-// Fields are read straight out of the Darwin (arm64, 64-bit-inode) `struct stat`,
-// which is 144 bytes: st_mode is a u16 at byte 4; st_mtimespec.tv_sec an i64 at
-// byte 48; st_size an i64 at byte 96. S_IFMT = 0xF000, S_IFDIR = 0x4000.
+// The `struct stat` buffer is opaque here: its size and every field offset come
+// from `./fs_sys`, because both differ per platform (and, worse, the SIZE
+// happens to agree at 144 bytes while none of the offsets do). Only S_IFMT /
+// S_IFDIR are portable — 0xF000 / 0x4000 everywhere.
 fn metadata(path: str) -> result::Result[Metadata, result::IoError] {
     match c_path(path) {
         option::Option[text::CString]::Some(cp) => {
-            let buf: *u8 = { malloc(144 as usize) };
+            let buf: *u8 = { malloc(fsys::stat_buf_bytes()) };
             if buf == (0 as *u8) { return result::io_err::[Metadata](result::IoError::Other); }
-            let rc: i32 = { stat(cp.as_ptr(), buf) };
+            let rc: i32 = fsys::stat_path(cp.as_ptr(), buf);
             if rc != (0 as i32) {
                 let err: i32 = errno();
                 free(buf);
@@ -144,11 +142,11 @@ fn metadata(path: str) -> result::Result[Metadata, result::IoError] {
                 if err == (13 as i32) { return result::io_err::[Metadata](result::IoError::PermissionDenied); }
                 return result::io_err::[Metadata](result::IoError::Other);
             }
-            let mode: u16 = { *((buf + (4 as usize)) as *u16) };
-            let mtime: i64 = { *((buf + (48 as usize)) as *i64) };
-            let size: i64 = { *((buf + (96 as usize)) as *i64) };
+            let mode: u32 = fsys::stat_mode(buf);
+            let mtime: i64 = fsys::stat_mtime_secs(buf);
+            let size: i64 = fsys::stat_file_size(buf);
             free(buf);
-            let dir: bool = (mode & (0xF000 as u16)) == (0x4000 as u16);
+            let dir: bool = (mode & (0xF000 as u32)) == (0x4000 as u32);
             return result::io_ok::[Metadata](Metadata { size: size, mtime: mtime, is_dir: dir });
         }
         option::Option[text::CString]::None => {
@@ -390,7 +388,7 @@ fn exists(path: str) -> bool {
 fn create_dir(path: str) -> result::Result[bool, result::IoError] {
     match c_path(path) {
         option::Option[text::CString]::Some(cp) => {
-            let r: i32 = { mkdir(cp.as_ptr(), 493 as u16) };   // 0o755
+            let r: i32 = fsys::make_dir(cp.as_ptr(), 493 as u32);   // 0o755
             if r == (0 as i32) { return result::io_ok::[bool](true); }
             return result::io_err::[bool](errno_as_ioerror());
         }
@@ -428,7 +426,7 @@ fn create_dir_all(path: str) -> result::Result[bool, result::IoError] {
                     let _a: status::Status = prefix.append({ *seg });
                     match prefix.c_str() {
                         option::Option[text::CString]::Some(cs) => {
-                            let r: i32 = { mkdir(cs.as_ptr(), 493 as u16) };
+                            let r: i32 = fsys::make_dir(cs.as_ptr(), 493 as u32);
                             if r != (0 as i32) && errno() != (17 as i32) {   // not EEXIST
                                 return result::io_err::[bool](errno_as_ioerror());
                             }
@@ -486,10 +484,10 @@ fn read_dir(path: str) -> option::Option[vec::Vec[text::Text]] {
     var out: vec::Vec[text::Text] = vec::new::[text::Text]();
     var ent: *u8 = { readdir(dir) };
     while ent != { 0 as *u8 } {
-        // Darwin 64-bit-inode `struct dirent`: u64 d_ino, u64 d_seekoff,
-        // u16 d_reclen, u16 d_namlen, u8 d_type, then char d_name[] — the name
-        // is a NUL-terminated C string starting at byte offset 21.
-        let name_ptr: *u8 = { ent + (21 as usize) };
+        // `d_name` is a NUL-terminated C string, but at a per-platform offset
+        // into `struct dirent` (Darwin has a d_namlen field Linux does not), so
+        // the offset comes from `./fs_sys`.
+        let name_ptr: *u8 = fsys::dirent_name(ent);
         let len: usize = { strlen(name_ptr) };
         if !_is_dot_entry(name_ptr, len) {
             let name: str = { #str_from_raw_parts(name_ptr, len) };

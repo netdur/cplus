@@ -1,0 +1,59 @@
+// Linux/Android file-system ABI. The shadow of `fs_sys.cplus` — read that file
+// first; it says why these numbers live in a platform file at all.
+//
+// Verified against the host's own headers (x86_64 glibc 2.39 and bionic agree
+// on all of it): every offset below is `offsetof` on a real `struct stat` /
+// `struct dirent`, not a reading of the man page.
+//
+// GLIBC VERSION NOTE: `stat` is a real exported symbol from glibc 2.33 on. On
+// anything older the C library only published `__xstat`, and this file would
+// fail to LINK rather than silently misbehave — which is the failure mode we
+// want if it ever comes up.
+
+// Linux `mode_t` is `unsigned int`, not Darwin's `__uint16_t`.
+extern fn mkdir(path: *u8, mode: u32) -> i32;
+extern fn stat(path: *u8, buf: *u8) -> i32;
+
+// O_WRONLY = 0x1, O_CREAT = 0x40, O_TRUNC = 0x200 -> 0x241.
+fn create_flags() -> i32 { return 577 as i32; }
+
+// O_WRONLY = 0x1, O_CREAT = 0x40, O_APPEND = 0x400 -> 0x441.
+fn append_flags() -> i32 { return 1089 as i32; }
+
+fn make_dir(path: *u8, mode: u32) -> i32 {
+    return { mkdir(path, mode) };
+}
+
+// ---- struct stat -------------------------------------------------------------
+//
+// x86_64/aarch64 Linux: 144 bytes — the same SIZE as Darwin's and a completely
+// different layout, which is exactly why the Darwin offsets read plausible
+// garbage instead of faulting. st_mode is a u32 at byte 24, st_size an i64 at
+// byte 48, st_mtim.tv_sec an i64 at byte 88.
+
+fn stat_buf_bytes() -> usize { return 144 as usize; }
+
+fn stat_path(path: *u8, buf: *u8) -> i32 {
+    return { stat(path, buf) };
+}
+
+fn stat_mode(buf: *u8) -> u32 {
+    return { *((buf + (24 as usize)) as *u32) };
+}
+
+fn stat_mtime_secs(buf: *u8) -> i64 {
+    return { *((buf + (88 as usize)) as *i64) };
+}
+
+fn stat_file_size(buf: *u8) -> i64 {
+    return { *((buf + (48 as usize)) as *i64) };
+}
+
+// ---- struct dirent -----------------------------------------------------------
+
+// Linux `struct dirent`: u64 d_ino, i64 d_off, u16 d_reclen, u8 d_type, then
+// char d_name[256] at byte 19 — two bytes earlier than Darwin, which has a
+// d_namlen field Linux does not.
+fn dirent_name(ent: *u8) -> *u8 {
+    return { ent + (19 as usize) };
+}

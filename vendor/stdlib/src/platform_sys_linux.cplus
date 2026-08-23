@@ -7,11 +7,11 @@
 
 import "./text" as text;
 
-// `uname(2)`. `struct utsname` is five NUL-terminated char arrays laid out
-// back to back; on Linux each is `_UTSNAME_LENGTH` == 65 bytes. The buffer is
-// treated as opaque bytes here and indexed by field offset rather than
-// declared as a struct, because the layout is the ABI and a mis-declared
-// struct would be a silent buffer overrun.
+// `uname(2)`. `struct utsname` is SIX NUL-terminated char arrays laid out back
+// to back; on Linux each is `_UTSNAME_LENGTH` == 65 bytes, so the buffer is 390
+// bytes, not 325. The buffer is treated as opaque bytes here and indexed by
+// field offset rather than declared as a struct, because the layout is the ABI
+// and a mis-declared struct would be a silent buffer overrun.
 extern fn uname(buf: *u8) -> i32;
 extern fn sysconf(name: i32) -> i64;
 extern fn strlen(s: *u8) -> usize;
@@ -24,8 +24,14 @@ fn nprocessors_onln() -> i32 { return 84 as i32; }
 
 // One `struct utsname` field, in bytes.
 fn utsname_field() -> usize { return 65 as usize; }
-// sysname, nodename, release, version, machine — five fields.
-fn utsname_size() -> usize { return utsname_field() * (5 as usize); }
+// sysname, nodename, release, version, machine, DOMAINNAME — six fields, 390
+// bytes. The sixth is the one this file used to leave out, and leaving it out
+// is a 65-byte heap overflow on every single `os_version()` call: the kernel's
+// `new_utsname` has six fields and `uname(2)` writes all of them, whether or
+// not the caller's headers declare the last. It sat under a passing test —
+// the release string is field THREE, so the answer looked right while the
+// write ran off the end of the allocation. ASan is what found it.
+fn utsname_size() -> usize { return utsname_field() * (6 as usize); }
 
 // Online CPU count, or 0 when the query fails.
 fn cpu_count_raw() -> usize {

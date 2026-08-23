@@ -450,14 +450,29 @@ fn waiter_count() -> i32 {
     return { *nw_slot } +% { *nt_slot };
 }
 
+// How many (awaitee -> awaiter) pairs the table currently holds.
+//
+// Not used to drive the loop — the awaiter table resumes through
+// `notify_completed` -> `enqueue_pending`, so it never gates a wait. It exists
+// so the invariant can be ASSERTED: a `block_on` that ran to completion must
+// leave the table exactly as it found it. An entry that outlives the frame it
+// names is a use-after-free waiting for malloc to reuse the address, and it is
+// invisible from the outside until then — see
+// `executor::the_awaiter_table_is_left_empty_by_a_completed_block_on`.
+fn awaiter_count() -> i32 {
+    let state: *u8 = ensure();
+    let na_slot: *i32 = { (state + off_n_awaiters()) as *i32 };
+    return { *na_slot };
+}
+
 fn pending_count() -> i32 {
     let state: *u8 = ensure();
     let np_slot: *i32 = { (state + off_n_pending()) as *i32 };
     return { *np_slot };
 }
 
-// Register `awaiter` as waiting on `awaitee`. Append-only; removed by
-// `notify_completed` (swap-remove).
+// Register `awaiter` as waiting on `awaitee`. Removed by `notify_completed`
+// (swap-remove) or by the await's cancel edge.
 fn register_awaiter(awaitee: *u8, awaiter: *u8) {
     let state: *u8 = ensure();
     let na_slot: *i32 = { (state + off_n_awaiters()) as *i32 };
@@ -476,6 +491,25 @@ fn register_awaiter(awaitee: *u8, awaiter: *u8) {
     }
     let aes: **u8 = { *ae_slot as **u8 };
     let ars: **u8 = { *ar_slot as **u8 };
+    // Idempotent, for the reason spelled out in `reactor.cplus` and
+    // `reactor_linux.cplus`: `block_on` resumes the outermost future once per
+    // drive pass and each pass re-runs the await's registration, so an
+    // append-only table accumulates duplicates whose awaitee dangles after the
+    // extract-path destroy. A later notify then enqueues a dead frame and the
+    // next drain resumes freed memory.
+    //
+    // Carried here from the same fix; this backend has the same shape and the
+    // same protocol, but no Windows suite has been run against it — it is a
+    // known-bug port, not a verified one.
+    var s: i32 = 0;
+    while s < n {
+        let cur_ae: *u8 = { *(aes + (s as usize)) };
+        if cur_ae == awaitee {
+            let cur_ar: *u8 = { *(ars + (s as usize)) };
+            if cur_ar == awaiter { return; }
+        }
+        s = s +% (1 as i32);
+    }
     { *(aes + (n as usize)) = awaitee; }
     { *(ars + (n as usize)) = awaiter; }
     { *na_slot = n +% (1 as i32); }

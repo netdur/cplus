@@ -1,0 +1,68 @@
+// The parts of `fs` that are the KERNEL ABI rather than the C library: the
+// numeric `open` flags, `mode_t`'s width, and the byte layout of `struct stat`
+// and `struct dirent`.
+//
+// This file is the DARWIN base; `fs_sys_linux.cplus` shadows it on Linux and
+// Android through the resolver's platform override, the same way
+// `netsys_linux.cplus` shadows `netsys.cplus`.
+//
+// SPLIT BECAUSE THESE NUMBERS ARE NOT PORTABLE AND LOOK LIKE THEY ARE. Every
+// one of them is a small integer that compiles fine on the wrong platform and
+// then misbehaves at runtime, not at link time — which is why this drift
+// survived: `O_CREAT` is 0x200 on Darwin and 0x40 on Linux, so a Darwin
+// `create()` on Linux asks for O_WRONLY|O_TRUNC|0x200 — no O_CREAT, and 0x200
+// is Linux's O_TRUNC — and `open` returns ENOENT on a file it was told to
+// create. `st_mode` sits at byte 4 here and byte 24 there, so `is_dir` reads
+// two bytes of `st_ino`. Nothing crashes; the answers are just wrong.
+//
+// `fs.cplus` keeps everything else — it is portable POSIX and stays shared.
+
+// `mode_t` is `__uint16_t` on Darwin.
+extern fn mkdir(path: *u8, mode: u16) -> i32;
+// Darwin arm64 exposes the 64-bit-inode stat as the bare `stat` symbol (on
+// x86_64 it is `stat$INODE64`; this build targets arm64 macOS).
+extern fn stat(path: *u8, buf: *u8) -> i32;
+
+// O_WRONLY = 0x001, O_CREAT = 0x200, O_TRUNC = 0x400 -> 0x601.
+fn create_flags() -> i32 { return 1537 as i32; }
+
+// O_WRONLY = 0x001, O_CREAT = 0x200, O_APPEND = 0x008 -> 0x209.
+fn append_flags() -> i32 { return 521 as i32; }
+
+// `mode` is a portable octal permission value (0o755 = 493). Narrowed here to
+// whatever this platform's `mode_t` is, which is the whole reason this wrapper
+// exists rather than a shared `extern`.
+fn make_dir(path: *u8, mode: u32) -> i32 {
+    return { mkdir(path, mode as u16) };
+}
+
+// ---- struct stat -------------------------------------------------------------
+//
+// Darwin (arm64, 64-bit-inode): 144 bytes; st_mode a u16 at byte 4,
+// st_mtimespec.tv_sec an i64 at byte 48, st_size an i64 at byte 96.
+
+fn stat_buf_bytes() -> usize { return 144 as usize; }
+
+fn stat_path(path: *u8, buf: *u8) -> i32 {
+    return { stat(path, buf) };
+}
+
+fn stat_mode(buf: *u8) -> u32 {
+    return { *((buf + (4 as usize)) as *u16) } as u32;
+}
+
+fn stat_mtime_secs(buf: *u8) -> i64 {
+    return { *((buf + (48 as usize)) as *i64) };
+}
+
+fn stat_file_size(buf: *u8) -> i64 {
+    return { *((buf + (96 as usize)) as *i64) };
+}
+
+// ---- struct dirent -----------------------------------------------------------
+
+// Darwin 64-bit-inode `struct dirent`: u64 d_ino, u64 d_seekoff, u16 d_reclen,
+// u16 d_namlen, u8 d_type, then char d_name[] at byte 21.
+fn dirent_name(ent: *u8) -> *u8 {
+    return { ent + (21 as usize) };
+}

@@ -26,12 +26,18 @@
 // and lets `waiter_count` (= n_waiters + n_timers) stay correct while
 // counting timers through `n_waiters`.
 //
-// **epoll_event layout.** This targets x86_64-linux, where
-// `struct epoll_event` is `__attribute__((packed))`:
-//     events  u32  @0
-//     data    u64  @4   (union; we stash the ready fd here)
-//   total 12 bytes. (aarch64-linux would be naturally aligned at @8 —
-//   a future arch split if/when that target is added.)
+// **epoll_event layout is ARCH-dependent, not platform-dependent.** On
+// x86_64 `struct epoll_event` is `__attribute__((packed))` — events u32 @0,
+// data u64 @4, 12 bytes total. On aarch64 (and every other Linux arch) the
+// packed attribute is NOT applied, so data is naturally aligned at @8 and the
+// struct is 16 bytes. `data_offset()` below reads `#arch()` for this; that
+// target is no longer hypothetical, because Android arm64 loads this file.
+//
+// Getting it wrong does not fail to build or to link. The kernel reads the
+// events word (correct at @0 either way) and arms the fd, then writes the
+// ready event back — and `poll_one_event` reads the fd it stashed from the
+// wrong half of the struct, matches no waiter, and returns "nothing resumed".
+// The executor then spins on a timer that never appears to fire.
 //
 // See reactor.cplus's header for the full architecture notes; the state
 // heap-block layout and every table-management routine below are copied
@@ -79,6 +85,15 @@ fn header_bytes() -> usize { return 96 as usize; }
 // 32-byte allocation from the kqueue layout is kept so the state-block
 // offsets are byte-identical to reactor.cplus.
 fn evbuf_bytes() -> usize { return 32 as usize; }
+
+// Byte offset of `epoll_data_t` within `struct epoll_event`. See the header:
+// 4 on x86_64 (the struct is packed there), 8 everywhere else. A value-level
+// branch on `#arch()` — both arms compile on every target, and the compiler
+// folds the dead one.
+fn data_offset() -> usize {
+    if #arch() == "x86_64" { return 4 as usize; }
+    return 8 as usize;
+}
 
 fn off_kqfd() -> usize { return 0 as usize; }
 fn off_n_waiters() -> usize { return 4 as usize; }
@@ -277,7 +292,7 @@ fn register_filter(fd: i32, hdl: *u8, filter: i16) {
     } else {
         { *ev_slot = epollin_oneshot(); }
     }
-    let data_slot: *i64 = { (eb + (4 as usize)) as *i64 };
+    let data_slot: *i64 = { (eb + data_offset()) as *i64 };
     { *data_slot = fd as i64; }
     let r: i32 = { epoll_ctl(epfd, epoll_ctl_add(), fd, eb) };
     // EEXIST (fd already armed — e.g. read+write on one fd): switch to MOD.
@@ -302,8 +317,9 @@ fn poll_one_event() -> bool {
     let eb: *u8 = { *((state + off_evbuf()) as **u8) };
     let nev: i32 = { epoll_wait(epfd, eb, 1 as i32, (0 as i32) -% (1 as i32)) };
     if nev <= (0 as i32) { return false; }
-    // data @4 holds the fd we stored at register time.
-    let fd_ready: i32 = { *((eb + (4 as usize)) as *i32) };
+    // `data` holds the fd we stored at register time; its offset is the
+    // arch's, not a constant (header).
+    let fd_ready: i32 = { *((eb + data_offset()) as *i32) };
     let wf_slot: **u8 = { (state + off_waiter_fds()) as **u8 };
     let wh_slot: **u8 = { (state + off_waiter_hdls()) as **u8 };
     let wflt_slot: **u8 = { (state + off_waiter_filters()) as **u8 };
@@ -396,14 +412,29 @@ fn waiter_count() -> i32 {
     return { *nw_slot } +% { *nt_slot };
 }
 
+// How many (awaitee -> awaiter) pairs the table currently holds.
+//
+// Not used to drive the loop — the awaiter table resumes through
+// `notify_completed` -> `enqueue_pending`, so it never gates a wait. It exists
+// so the invariant can be ASSERTED: a `block_on` that ran to completion must
+// leave the table exactly as it found it. An entry that outlives the frame it
+// names is a use-after-free waiting for malloc to reuse the address, and it is
+// invisible from the outside until then — see
+// `executor::the_awaiter_table_is_left_empty_by_a_completed_block_on`.
+fn awaiter_count() -> i32 {
+    let state: *u8 = ensure();
+    let na_slot: *i32 = { (state + off_n_awaiters()) as *i32 };
+    return { *na_slot };
+}
+
 fn pending_count() -> i32 {
     let state: *u8 = ensure();
     let np_slot: *i32 = { (state + off_n_pending()) as *i32 };
     return { *np_slot };
 }
 
-// Register `awaiter` as waiting on `awaitee`. Append-only; entries are
-// removed by `notify_completed` (swap-remove).
+// Register `awaiter` as waiting on `awaitee`. Entries are removed by
+// `notify_completed` (swap-remove) or by the await's cancel edge.
 fn register_awaiter(awaitee: *u8, awaiter: *u8) {
     let state: *u8 = ensure();
     let na_slot: *i32 = { (state + off_n_awaiters()) as *i32 };
@@ -422,6 +453,31 @@ fn register_awaiter(awaitee: *u8, awaiter: *u8) {
     }
     let aes: **u8 = { *ae_slot as **u8 };
     let ars: **u8 = { *ar_slot as **u8 };
+    // Idempotent (v0.0.29 phase 2): `block_on` resumes the outermost future
+    // once per drive pass, and every pass re-runs the await's registration.
+    // Appending a duplicate per pass left stale entries whose awaitee
+    // pointer dangles after the extract-path destroy — harmless until
+    // malloc reuses that address, at which point a later notify enqueues a
+    // dead frame. Scan-before-append closes the source; the table is small.
+    //
+    // MISSING HERE UNTIL 2026-08-23, and it is what a Linux `cpc test` in
+    // this package died of: two suites apart, `receive_or_cancel`'s frame
+    // landed on the address a previous test's `join_worker` frame had used,
+    // `notify_completed` matched the LEFTOVER entry first, and the freed
+    // frame it named went into the pending queue. The next `block_on` on
+    // that thread drained it and resumed freed memory — a jump to a garbage
+    // address, in the main thread, one test after the one at fault. The
+    // Darwin twin has carried this guard since the day the protocol landed;
+    // this file was ported from an older draft of it.
+    var s: i32 = 0;
+    while s < n {
+        let cur_ae: *u8 = { *(aes + (s as usize)) };
+        if cur_ae == awaitee {
+            let cur_ar: *u8 = { *(ars + (s as usize)) };
+            if cur_ar == awaiter { return; }
+        }
+        s = s +% (1 as i32);
+    }
     let aes_dst: **u8 = { aes + (n as usize) };
     { *aes_dst = awaitee; }
     let ars_dst: **u8 = { ars + (n as usize) };

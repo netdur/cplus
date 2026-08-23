@@ -4,17 +4,29 @@
 // Android; it is the one primitive here that must never be approximated,
 // because a silently unfilled buffer is a token everyone can guess.
 //
-// HASHING IS NOT IMPLEMENTED, AND IT ABORTS RATHER THAN RETURNING SOMETHING.
-// There is no CommonCrypto here and no libcrypto in the public NDK, so SHA-256
-// and SHA-512 need a real portable implementation — about 250 lines, and
-// correctness is not eyeballable. `crypto.cplus` already carries the FIPS 180-4
-// and RFC 4231 vectors as tests, so the port is verifiable the moment it is
-// written; until then, calling a hash here is a bug and says so.
+// HASHING IS ALSO REAL NOW. There is no CommonCrypto here and no libcrypto in
+// the public NDK, so SHA-256, SHA-512 and HMAC are implemented in this file
+// from FIPS 180-4 and RFC 2104. This is the one place in the tree where a
+// hand-written primitive is the right call: the alternative was a `zero_digest`
+// that would make every signature compare equal, every HMAC verify against a
+// constant, and every content hash collide, silently.
 //
-// It aborts deliberately. The alternative — returning `zero_digest()` — would
-// make every signature compare equal, every HMAC verify against a constant, and
-// every content hash collide, silently. A crash naming the reason is strictly
-// safer than a hash that is not one.
+// WHAT KEEPS IT HONEST is that `crypto.cplus` carries the published vectors —
+// FIPS 180-4 for the digests, RFC 4231 for HMAC — plus the block-boundary
+// lengths (55/56/63/64 bytes for SHA-256, 111/112/127/128 for SHA-512) where a
+// hand-written padding routine actually breaks. Those tests run against THIS
+// file on Linux and against CommonCrypto on Darwin, so the two implementations
+// are held to the same vectors. Never change the arithmetic below without
+// running `cpc test` in this package.
+//
+// The round constants are the first 32 (resp. 64) bits of the fractional parts
+// of the cube roots of the first 64 (resp. 80) primes; the initial states are
+// the same over square roots of the first eight. They were generated from that
+// definition and cross-checked against FIPS 180-4's printed tables — a
+// transcription typo here produces a wrong digest, not a crash.
+//
+// Not constant time, and it does not need to be: a digest has no secret to
+// leak through timing. The comparison does, and that lives in `crypto.cplus`.
 
 extern fn open(path: *u8, flags: i32) -> i32;
 extern fn read(fd: i32, buf: *u8, n: usize) -> i64;
@@ -27,26 +39,518 @@ fn not_implemented(what: *u8) {
     let msg: *u8 = #str_ptr("stdlib/crypto: not implemented on this platform: \0");
     let _a: i64 = { write(2 as i32, msg, strlen(msg)) };
     let _b: i64 = { write(2 as i32, what, strlen(what)) };
-    let nl: *u8 = #str_ptr("\n  (see crypto_sys_linux.cplus - returning a zero digest would be worse)\n\0");
+    let nl: *u8 = #str_ptr("\n  (see crypto_sys_linux.cplus)\n\0");
     let _c: i64 = { write(2 as i32, nl, strlen(nl)) };
     { abort(); }
     return;
 }
 
-fn sha256_into(p: *u8, n: usize, out: *u8) {
-    not_implemented(#str_ptr("sha256\0"));
+// ---- shared helpers ----------------------------------------------------------
+
+// Rotate right. `n` is never 0 or the word width at any call site below, which
+// is what keeps the complementary shift in range.
+fn _rotr32(x: u32, n: u32) -> u32 {
+    return (x >> n) | (x << ((32 as u32) -% n));
+}
+
+fn _rotr64(x: u64, n: u64) -> u64 {
+    return (x >> n) | (x << ((64 as u64) -% n));
+}
+
+fn _load_byte(p: *u8, i: usize) -> u8 {
+    return { *(((p as usize) +% i) as *u8) };
+}
+
+fn _store_byte(p: *u8, i: usize, v: u8) {
+    { *(((p as usize) +% i) as *u8) = v };
     return;
+}
+
+// ---- SHA-256 -----------------------------------------------------------------
+
+static _K256: [u32; 64] = [
+    0x428a2f98u32, 0x71374491u32, 0xb5c0fbcfu32, 0xe9b5dba5u32,
+    0x3956c25bu32, 0x59f111f1u32, 0x923f82a4u32, 0xab1c5ed5u32,
+    0xd807aa98u32, 0x12835b01u32, 0x243185beu32, 0x550c7dc3u32,
+    0x72be5d74u32, 0x80deb1feu32, 0x9bdc06a7u32, 0xc19bf174u32,
+    0xe49b69c1u32, 0xefbe4786u32, 0x0fc19dc6u32, 0x240ca1ccu32,
+    0x2de92c6fu32, 0x4a7484aau32, 0x5cb0a9dcu32, 0x76f988dau32,
+    0x983e5152u32, 0xa831c66du32, 0xb00327c8u32, 0xbf597fc7u32,
+    0xc6e00bf3u32, 0xd5a79147u32, 0x06ca6351u32, 0x14292967u32,
+    0x27b70a85u32, 0x2e1b2138u32, 0x4d2c6dfcu32, 0x53380d13u32,
+    0x650a7354u32, 0x766a0abbu32, 0x81c2c92eu32, 0x92722c85u32,
+    0xa2bfe8a1u32, 0xa81a664bu32, 0xc24b8b70u32, 0xc76c51a3u32,
+    0xd192e819u32, 0xd6990624u32, 0xf40e3585u32, 0x106aa070u32,
+    0x19a4c116u32, 0x1e376c08u32, 0x2748774cu32, 0x34b0bcb5u32,
+    0x391c0cb3u32, 0x4ed8aa4au32, 0x5b9cca4fu32, 0x682e6ff3u32,
+    0x748f82eeu32, 0x78a5636fu32, 0x84c87814u32, 0x8cc70208u32,
+    0x90befffau32, 0xa4506cebu32, 0xbef9a3f7u32, 0xc67178f2u32,
+];
+
+// A streaming context rather than a one-shot over a byte range, because HMAC
+// hashes two segments — the padded key and then the message — and a one-shot
+// would have to concatenate them into a buffer whose size is the caller's
+// message length. This shape hashes both without allocating anything.
+struct _Sha256 {
+    _h: [u32; 8],
+    _block: [u8; 64],
+    _fill: usize,
+    _total: u64,
+}
+
+fn _sha256_new() -> _Sha256 {
+    return _Sha256 {
+        _h: [0x6a09e667u32, 0xbb67ae85u32, 0x3c6ef372u32, 0xa54ff53au32,
+             0x510e527fu32, 0x9b05688cu32, 0x1f83d9abu32, 0x5be0cd19u32],
+        _block: [0u8; 64],
+        _fill: 0 as usize,
+        _total: 0u64,
+    };
+}
+
+impl _Sha256 {
+    // One 64-byte block, from `_block`. FIPS 180-4 §6.2.2.
+    fn _compress(ref this) {
+        var w: [u32; 64] = [0u32; 64];
+        var t: usize = 0 as usize;
+        while t < (16 as usize) {
+            let i: usize = t *% (4 as usize);
+            w[t] = ((this._block[i] as u32) << (24 as u32))
+                 | ((this._block[i +% (1 as usize)] as u32) << (16 as u32))
+                 | ((this._block[i +% (2 as usize)] as u32) << (8 as u32))
+                 | (this._block[i +% (3 as usize)] as u32);
+            t = t +% (1 as usize);
+        }
+        while t < (64 as usize) {
+            let x15: u32 = w[t -% (15 as usize)];
+            let x2: u32 = w[t -% (2 as usize)];
+            let s0: u32 = _rotr32(x15, 7 as u32) ^ _rotr32(x15, 18 as u32)
+                        ^ (x15 >> (3 as u32));
+            let s1: u32 = _rotr32(x2, 17 as u32) ^ _rotr32(x2, 19 as u32)
+                        ^ (x2 >> (10 as u32));
+            w[t] = w[t -% (16 as usize)] +% s0 +% w[t -% (7 as usize)] +% s1;
+            t = t +% (1 as usize);
+        }
+
+        var va: u32 = this._h[0];
+        var vb: u32 = this._h[1];
+        var vc: u32 = this._h[2];
+        var vd: u32 = this._h[3];
+        var ve: u32 = this._h[4];
+        var vf: u32 = this._h[5];
+        var vg: u32 = this._h[6];
+        var vh: u32 = this._h[7];
+
+        t = 0 as usize;
+        while t < (64 as usize) {
+            let big1: u32 = _rotr32(ve, 6 as u32) ^ _rotr32(ve, 11 as u32)
+                          ^ _rotr32(ve, 25 as u32);
+            let ch: u32 = (ve & vf) ^ ((~ve) & vg);
+            let t1: u32 = vh +% big1 +% ch +% _K256[t] +% w[t];
+            let big0: u32 = _rotr32(va, 2 as u32) ^ _rotr32(va, 13 as u32)
+                          ^ _rotr32(va, 22 as u32);
+            let maj: u32 = (va & vb) ^ (va & vc) ^ (vb & vc);
+            let t2: u32 = big0 +% maj;
+            vh = vg;
+            vg = vf;
+            vf = ve;
+            ve = vd +% t1;
+            vd = vc;
+            vc = vb;
+            vb = va;
+            va = t1 +% t2;
+            t = t +% (1 as usize);
+        }
+
+        this._h[0] = this._h[0] +% va;
+        this._h[1] = this._h[1] +% vb;
+        this._h[2] = this._h[2] +% vc;
+        this._h[3] = this._h[3] +% vd;
+        this._h[4] = this._h[4] +% ve;
+        this._h[5] = this._h[5] +% vf;
+        this._h[6] = this._h[6] +% vg;
+        this._h[7] = this._h[7] +% vh;
+        return;
+    }
+
+    fn update(ref this, p: *u8, n: usize) {
+        var i: usize = 0 as usize;
+        while i < n {
+            this._block[this._fill] = _load_byte(p, i);
+            this._fill = this._fill +% (1 as usize);
+            if this._fill == (64 as usize) {
+                this._compress();
+                this._fill = 0 as usize;
+            }
+            i = i +% (1 as usize);
+        }
+        this._total = this._total +% (n as u64);
+        return;
+    }
+
+    // FIPS 180-4 §5.1.1 padding, then the 32-byte digest big-endian into `out`.
+    //
+    // The `> 56` branch is the case a hand-written SHA-256 gets wrong: when the
+    // 0x80 byte lands past the length field's slot there is no room for the
+    // length in this block, so the block is zero-filled and compressed and the
+    // length goes in a whole extra one. That is what the 56- and 63-byte test
+    // vectors in `crypto.cplus` pin down.
+    fn finish(ref this, out: *u8) {
+        let bits: u64 = this._total *% (8u64);
+
+        this._block[this._fill] = 0x80u8;
+        this._fill = this._fill +% (1 as usize);
+
+        if this._fill > (56 as usize) {
+            while this._fill < (64 as usize) {
+                this._block[this._fill] = 0u8;
+                this._fill = this._fill +% (1 as usize);
+            }
+            this._compress();
+            this._fill = 0 as usize;
+        }
+        while this._fill < (56 as usize) {
+            this._block[this._fill] = 0u8;
+            this._fill = this._fill +% (1 as usize);
+        }
+
+        var i: usize = 0 as usize;
+        while i < (8 as usize) {
+            let sh: u64 = ((7 as usize) -% i) as u64 *% (8u64);
+            this._block[(56 as usize) +% i] = ((bits >> sh) & (0xFFu64)) as u8;
+            i = i +% (1 as usize);
+        }
+        this._compress();
+        this._fill = 0 as usize;
+
+        i = 0 as usize;
+        while i < (8 as usize) {
+            let v: u32 = this._h[i];
+            let at: usize = i *% (4 as usize);
+            _store_byte(out, at, (v >> (24 as u32)) as u8);
+            _store_byte(out, at +% (1 as usize), (v >> (16 as u32)) as u8);
+            _store_byte(out, at +% (2 as usize), (v >> (8 as u32)) as u8);
+            _store_byte(out, at +% (3 as usize), v as u8);
+            i = i +% (1 as usize);
+        }
+        return;
+    }
+}
+
+fn sha256_into(p: *u8, n: usize, out: *u8) {
+    var ctx: _Sha256 = _sha256_new();
+    ctx.update(p, n);
+    ctx.finish(out);
+    return;
+}
+
+// ---- SHA-512 -----------------------------------------------------------------
+
+static _K512: [u64; 80] = [
+    0x428a2f98d728ae22u64, 0x7137449123ef65cdu64,
+    0xb5c0fbcfec4d3b2fu64, 0xe9b5dba58189dbbcu64,
+    0x3956c25bf348b538u64, 0x59f111f1b605d019u64,
+    0x923f82a4af194f9bu64, 0xab1c5ed5da6d8118u64,
+    0xd807aa98a3030242u64, 0x12835b0145706fbeu64,
+    0x243185be4ee4b28cu64, 0x550c7dc3d5ffb4e2u64,
+    0x72be5d74f27b896fu64, 0x80deb1fe3b1696b1u64,
+    0x9bdc06a725c71235u64, 0xc19bf174cf692694u64,
+    0xe49b69c19ef14ad2u64, 0xefbe4786384f25e3u64,
+    0x0fc19dc68b8cd5b5u64, 0x240ca1cc77ac9c65u64,
+    0x2de92c6f592b0275u64, 0x4a7484aa6ea6e483u64,
+    0x5cb0a9dcbd41fbd4u64, 0x76f988da831153b5u64,
+    0x983e5152ee66dfabu64, 0xa831c66d2db43210u64,
+    0xb00327c898fb213fu64, 0xbf597fc7beef0ee4u64,
+    0xc6e00bf33da88fc2u64, 0xd5a79147930aa725u64,
+    0x06ca6351e003826fu64, 0x142929670a0e6e70u64,
+    0x27b70a8546d22ffcu64, 0x2e1b21385c26c926u64,
+    0x4d2c6dfc5ac42aedu64, 0x53380d139d95b3dfu64,
+    0x650a73548baf63deu64, 0x766a0abb3c77b2a8u64,
+    0x81c2c92e47edaee6u64, 0x92722c851482353bu64,
+    0xa2bfe8a14cf10364u64, 0xa81a664bbc423001u64,
+    0xc24b8b70d0f89791u64, 0xc76c51a30654be30u64,
+    0xd192e819d6ef5218u64, 0xd69906245565a910u64,
+    0xf40e35855771202au64, 0x106aa07032bbd1b8u64,
+    0x19a4c116b8d2d0c8u64, 0x1e376c085141ab53u64,
+    0x2748774cdf8eeb99u64, 0x34b0bcb5e19b48a8u64,
+    0x391c0cb3c5c95a63u64, 0x4ed8aa4ae3418acbu64,
+    0x5b9cca4f7763e373u64, 0x682e6ff3d6b2b8a3u64,
+    0x748f82ee5defb2fcu64, 0x78a5636f43172f60u64,
+    0x84c87814a1f0ab72u64, 0x8cc702081a6439ecu64,
+    0x90befffa23631e28u64, 0xa4506cebde82bde9u64,
+    0xbef9a3f7b2c67915u64, 0xc67178f2e372532bu64,
+    0xca273eceea26619cu64, 0xd186b8c721c0c207u64,
+    0xeada7dd6cde0eb1eu64, 0xf57d4f7fee6ed178u64,
+    0x06f067aa72176fbau64, 0x0a637dc5a2c898a6u64,
+    0x113f9804bef90daeu64, 0x1b710b35131c471bu64,
+    0x28db77f523047d84u64, 0x32caab7b40c72493u64,
+    0x3c9ebe0a15c9bebcu64, 0x431d67c49c100d4cu64,
+    0x4cc5d4becb3e42b6u64, 0x597f299cfc657e2au64,
+    0x5fcb6fab3ad6faecu64, 0x6c44198c4a475817u64,
+];
+
+struct _Sha512 {
+    _h: [u64; 8],
+    _block: [u8; 128],
+    _fill: usize,
+    _total: u64,
+}
+
+fn _sha512_new() -> _Sha512 {
+    return _Sha512 {
+        _h: [0x6a09e667f3bcc908u64, 0xbb67ae8584caa73bu64,
+             0x3c6ef372fe94f82bu64, 0xa54ff53a5f1d36f1u64,
+             0x510e527fade682d1u64, 0x9b05688c2b3e6c1fu64,
+             0x1f83d9abfb41bd6bu64, 0x5be0cd19137e2179u64],
+        _block: [0u8; 128],
+        _fill: 0 as usize,
+        _total: 0u64,
+    };
+}
+
+impl _Sha512 {
+    // Same shape as SHA-256 over 64-bit words: 128-byte block, 80 rounds, and
+    // its own rotation amounts. FIPS 180-4 §6.4.2.
+    fn _compress(ref this) {
+        var w: [u64; 80] = [0u64; 80];
+        var t: usize = 0 as usize;
+        while t < (16 as usize) {
+            let i: usize = t *% (8 as usize);
+            var acc: u64 = 0u64;
+            var j: usize = 0 as usize;
+            while j < (8 as usize) {
+                acc = (acc << (8u64)) | (this._block[i +% j] as u64);
+                j = j +% (1 as usize);
+            }
+            w[t] = acc;
+            t = t +% (1 as usize);
+        }
+        while t < (80 as usize) {
+            let x15: u64 = w[t -% (15 as usize)];
+            let x2: u64 = w[t -% (2 as usize)];
+            let s0: u64 = _rotr64(x15, 1u64) ^ _rotr64(x15, 8u64)
+                        ^ (x15 >> (7u64));
+            let s1: u64 = _rotr64(x2, 19u64) ^ _rotr64(x2, 61u64)
+                        ^ (x2 >> (6u64));
+            w[t] = w[t -% (16 as usize)] +% s0 +% w[t -% (7 as usize)] +% s1;
+            t = t +% (1 as usize);
+        }
+
+        var va: u64 = this._h[0];
+        var vb: u64 = this._h[1];
+        var vc: u64 = this._h[2];
+        var vd: u64 = this._h[3];
+        var ve: u64 = this._h[4];
+        var vf: u64 = this._h[5];
+        var vg: u64 = this._h[6];
+        var vh: u64 = this._h[7];
+
+        t = 0 as usize;
+        while t < (80 as usize) {
+            let big1: u64 = _rotr64(ve, 14u64) ^ _rotr64(ve, 18u64)
+                          ^ _rotr64(ve, 41u64);
+            let ch: u64 = (ve & vf) ^ ((~ve) & vg);
+            let t1: u64 = vh +% big1 +% ch +% _K512[t] +% w[t];
+            let big0: u64 = _rotr64(va, 28u64) ^ _rotr64(va, 34u64)
+                          ^ _rotr64(va, 39u64);
+            let maj: u64 = (va & vb) ^ (va & vc) ^ (vb & vc);
+            let t2: u64 = big0 +% maj;
+            vh = vg;
+            vg = vf;
+            vf = ve;
+            ve = vd +% t1;
+            vd = vc;
+            vc = vb;
+            vb = va;
+            va = t1 +% t2;
+            t = t +% (1 as usize);
+        }
+
+        this._h[0] = this._h[0] +% va;
+        this._h[1] = this._h[1] +% vb;
+        this._h[2] = this._h[2] +% vc;
+        this._h[3] = this._h[3] +% vd;
+        this._h[4] = this._h[4] +% ve;
+        this._h[5] = this._h[5] +% vf;
+        this._h[6] = this._h[6] +% vg;
+        this._h[7] = this._h[7] +% vh;
+        return;
+    }
+
+    fn update(ref this, p: *u8, n: usize) {
+        var i: usize = 0 as usize;
+        while i < n {
+            this._block[this._fill] = _load_byte(p, i);
+            this._fill = this._fill +% (1 as usize);
+            if this._fill == (128 as usize) {
+                this._compress();
+                this._fill = 0 as usize;
+            }
+            i = i +% (1 as usize);
+        }
+        this._total = this._total +% (n as u64);
+        return;
+    }
+
+    // SHA-512's length field is 128 bits. `_total` is a byte count in a u64, so
+    // the high half is always zero here — a message would have to reach 2^61
+    // bytes to need it. Written as explicit zeros rather than skipped, because
+    // the padding is defined over 16 bytes and a 8-byte-short block is a
+    // different hash, not a smaller one.
+    fn finish(ref this, out: *u8) {
+        let bits: u64 = this._total *% (8u64);
+
+        this._block[this._fill] = 0x80u8;
+        this._fill = this._fill +% (1 as usize);
+
+        if this._fill > (112 as usize) {
+            while this._fill < (128 as usize) {
+                this._block[this._fill] = 0u8;
+                this._fill = this._fill +% (1 as usize);
+            }
+            this._compress();
+            this._fill = 0 as usize;
+        }
+        while this._fill < (120 as usize) {
+            this._block[this._fill] = 0u8;
+            this._fill = this._fill +% (1 as usize);
+        }
+
+        var i: usize = 0 as usize;
+        while i < (8 as usize) {
+            let sh: u64 = ((7 as usize) -% i) as u64 *% (8u64);
+            this._block[(120 as usize) +% i] = ((bits >> sh) & (0xFFu64)) as u8;
+            i = i +% (1 as usize);
+        }
+        this._compress();
+        this._fill = 0 as usize;
+
+        i = 0 as usize;
+        while i < (8 as usize) {
+            let v: u64 = this._h[i];
+            let at: usize = i *% (8 as usize);
+            var j: usize = 0 as usize;
+            while j < (8 as usize) {
+                let sh: u64 = ((7 as usize) -% j) as u64 *% (8u64);
+                _store_byte(out, at +% j, (v >> sh) as u8);
+                j = j +% (1 as usize);
+            }
+            i = i +% (1 as usize);
+        }
+        return;
+    }
 }
 
 fn sha512_into(p: *u8, n: usize, out: *u8) {
-    not_implemented(#str_ptr("sha512\0"));
+    var ctx: _Sha512 = _sha512_new();
+    ctx.update(p, n);
+    ctx.finish(out);
     return;
 }
 
-fn hmac_into(alg: u32, key: *u8, key_len: usize, msg: *u8, msg_len: usize, out: *u8) {
-    not_implemented(#str_ptr("hmac\0"));
+// ---- HMAC --------------------------------------------------------------------
+
+// RFC 2104: H((K0 ^ opad) || H((K0 ^ ipad) || message)), where K0 is the key
+// hashed down if it is longer than the hash's BLOCK size (not its digest size —
+// 64 bytes for SHA-256, 128 for SHA-512) and zero-padded up to it otherwise.
+//
+// The nested hash is the whole point: `sha256(key || msg)` is length-extendable
+// and is not HMAC. `crypto.cplus` has a test asserting the two do not agree.
+fn _hmac_sha256(key: *u8, key_len: usize, msg: *u8, msg_len: usize, out: *u8) {
+    var k0: [u8; 64] = [0u8; 64];
+    if key_len > (64 as usize) {
+        var kh: _Sha256 = _sha256_new();
+        kh.update(key, key_len);
+        kh.finish(#addr_of(k0) as *u8);
+    } else {
+        var i: usize = 0 as usize;
+        while i < key_len {
+            k0[i] = _load_byte(key, i);
+            i = i +% (1 as usize);
+        }
+    }
+
+    var pad: [u8; 64] = [0u8; 64];
+    var i: usize = 0 as usize;
+    while i < (64 as usize) {
+        pad[i] = k0[i] ^ (0x36u8);
+        i = i +% (1 as usize);
+    }
+    var inner: _Sha256 = _sha256_new();
+    inner.update(#addr_of(pad) as *u8, 64 as usize);
+    inner.update(msg, msg_len);
+    var idig: [u8; 32] = [0u8; 32];
+    inner.finish(#addr_of(idig) as *u8);
+
+    i = 0 as usize;
+    while i < (64 as usize) {
+        pad[i] = k0[i] ^ (0x5cu8);
+        i = i +% (1 as usize);
+    }
+    var outer: _Sha256 = _sha256_new();
+    outer.update(#addr_of(pad) as *u8, 64 as usize);
+    outer.update(#addr_of(idig) as *u8, 32 as usize);
+    outer.finish(out);
     return;
 }
+
+fn _hmac_sha512(key: *u8, key_len: usize, msg: *u8, msg_len: usize, out: *u8) {
+    var k0: [u8; 128] = [0u8; 128];
+    if key_len > (128 as usize) {
+        var kh: _Sha512 = _sha512_new();
+        kh.update(key, key_len);
+        kh.finish(#addr_of(k0) as *u8);
+    } else {
+        var i: usize = 0 as usize;
+        while i < key_len {
+            k0[i] = _load_byte(key, i);
+            i = i +% (1 as usize);
+        }
+    }
+
+    var pad: [u8; 128] = [0u8; 128];
+    var i: usize = 0 as usize;
+    while i < (128 as usize) {
+        pad[i] = k0[i] ^ (0x36u8);
+        i = i +% (1 as usize);
+    }
+    var inner: _Sha512 = _sha512_new();
+    inner.update(#addr_of(pad) as *u8, 128 as usize);
+    inner.update(msg, msg_len);
+    var idig: [u8; 64] = [0u8; 64];
+    inner.finish(#addr_of(idig) as *u8);
+
+    i = 0 as usize;
+    while i < (128 as usize) {
+        pad[i] = k0[i] ^ (0x5cu8);
+        i = i +% (1 as usize);
+    }
+    var outer: _Sha512 = _sha512_new();
+    outer.update(#addr_of(pad) as *u8, 128 as usize);
+    outer.update(#addr_of(idig) as *u8, 64 as usize);
+    outer.finish(out);
+    return;
+}
+
+// `alg` is a `CCHmacAlgorithm` value, because that is the vocabulary
+// `crypto.cplus` was written against and it is the same number on both
+// platforms. Only the two the module exposes are answered; anything else is a
+// caller reaching past this module's surface and aborts rather than silently
+// producing a SHA-256 MAC under an SHA-1 request.
+fn hmac_into(alg: u32, key: *u8, key_len: usize, msg: *u8, msg_len: usize, out: *u8) {
+    if alg == (2 as u32) {
+        _hmac_sha256(key, key_len, msg, msg_len, out);
+        return;
+    }
+    if alg == (4 as u32) {
+        _hmac_sha512(key, key_len, msg, msg_len, out);
+        return;
+    }
+    not_implemented(#str_ptr("hmac: only SHA-256 (2) and SHA-512 (4)\0"));
+    return;
+}
+
+// ---- randomness --------------------------------------------------------------
 
 // The kernel CSPRNG. Reads in a loop: a short read is legal, and treating one
 // as success would hand back a partially-filled buffer.

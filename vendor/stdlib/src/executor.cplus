@@ -382,3 +382,56 @@ fn receive_or_cancel_surfaces_cancellation() {
     }
     return;
 }
+
+// ---- the awaiter table's idempotence -----------------------------------------
+
+// An inner task that suspends SEVERAL times, so `block_on` gets several drive
+// passes over the outer while the inner is still running. That is the count
+// that matters: each pass re-runs the outer's await registration, and an
+// append-only awaiter table gains one duplicate entry per pass.
+async fn _five_ticks() -> i32 {
+    var i: i32 = 0;
+    while i < (5 as i32) {
+        await _tick();
+        i = i +% (1 as i32);
+    }
+    return 5;
+}
+
+async fn _await_five_ticks() -> i32 {
+    return await _five_ticks();
+}
+
+#[test]
+fn the_awaiter_table_is_left_empty_by_a_completed_block_on() {
+    // REGRESSION, 2026-08-23, `reactor_linux` / `reactor_windows`: their
+    // `register_awaiter` was append-only where Darwin's scans first.
+    //
+    // `block_on` resumes the OUTERMOST future once per drive pass, and every
+    // pass re-runs that future's await registration. Append-only, the table
+    // therefore gains one duplicate per pass, and `notify_completed` retires
+    // exactly ONE of them — so a completed `block_on` walks away leaving
+    // entries that name a frame it has already destroyed.
+    //
+    // THE CRASH IS NOWHERE NEAR HERE, which is why the assertion is on the
+    // table and not on an outcome. The stale entry is inert until malloc
+    // hands a later coroutine the same address; then a `notify_completed`
+    // matches the dead entry ahead of the live one and puts a freed frame in
+    // the pending queue, and the NEXT `block_on` on this thread drains it and
+    // resumes freed memory. That surfaced as a SIGSEGV in a different
+    // module's test, two suites downstream, with a garbage RIP and no usable
+    // backtrace — nothing at the crash site points back to here.
+    //
+    // Asserting the invariant at the source turns all of that into one
+    // deterministic integer compare: run a nested await, and the table is as
+    // empty as it was before. `_five_ticks` suspends five times so there are
+    // several drive passes to duplicate across; one pass would not show it.
+    let before: i32 = reactor::awaiter_count();
+    assert block_on::[i32](_await_five_ticks()) == 5;
+    assert reactor::awaiter_count() == before;
+    // And again, because the failure needs a SECOND round to become a
+    // use-after-free — if round one leaks, round two is where it bites.
+    assert block_on::[i32](_await_five_ticks()) == 5;
+    assert reactor::awaiter_count() == before;
+    return;
+}

@@ -657,6 +657,21 @@ fn waiter_count() -> i32 {
     return { *nw_slot } +% { *nt_slot };
 }
 
+// How many (awaitee -> awaiter) pairs the table currently holds.
+//
+// Not used to drive the loop — the awaiter table resumes through
+// `notify_completed` -> `enqueue_pending`, so it never gates a wait. It exists
+// so the invariant can be ASSERTED: a `block_on` that ran to completion must
+// leave the table exactly as it found it. An entry that outlives the frame it
+// names is a use-after-free waiting for malloc to reuse the address, and it is
+// invisible from the outside until then — see
+// `executor::the_awaiter_table_is_left_empty_by_a_completed_block_on`.
+fn awaiter_count() -> i32 {
+    let state: *u8 = ensure();
+    let na_slot: *i32 = { (state + off_n_awaiters()) as *i32 };
+    return { *na_slot };
+}
+
 fn pending_count() -> i32 {
     let state: *u8 = ensure();
     let np_slot: *i32 = { (state + off_n_pending()) as *i32 };
