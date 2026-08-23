@@ -652,7 +652,6 @@ impl CopyOracle {
             // classification — a borrow-region type is Copy iff T is.
             // (The `borrow A T` source syntax is retired; this arm is now
             // unreachable from source but kept for the type's invariants.)
-            TypeKind::Borrowed { inner, .. } => self.definitely_non_copy(inner),
             // Slice 7GEN.5c: generic instantiation in type position.
             // Borrowck runs *before* monomorphize, so `Pair[i32, bool]`
             // still appears here. A generic base that is a **Drop** type is
@@ -691,7 +690,6 @@ impl CopyOracle {
                 self.types.get(name).map(|i| i.is_copy).unwrap_or(true)
             }
             TypeKind::Array { elem, .. } => self.is_type_copy_internal(elem),
-            TypeKind::Borrowed { inner, .. } => self.is_type_copy_internal(inner),
             TypeKind::RawPtr(_) => true,
             // Slice 11.FN_PTR: function pointers are Copy.
             TypeKind::FnPtr { .. } => true,
@@ -2064,9 +2062,6 @@ fn detect_fn_elision_with_flavor(
         return (None, None);
     }
     // 6BC.5: explicit annotations short-circuit elision.
-    if let Some((src, flavor)) = detect_fn_explicit_regions(f, oracle) {
-        return (Some(src), Some(flavor));
-    }
     if let Some(s) = detect_fn_e1_mut(f, oracle) {
         return (Some(s), Some(BorrowFlavor::Exclusive));
     }
@@ -2122,80 +2117,6 @@ fn detect_fn_view(f: &Function, oracle: &CopyOracle) -> Option<ReturnBorrowSourc
         _ => Some(ReturnBorrowSource::MultiParam(indices)),
     }
 }
-
-/// Slice 6BC.5: explicit region-annotation detection. The source
-/// syntax this matched (`borrow REGION T`) is retired, so this detector
-/// is now unreachable from user source; the structural rules it encodes
-/// are kept for the region-typed AST it still recognizes.
-///
-/// Qualifies iff:
-/// 1. The return type is a borrow-region type for some region name R.
-/// 2. At least one parameter type is a borrow-region type for the same R.
-/// 3. The return type and all matching parameter types are non-Copy.
-///
-/// The flavor is **Exclusive** when any of the matching parameters is
-/// `ref`-marked, else **Shared**. (Mixed ref/shared on the same
-/// region is rejected by sema in a future polish; 6BC.5 first cut
-/// picks Exclusive whenever any contributing param is `ref`.)
-///
-/// Sources = the indices of every parameter typed with the matching
-/// region. Single-source collapses to `Param(N)`; multi-source uses
-/// `MultiParam(indices)`. `take`-marked params don't carry regions
-/// (parser rejects); they never contribute to the source set.
-fn detect_fn_explicit_regions(
-    f: &Function,
-    oracle: &CopyOracle,
-) -> Option<(ReturnBorrowSource, BorrowFlavor)> {
-    let ret = f.return_type.as_ref()?;
-    let TypeKind::Borrowed {
-        region: ret_region,
-        inner: ret_inner,
-    } = &ret.kind
-    else {
-        return None;
-    };
-    if !oracle.definitely_non_copy(ret_inner) {
-        return None;
-    }
-    let mut indices: Vec<u32> = Vec::new();
-    let mut any_mut = false;
-    for (i, p) in f.params.iter().enumerate() {
-        let TypeKind::Borrowed { region, inner } = &p.ty.kind else {
-            continue;
-        };
-        if region != ret_region {
-            continue;
-        }
-        if p.move_ {
-            continue;
-        } // parser rejects this, but defensive
-        if !oracle.definitely_non_copy(inner) {
-            continue;
-        }
-        indices.push(i as u32);
-        if p.mutable {
-            any_mut = true;
-        }
-    }
-    if indices.is_empty() {
-        return None;
-    }
-    let src = if indices.len() == 1 {
-        ReturnBorrowSource::Param(indices[0])
-    } else {
-        ReturnBorrowSource::MultiParam(indices)
-    };
-    let flavor = if any_mut {
-        BorrowFlavor::Exclusive
-    } else {
-        BorrowFlavor::Shared
-    };
-    Some((src, flavor))
-}
-
-/// Slice 6BC.2: method elision with flavor. Same shape as the free-fn
-/// version, but for methods: tries Rule E2-mut (`ref this` + non-Copy
-/// return) before Rule E2 (`this` + non-Copy return).
 fn detect_method_elision_with_flavor(
     b: &ImplBlock,
     m: &Method,

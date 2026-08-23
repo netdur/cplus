@@ -262,6 +262,8 @@ var m = hash_map::new::[Key, i32]();             // derived Hash + Eq satisfy K'
 m.insert(Key { id: 1, name: "a" }, 100);
 ```
 
+A payload-free enum needs NO impl — it is a bare discriminant, so `eq`/`cmp`/`hash`/`clone` and the `Eq`/`Ord`/`Hash`/`Clone` bounds already work on it (that is what makes it usable as a `HashMap` key); an empty `impl` on one is E0916 telling you to delete it. A payload-CARRYING enum is an aggregate and satisfies none of them — write the method by hand.
+
 Field-by-field: primitives compare/hash directly, `str` orders through its `compare`, nested structs recurse through their own (derived or hand-written) method, and a generic target works with the bounds you declare (`impl Pair[T: Eq]: Eq {}`). Payload-carrying enum fields and array/slice/tuple fields are not derivable (**E0920**) — write that method by hand. `ToText` needs `stdlib/text` in the build. Deriving targets structs only; an empty impl of a user interface stays an error (E0916), and `Copy` stays structural (never written, never derived).
 
 ### Callbacks: pass a method with `recv.method`
@@ -323,6 +325,14 @@ return match s {                                  // exhaustive — missing arm 
 };
 
 if let Maybe[i32]::Some(v) = m { #println(v); }
+
+// Payload patterns NEST, to any depth, and nesting counts toward
+// exhaustiveness — these three arms need no catch-all.
+return match r {
+    Read::Ok(Maybe[i32]::Some(v)) => v,
+    Read::Ok(Maybe[i32]::None)    => 0,
+    Read::Err(e)                  => 0 -% e,
+};
 
 // guard let — pattern-or-diverge; else must return/break/continue/loop
 fn process(m: Maybe[i32]) -> i32 {
@@ -1123,8 +1133,10 @@ Recurring traps for generated code:
 - **No `.unwrap()` / `.map()` / `.is_some()` on Result/Option** — use `match` / `guard let`. No `panic()` either.
 - **No `Text` `+`, `split`, `parse`** — interpolate (`${x}`) or do pointer/length work.
 - **`for v in arr` is invalid** — index with `for i in 0..n`.
+- **A payload position takes `_`, a name, or a nested variant pattern.** One position per payload may discriminate; a second one that also does leaves coverage undecided (E0340 asks for a catch-all). A variant pattern over a non-enum payload is E0341.
 - **Struct literals need named fields** — `Point { x: x, y: y }`, not `{ x, y }`.
 - **`cpc check` can't see imports** — anything with `import` must go through `cpc build`.
+- **`cpc check` never runs clang**, so it cannot catch invalid IR: a construct cpc emits but LLVM rejects passes `check` and fails only in a real build. When the question is whether something compiles, **build it**.
 - Interpolation is `${x}`, not `\{x}`; no format specifiers.
 
 ---

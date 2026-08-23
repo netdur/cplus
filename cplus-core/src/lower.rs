@@ -1355,7 +1355,7 @@ impl Lower {
                         } else {
                             self.err(
                                 "E0911",
-                                "static initializer must be a literal (integer, float, bool, string, unary-negated numeric literal), `#zero::[T]()`, an array literal/fill, a (non-generic) struct literal of such, or a scalar constant expression".to_string(),
+                                "static initializer must be a literal (integer, float, bool, string, unary-negated numeric literal), `#zero::[T]()`, an array literal/fill, a (non-generic) struct literal of such, a function name where the type is a fn pointer, or a scalar constant expression".to_string(),
                                 s.value.span,
                             );
                         }
@@ -1649,7 +1649,6 @@ impl Lower {
                 }
                 self.resolve_lens_in_type(elem, consts);
             }
-            TypeKind::Borrowed { inner, .. } => self.resolve_lens_in_type(inner, consts),
             TypeKind::RawPtr(inner) => self.resolve_lens_in_type(inner, consts),
             TypeKind::Slice(inner) => self.resolve_lens_in_type(inner, consts),
             TypeKind::FnPtr {
@@ -1793,6 +1792,15 @@ fn is_static_initializer(e: &Expr) -> bool {
         ExprKind::StructLit { fields, .. } => {
             fields.iter().all(|f| is_static_initializer(&f.value))
         }
+        // A bare name. This is the fn-pointer case
+        // (`static HANDLER: fn(i32) = on_tick;`, and the dispatch-table shape
+        // `static V: Vt = Vt { f: handler };`) — a function's address is a
+        // link-time constant, the most naturally-static value there is, and
+        // it was the one entry missing from a list that had already been
+        // widened three times. Whether the name actually resolves to a
+        // function is sema's call; if it does not, the reference fails there
+        // with E0300 rather than silently rendering as `poison`.
+        ExprKind::Ident(_) => true,
         _ => false,
     }
 }
@@ -3075,7 +3083,7 @@ impl Lower {
             // the historical E0911.
             self.err(
                 "E0911",
-                "const initializer must be a literal (integer, float, bool, string, unary-negated numeric literal, or `#zero::[T]()`) or a scalar constant expression".to_string(),
+                "const initializer must be a literal (integer, float, bool, string, unary-negated numeric literal, or `#zero::[T]()`) or a scalar constant expression. A FUNCTION NAME is not one: a const is substituted at each use, and the substituted name arrives without the type context that makes it a fn pointer. Declare it as a `static` instead — `static F: fn(i32) -> i32 = handler;` — which stores the address and works".to_string(),
                 value.span,
             );
             None
@@ -3179,7 +3187,6 @@ fn classify_derive_field(
         TypeKind::Array { .. } => DeriveFieldKind::Unsupported("array fields"),
         TypeKind::Slice(_) => DeriveFieldKind::Unsupported("slice fields"),
         TypeKind::Tuple(_) => DeriveFieldKind::Unsupported("tuple fields"),
-        TypeKind::Borrowed { .. } => DeriveFieldKind::Unsupported("borrow fields"),
     }
 }
 

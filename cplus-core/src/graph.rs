@@ -1588,7 +1588,6 @@ fn collect_type_names(t: &Type, out: &mut Vec<(String, Span)>) {
         }
         TypeKind::Array { elem, .. } => collect_type_names(elem, out),
         TypeKind::RawPtr(inner) | TypeKind::Slice(inner) => collect_type_names(inner, out),
-        TypeKind::Borrowed { inner, .. } => collect_type_names(inner, out),
         TypeKind::Tuple(ts) => {
             for ty in ts {
                 collect_type_names(ty, out);
@@ -2847,9 +2846,6 @@ pub fn type_to_string(t: &Type) -> String {
     match &t.kind {
         TypeKind::Path(s) => short_name(s).to_string(),
         TypeKind::Array { elem, len, .. } => format!("[{}; {len}]", type_to_string(elem)),
-        TypeKind::Borrowed { region, inner } => {
-            format!("borrow {region} {}", type_to_string(inner))
-        }
         TypeKind::Generic { name, args } => {
             let parts: Vec<String> = args.iter().map(type_to_string).collect();
             format!("{}[{}]", short_name(name), parts.join(", "))

@@ -1405,7 +1405,7 @@ fn generate_inner(
             }
         })
         .collect();
-    emit_statics(&mut out, statics_map, &static_ast_tys, &types, &md, is_lib);
+    emit_statics(&mut out, statics_map, &static_ast_tys, &types, &md, is_lib, &sigs);
     // v0.0.10 Phase 4A: emit per-selector cached-pointer globals.
     emit_selector_globals(&mut out, selectors_set, &md);
     // v0.0.10 Phase 4C: emit per-call shader-blob globals.
@@ -4495,12 +4495,6 @@ fn ty_from(t: &Type, types: &TypeTable) -> Ty {
             let elem_ty = ty_from(elem, types);
             return Ty::Array(Box::new(elem_ty), *len);
         }
-        // Slice 6BC.5: region annotations are transparent at codegen
-        // time. A region-annotated type lowers exactly like its inner T —
-        // the region was borrow-checker metadata, not a runtime construct.
-        // (The `borrow A T` region syntax is retired as of v0.0.24; this
-        // arm survives only for any residual `TypeKind::Borrowed` AST node.)
-        TypeKind::Borrowed { inner, .. } => return ty_from(inner, types),
         // Slice 7GEN.5c: monomorphize rewrites every `TypeKind::Generic`
         // to a concrete `TypeKind::Path(mangled_name)` before codegen.
         // If we reach here it means the rewrite missed a site.
@@ -5809,6 +5803,15 @@ fn collect_address_taken_fns(program: &Program, sigs: &HashMap<String, FnSig>) -
                     }
                 }
             }
+            // A `const`/`static` initializer can name a function too
+            // (`static V: Vt = Vt { f: handler };`). Walking only bodies left
+            // such a function OUTSIDE the address-taken set, so it kept
+            // `fastcc` while the emitted global pointed at it — an indirect
+            // call through that slot would then use the C convention against
+            // a fastcc definition. That is a miscompile, not a link error,
+            // which is why this arm exists before the feature it serves.
+            ItemKind::Static(st) => visit_expr(&st.value, sigs, &mut taken),
+            ItemKind::Const(c) => visit_expr(&c.value, sigs, &mut taken),
             _ => {}
         }
     }
@@ -6034,6 +6037,7 @@ fn emit_statics(
     types: &TypeTable,
     md: &ModuleMetadata,
     is_lib: bool,
+    sigs: &HashMap<String, FnSig>,
 ) {
     let us = usize_llvm_ty();
     if statics_map.is_empty() {
@@ -6088,7 +6092,7 @@ fn emit_statics(
             }
         }
         let lltype = llvm_ty(sty, types);
-        let llvalue = match render_static_literal(&info.init, sty, types) {
+        let llvalue = match render_static_literal(&info.init, sty, types, sigs) {
             Some(s) => s,
             None => {
                 // Defense-in-depth: lower + sema should have rejected
@@ -6115,7 +6119,12 @@ fn emit_statics(
 /// from `gen_expr(ExprKind::FloatLit)`. Returns `None` on any unsupported
 /// shape — the caller emits a `poison` operand in that case so the
 /// failure surfaces at LLVM-assembly time rather than silently.
-fn render_static_literal(e: &Expr, ty: &Ty, types: &TypeTable) -> Option<String> {
+fn render_static_literal(
+    e: &Expr,
+    ty: &Ty,
+    types: &TypeTable,
+    sigs: &HashMap<String, FnSig>,
+) -> Option<String> {
     use crate::lexer::NumSuffix;
     match &e.kind {
         // v0.0.12 G-043 (llama.cplus): array literal / fill as a static
@@ -6134,7 +6143,7 @@ fn render_static_literal(e: &Expr, ty: &Ty, types: &TypeTable) -> Option<String>
             let elem_ll = llvm_ty(elem, types);
             let mut parts: Vec<String> = Vec::with_capacity(elements.len());
             for el in elements {
-                let v = render_static_literal(el, elem, types)?;
+                let v = render_static_literal(el, elem, types, sigs)?;
                 parts.push(format!("{elem_ll} {v}"));
             }
             Some(format!("[{}]", parts.join(", ")))
@@ -6146,7 +6155,7 @@ fn render_static_literal(e: &Expr, ty: &Ty, types: &TypeTable) -> Option<String>
             if *count as u64 != *n as u64 {
                 return None;
             }
-            let v = render_static_literal(fill, elem, types)?;
+            let v = render_static_literal(fill, elem, types, sigs)?;
             if v == "0" || v == "0x0000000000000000" {
                 return Some("zeroinitializer".to_string());
             }
@@ -6169,11 +6178,27 @@ fn render_static_literal(e: &Expr, ty: &Ty, types: &TypeTable) -> Option<String>
             let mut parts: Vec<String> = Vec::with_capacity(info.fields.len());
             for (fname, fty) in &info.fields {
                 let lit = fields.iter().find(|f| &f.name.name == fname)?;
-                let v = render_static_literal(&lit.value, fty, types)?;
+                let v = render_static_literal(&lit.value, fty, types, sigs)?;
                 let fty_ll = llvm_ty(fty, types);
                 parts.push(format!("{fty_ll} {v}"));
             }
             Some(format!("{{ {} }}", parts.join(", ")))
+        }
+        // A bare name where the declared type is a fn pointer: emit the
+        // function's own symbol. A function's address is a link-time constant,
+        // so this is a real constant initializer and not a runtime store —
+        // which is what makes `static V: Vt = Vt { f: handler };`, the
+        // ordinary C dispatch table, expressible at all.
+        //
+        // `link_name` wins where one is set, matching the expression-side
+        // fn-as-value path. A name that is NOT a known function falls through
+        // to `None`, which is the caller's poison path — but lower only admits
+        // an `Ident` initializer for this case and sema resolves the name, so
+        // an unknown one has already been reported.
+        ExprKind::Ident(name) if matches!(ty, Ty::FnPtr { .. }) => {
+            let sig = sigs.get(name)?;
+            let symbol = sig.link_name.clone().unwrap_or_else(|| name.clone());
+            Some(format!("@{symbol}"))
         }
         // A pointer-typed static initialized from an integer literal — either
         // directly or (the common case) via a `0 as *u8` cast that recurses
@@ -6218,9 +6243,9 @@ fn render_static_literal(e: &Expr, ty: &Ty, types: &TypeTable) -> Option<String>
                 Ty::F16 | Ty::F32 | Ty::F64,
             ) => match &operand.kind {
                 ExprKind::IntLit(v, _) => render_static_float(-(*v as f64), NumSuffix::None, ty),
-                _ => render_static_literal(expr, ty, types),
+                _ => render_static_literal(expr, ty, types, sigs),
             },
-            _ => render_static_literal(expr, ty, types),
+            _ => render_static_literal(expr, ty, types, sigs),
         },
         // str-typed statics need a paired data global; v0.0.9 punts.
         // Users should declare these as `const FOO: str = "..."` which
@@ -10161,6 +10186,131 @@ impl<'a> FnState<'a> {
     /// using byte offsets (not slot indices) so multi-payload variants with a
     /// value larger than 8 bytes lay out correctly. Used by construction, match
     /// extraction, and enum-variant drop so all three agree on layout.
+    /// Emit the tag tests a NESTED variant pattern needs, branching to
+    /// `fail_lbl` when any of them says no.
+    ///
+    /// A top-level variant arm needs no test — the switch already routed the
+    /// tag here. A nested one does: several arms can share an outer variant
+    /// and differ only inside it, so the switch sends the tag to the first of
+    /// them and each refutable arm falls through to the next candidate on a
+    /// miss. Tests are pure tag reads, so a failed guard has changed nothing
+    /// and the next candidate starts clean.
+    ///
+    /// Recursive: a pattern nested two deep tests both levels, outermost
+    /// first, so an inner GEP is only reached once its outer tag matched.
+    fn emit_nested_guards(&mut self, pat: &Pattern, slot_ptr: &str, ty: &Ty, fail_lbl: &str) {
+        let PatternKind::Variant {
+            variant_name,
+            payload,
+            ..
+        } = &pat.kind
+        else {
+            return;
+        };
+        let Ty::Enum(id) = ty else { return };
+        let info = self.types.enum_defs[id.0 as usize].clone();
+        let llvm_enum = self.lty(ty);
+        let idx = match info.variants.get(&variant_name.name).copied() {
+            Some(i) => i,
+            None => return, // sema validated; nothing to test if it did not
+        };
+        let (tag_llvm, want) = if info.is_tagged {
+            ("i32".to_string(), idx as i64)
+        } else {
+            let t = match info.repr.0 {
+                8 => "i8",
+                16 => "i16",
+                64 => "i64",
+                _ => "i32",
+            };
+            (t.to_string(), info.values[idx as usize])
+        };
+        let tag = self.next_tmp();
+        if info.is_tagged {
+            let tag_ptr = self.next_tmp();
+            self.emit(&format!(
+                "{tag_ptr} = getelementptr inbounds {llvm_enum}, ptr {slot_ptr}, i32 0, i32 0"
+            ));
+            self.emit(&format!("{tag} = load i32, ptr {tag_ptr}"));
+        } else {
+            self.emit(&format!("{tag} = load {tag_llvm}, ptr {slot_ptr}"));
+        }
+        let ok = self.next_tmp();
+        self.emit(&format!("{ok} = icmp eq {tag_llvm} {tag}, {want}"));
+        let cont = self.next_block_label();
+        self.emit_terminator(&format!("br i1 {ok}, label %{cont}, label %{fail_lbl}"));
+        self.open_block(&cont);
+        // Deeper levels, once this one is known to match.
+        if info.is_tagged {
+            let ptys = info
+                .variant_payloads
+                .get(idx as usize)
+                .cloned()
+                .unwrap_or_default();
+            for (pi, pp) in payload.iter().enumerate() {
+                if matches!(pp.kind, PatternKind::Variant { .. }) {
+                    let inner_ty = ptys.get(pi).cloned().unwrap_or(Ty::I32);
+                    let inner_ptr = self.payload_slot_ptr(&llvm_enum, slot_ptr, &ptys, pi);
+                    self.emit_nested_guards(pp, &inner_ptr, &inner_ty, fail_lbl);
+                }
+            }
+        }
+    }
+
+    /// Bind the names a NESTED variant pattern introduces, reading them out of
+    /// the payload slots the guards have already proven live.
+    fn emit_nested_bindings(&mut self, pat: &Pattern, slot_ptr: &str, ty: &Ty, consumed: bool) {
+        let PatternKind::Variant {
+            variant_name,
+            payload,
+            ..
+        } = &pat.kind
+        else {
+            return;
+        };
+        let Ty::Enum(id) = ty else { return };
+        let info = self.types.enum_defs[id.0 as usize].clone();
+        if !info.is_tagged {
+            return; // payload-free: nothing to bind
+        }
+        let llvm_enum = self.lty(ty);
+        let Some(idx) = info.variants.get(&variant_name.name).copied() else {
+            return;
+        };
+        let ptys = info
+            .variant_payloads
+            .get(idx as usize)
+            .cloned()
+            .unwrap_or_default();
+        for (pi, pp) in payload.iter().enumerate() {
+            let pty = ptys.get(pi).cloned().unwrap_or(Ty::I32);
+            let inner_ptr = self.payload_slot_ptr(&llvm_enum, slot_ptr, &ptys, pi);
+            match &pp.kind {
+                PatternKind::Binding(name) => {
+                    let v = self.next_tmp();
+                    self.gen_load(&v, &pty, &inner_ptr);
+                    let local = self.alloca_named(&name.name, pty.clone());
+                    self.gen_store(&pty, &v, &local);
+                    self.bind(&name.name, local.clone(), pty.clone());
+                    if consumed {
+                        self.register_value_drop(&name.name, &local, &pty, true);
+                    }
+                }
+                PatternKind::Variant { .. } => {
+                    self.emit_nested_bindings(pp, &inner_ptr, &pty, consumed)
+                }
+                // `_` in a nested position: same rule as the top level — when
+                // the match owns the scrutinee, an unbound owning payload has
+                // no other owner left, so drop it here.
+                _ => {
+                    if consumed && self.needs_drop(&pty) {
+                        self.gen_drop_in_place(&pty, &inner_ptr);
+                    }
+                }
+            }
+        }
+    }
+
     fn payload_slot_ptr(
         &mut self,
         llvm_enum: &str,
@@ -12014,6 +12164,22 @@ impl<'a> FnState<'a> {
         // expected element type, so non-literal elements are the right type.
         // With no expected type (untyped `let a = [...]`), infer from the
         // first element as before.
+        // A zero-length array has no first element to infer from and nothing
+        // to store: allocate the (zero-sized) slot and hand back its pointer.
+        // Sema only admits `[]` where the expected type is `[T; 0]`, so the
+        // element type is always known here.
+        if elements.is_empty() {
+            let elem_ty = expected_elem.unwrap_or(Ty::I32);
+            let array_ty = Ty::Array(Box::new(elem_ty.clone()), 0);
+            let _ = self.lty(&elem_ty);
+            let slot = self.alloca_anon(array_ty.clone());
+            // Same aggregate-value tail as the non-empty path: callers store
+            // the RESULT into their destination, so handing back the slot
+            // pointer would store a `ptr` where a `[0 x T]` is expected.
+            let v = self.next_tmp();
+            self.gen_load(&v, &array_ty, &slot);
+            return (v, array_ty);
+        }
         let (first_val, inferred_elem) = self.gen_expr(&elements[0]).expect("array lit element");
         let elem_ty = expected_elem.unwrap_or(inferred_elem);
         let len = elements.len() as u32;
@@ -13447,7 +13613,16 @@ impl<'a> FnState<'a> {
                 (self.divide_with_zero_check(op, &lt, &l, &r), lt)
             }
             BinOp::Mod => {
-                // Sema rejects float `%`; only integer reaches here.
+                // Float `%` is `frem`, the exact mirror of `fdiv` above: IEEE
+                // remainder, no zero check (a float modulo by zero is NaN, not
+                // UB, so there is nothing to trap on). Integer `%` keeps the
+                // zero + INT_MIN checks.
+                if lt.is_float() {
+                    let v = self.next_tmp();
+                    let cf = self.fmf();
+                    self.emit(&format!("{v} = frem {cf}{} {l}, {r}", self.lty(&lt)));
+                    return (v, lt);
+                }
                 (self.divide_with_zero_check(op, &lt, &l, &r), lt)
             }
             BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => {
@@ -14026,8 +14201,14 @@ impl<'a> FnState<'a> {
             None => default_lbl.clone(),
         };
 
-        // Emit switch: one case per concrete variant arm.
+        // Emit switch: one case per DISTINCT tag, routed to the FIRST arm that
+        // names it. Nested patterns make several arms share an outer variant
+        // — `W(A(v))` and `W(B)` are both tag `W` — and LLVM rejects a
+        // duplicated switch case, so the tag selects a chain entry point and
+        // each refutable arm falls through to the next candidate on a miss
+        // (see `next_candidate` below).
         let mut cases = String::new();
+        let mut emitted_tags: std::collections::HashSet<i64> = std::collections::HashSet::new();
         for (i, arm) in arms.iter().enumerate() {
             if let PatternKind::Variant { variant_name, .. } = &arm.pattern.kind {
                 let idx = info
@@ -14042,7 +14223,9 @@ impl<'a> FnState<'a> {
                 } else {
                     info.values[idx as usize]
                 };
-                cases.push_str(&format!("    {tag_llvm} {tag}, label %{}\n", arm_labels[i]));
+                if emitted_tags.insert(tag) {
+                    cases.push_str(&format!("    {tag_llvm} {tag}, label %{}\n", arm_labels[i]));
+                }
             }
         }
         self.emit_terminator(&format!(
@@ -14122,7 +14305,57 @@ impl<'a> FnState<'a> {
                         .get(tag as usize)
                         .cloned()
                         .unwrap_or_default();
+                    // Guards first, and BEFORE any binding or drop below: a
+                    // failed guard must leave the value exactly as the next
+                    // candidate expects to find it. Where this arm's payload
+                    // holds no nested pattern the loop emits nothing and the
+                    // shape is byte-identical to before.
+                    if payload
+                        .iter()
+                        .any(|pp| matches!(pp.kind, PatternKind::Variant { .. }))
+                    {
+                        // Where a miss goes: the next arm that could still
+                        // match this tag, else the catch-all, else the
+                        // unreachable default.
+                        let fail_lbl = arms
+                            .iter()
+                            .enumerate()
+                            .skip(i + 1)
+                            .find(|(_, a)| match &a.pattern.kind {
+                                PatternKind::Variant { variant_name: vn, .. } => {
+                                    vn.name == variant_name.name
+                                }
+                                PatternKind::Wildcard | PatternKind::Binding(_) => true,
+                                _ => false,
+                            })
+                            .map(|(j, _)| arm_labels[j].clone())
+                            .unwrap_or_else(|| default_lbl.clone());
+                        for (pi, pp) in payload.iter().enumerate() {
+                            if matches!(pp.kind, PatternKind::Variant { .. }) {
+                                let pty =
+                                    variant_payload_tys.get(pi).cloned().unwrap_or(Ty::I32);
+                                let slot_ptr = self.payload_slot_ptr(
+                                    &llvm_enum,
+                                    &scr_ptr,
+                                    &variant_payload_tys,
+                                    pi,
+                                );
+                                self.emit_nested_guards(pp, &slot_ptr, &pty, &fail_lbl);
+                            }
+                        }
+                    }
                     for (pi, pp) in payload.iter().enumerate() {
+                        if matches!(pp.kind, PatternKind::Variant { .. }) {
+                            let pty = variant_payload_tys.get(pi).cloned().unwrap_or(Ty::I32);
+                            let slot_ptr = self.payload_slot_ptr(
+                                &llvm_enum,
+                                &scr_ptr,
+                                &variant_payload_tys,
+                                pi,
+                            );
+                            self.emit_nested_bindings(pp, &slot_ptr, &pty, consumed);
+                            continue;
+                        }
                         if !matches!(pp.kind, PatternKind::Binding(_)) {
                             // Wildcard (or other non-binding) payload position:
                             // not bound, so not moved out. When the scrutinee is
@@ -16268,7 +16501,8 @@ impl<'a> FnState<'a> {
         // the underlying bytes (str) or a multiplicative mixer (integers).
         if name.name == "hash" && args.is_empty() {
             let (rv, rt) = self.blessed_recv_value(receiver, &pre);
-            if Self::is_blessed_hash_receiver_codegen(&rt) {
+            if Self::is_blessed_hash_receiver_codegen(&rt) || self.is_payload_free_enum_codegen(&rt)
+            {
                 return Some(self.gen_hash_intrinsic(&rv, &rt));
             }
         }
@@ -16276,7 +16510,7 @@ impl<'a> FnState<'a> {
         // str receivers. Lowers to the same icmp / memcmp shape as `==`.
         if name.name == "eq" && args.len() == 1 {
             let (lv, lt) = self.blessed_recv_value(receiver, &pre);
-            if Self::is_blessed_eq_receiver_codegen(&lt) {
+            if Self::is_blessed_eq_receiver_codegen(&lt) || self.is_payload_free_enum_codegen(&lt) {
                 let (rv, _) = self.gen_expr(&args[0]).expect("eq arg");
                 return Some(self.gen_eq_intrinsic(&lv, &rv, &lt));
             }
@@ -16327,6 +16561,26 @@ impl<'a> FnState<'a> {
                 let r = self.next_tmp();
                 self.emit(&format!("{r} = icmp eq {us} {len_val}, 0"));
                 return Some((r, Ty::Bool));
+            }
+        }
+        // Blessed `cmp(other)` on an ordered scalar → -1 / 0 / 1.
+        if name.name == "cmp" && args.len() == 1 {
+            let (lv, lt) = self.blessed_recv_value(receiver, &pre);
+            if Self::is_blessed_cmp_receiver_codegen(&lt) || self.is_payload_free_enum_codegen(&lt)
+            {
+                let (rv, _) = self.gen_expr(&args[0]).expect("cmp arg");
+                return Some(self.gen_cmp_intrinsic(&lv, &rv, &lt));
+            }
+        }
+        // Blessed `clone()` on a Copy scalar — the value itself. No copy to
+        // make: these types ARE their bits.
+        if name.name == "clone" && args.is_empty() {
+            let (rv, rt) = self.blessed_recv_value(receiver, &pre);
+            if Self::is_blessed_eq_receiver_codegen(&rt)
+                || Self::is_blessed_cmp_receiver_codegen(&rt)
+                || self.is_payload_free_enum_codegen(&rt)
+            {
+                return Some((rv, rt));
             }
         }
         // v0.0.12 G-024: blessed `is_null()` / `is_not_null()` on raw
@@ -17567,7 +17821,15 @@ impl<'a> FnState<'a> {
                 }
                 self.divide_with_zero_check(BinOp::Div, ty, l, r)
             }
-            AssignOp::ModAssign => self.divide_with_zero_check(BinOp::Mod, ty, l, r),
+            AssignOp::ModAssign => {
+                if ty.is_float() {
+                    let v = self.next_tmp();
+                    let cf = self.fmf();
+                    self.emit(&format!("{v} = frem {cf}{lty} {l}, {r}"));
+                    return v;
+                }
+                self.divide_with_zero_check(BinOp::Mod, ty, l, r)
+            }
             AssignOp::BitAndAssign => {
                 let v = self.next_tmp();
                 self.emit(&format!("{v} = and {lty} {l}, {r}"));
@@ -18374,6 +18636,68 @@ impl<'a> FnState<'a> {
                 | Ty::Usize
                 | Ty::Str
         )
+    }
+
+    /// Codegen twin of sema's `is_blessed_cmp_receiver`.
+    fn is_blessed_cmp_receiver_codegen(ty: &Ty) -> bool {
+        matches!(
+            ty,
+            Ty::I8
+                | Ty::I16
+                | Ty::I32
+                | Ty::I64
+                | Ty::Isize
+                | Ty::U8
+                | Ty::U16
+                | Ty::U32
+                | Ty::U64
+                | Ty::Usize
+                | Ty::F16
+                | Ty::F32
+                | Ty::F64
+        )
+    }
+
+    /// Three-way compare on an ordered scalar: `(a > b) - (a < b)`, so the
+    /// result is -1 / 0 / 1 in `i32`. Signedness picks the icmp predicate;
+    /// floats use ORDERED comparisons, which makes a NaN operand answer 0
+    /// (neither greater nor less) instead of producing something arbitrary.
+    fn gen_cmp_intrinsic(&mut self, lv: &str, rv: &str, lt: &Ty) -> (String, Ty) {
+        let llt = self.lty(lt);
+        let (gt_op, lt_op) = if lt.is_float() {
+            ("fcmp ogt", "fcmp olt")
+        } else if lt.is_signed_int() {
+            ("icmp sgt", "icmp slt")
+        } else {
+            ("icmp ugt", "icmp ult")
+        };
+        let g = self.next_tmp();
+        let l = self.next_tmp();
+        self.emit(&format!("{g} = {gt_op} {llt} {lv}, {rv}"));
+        self.emit(&format!("{l} = {lt_op} {llt} {lv}, {rv}"));
+        let g32 = self.next_tmp();
+        let l32 = self.next_tmp();
+        self.emit(&format!("{g32} = zext i1 {g} to i32"));
+        self.emit(&format!("{l32} = zext i1 {l} to i32"));
+        let r = self.next_tmp();
+        self.emit(&format!("{r} = sub i32 {g32}, {l32}"));
+        (r, Ty::I32)
+    }
+
+    /// A payload-free enum lowers to a bare discriminant, so the integer
+    /// lowerings are correct on it. A TAGGED one is an aggregate and none of
+    /// them are — and, unlike `eq`, a user may legitimately define `clone`
+    /// on a tagged enum, so intercepting it here would silently replace a
+    /// deep copy with a bit copy and double-free the payload. That is not
+    /// hypothetical: it is what the first version of this did.
+    ///
+    /// The static predicates cannot answer this (taggedness lives in the type
+    /// table), which is why it is a method.
+    fn is_payload_free_enum_codegen(&self, ty: &Ty) -> bool {
+        match ty {
+            Ty::Enum(id) => !self.types.enum_defs[id.0 as usize].is_tagged,
+            _ => false,
+        }
     }
 
     fn is_blessed_eq_receiver_codegen(ty: &Ty) -> bool {
@@ -21365,6 +21689,34 @@ fn main() -> i32 {\n\
             assert!(ir.contains(" = sdiv i32 "), "mode={mode:?}");
             assert!(ir.contains("call void @llvm.trap()"), "mode={mode:?}");
         }
+    }
+
+    #[test]
+    fn blessed_cmp_is_a_three_way_compare() {
+        let ir = gen_src("fn main() -> i32 { return (2 as i32).cmp(9); }");
+        assert!(ir.contains("icmp sgt i32"), "signed greater-than:\n{ir}");
+        assert!(ir.contains("icmp slt i32"), "signed less-than:\n{ir}");
+        assert!(ir.contains(" = sub i32 "), "difference of the two:\n{ir}");
+    }
+
+    #[test]
+    fn blessed_cmp_on_unsigned_uses_unsigned_predicates() {
+        // The bug an unsigned lowering prevents: `200u8` must sort ABOVE
+        // `3u8`, which a signed compare gets wrong the moment the high bit
+        // is set.
+        let ir = gen_src("fn main() -> i32 { return (200 as u8).cmp(3 as u8); }");
+        assert!(ir.contains("icmp ugt i8"), "unsigned greater-than:\n{ir}");
+        assert!(ir.contains("icmp ult i8"), "unsigned less-than:\n{ir}");
+    }
+
+    #[test]
+    fn float_modulo_lowers_to_frem() {
+        let ir = gen_src("fn main() -> i32 { let _x: f64 = 7.5 % 2.0; return 0; }");
+        assert!(ir.contains("frem"), "float `%` is `frem`:\n{ir}");
+        assert!(
+            !ir.contains("srem double") && !ir.contains("urem double"),
+            "and never an integer remainder:\n{ir}"
+        );
     }
 
     #[test]

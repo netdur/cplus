@@ -54,8 +54,11 @@ usage:
   cpc check [FILE]                  fast feedback loop: parse + sema + borrowck.
                                     With no FILE: whole-project check via Cplus.toml,
                                     enforcing any [profile.realtime] gate; no codegen.
-                                    With a FILE: also runs codegen and discards the
-                                    IR, so a codegen-stage fault is caught here too.
+                                    With a FILE: also runs codegen and discards the IR,
+                                    so a codegen-stage FAULT is caught here too. It does
+                                    NOT assemble: clang never sees the IR, so invalid IR
+                                    passes `check` and fails only in a real build. When
+                                    the question is whether it compiles, build it.
   cpc headers                       generate `lib/include/` from `src/` for the package in
                                     the current directory: concrete modules become
                                     declarations (`fn f(...) -> T;`), modules declaring
@@ -5907,11 +5910,8 @@ fn type_to_c(t: &cplus_core::ast::Type) -> Option<String> {
             let elem_c = type_to_c(elem)?;
             format!("{}[{}]", elem_c, len)
         }
-        // Generics, borrows, slices, tuples — not C-representable.
-        TypeKind::Generic { .. }
-        | TypeKind::Borrowed { .. }
-        | TypeKind::Slice(_)
-        | TypeKind::Tuple(_) => return None,
+        // Generics, slices, tuples — not C-representable.
+        TypeKind::Generic { .. } | TypeKind::Slice(_) | TypeKind::Tuple(_) => return None,
     })
 }
 

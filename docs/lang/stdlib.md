@@ -124,9 +124,10 @@ each. You import them only when you are extending stdlib itself.
 
 ## 8. What is not here
 
-- **No iterator protocol over collections.** `Vec`, arrays, and slices are
-  not `for … in` iterable (E0312). Index over `0..n`, or produce an
-  `Iterator[T]` from a `gen fn`.
+- **No implicit iterator protocol.** `for … in` takes a range or an
+  `Iterator[T]` and nothing else (E0312) — there is no trait it will call for
+  you. `Vec` supplies one explicitly (`gen fn iter`), so `for x in v.iter()`
+  works; arrays and slices have no `iter()` and are indexed over `0..n`.
 - **No `Option`/`Result` combinators.** No `map`, `unwrap_or`,
   `and_then`, `is_none`. Consume them with `match` or `guard let` —
   [error-handling.md](error-handling.md).

@@ -3583,6 +3583,22 @@ impl SemaCx<'_> {
                 }
                 seen.insert(f.name.name.clone(), ());
                 let ty = self.resolve_type(&f.ty);
+                // A `()` field has no storage. LLVM allows `void` only as a
+                // function result, so this used to reach clang as
+                // "void type only allowed for function results" — no code, no
+                // span in the user's file. There is nothing a unit field could
+                // hold, so reject it where it is written.
+                if ty == Ty::Unit {
+                    self.err(
+                        "E0302",
+                        format!(
+                            "field `{}` of struct `{}` has type `()`, which has no storage — \
+                             a struct cannot hold a value that has no bits",
+                            f.name.name, s.name.name
+                        ),
+                        f.name.span,
+                    );
+                }
                 fields.push((f.name.name.clone(), ty, f.is_pub));
             }
             self.structs[id.0 as usize].fields = fields;
@@ -4581,6 +4597,18 @@ impl SemaCx<'_> {
             "Hash" if Self::is_blessed_hash_receiver(ty) => return true,
             "Eq" if Self::is_blessed_eq_receiver(ty) => return true,
             "ToText" if Self::is_blessed_to_text_receiver(ty) => return true,
+            // A payload-free enum is a discriminant, so it answers every
+            // blessed scalar method and satisfies every blessed bound.
+            "Eq" | "Hash" | "Ord" | "Clone" if self.is_payload_free_enum(ty) => return true,
+            // `Ord` and `Clone` joined the list once they GREW a blessed
+            // dispatch (below). Until then admitting them here would have
+            // been the mirror-image mismatch the comment above warns about:
+            // a bound that type-checks and a body that cannot call the
+            // method. `fn max[T: Ord]` could not be instantiated at `i32` —
+            // the bounded generic could not be used at the types it is most
+            // obviously for.
+            "Ord" if Self::is_blessed_cmp_receiver(ty) => return true,
+            "Clone" if Self::is_blessed_clone_receiver(ty) => return true,
             _ => {}
         }
         match ty {
@@ -4902,7 +4930,7 @@ impl SemaCx<'_> {
                         ty: self.resolve_type(&p.ty),
                         mutable: p.mutable,
                         move_: p.move_,
-                        borrow_: p.borrow_ || matches!(p.ty.kind, TypeKind::Borrowed { .. }),
+                        borrow_: p.borrow_,
                     })
                     .collect();
                 let declared_ret = match &m.return_type {
@@ -5253,7 +5281,7 @@ impl SemaCx<'_> {
                     ty: self.resolve_type(&p.ty),
                     mutable: p.mutable,
                     move_: p.move_,
-                    borrow_: p.borrow_ || matches!(p.ty.kind, TypeKind::Borrowed { .. }),
+                    borrow_: p.borrow_,
                 })
                 .collect();
             let return_type = match &m.return_type {
@@ -5392,7 +5420,7 @@ impl SemaCx<'_> {
                     ty: self.resolve_type(&p.ty),
                     mutable: p.mutable,
                     move_: p.move_,
-                    borrow_: p.borrow_ || matches!(p.ty.kind, TypeKind::Borrowed { .. }),
+                    borrow_: p.borrow_,
                 })
                 .collect();
             let declared_ret = match &m.return_type {
@@ -5433,7 +5461,7 @@ impl SemaCx<'_> {
                 self.err(
                     "E0338",
                     format!(
-                        "destructor methods on enums are not yet supported (`impl {}::drop`)",
+                        "an enum cannot declare a destructor (`impl {}::drop`); its payload already drops through the tag switch. Wrap the enum in a struct and put `drop` there when a release has to be explicit",
                         b.target.name
                     ),
                     m.name.span,
@@ -5589,7 +5617,7 @@ impl SemaCx<'_> {
                     ty: self.resolve_type(&p.ty),
                     mutable: p.mutable,
                     move_: p.move_,
-                    borrow_: p.borrow_ || matches!(p.ty.kind, TypeKind::Borrowed { .. }),
+                    borrow_: p.borrow_,
                 })
                 .collect();
             let declared_ret = match &m.return_type {
@@ -5779,7 +5807,7 @@ impl SemaCx<'_> {
                         ty: self.resolve_type(&p.ty),
                         mutable: p.mutable,
                         move_: p.move_,
-                        borrow_: p.borrow_ || matches!(p.ty.kind, TypeKind::Borrowed { .. }),
+                        borrow_: p.borrow_,
                     })
                     .collect();
                 let return_type = match &m.return_type {
@@ -5911,11 +5939,26 @@ impl SemaCx<'_> {
                     iface_name.name.as_str(),
                     "Eq" | "Ord" | "Hash" | "Clone" | "ToText"
                 );
+                // A payload-free enum already answers every blessed scalar
+                // method and satisfies every blessed bound, so an explicit
+                // empty impl is redundant rather than wrong — say which.
+                let payload_free_enum = self
+                    .enums
+                    .iter()
+                    .find(|e| e.name == b.target.name)
+                    .map(|e| !e.is_tagged)
+                    .unwrap_or(false);
                 diags.push(Diag {
                     code: "E0916",
-                    msg: if derivable {
+                    msg: if derivable && payload_free_enum {
                         format!(
-                            "cannot derive `{}` for `{}` — deriving needs a struct target",
+                            "`{}` already satisfies `{}` — a payload-free enum is a bare discriminant, so `eq` / `cmp` / `hash` / `clone` and the matching bounds work on it with no impl. Delete this one",
+                            b.target.name.rsplit('.').next().unwrap_or(&b.target.name),
+                            iface_name.name
+                        )
+                    } else if derivable {
+                        format!(
+                            "cannot derive `{}` for `{}` — deriving needs a struct target (a payload-CARRYING enum has to write the method by hand)",
                             iface_name.name, b.target.name
                         )
                     } else {
@@ -6457,13 +6500,7 @@ impl SemaCx<'_> {
                     param.span,
                 );
             }
-            let param_owns_value = if matches!(param.ty.kind, crate::ast::TypeKind::Borrowed { .. })
-            {
-                // region borrow (Stage-4 feature, retired in v0.0.24 #9): shared is returnable, `ref` is not.
-                !param.mutable
-            } else {
-                param.move_ || self.is_copy(&psig.ty)
-            };
+            let param_owns_value = param.move_ || self.is_copy(&psig.ty);
             self.scopes.last_mut().unwrap().insert(
                 param.name.name.clone(),
                 LocalInfo {
@@ -6480,7 +6517,6 @@ impl SemaCx<'_> {
                 },
             );
         }
-        self.check_return_region_declared(&m.params, &m.return_type);
         // v0.0.27/v0.0.28 contracts: method pre- and postconditions check in
         // the receiver + parameter scope, before the body.
         let contract_ret = self.current_return.clone();
@@ -6554,12 +6590,7 @@ impl SemaCx<'_> {
                     param.span,
                 );
             }
-            let param_owns_value = if matches!(param.ty.kind, crate::ast::TypeKind::Borrowed { .. })
-            {
-                !param.mutable
-            } else {
-                param.move_ || self.is_copy(&psig.ty)
-            };
+            let param_owns_value = param.move_ || self.is_copy(&psig.ty);
             self.scopes.last_mut().unwrap().insert(
                 param.name.name.clone(),
                 LocalInfo {
@@ -6572,7 +6603,6 @@ impl SemaCx<'_> {
                 },
             );
         }
-        self.check_return_region_declared(&m.params, &m.return_type);
         // v0.0.27/v0.0.28 contracts: method pre- and postconditions check in
         // the receiver + parameter scope, before the body.
         let contract_ret = self.current_return.clone();
@@ -6721,13 +6751,7 @@ impl SemaCx<'_> {
                     param.span,
                 );
             }
-            let param_owns_value = if matches!(param.ty.kind, crate::ast::TypeKind::Borrowed { .. })
-            {
-                // region borrow (Stage-4 feature, retired in v0.0.24 #9): shared is returnable, `ref` is not.
-                !param.mutable
-            } else {
-                param.move_ || self.is_copy(&psig.ty)
-            };
+            let param_owns_value = param.move_ || self.is_copy(&psig.ty);
             self.scopes.last_mut().unwrap().insert(
                 param.name.name.clone(),
                 LocalInfo {
@@ -6744,7 +6768,6 @@ impl SemaCx<'_> {
                 },
             );
         }
-        self.check_return_region_declared(&m.params, &m.return_type);
         // v0.0.27/v0.0.28 contracts: method pre- and postconditions check in
         // the receiver + parameter scope, before the body.
         let contract_ret = self.current_return.clone();
@@ -6824,7 +6847,7 @@ impl SemaCx<'_> {
                     ty: self.resolve_type(&p.ty),
                     mutable: p.mutable,
                     move_: p.move_,
-                    borrow_: p.borrow_ || matches!(p.ty.kind, TypeKind::Borrowed { .. }),
+                    borrow_: p.borrow_,
                 })
                 .collect();
             let declared_ret = match &f.return_type {
@@ -7122,7 +7145,7 @@ impl SemaCx<'_> {
         if !no_params || sig.return_type != Ty::I32 {
             self.err(
                 "E0309",
-                "`main` must have signature `fn main() -> i32` in Phase 1".to_string(),
+                "`main` must have signature `fn main() -> i32`".to_string(),
                 span,
             );
         }
@@ -8314,7 +8337,7 @@ impl SemaCx<'_> {
                     self.err(
                         "E0900",
                         format!(
-                            "parameter `{}` has borrow-shaped type `{}` which is not allowed in `async fn` — borrows live across `await` may dangle once the reactor lands (Phase 3). Use an owned type instead (`Text` for `str`, `Vec[T]` for `T[]`).",
+                            "parameter `{}` has borrow-shaped type `{}`, which an `async fn` cannot take: a coroutine frame outlives the call that created it, so a borrow in one has no owner left to point at. Use an owned type instead (`Text` for `str`, `Vec[T]` for `T[]`).",
                             param.name.name, ty_display(pty),
                         ),
                         param.span,
@@ -8331,13 +8354,7 @@ impl SemaCx<'_> {
                     );
                 }
             }
-            let param_owns_value = if matches!(param.ty.kind, crate::ast::TypeKind::Borrowed { .. })
-            {
-                // region borrow (Stage-4 feature, retired in v0.0.24 #9): shared is returnable, `ref` is not.
-                !param.mutable
-            } else {
-                param.move_ || self.is_copy(&psig.ty)
-            };
+            let param_owns_value = param.move_ || self.is_copy(&psig.ty);
             self.scopes.last_mut().unwrap().insert(
                 param.name.name.clone(),
                 LocalInfo {
@@ -8354,7 +8371,6 @@ impl SemaCx<'_> {
                 },
             );
         }
-        self.check_return_region_declared(&f.params, &f.return_type);
         // v0.0.27/v0.0.28 contracts: `#[requires(EXPR)]` / `#[ensures(EXPR)]`
         // type-check in the parameter scope, before the body (their reads must
         // not perturb definite-assignment/move state — the purity rule
@@ -8802,6 +8818,23 @@ impl SemaCx<'_> {
                         (final_ty, false)
                     }
                 };
+                // A unit value has no storage, so there is no slot to bind it
+                // to — codegen panicked here rather than emitting anything
+                // ("expected value"). `let x = f();` where `f` returns nothing
+                // is an ordinary mistake (usually a misremembered signature),
+                // so it deserves a diagnostic, not a crash.
+                if final_ty == Ty::Unit {
+                    self.err(
+                        "E0302",
+                        format!(
+                            "cannot bind `{}`: the initializer produces `()`, which has no \
+                             value to store. Call it as a statement, or return something \
+                             from it",
+                            name.name
+                        ),
+                        s.span,
+                    );
+                }
                 // v0.0.14 `#[no_alloc]` drop-glue: a local whose scope-exit
                 // teardown frees heap (a `Text`/`Vec`/`Box`) or runs a
                 // `drop` not marked `#[no_alloc]` would allocate/deallocate at
@@ -10578,7 +10611,7 @@ impl SemaCx<'_> {
                         self.err(
                             "E0895",
                             format!(
-                                "`#asm` `out`/`inout` operand `{}` must be a variable; general places (field/index) are not yet supported",
+                                "`#asm` `out`/`inout` operand `{}` must be a plain variable, not a field or index. Write the result into a `var`, then copy it into the place",
                                 op.name
                             ),
                             op.span,
@@ -10784,10 +10817,28 @@ impl SemaCx<'_> {
 
     fn check_array_lit(&mut self, elements: &[Expr], expected: Option<Ty>, span: ByteSpan) -> Ty {
         if elements.is_empty() {
+            // `[]` carries no element type of its own, so it is well-formed
+            // exactly when the position it sits in already fixes one AND that
+            // type is zero-length. An annotated `let a: [i32; 0] = [];` is
+            // the whole legal shape; anything else has nothing to infer from.
+            if let Some(Ty::Array(elem, 0)) = &expected {
+                return Ty::Array(elem.clone(), 0);
+            }
+            let hint = match &expected {
+                Some(Ty::Array(elem, n)) => format!(
+                    "; this position expects `[{}; {}]`, so it needs {} element(s)",
+                    ty_display(elem),
+                    n,
+                    n
+                ),
+                _ => String::new(),
+            };
             self.err(
                 "E0332",
-                "empty array literals not supported in Phase 2; provide at least one element"
-                    .to_string(),
+                format!(
+                    "`[]` has no element type of its own, so it is only legal where the \
+                     expected type is a zero-length array (`let a: [i32; 0] = [];`){hint}"
+                ),
                 span,
             );
             return Ty::Error;
@@ -10798,6 +10849,21 @@ impl SemaCx<'_> {
             _ => None,
         };
         let first_ty = self.check_expr(&elements[0], expected_elem.clone());
+        // Same no-storage rule as a tuple element / struct field: an array of
+        // `()` has no bits to lay out, and codegen panicked on it.
+        if first_ty == Ty::Unit {
+            self.err(
+                "E0302",
+                "array element has type `()`, which has no storage — an array cannot hold \
+                 a value that has no bits"
+                    .to_string(),
+                elements[0].span,
+            );
+            for e in &elements[1..] {
+                let _ = self.check_expr(e, expected_elem.clone());
+            }
+            return Ty::Error;
+        }
         // v0.0.23: each element is MOVED into the array — run the shared
         // consuming-site classifier (reject a borrow / partial move → E0337 /
         // E0509) and mark a whole-binding element moved, in order, so a reused
@@ -10938,6 +11004,21 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         }
         if elem_tys.iter().any(|t| matches!(t, Ty::Error)) {
             return Ty::Error;
+        }
+        // A tuple is a synthesized struct, so a `()` element hits the same
+        // no-storage wall a `()` field does — and hit it as a codegen panic.
+        for (i, t) in elem_tys.iter().enumerate() {
+            if *t == Ty::Unit {
+                self.err(
+                    "E0302",
+                    format!(
+                        "tuple element {i} has type `()`, which has no storage — a tuple \
+                         cannot hold a value that has no bits"
+                    ),
+                    elements[i].span,
+                );
+                return Ty::Error;
+            }
         }
         // bug-27: remember what this literal's elements checked as. Inside a
         // generic template the element types are `Ty::Param`, and the struct
@@ -11103,7 +11184,12 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
 
         // Track which variants are covered by name. A wildcard / binding
         // pattern catches everything not yet covered.
-        let mut covered: HashMap<String, ()> = HashMap::new();
+        // Per variant, the payload-pattern ROWS that matched it. A row whose
+        // positions are all `_`/binding covers the variant outright; rows made
+        // of nested variant patterns cover it only if they are themselves
+        // exhaustive over the payload, which `nested_rows_are_exhaustive`
+        // decides.
+        let mut covered: HashMap<String, Vec<Vec<Pattern>>> = HashMap::new();
         let mut has_catchall = false;
         let mut result_ty: Option<Ty> = None;
         // Definite-assignment flow merge across arms: snapshot pre-match
@@ -11256,10 +11342,10 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                         self.err(
                             "E0337",
                             "cannot move a value out of a `match` on a value the match does not \
-                             own (a field, array element, `*p`, or a `borrow`/`mut` binding); that \
-                             would partially move a value owned elsewhere. Phase 3 defers partial \
-                             moves — match an owned binding instead, or leave the payload in place \
-                             (a read-only binding is allowed)."
+                             own (a field, an array element, `*p`, or a binding that only borrows); \
+                             that would partially move a value owned elsewhere. Match an owned \
+                             binding instead — a parameter declared `take x: T` owns what it was \
+                             given — or leave the payload in place (a read-only binding is allowed)."
                                 .to_string(),
                             arm.pattern.span,
                         );
@@ -11292,11 +11378,22 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         // Exhaustiveness: every variant must be covered, or there must be
         // a catch-all wildcard / binding arm.
         if !has_catchall && !pattern_poisoned {
-            let mut missing: Vec<String> = variant_names
-                .iter()
-                .filter(|n| !covered.contains_key(*n))
-                .cloned()
-                .collect();
+            let mut missing: Vec<String> = Vec::new();
+            for n in &variant_names {
+                let Some(rows) = covered.get(n) else {
+                    missing.push(n.clone());
+                    continue;
+                };
+                let payload_tys = self.enums[enum_id.0 as usize]
+                    .variants
+                    .iter()
+                    .find(|v| &v.name == n)
+                    .map(|v| v.payload.clone())
+                    .unwrap_or_default();
+                if !self.rows_cover(rows, &payload_tys) {
+                    missing.push(n.clone());
+                }
+            }
             if !missing.is_empty() {
                 missing.sort(); // deterministic for diagnostics
                 let list = missing.join(", ");
@@ -11334,7 +11431,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         pat: &Pattern,
         enum_id: EnumId,
         enum_name: &str,
-        covered: &mut HashMap<String, ()>,
+        covered: &mut HashMap<String, Vec<Vec<Pattern>>>,
         has_catchall: &mut bool,
         // True iff the scrutinee is owned by the match (an owned binding or
         // temporary). Payload / catch-all bindings then OWN their value and
@@ -11466,7 +11563,10 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                     *poisoned = true;
                     return;
                 };
-                covered.insert(variant_name.name.clone(), ());
+                covered
+                    .entry(variant_name.name.clone())
+                    .or_default()
+                    .push(payload.to_vec());
                 // Payload arity check.
                 if payload.len() != vdef.payload.len() {
                     self.err(
@@ -11517,11 +11617,45 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                             );
                         }
                         PatternKind::Variant { .. } => {
-                            self.err(
-                                "E0341",
-                                "nested variant patterns are not supported in Phase 3 (payload patterns must be `_` or a binding name)".to_string(),
-                                pp.span,
-                            );
+                            // A nested variant pattern. Its position must be
+                            // an enum, and then it is the same question one
+                            // level down — so ask `check_pattern` again.
+                            //
+                            // `covered` / `has_catchall` belong to the OUTER
+                            // match, so the recursion gets its own throwaway
+                            // pair: what the nested pattern covers is decided
+                            // by `rows_cover` after every arm is in, not by
+                            // this walk. Bindings, arity and type errors are
+                            // the parts that must happen here, and they do.
+                            match pty {
+                                Ty::Enum(inner_id) => {
+                                    let inner_name =
+                                        self.enums[inner_id.0 as usize].name.clone();
+                                    let mut inner_covered: HashMap<String, Vec<Vec<Pattern>>> =
+                                        HashMap::new();
+                                    let mut inner_catchall = false;
+                                    self.check_pattern(
+                                        pp,
+                                        *inner_id,
+                                        &inner_name,
+                                        &mut inner_covered,
+                                        &mut inner_catchall,
+                                        scrutinee_owned,
+                                        poisoned,
+                                    );
+                                }
+                                other => {
+                                    self.err(
+                                        "E0341",
+                                        format!(
+                                            "a variant pattern here would match an enum, but this payload position has type `{}` — use `_` or a binding name",
+                                            ty_display(other)
+                                        ),
+                                        pp.span,
+                                    );
+                                    *poisoned = true;
+                                }
+                            }
                         }
                     }
                 }
@@ -11535,6 +11669,115 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
     /// body reported E0300 `undefined name` — noise pointing at a name the
     /// author wrote correctly. `Ty::Error` is the existing poison: it
     /// compares equal to nothing and suppresses downstream type reports.
+    /// Is a payload pattern irrefutable — does it match every value of its
+    /// position? `_` and a binding do; a nested variant pattern does not.
+    /// The value of an integer literal (or a negated one), for the constant
+    /// folding the overflow warning does. `None` for anything else — the
+    /// warning only speaks about expressions it can evaluate exactly.
+    fn int_lit_value(e: &Expr) -> Option<i128> {
+        match &e.kind {
+            ExprKind::IntLit(v, _) => Some(*v as i128),
+            ExprKind::Unary {
+                op: UnaryOp::Neg,
+                operand,
+            } => Self::int_lit_value(operand).map(|v| -v),
+            _ => None,
+        }
+    }
+
+    fn pattern_is_irrefutable(pat: &Pattern) -> bool {
+        matches!(
+            pat.kind,
+            PatternKind::Wildcard | PatternKind::Binding(_)
+        )
+    }
+
+    /// Do these payload-pattern rows cover every value the variant can hold?
+    ///
+    /// Two cases, and the second is the one nested patterns introduced:
+    ///
+    /// 1. Any row that is irrefutable in every position covers outright —
+    ///    `Some(v)`, `Pair(_, _)`. This is the whole of the pre-nesting rule.
+    /// 2. Otherwise the rows are refutable, which is only possible now that a
+    ///    payload may itself be a variant pattern. For a SINGLE-position
+    ///    payload — `Option`, `Result`, the shape that motivates nesting —
+    ///    gather what each row says about that position and ask whether those
+    ///    patterns are exhaustive over the payload's own enum. That recursion
+    ///    is what makes `W(A(v)) | W(B) | N` exhaustive without a catch-all.
+    ///
+    /// A multi-position payload with no irrefutable row is reported as not
+    /// covered. Deciding it needs a real pattern matrix over several columns;
+    /// answering "not covered" is the honest under-approximation — it never
+    /// accepts a match that could fall through, and the fix (add a row that is
+    /// irrefutable, or a catch-all) is one the message can name.
+    fn rows_cover(&self, rows: &[Vec<Pattern>], payload_tys: &[Ty]) -> bool {
+        if rows.iter().any(|r| r.iter().all(Self::pattern_is_irrefutable)) {
+            return true;
+        }
+        // Otherwise exactly one position may be doing the discriminating. Find
+        // the positions some row is refutable in; if there is more than one,
+        // deciding coverage needs a real multi-column pattern matrix and the
+        // honest answer is "not covered".
+        //
+        // One column is the shape that actually occurs: `Pair(A(v), k)` /
+        // `Pair(B, k)` discriminates on position 0 and takes anything in
+        // position 1, and the second column contributes nothing to whether the
+        // first is exhausted.
+        let mut refutable_cols: Vec<usize> = Vec::new();
+        for row in rows {
+            for (i, p) in row.iter().enumerate() {
+                if !Self::pattern_is_irrefutable(p) && !refutable_cols.contains(&i) {
+                    refutable_cols.push(i);
+                }
+            }
+        }
+        if refutable_cols.len() != 1 {
+            return false;
+        }
+        let col = refutable_cols[0];
+        let Some(Ty::Enum(inner_id)) = payload_tys.get(col) else {
+            // A refutable pattern over a non-enum payload cannot arise: sema
+            // rejects a literal payload pattern (E0341), so the only refutable
+            // shape is a variant pattern, which needs an enum.
+            return false;
+        };
+        let column: Vec<&Pattern> = rows.iter().filter_map(|r| r.get(col)).collect();
+        self.patterns_cover_enum(&column, *inner_id)
+    }
+
+    /// Do these patterns, read as the arms of a `match` on `enum_id`, cover it?
+    /// The same question `check_match` asks at the top level, asked of a
+    /// nested position — and recursive through `rows_cover`, so depth is not
+    /// specially limited.
+    fn patterns_cover_enum(&self, pats: &[&Pattern], enum_id: EnumId) -> bool {
+        if pats.iter().any(|p| Self::pattern_is_irrefutable(p)) {
+            return true;
+        }
+        let def = &self.enums[enum_id.0 as usize];
+        let variants: Vec<(String, Vec<Ty>)> = def
+            .variants
+            .iter()
+            .map(|v| (v.name.clone(), v.payload.clone()))
+            .collect();
+        for (vname, vtys) in &variants {
+            let rows: Vec<Vec<Pattern>> = pats
+                .iter()
+                .filter_map(|p| match &p.kind {
+                    PatternKind::Variant {
+                        variant_name,
+                        payload,
+                        ..
+                    } if &variant_name.name == vname => Some(payload.to_vec()),
+                    _ => None,
+                })
+                .collect();
+            if rows.is_empty() || !self.rows_cover(&rows, vtys) {
+                return false;
+            }
+        }
+        true
+    }
+
     fn bind_payload_as_error(&mut self, payload: &[Pattern], scrutinee_owned: bool) {
         for pp in payload {
             let PatternKind::Binding(name) = &pp.kind else {
@@ -14166,7 +14409,10 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         // `k.hash()` in its body; after K is monomorphized to a primitive
         // type the blessed path produces a real hash. User structs hit
         // the normal method-lookup below (they must provide `impl Hash`).
-        if name.name == "hash" && args.is_empty() && Self::is_blessed_hash_receiver(&recv_ty) {
+        if name.name == "hash"
+            && args.is_empty()
+            && (Self::is_blessed_hash_receiver(&recv_ty) || self.is_payload_free_enum(&recv_ty))
+        {
             if !type_args.is_empty() {
                 self.err(
                     "E0501",
@@ -14181,7 +14427,10 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         // Generic HashMap[K, V]'s probe loop uses `k.eq(stored)` so
         // monomorphized code over user K can use their impl Eq while
         // monomorphized code over primitive K uses the blessed lowering.
-        if name.name == "eq" && args.len() == 1 && Self::is_blessed_eq_receiver(&recv_ty) {
+        if name.name == "eq"
+            && args.len() == 1
+            && (Self::is_blessed_eq_receiver(&recv_ty) || self.is_payload_free_enum(&recv_ty))
+        {
             if !type_args.is_empty() {
                 self.err(
                     "E0501",
@@ -14191,6 +14440,38 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
             }
             let _ = self.check_expr(&args[0], Some(recv_ty.clone()));
             return Ty::Bool;
+        }
+        // Blessed `cmp(other) -> i32` on ordered scalars: negative, zero or
+        // positive as the receiver sorts before, with, or after `other` —
+        // the shape `Ord` declares and every sort/max body calls.
+        if name.name == "cmp"
+            && args.len() == 1
+            && (Self::is_blessed_cmp_receiver(&recv_ty) || self.is_payload_free_enum(&recv_ty))
+        {
+            if !type_args.is_empty() {
+                self.err(
+                    "E0501",
+                    "`cmp` takes no type arguments".to_string(),
+                    call_span,
+                );
+            }
+            let _ = self.check_expr(&args[0], Some(recv_ty.clone()));
+            return Ty::I32;
+        }
+        // Blessed `clone()` on Copy scalars: the value itself. A `T: Clone`
+        // body monomorphized at a primitive needs this to resolve.
+        if name.name == "clone"
+            && args.is_empty()
+            && (Self::is_blessed_clone_receiver(&recv_ty) || self.is_payload_free_enum(&recv_ty))
+        {
+            if !type_args.is_empty() {
+                self.err(
+                    "E0501",
+                    "`clone` takes no type arguments".to_string(),
+                    call_span,
+                );
+            }
+            return recv_ty;
         }
         // v0.0.12 G-024: blessed `is_null()` / `is_not_null()` on raw-pointer
         // receivers. Lowers to a single `icmp eq ptr %p, null` (and its
@@ -14803,6 +15084,78 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
     /// v0.0.4 Phase 3 Slice 3B.5: blessed `eq(other)` for primitive
     /// receivers. Same set as Hash plus Bool — anywhere `==` works
     /// today.
+    /// Which receivers answer a blessed `cmp(other) -> i32`.
+    ///
+    /// Ordered scalars only. `bool` and `str` are deliberately out: bool has
+    /// no useful order, and `str` already carries a stdlib `compare` on its
+    /// blessed `impl str` block — blessing a second one here would give the
+    /// same name two lowerings.
+    fn is_blessed_cmp_receiver(ty: &Ty) -> bool {
+        if let Ty::Distinct { base, .. } = ty {
+            return Self::is_blessed_cmp_receiver(base);
+        }
+        matches!(
+            ty,
+            Ty::I8
+                | Ty::I16
+                | Ty::I32
+                | Ty::I64
+                | Ty::Isize
+                | Ty::U8
+                | Ty::U16
+                | Ty::U32
+                | Ty::U64
+                | Ty::Usize
+                | Ty::F16
+                | Ty::F32
+                | Ty::F64
+        )
+    }
+
+    /// Which receivers answer a blessed `clone() -> Self`.
+    ///
+    /// Every Copy scalar, plus `str` (a view is Copy — cloning one yields the
+    /// same view, which is exactly what a `T: Clone` body wants when `T`
+    /// happens to be a primitive).
+    fn is_blessed_clone_receiver(ty: &Ty) -> bool {
+        if let Ty::Distinct { base, .. } = ty {
+            return Self::is_blessed_clone_receiver(base);
+        }
+        matches!(
+            ty,
+            Ty::I8
+                | Ty::I16
+                | Ty::I32
+                | Ty::I64
+                | Ty::Isize
+                | Ty::U8
+                | Ty::U16
+                | Ty::U32
+                | Ty::U64
+                | Ty::Usize
+                | Ty::F16
+                | Ty::F32
+                | Ty::F64
+                | Ty::Bool
+                | Ty::Str
+        )
+    }
+
+    /// A payload-free enum lowers to a bare discriminant — an `i32` with a
+    /// name. Every blessed scalar method is therefore already correct on it,
+    /// and refusing the bound only meant such an enum could not be a
+    /// `HashMap` key or appear in any bounded generic.
+    ///
+    /// Needs `self` (the taggedness lives in the enum table), which is why it
+    /// sits beside the static predicates rather than inside them.
+    fn is_payload_free_enum(&self, ty: &Ty) -> bool {
+        match ty {
+            Ty::Enum(id) => !self.enums[id.0 as usize].is_tagged,
+            Ty::Distinct { base, .. } => self.is_payload_free_enum(base),
+            _ => false,
+        }
+    }
+
     fn is_blessed_eq_receiver(ty: &Ty) -> bool {
         // v0.0.27: a distinct integer alias inherits its base's blessed
         // method (the receiver lowers to the base after mono).
@@ -16035,7 +16388,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         if segments.len() != 2 {
             self.err(
                 "E0312",
-                "Phase 2 paths have exactly two segments".to_string(),
+                "a call path resolves as `Enum::Variant` or `Type::assoc_fn`, which is exactly two segments; qualify the module with an import alias instead of adding a segment".to_string(),
                 path_span,
             );
             for a in args {
@@ -17058,10 +17411,10 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
             PartialMoveKind::BorrowedBinding(name) => (
                 "E0337",
                 format!(
-                    "cannot move `{name}` into an owned value: it is a borrowed binding (a \
-                     `borrow`/`mut`/`self` parameter, or a payload matched from a borrowed value) \
-                     whose owner still drops it — the move would create a second owner \
-                     (double-free). Take ownership by value (drop the `borrow`/`mut`), or clone."
+                    "cannot move `{name}` into an owned value: it only borrows (a bare or \
+                     `ref` parameter, `this`, or a payload matched out of one) and its owner \
+                     still drops it, so the move would create a second owner (double-free). \
+                     Declare the parameter `take {name}: T` so the callee owns it, or `.clone()`."
                 ),
             ),
         };
@@ -17211,39 +17564,6 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         }
     }
 
-    /// E0511: a return region must be declared on some parameter — otherwise
-    /// the borrow it names has no provenance and the annotation is inert.
-    ///
-    /// All that is left of v0.0.12's returned-borrow context. The state it
-    /// used to record for the `return` site — param names, `ref` write
-    /// targets, per-param regions — has no readers here any more: E0512 and
-    /// E0513 moved to borrowck with issue-07, E0365 with step 5, and
-    /// borrowck derives the same facts from the signature itself.
-    fn check_return_region_declared(&mut self, params: &[Param], ret_ty: &Option<Type>) {
-        let TypeKind::Borrowed { region, .. } = &(match ret_ty {
-            Some(t) => t,
-            None => return,
-        })
-        .kind
-        else {
-            return;
-        };
-        let declared = params.iter().any(|p| {
-            matches!(&p.ty.kind, TypeKind::Borrowed { region: pr, .. } if pr == region)
-        });
-        if !declared {
-            if let Some(t) = ret_ty {
-                self.err(
-                    "E0511",
-                    format!(
-                        "return type names borrow region `{region}`, but no parameter declares region `{region}` — a returned borrow must originate from a same-region parameter"
-                    ),
-                    t.span,
-                );
-            }
-        }
-    }
-
     fn is_writable_place_quiet(&self, target: &Expr) -> bool {
         match &target.kind {
             ExprKind::Ident(name) => {
@@ -17316,23 +17636,69 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                     return Ty::Error;
                 }
                 let _ = self.check_expr(rhs, Some(lhs_ty.clone()));
+                // W0007's sibling: a constant expression that overflows the
+                // type it is computed in. `(1000000 * 1000000) as i64`
+                // multiplies at `i32`, so debug traps on the overflow and
+                // RELEASE WRAPS SILENTLY — the cast is too late either way.
+                // The `const` form of the same expression folds at the
+                // declared width and is correct in both modes, so this is
+                // purely the expression form, and it is foldable here
+                // regardless of the build's overflow-check setting.
+                if let (Some(a), Some(b)) = (Self::int_lit_value(lhs), Self::int_lit_value(rhs)) {
+                    if let Some(width) = int_bit_width(&lhs_ty, self) {
+                        let folded: Option<i128> = match op {
+                            BinOp::Add => a.checked_add(b),
+                            BinOp::Sub => a.checked_sub(b),
+                            BinOp::Mul => a.checked_mul(b),
+                            _ => None,
+                        };
+                        if let Some(v) = folded {
+                            let signed = lhs_ty.is_signed_int();
+                            let (lo, hi) = if signed {
+                                (-(1i128 << (width - 1)), (1i128 << (width - 1)) - 1)
+                            } else {
+                                (0, (1i128 << width) - 1)
+                            };
+                            if v < lo || v > hi {
+                                self.warn(
+                                    "W0007",
+                                    format!(
+                                        "this constant expression is {v}, which does not fit in \
+                                         `{}` — it is computed at `{}` and wraps. A later `as` \
+                                         cannot recover it: widen an operand first, or declare \
+                                         the value as a `const`, which folds at the declared width",
+                                        lhs_ty.name(),
+                                        lhs_ty.name()
+                                    ),
+                                    span,
+                                );
+                            }
+                        }
+                    }
+                }
                 lhs_ty
             }
             BinOp::Mod => {
                 let lhs_ty = self.check_expr(lhs, None);
+                // Float `%` lowers to `frem` — IEEE remainder, the same
+                // operation C's `fmod` names. It used to be rejected (E0316)
+                // only because codegen had no arm for it.
                 if lhs_ty.is_float() {
-                    self.err(
-                        "E0316",
-                        "modulo (`%`) on float types is not supported".to_string(),
-                        lhs.span,
-                    );
-                    let _ = self.check_expr(rhs, None);
-                    return Ty::Error;
+                    let _ = self.check_expr(rhs, Some(lhs_ty.clone()));
+                    return lhs_ty;
                 }
                 if !lhs_ty.is_int() && lhs_ty != Ty::Error {
+                    // E0316 used to mean "modulo on a float". Float `%` is
+                    // `frem` now, so the code was left describing behaviour
+                    // that no longer happens — the same drift E1002 had. It
+                    // keeps its slot on the remaining case, which is more
+                    // precise than the generic type-mismatch code was.
                     self.err(
-                        "E0302",
-                        format!("`%` requires integer operands, found `{}`", lhs_ty.name()),
+                        "E0316",
+                        format!(
+                            "`%` requires numeric operands, found `{}`",
+                            lhs_ty.name()
+                        ),
                         lhs.span,
                     );
                     let _ = self.check_expr(rhs, None);
@@ -17368,7 +17734,10 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                     } else if rt != Ty::Error {
                         self.err(
                             "E0302",
-                            "`==` / `!=` are not implemented for struct types in Phase 2; write your own equality function".to_string(),
+                            "`==` / `!=` do not apply to struct types — there is no operator \
+                             overloading. Equality is a method: an empty `impl T: Eq {}` derives \
+                             the memberwise one, and you call it as `a.eq(b)`"
+                                .to_string(),
                             lhs.span,
                         );
                     }
@@ -17377,7 +17746,10 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                 if lt.is_struct() {
                     self.err(
                         "E0302",
-                        "`==` / `!=` are not implemented for struct types in Phase 2; write your own equality function".to_string(),
+                        "`==` / `!=` do not apply to struct types — there is no operator \
+                             overloading. Equality is a method: an empty `impl T: Eq {}` derives \
+                             the memberwise one, and you call it as `a.eq(b)`"
+                                .to_string(),
                         lhs.span,
                     );
                     let _ = self.check_expr(rhs, None);
@@ -17389,6 +17761,48 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                 // aggregate). Payload-FREE enums stay comparable (they lower
                 // to a bare discriminant). Found while building derive
                 // (2026-08-08): the shape previously escaped sema entirely.
+                // Same shape, same reason, found the same way (2026-08-23,
+                // by building instead of `cpc check`, which does not run
+                // clang): an array is an aggregate, so `icmp` cannot take it.
+                // Sema used to let arrays through and the failure surfaced as
+                // a raw `icmp requires integer operands` from clang, with no
+                // error code and no span in the user's file. Arrays are also
+                // not derivable (E0920), so there is no `.eq()` to point at —
+                // the honest advice is to compare element by element.
+                if lt.is_array() || matches!(lt, Ty::Slice(_)) {
+                    let op_txt = if op == BinOp::Eq { "==" } else { "!=" };
+                    let what = if lt.is_array() { "array" } else { "slice" };
+                    self.err(
+                        "E0302",
+                        format!(
+                            "`{}` does not apply to {} types — there is no operator \
+                             overloading, and neither is derivable. Compare element by \
+                             element over `0..n`",
+                            op_txt, what
+                        ),
+                        lhs.span,
+                    );
+                    let _ = self.check_expr(rhs, None);
+                    return Ty::Bool;
+                }
+                // A unit value carries no bits, so there is nothing for `icmp`
+                // to take — codegen panicked ("binary lhs has value") rather
+                // than emitting anything. Comparing two calls that return
+                // nothing is a mistake worth naming, not a tautology to fold.
+                if lt == Ty::Unit {
+                    let op_txt = if op == BinOp::Eq { "==" } else { "!=" };
+                    self.err(
+                        "E0302",
+                        format!(
+                            "`{}` has no meaning on `()` — both sides return nothing. \
+                             Compare the values you meant to return",
+                            op_txt
+                        ),
+                        lhs.span,
+                    );
+                    let _ = self.check_expr(rhs, None);
+                    return Ty::Bool;
+                }
                 if let Ty::Enum(id) = &lt {
                     if self.enums[id.0 as usize].is_tagged {
                         let op_txt = if op == BinOp::Eq { "==" } else { "!=" };
@@ -17535,6 +17949,37 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                     );
                     return Ty::Error;
                 }
+                // W0007: a CONSTANT shift distance at or past the left
+                // operand's width. `(1 << 40) as u64` is the motivating case
+                // and it is the quietest bug in the language: the literal is
+                // `i32` before the cast, so the shift wraps and the mask is
+                // 256 instead of 2^40 — no diagnostic, no trap, just a wrong
+                // number. There is no legitimate reason to write one, and the
+                // fix is always the same shape: widen the LEFT operand first
+                // (`1u64 << 40`), or build the value in a `const`, which folds
+                // at the declared width and rejects overflow (E0921).
+                if let ExprKind::IntLit(dist, _) = &rhs.kind {
+                    if let Some(width) = int_bit_width(&lhs_ty, self) {
+                        if *dist as u128 >= width as u128 {
+                            self.warn(
+                                "W0007",
+                                format!(
+                                    "shifting a `{}` by {} discards every bit: the left \
+                                     operand is only {} bits wide. Widen the LEFT operand \
+                                     — suffix the literal (`1{} << {}`) or cast before the \
+                                     shift, not after — or build the value in a `const`, \
+                                     which folds at the declared width",
+                                    lhs_ty.name(),
+                                    dist,
+                                    width,
+                                    "u64",
+                                    dist
+                                ),
+                                span,
+                            );
+                        }
+                    }
+                }
                 lhs_ty
             }
         }
@@ -17617,7 +18062,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
             UnaryOp::Ref { .. } => {
                 self.err(
                     "E0312",
-                    "references are not yet supported (Phase 5/6)".to_string(),
+                    "C+ has no `&T` / `&mut T`: how a parameter relates to the caller's value is a prefix on the PARAMETER, not a type — bare `x: T` borrows for reading, `ref x: T` borrows for writing, `take x: T` consumes. For an address, `#addr_of(place)` gives a raw `*T`".to_string(),
                     span,
                 );
                 let _ = self.check_expr(operand, None);
@@ -17975,7 +18420,6 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
             // T (the region was borrow-checker metadata). The `borrow REGION T`
             // syntax is retired in v0.0.24 #9, so the parser no longer produces
             // this node; the arm is kept defensively.
-            TypeKind::Borrowed { inner, .. } => return self.resolve_type(inner),
             // Slice 7GEN.5c: resolve generic-struct instantiation —
             // returns the StructId for the synthesized concrete struct.
             TypeKind::Generic { name, args } => {
@@ -19227,7 +19671,6 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
                 let elem_ty = self.resolve_field_type_with_subst(elem, subst);
                 Ty::Array(Box::new(elem_ty), *len)
             }
-            TypeKind::Borrowed { inner, .. } => self.resolve_field_type_with_subst(inner, subst),
             TypeKind::Generic { name, args } => {
                 // A field type that itself names a generic — e.g.
                 // `struct Pair[A, B] { left: Inner[A], ... }`. Substitute
@@ -19361,7 +19804,7 @@ build each element explicitly with `[expr0, expr1, ...]` instead",
         if segments.len() != 2 {
             self.err(
                 "E0312",
-                "Phase 2 paths must be `EnumName::Variant` (exactly two segments)".to_string(),
+                "a variant path is `EnumName::Variant`, exactly two segments — a module-qualified variant is spelled `alias::Enum[T]::Variant`, where `alias::Enum[T]` resolves to the enum first".to_string(),
                 span,
             );
             return Ty::Error;
@@ -20392,7 +20835,6 @@ fn walk_type_sites(ty: &Type, out: &mut Vec<BodySite>) {
             }
         }
         TypeKind::Array { elem, .. } => walk_type_sites(elem, out),
-        TypeKind::Borrowed { inner, .. } => walk_type_sites(inner, out),
         TypeKind::RawPtr(inner) => walk_type_sites(inner, out),
         TypeKind::Slice(inner) => walk_type_sites(inner, out),
         TypeKind::FnPtr {
@@ -21106,12 +21548,6 @@ fn substitute_param_in_type_ast_with_tables(
             len: *len,
             len_name: None,
             len_expr: None,
-        },
-        TypeKind::Borrowed { region, inner } => TypeKind::Borrowed {
-            region: region.clone(),
-            inner: Box::new(substitute_param_in_type_ast_with_tables(
-                inner, subst, structs, enums,
-            )),
         },
         TypeKind::Generic { name, args } => TypeKind::Generic {
             name: name.clone(),
@@ -25986,11 +26422,273 @@ fn pm(ref r: R) -> i32 { return 0; }\n";
     }
 
     #[test]
-    fn float_modulo_rejected_e0316() {
-        assert_only_code(
-            "fn main() -> i32 { let x: f64 = 1.0 % 2.0; let _y: f64 = x; return 0; }",
-            "E0316",
+    fn a_function_name_initializes_a_static_fn_pointer() {
+        // The C dispatch table. A function's address is a link-time constant,
+        // so this is a real constant initializer — it was simply the one
+        // entry missing from an accepted-shape list that had already been
+        // widened three times.
+        assert_clean(
+            "fn add1(x: i32) -> i32 { return x +% 1; } \
+             static H: fn(i32) -> i32 = add1; \
+             fn main() -> i32 { let h: fn(i32) -> i32 = H; return h(41) - 42; }",
         );
+        assert_clean(
+            "fn add1(x: i32) -> i32 { return x +% 1; } \
+             struct Vt { f: fn(i32) -> i32 } \
+             static V: Vt = Vt { f: add1 }; \
+             fn main() -> i32 { let a: fn(i32) -> i32 = V.f; return a(41) - 42; }",
+        );
+    }
+
+    #[test]
+    fn constant_expressions_that_lose_their_value_warn_w0007() {
+        // The quietest bug in the language: an unsuffixed literal is `i32`
+        // BEFORE the cast, so `(1 << 40) as u64` is 256, not 2^40 — no error,
+        // no trap, just a wrong number. Nothing rejects it, so a warning is
+        // the only place to say so.
+        let ds = check_src_lowered("fn main() -> i32 { let _m: u64 = (1 << 40) as u64; return 0; }");
+        assert!(
+            ds.iter().any(|d| d.code.0 == "W0007"),
+            "expected W0007, got: {:?}",
+            ds.iter().map(|d| d.code.0).collect::<Vec<_>>()
+        );
+        // The sibling shape: arithmetic that overflows the type it is
+        // computed in. Debug traps on it; RELEASE wraps silently, and the
+        // cast is too late either way.
+        let ds = check_src_lowered(
+            "fn main() -> i32 { let _b: i64 = (1000000 * 1000000) as i64; return 0; }",
+        );
+        assert!(
+            ds.iter().any(|d| d.code.0 == "W0007"),
+            "expected W0007 for a constant overflow, got: {:?}",
+            ds.iter().map(|d| d.code.0).collect::<Vec<_>>()
+        );
+
+        // …and stays quiet where the expression is well-formed.
+        for src in [
+            "fn main() -> i32 { let _m: u64 = 1u64 << 40; return 0; }",
+            "fn main() -> i32 { let _m: i32 = 1 << 31; return 0; }",
+            "const M: u64 = (1u64 << 40) - 1u64; fn main() -> i32 { return 0; }",
+            // folds at the DECLARED width, so it is correct and silent
+            "const N: i64 = 1000000 * 1000000; fn main() -> i32 { return 0; }",
+            "fn main() -> i32 { let _b: i64 = 1000000i64 * 1000000i64; return 0; }",
+            "fn main() -> i32 { let _s: i32 = 2 * 3; return 0; }",
+        ] {
+            let ds = check_src_lowered(src);
+            assert!(
+                !ds.iter().any(|d| d.code.0 == "W0007"),
+                "unexpected W0007 for `{src}`"
+            );
+        }
+    }
+
+    #[test]
+    fn nested_variant_patterns_check_and_are_exhaustive() {
+        // The motivating shape: discriminate two levels in one `match`,
+        // with no catch-all. Exhaustiveness has to follow the nesting down
+        // or this is a spurious E0340.
+        assert_clean(
+            "enum I { A(i32), B } enum O { W(I), N } \
+             fn f(o: O) -> i32 { \
+                 return match o { O::W(I::A(v)) => v, O::W(I::B) => 1, O::N => 2 }; \
+             } \
+             fn main() -> i32 { return f(O::N) - 2; }",
+        );
+        // Depth is not specially limited — the check recurses.
+        assert_clean(
+            "enum C { X(i32), Y } enum B { P(C), Q } enum A { M(B), N } \
+             fn f(a: A) -> i32 { \
+                 return match a { \
+                     A::M(B::P(C::X(v))) => v, A::M(B::P(C::Y)) => 1, \
+                     A::M(B::Q) => 2, A::N => 3, \
+                 }; \
+             } \
+             fn main() -> i32 { return f(A::N) - 3; }",
+        );
+        // One discriminating column beside irrefutable ones still counts:
+        // position 1 takes anything, so position 0 decides coverage.
+        assert_clean(
+            "enum I { A(i32), B } enum P { Pair(I, i32), N } \
+             fn f(p: P) -> i32 { \
+                 return match p { \
+                     P::Pair(I::A(v), k) => v +% k, P::Pair(I::B, k) => k, P::N => 0, \
+                 }; \
+             } \
+             fn main() -> i32 { return f(P::N); }",
+        );
+    }
+
+    #[test]
+    fn a_nested_match_that_misses_a_case_is_still_e0340() {
+        // The half that matters more than the feature: recursion must not
+        // turn exhaustiveness into a rubber stamp. `I::B` is unhandled.
+        let codes = errors(
+            "enum I { A(i32), B } enum O { W(I), N } \
+             fn main() -> i32 { return match O::N { O::W(I::A(v)) => v, O::N => 0 }; }",
+        );
+        assert!(codes.contains(&"E0340"), "expected E0340, got: {codes:?}");
+    }
+
+    #[test]
+    fn a_variant_pattern_needs_an_enum_payload() {
+        let codes = errors(
+            "enum I { A(i32), B } enum O { W(i32), N } \
+             fn main() -> i32 { return match O::N { O::W(I::A(v)) => v, O::N => 0 }; }",
+        );
+        assert!(codes.contains(&"E0341"), "expected E0341, got: {codes:?}");
+    }
+
+    #[test]
+    fn a_payload_free_enum_satisfies_the_blessed_bounds() {
+        // A payload-free enum lowers to a bare discriminant — an `i32` with a
+        // name — so every blessed scalar method is already correct on it.
+        // Refusing the bounds meant such an enum could not be a `HashMap` key
+        // or appear in any bounded generic, which is most of what a plain
+        // enum is for.
+        assert_clean(
+            "enum C { R, G } \
+             fn same[T: Eq](a: T, b: T) -> bool { return a.eq(b); } \
+             fn main() -> i32 { if same::[C](C::R, C::R) { return 0; } return 1; }",
+        );
+        assert_clean(
+            "enum C { R, G } \
+             fn h[T: Hash](a: T) -> u64 { return a.hash(); } \
+             fn main() -> i32 { let _ = h::[C](C::R); return 0; }",
+        );
+        assert_clean(
+            "enum C { R, G, B } \
+             fn larger[T: Ord](take a: T, take b: T) -> T { if a.cmp(b) > 0 { return a; } return b; } \
+             fn main() -> i32 { let _ = larger::[C](C::R, C::B); return 0; }",
+        );
+    }
+
+    #[test]
+    fn a_payload_carrying_enum_still_fails_the_bounds() {
+        // The line is taggedness, not enum-ness: a tagged value is an
+        // aggregate and none of the blessed scalar lowerings apply to it.
+        let codes = errors(
+            "enum C { A(i32), B } \
+             fn same[T: Eq](a: T, b: T) -> bool { return a.eq(b); } \
+             fn main() -> i32 { if same::[C](C::B, C::B) { return 0; } return 1; }",
+        );
+        assert!(codes.contains(&"E0502"), "expected E0502, got: {codes:?}");
+    }
+
+    #[test]
+    fn ord_and_clone_bounds_accept_primitives() {
+        // `Eq`, `Hash` and `ToText` admitted primitives; `Ord` and `Clone`
+        // did not, so `fn max[T: Ord]` could not be instantiated at `i32` —
+        // the bounded generic was unusable at the types it is most obviously
+        // for. Admitting the bound needed the blessed dispatch first, or the
+        // bound would type-check with a body that cannot call the method.
+        assert_clean(
+            "fn larger[T: Ord](take a: T, take b: T) -> T { if a.cmp(b) > 0 { return a; } return b; } \
+             fn main() -> i32 { return larger::[i32](3, 7) - 7; }",
+        );
+        assert_clean(
+            "fn dup[T: Clone](a: T) -> T { return a.clone(); } \
+             fn main() -> i32 { return dup::[i32](5) - 5; }",
+        );
+        assert_clean("fn main() -> i32 { return (2 as i32).cmp(9); }");
+        assert_clean("fn main() -> i32 { return (2 as i32).clone(); }");
+    }
+
+    #[test]
+    fn ord_bound_still_rejects_a_type_with_no_order() {
+        // `bool` has no useful order and `str` already carries a stdlib
+        // `compare`, so neither is blessed for `cmp` — the bound must still
+        // refuse them rather than silently pick a lowering.
+        let codes = errors(
+            "fn larger[T: Ord](take a: T, take b: T) -> T { if a.cmp(b) > 0 { return a; } return b; } \
+             fn main() -> i32 { let _ = larger::[bool](true, false); return 0; }",
+        );
+        assert!(codes.contains(&"E0502"), "expected E0502, got: {codes:?}");
+    }
+
+    #[test]
+    fn slice_equality_rejected_in_sema_not_by_clang() {
+        // Same hole as arrays: a slice is a `{ptr, len}` aggregate, so `icmp`
+        // cannot take it. It escaped the first sweep because an UNCALLED
+        // function is never lowered — the failure only appears once the
+        // comparison reaches codegen.
+        let codes = errors(
+            "fn f(s: i32[], t: i32[]) -> i32 { if s == t { return 0; } return 1; } \
+             fn main() -> i32 { return 0; }",
+        );
+        assert!(codes.contains(&"E0302"), "expected E0302, got: {codes:?}");
+    }
+
+    #[test]
+    fn unit_values_are_rejected_where_storage_is_required() {
+        // `()` has no bits. Every one of these reached codegen and panicked
+        // (or emitted `void` where LLVM allows it only as a function result)
+        // instead of producing a diagnostic. A compiler panic is worse than a
+        // bad message: no code, no span, and it reads as a compiler crash —
+        // which it was.
+        for src in [
+            // comparison
+            "fn v() { return; } fn main() -> i32 { if v() == v() { return 0; } return 1; }",
+            "fn v() { return; } fn main() -> i32 { if v() != v() { return 0; } return 1; }",
+            // binding, with and without an annotation, `let` and `var`
+            "fn v() { return; } fn main() -> i32 { let x = v(); return 0; }",
+            "fn v() { return; } fn main() -> i32 { var x = v(); return 0; }",
+            "fn v() { return; } fn main() -> i32 { let x: () = v(); return 0; }",
+            // aggregate members
+            "fn v() { return; } fn main() -> i32 { let a = [v(), v()]; return 0; }",
+            "fn v() { return; } fn main() -> i32 { let t = (v(), 1); return 0; }",
+            "struct S { u: () } fn main() -> i32 { return 0; }",
+        ] {
+            let codes = errors(src);
+            assert!(
+                codes.contains(&"E0302"),
+                "expected E0302 for `{src}`, got: {codes:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn returning_unit_from_a_unit_fn_is_still_fine() {
+        // The rule is about STORAGE, not about the type existing: a unit
+        // return flows through a return slot that is never materialized.
+        assert_clean("fn v() { return; } fn w() -> () { return v(); } fn main() -> i32 { w(); return 0; }");
+    }
+
+    #[test]
+    fn array_equality_rejected_in_sema_not_by_clang() {
+        // The hole this closes: sema accepted `[i32; 2] == [i32; 2]` and
+        // codegen emitted `icmp eq [2 x i32]`, which clang rejects. The
+        // failure reached the user as a raw LLVM error with no code and no
+        // span in their file — the same shape payload-carrying enums were
+        // fixed for in 2026-08-08.
+        let codes = errors(
+            "fn main() -> i32 { let a: [i32;2] = [1,2]; let b: [i32;2] = [1,2]; \
+             if a == b { return 0; } return 1; }",
+        );
+        assert!(codes.contains(&"E0302"), "expected E0302, got: {codes:?}");
+        let codes = errors(
+            "fn main() -> i32 { let a: [i32;2] = [1,2]; let b: [i32;2] = [1,2]; \
+             if a != b { return 0; } return 1; }",
+        );
+        assert!(codes.contains(&"E0302"), "expected E0302, got: {codes:?}");
+    }
+
+    #[test]
+    fn float_modulo_accepted_and_typed_as_the_operand() {
+        // `%` on floats lowers to `frem` — IEEE remainder, the operation C
+        // spells `fmod`. It was rejected (E0316) only because codegen had no
+        // arm for it; the type rule is the same as every other float binop.
+        assert_clean("fn main() -> i32 { let x: f64 = 1.0 % 2.0; let _y: f64 = x; return 0; }");
+        assert_clean("fn main() -> i32 { var x: f32 = 7.5f32; x %= 2.0f32; return 0; }");
+    }
+
+    #[test]
+    fn modulo_on_a_non_numeric_is_e0316() {
+        // E0316's old meaning (modulo on a float) went away when `%` learned
+        // `frem`. Rather than leave a documented code that nothing emits — the
+        // exact drift E1002 was fixed for — it keeps its slot on the case that
+        // remains.
+        let codes = errors("fn main() -> i32 { let _x = true % false; return 0; }");
+        assert!(codes.contains(&"E0316"), "expected E0316, got: {codes:?}");
     }
 
     #[test]
@@ -26936,6 +27634,26 @@ fn pm(ref r: R) -> i32 { return 0; }\n";
     }
 
     #[test]
+    fn empty_array_literal_accepted_at_a_zero_length_annotation() {
+        // `[]` has no element type of its own, so it is legal exactly where
+        // the position already fixes one AND that type is zero-length. The
+        // old guard rejected every `[]` with a Phase-2 message.
+        assert_clean("fn main() -> i32 { let _a: [i32; 0] = []; return 0; }");
+    }
+
+    #[test]
+    fn empty_array_literal_without_an_expected_type_e0332() {
+        let codes = errors("fn main() -> i32 { let _a = []; return 0; }");
+        assert!(codes.contains(&"E0332"), "expected E0332, got: {codes:?}");
+    }
+
+    #[test]
+    fn empty_array_literal_against_a_nonzero_length_e0332() {
+        let codes = errors("fn main() -> i32 { let _a: [i32; 3] = []; return 0; }");
+        assert!(codes.contains(&"E0332"), "expected E0332, got: {codes:?}");
+    }
+
+    #[test]
     fn array_literal_length_mismatch_e0330() {
         let codes = errors("fn main() -> i32 { let _xs: [i32; 3] = [1, 2]; return 0; }");
         assert!(codes.contains(&"E0330"), "expected E0330, got: {codes:?}");
@@ -26951,12 +27669,6 @@ fn pm(ref r: R) -> i32 { return 0; }\n";
     fn indexing_non_array_e0331() {
         let codes = errors("fn main() -> i32 { let x: i32 = 5; return x[0 as usize]; }");
         assert!(codes.contains(&"E0331"));
-    }
-
-    #[test]
-    fn empty_array_literal_e0332() {
-        let codes = errors("fn main() -> i32 { let _xs: [i32; 0] = []; return 0; }");
-        assert!(codes.contains(&"E0332"));
     }
 
     #[test]

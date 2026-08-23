@@ -92,13 +92,15 @@ c"hi\n"             // *u8, NUL-terminated, for C
                     // any other position builds an owned Text. No format specifiers.
 [1, 2, 3]           // array literal
 [0u8; 64]           // fill literal — memset fast path; count is any const expression
+[]                  // only where the expected type is a zero-length array (E0332 elsewhere)
 Point { x: 1, y: 2 }        // struct literal — fields always named
 { x: 1, y: 2 }              // type-inferred form where the target type is known
 ```
 
 Unsuffixed integer literals evaluate as `i32` before any `as` — a wide mask
-is built arithmetically or in a `const` (which folds at the declared width
-and rejects overflow, E0921).
+is built by widening the left operand first (`1u64 << 40`) or in a `const`
+(which folds at the declared width and rejects overflow, E0921). Casting
+after the shift is too late: `(1 << 40) as u64` is 256, and warns (W0007).
 
 ## Bindings
 
@@ -112,14 +114,17 @@ static N: i32 = 0;     // module-scope mutable global: addressable, C-facing; ac
 
 No `mut` exists. `const` initializers are constant expressions (may
 reference other consts, any order, cycles rejected); `static` additionally
-accepts array and non-generic struct literals. Cross-thread `static` safety
-is the developer's responsibility.
+accepts array and non-generic struct literals, and a **function name** where
+the type is a fn pointer — `static V: Vt = Vt { f: handler };` is the
+dispatch table. A fn-pointer `const` is still E0911; use a `static`.
+Cross-thread `static` safety is the developer's responsibility.
 
 ## Operators
 
 | Class | Ops | Behavior |
 |---|---|---|
-| arithmetic | `+ - * / %` | overflow traps in debug, wraps in release; `/ 0` always traps |
+| arithmetic | `+ - * / %` | overflow traps in debug, wraps in release; integer `/ 0` and `% 0` always trap. On floats, `/` and `%` are `fdiv`/`frem` — IEEE, no trap (`%` is C's `fmod`) |
+| shifts | `<< >>` | `>>` arithmetic on signed, logical on unsigned. A **constant** distance at or past the left operand's width is W0007 — `(1 << 40) as u64` is 256, not 2^40 |
 | wrapping | `+% -% *%` | always wrap |
 | bitwise | `& \| ^ ~ << >>` | `>>` arithmetic on signed, logical on unsigned |
 | comparison | `< <= > >= == !=` | `bool`, no coercion between operand types |
@@ -127,8 +132,11 @@ is the developer's responsibility.
 | cast | `expr as T` | the only conversion; truncating on narrow; pointer↔int via `usize` only (E0315) |
 | checked cast | `expr as? T` | integer→integer, `Option[T]`: `Some` iff the value fits |
 
-No operator overloading. `==` on `str`/`Text` compares contents (and the
-two compare with each other through coercion).
+No operator overloading. `==` compares scalars, pointers, payload-free enums,
+and `str`/`Text` by content (either side may be the owned one). It does **not**
+apply to any aggregate — struct, tuple, array, or payload-carrying enum — all
+E0302. For a struct, an empty `impl T: Eq {}` derives a memberwise `a.eq(b)`;
+arrays and payload enums are compared element-wise or by `match`.
 
 ## Control flow
 
@@ -144,9 +152,10 @@ defer expr;                                     // runs at scope exit, LIFO, sha
 assert cond;                                    // traps on false — the only hard stop
 ```
 
-Arrays and `Vec` are not `for … in` iterable (E0312) — iterate `0..n` by
-index, or an `Iterator[T]` from `gen fn`. A parenthesized deref opening an
-`if` condition misparses: write `if { (*p).field } == x`.
+`for … in` takes a range or an `Iterator[T]`, and nothing else (E0312).
+`Vec` supplies one — `for x in v.iter()`. Arrays and slices do not: index
+them over `0..n`. A parenthesized deref opening an `if` condition misparses:
+write `if { (*p).field } == x`.
 
 ## Functions
 
@@ -253,12 +262,23 @@ match e {                                    // exhaustive or E0340; `_` is the 
     Shape::Circle(r)  => …,
     Shape::Rect(w, h) => …,
 }
+match r {                                    // payload patterns nest, any depth
+    Read::Ok(Option[i32]::Some(v)) => …,
+    Read::Ok(Option[i32]::None)    => …,
+    Read::Err(e)                   => …,
+}
 if let Maybe[i32]::Some(v) = m { }
 while let option::Option[i64]::Some(v) = it.next() { }
 guard let Read::Ok(v) = r else { return 1; };            // else must diverge
 guard let Read::Ok(v) = r else |Read::Err(c)| { … };     // complement form: else binds the rest;
                                                          // both patterns together must cover the enum (E0340)
 ```
+
+A payload position takes `_`, a binding name, or another variant pattern —
+nesting is checked and counted toward exhaustiveness, so the three arms above
+need no catch-all. One position per payload may discriminate; where a second
+also does, coverage is not decided and E0340 asks for a catch-all. A variant
+pattern over a non-enum payload is E0341.
 
 All four take `var` in place of `let` for mutable bindings. `Some(_)` binds
 nothing (reads the tag only, does not consume); `Some(_v)` binds — `_` on a
@@ -267,7 +287,10 @@ name is privacy, not a wildcard.
 ## Generics & interfaces
 
 ```cplus
-fn max[T: Ord](a: T, b: T) -> T { … }
+fn larger[T: Ord](take a: T, take b: T) -> T {   // `take`: a bare param cannot be returned
+    if a.cmp(b) > 0 { return a; }                // `.cmp`, not `>` — no operator overloading
+    return b;
+}
 struct Pair[A, B] { first: A, second: B }
 let v = vec::with_capacity::[i32](16 as usize);   // turbofish: name::[Args](…)
 
@@ -280,13 +303,21 @@ impl Sq: Shape { fn area(this) -> i32 { … } }
 
 - Monomorphized; no `dyn`, no vtables — interface bounds dispatch through
   erased fn-pointers internally, but the source model is static.
-- Bounds: `Ord`, `Eq`, `Hash`, plus any user interface. `Copy` is
-  structural, `Send`/`Sync` are marker impls.
+- Bounds: `Eq`, `Ord`, `Hash`, `Clone`, `ToText`, plus any user interface.
+  `Copy` is structural, `Send`/`Sync` are marker impls. Primitives satisfy all
+  five: `cmp` is blessed on integers and floats (`-1` / `0` / `1`, unsigned
+  and NaN-safe), `clone` on every Copy scalar and `str`. `bool` and `str` have
+  no blessed `cmp` — bool has no useful order and `str` carries its own
+  `compare` — so `T: Ord` still refuses them (E0502).
 - **Deriving**: an *empty* `impl T: I {}` for the five blessed interfaces —
   `Eq`, `Ord`, `Hash`, `Clone`, `ToText` — generates the memberwise
-  implementation. Payload enums / arrays / tuples inside are not derivable
-  (E0920): write by hand. An empty impl of any other interface is E0916
-  unless every method has a default.
+  implementation for a **struct**. Arrays, tuples and payload-carrying enums
+  inside one are not derivable (E0920): write by hand. An empty impl of any
+  other interface is E0916 unless every method has a default.
+- A **payload-free enum** needs no impl at all: it is a bare discriminant, so
+  `eq` / `cmp` / `hash` / `clone` and the matching bounds already work on it —
+  which is what lets it be a `HashMap` key. A payload-carrying enum is an
+  aggregate and satisfies none of them.
 - **Markers**: `impl Handle: Send {}` vouches a pointer-holding type across
   threads; conditional form `impl Arc[T: Send + Sync]: Send {}`. A type
   hiding a raw pointer is `!Send`/`!Sync` by default (E0502 at a bound).
@@ -317,7 +348,8 @@ slice::sub::[T](s, from, to)          // -> Option[T[]]; also prefix/suffix/drop
 ```
 
 Slices carry `count()` / `is_empty()`; `#slice_ptr`/`#slice_len` are the FFI
-tier. Iterate arrays and slices by index.
+tier. Arrays and slices have no `iter()` — index them over `0..n`.
+(`Vec` does: `for x in v.iter()`.)
 
 ## Pointers
 
@@ -577,4 +609,5 @@ Targets: `host` (default), `ios-arm64`, `ios-arm64-simulator`,
 artifacts land in `target/<target-name>/<mode>/`.
 
 `cpc check FILE` does not read the manifest — a file with any `import`
-fails there with E0852. Full model: [tooling.md](tooling.md).
+fails there with E0852 — and no form of `check` invokes clang, so invalid IR
+passes it and fails only in a build. Full model: [tooling.md](tooling.md).

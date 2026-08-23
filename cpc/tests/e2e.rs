@@ -24739,6 +24739,136 @@ fn borrow_error_names_the_offending_module() {
 // "TypeKind::Generic" for the annotation). `propagate_body_instantiations`
 // (sema) + the by-name fn-instantiation lookup (monomorphize) close this.
 
+/// A function's address is a link-time constant, so a `static` can hold one —
+/// which is what makes the ordinary C dispatch table expressible. Two things
+/// had to be true and neither was: the emitted global must carry the
+/// function's own symbol (it was `poison`, so calling through it segfaulted),
+/// and a function named ONLY by a static initializer must be treated as
+/// address-taken, or it keeps `fastcc` while the global points at it — an
+/// indirect call through that slot would then use the C convention against a
+/// fastcc definition. That second one is a miscompile, not a link error.
+#[test]
+fn a_static_can_hold_a_function_pointer_and_a_dispatch_table() {
+    let out = compile_and_run_src(
+        "static_fn_ptr",
+        "fn add1(x: i32) -> i32 { return x +% 1; }\n\
+         fn dbl(x: i32) -> i32 { return x *% 2; }\n\
+         struct Vt { f: fn(i32) -> i32, g: fn(i32) -> i32 }\n\
+         static V: Vt = Vt { f: add1, g: dbl };\n\
+         static H: fn(i32) -> i32 = add1;\n\
+         fn main() -> i32 {\n\
+             let a: fn(i32) -> i32 = V.f;\n\
+             let b: fn(i32) -> i32 = V.g;\n\
+             let h: fn(i32) -> i32 = H;\n\
+             if a(41) != 42 { return 1; }\n\
+             if b(21) != 42 { return 2; }\n\
+             if h(41) != 42 { return 3; }\n\
+             return 0;\n\
+         }\n",
+    );
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "dispatch table through statics: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+/// A payload-free enum is a bare discriminant, so the blessed scalar
+/// lowerings (`eq` / `cmp` / `hash` / `clone`) are correct on it — that is
+/// what lets one be a `HashMap` key or satisfy a bounded generic. A TAGGED
+/// enum is an aggregate and none of them are, and unlike `eq` a user may
+/// legitimately define `clone` on one. Gating codegen on `Ty::Enum(_)` with
+/// no taggedness check replaced that deep copy with a bit copy: the owned
+/// payload was shallow-copied and both halves freed it. `vendor/inspector`
+/// aborted on exactly this, 338 tests in.
+///
+/// Written against a hand-rolled owner rather than `Text` so it stays in
+/// single-file mode (no manifest, no stdlib).
+#[test]
+fn a_user_clone_on_a_tagged_enum_is_not_replaced_by_a_bit_copy() {
+    let out = compile_and_run_src(
+        "tagged_enum_clone",
+        "extern fn malloc(n: usize) -> *u8;\n\
+         extern fn free(p: *u8);\n\
+         struct Owner { p: *u8 }\n\
+         impl Owner {\n\
+             fn drop(ref this) { { free(this.p); } return; }\n\
+             fn dup(this) -> Owner { return Owner { p: { malloc(8 as usize) } }; }\n\
+         }\n\
+         enum V { Nothing, Held(Owner) }\n\
+         impl V {\n\
+             fn clone(this) -> V {\n\
+                 return match this {\n\
+                     V::Nothing => V::Nothing,\n\
+                     V::Held(o) => V::Held(o.dup()),\n\
+                 };\n\
+             }\n\
+         }\n\
+         fn main() -> i32 {\n\
+             var copied: V = V::Nothing;\n\
+             {\n\
+                 let original: V = V::Held(Owner { p: { malloc(8 as usize) } });\n\
+                 copied = original.clone();\n\
+             }\n\
+             return match copied { V::Held(_o) => 0, V::Nothing => 1 };\n\
+         }\n",
+    );
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "a deep clone must survive its original, not double-free it: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+/// Nested variant patterns, end to end and with an OWNING payload — the half
+/// a type check cannot answer.
+///
+/// Two arms share the outer tag, so the switch routes that tag to the first of
+/// them and a failed inner guard falls through to the next candidate. The
+/// dangerous path is that fallthrough: the guard runs before any binding or
+/// drop, so a miss must leave the value exactly as the next arm expects to
+/// find it — no drop, no partial move, nothing freed twice. A nested `_` over
+/// an owning payload must still be dropped rather than leaked.
+#[test]
+fn nested_variant_patterns_bind_and_fall_through_without_leaking() {
+    let out = compile_and_run_src(
+        "nested_patterns",
+        "extern fn malloc(n: usize) -> *u8;\n\
+         extern fn free(p: *u8);\n\
+         struct Owner { p: *u8, tag: i32 }\n\
+         impl Owner { fn drop(ref this) { { free(this.p); } return; } }\n\
+         fn owner(t: i32) -> Owner { return Owner { p: { malloc(8 as usize) }, tag: t }; }\n\
+         enum I { A(Owner), B(Owner) }\n\
+         enum O { W(I), N }\n\
+         fn take_it(take o: O) -> i32 {\n\
+             return match o {\n\
+                 O::W(I::A(t)) => { t.tag }\n\
+                 O::W(I::B(t)) => { (100 as i32) +% t.tag }\n\
+                 O::N => { 0 }\n\
+             };\n\
+         }\n\
+         fn ignore_it(take o: O) -> i32 {\n\
+             return match o { O::W(I::A(_)) => 1, O::W(I::B(_)) => 2, O::N => 3 };\n\
+         }\n\
+         fn main() -> i32 {\n\
+             if take_it(O::W(I::A(owner(7)))) != 7 { return 1; }\n\
+             if take_it(O::W(I::B(owner(3)))) != 103 { return 2; }\n\
+             if take_it(O::N) != 0 { return 3; }\n\
+             if ignore_it(O::W(I::A(owner(1)))) != 1 { return 4; }\n\
+             if ignore_it(O::W(I::B(owner(1)))) != 2 { return 5; }\n\
+             return 0;\n\
+         }\n",
+    );
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "nested patterns over an owning payload: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
 fn compile_and_run_src(name: &str, src: &str) -> std::process::Output {
     let cpc = env!("CARGO_BIN_EXE_cpc");
     let dir = tempdir();

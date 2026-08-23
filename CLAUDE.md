@@ -39,16 +39,19 @@ has already cost this project real behaviour — see below.
 
 ## Before rebuilding any AppKit behaviour, check whether it already exists
 
-`vendor/facet.old/` and `vendor/facet_appkit.old/` are the previous backend
-generation **and they worked**. `vendor/appkit/src/appkit_ext.cplus` is
-hand-written and survives regeneration.
+`vendor/appkit/src/appkit_ext.cplus` is hand-written and survives
+regeneration. Grep it first; you may be reimplementing something whose traps
+are already documented in its comments.
 
 Two bugs in one session (2026-08-08) were behaviour that still existed in
 `appkit_ext` while the regenerated `facet_appkit` had stopped calling it —
 `FacetScrollView` (nested-scroll axis forwarding) and the drag-session
 press/threshold sequence. Both left comments naming classes the package no
-longer built. Grep the old tree and `appkit_ext` first; you may be
-reimplementing something whose traps are already documented in its comments.
+longer built.
+
+(The `vendor/facet.old/` and `vendor/facet_appkit.old/` trees this section
+used to name were deleted 2026-08-23 — the current backend has caught up.
+Their history is in git if a trap ever needs archaeology.)
 
 ## Conventions that bite
 

@@ -825,10 +825,6 @@ fn rewrite_self_in_type(ty: &Type, mangled_name: &str) -> Type {
             len_name: None,
             len_expr: None,
         },
-        TypeKind::Borrowed { region, inner } => TypeKind::Borrowed {
-            region: region.clone(),
-            inner: Box::new(rewrite_self_in_type(inner, mangled_name)),
-        },
         TypeKind::Generic { name, args } => TypeKind::Generic {
             name: name.clone(),
             args: args
@@ -1568,10 +1564,6 @@ fn subst_type_ast(
             len: *len,
             len_name: None,
             len_expr: None,
-        },
-        TypeKind::Borrowed { region, inner } => TypeKind::Borrowed {
-            region: region.clone(),
-            inner: Box::new(subst_type_ast(inner, subst, type_name_of, struct_lookup)),
         },
         // Slice 7GEN.5c: rewrite `Pair[i32, bool]` to `Path("Pair__i32__bool")`.
         // First substitute fn-generic params in each arg (so `Pair[T]` inside
@@ -2508,7 +2500,6 @@ fn rewrite_alias_type(t: &mut Type, aliases: &std::collections::BTreeMap<String,
             }
         }
         TypeKind::Array { elem, .. } => rewrite_alias_type(elem, aliases),
-        TypeKind::Borrowed { inner, .. } => rewrite_alias_type(inner, aliases),
         TypeKind::RawPtr(inner) => rewrite_alias_type(inner, aliases),
         TypeKind::FnPtr {
             params,

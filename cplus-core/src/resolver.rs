@@ -2757,7 +2757,6 @@ fn rewrite_type(ty: &mut Type, ctx: &RewriteCtx) -> Result<(), ResolveError> {
         // inside is qualified. (The surface `borrow REGION T` syntax was
         // retired in v0.0.24 #9; this variant only persists for any
         // already-parsed inner types.)
-        TypeKind::Borrowed { inner, .. } => rewrite_type(inner, ctx)?,
         // Slice 7GEN.5c: `prefix::Pair[i32, bool]` — qualify the generic
         // name + recurse into each arg (args may themselves reference
         // qualified types).

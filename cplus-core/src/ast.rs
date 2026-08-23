@@ -685,10 +685,6 @@ pub enum TypeKind {
     /// the underlying place's type. Sema and codegen treat it as a
     /// transparent wrapper for the inner type — region info is metadata
     /// that only the borrow checker reads.
-    Borrowed {
-        region: String,
-        inner: Box<Type>,
-    },
     /// Slice 7GEN.5c: generic type instantiation — `Pair[i32, bool]`.
     /// `name` is the generic type's declared name; `args` is the list
     /// of concrete type arguments. Sema's `resolve_type` synthesizes
@@ -1934,10 +1930,6 @@ pub fn walk_type<R: ExprRewriter + ?Sized>(t: &Type, r: &mut R) -> Type {
             len: *len,
             len_name: len_name.clone(),
             len_expr: len_expr.as_ref().map(|e| Box::new(walk_expr(e, r))),
-        },
-        TypeKind::Borrowed { region, inner } => TypeKind::Borrowed {
-            region: region.clone(),
-            inner: Box::new(walk_type(inner, r)),
         },
         TypeKind::Generic { name, args } => TypeKind::Generic {
             name: name.clone(),

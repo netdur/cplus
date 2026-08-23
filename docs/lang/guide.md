@@ -163,9 +163,11 @@ Each of these is legal-looking code with a surprise in it. The long
 explanations live in the linked topic file.
 
 - **Integer literals evaluate through `i32` before `as`.**
-  `(1 << 40) as u64` is not the mask you meant — build wide masks
-  arithmetically, or in a `const` (const expressions fold at the declared
-  width and reject overflow).
+  `(1 << 40) as u64` is not the mask you meant — it is 256. Widen the LEFT
+  operand before the shift (`1u64 << 40`), or build the mask in a `const`,
+  which folds at the declared width and rejects overflow. A constant shift
+  distance at or past the operand's width now warns (W0007); the general
+  literal-width rule still has no warning, so the habit still matters.
 - **No array→slice coercion.** `[T; N]` does not pass where `T[]` is
   expected; go through a `Vec` and `as_slice`, or index.
 - **A view at a binding needs a named owner** — and a brace-block tail

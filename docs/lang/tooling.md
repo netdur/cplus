@@ -24,7 +24,15 @@ Single-file mode is for import-free snippets; anything real goes through
 
 The other asymmetry is deliberate: project-mode `check` stops after
 borrowck, so it is the fast feedback loop; file-mode `check` also runs
-codegen and throws the IR away, so a codegen-stage fault is caught too.
+codegen and throws the IR away, so a codegen-stage *fault* — a panic in the
+emitter — is caught too.
+
+**What `check` cannot catch: invalid IR.** It never invokes clang, so IR that
+cpc emits but LLVM rejects passes `check` and fails only in a real build. That
+gap is not hypothetical — `==` on an array type-checked, emitted
+`icmp eq [2 x i32]`, and died in clang with no error code and no span in the
+user's file. When the question is "does this actually compile", build it;
+`check` answers "is the front end happy".
 
 Build flags, all of which apply to `cpc FILE`, `cpc build`, and `cpc test`:
 
