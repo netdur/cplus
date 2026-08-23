@@ -326,7 +326,18 @@ fn find_gir_file(arg: &str) -> Option<PathBuf> {
 /// really do exist (variadics like `g_strdup_printf` carry it). Filtering on it
 /// would delete 464 working bindings to catch 5 broken ones. The library's own
 /// dynamic symbol table is the only ground truth, so that is what we read.
-fn exported_symbols(ns: &Node) -> Option<(HashSet<String>, String)> {
+/// Which library provides each symbol, for the closure of a namespace's
+/// `shared-library` over DT_NEEDED. Direct libraries are indexed first, so a
+/// symbol available in both a library and its dependency is attributed to the
+/// one the GIR actually names.
+struct SymbolIndex {
+    /// symbol -> the soname that exports it.
+    by_symbol: HashMap<String, String>,
+    /// The sonames the GIR itself named, in declaration order.
+    direct: Vec<String>,
+}
+
+fn exported_symbols(ns: &Node) -> Option<SymbolIndex> {
     let attr = ns.attr("shared-library")?;
     let direct: Vec<String> = attr
         .split(',')
@@ -345,11 +356,14 @@ fn exported_symbols(ns: &Node) -> Option<(HashSet<String>, String)> {
     // working binding — the one failure mode this check must not have, since a
     // false positive silently removes API and a false negative only restores
     // the status quo.
-    let mut syms = HashSet::new();
-    let mut queue: Vec<String> = direct.clone();
+    //
+    // Breadth-first from the direct libraries so THEY are indexed first; the
+    // provider recorded here also decides the package's `[link] libs`.
+    let mut by_symbol: HashMap<String, String> = HashMap::new();
+    let mut queue: std::collections::VecDeque<String> = direct.iter().cloned().collect();
     let mut seen: HashSet<String> = HashSet::new();
     let mut read_any = false;
-    while let Some(so) = queue.pop() {
+    while let Some(so) = queue.pop_front() {
         if !seen.insert(so.clone()) {
             continue;
         }
@@ -366,12 +380,12 @@ fn exported_symbols(ns: &Node) -> Option<(HashSet<String>, String)> {
             return None;
         }
         for line in String::from_utf8_lossy(&out.stdout).lines() {
-            let mut parts = line.split_whitespace();
-            let count = line.split_whitespace().count();
-            if count >= 3 {
-                if let Some(name) = parts.next_back() {
-                    syms.insert(name.split('@').next().unwrap_or(name).to_string());
-                }
+            if line.split_whitespace().count() < 3 {
+                continue;
+            }
+            if let Some(name) = line.split_whitespace().next_back() {
+                let name = name.split('@').next().unwrap_or(name).to_string();
+                by_symbol.entry(name).or_insert_with(|| so.clone());
             }
         }
         read_any = true;
@@ -385,19 +399,18 @@ fn exported_symbols(ns: &Node) -> Option<(HashSet<String>, String)> {
             return None;
         }
         for line in String::from_utf8_lossy(&dp.stdout).lines() {
-            let t = line.trim();
-            if let Some(rest) = t.strip_prefix("NEEDED") {
+            if let Some(rest) = line.trim().strip_prefix("NEEDED") {
                 let need = rest.trim();
                 if !need.is_empty() {
-                    queue.push(need.to_string());
+                    queue.push_back(need.to_string());
                 }
             }
         }
     }
-    if !read_any || syms.is_empty() {
+    if !read_any || by_symbol.is_empty() {
         return None;
     }
-    Some((syms, direct.join(", ")))
+    Some(SymbolIndex { by_symbol, direct })
 }
 
 /// Locate a shared library by its soname (`libgtk-4.so.1`). Absolute or already
@@ -539,6 +552,22 @@ pub fn generate_package(arg: &str, out_dir: &str, uses: &[(String, String)]) -> 
     let module = em.run();
     let (emitted, skips) = (em.emitted, em.skips);
     let imported = em.imported.clone();
+    // `[link] libs` from EVIDENCE, not from the GIR's hint. `shared-library`
+    // names the namespace's own libraries, which is not the same as the set its
+    // bindings call into: cairo's GIR says `libcairo-gobject.so.2` while most of
+    // the binding is `cairo_*` from `libcairo.so.2` beneath it. Linking only
+    // what the GIR named left every consumer to hit
+    //
+    //   libgtk-4.so: undefined reference to symbol 'cairo_image_surface_create'
+    //   libcairo.so.2: error adding symbols: DSO missing from command line
+    //
+    // — GNU ld refuses to resolve through an indirect DT_NEEDED, and macOS's
+    // ld64 does, which is why this never showed up on the development host.
+    // The symbol index already knows which library provided each bound symbol,
+    // so the answer is exactly that set. Declared libraries are kept even when
+    // nothing resolved to them (dropping one is a behaviour change; adding the
+    // providers is not).
+    let libs = merge_link_libs(libs, &em.used_libs);
 
     let out = PathBuf::from(out_dir);
     let pkg = out
@@ -592,6 +621,22 @@ fn link_libs(ns: &Node) -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// The declared `[link] libs`, plus every library that actually provided a bound
+/// symbol. Declared names keep their order and their place at the front; the
+/// extras follow, sorted, so regenerating is stable.
+fn merge_link_libs(declared: Vec<String>, used_sonames: &std::collections::BTreeSet<String>) -> Vec<String> {
+    let mut out = declared;
+    let mut extra: Vec<String> = used_sonames
+        .iter()
+        .filter_map(|so| so_to_lib(so))
+        .filter(|l| !out.contains(l))
+        .collect();
+    extra.sort();
+    extra.dedup();
+    out.extend(extra);
+    out
+}
+
 /// `libgtk-4.so.1` -> `gtk-4` (strip the `lib` prefix and the `.so[.N]` suffix).
 fn so_to_lib(so: &str) -> Option<String> {
     let base = so.trim().strip_prefix("lib")?;
@@ -627,7 +672,11 @@ struct Emitter<'a> {
     /// Symbols this namespace's shared libraries actually export, and the list
     /// of libraries read. `None` disables the check (library not installed, or
     /// no `nm`) — see `exported_symbols` for why the check exists at all.
-    symbols: Option<(HashSet<String>, String)>,
+    symbols: Option<SymbolIndex>,
+    /// Sonames that actually provided a symbol this module bound. Together with
+    /// the GIR's own `shared-library` list this becomes `[link] libs` — see
+    /// `generate_package`.
+    used_libs: std::collections::BTreeSet<String>,
     /// In-namespace boxed `<record>` names (those with a `glib:type-name`).
     /// They're bound as opaque handles, but only where the C ABI passes them by
     /// pointer (`c:type` ends with `*`) — a by-value value-struct must not become
@@ -709,6 +758,7 @@ impl<'a> Emitter<'a> {
             enum_types,
             foreign,
             symbols: exported_symbols(ns),
+            used_libs: std::collections::BTreeSet::new(),
             record_types,
             imported: Vec::new(),
             sig_shapes: HashSet::new(),
@@ -880,15 +930,21 @@ impl<'a> Emitter<'a> {
     /// not export — see `exported_symbols`. False when the check is disabled,
     /// so a host without the libraries generates exactly what it did before.
     fn symbol_missing(&mut self, kind: &str, label: &str, cid: &str) -> bool {
-        let Some((syms, libs)) = &self.symbols else {
+        let Some(idx) = &self.symbols else {
             return false;
         };
-        if syms.contains(cid) {
-            return false;
+        match idx.by_symbol.get(cid) {
+            Some(so) => {
+                let so = so.clone();
+                self.used_libs.insert(so);
+                false
+            }
+            None => {
+                let libs = idx.direct.join(", ");
+                self.skip(kind, label, &format!("`{cid}` is not exported by {libs}"));
+                true
+            }
         }
-        let libs = libs.clone();
-        self.skip(kind, label, &format!("`{cid}` is not exported by {libs}"));
-        true
     }
 
     fn skip(&mut self, kind: &str, name: &str, reason: &str) {
@@ -1876,6 +1932,41 @@ mod tests {
     </function>
   </namespace>
 </repository>"#;
+
+    #[test]
+    fn link_libs_gain_the_library_that_actually_provides_the_symbols() {
+        // `shared-library` names the namespace's OWN libraries, which is not
+        // the set its bindings call into. cairo's GIR declares only
+        // `libcairo-gobject.so.2` while most of the binding is `cairo_*` from
+        // `libcairo.so.2` under it, and GNU ld will not resolve through an
+        // indirect DT_NEEDED — every consumer hit "DSO missing from command
+        // line". macOS's ld64 does resolve it, which is why the gap survived.
+        let declared = vec!["cairo-gobject".to_string()];
+        let mut used = std::collections::BTreeSet::new();
+        used.insert("libcairo-gobject.so.2".to_string());
+        used.insert("libcairo.so.2".to_string());
+        // Declared names keep their place at the front; providers follow.
+        assert_eq!(
+            merge_link_libs(declared, &used),
+            vec!["cairo-gobject".to_string(), "cairo".to_string()]
+        );
+    }
+
+    #[test]
+    fn link_libs_do_not_repeat_or_reorder_when_nothing_new_is_used() {
+        // The common case: every bound symbol came from a declared library, so
+        // the line is untouched. Regenerating must be stable.
+        let declared = vec!["gobject-2.0".to_string(), "glib-2.0".to_string()];
+        let mut used = std::collections::BTreeSet::new();
+        used.insert("libglib-2.0.so.0".to_string());
+        used.insert("libgobject-2.0.so.0".to_string());
+        assert_eq!(merge_link_libs(declared.clone(), &used), declared);
+        // ...and a namespace that bound nothing keeps exactly what it declared.
+        assert_eq!(
+            merge_link_libs(declared.clone(), &std::collections::BTreeSet::new()),
+            declared
+        );
+    }
 
     #[test]
     fn a_c_identifier_the_library_does_not_export_is_skipped() {

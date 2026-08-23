@@ -13,4 +13,4 @@ gobject = "*"
 stdlib  = "*"
 
 [link]
-libs = ["cairo-gobject"]
+libs = ["cairo-gobject", "cairo"]
