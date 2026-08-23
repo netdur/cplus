@@ -253,6 +253,13 @@ fn create(ctx: *u8, n: *core::Node) -> *u8 {
             { (*n).set_measure(measure_view) };
         }
     }
+    // Where a character is: the three text kinds can be asked, through the text
+    // system that laid them out. Same shape as the measure above — a probe on
+    // the node, installed by whoever backs it.
+    text_input::install_caret_probe(n, kind);
+    // Keys go to the FIRST RESPONDER, which for a text control is a view
+    // further in than the one `input::arm` just armed.
+    text_input::arm_key_band(v, n);
     // A `context_menu` child describes a menu for THIS view; it has no view of
     // its own, so this is the moment it can be hung.
     controls::attach_context_menu(v, n);
@@ -500,7 +507,12 @@ fn apply(ctx: *u8, n: *core::Node) {
     // every time (a re-attached node has a new address).
     // `input_transparent` is answered in the hit test, which lives on the same
     // class — so a node that becomes transparent has to be armed for it.
-    if (d & (core::C_GESTURES | props::C_INPUT_TRANSPARENT)) != (0 as u64) { input::arm(v, n); }
+    if (d & (core::C_GESTURES | props::C_INPUT_TRANSPARENT)) != (0 as u64) {
+        input::arm(v, n);
+        // A key handler attached AFTER mount arms the text surface here. Same
+        // idempotence as `arm`: the class moves once, the node is refreshed.
+        text_input::arm_key_band(v, n);
+    }
     // An item rides C_HANDLERS: it is the payload half of a handler.
     if (d & props::C_HANDLERS) != (0 as u64) { input::bind_item(v, n); }
     return;

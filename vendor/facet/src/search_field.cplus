@@ -479,6 +479,43 @@ impl SearchField {
         return { (*p).input_view.text_transform };
     }
 
+    // WHERE THE CHARACTER AT `offset` IS, in this control's own
+    // coordinate space — the same space `frame()` reports, top-left
+    // origin, so a popup is placed against it with `set_absolute` +
+    // `set_left`/`set_top` and nothing further to convert.
+    //
+    // Asked, not stored: the answer moves on every edit, scroll, resize,
+    // font change and re-wrap, and a pushed value that missed one of
+    // those would be a few points off with nothing to show why.
+    //
+    // None means the platform cannot answer — this control is not
+    // mounted, or its backend has no text layout to ask right now. It is
+    // never a guess.
+    fn rect_for_offset(this, offset: i64) -> option::Option[vocab::Rect] {
+        return core::rect_for_offset(this._p, offset);
+    }
+
+    // The INSERTION POINT's box: the character the caret is on, collapsed
+    // to the caret's own leading edge.
+    //
+    // Zero width, because a caret occupies no column — it sits BETWEEN
+    // two characters. The two verbs are deliberately different shapes:
+    // a completion popup anchors to this box's bottom-left, while a hint
+    // about a symbol wants the symbol's own width and asks
+    // `rect_for_offset` for it.
+    fn caret_rect(this) -> option::Option[vocab::Rect] {
+        match core::rect_for_offset(this._p, this.cursor_position()) {
+            option::Option[vocab::Rect]::Some(r) => {
+                return option::some(vocab::Rect::of({ r.x }, { r.y },
+                                                     0.0f64, { r.height }));
+            }
+            option::Option[vocab::Rect]::None => {
+                return option::Option[vocab::Rect]::None;
+            }
+        }
+        return option::Option[vocab::Rect]::None;
+    }
+
     // The flex node this cursor points at. The DOM division, and the
     // reason facet declares no layout verb of its own:
     //

@@ -5536,6 +5536,500 @@ fn a_write_that_is_not_is_secure_keeps_the_same_object() {
     return;
 }
 
+// ---- where a character is ------------------------------------------------------
+// The half only a real text system can answer. facet's own suite pins the
+// posture with no backend (None, never a guessed zero); these pin the NUMBERS
+// against AppKit's layout manager, which is the thing being claimed.
+
+// Give the editor a real size, which is what its text container tracks. A
+// zero-width container wraps every character onto its own line, so without
+// this the "same line" assertions below would be measuring the wrap, not the
+// layout. No window is needed: the layout manager answers off screen, which is
+// half the reason the probe uses it rather than the screen-coordinate API.
+fn size_editor(p: *core::Node, v: *u8, w: f64, h: f64) {
+    // What `mount` does after `create`: pair the view with the node. The probe
+    // is asked THROUGH the node's own view, so an unpaired node has nothing to
+    // ask and answers None — which is correct, and is why this line is here
+    // rather than the probe reaching for the view some other way.
+    core::set_view(p, v, views::view_release);
+    let box: rt::Rect = rt::Rect { x: 0.0f64, y: 0.0f64, w: w, h: h };
+    geometry::set_view_frame(v, box);
+    match text_input::editor_of(v) {
+        option::Option[ak::TextView]::Some(tv) => { geometry::set_view_frame(tv.as_view().raw(), box); }
+        option::Option[ak::TextView]::None => { assert false; }
+    }
+    return;
+}
+
+#[test]
+fn an_editor_answers_where_a_character_is_and_where_the_caret_is() {
+    backend::install();
+    var n: core::Node = text_area::text_area("abc", key: "ed");
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    size_editor(p, v, 300.0f64, 200.0f64);
+
+    match text_area::from(p) {
+        option::Option[text_area::TextArea]::Some(h) => {
+            let r0: vocab::Rect = match h.rect_for_offset(0 as i64) {
+                option::Option[vocab::Rect]::Some(r) => { r }
+                option::Option[vocab::Rect]::None => { assert false; vocab::Rect::zero() }
+            };
+            let r1: vocab::Rect = match h.rect_for_offset(1 as i64) {
+                option::Option[vocab::Rect]::Some(r) => { r }
+                option::Option[vocab::Rect]::None => { assert false; vocab::Rect::zero() }
+            };
+            // A CHARACTER HAS WIDTH and the next one is to its right. This is
+            // the whole claim: the mapping came from the text system, not from
+            // an assumed advance.
+            assert { r0.width } > 0.0f64;
+            assert { r1.x } > { r0.x };
+            assert { r0.height } > 0.0f64;
+            // Same line, so same top.
+            assert approx({ r0.y }, { r1.y });
+            // Inside the control it belongs to — the answer is in the NODE's
+            // own space, not the text view's and not the screen's.
+            assert { r0.x } >= 0.0f64;
+            assert { r0.y } >= 0.0f64;
+            assert { r0.x } < 300.0f64;
+            assert { r0.y } < 200.0f64;
+
+            // The caret is the same box with no width.
+            let _s: text_area::TextArea = h.set_cursor_position(1 as i64);
+            match h.caret_rect() {
+                option::Option[vocab::Rect]::Some(c) => {
+                    assert approx({ c.x }, { r1.x });
+                    assert approx({ c.y }, { r1.y });
+                    assert approx({ c.width }, 0.0f64);
+                    assert approx({ c.height }, { r1.height });
+                }
+                option::Option[vocab::Rect]::None => { assert false; }
+            }
+        }
+        option::Option[text_area::TextArea]::None => { assert false; }
+    }
+    return;
+}
+
+#[test]
+fn a_second_line_is_below_the_first_and_starts_back_at_the_left() {
+    // The reason an application cannot compute this itself: the offset alone
+    // does not say which LINE it fell on.
+    backend::install();
+    var n: core::Node = text_area::text_area("ab\ncd", key: "ed2");
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    size_editor(p, v, 300.0f64, 200.0f64);
+
+    match text_area::from(p) {
+        option::Option[text_area::TextArea]::Some(h) => {
+            // offsets: a=0 b=1 \n=2 c=3 d=4
+            let a: vocab::Rect = match h.rect_for_offset(0 as i64) {
+                option::Option[vocab::Rect]::Some(r) => { r }
+                option::Option[vocab::Rect]::None => { assert false; vocab::Rect::zero() }
+            };
+            let c: vocab::Rect = match h.rect_for_offset(3 as i64) {
+                option::Option[vocab::Rect]::Some(r) => { r }
+                option::Option[vocab::Rect]::None => { assert false; vocab::Rect::zero() }
+            };
+            assert { c.y } > { a.y };
+            assert approx({ c.x }, { a.x });
+        }
+        option::Option[text_area::TextArea]::None => { assert false; }
+    }
+    return;
+}
+
+#[test]
+fn the_caret_past_the_last_character_is_answered_not_refused() {
+    // Where a caret spends much of its life. There is no glyph there, so this
+    // is the case a naive implementation returns None (or zero) for.
+    backend::install();
+    var n: core::Node = text_area::text_area("ab", key: "ed3");
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    size_editor(p, v, 300.0f64, 200.0f64);
+
+    match text_area::from(p) {
+        option::Option[text_area::TextArea]::Some(h) => {
+            let last: vocab::Rect = match h.rect_for_offset(1 as i64) {
+                option::Option[vocab::Rect]::Some(r) => { r }
+                option::Option[vocab::Rect]::None => { assert false; vocab::Rect::zero() }
+            };
+            match h.rect_for_offset(2 as i64) {
+                option::Option[vocab::Rect]::Some(end) => {
+                    // Past the trailing edge of the last character, on its line,
+                    // and with no width of its own.
+                    assert { end.x } >= { last.x } + { last.width };
+                    assert approx({ end.y }, { last.y });
+                    assert approx({ end.width }, 0.0f64);
+                    assert { end.height } > 0.0f64;
+                }
+                option::Option[vocab::Rect]::None => { assert false; }
+            }
+            // And an empty editor still has a caret to place a popup against.
+            let _s: text_area::TextArea = h.set_text("");
+            views::apply(0 as *u8, p);
+            match h.rect_for_offset(0 as i64) {
+                option::Option[vocab::Rect]::Some(e) => { assert { e.height } > 0.0f64; }
+                option::Option[vocab::Rect]::None => { assert false; }
+            }
+        }
+        option::Option[text_area::TextArea]::None => { assert false; }
+    }
+    return;
+}
+
+// ---- the key band on a text control ---------------------------------------------
+// `.gesture(on_key:)` fired on every kind except the ones that own their text.
+// `input::arm` puts the band on the node's OUTERMOST view, and for a text_area
+// that is the NSScrollView while the first responder is the NSTextView inside
+// it — so a Return reached the text system and the handler was never called.
+
+static KEYS_SEEN: i64 = 0 as i64;
+static KEY_LAST: i64 = 0 as i64;
+
+fn key_swallow(event: *u8, ctx: *u8) -> bool {
+    KEYS_SEEN = KEYS_SEEN + (1 as i64);
+    KEY_LAST = gestures::key_named(event);
+    return true;
+}
+
+fn key_decline(event: *u8, ctx: *u8) -> bool {
+    KEYS_SEEN = KEYS_SEEN + (1 as i64);
+    KEY_LAST = gestures::key_named(event);
+    return false;
+}
+
+fn h_swallow() -> gestures::Handler { let f: gestures::Handler = key_swallow; return f; }
+fn h_decline() -> gestures::Handler { let f: gestures::Handler = key_decline; return f; }
+
+// The NSTextView a text_area's keys actually go to.
+fn editor_view_of(v: *u8) -> *u8 {
+    match text_input::editor_of(v) {
+        option::Option[ak::TextView]::Some(tv) => { return tv.raw(); }
+        option::Option[ak::TextView]::None => { assert false; return 0 as *u8; }
+    }
+    return 0 as *u8;
+}
+
+#[test]
+fn a_key_handler_on_a_text_area_fires_and_can_swallow_the_key() {
+    // THE WHOLE GAP, in one assertion: Return reaches the handler, and a
+    // handler that answers `true` means no newline was inserted. Those are the
+    // two halves a completion list needs — the list gets the key, and the text
+    // does not.
+    backend::install();
+    KEYS_SEEN = 0 as i64;
+    KEY_LAST = 0 as i64;
+    var n: core::Node = text_area::text_area("ab", key: "ked")
+                            .gesture(on_key: h_swallow());
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    core::set_view(p, v, views::view_release);
+    let tv: *u8 = editor_view_of(v);
+
+    { rt::msg_void_id(tv, rt::sel(#str_ptr("keyDown:\0")),
+                      fake_key_event(36 as u16, "\r", 0 as u64)) };
+    assert KEYS_SEEN == (1 as i64);
+    assert KEY_LAST == gestures::key_return();
+    match text_area::from(p) {
+        option::Option[text_area::TextArea]::Some(h) => {
+            let _s: text_area::TextArea = h;
+        }
+        option::Option[text_area::TextArea]::None => { assert false; }
+    }
+    // Swallowed: the text system never saw it.
+    assert ak::TextView::from_raw(tv).as_text().string().view() == "ab";
+
+    // The four keys a list is driven by all arrive, named portably.
+    { rt::msg_void_id(tv, rt::sel(#str_ptr("keyDown:\0")),
+                      fake_key_event(125 as u16, "", 0 as u64)) };
+    assert KEY_LAST == gestures::key_arrow_down();
+    { rt::msg_void_id(tv, rt::sel(#str_ptr("keyDown:\0")),
+                      fake_key_event(126 as u16, "", 0 as u64)) };
+    assert KEY_LAST == gestures::key_arrow_up();
+    { rt::msg_void_id(tv, rt::sel(#str_ptr("keyDown:\0")),
+                      fake_key_event(53 as u16, "", 0 as u64)) };
+    assert KEY_LAST == gestures::key_escape();
+    assert KEYS_SEEN == (4 as i64);
+    assert ak::TextView::from_raw(tv).as_text().string().view() == "ab";
+    return;
+}
+
+#[test]
+fn a_declining_handler_leaves_the_text_system_exactly_as_it_was() {
+    // The common case must not change. A handler that answers `false` — and a
+    // control with no handler at all — has to behave the way it did before the
+    // band could reach here, or every editor in every app changes at once.
+    backend::install();
+    KEYS_SEEN = 0 as i64;
+    var n: core::Node = text_area::text_area("", key: "ked2")
+                            .gesture(on_key: h_decline());
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    core::set_view(p, v, views::view_release);
+    let tv: *u8 = editor_view_of(v);
+    // A text view only inserts for a first responder in a window, so give it
+    // one — this is the real insertion path, not a simulated one.
+    let w: ak::Window = window::make_shell_window(screen::Chrome::new(
+        title: "keys", width: 300.0f64, height: 200.0f64));
+    let host: ak::View = akx::new_flipped_view(rt::Rect { x: 0.0f64, y: 0.0f64, w: 300.0f64, h: 200.0f64 });
+    host.add_subview(ak::View::from_raw(v));
+    w.set_content_view(host);
+    geometry::set_view_frame(v, rt::Rect { x: 0.0f64, y: 0.0f64, w: 300.0f64, h: 200.0f64 });
+    geometry::set_view_frame(tv, rt::Rect { x: 0.0f64, y: 0.0f64, w: 300.0f64, h: 200.0f64 });
+    w.make_key_and_order_front(0 as *u8);
+    assert w.make_first_responder(ak::View::from_raw(tv).as_responder());
+
+    { rt::msg_void_id(tv, rt::sel(#str_ptr("keyDown:\0")),
+                      fake_key_event(0 as u16, "a", 0 as u64)) };
+    assert KEYS_SEEN == (1 as i64);
+    // Declined, so the character went in exactly as it always did.
+    assert ak::TextView::from_raw(tv).as_text().string().view() == "a";
+    w.close();
+    return;
+}
+
+#[test]
+fn a_text_area_with_no_key_handler_is_not_reclassed_at_all() {
+    // The gate. Without it every text control in every app gets a subclass and
+    // a `keyDown:` override to deliver nothing — and the point of a key-ONLY
+    // subclass is that facet stands in front of as little of the text system as
+    // it can get away with.
+    backend::install();
+    var n: core::Node = text_area::text_area("hi", key: "ked3");
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    core::set_view(p, v, views::view_release);
+    let tv: *u8 = editor_view_of(v);
+    assert !input::is_key_armed(tv);
+
+    // Attaching the handler AFTER mount arms it — `views::apply` re-runs the
+    // band on C_GESTURES, which is how a set swapped at runtime takes effect.
+    var g: gestures::Gestures = gestures::Gestures::new();
+    g.on_key = h_swallow();
+    gestures::attach(p, g);
+    views::apply(0 as *u8, p);
+    assert input::is_key_armed(tv);
+    return;
+}
+
+#[test]
+fn a_field_borrows_the_key_band_for_one_editing_session() {
+    // AppKit lends a window ONE field editor. Arming it for life would hand the
+    // next field's keystrokes to the last field's handler, so it is armed when
+    // editing begins and cut loose when it ends.
+    backend::install();
+    KEYS_SEEN = 0 as i64;
+    var n: core::Node = text_field::text_field(key: "kf", text: "")
+                            .gesture(on_key: h_swallow());
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    core::set_view(p, v, views::view_release);
+    let w: ak::Window = window::make_shell_window(screen::Chrome::new(
+        title: "kf", width: 300.0f64, height: 200.0f64));
+    let host: ak::View = akx::new_flipped_view(rt::Rect { x: 0.0f64, y: 0.0f64, w: 300.0f64, h: 200.0f64 });
+    host.add_subview(ak::View::from_raw(v));
+    w.set_content_view(host);
+
+    let ed: ak::Text = match focused_editor(w, v) {
+        option::Option[ak::Text]::Some(e) => { e }
+        option::Option[ak::Text]::None => { assert false; return; }
+    };
+    assert input::is_key_armed(ed.raw());
+    { rt::msg_void_id(ed.raw(), rt::sel(#str_ptr("keyDown:\0")),
+                      fake_key_event(125 as u16, "", 0 as u64)) };
+    assert KEYS_SEEN == (1 as i64);
+    assert KEY_LAST == gestures::key_arrow_down();
+
+    // Editing ends: the class stays (it is cached per base and declines with no
+    // node) but the NODE must go, or the next borrower inherits this handler.
+    let _ok: bool = w.make_first_responder(host.as_responder());
+    assert input::node_of_view(ed.raw()) == (0 as *core::Node);
+    let before: i64 = KEYS_SEEN;
+    { rt::msg_void_id(ed.raw(), rt::sel(#str_ptr("keyDown:\0")),
+                      fake_key_event(125 as u16, "", 0 as u64)) };
+    assert KEYS_SEEN == before;
+    w.close();
+    return;
+}
+
+#[test]
+fn the_caret_rect_agrees_with_appkits_own_independent_answer() {
+    // THE ORACLE TEST. Everything else here checks that the numbers are
+    // self-consistent — a character has width, the next is to its right, line 2
+    // is lower. Self-consistency is exactly what a systematically wrong
+    // implementation also has.
+    //
+    // So: ask AppKit the same question down a DIFFERENT path.
+    // `firstRectForCharacterRange:actualRange:` is NSTextInputClient's own
+    // answer, the one input methods position candidate windows with, and it
+    // reports in SCREEN coordinates — which is why the probe does not use it
+    // (it needs a window, and two conversions back down). Convert it the long
+    // way round and the two must land on the same point.
+    backend::install();
+    var n: core::Node = text_area::text_area("hello world", key: "ed5");
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    core::set_view(p, v, views::view_release);
+
+    let w: ak::Window = window::make_shell_window(screen::Chrome::new(
+        title: "oracle", width: 400.0f64, height: 300.0f64));
+    let host: ak::View = akx::new_flipped_view(rt::Rect { x: 0.0f64, y: 0.0f64, w: 400.0f64, h: 300.0f64 });
+    host.add_subview(ak::View::from_raw(v));
+    w.set_content_view(host);
+    let box: rt::Rect = rt::Rect { x: 20.0f64, y: 30.0f64, w: 300.0f64, h: 200.0f64 };
+    geometry::set_view_frame(v, box);
+    let tv: ak::TextView = match text_input::editor_of(v) {
+        option::Option[ak::TextView]::Some(t) => { t }
+        option::Option[ak::TextView]::None => { assert false; return; }
+    };
+    geometry::set_view_frame(tv.as_view().raw(),
+                             rt::Rect { x: 0.0f64, y: 0.0f64, w: 300.0f64, h: 200.0f64 });
+
+    let at: i64 = 6 as i64;   // the `w` of "world"
+    let ours: vocab::Rect = match core::rect_for_offset(p, at) {
+        option::Option[vocab::Rect]::Some(r) => { r }
+        option::Option[vocab::Rect]::None => { assert false; vocab::Rect::zero() }
+    };
+
+    // AppKit's answer, screen -> window -> the node's view, then flipped the
+    // same way the probe flips (the node is backed by an NSScrollView, which is
+    // one of AppKit's own and therefore bottom-up).
+    let on_screen: rt::Rect = ak::TextInputClient::from_raw(tv.raw())
+        .first_rect_for_character_range(rt::Range { location: at as u64, length: 1 as u64 },
+                                        0 as *u8);
+    let in_window: rt::Rect = w.convert_rect_from_screen(on_screen);
+    // `convertRect:fromView:` with nil means "from window coordinates"; there
+    // is no nil View to pass, so this one goes straight down msgSend.
+    let in_node: rt::Rect = rt::msg_rect_rect_id(v, rt::sel(#str_ptr("convertRect:fromView:\0")),
+                                                 in_window, 0 as *u8);
+    var theirs_y: f64 = { in_node.y };
+    if !text_input::is_flipped(v) {
+        let b: rt::Rect = ak::View::from_raw(v).bounds();
+        theirs_y = { b.h } - ({ in_node.y } + { in_node.h });
+    }
+
+    // Rounding through two coordinate systems, so a point of slack — the bug
+    // this catches is a whole line or a whole scroll offset, never a rounding
+    // difference.
+    let dx: f64 = { ours.x } - { in_node.x };
+    let dy: f64 = { ours.y } - theirs_y;
+    assert (dx < 1.0f64) && (dx > -1.0f64);
+    assert (dy < 1.0f64) && (dy > -1.0f64);
+    w.close();
+    return;
+}
+
+#[test]
+fn a_scrolled_editor_reports_the_caret_where_it_now_is() {
+    // THE CASE THAT WOULD BE SILENTLY WRONG. A rect that is right in the text
+    // view's space and never converted looks correct at the top of a document
+    // and drifts by exactly the scroll offset once the user moves — which is
+    // invisible in every assertion that only reads one position, and is the
+    // reason the probe converts into the NODE's space rather than answering
+    // the text system's own numbers.
+    backend::install();
+    var n: core::Node = text_area::text_area("a\nb\nc\nd\ne\nf\ng\nh\ni\nj\nk\nl", key: "ed4");
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    core::set_view(p, v, views::view_release);
+    // Short and narrow: the content is taller than the clip, so it can scroll.
+    let clip_box: rt::Rect = rt::Rect { x: 0.0f64, y: 0.0f64, w: 200.0f64, h: 40.0f64 };
+    geometry::set_view_frame(v, clip_box);
+    match text_input::editor_of(v) {
+        option::Option[ak::TextView]::Some(tv) => {
+            geometry::set_view_frame(tv.as_view().raw(),
+                                     rt::Rect { x: 0.0f64, y: 0.0f64, w: 200.0f64, h: 400.0f64 });
+        }
+        option::Option[ak::TextView]::None => { assert false; }
+    }
+
+    let before: vocab::Rect = match core::rect_for_offset(p, 0 as i64) {
+        option::Option[vocab::Rect]::Some(r) => { r }
+        option::Option[vocab::Rect]::None => { assert false; vocab::Rect::zero() }
+    };
+    let shift: f64 = 25.0f64;
+    ak::ScrollView::from_raw(v).content_view()
+        .scroll_to_point(rt::Point { x: 0.0f64, y: shift });
+    let after: vocab::Rect = match core::rect_for_offset(p, 0 as i64) {
+        option::Option[vocab::Rect]::Some(r) => { r }
+        option::Option[vocab::Rect]::None => { assert false; vocab::Rect::zero() }
+    };
+    // The character did not move in the document; the DOCUMENT moved under the
+    // control, so the answer in the control's space is that much higher up.
+    assert approx({ after.y }, { before.y } - shift);
+    assert approx({ after.x }, { before.x });
+    return;
+}
+
+#[test]
+fn an_unfocused_field_says_it_cannot_answer_rather_than_guessing() {
+    // AppKit lends a window ONE field editor to whichever control is first
+    // responder. An unfocused NSTextField has laid nothing out, so there is
+    // nothing to ask — and None is the honest answer, not a shortfall. The
+    // caller wants this while the user is typing, which is exactly when the
+    // field editor exists.
+    backend::install();
+    var n: core::Node = text_field::text_field(key: "fld", text: "hello");
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    core::set_view(p, v, views::view_release);
+    assert core::has_caret_probe(p);
+    match text_field::from(p) {
+        option::Option[text_field::TextField]::Some(f) => {
+            match f.caret_rect() {
+                option::Option[vocab::Rect]::Some(_r) => { assert false; }
+                option::Option[vocab::Rect]::None => { }
+            }
+        }
+        option::Option[text_field::TextField]::None => { assert false; }
+    }
+
+    // Focused, and the same verb answers.
+    let w: ak::Window = window::make_shell_window(screen::Chrome::new(
+        title: "fld", width: 300.0f64, height: 200.0f64));
+    let host: ak::View = akx::new_flipped_view(rt::Rect { x: 0.0f64, y: 0.0f64, w: 300.0f64, h: 200.0f64 });
+    host.add_subview(ak::View::from_raw(v));
+    w.set_content_view(host);
+    geometry::set_view_frame(v, rt::Rect { x: 0.0f64, y: 0.0f64, w: 200.0f64, h: 24.0f64 });
+    match focused_editor(w, v) {
+        option::Option[ak::Text]::Some(_ed) => { }
+        option::Option[ak::Text]::None => { assert false; }
+    }
+    match text_field::from(p) {
+        option::Option[text_field::TextField]::Some(f) => {
+            match f.rect_for_offset(0 as i64) {
+                option::Option[vocab::Rect]::Some(r) => {
+                    assert { r.height } > 0.0f64;
+                    assert { r.y } >= 0.0f64;
+                }
+                option::Option[vocab::Rect]::None => { assert false; }
+            }
+        }
+        option::Option[text_field::TextField]::None => { assert false; }
+    }
+    w.close();
+    return;
+}
+
+#[test]
+fn a_control_with_no_text_system_has_no_caret_probe_installed() {
+    // The probe goes on the three text kinds and nothing else — a button never
+    // answers a caret question, however it is mounted.
+    backend::install();
+    var n: core::Node = button::button("Save", key: "btn");
+    let p: *core::Node = #addr_of(n);
+    let _v: *u8 = views::create(0 as *u8, p);
+    assert !core::has_caret_probe(p);
+    match core::rect_for_offset(p, 0 as i64) {
+        option::Option[vocab::Rect]::Some(_r) => { assert false; }
+        option::Option[vocab::Rect]::None => { }
+    }
+    return;
+}
+
 #[test]
 fn a_text_field_reports_the_caret_it_actually_has() {
     // `cursor_position` and `selection_length` are declared two-way and were

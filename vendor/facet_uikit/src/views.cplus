@@ -30,6 +30,7 @@ import "objc/bridge" as bridge;
 import "uikit/uikit" as ui;
 import "./paint" as paint;
 import "./input" as input;
+import "./text_input" as text_input;
 import "./keys" as keys;
 import "./controls" as controls;
 import "./swipe" as swipe;
@@ -166,6 +167,10 @@ fn create(ctx: *u8, n: *core::Node) -> *u8 {
         { (*n).set_context(v) };
         { (*n).set_measure(measure_window_buttons) };
     }
+    // Where a character is: the three text kinds can be asked, through
+    // UITextInput. Same shape as the measure above — a probe on the node,
+    // installed by whoever backs it.
+    text_input::install_caret_probe(n, kind);
     return v;
 }
 

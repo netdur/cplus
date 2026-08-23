@@ -475,6 +475,117 @@ fn boolean_readers_assert_and_setters_do_not() {
 
 // ---- styling text that is already there -------------------------------------
 
+// ---- where a character is ----------------------------------------------------
+// The portable half. What a rect IS can only be checked against a real text
+// system (facet_appkit's suite does that); what this tier owes is the posture
+// when there is none — which is the whole point of the verb answering an
+// Option rather than a Rect.
+
+#[test]
+fn a_caret_rect_is_none_without_a_backend_rather_than_a_guessed_zero() {
+    // NO BACKEND, so nothing laid this text out and there is no honest answer.
+    // A `Rect::zero()` here would be a lie an editor cannot detect: a popup
+    // would open at the control's top-left corner and look plausible.
+    var root: facet::Node = text_area::text_area("let x = 1;", key: "e");
+    let p: *facet::Node = #addr_of(root);
+    match text_area::find("e", within: p) {
+        option::Option[text_area::TextArea]::Some(h) => {
+            match h.caret_rect() {
+                option::Option[vocab::Rect]::Some(_r) => { assert false; }
+                option::Option[vocab::Rect]::None => { }
+            }
+            match h.rect_for_offset(4 as i64) {
+                option::Option[vocab::Rect]::Some(_r) => { assert false; }
+                option::Option[vocab::Rect]::None => { }
+            }
+        }
+        option::Option[text_area::TextArea]::None => { assert false; }
+    }
+    return;
+}
+
+#[test]
+fn a_node_that_is_not_a_text_surface_has_no_caret_probe() {
+    // The probe is per-node and installed by whoever backs it, so a button
+    // never has one however it is mounted.
+    var root: facet::Node = button::button("Save", key: "save");
+    assert !facet::has_caret_probe(#addr_of(root));
+    var ta: facet::Node = text_area::text_area("hi", key: "t");
+    assert !facet::has_caret_probe(#addr_of(ta));
+    return;
+}
+
+// A stand-in text system: the answer is arithmetic, so the test can state
+// exactly what it expects. It stands for a BACKEND, not for AppKit — what it
+// checks is that core carries the offset through and hands the rect back
+// untouched.
+fn fake_caret(view: *u8, offset: i64, out: *vocab::Rect) -> bool {
+    if view == (0 as *u8) { return false; }
+    if offset < (0 as i64) { return false; }
+    { (*out) = vocab::Rect::of((offset as f64) * 7.0f64, 0.0f64, 7.0f64, 16.0f64) };
+    return true;
+}
+
+fn refusing_caret(view: *u8, offset: i64, out: *vocab::Rect) -> bool { return false; }
+
+#[test]
+fn an_installed_probe_is_asked_at_the_offset_and_its_rect_is_carried_through() {
+    var root: facet::Node = text_area::text_area("let x = 1;", key: "e");
+    let p: *facet::Node = #addr_of(root);
+    // A probe with no view to ask is still no answer: `rect_for_offset` hands
+    // the backend its own view, and an unmounted node has none.
+    facet::set_caret_probe(p, fake_caret);
+    assert facet::has_caret_probe(p);
+    match facet::rect_for_offset(p, 3 as i64) {
+        option::Option[vocab::Rect]::Some(_r) => { assert false; }
+        option::Option[vocab::Rect]::None => { }
+    }
+    // Mounted, so there is something to ask.
+    facet::set_native(p, 1 as *u8);
+    match text_area::find("e", within: p) {
+        option::Option[text_area::TextArea]::Some(h) => {
+            match h.rect_for_offset(3 as i64) {
+                option::Option[vocab::Rect]::Some(r) => {
+                    assert approx({ r.x }, 21.0f64);
+                    assert approx({ r.width }, 7.0f64);
+                    assert approx({ r.height }, 16.0f64);
+                }
+                option::Option[vocab::Rect]::None => { assert false; }
+            }
+            // `caret_rect` is the same read at `cursor_position`, collapsed to
+            // the insertion point: same left edge, same line, no width.
+            let _s: text_area::TextArea = h.set_cursor_position(5 as i64);
+            match h.caret_rect() {
+                option::Option[vocab::Rect]::Some(r) => {
+                    assert approx({ r.x }, 35.0f64);
+                    assert approx({ r.width }, 0.0f64);
+                    assert approx({ r.height }, 16.0f64);
+                }
+                option::Option[vocab::Rect]::None => { assert false; }
+            }
+        }
+        option::Option[text_area::TextArea]::None => { assert false; }
+    }
+    return;
+}
+
+#[test]
+fn a_surface_that_cannot_answer_right_now_says_so() {
+    // An AppKit text FIELD borrows the window's field editor and only has one
+    // while focused, so "installed" and "can answer" are different questions
+    // and the probe reports the second.
+    var root: facet::Node = text_field::text_field("hi", key: "f");
+    let p: *facet::Node = #addr_of(root);
+    facet::set_caret_probe(p, refusing_caret);
+    facet::set_native(p, 1 as *u8);
+    assert facet::has_caret_probe(p);
+    match facet::rect_for_offset(p, 0 as i64) {
+        option::Option[vocab::Rect]::Some(_r) => { assert false; }
+        option::Option[vocab::Rect]::None => { }
+    }
+    return;
+}
+
 #[test]
 fn style_runs_name_ranges_and_carry_no_text_of_their_own() {
     // `formatted_text` is a formatted STRING and writing one replaces the

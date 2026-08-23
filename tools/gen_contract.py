@@ -2420,6 +2420,28 @@ TAB_SOURCE_FIELDS = [
 # knows the answer exactly.
 EDITOR_TIER = ("text_area",)
 
+# WHERE THE CARET IS ON SCREEN, which no text surface could say. `cursor_position`
+# answers a character OFFSET; nothing answered where that offset SITS in points,
+# and that is the one number needed to put anything beside the caret — a
+# completion list, a signature hint, an inline error card, a colour swatch on a
+# hex literal.
+#
+# facet already had the rest of it: absolute placement in points
+# (`set_absolute` + `set_left`/`set_top`), a node's computed box
+# (`flex::Node::frame()`) and a portable selection-changed event. So the popup
+# is an ordinary facet subtree positioned by ordinary facet verbs, and the
+# single missing quantity was the offset-to-point mapping.
+#
+# THAT MAPPING IS THE TEXT LAYOUT — which line the offset fell on after
+# wrapping, how wide the glyphs before it are in the resolved face, where the
+# baseline sits. It lives inside whatever the backend built the surface from,
+# and no application-side arithmetic reconstructs it: measuring a monospaced
+# advance is a guess that is wrong for the first proportional font, the first
+# ligature and the first astral character, and wrong SILENTLY.
+#
+# Not a props field — a live probe. `core::Data.caret_probe` says why.
+CARET_GEOMETRY = ("text_area", "text_field", "search_field")
+
 EDITOR_TIER_FIELDS = [
     ("style_runs", "vocab::StyleRuns", "vocab::StyleRuns::new()",
      "facet — how to draw RANGES of the text that is already there"),
@@ -3151,6 +3173,41 @@ def emit_control(row_type, merged):
         o.append("        { (*p).on_selection_changed_ctx = on_selection_changed_ctx };\n")
         o.append("        core::touch(this._p, props::C_HANDLERS);\n")
         o.append("        return this;\n    }\n")
+
+    # ---- facet's own: where a character is, asked of the text system
+    if mod in CARET_GEOMETRY:
+        o.append("\n    // WHERE THE CHARACTER AT `offset` IS, in this control's own\n")
+        o.append("    // coordinate space — the same space `frame()` reports, top-left\n")
+        o.append("    // origin, so a popup is placed against it with `set_absolute` +\n")
+        o.append("    // `set_left`/`set_top` and nothing further to convert.\n")
+        o.append("    //\n")
+        o.append("    // Asked, not stored: the answer moves on every edit, scroll, resize,\n")
+        o.append("    // font change and re-wrap, and a pushed value that missed one of\n")
+        o.append("    // those would be a few points off with nothing to show why.\n")
+        o.append("    //\n")
+        o.append("    // None means the platform cannot answer — this control is not\n")
+        o.append("    // mounted, or its backend has no text layout to ask right now. It is\n")
+        o.append("    // never a guess.\n")
+        o.append("    fn rect_for_offset(this, offset: i64) -> option::Option[vocab::Rect] {\n")
+        o.append("        return core::rect_for_offset(this._p, offset);\n    }\n")
+        o.append("\n    // The INSERTION POINT's box: the character the caret is on, collapsed\n")
+        o.append("    // to the caret's own leading edge.\n")
+        o.append("    //\n")
+        o.append("    // Zero width, because a caret occupies no column — it sits BETWEEN\n")
+        o.append("    // two characters. The two verbs are deliberately different shapes:\n")
+        o.append("    // a completion popup anchors to this box's bottom-left, while a hint\n")
+        o.append("    // about a symbol wants the symbol's own width and asks\n")
+        o.append("    // `rect_for_offset` for it.\n")
+        o.append("    fn caret_rect(this) -> option::Option[vocab::Rect] {\n")
+        o.append("        match core::rect_for_offset(this._p, this.cursor_position()) {\n")
+        o.append("            option::Option[vocab::Rect]::Some(r) => {\n")
+        o.append("                return option::some(vocab::Rect::of({ r.x }, { r.y },\n")
+        o.append("                                                     0.0f64, { r.height }));\n")
+        o.append("            }\n")
+        o.append("            option::Option[vocab::Rect]::None => {\n")
+        o.append("                return option::Option[vocab::Rect]::None;\n            }\n")
+        o.append("        }\n")
+        o.append("        return option::Option[vocab::Rect]::None;\n    }\n")
 
     # ---- facet's own: a chooser says what it IS, separately from what it SHOWS
     if mod in PICKER_LABEL:

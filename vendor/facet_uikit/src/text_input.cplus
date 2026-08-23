@@ -244,6 +244,70 @@ fn apply_selection(v: *u8, iv: *props::InputViewProps, is_text_view: bool) {
 static TV_DELEGATE_CLASS: *u8 = 0 as *u8;
 static TV_DELEGATE: *u8 = 0 as *u8;
 
+// ---- where a character is ------------------------------------------------------
+//
+// The portable read is `core::rect_for_offset`; this is what it asks on iOS.
+//
+// UIKit makes this the easy backend. UITextView and UITextField both conform
+// to UITextInput, which is a POSITION-based API rather than an offset-based
+// one — every query goes through opaque `UITextPosition` objects the view
+// hands out — and it answers in the view's OWN coordinates, top-left, which is
+// already facet's space. So there is no coordinate conversion here at all and
+// nothing to flip, unlike the AppKit side.
+//
+// Both kinds are backed by the view directly (a UITextView IS a scroll view),
+// so the node's own view is the one to ask, and it can answer whether or not
+// it is first responder — the other thing AppKit cannot do.
+
+fn caret_probe(view: *u8, offset: i64, out: *vocab::Rect) -> bool {
+    if view == (0 as *u8) { return false; }
+    let ti: ui::TextInput = ui::TextInput::from_raw(view);
+    var at: i64 = offset;
+    if at < (0 as i64) { at = 0 as i64; }
+    let start: ui::TextPosition = match ti.position_from_position(ti.beginning_of_document(), at) {
+        option::Option[ui::TextPosition]::Some(p) => { p }
+        // Past the end of the document. The caret still belongs somewhere —
+        // after the last character — and that is where the document ends.
+        option::Option[ui::TextPosition]::None => {
+            let r: rt::Rect = ti.caret_rect_for_position(ti.end_of_document());
+            if !(({ r.h }) > 0.0f64) { return false; }
+            { (*out) = vocab::Rect { x: { r.x }, y: { r.y }, width: 0.0f64, height: { r.h } } };
+            return true;
+        }
+    };
+    // The character's own box: the range from this position to the next.
+    match ti.position_from_position(start, 1 as i64) {
+        option::Option[ui::TextPosition]::Some(next) => {
+            match ti.text_range_from_position(start, next) {
+                option::Option[ui::TextRange]::Some(range) => {
+                    let r: rt::Rect = ti.first_rect_for_range(range);
+                    // UIKit answers CGRectNull for a range it cannot lay out.
+                    if ({ r.h }) > 0.0f64 {
+                        { (*out) = vocab::Rect { x: { r.x }, y: { r.y },
+                                                 width: { r.w }, height: { r.h } } };
+                        return true;
+                    }
+                }
+                option::Option[ui::TextRange]::None => { }
+            }
+        }
+        option::Option[ui::TextPosition]::None => { }
+    }
+    // No next character — the caret at the very end, which has no width.
+    let c: rt::Rect = ti.caret_rect_for_position(start);
+    if !(({ c.h }) > 0.0f64) { return false; }
+    { (*out) = vocab::Rect { x: { c.x }, y: { c.y }, width: 0.0f64, height: { c.h } } };
+    return true;
+}
+
+fn install_caret_probe(n: *core::Node, kind: u32) {
+    if kind == props::K_TEXT_AREA || kind == props::K_TEXT_FIELD
+        || kind == props::K_SEARCH_FIELD {
+        core::set_caret_probe(n, caret_probe);
+    }
+    return;
+}
+
 fn imp_text_view_did_change(self_obj: *u8, cmd: *u8, tv: *u8) {
     let n: *core::Node = input::node_of(tv);
     if n == (0 as *core::Node) { return; }

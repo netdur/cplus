@@ -92,6 +92,30 @@ struct Data {
     // gestures pays 16 bytes a node and never allocates.
     opaque gestures: *u8,
     gestures_release: fn(*u8),
+    // WHERE A CHARACTER IS, asked of the text system that laid it out.
+    //
+    // A text surface can say which character the caret is ON (`cursor_position`
+    // is an offset); nothing could say where that offset SITS, and that is the
+    // one number needed to put anything beside the caret — a completion list, a
+    // signature hint, an inline error, a colour swatch on a hex literal.
+    //
+    // NOT A PROP, and that is the whole design. A prop would be pushed by the
+    // backend when it changed, and it changes on selection, on edit, on scroll,
+    // on resize, on a font change and on a wrap — miss one and the popup is a
+    // few points off, silently, which is the failure mode nobody can diagnose.
+    // A PROBE is asked at the moment the answer is used, so it cannot be stale.
+    //
+    // The same shape flex already uses for intrinsic size (`set_measure`): the
+    // backend installs a function on the node it backs, and the portable side
+    // calls it. It does NOT go on `mount::Renderer`, whose five verbs are
+    // deliberately universal — this belongs to the three nodes that have text
+    // systems under them, not to every node in the tree.
+    //
+    // `(*d).view` is the argument, so the backend gets what it created. The
+    // bool is "could the platform answer": 0 for a node nothing installed one
+    // on, false for a surface that cannot answer right now (an AppKit field
+    // borrows its field editor and only has one while focused).
+    caret_probe: fn(*u8, i64, *vocab::Rect) -> bool,
     // What this node STANDS FOR, from the application's side: the row's record,
     // the card's model, whatever a handler shared across many nodes needs to
     // tell them apart. BORROWED — the application owns it and outlives the
@@ -167,6 +191,7 @@ fn ensure_data(n: *Node) -> *Data {
                              is_focused: false, is_attached: false,
                              window: vocab::WindowRef::none(), batch: 0 as i64,
                              gestures: 0 as *u8, gestures_release: no_release,
+                             caret_probe: 0 as fn(*u8, i64, *vocab::Rect) -> bool,
                              item: 0 as *u8 };
     match box::new::[Data](fresh) {
         option::Option[box::Box[Data]]::Some(b) => { { (*n).attach(b.into_raw(), release_data) }; }
@@ -187,6 +212,7 @@ fn node_with(key: str, kind: u32, props_ptr: *u8, release: fn(*u8)) -> Node {
                          is_focused: false, is_attached: false,
                          window: vocab::WindowRef::none(), batch: 0 as i64,
                          gestures: 0 as *u8, gestures_release: no_release,
+                         caret_probe: 0 as fn(*u8, i64, *vocab::Rect) -> bool,
                          item: 0 as *u8 };
     match box::new::[Data](d) {
         option::Option[box::Box[Data]]::Some(b) => { n.attach(b.into_raw(), release_data); }
@@ -1616,6 +1642,53 @@ fn set_window(n: *Node, w: vocab::WindowRef) {
     if d == (0 as *Data) { return; }
     { (*d).window = w };
     return;
+}
+
+// ---- where a character is -----------------------------------------------------
+// The fourth thing a backend writes back, and the only one that is a function
+// rather than a value. See `Data.caret_probe` for why it is a probe.
+
+fn set_caret_probe(n: *Node, f: fn(*u8, i64, *vocab::Rect) -> bool) {
+    let d: *Data = ensure_data(n);
+    if d == (0 as *Data) { return; }
+    { (*d).caret_probe = f };
+    return;
+}
+
+fn has_caret_probe(n: *Node) -> bool {
+    let d: *Data = node_data(n);
+    if d == (0 as *Data) { return false; }
+    return { (*d).caret_probe } != (0 as fn(*u8, i64, *vocab::Rect) -> bool);
+}
+
+// The box of the character at `offset`, in THIS NODE'S own coordinate space —
+// the same space `frame()` reports the node's children in, top-left origin, so
+// a popup is positioned against it with the ordinary absolute-placement verbs
+// and no further conversion.
+//
+// A ZERO-LENGTH box at the offset is the caret; a text surface answers the
+// insertion point's box there, which is what an input method is shown and
+// therefore what the platform is best at. Past the end of the text the answer
+// is the box the next character WOULD occupy — that is where a caret sits, and
+// an editor asks for it constantly.
+//
+// None, and it means one of three things, all of them honest: this node is not
+// a text surface, it is not mounted, or its backend cannot answer right now.
+// It is never a guess. Application-side arithmetic over a font's advance is
+// wrong for the first proportional face, the first ligature and the first
+// astral character, and wrong silently.
+fn rect_for_offset(n: *Node, offset: i64) -> option::Option[vocab::Rect] {
+    let d: *Data = node_data(n);
+    if d == (0 as *Data) { return option::Option[vocab::Rect]::None; }
+    let f: fn(*u8, i64, *vocab::Rect) -> bool = { (*d).caret_probe };
+    if f == (0 as fn(*u8, i64, *vocab::Rect) -> bool) {
+        return option::Option[vocab::Rect]::None;
+    }
+    let v: *u8 = { (*d).view };
+    if v == (0 as *u8) { return option::Option[vocab::Rect]::None; }
+    var out: vocab::Rect = vocab::Rect::zero();
+    if !f(v, offset, #addr_of(out)) { return option::Option[vocab::Rect]::None; }
+    return option::some(out);
 }
 
 // The escape hatch INTENT blesses: the platform's own view, or 0 while the

@@ -51,6 +51,7 @@ import "stdlib/option" as option;
 import "stdlib/text" as text;
 import "facet/facet" as core;
 import "facet/props" as props;
+import "facet/gestures" as gestures;
 import "facet/vocabulary" as vocab;
 import "facet/text_field" as text_field;
 import "facet/text_area" as text_area;
@@ -62,6 +63,7 @@ import "objc/synthesis" as synth;
 import "appkit/appkit" as ak;
 import "appkit/appkit_ext" as akx;
 import "./paint" as paint;
+import "./input" as input;
 import "./scheduler" as scheduler;
 
 extern fn printf(fmt: *u8, ...) -> i32;
@@ -559,6 +561,162 @@ fn apply_editor_flags(ed: *u8, iv: *props::InputViewProps) {
     return;
 }
 
+// ---- where a character is ----------------------------------------------------
+//
+// `core::rect_for_offset` asks the node; the node asks whatever this file
+// installed on it. Two shapes, because AppKit has two:
+//
+//   an EDITOR owns its NSTextView (inside the scroller facet's node is backed
+//   by), so it can always answer, mounted or not, focused or not;
+//
+//   a FIELD borrows one. AppKit gives a window ONE field editor and lends it to
+//   whichever control is first responder, so an unfocused NSTextField has no
+//   text layout at all and the honest answer is None. That is not a shortfall
+//   to paper over: a field with no field editor has not laid its text out,
+//   there is nothing to ask, and the caller only wants this while the user is
+//   typing into it anyway.
+//
+// THE LAYOUT MANAGER, not `firstRectForCharacterRange:`. Both answer the same
+// question and the NSTextInputClient one is the better-known name, but it
+// reports in SCREEN coordinates — so it needs a window, and needs converting
+// back down through two spaces to get where it started. The layout manager is
+// what that method is implemented in terms of, answers in the text container's
+// own space, and works on a view that has never been on screen.
+
+// The text container's rect for the character at `offset`, in the TEXT VIEW's
+// coordinates. None when the layout is not askable.
+fn glyph_box(tv: ak::TextView, offset: i64) -> option::Option[rt::Rect] {
+    let lm: ak::LayoutManager = match tv.layout_manager() {
+        option::Option[ak::LayoutManager]::Some(m) => { m }
+        option::Option[ak::LayoutManager]::None => { return option::Option[rt::Rect]::None; }
+    };
+    let tc: ak::TextContainer = match tv.text_container() {
+        option::Option[ak::TextContainer]::Some(c) => { c }
+        option::Option[ak::TextContainer]::None => { return option::Option[rt::Rect]::None; }
+    };
+    let origin: rt::Point = tv.text_container_origin();
+    let chars: usize = tv.as_text().string().count();
+    var at: i64 = offset;
+    if at < (0 as i64) { at = 0 as i64; }
+    if at > (chars as i64) { at = chars as i64; }
+
+    // Everything below is laid out lazily, so ask for it before measuring it.
+    // Without this a freshly-set string measures against the PREVIOUS layout —
+    // the caret lands where the old text put it, which looks like an
+    // off-by-one-line bug and is not one.
+    lm.ensure_layout_for_text_container(tc);
+    let glyphs: u64 = lm.number_of_glyphs();
+
+    // PAST THE LAST CHARACTER is where a caret spends much of its life — at the
+    // end of the buffer, and at the end of every line, since a newline's own
+    // box is not where the caret sits after it.
+    if at >= (chars as i64) || glyphs == (0 as u64) {
+        // AppKit keeps a dedicated fragment for exactly this: an empty view,
+        // or a buffer ending in a newline, has a line the caret belongs on that
+        // contains no glyphs. It is zero-sized when neither applies.
+        let extra: rt::Rect = lm.extra_line_fragment_rect();
+        if { extra.h } > 0.0f64 {
+            return option::some(rt::Rect { x: { extra.x } + { origin.x },
+                                           y: { extra.y } + { origin.y },
+                                           w: 0.0f64, h: { extra.h } });
+        }
+        if glyphs == (0 as u64) { return option::Option[rt::Rect]::None; }
+        // Otherwise the caret is the trailing edge of the last glyph.
+        let g: u64 = glyphs -% (1 as u64);
+        let frag: rt::Rect = lm.line_fragment_rect_for_glyph_at_index(g, 0 as *u8);
+        let box: rt::Rect = lm.bounding_rect_for_glyph_range(rt::Range { location: g, length: 1 as u64 }, tc);
+        return option::some(rt::Rect { x: { box.x } + { box.w } + { origin.x },
+                                       y: { frag.y } + { origin.y },
+                                       w: 0.0f64, h: { frag.h } });
+    }
+
+    let g: u64 = lm.glyph_index_for_character_at_index(at as u64);
+    if g >= glyphs { return option::Option[rt::Rect]::None; }
+    // The character's own box for x/width, its LINE's box for y/height: a
+    // glyph's bounding rect is the ink, and a popup wants the line it sits on.
+    let box: rt::Rect = lm.bounding_rect_for_glyph_range(rt::Range { location: g, length: 1 as u64 }, tc);
+    let frag: rt::Rect = lm.line_fragment_rect_for_glyph_at_index(g, 0 as *u8);
+    return option::some(rt::Rect { x: { box.x } + { origin.x }, y: { frag.y } + { origin.y },
+                                   w: { box.w }, h: { frag.h } });
+}
+
+fn is_flipped(v: *u8) -> bool {
+    return rt::msg_i8(v, rt::sel(#str_ptr("isFlipped\0"))) != (0 as i8);
+}
+
+// Text-view coordinates -> the NODE's own space, top-left origin.
+//
+// Two conversions, and the second is the one that is easy to forget. AppKit
+// converts between views correctly whatever their flippedness, but it converts
+// into the DESTINATION's convention — and a node's backing view here may be one
+// of AppKit's own (an NSScrollView, an NSTextField), which is bottom-up. facet
+// reports every geometry top-left, because every view this backend CREATES is
+// flipped and flex is top-left, so a rect that came back bottom-up has to be
+// turned over before it is an answer in facet's terms.
+fn into_node_space(node_view: *u8, from: ak::TextView, r: rt::Rect, out: *vocab::Rect) -> bool {
+    if node_view == (0 as *u8) { return false; }
+    let host: ak::View = ak::View::from_raw(node_view);
+    let local: rt::Rect = host.convert_rect(r, from.as_view());
+    var y: f64 = { local.y };
+    if !is_flipped(node_view) {
+        let b: rt::Rect = host.bounds();
+        y = { b.h } - ({ local.y } + { local.h });
+    }
+    { (*out) = vocab::Rect { x: { local.x }, y: y, width: { local.w }, height: { local.h } } };
+    return true;
+}
+
+// An editor: the node is backed by the scroll view, the text view is inside it.
+fn editor_caret_probe(node_view: *u8, offset: i64, out: *vocab::Rect) -> bool {
+    let tv: ak::TextView = match editor_of(node_view) {
+        option::Option[ak::TextView]::Some(t) => { t }
+        option::Option[ak::TextView]::None => { return false; }
+    };
+    match glyph_box(tv, offset) {
+        option::Option[rt::Rect]::Some(r) => { return into_node_space(node_view, tv, r, out); }
+        option::Option[rt::Rect]::None => { return false; }
+    }
+    return false;
+}
+
+// A field: the node is backed by the control, and the text view is the window's
+// field editor — which exists only while this control is first responder.
+fn field_caret_probe(node_view: *u8, offset: i64, out: *vocab::Rect) -> bool {
+    if node_view == (0 as *u8) { return false; }
+    let ed: ak::Text = match ak::Control::from_raw(node_view).current_editor() {
+        option::Option[ak::Text]::Some(e) => { e }
+        option::Option[ak::Text]::None => { return false; }
+    };
+    let tv: ak::TextView = ak::TextView::from_raw(ed.raw());
+    match glyph_box(tv, offset) {
+        option::Option[rt::Rect]::Some(r) => { return into_node_space(node_view, tv, r, out); }
+        option::Option[rt::Rect]::None => { return false; }
+    }
+    return false;
+}
+
+// The NSTextView inside a text_area's scroll view. `controls` has the same
+// read for its apply path; this one is here so the probe does not reach across
+// into a module that imports this one.
+fn editor_of(v: *u8) -> option::Option[ak::TextView] {
+    if v == (0 as *u8) { return option::Option[ak::TextView]::None; }
+    match ak::ScrollView::from_raw(v).document_view() {
+        option::Option[ak::View]::Some(d) => { return option::some(ak::TextView::from_raw(d.raw())); }
+        option::Option[ak::View]::None => { return option::Option[ak::TextView]::None; }
+    }
+    return option::Option[ak::TextView]::None;
+}
+
+// Install the right probe for the kind, at create, beside the delegate.
+fn install_caret_probe(n: *core::Node, kind: u32) {
+    if kind == props::K_TEXT_AREA { core::set_caret_probe(n, editor_caret_probe); return; }
+    if kind == props::K_TEXT_FIELD || kind == props::K_SEARCH_FIELD {
+        core::set_caret_probe(n, field_caret_probe);
+        return;
+    }
+    return;
+}
+
 // ---- installation ------------------------------------------------------------
 
 // Called once per view from `create_*`. Attaching at CREATE rather than on
@@ -581,6 +739,42 @@ fn install(view: *u8, target: *u8, n: *core::Node) {
     // Enter on a field. `set_control_action_ctx` pins its own target to the
     // control, so this is the same lifetime story as the delegate.
     akx::set_control_action_ctx(ak::Control::from_raw(target), submit_imp, n as *u8);
+    return;
+}
+
+// ---- the key band on a text control --------------------------------------------
+//
+// WHICH VIEW GETS THE KEYS is a text-control question, so the answer is here;
+// the arming itself is `input::arm_key_surface`. The two halves differ because
+// AppKit's do:
+//
+//   an EDITOR owns its NSTextView for life, so it is armed once at create and
+//   stays armed;
+//
+//   a FIELD borrows the WINDOW's field editor — one object, lent to whichever
+//   control is first responder — so it is armed and released around the
+//   RESPONDER change, in `input.cplus`, which is where become/resign already
+//   live. `controlTextDidBeginEditing:` looks like the natural hook and is not:
+//   it fires on the first EDIT, not on focus, so the keystroke that opens a
+//   completion list would be the one that got through.
+//
+// Gated on the node actually carrying `on_key`. Without the gate every text
+// control in every app would get a subclass and a `keyDown:` override to
+// deliver nothing, and `views::apply` re-runs this on `C_GESTURES` — so a
+// handler attached after mount arms the surface then.
+
+fn wants_key_band(n: *core::Node) -> bool {
+    return gestures::on_key_of(n) != gestures::no_gesture;
+}
+
+// The editor's own text view, armed at create.
+fn arm_key_band(v: *u8, n: *core::Node) {
+    if !is_editor(n) { return; }
+    if !wants_key_band(n) { return; }
+    match editor_of(v) {
+        option::Option[ak::TextView]::Some(tv) => { input::arm_key_surface(tv.raw(), n); }
+        option::Option[ak::TextView]::None => { }
+    }
     return;
 }
 

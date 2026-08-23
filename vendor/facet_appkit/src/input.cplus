@@ -433,6 +433,91 @@ fn imp_key_down(self_obj: *u8, cmd: *u8, event: *u8) {
     return;
 }
 
+// ---- the key band on a view that is not the node's own -------------------------
+//
+// `arm` puts the whole input class on the node's OUTERMOST view, which is what
+// every other band wants. The key band does not: keys go to the FIRST
+// RESPONDER, and for a text control that is a view further in — the NSTextView
+// inside a text_area's scroll view, the window's field editor for a text_field.
+// So `.gesture(on_key:)` on an editor never fired: the handler was armed on the
+// NSScrollView while Return was being delivered to the NSTextView inside it.
+//
+// ONLY `keyDown:`, deliberately. Putting the full input class on an NSTextView
+// would also take over `hitTest:`, `mouseDown:`, `acceptsFirstResponder` and
+// the responder hooks — that is the text system's own machinery for selection,
+// dragging and insertion-point placement, and facet has no business standing in
+// front of it to deliver a key. One selector is the whole gap.
+//
+// The decline is what keeps the common case intact: a handler that answers
+// `false` (or a node with none) falls through to the real `keyDown:` and the
+// character is inserted exactly as before. Only a `true` swallows it, which is
+// what lets Down/Up/Return/Escape drive a completion list while every other key
+// still reaches the text.
+
+fn key_armed_key() -> *u8 { return { 29017 as *u8 }; }
+
+fn is_key_armed(v: *u8) -> bool {
+    return { synth::get_associated(v, key_armed_key()) } != (0 as *u8);
+}
+
+static KEY_CLASSES: u32 = 0 as u32;
+
+// A subclass of `base` overriding `keyDown:` and nothing else. Cached on the
+// base class, like `input_class_for` — the window's field editor is armed and
+// re-armed on every editing session, and each one must not mint a class.
+fn key_class_for(base: *u8) -> *u8 {
+    let cached: *u8 = { synth::get_associated(base, key_subclass_key()) };
+    if cached != (0 as *u8) { return cached; }
+    var name: text::Text = text::from_str("FacetKey");
+    let _t: status::Status = name.append(one_digit((KEY_CLASSES / (10 as u32)) % (10 as u32)));
+    let _u: status::Status = name.append(one_digit(KEY_CLASSES % (10 as u32)));
+    KEY_CLASSES = KEY_CLASSES + (1 as u32);
+    var made: *u8 = base;
+    match name.c_str() {
+        option::Option[text::CString]::Some(cs) => {
+            let cls: *u8 = synth::allocate_class_pair(base, cs.as_ptr(), 0 as usize);
+            if cls != (0 as *u8) {
+                synth::add_method_v_1id(cls, rt::sel(#str_ptr("keyDown:\0")),
+                                        imp_key_down, #str_ptr("v@:@\0"));
+                // Only a BORROWED editor acts on this — see `imp_key_resign`.
+                add_method_i8_0(cls, rt::sel(#str_ptr("resignFirstResponder\0")),
+                                imp_key_resign, #str_ptr("c@:\0"));
+                synth::register_class_pair(cls);
+                made = cls;
+            }
+        }
+        option::Option[text::CString]::None => { }
+    }
+    if made != base { synth::set_associated(base, key_subclass_key(), made); }
+    return made;
+}
+
+fn key_subclass_key() -> *u8 { return { 29018 as *u8 }; }
+
+// Point `v`'s keys at `n`. Idempotent: the class moves once, the node pointer
+// is refreshed every time (a re-attached node has a new address, and the
+// window's field editor serves a different node on every focus).
+fn arm_key_surface(v: *u8, n: *core::Node) {
+    if v == (0 as *u8) || n == (0 as *core::Node) { return; }
+    synth::set_associated(v, node_key(), n as *u8);
+    if is_key_armed(v) { return; }
+    let _old: *u8 = object_setClass(v, key_class_for(synth::object_class(v)));
+    synth::set_associated(v, key_armed_key(), 1 as *u8);
+    return;
+}
+
+// Cut a view loose from its node. The class stays — it is cached per base and
+// declines to super with no node — but the association must go, because THE
+// FIELD EDITOR IS SHARED: one per window, lent to whichever control is first
+// responder. Leaving a node on it would hand the next field's keystrokes to
+// the last field's handler.
+fn disarm_key_surface(v: *u8) {
+    if v == (0 as *u8) { return; }
+    if !is_key_armed(v) { return; }
+    synth::set_associated(v, node_key(), 0 as *u8);
+    return;
+}
+
 fn imp_accepts_first_responder(self_obj: *u8, cmd: *u8) -> i8 {
     let n: *core::Node = node_of_view(self_obj);
     if n == (0 as *core::Node) { return 0 as i8; }
@@ -699,8 +784,84 @@ fn imp_become_first_responder(self_obj: *u8, cmd: *u8) -> i8 {
     // refuse to give up first responder while its value is invalid — so the
     // state is only re-read when the super call succeeded.
     let ok: i8 = { msg_super_i8(#addr_of(sup), cmd) };
-    if ok != (0 as i8) { sync_focus(self_obj, true); }
+    if ok != (0 as i8) {
+        sync_focus(self_obj, true);
+        // A CONTROL THAT BORROWS A FIELD EDITOR gets the key band on the
+        // editor, now — this is the moment it exists, and it is the earliest
+        // one. `controlTextDidBeginEditing:` looks like the natural hook and is
+        // not: it fires on the first EDIT, not on focus, so the keystroke that
+        // opened a completion list would be the one that got through.
+        borrow_field_editor(self_obj);
+    }
     return ok;
+}
+
+// Arm / release the field editor of a control that has one.
+//
+// Asked of the OBJECT rather than of a kind: "does this respond to
+// `currentEditor`" is exactly the question, it is true of NSTextField and
+// NSSearchField and false of everything else, and it keeps this file free of
+// text-control knowledge it otherwise has none of.
+fn borrowed_editor_key() -> *u8 { return { 29019 as *u8 }; }
+// On the EDITOR: this one was lent to a control and must be handed back clean.
+fn borrowed_flag_key() -> *u8 { return { 29020 as *u8 }; }
+
+// A borrowed field editor is giving itself back.
+//
+// THE CONTROL'S OWN `resignFirstResponder` NEVER FIRES for this — measured: a
+// focused NSTextField is not the first responder, its field editor is, so
+// moving focus away resigns the EDITOR and the field hears nothing. Nor is
+// `controlTextDidEndEditing:` enough on its own, because it is an EDITING
+// notification and focus can leave a field that was never typed in.
+//
+// A text_area's own NSTextView carries the same class and is NOT marked
+// borrowed, so it keeps its node across focus changes — which it must, being
+// the same view for the node's whole life.
+fn imp_key_resign(self_obj: *u8, cmd: *u8) -> i8 {
+    var sup: SuperRef = SuperRef {
+        receiver: self_obj,
+        super_class: { class_getSuperclass(synth::object_class(self_obj)) },
+    };
+    let ok: i8 = { msg_super_i8(#addr_of(sup), cmd) };
+    if ok != (0 as i8) {
+        if { synth::get_associated(self_obj, borrowed_flag_key()) } != (0 as *u8) {
+            synth::set_associated(self_obj, node_key(), 0 as *u8);
+            synth::set_associated(self_obj, borrowed_flag_key(), 0 as *u8);
+        }
+    }
+    return ok;
+}
+
+fn current_editor_of(v: *u8) -> *u8 {
+    let sel: *u8 = rt::sel(#str_ptr("currentEditor\0"));
+    if synth::class_responds(synth::object_class(v), sel) == (0 as i8) { return 0 as *u8; }
+    return { rt::msg_id(v, sel) };
+}
+
+fn borrow_field_editor(v: *u8) {
+    let n: *core::Node = node_of_view(v);
+    if n == (0 as *core::Node) { return; }
+    if gestures::on_key_of(n) == gestures::no_gesture { return; }
+    let ed: *u8 = current_editor_of(v);
+    if ed == (0 as *u8) { return; }
+    arm_key_surface(ed, n);
+    // Mark it borrowed, so it hands the node back when it resigns. Remember it
+    // on the control too: by the time editing ends `currentEditor` answers nil,
+    // so a release path that asked for it again would find nothing.
+    synth::set_associated(ed, borrowed_flag_key(), 1 as *u8);
+    synth::set_associated(v, borrowed_editor_key(), ed);
+    return;
+}
+
+// The belt to the editor's own braces: editing ended, so hand it back even if
+// the responder change has not landed yet.
+fn return_field_editor(v: *u8) {
+    let ed: *u8 = { synth::get_associated(v, borrowed_editor_key()) };
+    if ed == (0 as *u8) { return; }
+    disarm_key_surface(ed);
+    synth::set_associated(ed, borrowed_flag_key(), 0 as *u8);
+    synth::set_associated(v, borrowed_editor_key(), 0 as *u8);
+    return;
 }
 
 fn imp_resign_first_responder(self_obj: *u8, cmd: *u8) -> i8 {
@@ -709,7 +870,10 @@ fn imp_resign_first_responder(self_obj: *u8, cmd: *u8) -> i8 {
         super_class: { class_getSuperclass(synth::object_class(self_obj)) },
     };
     let ok: i8 = { msg_super_i8(#addr_of(sup), cmd) };
-    if ok != (0 as i8) { sync_focus(self_obj, false); }
+    if ok != (0 as i8) {
+        sync_focus(self_obj, false);
+        return_field_editor(self_obj);
+    }
     return ok;
 }
 

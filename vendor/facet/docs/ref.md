@@ -19,6 +19,7 @@ the tree, the runtime, the seams, and how to reach a control once it is built.
 | `child_count_of(n)` `child_of(n, i)` | walk children |
 | `kind_of(n)` `view_of(n)` `key()` | what a node is and what backs it |
 | `is_attached(n)` `is_focused(n)` | state the platform wrote back |
+| `rect_for_offset(n, i)` `has_caret_probe(n)` | where a character is, asked of the text system |
 | `touch(n, bits)` `clear_dirty(n)` `dirty_of(n)` | the dirty word |
 | `relayout(n)` | force a re-measure and a layout pass |
 
@@ -154,6 +155,51 @@ match text_field::find("email") {
     option::Option[text_field::TextField]::None => { }
 }
 ```
+
+### Where a character is
+
+`text_area`, `text_field` and `search_field` carry two reads the generator does
+not describe, because they are not props — nothing is stored and nothing is
+pushed. They ASK the platform's text system at the moment you call them.
+
+| | |
+|---|---|
+| `rect_for_offset(i) -> Option[Rect]` | the box of the character at offset `i` |
+| `caret_rect() -> Option[Rect]` | the same at `cursor_position()`, zero width |
+
+The rect is in the control's OWN coordinate space, top-left origin — the space
+`frame()` reports — so a popup goes beside it with `set_absolute` plus
+`set_left`/`set_top` and nothing further to convert.
+
+Asked rather than stored, because the answer moves on every edit, scroll,
+resize, font change and re-wrap: a pushed value that missed one of those would
+be a few points off with nothing to show why.
+
+`None` means the platform cannot answer — the control is not mounted, or its
+backend has no text layout right now. It is never a guess: an AppKit
+`text_field` borrows the window's field editor and only has one while focused,
+so an unfocused field answers `None` and a `text_area` always answers.
+Application-side arithmetic over a font's advance is not a substitute — it is
+wrong for the first proportional face, the first ligature and the first astral
+character, and wrong silently.
+
+```cplus
+match text_area::find("editor") {
+    option::Option[text_area::TextArea]::Some(ed) => {
+        match ed.caret_rect() {
+            option::Option[vocab::Rect]::Some(r) => {
+                facet::set_left(popup, { r.x });
+                facet::set_top(popup, { r.y } + { r.height });   // just below the caret
+            }
+            option::Option[vocab::Rect]::None => { }
+        }
+    }
+    option::Option[text_area::TextArea]::None => { }
+}
+```
+
+Backends: AppKit and UIKit answer. GTK has no probe installed and answers
+`None` everywhere rather than reporting a number nobody measured.
 
 ## facet/component
 
@@ -368,6 +414,24 @@ handler that did not bring one; that is what a free function wants.
 Standing rule: a gesture-only affordance must also have a click path. An agent
 has no hands, and a feature it cannot reach is a feature half the users of this
 framework cannot reach.
+
+### `on_key` on a text control
+
+Keys go to the FIRST RESPONDER, and for a text control that is not the view the
+rest of the band is armed on — on AppKit a `text_area`'s node is backed by the
+enclosing NSScrollView, and a `text_field` borrows the window's shared field
+editor. So the backend arms `keyDown:` on the view that actually receives it,
+and only that selector: the text system's own selection, dragging and
+insertion-point machinery is left alone.
+
+Declining is the common case and it is unchanged — `false`, or no handler, and
+the character is inserted exactly as before. Only `true` swallows. That is what
+lets Down/Up/Return/Escape drive a completion list while every other key still
+reaches the text, and `caret_rect()` is what says where to put the list.
+
+Read the key with `gestures::key_named(event)` against `key_return()`,
+`key_escape()`, `key_arrow_up()`, `key_arrow_down()` and the rest, so a handler
+never touches a platform key code.
 
 ## facet_agent/agent
 
