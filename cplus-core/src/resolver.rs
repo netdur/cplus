@@ -1559,21 +1559,47 @@ fn relative_import_escapes_root(import_dir: &Path, rel: &str, manifest_root: &Pa
 /// from a Mac looks for `_ios` files, never `_macos` ones. (Pre-platform-deps
 /// this keyed off `cfg!(target_os)`, which conflated host and target.) The
 /// platform names are the same vocabulary `[<platform>.dependencies]` uses.
+/// The override suffixes to try, in order of preference.
+///
+/// Usually one — `_macos`, `_windows` — but ANDROID FALLS BACK TO `_linux`,
+/// and that is not a convenience. Android's kernel is Linux: same `/proc`,
+/// same `epoll`, same `environ`. A stdlib module that already carries a
+/// `_linux` body is correct there unmodified, and without this fallback
+/// `android` resolves to the file's DARWIN base instead — which is how the
+/// whole stdlib slice came to carry `kqueue` and `sysctlbyname` into an
+/// Android link and fail at `dlopen` naming functions the app never called.
+///
+/// A real `_android` file still wins when one exists, for the places where
+/// bionic genuinely differs from glibc.
+fn override_suffixes_for(platform: &str) -> Vec<String> {
+    if platform == "android" {
+        return vec!["_android".to_string(), "_linux".to_string()];
+    }
+    vec![format!("_{platform}")]
+}
+
+fn override_suffixes() -> Vec<String> {
+    override_suffixes_for(crate::target::active_platform())
+}
+
 fn platform_override(p: PathBuf) -> PathBuf {
-    let os_suffix = format!("_{}", crate::target::active_platform());
+    let suffixes = override_suffixes();
     // Only base `.cplus` files participate; never double-suffix.
     let Some(stem) = p.file_stem().and_then(|s| s.to_str()) else {
         return p;
     };
-    if stem.ends_with(os_suffix.as_str()) {
-        return p;
+    for suffix in &suffixes {
+        if stem.ends_with(suffix.as_str()) {
+            return p;
+        }
     }
-    let candidate = p.with_file_name(format!("{stem}{os_suffix}.cplus"));
-    if candidate.is_file() {
-        candidate
-    } else {
-        p
+    for suffix in &suffixes {
+        let candidate = p.with_file_name(format!("{stem}{suffix}.cplus"));
+        if candidate.is_file() {
+            return candidate;
+        }
     }
+    p
 }
 
 /// The file id becomes the mangled-symbol prefix for every item in the file,
@@ -3531,6 +3557,34 @@ fn is_builtin(name: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    // ---- platform override suffixes ------------------------------------
+    // These call `override_suffixes` directly rather than `platform_override`
+    // so they do not depend on the ambient build target's filesystem.
+
+    #[test]
+    fn android_falls_back_to_the_linux_override() {
+        // Android's kernel IS Linux, so a module with only a `_linux` body is
+        // correct there. Before this, `android` resolved to the DARWIN base and
+        // stdlib carried `kqueue` / `sysctlbyname` into every Android link,
+        // failing at dlopen naming a function the app never called.
+        let s = super::override_suffixes_for("android");
+        assert_eq!(s, vec!["_android".to_string(), "_linux".to_string()]);
+        // `_android` is FIRST: where bionic genuinely differs from glibc, a
+        // real `_android` file must win.
+        assert_eq!(s[0], "_android");
+    }
+
+    #[test]
+    fn other_platforms_get_exactly_one_suffix() {
+        // Negative: the fallback must not leak. macOS must never pick up a
+        // `_linux` file, or a Darwin build would silently compile the POSIX
+        // body — and `linux` itself must not gain a phantom `_android` lookup.
+        assert_eq!(super::override_suffixes_for("macos"), vec!["_macos".to_string()]);
+        assert_eq!(super::override_suffixes_for("linux"), vec!["_linux".to_string()]);
+        assert_eq!(super::override_suffixes_for("windows"), vec!["_windows".to_string()]);
+        assert_eq!(super::override_suffixes_for("ios"), vec!["_ios".to_string()]);
+    }
+
     use super::*;
     use std::fs;
 
