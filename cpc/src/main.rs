@@ -1552,6 +1552,8 @@ fn collect_dep_link_args(
     // fixed canonical `artifact_triple`.
     let link_triple = active_link_triple()?;
     let mut link_args: Vec<String> = Vec::new();
+    // (package, its declared deps, its archives) — ordered after the walk.
+    let mut archives: Vec<(String, Vec<String>, Vec<String>)> = Vec::new();
     let platform = target::active_platform();
     for dep in &m.dependencies {
         // A dep scoped to another platform contributes nothing to this
@@ -1712,27 +1714,110 @@ fn collect_dep_link_args(
         }
         // Splice this dep's validated link contributions into the line.
         splice_plain_link_args(&mut link_args, &vm, diag_mode, &vendor_manifest)?;
-        // Bundled artifacts go in as full paths (not `-l<name>` — they're
-        // not on the linker's search path). Skipped entirely when the slice
-        // directory is absent: that case already resolved to source.
-        if triple_lib_dir.is_dir() {
-            if let Some(ls) = &vm.link {
-                for basename in &ls.bundled {
-                    link_args.push(triple_lib_dir.join(basename).to_string_lossy().to_string());
-                }
-            }
-        }
+        // ARCHIVES ARE NOT PUSHED HERE. They are collected and ordered after
+        // the loop — see `order_archives_dependents_first` for why the order
+        // this loop walks in is the wrong one.
+        let mut pkg_archives: Vec<String> = Vec::new();
         // The prebuilt slice, if `ensure_prebuilt_deps` produced one. Checked
         // for existence rather than assumed: `cpc check` never builds a cache,
         // and a dep whose package failed to prebuild has already aborted.
         if vm.build.prebuild {
             let archive = triple_lib_dir.join(prebuilt_archive_name(&dep.name));
             if archive.is_file() {
-                link_args.push(archive.to_string_lossy().to_string());
+                pkg_archives.push(archive.to_string_lossy().to_string());
+            }
+        }
+        // Bundled artifacts go in as full paths (not `-l<name>` — they're
+        // not on the linker's search path). Skipped entirely when the slice
+        // directory is absent: that case already resolved to source. They
+        // follow the package's own slice, which is what references them.
+        if triple_lib_dir.is_dir() {
+            if let Some(ls) = &vm.link {
+                for basename in &ls.bundled {
+                    pkg_archives.push(triple_lib_dir.join(basename).to_string_lossy().to_string());
+                }
+            }
+        }
+        if !pkg_archives.is_empty() {
+            let dep_names: Vec<String> =
+                vm.dependencies.iter().map(|d| d.name.clone()).collect();
+            archives.push((dep.name.clone(), dep_names, pkg_archives));
+        }
+    }
+    link_args.extend(order_archives_dependents_first(archives));
+    Ok(link_args)
+}
+
+/// Order package archives so a DEPENDENT always precedes its DEPENDENCY, and
+/// flatten them onto the link line.
+///
+/// GNU `ld` resolves left-to-right in a single pass and pulls a static-archive
+/// member only to satisfy a reference it has ALREADY seen — the same rule that
+/// puts the program object first in `run_clang`, applied between the archives.
+/// The dep walker visits `m.dependencies`, which parses into a `BTreeMap` and so
+/// iterates LEXICOGRAPHICALLY (manifest.rs, "BTreeMap order so any failure is
+/// deterministic" — good for diagnostics, meaningless for a link line). For the
+/// GTK stack alphabetical is close to the worst possible order: `gdk`, `gio`,
+/// `glib`, `gobject` and `gobject_gir` all sort before `gtk4` and are all
+/// things `gtk4` calls, so each was scanned and discarded before `gtk4.o` was
+/// pulled in and referenced it — 1585 undefined C+ symbols from a link whose
+/// archives were all present and correct.
+///
+/// macOS's `ld64` resolves globally and is order-insensitive, which is why this
+/// never appeared on the development host.
+///
+/// Ties break alphabetically so a given dependency set always produces the same
+/// line. A cycle cannot be ordered at all; the packages caught in one are
+/// appended alphabetically, which links no worse than before and leaves the
+/// linker to report it.
+fn order_archives_dependents_first(
+    archives: Vec<(String, Vec<String>, Vec<String>)>,
+) -> Vec<String> {
+    use std::collections::{BTreeMap, BTreeSet};
+    let present: BTreeSet<&str> = archives.iter().map(|(n, _, _)| n.as_str()).collect();
+    // Edge dependent -> dependency; in-degree counts DEPENDENTS, so the nodes
+    // nobody depends on come out first.
+    let mut indeg: BTreeMap<&str, usize> = present.iter().map(|n| (*n, 0)).collect();
+    for (_, deps, _) in &archives {
+        for d in deps {
+            if let Some(slot) = indeg.get_mut(d.as_str()) {
+                *slot += 1;
             }
         }
     }
-    Ok(link_args)
+    let mut ready: BTreeSet<&str> = indeg
+        .iter()
+        .filter(|(_, &v)| v == 0)
+        .map(|(k, _)| *k)
+        .collect();
+    let mut emitted: Vec<&str> = Vec::new();
+    while let Some(name) = ready.iter().next().copied() {
+        ready.remove(name);
+        emitted.push(name);
+        if let Some((_, deps, _)) = archives.iter().find(|(n, _, _)| n == name) {
+            for d in deps {
+                if let Some(slot) = indeg.get_mut(d.as_str()) {
+                    *slot -= 1;
+                    if *slot == 0 {
+                        ready.insert(d.as_str());
+                    }
+                }
+            }
+        }
+    }
+    // Anything left is in a cycle — append it alphabetically rather than drop it.
+    for n in &present {
+        if !emitted.contains(n) {
+            emitted.push(n);
+        }
+    }
+    let mut out = Vec::new();
+    for name in emitted {
+        if let Some((_, _, paths)) = archives.iter().find(|(n, _, _)| n == name) {
+            out.extend(paths.iter().cloned());
+        }
+    }
+    out
 }
 
 /// Where a dependency's package directory lives, or `None` if it isn't there.

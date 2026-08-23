@@ -25161,6 +25161,78 @@ fn prebuild_rebuilds_when_the_package_source_changes() {
 }
 
 #[test]
+fn a_dependency_archive_is_linked_after_the_package_that_calls_it() {
+    // GNU `ld` resolves left-to-right in ONE pass and pulls a static-archive
+    // member only to satisfy a reference it has already seen, so a dependency's
+    // archive placed BEFORE the package that calls into it contributes nothing
+    // and its symbols come up undefined. The dep walker iterates
+    // `m.dependencies`, which parses into a `BTreeMap` and therefore comes out
+    // LEXICOGRAPHICALLY — an order with no relation to who calls whom.
+    //
+    // This fixture is built so alphabetical is exactly backwards: `alpha` is the
+    // leaf and `zulu` calls it, so the sorted order puts the callee first. It
+    // linked fine on macOS the whole time (ld64 resolves globally and does not
+    // care about order), and failed on Linux with
+    //
+    //     libzulu.a(zulu.o): undefined reference to `alpha.src.alpha.answer'
+    //
+    // which is what the whole GTK stack hit: alphabetical put `gdk`, `gio`,
+    // `glib`, `gobject` and `gobject_gir` — everything `gtk4` calls — ahead of
+    // `gtk4`, for 1585 undefined symbols from archives that were all present.
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"app\"\n\n[dependencies]\nalpha = \"*\"\nzulu = \"*\"\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"zulu/zulu\" as zulu;\nfn main() -> i32 { return zulu::ask(); }\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("vendor/alpha/src")).unwrap();
+    std::fs::write(
+        dir.join("vendor/alpha/Cplus.toml"),
+        "[package]\nname = \"alpha\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("vendor/alpha/src/alpha.cplus"),
+        "fn answer() -> i32 { return 42; }\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("vendor/zulu/src")).unwrap();
+    std::fs::write(
+        dir.join("vendor/zulu/Cplus.toml"),
+        "[package]\nname = \"zulu\"\n\n[dependencies]\nalpha = \"*\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("vendor/zulu/src/zulu.cplus"),
+        "import \"alpha/alpha\" as alpha;\nfn ask() -> i32 { return alpha::answer(); }\n",
+    )
+    .unwrap();
+
+    let out = std::process::Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "build failed:\n{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let run = std::process::Command::new(dir.join("target/debug/app"))
+        .output()
+        .unwrap();
+    assert_eq!(run.status.code(), Some(42), "the linked program must run");
+}
+
+#[test]
 fn prebuild_rebuilds_when_a_dependency_changes() {
     // A slice's fingerprint covered the package's OWN source and nothing
     // else, so a struct that changed shape in `base` left every slice
