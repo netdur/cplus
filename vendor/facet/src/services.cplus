@@ -22,6 +22,7 @@ import "stdlib/future" as future;
 import "stdlib/executor" as executor;
 import "stdlib/net" as net;
 import "stdlib/atomic" as atomic;
+import "stdlib/io" as io;
 import "flex_layout/flex_layout" as flex;
 import "./facet" as core;
 
@@ -312,17 +313,143 @@ interface Job {
 // back ON it. Returns immediately. The job must outlive the flight (it is
 // reached through its address). Needs a backend for the main-thread hop
 // (run_on_main): without one the prepared result is never applied.
-fn run_job[J: Job](ref job_v: J, then: fn(*u8) = job_done_noop, ctx: *u8 = 0 as *u8) {
+fn run_job[J: Job](ref job_v: J, then: fn(*u8) = job_done_noop, ctx: *u8 = 0 as *u8) -> bool {
+    let addr: usize = { #addr_of(job_v) as *u8 } as usize;
+    // ONE FLIGHT PER JOB. A second worker inside the same `run()` assigns the
+    // same fields as the first, and where those fields are `Text` or `Vec` —
+    // which is most of them, because a job exists to fetch things — the second
+    // assignment frees what the first is writing. See `claim_job` below for
+    // what that cost.
+    if !claim_job(addr as u64) { return false; }
     jobs_inflight_add(1 as u64);
     let job: JobFlight = JobFlight {
-        job_addr: { #addr_of(job_v) as *u8 } as usize,
+        job_addr: addr,
         run: job_run_tramp::[J],
         apply: job_apply_tramp::[J],
         then: then,
         ctx_addr: ctx as usize,
     };
     let _bg: thread::JoinHandle[i32] = thread::spawn_with::[JobFlight, i32](job, run_job_flight);
+    return true;
+}
+
+// ---- one flight per job ------------------------------------------------------
+//
+// `run_job` spawns a worker on the job's ADDRESS. Called twice on the same job
+// object, two workers are inside the same `run()`, assigning the same fields,
+// and the main thread paints from them. It is not a hypothesis: iris,
+// 2026-08-23, in a `Text.clone` on the main thread —
+//
+//     x1 = 0x402c000000000000   the double 14.0, read as a string pointer
+//     x2 = 0x0000000c81c61800   ~53 GB, read as its length
+//
+// EVERY SERVICE HAND-ROLLED THE GUARD, which is the tell that the default was
+// in the wrong place. Three of iris's five carried a `kicked: i8` set before
+// `run_job` and checked on entry; two did not, and those two are the two that
+// crashed. Five copies of one flag, each depending on an author remembering.
+//
+// The teardown contract (`wait_for_jobs` / `applies_pending`) is sound and is
+// not what failed. It answers "is a worker still in this job" along the
+// LIFETIME axis. This is the other axis — "is a worker in it ALREADY" — and
+// nothing was asking.
+//
+// A slot is held from the claim until the flight is completely finished: after
+// `apply` and `then` on the main thread, or when the flight is dropped with no
+// main-thread hop to deliver it. Not when `run` returns — an `apply` still
+// queued is still writing the job's fields.
+
+const JOB_SLOT_COUNT: usize = 64 as usize;
+
+// Addresses currently flying. Zero means free; an address can appear once.
+static JOB_ADDRS: [u64; 64] = [0 as u64; 64];
+
+// A spin lock over the table. The table is scanned and mutated in one step, and
+// a lock-free scan-then-claim would let two threads pass the scan for the same
+// address and both claim. Contention is a handful of jobs across a session, so
+// the simplest thing that is exactly right is the right one.
+static JOB_TABLE_LOCK: u64 = 0 as u64;
+
+fn job_table_lock() {
+    let p: *u64 = { #addr_of(JOB_TABLE_LOCK) };
+    while atomic::compare_exchange_u64(p, 0 as u64, 1 as u64, atomic::Ordering::AcqRel)
+          != (0 as u64) {
+        sched_yield_once();
+    }
     return;
+}
+
+fn job_table_unlock() {
+    let p: *u64 = { #addr_of(JOB_TABLE_LOCK) };
+    atomic::store_u64(p, 0 as u64, atomic::Ordering::Release);
+    return;
+}
+
+// Take a slot for `addr`, or answer false because it is already flying.
+//
+// A FULL TABLE FAILS OPEN. Refusing would mean a pane that never loads because
+// 64 other jobs happen to be in the air, which is a worse failure than the race
+// this guards — and the scan has just proved this address is NOT flying, so
+// running it is safe. Only a LATER duplicate of this one would go uncaught, and
+// the line on stderr says so.
+fn claim_job(addr: u64) -> bool {
+    if addr == (0 as u64) { return true; }
+    job_table_lock();
+    let base: *u64 = { #addr_of(JOB_ADDRS[0]) };
+    var free: i64 = -1 as i64;
+    var i: usize = 0 as usize;
+    while i < JOB_SLOT_COUNT {
+        let v: u64 = atomic::load_u64({ base + i }, atomic::Ordering::Acquire);
+        if v == addr {
+            job_table_unlock();
+            return false;
+        }
+        if v == (0 as u64) && free < (0 as i64) { free = i as i64; }
+        i = i +% (1 as usize);
+    }
+    if free >= (0 as i64) {
+        atomic::store_u64({ base + (free as usize) }, addr, atomic::Ordering::Release);
+    } else {
+        io::eprintln("facet: job table full; a second flight on this job cannot be refused");
+    }
+    job_table_unlock();
+    return true;
+}
+
+// Give the slot back. Called when the flight is completely finished.
+fn release_job(addr: u64) {
+    if addr == (0 as u64) { return; }
+    job_table_lock();
+    let base: *u64 = { #addr_of(JOB_ADDRS[0]) };
+    var i: usize = 0 as usize;
+    while i < JOB_SLOT_COUNT {
+        if atomic::load_u64({ base + i }, atomic::Ordering::Acquire) == addr {
+            atomic::store_u64({ base + i }, 0 as u64, atomic::Ordering::Release);
+            job_table_unlock();
+            return;
+        }
+        i = i +% (1 as usize);
+    }
+    job_table_unlock();
+    return;
+}
+
+// Is a worker or a queued apply still inside this job? The question a caller
+// asks before deciding whether to kick, and the one every service used to
+// answer with its own flag.
+fn job_in_flight(addr: usize) -> bool {
+    if addr == (0 as usize) { return false; }
+    job_table_lock();
+    let base: *u64 = { #addr_of(JOB_ADDRS[0]) };
+    var i: usize = 0 as usize;
+    while i < JOB_SLOT_COUNT {
+        if atomic::load_u64({ base + i }, atomic::Ordering::Acquire) == (addr as u64) {
+            job_table_unlock();
+            return true;
+        }
+        i = i +% (1 as usize);
+    }
+    job_table_unlock();
+    return false;
 }
 
 // ---- in-flight jobs ----------------------------------------------------------
@@ -457,6 +584,17 @@ fn run_job_flight(take job: JobFlight) -> i32 {
     // observe the gap between the two.
     let hop: fn(fn(*u8), *u8) = SCHEDULER.run_on_main;
     if hop == (0 as fn(fn(*u8), *u8)) {
+        // Headless: nothing will ever apply, so the flight ends HERE and the
+        // slot goes back here too.
+        //
+        // ORDER MATTERS, the same way it does for the apply count below: the
+        // slot is released BEFORE the worker count drops, so a caller that
+        // returns from `wait_for_jobs` can never see a job still holding a slot
+        // it will never give back. Written the other way round, this suite went
+        // flaky under load within an hour — `wait_for_jobs` returned in the gap
+        // between the two lines, and the next `run_job` was refused for a
+        // flight that had already finished.
+        release_job(job.job_addr as u64);
         jobs_inflight_sub(1 as u64);
         return 0;
     }
@@ -467,6 +605,7 @@ fn run_job_flight(take job: JobFlight) -> i32 {
             run_on_main(finish_job_flight, b.into_raw());
         }
         option::Option[box::Box[JobFlight]]::None => {
+            release_job(job.job_addr as u64);
             jobs_inflight_sub(1 as u64);
         }
     }
@@ -479,6 +618,11 @@ fn finish_job_flight(raw: *u8) {
     apply(job.job_addr as *u8);     // install ON the main thread
     let cb: fn(*u8) = job.then;
     cb(job.ctx_addr as *u8);
+    // The flight is over HERE, not when `run` returned: an apply still queued
+    // is still writing the job's fields, so releasing earlier would let a
+    // second flight in beside it. And released BEFORE the count drops, so
+    // `jobs_settled()` never reports settled while a slot is still held.
+    release_job(job.job_addr as u64);
     applies_pending_sub(1 as u64);
     return;
 }
@@ -527,6 +671,85 @@ fn arm_and_wait() {
     assert jobs_in_flight() >= (1 as u64) || j.done > (0 as i32);
     wait_for_jobs();
     return;   // safe: no worker is touching `j` any more
+}
+
+// ---- one flight per job -----------------------------------------------------
+
+// A job that stays in `run` until it is told to stop, so a second flight can be
+// attempted while the first is genuinely still inside it. Spinning on a flag is
+// what makes the race REPRODUCIBLE rather than timing-dependent — the whole
+// difficulty of the crash this guards was that it needed two workers to overlap.
+struct HeldJob {
+    hold: u64,
+    runs: i32,
+}
+
+impl HeldJob: Job {
+    fn run(ref this) {
+        let p: *u64 = { #addr_of(this.hold) };
+        while atomic::load_u64(p, atomic::Ordering::Acquire) != (0 as u64) {
+            sched_yield_once();
+        }
+        this.runs = this.runs + 1;
+        return;
+    }
+    fn apply(ref this) { return; }
+}
+
+#[test]
+fn a_second_flight_on_a_live_job_is_refused() {
+    var j: HeldJob = HeldJob { hold: 1 as u64, runs: 0 };
+    let addr: usize = { #addr_of(j) as *u8 } as usize;
+
+    // The first flight starts.
+    assert run_job::[HeldJob](j);
+    assert job_in_flight(addr);
+    // The one that used to crash iris: two workers inside one `run`, assigning
+    // the same fields, while the main thread paints from them.
+    // Refused, not queued.
+    assert run_job::[HeldJob](j) == false;
+    assert run_job::[HeldJob](j) == false;
+
+    // Let the first finish, then the job is free again — refusing is about
+    // OVERLAP, not a one-shot latch, which is the difference between this and
+    // the `kicked` flags it replaces.
+    atomic::store_u64({ #addr_of(j.hold) }, 0 as u64, atomic::Ordering::Release);
+    wait_for_jobs();
+    // The slot went back.
+    assert job_in_flight(addr) == false;
+    // Exactly one worker ran it.
+    assert j.runs == 1;
+
+    // A later flight is allowed.
+    assert run_job::[HeldJob](j);
+    wait_for_jobs();
+    assert j.runs == 2;
+    return;
+}
+
+#[test]
+fn two_different_jobs_do_not_block_each_other() {
+    // The guard is per JOB, not a global one-at-a-time — a screen with three
+    // services must be able to load all three at once.
+    var a: HeldJob = HeldJob { hold: 1 as u64, runs: 0 };
+    var b: HeldJob = HeldJob { hold: 1 as u64, runs: 0 };
+    assert run_job::[HeldJob](a);
+    // A different job is not the same job.
+    assert run_job::[HeldJob](b);
+    atomic::store_u64({ #addr_of(a.hold) }, 0 as u64, atomic::Ordering::Release);
+    atomic::store_u64({ #addr_of(b.hold) }, 0 as u64, atomic::Ordering::Release);
+    wait_for_jobs();
+    assert a.runs == 1;
+    assert b.runs == 1;
+    return;
+}
+
+#[test]
+fn a_job_that_never_flew_is_not_in_flight() {
+    var j: HeldJob = HeldJob { hold: 0 as u64, runs: 0 };
+    assert job_in_flight({ #addr_of(j) as *u8 } as usize) == false;
+    assert job_in_flight(0 as usize) == false;
+    return;
 }
 
 #[test]
