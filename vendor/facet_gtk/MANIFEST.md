@@ -245,11 +245,6 @@ Everything not listed as live above. The large ones, in the order they matter:
   node at fire time, so a detached set makes every one of them `no_gesture` and
   the controller fires nothing — dead weight, not wrong behaviour.
 
-- **A gradient BORDER.** `bordered.stroke` is a Brush and a CSS border takes a
-  solid; a gradient is `border-image`, which is a different mechanism with a
-  different box model. Today a gradient stroke writes no border colour at all
-  rather than flattening it to its first stop, which would put a flat colour
-  where the application asked for a blend and say nothing.
 - **A splice is fine-grained only where a SLOT IS A ROW.** A grouped list has
   headers between its rows and a grid has `columns` rows per slot, so a data
   range is not a slot range in either — and computing one from the other is the
@@ -363,6 +358,27 @@ Everything not listed as live above. The large ones, in the order they matter:
   Graphics and was read as the shape, not ported: cairo keeps its path IN the
   context where CG builds one separately, and cairo is already top-left so
   there is no flip arithmetic anywhere.
+- **THE THREE BACKGROUND VERBS ARE ALL ANSWERED NOW, and two of them were
+  not.** `background_color` is a Color and was applied; `background` is a
+  BRUSH — a solid or a linear gradient — and `background_image` is a source
+  string, and neither appeared anywhere in this backend (`core::background(`
+  had zero hits, the same hole `facet_appkit/paint.cplus` records finding on
+  its own side). In CSS each is one declaration, so what AppKit needs a
+  CAGradientLayer and a sublayer-ordering rule for, this needs a string.
+  Precedence runs most-specific-last: colour, then brush, then an explicit
+  image. A gradient BORDER goes the same way, through `border-image-source`
+  with `border-image-slice: 1` — with one CSS rule to know about, which is that
+  a border image is not clipped by `border-radius`, so a gradient border on a
+  rounded `stroke_shape` draws square.
+- **A GRADIENT ANGLE IS A QUARTER TURN OFF CSS's, and the three facet
+  implementations do not all agree.** facet's is the CANVAS convention — zero
+  runs LEFT TO RIGHT — which `drawing::gradient_for` here and
+  `facet_appkit/drawing.cplus`'s `gradient_axis` both implement. CSS's zero
+  points TO THE TOP and increases clockwise, so `to right` is 90deg and the two
+  differ by +90. Worth naming: `facet_appkit/paint.cplus`'s `apply_brush` — the
+  VIEW background rather than the canvas — uses zero as top-to-bottom, which is
+  neither. Two of the three agree and the canvas is the one facet's own
+  `DrawCommand` documents, so this package follows the canvas.
 - **RTL is TWO HALVES, and facet already does the harder one.**
   `core::set_flow_direction` hands flex its own direction, and flex mirrors
   row layout, justification and edge resolution from there. What this package

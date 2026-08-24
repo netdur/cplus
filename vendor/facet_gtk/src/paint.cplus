@@ -48,9 +48,11 @@ fn restyle_bits() -> u64 { return props::C_RESTYLE; }
 fn css_band_bits() -> u64 {
     // C_FLOW_DIRECTION is here because a corner radius is LOGICAL and CSS's is
     // PHYSICAL: changing the flow swaps leading for trailing, so the document
-    // has to be recomposed even though no radius moved.
+    // has to be recomposed even though no radius moved. C_BACKGROUND carries
+    // both the brush and the background image — `props.cplus` says the image
+    // deliberately takes no bit of its own.
     return props::C_BACKGROUND_COLOR | props::C_CORNER_RADIUS
-         | props::C_FLOW_DIRECTION;
+         | props::C_FLOW_DIRECTION | props::C_BACKGROUND;
 }
 
 // The band's own bits, so a caller can ask "is any of this dirty?" without
@@ -58,7 +60,8 @@ fn css_band_bits() -> u64 {
 fn band_bits() -> u64 {
     return props::C_OPACITY | props::C_BACKGROUND_COLOR | props::C_CORNER_RADIUS
          | props::C_IS_ENABLED | props::C_IS_VISIBLE | props::C_TOOLTIP
-         | props::C_SHADOW | props::C_CLIP | props::C_FLOW_DIRECTION;
+         | props::C_SHADOW | props::C_CLIP | props::C_FLOW_DIRECTION
+         | props::C_BACKGROUND;
 }
 
 // Which side of an adaptive pair is live. Set by the window tier at install
@@ -244,10 +247,25 @@ fn css_rgba(c: vocab::Color) -> text::Text {
     let ri: i32 = (r * (255.0 as f64) + (0.5 as f64)) as i32;
     let gi: i32 = (gg * (255.0 as f64) + (0.5 as f64)) as i32;
     let bi: i32 = (b * (255.0 as f64) + (0.5 as f64)) as i32;
-    // GTK's CSS parser takes a decimal alpha; three digits is past what an
-    // 8-bit channel can show.
+    // GTK's CSS parser takes a DECIMAL alpha, and the decimal has to be
+    // written as one.
+    //
+    // This emitted `0.${thousandths}` — so an alpha of 1.0 came out as
+    // `0.1000`, which GTK parses as ONE TENTH. Measured with `gdk_rgba_parse`:
+    // `rgba(255,0,0,0.1000)` is alpha 0.100. Every opaque colour this package
+    // wrote was being drawn at a tenth of its opacity, and three tests in this
+    // suite pinned the broken string as the expected one.
+    //
+    // Three fraction digits is past what an 8-bit channel can show, which is
+    // why thousandths; what was missing is the WHOLE part.
     let ai: i32 = (a * (1000.0 as f64) + (0.5 as f64)) as i32;
-    return "rgba(${ri},${gi},${bi},0.${ai})";
+    let whole: i32 = ai / (1000 as i32);
+    var frac: i32 = ai -% (whole *% (1000 as i32));
+    if frac < (0 as i32) { frac = 0 as i32; }
+    var digits: text::Text = text::from_str("${frac}");
+    if frac < (100 as i32) { digits = text::from_str("0${frac}"); }
+    if frac < (10 as i32) { digits = text::from_str("00${frac}"); }
+    return "rgba(${ri},${gi},${bi},${whole}.${digits})";
 }
 
 // ---- Pango markup ------------------------------------------------------------
@@ -440,6 +458,7 @@ fn band_css(n: *core::Node) -> text::Text {
         let rgba: text::Text = css_rgba(bg);
         body = body.appending("background-color: ${rgba};");
     }
+    body = body.appending(background_decls(n).view());
     let cr: vocab::Corners = core::corner_radius(n);
     if cr.top_leading > (0.0 as f64) || cr.top_trailing > (0.0 as f64)
         || cr.bottom_leading > (0.0 as f64) || cr.bottom_trailing > (0.0 as f64) {
@@ -593,3 +612,92 @@ fn locale_is_rtl() -> bool { return { gtk_get_locale_direction() } == (2 as i32)
 
 #[link_name = "gtk_widget_get_default_direction"]
 extern fn gtk_get_locale_direction() -> i32;
+
+// ---- the background brush, and the background image ----------------------------
+//
+// THREE BACKGROUND VERBS, and this package answered one. `background_color` is
+// a Color and was applied; `background` is a Brush — a solid or a linear
+// gradient — and `background_image` is a source string, and neither appeared
+// anywhere in this backend. `core::background(` had zero hits, which is the
+// same hole `facet_appkit/paint.cplus` records finding on its own side.
+//
+// In CSS all three are one declaration each, so what AppKit needs a
+// CAGradientLayer and a sublayer-ordering rule for, this needs a string.
+//
+// PRECEDENCE, most specific last: `background_color` is the oldest and
+// narrowest verb and is written first; a brush overrides it (a solid brush
+// re-states `background-color`, a gradient becomes `background-image`); an
+// explicit image overrides that, because naming a file is the most specific
+// thing an application can do.
+
+fn background_decls(n: *core::Node) -> text::Text {
+    var body: text::Text = text::from_str("");
+    let b: vocab::Brush = core::background(n);
+    if b.is_gradient {
+        let g: text::Text = css_gradient(b);
+        body = body.appending("background-image: ${g};");
+    } else {
+        if b.start.is_set() {
+            let rgba: text::Text = css_rgba(b.start);
+            body = body.appending("background-color: ${rgba};");
+        }
+    }
+    let src: str = core::background_image(n);
+    if src != "" {
+        let url: text::Text = css_url(src);
+        body = body.appending("background-image: ${url};");
+        // A background IMAGE that is not sized is tiled at its natural size,
+        // which is almost never what a background means. `cover` is the
+        // ledger's own default for one and is what every other toolkit does.
+        body = body.appending("background-size: cover;");
+        body = body.appending("background-repeat: no-repeat;");
+        body = body.appending("background-position: center;");
+    }
+    return body;
+}
+
+// facet's angle and CSS's differ by a QUARTER TURN, and getting it wrong is a
+// gradient that runs the wrong way rather than one that fails to render — so
+// it is written out.
+//
+// facet's is the canvas convention: zero degrees runs LEFT TO RIGHT, which is
+// what `drawing::gradient_for` here and `facet_appkit/drawing.cplus`'s
+// `gradient_axis` both implement (`cos`/`sin` of the angle as the axis, from
+// the x axis). CSS's zero points TO THE TOP and increases clockwise, so `to
+// right` is 90deg. The two therefore differ by +90.
+//
+// A DISAGREEMENT WORTH NAMING: `facet_appkit/paint.cplus`'s `apply_brush` — the
+// VIEW background rather than the canvas — uses zero as top-to-bottom, which is
+// neither of the canvas implementations. Two of the three agree and the canvas
+// is the one facet's own `DrawCommand` documents, so this follows the canvas.
+// MANIFEST.md §3 records the discrepancy so it is not rediscovered as a bug.
+fn css_gradient(b: vocab::Brush) -> text::Text {
+    // NORMALISED BEFORE ROUNDING, not after: a float-to-int cast truncates
+    // toward zero, so -89.5 becomes -89 and a -180 degree brush came out one
+    // degree off. Bringing the angle positive first makes the rounding a plain
+    // floor, which is what `+ 0.5` means.
+    var turn: f64 = b.angle + (90.0 as f64);
+    while turn < (0.0 as f64) { turn = turn + (360.0 as f64); }
+    var deg: i64 = (turn + (0.5 as f64)) as i64;
+    // CSS accepts any angle, but a normalised one reads better in a dump and
+    // makes the suite's expectations exact.
+    deg = deg % (360 as i64);
+    let a: text::Text = css_rgba(b.start);
+    let z: text::Text = css_rgba(b.end);
+    return text::from_str("linear-gradient(${deg}deg, ${a}, ${z})");
+}
+
+// A source is a PATH here, not a theme icon: CSS `url()` takes a file and the
+// icon-name half of `looks_like_path` has no spelling in a stylesheet. A name
+// that is not a path is skipped rather than emitted as a broken url.
+//
+// QUOTED, and the quote is why this is a function: a path with a space or a
+// bracket in it would otherwise end the declaration early and take the rest of
+// the document with it.
+fn css_url(source: str) -> text::Text {
+    if !looks_like_path(source) { return text::from_str("none"); }
+    var t: text::Text = text::from_str(source);
+    if t.contains("\"") { return text::from_str("none"); }
+    if t.contains(")") { return text::from_str("none"); }
+    return text::from_str("url(\"${source}\")");
+}

@@ -2184,12 +2184,22 @@ fn bordered_decls(p: *props::BorderedProps) -> text::Text {
     } else {
         body = body.appending("border-width: 0;");
     }
-    // A Brush is a gradient or a solid; a CSS border takes the solid. A
-    // gradient border is `border-image`, which is a different mechanism with a
-    // different box model — recorded in §2 rather than approximated with the
-    // gradient's first stop pretending to be the whole thing.
+    // A Brush is a gradient or a solid. A CSS border takes the solid; a
+    // GRADIENT border is `border-image`, which is a different mechanism —
+    // the gradient is painted into the border box and `border-image-slice: 1`
+    // is what makes the whole of it the border rather than a nine-patch.
+    //
+    // THE BOX MODEL IS THE CATCH, and it is recorded in MANIFEST.md §3: a
+    // border image is not clipped by `border-radius`, so a gradient border on
+    // a rounded or elliptical `stroke_shape` draws square. That is CSS's rule
+    // and not a choice here — and it is still a great deal closer to what was
+    // asked for than the nothing this used to write.
     let brush: vocab::Brush = { (*p).stroke };
-    if !brush.is_gradient {
+    if brush.is_gradient {
+        let g: text::Text = paint::css_gradient(brush);
+        body = body.appending("border-image-source: ${g};");
+        body = body.appending("border-image-slice: 1;");
+    } else {
         body = body.appending(color_decl("border-color", brush.start).view());
     }
     body = body.appending(shape_decl({ (*p).stroke_shape }).view());
@@ -2821,14 +2831,21 @@ fn style_tabs(v: *u8, p: *props::TabsProps, at: i64) {
     let strip: *u8 = tab_strip_of(v);
     if strip == (0 as *u8) { return; }
     var back: vocab::Color = { (*p).bar_background_color };
-    // A Brush is a gradient or a solid; CSS borders and backgrounds here take
-    // the solid, and `bar_background_color` wins when both are set because it
-    // is the more specific verb.
+    var body: text::Text = text::from_str("");
+    // `bar_background_color` wins when both are set, because it is the more
+    // specific verb. A gradient bar is a `background-image`, the same as the
+    // band's own brush — see `paint::css_gradient` for why the angle differs
+    // from CSS's by a quarter turn.
     if !back.is_set() {
         let brush: vocab::Brush = { (*p).bar_background };
-        if brush.is_gradient == false { back = brush.start; }
+        if brush.is_gradient {
+            let g: text::Text = paint::css_gradient(brush);
+            body = body.appending("background-image: ${g};");
+        } else {
+            back = brush.start;
+        }
     }
-    var body: text::Text = color_decl("background-color", back);
+    body = body.appending(color_decl("background-color", back).view());
     strip_provider(strip).load_from_string("* { ${body} }");
 
     var i: i64 = 0 as i64;

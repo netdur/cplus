@@ -89,7 +89,20 @@ fn css_rgba_writes_an_eight_bit_channel_and_a_decimal_alpha() {
     let c: vocab::Color = vocab::Color::rgba(1.0f64, 0.0f64, 0.5f64, 1.0f64);
     // 0.5 * 255 rounds to 128, and the alpha is thousandths — GTK's parser
     // takes a decimal there and an 8-bit channel cannot express it.
-    assert paint::css_rgba(c).view() == "rgba(255,0,128,0.1000)";
+    //
+    // THE WHOLE PART IS THE POINT. This expected `0.1000` for an OPAQUE
+    // colour, which `gdk_rgba_parse` reads as alpha 0.1 — so every opaque
+    // colour this package wrote was drawn at a tenth of its opacity, and this
+    // assertion was what kept saying that was fine.
+    assert paint::css_rgba(c).view() == "rgba(255,0,128,1.000)";
+    let half: vocab::Color = vocab::Color::rgba(1.0f64, 0.0f64, 0.5f64, 0.5f64);
+    assert paint::css_rgba(half).view() == "rgba(255,0,128,0.500)";
+    let tenth: vocab::Color = vocab::Color::rgba(1.0f64, 0.0f64, 0.5f64, 0.1f64);
+    assert paint::css_rgba(tenth).view() == "rgba(255,0,128,0.100)";
+    let sliver: vocab::Color = vocab::Color::rgba(1.0f64, 0.0f64, 0.5f64, 0.004f64);
+    assert paint::css_rgba(sliver).view() == "rgba(255,0,128,0.004)";
+    let clear: vocab::Color = vocab::Color::rgba(1.0f64, 0.0f64, 0.5f64, 0.0f64);
+    assert paint::css_rgba(clear).view() == "rgba(255,0,128,0.000)";
     return;
 }
 
@@ -99,11 +112,11 @@ fn css_rgba_picks_the_dark_side_of_an_adaptive_pair_only_when_dark() {
         light: vocab::Color::rgba(1.0f64, 1.0f64, 1.0f64, 1.0f64),
         dark: vocab::Color::rgba(0.0f64, 0.0f64, 0.0f64, 1.0f64));
     paint::set_dark(false);
-    assert paint::css_rgba(pair).view() == "rgba(255,255,255,0.1000)";
+    assert paint::css_rgba(pair).view() == "rgba(255,255,255,1.000)";
     paint::set_dark(true);
     // The SAME colour value answers differently: this is the whole reason an
     // appearance flip is a re-apply rather than a repaint of a registry.
-    assert paint::css_rgba(pair).view() == "rgba(0,0,0,0.1000)";
+    assert paint::css_rgba(pair).view() == "rgba(0,0,0,1.000)";
     paint::set_dark(false);
     return;
 }
@@ -123,12 +136,14 @@ fn the_css_band_bits_are_only_the_ones_that_feed_the_document() {
     // The band's OTHER verbs are widget properties, and listing them here
     // would rebuild the document on a tooltip change.
     //
-    // THREE, not two: the flow direction joined them because a corner radius
-    // is logical and CSS's is physical, so flipping the flow changes the
-    // document with no radius having moved.
+    // FOUR, not two. The flow direction joined them because a corner radius is
+    // logical and CSS's is physical, so flipping the flow changes the document
+    // with no radius having moved; C_BACKGROUND joined them because the brush
+    // and the background image are both declarations now, and `props.cplus`
+    // says the image deliberately takes no bit of its own.
     assert paint::css_band_bits()
         == (props::C_BACKGROUND_COLOR | props::C_CORNER_RADIUS
-            | props::C_FLOW_DIRECTION);
+            | props::C_FLOW_DIRECTION | props::C_BACKGROUND);
     assert (paint::css_band_bits() & props::C_TOOLTIP) == (0 as u64);
     return;
 }
@@ -1253,6 +1268,122 @@ fn a_null_c_string_reads_as_empty_rather_than_dereferencing() {
 // because those are what is wrong silently, and a mirrored arc or a
 // transposed line cap looks like a drawing bug in the application.
 
+// ---- the background brush, the background image, and gradients -----------------
+//
+// THREE BACKGROUND VERBS and this package answered one. `core::background(` —
+// the Brush — had zero hits in the whole backend, and so did
+// `background_image`. In CSS each is one declaration, so what was missing was
+// the declaration and not a mechanism.
+
+// facet's angle is the CANVAS convention: zero runs LEFT TO RIGHT, which is
+// what `drawing::gradient_for` implements. CSS's zero points TO THE TOP. The
+// quarter turn between them is the thing that would go unnoticed — a gradient
+// running the wrong way still renders.
+#[test]
+fn a_gradient_angle_is_turned_a_quarter_into_css() {
+    paint::set_dark(false);
+    let a: vocab::Color = vocab::Color::rgba(1.0f64, 0.0f64, 0.0f64, 1.0f64);
+    let b: vocab::Color = vocab::Color::rgba(0.0f64, 0.0f64, 1.0f64, 1.0f64);
+    // facet 0 = left to right = CSS "to right" = 90deg.
+    assert paint::css_gradient(vocab::Brush { start: a, end: b, angle: 0.0f64,
+                                              is_gradient: true })
+        .view() == "linear-gradient(90deg, rgba(255,0,0,1.000), rgba(0,0,255,1.000))";
+    // facet 90 = top to bottom = CSS "to bottom" = 180deg.
+    assert paint::css_gradient(vocab::Brush { start: a, end: b, angle: 90.0f64,
+                                              is_gradient: true })
+        .view().contains("linear-gradient(180deg,");
+    // facet 270 = bottom to top = CSS "to top" = 0deg, NOT 360.
+    assert paint::css_gradient(vocab::Brush { start: a, end: b, angle: 270.0f64,
+                                              is_gradient: true })
+        .view().contains("linear-gradient(0deg,");
+    // ...and a negative angle normalises rather than emitting "-90deg".
+    assert paint::css_gradient(vocab::Brush { start: a, end: b, angle: 0.0f64 - 180.0f64,
+                                              is_gradient: true })
+        .view().contains("linear-gradient(270deg,");
+}
+
+#[test]
+fn a_background_brush_is_a_colour_or_a_gradient() {
+    paint::set_dark(false);
+    let a: vocab::Color = vocab::Color::rgba(1.0f64, 0.0f64, 0.0f64, 1.0f64);
+    let b: vocab::Color = vocab::Color::rgba(0.0f64, 0.0f64, 1.0f64, 1.0f64);
+
+    var solid: core::Node = core::column(core::Builder::new());
+    solid.set_background(vocab::Brush::solid(a));
+    // A SOLID brush is `background-color`, the same declaration the older
+    // `background_color` verb writes — not a one-stop gradient.
+    assert paint::band_css(#addr_of(solid)).contains("background-color: rgba(255,0,0,1.000);");
+    assert !paint::band_css(#addr_of(solid)).contains("linear-gradient");
+
+    var grad: core::Node = core::column(core::Builder::new());
+    grad.set_background(vocab::Brush { start: a, end: b, angle: 0.0f64, is_gradient: true });
+    assert paint::band_css(#addr_of(grad)).contains("background-image: linear-gradient(90deg,");
+}
+
+// NEGATIVE: an UNSET brush says nothing. `Brush::none()` is a solid clear, and
+// writing `background-color: rgba(0,0,0,0)` for it would override whatever the
+// theme or the older `background_color` verb had put there.
+#[test]
+fn an_unset_background_brush_writes_nothing() {
+    var n: core::Node = core::column(core::Builder::new());
+    n.set_background(vocab::Brush::none());
+    assert !paint::band_css(#addr_of(n)).contains("background-color");
+    assert !paint::band_css(#addr_of(n)).contains("background-image");
+}
+
+#[test]
+fn a_background_image_is_a_covering_url() {
+    var n: core::Node = core::column(core::Builder::new());
+    n.set_background_image("/tmp/facet-suite.png");
+    let css: text::Text = paint::band_css(#addr_of(n));
+    assert css.contains("background-image: url(\"/tmp/facet-suite.png\");");
+    // A background that TILED at its natural size is almost never what one
+    // means, and it is CSS's default.
+    assert css.contains("background-size: cover;");
+    assert css.contains("background-repeat: no-repeat;");
+}
+
+// NEGATIVE: a source that is not a path has no spelling in a stylesheet — an
+// icon NAME is a theme lookup, not a file — and a path carrying a quote or a
+// bracket would end the declaration early and take the rest of the document
+// with it. Both answer `none`.
+#[test]
+fn a_background_image_that_cannot_be_a_url_is_none() {
+    assert paint::css_url("folder-symbolic").view() == "none";
+    assert paint::css_url("/tmp/a\"b.png").view() == "none";
+    assert paint::css_url("/tmp/a)b.png").view() == "none";
+    assert paint::css_url("/tmp/ok.png").view() == "url(\"/tmp/ok.png\")";
+}
+
+// A GRADIENT BORDER used to write no border colour at all — the stroke was
+// simply dropped. `border-image` is the CSS mechanism, and `slice: 1` is what
+// makes the whole gradient the border rather than a nine-patch.
+#[test]
+fn a_gradient_border_becomes_a_border_image() {
+    paint::set_dark(false);
+    var p: props::BorderedProps = #zero::[props::BorderedProps]();
+    p.stroke_width = 2.0f64;
+    p.stroke = vocab::Brush {
+        start: vocab::Color::rgba(1.0f64, 0.0f64, 0.0f64, 1.0f64),
+        end: vocab::Color::rgba(0.0f64, 0.0f64, 1.0f64, 1.0f64),
+        angle: 0.0f64, is_gradient: true,
+    };
+    let css: text::Text = controls::bordered_decls(#addr_of(p));
+    assert css.contains("border-image-source: linear-gradient(90deg,");
+    assert css.contains("border-image-slice: 1;");
+    // And NOT a border-color: a border image and a border colour together is
+    // the colour showing through wherever the image does not cover.
+    assert !css.contains("border-color");
+
+    // A SOLID stroke is still a plain border colour.
+    var q: props::BorderedProps = #zero::[props::BorderedProps]();
+    q.stroke_width = 2.0f64;
+    q.stroke = vocab::Brush::solid(vocab::Color::rgba(0.0f64, 1.0f64, 0.0f64, 1.0f64));
+    let solid: text::Text = controls::bordered_decls(#addr_of(q));
+    assert solid.contains("border-color: rgba(0,255,0,1.000);");
+    assert !solid.contains("border-image");
+}
+
 // ---- the flow direction --------------------------------------------------------
 //
 // `C_FLOW_DIRECTION` was unanswered, and the corner radius said so in a
@@ -1926,15 +2057,19 @@ fn an_ellipse_is_a_border_radius_of_half_the_box() {
 }
 
 #[test]
-fn a_gradient_stroke_writes_no_border_colour_at_all() {
-    // NEGATIVE: a CSS border takes a solid, and a gradient's first stop is not
-    // the gradient. Writing it would put a flat colour where the application
-    // asked for a blend and nothing would say otherwise.
+fn a_gradient_stroke_is_a_border_image_and_never_a_flat_first_stop() {
+    // A CSS border takes a solid, and a gradient's first stop is not the
+    // gradient — writing it would put a flat colour where the application
+    // asked for a blend and nothing would say otherwise. So the gradient goes
+    // through `border-image` instead, and the border COLOUR stays unwritten:
+    // a border image and a border colour together is the colour showing
+    // through wherever the image does not cover.
     var g: core::Node = ui::bordered(key: "b4", stroke_width: 2.0f64,
         stroke: vocab::Brush { start: vocab::Color::rgba(1.0f64, 0.0f64, 0.0f64, 1.0f64),
                                end: vocab::Color::rgba(0.0f64, 0.0f64, 1.0f64, 1.0f64),
                                angle: 0.0f64, is_gradient: true });
     assert !bordered_css(#addr_of(g)).contains("border-color");
+    assert bordered_css(#addr_of(g)).contains("border-image-source: linear-gradient(90deg,");
     var flat: core::Node = ui::bordered(key: "b5", stroke_width: 2.0f64,
         stroke: vocab::Brush::solid(vocab::Color::rgba(1.0f64, 0.0f64, 0.0f64, 1.0f64)));
     assert bordered_css(#addr_of(flat)).contains("border-color: rgba(255,0,0,");
