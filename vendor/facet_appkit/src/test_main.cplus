@@ -5464,6 +5464,153 @@ fn a_sheet_answers_return_and_escape() {
     return;
 }
 
+// `+[NSEvent keyEventWithType:...]` — a real key-down, so the routing below is
+// AppKit's own rather than a stand-in for it.
+#[link_name = "objc_msgSend"]
+extern fn msg_key_event(recv: *u8, sel: *u8, ty: u64, loc: rt::Point, flags: u64,
+                        ts: f64, wnum: i64, ctx: *u8, chars: *u8, unmod: *u8,
+                        repeat: i8, code: u16) -> *u8;
+
+fn return_key_event(window: *u8) -> *u8 {
+    let wnum: i64 = { rt::msg_i64(window, rt::sel(#str_ptr("windowNumber\0"))) };
+    return { msg_key_event(rt::get_class(#str_ptr("NSEvent\0")),
+        rt::sel(#str_ptr("keyEventWithType:location:modifierFlags:timestamp:windowNumber:context:characters:charactersIgnoringModifiers:isARepeat:keyCode:\0")),
+        10 as u64,                                  // NSEventTypeKeyDown
+        rt::Point { x: 0.0f64, y: 0.0f64 },
+        0 as u64, 0.0f64, wnum, 0 as *u8,
+        bridge::nsstring("\r"), bridge::nsstring("\r"),
+        0 as i8, 36 as u16) };                      // kVK_Return
+}
+
+fn window_of_key(key: str) -> *u8 {
+    match button::find(key) {
+        option::Option[button::Button]::Some(b) => {
+            let v: *u8 = core::view_of(b.node());
+            if v == (0 as *u8) { return 0 as *u8; }
+            return { rt::msg_id(v, rt::sel(#str_ptr("window\0"))) };
+        }
+        option::Option[button::Button]::None => { return 0 as *u8; }
+    }
+}
+
+#[test]
+fn return_actually_reaches_the_default_button() {
+    backend::install();
+    // THE HALF THE LAST FIX DID NOT CHECK. `keyEquivalent` was set and asserted
+    // — and asserting a property is not asserting that AppKit routes the key to
+    // it. A person pressed Return and nothing happened.
+    //
+    // `performKeyEquivalent:` is what a window does with a key-down BEFORE the
+    // responder chain sees it, so driving it with a real NSEvent is the routing
+    // itself rather than a stand-in for it.
+    AL_ANSWER = -1;
+    dialogs::prompt_sheet("Rename", "", "name", "Rename", "Cancel",
+                          on_answer: al_answered, on_answer_ctx: 0 as *u8,
+                          initial: "old.cplus");
+    let w: *u8 = window_of_key("prompt:ok");
+    assert w != (0 as *u8);
+    let ev: *u8 = return_key_event(w);
+    assert ev != (0 as *u8);
+    let handled: i8 = { rt::msg_i8_id(w, rt::sel(#str_ptr("performKeyEquivalent:\0")), ev) };
+    assert handled != (0 as i8);
+    // 0 is the primary — the sheet is gone and the answer arrived.
+    assert AL_ANSWER == 0;
+    return;
+}
+
+#[test]
+fn the_prompt_field_has_the_caret_when_the_sheet_opens() {
+    backend::install();
+    // A naming sheet must open with the caret IN the field and the old name
+    // SELECTED — otherwise you click before you can type, and a rename means
+    // retyping. Both hold, and neither is this file's doing: AppKit makes the
+    // first valid key view the initial first responder when a window becomes
+    // key, and selects a text field's contents when it does.
+    AL_ANSWER = -1;
+    dialogs::prompt_sheet("Rename", "", "name", "Rename", "Cancel",
+                          on_answer: al_answered, on_answer_ctx: 0 as *u8,
+                          initial: "old.cplus");
+    let w: *u8 = window_of_key("prompt:ok");
+    assert w != (0 as *u8);
+    let fr: *u8 = { rt::msg_id(w, rt::sel(#str_ptr("firstResponder\0"))) };
+    assert fr != (0 as *u8);
+    match text_field::find("prompt:value") {
+        option::Option[text_field::TextField]::Some(f) => {
+            let fv: *u8 = core::view_of(f.node());
+            assert fv != (0 as *u8);
+            // An NSTextField hands editing to the window's shared FIELD EDITOR,
+            // so the first responder after `selectText:` is that editor and the
+            // field is its delegate. Asking "is this field being edited" is the
+            // honest question; comparing against the field itself would fail on
+            // a focused field, which is the wrong way round.
+            var focused: bool = fr == fv;
+            if !focused {
+                if synth::class_responds(synth::object_class(fr),
+                                         rt::sel(#str_ptr("delegate\0"))) != (0 as i8) {
+                    focused = { rt::msg_id(fr, rt::sel(#str_ptr("delegate\0"))) } == fv;
+                }
+            }
+            assert focused;
+            // ...and its contents are SELECTED, so the first keystroke
+            // replaces the old name instead of appending to it. Both come from
+            // AppKit's own initial-key-view behaviour, not from anything this
+            // file does — measured, after a `selectText:` call was added here
+            // on the assumption that they did not and removed again when it
+            // changed nothing. Pinned because a future change to the tree could
+            // take it away silently, and a naming sheet without it is one you
+            // must click before you can type.
+            let ed: *u8 = { rt::msg_id(fv, rt::sel(#str_ptr("currentEditor\0"))) };
+            assert ed != (0 as *u8);
+            let r: rt::Range = { rt::msg_range(ed, rt::sel(#str_ptr("selectedRange\0"))) };
+            assert r.length == (9 as u64);   // "old.cplus"
+        }
+        option::Option[text_field::TextField]::None => { assert false; }
+    }
+    click_key("prompt:cancel");
+    return;
+}
+
+static AL_TYPED: text::Text = #zero::[text::Text]();
+fn al_typed(v: str, ctx: *u8) { AL_TYPED = text::from_str(v); return; }
+
+#[test]
+fn return_commits_what_was_typed_not_what_was_there_before() {
+    backend::install();
+    // THE TRAP UNDER THE TRAP. `prompt_ok` reads `[field stringValue]`, and
+    // AppKit does NOT update that from the FIELD EDITOR while editing is in
+    // progress — the editor holds the text and the field is only refreshed when
+    // editing ends. Return arrives through `performKeyEquivalent:`, which fires
+    // the button BEFORE anything ends editing, so the handler read the value
+    // the sheet OPENED with and the typing was thrown away.
+    //
+    // That is "Enter does not work" from a person's side: the sheet closes and
+    // the file is named whatever it was already called.
+    AL_ANSWER = -1;
+    AL_TYPED = text::from_str("");
+    dialogs::prompt_sheet("Rename", "", "name", "Rename", "Cancel",
+                          on_typed: al_typed, on_typed_ctx: 0 as *u8,
+                          on_answer: al_answered, on_answer_ctx: 0 as *u8,
+                          initial: "old.cplus");
+    // Type, the way a person does: into the field EDITOR, which is what has
+    // focus after `selectText:`.
+    match text_field::find("prompt:value") {
+        option::Option[text_field::TextField]::Some(f) => {
+            let fv: *u8 = core::view_of(f.node());
+            let ed: *u8 = { rt::msg_id(fv, rt::sel(#str_ptr("currentEditor\0"))) };
+            assert ed != (0 as *u8);
+            { rt::msg_void_id(ed, rt::sel(#str_ptr("setString:\0")),
+                              bridge::nsstring("new.cplus")) };
+        }
+        option::Option[text_field::TextField]::None => { assert false; }
+    }
+    let w: *u8 = window_of_key("prompt:ok");
+    let ev: *u8 = return_key_event(w);
+    let _h: i8 = { rt::msg_i8_id(w, rt::sel(#str_ptr("performKeyEquivalent:\0")), ev) };
+    assert AL_ANSWER == 0;
+    assert AL_TYPED.view() == "new.cplus";
+    return;
+}
+
 #[test]
 fn a_choose_sheet_binds_neither_key() {
     backend::install();

@@ -201,6 +201,20 @@ fn choose_pick(sender: *u8, ctx: *u8) {
 fn prompt_ok(sender: *u8, ctx: *u8) {
     let h: *AlertHost = host_of(sender);
     if h == (0 as *AlertHost) { return; }
+    // END EDITING FIRST, and this is the difference between the sheet working
+    // and the sheet throwing your typing away.
+    //
+    // An NSTextField does not hold the text you are typing — the window's
+    // shared FIELD EDITOR does — and `stringValue` is only refreshed from it
+    // when editing ENDS. Clicking a button ends editing on the way, because
+    // the click moves first responder. RETURN DOES NOT: it arrives through
+    // `performKeyEquivalent:`, which fires the button before anything touches
+    // the responder chain, so the read below saw the value the sheet OPENED
+    // with. A rename kept the old name; a New File got an empty one.
+    //
+    // `endEditingFor: nil` is AppKit's own commit, and it is what every native
+    // dialog does before reading a field.
+    { rt::msg_void_id({ (*h).sheet }, rt::sel(#str_ptr("endEditingFor:\0")), 0 as *u8) };
     match text_field::find("prompt:value") {
         option::Option[text_field::TextField]::Some(f) => {
             let typed: str = f.text();

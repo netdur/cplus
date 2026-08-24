@@ -699,6 +699,28 @@ by its *shape*, not a method-name allowlist, through every form it can leak:
   replaced. `cpc lsp` also stopped canonicalizing every file in the project
   on every request.
 
+### facet — Return in a prompt commits what you TYPED
+- The key equivalents landed and Return still "did not work", because the
+  sheet committed the value it OPENED with. An NSTextField does not hold the
+  text you are typing — the window's shared FIELD EDITOR does, and
+  `stringValue` is only refreshed from it when editing ENDS. Clicking a button
+  ends editing on the way, because the click moves first responder. **Return
+  does not**: it arrives through `performKeyEquivalent:`, which fires the
+  button before anything touches the responder chain. So a Rename kept the old
+  name and a New File got an empty one. `prompt_ok` now sends
+  `endEditingFor:` before reading, which is what every native dialog does.
+- **The routing itself is now tested rather than left to hands.** A real
+  `NSEvent` through `performKeyEquivalent:` is what a window does with a
+  key-down before the responder chain sees it, so driving it is the routing
+  and not a stand-in for it. Setting `keyEquivalent` and asserting the
+  property — which is all the previous change did — asserts nothing about
+  whether AppKit delivers the key.
+- Also pinned, and NOT facet's doing: a prompt opens with the caret in the
+  field and the old name selected. A `selectText:` call was added here on the
+  assumption that it did not, and removed again when measurement showed it
+  changed nothing — AppKit's initial-key-view behaviour already does both.
+  The test stays, because a future change to the tree could take it away.
+
 ### agent — `wired` was false for a gesture, and `click` acted then denied it
 - A regression from `wired` itself. It read appkit_ext's agent-click SLOT for
   every non-control — a slot facet never fills — so every gesture-bound
