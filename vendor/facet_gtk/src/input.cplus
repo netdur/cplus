@@ -1,0 +1,2239 @@
+// facet_gtk/input — the READ half: the gesture band, the key band, the
+// control actions, and the sender readers.
+//
+// `facet_appkit/input.cplus` is the file this answers, and the two solve the
+// same problem from opposite ends. THE DECLINE CHAIN is the rule in both: a
+// gesture handler answers `bool`, and `false` means "not mine" — the event
+// must then continue exactly as if facet had never looked at it.
+//
+// ---- why GTK needs no dynamic subclass ---------------------------------------
+//
+// AppKit has to swizzle the isa, because an NSGestureRecognizer cannot decline:
+// by the time its action fires it has already claimed the event and there is no
+// way to put it back, so the handlers have to BE the view's event methods.
+//
+// GTK 4 already has what AppKit does not. A GtkEventController is attached to
+// any widget without changing what the widget IS, controllers run in the BUBBLE
+// phase from the event target upward, and a gesture claims a sequence only when
+// it says so — `gtk_gesture_set_state(GTK_EVENT_SEQUENCE_CLAIMED)`. So:
+//
+//   the app returned true  -> claim the sequence; gestures further up are
+//                             cancelled and the widget's own handling stops.
+//   the app returned false -> do nothing. The sequence is untouched, so the
+//                             next controller up the chain sees it and the
+//                             native behaviour underneath still runs.
+//
+// Declining is the DEFAULT here rather than something that has to be arranged,
+// which is the whole reason this file is a third the size of AppKit's.
+//
+// `HitTest::Opaque` is the one case that inverts the order: it claims the
+// node's whole area, children included, so that band is armed in the CAPTURE
+// phase instead — capture runs root-DOWNWARD, before the target sees anything.
+//
+// ---- bands, and why a node does not pay for verbs it never named -------------
+//
+// A controller costs a GObject and, for motion, an event per pointer move
+// across the whole window. So the band is armed in PIECES, each gated on the
+// node actually declaring one of its verbs, each with its own armed flag so a
+// re-arm adds only what is new. `views::apply` re-arms on `C_GESTURES`, which
+// is what `.gesture(...)` raises when a set is attached, swapped or detached.
+//
+// A band is never REMOVED once armed. Handlers are read off the node at fire
+// time, so a detached set makes every one of them `no_gesture` and the
+// controller fires nothing — dead weight, not wrong behaviour. Written down
+// rather than fixed because the fix (remove_controller per band) needs the
+// controller pointer kept per widget per band, and nothing has needed it yet.
+
+import "stdlib/option" as option;
+import "stdlib/text" as text;
+import "flex_layout/flex_layout" as flex;
+import "facet/facet" as core;
+import "facet/props" as props;
+import "facet/vocabulary" as vocab;
+import "facet/gestures" as gestures;
+import "facet/component" as component;
+import "facet/button" as button;
+import "facet/toggle" as toggle;
+import "facet/checkbox" as checkbox;
+import "facet/slider" as slider;
+import "facet/progress" as progress;
+import "facet/text_field" as text_field;
+import "facet/text_area" as text_area;
+import "facet/search_field" as search_field;
+import "facet/stepper" as stepper;
+import "facet/radio" as radio;
+import "facet/icon_button" as icon_button;
+import "facet/text_button" as text_button;
+import "facet/scroll" as scroll;
+import "facet/split" as split;
+import "facet/tree" as tree;
+import "facet/list" as list;
+import "facet/collection" as collection;
+import "facet/popup" as popup;
+import "facet/tabs" as tabs;
+import "facet/date_picker" as date_picker;
+import "facet/time_picker" as time_picker;
+import "facet/carousel" as carousel;
+import "facet/refreshable" as refreshable;
+import "gtk4/gtk4" as gtk;
+import "gdk/gdk" as gdk;
+import "gobject_gir/gobject_gir" as gobject_gir;
+import "gobject/runtime" as g;
+import "gobject/bridge" as bridge;
+import "./chrome" as chrome;
+import "./pointer" as pointer;
+
+// ---- the node on the widget --------------------------------------------------
+//
+// AppKit hangs the node off the view with an associated object; GTK's
+// equivalent is `g_object_set_data`, which `paint` already uses for the
+// per-widget CSS provider. BORROWED, not owned: facet owns the node and the
+// widget dies first, so there is nothing to free and no destroy notify.
+//
+// Every backed node carries this, not only a gesture-bearing one — the sender
+// readers walk it to answer `key_of` for a control's own action too.
+
+fn node_key() -> *u8 { return #str_ptr("facet-gtk-node\0"); }
+
+fn bind_node(v: *u8, n: *core::Node) {
+    if v == (0 as *u8) { return; }
+    g::set_data(v, node_key(), n as *u8);
+    return;
+}
+
+fn node_of_widget(v: *u8) -> *core::Node {
+    if v == (0 as *u8) { return 0 as *core::Node; }
+    return g::get_data(v, node_key()) as *core::Node;
+}
+
+// The nearest node of a given KIND at or above `v`.
+//
+// The pair to `node_at_or_above`: a handler on a tree ROW needs the row's own
+// node (which is what `item_of` and `key_of` answer) AND the tree that owns it,
+// and facet's tree has no parent pointers — the widget tree does. Answering
+// null rather than the nearest node of any kind is what keeps a caller from
+// reading a row's props as a tree's.
+fn node_of_kind_above(v: *u8, kind: u32) -> *core::Node {
+    var cur: *u8 = v;
+    while cur != (0 as *u8) {
+        let n: *core::Node = node_of_widget(cur);
+        if n != (0 as *core::Node) {
+            if core::kind_of(n) == kind { return n; }
+        }
+        cur = parent_of(cur);
+    }
+    return 0 as *core::Node;
+}
+
+// The nearest node at or above `v`. The walk goes UP for the reason AppKit's
+// does: a click on an untagged icon inside a tagged row is the ROW's.
+fn node_at_or_above(v: *u8) -> *core::Node {
+    var cur: *u8 = v;
+    while cur != (0 as *u8) {
+        let n: *core::Node = node_of_widget(cur);
+        if n != (0 as *core::Node) { return n; }
+        cur = parent_of(cur);
+    }
+    return 0 as *core::Node;
+}
+
+fn parent_of(v: *u8) -> *u8 {
+    match gtk::Widget::from_raw(v).get_parent() {
+        option::Option[gtk::Widget]::Some(p) => { return p.raw(); }
+        option::Option[gtk::Widget]::None => { return 0 as *u8; }
+    }
+}
+
+// ---- firing ------------------------------------------------------------------
+
+// GtkEventSequenceState: 0 NONE, 1 CLAIMED, 2 DENIED.
+fn seq_claimed() -> i32 { return 1 as i32; }
+
+// GtkPropagationPhase: 0 NONE, 1 CAPTURE, 2 BUBBLE, 3 TARGET.
+fn phase_capture() -> i32 { return 1 as i32; }
+fn phase_bubble() -> i32 { return 2 as i32; }
+
+fn claim(gesture: *u8) {
+    let _s: bool = gtk::Gesture::from_raw(gesture).set_state(seq_claimed());
+    return;
+}
+
+// Fire one handler off a node. False when there is nothing to fire or the app
+// declined — either way the caller leaves the sequence alone and the event
+// carries on.
+fn fire_of(n: *core::Node, h: gestures::Handler, ctx: *u8) -> bool {
+    if n == (0 as *core::Node) { return false; }
+    if h == gestures::no_gesture { return false; }
+    return gestures::fire(n, h, ctx);
+}
+
+fn gestures_of_user(user: *u8) -> *gestures::Gestures {
+    let n: *core::Node = user as *core::Node;
+    if n == (0 as *core::Node) { return 0 as *gestures::Gestures; }
+    return gestures::gestures_of(n);
+}
+
+// ---- the pointer band --------------------------------------------------------
+//
+// One GtkGestureClick answers press, release, click and double-click, because
+// GTK reports the press count on both edges — `n_press` is 2 on the second
+// press AND on its release. A click is reported on the way UP for the same
+// reason AppKit reports it there: a press that drags off the control is not a
+// click.
+
+fn click_pressed(gesture: *u8, n_press: i32, x: f64, y: f64, user: *u8) {
+    let n: *core::Node = user as *core::Node;
+    let gs: *gestures::Gestures = gestures_of_user(user);
+    if gs == (0 as *gestures::Gestures) { return; }
+    if fire_of(n, { (*gs).on_press }, { (*gs).on_press_ctx }) { claim(gesture); }
+    return;
+}
+
+fn click_released(gesture: *u8, n_press: i32, x: f64, y: f64, user: *u8) {
+    let n: *core::Node = user as *core::Node;
+    let gs: *gestures::Gestures = gestures_of_user(user);
+    if gs == (0 as *gestures::Gestures) { return; }
+    var took: bool = fire_of(n, { (*gs).on_release }, { (*gs).on_release_ctx });
+    if n_press >= (2 as i32) {
+        if fire_of(n, { (*gs).on_double_click }, { (*gs).on_double_click_ctx }) { took = true; }
+    } else {
+        if fire_of(n, { (*gs).on_click }, { (*gs).on_click_ctx }) { took = true; }
+    }
+    if took { claim(gesture); }
+    return;
+}
+
+// The secondary button is a SECOND GtkGestureClick, not a `get_current_button`
+// branch inside the first: a GtkGestureSingle listens to exactly one button, so
+// asking one gesture about two of them answers about neither.
+fn secondary_released(gesture: *u8, n_press: i32, x: f64, y: f64, user: *u8) {
+    let n: *core::Node = user as *core::Node;
+    let gs: *gestures::Gestures = gestures_of_user(user);
+    if gs == (0 as *gestures::Gestures) { return; }
+    if fire_of(n, { (*gs).on_right_click }, { (*gs).on_right_click_ctx }) { claim(gesture); }
+    return;
+}
+
+fn long_pressed(gesture: *u8, x: f64, y: f64, user: *u8) {
+    let n: *core::Node = user as *core::Node;
+    let gs: *gestures::Gestures = gestures_of_user(user);
+    if gs == (0 as *gestures::Gestures) { return; }
+    if fire_of(n, { (*gs).on_long_press }, { (*gs).on_long_press_ctx }) { claim(gesture); }
+    return;
+}
+
+// ---- the motion band ---------------------------------------------------------
+//
+// GtkEventControllerMotion is not a gesture: it has no sequence, so nothing to
+// claim and no way to decline. A hover is observational on every toolkit —
+// AppKit's tracking areas do not consume the event either — so the handler's
+// bool is READ AND DISCARDED here, and the MANIFEST says so rather than
+// pretending the return value was honoured.
+
+fn motion_enter(controller: *u8, x: f64, y: f64, user: *u8) {
+    let n: *core::Node = user as *core::Node;
+    pointer::fire_hover(n, core::view_of(n), true);
+    let _t: bool = gestures::fire_hover(n, true);
+    return;
+}
+
+fn motion_leave(controller: *u8, user: *u8) {
+    let n: *core::Node = user as *core::Node;
+    pointer::fire_hover(n, core::view_of(n), false);
+    let _t: bool = gestures::fire_hover(n, false);
+    return;
+}
+
+fn motion_moved(controller: *u8, x: f64, y: f64, user: *u8) {
+    let n: *core::Node = user as *core::Node;
+    // A canvas's own `observe_move_hover_interaction`, dispatched before the
+    // gestures guard: the verb is the CONTROL's, so a canvas that declares it
+    // and no gesture set must still be told. See pointer.cplus.
+    pointer::fire_moved(n, core::view_of(n));
+    let gs: *gestures::Gestures = gestures_of_user(user);
+    if gs == (0 as *gestures::Gestures) { return; }
+    let _t: bool = fire_of(n, { (*gs).on_pointer_move }, { (*gs).on_pointer_move_ctx });
+    return;
+}
+
+// ---- the control press band --------------------------------------------------
+//
+// `pointer.cplus` owns the per-kind dispatch; this is its transport. Separate
+// from the gesture band above because these are the CONTROL's own verbs — see
+// pointer.cplus's header — and a node may want this band and no gestures at
+// all, which is why it is armed before the gestures guard.
+
+fn press_band_pressed(gesture: *u8, n_press: i32, x: f64, y: f64, user: *u8) {
+    let n: *core::Node = user as *core::Node;
+    if n == (0 as *core::Node) { return; }
+    pointer::fire_press(n, core::view_of(n));
+    return;
+}
+
+fn press_band_released(gesture: *u8, n_press: i32, x: f64, y: f64, user: *u8) {
+    let n: *core::Node = user as *core::Node;
+    if n == (0 as *core::Node) { return; }
+    pointer::fire_release(n, core::view_of(n));
+    return;
+}
+
+// HAND-BOUND, the same way `connect_drop` above is and for the same reason:
+// cpc-bindgen SKIPPED `Gesture::cancel` ("handler argument not modelled") —
+// the handler takes a `GdkEventSequence *`, which the GIR does not present as
+// a bindable type. A typed alias of `g_signal_connect_data` exactly as
+// `gobject/signal.cplus` describes, not a new mechanism.
+#[link_name = "g_signal_connect_data"]
+extern fn connect_gesture_cancel(
+    instance: *u8,
+    detailed_signal: *u8,
+    c_handler: fn(*u8, *u8, *u8),
+    data: *u8,
+    destroy_data: *u8,
+    connect_flags: i32,
+) -> u64;
+
+fn press_band_cancelled(gesture: *u8, sequence: *u8, user: *u8) {
+    let n: *core::Node = user as *core::Node;
+    if n == (0 as *core::Node) { return; }
+    pointer::fire_cancel(n, core::view_of(n));
+    return;
+}
+
+// ---- the focus band ----------------------------------------------------------
+//
+// The shared band's `on_focus` / `on_blur`, and the write that makes
+// `core::is_focused()` answer. All three are declared on EVERY node — they are
+// `CommonProps`, not a control's own verbs — so this band is armed from
+// `core::wants_focus_events`, which facet provides for exactly this decision:
+// a node carrying only an `on_focus` and no gestures still needs the
+// controller.
+//
+// GtkEventControllerFocus is observational like the motion controller: focus
+// has already moved by the time `enter` fires, there is no sequence to claim,
+// and nothing to decline. So neither handler answers a bool, which is why
+// these two are `fn(*u8, *u8)` where a gesture's are not.
+//
+// `set_focused` is the half that is easy to leave out and silently wrong: the
+// AppKit backend records finding `is_focused()` a reader that could only ever
+// answer false, because nothing had ever written it. Write it here, on both
+// edges, or the same hole reopens.
+
+fn focus_entered(controller: *u8, user: *u8) {
+    let n: *core::Node = user as *core::Node;
+    if n == (0 as *core::Node) { return; }
+    core::set_focused(n, true);
+    core::fire_focus_handler(n);
+    return;
+}
+
+fn focus_left(controller: *u8, user: *u8) {
+    let n: *core::Node = user as *core::Node;
+    if n == (0 as *core::Node) { return; }
+    core::set_focused(n, false);
+    core::fire_blur_handler(n);
+    return;
+}
+
+// ---- the continuous band -----------------------------------------------------
+
+fn drag_update(gesture: *u8, dx: f64, dy: f64, user: *u8) {
+    // A canvas's `observe_drag_interaction` — the control's verb, so it is
+    // answered whether or not a gesture set was attached.
+    pointer::fire_dragged(user as *core::Node, core::view_of(user as *core::Node));
+    let n: *core::Node = user as *core::Node;
+    let gs: *gestures::Gestures = gestures_of_user(user);
+    if gs == (0 as *gestures::Gestures) { return; }
+    if fire_of(n, { (*gs).on_pan }, { (*gs).on_pan_ctx }) { claim(gesture); }
+    return;
+}
+
+fn zoom_changed(gesture: *u8, scale: f64, user: *u8) {
+    let n: *core::Node = user as *core::Node;
+    let gs: *gestures::Gestures = gestures_of_user(user);
+    if gs == (0 as *gestures::Gestures) { return; }
+    if fire_of(n, { (*gs).on_pinch }, { (*gs).on_pinch_ctx }) { claim(gesture); }
+    return;
+}
+
+fn swiped(gesture: *u8, vx: f64, vy: f64, user: *u8) {
+    let n: *core::Node = user as *core::Node;
+    let gs: *gestures::Gestures = gestures_of_user(user);
+    if gs == (0 as *gestures::Gestures) { return; }
+    // `swipe_threshold` is facet's, and GTK has no equivalent knob on
+    // GtkGestureSwipe — so it is honoured HERE, against the velocity GTK
+    // reports, rather than dropped.
+    let limit: f64 = { (*gs).swipe_threshold };
+    if limit > (0.0 as f64) {
+        var ax: f64 = vx;
+        if ax < (0.0 as f64) { ax = (0.0 as f64) - ax; }
+        var ay: f64 = vy;
+        if ay < (0.0 as f64) { ay = (0.0 as f64) - ay; }
+        var peak: f64 = ax;
+        if ay > peak { peak = ay; }
+        if peak < limit { return; }
+    }
+    if fire_of(n, { (*gs).on_swipe }, { (*gs).on_swipe_ctx }) { claim(gesture); }
+    return;
+}
+
+// ---- drag and drop -----------------------------------------------------------
+//
+// The two halves are two controllers: a GtkDragSource on a node that declared
+// `can_drag`, and a GtkDropTarget on one that declared `allow_drop`. Neither is
+// a gesture in GTK's sense — they carry no sequence — so nothing here claims,
+// and the decline chain runs on the RETURN VALUES the drop signals already
+// have: an action of 0 rejects, and `drop` answering FALSE says the drop was
+// not taken.
+//
+// WHAT TRAVELS IS THE SOURCE NODE'S KEY, as text. That is facet's whole drag
+// payload and the AppKit backend carries the same thing — `dropped_text` on the
+// destination hands back the key of the node that was dragged, which is what
+// lets a receiving list say WHICH card arrived.
+//
+// `connect_drop` IS HAND-BOUND. GtkDropTarget's `::drop` handler takes a
+// `const GValue *` and cpc-bindgen emitted every other signal on the class but
+// not that one — the GIR does not present the parameter. The shape is the same
+// one `GtkDropTargetAsync::connect_drop` already uses, so this is a typed alias
+// of `g_signal_connect_data` exactly as `gobject/signal.cplus` describes, and
+// not a new mechanism.
+#[link_name = "g_signal_connect_data"]
+extern fn sigc_drop(instance: *u8, detailed_signal: *u8,
+                    handler: fn(*u8, *u8, f64, f64, *u8) -> i32,
+                    data: *u8, destroy_data: *u8, connect_flags: i32) -> u64;
+
+#[link_name = "gtk_widget_paintable_new"]
+extern fn gtk_widget_paintable_new(widget: *u8) -> *u8;
+
+#[link_name = "g_strdup"]
+extern fn g_strdup(s: *u8) -> *u8;
+
+#[link_name = "g_free"]
+extern fn g_free(p: *u8) -> ();
+
+// G_TYPE_STRING is fundamental type 16 shifted by 2. Written arithmetically
+// because that is what the macro is, and because a bare 64 here would be a
+// number nobody could check.
+fn g_type_string() -> usize { return (16 as usize) *% (4 as usize); }
+
+// GdkDragAction is a flag set: COPY 1, MOVE 2, LINK 4, ASK 8. facet's drag
+// carries text and nothing is moved out of the source, so COPY is the whole
+// answer — and 0 is how a drop target says "not this one".
+fn action_copy() -> u32 { return 1 as u32; }
+fn action_none() -> u32 { return 0 as u32; }
+
+fn drop_text_key() -> *u8 { return #str_ptr("facet-gtk-drop-text\0"); }
+fn drag_targeted_key() -> *u8 { return #str_ptr("facet-gtk-drag-over\0"); }
+
+// WHERE the last drop landed. One record, not one per widget, because the
+// contract only asks during the drop's own handler: `drop_position(sender)`
+// answers Some for the widget that was just dropped on and None for every
+// other, which is also the right answer once the drop is over.
+static DROP_WIDGET: usize = 0;
+static DROP_X: f64 = 0.0f64;
+static DROP_Y: f64 = 0.0f64;
+
+fn set_drop_text(v: *u8, s: str) {
+    // The GValue's string dies with the handler's frame, so the destination
+    // keeps a copy — and drops the previous one, or a widget dropped on twice
+    // leaks the first.
+    let old: *u8 = g::get_data(v, drop_text_key());
+    if old != (0 as *u8) { { g_free(old) }; }
+    if s == "" { g::set_data(v, drop_text_key(), 0 as *u8); return; }
+    match text::from_str(s).c_str() {
+        option::Option[text::CString]::Some(cs) => {
+            g::set_data(v, drop_text_key(), { g_strdup(cs.as_ptr()) });
+        }
+        option::Option[text::CString]::None => {
+            g::set_data(v, drop_text_key(), 0 as *u8);
+        }
+    }
+    return;
+}
+
+fn set_targeted(v: *u8, on: bool) {
+    g::set_data(v, drag_targeted_key(), if on { 1 as *u8 } else { 0 as *u8 });
+    return;
+}
+
+// The destination's three hover callbacks. `enter` and `motion` answer an
+// ACTION, and 0 is the rejection — so a node whose `on_drag_over` declined is
+// told about again on the next motion rather than having the drag taken away
+// from it.
+fn drop_enter(target: *u8, x: f64, y: f64, user: *u8) -> u32 {
+    let n: *core::Node = user as *core::Node;
+    let gs: *gestures::Gestures = gestures_of_user(user);
+    if gs == (0 as *gestures::Gestures) { return action_none(); }
+    set_targeted(core::view_of(n), true);
+    let _t: bool = fire_of(n, { (*gs).on_drag_over }, { (*gs).on_drag_over_ctx });
+    return action_copy();
+}
+
+fn drop_motion(target: *u8, x: f64, y: f64, user: *u8) -> u32 {
+    let n: *core::Node = user as *core::Node;
+    let gs: *gestures::Gestures = gestures_of_user(user);
+    if gs == (0 as *gestures::Gestures) { return action_none(); }
+    let _t: bool = fire_of(n, { (*gs).on_drag_over }, { (*gs).on_drag_over_ctx });
+    return action_copy();
+}
+
+fn drop_leave(target: *u8, user: *u8) {
+    let n: *core::Node = user as *core::Node;
+    let gs: *gestures::Gestures = gestures_of_user(user);
+    if gs == (0 as *gestures::Gestures) { return; }
+    set_targeted(core::view_of(n), false);
+    let _t: bool = fire_of(n, { (*gs).on_drag_leave }, { (*gs).on_drag_leave_ctx });
+    return;
+}
+
+// The drop itself. The text and the position are written BEFORE the handler
+// runs, for the same reason a checkbox syncs its state first: `dropped_text`
+// and `drop_position` read what the drop delivered, and a handler that asked
+// before the write would get the previous drop's answer.
+fn drop_performed(target: *u8, value: *u8, x: f64, y: f64, user: *u8) -> i32 {
+    let n: *core::Node = user as *core::Node;
+    let gs: *gestures::Gestures = gestures_of_user(user);
+    if gs == (0 as *gestures::Gestures) { return 0 as i32; }
+    let v: *u8 = core::view_of(n);
+    set_targeted(v, false);
+    match gobject_gir::Value::from_raw(value).get_string() {
+        option::Option[text::Text]::Some(t) => { set_drop_text(v, t.view()); }
+        option::Option[text::Text]::None => { set_drop_text(v, ""); }
+    }
+    // x and y are already in the DROP TARGET's own coordinates, which is
+    // exactly the space facet's `drop_position` is documented in — no
+    // conversion, unlike AppKit where the point arrives in window space.
+    DROP_WIDGET = { #addr(v) };
+    DROP_X = x;
+    DROP_Y = y;
+    if fire_of(n, { (*gs).on_drop }, { (*gs).on_drop_ctx }) { return 1 as i32; }
+    // Declined: GTK tells the source the drop failed rather than reporting a
+    // success nobody acted on.
+    return 0 as i32;
+}
+
+// ---- the source half ---------------------------------------------------------
+
+// GTK asks for the payload when the drag is about to start. A node with no key
+// has nothing to say, and answering a provider with an empty string would
+// start a drag that delivers nothing — so it answers NULL, which is GTK's own
+// way of saying "not a drag source after all".
+fn drag_prepare(source: *u8, x: f64, y: f64, user: *u8) -> *u8 {
+    let n: *core::Node = user as *core::Node;
+    if n == (0 as *core::Node) { return 0 as *u8; }
+    let k: str = { (*n).key() };
+    if k == "" { return 0 as *u8; }
+    // A GValue is a 24-byte struct the caller owns; it is initialised, filled,
+    // handed to the provider (which copies) and unset again inside this frame.
+    var storage: [u8; 32] = [0u8; 32];
+    let val: gobject_gir::Value = gobject_gir::Value::from_raw(#addr_of(storage) as *u8);
+    let inited: gobject_gir::Value = val.init(g_type_string());
+    inited.set_string(k);
+    let provider: gdk::ContentProvider = gdk::ContentProvider::new_for_value(inited);
+    inited.unset();
+    return provider.raw();
+}
+
+fn drag_began(source: *u8, drag: *u8, user: *u8) {
+    let n: *core::Node = user as *core::Node;
+    let gs: *gestures::Gestures = gestures_of_user(user);
+    if gs == (0 as *gestures::Gestures) { return; }
+    let _t: bool = fire_of(n, { (*gs).on_drag_start }, { (*gs).on_drag_start_ctx });
+    return;
+}
+
+// ONE end, not two. GTK emits `::drag-end` whether the drag was dropped or
+// cancelled, so connecting `::drag-cancel` as well would fire
+// `on_drop_completed` twice for one cancelled drag.
+fn drag_ended(source: *u8, drag: *u8, delete_data: i32, user: *u8) {
+    let n: *core::Node = user as *core::Node;
+    let gs: *gestures::Gestures = gestures_of_user(user);
+    if gs == (0 as *gestures::Gestures) { return; }
+    let _t: bool = fire_of(n, { (*gs).on_drop_completed }, { (*gs).on_drop_completed_ctx });
+    return;
+}
+
+// ---- the key band ------------------------------------------------------------
+//
+// facet hands a key handler an OPAQUE platform event and the app reads it back
+// through `gestures::key_code` / `key_chars` / `key_modifiers` / `key_named`.
+// On AppKit the opaque pointer is the NSEvent.
+//
+// GTK 4 has no event object at this seam: `key-pressed` carries the keyval, the
+// hardware keycode and the modifier state as three plain arguments. So the
+// opaque pointer is a RECORD OF THOSE THREE, on the handler's own stack — which
+// is exactly as long as the contract says the pointer is valid, because the
+// readers are synchronous and the handler may not store it.
+
+#[repr(C)]
+struct KeyEvent { keyval: u32, keycode: u32, state: u32 }
+
+fn key_pressed(controller: *u8, keyval: u32, keycode: u32, state: u32, user: *u8) -> i32 {
+    let n: *core::Node = user as *core::Node;
+    if n == (0 as *core::Node) { return 0 as i32; }
+    var ev: KeyEvent = KeyEvent { keyval: keyval, keycode: keycode, state: state };
+    // TRUE stops the event: it reaches neither a facet ancestor nor GTK's own
+    // key handling, which is what lets an app take Ctrl-C from a text field.
+    if gestures::fire_key(n, #addr_of(ev) as *u8) { return 1 as i32; }
+    return 0 as i32;    // GDK_EVENT_PROPAGATE
+}
+
+fn ev_of(event: *u8) -> *KeyEvent { return event as *KeyEvent; }
+
+// The platform key code, raw and non-portable by contract — the HARDWARE
+// keycode, which is what AppKit's `keyCode` is too. An app that wants a
+// portable answer asks `key_named`.
+fn key_code(event: *u8) -> i64 {
+    if event == (0 as *u8) { return (0 as i64) -% (1 as i64); }
+    return { (*ev_of(event)).keycode } as i64;
+}
+
+// The text the key would produce. `gdk_keyval_to_unicode` answers 0 for a bare
+// modifier or a function key, which is the empty string facet documents.
+fn key_chars(event: *u8) -> text::Text {
+    if event == (0 as *u8) { return text::new(); }
+    let cp: u32 = gdk::keyval_to_unicode({ (*ev_of(event)).keyval });
+    if cp == (0 as u32) { return text::new(); }
+    return utf8_of(cp);
+}
+
+// One codepoint as UTF-8. Written out rather than reached for in stdlib because
+// stdlib has no codepoint encoder, and a four-byte buffer is the whole job.
+fn utf8_of(cp: u32) -> text::Text {
+    var buf: [u8; 4] = [0u8; 4];
+    var n: usize = 0 as usize;
+    if cp < (128 as u32) {
+        buf[0] = cp as u8;
+        n = 1 as usize;
+    } else if cp < (2048 as u32) {
+        buf[0] = ((192 as u32) | (cp >> (6 as u32))) as u8;
+        buf[1] = ((128 as u32) | (cp & (63 as u32))) as u8;
+        n = 2 as usize;
+    } else if cp < (65536 as u32) {
+        buf[0] = ((224 as u32) | (cp >> (12 as u32))) as u8;
+        buf[1] = ((128 as u32) | ((cp >> (6 as u32)) & (63 as u32))) as u8;
+        buf[2] = ((128 as u32) | (cp & (63 as u32))) as u8;
+        n = 3 as usize;
+    } else {
+        buf[0] = ((240 as u32) | (cp >> (18 as u32))) as u8;
+        buf[1] = ((128 as u32) | ((cp >> (12 as u32)) & (63 as u32))) as u8;
+        buf[2] = ((128 as u32) | ((cp >> (6 as u32)) & (63 as u32))) as u8;
+        buf[3] = ((128 as u32) | (cp & (63 as u32))) as u8;
+        n = 4 as usize;
+    }
+    return text::from_str({ #str_from_raw_parts(#addr_of(buf) as *u8, n) });
+}
+
+// GdkModifierType -> facet's portable bits.
+//
+// COMMAND IS THE SUPER KEY. facet's four names are macOS's, and the one that
+// does not transfer is `mod_command`: X11 and Wayland call that physical key
+// Super (Meta, "the Windows key"). Mapping it to Control instead would make
+// `has_modifier(mods, mod_command())` and `has_modifier(mods, mod_control())`
+// both true for one press, and an app branching on the pair would take the
+// wrong arm. So Super is Command and Control is Control, which is also what
+// every GTK app's own accelerator table says.
+fn gdk_shift() -> u32 { return 1 as u32; }
+fn gdk_control() -> u32 { return 4 as u32; }
+fn gdk_alt() -> u32 { return 8 as u32; }
+fn gdk_super() -> u32 { return 67108864 as u32; }
+
+fn key_modifiers(event: *u8) -> u64 {
+    if event == (0 as *u8) { return 0 as u64; }
+    let s: u32 = { (*ev_of(event)).state };
+    var out: u64 = 0 as u64;
+    if (s & gdk_shift()) != (0 as u32) { out = out | gestures::mod_shift(); }
+    if (s & gdk_control()) != (0 as u32) { out = out | gestures::mod_control(); }
+    if (s & gdk_alt()) != (0 as u32) { out = out | gestures::mod_option(); }
+    if (s & gdk_super()) != (0 as u32) { out = out | gestures::mod_command(); }
+    return out;
+}
+
+// The X11 keysyms, which are what a GDK keyval IS. Written as their hex values
+// with the name beside them rather than pulled from gdk: the binding does not
+// carry the `GDK_KEY_*` defines (they are C macros, invisible to the GIR), and
+// `gdk_keyval_from_name` at every keystroke is a string lookup for a constant.
+fn key_named(event: *u8) -> i64 {
+    if event == (0 as *u8) { return gestures::key_none(); }
+    let k: u32 = { (*ev_of(event)).keyval };
+    if k == (0xff0d as u32) { return gestures::key_return(); }        // Return
+    if k == (0xff8d as u32) { return gestures::key_return(); }        // KP_Enter
+    if k == (0xff09 as u32) { return gestures::key_tab(); }           // Tab
+    if k == (0x0020 as u32) { return gestures::key_space(); }         // space
+    if k == (0xff08 as u32) { return gestures::key_delete(); }        // BackSpace
+    if k == (0xffff as u32) { return gestures::key_forward_delete(); }// Delete
+    if k == (0xff1b as u32) { return gestures::key_escape(); }        // Escape
+    if k == (0xff51 as u32) { return gestures::key_arrow_left(); }    // Left
+    if k == (0xff53 as u32) { return gestures::key_arrow_right(); }   // Right
+    if k == (0xff52 as u32) { return gestures::key_arrow_up(); }      // Up
+    if k == (0xff54 as u32) { return gestures::key_arrow_down(); }    // Down
+    if k == (0xff50 as u32) { return gestures::key_home(); }          // Home
+    if k == (0xff57 as u32) { return gestures::key_end(); }           // End
+    if k == (0xff55 as u32) { return gestures::key_page_up(); }       // Page_Up
+    if k == (0xff56 as u32) { return gestures::key_page_down(); }     // Page_Down
+    return gestures::key_none();
+}
+
+fn key_reader() -> gestures::KeyReader {
+    return gestures::KeyReader {
+        code: key_code,
+        chars: key_chars,
+        modifiers: key_modifiers,
+        named: key_named,
+    };
+}
+
+// ---- arming ------------------------------------------------------------------
+//
+// One flag per band, so a re-arm on `C_GESTURES` adds what the node has newly
+// asked for and nothing else.
+
+fn armed(v: *u8, k: *u8) -> bool { return g::get_data(v, k) != (0 as *u8); }
+fn mark(v: *u8, k: *u8) { g::set_data(v, k, 1 as *u8); return; }
+
+fn k_click() -> *u8 { return #str_ptr("facet-gtk-arm-click\0"); }
+fn k_secondary() -> *u8 { return #str_ptr("facet-gtk-arm-secondary\0"); }
+fn k_long() -> *u8 { return #str_ptr("facet-gtk-arm-long\0"); }
+fn k_motion() -> *u8 { return #str_ptr("facet-gtk-arm-motion\0"); }
+fn k_pan() -> *u8 { return #str_ptr("facet-gtk-arm-pan\0"); }
+fn k_pinch() -> *u8 { return #str_ptr("facet-gtk-arm-pinch\0"); }
+fn k_swipe() -> *u8 { return #str_ptr("facet-gtk-arm-swipe\0"); }
+fn k_key() -> *u8 { return #str_ptr("facet-gtk-arm-key\0"); }
+fn k_focus() -> *u8 { return #str_ptr("facet-gtk-arm-focus\0"); }
+fn k_press_band() -> *u8 { return #str_ptr("facet-gtk-arm-pressband\0"); }
+fn k_drag() -> *u8 { return #str_ptr("facet-gtk-arm-drag\0"); }
+fn k_drop() -> *u8 { return #str_ptr("facet-gtk-arm-drop\0"); }
+
+fn wants(gs: *gestures::Gestures, h: gestures::Handler) -> bool {
+    return h != gestures::no_gesture;
+}
+
+// `input_transparent`, and the one switch that changes what it MEANS.
+//
+// GTK's `can-target` is exactly the CASCADING form: `gtk_widget_pick` refuses a
+// widget whose can-target is false AND does not descend into it, so the whole
+// subtree becomes unreachable — which is what `CascadeInputTransparent` says.
+//
+// The non-cascading form has no GTK switch, and does not need one: a widget
+// receives facet's input only through the controllers `arm` attaches, so a
+// transparent node that must let its CHILDREN through is answered by leaving
+// can-target alone and arming nothing on it. That is `arm`'s early return.
+//
+// `scroll` is the only kind that declares the switch; every other kind takes
+// the ledger's own default, which is that transparency cascades.
+fn cascades_input(n: *core::Node) -> bool {
+    let d: *core::Data = core::node_data(n);
+    if d == (0 as *core::Data) { return true; }
+    if { (*d).kind } != props::K_SCROLL { return true; }
+    let p: *props::ScrollProps = { (*d).props } as *props::ScrollProps;
+    if p == (0 as *props::ScrollProps) { return true; }
+    return { (*p).cascades_input };
+}
+
+fn apply_input_transparency(v: *u8, n: *core::Node) {
+    if v == (0 as *u8) || n == (0 as *core::Node) { return; }
+    let blocked: bool = core::input_transparent(n) && cascades_input(n);
+    gtk::Widget::from_raw(v).set_can_target(!blocked);
+    return;
+}
+
+// The phase a node's gestures run in. `Opaque` claims the node's whole area,
+// children included, and the only way to be asked BEFORE a child is to run in
+// the capture phase — which walks root-downward.
+fn phase_for(n: *core::Node) -> i32 {
+    if gestures::is_opaque_to_input(n) { return phase_capture(); }
+    return phase_bubble();
+}
+
+fn add_controller(v: *u8, c: gtk::EventController, phase: i32) {
+    c.set_propagation_phase(phase);
+    gtk::Widget::from_raw(v).add_controller(c);
+    return;
+}
+
+// Arm every band this node has actually asked for. Called from `views::create`
+// and again from `views::apply` on `C_GESTURES`.
+fn arm(v: *u8, n: *core::Node) {
+    if v == (0 as *u8) { return; }
+    if n == (0 as *core::Node) { return; }
+    bind_node(v, n);
+    apply_input_transparency(v, n);
+
+    // THE FOCUS BAND IS ARMED FIRST, and above the gestures guard on purpose.
+    // `on_focus` / `on_blur` are CommonProps — every node may carry them,
+    // gestures or not — so a node whose only verb is a focus handler would
+    // otherwise fall out at the `return` below and never be wired. That is the
+    // case facet's `wants_focus_events` exists to answer.
+    if !armed(v, k_focus()) {
+        if core::wants_focus_events(n) {
+            // A widget only receives focus if it can TAKE it. Controls
+            // (GtkEntry, GtkButton) are focusable already; a bare container
+            // that asked for focus events is not, and arming one without this
+            // is a controller that can never fire.
+            gtk::Widget::from_raw(v).set_focusable(true);
+            let f: gtk::EventControllerFocus = gtk::EventControllerFocus::new();
+            let _e: u64 = f.connect_enter(focus_entered, n as *u8);
+            let _l: u64 = f.connect_leave(focus_left, n as *u8);
+            // Bubble, like the rest of the band: focus has already moved and
+            // there is nothing to intercept on the way down.
+            add_controller(v, f.upcast(), phase_bubble());
+            mark(v, k_focus());
+        }
+    }
+
+    // The CONTROL's own press verbs, above the gestures guard for the same
+    // reason the focus band is: `button("Save", on_pressed: ...)` declares no
+    // gesture set, so this node would fall out at the `return` below.
+    if !armed(v, k_press_band()) {
+        if pointer::wants_press_band(n) {
+            let c: gtk::GestureClick = gtk::GestureClick::new();
+            let _p: u64 = c.connect_pressed(press_band_pressed, n as *u8);
+            let _r: u64 = c.connect_released(press_band_released, n as *u8);
+            // The cancel edge, which only a canvas declares — see
+            // `pointer::fire_cancel`. Connected unconditionally because the
+            // dispatch already gates on kind, and one connect is cheaper than
+            // a second arming decision.
+            let cancel_h: fn(*u8, *u8, *u8) = press_band_cancelled;
+            let _c: u64 = { connect_gesture_cancel(c.raw(), #str_ptr("cancel\0"),
+                                                   cancel_h, n as *u8,
+                                                   0 as *u8, 0 as i32) };
+            add_controller(v, c.upcast().upcast().upcast(), phase_bubble());
+            mark(v, k_press_band());
+        }
+    }
+
+    // A CANVAS's observers need the same two controllers the gesture band uses,
+    // and a canvas that declares only `observe_move_hover_interaction` has no
+    // gesture set to arm them from. Gated per band rather than armed together:
+    // a motion controller costs an event per pointer move across the whole
+    // window, which is the cost input.cplus's header refuses to pay
+    // unconditionally.
+    if !armed(v, k_motion()) {
+        if pointer::wants_motion_band(n) {
+            let c: gtk::EventControllerMotion = gtk::EventControllerMotion::new();
+            let _e: u64 = c.connect_enter(motion_enter, n as *u8);
+            let _l: u64 = c.connect_leave(motion_leave, n as *u8);
+            let _m: u64 = c.connect_motion(motion_moved, n as *u8);
+            add_controller(v, c.upcast(), phase_bubble());
+            mark(v, k_motion());
+        }
+    }
+    if !armed(v, k_pan()) {
+        if pointer::wants_drag_band(n) {
+            let d: gtk::GestureDrag = gtk::GestureDrag::new();
+            let _u: u64 = d.connect_drag_update(drag_update, n as *u8);
+            add_controller(v, d.upcast().upcast().upcast(), phase_bubble());
+            mark(v, k_pan());
+        }
+    }
+
+    let gs: *gestures::Gestures = gestures::gestures_of(n);
+    if gs == (0 as *gestures::Gestures) { return; }
+    // An input-transparent node that does NOT cascade keeps its children
+    // reachable and answers nothing itself — which on GTK is simply not having
+    // any controllers, since a widget receives our events through them and
+    // nothing else. Arming it would be the bug.
+    if core::input_transparent(n) { return; }
+    let phase: i32 = phase_for(n);
+    let user: *u8 = n as *u8;
+
+    if !armed(v, k_click()) {
+        if wants(gs, { (*gs).on_click }) || wants(gs, { (*gs).on_double_click })
+            || wants(gs, { (*gs).on_press }) || wants(gs, { (*gs).on_release }) {
+            let c: gtk::GestureClick = gtk::GestureClick::new();
+            let _a: u64 = c.connect_pressed(click_pressed, user);
+            let _b: u64 = c.connect_released(click_released, user);
+            add_controller(v, c.upcast().upcast().upcast(), phase);
+            mark(v, k_click());
+        }
+    }
+
+    if !armed(v, k_secondary()) {
+        if wants(gs, { (*gs).on_right_click }) {
+            let c: gtk::GestureClick = gtk::GestureClick::new();
+            // GDK_BUTTON_SECONDARY. A GtkGestureSingle listens to ONE button,
+            // and the default is the primary one.
+            c.upcast().set_button(3 as u32);
+            let _b: u64 = c.connect_released(secondary_released, user);
+            add_controller(v, c.upcast().upcast().upcast(), phase);
+            mark(v, k_secondary());
+        }
+    }
+
+    if !armed(v, k_long()) {
+        if wants(gs, { (*gs).on_long_press }) {
+            let c: gtk::GestureLongPress = gtk::GestureLongPress::new();
+            // facet says the press duration in SECONDS; GTK has no absolute
+            // setter, only a factor against the platform's own long-press time
+            // (500ms). A factor is the honest conversion, and 0 means "leave
+            // the platform's".
+            let secs: f64 = { (*gs).long_press_seconds };
+            if secs > (0.0 as f64) { c.set_delay_factor(secs / (0.5 as f64)); }
+            let _b: u64 = c.connect_pressed(long_pressed, user);
+            add_controller(v, c.upcast().upcast().upcast(), phase);
+            mark(v, k_long());
+        }
+    }
+
+    if !armed(v, k_motion()) {
+        if wants(gs, { (*gs).on_hover }) || wants(gs, { (*gs).on_unhover })
+            || wants(gs, { (*gs).on_pointer_move }) {
+            let c: gtk::EventControllerMotion = gtk::EventControllerMotion::new();
+            let _a: u64 = c.connect_enter(motion_enter, user);
+            let _b: u64 = c.connect_leave(motion_leave, user);
+            let _d: u64 = c.connect_motion(motion_moved, user);
+            add_controller(v, c.upcast(), phase);
+            mark(v, k_motion());
+        }
+    }
+
+    if !armed(v, k_pan()) {
+        if wants(gs, { (*gs).on_pan }) {
+            let c: gtk::GestureDrag = gtk::GestureDrag::new();
+            let _b: u64 = c.connect_drag_update(drag_update, user);
+            add_controller(v, c.upcast().upcast().upcast(), phase);
+            mark(v, k_pan());
+        }
+    }
+
+    if !armed(v, k_pinch()) {
+        if wants(gs, { (*gs).on_pinch }) {
+            let c: gtk::GestureZoom = gtk::GestureZoom::new();
+            let _b: u64 = c.connect_scale_changed(zoom_changed, user);
+            add_controller(v, c.upcast().upcast(), phase);
+            mark(v, k_pinch());
+        }
+    }
+
+    if !armed(v, k_swipe()) {
+        if wants(gs, { (*gs).on_swipe }) {
+            let c: gtk::GestureSwipe = gtk::GestureSwipe::new();
+            let _b: u64 = c.connect_swipe(swiped, user);
+            add_controller(v, c.upcast().upcast().upcast(), phase);
+            mark(v, k_swipe());
+        }
+    }
+
+    // Drag and drop gate on FLAGS rather than on a handler: `can_drag` and
+    // `allow_drop` are what the ledger's recognizers carry, and a node may
+    // declare itself draggable before it has anything to say about it.
+    if !armed(v, k_drag()) {
+        if { (*gs).can_drag } {
+            let c: gtk::DragSource = gtk::DragSource::new();
+            c.set_actions(action_copy());
+            // THE NODE BEING DRAGGED IS THE ICON. `gtk_widget_paintable_new`
+            // is a live view of a widget, so the drag carries a picture of the
+            // thing rather than GTK's default — which is the text payload, and
+            // for facet that is the source node's KEY: an application dragging
+            // a card watched `probe:card-a` follow the pointer.
+            //
+            // The hotspot is the widget's own centre, so the picture sits under
+            // the pointer the way it does on every desktop.
+            let icon: gdk::Paintable = gdk::Paintable::from_raw(
+                { gtk_widget_paintable_new(v) });
+            if icon.raw() != (0 as *u8) {
+                let w: gtk::Widget = gtk::Widget::from_raw(v);
+                c.set_icon(icon, w.get_width() / (2 as i32),
+                           w.get_height() / (2 as i32));
+                // `set_icon` takes its own reference; this one was the
+                // constructor's.
+                g::object_unref(icon.raw());
+            }
+            let _p: u64 = c.connect_prepare(drag_prepare, user);
+            let _b: u64 = c.connect_drag_begin(drag_began, user);
+            let _e: u64 = c.connect_drag_end(drag_ended, user);
+            add_controller(v, c.upcast().upcast().upcast(), phase);
+            mark(v, k_drag());
+        }
+    }
+
+    if !armed(v, k_drop()) {
+        if { (*gs).allow_drop } {
+            // Typed on G_TYPE_STRING because that is what facet's drag
+            // carries — a target that accepted every type would claim drags it
+            // cannot read.
+            let c: gtk::DropTarget = gtk::DropTarget::new(g_type_string(), action_copy());
+            let _e: u64 = c.connect_enter(drop_enter, user);
+            let _m: u64 = c.connect_motion(drop_motion, user);
+            let _l: u64 = c.connect_leave(drop_leave, user);
+            let _d: u64 = { sigc_drop(c.raw(), #str_ptr("drop\0"), drop_performed,
+                                      user, 0 as *u8, 0 as i32) };
+            add_controller(v, c.upcast(), phase);
+            mark(v, k_drop());
+        }
+    }
+
+    // `.window_drag()` — a MODIFIER in the same gesture set, so it is armed
+    // here beside the bands rather than in a pass of its own. It draws nothing
+    // and reads nothing back: the window manager takes the drag.
+    chrome::arm_window_drag(v, n, phase);
+
+    if !armed(v, k_key()) {
+        if wants(gs, { (*gs).on_key }) {
+            // A key controller only ever fires on the FOCUSED widget, so a
+            // node that asked for keys has to be able to hold focus. GTK does
+            // not make a GtkFixed focusable on its own, and a container that
+            // declares `on_key` and never receives one is the exact
+            // half-wired failure this package refuses to ship.
+            let w: gtk::Widget = gtk::Widget::from_raw(v);
+            w.set_focusable(true);
+            let c: gtk::EventControllerKey = gtk::EventControllerKey::new();
+            let _b: u64 = c.connect_key_pressed(key_pressed, user);
+            add_controller(v, c.upcast(), phase);
+            mark(v, k_key());
+        }
+    }
+    return;
+}
+
+// ---- the control actions -----------------------------------------------------
+//
+// A control's own verb is NOT a gesture (facet's gestures.cplus says why: a
+// button's action fires from the keyboard and from a screen reader, and a
+// recognizer sees only the pointer). These are the GTK signals each kind
+// natively emits, connected ONCE at create.
+//
+// THE READ IS WRITTEN BACK FIRST. A contract read — `checkbox.on()`,
+// `slider.value()` — answers from the props, and the props are only ever
+// written by the application. So a control the USER changed would answer with
+// the state BEFORE the change. Every trampoline below syncs the platform's
+// answer into the props and only then calls the app, which is the rule
+// `facet_appkit/controls` records as "the reads that go stale".
+
+fn props_of(n: *core::Node, kind: u32) -> *u8 {
+    let d: *core::Data = core::node_data(n);
+    if d == (0 as *core::Data) { return 0 as *u8; }
+    if { (*d).kind } != kind { return 0 as *u8; }
+    return { (*d).props };
+}
+
+// EVERY button kind is a GtkToggleButton, whether or not it toggles.
+//
+// A GtkButton and a GtkToggleButton are different classes, so choosing between
+// them at create would freeze `toggles` for the life of the control — and
+// `toggles` is a live prop the application may flip. A GtkToggleButton that is
+// never left active is indistinguishable from a plain button, so the one that
+// can answer both is the one to build; a non-toggling click just puts the
+// state back.
+fn settle_toggle(w: *u8, toggles: bool, on: *bool) {
+    let t: gtk::ToggleButton = gtk::ToggleButton::from_raw(w);
+    if !toggles { t.set_active(false); return; }
+    { (*on) = t.get_active() };
+    return;
+}
+
+fn button_clicked(w: *u8, user: *u8) {
+    let n: *core::Node = user as *core::Node;
+    let p: *props::ButtonProps = props_of(n, props::K_BUTTON) as *props::ButtonProps;
+    if p == (0 as *props::ButtonProps) { return; }
+    settle_toggle(w, { (*p).toggles }, #addr_of((*p).on));
+    let h: fn(*u8, *u8) = { (*p).on_click };
+    if h != props::no_handler { h(w, { (*p).on_click_ctx }); }
+    return;
+}
+
+fn text_button_clicked(w: *u8, user: *u8) {
+    let n: *core::Node = user as *core::Node;
+    let p: *text_button::TextButtonProps =
+        props_of(n, text_button::K_TEXT_BUTTON) as *text_button::TextButtonProps;
+    if p == (0 as *text_button::TextButtonProps) { return; }
+    settle_toggle(w, { (*p).toggles }, #addr_of((*p).on));
+    let h: fn(*u8, *u8) = { (*p).on_click };
+    if h != props::no_handler { h(w, { (*p).on_click_ctx }); }
+    return;
+}
+
+fn icon_button_clicked(w: *u8, user: *u8) {
+    let n: *core::Node = user as *core::Node;
+    let p: *props::IconButtonProps = props_of(n, props::K_ICON_BUTTON) as *props::IconButtonProps;
+    if p == (0 as *props::IconButtonProps) { return; }
+    settle_toggle(w, { (*p).toggles }, #addr_of((*p).on));
+    let h: fn(*u8, *u8) = { (*p).on_clicked };
+    if h != props::no_handler { h(w, { (*p).on_clicked_ctx }); }
+    return;
+}
+
+// A radio's `toggled` fires on BOTH members of a group change — the one going
+// off and the one coming on — which is what lets an application keep its own
+// state without asking the group.
+fn radio_toggled(w: *u8, user: *u8) {
+    let n: *core::Node = user as *core::Node;
+    let p: *props::RadioProps = props_of(n, props::K_RADIO) as *props::RadioProps;
+    if p == (0 as *props::RadioProps) { return; }
+    { (*p).on = gtk::CheckButton::from_raw(w).get_active() };
+    let h: fn(*u8, *u8) = { (*p).on_checked_changed };
+    if h != props::no_handler { h(w, { (*p).on_checked_changed_ctx }); }
+    return;
+}
+
+fn stepper_value_changed(w: *u8, user: *u8) {
+    let n: *core::Node = user as *core::Node;
+    let p: *props::StepperProps = props_of(n, props::K_STEPPER) as *props::StepperProps;
+    if p == (0 as *props::StepperProps) { return; }
+    { (*p).value = gtk::SpinButton::from_raw(w).get_value() };
+    let h: fn(*u8, *u8) = { (*p).on_value_changed };
+    if h != props::no_handler { h(w, { (*p).on_value_changed_ctx }); }
+    return;
+}
+
+fn search_changed(w: *u8, user: *u8) {
+    let n: *core::Node = user as *core::Node;
+    let p: *props::SearchFieldProps = props_of(n, props::K_SEARCH_FIELD) as *props::SearchFieldProps;
+    if p == (0 as *props::SearchFieldProps) { return; }
+    { (*p).input_view.text = gtk::Editable::from_raw(w).get_text() };
+    let h: fn(*u8, *u8) = { (*p).input_view.on_text_changed };
+    if h != props::no_handler { h(w, { (*p).input_view.on_text_changed_ctx }); }
+    return;
+}
+
+fn search_activated(w: *u8, user: *u8) {
+    let n: *core::Node = user as *core::Node;
+    let p: *props::SearchFieldProps = props_of(n, props::K_SEARCH_FIELD) as *props::SearchFieldProps;
+    if p == (0 as *props::SearchFieldProps) { return; }
+    { (*p).input_view.text = gtk::Editable::from_raw(w).get_text() };
+    let h: fn(*u8, *u8) = { (*p).on_submit };
+    if h != props::no_handler { h(w, { (*p).on_submit_ctx }); }
+    return;
+}
+
+// The sender is the WIDGET, not the buffer that emitted `changed` — a handler
+// asking `key_of(sender)` must reach the node, and only the text view carries
+// it.
+fn area_changed(buffer: *u8, user: *u8) {
+    let n: *core::Node = user as *core::Node;
+    let p: *props::TextAreaProps = props_of(n, props::K_TEXT_AREA) as *props::TextAreaProps;
+    if p == (0 as *props::TextAreaProps) { return; }
+    // The limit is enforced on the way IN as well as on the way out: a
+    // GtkTextBuffer has no max-length, so this is the only moment a paste that
+    // overruns it can be cut back.
+    buffer_truncate(buffer, { (*p).input_view.max_length } as i32);
+    { (*p).input_view.text = buffer_text(buffer) };
+    // AUTO SIZE, and it has to happen HERE rather than in `apply`: an editor
+    // that grows with its text grows while the USER types, and nothing else in
+    // the pipeline knows the measurement went stale. `mark_content_changed`
+    // alone is not enough — flex would re-measure at the next layout and
+    // nothing would ask for one — so `touch` is what requests the sync.
+    if auto_sizes(n) {
+        { (*n).mark_content_changed() };
+        core::touch(n, text_area::P_TEXT);
+    }
+    let w: *u8 = core::view_of(n);
+    let h: fn(*u8, *u8) = { (*p).input_view.on_text_changed };
+    if h != props::no_handler { h(w, { (*p).input_view.on_text_changed_ctx }); }
+    return;
+}
+
+// Does this node measure ITSELF from its text?
+//
+// It lives in `input` rather than beside the text_area body because BOTH sides
+// need it — `controls` writes the editor and `views` decides whether to give
+// the node a measure callback — and `input` is the module both already import.
+// Putting it in either of them would be a cycle.
+fn auto_sizes(n: *core::Node) -> bool {
+    if n == (0 as *core::Node) { return false; }
+    let p: *props::TextAreaProps = props_of(n, props::K_TEXT_AREA) as *props::TextAreaProps;
+    if p == (0 as *props::TextAreaProps) { return false; }
+    return match { (*p).auto_size } {
+        vocab::AutoSize::TextChanges => true,
+        vocab::AutoSize::Disabled => false,
+    };
+}
+
+// ---- GtkTextBuffer's whole contents -------------------------------------------
+//
+// HAND-BOUND. `gtk_text_buffer_get_bounds` fills two GtkTextIters, which are
+// stack structs the GIR presents as caller-allocated out-parameters —
+// cpc-bindgen emits neither the getter nor the iterator type, so the pair is
+// bound here against a byte buffer. A GtkTextIter is 80 bytes across every GTK
+// 4 release; 96 is the margin.
+#[link_name = "gtk_text_buffer_get_bounds"]
+extern fn gtk_text_buffer_get_bounds(buffer: *u8, start: *u8, end: *u8);
+
+#[link_name = "gtk_text_buffer_get_text"]
+extern fn gtk_text_buffer_get_text(buffer: *u8, start: *u8, end: *u8,
+                                   include_hidden: i32) -> *u8;
+
+// The iterator half of the same hand-binding. A GtkTextBuffer addresses
+// positions by ITERATOR, so a caret move and a selection both need two of them
+// built from character offsets.
+#[link_name = "gtk_text_buffer_get_iter_at_offset"]
+extern fn gtk_text_buffer_get_iter_at_offset(buffer: *u8, iter: *u8, offset: i32);
+
+#[link_name = "gtk_text_buffer_select_range"]
+extern fn gtk_text_buffer_select_range(buffer: *u8, ins: *u8, bound: *u8);
+
+#[link_name = "gtk_text_buffer_place_cursor"]
+extern fn gtk_text_buffer_place_cursor(buffer: *u8, where_: *u8);
+
+#[link_name = "gtk_text_buffer_delete"]
+extern fn gtk_text_buffer_delete(buffer: *u8, start: *u8, end: *u8);
+
+#[link_name = "gtk_text_buffer_get_char_count"]
+extern fn gtk_text_buffer_get_char_count(buffer: *u8) -> i32;
+
+// Put the caret at `at`, selecting `length` characters from it. A zero length
+// is a caret move, which is the common case and the reason the two facet verbs
+// share one call.
+fn buffer_select(buffer: *u8, at: i32, length: i32) {
+    if buffer == (0 as *u8) { return; }
+    var a: [u8; 96] = [0u8; 96];
+    { gtk_text_buffer_get_iter_at_offset(buffer, #addr_of(a) as *u8, at) };
+    if length <= (0 as i32) {
+        { gtk_text_buffer_place_cursor(buffer, #addr_of(a) as *u8) };
+        return;
+    }
+    var b: [u8; 96] = [0u8; 96];
+    { gtk_text_buffer_get_iter_at_offset(buffer, #addr_of(b) as *u8, at + length) };
+    { gtk_text_buffer_select_range(buffer, #addr_of(a) as *u8, #addr_of(b) as *u8) };
+    return;
+}
+
+// Cut the buffer back to `limit` characters. `limit` of 0 or less is facet's
+// "no limit", not "empty".
+fn buffer_truncate(buffer: *u8, limit: i32) {
+    if buffer == (0 as *u8) { return; }
+    if limit <= (0 as i32) { return; }
+    let have: i32 = { gtk_text_buffer_get_char_count(buffer) };
+    if have <= limit { return; }
+    var a: [u8; 96] = [0u8; 96];
+    var b: [u8; 96] = [0u8; 96];
+    { gtk_text_buffer_get_iter_at_offset(buffer, #addr_of(a) as *u8, limit) };
+    { gtk_text_buffer_get_iter_at_offset(buffer, #addr_of(b) as *u8, have) };
+    { gtk_text_buffer_delete(buffer, #addr_of(a) as *u8, #addr_of(b) as *u8) };
+    return;
+}
+
+fn buffer_text(buffer: *u8) -> text::Text {
+    if buffer == (0 as *u8) { return text::new(); }
+    var start: [u8; 96] = [0u8; 96];
+    var end: [u8; 96] = [0u8; 96];
+    { gtk_text_buffer_get_bounds(buffer, #addr_of(start) as *u8, #addr_of(end) as *u8) };
+    let c: *u8 = { gtk_text_buffer_get_text(buffer, #addr_of(start) as *u8,
+                                            #addr_of(end) as *u8, 0 as i32) };
+    // `_full` — GTK hands back an owned string and the copy has to free it.
+    return bridge::cstr_to_text_full(c);
+}
+
+// GtkSwitch's `state-set` carries the state being MOVED TO and returns whether
+// the default handling is stopped. FALSE, always: returning TRUE would leave
+// the switch showing its old state while facet believed the new one.
+fn toggle_state_set(w: *u8, state: i32, user: *u8) -> i32 {
+    let n: *core::Node = user as *core::Node;
+    let p: *props::ToggleProps = props_of(n, props::K_TOGGLE) as *props::ToggleProps;
+    if p == (0 as *props::ToggleProps) { return 0 as i32; }
+    { (*p).on = state != (0 as i32) };
+    let h: fn(*u8, *u8) = { (*p).on_toggled };
+    if h != props::no_handler { h(w, { (*p).on_toggled_ctx }); }
+    return 0 as i32;
+}
+
+fn checkbox_toggled(w: *u8, user: *u8) {
+    let n: *core::Node = user as *core::Node;
+    let p: *props::CheckboxProps = props_of(n, props::K_CHECKBOX) as *props::CheckboxProps;
+    if p == (0 as *props::CheckboxProps) { return; }
+    { (*p).on = gtk::CheckButton::from_raw(w).get_active() };
+    let h: fn(*u8, *u8) = { (*p).on_checked_changed };
+    if h != props::no_handler { h(w, { (*p).on_checked_changed_ctx }); }
+    return;
+}
+
+fn slider_value_changed(w: *u8, user: *u8) {
+    let n: *core::Node = user as *core::Node;
+    let p: *props::SliderProps = props_of(n, props::K_SLIDER) as *props::SliderProps;
+    if p == (0 as *props::SliderProps) { return; }
+    { (*p).value = gtk::Range::from_raw(w).get_value() };
+    let h: fn(*u8, *u8) = { (*p).on_value_changed };
+    if h != props::no_handler { h(w, { (*p).on_value_changed_ctx }); }
+    return;
+}
+
+// THE DRAG EDGES, which `value-changed` cannot answer. That signal fires on
+// every step of a drag AND on a programmatic `set_value`, so it says "the value
+// moved" and never "the user took hold of it". `on_drag_started` /
+// `on_drag_completed` are the two edges of the grab, and a GtkGestureDrag on
+// the scale is where they are.
+//
+// The gesture does NOT claim the sequence. GtkRange has its own internal
+// gesture doing the actual dragging, and claiming here would take the drag away
+// from the widget — the slider would report a drag it then refused to perform.
+// Observational, like the motion band.
+
+fn slider_drag_begin(gesture: *u8, start_x: f64, start_y: f64, user: *u8) {
+    let n: *core::Node = user as *core::Node;
+    let p: *props::SliderProps = props_of(n, props::K_SLIDER) as *props::SliderProps;
+    if p == (0 as *props::SliderProps) { return; }
+    let h: fn(*u8, *u8) = { (*p).on_drag_started };
+    if h != props::no_handler { h(core::view_of(n), { (*p).on_drag_started_ctx }); }
+    return;
+}
+
+fn slider_drag_end(gesture: *u8, offset_x: f64, offset_y: f64, user: *u8) {
+    let n: *core::Node = user as *core::Node;
+    let p: *props::SliderProps = props_of(n, props::K_SLIDER) as *props::SliderProps;
+    if p == (0 as *props::SliderProps) { return; }
+    let h: fn(*u8, *u8) = { (*p).on_drag_completed };
+    if h != props::no_handler { h(core::view_of(n), { (*p).on_drag_completed_ctx }); }
+    return;
+}
+
+fn field_changed(w: *u8, user: *u8) {
+    let n: *core::Node = user as *core::Node;
+    let p: *props::TextFieldProps = props_of(n, props::K_TEXT_FIELD) as *props::TextFieldProps;
+    if p == (0 as *props::TextFieldProps) { return; }
+    { (*p).input_view.text = gtk::Editable::from_raw(w).get_text() };
+    // `on_text_changed` is InputView's, shared by every text-bearing kind —
+    // the same embedded block `apply_text_field` writes the text through.
+    let h: fn(*u8, *u8) = { (*p).input_view.on_text_changed };
+    if h != props::no_handler { h(w, { (*p).input_view.on_text_changed_ctx }); }
+    return;
+}
+
+fn field_activated(w: *u8, user: *u8) {
+    let n: *core::Node = user as *core::Node;
+    let p: *props::TextFieldProps = props_of(n, props::K_TEXT_FIELD) as *props::TextFieldProps;
+    if p == (0 as *props::TextFieldProps) { return; }
+    { (*p).input_view.text = gtk::Editable::from_raw(w).get_text() };
+    let h: fn(*u8, *u8) = { (*p).on_submit };
+    if h != props::no_handler { h(w, { (*p).on_submit_ctx }); }
+    return;
+}
+
+// Both adjustments, because facet declares ONE `observe_scrolled` and a
+// diagonal scroll moves both — an app that only heard about the vertical one
+// would miss half of every gesture.
+fn scrolled(adjustment: *u8, user: *u8) {
+    let n: *core::Node = user as *core::Node;
+    let p: *props::ScrollProps = props_of(n, props::K_SCROLL) as *props::ScrollProps;
+    if p == (0 as *props::ScrollProps) { return; }
+    let v: *u8 = core::view_of(n);
+    if v == (0 as *u8) { return; }
+    // The READ is written back first, as everywhere else: `scroll.scroll_y()`
+    // answers from the props, so a handler asking where it is must be given
+    // the position that caused it.
+    let sw: gtk::ScrolledWindow = gtk::ScrolledWindow::from_raw(v);
+    { (*p).scroll_x = sw.get_hadjustment().get_value() };
+    { (*p).scroll_y = sw.get_vadjustment().get_value() };
+    let h: fn(*u8, *u8) = { (*p).observe_scrolled };
+    if h != props::no_handler { h(v, { (*p).observe_scrolled_ctx }); }
+    return;
+}
+
+fn arm_scroll(v: *u8, n: *core::Node) {
+    let sw: gtk::ScrolledWindow = gtk::ScrolledWindow::from_raw(v);
+    let _h: u64 = sw.get_hadjustment().connect_value_changed(scrolled, n as *u8);
+    let _v: u64 = sw.get_vadjustment().connect_value_changed(scrolled, n as *u8);
+    return;
+}
+
+// ---- the popup's factories and its selection ---------------------------------
+//
+// A GtkDropDown builds its button and its rows through FACTORIES: `setup` makes
+// the widget once and `bind` writes one item into it. That is the recycling
+// protocol GTK uses everywhere, and it is why `label` and `item_enabled` are
+// answerable at all — neither is a property of a combo box.
+//
+// The node travels in the factory's user data, so both callbacks read live
+// props rather than a copy taken when the factory was made.
+
+fn popup_cell_setup(factory: *u8, item: *u8, user: *u8) {
+    let cell: gtk::Label = gtk::Label::new("");
+    cell.set_xalign(0.0f32);
+    // One line, no ellipsis: a menu row that ends in "…" has hidden the thing
+    // it was there to name.
+    cell.set_lines(1 as i32);
+    cell.set_ellipsize(0 as i32);
+    gtk::ListItem::from_raw(item).set_child(cell.upcast());
+    return;
+}
+
+// The BUTTON's content — what the popup reads when it is closed.
+fn popup_button_bind(factory: *u8, item: *u8, user: *u8) {
+    let n: *core::Node = user as *core::Node;
+    let p: *props::PopupProps = props_of(n, props::K_POPUP) as *props::PopupProps;
+    if p == (0 as *props::PopupProps) { return; }
+    let li: gtk::ListItem = gtk::ListItem::from_raw(item);
+    match li.get_child() {
+        option::Option[gtk::Widget]::Some(w) => {
+            gtk::Label::from_raw(w.raw())
+                .set_text(popup_button_text(p, { (*p).selected_index }));
+        }
+        option::Option[gtk::Widget]::None => { }
+    }
+    return;
+}
+
+// A ROW in the open popup. `item_enabled` decides whether it may be picked at
+// all — a header answers false, which is what the verb exists for — and GTK
+// says that with the row's own selectable/activatable pair rather than by
+// leaving it out of the list.
+fn popup_row_bind(factory: *u8, item: *u8, user: *u8) {
+    let n: *core::Node = user as *core::Node;
+    let p: *props::PopupProps = props_of(n, props::K_POPUP) as *props::PopupProps;
+    if p == (0 as *props::PopupProps) { return; }
+    let li: gtk::ListItem = gtk::ListItem::from_raw(item);
+    let at: usize = li.get_position() as usize;
+    let items: *vocab::TextList = #addr_of((*p).items);
+    var label: str = "";
+    if at < { (*items).count() } { label = { (*items).at(at) }; }
+    match li.get_child() {
+        option::Option[gtk::Widget]::Some(w) => {
+            let l: gtk::Label = gtk::Label::from_raw(w.raw());
+            l.set_text(label);
+            let on: bool = popup_item_enabled(p, at);
+            l.upcast().set_sensitive(on);
+            li.set_selectable(on);
+            li.set_activatable(on);
+        }
+        option::Option[gtk::Widget]::None => { }
+    }
+    return;
+}
+
+// `notify::selected` — a GtkDropDown's selection is a PROPERTY, so the change
+// is a notify rather than a signal of its own.
+#[link_name = "g_signal_connect_data"]
+extern fn sigc_notify(instance: *u8, detailed_signal: *u8,
+                      handler: fn(*u8, *u8, *u8),
+                      data: *u8, destroy_data: *u8, connect_flags: i32) -> u64;
+
+fn popup_selected(dropdown: *u8, pspec: *u8, user: *u8) {
+    let n: *core::Node = user as *core::Node;
+    let p: *props::PopupProps = props_of(n, props::K_POPUP) as *props::PopupProps;
+    if p == (0 as *props::PopupProps) { return; }
+    let raw: u32 = gtk::DropDown::from_raw(dropdown).get_selected();
+    // GTK says "nothing chosen" with an out-of-range sentinel; facet says -1,
+    // and translating it is what stops a cleared popup reading as row
+    // 4294967295.
+    var at: i64 = (0 as i64) -% (1 as i64);
+    if raw != gtk_invalid_position() { at = raw as i64; }
+    if { (*p).selected_index } == at { return; }
+    { (*p).selected_index = at };
+    let h: fn(*u8, *u8) = { (*p).on_selected_index_changed };
+    if h != props::no_handler { h(dropdown, { (*p).on_selected_index_changed_ctx }); }
+    return;
+}
+
+fn gtk_invalid_position() -> u32 { return (0 as u32) -% (1 as u32); }
+
+// What the BUTTON reads: the application's own label when it set one, then the
+// selected item, then the title — which is what a picker shows before anything
+// has been picked.
+fn popup_button_text(p: *props::PopupProps, at: i64) -> str {
+    let lab: str = { (*p).label.view() };
+    if lab != "" { return lab; }
+    let items: *vocab::TextList = #addr_of((*p).items);
+    if at >= (0 as i64) && (at as usize) < { (*items).count() } {
+        return { (*items).at(at as usize) };
+    }
+    return { (*p).title.view() };
+}
+
+fn popup_item_enabled(p: *props::PopupProps, at: usize) -> bool {
+    let f: fn(usize, *u8) -> bool = { (*p).item_enabled };
+    if f == props::every_item_enabled { return true; }
+    return f(at, { (*p).item_enabled_ctx });
+}
+
+fn arm_popup(v: *u8, n: *core::Node) {
+    let _s: u64 = { sigc_notify(v, #str_ptr("notify::selected\0"), popup_selected,
+                                n as *u8, 0 as *u8, 0 as i32) };
+    return;
+}
+
+// ---- pull to refresh -----------------------------------------------------------
+//
+// GTK has no pull-to-refresh anywhere: what exists is a scrolled window that
+// reports its position and a spinner. So the gesture is assembled here, and the
+// ONE thing that stops it fighting the scroll is that it only listens while the
+// scroll is ALREADY AT THE TOP — a scrolled window with room above it is a
+// scrolled window that owns the drag, and taking it would break scrolling to
+// add a refresh.
+//
+// The threshold is the distance a pull has to travel before it counts. Too
+// small and every flick refreshes; this is the figure every mobile toolkit
+// converged on.
+fn pull_threshold() -> f64 { return 64.0f64; }
+
+fn pull_enabled_key() -> *u8 { return #str_ptr("facet-gtk-pull-on\0"); }
+fn pull_fired_key() -> *u8 { return #str_ptr("facet-gtk-pull-fired\0"); }
+
+fn set_pull_enabled(v: *u8, on: bool) {
+    if v == (0 as *u8) { return; }
+    g::set_data(v, pull_enabled_key(), if on { 1 as *u8 } else { 0 as *u8 });
+    return;
+}
+
+fn pull_enabled(v: *u8) -> bool { return g::get_data(v, pull_enabled_key()) != (0 as *u8); }
+
+// Is there room above? A widget that is not a scrolled window has none, which
+// is the right answer: `refreshable` wrapping a plain box refreshes on any
+// downward pull, and one wrapping a list refreshes only at its top.
+fn at_top(v: *u8) -> bool {
+    if v == (0 as *u8) { return true; }
+    if !g::is_a(v, #str_ptr("GtkScrolledWindow\0")) { return true; }
+    return gtk::ScrolledWindow::from_raw(v).get_vadjustment().get_value() <= (0.5 as f64);
+}
+
+fn pull_begin(gesture: *u8, x: f64, y: f64, user: *u8) {
+    let n: *core::Node = user as *core::Node;
+    let v: *u8 = core::view_of(n);
+    if v == (0 as *u8) { return; }
+    // ONCE PER DRAG. Without the latch a pull held past the threshold fires a
+    // refresh on every motion event for as long as it is held.
+    g::set_data(v, pull_fired_key(), 0 as *u8);
+    return;
+}
+
+fn pull_update(gesture: *u8, dx: f64, dy: f64, user: *u8) {
+    let n: *core::Node = user as *core::Node;
+    let v: *u8 = core::view_of(n);
+    if v == (0 as *u8) { return; }
+    if !pull_enabled(v) { return; }
+    if g::get_data(v, pull_fired_key()) != (0 as *u8) { return; }
+    if dy < pull_threshold() { return; }
+    if !at_top(v) { return; }
+    g::set_data(v, pull_fired_key(), 1 as *u8);
+    begin_refresh(n, v);
+    return;
+}
+
+// Which kind is refreshing decides which props hold the flag, and both say the
+// same thing: the control IS refreshing now, and the application is told once.
+fn begin_refresh(n: *core::Node, v: *u8) {
+    let r: *props::RefreshableProps =
+        props_of(n, props::K_REFRESHABLE) as *props::RefreshableProps;
+    if r != (0 as *props::RefreshableProps) {
+        if { (*r).is_refreshing } { return; }
+        { (*r).is_refreshing = true };
+        core::touch(n, refreshable::P_IS_REFRESHING);
+        let h: fn(*u8, *u8) = { (*r).on_refreshing };
+        if h != props::no_handler { h(v, { (*r).on_refreshing_ctx }); }
+        return;
+    }
+    let l: *props::ListProps = props_of(n, props::K_LIST) as *props::ListProps;
+    if l == (0 as *props::ListProps) { return; }
+    if { (*l).is_refreshing } { return; }
+    { (*l).is_refreshing = true };
+    core::touch(n, list::P_IS_REFRESHING);
+    let h: fn(*u8, *u8) = { (*l).on_refreshing };
+    if h != props::no_handler { h(v, { (*l).on_refreshing_ctx }); }
+    return;
+}
+
+// Armed on the host in the BUBBLE phase, so a scroll that can still scroll
+// claims the drag first and this never sees it.
+fn arm_pull_to_refresh(host: *u8, spinner: *u8, n: *core::Node) {
+    let c: gtk::GestureDrag = gtk::GestureDrag::new();
+    let _b: u64 = c.connect_drag_begin(pull_begin, n as *u8);
+    let _u: u64 = c.connect_drag_update(pull_update, n as *u8);
+    add_controller(host, c.upcast().upcast().upcast(), phase_bubble());
+    return;
+}
+
+// ---- a scroll that SLIDES ------------------------------------------------------
+//
+// A GtkAdjustment has no animation of its own — setting `value` jumps — so
+// `animates_scroll` is a tween driven from a timeout. Sixty steps a second for
+// a quarter of a second, which is GTK's own transition length and MAUI's
+// default animation duration both.
+//
+// ONE OUTSTANDING TWEEN, in a static pair. A second call before the first
+// finishes replaces it, which is the right answer for a carousel — the user
+// swiped again — and is written down here rather than discovered. `after` in
+// `scheduler` records the same limitation for the same reason.
+
+#[link_name = "g_timeout_add"]
+extern fn g_timeout_add_tween(interval: u32, f: fn(*u8) -> i32, data: *u8) -> u32;
+
+const TWEEN_STEPS: i64 = 15;
+
+static TWEEN_ADJ: usize = 0;
+static TWEEN_FROM: f64 = 0.0f64;
+static TWEEN_TO: f64 = 0.0f64;
+static TWEEN_STEP: i64 = 0;
+
+fn tween_adjustment(adj: *u8, to: f64) {
+    if adj == (0 as *u8) { return; }
+    let a: gtk::Adjustment = gtk::Adjustment::from_raw(adj);
+    TWEEN_ADJ = { #addr(adj) };
+    TWEEN_FROM = a.get_value();
+    TWEEN_TO = to;
+    // A tween already running is REPLACED rather than joined: the step counter
+    // going back to zero is what the running timeout reads, so the old one
+    // finishes this tween instead of the previous.
+    let restart: bool = TWEEN_STEP > (0 as i64);
+    TWEEN_STEP = 0 as i64;
+    if restart { return; }
+    let _t: u32 = { g_timeout_add_tween(16 as u32, tween_step, 0 as *u8) };
+    return;
+}
+
+fn tween_step(user: *u8) -> i32 {
+    if TWEEN_ADJ == (0 as usize) { return 0 as i32; }        // G_SOURCE_REMOVE
+    TWEEN_STEP = TWEEN_STEP +% (1 as i64);
+    let t: f64 = (TWEEN_STEP as f64) / (TWEEN_STEPS as f64);
+    // Ease out: fast at first and settling, which is what a page turn does
+    // everywhere. `1 - (1-t)^2` rather than a curve table nobody can read.
+    let inv: f64 = (1.0 as f64) - t;
+    let e: f64 = (1.0 as f64) - (inv * inv);
+    let at: f64 = TWEEN_FROM + ((TWEEN_TO - TWEEN_FROM) * e);
+    gtk::Adjustment::from_raw(TWEEN_ADJ as *u8).set_value(at);
+    if TWEEN_STEP >= TWEEN_STEPS {
+        // Land exactly. An eased last step is a fraction short, and a carousel
+        // that stops a pixel before the page is a carousel with a seam.
+        gtk::Adjustment::from_raw(TWEEN_ADJ as *u8).set_value(TWEEN_TO);
+        TWEEN_ADJ = 0 as usize;
+        TWEEN_STEP = 0 as i64;
+        return 0 as i32;
+    }
+    return 1 as i32;                                          // G_SOURCE_CONTINUE
+}
+
+// ---- the carousel's own reads --------------------------------------------------
+//
+// `is_scrolling` and `position` are READS the application makes, so both are
+// written back before any handler runs — the rule every control here follows.
+
+fn carousel_scrolled(adjustment: *u8, user: *u8) {
+    let n: *core::Node = user as *core::Node;
+    let p: *props::CarouselProps = props_of(n, props::K_CAROUSEL) as *props::CarouselProps;
+    if p == (0 as *props::CarouselProps) { return; }
+    let v: *u8 = core::view_of(n);
+    if v == (0 as *u8) { return; }
+    { (*p).is_scrolling = true };
+    let at: i64 = page_under(n, gtk::Adjustment::from_raw(adjustment).get_value());
+    if at >= (0 as i64) && { (*p).position } != at {
+        { (*p).position = at };
+        let h: fn(*u8, *u8) = { (*p).on_position_changed };
+        if h != props::no_handler { h(v, { (*p).on_position_changed_ctx }); }
+        // `CurrentItemChanged` is the same moment on a carousel whose items ARE
+        // its pages: the position changed and so did what is under it.
+        let c: fn(*u8, *u8) = { (*p).on_current_item_changed };
+        if c != props::no_handler { c(v, { (*p).on_current_item_changed_ctx }); }
+    }
+    { (*p).is_scrolling = false };
+    return;
+}
+
+// Which page is at the leading edge, from the frames flex already computed.
+fn page_under(n: *core::Node, offset: f64) -> i64 {
+    let own: flex::Frame = { (*n).frame() };
+    var best: i64 = (0 as i64) -% (1 as i64);
+    var i: usize = 0 as usize;
+    let count: usize = core::child_count_of(n);
+    while i < count {
+        match core::child_of(n, i) {
+            option::Option[*core::Node]::Some(c) => {
+                let cf: flex::Frame = { (*c).frame() };
+                let left: f64 = cf.left - own.left;
+                // The page whose leading edge is at or before the offset, taking
+                // the LAST such — which is the one showing.
+                if left <= offset + (1.0 as f64) { best = i as i64; }
+            }
+            option::Option[*core::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return best;
+}
+
+fn arm_carousel(v: *u8, n: *core::Node) {
+    let sw: gtk::ScrolledWindow = gtk::ScrolledWindow::from_raw(v);
+    let _h: u64 = sw.get_hadjustment().connect_value_changed(carousel_scrolled, n as *u8);
+    return;
+}
+
+// ---- the pickers -------------------------------------------------------------
+//
+// A GtkMenuButton's popover is a PROPERTY (`active`), so opening and closing
+// are one `notify::active` — which is what makes `is_open`, `on_opened` and
+// `on_closed` all answerable here where a GtkDropDown's private popover made
+// them a cannot-row for `popup`. The same three verbs, two controls, opposite
+// answers, and the difference is only which widget GTK chose to expose.
+
+fn picker_open_changed(button: *u8, pspec: *u8, user: *u8) {
+    let n: *core::Node = user as *core::Node;
+    let open: bool = gtk::MenuButton::from_raw(button).get_active();
+    let d: *props::DatePickerProps =
+        props_of(n, props::K_DATE_PICKER) as *props::DatePickerProps;
+    if d != (0 as *props::DatePickerProps) {
+        if { (*d).is_open } == open { return; }
+        { (*d).is_open = open };
+        let h: fn(*u8, *u8) = if open { { (*d).on_opened } } else { { (*d).on_closed } };
+        let c: *u8 = if open { { (*d).on_opened_ctx } } else { { (*d).on_closed_ctx } };
+        if h != props::no_handler { h(button, c); }
+        return;
+    }
+    let t: *props::TimePickerProps =
+        props_of(n, props::K_TIME_PICKER) as *props::TimePickerProps;
+    if t == (0 as *props::TimePickerProps) { return; }
+    if { (*t).is_open } == open { return; }
+    { (*t).is_open = open };
+    let h: fn(*u8, *u8) = if open { { (*t).on_opened } } else { { (*t).on_closed } };
+    let c: *u8 = if open { { (*t).on_opened_ctx } } else { { (*t).on_closed_ctx } };
+    if h != props::no_handler { h(button, c); }
+    return;
+}
+
+// A day was picked. THE BOUNDS ARE ENFORCED HERE, because a GtkCalendar has no
+// range of its own — a pick outside them is put straight back, which is what a
+// picker with a minimum does everywhere.
+fn date_chosen(calendar: *u8, user: *u8) {
+    let n: *core::Node = user as *core::Node;
+    let p: *props::DatePickerProps =
+        props_of(n, props::K_DATE_PICKER) as *props::DatePickerProps;
+    if p == (0 as *props::DatePickerProps) { return; }
+    let c: gtk::Calendar = gtk::Calendar::from_raw(calendar);
+    // GTK counts months from ZERO and facet from one.
+    let picked: vocab::Date = vocab::Date {
+        year: { c.get_year() } as i64,
+        month: ({ c.get_month() } as i64) +% (1 as i64),
+        day: { c.get_day() } as i64,
+    };
+    if !controls_date_within(picked, { (*p).minimum_date }, { (*p).maximum_date }) {
+        // Put it back. Writing the prop's own date returns the calendar to
+        // where it was without the application ever seeing the refused pick.
+        core::touch(n, date_picker::P_DATE);
+        return;
+    }
+    { (*p).date = picked };
+    core::touch(n, date_picker::P_DATE);
+    let h: fn(*u8, *u8) = { (*p).on_date_selected };
+    if h != props::no_handler { h(calendar, { (*p).on_date_selected_ctx }); }
+    return;
+}
+
+fn time_chosen(spin: *u8, user: *u8) {
+    let n: *core::Node = user as *core::Node;
+    let p: *props::TimePickerProps =
+        props_of(n, props::K_TIME_PICKER) as *props::TimePickerProps;
+    if p == (0 as *props::TimePickerProps) { return; }
+    let v: *u8 = core::view_of(n);
+    if v == (0 as *u8) { return; }
+    let hh: *u8 = g::get_data(v, #str_ptr("facet-gtk-picker-hh\0"));
+    let mm: *u8 = g::get_data(v, #str_ptr("facet-gtk-picker-mm\0"));
+    if hh == (0 as *u8) || mm == (0 as *u8) { return; }
+    let hours: f64 = gtk::SpinButton::from_raw(hh).get_value();
+    let minutes: f64 = gtk::SpinButton::from_raw(mm).get_value();
+    { (*p).time = vocab::Duration::of_seconds((hours * (3600.0 as f64))
+                                              + (minutes * (60.0 as f64))) };
+    core::touch(n, time_picker::P_TIME);
+    let h: fn(*u8, *u8) = { (*p).on_time_selected };
+    if h != props::no_handler { h(spin, { (*p).on_time_selected_ctx }); }
+    return;
+}
+
+// The bounds test, here rather than in `controls`, because `controls` imports
+// this module and not the other way round.
+fn controls_date_within(d: vocab::Date, lo: vocab::Date, hi: vocab::Date) -> bool {
+    if date_is_set(lo) && date_ordinal(d) < date_ordinal(lo) { return false; }
+    if date_is_set(hi) && date_ordinal(d) > date_ordinal(hi) { return false; }
+    return true;
+}
+
+fn date_ordinal(d: vocab::Date) -> i64 {
+    return (d.year *% (10000 as i64)) +% (d.month *% (100 as i64)) +% d.day;
+}
+
+fn date_is_set(d: vocab::Date) -> bool { return d.year > (0 as i64); }
+
+fn arm_date_picker(button: *u8, calendar: *u8, n: *core::Node) {
+    let _o: u64 = { sigc_notify(button, #str_ptr("notify::active\0"),
+                                picker_open_changed, n as *u8, 0 as *u8, 0 as i32) };
+    let _d: u64 = gtk::Calendar::from_raw(calendar).connect_day_selected(date_chosen, n as *u8);
+    return;
+}
+
+fn arm_time_picker(button: *u8, hours: *u8, minutes: *u8, n: *core::Node) {
+    let _o: u64 = { sigc_notify(button, #str_ptr("notify::active\0"),
+                                picker_open_changed, n as *u8, 0 as *u8, 0 as i32) };
+    let _h: u64 = gtk::SpinButton::from_raw(hours).connect_value_changed(time_chosen, n as *u8);
+    let _m: u64 = gtk::SpinButton::from_raw(minutes).connect_value_changed(time_chosen, n as *u8);
+    return;
+}
+
+// ---- a tab's click -----------------------------------------------------------
+//
+// The strip is this package's, so its buttons are too — the index rides on the
+// widget rather than in a table, because there is exactly one place to put it
+// and it dies with the button.
+
+fn tab_index_key() -> *u8 { return #str_ptr("facet-gtk-tab-index\0"); }
+
+fn tab_clicked(button: *u8, user: *u8) {
+    let n: *core::Node = user as *core::Node;
+    let p: *props::TabsProps = props_of(n, props::K_TABS) as *props::TabsProps;
+    if p == (0 as *props::TabsProps) { return; }
+    // ONE-BASED on the widget, so 0 can mean "no index": the slot is a pointer.
+    let at: i64 = (g::get_data(button, tab_index_key()) as i64) -% (1 as i64);
+    if at < (0 as i64) { return; }
+    { (*p).selected_index = at };
+    core::touch(n, tabs::P_SELECTED_INDEX);
+    let h: fn(*u8, *u8) = { (*p).on_tab_changed };
+    if h != props::no_handler { h(button, { (*p).on_tab_changed_ctx }); }
+    return;
+}
+
+fn arm_tab(button: *u8, n: *core::Node, at: usize) {
+    g::set_data(button, tab_index_key(), (at +% (1 as usize)) as *u8);
+    let _i: u64 = gtk::Button::from_raw(button).connect_clicked(tab_clicked, n as *u8);
+    return;
+}
+
+// ---- a sequence row's click --------------------------------------------------
+//
+// ONE handler for `list` and `collection` both, and for every row of both. What
+// it needs is the row's INDEX and the control that owns it, and both come off
+// the sender: `component::item_index_of` reads the index the row was tagged
+// with (1-based underneath, so "no index" and "row zero" are different
+// answers), and `node_of_kind_above` walks the widget tree to the owner because
+// facet's own tree has no parent pointers.
+//
+// A GROUP HEADER is not a row and carries no index, so a click on one answers
+// None here and falls through — which is what a header should do.
+
+fn sequence_row_click(sender: *u8, ctx: *u8) -> bool {
+    let at: usize = match component::item_index_of(sender) {
+        option::Option[usize]::Some(i) => i,
+        option::Option[usize]::None => { return false; }
+    };
+    let owner: *core::Node = node_of_kind_above(sender, props::K_LIST);
+    if owner != (0 as *core::Node) { return list_row_click(owner, at, sender); }
+    let coll: *core::Node = node_of_kind_above(sender, props::K_COLLECTION);
+    if coll != (0 as *core::Node) { return collection_row_click(coll, at, sender); }
+    return false;
+}
+
+// `SelectionMode::None` is a list that CANNOT be selected, and a click on one
+// still taps: the ledger keeps `ItemTapped` and `ItemSelected` apart precisely
+// so a read-only list can be clicked.
+fn selects(mode: vocab::SelectionMode) -> bool {
+    return match mode {
+        vocab::SelectionMode::None => false,
+        vocab::SelectionMode::Single => true,
+        vocab::SelectionMode::Multiple => true,
+    };
+}
+
+fn list_row_click(owner: *core::Node, at: usize, sender: *u8) -> bool {
+    let p: *props::ListProps = props_of(owner, props::K_LIST) as *props::ListProps;
+    if p == (0 as *props::ListProps) { return false; }
+    // The READ is written back BEFORE the handler, as everywhere else:
+    // `list.selected_index()` answers from the props, so a handler asking
+    // which row it is on must be given the one that caused the call.
+    if selects({ (*p).selection_mode }) {
+        { (*p).selected_index = at as i64 };
+        core::touch(owner, list::P_SELECTED_INDEX);
+        let sel: fn(*u8, *u8) = { (*p).on_item_selected };
+        if sel != props::no_handler { sel(sender, { (*p).on_item_selected_ctx }); }
+    }
+    let tap: fn(*u8, *u8) = { (*p).on_item_tapped };
+    if tap != props::no_handler { tap(sender, { (*p).on_item_tapped_ctx }); }
+    return true;
+}
+
+fn collection_row_click(owner: *core::Node, at: usize, sender: *u8) -> bool {
+    let p: *props::CollectionProps =
+        props_of(owner, props::K_COLLECTION) as *props::CollectionProps;
+    if p == (0 as *props::CollectionProps) { return false; }
+    if !selects({ (*p).selectable_items_view.selection_mode }) { return false; }
+    { (*p).selected_index = at as i64 };
+    core::touch(owner, collection::P_SELECTED_INDEX);
+    let h: fn(*u8, *u8) = { (*p).selectable_items_view.on_selection_changed };
+    if h != props::no_handler { h(sender, { (*p).selectable_items_view.on_selection_changed_ctx }); }
+    return true;
+}
+
+// ---- the tree's two gestures -------------------------------------------------
+//
+// A tree row is a facet node this package materialised, so its handlers are
+// gesture-band handlers like any other — but the SENDER is all they get, and
+// what they need is the model node the row stands for plus the tree that owns
+// it. Both come off the sender: the row carries the model node as its `item`,
+// and `node_of_kind_above` walks the widget tree to the tree node, because
+// facet's own tree has no parent pointers.
+//
+// NOTHING IS REBUILT HERE. Both handlers write a prop and touch a bit; the
+// rows are re-materialised by `apply_tree` on the next sync, which is an idle
+// callback — so the widget this handler is running inside is never unparented
+// underneath GTK's own dispatch.
+
+fn tree_node_of(sender: *u8) -> *tree::TreeNode {
+    return component::item_of(sender) as *tree::TreeNode;
+}
+
+fn tree_owner_of(sender: *u8) -> *core::Node {
+    return node_of_kind_above(sender, tree::K_TREE);
+}
+
+// Click the triangle: open or close. The row's own gesture never sees this —
+// the disclosure claims the sequence, which is the ordinary decline chain
+// working in the one place a control needs it against itself.
+fn tree_disclosure_click(sender: *u8, ctx: *u8) -> bool {
+    let tn: *tree::TreeNode = tree_node_of(sender);
+    if tn == (0 as *tree::TreeNode) { return false; }
+    let owner: *core::Node = tree_owner_of(sender);
+    if owner == (0 as *core::Node) { return false; }
+    let id: str = { (*tn).id_of() };
+    if id == "" { return false; }
+    match tree::from(owner) {
+        option::Option[tree::Tree]::Some(t) => {
+            if tree_id_is_expanded(owner, id) { let _c: tree::Tree = t.collapse(id); }
+            else { let _e: tree::Tree = t.expand(id); }
+        }
+        option::Option[tree::Tree]::None => { return false; }
+    }
+    return true;
+}
+
+fn tree_id_is_expanded(owner: *core::Node, id: str) -> bool {
+    let p: *tree::TreeProps = tree_props_of(owner);
+    if p == (0 as *tree::TreeProps) { return false; }
+    let ex: *vocab::TextList = { #addr_of((*p).expanded) };
+    var i: usize = 0 as usize;
+    let n: usize = { (*ex).count() };
+    while i < n {
+        if { (*ex).at(i) } == id { return true; }
+        i = i +% (1 as usize);
+    }
+    return false;
+}
+
+fn tree_props_of(n: *core::Node) -> *tree::TreeProps {
+    let d: *core::Data = core::node_data(n);
+    if d == (0 as *core::Data) { return 0 as *tree::TreeProps; }
+    if { (*d).kind } != tree::K_TREE { return 0 as *tree::TreeProps; }
+    return { (*d).props } as *tree::TreeProps;
+}
+
+// Click the row: select it. The READ is written back before the handler runs,
+// as everywhere else — `tree.selected()` answers from the props, so an
+// application asking which row it is on must be given the one that caused the
+// call.
+//
+// A BRANCH ALSO TOGGLES. Clicking the label of a folder opens it on every
+// desktop, and a catalog whose sections only open from a 16-point triangle is
+// a catalog that reads as broken.
+fn tree_row_click(sender: *u8, ctx: *u8) -> bool {
+    let tn: *tree::TreeNode = tree_node_of(sender);
+    if tn == (0 as *tree::TreeNode) { return false; }
+    let owner: *core::Node = tree_owner_of(sender);
+    if owner == (0 as *core::Node) { return false; }
+    let p: *tree::TreeProps = tree_props_of(owner);
+    if p == (0 as *tree::TreeProps) { return false; }
+    let id: str = { (*tn).id_of() };
+    { (*p).selected = text::from_str(id) };
+    core::touch(owner, tree::P_SELECTED);
+    if { (*tn).is_branch } {
+        match tree::from(owner) {
+            option::Option[tree::Tree]::Some(t) => {
+                if tree_id_is_expanded(owner, id) { let _c: tree::Tree = t.collapse(id); }
+                else { let _e: tree::Tree = t.expand(id); }
+            }
+            option::Option[tree::Tree]::None => { }
+        }
+    }
+    let h: fn(*tree::TreeNode, *u8) = { (*p).on_select };
+    if h != tree::no_select { h(tn, { (*p).on_select_ctx }); }
+    return true;
+}
+
+// ---- the split's divider -----------------------------------------------------
+//
+// The one control in this package whose gesture is the CONTROL, not a modifier
+// on it: a divider IS a thing you drag. So it gets its own GtkGestureDrag,
+// armed on the divider widget rather than through the gesture band — an
+// application that never wrote `.gesture(...)` still expects to be able to drag
+// a split.
+//
+// The offset GTK reports is from where the drag STARTED, so the position at
+// that moment is what it is added to; reading the live position each update
+// would compound every delta.
+static DRAG_ORIGIN: f64 = 0.0f64;
+
+fn split_drag_begin(gesture: *u8, x: f64, y: f64, user: *u8) {
+    let n: *core::Node = user as *core::Node;
+    let p: *split::SplitProps = split_props(n);
+    if p == (0 as *split::SplitProps) { return; }
+    DRAG_ORIGIN = { (*p).position };
+    return;
+}
+
+fn split_drag_update(gesture: *u8, dx: f64, dy: f64, user: *u8) {
+    let n: *core::Node = user as *core::Node;
+    let p: *split::SplitProps = split_props(n);
+    if p == (0 as *split::SplitProps) { return; }
+    let along: f64 = match { (*p).axis } {
+        split::SplitAxis::Columns => dx,
+        split::SplitAxis::Rows => dy,
+    };
+    var next: f64 = DRAG_ORIGIN + along;
+    // BOTH minimums, here, because this is the path a person moves a divider
+    // by and the live widget is in hand — its allocation is what `min_trailing`
+    // has to be measured against, and `apply_split`'s own clamp reads a frame
+    // that is one layout behind.
+    if next < { (*p).min_leading } { next = { (*p).min_leading }; }
+    let host: *u8 = core::view_of(n);
+    if host != (0 as *u8) {
+        let w: gtk::Widget = gtk::Widget::from_raw(host);
+        let avail: f64 = match { (*p).axis } {
+            split::SplitAxis::Columns => { w.get_width() } as f64,
+            split::SplitAxis::Rows => { w.get_height() } as f64,
+        };
+        let cap: f64 = avail - { (*p).min_trailing };
+        if avail > (0.0 as f64) && cap > { (*p).min_leading } && next > cap { next = cap; }
+    }
+    { (*p).position = next };
+    // Through the ordinary dirty word, so `apply_split` re-writes the panes'
+    // style and the sync's own relayout puts them there. Nothing here places a
+    // widget; that would be a second layout path.
+    core::touch(n, split::P_POSITION);
+    let h: fn(*u8, *u8) = { (*p).on_move };
+    if h != props::no_handler { h(core::view_of(n), { (*p).ctx }); }
+    return;
+}
+
+fn split_props(n: *core::Node) -> *split::SplitProps {
+    let d: *core::Data = core::node_data(n);
+    if d == (0 as *core::Data) { return 0 as *split::SplitProps; }
+    if { (*d).kind } != split::K_SPLIT { return 0 as *split::SplitProps; }
+    return { (*d).props } as *split::SplitProps;
+}
+
+// Armed on the DIVIDER, with the split's node as its context.
+fn arm_split(divider: *u8, n: *core::Node) {
+    let c: gtk::GestureDrag = gtk::GestureDrag::new();
+    let _b: u64 = c.connect_drag_begin(split_drag_begin, n as *u8);
+    let _u: u64 = c.connect_drag_update(split_drag_update, n as *u8);
+    add_controller(divider, c.upcast().upcast().upcast(), phase_bubble());
+    // The pointer says the thing is draggable before it is dragged, which is
+    // the whole affordance of a divider one pixel wide. Named for the axis: a
+    // row-splitting divider resizes rows, and the two cursors are different
+    // pictures on every desktop.
+    let p: *split::SplitProps = split_props(n);
+    var cursor: str = "col-resize";
+    if p != (0 as *split::SplitProps) {
+        cursor = match { (*p).axis } {
+            split::SplitAxis::Columns => "col-resize",
+            split::SplitAxis::Rows => "row-resize",
+        };
+    }
+    gtk::Widget::from_raw(divider).set_cursor_from_name(cursor);
+    return;
+}
+
+// Connect the kind's own signals. Called once, from the kind's `create_*`.
+fn arm_button(v: *u8, n: *core::Node) {
+    let _i: u64 = gtk::Button::from_raw(v).connect_clicked(button_clicked, n as *u8);
+    return;
+}
+
+fn arm_text_button(v: *u8, n: *core::Node) {
+    let _i: u64 = gtk::Button::from_raw(v).connect_clicked(text_button_clicked, n as *u8);
+    return;
+}
+
+fn arm_icon_button(v: *u8, n: *core::Node) {
+    let _i: u64 = gtk::Button::from_raw(v).connect_clicked(icon_button_clicked, n as *u8);
+    return;
+}
+
+fn arm_radio(v: *u8, n: *core::Node) {
+    let _i: u64 = gtk::CheckButton::from_raw(v).connect_toggled(radio_toggled, n as *u8);
+    return;
+}
+
+fn arm_stepper(v: *u8, n: *core::Node) {
+    let _i: u64 = gtk::SpinButton::from_raw(v).connect_value_changed(stepper_value_changed,
+                                                                    n as *u8);
+    return;
+}
+
+fn arm_search_field(v: *u8, n: *core::Node) {
+    let _c: u64 = gtk::Editable::from_raw(v).connect_changed(search_changed, n as *u8);
+    let _a: u64 = gtk::SearchEntry::from_raw(v).connect_activate(search_activated, n as *u8);
+    return;
+}
+
+// The buffer is what emits `changed`, so the connection is made on it and the
+// node travels in the user data.
+fn arm_text_area(v: *u8, n: *core::Node) {
+    let b: gtk::TextBuffer = gtk::TextView::from_raw(v).get_buffer();
+    let _c: u64 = b.connect_changed(area_changed, n as *u8);
+    return;
+}
+
+fn arm_toggle(v: *u8, n: *core::Node) {
+    let _i: u64 = gtk::Switch::from_raw(v).connect_state_set(toggle_state_set, n as *u8);
+    return;
+}
+
+fn arm_checkbox(v: *u8, n: *core::Node) {
+    let _i: u64 = gtk::CheckButton::from_raw(v).connect_toggled(checkbox_toggled, n as *u8);
+    return;
+}
+
+fn arm_slider(v: *u8, n: *core::Node) {
+    let _i: u64 = gtk::Range::from_raw(v).connect_value_changed(slider_value_changed, n as *u8);
+    // The grab's two edges — see `slider_drag_begin`. Armed unconditionally
+    // alongside `value-changed` rather than gated on the handlers being set:
+    // a slider already carries this controller's cost in GtkRange itself, and
+    // the dispatch reads the handler at fire time like every other in this file.
+    let d: gtk::GestureDrag = gtk::GestureDrag::new();
+    let _b: u64 = d.connect_drag_begin(slider_drag_begin, n as *u8);
+    let _e: u64 = d.connect_drag_end(slider_drag_end, n as *u8);
+    add_controller(v, d.upcast().upcast().upcast(), phase_bubble());
+    return;
+}
+
+fn arm_text_field(v: *u8, n: *core::Node) {
+    // `changed` is GtkEditable's, an interface GtkEntry implements — the same
+    // tier `apply_text_field` writes through.
+    let _c: u64 = gtk::Editable::from_raw(v).connect_changed(field_changed, n as *u8);
+    let _a: u64 = gtk::Entry::from_raw(v).connect_activate(field_activated, n as *u8);
+    return;
+}
+
+// ---- the sender readers ------------------------------------------------------
+//
+// A handler holds only its opaque `sender`, which on this backend is always the
+// GtkWidget that fired. Every reader is the same walk up the widget tree to the
+// nearest node, so `key` and `item` can never resolve off different widgets.
+//
+// PARTIALLY FILLED, and that is a supported state rather than a half-wire:
+// `component::SenderReaders` documents a zero field as keeping facet's portable
+// default, and every reader below is checked for null at the call site. The
+// three drag-and-drop readers are left zero because this backend has no
+// GtkDropTarget yet — an empty `dropped_text` would be a LIE, where the
+// portable default is facet answering "no backend told me".
+
+fn key_of(sender: *u8) -> text::Text {
+    let n: *core::Node = node_at_or_above(sender);
+    if n == (0 as *core::Node) { return text::new(); }
+    return text::from_str({ (*n).key() });
+}
+
+fn item_of(sender: *u8) -> *u8 {
+    let n: *core::Node = node_at_or_above(sender);
+    if n == (0 as *core::Node) { return 0 as *u8; }
+    return core::item_of(n);
+}
+
+// Bring the keyed element to the front of its siblings, in place. In a GtkFixed
+// the LAST child is the topmost, and `insert_before(parent, NULL)` is GTK's
+// "move to the end" — no remove/re-add, so the widget keeps its state.
+fn raise(sender: *u8, key: str) {
+    if sender == (0 as *u8) { return; }
+    let target: *u8 = find_by_key(top_of(sender), key);
+    if target == (0 as *u8) { return; }
+    let host: *u8 = parent_of(target);
+    if host == (0 as *u8) { return; }
+    gtk::Widget::from_raw(target)
+        .insert_before(gtk::Widget::from_raw(host), gtk::Widget::from_raw(0 as *u8));
+    return;
+}
+
+fn top_of(v: *u8) -> *u8 {
+    var cur: *u8 = v;
+    var going: bool = true;
+    while going {
+        let p: *u8 = parent_of(cur);
+        if p == (0 as *u8) { going = false; } else { cur = p; }
+    }
+    return cur;
+}
+
+// Depth-first over the WIDGET tree, matching on the node each widget carries.
+// The widget tree rather than facet's: `raise` is asked from a handler, which
+// holds a widget and not a root.
+fn find_by_key(root: *u8, key: str) -> *u8 {
+    if root == (0 as *u8) { return 0 as *u8; }
+    let n: *core::Node = node_of_widget(root);
+    if n != (0 as *core::Node) {
+        if { (*n).key() } == key { return root; }
+    }
+    var child: *u8 = first_child_of(root);
+    while child != (0 as *u8) {
+        let hit: *u8 = find_by_key(child, key);
+        if hit != (0 as *u8) { return hit; }
+        child = next_sibling_of(child);
+    }
+    return 0 as *u8;
+}
+
+fn first_child_of(v: *u8) -> *u8 {
+    match gtk::Widget::from_raw(v).get_first_child() {
+        option::Option[gtk::Widget]::Some(c) => { return c.raw(); }
+        option::Option[gtk::Widget]::None => { return 0 as *u8; }
+    }
+}
+
+fn next_sibling_of(v: *u8) -> *u8 {
+    match gtk::Widget::from_raw(v).get_next_sibling() {
+        option::Option[gtk::Widget]::Some(c) => { return c.raw(); }
+        option::Option[gtk::Widget]::None => { return 0 as *u8; }
+    }
+}
+
+// What the last drop on this node delivered — the KEY of the node that was
+// dragged. Empty when nothing has been dropped on it, which is also what a
+// caller gets mid-teardown and is the right answer both times.
+fn dropped_text(sender: *u8) -> text::Text {
+    let v: *u8 = drop_widget_of(sender);
+    if v == (0 as *u8) { return text::new(); }
+    let p: *u8 = g::get_data(v, drop_text_key());
+    if p == (0 as *u8) { return text::new(); }
+    // `cstr_to_text`, not `_full`: the widget owns the copy and hands out a
+    // reading of it, so freeing here would take it away from the next caller.
+    return bridge::cstr_to_text(p);
+}
+
+fn drag_targeted(sender: *u8) -> bool {
+    let v: *u8 = drop_widget_of(sender);
+    if v == (0 as *u8) { return false; }
+    return g::get_data(v, drag_targeted_key()) != (0 as *u8);
+}
+
+// WHERE the drop landed, in the receiving node's own coordinate space.
+//
+// Only the widget that was JUST dropped on answers, and only until the next
+// drop: one record, because the contract asks during the drop's own handler
+// and "nothing has been dropped on me" is the correct answer at every other
+// moment. Keeping a stale point per widget would let a handler read where the
+// LAST drop landed and place a card there.
+fn drop_position(sender: *u8) -> option::Option[vocab::Point] {
+    let v: *u8 = drop_widget_of(sender);
+    if v == (0 as *u8) { return option::Option[vocab::Point]::None; }
+    if { #addr(v) } != DROP_WIDGET { return option::Option[vocab::Point]::None; }
+    return option::Option[vocab::Point]::Some(vocab::Point { x: DROP_X, y: DROP_Y });
+}
+
+// The three drop readers resolve off the same walk as `key_of`, so a drop
+// reported on an untagged child answers about the node that armed the target.
+fn drop_widget_of(sender: *u8) -> *u8 {
+    let n: *core::Node = node_at_or_above(sender);
+    if n == (0 as *core::Node) { return 0 as *u8; }
+    return core::view_of(n);
+}
+
+fn sender_readers() -> component::SenderReaders {
+    return component::SenderReaders {
+        raise: raise,
+        key_of: key_of,
+        item_of: item_of,
+        dropped_text: dropped_text,
+        drop_position: drop_position,
+        drag_targeted: drag_targeted,
+    };
+}
+
+fn install() {
+    gestures::install_key_reader(key_reader());
+    component::install_sender_readers(sender_readers());
+    return;
+}
+
+fn uninstall() {
+    gestures::uninstall_key_reader();
+    component::uninstall_sender_readers();
+    return;
+}

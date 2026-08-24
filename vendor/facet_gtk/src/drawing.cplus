@@ -1,0 +1,858 @@
+// facet_gtk drawing — the canvas replay.
+//
+// facet's `canvas` carries a `Drawable`, and a Drawable RECORDS: it is handed a
+// `vocab::Canvas` and appends commands to it. Nothing here is called back into
+// facet; this module reads the recording and executes it against cairo, once,
+// in order. That is the whole seam, and it is why the backend has one replay
+// loop instead of forty registered callbacks.
+//
+// The AppKit backend's `drawing.cplus` is the same loop against Core Graphics
+// and was read as the SHAPE, not ported: a GtkDrawingArea hands a cairo context
+// to a draw function where AppKit hands a CGContext to `drawRect:`, and cairo
+// keeps its path in the context where CG builds one separately.
+//
+// Two things make the replay short:
+//
+//   cairo is already TOP-LEFT with y growing downward, the same as flex — so
+//   unlike the AppKit backend there is no flip arithmetic anywhere below;
+//   the recording is already in the widget's own space, because the Drawable
+//   was given the laid-out size and drew inside it.
+//
+// ---- cairo, hand-bound --------------------------------------------------------
+//
+// `vendor/cairo` binds the TYPES and none of the calls — cpc-bindgen had no GIR
+// to read for a C library that ships none. These are the drawing calls one
+// module makes, and they are declared here rather than grown into the cairo
+// package because nothing else in facet draws.
+
+import "stdlib/option" as option;
+import "stdlib/text" as text;
+import "stdlib/vec" as vec;
+import "flex_layout/flex_layout" as flex;
+import "facet/facet" as core;
+import "facet/props" as props;
+import "facet/vocabulary" as vocab;
+import "facet/canvas" as canvas;
+import "gtk4/gtk4" as gtk;
+import "pango/pango" as pango;
+import "pangocairo/pangocairo" as pangocairo;
+import "cairo/cairo" as cairo;
+import "gobject/runtime" as g;
+import "./paint" as paint;
+
+extern fn cairo_save(cr: *u8);
+extern fn cairo_restore(cr: *u8);
+extern fn cairo_translate(cr: *u8, tx: f64, ty: f64);
+extern fn cairo_scale(cr: *u8, sx: f64, sy: f64);
+extern fn cairo_rotate(cr: *u8, radians: f64);
+// cairo_matrix_t is six doubles in the order xx yx xy yy x0 y0 — which is
+// vocab::Transform's a b c d tx ty under different names and in the same
+// order, so the copy is the whole conversion.
+#[repr(C)]
+struct Matrix { xx: f64, yx: f64, xy: f64, yy: f64, x0: f64, y0: f64 }
+extern fn cairo_transform(cr: *u8, matrix: *Matrix);
+extern fn cairo_identity_matrix(cr: *u8);
+
+extern fn cairo_set_line_width(cr: *u8, width: f64);
+extern fn cairo_set_miter_limit(cr: *u8, limit: f64);
+extern fn cairo_set_line_cap(cr: *u8, cap: i32);
+extern fn cairo_set_line_join(cr: *u8, join: i32);
+extern fn cairo_set_dash(cr: *u8, dashes: *f64, num_dashes: i32, offset: f64);
+extern fn cairo_set_source_rgba(cr: *u8, r: f64, gg: f64, b: f64, a: f64);
+extern fn cairo_set_antialias(cr: *u8, antialias: i32);
+extern fn cairo_set_operator(cr: *u8, op: i32);
+
+extern fn cairo_new_path(cr: *u8);
+extern fn cairo_close_path(cr: *u8);
+extern fn cairo_move_to(cr: *u8, x: f64, y: f64);
+extern fn cairo_line_to(cr: *u8, x: f64, y: f64);
+extern fn cairo_curve_to(cr: *u8, x1: f64, y1: f64, x2: f64, y2: f64, x3: f64, y3: f64);
+extern fn cairo_rectangle(cr: *u8, x: f64, y: f64, width: f64, height: f64);
+extern fn cairo_arc(cr: *u8, xc: f64, yc: f64, radius: f64, angle1: f64, angle2: f64);
+extern fn cairo_arc_negative(cr: *u8, xc: f64, yc: f64, radius: f64,
+                             angle1: f64, angle2: f64);
+extern fn cairo_stroke(cr: *u8);
+extern fn cairo_fill(cr: *u8);
+extern fn cairo_fill_preserve(cr: *u8);
+extern fn cairo_clip(cr: *u8);
+extern fn cairo_set_fill_rule(cr: *u8, rule: i32);
+
+extern fn cairo_pattern_create_linear(x0: f64, y0: f64, x1: f64, y1: f64) -> *u8;
+extern fn cairo_pattern_add_color_stop_rgba(pattern: *u8, offset: f64,
+                                            r: f64, gg: f64, b: f64, a: f64);
+extern fn cairo_set_source(cr: *u8, source: *u8);
+extern fn cairo_pattern_destroy(pattern: *u8);
+
+// NO TOY TEXT API. cairo's `show_text` takes one string at one point and knows
+// nothing about wrapping, alignment or per-run styling — it also has two font
+// weights where facet names ten. So all three text commands go through Pango,
+// which is already a dependency of this package and is what GTK itself draws
+// text with.
+
+// ---- the widget ---------------------------------------------------------------
+
+fn canvas_node_key() -> *u8 { return #str_ptr("facet-gtk-canvas-node\0"); }
+
+fn create_canvas(n: *core::Node) -> *u8 {
+    let area: gtk::DrawingArea = gtk::DrawingArea::new();
+    g::set_data(area.raw(), canvas_node_key(), n as *u8);
+    // The draw function is set ONCE. GTK calls it whenever the area needs
+    // painting; a `redraw` is `queue_draw`, not a second registration.
+    set_draw_func(area.raw(), canvas_draw, n as *u8, 0 as *u8);
+    return area.upcast().raw();
+}
+
+// `gtk_drawing_area_set_draw_func` takes a GtkDrawingAreaDrawFunc, which the
+// GIR presents as a callback cpc-bindgen skips — so it is bound here with the
+// shape the callback actually has.
+#[link_name = "gtk_drawing_area_set_draw_func"]
+extern fn set_draw_func(area: *u8, draw_func: fn(*u8, *u8, i32, i32, *u8),
+                        user_data: *u8, destroy: *u8);
+
+fn apply_canvas(v: *u8, n: *core::Node, dirty: u64) {
+    // `drawable` and `redraw` both mean the same thing to a drawing area: what
+    // it paints has changed. GTK repaints on its own schedule, so the answer to
+    // both is to ask for one.
+    if (dirty & (canvas::P_DRAWABLE | canvas::P_REDRAW)) != (0 as u64) {
+        gtk::Widget::from_raw(v).queue_draw();
+    }
+    return;
+}
+
+fn drawable_of(n: *core::Node) -> vocab::Drawable {
+    let d: *core::Data = core::node_data(n);
+    if d == (0 as *core::Data) { return vocab::Drawable::none(); }
+    if { (*d).kind } != props::K_CANVAS { return vocab::Drawable::none(); }
+    let p: *props::CanvasProps = { (*d).props } as *props::CanvasProps;
+    if p == (0 as *props::CanvasProps) { return vocab::Drawable::none(); }
+    return { (*p).drawable };
+}
+
+// GTK's draw function. The recording is made HERE, per paint, rather than kept:
+// a Drawable is a function of the size it is given, so a canvas that is resized
+// draws itself again rather than scaling what it drew before.
+fn canvas_draw(area: *u8, cr: *u8, width: i32, height: i32, user: *u8) {
+    let n: *core::Node = user as *core::Node;
+    if n == (0 as *core::Node) { return; }
+    let d: vocab::Drawable = drawable_of(n);
+    if d.is_none() { return; }
+    let size: vocab::Size = vocab::Size::of(width as f64, height as f64);
+    let scale: f64 = { gtk::Widget::from_raw(area).get_scale_factor() } as f64;
+    var canvas: vocab::Canvas = vocab::Canvas::of(size, scale);
+    let f: fn(*vocab::Canvas, vocab::Rect, *u8) = d.draw;
+    f(#addr_of(canvas), vocab::Rect::sized(size.width, size.height), d.ctx);
+    replay(cr, #addr_of(canvas));
+    return;
+}
+
+// ---- the replay ---------------------------------------------------------------
+//
+// cairo carries most of the state itself (line width, dash, cap, join, the
+// matrix, the clip) and `cairo_save`/`cairo_restore` save all of it. What cairo
+// has no state for is the STROKE and FILL colours as separate things — it has
+// ONE source — and the font and the fill brush. Those four ride here and are
+// pushed and popped alongside.
+
+struct DrawState {
+    stroke: vocab::Color,
+    fill: vocab::Color,
+    text_color: vocab::Color,
+    font_family: i64,          // index into the canvas text table, -1 = system
+    font_size: f64,
+    font_weight: vocab::FontWeight,
+    is_italic: bool,
+    has_brush: bool,
+    brush: vocab::Brush,
+    // The box the gradient runs ACROSS, which `set_fill_brush` records with
+    // the brush — a gradient is an axis over a rect and not over whatever
+    // shape happens to be filled with it.
+    brush_rect: vocab::Rect,
+    opacity: f64,
+}
+
+fn initial_state() -> DrawState {
+    return DrawState {
+        stroke: vocab::Color::text(),
+        fill: vocab::Color::text(),
+        text_color: vocab::Color::text(),
+        font_family: (0 as i64) -% (1 as i64),
+        font_size: 0.0f64,
+        font_weight: vocab::FontWeight::Default,
+        is_italic: false,
+        has_brush: false,
+        brush: vocab::Brush::none(),
+        brush_rect: vocab::Rect::zero(),
+        opacity: 1.0f64,
+    };
+}
+
+const MAX_DEPTH: usize = 32;
+
+fn replay(cr: *u8, c: *vocab::Canvas) {
+    var st: DrawState = initial_state();
+    var stack: [DrawState; MAX_DEPTH] = [#zero::[DrawState](); MAX_DEPTH];
+    var depth: usize = 0 as usize;
+    var i: usize = 0 as usize;
+    let count: usize = { (*c).count() };
+    while i < count {
+        let cmd: vocab::DrawCommand = { (*c).at(i) };
+        step(cr, c, cmd, #addr_of(st), #addr_of(stack), #addr_of(depth));
+        i = i +% (1 as usize);
+    }
+    // A recording that saved and never restored leaves cairo's own stack
+    // unbalanced, and the context is GTK's — so it is unwound here rather than
+    // handed back deeper than it arrived.
+    while depth > (0 as usize) {
+        { cairo_restore(cr) };
+        depth = depth -% (1 as usize);
+    }
+    return;
+}
+
+fn step(cr: *u8, c: *vocab::Canvas, cmd: vocab::DrawCommand, st: *DrawState,
+        stack: *[DrawState; MAX_DEPTH], depth: *usize) {
+    match cmd.op {
+        vocab::DrawOp::None => { }
+        // ---- state ----
+        vocab::DrawOp::SetStroke => { { (*st).stroke = cmd.color }; }
+        vocab::DrawOp::SetFill => {
+            { (*st).fill = cmd.color };
+            { (*st).has_brush = false };
+        }
+        vocab::DrawOp::SetFillBrush => {
+            if cmd.has_aux() {
+                { (*st).brush = { (*c).brush(cmd.aux as usize) } };
+                { (*st).brush_rect = cmd.bounds };
+                { (*st).has_brush = true };
+            }
+        }
+        vocab::DrawOp::SetTextColor => { { (*st).text_color = cmd.color }; }
+        vocab::DrawOp::SetStrokeWidth => { { cairo_set_line_width(cr, cmd.stroke_width()) }; }
+        vocab::DrawOp::SetMiterLimit => { { cairo_set_miter_limit(cr, cmd.miter_limit()) }; }
+        vocab::DrawOp::SetStrokeCap => { { cairo_set_line_cap(cr, cairo_cap(cmd.cap)) }; }
+        vocab::DrawOp::SetStrokeJoin => { { cairo_set_line_join(cr, cairo_join(cmd.join)) }; }
+        vocab::DrawOp::SetStrokeDash => { set_dash(cr, c, cmd); }
+        vocab::DrawOp::SetFont => {
+            { (*st).font_size = cmd.font_size() };
+            { (*st).font_weight = cmd.weight };
+            { (*st).is_italic = cmd.is_italic };
+            { (*st).font_family = cmd.aux };
+        }
+        // OPACITY IS NOT A CAIRO STATE. cairo has `paint_with_alpha` and no
+        // global alpha, so the value is kept and folded into every colour on
+        // its way to the source — which is the same result and the reason
+        // `source_rgba` is the one door a colour goes through.
+        vocab::DrawOp::SetOpacity => { { (*st).opacity = cmd.opacity() }; }
+        vocab::DrawOp::SetAntialiased => {
+            // CAIRO_ANTIALIAS_DEFAULT 0, NONE 1.
+            { cairo_set_antialias(cr, if cmd.is_on { 0 as i32 } else { 1 as i32 }) };
+        }
+        vocab::DrawOp::SetBlend => { { cairo_set_operator(cr, cairo_operator(cmd.blend)) }; }
+        // A SHADOW is a cairo_surface trick — draw to a group, blur it, offset
+        // it, composite — and cairo has no blur of its own. Named in
+        // MANIFEST.md §2 rather than approximated with an offset copy, which
+        // would be a second shape and not a shadow.
+        vocab::DrawOp::SetShadow => { }
+        // ---- the stack and the transform ----
+        vocab::DrawOp::Save => {
+            if { (*depth) } < MAX_DEPTH {
+                { (*stack)[{ (*depth) }] = { (*st) } };
+                { (*depth) = { (*depth) } +% (1 as usize) };
+                { cairo_save(cr) };
+            }
+        }
+        vocab::DrawOp::Restore => {
+            if { (*depth) } > (0 as usize) {
+                { (*depth) = { (*depth) } -% (1 as usize) };
+                { (*st) = { (*stack)[{ (*depth) }] } };
+                { cairo_restore(cr) };
+            }
+        }
+        vocab::DrawOp::Reset => {
+            { cairo_identity_matrix(cr) };
+            { (*st) = initial_state() };
+        }
+        vocab::DrawOp::Rotate => {
+            // About a PIVOT, which cairo expresses as a move there and back.
+            let p: vocab::Point = cmd.pivot();
+            { cairo_translate(cr, p.x, p.y) };
+            { cairo_rotate(cr, radians(cmd.degrees())) };
+            { cairo_translate(cr, (0.0 as f64) - p.x, (0.0 as f64) - p.y) };
+        }
+        vocab::DrawOp::Scale => { { cairo_scale(cr, cmd.x(), cmd.y()) }; }
+        vocab::DrawOp::Translate => { { cairo_translate(cr, cmd.x(), cmd.y()) }; }
+        vocab::DrawOp::ConcatTransform => {
+            let t: vocab::Transform = cmd.transform();
+            var m: Matrix = Matrix { xx: t.a, yx: t.b, xy: t.c, yy: t.d, x0: t.tx, y0: t.ty };
+            { cairo_transform(cr, #addr_of(m)) };
+        }
+        // ---- clipping ----
+        vocab::DrawOp::ClipRect => {
+            { cairo_new_path(cr) };
+            rect_path(cr, cmd.bounds);
+            { cairo_clip(cr) };
+        }
+        vocab::DrawOp::ClipPath => {
+            if cmd.has_aux() {
+                { cairo_new_path(cr) };
+                build_path(cr, { (*c).path(cmd.aux as usize) });
+                { cairo_set_fill_rule(cr, fill_rule(cmd.winding)) };
+                { cairo_clip(cr) };
+            }
+        }
+        // SUBTRACTING from a clip is an even-odd trick: the whole surface plus
+        // the shape, filled even-odd, is everything OUTSIDE the shape. cairo
+        // intersects clips, so that is the one way to take a bite out of one.
+        vocab::DrawOp::SubtractFromClip => {
+            { cairo_new_path(cr) };
+            { cairo_rectangle(cr, -100000.0f64, -100000.0f64, 200000.0f64, 200000.0f64) };
+            rect_path(cr, cmd.bounds);
+            { cairo_set_fill_rule(cr, 1 as i32) };          // CAIRO_FILL_RULE_EVEN_ODD
+            { cairo_clip(cr) };
+        }
+        // ---- shapes ----
+        vocab::DrawOp::DrawLine => {
+            let a: vocab::Point = cmd.from();
+            let b: vocab::Point = cmd.to();
+            { cairo_new_path(cr) };
+            { cairo_move_to(cr, a.x, a.y) };
+            { cairo_line_to(cr, b.x, b.y) };
+            stroke_with(cr, st);
+        }
+        vocab::DrawOp::DrawRect => {
+            { cairo_new_path(cr) };
+            rect_path(cr, cmd.bounds);
+            stroke_with(cr, st);
+        }
+        vocab::DrawOp::FillRect => {
+            { cairo_new_path(cr) };
+            rect_path(cr, cmd.bounds);
+            fill_with(cr, st, cmd.bounds, false);
+        }
+        vocab::DrawOp::DrawRoundedRect => {
+            { cairo_new_path(cr) };
+            rounded_rect_path(cr, cmd.bounds, cmd.corner_radius());
+            stroke_with(cr, st);
+        }
+        vocab::DrawOp::FillRoundedRect => {
+            { cairo_new_path(cr) };
+            rounded_rect_path(cr, cmd.bounds, cmd.corner_radius());
+            fill_with(cr, st, cmd.bounds, false);
+        }
+        vocab::DrawOp::DrawEllipse => {
+            { cairo_new_path(cr) };
+            ellipse_path(cr, cmd.bounds);
+            stroke_with(cr, st);
+        }
+        vocab::DrawOp::FillEllipse => {
+            { cairo_new_path(cr) };
+            ellipse_path(cr, cmd.bounds);
+            fill_with(cr, st, cmd.bounds, false);
+        }
+        vocab::DrawOp::DrawArc => {
+            { cairo_new_path(cr) };
+            arc_path(cr, cmd.bounds, cmd.start_angle(), cmd.end_angle(),
+                     cmd.is_clockwise, cmd.is_closed);
+            stroke_with(cr, st);
+        }
+        vocab::DrawOp::FillArc => {
+            { cairo_new_path(cr) };
+            arc_path(cr, cmd.bounds, cmd.start_angle(), cmd.end_angle(),
+                     cmd.is_clockwise, true);
+            fill_with(cr, st, cmd.bounds, false);
+        }
+        vocab::DrawOp::DrawPath => {
+            if cmd.has_aux() {
+                { cairo_new_path(cr) };
+                build_path(cr, { (*c).path(cmd.aux as usize) });
+                stroke_with(cr, st);
+            }
+        }
+        vocab::DrawOp::FillPath => {
+            if cmd.has_aux() {
+                { cairo_new_path(cr) };
+                build_path(cr, { (*c).path(cmd.aux as usize) });
+                fill_with(cr, st, cmd.bounds, is_even_odd(cmd.winding));
+            }
+        }
+        // ---- content ----
+        vocab::DrawOp::DrawText => { draw_text_at(cr, c, cmd, st); }
+        vocab::DrawOp::DrawTextBlock => { draw_text_block(cr, c, cmd, st); }
+        vocab::DrawOp::DrawSpans => { draw_spans(cr, c, cmd, st); }
+        // An IMAGE needs the source decoded to a cairo surface; the recording
+        // carries its name and this package has no image cache yet.
+        vocab::DrawOp::DrawImage => { }
+    }
+    return;
+}
+
+// ---- colour, and the one source ------------------------------------------------
+//
+// cairo has ONE source where Core Graphics has a stroke colour and a fill
+// colour, so the source is set immediately before each stroke or fill rather
+// than when the state command arrives. `opacity` folds in here, which is the
+// only place it can: cairo has no global alpha.
+
+fn use_color(cr: *u8, col: vocab::Color, opacity: f64) {
+    let r: vocab::Color = paint::resolved(col);
+    { cairo_set_source_rgba(cr, r.r, r.g, r.b, r.a * opacity) };
+    return;
+}
+
+fn stroke_with(cr: *u8, st: *DrawState) {
+    use_color(cr, { (*st).stroke }, { (*st).opacity });
+    { cairo_stroke(cr) };
+    return;
+}
+
+fn fill_with(cr: *u8, st: *DrawState, box: vocab::Rect, even_odd: bool) {
+    { cairo_set_fill_rule(cr, if even_odd { 1 as i32 } else { 0 as i32 }) };
+    if { (*st).has_brush } {
+        let b: vocab::Brush = { (*st).brush };
+        if b.is_gradient {
+            // The recorded box when there is one — the axis belongs to the
+            // BRUSH — and the shape's own only when the brush named none.
+            var across: vocab::Rect = { (*st).brush_rect };
+            if across.width <= (0.0 as f64) || across.height <= (0.0 as f64) { across = box; }
+            let pat: *u8 = gradient_for(b, across, { (*st).opacity });
+            if pat != (0 as *u8) {
+                { cairo_set_source(cr, pat) };
+                { cairo_fill(cr) };
+                { cairo_pattern_destroy(pat) };
+                return;
+            }
+        }
+        use_color(cr, b.start, { (*st).opacity });
+        { cairo_fill(cr) };
+        return;
+    }
+    use_color(cr, { (*st).fill }, { (*st).opacity });
+    { cairo_fill(cr) };
+    return;
+}
+
+// A linear gradient across the box at the brush's angle. Zero degrees runs
+// left to right, which is the convention the ledger's own brushes use.
+fn gradient_for(b: vocab::Brush, box: vocab::Rect, opacity: f64) -> *u8 {
+    let cx: f64 = box.x + (box.width / (2.0 as f64));
+    let cy: f64 = box.y + (box.height / (2.0 as f64));
+    let rad: f64 = radians(b.angle);
+    let half: f64 = ((box.width + box.height) / (4.0 as f64));
+    let dx: f64 = cos_approx(rad) * half;
+    let dy: f64 = sin_approx(rad) * half;
+    let pat: *u8 = { cairo_pattern_create_linear(cx - dx, cy - dy, cx + dx, cy + dy) };
+    if pat == (0 as *u8) { return 0 as *u8; }
+    let s: vocab::Color = paint::resolved(b.start);
+    let e: vocab::Color = paint::resolved(b.end);
+    { cairo_pattern_add_color_stop_rgba(pat, 0.0f64, s.r, s.g, s.b, s.a * opacity) };
+    { cairo_pattern_add_color_stop_rgba(pat, 1.0f64, e.r, e.g, e.b, e.a * opacity) };
+    return pat;
+}
+
+// ---- paths ---------------------------------------------------------------------
+
+fn rect_path(cr: *u8, r: vocab::Rect) {
+    { cairo_rectangle(cr, r.x, r.y, r.width, r.height) };
+    return;
+}
+
+// A rounded rectangle is four arcs and four lines, and cairo's `arc` continues
+// the current path — so the corners join without a `move_to` between them.
+fn rounded_rect_path(cr: *u8, r: vocab::Rect, radius: f64) {
+    var rad: f64 = radius;
+    let max: f64 = if r.width < r.height { r.width / (2.0 as f64) }
+                   else { r.height / (2.0 as f64) };
+    if rad > max { rad = max; }
+    if rad <= (0.0 as f64) { rect_path(cr, r); return; }
+    let x: f64 = r.x;
+    let y: f64 = r.y;
+    let w: f64 = r.width;
+    let h: f64 = r.height;
+    let pi: f64 = 3.14159265358979323846f64;
+    { cairo_move_to(cr, x + rad, y) };
+    { cairo_line_to(cr, x + w - rad, y) };
+    { cairo_arc(cr, x + w - rad, y + rad, rad, (0.0 as f64) - (pi / (2.0 as f64)), 0.0f64) };
+    { cairo_line_to(cr, x + w, y + h - rad) };
+    { cairo_arc(cr, x + w - rad, y + h - rad, rad, 0.0f64, pi / (2.0 as f64)) };
+    { cairo_line_to(cr, x + rad, y + h) };
+    { cairo_arc(cr, x + rad, y + h - rad, rad, pi / (2.0 as f64), pi) };
+    { cairo_line_to(cr, x, y + rad) };
+    { cairo_arc(cr, x + rad, y + rad, rad, pi, (3.0 as f64) * pi / (2.0 as f64)) };
+    { cairo_close_path(cr) };
+    return;
+}
+
+// An ellipse is a CIRCLE IN A SCALED SPACE. cairo has no ellipse call, and
+// scaling around the box's centre is the standard way to get one — the save
+// and restore keep the scale off everything after it.
+fn ellipse_path(cr: *u8, r: vocab::Rect) {
+    if r.width <= (0.0 as f64) || r.height <= (0.0 as f64) { return; }
+    let pi: f64 = 3.14159265358979323846f64;
+    { cairo_save(cr) };
+    { cairo_translate(cr, r.x + (r.width / (2.0 as f64)),
+                          r.y + (r.height / (2.0 as f64))) };
+    { cairo_scale(cr, r.width / (2.0 as f64), r.height / (2.0 as f64)) };
+    { cairo_arc(cr, 0.0f64, 0.0f64, 1.0f64, 0.0f64, (2.0 as f64) * pi) };
+    { cairo_restore(cr) };
+    return;
+}
+
+// THE ONE CONVENTION THAT HAS TO BE CHOSEN rather than inherited.
+//
+// facet's angles are DEGREES measured from the x axis, and its `is_clockwise`
+// is about the direction on SCREEN. cairo's y grows downward, so its own
+// `cairo_arc` sweeps clockwise on screen and `cairo_arc_negative`
+// anticlockwise — the opposite of the names' mathematical reading. Taking the
+// names at face value here is how an arc comes out mirrored.
+fn arc_path(cr: *u8, box: vocab::Rect, from: f64, to: f64,
+            clockwise: bool, closed: bool) {
+    if box.width <= (0.0 as f64) || box.height <= (0.0 as f64) { return; }
+    let cx: f64 = box.x + (box.width / (2.0 as f64));
+    let cy: f64 = box.y + (box.height / (2.0 as f64));
+    let a: f64 = radians(from);
+    let b: f64 = radians(to);
+    { cairo_save(cr) };
+    { cairo_translate(cr, cx, cy) };
+    { cairo_scale(cr, box.width / (2.0 as f64), box.height / (2.0 as f64)) };
+    if closed { { cairo_move_to(cr, 0.0f64, 0.0f64) }; }
+    if clockwise { { cairo_arc(cr, 0.0f64, 0.0f64, 1.0f64, a, b) }; }
+    else { { cairo_arc_negative(cr, 0.0f64, 0.0f64, 1.0f64, a, b) }; }
+    if closed { { cairo_close_path(cr) }; }
+    { cairo_restore(cr) };
+    return;
+}
+
+// A recorded path, segment by segment. cairo builds the path IN the context,
+// so this appends rather than answering an object — which is the one shape
+// difference from the Core Graphics version of the same walk.
+fn build_path(cr: *u8, p: *vocab::Path) {
+    if p == (0 as *vocab::Path) { return; }
+    var last: vocab::Point = vocab::Point::zero();
+    var i: usize = 0 as usize;
+    let count: usize = { (*p).count() };
+    while i < count {
+        let s: vocab::PathSegment = { (*p).at(i) };
+        match s.op {
+            vocab::PathOp::None => { }
+            vocab::PathOp::Move => {
+                { cairo_move_to(cr, s.point.x, s.point.y) };
+                last = s.point;
+            }
+            vocab::PathOp::Line => {
+                { cairo_line_to(cr, s.point.x, s.point.y) };
+                last = s.point;
+            }
+            // A QUADRATIC raised to a cubic: cairo has only `curve_to`, and the
+            // two control points are the quad's own, each two thirds of the way
+            // from its end. Exact, not an approximation.
+            vocab::PathOp::Quad => {
+                let c1: vocab::Point = s.control1;
+                let e: vocab::Point = s.point;
+                let t: f64 = 2.0f64 / 3.0f64;
+                { cairo_curve_to(cr,
+                    last.x + ((c1.x - last.x) * t), last.y + ((c1.y - last.y) * t),
+                    e.x + ((c1.x - e.x) * t), e.y + ((c1.y - e.y) * t),
+                    e.x, e.y) };
+                last = e;
+            }
+            vocab::PathOp::Curve => {
+                { cairo_curve_to(cr, s.control1.x, s.control1.y,
+                                     s.control2.x, s.control2.y,
+                                     s.point.x, s.point.y) };
+                last = s.point;
+            }
+            vocab::PathOp::Arc => {
+                arc_path(cr, s.bounds, s.start_angle(), s.end_angle(),
+                         s.is_clockwise, false);
+            }
+            vocab::PathOp::Rect => { rect_path(cr, s.bounds); }
+            vocab::PathOp::RoundedRect => {
+                rounded_rect_path(cr, s.bounds, s.corner_radius());
+            }
+            vocab::PathOp::Ellipse => { ellipse_path(cr, s.bounds); }
+            vocab::PathOp::Close => { { cairo_close_path(cr) }; }
+        }
+        i = i +% (1 as usize);
+    }
+    return;
+}
+
+// ---- text ----------------------------------------------------------------------
+//
+// ALL THREE TEXT COMMANDS GO THROUGH ONE LAYOUT. `draw_text` is a layout with
+// no width, `draw_text_block` one with a width and an alignment, `draw_spans`
+// one filled from markup — so wrapping, ellipsizing and per-run styling are the
+// same machinery rather than three text paths that disagree about a font.
+
+// Pango measures in 1024ths of a point — `paint::pango_scale`, which the
+// markup builder uses too.
+fn pango_scale() -> f64 { return paint::pango_scale(); }
+
+fn pango_weight(w: vocab::FontWeight) -> i32 { return paint::pango_weight(w); }
+
+// PangoAlignment: 0 LEFT, 1 CENTER, 2 RIGHT. Pango has no JUSTIFY alignment —
+// justification is a separate flag — so `Justify` sets the flag and leaves the
+// alignment at the start, which is what justified text is.
+fn pango_align(a: vocab::TextAlign) -> i32 {
+    return match a {
+        vocab::TextAlign::Start => 0,
+        vocab::TextAlign::Center => 1,
+        vocab::TextAlign::End => 2,
+        vocab::TextAlign::Justify => 0,
+    };
+}
+
+fn is_justified(a: vocab::TextAlign) -> bool {
+    return match a { vocab::TextAlign::Justify => true, _other => false };
+}
+
+// A layout carrying the recorded font. The context is cairo's own, so the
+// layout is measured against the surface it will be drawn on — which is what
+// makes a hairline at 2x actually hairline.
+fn layout_for(cr: *u8, c: *vocab::Canvas, st: *DrawState) -> pango::Layout {
+    let layout: pango::Layout = pangocairo::create_layout(cairo::Context::from_raw(cr));
+    let desc: pango::FontDescription = pango::FontDescription::new();
+    var family: str = "";
+    let at: i64 = { (*st).font_family };
+    if at >= (0 as i64) { family = { (*c).text(at as usize) }; }
+    if family != "" { desc.set_family(family); }
+    let size: f64 = { (*st).font_size };
+    if size > (0.0 as f64) { desc.set_size((size * pango_scale()) as i32); }
+    desc.set_weight(pango_weight({ (*st).font_weight }));
+    // PangoStyle: 0 NORMAL, 1 OBLIQUE, 2 ITALIC.
+    desc.set_style(if { (*st).is_italic } { 2 as i32 } else { 0 as i32 });
+    layout.set_font_description(desc);
+    desc.free();
+    return layout;
+}
+
+// ONE STRING AT A POINT, and the point is its BASELINE — which is what the
+// AppKit backend's `drawAtPoint:` takes and what an application that placed
+// text by hand expects. Pango draws a layout from its TOP-LEFT, so the
+// baseline is subtracted on the way in; without that every recorded string
+// sits one line lower than it was asked for.
+fn draw_text_at(cr: *u8, c: *vocab::Canvas, cmd: vocab::DrawCommand, st: *DrawState) {
+    if !cmd.has_aux() { return; }
+    let s: str = { (*c).text(cmd.aux as usize) };
+    if s == "" { return; }
+    let layout: pango::Layout = layout_for(cr, c, st);
+    layout.set_text(s, (0 as i32) -% (1 as i32));
+    layout.set_alignment(pango_align(cmd.align));
+    use_color(cr, { (*st).text_color }, { (*st).opacity });
+    let at: vocab::Point = cmd.at();
+    let baseline: f64 = (layout.get_baseline() as f64) / pango_scale();
+    { cairo_move_to(cr, at.x, at.y - baseline) };
+    pangocairo::show_layout(cairo::Context::from_raw(cr), layout);
+    g::object_unref(layout.raw());
+    return;
+}
+
+// WRAPPED, ALIGNED TEXT IN A BOX. The width is the box's, which is what makes
+// it wrap at all; the height is only used to place the block vertically,
+// because Pango's own height is a limit on ellipsization and not on drawing.
+fn draw_text_block(cr: *u8, c: *vocab::Canvas, cmd: vocab::DrawCommand, st: *DrawState) {
+    if !cmd.has_aux() { return; }
+    let s: str = { (*c).text(cmd.aux as usize) };
+    if s == "" { return; }
+    let box: vocab::Rect = cmd.bounds;
+    if box.width <= (0.0 as f64) { return; }
+    let layout: pango::Layout = layout_for(cr, c, st);
+    layout.set_text(s, (0 as i32) -% (1 as i32));
+    layout.set_width((box.width * pango_scale()) as i32);
+    layout.set_alignment(pango_align(cmd.align));
+    layout.set_justify(is_justified(cmd.align));
+    // `line_spacing` is a FACTOR on Pango and a factor in the recording too, so
+    // zero means "the font's own" on both sides and there is nothing to
+    // convert.
+    let spacing: f64 = cmd.line_spacing();
+    if spacing > (0.0 as f64) { layout.set_line_spacing(spacing as f32); }
+    // `TextFlow::Clip` is text that must not leave its box, which Pango says
+    // with an ellipsis at the end; `Overflow` lets it run on.
+    match cmd.flow {
+        vocab::TextFlow::Clip => {
+            layout.set_height((box.height * pango_scale()) as i32);
+            layout.set_ellipsize(3 as i32);          // PANGO_ELLIPSIZE_END
+        }
+        vocab::TextFlow::Overflow => { layout.set_ellipsize(0 as i32); }
+    }
+    var w: i32 = 0 as i32;
+    var h: i32 = 0 as i32;
+    layout.get_pixel_size(w, h);
+    // VERTICAL alignment is not Pango's — it lays a block out from the top and
+    // says how tall it came out. Placing that block in the box is this
+    // module's arithmetic.
+    var y: f64 = box.y;
+    match cmd.vertical_align {
+        vocab::VerticalAlign::Top => { }
+        vocab::VerticalAlign::Center => { y = box.y + ((box.height - (h as f64)) / (2.0 as f64)); }
+        vocab::VerticalAlign::Bottom => { y = box.y + (box.height - (h as f64)); }
+    }
+    use_color(cr, { (*st).text_color }, { (*st).opacity });
+    { cairo_move_to(cr, box.x, y) };
+    pangocairo::show_layout(cairo::Context::from_raw(cr), layout);
+    g::object_unref(layout.raw());
+    return;
+}
+
+// PER-RUN STYLING, as Pango markup. A `Spans` is a list of runs each with its
+// own font, colour and decoration, and markup is the one way to hand Pango all
+// of that in a single layout — the alternative is a PangoAttrList built run by
+// run, which says the same thing in ten times the code.
+fn draw_spans(cr: *u8, c: *vocab::Canvas, cmd: vocab::DrawCommand, st: *DrawState) {
+    if !cmd.has_aux() { return; }
+    let runs: *vocab::Spans = { (*c).spans(cmd.aux as usize) };
+    if runs == (0 as *vocab::Spans) { return; }
+    if { (*runs).is_empty() } { return; }
+    let markup: text::Text = spans_markup(runs);
+    if markup.view() == "" { return; }
+    let box: vocab::Rect = cmd.bounds;
+    let layout: pango::Layout = layout_for(cr, c, st);
+    layout.set_markup(markup.view(), (0 as i32) -% (1 as i32));
+    if box.width > (0.0 as f64) {
+        layout.set_width((box.width * pango_scale()) as i32);
+        layout.set_alignment(pango_align(cmd.align));
+    }
+    use_color(cr, { (*st).text_color }, { (*st).opacity });
+    { cairo_move_to(cr, box.x, box.y) };
+    pangocairo::show_layout(cairo::Context::from_raw(cr), layout);
+    g::object_unref(layout.raw());
+    return;
+}
+
+// One `<span>` per run, built from the shared markup builder in `paint` — the
+// same one a label with span children uses, so a run styled in a drawing and a
+// run styled in a label cannot disagree about what a weight means.
+fn spans_markup(runs: *vocab::Spans) -> text::Text {
+    var out: text::Text = text::from_str("");
+    var i: usize = 0 as usize;
+    let count: usize = { (*runs).count() };
+    while i < count {
+        let r: *vocab::TextSpan = { (*runs).at(i) };
+        if r != (0 as *vocab::TextSpan) {
+            let attrs: text::Text = paint::span_attrs(
+                { (*r).font_family.view() }, { (*r).font_size }, { (*r).font_weight },
+                { (*r).is_italic }, true, { (*r).color }, { (*r).background_color },
+                { (*r).decoration }, 0.0f64, 0.0f64);
+            out = out.appending(paint::markup_run(attrs.view(), { (*r).view() }).view());
+        }
+        i = i +% (1 as usize);
+    }
+    return out;
+}
+
+// ---- the small conversions -----------------------------------------------------
+
+// CAIRO_LINE_CAP_BUTT 0, ROUND 1, SQUARE 2.
+fn cairo_cap(c: vocab::LineCap) -> i32 {
+    return match c {
+        vocab::LineCap::Flat => 0,
+        vocab::LineCap::Round => 1,
+        vocab::LineCap::Square => 2,
+    };
+}
+
+// CAIRO_LINE_JOIN_MITER 0, ROUND 1, BEVEL 2.
+fn cairo_join(j: vocab::LineJoin) -> i32 {
+    return match j {
+        vocab::LineJoin::Miter => 0,
+        vocab::LineJoin::Round => 1,
+        vocab::LineJoin::Bevel => 2,
+    };
+}
+
+// cairo_operator_t. `Normal` is OVER (2); the rest are the Porter-Duff and
+// blend modes cairo carries under the same names the ledger uses.
+fn cairo_operator(b: vocab::Blend) -> i32 {
+    return match b {
+        vocab::Blend::Normal => 2,
+        vocab::Blend::Multiply => 14,
+        vocab::Blend::Screen => 15,
+        vocab::Blend::Overlay => 16,
+        vocab::Blend::Darken => 17,
+        vocab::Blend::Lighten => 18,
+        vocab::Blend::ColorDodge => 19,
+        vocab::Blend::ColorBurn => 20,
+        vocab::Blend::HardLight => 21,
+        vocab::Blend::SoftLight => 22,
+        vocab::Blend::Difference => 23,
+        vocab::Blend::Exclusion => 24,
+        vocab::Blend::Hue => 25,
+        vocab::Blend::Saturation => 26,
+        vocab::Blend::Color => 27,
+        vocab::Blend::Luminosity => 28,
+        vocab::Blend::Clear => 0,
+        vocab::Blend::Copy => 1,
+        vocab::Blend::SourceIn => 3,
+        vocab::Blend::SourceOut => 4,
+        vocab::Blend::SourceAtop => 5,
+        vocab::Blend::DestinationOver => 6,
+        vocab::Blend::DestinationIn => 7,
+        vocab::Blend::DestinationOut => 8,
+        vocab::Blend::DestinationAtop => 9,
+        vocab::Blend::Xor => 10,
+        vocab::Blend::PlusDarker => 11,
+        vocab::Blend::PlusLighter => 12,
+    };
+}
+
+fn fill_rule(w: vocab::Winding) -> i32 {
+    return match w {
+        vocab::Winding::NonZero => 0,
+        vocab::Winding::EvenOdd => 1,
+    };
+}
+
+fn is_even_odd(w: vocab::Winding) -> bool {
+    return match w { vocab::Winding::EvenOdd => true, vocab::Winding::NonZero => false };
+}
+
+fn set_dash(cr: *u8, c: *vocab::Canvas, cmd: vocab::DrawCommand) {
+    if !cmd.has_aux() { { cairo_set_dash(cr, 0 as *f64, 0 as i32, 0.0f64) }; return; }
+    let d: vocab::Dashes = { (*c).dashes(cmd.aux as usize) };
+    let n: usize = d.count;
+    if n == (0 as usize) { { cairo_set_dash(cr, 0 as *f64, 0 as i32, 0.0f64) }; return; }
+    // Copied into a local array because cairo reads the runs from contiguous
+    // memory and a `Dashes` keeps its own.
+    var runs: [f64; 8] = [0.0f64; 8];
+    var i: usize = 0 as usize;
+    while i < n && i < (8 as usize) {
+        runs[i] = d.run(i);
+        i = i +% (1 as usize);
+    }
+    { cairo_set_dash(cr, #addr_of(runs) as *f64, i as i32, cmd.dash_offset()) };
+    return;
+}
+
+fn radians(degrees: f64) -> f64 {
+    return degrees * (3.14159265358979323846f64 / 180.0f64);
+}
+
+// sin and cos for the ONE place that needs them — a gradient's axis. The angle
+// is a brush's, so this is read once per fill and never in a loop.
+//
+// A TAYLOR SERIES ONLY WORKS NEAR ZERO, and the fold is what makes it usable
+// across a turn: seven terms at π give -0.075 for a value that is 0. So the
+// angle comes down to the first quadrant and the sign is carried separately —
+// which is what every fixed-point sine does and what the first version of this
+// claimed to do and did not.
+fn sin_approx(x: f64) -> f64 {
+    let pi: f64 = 3.14159265358979323846f64;
+    let two_pi: f64 = 6.28318530717958647692f64;
+    var t: f64 = x;
+    while t >= two_pi { t = t - two_pi; }
+    while t < (0.0 as f64) { t = t + two_pi; }
+    var sign: f64 = 1.0f64;
+    // Past half a turn the curve is its own negative, half a turn back.
+    if t > pi { t = t - pi; sign = (0.0 as f64) - 1.0f64; }
+    // And within a half turn it is symmetric about the quarter.
+    if t > (pi / 2.0f64) { t = pi - t; }
+    let t2: f64 = t * t;
+    let t3: f64 = t2 * t;
+    let t5: f64 = t3 * t2;
+    let t7: f64 = t5 * t2;
+    return sign * (t - (t3 / 6.0f64) + (t5 / 120.0f64) - (t7 / 5040.0f64));
+}
+
+fn cos_approx(x: f64) -> f64 {
+    return sin_approx(x + (3.14159265358979323846f64 / 2.0f64));
+}

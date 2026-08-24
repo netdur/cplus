@@ -41,6 +41,13 @@ fn all_bits() -> u64 { return props::C_ALL_STATE; }
 // also the create sentinel — see the note in facet_appkit's `repaint_walk`.
 fn restyle_bits() -> u64 { return props::C_RESTYLE; }
 
+// The band's bits that feed the CSS DOCUMENT, as against the ones that are
+// plain widget properties. `views::configure` asks for these when deciding
+// whether the document has to be rebuilt.
+fn css_band_bits() -> u64 {
+    return props::C_BACKGROUND_COLOR | props::C_CORNER_RADIUS;
+}
+
 // The band's own bits, so a caller can ask "is any of this dirty?" without
 // keeping a second copy of the list.
 fn band_bits() -> u64 {
@@ -56,15 +63,35 @@ static DARK: bool = false;
 fn set_dark(v: bool) { DARK = v; return; }
 fn is_dark() -> bool { return DARK; }
 
+// The desktop text-scaling factor, read once per appearance sync by the window
+// tier. `font_scales` multiplies a size by this rather than switching CSS
+// units — see `window::text_scale` for why the unit switch is wrong.
+static TEXT_SCALE: f64 = 1.0f64;
+
+fn set_text_scale(v: f64) { if v > (0.0 as f64) { TEXT_SCALE = v; } return; }
+fn text_scale() -> f64 { return TEXT_SCALE; }
+
+// The side of an adaptive pair the live appearance asks for, as a plain
+// colour. `css_rgba` writes it as CSS; `drawing` hands the four numbers to
+// cairo — so the resolution is here, once, rather than in each of them.
+fn resolved(c: vocab::Color) -> vocab::Color {
+    if c.token != (254 as u32) { return c; }
+    if !DARK { return c; }
+    var out: vocab::Color = c;
+    out.r = c.r2;
+    out.g = c.g2;
+    out.b = c.b2;
+    out.a = c.a2;
+    return out;
+}
+
 // `Color` -> a CSS `rgba(...)`. Resolves the adaptive pair against `DARK`.
 fn css_rgba(c: vocab::Color) -> text::Text {
-    var r: f64 = c.r;
-    var gg: f64 = c.g;
-    var b: f64 = c.b;
-    var a: f64 = c.a;
-    if c.token == (254 as u32) {
-        if DARK { r = c.r2; gg = c.g2; b = c.b2; a = c.a2; }
-    }
+    let live: vocab::Color = resolved(c);
+    let r: f64 = live.r;
+    let gg: f64 = live.g;
+    let b: f64 = live.b;
+    let a: f64 = live.a;
     let ri: i32 = (r * (255.0 as f64) + (0.5 as f64)) as i32;
     let gi: i32 = (gg * (255.0 as f64) + (0.5 as f64)) as i32;
     let bi: i32 = (b * (255.0 as f64) + (0.5 as f64)) as i32;
@@ -74,15 +101,178 @@ fn css_rgba(c: vocab::Color) -> text::Text {
     return "rgba(${ri},${gi},${bi},0.${ai})";
 }
 
+// ---- Pango markup ------------------------------------------------------------
+//
+// The OTHER string facet styling becomes. CSS is what a widget's own band
+// compiles to; markup is what a RUN of styled text compiles to, and three
+// callers need it — a label with span children, a label with a `formatted_text`
+// value, and the canvas's `draw_spans`. It lives here for the same reason
+// `css_rgba` does: one translation of facet's vocabulary into a platform
+// string, not three that drift.
+
+// facet's named weights -> Pango's numeric ones, which are the CSS numbers —
+// so this is `css_weight` under another name and deliberately not a second
+// table.
+fn pango_weight(w: vocab::FontWeight) -> i32 {
+    return match w {
+        vocab::FontWeight::Default => 400,
+        vocab::FontWeight::UltraLight => 100,
+        vocab::FontWeight::Thin => 200,
+        vocab::FontWeight::Light => 300,
+        vocab::FontWeight::Regular => 400,
+        vocab::FontWeight::Medium => 500,
+        vocab::FontWeight::Semibold => 600,
+        vocab::FontWeight::Bold => 700,
+        vocab::FontWeight::Heavy => 800,
+        vocab::FontWeight::Black => 900,
+    };
+}
+
+// Pango measures in 1024ths of a point.
+fn pango_scale() -> f64 { return 1024.0f64; }
+
+// One `<span>`'s attribute list. Every argument is a facet verb and every one
+// of them is omitted when it is unset, so a run that names nothing inherits the
+// label's own font and colour — which is what an unstyled run should do.
+fn span_attrs(family: str, size: f64, weight: vocab::FontWeight, italic: bool,
+              scales: bool, color: vocab::Color, background: vocab::Color,
+              decoration: vocab::TextDecoration, spacing: f64,
+              line_height: f64) -> text::Text {
+    var a: text::Text = text::from_str("");
+    if family != "" { a = a.appending(" face=\"${family}\""); }
+    if size > (0.0 as f64) {
+        var px: f64 = size;
+        if scales { px = px * text_scale(); }
+        let units: i32 = (px * pango_scale()) as i32;
+        a = a.appending(" size=\"${units}\"");
+    }
+    let w: i32 = pango_weight(weight);
+    a = a.appending(" weight=\"${w}\"");
+    if italic { a = a.appending(" style=\"italic\""); }
+    a = a.appending(markup_color("foreground", color).view());
+    a = a.appending(markup_color("background", background).view());
+    match decoration {
+        vocab::TextDecoration::None => { }
+        vocab::TextDecoration::Underline => { a = a.appending(" underline=\"single\""); }
+        vocab::TextDecoration::Strikethrough => { a = a.appending(" strikethrough=\"true\""); }
+    }
+    if spacing != (0.0 as f64) {
+        // Pango's letter spacing is in 1024ths too, and facet's is in points.
+        let units: i32 = (spacing * pango_scale()) as i32;
+        a = a.appending(" letter_spacing=\"${units}\"");
+    }
+    if line_height > (0.0 as f64) {
+        // A FACTOR on both sides, so there is nothing to convert — and zero
+        // means "the font's own" on both, which is why it is gated.
+        a = a.appending(" line_height=\"${line_height}\"");
+    }
+    return a;
+}
+
+// Pango takes a colour as `#rrggbb`; its markup has NO alpha channel, so a
+// translucent run draws opaque. Recorded in MANIFEST.md §3 rather than left for
+// someone to find.
+fn markup_color(attr: str, c: vocab::Color) -> text::Text {
+    if !c.is_set() { return text::from_str(""); }
+    let live: vocab::Color = resolved(c);
+    let r: i32 = (live.r * (255.0 as f64) + (0.5 as f64)) as i32;
+    let g2: i32 = (live.g * (255.0 as f64) + (0.5 as f64)) as i32;
+    let b: i32 = (live.b * (255.0 as f64) + (0.5 as f64)) as i32;
+    return text::from_str(" ${attr}=\"#${hex2(r)}${hex2(g2)}${hex2(b)}\"");
+}
+
+fn hex2(v: i32) -> text::Text {
+    var n: i32 = v;
+    if n < (0 as i32) { n = 0 as i32; }
+    if n > (255 as i32) { n = 255 as i32; }
+    var out: text::Text = text::from_str("");
+    out = out.appending(hex_digit(n / (16 as i32)));
+    out = out.appending(hex_digit(n % (16 as i32)));
+    return out;
+}
+
+fn hex_digit(v: i32) -> str {
+    if v == (0 as i32) { return "0"; }
+    if v == (1 as i32) { return "1"; }
+    if v == (2 as i32) { return "2"; }
+    if v == (3 as i32) { return "3"; }
+    if v == (4 as i32) { return "4"; }
+    if v == (5 as i32) { return "5"; }
+    if v == (6 as i32) { return "6"; }
+    if v == (7 as i32) { return "7"; }
+    if v == (8 as i32) { return "8"; }
+    if v == (9 as i32) { return "9"; }
+    if v == (10 as i32) { return "a"; }
+    if v == (11 as i32) { return "b"; }
+    if v == (12 as i32) { return "c"; }
+    if v == (13 as i32) { return "d"; }
+    if v == (14 as i32) { return "e"; }
+    return "f";
+}
+
+// The five XML entities, of which three appear in ordinary prose. Pango's
+// markup IS XML, so a run containing `&` or `<` would end the layout at that
+// character or fail to parse outright — and a caption is exactly where an
+// ampersand turns up.
+//
+// Replaced in ONE pass over the bytes rather than five passes with `replacing`:
+// `&` has to go first, and a second pass would then escape the `&` of the
+// entities the first pass wrote. Walking BYTES is right for UTF-8 — every byte
+// of a multi-byte sequence is >= 0x80 and none of the five entities is, so a
+// continuation byte falls through and the sequence is rebuilt exactly.
+fn escape_markup(s: str) -> text::Text {
+    var out: text::Text = text::from_str("");
+    let base: *u8 = { #str_ptr(s) };
+    var i: usize = 0 as usize;
+    let n: usize = { #str_len(s) };
+    while i < n {
+        let b: u8 = { *(((base as usize) +% i) as *u8) };
+        if b == (38 as u8) { out = out.appending("&amp;"); }
+        else if b == (60 as u8) { out = out.appending("&lt;"); }
+        else if b == (62 as u8) { out = out.appending("&gt;"); }
+        else if b == (34 as u8) { out = out.appending("&quot;"); }
+        else if b == (39 as u8) { out = out.appending("&apos;"); }
+        else {
+            let one: str = { #str_from_raw_parts(((base as usize) +% i) as *u8,
+                                                 1 as usize) };
+            out = out.appending(one);
+        }
+        i = i +% (1 as usize);
+    }
+    return out;
+}
+
+// One run, whole. `body` is escaped here so no caller can forget.
+fn markup_run(attrs: str, body: str) -> text::Text {
+    let escaped: text::Text = escape_markup(body);
+    return text::from_str("<span${attrs}>${escaped}</span>");
+}
+
+// facet's `text_transform`, applied to the run's own text — markup has no
+// transform attribute, so the string is transformed before it is escaped.
+fn transformed(s: str, t: vocab::TextTransform) -> text::Text {
+    return match t {
+        vocab::TextTransform::Uppercase => text::from_str(s).uppercased(),
+        vocab::TextTransform::Lowercase => text::from_str(s).lowercased(),
+        vocab::TextTransform::None => text::from_str(s),
+        vocab::TextTransform::Default => text::from_str(s),
+    };
+}
+
 // The per-widget provider, keyed on the widget itself. `g_object_set_data`
 // is the standard place to hang a companion object off a GObject, and it is
 // what keeps the provider alive exactly as long as the widget.
 fn provider_key() -> *u8 { return #str_ptr("facet-gtk-css\0"); }
 
+// The class the band's rule is written AGAINST — see `set_css`. Added once,
+// beside the provider, because the two are the same act.
+fn band_class() -> str { return "facet-band"; }
+
 fn provider_for(v: *u8) -> gtk::CssProvider {
     let existing: *u8 = g::get_data(v, provider_key());
     if existing != (0 as *u8) { return gtk::CssProvider::from_raw(existing); }
     let p: gtk::CssProvider = gtk::CssProvider::new();
+    gtk::Widget::from_raw(v).add_css_class(band_class());
     // GTK_STYLE_PROVIDER_PRIORITY_APPLICATION (600): above the theme, below a
     // user stylesheet. facet is the application here.
     gtk::Widget::from_raw(v).get_style_context()
@@ -116,34 +306,53 @@ fn band_css(n: *core::Node) -> text::Text {
     return body;
 }
 
-// Load a document of exactly the band plus `extra`, whole.
+// Load a document of exactly the band, plus the kind's own declarations, plus
+// any whole RULES the kind needs for its subnodes.
 //
 // ALWAYS THE WHOLE DOCUMENT, and always rebuilt from the node — a
 // GtkCssProvider has no per-declaration edit, so a control writing its font
 // would otherwise drop the background the band wrote. The kind bodies call
-// this with their text styling; nothing else appends.
-fn set_css(v: *u8, n: *core::Node, extra: str) {
+// this with their styling; nothing else appends.
+//
+// `.facet-band`, NOT `*`. A widget's provider is reachable from that widget's
+// CSS SUBNODES too — a GtkScale is a `scale` node over `trough` over `slider`,
+// and a GtkProgressBar likewise — so a universal selector paints a control's
+// internal parts with the node's background as well as the control. The class
+// is on the widget's own node and on nothing beneath it, which is exactly the
+// scope the band means.
+//
+// That reachability is also what makes `rules` work at all: a kind that wants
+// its thumb coloured writes `slider { background-color: ... }` and it lands on
+// this widget's slider and no other's, because the provider is this widget's.
+fn set_css(v: *u8, n: *core::Node, extra: str, rules: str) {
     var body: text::Text = band_css(n);
     if extra != "" { body = body.appending(extra); }
-    if body.count() == (0 as usize) {
-        // Nothing to say. Load an EMPTY document rather than skipping: a widget
-        // that HAD a background and lost it must lose it on screen too.
-        provider_for(v).load_from_string("");
-        return;
+    var doc: text::Text = text::from_str("");
+    if body.count() != (0 as usize) {
+        let cls: str = band_class();
+        doc = doc.appending(".${cls} { ${body} }");
     }
-    let doc: text::Text = "* { ${body} }";
+    if rules != "" { doc = doc.appending(rules); }
+    // An EMPTY document rather than skipping the load: a widget that HAD a
+    // background and lost it must lose it on screen too.
     provider_for(v).load_from_string(doc.view());
     return;
 }
 
 // The kind bodies' door: their own declarations, on top of the live band.
 fn append_css(v: *u8, n: *core::Node, extra: str) {
-    set_css(v, n, extra);
+    set_css(v, n, extra, "");
+    return;
+}
+
+// The same, plus whole rules for the control's own CSS subnodes.
+fn append_css_rules(v: *u8, n: *core::Node, extra: str, rules: str) {
+    set_css(v, n, extra, rules);
     return;
 }
 
 fn reload_css(v: *u8, n: *core::Node) {
-    set_css(v, n, "");
+    set_css(v, n, "", "");
     return;
 }
 
@@ -168,8 +377,8 @@ fn band(v: *u8, n: *core::Node, d: u64) {
         let t: str = core::tooltip(n);
         if t != "" { w.set_tooltip_text(t); }
     }
-    if (d & (props::C_BACKGROUND_COLOR | props::C_CORNER_RADIUS)) != (0 as u64) {
-        reload_css(v, n);
-    }
+    // The CSS document is NOT written here. It is one document per widget with
+    // no per-declaration edit, so composing it is `views::configure`'s job —
+    // reloading it from the band would drop whatever the kind had put in it.
     return;
 }

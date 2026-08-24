@@ -1,0 +1,41 @@
+[package]
+name    = "facet_gtk_probe"
+version = "0.0.1"
+edition = "2026"
+
+# facet_gtk probe — the smallest app that exercises facet's GTK backend end to
+# end: one window, one control of each kind that has a body, and a status label
+# every handler writes to.
+#
+# It exists because UI FEEL CANNOT BE ASSERTED. A test can pin the state
+# machine; it cannot tell you the switch reported its change, the slider fired
+# while dragging, or the field kept its caret while the app wrote text back.
+# So this is the thing to run by hand after touching `facet_gtk`:
+#
+#     cd examples/facet_gtk_probe && ../../target/release/cpc run
+#
+# Every line in the status label is a HANDLER firing. If a control does
+# something visible and the label does not change, the read half is broken for
+# that kind.
+
+[dependencies]
+stdlib      = "*"
+facet       = "*"
+flex_layout = "*"
+
+[linux.dependencies]
+facet_gtk   = "*"
+gtk4        = "*"
+gobject     = "*"
+gobject_gir = "*"
+gio         = "*"
+glib        = "*"
+cairo       = "*"
+gdk         = "*"
+gdkpixbuf   = "*"
+graphene    = "*"
+gsk         = "*"
+harfbuzz    = "*"
+pango       = "*"
+pangocairo  = "*"
+gmodule     = "*"

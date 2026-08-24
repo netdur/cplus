@@ -16,19 +16,21 @@
 //   services::install_scheduler(Scheduler)   run_on_main / after / observe_size
 //   theme::set_is_dark_fn                    the system appearance read
 //   theme::set_theme_changed_fn              repaint the running app's chrome
+//   gestures::install_key_reader             input.cplus — the key band's readers
+//   component::install_sender_readers        input.cplus — key / item / raise
 //
-// NOT YET FILLED, and deliberately NOT half-filled — an unset hook keeps
-// facet's portable no-op, which is honest, where a struct with three of five
-// slots looks installed and behaves randomly:
-//   gestures::install_key_reader             input.cplus, not written
-//   component::install_sender_readers        input.cplus, not written
+// The sender readers are PARTIALLY filled, which is not the same as
+// half-wired: `component::SenderReaders` declares a zero field as keeping
+// facet's portable default, and the three drag-and-drop readers are left zero
+// because there is no GtkDropTarget in this package yet. A zero reader answers
+// "no backend told me"; a filled one answering empty would be a lie.
 //
 // STATUS. Read MANIFEST.md, which is a MEASUREMENT (`tools/parity.py`) rather
 // than a claim. This backend is early: the shared band and a first set of kinds
 // are live, every other kind gets a container that honours the band and holds
-// its children, and no handler is wired yet — so nothing reads back from a
-// control. That is a floor, not a finished backend, and the tool prints the
-// number so it cannot be overstated.
+// its children, and the read half now covers the gesture band, the key band and
+// the own actions of every kind that has a body. That is a floor, not a
+// finished backend, and the tool prints the number so it cannot be overstated.
 
 import "stdlib/option" as option;
 import "facet/facet" as core;
@@ -37,6 +39,7 @@ import "facet/services" as services;
 import "facet/theme" as theme;
 import "facet/application" as app;
 import "gtk4/gtk4" as gtk;
+import "./input" as input;
 import "./views" as views;
 import "./paint" as paint;
 import "./scheduler" as scheduler;
@@ -67,6 +70,7 @@ fn install() {
     gtk::init();
     mount::install(renderer());
     services::install_scheduler(scheduler::scheduler());
+    input::install();
     theme::set_is_dark_fn(window::is_dark);
     theme::set_theme_changed_fn(theme_changed);
     window::sync_appearance();
@@ -79,6 +83,7 @@ fn installed() -> bool { return INSTALLED; }
 fn uninstall() {
     mount::uninstall();
     services::uninstall_scheduler();
+    input::uninstall();
     theme::set_is_dark_fn(0 as fn() -> bool);
     theme::set_theme_changed_fn(0 as fn());
     INSTALLED = false;
@@ -130,11 +135,14 @@ fn repaint_walk(n: *core::Node) {
 
 // ---- hosting -----------------------------------------------------------------
 
-// Mount a tree and put it on screen. The two halves are separate on purpose —
-// `mount::mount` is facet's, `window::open` is this package's — and a caller
-// that wants them apart can call them apart.
+// Mount a tree and put it on screen.
+//
+// ONE ENTRY, and the mount is inside it. `window::open_window` mounts because
+// `mount::mount` is what opens the window on the app's record — the two have to
+// happen together or `app::newest_window_root()` answers about a window that is
+// not there yet. A caller that wants them apart mounts and then calls
+// `mount::mount`'s own no-op second time, which is not a thing to want.
 fn open_window(root: *core::Node, title: str, width: f64, height: f64) -> bool {
     if !INSTALLED { install(); }
-    if !mount::mount(root) { return false; }
     return window::open(root, title, width, height);
 }

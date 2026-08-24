@@ -17,14 +17,31 @@
 // parented leaks; without the release, one removed from its host does.
 
 import "stdlib/option" as option;
+import "stdlib/text" as text;
 import "facet/facet" as core;
 import "facet/props" as props;
 import "facet/gestures" as gestures;
+import "facet/text_button" as text_button;
+import "facet/symbol" as symbol;
+import "facet/menu" as menu;
+import "facet/menu_item" as menu_item;
+import "facet/context_menu_item" as context_menu_item;
+import "facet/split" as split;
+import "facet/window_chrome" as window_chrome;
+import "facet/toolbar_item" as toolbar_item;
+import "facet/tree" as tree;
 import "flex_layout/flex_layout" as flex;
 import "gtk4/gtk4" as gtk;
 import "gobject/runtime" as g;
 import "./controls" as controls;
+import "./drawing" as drawing;
+import "./window" as window;
+import "./web" as web;
+import "./input" as input;
 import "./paint" as paint;
+import "./chrome" as chrome;
+import "./swipe" as swipe;
+import "./recycler" as recycler;
 
 // Kinds that are not rectangles at all — read as NODES by whatever owns them,
 // never given a widget of their own. Same list, same reasons, as the AppKit
@@ -49,6 +66,12 @@ fn wants_view(n: *core::Node) -> bool {
     if non_view_kind(kind) { return false; }
     if kind != core::K_NODE { return true; }
     if gestures::has_gestures(n) { return true; }
+    // A bare container carrying only a FOCUS handler needs one too. Focus
+    // arrives on a widget exactly as input does, so an unkeyed
+    // `column(...).on_focus(...)` would otherwise describe a handler nothing
+    // could ever deliver to — the same claim the gestures line above makes,
+    // for the band `input::arm` wires before it reaches gestures at all.
+    if core::wants_focus_events(n) { return true; }
     return { (*n).key() } != "";
 }
 
@@ -58,11 +81,38 @@ fn wants_view(n: *core::Node) -> bool {
 fn create_for_kind(kind: u32, n: *core::Node) -> *u8 {
     if kind == props::K_LABEL { return controls::create_label(n); }
     if kind == props::K_BUTTON { return controls::create_button(n); }
+    if kind == text_button::K_TEXT_BUTTON { return controls::create_text_button(n); }
+    if kind == props::K_ICON_BUTTON { return controls::create_icon_button(n); }
     if kind == props::K_TOGGLE { return controls::create_toggle(n); }
     if kind == props::K_CHECKBOX { return controls::create_checkbox(n); }
+    if kind == props::K_RADIO { return controls::create_radio(n); }
     if kind == props::K_PROGRESS { return controls::create_progress(n); }
+    if kind == props::K_SPINNER { return controls::create_spinner(n); }
     if kind == props::K_SLIDER { return controls::create_slider(n); }
+    if kind == props::K_STEPPER { return controls::create_stepper(n); }
+    if kind == props::K_IMAGE { return controls::create_image(n); }
     if kind == props::K_TEXT_FIELD { return controls::create_text_field(n); }
+    if kind == props::K_SEARCH_FIELD { return controls::create_search_field(n); }
+    if kind == props::K_TEXT_AREA { return controls::create_text_area(n); }
+    if kind == symbol::K_SYMBOL { return controls::create_symbol(n); }
+    if kind == props::K_PAGE_DOTS { return controls::create_page_dots(n); }
+    if kind == props::K_SCROLL { return controls::create_scroll(n); }
+    if kind == split::K_SPLIT { return controls::create_split(n); }
+    if kind == tree::K_TREE { return recycler::create_tree(n); }
+    if kind == props::K_LIST { return recycler::create_sequence(n); }
+    if kind == props::K_COLLECTION { return recycler::create_sequence(n); }
+    if kind == props::K_TABLE { return recycler::create_sequence(n); }
+    if kind == props::K_POPUP { return controls::create_popup(n); }
+    if kind == props::K_TABS { return controls::create_tabs(n); }
+    if kind == props::K_DATE_PICKER { return controls::create_date_picker(n); }
+    if kind == props::K_TIME_PICKER { return controls::create_time_picker(n); }
+    if kind == props::K_CAROUSEL { return controls::create_carousel(n); }
+    if kind == props::K_REFRESHABLE { return controls::create_refreshable(n); }
+    if kind == props::K_SWIPEABLE { return swipe::create_swipeable(n); }
+    if kind == window_chrome::K_WINDOW_BUTTONS { return chrome::create_window_buttons(n); }
+    if kind == props::K_CANVAS { return drawing::create_canvas(n); }
+    if kind == props::K_WEB { return web::create_web(n); }
+    if kind == props::K_HYBRID_WEB { return web::create_web(n); }
     if kind == props::K_BOX { return controls::create_box(n); }
     // Every remaining backed kind is a plain container until it has a body:
     // it holds children and honours the shared band, which is more than a
@@ -73,21 +123,96 @@ fn create_for_kind(kind: u32, n: *core::Node) -> *u8 {
 fn apply_for_kind(kind: u32, v: *u8, n: *core::Node, dirty: u64) {
     if kind == props::K_LABEL { controls::apply_label(v, n, dirty); return; }
     if kind == props::K_BUTTON { controls::apply_button(v, n, dirty); return; }
+    if kind == text_button::K_TEXT_BUTTON { controls::apply_text_button(v, n, dirty); return; }
+    if kind == props::K_ICON_BUTTON { controls::apply_icon_button(v, n, dirty); return; }
     if kind == props::K_TOGGLE { controls::apply_toggle(v, n, dirty); return; }
     if kind == props::K_CHECKBOX { controls::apply_checkbox(v, n, dirty); return; }
+    if kind == props::K_RADIO { controls::apply_radio(v, n, dirty); return; }
     if kind == props::K_PROGRESS { controls::apply_progress(v, n, dirty); return; }
+    if kind == props::K_SPINNER { controls::apply_spinner(v, n, dirty); return; }
     if kind == props::K_SLIDER { controls::apply_slider(v, n, dirty); return; }
+    if kind == props::K_STEPPER { controls::apply_stepper(v, n, dirty); return; }
+    if kind == props::K_IMAGE { controls::apply_image(v, n, dirty); return; }
     if kind == props::K_TEXT_FIELD { controls::apply_text_field(v, n, dirty); return; }
+    if kind == props::K_SEARCH_FIELD { controls::apply_search_field(v, n, dirty); return; }
+    if kind == props::K_TEXT_AREA { controls::apply_text_area(v, n, dirty); return; }
+    if kind == symbol::K_SYMBOL { controls::apply_symbol(v, n, dirty); return; }
+    if kind == props::K_PAGE_DOTS { controls::apply_page_dots(v, n, dirty); return; }
+    if kind == props::K_SCROLL { controls::apply_scroll(v, n, dirty); return; }
+    if kind == split::K_SPLIT { controls::apply_split(v, n, dirty); return; }
+    if kind == tree::K_TREE { recycler::apply_tree(v, n, dirty); return; }
+    if kind == props::K_LIST { recycler::apply_list(v, n, dirty); return; }
+    if kind == props::K_COLLECTION { recycler::apply_collection(v, n, dirty); return; }
+    if kind == props::K_TABLE { recycler::apply_table(v, n, dirty); return; }
+    if kind == props::K_POPUP { controls::apply_popup(v, n, dirty); return; }
+    if kind == props::K_TABS { controls::apply_tabs(v, n, dirty); return; }
+    if kind == props::K_DATE_PICKER { controls::apply_date_picker(v, n, dirty); return; }
+    if kind == props::K_TIME_PICKER { controls::apply_time_picker(v, n, dirty); return; }
+    if kind == props::K_CAROUSEL { controls::apply_carousel(v, n, dirty); return; }
+    if kind == props::K_REFRESHABLE { controls::apply_refreshable(v, n, dirty); return; }
+    if kind == props::K_SWIPEABLE { swipe::apply_swipeable(v, n, dirty); return; }
+    if kind == window_chrome::K_WINDOW_BUTTONS { chrome::apply_window_buttons(v, n, dirty); return; }
+    if kind == props::K_CANVAS { drawing::apply_canvas(v, n, dirty); return; }
+    if kind == props::K_WEB { web::apply_web(v, n, dirty); return; }
+    if kind == props::K_HYBRID_WEB { web::apply_hybrid_web(v, n, dirty); return; }
     if kind == props::K_BOX { controls::apply_box(v, n, dirty); return; }
     return;
 }
 
-// The band, then the kind's own body. Order matters: a kind writes CSS ON TOP
-// of the band's document (see `paint::append_css`), so the band has to have
-// gone in first.
+// Does this node hold a `menu` among its children? Asked before rebuilding a
+// menu bar, because every node in a tree gets `touch_all` at some point and
+// almost none of them have anything to do with a menu.
+fn holds_a_menu(n: *core::Node) -> bool {
+    var i: usize = 0 as usize;
+    let count: usize = core::child_count_of(n);
+    while i < count {
+        match core::child_of(n, i) {
+            option::Option[*core::Node]::Some(c) => {
+                if core::kind_of(c) == props::K_MENU { return true; }
+            }
+            option::Option[*core::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return false;
+}
+
+// The same question for a `toolbar_item`. Separate from `holds_a_menu` rather
+// than one walk answering both: they are asked under different dirty gates, and
+// a shared walk would run for either kind's bits.
+fn holds_a_toolbar_item(n: *core::Node) -> bool {
+    var i: usize = 0 as usize;
+    let count: usize = core::child_count_of(n);
+    while i < count {
+        match core::child_of(n, i) {
+            option::Option[*core::Node]::Some(c) => {
+                if core::kind_of(c) == props::K_TOOLBAR_ITEM { return true; }
+            }
+            option::Option[*core::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return false;
+}
+
+// The band's PROPERTIES, then the whole CSS document, then the kind's own
+// non-CSS writes.
+//
+// The CSS is composed in ONE place because a GtkCssProvider has no
+// per-declaration edit: a kind that wrote its font from `apply` would drop the
+// background the band had just written, and a band that reloaded would drop
+// the font. So the document is rebuilt whole from the node whenever anything
+// that feeds it is dirty — the band's two colour bits, or the kind's own
+// styling bits, which each kind declares in `controls::css_bits`.
 fn configure(v: *u8, n: *core::Node, d: u64) {
+    let kind: u32 = core::kind_of(n);
     paint::band(v, n, d);
-    apply_for_kind(core::kind_of(n), v, n, d);
+    if (d & (paint::css_band_bits() | controls::css_bits(kind))) != (0 as u64) {
+        let decls: text::Text = controls::css_decls(kind, n);
+        let rules: text::Text = controls::css_rules(kind, n);
+        paint::set_css(v, n, decls.view(), rules.view());
+    }
+    apply_for_kind(kind, v, n, d);
     return;
 }
 
@@ -121,11 +246,25 @@ extern fn gtk_widget_measure(widget: *u8, orientation: i32, for_size: i32,
 fn has_intrinsic_size(kind: u32) -> bool {
     if kind == props::K_LABEL { return true; }
     if kind == props::K_BUTTON { return true; }
+    if kind == text_button::K_TEXT_BUTTON { return true; }
+    if kind == props::K_ICON_BUTTON { return true; }
     if kind == props::K_TOGGLE { return true; }
     if kind == props::K_CHECKBOX { return true; }
+    if kind == props::K_RADIO { return true; }
     if kind == props::K_PROGRESS { return true; }
+    if kind == props::K_SPINNER { return true; }
     if kind == props::K_SLIDER { return true; }
+    if kind == props::K_STEPPER { return true; }
     if kind == props::K_TEXT_FIELD { return true; }
+    if kind == props::K_SEARCH_FIELD { return true; }
+    if kind == props::K_POPUP { return true; }
+    if kind == props::K_DATE_PICKER { return true; }
+    if kind == props::K_TIME_PICKER { return true; }
+    if kind == symbol::K_SYMBOL { return true; }
+    if kind == props::K_PAGE_DOTS { return true; }
+    // The group is three buttons wide and as tall as a button — a size an
+    // application should not have to state, and one only GTK knows.
+    if kind == window_chrome::K_WINDOW_BUTTONS { return true; }
     return false;
 }
 
@@ -139,6 +278,7 @@ fn fills_line(kind: u32) -> bool {
     if kind == props::K_SLIDER { return true; }
     if kind == props::K_PROGRESS { return true; }
     if kind == props::K_TEXT_FIELD { return true; }
+    if kind == props::K_SEARCH_FIELD { return true; }
     return false;
 }
 
@@ -200,12 +340,31 @@ fn create(ctx: *u8, n: *core::Node) -> *u8 {
     if k != "" { gtk::Widget::from_raw(v).set_name(k); }
     // Configure it WHOLE — the same call apply makes, with every bit set.
     configure(v, n, paint::all_bits());
+    // The READ half. `arm` binds the node onto the widget — which every backed
+    // node needs, gestures or not, because the sender readers walk it — and
+    // then arms only the gesture bands this node actually declared.
+    input::arm(v, n);
+    // A `context_menu` DECORATES this node: right-clicking it is what opens the
+    // menu, so the menu is built from the child NODES the moment this node has
+    // a widget to hang it on. The children are already there — `build` ran long
+    // before mount — even though none of them will ever get a widget.
+    window::attach_context_menu(v, n);
     // Intrinsic size: from here the node measures itself through its widget.
     let kind: u32 = core::kind_of(n);
     if has_intrinsic_size(kind) {
         { (*n).set_context(v) };
         if fills_line(kind) { { (*n).set_measure(measure_filling) }; }
         else { { (*n).set_measure(measure_view) }; }
+    }
+    // `text_area.auto_size` is the one kind whose intrinsic sizing is a
+    // PROPERTY rather than a fact about the kind: an editor is normally sized
+    // by its container, and `AutoSize::TextChanges` is the application asking
+    // for the other thing. It fills its line for the same reason a text field
+    // does — GTK's natural width for a GtkTextView is its widest line, and an
+    // editor laid out at that width is one that never wraps.
+    if input::auto_sizes(n) {
+        { (*n).set_context(v) };
+        { (*n).set_measure(measure_filling) };
     }
     return v;
 }
@@ -217,25 +376,130 @@ fn apply(ctx: *u8, n: *core::Node) {
     let d: u64 = core::dirty_of(n);
     if d == (0 as u64) { return; }
     configure(v, n, d);
+    // `attach` / `detach` / a whole-set swap all raise C_GESTURES, and arming
+    // is idempotent per band — so a set that gained a verb gains its
+    // controller here, and one that gained nothing pays a handful of null
+    // reads. `C_INPUT_TRANSPARENT` rides along because `arm` answers it.
+    if (d & (core::C_GESTURES | props::C_INPUT_TRANSPARENT)) != (0 as u64) {
+        input::arm(v, n);
+    }
+    // A `menu` subtree changed under this node. A viewless child cannot say
+    // which of its host's verbs it affected, so `mount` raises `touch_all` on
+    // the host — which is why the bits a MENU carries are what this tests for,
+    // on a node that holds one.
+    // NOT `menu_item::P_IS_DESTRUCTIVE`, which this backend does not answer —
+    // naming a bit in a gate that then does nothing with it is exactly how the
+    // coverage number gets inflated. See MANIFEST.md §1.
+    if (d & (menu::P_TEXT | menu::P_PRIORITY | menu_item::P_TEXT
+             | menu_item::P_ICON)) != (0 as u64) {
+        if holds_a_menu(n) { window::menus_changed(); }
+    }
+    // The same shape for a `context_menu`, which decorates THIS node — so the
+    // change arrives here rather than on a window, and the popover is rebuilt
+    // in place.
+    if (d & (context_menu_item::P_TEXT | context_menu_item::P_ICON
+             | context_menu_item::P_SHORTCUT)) != (0 as u64) {
+        window::attach_context_menu(v, n);
+    }
+    // And a `toolbar_item`, which is viewless in the same way but belongs to
+    // the WINDOW rather than to the node it was declared under — so the whole
+    // bar is repacked rather than one button edited in place.
+    if (d & chrome::toolbar_bits()) != (0 as u64) {
+        if holds_a_toolbar_item(n) { window::toolbars_changed(); }
+    }
     // A node that measures ITSELF has just been written to, so its measurement
     // is stale — and nothing else in the pipeline knows that. flex's
     // incremental cache prunes a subtree whose STYLE is unchanged, and
     // `set_text` changes no style: it changes what the widget would answer if
     // asked again. Without this the label keeps the box it was given for its
     // OLD string.
-    if has_intrinsic_size(core::kind_of(n)) { { (*n).mark_content_changed() }; }
+    if has_intrinsic_size(core::kind_of(n)) || input::auto_sizes(n) {
+        { (*n).mark_content_changed() };
+    }
     return;
 }
 
-fn insert(ctx: *u8, host: *u8, child: *u8, slot: usize) {
-    if host == (0 as *u8) { return; }
+fn insert(ctx: *u8, raw_host: *u8, child: *u8, slot: usize) {
+    if raw_host == (0 as *u8) { return; }
     if child == (0 as *u8) { return; }
-    // Every backed container is a GtkFixed, so there is ONE child model here.
+    // A scroll's children belong in its DOCUMENT, not in the scroll view — the
+    // one kind whose widget and whose child host differ. Every other kind
+    // answers itself, so there is still ONE child model below this line.
+    let host: *u8 = controls::document_host(raw_host);
     // The frame comes later, from the layout walk — `put` at the origin is
     // just "it is in the tree now".
-    if geometry_parent(child) == host { return; }
-    gtk::Fixed::from_raw(host).put(gtk::Widget::from_raw(child), 0.0f64, 0.0f64);
+    if geometry_parent(child) != host {
+        gtk::Fixed::from_raw(host).put(gtk::Widget::from_raw(child), 0.0f64, 0.0f64);
+    }
+    // `put` APPENDS, which is right for a fresh mount and wrong for an insert
+    // into the middle of a live list. A GtkFixed has no ordering API of its
+    // own, but GtkWidget does — and the order matters twice over: it is the
+    // paint order (a Fixed's later children draw on top) and it is what
+    // `component::raise` moves a node through.
+    place_at_slot(host, child, slot);
     return;
+}
+
+// Move `child` so that exactly `slot` siblings precede it. `insert_after` with
+// a NULL sibling means "make it first"; anything else names the widget it
+// follows.
+fn place_at_slot(host: *u8, child: *u8, slot: usize) {
+    let hw: gtk::Widget = gtk::Widget::from_raw(host);
+    let cw: gtk::Widget = gtk::Widget::from_raw(child);
+    if slot == (0 as usize) {
+        // Already first: a fresh mount inserts in order, so this is the common
+        // case and a reorder per child would make mounting quadratic.
+        if first_facet_child(host) == child { return; }
+        cw.insert_after(hw, gtk::Widget::from_raw(0 as *u8));
+        return;
+    }
+    // Walk to the widget that should end up just before it, skipping the child
+    // itself — it is already somewhere in this list and must not count.
+    var prev: *u8 = 0 as *u8;
+    var seen: usize = 0 as usize;
+    var cur: *u8 = first_child_raw(host);
+    while cur != (0 as *u8) {
+        // Only widgets that carry a NODE are facet's children. A split's
+        // divider lives in the same GtkFixed and belongs to this package, so
+        // counting it would shift every slot after it by one.
+        if cur != child && input::node_of_widget(cur) != (0 as *core::Node) {
+            prev = cur;
+            seen = seen +% (1 as usize);
+            if seen == slot {
+                if next_sibling_raw(prev) == child { return; }   // already there
+                cw.insert_after(hw, gtk::Widget::from_raw(prev));
+                return;
+            }
+        }
+        cur = next_sibling_raw(cur);
+    }
+    // Fewer siblings than the slot asked for: the end is where it belongs.
+    return;
+}
+
+// The first child that is one of FACET's, skipping anything this package put
+// in the same host for itself.
+fn first_facet_child(host: *u8) -> *u8 {
+    var cur: *u8 = first_child_raw(host);
+    while cur != (0 as *u8) {
+        if input::node_of_widget(cur) != (0 as *core::Node) { return cur; }
+        cur = next_sibling_raw(cur);
+    }
+    return 0 as *u8;
+}
+
+fn first_child_raw(v: *u8) -> *u8 {
+    match gtk::Widget::from_raw(v).get_first_child() {
+        option::Option[gtk::Widget]::Some(c) => { return c.raw(); }
+        option::Option[gtk::Widget]::None => { return 0 as *u8; }
+    }
+}
+
+fn next_sibling_raw(v: *u8) -> *u8 {
+    match gtk::Widget::from_raw(v).get_next_sibling() {
+        option::Option[gtk::Widget]::Some(c) => { return c.raw(); }
+        option::Option[gtk::Widget]::None => { return 0 as *u8; }
+    }
 }
 
 fn remove(ctx: *u8, host: *u8, child: *u8) {

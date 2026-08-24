@@ -10,11 +10,19 @@ engine). This package answers the contract's verbs with GTK and records in
 ```
 facet_gtk   the registration surface: install(), and nothing else
 views       the Renderer's five verbs + intrinsic size
-controls    one GTK body per node kind
+controls    one GTK body per node kind, and the CSS each one composes
+input       the READ half — gestures, keys, control actions, sender readers
 paint       the shared band — background / radius / opacity / enabled / tooltip
-geometry    computed frames -> GtkFixed placements
+geometry    computed frames -> GtkFixed placements, and a scroll's extent
 scheduler   schedule + the Scheduler service, over the GLib main loop
-window      the GtkWindow host a root is laid into
+window      the GtkWindow host, the run loop, and the menus
+chrome      the toolbar, the window buttons, and the drag region
+swipe       swipe-to-reveal, assembled — GTK has no such row
+anim        the two things that move on their own: a progress tween, a GIF
+recycler    list, collection and tree over GtkListView — rows built as they scroll in
+dialogs     alert / choose / prompt as facet trees, and the file chooser
+drawing     the canvas replay, against cairo and Pango
+web         a WebKitGTK view, opened at runtime rather than linked
 ```
 
 ## Status is a measurement
@@ -23,17 +31,52 @@ window      the GtkWindow host a root is laid into
 $ python3 tools/parity.py
   appkit    318 / 360    88%
   uikit     311 / 360    86%
-  gtk        29 / 360     8%   <-- this package
+  gtk       347 / 360    96%   <-- this package
 ```
 
-**8%, and it is early.** Read [MANIFEST.md](MANIFEST.md) before trusting any
-adjective. The biggest single gap is that **no handler is wired**: props are
-writes and handlers are reads, and this backend currently has only the write
-half — a button does not yet call `on_click`.
+**96%, and that is only the WRITE number.** Props are writes and handlers are
+reads, and a backend at 100% on props can still be a control that is clicked
+and calls nothing. The read half has no tool, so `MANIFEST.md` states it in
+words: the gesture band, the key band, every implemented kind's own action,
+drag and drop, and all six sender readers.
 
-`tools/parity.py --check` fails if the number drops, so a refactor that
+Read [MANIFEST.md](MANIFEST.md) before trusting any adjective — including that
+one. `tools/parity.py --check` fails if the number drops, so a refactor that
 quietly loses a verb is caught by the gate rather than by someone noticing a
 control stopped working.
+
+## Two ways to check it
+
+```bash
+cd vendor/facet_gtk && ../../target/release/cpc test    # 188 tests, no display needed
+cd examples/facet_gtk_probe && ../../target/release/cpc run
+cd examples/facet_gallery   && ../../target/release/cpc run
+```
+
+The suite pins everything the backend DECIDES — the mappings, the CSS it
+composes, the bits it claims, the encoders — and makes no widget, because a
+suite that needs a login session is a suite that stops running. The probe is
+the other half: whether the switch reported its change, whether the slider
+fired while it was being dragged, whether the field kept its caret. An agent
+has no hands, so that half is an app you run.
+
+The gallery is the third: it is the same application macOS runs, unchanged,
+and it reaches this backend through `facet_runtime/runtime_linux.cplus`. If it
+builds and comes up, the whole stack — contract, backend, facade, app — is
+wired end to end.
+
+## Seeing what was computed
+
+```bash
+FACET_GTK_FRAMES=1 ./target/debug/facet_gallery 2>&1 | head -40
+```
+
+One line per node: its key, its kind, the frame flex computed, and whether it
+has a widget. This is the package's one diagnostic and it exists because a
+backend under an external layout engine fails in a way a screenshot cannot
+explain — every control in the right place and none of them visible. `w=0` on a
+kind that has a body is that bug; `view=-` on a backed kind is the other one.
+Both have already happened here, and both were found in a second by this.
 
 ## It runs
 

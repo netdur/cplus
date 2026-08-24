@@ -13,6 +13,23 @@ facet_runtime = "*"
 flex_layout = "*"
 events      = "*"
 
+[linux.dependencies]
+facet_gtk   = "*"
+gtk4        = "*"
+gobject     = "*"
+gobject_gir = "*"
+gio         = "*"
+glib        = "*"
+cairo       = "*"
+gdk         = "*"
+gdkpixbuf   = "*"
+graphene    = "*"
+gsk         = "*"
+harfbuzz    = "*"
+pango       = "*"
+pangocairo  = "*"
+gmodule     = "*"
+
 [macos.dependencies]
 facet_appkit = "*"
 objc         = "*"

@@ -17,9 +17,82 @@
 // arriving from it will look for the same.
 
 import "stdlib/option" as option;
+import "stdlib/env" as env;
+import "stdlib/io" as io;
+import "stdlib/text" as text;
 import "flex_layout/flex_layout" as flex;
 import "facet/facet" as core;
 import "gtk4/gtk4" as gtk;
+import "facet/props" as props;
+import "facet/vocabulary" as vocab;
+import "facet/split" as split;
+import "facet/refreshable" as refreshable;
+import "./controls" as controls;
+import "./swipe" as swipe;
+
+// ---- seeing what was computed ------------------------------------------------
+//
+//     FACET_GTK_FRAMES=1 ./target/debug/facet_gallery 2>&1 | head -60
+//
+// One line per node: its key, its kind, the frame flex computed, and whether it
+// has a widget at all. Off by default and costing one bool read when it is.
+//
+// THIS IS THE ONE DIAGNOSTIC THIS PACKAGE HAS, and it is here rather than in a
+// scratch file because it has already been rewritten by hand twice. A backend
+// under an external layout engine fails in a way a screenshot cannot explain:
+// every control in the right place and none of them visible, because a leaf
+// measured 0x0 and flex believed it. `w=0` or `h=0` on a line whose kind has a
+// body IS that bug, and it is visible here in a second.
+//
+// `view=-` on a backed kind is the other one: a node facet laid out and this
+// package never gave a widget to.
+
+static FRAMES_READ: bool = false;
+static FRAMES_ON: bool = false;
+
+fn tracing_frames() -> bool {
+    if !FRAMES_READ {
+        FRAMES_READ = true;
+        FRAMES_ON = env::has_var("FACET_GTK_FRAMES");
+    }
+    return FRAMES_ON;
+}
+
+fn trace_node(n: *core::Node, depth: usize) {
+    if !tracing_frames() { return; }
+    let f: flex::Frame = { (*n).frame() };
+    var line: text::Text = text::repeating("  ", depth);
+    let k: str = { (*n).key() };
+    let kind: u32 = core::kind_of(n);
+    let x: i32 = f.left as i32;
+    let y: i32 = f.top as i32;
+    let w: i32 = f.width as i32;
+    let h: i32 = f.height as i32;
+    let view: str = if core::view_of(n) == (0 as *u8) { "-" } else { "+" };
+    let name: str = if k == "" { "(unkeyed)" } else { k };
+    line = line.appending("${name}  kind=${kind}  ${x},${y} ${w}x${h}  view=${view}");
+    io::eprintln(line.view());
+    return;
+}
+
+// Walk the whole tree, once, after a layout pass. Separate from
+// `reposition_children` on purpose: that walk skips into a scroll's document
+// and passes unbacked nodes through, so it is the wrong shape for a report
+// about the TREE.
+fn trace_tree(n: *core::Node, depth: usize) {
+    if !tracing_frames() { return; }
+    trace_node(n, depth);
+    var i: usize = 0 as usize;
+    let count: usize = core::child_count_of(n);
+    while i < count {
+        match core::child_of(n, i) {
+            option::Option[*core::Node]::Some(c) => { trace_tree(c, depth +% (1 as usize)); }
+            option::Option[*core::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return;
+}
 
 // A frame is fractional; a size request is not. ROUND rather than truncate: a
 // 99.6pt column truncated to 99 loses a pixel at every nesting level, and
@@ -77,7 +150,17 @@ fn reposition_children(node: *core::Node, host: *u8, host_abs: flex::Frame) {
                     gtk::Widget::from_raw(v).set_visible(!core::is_hidden(c));
                     place(host, v, cf.left - host_abs.left, cf.top - host_abs.top,
                           cf.width, cf.height);
-                    reposition_children(c, v, cf);
+                    // A scroll's children go into its DOCUMENT — see
+                    // `controls::document_host`, the one place a node's widget
+                    // and its child host differ.
+                    reposition_children(c, controls::document_host(v), cf);
+                    size_scroll_content(c, v, cf);
+                    place_split_divider(c, v, cf);
+                    place_refresh_spinner(c, v, cf);
+                    // A swipeable's strip is this package's widget too, and its
+                    // content sits wherever the last swipe left it — which is a
+                    // MOVE applied after the frames, not a frame of its own.
+                    swipe::layout_swipe(c, v, cf);
                 } else {
                     reposition_children(c, host, host_abs);
                 }
@@ -87,4 +170,138 @@ fn reposition_children(node: *core::Node, host: *u8, host_abs: flex::Frame) {
         i = i +% (1 as usize);
     }
     return;
+}
+
+// The document of a scroll is as big as what it holds, and never smaller than
+// the viewport.
+//
+// GTK learns the scrollable range from the document's size request and nothing
+// else — a GtkFixed neither measures its children nor asks for room, which is
+// exactly why it is the host under an external layout engine, and exactly why
+// the extent has to be computed here.
+//
+// THE AXIS THAT DOES NOT SCROLL IS PINNED TO THE VIEWPORT. Policy alone is half
+// the nested-scroll answer: a lane whose content overruns its width by three
+// pixels of rounding is a lane with something to scroll sideways, and GTK will
+// let it — so the other half is having nothing there to scroll. The AppKit
+// backend records the same pair, from the other side (`ScrollElasticity::None`
+// plus the same pinning), after nested lanes swallowed a board's horizontal
+// scroll for a long time.
+fn size_scroll_content(node: *core::Node, v: *u8, frame: flex::Frame) {
+    if core::kind_of(node) != props::K_SCROLL { return; }
+    let doc: *u8 = controls::document_host(v);
+    if doc == v { return; }
+    let e: flex::Size = content_extent(node, frame);
+    gtk::Widget::from_raw(doc).set_size_request(round_i32(e.width), round_i32(e.height));
+    return;
+}
+
+// The extent alone, with no widget in it — the rule this file exists to get
+// right, kept where a test can reach it.
+fn content_extent(node: *core::Node, frame: flex::Frame) -> flex::Size {
+    var w: f64 = 0.0f64;
+    var h: f64 = 0.0f64;
+    var i: usize = 0 as usize;
+    let count: usize = core::child_count_of(node);
+    while i < count {
+        match core::child_of(node, i) {
+            option::Option[*core::Node]::Some(c) => {
+                let cf: flex::Frame = { (*c).frame() };
+                let right: f64 = (cf.left - frame.left) + cf.width;
+                let bottom: f64 = (cf.top - frame.top) + cf.height;
+                if right > w { w = right; }
+                if bottom > h { h = bottom; }
+            }
+            option::Option[*core::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    // Never SMALLER than the viewport: a document short of its scroll leaves a
+    // strip of window behind it that nothing draws.
+    if w < frame.width { w = frame.width; }
+    if h < frame.height { h = frame.height; }
+    let p: *props::ScrollProps = scroll_props(node);
+    // A host that is not a `scroll` has no axis to ask about, and every one of
+    // them scrolls the way its rows run — down. Pinning the cross axis is the
+    // same rule the declined axis gets below, for the same reason.
+    if p == (0 as *props::ScrollProps) { return flex::Size { width: frame.width, height: h }; }
+    // `content_size` — an extent the APPLICATION states, which wins over the
+    // one measured from the children.
+    //
+    // The two disagree on purpose: a scroll whose children are placed by hand,
+    // or one holding a canvas that draws past its own frame, has a scrollable
+    // area nothing in the tree describes. Zero is "not asked for", the reading
+    // the contract gives every numeric zero, and each axis is answered on its
+    // own — an application may state a width and leave the height measured.
+    let stated: vocab::Size = { (*p).content_size };
+    if stated.width > (0.0 as f64) { w = stated.width; }
+    if stated.height > (0.0 as f64) { h = stated.height; }
+    if !controls::scrolls_horizontally(p) { w = frame.width; }
+    if !controls::scrolls_vertically(p) { h = frame.height; }
+    return flex::Size { width: w, height: h };
+}
+
+// A split's divider sits where the leading pane ends, and it is this package's
+// own widget rather than one of facet's children — so nothing else in the frame
+// walk places it.
+//
+// It is drawn ON the seam rather than between the panes: `position` is the
+// distance from the leading edge to the divider, and taking a thickness out of
+// a pane would make the panes disagree with the number the application set and
+// reads back.
+fn place_split_divider(node: *core::Node, v: *u8, frame: flex::Frame) {
+    if core::kind_of(node) != split::K_SPLIT { return; }
+    let bar: *u8 = controls::divider_of(v);
+    if bar == (0 as *u8) { return; }
+    let p: *split::SplitProps = split_props(node);
+    if p == (0 as *split::SplitProps) { return; }
+    var thick: f64 = { (*p).divider_thickness };
+    if thick <= (0.0 as f64) { thick = 1.0f64; }
+    // A one-pixel target cannot be hit with a mouse. The GRAB is widened around
+    // the drawn line — which is what every toolkit does, and what makes
+    // `col-resize` reachable at all.
+    var grab: f64 = thick;
+    if grab < (6.0 as f64) { grab = 6.0f64; }
+    let at: f64 = { (*p).position };
+    match { (*p).axis } {
+        split::SplitAxis::Columns => {
+            place(v, bar, at - (grab / (2.0 as f64)), 0.0f64, grab, frame.height);
+        }
+        split::SplitAxis::Rows => {
+            place(v, bar, 0.0f64, at - (grab / (2.0 as f64)), frame.width, grab);
+        }
+    }
+    return;
+}
+
+// The refresh spinner sits centred in the strip above the content — this
+// package's own widget, so nothing else in the frame walk places it.
+fn place_refresh_spinner(node: *core::Node, v: *u8, frame: flex::Frame) {
+    let sp: *u8 = controls::spinner_of(v);
+    if sp == (0 as *u8) { return; }
+    // A RECYCLING list has no Fixed to place it in — its scrolled window holds
+    // a GtkListView — so the spinner sits on the scrolled window itself and
+    // aligns itself. `gtk_fixed_move` on a GtkScrolledWindow is a GTK warning
+    // per frame, which is what this line stops.
+    if controls::recycles(v) { return; }
+    let h: f64 = controls::refresh_height();
+    // Into the DOCUMENT when there is one, because that is where it was put:
+    // a list's spinner lives in the scroll's own child, not in the viewport.
+    place(controls::document_host(v), sp, (frame.width - h) / (2.0 as f64),
+          0.0f64, h, h);
+    return;
+}
+
+fn split_props(n: *core::Node) -> *split::SplitProps {
+    let d: *core::Data = core::node_data(n);
+    if d == (0 as *core::Data) { return 0 as *split::SplitProps; }
+    if { (*d).kind } != split::K_SPLIT { return 0 as *split::SplitProps; }
+    return { (*d).props } as *split::SplitProps;
+}
+
+fn scroll_props(n: *core::Node) -> *props::ScrollProps {
+    let d: *core::Data = core::node_data(n);
+    if d == (0 as *core::Data) { return 0 as *props::ScrollProps; }
+    if { (*d).kind } != props::K_SCROLL { return 0 as *props::ScrollProps; }
+    return { (*d).props } as *props::ScrollProps;
 }

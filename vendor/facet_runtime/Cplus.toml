@@ -33,6 +33,24 @@ appkit     = "*"
 quartzcore = "*"
 webkit     = "*"
 
+[linux.dependencies]
+facet_gtk   = "*"
+# facet_gtk's transitive deps — same flat-set rule.
+gtk4        = "*"
+gobject     = "*"
+gobject_gir = "*"
+gio         = "*"
+glib        = "*"
+cairo       = "*"
+gdk         = "*"
+gdkpixbuf   = "*"
+graphene    = "*"
+gsk         = "*"
+harfbuzz    = "*"
+pango       = "*"
+pangocairo  = "*"
+gmodule     = "*"
+
 [ios.dependencies]
 facet_uikit = "*"
 objc        = "*"

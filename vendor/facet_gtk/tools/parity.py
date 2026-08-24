@@ -9,11 +9,15 @@ for their `P_*` dirty bits and asks which of them each backend actually names.
     python3 vendor/facet_gtk/tools/parity.py            # from the repo root
     python3 vendor/facet_gtk/tools/parity.py --check    # non-zero if gtk regressed
 
-A prop counts as implemented when the backend REFERENCES its bit. That is a
-proxy, and a deliberately loose one: a body could name a bit and do nothing
+A prop counts as implemented when the backend REFERENCES its bit IN CODE. That
+is a proxy, and a deliberately loose one: a body could name a bit and do nothing
 useful with it. It cannot go the other way, though — a prop nobody names is a
 prop nobody honours — so the number is an UPPER BOUND, which is the right
 direction for a claim to be wrong in.
+
+Comments are stripped first. A backend explaining WHY it does not answer a verb
+would otherwise be counted as answering it, which would make the honest thing to
+write also the thing that inflates the number.
 
 The same measurement as facet_uikit/tools/parity.py, widened to every backend
 so the columns are comparable.
@@ -34,7 +38,19 @@ BACKENDS = {
 # The floor this backend has already reached. `--check` fails below it, so a
 # refactor that quietly drops a verb is caught at the number rather than by
 # someone noticing a control stopped working.
-FLOOR = 29
+FLOOR = 347
+
+
+def strip_comments(text):
+    """Line comments out, so PROSE does not count as an implementation.
+
+    The regex below matches `module::P_BIT` anywhere, and a comment saying "NOT
+    `menu_item::P_IS_DESTRUCTIVE`, which this backend does not answer" named the
+    bit as loudly as an implementation would. A measurement that a sentence can
+    move is not a measurement — and the sentence that moved it was one written
+    to be honest about a gap, which is the worst possible thing to punish.
+    """
+    return "\n".join(line.split("//", 1)[0] for line in text.splitlines())
 
 
 def referenced(directory):
@@ -43,7 +59,7 @@ def referenced(directory):
     for path in glob.glob(os.path.join(directory, "*.cplus")):
         if path.endswith("test_main.cplus"):
             continue
-        text = open(path).read()
+        text = strip_comments(open(path).read())
         alias = {}
         for module, name in re.findall(
             r'import\s+"(?:\.\./)?(?:facet/)?([\w/]+)"\s+as\s+(\w+)\s*;', text

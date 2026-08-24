@@ -23,10 +23,16 @@ fn main() -> i32 {
 
 `import "facet_runtime/runtime"` resolves by filename override:
 `runtime_macos.cplus` on a macOS target (installs facet_appkit),
-`runtime_ios.cplus` on iOS (facet_uikit), the neutral `runtime.cplus`
-anywhere else — which renders nothing and says so, never some other
-platform's toolkit. The facade installs the backend into facet's seams;
-facet itself knows no backend.
+`runtime_linux.cplus` on Linux (facet_gtk), `runtime_ios.cplus` on iOS
+(facet_uikit), the neutral `runtime.cplus` anywhere else — which renders
+nothing and says so, never some other platform's toolkit. The facade installs
+the backend into facet's seams; facet itself knows no backend.
+
+A facade is a COPY of another facade, not a fresh file: ~1100 of
+`runtime_linux.cplus`'s lines are `runtime_macos.cplus`'s verbatim, because
+almost all of the facade is about facet's own tiers (App, routes, nav, screens,
+teardown) and not about a toolkit. Three regions differ and each says so where
+it sits: the imports, the lifecycle observers, and the quit seam.
 
 This package exists so every dependency arrow points down (2026-08-17):
 apps → facet_runtime → backend → facet. The old facet ↔ facet_appkit cycle

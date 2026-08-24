@@ -1,6 +1,9 @@
 # facet_gallery
 
-Living **widget reference** for [facet](../../vendor/facet) on AppKit.
+Living **widget reference** for [facet](../../vendor/facet), on AppKit and on
+GTK 4. The source names no platform: `facet_runtime` picks the backend by
+target, so this is the same application both times and the DIFFERENCE between
+the two windows is a measurement of the younger backend.
 
 Browse from a **tree** catalog (sidebar), interact in the **main pane**. Each
 demo shows the control live and a short constructor snippet you can copy.
@@ -10,9 +13,15 @@ demo shows the control live and a short constructor snippet you can copy.
 ```bash
 cargo build --release
 cd examples/facet_gallery
+ln -sfn ../../vendor vendor      # resolve deps from the repo, not the registry
 ../../target/release/cpc build
 ./target/debug/facet_gallery
 ```
+
+On Linux the backend is [`facet_gtk`](../../vendor/facet_gtk), which is younger
+than the AppKit one: its `MANIFEST.md` says what is answered and what is not,
+and a demo whose control looks like a plain box is a kind that has no body yet
+rather than a bug in the demo.
 
 ## Catalog
 

@@ -1030,7 +1030,8 @@ impl<'a> Emitter<'a> {
             self.skip("fn", name, &format!("name `{wname}` already defined (would collide with a sibling or `vendor/gobject`/`stdlib`)"));
             return;
         }
-        let (ext, wrap) = self.render(&wname, cid, None, &ret, ret_full, ret_nullable, &params);
+        let (ext, wrap) = self.render(&wname, cid, None, &ret, ret_full, ret_nullable,
+                                     &params, throws_of(f));
         self.out.push_str(&ext);
         // `render` indents for an `impl` body; a free function sits at column 0.
         self.out.push_str(&dedent4(&wrap));
@@ -1053,6 +1054,7 @@ impl<'a> Emitter<'a> {
         ret_full: bool,
         ret_nullable: bool,
         params: &[Param],
+        throws: bool,
     ) -> (String, String) {
         let ext_name = format!("__c_{}", sanitize_sym(cid));
 
@@ -1065,6 +1067,16 @@ impl<'a> Emitter<'a> {
             // An out scalar is a pointer to the scalar in the C ABI.
             let ty = if p.out { format!("*{}", p.m.extern_ty) } else { p.m.extern_ty.clone() };
             ext_params.push(format!("{}: {ty}", p.name));
+        }
+        // GIR's `throws="1"` means the C function takes a trailing `GError **`
+        // that is NOT in the <parameters> list. Leaving it off does not make the
+        // call safe — it makes it WRONG: the callee still writes through whatever
+        // that register happened to hold, so a failing load segfaults inside
+        // libgdk_pixbuf with a backtrace that names the binding and not the bug.
+        // NULL is a legal GError** and means "do not report", which is what a
+        // wrapper answering Option[T] already says.
+        if throws {
+            ext_params.push("__error: *u8".to_string());
         }
         let ext_ret = if ret.extern_ty == "()" { String::new() } else { format!(" -> {}", ret.extern_ty) };
         let ext = format!(
@@ -1149,6 +1161,11 @@ impl<'a> Emitter<'a> {
                 Cat::Obj => call_args.push(format!("{n}.raw()")),
                 _ => call_args.push(n.clone()),
             }
+        }
+        // The GError** slot — see the extern above. It goes LAST, after any
+        // out-params, which is where the C ABI puts it.
+        if throws {
+            call_args.push("0 as *u8".to_string());
         }
         let call = format!("{{ {ext_name}({}) }}", call_args.join(", "));
 
@@ -1367,7 +1384,8 @@ impl<'a> Emitter<'a> {
         if !self.fold_gate("ctor", &format!("{ty}::{name}"), &params, &ret) {
             return;
         }
-        let (ext, wrap) = self.render(&wname, cid, None, &ret, false, nullable, &params);
+        let (ext, wrap) = self.render(&wname, cid, None, &ret, false, nullable,
+                                     &params, throws_of(ctor));
         self.out.push_str(&ext);
         body.push_str(&wrap);
         self.emitted += 1;
@@ -1415,7 +1433,8 @@ impl<'a> Emitter<'a> {
             self.skip("method", &label, &format!("method name `{wname}` already defined"));
             return;
         }
-        let (ext, wrap) = self.render(&wname, cid, Some("this._raw"), &ret, ret_full, ret_nullable, &params);
+        let (ext, wrap) = self.render(&wname, cid, Some("this._raw"), &ret, ret_full, ret_nullable,
+                                     &params, throws_of(m));
         self.out.push_str(&ext);
         body.push_str(&wrap);
         self.emitted += 1;
@@ -1733,6 +1752,16 @@ fn ctype_is_pointer(t: &Node) -> bool {
 /// (`char**`) or a real class/interface object (`T**`). A boxed/value-struct
 /// record out is excluded — it is frequently a caller-allocated `T*` we cannot
 /// fill through an 8-byte slot without corrupting the stack.
+/// Does this callable take GIR's implicit trailing `GError **`?
+///
+/// It is an attribute on the callable, never a `<parameter>`, so a generator
+/// that only walks `<parameters>` emits an extern one argument short — and the
+/// call is then ABI-wrong rather than merely error-less. 879 callables across
+/// the four GIR files this repo binds carry it.
+fn throws_of(node: &Node) -> bool {
+    node.attr("throws") == Some("1")
+}
+
 fn is_foldable_out(m: &Mapped) -> bool {
     matches!(m.cat, Cat::Str) || (matches!(m.cat, Cat::Obj) && !m.record)
 }
@@ -1932,6 +1961,71 @@ mod tests {
     </function>
   </namespace>
 </repository>"#;
+
+    /// A callable that `throws`, in each of the three shapes that reach
+    /// `render`: a bare function, a constructor, and a method.
+    const THROWERS: &str = r#"<?xml version="1.0"?>
+<repository>
+  <namespace name="Probe" version="1.0" shared-library="libc.so.6" c:identifier-prefixes="Probe">
+    <class name="Loader" c:type="ProbeLoader" glib:type-name="ProbeLoader">
+      <constructor name="new_from_file" c:identifier="strdup" throws="1">
+        <return-value><type name="Loader" c:type="ProbeLoader*"/></return-value>
+        <parameters><parameter name="path"><type name="utf8" c:type="const char*"/></parameter></parameters>
+      </constructor>
+      <method name="reload" c:identifier="strlen" throws="1">
+        <return-value><type name="gboolean" c:type="gboolean"/></return-value>
+      </method>
+    </class>
+    <function name="check" c:identifier="atoi" throws="1">
+      <return-value><type name="gboolean" c:type="gboolean"/></return-value>
+      <parameters><parameter name="s"><type name="utf8" c:type="const char*"/></parameter></parameters>
+    </function>
+    <function name="quiet" c:identifier="abs">
+      <return-value><type name="gint" c:type="int"/></return-value>
+      <parameters><parameter name="v"><type name="gint" c:type="int"/></parameter></parameters>
+    </function>
+  </namespace>
+</repository>"#;
+
+    #[test]
+    fn a_throwing_callable_gets_the_trailing_gerror_slot() {
+        // THE BUG THIS CLOSES: GIR puts the `GError **` on the callable as
+        // `throws="1"` and NOT in <parameters>, so a generator that only walks
+        // the parameter list emits an extern one argument short. That is not a
+        // binding that merely cannot report errors — it is ABI-WRONG: the
+        // callee writes through whatever register the slot happened to land on.
+        // `gdk_pixbuf_animation_new_from_file` segfaulted inside libgdk_pixbuf
+        // with a backtrace naming the binding, and 879 callables across the four
+        // GIRs this repo binds carry the attribute.
+        if find_shared_library("libc.so.6").is_none() {
+            return;
+        }
+        let out = emit(THROWERS);
+        assert!(
+            out.contains("extern fn __c_atoi(s: *u8, __error: *u8) -> i32;"),
+            "a throwing function keeps its GError slot:\n{out}"
+        );
+        assert!(
+            out.contains("extern fn __c_strdup(path: *u8, __error: *u8) -> *u8;"),
+            "a throwing constructor keeps its GError slot:\n{out}"
+        );
+        assert!(
+            out.contains("extern fn __c_strlen(__recv: *u8, __error: *u8) -> i32;"),
+            "a throwing method keeps its GError slot, after the receiver:\n{out}"
+        );
+        // NULL is a legal GError** and means "do not report", which is what a
+        // wrapper answering Option[T] already says.
+        assert!(
+            out.contains("__c_atoi(__cs_s, 0 as *u8)"),
+            "the slot is passed as NULL at the call site:\n{out}"
+        );
+        // NEGATIVE: a callable that does not throw is untouched, so the fix
+        // cannot silently add an argument to the other 30-odd thousand.
+        assert!(
+            out.contains("extern fn __c_abs(v: i32) -> i32;"),
+            "a non-throwing function is unchanged:\n{out}"
+        );
+    }
 
     #[test]
     fn link_libs_gain_the_library_that_actually_provides_the_symbols() {

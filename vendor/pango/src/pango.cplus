@@ -2840,7 +2840,7 @@ extern fn __c_pango_layout_set_width(__recv: *u8, width: i32);
 #[link_name = "pango_layout_set_wrap"]
 extern fn __c_pango_layout_set_wrap(__recv: *u8, wrap: i32);
 #[link_name = "pango_layout_write_to_file"]
-extern fn __c_pango_layout_write_to_file(__recv: *u8, flags: u32, filename: *u8) -> i32;
+extern fn __c_pango_layout_write_to_file(__recv: *u8, flags: u32, filename: *u8, __error: *u8) -> i32;
 #[link_name = "pango_layout_xy_to_index"]
 extern fn __c_pango_layout_xy_to_index(__recv: *u8, x: i32, y: i32, index_: *i32, trailing: *i32) -> i32;
 // `Layout` — GObject wrapper (non-owning handle); parent `GObject.Object`.
@@ -3135,7 +3135,7 @@ impl Layout {
 
     fn write_to_file(this, flags: u32, filename: str) -> bool {
         let __cs_filename: *u8 = bridge::str_to_cstring(filename);
-        let __r: i32 = { __c_pango_layout_write_to_file(this._raw, flags, __cs_filename) };
+        let __r: i32 = { __c_pango_layout_write_to_file(this._raw, flags, __cs_filename, 0 as *u8) };
         bridge::free_cstring(__cs_filename);
         return __r != (0 as i32);
     }

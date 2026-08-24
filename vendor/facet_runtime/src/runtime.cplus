@@ -181,7 +181,11 @@ fn set_app_appearance(a: vocab::Appearance) {
 
 fn app_appearance() -> vocab::Appearance {
     no_backend("app_appearance");
-    return vocab::Appearance::System;
+    // `Unspecified`, which is vocabulary's own word for "nobody chose" — there
+    // is no `System` variant, and naming one kept this file from COMPILING on
+    // every target that lands here. The base is the file a new platform builds
+    // against, so it was broken exactly where it is most load-bearing.
+    return vocab::Appearance::Unspecified;
 }
 
 // `alert` DIVERGED, which is worse than being missing: the base was blocking

@@ -37,6 +37,11 @@ fn drain(user: *u8) -> i32 {
     // in the same turn as the sync or the frame the user sees is one write
     // behind.
     window::relayout_all();
+    // The app menu's `is_enabled` and `title_of` are answered "when the menu
+    // opens" in the ledger, and a GtkPopoverMenuBar gives no such moment — so
+    // they are answered once per sync instead, which is more often than a menu
+    // opens and costs one call per item.
+    window::refresh_menu_state();
     return 0 as i32;   // G_SOURCE_REMOVE
 }
 

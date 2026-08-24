@@ -1506,7 +1506,7 @@ extern fn __c_gsk_gl_shader_new_from_bytes(sourcecode: *u8) -> *u8;
 #[link_name = "gsk_gl_shader_new_from_resource"]
 extern fn __c_gsk_gl_shader_new_from_resource(resource_path: *u8) -> *u8;
 #[link_name = "gsk_gl_shader_compile"]
-extern fn __c_gsk_gl_shader_compile(__recv: *u8, renderer: *u8) -> i32;
+extern fn __c_gsk_gl_shader_compile(__recv: *u8, renderer: *u8, __error: *u8) -> i32;
 #[link_name = "gsk_gl_shader_find_uniform_by_name"]
 extern fn __c_gsk_gl_shader_find_uniform_by_name(__recv: *u8, name: *u8) -> i32;
 // SKIPPED method `GLShader::format_args`: variadic
@@ -1563,7 +1563,7 @@ impl GLShader {
     }
 
     fn compile(this, renderer: Renderer) -> bool {
-        let __r: i32 = { __c_gsk_gl_shader_compile(this._raw, renderer.raw()) };
+        let __r: i32 = { __c_gsk_gl_shader_compile(this._raw, renderer.raw(), 0 as *u8) };
         return __r != (0 as i32);
     }
 
@@ -2005,7 +2005,7 @@ extern fn __c_gsk_render_node_serialize(__recv: *u8) -> *u8;
 #[link_name = "gsk_render_node_unref"]
 extern fn __c_gsk_render_node_unref(__recv: *u8);
 #[link_name = "gsk_render_node_write_to_file"]
-extern fn __c_gsk_render_node_write_to_file(__recv: *u8, filename: *u8) -> i32;
+extern fn __c_gsk_render_node_write_to_file(__recv: *u8, filename: *u8, __error: *u8) -> i32;
 // `RenderNode` — GObject wrapper (non-owning handle).
 struct RenderNode {
     opaque _raw: *u8,
@@ -2042,7 +2042,7 @@ impl RenderNode {
 
     fn write_to_file(this, filename: str) -> bool {
         let __cs_filename: *u8 = bridge::str_to_cstring(filename);
-        let __r: i32 = { __c_gsk_render_node_write_to_file(this._raw, __cs_filename) };
+        let __r: i32 = { __c_gsk_render_node_write_to_file(this._raw, __cs_filename, 0 as *u8) };
         bridge::free_cstring(__cs_filename);
         return __r != (0 as i32);
     }
@@ -2056,9 +2056,9 @@ extern fn __c_gsk_renderer_get_surface(__recv: *u8) -> *u8;
 #[link_name = "gsk_renderer_is_realized"]
 extern fn __c_gsk_renderer_is_realized(__recv: *u8) -> i32;
 #[link_name = "gsk_renderer_realize"]
-extern fn __c_gsk_renderer_realize(__recv: *u8, surface: *u8) -> i32;
+extern fn __c_gsk_renderer_realize(__recv: *u8, surface: *u8, __error: *u8) -> i32;
 #[link_name = "gsk_renderer_realize_for_display"]
-extern fn __c_gsk_renderer_realize_for_display(__recv: *u8, display: *u8) -> i32;
+extern fn __c_gsk_renderer_realize_for_display(__recv: *u8, display: *u8, __error: *u8) -> i32;
 #[link_name = "gsk_renderer_render"]
 extern fn __c_gsk_renderer_render(__recv: *u8, root: *u8, region: *u8);
 #[link_name = "gsk_renderer_render_texture"]
@@ -2092,12 +2092,12 @@ impl Renderer {
     }
 
     fn realize(this, surface: gdk::Surface) -> bool {
-        let __r: i32 = { __c_gsk_renderer_realize(this._raw, surface.raw()) };
+        let __r: i32 = { __c_gsk_renderer_realize(this._raw, surface.raw(), 0 as *u8) };
         return __r != (0 as i32);
     }
 
     fn realize_for_display(this, display: gdk::Display) -> bool {
-        let __r: i32 = { __c_gsk_renderer_realize_for_display(this._raw, display.raw()) };
+        let __r: i32 = { __c_gsk_renderer_realize_for_display(this._raw, display.raw(), 0 as *u8) };
         return __r != (0 as i32);
     }
 

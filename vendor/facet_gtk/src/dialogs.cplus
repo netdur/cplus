@@ -1,0 +1,501 @@
+// facet_gtk/dialogs — the modal verbs, and the window-scoped ones that have
+// nowhere else to live.
+//
+// ---- an alert is a facet TREE, not a GtkAlertDialog ---------------------------
+//
+// GTK has GtkAlertDialog and this file does not use it, for the reason
+// `facet_appkit/dialogs` gives about NSAlert: a dialog the platform draws is
+// not facet's, so nothing in it has a key AND AN AGENT CANNOT REACH IT. A
+// dialog an agent cannot answer is a dialog an agent cannot get past.
+//
+// So the sheet is an ordinary facet tree in an ordinary window, mounted through
+// the ordinary mount, and every part of it is addressable the way everything
+// else is: `alert:title`, `alert:message`, `alert:primary`, `alert:secondary`,
+// `choose:opt:2`, `prompt:value`. The trees are the AppKit backend's, verbatim,
+// because they are portable facet and the only platform-shaped part is how the
+// window is presented.
+//
+// NON-BLOCKING. `alert` returns immediately and the answer arrives on
+// `on_answer`; the blocking spelling keeps its own name and is a nested main
+// loop over the same tree, so an agent can still answer it.
+
+import "stdlib/option" as option;
+import "stdlib/text" as text;
+import "stdlib/vec" as vec;
+import "stdlib/box" as box;
+import "flex_layout/flex_layout" as flex;
+import "facet/facet" as core;
+import "facet/mount" as mount;
+import "facet/screen" as screen;
+import "facet/vocabulary" as vocab;
+import "facet/application" as app;
+import "facet/label" as label;
+import "facet/button" as button;
+import "facet/text_field" as text_field;
+import "gtk4/gtk4" as gtk;
+import "gio/gio" as gio;
+import "glib/glib" as glib;
+import "./window" as window;
+
+// ---- the live sheet ----------------------------------------------------------
+//
+// ONE AT A TIME, in a static rather than pinned to the window. AppKit hangs the
+// host off its NSWindow because a sheet is a window-modal child and two parents
+// may each have one; a GTK sheet here is application-modal, so a second one
+// would be unanswerable anyway and a static says that plainly instead of
+// pretending otherwise.
+
+struct SheetHost {
+    opaque root: *core::Node,
+    opaque win: *u8,
+    answer: fn(i32, *u8),
+    // The prompt's second answer: the text that was typed. A separate slot
+    // rather than a wider `answer`, so an alert and a choose keep the signature
+    // they have and only a prompt pays for the string.
+    typed: fn(str, *u8),
+    // ONE CONTEXT PER HANDLER — `typed` reading `answer_ctx` is right only
+    // while both answers come from the same object, and a shared slot also
+    // means only one of the two can ever be a bound method.
+    opaque answer_ctx: *u8,
+    opaque typed_ctx: *u8,
+}
+
+static LIVE: usize = 0;
+
+fn host() -> *SheetHost { return LIVE as *SheetHost; }
+
+fn alert_primary(sender: *u8, ctx: *u8) { dismiss(0 as i32); return; }
+fn alert_secondary(sender: *u8, ctx: *u8) { dismiss(1 as i32); return; }
+
+// A CHOICE AMONG N, which `alert` could not say. The index rides the ctx slot
+// rather than needing one named handler per button — `on_click` already carries
+// a ctx, and an index is exactly the kind of small fact it is for.
+fn choose_pick(sender: *u8, ctx: *u8) {
+    dismiss({ #addr(ctx) } as i32);
+    return;
+}
+
+// The prompt's OK reads the field BEFORE dismissing, because `dismiss` unmounts
+// the tree — the text would be gone by the time an answer handler ran.
+fn prompt_ok(sender: *u8, ctx: *u8) {
+    let h: *SheetHost = host();
+    if h == (0 as *SheetHost) { return; }
+    match text_field::find("prompt:value") {
+        option::Option[text_field::TextField]::Some(f) => {
+            let typed: str = f.text();
+            let g: fn(str, *u8) = { (*h).typed };
+            if g != (0 as fn(str, *u8)) { g(typed, { (*h).typed_ctx }); }
+        }
+        option::Option[text_field::TextField]::None => { }
+    }
+    dismiss(0 as i32);
+    return;
+}
+
+fn prompt_cancel(sender: *u8, ctx: *u8) { dismiss(1 as i32); return; }
+
+// The blocking spelling's answer, and what its nested loop waits for.
+static BLOCKING_LOOP: usize = 0;
+static BLOCKING_ANSWER: i32 = 0;
+
+fn blocking_answer(a: i32, ctx: *u8) {
+    BLOCKING_ANSWER = a;
+    if BLOCKING_LOOP != (0 as usize) {
+        glib::MainLoop::from_raw(BLOCKING_LOOP as *u8).quit();
+    }
+    return;
+}
+
+fn dismiss(answer: i32) {
+    let h: *SheetHost = host();
+    if h == (0 as *SheetHost) { return; }
+    LIVE = 0 as usize;
+    let win: *u8 = { (*h).win };
+    let root: *core::Node = { (*h).root };
+    let f: fn(i32, *u8) = { (*h).answer };
+    let ctx: *u8 = { (*h).answer_ctx };
+    // The window goes FIRST so the loop's window count drops before an answer
+    // handler decides to navigate — a handler that quits must not be racing a
+    // sheet that is still counted as up.
+    if win != (0 as *u8) { window::close_window(win); }
+    // The answer goes out BEFORE the tree is dropped, so a handler can still
+    // read anything it wants out of the sheet.
+    if f != (0 as fn(i32, *u8)) { f(answer, ctx); }
+    if root != (0 as *core::Node) {
+        mount::unmount(root);
+        let _gone: box::Box[core::Node] = box::from_raw::[core::Node](root as *u8);
+    }
+    let _h: box::Box[SheetHost] = box::from_raw::[SheetHost](h as *u8);
+    return;
+}
+
+// ---- how tall a sheet has to be ----------------------------------------------
+//
+// Measured rather than guessed would be better and needs a text-measurement hop
+// this file does not have. This estimate is deliberately generous — too tall is
+// a little empty space, too short is unreadable text and an unreachable button,
+// and those are not the same mistake.
+//
+// 380pt wide less 20pt padding a side leaves 340; at 13pt the average glyph runs
+// about 6.4pt, so ~53 characters to a line. Explicit newlines count as breaks of
+// their own, because a caller that wrote a paragraph break meant one.
+fn message_lines(message: str) -> f64 {
+    if message == "" { return 0.0f64; }
+    let per_line: usize = 53 as usize;
+    var total: f64 = 0.0f64;
+    // The owner is bound before the split: a view into a temporary would dangle
+    // at the end of the statement (E0513).
+    let owner: text::Text = text::from_str(message);
+    let segments: vec::Vec[str] = owner.split("\n");
+    var i: usize = 0 as usize;
+    while i < segments.count() {
+        match segments.at(i) {
+            option::Option[str]::Some(seg) => {
+                let n: usize = { #str_len(seg) };
+                var lines: usize = n / per_line;
+                if n % per_line != (0 as usize) { lines = lines +% (1 as usize); }
+                if lines == (0 as usize) { lines = 1 as usize; }
+                total = total + (lines as f64);
+            }
+            option::Option[str]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return total;
+}
+
+fn message_height(message: str) -> f64 { return message_lines(message) * 18.0f64; }
+
+fn capped(h: f64) -> f64 {
+    if h > 560.0f64 { return 560.0f64; }
+    return h;
+}
+
+// ---- the trees ---------------------------------------------------------------
+// Plain facet — nothing here is special, which is the point: an agent walks
+// them like any other screen.
+
+fn alert_tree(title: str, message: str, primary: str, secondary: str) -> core::Node {
+    var b: core::Builder = core::Builder::new();
+    b.add(label::label(title, key: "alert:title", font_size: 15.0f64,
+                       font_weight: vocab::FontWeight::Bold,
+                       text_align: vocab::TextAlign::Start));
+    if message != "" {
+        // WRAP, do not clip. Without these two the label renders one line and
+        // ends it in "…", which is how a sheet came to hide the sentence it
+        // existed to show.
+        b.add(label::label(message, key: "alert:message", font_size: 13.0f64,
+                           line_break: vocab::LineBreak::WordWrap,
+                           max_lines: 0 as i64,
+                           text_align: vocab::TextAlign::Start));
+    }
+    var row: core::Builder = core::Builder::new();
+    if secondary != "" {
+        row.add(button::button(secondary, key: "alert:secondary", on_click: alert_secondary));
+    }
+    row.add(button::button(primary, key: "alert:primary", on_click: alert_primary));
+    b.add(core::row(row, key: "alert:buttons").gap(8.0f64).justify(flex::Justify::FlexEnd));
+    return core::column(b, key: "alert").padding(20.0f64).gap(12.0f64);
+}
+
+fn choose_tree(title: str, message: str, take options: vec::Vec[text::Text]) -> core::Node {
+    var b: core::Builder = core::Builder::new();
+    b.add(label::label(title, key: "choose:title", font_size: 15.0f64,
+                       font_weight: vocab::FontWeight::Bold,
+                       text_align: vocab::TextAlign::Start));
+    if message != "" {
+        b.add(label::label(message, key: "choose:message", font_size: 13.0f64,
+                           line_break: vocab::LineBreak::WordWrap,
+                           max_lines: 0 as i64,
+                           text_align: vocab::TextAlign::Start));
+    }
+    // One button per option, stacked: a row of six buttons is unreadable and a
+    // sheet has the height. Keyed by INDEX so an agent can name the one it
+    // wants — `choose:opt:2` is addressable where "the third button" is not.
+    var col: core::Builder = core::Builder::new();
+    var i: usize = 0 as usize;
+    while i < options.count() {
+        match options.at_ptr(i) {
+            option::Option[*text::Text]::Some(t) => {
+                let k: text::Text = "choose:opt:${i}";
+                col.add(button::button({ (*t).view() }, key: { k.view() },
+                                       on_click: choose_pick, on_click_ctx: i as *u8));
+            }
+            option::Option[*text::Text]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    b.add(core::column(col, key: "choose:options").gap(6.0f64));
+    return core::column(b, key: "choose").padding(20.0f64).gap(12.0f64);
+}
+
+fn prompt_tree(title: str, message: str, placeholder: str, primary: str,
+               secondary: str) -> core::Node {
+    var b: core::Builder = core::Builder::new();
+    b.add(label::label(title, key: "prompt:title", font_size: 15.0f64,
+                       font_weight: vocab::FontWeight::Bold,
+                       text_align: vocab::TextAlign::Start));
+    if message != "" {
+        b.add(label::label(message, key: "prompt:message", font_size: 13.0f64,
+                           line_break: vocab::LineBreak::WordWrap,
+                           max_lines: 0 as i64,
+                           text_align: vocab::TextAlign::Start));
+    }
+    // A real facet text_field, which is what makes the prompt agent-drivable:
+    // `set_text` reaches it by key like any other field.
+    b.add(text_field::text_field("", key: "prompt:value", placeholder: placeholder));
+    var row: core::Builder = core::Builder::new();
+    if secondary != "" {
+        row.add(button::button(secondary, key: "prompt:cancel", on_click: prompt_cancel));
+    }
+    row.add(button::button(primary, key: "prompt:ok", on_click: prompt_ok));
+    b.add(core::row(row, key: "prompt:buttons").gap(8.0f64).justify(flex::Justify::FlexEnd));
+    return core::column(b, key: "prompt").padding(20.0f64).gap(12.0f64);
+}
+
+fn no_typed(v: str, ctx: *u8) { return; }
+
+// `alert`, `choose` and `prompt` differ only in the TREE and its height, so the
+// sheet itself is one body. Three copies of the window plumbing was how the
+// second one would have started drifting from the first.
+fn alert_sheet(title: str, message: str, primary: str, secondary: str = "",
+               on_answer: fn(i32, *u8) = 0 as fn(i32, *u8),
+               on_answer_ctx: *u8 = 0 as *u8) {
+    present_sheet(alert_tree(title, message, primary, secondary),
+                  capped(116.0f64 + message_height(message)),
+                  on_answer, on_answer_ctx, no_typed, 0 as *u8);
+    return;
+}
+
+fn choose_sheet(title: str, message: str, take options: vec::Vec[text::Text],
+                on_answer: fn(i32, *u8) = 0 as fn(i32, *u8),
+                on_answer_ctx: *u8 = 0 as *u8) {
+    let n: f64 = options.count() as f64;
+    present_sheet(choose_tree(title, message, options),
+                  capped(78.0f64 + (n * 34.0f64) + message_height(message)),
+                  on_answer, on_answer_ctx, no_typed, 0 as *u8);
+    return;
+}
+
+fn prompt_sheet(title: str, message: str, placeholder: str, primary: str,
+                secondary: str = "",
+                on_typed: fn(str, *u8) = no_typed, on_typed_ctx: *u8 = 0 as *u8,
+                on_answer: fn(i32, *u8) = 0 as fn(i32, *u8),
+                on_answer_ctx: *u8 = 0 as *u8) {
+    present_sheet(prompt_tree(title, message, placeholder, primary, secondary),
+                  capped(151.0f64 + message_height(message)),
+                  on_answer, on_answer_ctx, on_typed, on_typed_ctx);
+    return;
+}
+
+fn present_sheet(take tree: core::Node, height: f64,
+                 on_answer: fn(i32, *u8), on_answer_ctx: *u8,
+                 on_typed: fn(str, *u8), on_typed_ctx: *u8) {
+    // A second sheet over the first would be unanswerable — `dismiss` reads one
+    // static — so the first one wins and the second is refused rather than
+    // silently replacing it.
+    if LIVE != (0 as usize) { return; }
+    var root: core::Node = tree;
+    let rp: *core::Node = match box::new::[core::Node](root) {
+        option::Option[box::Box[core::Node]]::Some(b) => { b.into_raw() } as *core::Node,
+        option::Option[box::Box[core::Node]]::None => 0 as *core::Node,
+    };
+    if rp == (0 as *core::Node) { return; }
+    // A REAL MOUNT, through the ordinary path — `open_window` does it, so the
+    // sheet is a window of the app and `find` reaches it exactly as it reaches
+    // any other screen. Mounting here as well would mount it twice.
+    // Titleless and not resizable: a sheet is the size of what it says.
+    let w: *u8 = window::open_window(rp, screen::Chrome::new(
+        title: "", width: 380.0f64, height: height,
+        maximizable: false, minimizable: false));
+    if w == (0 as *u8) {
+        mount::unmount(rp);
+        let _gone: box::Box[core::Node] = box::from_raw::[core::Node](rp as *u8);
+        return;
+    }
+    // Modal, and over whatever is already up — GTK's own words for what a sheet
+    // is. Without `transient_for` a window manager is free to place it
+    // anywhere, including behind the window it is asking about.
+    let sheet: gtk::Window = gtk::Window::from_raw(w);
+    sheet.set_modal(true);
+    let parent: *u8 = window::any_window();
+    if parent != (0 as *u8) && parent != w {
+        sheet.set_transient_for(gtk::Window::from_raw(parent));
+    }
+    match box::new::[SheetHost](SheetHost {
+        root: rp, win: w, answer: on_answer, typed: on_typed,
+        answer_ctx: on_answer_ctx, typed_ctx: on_typed_ctx,
+    }) {
+        option::Option[box::Box[SheetHost]]::Some(b) => { LIVE = { #addr(b.into_raw()) }; }
+        option::Option[box::Box[SheetHost]]::None => { }
+    }
+    return;
+}
+
+// ---- the blocking spelling ---------------------------------------------------
+
+// The same sheet, with a nested main loop held until it answers.
+//
+// A NESTED LOOP, NOT A FROZEN ONE: the rest of the app keeps drawing and the
+// agent channel keeps being served, which is the whole difference between this
+// and the modal call GTK offers. It is still the wrong shape for anything that
+// can be written as a callback, and the non-blocking spelling above is what an
+// application should reach for.
+fn alert(title: str, message: str, primary: str, secondary: str = "") -> i32 {
+    BLOCKING_ANSWER = -1;
+    alert_sheet(title, message, primary, secondary, blocking_answer, 0 as *u8);
+    if LIVE == (0 as usize) { return -1; }   // refused: a sheet was already up
+    let lp: glib::MainLoop = glib::MainLoop::new(glib::main_context_default(), false);
+    BLOCKING_LOOP = { #addr(lp.raw()) };
+    lp.run();
+    BLOCKING_LOOP = 0 as usize;
+    lp.unref();
+    return BLOCKING_ANSWER;
+}
+
+// ---- choosing a file ---------------------------------------------------------
+//
+// GtkFileDialog is ASYNC ONLY — GTK 4.10 replaced the modal chooser with a
+// pair of `_async` calls, and neither has a blocking form. facet's verb answers
+// a path, so the wait happens here: a nested main loop, quit from the completion
+// callback. The same shape as the blocking alert above and for the same reason.
+//
+// HAND-BOUND, both of them. cpc-bindgen emitted `open_finish` and
+// `select_folder_finish` but not the calls that produce a result for them: the
+// GAsyncReadyCallback parameter is one the GIR does not present.
+#[link_name = "gtk_file_dialog_open"]
+extern fn gtk_file_dialog_open(dialog: *u8, parent: *u8, cancellable: *u8,
+                               callback: fn(*u8, *u8, *u8), user: *u8);
+
+#[link_name = "gtk_file_dialog_select_folder"]
+extern fn gtk_file_dialog_select_folder(dialog: *u8, parent: *u8, cancellable: *u8,
+                                        callback: fn(*u8, *u8, *u8), user: *u8);
+
+static CHOOSE_LOOP: usize = 0;
+static CHOSEN: text::Text = #zero::[text::Text]();
+static CHOSE_ONE: bool = false;
+
+fn chose(path: option::Option[text::Text]) {
+    match path {
+        option::Option[text::Text]::Some(t) => { CHOSEN = t; CHOSE_ONE = true; }
+        option::Option[text::Text]::None => { CHOSE_ONE = false; }
+    }
+    if CHOOSE_LOOP != (0 as usize) {
+        glib::MainLoop::from_raw(CHOOSE_LOOP as *u8).quit();
+    }
+    return;
+}
+
+// `_finish` answers None for a cancel as well as for an error, and both mean
+// the same thing to facet: nothing was chosen.
+fn open_done(source: *u8, result: *u8, user: *u8) {
+    chose(path_of(gtk::FileDialog::from_raw(source)
+        .open_finish(gio::AsyncResult::from_raw(result))));
+    return;
+}
+
+fn folder_done(source: *u8, result: *u8, user: *u8) {
+    chose(path_of(gtk::FileDialog::from_raw(source)
+        .select_folder_finish(gio::AsyncResult::from_raw(result))));
+    return;
+}
+
+// A GFile is not always a path — it may be a URI on a remote mount, and
+// `get_path` says so by answering None rather than by inventing one.
+fn path_of(f: option::Option[gio::File]) -> option::Option[text::Text] {
+    match f {
+        option::Option[gio::File]::Some(file) => { return file.get_path(); }
+        option::Option[gio::File]::None => { return option::Option[text::Text]::None; }
+    }
+}
+
+fn wait_for_choice() -> option::Option[text::Text] {
+    let lp: glib::MainLoop = glib::MainLoop::new(glib::main_context_default(), false);
+    CHOOSE_LOOP = { #addr(lp.raw()) };
+    lp.run();
+    CHOOSE_LOOP = 0 as usize;
+    lp.unref();
+    if !CHOSE_ONE { return option::Option[text::Text]::None; }
+    return option::Option[text::Text]::Some(CHOSEN.clone());
+}
+
+fn choose_file() -> option::Option[text::Text] {
+    let d: gtk::FileDialog = gtk::FileDialog::new();
+    d.set_title("Choose a file");
+    { gtk_file_dialog_open(d.raw(), window::any_window(), 0 as *u8, open_done, 0 as *u8) };
+    return wait_for_choice();
+}
+
+fn choose_directory() -> option::Option[text::Text] {
+    let d: gtk::FileDialog = gtk::FileDialog::new();
+    d.set_title("Choose a folder");
+    { gtk_file_dialog_select_folder(d.raw(), window::any_window(), 0 as *u8,
+                                    folder_done, 0 as *u8) };
+    return wait_for_choice();
+}
+
+// ---- the window verbs a handler reaches --------------------------------------
+//
+// The sender is whatever fired — a button in a custom title bar, usually — so
+// the window is found by walking up to the top of the widget tree, the same
+// walk `input`'s sender readers make.
+
+fn window_of_sender(sender: *u8) -> *u8 {
+    if sender == (0 as *u8) { return window::any_window(); }
+    var cur: *u8 = sender;
+    var going: bool = true;
+    while going {
+        match gtk::Widget::from_raw(cur).get_parent() {
+            option::Option[gtk::Widget]::Some(p) => { cur = p.raw(); }
+            option::Option[gtk::Widget]::None => { going = false; }
+        }
+    }
+    return cur;
+}
+
+fn window_close(sender: *u8) {
+    window::close_window(window_of_sender(sender));
+    return;
+}
+
+fn window_minimize(sender: *u8) {
+    let w: *u8 = window_of_sender(sender);
+    if w == (0 as *u8) { return; }
+    gtk::Window::from_raw(w).minimize();
+    return;
+}
+
+// facet's `zoom` is macOS's word for the maximise TOGGLE, which is what GTK
+// calls maximize/unmaximize — so the verb is one call on each side of a
+// question about the current state.
+fn window_zoom(sender: *u8) {
+    let w: *u8 = window_of_sender(sender);
+    if w == (0 as *u8) { return; }
+    let win: gtk::Window = gtk::Window::from_raw(w);
+    if win.is_maximized() { win.unmaximize(); } else { win.maximize(); }
+    return;
+}
+
+// ---- window geometry ---------------------------------------------------------
+//
+// SIZE ONLY. GTK 4 has no window POSITION, on purpose: `gtk_window_move` and
+// `gtk_window_get_position` were removed because Wayland has no global
+// coordinate space to express them in, and a toolkit that answered anyway would
+// be answering about X11 and lying everywhere else. So x and y read zero and
+// are ignored on the way in — recorded in MANIFEST.md §1 rather than faked.
+fn window_frame_of(root: *core::Node) -> vocab::Rect {
+    let w: *u8 = window::window_of_root(root);
+    if w == (0 as *u8) { return vocab::Rect::zero(); }
+    let widget: gtk::Widget = gtk::Widget::from_raw(w);
+    return vocab::Rect::of(0.0f64, 0.0f64,
+                           { widget.get_width() } as f64,
+                           { widget.get_height() } as f64);
+}
+
+fn set_window_frame_of(root: *core::Node, frame: vocab::Rect) {
+    let w: *u8 = window::window_of_root(root);
+    if w == (0 as *u8) { return; }
+    if frame.width <= (0.0 as f64) || frame.height <= (0.0 as f64) { return; }
+    gtk::Window::from_raw(w).set_default_size(frame.width as i32, frame.height as i32);
+    return;
+}

@@ -387,9 +387,9 @@ fn content_formats_parse(string: str) -> option::Option[ContentFormats] {
 // SKIPPED fn `content_register_serializer`: param `serialize` — unmapped type `ContentSerializeFunc`
 // SKIPPED fn `content_serialize_async`: param `callback` — unmapped type `Gio.AsyncReadyCallback`
 #[link_name = "gdk_content_serialize_finish"]
-extern fn __c_gdk_content_serialize_finish(result: *u8) -> i32;
+extern fn __c_gdk_content_serialize_finish(result: *u8, __error: *u8) -> i32;
 fn content_serialize_finish(result: gio::AsyncResult) -> bool {
-    let __r: i32 = { __c_gdk_content_serialize_finish(result.raw()) };
+    let __r: i32 = { __c_gdk_content_serialize_finish(result.raw(), 0 as *u8) };
     return __r != (0 as i32);
 }
 
@@ -1752,13 +1752,13 @@ extern fn __c_gdk_clipboard_is_local(__recv: *u8) -> i32;
 // SKIPPED method `Clipboard::read_finish`: string/object out-param alongside a value return — cannot fold
 // SKIPPED method `Clipboard::read_text_async`: param `callback` — unmapped type `Gio.AsyncReadyCallback`
 #[link_name = "gdk_clipboard_read_text_finish"]
-extern fn __c_gdk_clipboard_read_text_finish(__recv: *u8, result: *u8) -> *u8;
+extern fn __c_gdk_clipboard_read_text_finish(__recv: *u8, result: *u8, __error: *u8) -> *u8;
 // SKIPPED method `Clipboard::read_texture_async`: param `callback` — unmapped type `Gio.AsyncReadyCallback`
 #[link_name = "gdk_clipboard_read_texture_finish"]
-extern fn __c_gdk_clipboard_read_texture_finish(__recv: *u8, result: *u8) -> *u8;
+extern fn __c_gdk_clipboard_read_texture_finish(__recv: *u8, result: *u8, __error: *u8) -> *u8;
 // SKIPPED method `Clipboard::read_value_async`: param `callback` — unmapped type `Gio.AsyncReadyCallback`
 #[link_name = "gdk_clipboard_read_value_finish"]
-extern fn __c_gdk_clipboard_read_value_finish(__recv: *u8, result: *u8) -> *u8;
+extern fn __c_gdk_clipboard_read_value_finish(__recv: *u8, result: *u8, __error: *u8) -> *u8;
 // SKIPPED method `Clipboard::set`: variadic
 #[link_name = "gdk_clipboard_set_content"]
 extern fn __c_gdk_clipboard_set_content(__recv: *u8, provider: *u8) -> i32;
@@ -1771,7 +1771,7 @@ extern fn __c_gdk_clipboard_set_texture(__recv: *u8, texture: *u8);
 extern fn __c_gdk_clipboard_set_value(__recv: *u8, value: *u8);
 // SKIPPED method `Clipboard::store_async`: param `callback` — unmapped type `Gio.AsyncReadyCallback`
 #[link_name = "gdk_clipboard_store_finish"]
-extern fn __c_gdk_clipboard_store_finish(__recv: *u8, result: *u8) -> i32;
+extern fn __c_gdk_clipboard_store_finish(__recv: *u8, result: *u8, __error: *u8) -> i32;
 // `Clipboard` — GObject wrapper (non-owning handle); parent `GObject.Object`.
 struct Clipboard {
     opaque _raw: *u8,
@@ -1803,19 +1803,19 @@ impl Clipboard {
     }
 
     fn read_text_finish(this, result: gio::AsyncResult) -> option::Option[text::Text] {
-        let __r: *u8 = { __c_gdk_clipboard_read_text_finish(this._raw, result.raw()) };
+        let __r: *u8 = { __c_gdk_clipboard_read_text_finish(this._raw, result.raw(), 0 as *u8) };
         if __r == { 0 as *u8 } { return option::Option[text::Text]::None; }
         return option::some(bridge::cstr_to_text_full(__r));
     }
 
     fn read_texture_finish(this, result: gio::AsyncResult) -> option::Option[Texture] {
-        let __r: *u8 = { __c_gdk_clipboard_read_texture_finish(this._raw, result.raw()) };
+        let __r: *u8 = { __c_gdk_clipboard_read_texture_finish(this._raw, result.raw(), 0 as *u8) };
         if __r == { 0 as *u8 } { return option::Option[Texture]::None; }
         return option::some(Texture::from_raw(__r));
     }
 
     fn read_value_finish(this, result: gio::AsyncResult) -> gobject_gir::Value {
-        let __r: *u8 = { __c_gdk_clipboard_read_value_finish(this._raw, result.raw()) };
+        let __r: *u8 = { __c_gdk_clipboard_read_value_finish(this._raw, result.raw(), 0 as *u8) };
         return gobject_gir::Value::from_raw(__r);
     }
 
@@ -1842,7 +1842,7 @@ impl Clipboard {
     }
 
     fn store_finish(this, result: gio::AsyncResult) -> bool {
-        let __r: i32 = { __c_gdk_clipboard_store_finish(this._raw, result.raw()) };
+        let __r: i32 = { __c_gdk_clipboard_store_finish(this._raw, result.raw(), 0 as *u8) };
         return __r != (0 as i32);
     }
 
@@ -1958,7 +1958,7 @@ extern fn __c_gdk_content_provider_ref_formats(__recv: *u8) -> *u8;
 extern fn __c_gdk_content_provider_ref_storable_formats(__recv: *u8) -> *u8;
 // SKIPPED method `ContentProvider::write_mime_type_async`: param `callback` — unmapped type `Gio.AsyncReadyCallback`
 #[link_name = "gdk_content_provider_write_mime_type_finish"]
-extern fn __c_gdk_content_provider_write_mime_type_finish(__recv: *u8, result: *u8) -> i32;
+extern fn __c_gdk_content_provider_write_mime_type_finish(__recv: *u8, result: *u8, __error: *u8) -> i32;
 // `ContentProvider` — GObject wrapper (non-owning handle); parent `GObject.Object`.
 struct ContentProvider {
     opaque _raw: *u8,
@@ -1996,7 +1996,7 @@ impl ContentProvider {
     }
 
     fn write_mime_type_finish(this, result: gio::AsyncResult) -> bool {
-        let __r: i32 = { __c_gdk_content_provider_write_mime_type_finish(this._raw, result.raw()) };
+        let __r: i32 = { __c_gdk_content_provider_write_mime_type_finish(this._raw, result.raw(), 0 as *u8) };
         return __r != (0 as i32);
     }
 
@@ -2431,7 +2431,7 @@ extern fn __c_gdk_display_beep(__recv: *u8);
 #[link_name = "gdk_display_close"]
 extern fn __c_gdk_display_close(__recv: *u8);
 #[link_name = "gdk_display_create_gl_context"]
-extern fn __c_gdk_display_create_gl_context(__recv: *u8) -> *u8;
+extern fn __c_gdk_display_create_gl_context(__recv: *u8, __error: *u8) -> *u8;
 #[link_name = "gdk_display_device_is_grabbed"]
 extern fn __c_gdk_display_device_is_grabbed(__recv: *u8, device: *u8) -> i32;
 #[link_name = "gdk_display_flush"]
@@ -2468,7 +2468,7 @@ extern fn __c_gdk_display_is_rgba(__recv: *u8) -> i32;
 #[link_name = "gdk_display_notify_startup_complete"]
 extern fn __c_gdk_display_notify_startup_complete(__recv: *u8, startup_id: *u8);
 #[link_name = "gdk_display_prepare_gl"]
-extern fn __c_gdk_display_prepare_gl(__recv: *u8) -> i32;
+extern fn __c_gdk_display_prepare_gl(__recv: *u8, __error: *u8) -> i32;
 #[link_name = "gdk_display_put_event"]
 extern fn __c_gdk_display_put_event(__recv: *u8, event: *u8);
 #[link_name = "gdk_display_supports_input_shapes"]
@@ -2501,7 +2501,7 @@ impl Display {
     }
 
     fn create_gl_context(this) -> GLContext {
-        let __r: *u8 = { __c_gdk_display_create_gl_context(this._raw) };
+        let __r: *u8 = { __c_gdk_display_create_gl_context(this._raw, 0 as *u8) };
         return GLContext::from_raw(__r);
     }
 
@@ -2593,7 +2593,7 @@ impl Display {
     }
 
     fn prepare_gl(this) -> bool {
-        let __r: i32 = { __c_gdk_display_prepare_gl(this._raw) };
+        let __r: i32 = { __c_gdk_display_prepare_gl(this._raw, 0 as *u8) };
         return __r != (0 as i32);
     }
 
@@ -3077,7 +3077,7 @@ extern fn __c_gdk_drop_get_surface(__recv: *u8) -> *u8;
 // SKIPPED method `Drop::read_finish`: string/object out-param alongside a value return — cannot fold
 // SKIPPED method `Drop::read_value_async`: param `callback` — unmapped type `Gio.AsyncReadyCallback`
 #[link_name = "gdk_drop_read_value_finish"]
-extern fn __c_gdk_drop_read_value_finish(__recv: *u8, result: *u8) -> *u8;
+extern fn __c_gdk_drop_read_value_finish(__recv: *u8, result: *u8, __error: *u8) -> *u8;
 #[link_name = "gdk_drop_status"]
 extern fn __c_gdk_drop_status(__recv: *u8, actions: u32, preferred: u32);
 // `Drop` — GObject wrapper (non-owning handle); parent `GObject.Object`.
@@ -3126,7 +3126,7 @@ impl Drop {
     }
 
     fn read_value_finish(this, result: gio::AsyncResult) -> gobject_gir::Value {
-        let __r: *u8 = { __c_gdk_drop_read_value_finish(this._raw, result.raw()) };
+        let __r: *u8 = { __c_gdk_drop_read_value_finish(this._raw, result.raw(), 0 as *u8) };
         return gobject_gir::Value::from_raw(__r);
     }
 
@@ -3446,7 +3446,7 @@ extern fn __c_gdk_gl_context_is_shared(__recv: *u8, other: *u8) -> i32;
 #[link_name = "gdk_gl_context_make_current"]
 extern fn __c_gdk_gl_context_make_current(__recv: *u8);
 #[link_name = "gdk_gl_context_realize"]
-extern fn __c_gdk_gl_context_realize(__recv: *u8) -> i32;
+extern fn __c_gdk_gl_context_realize(__recv: *u8, __error: *u8) -> i32;
 #[link_name = "gdk_gl_context_set_allowed_apis"]
 extern fn __c_gdk_gl_context_set_allowed_apis(__recv: *u8, apis: u32);
 #[link_name = "gdk_gl_context_set_debug_enabled"]
@@ -3535,7 +3535,7 @@ impl GLContext {
     }
 
     fn realize(this) -> bool {
-        let __r: i32 = { __c_gdk_gl_context_realize(this._raw) };
+        let __r: i32 = { __c_gdk_gl_context_realize(this._raw, 0 as *u8) };
         return __r != (0 as i32);
     }
 
@@ -4170,11 +4170,11 @@ extern fn __c_gdk_surface_beep(__recv: *u8);
 #[link_name = "gdk_surface_create_cairo_context"]
 extern fn __c_gdk_surface_create_cairo_context(__recv: *u8) -> *u8;
 #[link_name = "gdk_surface_create_gl_context"]
-extern fn __c_gdk_surface_create_gl_context(__recv: *u8) -> *u8;
+extern fn __c_gdk_surface_create_gl_context(__recv: *u8, __error: *u8) -> *u8;
 #[link_name = "gdk_surface_create_similar_surface"]
 extern fn __c_gdk_surface_create_similar_surface(__recv: *u8, content: i32, width: i32, height: i32) -> *u8;
 #[link_name = "gdk_surface_create_vulkan_context"]
-extern fn __c_gdk_surface_create_vulkan_context(__recv: *u8) -> *u8;
+extern fn __c_gdk_surface_create_vulkan_context(__recv: *u8, __error: *u8) -> *u8;
 #[link_name = "gdk_surface_destroy"]
 extern fn __c_gdk_surface_destroy(__recv: *u8);
 #[link_name = "gdk_surface_get_cursor"]
@@ -4249,7 +4249,7 @@ impl Surface {
     }
 
     fn create_gl_context(this) -> GLContext {
-        let __r: *u8 = { __c_gdk_surface_create_gl_context(this._raw) };
+        let __r: *u8 = { __c_gdk_surface_create_gl_context(this._raw, 0 as *u8) };
         return GLContext::from_raw(__r);
     }
 
@@ -4259,7 +4259,7 @@ impl Surface {
     }
 
     fn create_vulkan_context(this) -> VulkanContext {
-        let __r: *u8 = { __c_gdk_surface_create_vulkan_context(this._raw) };
+        let __r: *u8 = { __c_gdk_surface_create_vulkan_context(this._raw, 0 as *u8) };
         return VulkanContext::from_raw(__r);
     }
 
@@ -4384,11 +4384,11 @@ impl Surface {
 #[link_name = "gdk_texture_new_for_pixbuf"]
 extern fn __c_gdk_texture_new_for_pixbuf(pixbuf: *u8) -> *u8;
 #[link_name = "gdk_texture_new_from_bytes"]
-extern fn __c_gdk_texture_new_from_bytes(bytes: *u8) -> *u8;
+extern fn __c_gdk_texture_new_from_bytes(bytes: *u8, __error: *u8) -> *u8;
 #[link_name = "gdk_texture_new_from_file"]
-extern fn __c_gdk_texture_new_from_file(file: *u8) -> *u8;
+extern fn __c_gdk_texture_new_from_file(file: *u8, __error: *u8) -> *u8;
 #[link_name = "gdk_texture_new_from_filename"]
-extern fn __c_gdk_texture_new_from_filename(path: *u8) -> *u8;
+extern fn __c_gdk_texture_new_from_filename(path: *u8, __error: *u8) -> *u8;
 #[link_name = "gdk_texture_new_from_resource"]
 extern fn __c_gdk_texture_new_from_resource(resource_path: *u8) -> *u8;
 // SKIPPED method `Texture::download`: param `data` — no <type> (array, callback, or varargs)
@@ -4421,18 +4421,18 @@ impl Texture {
     }
 
     fn new_from_bytes(bytes: glib::Bytes) -> Texture {
-        let __r: *u8 = { __c_gdk_texture_new_from_bytes(bytes.raw()) };
+        let __r: *u8 = { __c_gdk_texture_new_from_bytes(bytes.raw(), 0 as *u8) };
         return Texture::from_raw(__r);
     }
 
     fn new_from_file(file: gio::File) -> Texture {
-        let __r: *u8 = { __c_gdk_texture_new_from_file(file.raw()) };
+        let __r: *u8 = { __c_gdk_texture_new_from_file(file.raw(), 0 as *u8) };
         return Texture::from_raw(__r);
     }
 
     fn new_from_filename(path: str) -> Texture {
         let __cs_path: *u8 = bridge::str_to_cstring(path);
-        let __r: *u8 = { __c_gdk_texture_new_from_filename(__cs_path) };
+        let __r: *u8 = { __c_gdk_texture_new_from_filename(__cs_path, 0 as *u8) };
         bridge::free_cstring(__cs_path);
         return Texture::from_raw(__r);
     }

@@ -1,69 +1,377 @@
 // facet_gtk/window — the host: a GtkWindow whose content is a GtkFixed that
-// facet's root tree is laid into.
+// facet's root tree is laid into, plus the app tier the runtime facade needs.
 //
 // facet's `mount` inserts a root with a NULL host, so nothing places it; the
 // window tier is what gives a root somewhere to be. Same division as the
 // AppKit backend, where the window makes the content view and `insert` never
 // sees a null host.
 //
-// ONE WINDOW PER ROOT, tracked in a parallel pair of statics rather than a map:
-// facet's own `application` module already owns the root list and its order,
-// and a second index would be a copy of it that can disagree.
+// ---- the shell is a BOX, not the Fixed ----------------------------------------
+//
+// A window's child is a vertical GtkBox holding, in order, an optional menu bar
+// and the content GtkFixed. That is one widget more than the tree needs and it
+// buys the one thing facet's layout cannot do for itself: the menu bar takes
+// its natural height off the top and the Fixed gets what is left, so the
+// LAYOUT SIZE is the Fixed's allocation and never the window's. Measuring the
+// window instead would lay every tree a menu-bar's height too tall and hide
+// the bottom row of every screen.
+//
+// ONE WINDOW PER ROOT, tracked in parallel arrays rather than a map: facet's
+// own `application` module already owns the root list and its order, and a
+// second index would be a copy of it that can disagree. A slot whose ROOT is
+// null is FREE — the arrays are reused, because an app that opens a screen per
+// route would otherwise run out after eight.
 
 import "stdlib/option" as option;
+import "stdlib/text" as text;
+import "stdlib/vec" as vec;
+import "stdlib/status" as status;
 import "flex_layout/flex_layout" as flex;
 import "facet/facet" as core;
 import "facet/application" as app;
+import "facet/mount" as mount;
+import "facet/screen" as screen;
+import "facet/menu" as menu;
+import "facet/menu_item" as menu_item;
+import "facet/context_menu_item" as context_menu_item;
+import "facet/props" as props;
+import "facet/vocabulary" as vocab;
 import "gtk4/gtk4" as gtk;
+import "gio/gio" as gio;
+import "gdk/gdk" as gdk;
+import "glib/glib" as glib;
 import "gobject/runtime" as g;
+import "gobject/signal" as sig;
+import "gobject/bridge" as bridge;
+import "./controls" as controls;
 import "./geometry" as geometry;
 import "./paint" as paint;
+import "./chrome" as chrome;
 
 const MAX_WINDOWS: usize = 8;
 
-static N_WINDOWS: usize = 0;
 static ROOTS: [usize; MAX_WINDOWS] = [0; MAX_WINDOWS];
 static FIXEDS: [usize; MAX_WINDOWS] = [0; MAX_WINDOWS];
 static WINDOWS: [usize; MAX_WINDOWS] = [0; MAX_WINDOWS];
+static SHOULD_CLOSE: [usize; MAX_WINDOWS] = [0; MAX_WINDOWS];
+static SHOULD_CLOSE_CTX: [usize; MAX_WINDOWS] = [0; MAX_WINDOWS];
+static WILL_CLOSE: [usize; MAX_WINDOWS] = [0; MAX_WINDOWS];
+static WILL_CLOSE_CTX: [usize; MAX_WINDOWS] = [0; MAX_WINDOWS];
+static OPEN_WINDOWS: i64 = 0;
 
-// Open a real window for a mounted root and lay the tree into it.
+fn default_should_close(ctx: *u8) -> bool { return true; }
+fn default_will_close(ctx: *u8) { return; }
+
+// How many windows are up. `run_loop` ends when this reaches zero, which is
+// what makes closing the last window the app's ordinary unwind.
+fn open_window_count() -> i64 { return OPEN_WINDOWS; }
+
+fn free_slot() -> usize {
+    var i: usize = 0 as usize;
+    while i < MAX_WINDOWS {
+        if ROOTS[i] == (0 as usize) { return i; }
+        i = i +% (1 as usize);
+    }
+    return MAX_WINDOWS;
+}
+
+fn slot_of_window(w: *u8) -> usize {
+    var i: usize = 0 as usize;
+    while i < MAX_WINDOWS {
+        if ROOTS[i] != (0 as usize) && WINDOWS[i] == { #addr(w) } { return i; }
+        i = i +% (1 as usize);
+    }
+    return MAX_WINDOWS;
+}
+
+fn slot_of_root(r: *core::Node) -> usize {
+    var i: usize = 0 as usize;
+    while i < MAX_WINDOWS {
+        if ROOTS[i] == { #addr(r as *u8) } { return i; }
+        i = i +% (1 as usize);
+    }
+    return MAX_WINDOWS;
+}
+
+// ---- chrome ------------------------------------------------------------------
+
+// `Bar` says how much of the platform's own window frame is wanted.
 //
-// The caller has already run `mount::mount(root)`, so every backed node owns
-// its widget and the widgets are in each other's hosts — everything except the
-// ROOT, which had no host to go into. That is what this supplies.
-fn open(root: *core::Node, title: str, width: f64, height: f64) -> bool {
-    if root == (0 as *core::Node) { return false; }
-    if N_WINDOWS >= MAX_WINDOWS { return false; }
-    var win: gtk::Window = gtk::Window::new();
-    win.set_title(title);
-    win.set_default_size(geometry::round_i32(width), geometry::round_i32(height));
-    // The content host. A Fixed because facet computes every frame — see
-    // geometry.cplus.
+// GTK draws the frame client-side, so all four are reachable — but two of them
+// need a GtkHeaderBar to say anything at all, because the close/minimise/
+// maximise buttons belong to the header rather than to the window.
+fn wants_header(c: *screen::Chrome) -> bool {
+    if { (*c).subtitle_text.view() } != "" { return true; }
+    if !{ (*c).maximizable } { return true; }
+    if !{ (*c).minimizable } { return true; }
+    return match { (*c).bar } {
+        screen::Bar::Blended => true,
+        screen::Bar::Native => false,
+        screen::Bar::Hidden => false,
+        screen::Bar::Custom => false,
+    };
+}
+
+// GTK's decoration layout is a string: what sits left of the title, a colon,
+// then what sits right. Naming only the buttons that are wanted is how a
+// window says it cannot be maximised — there is no per-button switch.
+fn decoration_layout(c: *screen::Chrome) -> text::Text {
+    var right: text::Text = text::from_str("");
+    if { (*c).minimizable } { right = right.appending("minimize,"); }
+    if { (*c).maximizable } { right = right.appending("maximize,"); }
+    right = right.appending("close");
+    return text::from_str(":${right}");
+}
+
+// The title widget, when the chrome asks for more than a title.
+//
+// A SUBTITLE IS TWO LABELS. GTK 4 dropped GtkHeaderBar's subtitle outright, so
+// the answer is a box of two — the same rule the button follows, and the reason
+// this is not a "GTK cannot" row.
+fn header_title(c: *screen::Chrome) -> gtk::Widget {
+    let title: gtk::Label = gtk::Label::new({ (*c).title_text.view() });
+    title.upcast().add_css_class("title");
+    let sub: str = { (*c).subtitle_text.view() };
+    if sub == "" { return title.upcast(); }
+    let bx: gtk::Box = gtk::Box::new(1 as i32, 0 as i32);   // vertical
+    let subtitle: gtk::Label = gtk::Label::new(sub);
+    subtitle.upcast().add_css_class("subtitle");
+    bx.append(title.upcast());
+    bx.append(subtitle.upcast());
+    bx.upcast().set_valign(3 as i32);                       // GTK_ALIGN_CENTER
+    return bx.upcast();
+}
+
+// `root` is here for ONE question: does this tree declare a toolbar? A window
+// with toolbar items needs a GtkHeaderBar whatever its `Bar` said, because a
+// GTK window has nowhere else to put them — so the header is built for the
+// toolbar's sake too, and the items are packed into it before it is installed.
+fn apply_chrome(win: gtk::Window, c: *screen::Chrome, root: *core::Node) {
+    win.set_title({ (*c).title_text.view() });
+    win.set_default_size(geometry::round_i32({ (*c).width }),
+                         geometry::round_i32({ (*c).height }));
+    // A window's MINIMUM is a size request on the window itself. Zero means
+    // unset, and a request of zero is also "no minimum", so the two agree.
+    gtk::Widget::from_raw(win.raw()).set_size_request(
+        geometry::round_i32({ (*c).min_width }), geometry::round_i32({ (*c).min_height }));
+    // A window that can be neither maximised nor resized is not resizable;
+    // one that can be maximised is. There is no third state in GTK.
+    win.set_resizable({ (*c).maximizable });
+    match { (*c).bar } {
+        screen::Bar::Hidden => { win.set_decorated(false); }
+        screen::Bar::Custom => {
+            // The application draws its own bar and moves the window through
+            // `.gesture(drags_window:)`. Undecorated is the whole request.
+            win.set_decorated(false);
+        }
+        screen::Bar::Native => { win.set_decorated(true); }
+        screen::Bar::Blended => { win.set_decorated(true); }
+    }
+    let toolbar: bool = chrome::has_toolbar_items(root);
+    if wants_header(c) || toolbar {
+        let h: gtk::HeaderBar = gtk::HeaderBar::new();
+        h.set_decoration_layout(decoration_layout(c).view());
+        h.set_title_widget(header_title(c));
+        match { (*c).bar } {
+            // `Blended` is a bar the content flows under — GTK's own word for
+            // it is the `flat` header style, which drops the bar's background
+            // and its separator and leaves the buttons.
+            screen::Bar::Blended => { h.upcast().add_css_class("flat"); }
+            screen::Bar::Native => { }
+            screen::Bar::Hidden => { }
+            screen::Bar::Custom => { }
+        }
+        if toolbar { chrome::install_toolbar(h.raw(), root); }
+        win.set_titlebar(h.upcast());
+    }
+    return;
+}
+
+// A `toolbar_item` subtree changed. Same shape as `menus_changed`, and for the
+// same reason: the item is viewless, so its edit arrives as `touch_all` on
+// whatever node holds it, and only the window can see the whole bar.
+fn toolbars_changed() {
+    var i: usize = 0 as usize;
+    while i < MAX_WINDOWS {
+        if ROOTS[i] != (0 as usize) {
+            let root: *core::Node = ROOTS[i] as *core::Node;
+            match gtk::Window::from_raw(WINDOWS[i] as *u8).get_titlebar() {
+                option::Option[gtk::Widget]::Some(h) => {
+                    if g::is_a(h.raw(), #str_ptr("GtkHeaderBar\0")) {
+                        chrome::install_toolbar(h.raw(), root);
+                    }
+                }
+                option::Option[gtk::Widget]::None => { }
+            }
+        }
+        i = i +% (1 as usize);
+    }
+    return;
+}
+
+// ---- opening -----------------------------------------------------------------
+
+// Open a real window for a root, MOUNTING IT HERE, and lay the tree into it.
+//
+// THE MOUNT IS THIS FUNCTION'S, not the caller's, and that is not a style
+// choice — `mount::mount` is what calls `app::open_window`, so the app's own
+// record and the native window have to be established together or
+// `app::newest_window_root()` answers about a window that does not exist yet.
+// Every window-scoped verb the runtime facade offers (`window_frame`,
+// `display_density`, `is_window_active`) resolves through that pairing.
+//
+// It was NOT here at first, and the failure is worth writing down because it is
+// invisible: the runtime facade opened every screen through this entry and
+// never mounted, so every node in the gallery had a frame, a position and no
+// WIDGET. The window came up the right size, the layout was correct, and it was
+// empty. `FACET_GTK_FRAMES=1` prints `view=-` on every line, which is what
+// found it.
+//
+// Answers the GtkWindow, or null when there is no slot left; the runtime
+// facade hands that pointer to the agent surface and treats null as "no
+// window", which is exactly what it is.
+fn open_window(root: *core::Node, take chrome: screen::Chrome,
+               should_close: fn(*u8) -> bool = default_should_close,
+               should_close_ctx: *u8 = 0 as *u8,
+               will_close: fn(*u8) = default_will_close,
+               will_close_ctx: *u8 = 0 as *u8) -> *u8 {
+    if root == (0 as *core::Node) { return 0 as *u8; }
+    let slot: usize = free_slot();
+    if slot >= MAX_WINDOWS { return 0 as *u8; }
+    var c: screen::Chrome = chrome;
+    let win: gtk::Window = gtk::Window::new();
+    apply_chrome(win, #addr_of(c), root);
+
+    // The shell — see the header. Vertical box, menu bar (later) on top, the
+    // content Fixed taking everything left.
+    let shell: gtk::Box = gtk::Box::new(1 as i32, 0 as i32);
     let fixed: gtk::Fixed = gtk::Fixed::new();
-    win.set_child(fixed.upcast());
+    fixed.upcast().set_vexpand(true);
+    fixed.upcast().set_hexpand(true);
+    shell.append(fixed.upcast());
+    win.set_child(shell.upcast());
+
+    // Mount, then place. `mount::mount` opens the window on the APP's record
+    // too, so the native handle is recorded against it immediately after.
+    let mounted: bool = mount::mount(root);
+    app::set_window_native(root, win.raw());
+
     // The root's own widget, if it has one, goes in first; a keyless container
     // root has none, and its children were inserted into... nothing. So the
     // Fixed becomes their host and the layout walk places them against it.
-    let rv: *u8 = core::view_of(root);
+    var rv: *u8 = 0 as *u8;
+    if mounted { rv = core::view_of(root); }
     if rv != (0 as *u8) {
         gtk::Fixed::from_raw(fixed.raw()).put(gtk::Widget::from_raw(rv), 0.0f64, 0.0f64);
     }
-    let slot: usize = N_WINDOWS;
     ROOTS[slot] = { #addr(root as *u8) };
     FIXEDS[slot] = { #addr(fixed.raw()) };
     WINDOWS[slot] = { #addr(win.raw()) };
-    N_WINDOWS = N_WINDOWS +% (1 as usize);
-    relayout(slot, width, height);
+    SHOULD_CLOSE[slot] = { #addr(should_close as *u8) };
+    SHOULD_CLOSE_CTX[slot] = { #addr(should_close_ctx) };
+    WILL_CLOSE[slot] = { #addr(will_close as *u8) };
+    WILL_CLOSE_CTX[slot] = { #addr(will_close_ctx) };
+    OPEN_WINDOWS = OPEN_WINDOWS +% (1 as i64);
+    let _id: u64 = win.connect_close_request(close_request, win.raw());
+    relayout(slot, c.width, c.height);
     win.present();
-    return true;
+    return win.raw();
 }
+
+// The simple entry, for a caller that wants a window and no chrome vocabulary.
+fn open(root: *core::Node, title: str, width: f64, height: f64) -> bool {
+    return open_window(root, screen::Chrome::new(title: title, width: width,
+                                                 height: height)) != (0 as *u8);
+}
+
+// ---- closing -----------------------------------------------------------------
+//
+// ONE PATH. `close_window_of` asks GTK to close the window, GTK emits
+// `close-request`, and this is where every close ends up — the user's title-bar
+// button, `nav::quit`, and a screen replacing its root all take the same three
+// steps in the same order. TRUE from this handler HOLDS the close, which is
+// what `should_close` answering false has to mean.
+fn close_request(w: *u8, user: *u8) -> i32 {
+    let slot: usize = slot_of_window(w);
+    if slot >= MAX_WINDOWS { return 0 as i32; }   // not ours: let GTK have it
+    let ask: fn(*u8) -> bool = SHOULD_CLOSE[slot] as fn(*u8) -> bool;
+    if ask != (0 as fn(*u8) -> bool) {
+        if !ask(SHOULD_CLOSE_CTX[slot] as *u8) { return 1 as i32; }   // held
+    }
+    let will: fn(*u8) = WILL_CLOSE[slot] as fn(*u8);
+    if will != (0 as fn(*u8)) { will(WILL_CLOSE_CTX[slot] as *u8); }
+    release_slot(slot);
+    OPEN_WINDOWS = OPEN_WINDOWS -% (1 as i64);
+    // The LAST window ending the loop is what makes closing it the app's
+    // ordinary unwind — the same event `nav::quit` produces, so the runtime
+    // reaches its teardown by one route rather than two.
+    if OPEN_WINDOWS <= (0 as i64) { stop_loop(); }
+    return 0 as i32;
+}
+
+fn release_slot(slot: usize) {
+    ROOTS[slot] = 0 as usize;
+    FIXEDS[slot] = 0 as usize;
+    WINDOWS[slot] = 0 as usize;
+    SHOULD_CLOSE[slot] = 0 as usize;
+    SHOULD_CLOSE_CTX[slot] = 0 as usize;
+    WILL_CLOSE[slot] = 0 as usize;
+    WILL_CLOSE_CTX[slot] = 0 as usize;
+    return;
+}
+
+fn close_window(win: *u8) {
+    if win == (0 as *u8) { return; }
+    gtk::Window::from_raw(win).close();
+    return;
+}
+
+fn close_window_of(root: *core::Node) {
+    let slot: usize = slot_of_root(root);
+    if slot >= MAX_WINDOWS { return; }
+    close_window(WINDOWS[slot] as *u8);
+    return;
+}
+
+// ---- the loop ----------------------------------------------------------------
+//
+// A GLib main loop rather than `gtk_main`, which GTK 4 does not have. The loop
+// object is a static because `stop_loop` is called from a close handler that
+// has no way to be handed it.
+//
+// RE-ENTRANT BY DESIGN. `App::run` shows one screen, runs the loop until that
+// screen's window closes, then shows the next and runs it again — so this is
+// entered once per screen and must start clean each time.
+
+static LOOP: usize = 0;
+
+fn run_loop() {
+    if OPEN_WINDOWS <= (0 as i64) { return; }   // nothing to wait for
+    let lp: glib::MainLoop = glib::MainLoop::new(glib::main_context_default(), false);
+    LOOP = { #addr(lp.raw()) };
+    lp.run();
+    LOOP = 0 as usize;
+    lp.unref();
+    return;
+}
+
+fn stop_loop() {
+    if LOOP == (0 as usize) { return; }
+    glib::MainLoop::from_raw(LOOP as *u8).quit();
+    return;
+}
+
+// ---- layout ------------------------------------------------------------------
 
 // The host a root's children are placed into: its own widget when it has one,
 // the window's Fixed when it does not. Mirrors mount_walk's pass-through.
 fn host_for(slot: usize) -> *u8 {
     let root: *core::Node = ROOTS[slot] as *core::Node;
     let rv: *u8 = core::view_of(root);
-    if rv != (0 as *u8) { return rv; }
+    // `document_host` because a root may itself be a `scroll`, and then its
+    // children belong in the document rather than in the scroll view. Every
+    // other kind answers its own widget.
+    if rv != (0 as *u8) { return controls::document_host(rv); }
     return FIXEDS[slot] as *u8;
 }
 
@@ -78,6 +386,13 @@ fn relayout(slot: usize, width: f64, height: f64) {
         geometry::place(FIXEDS[slot] as *u8, rv, 0.0f64, 0.0f64, width, height);
     }
     geometry::reposition_children(root, host_for(slot), rf);
+    // `FACET_GTK_FRAMES=1` — see geometry.cplus. After the walk, so the report
+    // is of what was actually placed.
+    geometry::trace_tree(root, 0 as usize);
+    // A scroll ROOT sizes its own document too — `reposition_children` does
+    // that for every scroll it descends into, and the root is the one node it
+    // is never called for.
+    if rv != (0 as *u8) { geometry::size_scroll_content(root, rv, rf); }
     return;
 }
 
@@ -86,21 +401,66 @@ fn relayout(slot: usize, width: f64, height: f64) {
 // layout, and nothing else in the pipeline knows that.
 fn relayout_all() {
     var i: usize = 0 as usize;
-    while i < N_WINDOWS {
-        let w: *u8 = WINDOWS[i] as *u8;
-        if w != (0 as *u8) {
-            let ww: gtk::Widget = gtk::Widget::from_raw(w);
-            var cw: f64 = { ww.get_width() } as f64;
-            var ch: f64 = { ww.get_height() } as f64;
-            // Before the first present the window has no allocation yet; its
-            // default size is the honest answer then.
-            if cw <= (0.0 as f64) { cw = 640.0f64; }
-            if ch <= (0.0 as f64) { ch = 480.0f64; }
+    while i < MAX_WINDOWS {
+        if ROOTS[i] != (0 as usize) {
+            // The FIXED's allocation, not the window's: a menu bar takes its
+            // height off the top and the tree must be laid into what is left.
+            let content: gtk::Widget = gtk::Widget::from_raw(FIXEDS[i] as *u8);
+            var cw: f64 = { content.get_width() } as f64;
+            var ch: f64 = { content.get_height() } as f64;
+            // Before the first allocation the box has no size yet; the
+            // window's default is the honest answer then.
+            if cw <= (0.0 as f64) || ch <= (0.0 as f64) {
+                var dw: i32 = 0 as i32;
+                var dh: i32 = 0 as i32;
+                gtk::Window::from_raw(WINDOWS[i] as *u8).get_default_size(dw, dh);
+                if cw <= (0.0 as f64) { cw = dw as f64; }
+                if ch <= (0.0 as f64) { ch = dh as f64; }
+                if cw <= (0.0 as f64) { cw = 640.0f64; }
+                if ch <= (0.0 as f64) { ch = 480.0f64; }
+            }
             relayout(i, cw, ch);
         }
         i = i +% (1 as usize);
     }
     return;
+}
+
+// ---- window reads the facade asks for ----------------------------------------
+
+fn window_of_root(root: *core::Node) -> *u8 {
+    let slot: usize = slot_of_root(root);
+    if slot >= MAX_WINDOWS { return 0 as *u8; }
+    return WINDOWS[slot] as *u8;
+}
+
+// The first window that is up, for the facade's window-scoped verbs. facet's
+// own `application` module owns which root is current; this is the fallback
+// for a verb that names no root at all.
+fn any_window() -> *u8 {
+    var i: usize = 0 as usize;
+    while i < MAX_WINDOWS {
+        if ROOTS[i] != (0 as usize) { return WINDOWS[i] as *u8; }
+        i = i +% (1 as usize);
+    }
+    return 0 as *u8;
+}
+
+// Backing-scale, which on a HiDPI screen is 2. GTK's own word is the scale
+// FACTOR and it is an integer — there is no fractional answer to give, and
+// pretending otherwise would invent precision the toolkit does not have.
+fn density_of(root: *core::Node) -> f64 {
+    let w: *u8 = window_of_root(root);
+    if w == (0 as *u8) { return 1.0f64; }
+    let f: i32 = { gtk::Widget::from_raw(w).get_scale_factor() };
+    if f <= (0 as i32) { return 1.0f64; }
+    return f as f64;
+}
+
+fn is_active(root: *core::Node) -> bool {
+    let w: *u8 = window_of_root(root);
+    if w == (0 as *u8) { return false; }
+    return gtk::Window::from_raw(w).is_active();
 }
 
 // ---- appearance --------------------------------------------------------------
@@ -117,6 +477,9 @@ extern fn gtk_settings_get_default() -> *u8;
 #[link_name = "g_object_get"]
 extern fn g_object_get(obj: *u8, first: *u8, ...);
 
+#[link_name = "g_object_set"]
+extern fn g_object_set(obj: *u8, first: *u8, ...);
+
 // Is the running theme dark? Read from GtkSettings rather than guessed from a
 // colour, because a GTK theme states it.
 fn is_dark() -> bool {
@@ -128,9 +491,926 @@ fn is_dark() -> bool {
     return v != (0 as i32);
 }
 
+// The app's OWN preference, as against the desktop's.
+//
+// GTK has one switch and it is the same one `is_dark` reads: an application
+// asking for dark IS the application setting `gtk-application-prefer-dark-
+// theme`. So `Unspecified` cannot be expressed — there is nothing to put back
+// once the flag has been written — and it is answered as "leave it alone",
+// which is what an app that never asked already has.
+// Held as the enum's own ordinal, because a static initialiser may not be an
+// enum variant — `#zero` is Unspecified, which is the right start anyway.
+static APPEARANCE: vocab::Appearance = #zero::[vocab::Appearance]();
+
+fn set_app_appearance(a: vocab::Appearance) {
+    let s: *u8 = { gtk_settings_get_default() };
+    if s == (0 as *u8) { return; }
+    APPEARANCE = a;
+    match a {
+        vocab::Appearance::Unspecified => { return; }
+        vocab::Appearance::Light => {
+            { g_object_set(s, #str_ptr("gtk-application-prefer-dark-theme\0"),
+                           0 as i32, 0 as *u8) };
+        }
+        vocab::Appearance::Dark => {
+            { g_object_set(s, #str_ptr("gtk-application-prefer-dark-theme\0"),
+                           1 as i32, 0 as *u8) };
+        }
+    }
+    sync_appearance();
+    return;
+}
+
+fn app_appearance() -> vocab::Appearance { return APPEARANCE; }
+
+// The desktop's TEXT SCALING factor, as a multiplier on 1.0.
+//
+// `font_scales` is facet's "this size follows the OS text-size setting", and
+// GTK has no per-widget opt-in for it: a size written into CSS as `px` is
+// absolute and one written as `pt` is scaled, but `pt` also rescales by
+// 96/72 and would inflate every size a macOS-sized tree carries. So the
+// factor is READ and multiplied in — the size stays in the unit facet meant
+// and still follows the setting.
+//
+// `gtk-xft-dpi` is the DPI in 1024ths, so the unscaled default (96 dpi) is
+// 98304. A settings object that does not answer leaves the factor at 1.
+fn text_scale() -> f64 {
+    let s: *u8 = { gtk_settings_get_default() };
+    if s == (0 as *u8) { return 1.0f64; }
+    var dpi: i32 = 0 as i32;
+    { g_object_get(s, #str_ptr("gtk-xft-dpi\0"), #addr_of(dpi) as *u8, 0 as *u8) };
+    if dpi <= (0 as i32) { return 1.0f64; }
+    return (dpi as f64) / (98304.0 as f64);
+}
+
 // Push the current appearance into the paint tier, which resolves adaptive
 // colour pairs against it.
 fn sync_appearance() {
     paint::set_dark(is_dark());
+    paint::set_text_scale(text_scale());
+    return;
+}
+
+// ---- observers ----------------------------------------------------------------
+//
+// The lifecycle rows the ledger defers to the window tier: is the window
+// active, did its scale change, did it resize, did the app go away.
+//
+// AppKit answers all of these with NSNotificationCenter, which has no GTK
+// equivalent — a GTK window carries them as PROPERTIES, so each one is a
+// `notify::` connection on the window itself. That is the same fact from the
+// other side and it costs one thing: an observation is per-WINDOW, so it is
+// armed on whatever window is up when the observer is registered and does not
+// follow a later one. Recorded in MANIFEST.md rather than papered over.
+//
+// `services::Cancellable` carries a single u64 token and a revoke function, so
+// the instance a handler id belongs to is kept HERE — a signal handler id is
+// meaningless without the object it was connected to.
+
+const MAX_OBSERVERS: usize = 32;
+static OBS_INSTANCE: [usize; MAX_OBSERVERS] = [0; MAX_OBSERVERS];
+static OBS_HANDLER: [usize; MAX_OBSERVERS] = [0; MAX_OBSERVERS];
+static OBS_FN: [usize; MAX_OBSERVERS] = [0; MAX_OBSERVERS];
+static OBS_CTX: [usize; MAX_OBSERVERS] = [0; MAX_OBSERVERS];
+
+// Tokens are 1-BASED: `Cancellable` reads 0 as "nothing pending", so slot 0
+// would be a live registration that could never be cancelled.
+fn observer_slot() -> usize {
+    var i: usize = 0 as usize;
+    while i < MAX_OBSERVERS {
+        if OBS_INSTANCE[i] == (0 as usize) { return i; }
+        i = i +% (1 as usize);
+    }
+    return MAX_OBSERVERS;
+}
+
+fn observer_fired(instance: *u8, pspec: *u8, user: *u8) {
+    let i: usize = (user as usize) -% (1 as usize);
+    if i >= MAX_OBSERVERS { return; }
+    let f: fn(*u8) = OBS_FN[i] as fn(*u8);
+    if f != (0 as fn(*u8)) { f(OBS_CTX[i] as *u8); }
+    return;
+}
+
+fn cancel_observe(token: u64) {
+    let i: usize = (token as usize) -% (1 as usize);
+    if i >= MAX_OBSERVERS { return; }
+    if OBS_INSTANCE[i] == (0 as usize) { return; }
+    sig::disconnect(OBS_INSTANCE[i] as *u8, OBS_HANDLER[i] as u64);
+    OBS_INSTANCE[i] = 0 as usize;
+    OBS_HANDLER[i] = 0 as usize;
+    OBS_FN[i] = 0 as usize;
+    OBS_CTX[i] = 0 as usize;
+    return;
+}
+
+// `notify::<property>` — GObject's own "this changed" signal, detailed by the
+// property name. The handler shape carries the GParamSpec, so it is a typed
+// alias rather than the argument-free pair `gobject/signal` exports.
+#[link_name = "g_signal_connect_data"]
+extern fn sigc_notify(instance: *u8, detailed_signal: *u8,
+                      handler: fn(*u8, *u8, *u8),
+                      data: *u8, destroy_data: *u8, connect_flags: i32) -> u64;
+
+// Observe a property of the window that is up. Answers 0 — an inert handle —
+// when there is no window, which is the honest reading of "there is nothing to
+// observe yet".
+fn observe_window_property(detailed: *u8, cb: fn(*u8), ctx: *u8) -> u64 {
+    let w: *u8 = any_window();
+    if w == (0 as *u8) { return 0 as u64; }
+    let slot: usize = observer_slot();
+    if slot >= MAX_OBSERVERS { return 0 as u64; }
+    let token: usize = slot +% (1 as usize);
+    let id: u64 = { sigc_notify(w, detailed, observer_fired, token as *u8,
+                                0 as *u8, 0 as i32) };
+    if id == (0 as u64) { return 0 as u64; }
+    OBS_INSTANCE[slot] = { #addr(w) };
+    OBS_HANDLER[slot] = id as usize;
+    OBS_FN[slot] = { #addr(cb as *u8) };
+    OBS_CTX[slot] = { #addr(ctx) };
+    return token as u64;
+}
+
+fn observe_active(cb: fn(*u8), ctx: *u8) -> u64 {
+    return observe_window_property(#str_ptr("notify::is-active\0"), cb, ctx);
+}
+
+// GTK 4 tracks the window's CURRENT size in `default-width`/`default-height`,
+// not only the size it was opened at — so a resize is a notify on those two.
+// There is no size-allocate signal on a GtkWidget any more.
+fn observe_size_changed(cb: fn(*u8), ctx: *u8) -> u64 {
+    return observe_window_property(#str_ptr("notify::default-height\0"), cb, ctx);
+}
+
+fn observe_density(cb: fn(*u8), ctx: *u8) -> u64 {
+    return observe_window_property(#str_ptr("notify::scale-factor\0"), cb, ctx);
+}
+
+// "Backgrounded" on a desktop is the window being minimised or otherwise not
+// shown to anyone, which GTK 4.12 states as `suspended`. The same signal
+// carries the resume, so both facet verbs ride it and the handler asks the
+// window which way it went.
+fn observe_suspended(cb: fn(*u8), ctx: *u8) -> u64 {
+    return observe_window_property(#str_ptr("notify::suspended\0"), cb, ctx);
+}
+
+fn is_suspended() -> bool {
+    let w: *u8 = any_window();
+    if w == (0 as *u8) { return false; }
+    return gtk::Window::from_raw(w).is_suspended();
+}
+
+// ---- the app menu ------------------------------------------------------------
+//
+// GTK 4 has no menu-bar WIDGET that an application fills item by item: a menu
+// is a GMenu (a model), every item names an ACTION by string, and the bar is a
+// GtkPopoverMenuBar built from the model. So installing facet's `AppMenu` is
+// three things — a GMenu tree, a GSimpleActionGroup holding one action per
+// item, and the bar widget — and the action name is what ties them.
+//
+// The bar goes into the shell box above the content Fixed, so it takes its
+// height off the top and `relayout_all` lays the tree into what is left.
+//
+// NOT `GtkApplication`. That is the other way to do this and it would take
+// over the process's main loop, its lifecycle and its D-Bus name — a very
+// large thing to adopt for a menu, and it would put facet's `App::run` inside
+// GTK's own application object rather than the other way round.
+
+// One action per item, indexed by the order the items were declared, so the
+// action name is derivable on both sides without a second table.
+//
+// What is kept is what firing NEEDS — the handler, its context and the action
+// tag — and not the MenuItem, which owns three Texts the caller's AppMenu is
+// still holding. Copying it here would need a clone and give this module an
+// ownership problem it has no reason to have; the AppKit backend keeps the
+// same three things on an NSMenuItem's target for the same reason.
+const MAX_MENU_ITEMS: usize = 64;
+static ITEM_FN: [usize; MAX_MENU_ITEMS] = [0; MAX_MENU_ITEMS];
+static ITEM_CTX: [usize; MAX_MENU_ITEMS] = [0; MAX_MENU_ITEMS];
+static ITEM_ACTION: [usize; MAX_MENU_ITEMS] = [0; MAX_MENU_ITEMS];
+// The accelerator each item asked for, interned — read again when the shortcut
+// controller is built, which is a SECOND pass over the same items and cannot be
+// done from the GMenu (a model carries the attribute and forgets the item).
+static ITEM_ACCEL: [str; MAX_MENU_ITEMS] = [""; MAX_MENU_ITEMS];
+static N_ITEMS: usize = 0;
+// The action group the current bar was built with, kept so `refresh_menu_state`
+// can reach the actions without rebuilding.
+static MENU_GROUP: usize = 0;
+
+// THE APP MENU, KEPT, so the bar can be rebuilt without it.
+//
+// A `menu` declared in the TREE can change while a screen is up — its text, or
+// its priority — and rebuilding the bar for that must not throw away the items
+// the application gave `install_app_menu`. The caller's `AppMenu` is a stack
+// value that is gone by then, so the two strings each item needs are interned
+// here and the rest already lives in the table above.
+const MAX_APP_ITEMS: usize = 48;
+static APP_MENU_NAME: [str; MAX_APP_ITEMS] = [""; MAX_APP_ITEMS];
+static APP_ITEM_TITLE: [str; MAX_APP_ITEMS] = [""; MAX_APP_ITEMS];
+static APP_ITEM_FN: [usize; MAX_APP_ITEMS] = [0; MAX_APP_ITEMS];
+static APP_ITEM_CTX: [usize; MAX_APP_ITEMS] = [0; MAX_APP_ITEMS];
+static APP_ITEM_ACTION: [usize; MAX_APP_ITEMS] = [0; MAX_APP_ITEMS];
+// `is_enabled` and `title_of`, and the title each item is CURRENTLY SHOWING.
+//
+// The ledger answers both "when the menu opens", which is the platform
+// behaviour on AppKit and has no equivalent here: a GtkPopoverMenuBar gives no
+// per-menu about-to-open signal, and a GMenu is a MODEL — a label can only
+// change by rebuilding it. So both are answered on every SYNC instead, which is
+// more often than a menu opens and cheap for one call per item; and the shown
+// title is remembered so a rebuild happens only when a title actually moved.
+static APP_ITEM_ENABLED: [usize; MAX_APP_ITEMS] = [0; MAX_APP_ITEMS];
+static APP_ITEM_ENABLED_CTX: [usize; MAX_APP_ITEMS] = [0; MAX_APP_ITEMS];
+static APP_ITEM_TITLE_FN: [usize; MAX_APP_ITEMS] = [0; MAX_APP_ITEMS];
+static APP_ITEM_TITLE_CTX: [usize; MAX_APP_ITEMS] = [0; MAX_APP_ITEMS];
+static APP_ITEM_SHOWN: [str; MAX_APP_ITEMS] = [""; MAX_APP_ITEMS];
+static APP_ITEM_ACCEL: [str; MAX_APP_ITEMS] = [""; MAX_APP_ITEMS];
+static N_APP_ITEMS: usize = 0;
+
+// AN INTERNED STRING IS NOT NUL-TERMINATED.
+//
+// `text::intern` mallocs a 24-byte header plus exactly `n` bytes and copies `n`
+// — there is no terminator after it. This module used to store the interned
+// POINTER in a `[usize; N]` and rebuild the `str` with `c_strlen`, which reads
+// into whatever malloc put next: a menu item titled "Save" came back as
+// `Save` followed by the tail of an unrelated CSS declaration. It looked right
+// for a long time because the byte after a small allocation is usually zero.
+//
+// The fix is to stop taking the string apart. `intern` already answers a `str`
+// whose bytes outlive every caller — that IS the point of it — so the tables
+// hold `str` and there is nothing to reconstruct.
+//
+// AND `text::intern` IS CALLED AT EVERY STORE, not through a helper. The borrow
+// checker recognises it by NAME as the process-lifetime escape (E0514/E0515 say
+// so in as many words); a one-line wrapper around it is opaque to that check,
+// and every one of these stores is exactly the case those errors exist for.
+
+
+
+
+
+fn menu_action_name(i: usize) -> text::Text {
+    let n: usize = i;
+    return text::from_str("facet.item${n}");
+}
+
+// GSimpleAction's `activate` handler is `void (GSimpleAction*, GVariant*,
+// gpointer)`. cpc-bindgen emitted the class but not the signal — the GVariant
+// parameter is one the GIR does not present — so the shape is a typed alias of
+// `g_signal_connect_data`, exactly as `gobject/signal.cplus` describes.
+#[link_name = "g_signal_connect_data"]
+extern fn sigc_activate(instance: *u8, detailed_signal: *u8,
+                        handler: fn(*u8, *u8, *u8),
+                        data: *u8, destroy_data: *u8, connect_flags: i32) -> u64;
+
+fn menu_activated(action: *u8, parameter: *u8, user: *u8) {
+    let i: usize = user as usize;
+    if i >= N_ITEMS { return; }
+    fire_item(i);
+    return;
+}
+
+// An item is EITHER a named standard action or an application handler; facet
+// carries both on the same struct and the action tag is what tells them apart.
+fn fire_item(i: usize) {
+    let action: u32 = ITEM_ACTION[i] as u32;
+    if action == screen::menu_action_quit() {
+        // Quit is the app's ordinary unwind: close every window and let the
+        // loop end, the same event closing the last window produces. NOT
+        // `exit`, which would skip every teardown seam past `run_loop`.
+        close_all_windows();
+        return;
+    }
+    if action == screen::menu_action_close_window() {
+        close_window(any_window());
+        return;
+    }
+    let h: fn(*u8, *u8) = ITEM_FN[i] as fn(*u8, *u8);
+    if h != (0 as fn(*u8, *u8)) { h(any_window(), ITEM_CTX[i] as *u8); }
+    return;
+}
+
+fn close_all_windows() {
+    var i: usize = 0 as usize;
+    while i < MAX_WINDOWS {
+        if ROOTS[i] != (0 as usize) { close_window(WINDOWS[i] as *u8); }
+        i = i +% (1 as usize);
+    }
+    return;
+}
+
+// Install `m` as the menu bar of every open window.
+//
+// Called once per screen by the runtime facade — the app's menu plus that
+// screen's contribution — so it REPLACES rather than appends: an additive
+// merge into a bar that is never rebuilt would accumulate a screen's items
+// after leaving it.
+fn install_app_menu(m: *screen::AppMenu) {
+    if m == (0 as *screen::AppMenu) { return; }
+    N_APP_ITEMS = 0 as usize;
+    var i: usize = 0 as usize;
+    let count: usize = { (*m).items.count() };
+    while i < count {
+        match { (*m).items.at_ptr(i) } {
+            option::Option[*screen::MenuItem]::Some(it) => {
+                if N_APP_ITEMS < MAX_APP_ITEMS {
+                    let slot: usize = N_APP_ITEMS;
+                    APP_MENU_NAME[slot] = text::intern({ (*it).menu.view() });
+                    APP_ITEM_TITLE[slot] = text::intern({ (*it).title.view() });
+                    APP_ITEM_FN[slot] = { #addr({ (*it).on_click } as *u8) };
+                    APP_ITEM_CTX[slot] = { #addr({ (*it).click_ctx }) };
+                    APP_ITEM_ACTION[slot] = { (*it).action } as usize;
+                    APP_ITEM_ENABLED[slot] = { #addr({ (*it).is_enabled } as *u8) };
+                    APP_ITEM_ENABLED_CTX[slot] = { #addr({ (*it).enabled_ctx }) };
+                    APP_ITEM_TITLE_FN[slot] = { #addr({ (*it).title_of } as *u8) };
+                    APP_ITEM_TITLE_CTX[slot] = { #addr({ (*it).title_ctx }) };
+                    APP_ITEM_ACCEL[slot] = text::intern(app_accel_of(it).view());
+                    APP_ITEM_SHOWN[slot] = "";
+                    N_APP_ITEMS = N_APP_ITEMS +% (1 as usize);
+                }
+            }
+            option::Option[*screen::MenuItem]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    rebuild_menu_bar();
+    return;
+}
+
+// The whole bar, from the app's kept items and the tree's own. Called on every
+// install and again whenever a `menu` node changes — so a menu item whose text
+// an application edits is a menu item whose text the bar shows.
+fn rebuild_menu_bar() {
+    N_ITEMS = 0 as usize;
+    let model: gio::Menu = gio::Menu::new();
+    let group: gio::SimpleActionGroup = gio::SimpleActionGroup::new();
+    var submenus: vec::Vec[text::Text] = vec::new::[text::Text]();
+    var built: vec::Vec[gio::Menu] = vec::new::[gio::Menu]();
+    var i: usize = 0 as usize;
+    while i < N_APP_ITEMS {
+        let sub: gio::Menu = submenu_for(model, #addr_of(submenus), #addr_of(built),
+                                         APP_MENU_NAME[i]);
+        // The RESOLVED title, not the built one — `title_of` is asked here
+        // because here is where the model is made, and remembered so
+        // `refresh_menu_state` can tell whether it moved.
+        let shown: str = app_item_title(i);
+        APP_ITEM_SHOWN[i] = text::intern(shown);
+        add_item(sub, group, shown,
+                 APP_ITEM_FN[i] as fn(*u8, *u8), APP_ITEM_CTX[i] as *u8,
+                 APP_ITEM_ACTION[i] as u32, icon: "",
+                 accel: APP_ITEM_ACCEL[i],
+                 enabled: app_item_enabled(i));
+        i = i +% (1 as usize);
+    }
+    // THE TREE'S OWN MENUS, merged into the same bar. `menu` and `menu_item`
+    // are kinds an application declares INSIDE a screen — a menu that belongs
+    // to what is on screen rather than to the process — and they had a builder
+    // with no installer. Appended after the app's, so a screen ADDS to the bar
+    // rather than replacing it.
+    add_tree_menus(model, group);
+    attach_menu_bar(model, group);
+    return;
+}
+
+// A `menu` subtree changed. `views::apply` calls this when the bits a menu
+// carries are dirty on a node that holds one — a viewless child's change
+// arrives on its HOST as `touch_all`, so the host is where it can be noticed.
+fn menus_changed() {
+    if N_APP_ITEMS == (0 as usize) && !any_window_has_menu() { return; }
+    rebuild_menu_bar();
+    return;
+}
+
+fn any_window_has_menu() -> bool {
+    var i: usize = 0 as usize;
+    let n: usize = app::window_count();
+    while i < n {
+        let r: *core::Node = app::window_root(i);
+        if r != (0 as *core::Node) {
+            var found: vec::Vec[usize] = vec::new::[usize]();
+            gather_menus(r, #addr_of(found));
+            if found.count() > (0 as usize) { return true; }
+        }
+        i = i +% (1 as usize);
+    }
+    return false;
+}
+
+// One item into a GMenu, with its own action, and the three things firing it
+// needs recorded in the table. The single door for both menu sources — a
+// second copy of this is how they would come to disagree about what a
+// destructive item does.
+fn add_item(into: gio::Menu, group: gio::SimpleActionGroup, title: str,
+            on_click: fn(*u8, *u8), ctx: *u8, action: u32,
+            icon: str = "", accel: str = "", enabled: bool = true) {
+    if N_ITEMS >= MAX_MENU_ITEMS { return; }
+    let slot: usize = N_ITEMS;
+    let name: text::Text = menu_action_name(slot);
+    let full: text::Text = text::from_str("app.").appending(name.view());
+    if icon == "" && accel == "" {
+        into.append(title, full.view());
+    } else {
+        // An ICON is a GIcon on the item and an ACCEL is an attribute of it,
+        // and `append` has room for neither — so an item with either is built
+        // and appended whole. The icon name is a THEMED one: facet's icon
+        // source is a name here for the same reason it is on a button.
+        let item: gio::MenuItem = gio::MenuItem::new(title, full.view());
+        if icon != "" { item.set_icon(gio::ThemedIcon::new(icon).as_icon()); }
+        if accel != "" {
+            item.set_attribute_value("accel", glib::Variant::new_string(accel));
+        }
+        into.append_item(item);
+        g::object_unref(item.raw());
+    }
+    let act: gio::SimpleAction = gio::SimpleAction::new(name.view(),
+        glib::VariantType::from_raw(0 as *u8));
+    let _s: u64 = { sigc_activate(act.raw(), #str_ptr("activate\0"),
+                                  menu_activated, slot as *u8, 0 as *u8, 0 as i32) };
+    act.set_enabled(enabled);
+    group.as_action_map().add_action(act.as_action());
+    ITEM_FN[slot] = { #addr(on_click as *u8) };
+    ITEM_CTX[slot] = { #addr(ctx) };
+    ITEM_ACTION[slot] = action as usize;
+    ITEM_ACCEL[slot] = text::intern(accel);
+    N_ITEMS = N_ITEMS +% (1 as usize);
+    return;
+}
+
+// ---- the app menu's live state ---------------------------------------------------
+
+// `is_enabled` — null is "always enabled", which is what every item that never
+// named one is.
+fn app_item_enabled(slot: usize) -> bool {
+    let f: fn(*u8) -> bool = APP_ITEM_ENABLED[slot] as fn(*u8) -> bool;
+    if f == (0 as fn(*u8) -> bool) { return true; }
+    return f(APP_ITEM_ENABLED_CTX[slot] as *u8);
+}
+
+// `title_of` — the half a bool cannot express: `Close "editor_tabs.cplus"`
+// rather than `Close`. An EMPTY answer keeps the built title, which is the
+// contract's own word for "nothing to say".
+fn app_item_title(slot: usize) -> str {
+    let f: fn(*u8) -> text::Text = APP_ITEM_TITLE_FN[slot] as fn(*u8) -> text::Text;
+    if f == (0 as fn(*u8) -> text::Text) { return APP_ITEM_TITLE[slot]; }
+    let answered: text::Text = f(APP_ITEM_TITLE_CTX[slot] as *u8);
+    if answered.view() == "" { return APP_ITEM_TITLE[slot]; }
+    return text::intern(answered.view());
+}
+
+// Re-ask every item and act on what changed. Called once per sync from the
+// scheduler — see the tables above for why it is not "when the menu opens".
+fn refresh_menu_state() {
+    if N_APP_ITEMS == (0 as usize) { return; }
+    var titles_moved: bool = false;
+    var i: usize = 0 as usize;
+    while i < N_APP_ITEMS {
+        let now: str = app_item_title(i);
+        if now != APP_ITEM_SHOWN[i] { titles_moved = true; }
+        i = i +% (1 as usize);
+    }
+    // A LABEL CANNOT BE EDITED. A GMenu is a model of items and `append` is the
+    // only way in, so a title that moved means the bar is rebuilt — which is
+    // why the shown title is remembered rather than recomputed blindly.
+    if titles_moved { rebuild_menu_bar(); return; }
+    set_enabled_states();
+    return;
+}
+
+// `enabled` IS editable, on the GSimpleAction rather than on the model — which
+// is the whole reason it can be answered without a rebuild.
+fn set_enabled_states() {
+    if MENU_GROUP == (0 as usize) { return; }
+    let map: gio::ActionMap =
+        gio::SimpleActionGroup::from_raw(MENU_GROUP as *u8).as_action_map();
+    var i: usize = 0 as usize;
+    while i < N_APP_ITEMS && i < N_ITEMS {
+        let name: text::Text = menu_action_name(i);
+        match map.lookup_action(name.view()) {
+            option::Option[gio::Action]::Some(a) => {
+                gio::SimpleAction::from_raw(a.raw()).set_enabled(app_item_enabled(i));
+            }
+            option::Option[gio::Action]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return;
+}
+
+// ---- accelerators, BOUND rather than shown ---------------------------------------
+//
+// A GMenu's `accel` attribute is a LABEL: a GtkPopoverMenu draws it beside the
+// row and nothing presses it. Making it work needs the chord bound somewhere,
+// and the two ways in are `gtk_application_set_accels_for_action` — which needs
+// the GtkApplication this backend deliberately does not adopt, because it would
+// take over the process's main loop, its lifecycle and its D-Bus name for the
+// sake of a menu — and a GtkShortcutController per window, which is this one.
+//
+// The controller is rebuilt with the bar, from the SAME item table, so the
+// chord a menu shows and the chord that fires are one fact.
+//
+// ⌘ IS SUPER, the same mapping the key band and the context menus make. Worth
+// knowing: a desktop may have taken the chord first — GNOME binds a good many
+// Super combinations for itself — and a shortcut the window manager grabbed
+// never reaches the window. That is a property of the platform rather than of
+// this code, and it is the reason the accel is also SHOWN.
+fn app_accel_of(it: *screen::MenuItem) -> text::Text {
+    let key: str = { (*it).key.view() };
+    if key == "" { return text::new(); }
+    var spelled: text::Text = text::from_str("");
+    if { (*it).shift } { spelled = spelled.appending("<Shift>"); }
+    if { (*it).alt } { spelled = spelled.appending("<Alt>"); }
+    // A bare `key:` always meant ⌘, which is Super on a GTK desktop.
+    spelled = spelled.appending("<Super>");
+    return spelled.appending(key);
+}
+
+fn shortcuts_key() -> *u8 { return #str_ptr("facet-gtk-shortcuts\0"); }
+
+// One GtkShortcut per item that asked for a chord, in a controller scoped to the
+// whole window — so the chord works wherever the focus is, which is what a menu
+// shortcut means.
+fn attach_shortcuts(win: *u8) {
+    if win == (0 as *u8) { return; }
+    let existing: *u8 = g::get_data(win, shortcuts_key());
+    if existing != (0 as *u8) {
+        gtk::Widget::from_raw(win).remove_controller(
+            gtk::EventController::from_raw(existing));
+        g::set_data(win, shortcuts_key(), 0 as *u8);
+    }
+    let c: gtk::ShortcutController = gtk::ShortcutController::new();
+    // GTK_SHORTCUT_SCOPE_GLOBAL — the chord is heard anywhere in the window
+    // rather than only where the controller sits.
+    c.set_scope(2 as i32);
+    var any: bool = false;
+    var i: usize = 0 as usize;
+    while i < N_ITEMS {
+        let accel: str = ITEM_ACCEL[i];
+        if accel != "" {
+            let trigger: *u8 = { gtk_shortcut_trigger_parse(bridge::str_to_cstring(accel)) };
+            if trigger != (0 as *u8) {
+                let full: text::Text = text::from_str("app.").appending(
+                    menu_action_name(i).view());
+                let action: gtk::NamedAction = gtk::NamedAction::new(full.view());
+                c.add_shortcut(gtk::Shortcut::new(
+                    gtk::ShortcutTrigger::from_raw(trigger),
+                    gtk::ShortcutAction::from_raw(action.raw())));
+                any = true;
+            }
+        }
+        i = i +% (1 as usize);
+    }
+    if !any { g::object_unref(c.raw()); return; }
+    gtk::Widget::from_raw(win).add_controller(c.upcast());
+    g::set_data(win, shortcuts_key(), c.raw());
+    return;
+}
+
+// `gtk_shortcut_trigger_parse_string` answers NULL for a chord it cannot read,
+// and the binding's wrapper is not null-safe about it — so the raw call, and
+// the null is checked here.
+#[link_name = "gtk_shortcut_trigger_parse_string"]
+extern fn gtk_shortcut_trigger_parse(spec: *u8) -> *u8;
+
+// ---- menus declared in the TREE ------------------------------------------------
+//
+// `menu` is a menu-bar item and `menu_item` is a row in it, and both are
+// NON-VIEW kinds: they decorate the screen rather than sitting in it, so they
+// never get a widget and are read as nodes from wherever they were declared.
+//
+// PRIORITY ORDERS THE BAR. An application that wants File before Edit says so
+// with a number rather than by declaring them in an order the tree walk might
+// not preserve.
+
+fn add_tree_menus(model: gio::Menu, group: gio::SimpleActionGroup) {
+    var i: usize = 0 as usize;
+    let n: usize = app::window_count();
+    while i < n {
+        let r: *core::Node = app::window_root(i);
+        if r != (0 as *core::Node) { collect_menus(r, model, group); }
+        i = i +% (1 as usize);
+    }
+    return;
+}
+
+// COLLECT, SORT, EMIT. Priority decides the order of the bar — an application
+// that wants File before Edit says so with a number rather than by declaring
+// them in an order the tree walk might not preserve — and a menu that named no
+// priority keeps the order it was found in, because a stable sort leaves equal
+// keys alone.
+fn collect_menus(root: *core::Node, model: gio::Menu, group: gio::SimpleActionGroup) {
+    var raw: vec::Vec[usize] = vec::new::[usize]();
+    gather_menus(root, #addr_of(raw));
+    let found: vec::Vec[usize] = sorted_by_priority(#addr_of(raw));
+    var i: usize = 0 as usize;
+    while i < found.count() {
+        match found.at(i) {
+            option::Option[usize]::Some(raw) => {
+                let n: *core::Node = raw as *core::Node;
+                let p: *props::MenuProps = menu_props(n);
+                if p != (0 as *props::MenuProps) {
+                    let sub: gio::Menu = gio::Menu::new();
+                    add_menu_items(n, sub, group);
+                    model.append_submenu({ (*p).text.view() }, sub.upcast());
+                }
+            }
+            option::Option[usize]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return;
+}
+
+fn gather_menus(n: *core::Node, out: *vec::Vec[usize]) {
+    if core::kind_of(n) == props::K_MENU {
+        let _a: status::Status = { (*out).append({ #addr(n as *u8) }) };
+    }
+    var i: usize = 0 as usize;
+    let count: usize = core::child_count_of(n);
+    while i < count {
+        match core::child_of(n, i) {
+            option::Option[*core::Node]::Some(c) => { gather_menus(c, out); }
+            option::Option[*core::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return;
+}
+
+// A selection pass into a FRESH vector rather than a sort in place: a `Vec`
+// behind a raw pointer does not take a swap written through it, and a menu bar
+// is a handful of entries — so the shape that cannot be wrong quietly is worth
+// more than the one that is asymptotically better.
+//
+// STABLE, which is what makes it right: `>` rather than `>=` when choosing the
+// next lowest means two menus that named the same priority keep the order they
+// were declared in.
+fn sorted_by_priority(v: *vec::Vec[usize]) -> vec::Vec[usize] {
+    var out: vec::Vec[usize] = vec::new::[usize]();
+    let n: usize = { (*v).count() };
+    var taken: [bool; 64] = [false; 64];
+    var made: usize = 0 as usize;
+    while made < n && made < (64 as usize) {
+        var best: usize = n;
+        var i: usize = 0 as usize;
+        while i < n && i < (64 as usize) {
+            if !taken[i] {
+                if best == n || priority_at(v, i) < priority_at(v, best) { best = i; }
+            }
+            i = i +% (1 as usize);
+        }
+        if best == n { return out; }
+        taken[best] = true;
+        let _a: status::Status = out.append(raw_at(v, best));
+        made = made +% (1 as usize);
+    }
+    return out;
+}
+
+fn raw_at(v: *vec::Vec[usize], i: usize) -> usize {
+    return match { (*v).at(i) } {
+        option::Option[usize]::Some(r) => r,
+        option::Option[usize]::None => 0 as usize,
+    };
+}
+
+fn priority_at(v: *vec::Vec[usize], i: usize) -> i64 {
+    let n: *core::Node = raw_at(v, i) as *core::Node;
+    if n == (0 as *core::Node) { return 0 as i64; }
+    let p: *props::MenuProps = menu_props(n);
+    if p == (0 as *props::MenuProps) { return 0 as i64; }
+    return { (*p).priority };
+}
+
+// The `menu_item` children of one `menu`.
+fn add_menu_items(m: *core::Node, into: gio::Menu, group: gio::SimpleActionGroup) {
+    var i: usize = 0 as usize;
+    let count: usize = core::child_count_of(m);
+    while i < count {
+        match core::child_of(m, i) {
+            option::Option[*core::Node]::Some(c) => {
+                let p: *props::MenuItemProps = menu_item_props(c);
+                if p != (0 as *props::MenuItemProps) {
+                    add_item(into, group, { (*p).text.view() },
+                             { (*p).on_clicked }, { (*p).on_clicked_ctx },
+                             screen::menu_action_none(), { (*p).icon.view() });
+                }
+            }
+            option::Option[*core::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return;
+}
+
+// ---- context menus -------------------------------------------------------------
+//
+// A `context_menu` DECORATES THE NODE IT SITS UNDER — right-clicking the parent
+// is what opens it — so it has no place of its own in the widget tree and no
+// frame. Its items are likewise not widgets. Both answer `wants_view` with
+// false and are read as NODES when the PARENT's widget is created, which is
+// exactly what `gtk_popover_set_parent` wants: a popover belongs to a widget
+// without being its child.
+
+fn context_menu_item_props(n: *core::Node) -> *props::ContextMenuItemProps {
+    let d: *core::Data = core::node_data(n);
+    if d == (0 as *core::Data) { return 0 as *props::ContextMenuItemProps; }
+    if { (*d).kind } != props::K_CONTEXT_MENU_ITEM {
+        return 0 as *props::ContextMenuItemProps;
+    }
+    return { (*d).props } as *props::ContextMenuItemProps;
+}
+
+fn context_menu_key() -> *u8 { return #str_ptr("facet-gtk-ctx-menu\0"); }
+
+// Build and attach the popover a node's `context_menu` child describes. Called
+// from `views::create` once the node has a widget — the child nodes are already
+// in the tree, because `build` ran long before mount.
+fn attach_context_menu(v: *u8, n: *core::Node) {
+    if v == (0 as *u8) || n == (0 as *core::Node) { return; }
+    let cm: *core::Node = context_menu_child(n);
+    if cm == (0 as *core::Node) { return; }
+    // REBUILT, not edited. A GMenu has no "replace these items", and a context
+    // menu is a handful of rows — so a change to one takes the popover away and
+    // makes another, which is the same call `install_app_menu` makes about the
+    // bar and for the same reason.
+    let old: *u8 = g::get_data(v, context_menu_key());
+    if old != (0 as *u8) {
+        gtk::Widget::from_raw(old).unparent();
+        g::set_data(v, context_menu_key(), 0 as *u8);
+    }
+    let model: gio::Menu = gio::Menu::new();
+    let group: gio::SimpleActionGroup = gio::SimpleActionGroup::new();
+    var i: usize = 0 as usize;
+    let count: usize = core::child_count_of(cm);
+    while i < count {
+        match core::child_of(cm, i) {
+            option::Option[*core::Node]::Some(c) => {
+                let p: *props::ContextMenuItemProps = context_menu_item_props(c);
+                if p != (0 as *props::ContextMenuItemProps) {
+                    let mi: *props::MenuItemProps = #addr_of((*p).menu_item);
+                    // The SHORTCUT is SHOWN, not bound: a GMenu carries an
+                    // `accel` attribute that a GtkPopoverMenu displays beside
+                    // the row, and binding it would need a shortcut controller
+                    // on a window this code does not have. The label is what a
+                    // person reads and is the half that was missing.
+                    add_item(model, group, { (*mi).text.view() },
+                             { (*mi).on_clicked }, { (*mi).on_clicked_ctx },
+                             screen::menu_action_none(), { (*mi).icon.view() },
+                             accel_of(p).view());
+                }
+            }
+            option::Option[*core::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    let pop: gtk::PopoverMenu = gtk::PopoverMenu::new_from_model(model.upcast());
+    gtk::Widget::from_raw(pop.raw()).set_parent(gtk::Widget::from_raw(v));
+    gtk::Widget::from_raw(v).insert_action_group("app", group.as_action_group());
+    g::set_data(v, context_menu_key(), pop.raw());
+    arm_context_menu(v, pop.raw());
+    return;
+}
+
+// `<Control>s` — GTK's own accelerator spelling, which is what the `accel`
+// attribute takes. facet carries the key and the modifiers separately.
+fn accel_of(p: *props::ContextMenuItemProps) -> text::Text {
+    let key: str = { (*p).shortcut_key.view() };
+    if key == "" { return text::new(); }
+    var spelled: text::Text = text::from_str("");
+    match { (*p).shortcut_modifiers } {
+        vocab::KeyModifiers::None => { }
+        vocab::KeyModifiers::Ctrl => { spelled = spelled.appending("<Control>"); }
+        vocab::KeyModifiers::Alt => { spelled = spelled.appending("<Alt>"); }
+        vocab::KeyModifiers::Shift => { spelled = spelled.appending("<Shift>"); }
+        // A Mac's Command and a Windows key are both Super on a GTK desktop —
+        // the same mapping the key band makes, for the same reason.
+        vocab::KeyModifiers::Cmd => { spelled = spelled.appending("<Super>"); }
+        vocab::KeyModifiers::Windows => { spelled = spelled.appending("<Super>"); }
+    }
+    return spelled.appending(key);
+}
+
+fn context_menu_child(n: *core::Node) -> *core::Node {
+    var i: usize = 0 as usize;
+    let count: usize = core::child_count_of(n);
+    while i < count {
+        match core::child_of(n, i) {
+            option::Option[*core::Node]::Some(c) => {
+                if core::kind_of(c) == props::K_CONTEXT_MENU { return c; }
+            }
+            option::Option[*core::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return 0 as *core::Node;
+}
+
+// A SECOND right-click gesture, separate from the gesture band's. A node may
+// have both — `.gesture(on_right_click:)` and a context menu — and the menu is
+// not a handler an application declined.
+fn context_right_click(gesture: *u8, n_press: i32, x: f64, y: f64, user: *u8) {
+    let pop: *u8 = user;
+    if pop == (0 as *u8) { return; }
+    // Where the pointer was, so the menu opens under it rather than at the
+    // widget's centre. A GdkRectangle is four ints and the binding models it as
+    // a handle, so the four are laid out here — the same shape the hand-bound
+    // GtkTextIter takes in `input`.
+    var r: [i32; 4] = [0i32; 4];
+    r[0 as usize] = x as i32;
+    r[1 as usize] = y as i32;
+    r[2 as usize] = 1 as i32;
+    r[3 as usize] = 1 as i32;
+    let popover: gtk::Popover = gtk::Popover::from_raw(pop);
+    popover.set_pointing_to(gdk::Rectangle::from_raw(#addr_of(r) as *u8));
+    popover.popup();
+    return;
+}
+
+fn arm_context_menu(v: *u8, pop: *u8) {
+    let c: gtk::GestureClick = gtk::GestureClick::new();
+    c.upcast().set_button(3 as u32);                     // GDK_BUTTON_SECONDARY
+    let _r: u64 = c.connect_released(context_right_click, pop);
+    c.upcast().upcast().upcast().set_propagation_phase(2 as i32);   // BUBBLE
+    gtk::Widget::from_raw(v).add_controller(c.upcast().upcast().upcast());
+    return;
+}
+
+fn menu_props(n: *core::Node) -> *props::MenuProps {
+    let d: *core::Data = core::node_data(n);
+    if d == (0 as *core::Data) { return 0 as *props::MenuProps; }
+    if { (*d).kind } != props::K_MENU { return 0 as *props::MenuProps; }
+    return { (*d).props } as *props::MenuProps;
+}
+
+fn menu_item_props(n: *core::Node) -> *props::MenuItemProps {
+    let d: *core::Data = core::node_data(n);
+    if d == (0 as *core::Data) { return 0 as *props::MenuItemProps; }
+    if { (*d).kind } != props::K_MENU_ITEM { return 0 as *props::MenuItemProps; }
+    return { (*d).props } as *props::MenuItemProps;
+}
+
+// The submenu named `group`, made on first sight. The order items were
+// declared in is the order the menus appear, which is what lets an app put
+// File before Edit without saying so twice.
+fn submenu_for(model: gio::Menu, names: *vec::Vec[text::Text],
+               built: *vec::Vec[gio::Menu], group: str) -> gio::Menu {
+    var i: usize = 0 as usize;
+    while i < { (*names).count() } {
+        match { (*names).at_ptr(i) } {
+            option::Option[*text::Text]::Some(t) => {
+                if { (*t).view() } == group {
+                    match { (*built).at_ptr(i) } {
+                        option::Option[*gio::Menu]::Some(mm) => { return { (*mm) }; }
+                        option::Option[*gio::Menu]::None => { }
+                    }
+                }
+            }
+            option::Option[*text::Text]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    let fresh: gio::Menu = gio::Menu::new();
+    model.append_submenu(group, fresh.upcast());
+    let _n: status::Status = { (*names).append(text::from_str(group)) };
+    let _b: status::Status = { (*built).append(fresh) };
+    return fresh;
+}
+
+// Put the bar into every open window's shell, replacing whatever was there.
+fn attach_menu_bar(model: gio::Menu, group: gio::SimpleActionGroup) {
+    MENU_GROUP = { #addr(group.raw()) };
+    var i: usize = 0 as usize;
+    while i < MAX_WINDOWS {
+        if ROOTS[i] != (0 as usize) {
+            let win: *u8 = WINDOWS[i] as *u8;
+            match gtk::Window::from_raw(win).get_child() {
+                option::Option[gtk::Widget]::Some(shell) => {
+                    let bx: gtk::Box = gtk::Box::from_raw(shell.raw());
+                    remove_existing_bar(bx);
+                    let bar: gtk::PopoverMenuBar =
+                        gtk::PopoverMenuBar::new_from_model(model.upcast());
+                    bx.prepend(bar.upcast());
+                    gtk::Widget::from_raw(win).insert_action_group("app",
+                        group.as_action_group());
+                    attach_shortcuts(win);
+                }
+                option::Option[gtk::Widget]::None => { }
+            }
+        }
+        i = i +% (1 as usize);
+    }
+    return;
+}
+
+// The shell's first child is the bar when there is one, and the content Fixed
+// when there is not — so this asks the widget what it IS rather than counting.
+fn remove_existing_bar(shell: gtk::Box) {
+    match shell.upcast().get_first_child() {
+        option::Option[gtk::Widget]::Some(first) => {
+            if g::is_a(first.raw(), #str_ptr("GtkPopoverMenuBar\0")) {
+                shell.remove(first);
+            }
+        }
+        option::Option[gtk::Widget]::None => { }
+    }
     return;
 }

@@ -1,0 +1,508 @@
+// facet_gtk/chrome — the window's own furniture, which is the part of a screen
+// that is not IN the layout.
+//
+// Three kinds live here and they have nothing in common except that:
+//
+//   `toolbar_item`   a non-view kind, read from the TREE when a window opens
+//                    and packed into the GtkHeaderBar the chrome already
+//                    builds. It has no frame, the way a `menu_item` has none.
+//   `window_buttons` a CONTROL — the close / minimise / maximise group, for an
+//                    application drawing its own titlebar under `Bar::Custom`.
+//   `.window_drag()` a MODIFIER on any region: pointer input there moves the
+//                    window. Armed from `input::arm`, beside the gesture band,
+//                    because that is what it is.
+//
+// WHY GTK GETS THIS EASILY. `window_chrome.cplus` says the portable answer for
+// a custom titlebar is `Bar::Custom` plus these two, and that GTK "supports
+// this BEST" — because GTK draws its own decorations client-side, so an
+// undecorated window is a window whose whole surface is the application's, and
+// `gdk_toplevel_begin_move` is a public call rather than a private one.
+
+import "stdlib/option" as option;
+import "stdlib/status" as status;
+import "stdlib/vec" as vec;
+import "facet/facet" as core;
+import "facet/props" as props;
+import "facet/vocabulary" as vocab;
+import "facet/toolbar_item" as toolbar_item;
+import "facet/window_chrome" as window_chrome;
+import "gtk4/gtk4" as gtk;
+import "gdk/gdk" as gdk;
+import "gobject/runtime" as g;
+
+// ================================================================================
+// toolbar_item
+// ================================================================================
+//
+// A GtkHeaderBar has two slots, `pack_start` and `pack_end`, and facet has
+// three placements — so the mapping is stated here rather than left implicit:
+//
+//   Primary    -> the LEADING side. GNOME's HIG puts an app's main action
+//                 (new, back, open) at the start of the bar.
+//   Default    -> the TRAILING side, which is where an unplaced action goes on
+//                 every desktop that has a header bar.
+//   Secondary  -> the trailing side, after the defaults.
+//
+// The sort is the AppKit backend's, verbatim (`placement_rank` then
+// `priority`), so an application that orders its bar with numbers gets the same
+// order on both — and the trailing group is packed in REVERSE, because
+// `pack_end` packs inward from the edge and the first widget packed ends up
+// furthest right.
+
+fn toolbar_props(n: *core::Node) -> *props::ToolbarItemProps {
+    let d: *core::Data = core::node_data(n);
+    if d == (0 as *core::Data) { return 0 as *props::ToolbarItemProps; }
+    if { (*d).kind } != props::K_TOOLBAR_ITEM { return 0 as *props::ToolbarItemProps; }
+    return { (*d).props } as *props::ToolbarItemProps;
+}
+
+// Primary, then Default, then Secondary — the rank an item is SORTED by.
+fn placement_rank(pl: vocab::ToolbarPlacement) -> i64 {
+    return match pl {
+        vocab::ToolbarPlacement::Primary => 0 as i64,
+        vocab::ToolbarPlacement::Default => 1 as i64,
+        vocab::ToolbarPlacement::Secondary => 2 as i64,
+    };
+}
+
+fn toolbar_order_of(n: *core::Node) -> i64 {
+    let p: *props::ToolbarItemProps = toolbar_props(n);
+    if p == (0 as *props::ToolbarItemProps) { return 1 as i64; }
+    return placement_rank({ (*p).placement });
+}
+
+fn toolbar_priority_of(n: *core::Node) -> i64 {
+    let p: *props::ToolbarItemProps = toolbar_props(n);
+    if p == (0 as *props::ToolbarItemProps) { return 0 as i64; }
+    return { (*p).priority };
+}
+
+// The leading side is `Primary` alone; everything else trails.
+fn packs_leading(n: *core::Node) -> bool {
+    return toolbar_order_of(n) == (0 as i64);
+}
+
+// Anywhere in the tree, not only at the root: a screen composes its toolbar
+// where the content that owns it is described, which is rarely the top.
+fn gather_toolbar_items(n: *core::Node, out: *vec::Vec[usize]) {
+    if n == (0 as *core::Node) { return; }
+    if core::kind_of(n) == props::K_TOOLBAR_ITEM {
+        let _a: status::Status = { (*out).append({ #addr(n as *u8) }) };
+        return;
+    }
+    var i: usize = 0 as usize;
+    let count: usize = core::child_count_of(n);
+    while i < count {
+        match core::child_of(n, i) {
+            option::Option[*core::Node]::Some(c) => { gather_toolbar_items(c, out); }
+            option::Option[*core::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return;
+}
+
+// Does this tree declare a toolbar at all? Asked BEFORE the chrome is applied,
+// because a window with toolbar items needs a GtkHeaderBar whatever its `Bar`
+// said — there is nowhere else on a GTK window to put them.
+fn has_toolbar_items(root: *core::Node) -> bool {
+    if root == (0 as *core::Node) { return false; }
+    var found: vec::Vec[usize] = vec::new::[usize]();
+    gather_toolbar_items(root, #addr_of(found));
+    return found.count() > (0 as usize);
+}
+
+fn raw_at(v: *vec::Vec[usize], i: usize) -> usize {
+    return match { (*v).at(i) } {
+        option::Option[usize]::Some(r) => r,
+        option::Option[usize]::None => 0 as usize,
+    };
+}
+
+fn node_at(v: *vec::Vec[usize], i: usize) -> *core::Node {
+    return raw_at(v, i) as *core::Node;
+}
+
+// Strictly before: placement group, then priority. Equal keys answer false,
+// which is what keeps the selection below STABLE — a bar that named neither
+// comes out in tree order, the only order such an application expressed.
+fn toolbar_precedes(a: *core::Node, b: *core::Node) -> bool {
+    let ra: i64 = toolbar_order_of(a);
+    let rb: i64 = toolbar_order_of(b);
+    if ra != rb { return ra < rb; }
+    return toolbar_priority_of(a) < toolbar_priority_of(b);
+}
+
+// A selection pass into a FRESH vector — same shape, same reason, as
+// `window::sorted_by_priority`: a `Vec` behind a raw pointer does not take a
+// swap written through it.
+fn sorted_toolbar(v: *vec::Vec[usize]) -> vec::Vec[usize] {
+    var out: vec::Vec[usize] = vec::new::[usize]();
+    let n: usize = { (*v).count() };
+    var taken: [bool; 64] = [false; 64];
+    var made: usize = 0 as usize;
+    while made < n && made < (64 as usize) {
+        var best: usize = n;
+        var i: usize = 0 as usize;
+        while i < n && i < (64 as usize) {
+            if !taken[i] {
+                if best == n || toolbar_precedes(node_at(v, i), node_at(v, best)) {
+                    best = i;
+                }
+            }
+            i = i +% (1 as usize);
+        }
+        if best == n { return out; }
+        taken[best] = true;
+        let _a: status::Status = out.append(raw_at(v, best));
+        made = made +% (1 as usize);
+    }
+    return out;
+}
+
+// The item NODE rides on its button, so the click can find what it belongs to
+// without a table keyed by index — the index changes whenever the description
+// does.
+fn item_node_key() -> *u8 { return #str_ptr("facet-gtk-toolbar-node\0"); }
+
+fn toolbar_clicked(button: *u8, user: *u8) {
+    let item: *core::Node = user as *core::Node;
+    if item == (0 as *core::Node) { return; }
+    let p: *props::ToolbarItemProps = toolbar_props(item);
+    if p == (0 as *props::ToolbarItemProps) { return; }
+    let mi: *props::MenuItemProps = { #addr_of((*p).menu_item) };
+    let h: fn(*u8, *u8) = { (*mi).on_clicked };
+    if h == props::no_handler { return; }
+    h(button, { (*mi).on_clicked_ctx });
+    return;
+}
+
+// One GtkButton from one `toolbar_item`.
+//
+// `is_destructive` IS answerable here, unlike on a `menu_item`: a GtkButton has
+// the `destructive-action` style class, which is GTK's own name for the red
+// one. Said explicitly because the manifest carries the menu row right beside
+// this one and the two look like they should agree.
+fn build_toolbar_button(item: *core::Node) -> *u8 {
+    let p: *props::ToolbarItemProps = toolbar_props(item);
+    if p == (0 as *props::ToolbarItemProps) { return 0 as *u8; }
+    let mi: *props::MenuItemProps = { #addr_of((*p).menu_item) };
+    let b: gtk::Button = gtk::Button::new();
+    let icon: str = { (*mi).icon.view() };
+    let label: str = { (*mi).text.view() };
+    // Icon, label, or both — a box only when there are two things to arrange,
+    // because a GtkButton with a single child styles better than one wrapping
+    // a box with one item in it.
+    if icon != "" && label != "" {
+        let bx: gtk::Box = gtk::Box::new(0 as i32, 6 as i32);   // horizontal
+        bx.append(gtk::Image::new_from_icon_name(icon).upcast());
+        bx.append(gtk::Label::new(label).upcast());
+        b.set_child(bx.upcast());
+    } else {
+        if icon != "" { b.set_icon_name(icon); }
+        else { b.set_label(label); }
+    }
+    if { (*mi).is_destructive } { b.upcast().add_css_class("destructive-action"); }
+    let name: str = { (*item).key() };
+    if name != "" { b.upcast().set_name(name); }
+    g::set_data(b.raw(), item_node_key(), item as *u8);
+    let _s: u64 = b.connect_clicked(toolbar_clicked, item as *u8);
+    return b.upcast().raw();
+}
+
+// ---- the two sides ------------------------------------------------------------
+//
+// ONE GtkBox PER SIDE, packed once and refilled, rather than N widgets packed
+// into the header directly. A GtkHeaderBar's own children are not walkable —
+// the packed widgets live inside internal boxes under a GtkWindowHandle — so
+// "take out what this package put there" has no answer at the header level.
+// A box we own has one: its children ARE its children.
+//
+// It also disposes of the ordering subtlety. `pack_end` packs inward from the
+// edge, so packing the trailing items one by one would need them in reverse;
+// appending into a box that is itself packed at the end reads left-to-right,
+// which is the order the sort produced.
+
+fn leading_box_key() -> *u8 { return #str_ptr("facet-gtk-tb-lead\0"); }
+fn trailing_box_key() -> *u8 { return #str_ptr("facet-gtk-tb-trail\0"); }
+
+fn side_box(header: *u8, key: *u8, at_end: bool) -> *u8 {
+    let existing: *u8 = g::get_data(header, key);
+    if existing != (0 as *u8) { return existing; }
+    let bx: gtk::Box = gtk::Box::new(0 as i32, 6 as i32);       // horizontal
+    let bar: gtk::HeaderBar = gtk::HeaderBar::from_raw(header);
+    if at_end { bar.pack_end(bx.upcast()); } else { bar.pack_start(bx.upcast()); }
+    g::set_data(header, key, bx.raw());
+    return bx.raw();
+}
+
+fn clear_box(bx: *u8) {
+    if bx == (0 as *u8) { return; }
+    var cur: *u8 = first_child_raw(bx);
+    while cur != (0 as *u8) {
+        let next: *u8 = next_sibling_raw(cur);
+        gtk::Widget::from_raw(cur).unparent();
+        cur = next;
+    }
+    return;
+}
+
+fn first_child_raw(v: *u8) -> *u8 {
+    match gtk::Widget::from_raw(v).get_first_child() {
+        option::Option[gtk::Widget]::Some(c) => { return c.raw(); }
+        option::Option[gtk::Widget]::None => { return 0 as *u8; }
+    }
+}
+
+fn next_sibling_raw(v: *u8) -> *u8 {
+    match gtk::Widget::from_raw(v).get_next_sibling() {
+        option::Option[gtk::Widget]::Some(c) => { return c.raw(); }
+        option::Option[gtk::Widget]::None => { return 0 as *u8; }
+    }
+}
+
+// Pack a window's header bar from the toolbar items in its tree. Idempotent:
+// both sides are emptied and refilled, so a screen that edits its bar gets the
+// bar it now describes rather than that bar appended to the old one.
+fn install_toolbar(header: *u8, root: *core::Node) {
+    if header == (0 as *u8) { return; }
+    if root == (0 as *core::Node) { return; }
+    let lead: *u8 = side_box(header, leading_box_key(), false);
+    let trail: *u8 = side_box(header, trailing_box_key(), true);
+    clear_box(lead);
+    clear_box(trail);
+    var raw: vec::Vec[usize] = vec::new::[usize]();
+    gather_toolbar_items(root, #addr_of(raw));
+    let found: vec::Vec[usize] = sorted_toolbar(#addr_of(raw));
+    let count: usize = found.count();
+    var i: usize = 0 as usize;
+    while i < count {
+        let item: *core::Node = raw_at(#addr_of(found), i) as *core::Node;
+        if item != (0 as *core::Node) {
+            let b: *u8 = build_toolbar_button(item);
+            if b != (0 as *u8) {
+                var into: *u8 = trail;
+                if packs_leading(item) { into = lead; }
+                gtk::Box::from_raw(into).append(gtk::Widget::from_raw(b));
+            }
+        }
+        i = i +% (1 as usize);
+    }
+    return;
+}
+
+// The bits a `toolbar_item` carries. A viewless child cannot say which of its
+// owner's verbs it affected, so the OWNER gets `touch_all` — which is why the
+// gate that rebuilds a bar tests for these rather than for anything of its own.
+fn toolbar_bits() -> u64 {
+    return toolbar_item::P_PLACEMENT | toolbar_item::P_PRIORITY
+        | toolbar_item::P_ICON | toolbar_item::P_IS_DESTRUCTIVE
+        | toolbar_item::P_TEXT;
+}
+
+// ================================================================================
+// window_buttons
+// ================================================================================
+//
+// The close / minimise / maximise group, for an application that asked for
+// `Bar::Custom` and is drawing the titlebar itself.
+//
+// GTK'S OWN BUTTONS ARE NOT REACHABLE AS A WIDGET. GtkWindowControls exists and
+// is exactly this group — but it only ever renders inside a GtkHeaderBar's
+// window-handle machinery, and an undecorated window has no header bar at all.
+// So the group is three GtkButtons with the platform's own symbolic icons and
+// the `titlebutton` style class the theme already draws, which is what GTK's
+// own control widget puts on them.
+//
+// WHICH BUTTONS: whatever the theme has icons for, all three, always. The
+// contract's comment says why there is no per-button switch — "picking them
+// individually is how you end up with a window that cannot be closed on someone
+// else's desktop" — and `Chrome.minimizable` / `.maximizable` are the window's
+// word on that, honoured through the decoration layout on the NATIVE path.
+
+fn window_buttons_props(n: *core::Node) -> *window_chrome::WindowButtonsProps {
+    let d: *core::Data = core::node_data(n);
+    if d == (0 as *core::Data) { return 0 as *window_chrome::WindowButtonsProps; }
+    if { (*d).kind } != window_chrome::K_WINDOW_BUTTONS {
+        return 0 as *window_chrome::WindowButtonsProps;
+    }
+    return { (*d).props } as *window_chrome::WindowButtonsProps;
+}
+
+// The platform's own metric, for a `spacing` of 0. GTK's window controls sit
+// six points apart in Adwaita.
+fn default_spacing() -> i32 { return 6 as i32; }
+
+fn window_of(v: *u8) -> *u8 {
+    match gtk::Widget::from_raw(v).get_root() {
+        option::Option[gtk::Root]::Some(r) => { return r.raw(); }
+        option::Option[gtk::Root]::None => { return 0 as *u8; }
+    }
+}
+
+fn minimize_clicked(b: *u8, user: *u8) {
+    let w: *u8 = window_of(b);
+    if w == (0 as *u8) { return; }
+    gtk::Window::from_raw(w).minimize();
+    return;
+}
+
+// Zoom is a TOGGLE, which is what the button means on every desktop: a
+// maximised window's control restores it.
+fn maximize_clicked(b: *u8, user: *u8) {
+    let w: *u8 = window_of(b);
+    if w == (0 as *u8) { return; }
+    let win: gtk::Window = gtk::Window::from_raw(w);
+    if win.is_maximized() { win.unmaximize(); } else { win.maximize(); }
+    return;
+}
+
+// `close`, not `destroy`: it asks, which runs `close-request` and therefore
+// `should_close` / `will_close`. Destroying would take the window out from
+// under an application that meant to veto.
+fn close_clicked(b: *u8, user: *u8) {
+    let w: *u8 = window_of(b);
+    if w == (0 as *u8) { return; }
+    gtk::Window::from_raw(w).close();
+    return;
+}
+
+fn control_button(icon: str, clicked: fn(*u8, *u8),
+                  clicked_ctx: *u8 = 0 as *u8) -> gtk::Button {
+    let b: gtk::Button = gtk::Button::new_from_icon_name(icon);
+    // The two classes GTK's own GtkWindowControls puts on them, so the theme
+    // draws these as titlebar controls rather than as ordinary buttons.
+    b.upcast().add_css_class("titlebutton");
+    b.upcast().add_css_class("flat");
+    b.set_has_frame(false);
+    let _s: u64 = b.connect_clicked(clicked, clicked_ctx);
+    return b;
+}
+
+fn create_window_buttons(n: *core::Node) -> *u8 {
+    let bx: gtk::Box = gtk::Box::new(0 as i32, default_spacing());
+    bx.append(control_button("window-minimize-symbolic", minimize_clicked).upcast());
+    bx.append(control_button("window-maximize-symbolic", maximize_clicked).upcast());
+    bx.append(control_button("window-close-symbolic", close_clicked).upcast());
+    return bx.upcast().raw();
+}
+
+// `OnHover` — the group only while the pointer is over it.
+//
+// THE HOVER REGION IS THE GROUP, not the titlebar, and that is a real
+// narrowing worth stating: under `Bar::Custom` there IS no titlebar as far as
+// GTK is concerned, only whatever the application drew, and this control has no
+// way to name it. Opacity does not affect hit testing, so the invisible group
+// still catches the pointer that is looking for it — which is how the same
+// style behaves on a Mac in full screen.
+fn hover_key() -> *u8 { return #str_ptr("facet-gtk-wb-hover\0"); }
+
+fn hover_enter(controller: *u8, x: f64, y: f64, user: *u8) {
+    if user == (0 as *u8) { return; }
+    gtk::Widget::from_raw(user).set_opacity(1.0f64);
+    return;
+}
+
+fn hover_leave(controller: *u8, user: *u8) {
+    if user == (0 as *u8) { return; }
+    gtk::Widget::from_raw(user).set_opacity(0.0f64);
+    return;
+}
+
+fn apply_window_buttons(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *window_chrome::WindowButtonsProps = window_buttons_props(n);
+    if p == (0 as *window_chrome::WindowButtonsProps) { return; }
+    if (dirty & window_chrome::P_SPACING) != (0 as u64) {
+        var s: i32 = default_spacing();
+        let asked: f64 = { (*p).spacing };
+        if asked > (0.0 as f64) { s = asked as i32; }
+        gtk::Box::from_raw(v).set_spacing(s);
+    }
+    if (dirty & window_chrome::P_STYLE) != (0 as u64) {
+        match { (*p).style } {
+            window_chrome::ButtonStyle::Native => {
+                gtk::Widget::from_raw(v).set_opacity(1.0f64);
+            }
+            window_chrome::ButtonStyle::OnHover => {
+                gtk::Widget::from_raw(v).set_opacity(0.0f64);
+                if g::get_data(v, hover_key()) == (0 as *u8) {
+                    let c: gtk::EventControllerMotion = gtk::EventControllerMotion::new();
+                    let _a: u64 = c.connect_enter(hover_enter, v);
+                    let _b: u64 = c.connect_leave(hover_leave, v);
+                    gtk::Widget::from_raw(v).add_controller(c.upcast());
+                    g::set_data(v, hover_key(), 1 as *u8);
+                }
+            }
+        }
+    }
+    return;
+}
+
+// ================================================================================
+// .window_drag()
+// ================================================================================
+//
+// A region whose pointer input MOVES THE WINDOW. `gdk_toplevel_begin_move`
+// hands the drag to the window manager, which is the only way to do this
+// correctly under a compositor: the client does not know where its window is,
+// and moving it by arithmetic fights every desktop that snaps or tiles.
+//
+// THE COORDINATES ARE THE SURFACE'S, not the widget's. `begin_move` takes the
+// press point in surface space, and a widget nested somewhere in a tree is not
+// at the surface origin — so the point goes through
+// `gtk_widget_translate_coordinates` to the native's widget space and then
+// through the native's own surface transform, which is the offset GTK keeps for
+// client-side shadows. Skipping either step makes a window jump by the width of
+// its drop shadow on the first pixel of every drag.
+
+fn drag_begin(gesture: *u8, start_x: f64, start_y: f64, user: *u8) {
+    let v: *u8 = user;
+    if v == (0 as *u8) { return; }
+    let native: gtk::Native = match gtk::Widget::from_raw(v).get_native() {
+        option::Option[gtk::Native]::Some(nv) => nv,
+        option::Option[gtk::Native]::None => { return; }
+    };
+    let surface: gdk::Surface = match native.get_surface() {
+        option::Option[gdk::Surface]::Some(s) => s,
+        option::Option[gdk::Surface]::None => { return; }
+    };
+    let device: gdk::Device = match gtk::Gesture::from_raw(gesture).get_device() {
+        option::Option[gdk::Device]::Some(d) => d,
+        option::Option[gdk::Device]::None => { return; }
+    };
+    var nx: f64 = 0.0f64;
+    var ny: f64 = 0.0f64;
+    if !gtk::Widget::from_raw(v).translate_coordinates(
+            gtk::Widget::from_raw(native.raw()), start_x, start_y, nx, ny) {
+        return;
+    }
+    var ox: f64 = 0.0f64;
+    var oy: f64 = 0.0f64;
+    native.get_surface_transform(ox, oy);
+    let button: u32 = gtk::GestureSingle::from_raw(gesture).get_current_button();
+    let stamp: u32 = gtk::EventController::from_raw(gesture).get_current_event_time();
+    gdk::Toplevel::from_raw(surface.raw()).begin_move(device, button as i32,
+                                                      nx + ox, ny + oy, stamp);
+    // The window manager owns the pointer from here; leaving the sequence
+    // unclaimed would let the widget under it also act on a press that has
+    // already become a window move.
+    let _s: bool = gtk::Gesture::from_raw(gesture).set_state(1 as i32);
+    return;
+}
+
+fn k_window_drag() -> *u8 { return #str_ptr("facet-gtk-arm-wdrag\0"); }
+
+// Armed from `input::arm`, gated on the modifier the node declared. A separate
+// GtkGestureDrag from the pan band's: a region can both move the window and
+// report a pan, and one gesture cannot answer two questions.
+fn arm_window_drag(v: *u8, n: *core::Node, phase: i32) {
+    if v == (0 as *u8) || n == (0 as *core::Node) { return; }
+    if g::get_data(v, k_window_drag()) != (0 as *u8) { return; }
+    if !window_chrome::drags_window(n) { return; }
+    let c: gtk::GestureDrag = gtk::GestureDrag::new();
+    let _b: u64 = c.connect_drag_begin(drag_begin, v);
+    c.upcast().upcast().upcast().set_propagation_phase(phase);
+    gtk::Widget::from_raw(v).add_controller(c.upcast().upcast().upcast());
+    g::set_data(v, k_window_drag(), 1 as *u8);
+    return;
+}

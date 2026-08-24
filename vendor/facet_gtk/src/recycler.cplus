@@ -1,0 +1,1783 @@
+// facet_gtk/recycler — `list` and `collection` over GtkListView.
+//
+// The one large item this package carried from the day it was rewritten. Every
+// row used to be BUILT and MOUNTED: a thousand-row list was a thousand live
+// widget subtrees, which is slow rather than wrong — and which is why it came
+// after everything that was wrong.
+//
+// ---- what recycling means here, and what it does not --------------------------
+//
+// GTK 4's answer is not AppKit's. NSTableView asks a DATA SOURCE for a view for
+// row N; GtkListView owns a pool of GtkListItems and hands one to a FACTORY to
+// be `bind`ed to a position. So the shape is inverted, and
+// `vendor/facet_appkit/recycler.cplus` — 3000 lines over NSTableView — is the
+// wrong thing to port. What IS portable is facet's own contract, and it already
+// has the seam:
+//
+//   `mount::realise(node, host)`   the second mount path: build a subtree's
+//                                  widgets with no window and no facet parent.
+//   `mount::unrealise(node)`       the matching teardown.
+//   `mount::sync_from(node)`       apply dirty bits over a subtree `sync` will
+//                                  never reach, because it is not in a window.
+//   `props.bind(i, row, ctx)`      write row `i`'s data INTO an existing row.
+//   `props.row_kind(i, ctx)`       which SHAPE row `i` has, so a pooled row is
+//                                  only reused for a row of its own shape.
+//
+// So a bind does the cheap thing when the application made it possible — the
+// pooled row keeps its widgets and only its DATA is rewritten — and the honest
+// thing when it did not: unrealise the old subtree, build a new one, realise
+// it. `set_row_bind` is optional in the contract and its absence is not an
+// error, which is exactly what that branch is.
+//
+// ---- the model is a COUNT ------------------------------------------------------
+//
+// A GListModel of what? facet's data is behind `row(i)` and this package never
+// sees it. So the model carries NOTHING: a GtkStringList of N empty strings,
+// and `gtk_list_item_get_position()` is the index. That is not a hack around a
+// missing abstraction — the position IS the whole of what GTK needs to know,
+// and inventing a GObject per row to carry data facet already owns would be a
+// second copy that can disagree.
+//
+// It is also what makes `count` cheap to change: the model grows and shrinks at
+// the END, so a list that gained a row appends one rather than rebuilding.
+//
+// ---- a table is NOT recycled, and that is the contract -------------------------
+//
+// `table` has no row builder. Its rows are its facet CHILDREN — the application
+// puts them in the tree — so there is nothing to build lazily and nothing to
+// recycle. It keeps the GtkFixed document every other container has. Said out
+// loud because "three kinds, two paths" reads like drift until you notice the
+// contract already made the split.
+//
+// ---- selection stays FACET'S ---------------------------------------------------
+//
+// GtkListView can own selection (GtkSingleSelection, the `activate` signal), and
+// this uses GtkNoSelection instead. The reason is that the read half already
+// works: `build_row` puts facet's own click gesture on the row and
+// `input::sequence_row_click` writes the index back and fires
+// `on_item_tapped` / `on_item_selected`. Moving that to GTK's model would be a
+// second implementation of a verb that is already answered, and the highlight
+// would then come from two places.
+
+import "stdlib/option" as option;
+import "stdlib/box" as box;
+import "stdlib/vec" as vec;
+import "stdlib/status" as status;
+import "flex_layout/flex_layout" as flex;
+import "facet/facet" as core;
+import "facet/props" as props;
+import "facet/mount" as mount;
+import "facet/gestures" as gestures;
+import "facet/vocabulary" as vocab;
+import "facet/list" as list;
+import "facet/collection" as collection;
+import "facet/table" as table;
+import "facet/tree" as tree;
+import "gtk4/gtk4" as gtk;
+import "gio/gio" as gio;
+import "gobject/runtime" as g;
+import "gobject_gir/gobject_gir" as gobject_gir;
+import "gdk/gdk" as gdk;
+import "stdlib/text" as text;
+import "./controls" as controls;
+import "./geometry" as geometry;
+import "./input" as input;
+
+// `gtk_string_list_splice(list, position, n_removals, additions)` — the binding
+// skips it (the `additions` array is `const char * const *`, which cpc-bindgen
+// does not map), and this module cannot do without it.
+//
+// A GtkStringList emits `items-changed` PER `append`, and GtkListView reacts to
+// every one: filling a 5000-row model an item at a time made it bind 205 cells
+// for a viewport that holds seven, because it re-ran its item manager after
+// each of the five thousand notifications. One splice is one notification.
+// One-shot, to get OUT of a size-allocate — see `viewport_changed`.
+#[link_name = "g_idle_add"]
+extern fn g_idle_add_recycler(f: fn(*u8) -> i32, data: *u8) -> u32;
+
+#[link_name = "gtk_string_list_splice"]
+extern fn gtk_string_list_splice(list: *u8, position: u32, n_removals: u32,
+                                 additions: *u8);
+
+// ================================================================================
+// the neutral record
+// ================================================================================
+//
+// ONE RECORD FOR TWO KINDS. `list` and `collection` differ in the ledger by
+// which bases they embed and in practice by ONE thing: a collection lays its
+// rows out in columns and a list does not. Reading both into one record is what
+// keeps the slot map from being written twice.
+
+struct Sequence {
+    count: i64,
+    row: fn(usize, *u8) -> flex::Node,
+    opaque row_ctx: *u8,
+    bind: fn(usize, *flex::Node, *u8),
+    row_kind: fn(usize, *u8) -> usize,
+    opaque row_kind_ctx: *u8,
+    row_height_of: fn(usize, *u8) -> f64,
+    opaque row_height_of_ctx: *u8,
+    is_grouped: bool,
+    group_count: i64,
+    group_size: fn(usize, *u8) -> usize,
+    opaque group_size_ctx: *u8,
+    group_header: fn(usize, *u8) -> flex::Node,
+    opaque group_header_ctx: *u8,
+    selected: i64,
+    row_height: f64,                 // 0 = let the row measure itself
+    separated: bool,
+    separator_color: vocab::Color,
+    columns: usize,                  // 0 or 1 = a single column, which is a list
+    h_bars: vocab::ScrollBars,
+    v_bars: vocab::ScrollBars,
+    scroll_to: i64,
+    // The four `collection` verbs that had nowhere to land until there was a
+    // recycler — each of them is a question about rows that do not exist yet.
+    item_sizing: vocab::ItemSizing,
+    scroll_anchor: vocab::ScrollAnchor,
+    remaining_threshold: i64,
+    on_threshold: fn(*u8, *u8),
+    opaque on_threshold_ctx: *u8,
+    can_reorder: bool,
+    can_mix_groups: bool,
+}
+
+fn empty_sequence() -> Sequence {
+    return Sequence {
+        count: 0 as i64, row: props::no_row, row_ctx: 0 as *u8,
+        bind: props::no_bind,
+        row_kind: props::no_row_kind, row_kind_ctx: 0 as *u8,
+        row_height_of: props::no_row_height_of, row_height_of_ctx: 0 as *u8,
+        is_grouped: false, group_count: 0 as i64,
+        group_size: props::no_group_size, group_size_ctx: 0 as *u8,
+        group_header: props::no_group_header, group_header_ctx: 0 as *u8,
+        selected: (0 as i64) -% (1 as i64),
+        row_height: 0.0f64, separated: false,
+        separator_color: vocab::Color::clear(),
+        columns: 0 as usize,
+        h_bars: vocab::ScrollBars::Default, v_bars: vocab::ScrollBars::Default,
+        scroll_to: (0 as i64) -% (1 as i64),
+        item_sizing: vocab::ItemSizing::MeasureAllItems,
+        scroll_anchor: vocab::ScrollAnchor::KeepItemsInView,
+        remaining_threshold: 0 as i64,
+        on_threshold: props::no_handler, on_threshold_ctx: 0 as *u8,
+        can_reorder: false, can_mix_groups: false,
+    };
+}
+
+fn sequence_of_list(p: *props::ListProps) -> Sequence {
+    var s: Sequence = empty_sequence();
+    s.count = { (*p).count };
+    s.row = { (*p).row };
+    s.row_ctx = { (*p).row_ctx };
+    s.bind = { (*p).bind };
+    s.row_kind = { (*p).row_kind };
+    s.row_kind_ctx = { (*p).row_kind_ctx };
+    s.row_height_of = { (*p).row_height_of };
+    s.row_height_of_ctx = { (*p).row_height_of_ctx };
+    s.is_grouped = { (*p).is_grouped };
+    s.group_count = { (*p).group_count };
+    s.group_size = { (*p).group_size };
+    s.group_size_ctx = { (*p).group_size_ctx };
+    s.group_header = { (*p).group_header };
+    s.group_header_ctx = { (*p).group_header_ctx };
+    s.selected = { (*p).selected_index };
+    s.row_height = { (*p).row_height } as f64;
+    s.separated = match { (*p).separator } {
+        vocab::Separator::Default => true,
+        vocab::Separator::None => false,
+    };
+    s.separator_color = { (*p).separator_color };
+    s.h_bars = { (*p).horizontal_scroll_bars };
+    s.v_bars = { (*p).vertical_scroll_bars };
+    s.scroll_to = { (*p).scroll_to_index };
+    return s;
+}
+
+fn sequence_of_collection(p: *props::CollectionProps) -> Sequence {
+    var s: Sequence = empty_sequence();
+    s.count = { (*p).count };
+    s.row = { (*p).row };
+    s.row_ctx = { (*p).row_ctx };
+    s.bind = { (*p).bind };
+    s.row_kind = { (*p).row_kind };
+    s.row_kind_ctx = { (*p).row_kind_ctx };
+    s.row_height_of = { (*p).row_height_of };
+    s.row_height_of_ctx = { (*p).row_height_of_ctx };
+    s.is_grouped = { (*p).groupable_items_view.is_grouped };
+    s.group_count = { (*p).group_count };
+    s.group_size = { (*p).group_size };
+    s.group_size_ctx = { (*p).group_size_ctx };
+    s.group_header = { (*p).group_header };
+    s.group_header_ctx = { (*p).group_header_ctx };
+    s.selected = { (*p).selected_index };
+    s.columns = { (*p).structured_items_view.columns };
+    s.h_bars = { (*p).items_view.horizontal_scroll_bars };
+    s.v_bars = { (*p).items_view.vertical_scroll_bars };
+    s.scroll_to = { (*p).items_view.scroll_to_index };
+    s.item_sizing = { (*p).structured_items_view.item_sizing };
+    s.scroll_anchor = { (*p).items_view.scroll_anchor };
+    s.remaining_threshold = { (*p).items_view.remaining_threshold };
+    s.on_threshold = { (*p).items_view.on_remaining_items_threshold_reached };
+    s.on_threshold_ctx = { (*p).items_view.on_remaining_items_threshold_reached_ctx };
+    s.can_reorder = { (*p).reorderable_items_view.can_reorder_items };
+    s.can_mix_groups = { (*p).reorderable_items_view.can_mix_groups };
+    return s;
+}
+
+fn sequence_of(n: *core::Node) -> Sequence {
+    let kind: u32 = core::kind_of(n);
+    if kind == props::K_LIST {
+        let p: *props::ListProps = controls::props_of(n, props::K_LIST) as *props::ListProps;
+        if p == (0 as *props::ListProps) { return empty_sequence(); }
+        return sequence_of_list(p);
+    }
+    if kind == props::K_COLLECTION {
+        let p: *props::CollectionProps =
+            controls::props_of(n, props::K_COLLECTION) as *props::CollectionProps;
+        if p == (0 as *props::CollectionProps) { return empty_sequence(); }
+        return sequence_of_collection(p);
+    }
+    return empty_sequence();
+}
+
+// ================================================================================
+// the slot map
+// ================================================================================
+//
+// A recycler is addressed by ONE flat index, and facet's description is not
+// flat: it has groups with headers, and it has grids whose visual row holds
+// `columns` data rows. So the map is the whole of what the old materialiser's
+// three `emit_*` walks did, turned inside out — instead of emitting rows in
+// order, it answers "what is at slot N".
+//
+// It is PURE, which is the point: every property the materialiser was tested
+// for — headers between groups, the index continuing across a group boundary, a
+// grid line holding exactly `columns` items — is a question about this map, and
+// can be asked without a widget, a window or a display.
+
+struct Slot {
+    is_header: bool,
+    group: usize,      // when is_header
+    first: usize,      // when !is_header: the first DATA index on this line
+    span: usize,       // how many data rows this slot holds (1 for a list row)
+}
+
+fn no_slot() -> Slot {
+    return Slot { is_header: false, group: 0 as usize, first: 0 as usize,
+                  span: 0 as usize };
+}
+
+// Zero and one both mean "a single column, which is a list".
+fn columns_of(s: Sequence) -> usize {
+    if s.columns > (1 as usize) { return s.columns; }
+    return 1 as usize;
+}
+
+// How many LINES `how_many` data rows take at `cols` per line. The last line is
+// short rather than absent, which is why this rounds up.
+fn lines_for(how_many: usize, cols: usize) -> usize {
+    if cols == (0 as usize) { return 0 as usize; }
+    return (how_many +% (cols -% (1 as usize))) / cols;
+}
+
+fn group_size_at(s: Sequence, g: usize) -> usize {
+    if s.group_size == props::no_group_size { return 0 as usize; }
+    return s.group_size(g, s.group_size_ctx);
+}
+
+fn has_headers(s: Sequence) -> bool {
+    return s.group_header != props::no_group_header;
+}
+
+// How many slots the whole sequence has. Answered WITHOUT building anything,
+// which is what the model's length is set from.
+fn slot_count(s: Sequence) -> usize {
+    if s.row == props::no_row { return 0 as usize; }
+    let cols: usize = columns_of(s);
+    if !s.is_grouped {
+        if s.count <= (0 as i64) { return 0 as usize; }
+        return lines_for(s.count as usize, cols);
+    }
+    var total: usize = 0 as usize;
+    var g: usize = 0 as usize;
+    while (g as i64) < s.group_count {
+        if has_headers(s) { total = total +% (1 as usize); }
+        total = total +% lines_for(group_size_at(s, g), cols);
+        g = g +% (1 as usize);
+    }
+    return total;
+}
+
+// What is at slot `at`. `span` of 0 is "nothing" — past the end, or a sequence
+// with no row builder.
+//
+// O(groups) for a grouped sequence and O(1) for a flat one. Groups are few by
+// construction (they are section headings), so walking them per bind is cheaper
+// than the table that would avoid it and cannot go stale.
+fn slot_at(s: Sequence, at: usize) -> Slot {
+    if s.row == props::no_row { return no_slot(); }
+    let cols: usize = columns_of(s);
+    if !s.is_grouped {
+        if s.count <= (0 as i64) { return no_slot(); }
+        let n: usize = s.count as usize;
+        let first: usize = at *% cols;
+        if first >= n { return no_slot(); }
+        var span: usize = cols;
+        if first +% span > n { span = n -% first; }
+        return Slot { is_header: false, group: 0 as usize, first: first, span: span };
+    }
+    var seen: usize = 0 as usize;
+    var data: usize = 0 as usize;
+    var g: usize = 0 as usize;
+    while (g as i64) < s.group_count {
+        if has_headers(s) {
+            if seen == at {
+                return Slot { is_header: true, group: g, first: data,
+                              span: 0 as usize };
+            }
+            seen = seen +% (1 as usize);
+        }
+        let size: usize = group_size_at(s, g);
+        let lines: usize = lines_for(size, cols);
+        if at < seen +% lines {
+            let line: usize = at -% seen;
+            let first: usize = data +% (line *% cols);
+            var span: usize = cols;
+            if (line *% cols) +% span > size { span = size -% (line *% cols); }
+            return Slot { is_header: false, group: g, first: first, span: span };
+        }
+        seen = seen +% lines;
+        data = data +% size;
+        g = g +% (1 as usize);
+    }
+    return no_slot();
+}
+
+// ================================================================================
+// building one slot
+// ================================================================================
+
+// One data row, with everything a row carries: the stated-or-measured height,
+// its share of a grid line, the selection highlight, and its INDEX — which is
+// how one shared handler tells the rows apart.
+fn build_row(s: Sequence, at: usize, cols: usize) -> core::Node {
+    var b: core::Builder = core::Builder::new();
+    b.add(s.row(at, s.row_ctx));
+    var row: core::Node = core::column(b);
+    // The height a row was TOLD, or the one it answers for itself, or none —
+    // in that order, because a stated height is a promise and a measured one
+    // is an observation.
+    var h: f64 = s.row_height;
+    if s.row_height_of != props::no_row_height_of {
+        let asked: f64 = s.row_height_of(at, s.row_height_of_ctx);
+        if asked >= (1.0 as f64) { h = asked; }
+    }
+    if h >= (1.0 as f64) { row.set_height(flex::StyleLength::points(h)); }
+    if cols > (1 as usize) {
+        core::set_width_percent(#addr_of(row), (100.0 as f64) / (cols as f64));
+    }
+    if s.selected >= (0 as i64) && (s.selected as usize) == at {
+        row.set_background_color(vocab::Color::selected_content_background());
+    }
+    // 1-based underneath, so that "no index" and "row zero" are different
+    // answers — `component::item_index_of(sender)` is the reader.
+    core::set_item_index(#addr_of(row), at);
+    let click: gestures::Handler = input::sequence_row_click;
+    return row.gesture(on_click: click);
+}
+
+// The node for one slot: a header, a single row, or a LINE of `span` rows.
+//
+// A grid is explicit lines and not `flex-wrap`. Wrap was the obvious spelling
+// and it does not hold — six 100-point items in a 300-point container came out
+// two to a line when asked for three — so a line is a `row` node of its own and
+// its items take an equal fraction of it.
+fn build_slot(s: Sequence, at: usize) -> core::Node {
+    let slot: Slot = slot_at(s, at);
+    if slot.is_header {
+        // A header is not a ROW: it carries no index, so a shared handler
+        // asking `item_index_of` gets None rather than a row it is not.
+        return s.group_header(slot.group, s.group_header_ctx);
+    }
+    if slot.span == (0 as usize) { return core::column(core::Builder::new()); }
+    let cols: usize = columns_of(s);
+    if cols == (1 as usize) { return build_row(s, slot.first, 1 as usize); }
+    var line: core::Builder = core::Builder::new();
+    var i: usize = 0 as usize;
+    while i < slot.span {
+        line.add(build_row(s, slot.first +% i, cols));
+        i = i +% (1 as usize);
+    }
+    return core::row(line);
+}
+
+// The data index a slot ADDRESSES, for the rebind path: a pooled row may only
+// be reused for a row of the same shape, and `row_kind` is asked about a data
+// index. A header has none.
+fn slot_data_index(s: Sequence, at: usize) -> i64 {
+    let slot: Slot = slot_at(s, at);
+    if slot.is_header { return (0 as i64) -% (1 as i64); }
+    if slot.span == (0 as usize) { return (0 as i64) -% (1 as i64); }
+    return slot.first as i64;
+}
+
+// Which SHAPE slot `at` has, so a pooled row is only reused for its own kind.
+//
+// The header/row split is this package's, not the application's: a header and a
+// row are never the same subtree, so they can never share a pooled cell however
+// the application numbers its own kinds. Headers take a shape of their own,
+// above anything `row_kind` can answer.
+fn header_shape() -> i64 { return (0 as i64) -% (2 as i64); }
+
+fn slot_shape(s: Sequence, at: usize) -> i64 {
+    let slot: Slot = slot_at(s, at);
+    if slot.is_header { return header_shape(); }
+    if slot.span == (0 as usize) { return (0 as i64) -% (1 as i64); }
+    if s.row_kind == props::no_row_kind {
+        // No `row_kind` means "every row has the same shape", which is what the
+        // contract's default says by answering zero for all of them. The SPAN
+        // still separates a full grid line from a short last one — they are
+        // different subtrees.
+        return slot.span as i64;
+    }
+    return ((s.row_kind(slot.first, s.row_kind_ctx) as i64) *% (64 as i64))
+         +% (slot.span as i64);
+}
+
+// ================================================================================
+// the OTHER slot map: a tree
+// ================================================================================
+//
+// `tree.cplus` says it out loud — "it recycles, but it is not `list`": a list is
+// count plus index and a tree is parent → children plus expansion plus stable
+// identity, and neither protocol reaches the other. Two controls, one
+// implementation technique, which is why the tree lives HERE beside the
+// sequences rather than in a module of its own. Everything below the slot maps —
+// the factory, the deferred fill, the per-row layout, the pooling rules — is
+// shared, and every one of those is a bug this package has already paid for
+// once.
+//
+// THE FLAT INDEX IS CACHED. A tree's Nth visible row is only findable by walking
+// the expanded model, so answering it per bind would be O(visible) per row and
+// O(visible²) per screen. The walk runs once per change instead, into a vector
+// of (node, depth) — which is what NSOutlineView's row cache is, and what the
+// materialiser was doing anyway on its way to building widgets. What recycling
+// removes is the BUILDING, not the walk.
+
+struct VisibleRow {
+    node: usize,       // *tree::TreeNode, as an address — see `raw_at`'s reason
+    depth: i64,
+}
+
+fn index_key() -> *u8 { return #str_ptr("facet-gtk-treeindex\0"); }
+
+fn tree_props(n: *core::Node) -> *tree::TreeProps {
+    return controls::props_of(n, tree::K_TREE) as *tree::TreeProps;
+}
+
+// Pre-order over the expanded model. `parent_open` is what stops a closed branch
+// costing anything: the walk does not descend through it at all, so a
+// hundred-thousand-node model with everything shut is two rows.
+fn walk_visible(node: *tree::TreeNode, p: *tree::TreeProps, depth: i64,
+                is_root: bool, out: *vec::Vec[VisibleRow]) {
+    if !is_root {
+        let _a: status::Status = { (*out).append(
+            VisibleRow { node: { #addr(node as *u8) }, depth: depth }) };
+        if !controls::is_expanded(p, node) { return; }
+    }
+    var i: usize = 0 as usize;
+    let count: usize = { (*node).child_count() };
+    while i < count {
+        match { (*node).child_ptr(i) } {
+            option::Option[*tree::TreeNode]::Some(c) => {
+                var next: i64 = depth;
+                if !is_root { next = depth +% (1 as i64); }
+                walk_visible(c, p, next, false, out);
+            }
+            option::Option[*tree::TreeNode]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return;
+}
+
+// The visible rows, in order, with no widget anywhere — which is what makes the
+// whole of a tree's slot map assertable in a suite that cannot make one.
+fn visible_rows(n: *core::Node) -> vec::Vec[VisibleRow] {
+    var rows: vec::Vec[VisibleRow] = vec::new::[VisibleRow]();
+    let p: *tree::TreeProps = tree_props(n);
+    if p == (0 as *tree::TreeProps) { return rows; }
+    // The root itself is the CONTAINER, not a row: a tree shows its children.
+    walk_visible(#addr_of((*p).root), p, 0 as i64, true, #addr_of(rows));
+    return rows;
+}
+
+// Rebuild the cached index. The old one is dropped first — it is a boxed Vec and
+// nothing else points at it.
+fn reindex_tree(n: *core::Node, v: *u8) {
+    if v == (0 as *u8) { return; }
+    forget_index(v);
+    if tree_props(n) == (0 as *tree::TreeProps) { return; }
+    var rows: vec::Vec[VisibleRow] = visible_rows(n);
+    match box::new::[vec::Vec[VisibleRow]](rows) {
+        option::Option[box::Box[vec::Vec[VisibleRow]]]::Some(b) => {
+            g::set_data(v, index_key(), b.into_raw());
+        }
+        option::Option[box::Box[vec::Vec[VisibleRow]]]::None => { }
+    }
+    return;
+}
+
+fn forget_index(v: *u8) {
+    let raw: *u8 = g::get_data(v, index_key());
+    if raw == (0 as *u8) { return; }
+    let _dropped: box::Box[vec::Vec[VisibleRow]] =
+        box::from_raw::[vec::Vec[VisibleRow]](raw);
+    g::set_data(v, index_key(), 0 as *u8);
+    return;
+}
+
+fn index_of(v: *u8) -> *vec::Vec[VisibleRow] {
+    if v == (0 as *u8) { return 0 as *vec::Vec[VisibleRow]; }
+    return g::get_data(v, index_key()) as *vec::Vec[VisibleRow];
+}
+
+fn visible_count(v: *u8) -> usize {
+    let ix: *vec::Vec[VisibleRow] = index_of(v);
+    if ix == (0 as *vec::Vec[VisibleRow]) { return 0 as usize; }
+    return { (*ix).count() };
+}
+
+fn visible_at(v: *u8, at: usize) -> VisibleRow {
+    let ix: *vec::Vec[VisibleRow] = index_of(v);
+    if ix == (0 as *vec::Vec[VisibleRow]) {
+        return VisibleRow { node: 0 as usize, depth: 0 as i64 };
+    }
+    return match { (*ix).at(at) } {
+        option::Option[VisibleRow]::Some(r) => r,
+        option::Option[VisibleRow]::None => VisibleRow { node: 0 as usize, depth: 0 as i64 },
+    };
+}
+
+fn build_tree_slot(n: *core::Node, v: *u8, at: usize) -> core::Node {
+    let p: *tree::TreeProps = tree_props(n);
+    if p == (0 as *tree::TreeProps) { return core::column(core::Builder::new()); }
+    let row: VisibleRow = visible_at(v, at);
+    if row.node == (0 as usize) { return core::column(core::Builder::new()); }
+    return controls::build_tree_row(row.node as *tree::TreeNode, p, row.depth);
+}
+
+// A tree row's POOL SHAPE is its depth and whether it is selected.
+//
+// Both are written by `build_tree_row` and neither is data a `bind` can reach —
+// the indent is padding on the row and the highlight is its background — so a
+// pooled cell may only be reused where both match. Getting this wrong is a row
+// that scrolls in at the wrong indent, which reads as the tree having reordered
+// itself.
+fn tree_shape(n: *core::Node, v: *u8, at: usize) -> i64 {
+    let p: *tree::TreeProps = tree_props(n);
+    if p == (0 as *tree::TreeProps) { return (0 as i64) -% (1 as i64); }
+    let row: VisibleRow = visible_at(v, at);
+    if row.node == (0 as usize) { return (0 as i64) -% (1 as i64); }
+    var shape: i64 = row.depth *% (2 as i64);
+    if controls::is_selected(p, row.node as *tree::TreeNode) {
+        shape = shape +% (1 as i64);
+    }
+    return shape;
+}
+
+// ================================================================================
+// the dispatch: two maps, one machine
+// ================================================================================
+
+fn is_tree(n: *core::Node) -> bool { return core::kind_of(n) == tree::K_TREE; }
+
+fn slots_of(n: *core::Node, v: *u8) -> usize {
+    if is_tree(n) { return visible_count(v); }
+    return slot_count(sequence_of(n));
+}
+
+fn build_at(n: *core::Node, v: *u8, at: usize) -> core::Node {
+    if is_tree(n) { return build_tree_slot(n, v, at); }
+    return build_slot(sequence_of(n), at);
+}
+
+fn shape_at(n: *core::Node, v: *u8, at: usize) -> i64 {
+    if is_tree(n) { return tree_shape(n, v, at); }
+    return slot_shape(sequence_of(n), at);
+}
+
+// Can slot `at` be rebound in place rather than rebuilt? Only when the
+// application PROMISED a stable shape by providing a bind function.
+fn rebind_at(n: *core::Node, v: *u8, at: usize) -> bool {
+    if is_tree(n) {
+        let p: *tree::TreeProps = tree_props(n);
+        if p == (0 as *tree::TreeProps) { return false; }
+        if { (*p).bind } == tree::no_bind { return false; }
+        return visible_at(v, at).node != (0 as usize);
+    }
+    return can_rebind(sequence_of(n), at);
+}
+
+// Write slot `at`'s data into a row that is already there. The two contracts
+// spell the arguments differently — a list's bind takes an INDEX and a tree's
+// takes the model NODE — which is the whole reason this is a branch and not a
+// shared function pointer.
+fn bind_at(n: *core::Node, v: *u8, at: usize, row: *core::Node) {
+    if is_tree(n) {
+        let p: *tree::TreeProps = tree_props(n);
+        if p == (0 as *tree::TreeProps) { return; }
+        let vr: VisibleRow = visible_at(v, at);
+        if vr.node == (0 as usize) { return; }
+        let f: fn(*tree::TreeNode, *u8, *flex::Node) = { (*p).bind };
+        f(vr.node as *tree::TreeNode, { (*p).bind_ctx }, row);
+        return;
+    }
+    let s: Sequence = sequence_of(n);
+    s.bind(slot_data_index(s, at) as usize, row, s.row_ctx);
+    return;
+}
+
+// ================================================================================
+// the widget: a GtkListView in a GtkScrolledWindow
+// ================================================================================
+
+fn model_key() -> *u8 { return #str_ptr("facet-gtk-listmodel\0"); }
+fn model_len_key() -> *u8 { return #str_ptr("facet-gtk-listlen\0"); }
+fn width_key() -> *u8 { return #str_ptr("facet-gtk-listwidth\0"); }
+// How many slots the description WANTS, which is not always how many the model
+// has — see `sync_model`.
+fn want_key() -> *u8 { return #str_ptr("facet-gtk-listwant\0"); }
+// The ESTIMATED row height — see `measure_sample`.
+fn est_key() -> *u8 { return #str_ptr("facet-gtk-listest\0"); }
+
+// Per list ITEM, on the GtkListItem itself: the row's node, the shape it was
+// built for, and the Fixed its widgets live in.
+fn row_node_key() -> *u8 { return #str_ptr("facet-gtk-rownode\0"); }
+fn row_shape_key() -> *u8 { return #str_ptr("facet-gtk-rowshape\0"); }
+fn row_host_key() -> *u8 { return #str_ptr("facet-gtk-rowhost\0"); }
+
+// Both live in `controls` — see `controls::list_view_key` for why.
+fn list_view_of(v: *u8) -> *u8 { return controls::list_view_of(v); }
+fn recycles(v: *u8) -> bool { return controls::recycles(v); }
+
+// A `table` keeps the GtkFixed document — see the header. This is the one
+// question `create` asks, and everything downstream follows from it.
+fn kind_recycles(kind: u32) -> bool {
+    return kind == props::K_LIST || kind == props::K_COLLECTION
+        || kind == tree::K_TREE;
+}
+
+fn create_sequence(n: *core::Node) -> *u8 {
+    let sw: gtk::ScrolledWindow = gtk::ScrolledWindow::new();
+    sw.set_propagate_natural_width(false);
+    sw.set_propagate_natural_height(false);
+    controls::yields_to_its_container(n);
+    input::arm_scroll(sw.raw(), n);
+    if !kind_recycles(core::kind_of(n)) {
+        // A table: the ordinary container shape, its rows being facet children.
+        let doc: gtk::Fixed = gtk::Fixed::new();
+        sw.set_child(doc.upcast());
+        g::set_data(sw.raw(), controls::scroll_doc_key(), doc.raw());
+        add_refresh(sw, doc.raw(), n);
+        return sw.upcast().raw();
+    }
+    let model: gtk::StringList = controls::new_string_list();
+    let sel: gtk::NoSelection = gtk::NoSelection::new(model.as_list_model());
+    let factory: gtk::SignalListItemFactory = gtk::SignalListItemFactory::new();
+    let _a: u64 = factory.connect_setup(item_setup, n as *u8);
+    let _b: u64 = factory.connect_bind(item_bind, n as *u8);
+    let _c: u64 = factory.connect_unbind(item_unbind, n as *u8);
+    let _d: u64 = factory.connect_teardown(item_teardown, n as *u8);
+    let lv: gtk::ListView = gtk::ListView::new(
+        gtk::SelectionModel::from_raw(sel.raw()), factory.upcast());
+    sw.set_child(lv.upcast().upcast());
+    g::set_data(sw.raw(), controls::list_view_key(), lv.raw());
+    g::set_data(sw.raw(), model_key(), model.raw());
+    // The pull-to-refresh spinner has no Fixed to live in here, so it hangs on
+    // the scrolled window and `geometry` leaves it alone — see
+    // `geometry::place_refresh_spinner`.
+    // Pull to refresh is a `list` verb; a tree has none, so it gets no
+    // affordance rather than a spinner nothing can start.
+    if core::kind_of(n) != tree::K_TREE {
+        controls::add_refresh_affordance(sw.raw(), n);
+        let sp: *u8 = controls::spinner_of(sw.raw());
+        if sp != (0 as *u8) {
+            gtk::Widget::from_raw(sp).set_halign(3 as i32);  // GTK_ALIGN_CENTER
+            gtk::Widget::from_raw(sp).set_valign(1 as i32);  // GTK_ALIGN_START
+        }
+    }
+    // The viewport's own width, watched — see `viewport_changed`.
+    let _w: u64 = sw.get_hadjustment().connect_changed(viewport_changed, n as *u8);
+    return sw.upcast().raw();
+}
+
+fn add_refresh(sw: gtk::ScrolledWindow, doc: *u8, n: *core::Node) {
+    controls::add_refresh_affordance(sw.raw(), n);
+    let sp: *u8 = controls::spinner_of(sw.raw());
+    if sp != (0 as *u8) {
+        gtk::Fixed::from_raw(doc).put(gtk::Widget::from_raw(sp), 0.0f64, 0.0f64);
+    }
+    return;
+}
+
+// ---- the model, which is a length ----------------------------------------------
+//
+// Grown and shrunk at the END rather than rebuilt, so a list that gained a row
+// appends one. `gtk_string_list_splice` empties it in a single call for the
+// case where it shrinks a long way — N `remove` calls each shift the tail.
+
+fn model_length(v: *u8) -> usize {
+    return { #addr(g::get_data(v, model_len_key())) };
+}
+
+// One `g_list_model_items_changed(at, removals, additions)`, which is the whole
+// vocabulary GtkListView reacts to. Every model write in this file goes through
+// it, so "what did the list view hear" has one answer.
+//
+// The additions array is `const char * const *`, NULL-terminated, and every
+// entry is the SAME empty string: GtkStringList copies what it is given and the
+// string is never read back (`gtk_list_item_get_position` is the index and
+// facet's row builder is the data), so one is as good as N.
+fn splice_model(v: *u8, at: usize, removals: usize, additions: usize) {
+    let model: *u8 = g::get_data(v, model_key());
+    if model == (0 as *u8) { return; }
+    if additions == (0 as usize) {
+        { gtk_string_list_splice(model, at as u32, removals as u32, 0 as *u8) };
+        return;
+    }
+    var slots: vec::Vec[usize] = vec::new::[usize]();
+    let blank: usize = { #addr(#str_ptr("\0")) };
+    var i: usize = 0 as usize;
+    while i < additions {
+        let _a: status::Status = slots.append(blank);
+        i = i +% (1 as usize);
+    }
+    let _t: status::Status = slots.append(0 as usize);          // the terminator
+    match slots.at_ptr(0 as usize) {
+        option::Option[*usize]::Some(first) => {
+            { gtk_string_list_splice(model, at as u32, removals as u32, first as *u8) };
+        }
+        option::Option[*usize]::None => { return; }
+    }
+    return;
+}
+
+fn set_model_length(v: *u8, want: usize, force: bool = false) {
+    if g::get_data(v, model_key()) == (0 as *u8) { return; }
+    let have: usize = model_length(v);
+    // `force` is how a REBUILD says "the length you have is not the length I
+    // mean": the rows can differ while their number does not — a selection
+    // moved, a branch of the same size opened — and the short-circuit that is
+    // right for a resize would then skip the rebind entirely.
+    if have == want && !force { return; }
+    // ONE SPLICE, replacing the whole model rather than emptying it and filling
+    // it again.
+    //
+    // Two splices is two `items-changed`, and the first of them says the model
+    // is EMPTY — which collapses the scrolled window's adjustment to zero and
+    // sends the reader back to the top. Expanding a branch in a tree is exactly
+    // that path, and losing the scroll position on every disclosure click is
+    // not a performance nit.
+    splice_model(v, 0 as usize, have, want);
+    g::set_data(v, model_len_key(), want as *u8);
+    return;
+}
+
+// ---- the factory ----------------------------------------------------------------
+
+// A row's widgets live in a GtkFixed, because facet's layout places by frame and
+// a Fixed is the one GTK container that takes an explicit position. Same host
+// every other facet container gets, one per pooled cell.
+fn item_setup(factory: *u8, item: *u8, user: *u8) {
+    let host: gtk::Fixed = gtk::Fixed::new();
+    let li: gtk::ListItem = gtk::ListItem::from_raw(item);
+    li.set_child(host.upcast());
+    g::set_data(item, row_host_key(), host.raw());
+    // THE ESTIMATE, and it is not a nicety.
+    //
+    // GtkListView allocates a cell BEFORE it binds it, and an empty GtkFixed
+    // measures 0x0 — so every fresh cell was allocated at its padding's
+    // negative (`gtk_widget_size_allocate(): width -4 and height -5`, once per
+    // cell) and, worse, the list concluded from those zero heights that it
+    // needed far more cells to fill the viewport: 205 of them for a box that
+    // holds seven. A height here is what makes the first pass sane; `bind`
+    // replaces it with the measured one a moment later.
+    let n: *core::Node = user as *core::Node;
+    let est: i32 = estimated_height(n);
+    if est > (0 as i32) {
+        host.upcast().set_size_request(0 -% (1 as i32), est);
+    }
+    return;
+}
+
+// Does this kind measure ONE row and use it for all of them? A `list` and a
+// `tree` have no such verb — only `collection` embeds StructuredItemsView — so
+// both answer the honest default.
+fn measures_first_only(n: *core::Node) -> bool {
+    if core::kind_of(n) != props::K_COLLECTION { return false; }
+    return match sequence_of(n).item_sizing {
+        vocab::ItemSizing::MeasureFirstItem => true,
+        vocab::ItemSizing::MeasureAllItems => false,
+    };
+}
+
+fn estimated_height(n: *core::Node) -> i32 {
+    if n == (0 as *core::Node) { return 0 as i32; }
+    let v: *u8 = core::view_of(n);
+    if v == (0 as *u8) { return 0 as i32; }
+    return { #addr(g::get_data(v, est_key())) } as i32;
+}
+
+// One row, built and laid out and thrown away, for its HEIGHT.
+//
+// Every recycler has this and every one of them calls it an estimate, because
+// that is what it is: the rows are not all the same height and the list has to
+// commit to a number before it has seen any of them. A stated `row_height` is
+// better than a measurement and is used when there is one; otherwise slot zero
+// is the sample, which is one row built per fill.
+fn measure_sample(n: *core::Node, v: *u8) {
+    let stated: f64 = stated_row_height(n);
+    if stated >= (1.0 as f64) {
+        g::set_data(v, est_key(), geometry::round_i32(stated) as *u8);
+        return;
+    }
+    let w: f64 = row_width(n);
+    if w <= (0.0 as f64) { return; }
+    if slots_of(n, v) == (0 as usize) { return; }
+    var sample: core::Node = build_at(n, v, 0 as usize);
+    { sample.calculate_layout(width: w, height: flex::undefined()) };
+    let f: flex::Frame = { sample.frame() };
+    var h: i32 = geometry::round_i32(f.height);
+    if h < (1 as i32) { h = 1 as i32; }
+    g::set_data(v, est_key(), h as *u8);
+    return;
+}
+
+// ---- the list's own appearing / disappearing verbs ---------------------------
+//
+// `ListView.ItemAppearing` / `ItemDisappearing`, and on a RECYCLING list the
+// bind/unbind pair is the only honest answer — the AppKit backend reaches the
+// same conclusion from `didAddRowView` / `didRemoveRowView` and says so: "a row
+// that scrolls away really is removed".
+//
+// So these are about VISIBILITY, not identity. `bind` fires on both of its
+// paths — the cheap rebind of a pooled cell and the full rebuild — because both
+// mean the same thing to the application: this item is on screen now. Firing
+// only on the rebuild path would report an item appearing exactly when the list
+// was too slow to recycle, which is the opposite of the truth.
+//
+// The sender is the ROW's host widget, not the list: a handler that wants to
+// know which row it was is holding the thing it was given.
+
+fn fire_item_visibility(n: *core::Node, host: *u8, appearing: bool) {
+    if n == (0 as *core::Node) { return; }
+    // Only `list` declares these two. `props_of` answers null for any other
+    // kind, so a collection or a table — which share this recycler and do NOT
+    // have the verbs — falls out here rather than reading another kind's block.
+    let p: *props::ListProps = controls::props_of(n, props::K_LIST) as *props::ListProps;
+    if p == (0 as *props::ListProps) { return; }
+    if appearing {
+        let h: fn(*u8, *u8) = { (*p).on_item_appearing };
+        if h != props::no_handler { h(host, { (*p).on_item_appearing_ctx }); }
+        return;
+    }
+    let h: fn(*u8, *u8) = { (*p).on_item_disappearing };
+    if h != props::no_handler { h(host, { (*p).on_item_disappearing_ctx }); }
+    return;
+}
+
+fn item_bind(factory: *u8, item: *u8, user: *u8) {
+    let n: *core::Node = user as *core::Node;
+    if n == (0 as *core::Node) { return; }
+    let host: *u8 = g::get_data(item, row_host_key());
+    if host == (0 as *u8) { return; }
+    let v: *u8 = core::view_of(n);
+    let at: usize = gtk::ListItem::from_raw(item).get_position() as usize;
+    let shape: i64 = shape_at(n, v, at);
+    let existing: *u8 = g::get_data(item, row_node_key());
+
+    // THE CHEAP PATH, and the whole reason `bind` is in the contract: the
+    // pooled row already has the right SHAPE, so only its data is rewritten and
+    // its widget subtree is left alone. `sync_from` is what carries the dirty
+    // bits, because a realised row is not in a window and `sync` will never
+    // reach it.
+    if existing != (0 as *u8) && shape == shaped_as(item) && rebind_at(n, v, at) {
+        let node: *core::Node = existing as *core::Node;
+        // The SLOT changes even when the subtree is kept: that is what a
+        // rebind IS, and a stale slot would report the wrong row moved.
+        set_row_slot(host, at);
+        bind_at(n, v, at, node);
+        mount::sync_from(node);
+        lay_row_out(n, host, node);
+        fire_item_visibility(n, host, true);
+        return;
+    }
+
+    // The honest path: no `bind`, or a different shape. Take the old subtree
+    // down and build a new one.
+    release_row(item, true);
+    var built: core::Node = build_at(n, v, at);
+    let boxed: *u8 = match box::new::[core::Node](built) {
+        option::Option[box::Box[core::Node]]::Some(b) => b.into_raw(),
+        option::Option[box::Box[core::Node]]::None => 0 as *u8,
+    };
+    if boxed == (0 as *u8) { return; }
+    let node: *core::Node = boxed as *core::Node;
+    // `realise` is the SECOND mount path: the same walk `mount` runs, minus the
+    // window and minus the insert. The host is ours, so an unbacked row root
+    // passes its children straight through to it.
+    let _v: *u8 = mount::realise(node, host);
+    g::set_data(item, row_node_key(), boxed);
+    g::set_data(item, row_shape_key(), (shape +% (8 as i64)) as *u8);
+    // ...and on the HOST as well, which is the only end of the pair a walk of
+    // the list view's own children can reach: the GtkListItem is GTK's and is
+    // not a widget, so `relayout_rows` has nothing else to follow.
+    g::set_data(host, row_node_key(), boxed);
+    set_row_slot(host, at);
+    g::set_data(host, owner_key(), n as *u8);
+    arm_reorder(host, n);
+    lay_row_out(n, host, node);
+    fire_item_visibility(n, host, true);
+    note_reached(n, v, at);
+    return;
+}
+
+// ---- `remaining_threshold` — the infinite-scroll verb ----------------------------
+//
+// "Tell me when the reader is within N rows of the end." A recycler is the only
+// place that can answer it, because it is the only thing that knows which rows
+// have been ASKED FOR — a materialiser built them all at once and the question
+// had no moment to be asked in.
+//
+// FIRED ONCE PER CROSSING, not once per bind. GtkListView binds a handful of
+// cells around the edge as the reader arrives, and an application that appends a
+// page on every one of them would append five pages for one scroll. The
+// high-water mark is what makes it one: the handler runs when a row is bound
+// PAST anything bound before, and a fresh model resets it.
+fn reached_key() -> *u8 { return #str_ptr("facet-gtk-listreached\0"); }
+
+// Is row `at` within `threshold` of the end? Kept apart from the firing so the
+// arithmetic is assertable — an off-by-one here is an application that loads its
+// next page one row too early or never.
+fn within_threshold(total: usize, at: usize, threshold: i64) -> bool {
+    if threshold <= (0 as i64) { return false; }
+    if total == (0 as usize) { return false; }
+    if at >= total { return true; }
+    let remaining: i64 = (total as i64) -% (at as i64) -% (1 as i64);
+    return remaining <= threshold;
+}
+
+fn note_reached(n: *core::Node, v: *u8, at: usize) {
+    if v == (0 as *u8) { return; }
+    if core::kind_of(n) != props::K_COLLECTION { return; }
+    let s: Sequence = sequence_of(n);
+    if s.remaining_threshold <= (0 as i64) { return; }
+    if s.on_threshold == props::no_handler { return; }
+    let total: usize = slots_of(n, v);
+    if total == (0 as usize) { return; }
+    // `at` is 0-based and the mark is biased by one, so "nothing reached yet"
+    // and "reached row zero" are different answers.
+    let mark: usize = { #addr(g::get_data(v, reached_key())) };
+    if (at +% (1 as usize)) <= mark { return; }
+    g::set_data(v, reached_key(), (at +% (1 as usize)) as *u8);
+    if !within_threshold(total, at, s.remaining_threshold) { return; }
+    let f: fn(*u8, *u8) = s.on_threshold;
+    f(v, s.on_threshold_ctx);
+    return;
+}
+
+// The shape a pooled row was BUILT for. Biased by 8 so that "never bound"
+// (null) and a real shape are different answers — `header_shape()` is -2 and an
+// empty slot is -1, so the bias has to clear both.
+fn shaped_as(item: *u8) -> i64 {
+    let raw: usize = { #addr(g::get_data(item, row_shape_key())) };
+    if raw == (0 as usize) { return (0 as i64) -% (99 as i64); }
+    return (raw as i64) -% (8 as i64);
+}
+
+// Can this slot be rebound in place? Only a DATA row, and only when the
+// application promised every row has the same shape by providing `bind`.
+fn can_rebind(s: Sequence, at: usize) -> bool {
+    if s.bind == props::no_bind { return false; }
+    return slot_data_index(s, at) >= (0 as i64);
+}
+
+fn item_unbind(factory: *u8, item: *u8, user: *u8) {
+    // The item stopped being shown — that is the verb, whether or not the cell
+    // is about to be reused. Fired BEFORE the note below takes effect, because
+    // the row's host is still intact here.
+    fire_item_visibility(user as *core::Node, g::get_data(item, row_host_key()), false);
+    // NOT released here. GtkListView unbinds a cell it is about to rebind to a
+    // neighbouring position, and throwing the subtree away on every scroll step
+    // is exactly the cost this module exists to avoid — the rebind path in
+    // `item_bind` is what reads it back. `teardown` is where a cell really dies.
+    return;
+}
+
+fn item_teardown(factory: *u8, item: *u8, user: *u8) {
+    release_row(item, false);
+    return;
+}
+
+// Take a row's subtree down: `unrealise` fires `on_detach` and clears attach
+// state, then dropping the box drops the node — which releases every view
+// through the same pairing every other node uses.
+//
+// `host_alive` is not a nicety. At TEARDOWN the GtkListItem is being finalised
+// and its child Fixed has already been unparented and dropped, so the pointer
+// this module kept is dangling — writing the back-reference through it is
+// `g_object_set_data: assertion 'G_IS_OBJECT (object)' failed`, once per cell,
+// from inside `g_object_unref`. The rebuild path in `item_bind` is the only
+// caller whose host is still there.
+fn release_row(item: *u8, host_alive: bool) {
+    let raw: *u8 = g::get_data(item, row_node_key());
+    if raw == (0 as *u8) { return; }
+    mount::unrealise(raw as *core::Node);
+    let _dropped: box::Box[core::Node] = box::from_raw::[core::Node](raw);
+    if host_alive {
+        let host: *u8 = g::get_data(item, row_host_key());
+        if host != (0 as *u8) { g::set_data(host, row_node_key(), 0 as *u8); }
+    }
+    g::set_data(item, row_node_key(), 0 as *u8);
+    g::set_data(item, row_shape_key(), 0 as *u8);
+    return;
+}
+
+// ================================================================================
+// reordering
+// ================================================================================
+//
+// `can_reorder_items` is the ledger's ReorderableItemsView, and it is the one
+// verb in this file where the BACKEND writes into the props: `reorder_from` and
+// `reorder_to` are READ-ONLY to the application (`collection.cplus` says so —
+// "writing them would be describing a move that did not happen") and
+// `on_reorder_completed` is how it learns a move happened at all.
+//
+// THE DATA IS NOT TOUCHED. facet's sequence is a count plus a builder, so the
+// ORDER belongs to the application: this reports the move and the application
+// reorders its own data and writes `count` or `row` back. A backend that
+// shuffled rows itself would be shuffling a view of data it does not own, and
+// the next rebuild would put them back.
+//
+// DRAG AND DROP PER ROW, over the same string payload `input`'s general drag
+// band uses — the SLOT INDEX as text. A row is both a source and a target,
+// which is what makes "drop row 3 on row 7" expressible at all.
+
+#[link_name = "g_signal_connect_data"]
+extern fn sigc_row_drop(instance: *u8, detailed_signal: *u8,
+                        handler: fn(*u8, *u8, f64, f64, *u8) -> i32,
+                        data: *u8, destroy_data: *u8, connect_flags: i32) -> u64;
+
+// GdkDragAction MOVE — a reorder takes the row OUT of where it was, which is
+// what the cursor should say.
+fn action_move() -> u32 { return 2 as u32; }
+fn g_type_string() -> usize { return (16 as usize) *% (4 as usize); }
+
+// The slot a row host stands for, so a drop can name both ends. Biased by one:
+// null data and slot zero are different answers.
+fn row_slot_key() -> *u8 { return #str_ptr("facet-gtk-rowslot\0"); }
+fn reorder_armed_key() -> *u8 { return #str_ptr("facet-gtk-rowreorder\0"); }
+
+fn set_row_slot(host: *u8, at: usize) {
+    g::set_data(host, row_slot_key(), (at +% (1 as usize)) as *u8);
+    return;
+}
+
+fn row_slot_of(host: *u8) -> i64 {
+    let raw: usize = { #addr(g::get_data(host, row_slot_key())) };
+    if raw == (0 as usize) { return (0 as i64) -% (1 as i64); }
+    return (raw -% (1 as usize)) as i64;
+}
+
+// Arm a row host once. The band stays armed for the life of the cell and reads
+// `can_reorder_items` at DROP time, so switching the verb on and off costs
+// nothing and cannot leave a half-armed row behind — the same rule the gesture
+// bands follow.
+fn arm_reorder(host: *u8, n: *core::Node) {
+    if host == (0 as *u8) { return; }
+    if g::get_data(host, reorder_armed_key()) != (0 as *u8) { return; }
+    g::set_data(host, reorder_armed_key(), 1 as *u8);
+    let src: gtk::DragSource = gtk::DragSource::new();
+    src.set_actions(action_move());
+    let _p: u64 = src.connect_prepare(reorder_prepare, host);
+    gtk::Widget::from_raw(host).add_controller(src.upcast().upcast().upcast());
+    let tgt: gtk::DropTarget = gtk::DropTarget::new(g_type_string(), action_move());
+    let _d: u64 = { sigc_row_drop(tgt.raw(), #str_ptr("drop\0"), reorder_dropped,
+                                  n as *u8, 0 as *u8, 0 as i32) };
+    gtk::Widget::from_raw(host).add_controller(tgt.upcast());
+    return;
+}
+
+fn reorder_prepare(source: *u8, x: f64, y: f64, user: *u8) -> *u8 {
+    let host: *u8 = user;
+    let at: i64 = row_slot_of(host);
+    if at < (0 as i64) { return 0 as *u8; }
+    if !reorderable(host) { return 0 as *u8; }
+    // A GValue is a 24-byte struct the caller owns; it is initialised, filled,
+    // handed to the provider (which copies) and unset again inside this frame.
+    var storage: [u8; 32] = [0u8; 32];
+    let val: gobject_gir::Value = gobject_gir::Value::from_raw(#addr_of(storage) as *u8);
+    let inited: gobject_gir::Value = val.init(g_type_string());
+    inited.set_string(text::from_str("${at}").view());
+    let provider: gdk::ContentProvider = gdk::ContentProvider::new_for_value(inited);
+    inited.unset();
+    return provider.raw();
+}
+
+// The owning node, from a row host: the node rides on the host for the layout
+// walk already, and its OWNER is what carries `can_reorder_items`.
+fn reorderable(host: *u8) -> bool {
+    let n: *core::Node = owner_of_host(host);
+    if n == (0 as *core::Node) { return false; }
+    if core::kind_of(n) != props::K_COLLECTION { return false; }
+    return sequence_of(n).can_reorder;
+}
+
+fn owner_key() -> *u8 { return #str_ptr("facet-gtk-rowowner\0"); }
+
+fn owner_of_host(host: *u8) -> *core::Node {
+    if host == (0 as *u8) { return 0 as *core::Node; }
+    return g::get_data(host, owner_key()) as *core::Node;
+}
+
+fn reorder_dropped(target: *u8, value: *u8, x: f64, y: f64, user: *u8) -> i32 {
+    let n: *core::Node = user as *core::Node;
+    if n == (0 as *core::Node) { return 0 as i32; }
+    if core::kind_of(n) != props::K_COLLECTION { return 0 as i32; }
+    let p: *props::CollectionProps =
+        controls::props_of(n, props::K_COLLECTION) as *props::CollectionProps;
+    if p == (0 as *props::CollectionProps) { return 0 as i32; }
+    let s: Sequence = sequence_of(n);
+    if !s.can_reorder { return 0 as i32; }
+    let host: *u8 = gtk::EventController::from_raw(target).get_widget().raw();
+    if host == (0 as *u8) { return 0 as i32; }
+    let to_slot: i64 = row_slot_of(host);
+    if to_slot < (0 as i64) { return 0 as i32; }
+    let from_slot: i64 = match gobject_gir::Value::from_raw(value).get_string() {
+        option::Option[text::Text]::Some(t) => parse_slot(t.view()),
+        option::Option[text::Text]::None => (0 as i64) -% (1 as i64),
+    };
+    if from_slot < (0 as i64) { return 0 as i32; }
+    // A row dropped on itself moved nothing, and reporting it would make an
+    // application rewrite its data for a click.
+    if from_slot == to_slot { return 0 as i32; }
+    let v: *u8 = core::view_of(n);
+    let from: i64 = slot_data_index(s, from_slot as usize);
+    let to: i64 = slot_data_index(s, to_slot as usize);
+    if from < (0 as i64) || to < (0 as i64) { return 0 as i32; }
+    // `can_mix_groups` — whether a reorder may cross a section boundary. False
+    // is the default and the stricter answer, so a grouped collection that
+    // never mentioned it cannot have a row dragged out of its section.
+    if s.is_grouped && !s.can_mix_groups {
+        if group_of_slot(s, from_slot as usize) != group_of_slot(s, to_slot as usize) {
+            return 0 as i32;
+        }
+    }
+    { (*p).reorder_from = from };
+    { (*p).reorder_to = to };
+    let h: fn(*u8, *u8) = { (*p).reorderable_items_view.on_reorder_completed };
+    if h != props::no_handler {
+        h(v, { (*p).reorderable_items_view.on_reorder_completed_ctx });
+    }
+    return 1 as i32;
+}
+
+fn group_of_slot(s: Sequence, at: usize) -> usize { return slot_at(s, at).group; }
+
+// The index as text, back to a number. Answers -1 for anything that is not one,
+// which is what a payload from another application looks like.
+fn parse_slot(t: str) -> i64 {
+    if t == "" { return (0 as i64) -% (1 as i64); }
+    var acc: i64 = 0 as i64;
+    var i: usize = 0 as usize;
+    while i < t.count() {
+        let c: u8 = match t.byte_at(i) {
+            option::Option[u8]::Some(b) => b,
+            option::Option[u8]::None => { return (0 as i64) -% (1 as i64); }
+        };
+        if c < (48 as u8) || c > (57 as u8) { return (0 as i64) -% (1 as i64); }
+        acc = (acc *% (10 as i64)) +% ((c -% (48 as u8)) as i64);
+        i = i +% (1 as usize);
+    }
+    return acc;
+}
+
+// ---- laying one row out ---------------------------------------------------------
+//
+// facet owns layout, and a realised row is not in any tree facet lays out — so
+// this is where the row's own layout pass happens. Width comes from the LIST,
+// height is left undefined so the row measures itself, and the host's size
+// request is what makes GtkListView give the row that much room.
+
+fn lay_row_out(n: *core::Node, host: *u8, node: *core::Node) {
+    let w: f64 = row_width(n);
+    if w <= (0.0 as f64) { return; }
+    // `item_sizing`, and it is a real difference rather than a hint.
+    //
+    // `MeasureFirstItem` is the application saying every row is the height of
+    // the first — so the sample's height is the answer for all of them and the
+    // row is laid out AGAINST it rather than measuring itself. That is the
+    // cheaper path and it is also the one that keeps a list from jittering as
+    // rows of slightly different heights scroll in.
+    var h: f64 = flex::undefined();
+    if measures_first_only(n) {
+        let est: f64 = estimated_height(n) as f64;
+        if est >= (1.0 as f64) { h = est; }
+    }
+    { (*node).calculate_layout(width: w, height: h) };
+    let f: flex::Frame = { (*node).frame() };
+    // WHOSE HOST THE CHILDREN GO IN is the same question `window::host_for`
+    // answers for a window root, and getting it wrong here was 61463
+    // `gtk_fixed_put` criticals a run: a row root that is BACKED (and every row
+    // is — `build_row` puts a click gesture on it) holds its own children, so
+    // placing them against the cell's Fixed asks GTK to reparent a widget that
+    // already has a parent. Only an UNBACKED root passes its children through.
+    var child_host: *u8 = host;
+    let rv: *u8 = core::view_of(node);
+    if rv != (0 as *u8) {
+        geometry::place(host, rv, 0.0f64, 0.0f64, f.width, f.height);
+        child_host = controls::document_host(rv);
+    }
+    geometry::reposition_children(node, child_host, f);
+    // HEIGHT ONLY. A GtkListView allocates every cell the full viewport width,
+    // so a width request here says nothing it does not already know — and
+    // saying it is expensive: changing a cell's width request queues a resize
+    // on the whole list, which re-runs its item manager, which rebinds. Every
+    // bind then asked for another allocation pass, and a 20000-row list opened
+    // by creating 410 cells instead of a dozen.
+    gtk::Widget::from_raw(host).set_size_request(0 -% (1 as i32),
+                                                 geometry::round_i32(f.height));
+    return;
+}
+
+// The width a row is laid out at.
+//
+// The LIST VIEW's allocation when it has one, because GtkListView binds its
+// items during its own size-allocate and by then the number is real; the list
+// NODE's frame before that, which is what facet computed. Zero means neither
+// has happened yet, and a row laid out at zero would be a row of nothing — so
+// `lay_row_out` declines, and the width change that follows re-lays it.
+fn row_width(n: *core::Node) -> f64 {
+    let v: *u8 = core::view_of(n);
+    let lv: *u8 = list_view_of(v);
+    if lv != (0 as *u8) {
+        let w: i32 = gtk::Widget::from_raw(lv).get_width();
+        if w > (0 as i32) { return w as f64; }
+    }
+    let f: flex::Frame = { (*n).frame() };
+    return f.width;
+}
+
+// ---- a resize re-lays the rows that are UP ---------------------------------------
+//
+// GtkListView re-allocates on a resize and does NOT re-bind, so a row keeps the
+// frames it was given at the old width and its text stops re-wrapping. Nothing
+// in facet's own walk can fix that: the rows are not its children, so the frame
+// walk never reaches them.
+//
+// The signal is the SCROLLED WINDOW'S OWN. A GtkAdjustment's `changed` fires
+// when its bounds move, and the horizontal one's `page-size` IS the viewport
+// width — so the widget tells us, locally, exactly when the number this module
+// laid its rows out against stopped being true. The alternative was a hook in
+// `geometry`'s frame walk, which would have made the lower module depend on
+// this one.
+//
+// The live cells are walked and laid out again, which keeps the SCROLL
+// POSITION; forcing a rebind through the model would send the user back to the
+// top on every window resize.
+fn viewport_changed(adjustment: *u8, user: *u8) {
+    let n: *core::Node = user as *core::Node;
+    if n == (0 as *core::Node) { return; }
+    let v: *u8 = core::view_of(n);
+    if !recycles(v) { return; }
+    let w: usize = geometry::round_i32(
+        gtk::Adjustment::from_raw(adjustment).get_page_size()) as usize;
+    if w == (0 as usize) { return; }
+    if { #addr(g::get_data(v, width_key())) } == w { return; }
+    g::set_data(v, width_key(), w as *u8);
+    // NOT NOW. A GtkAdjustment's bounds are set from inside the scrolled
+    // window's SIZE-ALLOCATE, and both things this wants to do — splice the
+    // model, or write size requests onto live cells — re-enter the allocation
+    // that is currently running.
+    //
+    // That is not a style point. Doing it inline made GtkListView create 205
+    // cells for a viewport that holds thirteen, tear most of them down again,
+    // and allocate every one of them at its padding's negative
+    // (`gtk_widget_size_allocate(): width -4 and height -5`, once per cell) —
+    // and the number did not move when the viewport, the row height estimate
+    // or the model size changed, because none of those were what drove it.
+    // An idle runs after the allocation has finished, and the churn goes away.
+    if g::get_data(v, pending_key()) != (0 as *u8) { return; }
+    g::set_data(v, pending_key(), 1 as *u8);
+    let _t: u32 = { g_idle_add_recycler(settle_viewport, n as *u8) };
+    return;
+}
+
+fn pending_key() -> *u8 { return #str_ptr("facet-gtk-listpending\0"); }
+
+// The deferred half of `viewport_changed`, run once the allocation that woke it
+// has finished. G_SOURCE_REMOVE, always: it is a one-shot, and the flag it
+// clears is what keeps a burst of adjustment changes to one of them.
+fn settle_viewport(user: *u8) -> i32 {
+    let n: *core::Node = user as *core::Node;
+    if n == (0 as *core::Node) { return 0 as i32; }
+    let v: *u8 = core::view_of(n);
+    if !recycles(v) { return 0 as i32; }
+    g::set_data(v, pending_key(), 0 as *u8);
+    // The FIRST width is what the deferred fill was waiting for; every later
+    // one re-lays the rows that are up.
+    if model_length(v) != { #addr(g::get_data(v, want_key())) } {
+        sync_model(n, v);
+        return 0 as i32;
+    }
+    relayout_rows(n, list_view_of(v));
+    return 0 as i32;
+}
+
+fn relayout_rows(n: *core::Node, lv: *u8) {
+    if lv == (0 as *u8) { return; }
+    var cur: *u8 = first_child_raw(lv);
+    while cur != (0 as *u8) {
+        relayout_cell(n, cur);
+        cur = next_sibling_raw(cur);
+    }
+    return;
+}
+
+// One cell. The GtkListItemWidget is GTK's own and carries nothing of ours; its
+// child is the Fixed `item_setup` made, and the NODE is on the list item, which
+// is not reachable from the widget. So the node rides on the HOST too — one
+// pointer, written where the walk can find it.
+fn relayout_cell(n: *core::Node, cell: *u8) {
+    let host: *u8 = first_child_raw(cell);
+    if host == (0 as *u8) { return; }
+    let raw: *u8 = g::get_data(host, row_node_key());
+    if raw == (0 as *u8) { return; }
+    lay_row_out(n, host, raw as *core::Node);
+    return;
+}
+
+fn first_child_raw(v: *u8) -> *u8 {
+    match gtk::Widget::from_raw(v).get_first_child() {
+        option::Option[gtk::Widget]::Some(c) => { return c.raw(); }
+        option::Option[gtk::Widget]::None => { return 0 as *u8; }
+    }
+}
+
+fn next_sibling_raw(v: *u8) -> *u8 {
+    match gtk::Widget::from_raw(v).get_next_sibling() {
+        option::Option[gtk::Widget]::Some(c) => { return c.raw(); }
+        option::Option[gtk::Widget]::None => { return 0 as *u8; }
+    }
+}
+
+// ================================================================================
+// the apply half
+// ================================================================================
+
+// The bits that mean "what rows there are, or how they look, changed".
+//
+// `invalidate` and `splice` are the recycler's fine-grained verbs and this
+// answers both the same way — by resizing the model and letting GtkListView
+// rebind what is on screen. That is correct if not clever: the fine-grained
+// form would be `g_list_model_items_changed` over the exact range, and the
+// range is in the props waiting for someone who has measured that it matters.
+fn rebuild_bits() -> u64 {
+    return list::P_COUNT | list::P_ROW | list::P_GROUP_COUNT | list::P_GROUP
+         | list::P_SELECTED_INDEX | list::P_ROW_HEIGHT | list::P_SEPARATOR
+         | list::P_SEPARATOR_COLOR | list::P_IS_GROUPED | list::P_INVALIDATE_ROW
+         | list::P_SPLICE_ROWS | list::P_REORDER | list::P_HAS_UNEVEN_ROWS
+         | list::P_SELECTION_MODE;
+}
+
+// Resize the model and re-read what the list view itself carries.
+fn refresh(n: *core::Node, v: *u8, s: Sequence) {
+    if !recycles(v) { return; }
+    let lv: gtk::ListView = gtk::ListView::from_raw(list_view_of(v));
+    // A separator is GTK's own line between cells, not a row of its own — which
+    // is what the materialiser had to emit and what made "a line after the last
+    // row" a thing that could happen at all.
+    lv.set_show_separators(s.separated);
+    refresh_length(n, v);
+    return;
+}
+
+// The length half, shared with the tree — which has no separators and no
+// `Sequence` to read them from.
+fn refresh_length(n: *core::Node, v: *u8) {
+    if !recycles(v) { return; }
+    g::set_data(v, want_key(), slots_of(n, v) as *u8);
+    // A rebuilt model is a new set of rows, so the threshold may be crossed
+    // again — an application that appended a page has to be told when the
+    // reader reaches the end of THAT.
+    g::set_data(v, reached_key(), 0 as *u8);
+    sync_model(n, v);
+    return;
+}
+
+// A row's height when the description STATES one, which is the number the cell
+// estimate prefers over a measurement.
+fn stated_row_height(n: *core::Node) -> f64 {
+    if is_tree(n) {
+        let p: *tree::TreeProps = tree_props(n);
+        if p == (0 as *tree::TreeProps) { return 0.0f64; }
+        return controls::row_height_of(p);
+    }
+    return sequence_of(n).row_height;
+}
+
+// ---- the tree's own five verbs ---------------------------------------------------
+
+fn create_tree(n: *core::Node) -> *u8 { return create_sequence(n); }
+
+fn apply_tree(v: *u8, n: *core::Node, dirty: u64) {
+    if tree_props(n) == (0 as *tree::TreeProps) { return; }
+    // Expansion and selection change WHICH rows exist and how they look, so both
+    // re-walk the model exactly as a root change does. That is affordable
+    // because the walk is over POINTERS — what used to be expensive was the
+    // building it led to.
+    if (dirty & (tree::P_ROOT | tree::P_ROW | tree::P_EXPANDED | tree::P_SELECTED
+                 | tree::P_ROW_HEIGHT | tree::P_ROW_ID)) != (0 as u64) {
+        reindex_tree(n, v);
+        refresh_length(n, v);
+    }
+    return;
+}
+
+// THE MODEL IS NOT FILLED UNTIL THE LIST HAS A WIDTH, and that is the
+// difference between a recycler and a slow list.
+//
+// A row's height is a MEASUREMENT here — facet lays the row out and the answer
+// is what the host's size request becomes — so before the list has a width
+// there is no height to give GtkListView either. And GtkListView sizes its cell
+// pool from the heights it has been told: rows of height zero means it needs
+// infinitely many to fill the viewport, so it binds until it runs out of model.
+// Measured on a 5000-row list in a 160pt box: 205 cells bound instead of 10.
+//
+// So the length is REMEMBERED and applied when the width arrives, which is the
+// first thing `viewport_changed` hears about.
+fn sync_model(n: *core::Node, v: *u8) {
+    let want: usize = { #addr(g::get_data(v, want_key())) };
+    if row_width(n) <= (0.0 as f64) {
+        set_model_length(v, 0 as usize);
+        return;
+    }
+    // Before the fill, because the fill is what makes the cells.
+    measure_sample(n, v);
+    // `scroll_anchor` — WHAT THE SCROLL POSITION DOES when the items change.
+    // GtkListView has no such policy, so the two policies that are not its own
+    // behaviour are applied around the splice: the offset is read here and
+    // restored (or sent to the end) after.
+    let keep: f64 = anchored_offset(n, v);
+    // The count and the SHAPE both changed, potentially — a row that is now
+    // selected, or taller, is a row whose pooled cell must not be reused as it
+    // is. Replacing the whole model is one `items-changed(0, have, want)`,
+    // which rebinds every live cell and lets the shape check in `item_bind`
+    // decide what may be kept.
+    set_model_length(v, want, force: true);
+    restore_anchor(n, v, keep, want);
+    return;
+}
+
+// GTK's own behaviour is `KeepItemsInView` — its item manager keeps an anchor
+// across a model change — so that policy reads nothing and restores nothing.
+// NaN is "no policy", which is also what a `list` or a `tree` gets: neither
+// kind embeds ItemsView, so neither declares the verb.
+fn anchored_offset(n: *core::Node, v: *u8) -> f64 {
+    let policy: i64 = anchor_policy(n);
+    if policy == anchor_none() { return flex::undefined(); }
+    // The END is not a number that survives a resize, so it is a SENTINEL
+    // resolved after the splice rather than an offset read before it.
+    if policy == anchor_last() { return (0.0 as f64) - (1.0f64); }
+    if v == (0 as *u8) { return flex::undefined(); }
+    return gtk::ScrolledWindow::from_raw(v).get_vadjustment().get_value();
+}
+
+// The policy, apart from the widget so it can be asked about without one.
+// `KeepItemsInView` is GTK's OWN behaviour — its item manager keeps an anchor
+// across a model change — so that one reads nothing and restores nothing. A
+// `list` or a `tree` gets the same answer for a different reason: neither kind
+// embeds ItemsView, so neither declares the verb at all.
+fn anchor_none() -> i64 { return 0 as i64; }
+fn anchor_offset() -> i64 { return 1 as i64; }
+fn anchor_last() -> i64 { return 2 as i64; }
+
+fn anchor_policy(n: *core::Node) -> i64 {
+    if core::kind_of(n) != props::K_COLLECTION { return anchor_none(); }
+    return match sequence_of(n).scroll_anchor {
+        vocab::ScrollAnchor::KeepItemsInView => anchor_none(),
+        vocab::ScrollAnchor::KeepScrollOffset => anchor_offset(),
+        vocab::ScrollAnchor::KeepLastItemInView => anchor_last(),
+    };
+}
+
+fn restore_anchor(n: *core::Node, v: *u8, keep: f64, want: usize) {
+    // `keep != keep` is the NaN test — flex's own "undefined", and the one
+    // value not equal to itself.
+    if keep != keep { return; }
+    if keep < (0.0 as f64) {
+        // KeepLastItemInView: the newest row, which is what a chat log or a
+        // console wants and what `KeepItemsInView` will not do for an append.
+        if want == (0 as usize) { return; }
+        let lv: *u8 = list_view_of(v);
+        if lv == (0 as *u8) { return; }
+        gtk::ListView::from_raw(lv).scroll_to((want -% (1 as usize)) as u32,
+                                              scroll_none(),
+                                              gtk::ScrollInfo::from_raw(0 as *u8));
+        return;
+    }
+    gtk::ScrolledWindow::from_raw(v).get_vadjustment().set_value(keep);
+    return;
+}
+
+// ================================================================================
+// the fine-grained verbs
+// ================================================================================
+//
+// `invalidate_rows(from, count)` and `insert_rows` / `remove_rows` carry the
+// EXACT range that changed, and until now this package answered both by
+// replacing the whole model — correct, and the thing the contract wrote them to
+// avoid. `list.cplus` names the cost in the caller's words: "a streaming
+// transcript re-drew every visible row on every token".
+//
+// Both become one `items-changed` over the range instead:
+//
+//   invalidate lo..hi   -> (lo, n, n)   same count, those rows rebound
+//   insert k at a       -> (a, 0, k)
+//   remove k at a       -> (a, k, 0)
+//
+// ONLY WHEN A SLOT IS A ROW. A grouped list has headers between its rows and a
+// grid has `columns` rows per slot, so a DATA range is not a slot range in
+// either — and computing one from the other is the map's inverse over the whole
+// sequence, which costs more than the rebuild it would save. Those fall back to
+// the replace, which is what they had.
+fn addresses_rows_directly(s: Sequence) -> bool {
+    if s.is_grouped { return false; }
+    return columns_of(s) == (1 as usize);
+}
+
+// Did the dirty word ask for ANYTHING ELSE that a rebuild answers? A splice
+// arriving beside a row-builder change is a rebuild — the fine-grained verb is
+// only sound while everything else about the sequence is unchanged.
+fn only_fine_grained(dirty: u64) -> bool {
+    // `!` is logical here, not bitwise — the mask is a SUBTRACTION, and both
+    // bits are known to be in `rebuild_bits()`.
+    let coarse: u64 = rebuild_bits() -% list::P_INVALIDATE_ROW -% list::P_SPLICE_ROWS;
+    return (dirty & coarse) == (0 as u64);
+}
+
+// Answers whether it handled the change.
+//
+// THE PENDING RANGE IS CLEARED EITHER WAY, and read into locals before it is —
+// the backend is what consumes these fields (`facet_appkit/recycler.cplus` does
+// the same), and a range left behind would be replayed on the next unrelated
+// write to the same node.
+fn apply_fine_grained(n: *core::Node, v: *u8, s: Sequence, dirty: u64,
+                      lo: *i64, hi: *i64, at: *i64, count: *i64) -> bool {
+    let want_invalidate: bool = (dirty & list::P_INVALIDATE_ROW) != (0 as u64);
+    let want_splice: bool = (dirty & list::P_SPLICE_ROWS) != (0 as u64);
+    if !want_invalidate && !want_splice { return false; }
+    let first: i64 = { (*lo) };
+    let last: i64 = { (*hi) };
+    let splice_at: i64 = { (*at) };
+    let splice_count: i64 = { (*count) };
+    { (*lo) = (0 as i64) -% (1 as i64) };
+    { (*hi) = (0 as i64) -% (1 as i64) };
+    { (*at) = (0 as i64) -% (1 as i64) };
+    { (*count) = 0 as i64 };
+
+    if !recycles(v) { return false; }
+    if !addresses_rows_directly(s) { return false; }
+    if !only_fine_grained(dirty) { return false; }
+    // Nothing has been filled yet — the model is still waiting for a width (see
+    // `sync_model`), so there is no range in it to change.
+    let have: usize = model_length(v);
+    if have == (0 as usize) { return false; }
+
+    if want_splice && splice_count != (0 as i64) {
+        if splice_at < (0 as i64) { return false; }
+        if (splice_at as usize) > have { return false; }
+        if splice_count > (0 as i64) {
+            let added: usize = splice_count as usize;
+            splice_model(v, splice_at as usize, 0 as usize, added);
+            g::set_data(v, model_len_key(), (have +% added) as *u8);
+        } else {
+            let gone: usize = ((0 as i64) -% splice_count) as usize;
+            if (splice_at as usize) +% gone > have { return false; }
+            splice_model(v, splice_at as usize, gone, 0 as usize);
+            g::set_data(v, model_len_key(), (have -% gone) as *u8);
+        }
+        // The length the description now means, so a later coarse write does
+        // not think it is out of step.
+        g::set_data(v, want_key(), slots_of(n, v) as *u8);
+        return true;
+    }
+
+    if want_invalidate && first >= (0 as i64) {
+        let span: usize = invalidated_span(first, last, have);
+        if span == (0 as usize) { return false; }
+        // Same count, those rows re-asked: `items-changed(lo, n, n)`.
+        splice_model(v, first as usize, span, span);
+        return true;
+    }
+    return false;
+}
+
+// How many rows an invalidation of `lo..hi` actually touches in a model of
+// `have`. Clamped rather than trusted: the range is a span of DATA the
+// application coalesced, and the model may already be shorter — an unclamped
+// splice past the end is a GTK error, and a negative width is a crash.
+fn invalidated_span(lo: i64, hi: i64, have: usize) -> usize {
+    if lo < (0 as i64) { return 0 as usize; }
+    if lo >= (have as i64) { return 0 as usize; }
+    var last: i64 = hi;
+    if last >= (have as i64) { last = (have as i64) -% (1 as i64); }
+    if last < lo { return 0 as usize; }
+    return ((last -% lo) +% (1 as i64)) as usize;
+}
+
+fn apply_list(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *props::ListProps = controls::props_of(n, props::K_LIST) as *props::ListProps;
+    if p == (0 as *props::ListProps) { return; }
+    let s: Sequence = sequence_of_list(p);
+    // The fine-grained verbs first: when they can answer the whole change, the
+    // model hears one `items-changed` over the range instead of a replacement.
+    let handled: bool = apply_fine_grained(n, v, s, dirty,
+        #addr_of((*p).invalidate_lo), #addr_of((*p).invalidate_hi),
+        #addr_of((*p).splice_at), #addr_of((*p).splice_count));
+    if !handled && (dirty & rebuild_bits()) != (0 as u64) { refresh(n, v, s); }
+    if (dirty & (list::P_HORIZONTAL_SCROLL_BARS | list::P_VERTICAL_SCROLL_BARS)) != (0 as u64) {
+        policy(v, s);
+    }
+    if (dirty & list::P_SCROLL_TO) != (0 as u64) { scroll_to_row(v, s); }
+    // The refresh band. `begin_refresh` and `end_refresh` are COMMANDS that set
+    // `is_refreshing` and touch a bit of their own, so all three arrive here and
+    // the flag is the single truth either way.
+    if (dirty & (list::P_IS_REFRESHING | list::P_BEGIN_REFRESH | list::P_END_REFRESH
+                 | list::P_REFRESH_COLOR)) != (0 as u64) {
+        controls::set_refreshing(v, { (*p).is_refreshing }, { (*p).refresh_color });
+    }
+    if (dirty & (list::P_IS_REFRESHABLE | list::P_CAN_REFRESH)) != (0 as u64) {
+        // BOTH, and they are different questions: `is_refreshable` is whether
+        // the control offers the gesture at all, `can_refresh` whether it may be
+        // used right now. A pull needs both to be true.
+        input::set_pull_enabled(v, { (*p).is_refreshable } && { (*p).can_refresh });
+    }
+    return;
+}
+
+fn apply_collection(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *props::CollectionProps =
+        controls::props_of(n, props::K_COLLECTION) as *props::CollectionProps;
+    if p == (0 as *props::CollectionProps) { return; }
+    let s: Sequence = sequence_of_collection(p);
+    let bits: u64 = collection::P_COUNT | collection::P_ROW | collection::P_GROUP_COUNT
+        | collection::P_GROUP | collection::P_SELECTED_INDEX | collection::P_COLUMNS
+        | collection::P_IS_GROUPED | collection::P_INVALIDATE_ROW
+        | collection::P_SPLICE_ROWS | collection::P_REORDER
+        | collection::P_ITEM_SIZING | collection::P_SELECTION_MODE
+        | collection::P_CAN_REORDER_ITEMS | collection::P_CAN_MIX_GROUPS;
+    let handled: bool = apply_fine_grained(n, v, s, dirty,
+        #addr_of((*p).invalidate_lo), #addr_of((*p).invalidate_hi),
+        #addr_of((*p).splice_at), #addr_of((*p).splice_count));
+    if !handled && (dirty & bits) != (0 as u64) { refresh(n, v, s); }
+    if (dirty & (collection::P_HORIZONTAL_SCROLL_BARS
+                 | collection::P_VERTICAL_SCROLL_BARS)) != (0 as u64) {
+        policy(v, s);
+    }
+    if (dirty & (collection::P_SCROLL_TO | collection::P_SCROLL_ANCHOR
+                 | collection::P_REMAINING_THRESHOLD)) != (0 as u64) {
+        scroll_to_row(v, s);
+    }
+    return;
+}
+
+// A TABLE HAS NO ROW BUILDER. Its rows are its facet CHILDREN, so nothing is
+// built lazily and nothing recycles — what the kind adds over a scroll is a row
+// height and a style, and both are written onto the children already there.
+fn apply_table(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *props::TableProps = controls::props_of(n, props::K_TABLE) as *props::TableProps;
+    if p == (0 as *props::TableProps) { return; }
+    if (dirty & (table::P_ROW_HEIGHT | table::P_HAS_UNEVEN_ROWS)) != (0 as u64) {
+        // `has_uneven_rows` is the SWITCH on the height: a table that says its
+        // rows differ is a table whose stated height is a floor rather than a
+        // measurement, so the height is simply not imposed.
+        let h: f64 = { (*p).row_height } as f64;
+        let impose: bool = h >= (1.0 as f64) && !{ (*p).has_uneven_rows };
+        var i: usize = 0 as usize;
+        let count: usize = core::child_count_of(n);
+        while i < count {
+            match core::child_of(n, i) {
+                option::Option[*core::Node]::Some(c) => {
+                    if impose { { (*c).set_height(flex::StyleLength::points(h)) }; }
+                }
+                option::Option[*core::Node]::None => { }
+            }
+            i = i +% (1 as usize);
+        }
+    }
+    if (dirty & table::P_STYLE) != (0 as u64) {
+        // GTK's list styles are CSS classes on the container, which is what a
+        // GtkListBox carries and what every GTK app uses to say the same thing.
+        // `Data` is the plain one and adds nothing.
+        let w: gtk::Widget = gtk::Widget::from_raw(v);
+        w.remove_css_class("rich-list");
+        w.remove_css_class("boxed-list");
+        match { (*p).style } {
+            vocab::TableStyle::Data => { }
+            vocab::TableStyle::Form => { w.add_css_class("boxed-list"); }
+            vocab::TableStyle::Settings => { w.add_css_class("boxed-list"); }
+            vocab::TableStyle::Menu => { w.add_css_class("rich-list"); }
+        }
+    }
+    return;
+}
+
+fn policy(v: *u8, s: Sequence) {
+    // Rows run DOWN. A sequence scrolls the way its rows run, and the cross axis
+    // declines — which is what stops it eating a sideways flick meant for
+    // whatever it sits in.
+    gtk::ScrolledWindow::from_raw(v).set_policy(2 as i32,
+                                                controls::policy_of(true, s.v_bars));
+    return;
+}
+
+// GTK_LIST_SCROLL_NONE — the row is brought into view and nothing else is
+// asked for (no focus move, no selection).
+fn scroll_none() -> u32 { return 0 as u32; }
+
+// `scroll_to(i)` — GtkListView's own, which is the whole point of it here: a
+// recycler does not know where row `i` IS until it has been built, so the old
+// answer (read the row's computed frame) has nothing to read.
+fn scroll_to_row(v: *u8, s: Sequence) {
+    if s.scroll_to < (0 as i64) { return; }
+    let lv: *u8 = list_view_of(v);
+    if lv == (0 as *u8) { return; }
+    let at: usize = slot_of_data_index(s, s.scroll_to as usize);
+    // Bounded by the MODEL, not by the description. The two disagree until the
+    // list has a width — the fill is deferred, see `sync_model` — and
+    // `gtk_list_view_scroll_to` past the end of its model is a GTK warning at
+    // every create, because `create` raises `P_SCROLL_TO` along with every
+    // other bit.
+    if at >= model_length(v) { return; }
+    gtk::ListView::from_raw(lv).scroll_to(at as u32, scroll_none(),
+                                          gtk::ScrollInfo::from_raw(0 as *u8));
+    return;
+}
+
+// Which SLOT holds data row `want` — the inverse of the map, needed because
+// `scroll_to` is addressed in DATA rows and GtkListView is addressed in slots.
+fn slot_of_data_index(s: Sequence, want: usize) -> usize {
+    let total: usize = slot_count(s);
+    var at: usize = 0 as usize;
+    while at < total {
+        let slot: Slot = slot_at(s, at);
+        if !slot.is_header && slot.span > (0 as usize) {
+            if want >= slot.first && want < slot.first +% slot.span { return at; }
+        }
+        at = at +% (1 as usize);
+    }
+    return total;
+}

@@ -160,22 +160,22 @@ extern fn __c_gdk_pixbuf_new(colorspace: i32, has_alpha: i32, bits_per_sample: i
 extern fn __c_gdk_pixbuf_new_from_bytes(data: *u8, colorspace: i32, has_alpha: i32, bits_per_sample: i32, width: i32, height: i32, rowstride: i32) -> *u8;
 // SKIPPED ctor `Pixbuf::new_from_data`: param `data` — no <type> (array, callback, or varargs)
 #[link_name = "gdk_pixbuf_new_from_file"]
-extern fn __c_gdk_pixbuf_new_from_file(filename: *u8) -> *u8;
+extern fn __c_gdk_pixbuf_new_from_file(filename: *u8, __error: *u8) -> *u8;
 #[link_name = "gdk_pixbuf_new_from_file_at_scale"]
-extern fn __c_gdk_pixbuf_new_from_file_at_scale(filename: *u8, width: i32, height: i32, preserve_aspect_ratio: i32) -> *u8;
+extern fn __c_gdk_pixbuf_new_from_file_at_scale(filename: *u8, width: i32, height: i32, preserve_aspect_ratio: i32, __error: *u8) -> *u8;
 #[link_name = "gdk_pixbuf_new_from_file_at_size"]
-extern fn __c_gdk_pixbuf_new_from_file_at_size(filename: *u8, width: i32, height: i32) -> *u8;
+extern fn __c_gdk_pixbuf_new_from_file_at_size(filename: *u8, width: i32, height: i32, __error: *u8) -> *u8;
 // SKIPPED ctor `Pixbuf::new_from_inline`: param `data` — no <type> (array, callback, or varargs)
 #[link_name = "gdk_pixbuf_new_from_resource"]
-extern fn __c_gdk_pixbuf_new_from_resource(resource_path: *u8) -> *u8;
+extern fn __c_gdk_pixbuf_new_from_resource(resource_path: *u8, __error: *u8) -> *u8;
 #[link_name = "gdk_pixbuf_new_from_resource_at_scale"]
-extern fn __c_gdk_pixbuf_new_from_resource_at_scale(resource_path: *u8, width: i32, height: i32, preserve_aspect_ratio: i32) -> *u8;
+extern fn __c_gdk_pixbuf_new_from_resource_at_scale(resource_path: *u8, width: i32, height: i32, preserve_aspect_ratio: i32, __error: *u8) -> *u8;
 #[link_name = "gdk_pixbuf_new_from_stream"]
-extern fn __c_gdk_pixbuf_new_from_stream(stream: *u8, cancellable: *u8) -> *u8;
+extern fn __c_gdk_pixbuf_new_from_stream(stream: *u8, cancellable: *u8, __error: *u8) -> *u8;
 #[link_name = "gdk_pixbuf_new_from_stream_at_scale"]
-extern fn __c_gdk_pixbuf_new_from_stream_at_scale(stream: *u8, width: i32, height: i32, preserve_aspect_ratio: i32, cancellable: *u8) -> *u8;
+extern fn __c_gdk_pixbuf_new_from_stream_at_scale(stream: *u8, width: i32, height: i32, preserve_aspect_ratio: i32, cancellable: *u8, __error: *u8) -> *u8;
 #[link_name = "gdk_pixbuf_new_from_stream_finish"]
-extern fn __c_gdk_pixbuf_new_from_stream_finish(async_result: *u8) -> *u8;
+extern fn __c_gdk_pixbuf_new_from_stream_finish(async_result: *u8, __error: *u8) -> *u8;
 // SKIPPED ctor `Pixbuf::new_from_xpm_data`: param `data` — no <type> (array, callback, or varargs)
 #[link_name = "gdk_pixbuf_add_alpha"]
 extern fn __c_gdk_pixbuf_add_alpha(__recv: *u8, substitute_color: i32, r: u8, g: u8, b: u8) -> *u8;
@@ -273,7 +273,7 @@ impl Pixbuf {
 
     fn new_from_file(filename: str) -> option::Option[Pixbuf] {
         let __cs_filename: *u8 = bridge::str_to_cstring(filename);
-        let __r: *u8 = { __c_gdk_pixbuf_new_from_file(__cs_filename) };
+        let __r: *u8 = { __c_gdk_pixbuf_new_from_file(__cs_filename, 0 as *u8) };
         bridge::free_cstring(__cs_filename);
         if __r == { 0 as *u8 } { return option::Option[Pixbuf]::None; }
         return option::some(Pixbuf::from_raw(__r));
@@ -281,7 +281,7 @@ impl Pixbuf {
 
     fn new_from_file_at_scale(filename: str, width: i32, height: i32, preserve_aspect_ratio: bool) -> option::Option[Pixbuf] {
         let __cs_filename: *u8 = bridge::str_to_cstring(filename);
-        let __r: *u8 = { __c_gdk_pixbuf_new_from_file_at_scale(__cs_filename, width, height, (if preserve_aspect_ratio { 1 as i32 } else { 0 as i32 })) };
+        let __r: *u8 = { __c_gdk_pixbuf_new_from_file_at_scale(__cs_filename, width, height, (if preserve_aspect_ratio { 1 as i32 } else { 0 as i32 }), 0 as *u8) };
         bridge::free_cstring(__cs_filename);
         if __r == { 0 as *u8 } { return option::Option[Pixbuf]::None; }
         return option::some(Pixbuf::from_raw(__r));
@@ -289,7 +289,7 @@ impl Pixbuf {
 
     fn new_from_file_at_size(filename: str, width: i32, height: i32) -> option::Option[Pixbuf] {
         let __cs_filename: *u8 = bridge::str_to_cstring(filename);
-        let __r: *u8 = { __c_gdk_pixbuf_new_from_file_at_size(__cs_filename, width, height) };
+        let __r: *u8 = { __c_gdk_pixbuf_new_from_file_at_size(__cs_filename, width, height, 0 as *u8) };
         bridge::free_cstring(__cs_filename);
         if __r == { 0 as *u8 } { return option::Option[Pixbuf]::None; }
         return option::some(Pixbuf::from_raw(__r));
@@ -297,7 +297,7 @@ impl Pixbuf {
 
     fn new_from_resource(resource_path: str) -> option::Option[Pixbuf] {
         let __cs_resource_path: *u8 = bridge::str_to_cstring(resource_path);
-        let __r: *u8 = { __c_gdk_pixbuf_new_from_resource(__cs_resource_path) };
+        let __r: *u8 = { __c_gdk_pixbuf_new_from_resource(__cs_resource_path, 0 as *u8) };
         bridge::free_cstring(__cs_resource_path);
         if __r == { 0 as *u8 } { return option::Option[Pixbuf]::None; }
         return option::some(Pixbuf::from_raw(__r));
@@ -305,26 +305,26 @@ impl Pixbuf {
 
     fn new_from_resource_at_scale(resource_path: str, width: i32, height: i32, preserve_aspect_ratio: bool) -> option::Option[Pixbuf] {
         let __cs_resource_path: *u8 = bridge::str_to_cstring(resource_path);
-        let __r: *u8 = { __c_gdk_pixbuf_new_from_resource_at_scale(__cs_resource_path, width, height, (if preserve_aspect_ratio { 1 as i32 } else { 0 as i32 })) };
+        let __r: *u8 = { __c_gdk_pixbuf_new_from_resource_at_scale(__cs_resource_path, width, height, (if preserve_aspect_ratio { 1 as i32 } else { 0 as i32 }), 0 as *u8) };
         bridge::free_cstring(__cs_resource_path);
         if __r == { 0 as *u8 } { return option::Option[Pixbuf]::None; }
         return option::some(Pixbuf::from_raw(__r));
     }
 
     fn new_from_stream(stream: gio::InputStream, cancellable: gio::Cancellable) -> option::Option[Pixbuf] {
-        let __r: *u8 = { __c_gdk_pixbuf_new_from_stream(stream.raw(), cancellable.raw()) };
+        let __r: *u8 = { __c_gdk_pixbuf_new_from_stream(stream.raw(), cancellable.raw(), 0 as *u8) };
         if __r == { 0 as *u8 } { return option::Option[Pixbuf]::None; }
         return option::some(Pixbuf::from_raw(__r));
     }
 
     fn new_from_stream_at_scale(stream: gio::InputStream, width: i32, height: i32, preserve_aspect_ratio: bool, cancellable: gio::Cancellable) -> option::Option[Pixbuf] {
-        let __r: *u8 = { __c_gdk_pixbuf_new_from_stream_at_scale(stream.raw(), width, height, (if preserve_aspect_ratio { 1 as i32 } else { 0 as i32 }), cancellable.raw()) };
+        let __r: *u8 = { __c_gdk_pixbuf_new_from_stream_at_scale(stream.raw(), width, height, (if preserve_aspect_ratio { 1 as i32 } else { 0 as i32 }), cancellable.raw(), 0 as *u8) };
         if __r == { 0 as *u8 } { return option::Option[Pixbuf]::None; }
         return option::some(Pixbuf::from_raw(__r));
     }
 
     fn new_from_stream_finish(async_result: gio::AsyncResult) -> option::Option[Pixbuf] {
-        let __r: *u8 = { __c_gdk_pixbuf_new_from_stream_finish(async_result.raw()) };
+        let __r: *u8 = { __c_gdk_pixbuf_new_from_stream_finish(async_result.raw(), 0 as *u8) };
         if __r == { 0 as *u8 } { return option::Option[Pixbuf]::None; }
         return option::some(Pixbuf::from_raw(__r));
     }
@@ -509,13 +509,13 @@ impl Pixbuf {
 }
 
 #[link_name = "gdk_pixbuf_animation_new_from_file"]
-extern fn __c_gdk_pixbuf_animation_new_from_file(filename: *u8) -> *u8;
+extern fn __c_gdk_pixbuf_animation_new_from_file(filename: *u8, __error: *u8) -> *u8;
 #[link_name = "gdk_pixbuf_animation_new_from_resource"]
-extern fn __c_gdk_pixbuf_animation_new_from_resource(resource_path: *u8) -> *u8;
+extern fn __c_gdk_pixbuf_animation_new_from_resource(resource_path: *u8, __error: *u8) -> *u8;
 #[link_name = "gdk_pixbuf_animation_new_from_stream"]
-extern fn __c_gdk_pixbuf_animation_new_from_stream(stream: *u8, cancellable: *u8) -> *u8;
+extern fn __c_gdk_pixbuf_animation_new_from_stream(stream: *u8, cancellable: *u8, __error: *u8) -> *u8;
 #[link_name = "gdk_pixbuf_animation_new_from_stream_finish"]
-extern fn __c_gdk_pixbuf_animation_new_from_stream_finish(async_result: *u8) -> *u8;
+extern fn __c_gdk_pixbuf_animation_new_from_stream_finish(async_result: *u8, __error: *u8) -> *u8;
 #[link_name = "gdk_pixbuf_animation_get_height"]
 extern fn __c_gdk_pixbuf_animation_get_height(__recv: *u8) -> i32;
 // SKIPPED method `PixbufAnimation::get_iter`: param `start_time` — unmapped type `GLib.TimeVal`
@@ -540,7 +540,7 @@ impl PixbufAnimation {
 
     fn new_from_file(filename: str) -> option::Option[PixbufAnimation] {
         let __cs_filename: *u8 = bridge::str_to_cstring(filename);
-        let __r: *u8 = { __c_gdk_pixbuf_animation_new_from_file(__cs_filename) };
+        let __r: *u8 = { __c_gdk_pixbuf_animation_new_from_file(__cs_filename, 0 as *u8) };
         bridge::free_cstring(__cs_filename);
         if __r == { 0 as *u8 } { return option::Option[PixbufAnimation]::None; }
         return option::some(PixbufAnimation::from_raw(__r));
@@ -548,20 +548,20 @@ impl PixbufAnimation {
 
     fn new_from_resource(resource_path: str) -> option::Option[PixbufAnimation] {
         let __cs_resource_path: *u8 = bridge::str_to_cstring(resource_path);
-        let __r: *u8 = { __c_gdk_pixbuf_animation_new_from_resource(__cs_resource_path) };
+        let __r: *u8 = { __c_gdk_pixbuf_animation_new_from_resource(__cs_resource_path, 0 as *u8) };
         bridge::free_cstring(__cs_resource_path);
         if __r == { 0 as *u8 } { return option::Option[PixbufAnimation]::None; }
         return option::some(PixbufAnimation::from_raw(__r));
     }
 
     fn new_from_stream(stream: gio::InputStream, cancellable: gio::Cancellable) -> option::Option[PixbufAnimation] {
-        let __r: *u8 = { __c_gdk_pixbuf_animation_new_from_stream(stream.raw(), cancellable.raw()) };
+        let __r: *u8 = { __c_gdk_pixbuf_animation_new_from_stream(stream.raw(), cancellable.raw(), 0 as *u8) };
         if __r == { 0 as *u8 } { return option::Option[PixbufAnimation]::None; }
         return option::some(PixbufAnimation::from_raw(__r));
     }
 
     fn new_from_stream_finish(async_result: gio::AsyncResult) -> option::Option[PixbufAnimation] {
-        let __r: *u8 = { __c_gdk_pixbuf_animation_new_from_stream_finish(async_result.raw()) };
+        let __r: *u8 = { __c_gdk_pixbuf_animation_new_from_stream_finish(async_result.raw(), 0 as *u8) };
         if __r == { 0 as *u8 } { return option::Option[PixbufAnimation]::None; }
         return option::some(PixbufAnimation::from_raw(__r));
     }
@@ -640,11 +640,11 @@ impl PixbufAnimationIter {
 #[link_name = "gdk_pixbuf_loader_new"]
 extern fn __c_gdk_pixbuf_loader_new() -> *u8;
 #[link_name = "gdk_pixbuf_loader_new_with_mime_type"]
-extern fn __c_gdk_pixbuf_loader_new_with_mime_type(mime_type: *u8) -> *u8;
+extern fn __c_gdk_pixbuf_loader_new_with_mime_type(mime_type: *u8, __error: *u8) -> *u8;
 #[link_name = "gdk_pixbuf_loader_new_with_type"]
-extern fn __c_gdk_pixbuf_loader_new_with_type(image_type: *u8) -> *u8;
+extern fn __c_gdk_pixbuf_loader_new_with_type(image_type: *u8, __error: *u8) -> *u8;
 #[link_name = "gdk_pixbuf_loader_close"]
-extern fn __c_gdk_pixbuf_loader_close(__recv: *u8) -> i32;
+extern fn __c_gdk_pixbuf_loader_close(__recv: *u8, __error: *u8) -> i32;
 #[link_name = "gdk_pixbuf_loader_get_animation"]
 extern fn __c_gdk_pixbuf_loader_get_animation(__recv: *u8) -> *u8;
 #[link_name = "gdk_pixbuf_loader_get_format"]
@@ -655,7 +655,7 @@ extern fn __c_gdk_pixbuf_loader_get_pixbuf(__recv: *u8) -> *u8;
 extern fn __c_gdk_pixbuf_loader_set_size(__recv: *u8, width: i32, height: i32);
 // SKIPPED method `PixbufLoader::write`: param `buf` — no <type> (array, callback, or varargs)
 #[link_name = "gdk_pixbuf_loader_write_bytes"]
-extern fn __c_gdk_pixbuf_loader_write_bytes(__recv: *u8, buffer: *u8) -> i32;
+extern fn __c_gdk_pixbuf_loader_write_bytes(__recv: *u8, buffer: *u8, __error: *u8) -> i32;
 #[link_name = "g_signal_connect_data"]
 extern fn __sigc_i32i32i32i32_v(instance: *u8, detailed: *u8, handler: fn(*u8, i32, i32, i32, i32, *u8), data: *u8, destroy: *u8, flags: i32) -> u64;
 #[link_name = "g_signal_connect_data"]
@@ -676,20 +676,20 @@ impl PixbufLoader {
 
     fn new_with_mime_type(mime_type: str) -> PixbufLoader {
         let __cs_mime_type: *u8 = bridge::str_to_cstring(mime_type);
-        let __r: *u8 = { __c_gdk_pixbuf_loader_new_with_mime_type(__cs_mime_type) };
+        let __r: *u8 = { __c_gdk_pixbuf_loader_new_with_mime_type(__cs_mime_type, 0 as *u8) };
         bridge::free_cstring(__cs_mime_type);
         return PixbufLoader::from_raw(__r);
     }
 
     fn new_with_type(image_type: str) -> PixbufLoader {
         let __cs_image_type: *u8 = bridge::str_to_cstring(image_type);
-        let __r: *u8 = { __c_gdk_pixbuf_loader_new_with_type(__cs_image_type) };
+        let __r: *u8 = { __c_gdk_pixbuf_loader_new_with_type(__cs_image_type, 0 as *u8) };
         bridge::free_cstring(__cs_image_type);
         return PixbufLoader::from_raw(__r);
     }
 
     fn close(this) -> bool {
-        let __r: i32 = { __c_gdk_pixbuf_loader_close(this._raw) };
+        let __r: i32 = { __c_gdk_pixbuf_loader_close(this._raw, 0 as *u8) };
         return __r != (0 as i32);
     }
 
@@ -717,7 +717,7 @@ impl PixbufLoader {
     }
 
     fn write_bytes(this, buffer: glib::Bytes) -> bool {
-        let __r: i32 = { __c_gdk_pixbuf_loader_write_bytes(this._raw, buffer.raw()) };
+        let __r: i32 = { __c_gdk_pixbuf_loader_write_bytes(this._raw, buffer.raw(), 0 as *u8) };
         return __r != (0 as i32);
     }
 

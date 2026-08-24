@@ -1,0 +1,363 @@
+// facet_gtk/anim — the two things that move on their own.
+//
+// GTK 4 has no property animation. GtkWidget animates through the frame clock
+// (`gtk_widget_add_tick_callback`) and a stylesheet transition, and neither
+// reaches a GtkProgressBar's `fraction` or a GtkPicture's paintable — so the
+// two verbs facet declares that MOVE WITHOUT INPUT are driven here, from a
+// GLib timeout, and both are written down as such rather than faked.
+//
+//   `progress.animate_progress(to, duration, easing)`
+//        a tween on the bar's fraction. The duration and the curve are the
+//        application's, which is the whole reason this is not a `set_fraction`
+//        with a comment.
+//
+//   `image.is_animation_playing`
+//        a GIF's own frames, through GdkPixbufAnimation. GtkPicture takes a
+//        GdkPaintable and a pixbuf is not one, so each frame becomes a
+//        GdkTexture and the ITERATOR decides how long it stays up — an
+//        animation's frames are not evenly spaced and a fixed interval would
+//        play it at the wrong speed.
+//
+// ---- one outstanding tween, and why that is the right answer -----------------
+//
+// A second `animate_progress` before the first finishes REPLACES it. That is
+// what the verb means — an application animating to 0.7 and then to 0.9 wants
+// to end at 0.9, not to queue — and `input::tween_adjustment` already records
+// the same rule for a carousel's slide. The limitation that IS real is that the
+// static pair holds one BAR: two progress bars animating at once, and the
+// second takes the tween. Written down rather than discovered; a per-widget
+// tween would be a timeout per bar and a state struct on each, which nothing
+// has needed.
+
+import "stdlib/option" as option;
+import "facet/vocabulary" as vocab;
+import "gtk4/gtk4" as gtk;
+import "gdk/gdk" as gdk;
+import "gdkpixbuf/gdkpixbuf" as pixbuf;
+import "gobject/runtime" as g;
+import "./drawing" as drawing;
+
+#[link_name = "g_timeout_add"]
+extern fn g_timeout_add_anim(interval: u32, f: fn(*u8) -> i32, data: *u8) -> u32;
+
+// G_SOURCE_REMOVE / G_SOURCE_CONTINUE, named because `0` and `1` in a return
+// position read as failure and success and mean the opposite here.
+fn source_remove() -> i32 { return 0 as i32; }
+fn source_continue() -> i32 { return 1 as i32; }
+
+// ================================================================================
+// easing
+// ================================================================================
+//
+// `t` runs 0..1 and the answer runs 0..1, except where the curve deliberately
+// overshoots — Spring does, and that is the point of it.
+//
+// The trigonometric pair goes through `drawing::sin_approx`, which is this
+// package's only sine and carries its own warning: a Taylor series only works
+// near zero, so that one folds to the first quadrant with the sign carried.
+// Reusing it rather than writing a second is not tidiness — it is that the
+// second would be the one with the bug.
+fn eased(t: f64, curve: vocab::Easing) -> f64 {
+    let x: f64 = t;
+    if x <= (0.0 as f64) { return 0.0f64; }
+    if x >= (1.0 as f64) { return 1.0f64; }
+    let half_pi: f64 = 1.5707963267948966f64;
+    return match curve {
+        vocab::Easing::Linear => x,
+        vocab::Easing::SinIn => (1.0 as f64) - drawing::cos_approx(x * half_pi),
+        vocab::Easing::SinOut => drawing::sin_approx(x * half_pi),
+        vocab::Easing::SinInOut =>
+            ((1.0 as f64) - drawing::cos_approx(x * (half_pi * (2.0 as f64)))) / (2.0 as f64),
+        vocab::Easing::CubicIn => x * x * x,
+        vocab::Easing::CubicOut => {
+            let inv: f64 = (1.0 as f64) - x;
+            (1.0 as f64) - (inv * inv * inv)
+        }
+        vocab::Easing::CubicInOut => {
+            if x < (0.5 as f64) { (4.0 as f64) * x * x * x }
+            else {
+                let inv: f64 = ((0.0 as f64) - ((2.0 as f64) * x)) + (2.0 as f64);
+                (1.0 as f64) - ((inv * inv * inv) / (2.0 as f64))
+            }
+        }
+        // A bounce is the OUT curve read backwards, which is how every toolkit
+        // defines the pair — writing two tables is how they come to disagree.
+        vocab::Easing::BounceIn => (1.0 as f64) - bounce_out((1.0 as f64) - x),
+        vocab::Easing::BounceOut => bounce_out(x),
+        // A spring OVERSHOOTS and settles. `SpringOut` is the familiar one (the
+        // thing arrives, goes past, comes back); `SpringIn` is its mirror, and
+        // it dips below zero on the way out — which for a progress fraction is
+        // clamped by the CALLER, not here, because clamping a curve is how a
+        // spring stops being one.
+        vocab::Easing::SpringIn => (1.0 as f64) - spring_out((1.0 as f64) - x),
+        vocab::Easing::SpringOut => spring_out(x),
+    };
+}
+
+// Four parabolic arcs, each shorter and lower than the last. The constants are
+// Penner's and are what every implementation of this curve uses.
+fn bounce_out(t: f64) -> f64 {
+    let n: f64 = 7.5625f64;
+    let d: f64 = 2.75f64;
+    if t < ((1.0 as f64) / d) { return n * t * t; }
+    if t < ((2.0 as f64) / d) {
+        let a: f64 = t - ((1.5 as f64) / d);
+        return (n * a * a) + (0.75 as f64);
+    }
+    if t < ((2.5 as f64) / d) {
+        let b: f64 = t - ((2.25 as f64) / d);
+        return (n * b * b) + (0.9375 as f64);
+    }
+    let c: f64 = t - ((2.625 as f64) / d);
+    return (n * c * c) + (0.984375 as f64);
+}
+
+// The standard "back out" spring: overshoots by about 10% and settles. A cubic
+// rather than a decaying sine, because a cubic lands EXACTLY on 1 at t=1 and a
+// decaying sine only approaches it.
+fn spring_out(t: f64) -> f64 {
+    let c: f64 = 1.70158f64;
+    let inv: f64 = t - (1.0 as f64);
+    return (1.0 as f64) + (((c + (1.0 as f64)) * inv * inv * inv) + (c * inv * inv));
+}
+
+// ================================================================================
+// progress.animate_progress
+// ================================================================================
+
+// Sixty steps a second, which is the frame rate every desktop compositor runs
+// at and the rate `input::tween_adjustment` already ticks.
+fn frame_ms() -> u32 { return 16 as u32; }
+
+static BAR: usize = 0;
+static FROM: f64 = 0.0f64;
+static TO: f64 = 0.0f64;
+static STEP: i64 = 0;
+static STEPS: i64 = 0;
+static CURVE: vocab::Easing = #zero::[vocab::Easing]();
+
+// How many frames a duration is worth. At least one, because a zero duration is
+// a jump and a jump is a tween of one step — the alternative is a branch that
+// makes the "no animation" path a different code path from the animated one.
+fn steps_for(d: vocab::Duration) -> i64 {
+    let frames: f64 = d.seconds * (60.0 as f64);
+    if frames < (1.0 as f64) { return 1 as i64; }
+    return (frames + (0.5 as f64)) as i64;
+}
+
+fn animating() -> bool { return BAR != (0 as usize); }
+
+// Start (or restart) the tween. `v` is the GtkProgressBar.
+//
+// A ZERO DURATION IS A SET, and that is not a shortcut — it is the difference
+// between a create and an animation. `create` configures a widget with every bit
+// raised, which includes `P_ANIMATE_PROGRESS`, so a bar that has never been
+// animated would otherwise start a tween the moment it is made: a timeout per
+// bar, and — because the tween's state is one static pair — a NEW BAR WOULD TAKE
+// THE TWEEN AWAY from one that was mid-animation. The default
+// `animate_duration` is zero, so this branch is what every create lands in.
+// The AppKit backend gates the same verb on the same test.
+fn animate_progress(v: *u8, to: f64, duration: vocab::Duration, curve: vocab::Easing) {
+    if v == (0 as *u8) { return; }
+    if duration.seconds <= (0.0 as f64) {
+        gtk::ProgressBar::from_raw(v).set_fraction(clamped(to));
+        return;
+    }
+    let running: bool = animating();
+    BAR = { #addr(v) };
+    FROM = gtk::ProgressBar::from_raw(v).get_fraction();
+    TO = to;
+    STEPS = steps_for(duration);
+    CURVE = curve;
+    // A tween already running is REPLACED rather than joined: resetting the
+    // step counter is what the live timeout reads, so it finishes THIS tween
+    // instead of the previous one and no second source is added.
+    STEP = 0 as i64;
+    if running { return; }
+    let _t: u32 = { g_timeout_add_anim(frame_ms(), progress_step, 0 as *u8) };
+    return;
+}
+
+fn progress_step(user: *u8) -> i32 {
+    if BAR == (0 as usize) { return source_remove(); }
+    STEP = STEP +% (1 as i64);
+    let t: f64 = (STEP as f64) / (STEPS as f64);
+    let at: f64 = clamped(FROM + ((TO - FROM) * eased(t, CURVE)));
+    gtk::ProgressBar::from_raw(BAR as *u8).set_fraction(at);
+    if STEP >= STEPS {
+        // Land exactly. An eased last step is a fraction short, and a bar that
+        // stops at 0.998 is a bar that never finished.
+        gtk::ProgressBar::from_raw(BAR as *u8).set_fraction(clamped(TO));
+        BAR = 0 as usize;
+        STEP = 0 as i64;
+        return source_remove();
+    }
+    return source_continue();
+}
+
+// The FRACTION is clamped, not the curve — see `SpringOut` above.
+fn clamped(v: f64) -> f64 {
+    if v < (0.0 as f64) { return 0.0f64; }
+    if v > (1.0 as f64) { return 1.0f64; }
+    return v;
+}
+
+// ================================================================================
+// image.is_animation_playing
+// ================================================================================
+//
+// GdkPixbufAnimation is the only animated-image decoder in the GTK stack, and
+// the binding cannot reach its iterator: `get_iter` and `advance` both take a
+// `GLib.TimeVal`, which cpc-bindgen skips (the type is deprecated and has no
+// GIR mapping). Passing NULL means "now" for both, which is exactly what a
+// player wants — so the calls are hand-bound here, with NULL written as the
+// null pointer rather than smuggled through a wrapper.
+
+#[link_name = "gdk_pixbuf_animation_get_iter"]
+extern fn gdk_pixbuf_animation_get_iter(anim: *u8, start_time: *u8) -> *u8;
+#[link_name = "gdk_pixbuf_animation_iter_advance"]
+extern fn gdk_pixbuf_animation_iter_advance(iter: *u8, current_time: *u8) -> i32;
+#[link_name = "gdk_pixbuf_animation_iter_get_pixbuf"]
+extern fn gdk_pixbuf_animation_iter_get_pixbuf(iter: *u8) -> *u8;
+#[link_name = "gdk_pixbuf_animation_iter_get_delay_time"]
+extern fn gdk_pixbuf_animation_iter_get_delay_time(iter: *u8) -> i32;
+#[link_name = "gdk_pixbuf_animation_is_static_image"]
+extern fn gdk_pixbuf_animation_is_static_image(anim: *u8) -> i32;
+
+fn anim_key() -> *u8 { return #str_ptr("facet-gtk-img-anim\0"); }
+fn iter_key() -> *u8 { return #str_ptr("facet-gtk-img-iter\0"); }
+fn playing_key() -> *u8 { return #str_ptr("facet-gtk-img-playing\0"); }
+fn ticking_key() -> *u8 { return #str_ptr("facet-gtk-img-tick\0"); }
+
+// Load the file as an ANIMATION and keep it on the widget. A still image
+// answers `is_static_image`, and this drops it — `apply_image` has already set
+// the filename, so there is nothing to take over and nothing to free.
+//
+// Called whenever the SOURCE changes, before the playing flag is looked at, so
+// that switching a playing image from one GIF to another keeps playing.
+fn load_animation(v: *u8, source: str) {
+    if v == (0 as *u8) { return; }
+    forget_animation(v);
+    if source == "" { return; }
+    let a: pixbuf::PixbufAnimation = match pixbuf::PixbufAnimation::new_from_file(source) {
+        option::Option[pixbuf::PixbufAnimation]::Some(x) => x,
+        option::Option[pixbuf::PixbufAnimation]::None => { return; }
+    };
+    if { gdk_pixbuf_animation_is_static_image(a.raw()) } != (0 as i32) {
+        g::object_unref(a.raw());
+        return;
+    }
+    g::set_data(v, anim_key(), a.raw());
+    let it: *u8 = { gdk_pixbuf_animation_get_iter(a.raw(), 0 as *u8) };
+    if it == (0 as *u8) { return; }
+    g::set_data(v, iter_key(), it);
+    return;
+}
+
+fn forget_animation(v: *u8) {
+    let it: *u8 = g::get_data(v, iter_key());
+    if it != (0 as *u8) { g::object_unref(it); g::set_data(v, iter_key(), 0 as *u8); }
+    let a: *u8 = g::get_data(v, anim_key());
+    if a != (0 as *u8) { g::object_unref(a); g::set_data(v, anim_key(), 0 as *u8); }
+    return;
+}
+
+fn is_animated(v: *u8) -> bool {
+    if v == (0 as *u8) { return false; }
+    return g::get_data(v, anim_key()) != (0 as *u8);
+}
+
+// Play or pause. A source with no animation in it answers neither — an
+// application that says `is_animation_playing: true` for a PNG has asked for
+// nothing, which is not an error and not a no-op worth hiding.
+fn set_playing(v: *u8, playing: bool) {
+    if v == (0 as *u8) { return; }
+    if !is_animated(v) { return; }
+    if !playing { g::set_data(v, playing_key(), 0 as *u8); return; }
+    g::set_data(v, playing_key(), 1 as *u8);
+    // Show the frame it is paused on immediately, so `play` is visible before
+    // the first delay elapses.
+    show_frame(v);
+    if g::get_data(v, ticking_key()) != (0 as *u8) { return; }
+    g::set_data(v, ticking_key(), 1 as *u8);
+    // The widget is kept ALIVE for as long as the timeout holds its pointer.
+    // facet's own reference goes away when the node lets go of the view, and a
+    // timeout dereferencing a freed GtkPicture is a crash that lands one frame
+    // later and nowhere near the cause.
+    let _r: *u8 = g::object_ref(v);
+    let _t: u32 = { g_timeout_add_anim(delay_of(v), image_tick, v) };
+    return;
+}
+
+fn is_playing(v: *u8) -> bool {
+    if v == (0 as *u8) { return false; }
+    return g::get_data(v, playing_key()) != (0 as *u8);
+}
+
+// The iterator's own delay, floored: a GIF is allowed to declare 0ms and
+// browsers all clamp it, because a frame per loop turn is a spin rather than
+// an animation.
+fn delay_floor_ms() -> i32 { return 20 as i32; }
+
+fn delay_of(v: *u8) -> u32 {
+    let it: *u8 = g::get_data(v, iter_key());
+    if it == (0 as *u8) { return 100 as u32; }
+    return clamped_delay({ gdk_pixbuf_animation_iter_get_delay_time(it) });
+}
+
+// Kept apart from the iterator so the floor is assertable without a GIF.
+// `-1` is what the decoder answers for a frame that never advances.
+fn clamped_delay(ms: i32) -> u32 {
+    if ms < delay_floor_ms() { return delay_floor_ms() as u32; }
+    return ms as u32;
+}
+
+fn show_frame(v: *u8) {
+    let it: *u8 = g::get_data(v, iter_key());
+    if it == (0 as *u8) { return; }
+    let pb: *u8 = { gdk_pixbuf_animation_iter_get_pixbuf(it) };
+    if pb == (0 as *u8) { return; }
+    // A GdkPixbuf is not a GdkPaintable; a GdkTexture is. The texture is
+    // handed to the picture, which takes its own reference, so this one is
+    // dropped here rather than accumulating a texture per frame.
+    let tex: gdk::Texture = gdk::Texture::new_for_pixbuf(pixbuf::Pixbuf::from_raw(pb));
+    gtk::Picture::from_raw(v).set_paintable(gdk::Paintable::from_raw(tex.raw()));
+    g::object_unref(tex.raw());
+    return;
+}
+
+// One frame. Answers whether to keep going, and every way of stopping goes
+// through the same two lines — the reference taken in `set_playing` has to come
+// back exactly once.
+fn image_tick(user: *u8) -> i32 {
+    let v: *u8 = user;
+    if v == (0 as *u8) { return source_remove(); }
+    if !still_playing(v) { return stop_ticking(v); }
+    let it: *u8 = g::get_data(v, iter_key());
+    if it == (0 as *u8) { return stop_ticking(v); }
+    let _moved: i32 = { gdk_pixbuf_animation_iter_advance(it, 0 as *u8) };
+    show_frame(v);
+    // RESCHEDULED rather than repeating, because the delay is per FRAME: a GIF
+    // with a long first frame and short rest is played at the wrong speed by
+    // any fixed interval, and that is most loading spinners.
+    let _t: u32 = { g_timeout_add_anim(delay_of(v), image_tick, v) };
+    return source_remove();
+}
+
+// Still wanted AND still on screen. The second half is what stops a timeout
+// outliving the window: `views::remove` unparents the widget, so a picture with
+// no root is one nothing can see. It is safe to ask because the reference taken
+// in `set_playing` keeps the pointer valid until this decides otherwise.
+fn still_playing(v: *u8) -> bool {
+    if !is_playing(v) { return false; }
+    return match gtk::Widget::from_raw(v).get_root() {
+        option::Option[gtk::Root]::Some(_r) => true,
+        option::Option[gtk::Root]::None => false,
+    };
+}
+
+fn stop_ticking(v: *u8) -> i32 {
+    g::set_data(v, ticking_key(), 0 as *u8);
+    g::object_unref(v);
+    return source_remove();
+}

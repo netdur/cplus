@@ -1,0 +1,207 @@
+// facet_gtk/pointer — the press band a CONTROL owns, not the gesture band.
+//
+// The GTK counterpart of `facet_appkit/pointer.cplus`, and it exists for the
+// same reason. Three kinds declare pointer verbs of their OWN: `button` and
+// `icon_button` (`on_pressed` / `on_released`), and `canvas`, which declares
+// the whole interaction set the ledger's GraphicsView has — press, release,
+// hover, move, drag, cancel.
+//
+// ---- why this is not the gesture band ----------------------------------------
+//
+// `input.cplus` answers `.gesture(on_press:)` on ANY node. These are
+// different: they are the CONTROL's own verbs, declared by the control's
+// module, and an application that writes `button("Save", on_pressed: ...)`
+// never touched the gesture band. Wiring them there would mean a control could
+// only report a press if the author had also attached a gesture set.
+//
+// They share a transport, because there is only one — input arrives on a
+// GtkEventController — but the DISPATCH is per-kind and lives here. `input::arm`
+// is what attaches the controller, and it now arms a node that wants either
+// band.
+//
+// ---- what a press is on GTK --------------------------------------------------
+//
+// A GtkButton's own `clicked` signal is a COMPLETED click: press and release
+// on the same widget, keyboard activation included. It is the right signal for
+// `on_click` (which is where `input::button_clicked` reads it) and the wrong
+// one for these, because `on_pressed` has to fire on the way DOWN — before the
+// release exists, and whether or not a release ever lands on this widget.
+//
+// So this band is a GtkGestureClick, whose `pressed` and `released` are the two
+// edges. It does NOT claim the sequence: a control reporting a press must not
+// stop the button from also being a button, and GTK's default of not claiming
+// is exactly right here — see input.cplus's decline-chain note.
+
+import "facet/facet" as core;
+import "facet/props" as props;
+import "facet/icon_button" as icon_button;
+
+// Asked of the NODE, not the kind: a canvas that declares no interaction verb
+// should not pay for a controller, and a button without these two verbs should
+// not either.
+fn wants_press_band(n: *core::Node) -> bool {
+    let d: *core::Data = core::node_data(n);
+    if d == (0 as *core::Data) { return false; }
+    let raw: *u8 = { (*d).props };
+    if raw == (0 as *u8) { return false; }
+    let kind: u32 = { (*d).kind };
+    if kind == props::K_BUTTON {
+        let p: *props::ButtonProps = raw as *props::ButtonProps;
+        return { (*p).on_pressed } != props::no_handler
+            || { (*p).on_released } != props::no_handler;
+    }
+    if kind == props::K_ICON_BUTTON {
+        let p: *props::IconButtonProps = raw as *props::IconButtonProps;
+        return { (*p).on_pressed } != props::no_handler
+            || { (*p).on_released } != props::no_handler;
+    }
+    if kind == props::K_CANVAS {
+        let p: *props::CanvasProps = raw as *props::CanvasProps;
+        return { (*p).on_press } != props::no_handler
+            || { (*p).on_release } != props::no_handler
+            || { (*p).on_cancel } != props::no_handler;
+    }
+    return false;
+}
+
+// Fire the press edge. `w` is the widget, which is what facet hands a handler
+// as its sender — the same value `input::button_clicked` passes.
+fn fire_press(n: *core::Node, w: *u8) {
+    let d: *core::Data = core::node_data(n);
+    if d == (0 as *core::Data) { return; }
+    let raw: *u8 = { (*d).props };
+    if raw == (0 as *u8) { return; }
+    let kind: u32 = { (*d).kind };
+    if kind == props::K_BUTTON {
+        let p: *props::ButtonProps = raw as *props::ButtonProps;
+        let h: fn(*u8, *u8) = { (*p).on_pressed };
+        if h != props::no_handler { h(w, { (*p).on_pressed_ctx }); }
+        return;
+    }
+    if kind == props::K_ICON_BUTTON {
+        let p: *props::IconButtonProps = raw as *props::IconButtonProps;
+        let h: fn(*u8, *u8) = { (*p).on_pressed };
+        if h != props::no_handler { h(w, { (*p).on_pressed_ctx }); }
+        return;
+    }
+    if kind == props::K_CANVAS {
+        let p: *props::CanvasProps = raw as *props::CanvasProps;
+        let h: fn(*u8, *u8) = { (*p).on_press };
+        if h != props::no_handler { h(w, { (*p).on_press_ctx }); }
+        return;
+    }
+    return;
+}
+
+fn fire_release(n: *core::Node, w: *u8) {
+    let d: *core::Data = core::node_data(n);
+    if d == (0 as *core::Data) { return; }
+    let raw: *u8 = { (*d).props };
+    if raw == (0 as *u8) { return; }
+    let kind: u32 = { (*d).kind };
+    if kind == props::K_BUTTON {
+        let p: *props::ButtonProps = raw as *props::ButtonProps;
+        let h: fn(*u8, *u8) = { (*p).on_released };
+        if h != props::no_handler { h(w, { (*p).on_released_ctx }); }
+        return;
+    }
+    if kind == props::K_ICON_BUTTON {
+        let p: *props::IconButtonProps = raw as *props::IconButtonProps;
+        let h: fn(*u8, *u8) = { (*p).on_released };
+        if h != props::no_handler { h(w, { (*p).on_released_ctx }); }
+        return;
+    }
+    if kind == props::K_CANVAS {
+        let p: *props::CanvasProps = raw as *props::CanvasProps;
+        let h: fn(*u8, *u8) = { (*p).on_release };
+        if h != props::no_handler { h(w, { (*p).on_release_ctx }); }
+        return;
+    }
+    return;
+}
+
+// A canvas's interaction can be CANCELLED — the pointer is taken away by
+// something else (a drag claimed higher up, the window losing the grab)
+// without a release ever arriving. GtkGesture's `cancel` signal is that edge.
+// Only a canvas declares it; a button has no such verb.
+fn fire_cancel(n: *core::Node, w: *u8) {
+    let d: *core::Data = core::node_data(n);
+    if d == (0 as *core::Data) { return; }
+    if { (*d).kind } != props::K_CANVAS { return; }
+    let raw: *u8 = { (*d).props };
+    if raw == (0 as *u8) { return; }
+    let p: *props::CanvasProps = raw as *props::CanvasProps;
+    let h: fn(*u8, *u8) = { (*p).on_cancel };
+    if h != props::no_handler { h(w, { (*p).on_cancel_ctx }); }
+    return;
+}
+
+// ---- the canvas's observers --------------------------------------------------
+//
+// `GraphicsView.MoveHoverInteraction` and `DragInteraction`: a canvas observes
+// the pointer moving over it and being dragged across it. Both are the
+// CONTROL's verbs, so they are dispatched here, but their transport is the
+// motion controller and the drag gesture `input.cplus` already owns — the same
+// division as press/release above.
+//
+// Observational, and named so: `observe_` rather than `on_`. The handler's
+// answer is not consulted and the event is never claimed, which is what lets a
+// canvas watch a drag that something else is performing.
+
+fn wants_motion_band(n: *core::Node) -> bool {
+    let d: *core::Data = core::node_data(n);
+    if d == (0 as *core::Data) { return false; }
+    if { (*d).kind } != props::K_CANVAS { return false; }
+    let raw: *u8 = { (*d).props };
+    if raw == (0 as *u8) { return false; }
+    let p: *props::CanvasProps = raw as *props::CanvasProps;
+    return { (*p).observe_move_hover_interaction } != props::no_handler
+        || { (*p).on_hover } != props::no_handler
+        || { (*p).on_unhover } != props::no_handler;
+}
+
+fn wants_drag_band(n: *core::Node) -> bool {
+    let d: *core::Data = core::node_data(n);
+    if d == (0 as *core::Data) { return false; }
+    if { (*d).kind } != props::K_CANVAS { return false; }
+    let raw: *u8 = { (*d).props };
+    if raw == (0 as *u8) { return false; }
+    let p: *props::CanvasProps = raw as *props::CanvasProps;
+    return { (*p).observe_drag_interaction } != props::no_handler;
+}
+
+fn canvas_props(n: *core::Node) -> *props::CanvasProps {
+    let d: *core::Data = core::node_data(n);
+    if d == (0 as *core::Data) { return 0 as *props::CanvasProps; }
+    if { (*d).kind } != props::K_CANVAS { return 0 as *props::CanvasProps; }
+    return { (*d).props } as *props::CanvasProps;
+}
+
+fn fire_moved(n: *core::Node, w: *u8) {
+    let p: *props::CanvasProps = canvas_props(n);
+    if p == (0 as *props::CanvasProps) { return; }
+    let h: fn(*u8, *u8) = { (*p).observe_move_hover_interaction };
+    if h != props::no_handler { h(w, { (*p).observe_move_hover_interaction_ctx }); }
+    return;
+}
+
+fn fire_dragged(n: *core::Node, w: *u8) {
+    let p: *props::CanvasProps = canvas_props(n);
+    if p == (0 as *props::CanvasProps) { return; }
+    let h: fn(*u8, *u8) = { (*p).observe_drag_interaction };
+    if h != props::no_handler { h(w, { (*p).observe_drag_interaction_ctx }); }
+    return;
+}
+
+fn fire_hover(n: *core::Node, w: *u8, entered: bool) {
+    let p: *props::CanvasProps = canvas_props(n);
+    if p == (0 as *props::CanvasProps) { return; }
+    if entered {
+        let h: fn(*u8, *u8) = { (*p).on_hover };
+        if h != props::no_handler { h(w, { (*p).on_hover_ctx }); }
+        return;
+    }
+    let h: fn(*u8, *u8) = { (*p).on_unhover };
+    if h != props::no_handler { h(w, { (*p).on_unhover_ctx }); }
+    return;
+}

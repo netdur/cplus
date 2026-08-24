@@ -11,24 +11,73 @@
 // the two cannot drift. That is the rule the AppKit backend states as "one
 // code path with apply".
 //
+// ---- the CSS half is SEPARATE, and rebuilt whole ------------------------------
+//
+// GTK 4 has no per-declaration edit on a GtkCssProvider: writing a font drops
+// the background that was already there. So a kind does NOT write CSS from its
+// `apply_*`. It declares three things instead —
+//
+//   css_bits(kind)    which dirty bits change this kind's CSS
+//   css_decls(kind)   the declarations for the widget's OWN node
+//   css_rules(kind)   whole rules for the control's CSS SUBNODES
+//
+// — and `views::configure` composes them with the band's into ONE document,
+// once, whenever any of those bits is dirty. That is what makes a
+// background-only change keep the label's font, which the earlier
+// write-as-you-go arrangement silently lost.
+//
 // This file is the growth surface. A kind is added by writing its two
-// functions and naming it in `views::create_for_kind` / `apply_for_kind`; the
-// coverage tool then counts the prop bits it references, and MANIFEST.md
-// records anything GTK genuinely cannot answer.
+// functions, its CSS trio, and naming it in `views::create_for_kind` /
+// `apply_for_kind`; the coverage tool then counts the prop bits it references,
+// and MANIFEST.md records anything GTK genuinely cannot answer.
 
+import "stdlib/option" as option;
 import "stdlib/text" as text;
 import "facet/facet" as core;
 import "facet/props" as props;
 import "facet/vocabulary" as vocab;
 import "facet/label" as label;
+import "facet/span" as span;
 import "facet/button" as button;
 import "facet/toggle" as toggle;
 import "facet/progress" as progress;
 import "facet/text_field" as text_field;
+import "facet/text_area" as text_area;
+import "facet/search_field" as search_field;
 import "facet/image" as image;
 import "facet/slider" as slider;
 import "facet/checkbox" as checkbox;
+import "facet/spinner" as spinner;
+import "facet/stepper" as stepper;
+import "facet/radio" as radio;
+import "facet/icon_button" as icon_button;
+import "facet/text_button" as text_button;
+import "facet/box" as fbox;
+import "facet/scroll" as scroll;
+import "facet/split" as split;
+import "facet/tree" as tree;
+import "facet/list" as list;
+import "facet/collection" as collection;
+import "facet/table" as table;
+import "facet/popup" as popup;
+import "facet/tabs" as tabs;
+import "facet/date_picker" as date_picker;
+import "facet/time_picker" as time_picker;
+import "facet/carousel" as carousel;
+import "facet/bordered" as bordered;
+import "facet/refreshable" as refreshable;
+import "glib/glib" as glib;
+import "facet/gestures" as gestures;
+import "facet/mount" as mount;
+import "flex_layout/flex_layout" as flex;
+import "facet/symbol" as symbol;
+import "facet/page_dots" as page_dots;
 import "gtk4/gtk4" as gtk;
+import "gio/gio" as gio;
+import "gobject_gir/gobject_gir" as gobject_gir;
+import "gobject/runtime" as g;
+import "./input" as input;
+import "./anim" as anim;
 import "./paint" as paint;
 
 // The typed prop block for a node, or null when the kind does not match.
@@ -41,7 +90,9 @@ fn props_of(n: *core::Node, kind: u32) -> *u8 {
     return { (*d).props };
 }
 
-// ---- shared text helpers -----------------------------------------------------
+// ================================================================================
+// CSS builders
+// ================================================================================
 
 // facet's named weights -> CSS numeric weights, which is what GTK's CSS
 // parser takes. `Default` is 400 rather than 0: CSS has no "inherit the
@@ -61,29 +112,563 @@ fn css_weight(w: vocab::FontWeight) -> i32 {
     };
 }
 
-// A label/button's text styling, as CSS on the widget's own provider. GTK has
-// no per-widget font API outside Pango attributes or CSS; CSS is the one that
-// composes with the background the band already wrote.
-fn text_css(v: *u8, n: *core::Node, family: str, size: f64, weight: vocab::FontWeight,
-            italic: bool, color: vocab::Color) {
+// One `prop: rgba(...)` declaration, or nothing when the colour is unset.
+// `is_set()` is the whole gate: an unset colour must leave the theme's own
+// answer alone rather than write transparent over it.
+fn color_decl(prop: str, c: vocab::Color) -> text::Text {
+    if !c.is_set() { return text::from_str(""); }
+    let rgba: text::Text = paint::css_rgba(c);
+    return text::from_str("${prop}: ${rgba};");
+}
+
+// The font half of the text band.
+//
+// `font_scales` multiplies the size by the desktop's text-scaling factor
+// rather than switching the CSS unit — GTK's `pt` scales but also rescales by
+// 96/72, which would inflate every size a tree written for AppKit's points
+// carries. See `window::text_scale`.
+fn font_decls(family: str, size: f64, weight: vocab::FontWeight,
+              italic: bool, scales: bool) -> text::Text {
     var body: text::Text = text::from_str("");
     if size > (0.0 as f64) {
-        let px: i32 = size as i32;
-        body = body.appending("font-size: ${px}px;");
+        var px: f64 = size;
+        if scales { px = px * paint::text_scale(); }
+        let n: i32 = (px + (0.5 as f64)) as i32;
+        body = body.appending("font-size: ${n}px;");
     }
     if family != "" { body = body.appending("font-family: \"${family}\";"); }
     let wt: i32 = css_weight(weight);
     body = body.appending("font-weight: ${wt};");
     if italic { body = body.appending("font-style: italic;"); }
-    if color.is_set() {
-        let rgba: text::Text = paint::css_rgba(color);
-        body = body.appending("color: ${rgba};");
+    else { body = body.appending("font-style: normal;"); }
+    return body;
+}
+
+// The rest of the text band. Every one of these is a GTK 4.6+ CSS property, so
+// they are ordinary declarations rather than anything Pango-specific.
+fn text_decls(spacing: f64, transform: vocab::TextTransform,
+              decoration: vocab::TextDecoration, color: vocab::Color) -> text::Text {
+    var body: text::Text = text::from_str("");
+    if spacing != (0.0 as f64) {
+        // facet's spacing is in points, GTK's letter-spacing takes a length.
+        let px: i32 = (spacing + (0.5 as f64)) as i32;
+        body = body.appending("letter-spacing: ${px}px;");
     }
-    paint::append_css(v, n, body.view());
+    let tt: str = match transform {
+        // `Default` is "whatever the platform does", which in CSS is `none`
+        // — there is no third state to express.
+        vocab::TextTransform::Default => "none",
+        vocab::TextTransform::None => "none",
+        vocab::TextTransform::Lowercase => "lowercase",
+        vocab::TextTransform::Uppercase => "uppercase",
+    };
+    body = body.appending("text-transform: ${tt};");
+    let td: str = match decoration {
+        vocab::TextDecoration::None => "none",
+        vocab::TextDecoration::Underline => "underline",
+        vocab::TextDecoration::Strikethrough => "line-through",
+    };
+    body = body.appending("text-decoration-line: ${td};");
+    body = body.appending(color_decl("color", color).view());
+    return body;
+}
+
+// CSS `border-radius`, from facet's per-edge leading/trailing corners.
+//
+// CSS order is TL TR BR BL; facet's is leading/trailing per edge. In a
+// left-to-right flow they coincide; RTL is a `C_FLOW_DIRECTION` job and is
+// recorded in MANIFEST.md rather than guessed at here.
+fn corner_decl(c: vocab::Corners) -> text::Text {
+    if c.top_leading <= (0.0 as f64) && c.top_trailing <= (0.0 as f64)
+        && c.bottom_leading <= (0.0 as f64) && c.bottom_trailing <= (0.0 as f64) {
+        return text::from_str("");
+    }
+    let tl: i32 = c.top_leading as i32;
+    let tr: i32 = c.top_trailing as i32;
+    let br: i32 = c.bottom_trailing as i32;
+    let bl: i32 = c.bottom_leading as i32;
+    return text::from_str("border-radius: ${tl}px ${tr}px ${br}px ${bl}px;");
+}
+
+// A described border. `bordered` is separate from the width on purpose (facet
+// keeps the description when the border is switched off), so a control that is
+// not bordered writes `border-width: 0` and REMEMBERS the rest.
+fn border_decls(color: vocab::Color, width: f64, bordered: bool) -> text::Text {
+    var body: text::Text = text::from_str("");
+    if !bordered {
+        body = body.appending("border-width: 0;");
+        return body;
+    }
+    if width > (0.0 as f64) {
+        let w: i32 = (width + (0.5 as f64)) as i32;
+        body = body.appending("border-style: solid; border-width: ${w}px;");
+    }
+    body = body.appending(color_decl("border-color", color).view());
+    return body;
+}
+
+// A rule for one of the control's CSS SUBNODES, scoped to this widget.
+//
+// The class the band writes is on the widget's OWN node and on nothing beneath
+// it, so `.facet-band trough` is this scale's trough — not every trough that
+// happens to share the provider's cascade.
+fn subnode_rule(selector: str, decls: str) -> text::Text {
+    if decls == "" { return text::from_str(""); }
+    let cls: str = paint::band_class();
+    return text::from_str(".${cls} ${selector} { ${decls} }");
+}
+
+// The same, for a state of the widget's own node (`:checked`, `:not(:checked)`).
+fn state_rule(state: str, decls: str) -> text::Text {
+    if decls == "" { return text::from_str(""); }
+    let cls: str = paint::band_class();
+    return text::from_str(".${cls}${state} { ${decls} }");
+}
+
+// ---- the input band, shared ----------------------------------------------------
+// Every text-bearing kind embeds `InputViewProps` rather than restating it, so
+// its CSS is written once here and its non-CSS writes once below.
+
+fn input_decls(p: *props::InputViewProps) -> text::Text {
+    var body: text::Text = font_decls({ (*p).font_family.view() }, { (*p).font_size },
+                                      { (*p).font_weight }, { (*p).is_italic },
+                                      { (*p).font_scales });
+    body = body.appending(text_decls({ (*p).character_spacing },
+                                     { (*p).text_transform },
+                                     vocab::TextDecoration::None,
+                                     { (*p).text_color }).view());
+    return body;
+}
+
+// The placeholder and the caret live on GtkText's own nodes, which is why they
+// are RULES and not declarations: `color` on the entry would repaint the real
+// text too.
+fn input_rules(p: *props::InputViewProps) -> text::Text {
+    var out: text::Text = text::from_str("");
+    out = out.appending(subnode_rule("> text > placeholder",
+                                     color_decl("color", { (*p).placeholder_color }).view()).view());
+    out = out.appending(subnode_rule("> text",
+                                     color_decl("caret-color", { (*p).text_color }).view()).view());
+    return out;
+}
+
+// GtkInputPurpose, the one thing a desktop toolkit does answer about a
+// "keyboard": 0 FREE_FORM, 1 ALPHA, 2 DIGITS, 3 NUMBER, 4 PHONE, 5 URL,
+// 6 EMAIL, 7 NAME, 8 PASSWORD, 9 PIN, 10 TERMINAL. It reaches the input
+// method, which is what picks a virtual keyboard where one exists.
+fn purpose_of(k: vocab::Keyboard) -> i32 {
+    return match k {
+        vocab::Keyboard::Default => 0,
+        vocab::Keyboard::Plain => 0,
+        vocab::Keyboard::Text => 0,
+        vocab::Keyboard::Chat => 0,
+        vocab::Keyboard::Numeric => 3,
+        vocab::Keyboard::Telephone => 4,
+        vocab::Keyboard::Url => 5,
+        vocab::Keyboard::Email => 6,
+    };
+}
+
+// GtkInputHints, a bit set: 1 SPELLCHECK, 2 NO_SPELLCHECK, 4 WORD_COMPLETION,
+// 8 LOWERCASE, ... facet asks two questions of it and both are real: GTK has
+// no speller of its own, but the hint is what an input method acts on.
+fn hints_of(checks_spelling: bool, predicts_text: bool) -> u32 {
+    var h: u32 = 0 as u32;
+    if checks_spelling { h = h | (1 as u32); } else { h = h | (2 as u32); }
+    if predicts_text { h = h | (4 as u32); }
+    return h;
+}
+
+// The non-CSS half of the input band, on anything implementing GtkEditable.
+// `dirty` is tested by the CALLER against its own kind's bit names — the bits
+// are per-kind constants — so this takes the decisions already made.
+fn apply_editable(e: gtk::Editable, p: *props::InputViewProps,
+                  do_text: bool, do_read_only: bool,
+                  do_cursor: bool, do_selection: bool) {
+    if do_text {
+        // Writing the same string back would move the caret to the end mid-typing:
+        // `changed` fires from the user, the app writes its state back, and the
+        // field is rewritten with what it already holds.
+        if e.get_text().view() != { (*p).text.view() } {
+            e.set_text({ (*p).text.view() });
+        }
+    }
+    if do_read_only { e.set_editable(!{ (*p).is_read_only }); }
+    if do_cursor { e.set_position({ (*p).cursor_position } as i32); }
+    if do_selection {
+        let start: i32 = { (*p).cursor_position } as i32;
+        let len: i32 = { (*p).selection_length } as i32;
+        if len > (0 as i32) { e.select_region(start, start + len); }
+    }
     return;
 }
 
-// ---- label -------------------------------------------------------------------
+// ================================================================================
+// The CSS trio, per kind
+// ================================================================================
+
+fn css_bits(kind: u32) -> u64 {
+    if kind == props::K_LABEL {
+        return label::P_FONT_SIZE | label::P_FONT_FAMILY | label::P_FONT_WEIGHT
+             | label::P_IS_ITALIC | label::P_FONT_SCALES | label::P_TEXT_COLOR
+             | label::P_CHARACTER_SPACING | label::P_TEXT_TRANSFORM
+             | label::P_TEXT_DECORATION;
+    }
+    // A SPAN has no widget and no CSS — it is a run inside its label's markup,
+    // and the label is what re-reads it. The bits are named so the coverage
+    // number counts a kind that is genuinely answered rather than one that
+    // merely has no body.
+    if kind == props::K_SPAN {
+        return span::P_TEXT | span::P_FONT_SIZE | span::P_FONT_FAMILY
+             | span::P_FONT_WEIGHT | span::P_IS_ITALIC | span::P_FONT_SCALES
+             | span::P_TEXT_COLOR | span::P_TEXT_DECORATION
+             | span::P_TEXT_TRANSFORM | span::P_CHARACTER_SPACING
+             | span::P_LINE_HEIGHT;
+    }
+    if kind == props::K_BUTTON {
+        return button::P_FONT_SIZE | button::P_FONT_FAMILY | button::P_FONT_WEIGHT
+             | button::P_IS_ITALIC | button::P_FONT_SCALES | button::P_TEXT_COLOR
+             | button::P_CHARACTER_SPACING | button::P_TEXT_TRANSFORM
+             | button::P_BORDER_COLOR | button::P_BORDER_WIDTH
+             | button::P_CORNER_RADIUS | button::P_BORDERED;
+    }
+    if kind == text_button::K_TEXT_BUTTON {
+        return text_button::P_FONT_SIZE | text_button::P_FONT_FAMILY
+             | text_button::P_FONT_WEIGHT | text_button::P_IS_ITALIC
+             | text_button::P_FONT_SCALES | text_button::P_TEXT_COLOR
+             | text_button::P_CHARACTER_SPACING | text_button::P_TEXT_TRANSFORM
+             | text_button::P_TEXT_DECORATION | text_button::P_BORDER_COLOR
+             | text_button::P_BORDER_WIDTH | text_button::P_CORNER_RADIUS
+             | text_button::P_BORDERED;
+    }
+    if kind == props::K_ICON_BUTTON {
+        return icon_button::P_BORDER_COLOR | icon_button::P_BORDER_WIDTH
+             | icon_button::P_CORNER_RADIUS | icon_button::P_BORDERED;
+    }
+    if kind == props::K_RADIO {
+        return radio::P_FONT_SIZE | radio::P_FONT_FAMILY | radio::P_FONT_WEIGHT
+             | radio::P_IS_ITALIC | radio::P_FONT_SCALES | radio::P_TEXT_COLOR
+             | radio::P_CHARACTER_SPACING | radio::P_TEXT_TRANSFORM
+             | radio::P_BORDER_COLOR | radio::P_BORDER_WIDTH
+             | radio::P_CORNER_RADIUS;
+    }
+    if kind == props::K_TEXT_FIELD {
+        return text_field::P_FONT_SIZE | text_field::P_FONT_FAMILY
+             | text_field::P_FONT_WEIGHT | text_field::P_IS_ITALIC
+             | text_field::P_FONT_SCALES | text_field::P_TEXT_COLOR
+             | text_field::P_CHARACTER_SPACING | text_field::P_TEXT_TRANSFORM
+             | text_field::P_PLACEHOLDER_COLOR;
+    }
+    if kind == props::K_SEARCH_FIELD {
+        return search_field::P_FONT_SIZE | search_field::P_FONT_FAMILY
+             | search_field::P_FONT_WEIGHT | search_field::P_IS_ITALIC
+             | search_field::P_FONT_SCALES | search_field::P_TEXT_COLOR
+             | search_field::P_CHARACTER_SPACING | search_field::P_TEXT_TRANSFORM
+             | search_field::P_PLACEHOLDER_COLOR
+             | search_field::P_SEARCH_ICON_COLOR
+             | search_field::P_CANCEL_BUTTON_COLOR;
+    }
+    if kind == props::K_TEXT_AREA {
+        return text_area::P_FONT_SIZE | text_area::P_FONT_FAMILY
+             | text_area::P_FONT_WEIGHT | text_area::P_IS_ITALIC
+             | text_area::P_FONT_SCALES | text_area::P_TEXT_COLOR
+             | text_area::P_CHARACTER_SPACING | text_area::P_TEXT_TRANSFORM
+             | text_area::P_PLACEHOLDER_COLOR;
+    }
+    if kind == props::K_DATE_PICKER {
+        return date_picker::P_FONT_SIZE | date_picker::P_FONT_FAMILY
+             | date_picker::P_FONT_WEIGHT | date_picker::P_IS_ITALIC
+             | date_picker::P_FONT_SCALES | date_picker::P_TEXT_COLOR
+             | date_picker::P_CHARACTER_SPACING;
+    }
+    if kind == props::K_TIME_PICKER {
+        return time_picker::P_FONT_SIZE | time_picker::P_FONT_FAMILY
+             | time_picker::P_FONT_WEIGHT | time_picker::P_IS_ITALIC
+             | time_picker::P_FONT_SCALES | time_picker::P_TEXT_COLOR
+             | time_picker::P_CHARACTER_SPACING;
+    }
+    if kind == props::K_POPUP {
+        return popup::P_FONT_SIZE | popup::P_FONT_FAMILY | popup::P_FONT_WEIGHT
+             | popup::P_IS_ITALIC | popup::P_FONT_SCALES | popup::P_TEXT_COLOR
+             | popup::P_CHARACTER_SPACING | popup::P_TITLE_COLOR;
+    }
+    if kind == props::K_CHECKBOX { return checkbox::P_COLOR; }
+    if kind == props::K_TOGGLE {
+        return toggle::P_ON_COLOR | toggle::P_OFF_COLOR | toggle::P_THUMB_COLOR;
+    }
+    if kind == props::K_SLIDER {
+        return slider::P_MINIMUM_TRACK_COLOR | slider::P_MAXIMUM_TRACK_COLOR
+             | slider::P_THUMB_COLOR | slider::P_THUMB_IMAGE;
+    }
+    if kind == props::K_PROGRESS { return progress::P_PROGRESS_COLOR; }
+    if kind == props::K_SPINNER { return spinner::P_COLOR; }
+    if kind == props::K_BOX { return fbox::P_COLOR | fbox::P_CORNER_RADIUS; }
+    if kind == props::K_BORDERED {
+        return bordered::P_STROKE | bordered::P_STROKE_WIDTH
+             | bordered::P_STROKE_DASH | bordered::P_STROKE_SHAPE;
+    }
+    if kind == symbol::K_SYMBOL {
+        return symbol::P_COLOR | symbol::P_SIZE | symbol::P_FONT | symbol::P_FILL;
+    }
+    return 0 as u64;
+}
+
+// `symbol.fill` — the outline-to-filled axis, as a FONT VARIATION.
+//
+// The bundled icon font is a variable font with the FILL axis kept (0 outline
+// .. 1 filled) and wght / opsz / GRAD pinned; `symbol.cplus` says so at the top
+// and says what keeping the axis costs. GTK 4's CSS carries
+// `font-variation-settings` straight through to Pango, so the axis is
+// reachable without touching a PangoFontDescription at all — which is why this
+// is three lines rather than a body.
+//
+// A THEMED icon has no axis and gets nothing: `symbol(named:)` is a GtkImage
+// showing one of the desktop's own icons, and there is no glyph to vary.
+//
+// The value is CLAMPED rather than trusted. A variation outside an axis's range
+// is undefined in the spec and silently ignored by some rasterisers, so a
+// `fill: 2.0` would read as unset rather than as filled.
+fn fill_decl(fill: f64) -> text::Text {
+    var v: f64 = fill;
+    if v <= (0.0 as f64) { return text::from_str(""); }
+    if v > (1.0 as f64) { v = 1.0f64; }
+    // Two decimals: the axis is continuous and an application animating it gets
+    // a hundred positions, which is more than the font has masters for.
+    let hundredths: i64 = ((v * (100.0 as f64)) + (0.5 as f64)) as i64;
+    let whole: i64 = hundredths / (100 as i64);
+    let rest: i64 = hundredths -% (whole *% (100 as i64));
+    var frac: text::Text = text::from_str("${rest}");
+    if rest < (10 as i64) { frac = text::from_str("0${rest}"); }
+    return text::from_str("font-variation-settings:\"FILL\" ${whole}.${frac};");
+}
+
+fn css_decls(kind: u32, n: *core::Node) -> text::Text {
+    if kind == props::K_LABEL {
+        let p: *props::LabelProps = props_of(n, kind) as *props::LabelProps;
+        if p == (0 as *props::LabelProps) { return text::from_str(""); }
+        var b: text::Text = font_decls({ (*p).font_family.view() }, { (*p).font_size },
+                                       { (*p).font_weight }, { (*p).is_italic },
+                                       { (*p).font_scales });
+        b = b.appending(text_decls({ (*p).character_spacing }, { (*p).text_transform },
+                                   { (*p).text_decoration }, { (*p).text_color }).view());
+        return b;
+    }
+    if kind == props::K_BUTTON {
+        let p: *props::ButtonProps = props_of(n, kind) as *props::ButtonProps;
+        if p == (0 as *props::ButtonProps) { return text::from_str(""); }
+        var b: text::Text = font_decls({ (*p).font_family.view() }, { (*p).font_size },
+                                       { (*p).font_weight }, { (*p).is_italic },
+                                       { (*p).font_scales });
+        b = b.appending(text_decls({ (*p).character_spacing }, { (*p).text_transform },
+                                   vocab::TextDecoration::None, { (*p).text_color }).view());
+        b = b.appending(border_decls({ (*p).border_color }, { (*p).border_width },
+                                     { (*p).bordered }).view());
+        b = b.appending(corner_decl({ (*p).corner_radius }).view());
+        return b;
+    }
+    if kind == text_button::K_TEXT_BUTTON {
+        let p: *text_button::TextButtonProps =
+            props_of(n, kind) as *text_button::TextButtonProps;
+        if p == (0 as *text_button::TextButtonProps) { return text::from_str(""); }
+        var b: text::Text = font_decls({ (*p).font_family.view() }, { (*p).font_size },
+                                       { (*p).font_weight }, { (*p).is_italic },
+                                       { (*p).font_scales });
+        b = b.appending(text_decls({ (*p).character_spacing }, { (*p).text_transform },
+                                   { (*p).text_decoration }, { (*p).text_color }).view());
+        b = b.appending(border_decls({ (*p).border_color }, { (*p).border_width },
+                                     { (*p).bordered }).view());
+        b = b.appending(corner_decl({ (*p).corner_radius }).view());
+        return b;
+    }
+    if kind == props::K_ICON_BUTTON {
+        let p: *props::IconButtonProps = props_of(n, kind) as *props::IconButtonProps;
+        if p == (0 as *props::IconButtonProps) { return text::from_str(""); }
+        var b: text::Text = border_decls({ (*p).border_color }, { (*p).border_width },
+                                         { (*p).bordered });
+        b = b.appending(corner_decl({ (*p).corner_radius }).view());
+        return b;
+    }
+    if kind == props::K_RADIO {
+        let p: *props::RadioProps = props_of(n, kind) as *props::RadioProps;
+        if p == (0 as *props::RadioProps) { return text::from_str(""); }
+        var b: text::Text = font_decls({ (*p).font_family.view() }, { (*p).font_size },
+                                       { (*p).font_weight }, { (*p).is_italic },
+                                       { (*p).font_scales });
+        b = b.appending(text_decls({ (*p).character_spacing }, { (*p).text_transform },
+                                   vocab::TextDecoration::None, { (*p).text_color }).view());
+        b = b.appending(border_decls({ (*p).border_color }, { (*p).border_width },
+                                     true).view());
+        b = b.appending(corner_decl({ (*p).corner_radius }).view());
+        return b;
+    }
+    if kind == props::K_TEXT_FIELD {
+        let p: *props::TextFieldProps = props_of(n, kind) as *props::TextFieldProps;
+        if p == (0 as *props::TextFieldProps) { return text::from_str(""); }
+        return input_decls(#addr_of((*p).input_view));
+    }
+    if kind == props::K_SEARCH_FIELD {
+        let p: *props::SearchFieldProps = props_of(n, kind) as *props::SearchFieldProps;
+        if p == (0 as *props::SearchFieldProps) { return text::from_str(""); }
+        return input_decls(#addr_of((*p).input_view));
+    }
+    if kind == props::K_TEXT_AREA {
+        let p: *props::TextAreaProps = props_of(n, kind) as *props::TextAreaProps;
+        if p == (0 as *props::TextAreaProps) { return text::from_str(""); }
+        return input_decls(#addr_of((*p).input_view));
+    }
+    if kind == props::K_DATE_PICKER {
+        let p: *props::DatePickerProps = date_props(n);
+        if p == (0 as *props::DatePickerProps) { return text::from_str(""); }
+        var b: text::Text = font_decls({ (*p).font_family.view() }, { (*p).font_size },
+                                       { (*p).font_weight }, { (*p).is_italic },
+                                       { (*p).font_scales });
+        b = b.appending(text_decls({ (*p).character_spacing }, vocab::TextTransform::Default,
+                                   vocab::TextDecoration::None, { (*p).text_color }).view());
+        return b;
+    }
+    if kind == props::K_TIME_PICKER {
+        let p: *props::TimePickerProps = time_props(n);
+        if p == (0 as *props::TimePickerProps) { return text::from_str(""); }
+        var b: text::Text = font_decls({ (*p).font_family.view() }, { (*p).font_size },
+                                       { (*p).font_weight }, { (*p).is_italic },
+                                       { (*p).font_scales });
+        b = b.appending(text_decls({ (*p).character_spacing }, vocab::TextTransform::Default,
+                                   vocab::TextDecoration::None, { (*p).text_color }).view());
+        return b;
+    }
+    if kind == props::K_POPUP {
+        let p: *props::PopupProps = popup_props(n);
+        if p == (0 as *props::PopupProps) { return text::from_str(""); }
+        var b: text::Text = font_decls({ (*p).font_family.view() }, { (*p).font_size },
+                                       { (*p).font_weight }, { (*p).is_italic },
+                                       { (*p).font_scales });
+        // `title_color` is the colour of the TITLE — what the button reads
+        // before anything is picked — and `text_color` of a picked item. The
+        // button is one widget, so the one that applies is the one that is
+        // showing.
+        let showing_title: bool = { (*p).selected_index } < (0 as i64)
+                                  && { (*p).label.view() } == "";
+        let fg: vocab::Color = if showing_title { { (*p).title_color } }
+                               else { { (*p).text_color } };
+        b = b.appending(text_decls({ (*p).character_spacing },
+                                   vocab::TextTransform::Default,
+                                   vocab::TextDecoration::None, fg).view());
+        return b;
+    }
+    if kind == props::K_CHECKBOX {
+        let p: *props::CheckboxProps = props_of(n, kind) as *props::CheckboxProps;
+        if p == (0 as *props::CheckboxProps) { return text::from_str(""); }
+        // GTK's check indicator takes its colour from `accent-color`; there is
+        // no property for it.
+        return color_decl("accent-color", { (*p).color });
+    }
+    if kind == props::K_SPINNER {
+        let p: *props::SpinnerProps = props_of(n, kind) as *props::SpinnerProps;
+        if p == (0 as *props::SpinnerProps) { return text::from_str(""); }
+        // A GtkSpinner draws itself in the FOREGROUND colour.
+        return color_decl("color", { (*p).color });
+    }
+    if kind == symbol::K_SYMBOL {
+        let p: *symbol::SymbolProps = symbol_props(n);
+        if p == (0 as *symbol::SymbolProps) { return text::from_str(""); }
+        // A themed icon takes its colour from the foreground (GTK's symbolic
+        // icons recolour themselves to it); a glyph takes font AND colour.
+        var b: text::Text = color_decl("color", { (*p).color });
+        if !symbol_is_system(n) {
+            b = b.appending(font_decls({ (*p).font.view() }, { (*p).size },
+                                       vocab::FontWeight::Default, false, false).view());
+            b = b.appending(fill_decl({ (*p).fill }).view());
+        }
+        return b;
+    }
+    if kind == props::K_BORDERED {
+        let p: *props::BorderedProps = props_of(n, kind) as *props::BorderedProps;
+        if p == (0 as *props::BorderedProps) { return text::from_str(""); }
+        return bordered_decls(p);
+    }
+    if kind == props::K_BOX {
+        let p: *props::BoxProps = props_of(n, kind) as *props::BoxProps;
+        if p == (0 as *props::BoxProps) { return text::from_str(""); }
+        var b: text::Text = color_decl("background-color", { (*p).color });
+        b = b.appending(corner_decl({ (*p).corner_radius }).view());
+        return b;
+    }
+    return text::from_str("");
+}
+
+fn css_rules(kind: u32, n: *core::Node) -> text::Text {
+    if kind == props::K_TEXT_FIELD {
+        let p: *props::TextFieldProps = props_of(n, kind) as *props::TextFieldProps;
+        if p == (0 as *props::TextFieldProps) { return text::from_str(""); }
+        return input_rules(#addr_of((*p).input_view));
+    }
+    if kind == props::K_TEXT_AREA {
+        let p: *props::TextAreaProps = props_of(n, kind) as *props::TextAreaProps;
+        if p == (0 as *props::TextAreaProps) { return text::from_str(""); }
+        return input_rules(#addr_of((*p).input_view));
+    }
+    if kind == props::K_SEARCH_FIELD {
+        let p: *props::SearchFieldProps = props_of(n, kind) as *props::SearchFieldProps;
+        if p == (0 as *props::SearchFieldProps) { return text::from_str(""); }
+        var out: text::Text = input_rules(#addr_of((*p).input_view));
+        // A GtkSearchEntry carries its magnifier and its clear button as image
+        // subnodes, in that order — so they are addressed by position, which
+        // is what a CSS node tree gives instead of names for these two.
+        out = out.appending(subnode_rule("> image:first-child",
+            color_decl("color", { (*p).search_icon_color }).view()).view());
+        out = out.appending(subnode_rule("> image:last-child",
+            color_decl("color", { (*p).cancel_button_color }).view()).view());
+        return out;
+    }
+    if kind == props::K_TOGGLE {
+        let p: *props::ToggleProps = props_of(n, kind) as *props::ToggleProps;
+        if p == (0 as *props::ToggleProps) { return text::from_str(""); }
+        var out: text::Text = text::from_str("");
+        // `:not(:checked)` rather than the bare node, so the OFF colour does
+        // not also repaint the ON state through specificity.
+        out = out.appending(state_rule(":checked",
+            color_decl("background-color", { (*p).on_color }).view()).view());
+        out = out.appending(state_rule(":not(:checked)",
+            color_decl("background-color", { (*p).off_color }).view()).view());
+        out = out.appending(subnode_rule("> slider",
+            color_decl("background-color", { (*p).thumb_color }).view()).view());
+        return out;
+    }
+    if kind == props::K_SLIDER {
+        let p: *props::SliderProps = props_of(n, kind) as *props::SliderProps;
+        if p == (0 as *props::SliderProps) { return text::from_str(""); }
+        var out: text::Text = text::from_str("");
+        // A GtkScale is `scale > contents > trough > {slider, highlight}`. The
+        // `highlight` node is the filled part BELOW the value, which is what
+        // facet calls the minimum track; `trough` is the rest of it.
+        out = out.appending(subnode_rule("trough",
+            color_decl("background-color", { (*p).maximum_track_color }).view()).view());
+        out = out.appending(subnode_rule("highlight",
+            color_decl("background-color", { (*p).minimum_track_color }).view()).view());
+        var thumb: text::Text = color_decl("background-color", { (*p).thumb_color });
+        let img: str = { (*p).thumb_image.view() };
+        if img != "" {
+            // GTK's CSS `url()` resolves against the provider's base, which for
+            // a string-loaded document is the working directory — so an
+            // absolute path is the one that always works, and that is what
+            // facet's image sources are.
+            thumb = thumb.appending("background-image: url(\"${img}\");");
+        }
+        out = out.appending(subnode_rule("slider", thumb.view()).view());
+        return out;
+    }
+    if kind == props::K_PROGRESS {
+        let p: *props::ProgressProps = props_of(n, kind) as *props::ProgressProps;
+        if p == (0 as *props::ProgressProps) { return text::from_str(""); }
+        return subnode_rule("progress",
+            color_decl("background-color", { (*p).progress_color }).view());
+    }
+    return text::from_str("");
+}
+
+// ================================================================================
+// label
+// ================================================================================
 
 fn create_label(n: *core::Node) -> *u8 {
     let l: gtk::Label = gtk::Label::new("");
@@ -96,12 +681,140 @@ fn create_label(n: *core::Node) -> *u8 {
     return w.raw();
 }
 
+// ---- a label's RUNS ------------------------------------------------------------
+//
+// THREE WAYS to give a label styled text, and all three are Pango markup:
+//
+//   `span` CHILD NODES     the K_SPAN kind, read as nodes by the label that
+//                          holds them — a formatted label's text IS the runs,
+//                          so its own `text` is not shown at all.
+//   `formatted_text`       the same thing as a VALUE, for a caller that builds
+//                          runs rather than nodes.
+//   `line_height`          which markup carries as an attribute and a plain
+//                          GtkLabel has no property for.
+//
+// So a label uses markup whenever any of them is present, and plain text
+// otherwise — a label that needs none pays for none.
+
+fn has_span_children(n: *core::Node) -> bool {
+    var i: usize = 0 as usize;
+    let count: usize = core::child_count_of(n);
+    while i < count {
+        match core::child_of(n, i) {
+            option::Option[*core::Node]::Some(c) => {
+                if core::kind_of(c) == props::K_SPAN { return true; }
+            }
+            option::Option[*core::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return false;
+}
+
+// The markup a label's span CHILDREN describe. Each run carries its own band,
+// and a span that names nothing inherits the label's — which is what the
+// attribute list omitting an unset verb already gives.
+fn span_children_markup(n: *core::Node) -> text::Text {
+    var out: text::Text = text::from_str("");
+    var i: usize = 0 as usize;
+    let count: usize = core::child_count_of(n);
+    while i < count {
+        match core::child_of(n, i) {
+            option::Option[*core::Node]::Some(c) => {
+                let p: *props::SpanProps = props_of(c, props::K_SPAN) as *props::SpanProps;
+                if p != (0 as *props::SpanProps) {
+                    let attrs: text::Text = paint::span_attrs(
+                        { (*p).font_family.view() }, { (*p).font_size },
+                        { (*p).font_weight }, { (*p).is_italic }, { (*p).font_scales },
+                        { (*p).text_color }, vocab::Color::clear(),
+                        { (*p).text_decoration }, { (*p).character_spacing },
+                        { (*p).line_height });
+                    // `text_transform` has no markup attribute, so the run's
+                    // own text is transformed before it is escaped.
+                    let shown: text::Text = paint::transformed({ (*p).text.view() },
+                                                               { (*p).text_transform });
+                    out = out.appending(paint::markup_run(attrs.view(), shown.view()).view());
+                }
+            }
+            option::Option[*core::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return out;
+}
+
+// The markup a label's `formatted_text` VALUE describes.
+fn formatted_markup(p: *props::LabelProps) -> text::Text {
+    var out: text::Text = text::from_str("");
+    let runs: *vocab::Spans = #addr_of((*p).formatted_text);
+    var i: usize = 0 as usize;
+    let count: usize = { (*runs).count() };
+    while i < count {
+        let r: *vocab::TextSpan = { (*runs).at(i) };
+        if r != (0 as *vocab::TextSpan) {
+            let attrs: text::Text = paint::span_attrs(
+                { (*r).font_family.view() }, { (*r).font_size }, { (*r).font_weight },
+                { (*r).is_italic }, true, { (*r).color }, { (*r).background_color },
+                { (*r).decoration }, 0.0f64, { (*p).line_height });
+            out = out.appending(paint::markup_run(attrs.view(), { (*r).view() }).view());
+        }
+        i = i +% (1 as usize);
+    }
+    return out;
+}
+
+// The whole label as ONE run, which is how `line_height` reaches a label that
+// has no runs of its own — a GtkLabel has no line-height property and markup
+// is the only door.
+fn whole_label_markup(p: *props::LabelProps) -> text::Text {
+    let attrs: text::Text = paint::span_attrs(
+        "", 0.0f64, vocab::FontWeight::Default, false, true,
+        vocab::Color::clear(), vocab::Color::clear(),
+        vocab::TextDecoration::None, 0.0f64, { (*p).line_height });
+    return paint::markup_run(attrs.view(), { (*p).text.view() });
+}
+
+// Which of the three, or none. Read in one place so `apply_label` cannot get
+// the order wrong: children beat the value, and the value beats a bare
+// line-height.
+fn label_markup(n: *core::Node, p: *props::LabelProps) -> text::Text {
+    if has_span_children(n) { return span_children_markup(n); }
+    if !{ (*p).formatted_text.is_empty() } { return formatted_markup(p); }
+    if { (*p).line_height } > (0.0 as f64) { return whole_label_markup(p); }
+    return text::from_str("");
+}
+
 fn apply_label(v: *u8, n: *core::Node, dirty: u64) {
     let p: *props::LabelProps = props_of(n, props::K_LABEL) as *props::LabelProps;
     if p == (0 as *props::LabelProps) { return; }
     let l: gtk::Label = gtk::Label::from_raw(v);
-    if (dirty & label::P_TEXT) != (0 as u64) {
-        l.set_text({ (*p).text.view() });
+    // A SPAN CHILD changing raises `core::touch_all` on its host — mount does
+    // that because a viewless child cannot say which of the host's own verbs it
+    // affected — so a span edit arrives here with every bit set and needs no
+    // gate of its own.
+    let runs: u64 = label::P_FORMATTED_TEXT | label::P_LINE_HEIGHT;
+    if (dirty & (label::P_TEXT | label::P_TEXT_FORMAT | runs)) != (0 as u64) {
+        // `TextFormat::Html` is answered with Pango markup, which shares the
+        // inline element vocabulary HTML uses (`<b>`, `<i>`, `<u>`, `<span>`,
+        // `<a href>`) and nothing of its block layout. That is a genuine
+        // answer for the inline case and a partial one for anything else, so
+        // it is written down in MANIFEST.md §3 rather than claimed whole.
+        // RUNS FIRST. A formatted label's text IS its runs, so a label that
+        // has them does not show its own `text` at all — and every run path is
+        // markup, which is also what `TextFormat::Html` asks for.
+        let built: text::Text = label_markup(n, p);
+        if built.view() != "" {
+            l.set_use_markup(true);
+            l.set_markup(built.view());
+        } else {
+            let markup: bool = match { (*p).text_format } {
+                vocab::TextFormat::Html => true,
+                vocab::TextFormat::Text => false,
+            };
+            l.set_use_markup(markup);
+            if markup { l.set_markup({ (*p).text.view() }); }
+            else { l.set_text({ (*p).text.view() }); }
+        }
     }
     if (dirty & label::P_TEXT_ALIGN) != (0 as u64) {
         // GtkJustification: 0 LEFT, 1 RIGHT, 2 CENTER, 3 FILL.
@@ -111,22 +824,37 @@ fn apply_label(v: *u8, n: *core::Node, dirty: u64) {
         // ignores the verb entirely.
         l.set_xalign(xalign_of({ (*p).text_align }));
     }
+    if (dirty & label::P_VERTICAL_ALIGN) != (0 as u64) {
+        // The same reasoning one axis over: `yalign` places the text block
+        // inside the frame facet gave the label.
+        l.set_yalign(xalign_of({ (*p).vertical_align }));
+    }
     if (dirty & label::P_MAX_LINES) != (0 as u64) {
         let m: i64 = { (*p).max_lines };
-        l.set_lines(m as i32);
+        // ZERO IS UNLIMITED to facet and -1 is unlimited to GTK, and passing
+        // the one for the other is not a rounding error: `gtk_label_set_lines(0)`
+        // left GTK measuring a label whose natural width came back SMALLER than
+        // its own minimum, which it reports as a warning per label per frame —
+        // six lines of `Gtk-WARNING ... natural size must be >= min size` for
+        // every glyph in the gallery's catalog.
+        l.set_lines(gtk_lines_of(m));
         // Lines only bite once the label is allowed to wrap.
         l.set_wrap(m != (1 as i64));
     }
     if (dirty & label::P_LINE_BREAK) != (0 as u64) {
         l.set_ellipsize(ellipsize_of({ (*p).line_break }));
     }
-    let styled: u64 = label::P_FONT_SIZE | label::P_FONT_FAMILY | label::P_FONT_WEIGHT
-        | label::P_IS_ITALIC | label::P_TEXT_COLOR;
-    if (dirty & styled) != (0 as u64) {
-        text_css(v, n, { (*p).font_family.view() }, { (*p).font_size },
-                 { (*p).font_weight }, { (*p).is_italic }, { (*p).text_color });
-    }
     return;
+}
+
+// facet's line limit -> GtkLabel's.
+//
+// ZERO IS UNLIMITED to facet and -1 is unlimited to GTK, and passing the one
+// for the other is not a rounding error: `gtk_label_set_lines(0)` is a limit of
+// no lines at all.
+fn gtk_lines_of(max_lines: i64) -> i32 {
+    if max_lines <= (0 as i64) { return (0 as i32) -% (1 as i32); }
+    return max_lines as i32;
 }
 
 // GtkJustification: 0 LEFT, 1 RIGHT, 2 CENTER, 3 FILL.
@@ -162,76 +890,347 @@ fn ellipsize_of(b: vocab::LineBreak) -> i32 {
     };
 }
 
-// ---- button ------------------------------------------------------------------
+// ================================================================================
+// button
+// ================================================================================
+//
+// A BUTTON IS TWO WIDGETS, and that is the point. `gtk_button_set_label` gives
+// a button one string and no room for an image beside it, so `image` and
+// `content_layout` would both be unanswerable — and "GTK cannot show an icon
+// in a button" is plainly false. So the button's child is a GtkBox holding a
+// GtkImage and a GtkLabel, and `content_layout` becomes the box's orientation
+// plus which of the two comes first.
+//
+// This is the bar `facet_appkit/MANIFEST.md` sets: a control does not have to
+// be ONE native widget, and sixty-odd rows left its cannot-ledger once that
+// was allowed.
+//
+// The two children are hung off the button by name rather than found by
+// walking, because `content_layout` REORDERS them — a positional lookup would
+// answer the label for the image half the time.
 
+fn btn_label_key() -> *u8 { return #str_ptr("facet-gtk-btn-label\0"); }
+fn btn_image_key() -> *u8 { return #str_ptr("facet-gtk-btn-image\0"); }
+fn btn_box_key() -> *u8 { return #str_ptr("facet-gtk-btn-box\0"); }
+
+// Build the image+label child and record where the pieces are.
+fn build_button_content(v: *u8) {
+    // Orientation 0 = horizontal, spacing 6 = GTK's own icon/label gap.
+    let bx: gtk::Box = gtk::Box::new(0 as i32, 6 as i32);
+    let img: gtk::Image = gtk::Image::new();
+    let lbl: gtk::Label = gtk::Label::new("");
+    bx.append(img.upcast());
+    bx.append(lbl.upcast());
+    // An empty half must not consume the gap; visibility is set by `apply`.
+    img.upcast().set_visible(false);
+    g::set_data(v, btn_box_key(), bx.raw());
+    g::set_data(v, btn_image_key(), img.raw());
+    g::set_data(v, btn_label_key(), lbl.raw());
+    gtk::Button::from_raw(v).set_child(bx.upcast());
+    return;
+}
+
+// GtkImage takes an icon NAME or a file. facet's source is one string for
+// both, so it is read the way every toolkit reads it: a path has a separator
+// or an extension, a theme icon has neither.
+fn looks_like_path(s: str) -> bool {
+    var t: text::Text = text::from_str(s);
+    if t.contains("/") { return true; }
+    if t.contains(".") { return true; }
+    return false;
+}
+
+fn set_image_source(img: gtk::Image, source: str) {
+    if source == "" { img.clear(); return; }
+    if looks_like_path(source) { img.set_from_file(source); return; }
+    img.set_from_icon_name(source);
+    return;
+}
+
+// ALWAYS a GtkToggleButton — see `input::settle_toggle` for why the class
+// cannot be chosen from `toggles`: the two are different objects and `toggles`
+// is a live prop.
 fn create_button(n: *core::Node) -> *u8 {
-    return gtk::Button::new().upcast().raw();
+    let raw: *u8 = gtk::ToggleButton::new().upcast().raw();
+    build_button_content(raw);
+    // The READ half, connected once and here rather than in `apply`: a signal
+    // connection is not a prop and re-connecting it on every dirty word would
+    // fire the handler once per apply since create.
+    input::arm_button(raw, n);
+    return gtk::Button::from_raw(raw).upcast().raw();
 }
 
 fn apply_button(v: *u8, n: *core::Node, dirty: u64) {
     let p: *props::ButtonProps = props_of(n, props::K_BUTTON) as *props::ButtonProps;
     if p == (0 as *props::ButtonProps) { return; }
-    let b: gtk::Button = gtk::Button::from_raw(v);
+    let lraw: *u8 = g::get_data(v, btn_label_key());
+    let iraw: *u8 = g::get_data(v, btn_image_key());
+    let braw: *u8 = g::get_data(v, btn_box_key());
+    // A widget this package did not build has none of the three, and every
+    // call below would be a GTK critical against a null instance.
+    if lraw == (0 as *u8) || iraw == (0 as *u8) || braw == (0 as *u8) { return; }
+    let lbl: gtk::Label = gtk::Label::from_raw(lraw);
+    let img: gtk::Image = gtk::Image::from_raw(iraw);
+    let bx: gtk::Box = gtk::Box::from_raw(braw);
     if (dirty & button::P_TITLE) != (0 as u64) {
-        b.set_label({ (*p).title.view() });
+        let t: str = { (*p).title.view() };
+        lbl.set_text(t);
+        lbl.upcast().set_visible(t != "");
+    }
+    if (dirty & button::P_IMAGE) != (0 as u64) {
+        let s: str = { (*p).image.view() };
+        set_image_source(img, s);
+        img.upcast().set_visible(s != "");
+    }
+    if (dirty & button::P_CONTENT_LAYOUT) != (0 as u64) {
+        arrange_content(bx, img.upcast(), lbl.upcast(), { (*p).content_layout });
+    }
+    if (dirty & button::P_LINE_BREAK) != (0 as u64) {
+        lbl.set_ellipsize(ellipsize_of({ (*p).line_break }));
     }
     if (dirty & button::P_BORDERED) != (0 as u64) {
         // GTK says "flat" for a button without its frame. A CSS class rather
         // than a property, and removable, so the verb is live in both
-        // directions.
+        // directions. The border DECLARATIONS are `css_decls`' half.
         let w: gtk::Widget = gtk::Widget::from_raw(v);
         if { (*p).bordered } { w.remove_css_class("flat"); }
         else { w.add_css_class("flat"); }
     }
-    let styled: u64 = button::P_FONT_SIZE | button::P_FONT_FAMILY | button::P_FONT_WEIGHT
-        | button::P_IS_ITALIC | button::P_TEXT_COLOR;
-    if (dirty & styled) != (0 as u64) {
-        text_css(v, n, { (*p).font_family.view() }, { (*p).font_size },
-                 { (*p).font_weight }, { (*p).is_italic }, { (*p).text_color });
+    if (dirty & (button::P_ON | button::P_TOGGLES)) != (0 as u64) {
+        // A control that stopped toggling must not stay depressed.
+        let t: gtk::ToggleButton = gtk::ToggleButton::from_raw(v);
+        if { (*p).toggles } { t.set_active({ (*p).on }); } else { t.set_active(false); }
     }
     return;
 }
 
-// ---- toggle ------------------------------------------------------------------
+// `content_layout` in one place: the box's axis, and which child leads.
+// GtkOrientation: 0 HORIZONTAL, 1 VERTICAL. `reorder_child_after` with a NULL
+// sibling is GTK's "move to the front".
+fn arrange_content(bx: gtk::Box, img: gtk::Widget, lbl: gtk::Widget,
+                   layout: vocab::ContentLayout) {
+    let nul: gtk::Widget = gtk::Widget::from_raw(0 as *u8);
+    match layout {
+        vocab::ContentLayout::ImageLeft => {
+            bx.as_orientable().set_orientation(0 as i32);
+            bx.reorder_child_after(img, nul);
+        }
+        vocab::ContentLayout::ImageRight => {
+            bx.as_orientable().set_orientation(0 as i32);
+            bx.reorder_child_after(lbl, nul);
+        }
+        vocab::ContentLayout::ImageTop => {
+            bx.as_orientable().set_orientation(1 as i32);
+            bx.reorder_child_after(img, nul);
+        }
+        vocab::ContentLayout::ImageBottom => {
+            bx.as_orientable().set_orientation(1 as i32);
+            bx.reorder_child_after(lbl, nul);
+        }
+    }
+    return;
+}
+
+// ================================================================================
+// text_button — the same control with the frame off by default
+// ================================================================================
+
+fn create_text_button(n: *core::Node) -> *u8 {
+    let raw: *u8 = gtk::ToggleButton::new().upcast().raw();
+    input::arm_text_button(raw, n);
+    return gtk::Button::from_raw(raw).upcast().raw();
+}
+
+fn apply_text_button(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *text_button::TextButtonProps =
+        props_of(n, text_button::K_TEXT_BUTTON) as *text_button::TextButtonProps;
+    if p == (0 as *text_button::TextButtonProps) { return; }
+    let b: gtk::Button = gtk::Button::from_raw(v);
+    if (dirty & text_button::P_TITLE) != (0 as u64) { b.set_label({ (*p).title.view() }); }
+    if (dirty & (text_button::P_LINE_BREAK | text_button::P_TEXT_ALIGN)) != (0 as u64) {
+        // The label GtkButton makes for itself is reachable as its child, and
+        // it is the node that owns both of these verbs.
+        match b.get_child() {
+            option::Option[gtk::Widget]::Some(c) => {
+                let l: gtk::Label = gtk::Label::from_raw(c.raw());
+                l.set_ellipsize(ellipsize_of({ (*p).line_break }));
+                l.set_xalign(xalign_of({ (*p).text_align }));
+            }
+            option::Option[gtk::Widget]::None => { }
+        }
+    }
+    if (dirty & text_button::P_BORDERED) != (0 as u64) {
+        let w: gtk::Widget = gtk::Widget::from_raw(v);
+        if { (*p).bordered } { w.remove_css_class("flat"); }
+        else { w.add_css_class("flat"); }
+    }
+    if (dirty & (text_button::P_ON | text_button::P_TOGGLES)) != (0 as u64) {
+        let t: gtk::ToggleButton = gtk::ToggleButton::from_raw(v);
+        if { (*p).toggles } { t.set_active({ (*p).on }); } else { t.set_active(false); }
+    }
+    return;
+}
+
+// ================================================================================
+// icon_button
+// ================================================================================
+
+fn create_icon_button(n: *core::Node) -> *u8 {
+    let raw: *u8 = gtk::ToggleButton::new().upcast().raw();
+    // An explicit GtkImage child rather than `set_icon_name`, because `fit`
+    // and a file source both need the image object itself.
+    let img: gtk::Image = gtk::Image::new();
+    g::set_data(raw, btn_image_key(), img.raw());
+    gtk::Button::from_raw(raw).set_child(img.upcast());
+    input::arm_icon_button(raw, n);
+    return gtk::Button::from_raw(raw).upcast().raw();
+}
+
+fn apply_icon_button(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *props::IconButtonProps = props_of(n, props::K_ICON_BUTTON) as *props::IconButtonProps;
+    if p == (0 as *props::IconButtonProps) { return; }
+    let iraw: *u8 = g::get_data(v, btn_image_key());
+    if iraw == (0 as *u8) { return; }
+    let img: gtk::Image = gtk::Image::from_raw(iraw);
+    if (dirty & icon_button::P_SOURCE) != (0 as u64) {
+        set_image_source(img, { (*p).source.view() });
+    }
+    if (dirty & icon_button::P_FIT) != (0 as u64) {
+        // A GtkImage scales its icon to the size it is given and has no
+        // content-fit of its own; `Fill` is the one that asks it to stretch,
+        // and `expand` is how a GTK image is told to take the whole cell.
+        let w: gtk::Widget = img.upcast();
+        let fill: bool = match { (*p).fit } {
+            vocab::ImageFit::Fill => true,
+            vocab::ImageFit::AspectFill => true,
+            vocab::ImageFit::AspectFit => false,
+            vocab::ImageFit::Center => false,
+        };
+        w.set_hexpand(fill);
+        w.set_vexpand(fill);
+    }
+    if (dirty & icon_button::P_BORDERED) != (0 as u64) {
+        let w: gtk::Widget = gtk::Widget::from_raw(v);
+        if { (*p).bordered } { w.remove_css_class("flat"); }
+        else { w.add_css_class("flat"); }
+    }
+    if (dirty & (icon_button::P_ON | icon_button::P_TOGGLES)) != (0 as u64) {
+        let t: gtk::ToggleButton = gtk::ToggleButton::from_raw(v);
+        if { (*p).toggles } { t.set_active({ (*p).on }); } else { t.set_active(false); }
+    }
+    return;
+}
+
+// ================================================================================
+// toggle
+// ================================================================================
 
 fn create_toggle(n: *core::Node) -> *u8 {
-    return gtk::Switch::new().upcast().raw();
+    let s: gtk::Switch = gtk::Switch::new();
+    input::arm_toggle(s.raw(), n);
+    return s.upcast().raw();
 }
 
 fn apply_toggle(v: *u8, n: *core::Node, dirty: u64) {
     let p: *props::ToggleProps = props_of(n, props::K_TOGGLE) as *props::ToggleProps;
     if p == (0 as *props::ToggleProps) { return; }
     if (dirty & toggle::P_ON) != (0 as u64) {
-        gtk::Switch::from_raw(v).set_active({ (*p).on });
+        let s: gtk::Switch = gtk::Switch::from_raw(v);
+        // `state` is what the switch SHOWS and `active` is what it was asked
+        // for; a GtkSwitch that is driven from outside needs both, or it
+        // animates back to where it was.
+        s.set_active({ (*p).on });
+        s.set_state({ (*p).on });
     }
     return;
 }
 
-// ---- checkbox ----------------------------------------------------------------
+// ================================================================================
+// checkbox
+// ================================================================================
 
 fn create_checkbox(n: *core::Node) -> *u8 {
-    return gtk::CheckButton::new().upcast().raw();
+    let c: gtk::CheckButton = gtk::CheckButton::new();
+    input::arm_checkbox(c.raw(), n);
+    return c.upcast().raw();
 }
 
 fn apply_checkbox(v: *u8, n: *core::Node, dirty: u64) {
     let p: *props::CheckboxProps = props_of(n, props::K_CHECKBOX) as *props::CheckboxProps;
     if p == (0 as *props::CheckboxProps) { return; }
-    let c: gtk::CheckButton = gtk::CheckButton::from_raw(v);
-    if (dirty & checkbox::P_ON) != (0 as u64) { c.set_active({ (*p).on }); }
-    if (dirty & checkbox::P_COLOR) != (0 as u64) {
-        // GTK's check indicator takes its colour from `accent-color` in CSS;
-        // there is no property for it. The band's document already carries any
-        // background, so this goes through the same door the kinds use.
-        let col: vocab::Color = { (*p).color };
-        if col.is_set() {
-            let rgba: text::Text = paint::css_rgba(col);
-            paint::append_css(v, n, "accent-color: ${rgba};");
-        }
+    if (dirty & checkbox::P_ON) != (0 as u64) {
+        gtk::CheckButton::from_raw(v).set_active({ (*p).on });
     }
     return;
 }
 
-// ---- progress ----------------------------------------------------------------
+// ================================================================================
+// radio
+// ================================================================================
+//
+// A GTK radio IS a GtkCheckButton in a group — there is no GtkRadioButton in
+// GTK 4. facet names the group with a string; GTK joins by pointing at another
+// member. So the first node of each group is remembered, and every later one
+// is grouped with it.
+
+const MAX_GROUPS: usize = 32;
+static GROUP_NODES: [usize; MAX_GROUPS] = [0; MAX_GROUPS];
+static GROUP_LEADS: [usize; MAX_GROUPS] = [0; MAX_GROUPS];
+static N_GROUPS: usize = 0;
+
+fn create_radio(n: *core::Node) -> *u8 {
+    let c: gtk::CheckButton = gtk::CheckButton::new();
+    input::arm_radio(c.raw(), n);
+    return c.upcast().raw();
+}
+
+fn apply_radio(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *props::RadioProps = props_of(n, props::K_RADIO) as *props::RadioProps;
+    if p == (0 as *props::RadioProps) { return; }
+    let c: gtk::CheckButton = gtk::CheckButton::from_raw(v);
+    if (dirty & radio::P_TEXT) != (0 as u64) { c.set_label({ (*p).text.view() }); }
+    if (dirty & radio::P_GROUP) != (0 as u64) { join_group(v, n, { (*p).group.view() }); }
+    if (dirty & radio::P_ON) != (0 as u64) { c.set_active({ (*p).on }); }
+    return;
+}
+
+// The group name a remembered lead carries, read back off its NODE rather than
+// stored: a `str` is a view into the node's own Text, and a table of those
+// would dangle the moment a radio was removed.
+fn group_name_at(i: usize) -> str {
+    let ln: *core::Node = GROUP_NODES[i] as *core::Node;
+    if ln == (0 as *core::Node) { return ""; }
+    let lp: *props::RadioProps = props_of(ln, props::K_RADIO) as *props::RadioProps;
+    if lp == (0 as *props::RadioProps) { return ""; }
+    return { (*lp).group.view() };
+}
+
+// Join the named group, becoming its lead if it has none. The table is a fixed
+// 32 rows: a screen with more than 32 distinct radio groups is not a case this
+// backend has met, and a fixed table cannot leak.
+fn join_group(v: *u8, n: *core::Node, name: str) {
+    if name == "" { return; }
+    var i: usize = 0 as usize;
+    while i < N_GROUPS {
+        if group_name_at(i) == name {
+            let lead: *u8 = GROUP_LEADS[i] as *u8;
+            if lead != v && lead != (0 as *u8) {
+                gtk::CheckButton::from_raw(v).set_group(gtk::CheckButton::from_raw(lead));
+            }
+            return;
+        }
+        i = i +% (1 as usize);
+    }
+    if N_GROUPS >= MAX_GROUPS { return; }
+    GROUP_NODES[N_GROUPS] = { #addr(n as *u8) };
+    GROUP_LEADS[N_GROUPS] = { #addr(v) };
+    N_GROUPS = N_GROUPS +% (1 as usize);
+    return;
+}
+
+// ================================================================================
+// progress
+// ================================================================================
 
 fn create_progress(n: *core::Node) -> *u8 {
     return gtk::ProgressBar::new().upcast().raw();
@@ -240,78 +1239,1931 @@ fn create_progress(n: *core::Node) -> *u8 {
 fn apply_progress(v: *u8, n: *core::Node, dirty: u64) {
     let p: *props::ProgressProps = props_of(n, props::K_PROGRESS) as *props::ProgressProps;
     if p == (0 as *props::ProgressProps) { return; }
+    // `animate_progress` writes `progress` too, so the two bits arrive
+    // together — and the ANIMATED one wins. Setting the fraction first and then
+    // starting a tween from it would make every animation a jump followed by a
+    // tween of nothing.
+    if (dirty & progress::P_ANIMATE_PROGRESS) != (0 as u64) {
+        anim::animate_progress(v, { (*p).progress }, { (*p).animate_duration },
+                               { (*p).animate_easing });
+        return;
+    }
     if (dirty & progress::P_PROGRESS) != (0 as u64) {
         gtk::ProgressBar::from_raw(v).set_fraction({ (*p).progress });
     }
     return;
 }
 
-// ---- slider ------------------------------------------------------------------
+// ================================================================================
+// spinner
+// ================================================================================
+
+fn create_spinner(n: *core::Node) -> *u8 {
+    return gtk::Spinner::new().upcast().raw();
+}
+
+fn apply_spinner(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *props::SpinnerProps = props_of(n, props::K_SPINNER) as *props::SpinnerProps;
+    if p == (0 as *props::SpinnerProps) { return; }
+    if (dirty & spinner::P_IS_RUNNING) != (0 as u64) {
+        gtk::Spinner::from_raw(v).set_spinning({ (*p).is_running });
+    }
+    return;
+}
+
+// ================================================================================
+// slider
+// ================================================================================
 
 fn create_slider(n: *core::Node) -> *u8 {
     // Orientation 0 = horizontal. A vertical slider is a `C_FLOW_DIRECTION`
     // question the contract does not ask of this kind.
-    return gtk::Scale::new_with_range(0 as i32, 0.0f64, 1.0f64, 0.01f64).upcast().raw();
+    let s: gtk::Scale = gtk::Scale::new_with_range(0 as i32, 0.0f64, 1.0f64, 0.01f64);
+    // The value readout is GTK's own affordance and not facet's; a slider that
+    // prints a number nobody asked for is a different control.
+    s.set_draw_value(false);
+    input::arm_slider(s.raw(), n);
+    return s.upcast().raw();
 }
 
 fn apply_slider(v: *u8, n: *core::Node, dirty: u64) {
     let p: *props::SliderProps = props_of(n, props::K_SLIDER) as *props::SliderProps;
     if p == (0 as *props::SliderProps) { return; }
-    let s: gtk::Scale = gtk::Scale::from_raw(v);
     // `set_range` / `set_value` are GtkRange's, not GtkScale's — a Scale IS a
     // Range, and the binding models that as an upcast rather than by copying
     // the parent's methods onto every subclass.
-    let r: gtk::Range = s.upcast();
+    let r: gtk::Range = gtk::Scale::from_raw(v).upcast();
     if (dirty & (slider::P_MINIMUM | slider::P_MAXIMUM)) != (0 as u64) {
         r.set_range({ (*p).minimum }, { (*p).maximum });
     }
     if (dirty & slider::P_VALUE) != (0 as u64) {
-        r.set_value({ (*p).value });
+        if r.get_value() != { (*p).value } { r.set_value({ (*p).value }); }
     }
     return;
 }
 
-// ---- text_field --------------------------------------------------------------
+// ================================================================================
+// stepper
+// ================================================================================
+
+fn create_stepper(n: *core::Node) -> *u8 {
+    let s: gtk::SpinButton = gtk::SpinButton::new_with_range(0.0f64, 100.0f64, 1.0f64);
+    input::arm_stepper(s.raw(), n);
+    return s.upcast().raw();
+}
+
+fn apply_stepper(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *props::StepperProps = props_of(n, props::K_STEPPER) as *props::StepperProps;
+    if p == (0 as *props::StepperProps) { return; }
+    let s: gtk::SpinButton = gtk::SpinButton::from_raw(v);
+    if (dirty & (stepper::P_MINIMUM | stepper::P_MAXIMUM)) != (0 as u64) {
+        s.set_range({ (*p).minimum }, { (*p).maximum });
+    }
+    if (dirty & stepper::P_INCREMENT) != (0 as u64) {
+        // GTK takes a step AND a page increment; facet declares one, so the
+        // page is ten steps — the same ratio GTK's own default carries.
+        let step: f64 = { (*p).increment };
+        s.set_increments(step, step * (10.0 as f64));
+    }
+    if (dirty & stepper::P_VALUE) != (0 as u64) {
+        if s.get_value() != { (*p).value } { s.set_value({ (*p).value }); }
+    }
+    return;
+}
+
+// ================================================================================
+// image
+// ================================================================================
+
+fn create_image(n: *core::Node) -> *u8 {
+    return gtk::Picture::new().upcast().raw();
+}
+
+fn apply_image(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *props::ImageProps = props_of(n, props::K_IMAGE) as *props::ImageProps;
+    if p == (0 as *props::ImageProps) { return; }
+    let pic: gtk::Picture = gtk::Picture::from_raw(v);
+    if (dirty & image::P_SOURCE) != (0 as u64) {
+        pic.set_filename({ (*p).source.view() });
+        // An animated source is decoded a SECOND time, as an animation, and
+        // the still frame above is what shows until something plays it. The
+        // double decode is the price of GtkPicture taking a paintable and
+        // GdkPixbufAnimation being the only decoder that knows about frames.
+        anim::load_animation(v, { (*p).source.view() });
+    }
+    if (dirty & (image::P_IS_ANIMATION_PLAYING | image::P_SOURCE)) != (0 as u64) {
+        anim::set_playing(v, { (*p).is_animation_playing });
+    }
+    if (dirty & image::P_FIT) != (0 as u64) {
+        // GtkContentFit: 0 FILL, 1 CONTAIN, 2 COVER, 3 SCALE_DOWN. facet's
+        // four names land on it exactly, which is rare enough to say out loud.
+        pic.set_content_fit(match { (*p).fit } {
+            vocab::ImageFit::Fill => 0,
+            vocab::ImageFit::AspectFit => 1,
+            vocab::ImageFit::AspectFill => 2,
+            vocab::ImageFit::Center => 3,
+        });
+    }
+    return;
+}
+
+// ================================================================================
+// text_field
+// ================================================================================
 
 fn create_text_field(n: *core::Node) -> *u8 {
-    return gtk::Entry::new().upcast().raw();
+    let e: gtk::Entry = gtk::Entry::new();
+    input::arm_text_field(e.raw(), n);
+    return e.upcast().raw();
 }
 
 fn apply_text_field(v: *u8, n: *core::Node, dirty: u64) {
     let p: *props::TextFieldProps = props_of(n, props::K_TEXT_FIELD) as *props::TextFieldProps;
     if p == (0 as *props::TextFieldProps) { return; }
     let e: gtk::Entry = gtk::Entry::from_raw(v);
+    let iv: *props::InputViewProps = #addr_of((*p).input_view);
     // TEXT and PLACEHOLDER live on the embedded `input_view` block, which the
     // contract shares across every text-bearing kind rather than restating.
-    if (dirty & text_field::P_TEXT) != (0 as u64) {
-        // The text itself is GtkEditable's, an INTERFACE GtkEntry implements —
-        // in GTK 4 the entry's own buffer API is the lower tier.
-        e.as_editable().set_text({ (*p).input_view.text.view() });
-    }
+    apply_editable(e.as_editable(), iv,
+                   (dirty & text_field::P_TEXT) != (0 as u64),
+                   (dirty & text_field::P_IS_READ_ONLY) != (0 as u64),
+                   (dirty & text_field::P_CURSOR_POSITION) != (0 as u64),
+                   (dirty & text_field::P_SELECTION_LENGTH) != (0 as u64));
     if (dirty & text_field::P_PLACEHOLDER) != (0 as u64) {
-        e.set_placeholder_text({ (*p).input_view.placeholder.view() });
+        e.set_placeholder_text({ (*iv).placeholder.view() });
     }
     if (dirty & text_field::P_IS_SECURE) != (0 as u64) {
         // GTK says "visibility" for the inverse of a password field.
         e.set_visibility(!{ (*p).is_secure });
     }
-    if (dirty & text_field::P_IS_READ_ONLY) != (0 as u64) {
-        e.as_editable().set_editable(!{ (*p).input_view.is_read_only });
-    }
     if (dirty & text_field::P_MAX_LENGTH) != (0 as u64) {
-        e.set_max_length({ (*p).input_view.max_length } as i32);
+        e.set_max_length({ (*iv).max_length } as i32);
     }
     if (dirty & text_field::P_TEXT_ALIGN) != (0 as u64) {
         e.as_editable().set_alignment(xalign_of({ (*p).text_align }));
     }
+    if (dirty & text_field::P_VERTICAL_ALIGN) != (0 as u64) {
+        // A single-line entry has one line to place, and GTK places it by
+        // aligning the WIDGET inside the frame facet gave it.
+        gtk::Widget::from_raw(v).set_valign(valign_of({ (*p).vertical_align }));
+    }
+    if (dirty & text_field::P_KEYBOARD) != (0 as u64) {
+        e.set_input_purpose(purpose_of({ (*iv).keyboard }));
+    }
+    if (dirty & (text_field::P_CHECKS_SPELLING | text_field::P_PREDICTS_TEXT)) != (0 as u64) {
+        e.set_input_hints(hints_of({ (*iv).checks_spelling }, { (*iv).predicts_text }));
+    }
+    if (dirty & text_field::P_CLEAR_BUTTON) != (0 as u64) {
+        // GtkEntry's secondary icon is the clear button every GTK app uses for
+        // this; `WhileEditing` is what makes it activatable.
+        let show: bool = match { (*p).clear_button } {
+            vocab::ClearButton::Never => false,
+            vocab::ClearButton::WhileEditing => true,
+        };
+        if show { e.set_icon_from_icon_name(1 as i32, "edit-clear-symbolic"); }
+        else { e.set_icon_from_icon_name(1 as i32, ""); }
+        e.set_icon_activatable(1 as i32, show);
+    }
     return;
 }
 
-// ---- box / container ---------------------------------------------------------
+// GtkAlign: 0 FILL, 1 START, 2 END, 3 CENTER.
+fn valign_of(a: vocab::TextAlign) -> i32 {
+    return match a {
+        vocab::TextAlign::Start => 1,
+        vocab::TextAlign::Center => 3,
+        vocab::TextAlign::End => 2,
+        vocab::TextAlign::Justify => 0,
+    };
+}
+
+// ================================================================================
+// search_field
+// ================================================================================
+
+fn create_search_field(n: *core::Node) -> *u8 {
+    let e: gtk::SearchEntry = gtk::SearchEntry::new();
+    input::arm_search_field(e.raw(), n);
+    return e.upcast().raw();
+}
+
+fn apply_search_field(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *props::SearchFieldProps = props_of(n, props::K_SEARCH_FIELD) as *props::SearchFieldProps;
+    if p == (0 as *props::SearchFieldProps) { return; }
+    let e: gtk::SearchEntry = gtk::SearchEntry::from_raw(v);
+    let iv: *props::InputViewProps = #addr_of((*p).input_view);
+    apply_editable(e.as_editable(), iv,
+                   (dirty & search_field::P_TEXT) != (0 as u64),
+                   (dirty & search_field::P_IS_READ_ONLY) != (0 as u64),
+                   (dirty & search_field::P_CURSOR_POSITION) != (0 as u64),
+                   (dirty & search_field::P_SELECTION_LENGTH) != (0 as u64));
+    if (dirty & search_field::P_PLACEHOLDER) != (0 as u64) {
+        e.set_placeholder_text({ (*iv).placeholder.view() });
+    }
+    if (dirty & search_field::P_TEXT_ALIGN) != (0 as u64) {
+        e.as_editable().set_alignment(xalign_of({ (*p).text_align }));
+    }
+    if (dirty & search_field::P_VERTICAL_ALIGN) != (0 as u64) {
+        gtk::Widget::from_raw(v).set_valign(valign_of({ (*p).vertical_align }));
+    }
+    if (dirty & search_field::P_KEYBOARD) != (0 as u64) {
+        e.set_input_purpose(purpose_of({ (*iv).keyboard }));
+    }
+    if (dirty & (search_field::P_CHECKS_SPELLING | search_field::P_PREDICTS_TEXT)) != (0 as u64) {
+        e.set_input_hints(hints_of({ (*iv).checks_spelling }, { (*iv).predicts_text }));
+    }
+    if (dirty & search_field::P_MAX_LENGTH) != (0 as u64) {
+        // A GtkSearchEntry has no max-length of its own; GtkEditable's
+        // width-in-characters is the nearest thing and is NOT the same verb,
+        // so the length is enforced on the way in instead — see
+        // `input::search_changed`.
+        e.as_editable().set_max_width_chars({ (*iv).max_length } as i32);
+    }
+    return;
+}
+
+// ================================================================================
+// text_area
+// ================================================================================
+//
+// A GtkTextView, whose text lives in a GtkTextBuffer rather than on the widget
+// — so this is the one text kind that does NOT go through GtkEditable, and the
+// only one whose `apply` has to reach a second object.
+
+// ---- the placeholder a GtkTextView does not have -------------------------------
+//
+// GtkEntry has `placeholder-text`; GtkTextView has nothing, and a multi-line
+// editor is exactly where a hint is most useful. The answer is a LABEL INSIDE
+// THE VIEW: `gtk_text_view_add_overlay` places a child at a position in BUFFER
+// coordinates, which is a real GTK API for annotating text and is why this does
+// not need a GtkOverlay wrapper — the node's widget stays the GtkTextView, and
+// every other verb in this file keeps working on it unchanged.
+//
+// IT IS DRIVEN BY THE BUFFER, not by `apply`. The label's visibility is a
+// question about the buffer's contents, and the buffer already emits `changed`
+// for both a write from the application and a keystroke from the user — so
+// hanging the sync there answers both with one handler and no cross-module
+// call. `apply` would only ever see the first.
+
+fn area_hint_key() -> *u8 { return #str_ptr("facet-gtk-area-hint\0"); }
+
+fn placeholder_of(v: *u8) -> *u8 { return g::get_data(v, area_hint_key()); }
+
+// Shown only when there is nothing to read past. `user` is the LABEL, so this
+// needs no node and cannot go stale when a description is rebuilt.
+fn area_hint_sync(buffer: *u8, user: *u8) {
+    if user == (0 as *u8) { return; }
+    let empty: bool = gtk::TextBuffer::from_raw(buffer).get_char_count() == (0 as i32);
+    gtk::Widget::from_raw(user).set_visible(empty);
+    return;
+}
+
+fn add_placeholder(t: gtk::TextView) {
+    let hint: gtk::Label = gtk::Label::new("");
+    let w: gtk::Widget = hint.upcast();
+    // It is furniture, not content: it must never take a click meant for the
+    // text under it, and it starts at the buffer's origin because that is where
+    // the first character would be.
+    w.set_can_target(false);
+    w.set_visible(false);
+    hint.set_xalign(0.0f32);
+    hint.set_yalign(0.0f32);
+    t.add_overlay(w, 0 as i32, 0 as i32);
+    g::set_data(t.raw(), area_hint_key(), hint.raw());
+    let _s: u64 = t.get_buffer().connect_changed(area_hint_sync, hint.raw());
+    return;
+}
+
+fn set_placeholder(v: *u8, p: *props::TextAreaProps) {
+    let hint: *u8 = placeholder_of(v);
+    if hint == (0 as *u8) { return; }
+    let iv: *props::InputViewProps = #addr_of((*p).input_view);
+    gtk::Label::from_raw(hint).set_text({ (*iv).placeholder.view() });
+    area_hint_sync(gtk::TextView::from_raw(v).get_buffer().raw(), hint);
+    return;
+}
+
+fn set_placeholder_color(v: *u8, p: *props::TextAreaProps) {
+    let hint: *u8 = placeholder_of(v);
+    if hint == (0 as *u8) { return; }
+    let iv: *props::InputViewProps = #addr_of((*p).input_view);
+    let c: vocab::Color = { (*iv).placeholder_color };
+    // Unset is the THEME's dimmed ink, not black: `dim-label` is GTK's own
+    // class for exactly this and it follows light/dark on its own.
+    if !c.is_set() {
+        gtk::Widget::from_raw(hint).add_css_class("dim-label");
+        strip_provider(hint).load_from_string("");
+        return;
+    }
+    gtk::Widget::from_raw(hint).remove_css_class("dim-label");
+    var body: text::Text = color_decl("color", c);
+    strip_provider(hint).load_from_string("* { ${body} }");
+    return;
+}
+
+// ---- style_runs ----------------------------------------------------------------
+//
+// A GtkTextBuffer styles RANGES with tags, which is the same idea as facet's
+// runs and lands on it almost exactly. Two things are not obvious:
+//
+// THE TAGS ARE NAMED AND REUSED. An anonymous tag can be added to a table
+// repeatedly and never comes out, so rebuilding the runs on every write would
+// grow the table forever. `facet:run:N` is looked up first and reset in place,
+// so a buffer that has ever shown five runs owns five tags and no more.
+//
+// EVERY PROPERTY IS WRITTEN, including the ones this run does not use. A reused
+// tag remembers what the last run put on it, and GtkTextTag carries a `-set`
+// boolean beside each value for exactly this — so "no colour" is written as
+// `foreground-set: false` rather than left alone.
+//
+// The properties go through `g_object_set_property` with a GValue rather than
+// `g_object_set`, which is varargs and unreachable from here. `foreground` and
+// `background` are STRINGS that GDK parses, and `paint::css_rgba` already emits
+// the syntax it parses.
+
+#[link_name = "gtk_text_buffer_get_iter_at_offset"]
+extern fn area_iter_at(buffer: *u8, iter: *u8, offset: i32);
+
+fn iter_at(buffer: *u8, storage: *u8, offset: i32) -> gtk::TextIter {
+    { area_iter_at(buffer, storage, offset) };
+    return gtk::TextIter::from_raw(storage);
+}
+
+fn set_bool_prop(obj: *u8, name: str, v: bool) {
+    var storage: [u8; 32] = [0u8; 32];
+    let val: gobject_gir::Value =
+        gobject_gir::Value::from_raw(#addr_of(storage) as *u8).init(g_type_boolean());
+    val.set_boolean(v);
+    gobject_gir::Object::from_raw(obj).set_property(name, val);
+    val.unset();
+    return;
+}
+
+fn set_int_prop(obj: *u8, name: str, v: i32) {
+    var storage: [u8; 32] = [0u8; 32];
+    let val: gobject_gir::Value =
+        gobject_gir::Value::from_raw(#addr_of(storage) as *u8).init(g_type_int());
+    val.set_int(v);
+    gobject_gir::Object::from_raw(obj).set_property(name, val);
+    val.unset();
+    return;
+}
+
+fn set_str_prop(obj: *u8, name: str, v: str) {
+    var storage: [u8; 32] = [0u8; 32];
+    let val: gobject_gir::Value =
+        gobject_gir::Value::from_raw(#addr_of(storage) as *u8).init(g_type_string());
+    val.set_string(v);
+    gobject_gir::Object::from_raw(obj).set_property(name, val);
+    val.unset();
+    return;
+}
+
+// G_TYPE_BOOLEAN / G_TYPE_INT / G_TYPE_STRING, which are fixed fundamental type
+// ids: `type << 2`, with 5, 6 and 16 the slots. Named rather than called
+// through `g_type_from_name`, which needs the type to have been registered by
+// something first.
+fn g_type_boolean() -> usize { return 20 as usize; }
+fn g_type_int() -> usize { return 24 as usize; }
+fn g_type_string() -> usize { return 64 as usize; }
+
+fn run_tag_name(i: usize) -> text::Text { return text::from_str("facet:run:${i}"); }
+
+// The tag for run `i`, made once per buffer and reset on every use.
+fn tag_for_run(b: gtk::TextBuffer, i: usize) -> gtk::TextTag {
+    let table: gtk::TextTagTable = b.get_tag_table();
+    let name: text::Text = run_tag_name(i);
+    return match table.lookup(name.view()) {
+        option::Option[gtk::TextTag]::Some(t) => t,
+        option::Option[gtk::TextTag]::None => {
+            let fresh: gtk::TextTag = gtk::TextTag::new(name.view());
+            let _a: bool = table.add(fresh);
+            fresh
+        }
+    };
+}
+
+// PANGO_STYLE_ITALIC, PANGO_UNDERLINE_{NONE,SINGLE}.
+fn pango_italic() -> i32 { return 2 as i32; }
+fn pango_underline_single() -> i32 { return 1 as i32; }
+fn pango_underline_none() -> i32 { return 0 as i32; }
+
+fn style_one_run(tag: gtk::TextTag, r: *vocab::StyleRun) {
+    let obj: *u8 = tag.raw();
+    let fg: vocab::Color = { (*r).color };
+    set_bool_prop(obj, "foreground-set", fg.is_set());
+    if fg.is_set() { set_str_prop(obj, "foreground", paint::css_rgba(fg).view()); }
+    let bg: vocab::Color = { (*r).background_color };
+    set_bool_prop(obj, "background-set", bg.is_set());
+    if bg.is_set() { set_str_prop(obj, "background", paint::css_rgba(bg).view()); }
+    let w: vocab::FontWeight = { (*r).font_weight };
+    let weighted: bool = match w { vocab::FontWeight::Default => false, _ => true };
+    set_bool_prop(obj, "weight-set", weighted);
+    if weighted { set_int_prop(obj, "weight", paint::pango_weight(w)); }
+    set_bool_prop(obj, "style-set", { (*r).is_italic });
+    if { (*r).is_italic } { set_int_prop(obj, "style", pango_italic()); }
+    let d: vocab::TextDecoration = { (*r).decoration };
+    set_bool_prop(obj, "underline-set", true);
+    set_int_prop(obj, "underline", match d {
+        vocab::TextDecoration::Underline => pango_underline_single(),
+        _ => pango_underline_none(),
+    });
+    set_bool_prop(obj, "strikethrough-set", true);
+    set_bool_prop(obj, "strikethrough", match d {
+        vocab::TextDecoration::Strikethrough => true,
+        _ => false,
+    });
+    return;
+}
+
+fn apply_style_runs(v: *u8, p: *props::TextAreaProps) {
+    let b: gtk::TextBuffer = gtk::TextView::from_raw(v).get_buffer();
+    let count: i32 = b.get_char_count();
+    var lo: [u8; 96] = [0u8; 96];
+    var hi: [u8; 96] = [0u8; 96];
+    // Cleared WHOLE first: a run that shrank would otherwise leave the tail of
+    // its old range styled, which reads as the run having moved.
+    b.remove_all_tags(iter_at(b.raw(), #addr_of(lo) as *u8, 0 as i32),
+                      iter_at(b.raw(), #addr_of(hi) as *u8, count));
+    let runs: *vocab::StyleRuns = #addr_of((*p).style_runs);
+    var i: usize = 0 as usize;
+    let n: usize = { (*runs).count() };
+    while i < n {
+        let r: *vocab::StyleRun = { (*runs).at(i) };
+        if r != (0 as *vocab::StyleRun) {
+            // CLAMPED to the text that is there. A run is a range over a string
+            // the application also owns, and the two are written separately —
+            // so a run past the end is an ordinary intermediate state, not an
+            // error, and an unclamped offset is a GTK assertion.
+            var start: i32 = { (*r).start } as i32;
+            var end: i32 = { (*r).end() } as i32;
+            if start > count { start = count; }
+            if end > count { end = count; }
+            if end > start {
+                let tag: gtk::TextTag = tag_for_run(b, i);
+                style_one_run(tag, r);
+                b.apply_tag(tag, iter_at(b.raw(), #addr_of(lo) as *u8, start),
+                            iter_at(b.raw(), #addr_of(hi) as *u8, end));
+            }
+        }
+        i = i +% (1 as usize);
+    }
+    return;
+}
+
+fn create_text_area(n: *core::Node) -> *u8 {
+    let t: gtk::TextView = gtk::TextView::new();
+    // GTK's default is no wrapping at all, which under an external layout
+    // engine means a paragraph draws off the side of its own frame.
+    t.set_wrap_mode(2 as i32);      // GTK_WRAP_WORD
+    add_placeholder(t);
+    input::arm_text_area(t.raw(), n);
+    return t.upcast().raw();
+}
+
+fn apply_text_area(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *props::TextAreaProps = props_of(n, props::K_TEXT_AREA) as *props::TextAreaProps;
+    if p == (0 as *props::TextAreaProps) { return; }
+    let t: gtk::TextView = gtk::TextView::from_raw(v);
+    let iv: *props::InputViewProps = #addr_of((*p).input_view);
+    if (dirty & text_area::P_TEXT) != (0 as u64) {
+        let b: gtk::TextBuffer = t.get_buffer();
+        // Same guard as the single-line case: rewriting the identical string
+        // would collapse the selection and move the caret while typing.
+        if input::buffer_text(b.raw()).view() != { (*iv).text.view() } {
+            b.set_text({ (*iv).text.view() }, (0 as i32) -% (1 as i32));
+        }
+    }
+    if (dirty & text_area::P_IS_READ_ONLY) != (0 as u64) {
+        t.set_editable(!{ (*iv).is_read_only });
+    }
+    if (dirty & text_area::P_TEXT_ALIGN) != (0 as u64) {
+        t.set_justification(justify_of({ (*p).text_align }));
+    }
+    if (dirty & text_area::P_VERTICAL_ALIGN) != (0 as u64) {
+        gtk::Widget::from_raw(v).set_valign(valign_of({ (*p).vertical_align }));
+    }
+    if (dirty & (text_area::P_CURSOR_POSITION | text_area::P_SELECTION_LENGTH)) != (0 as u64) {
+        // A buffer addresses positions with ITERATORS, not indices, so this is
+        // the one text verb that cannot be a setter — see `input::buffer_select`.
+        input::buffer_select(t.get_buffer().raw(), { (*iv).cursor_position } as i32,
+                             { (*iv).selection_length } as i32);
+    }
+    if (dirty & text_area::P_MAX_LENGTH) != (0 as u64) {
+        // A GtkTextBuffer has no max-length of its own, so the limit is kept
+        // by TRUNCATING — here for a write from the application, and in
+        // `input::area_changed` for a write from the user.
+        input::buffer_truncate(t.get_buffer().raw(), { (*iv).max_length } as i32);
+    }
+    if (dirty & text_area::P_KEYBOARD) != (0 as u64) {
+        t.set_input_purpose(purpose_of({ (*iv).keyboard }));
+    }
+    if (dirty & (text_area::P_CHECKS_SPELLING | text_area::P_PREDICTS_TEXT)) != (0 as u64) {
+        t.set_input_hints(hints_of({ (*iv).checks_spelling }, { (*iv).predicts_text }));
+    }
+    if (dirty & text_area::P_PLACEHOLDER) != (0 as u64) { set_placeholder(v, p); }
+    if (dirty & text_area::P_PLACEHOLDER_COLOR) != (0 as u64) {
+        set_placeholder_color(v, p);
+    }
+    // The runs are re-applied when the TEXT changes too: they are offsets into
+    // a string that has just been replaced, and tags do not follow a rewrite.
+    if (dirty & (text_area::P_STYLE_RUNS | text_area::P_TEXT)) != (0 as u64) {
+        apply_style_runs(v, p);
+    }
+    // `auto_size` is not a write. It decides whether this node MEASURES ITSELF,
+    // which `views::create` asks about once and `input::area_changed` acts on
+    // for every keystroke — the bit is read here so the gate is where a reader
+    // looks for it, and so a change of mind re-measures.
+    if (dirty & text_area::P_AUTO_SIZE) != (0 as u64) {
+        { (*n).mark_content_changed() };
+    }
+    return;
+}
+
+// ================================================================================
+// symbol
+// ================================================================================
+//
+// TWO WIDGETS BY SET, decided at create because the set is decided at build:
+// `symbol(icons::home)` is a codepoint in an icon FONT and `symbol(named: ...)`
+// is one of the desktop's own icons. A GtkLabel draws the first — the glyph IS
+// text — and a GtkImage the second, because a themed icon is not.
+
+fn symbol_props(n: *core::Node) -> *symbol::SymbolProps {
+    let d: *core::Data = core::node_data(n);
+    if d == (0 as *core::Data) { return 0 as *symbol::SymbolProps; }
+    if { (*d).kind } != symbol::K_SYMBOL { return 0 as *symbol::SymbolProps; }
+    return { (*d).props } as *symbol::SymbolProps;
+}
+
+fn symbol_is_system(n: *core::Node) -> bool {
+    let p: *symbol::SymbolProps = symbol_props(n);
+    if p == (0 as *symbol::SymbolProps) { return false; }
+    return match { (*p).set } {
+        symbol::IconSet::System => true,
+        symbol::IconSet::Bundled => false,
+    };
+}
+
+fn create_symbol(n: *core::Node) -> *u8 {
+    if symbol_is_system(n) { return gtk::Image::new().upcast().raw(); }
+    let l: gtk::Label = gtk::Label::new("");
+    let w: gtk::Widget = l.upcast();
+    w.set_halign(1 as i32);
+    w.set_valign(1 as i32);
+    return w.raw();
+}
+
+fn apply_symbol(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *symbol::SymbolProps = symbol_props(n);
+    if p == (0 as *symbol::SymbolProps) { return; }
+    if symbol_is_system(n) {
+        let img: gtk::Image = gtk::Image::from_raw(v);
+        if (dirty & symbol::P_NAME) != (0 as u64) {
+            img.set_from_icon_name({ (*p).name.view() });
+        }
+        if (dirty & symbol::P_SIZE) != (0 as u64) {
+            // A themed icon is sized in PIXELS, not in font points — there is
+            // no glyph to scale.
+            img.set_pixel_size({ (*p).size } as i32);
+        }
+        return;
+    }
+    let l: gtk::Label = gtk::Label::from_raw(v);
+    if (dirty & symbol::P_ICON) != (0 as u64) {
+        // The codepoint IS the label. `input::utf8_of` is the same encoder the
+        // key band uses to turn a keyval into the text it produces.
+        l.set_text(input::utf8_of({ (*p).icon }).view());
+    }
+    return;
+}
+
+// ================================================================================
+// page_dots
+// ================================================================================
+//
+// GTK HAS NO PAGE INDICATOR, and that is not the end of the answer. A row of
+// dots is a GtkBox of small widgets with a radius, which is what every GTK app
+// that wants one builds — so the control is real here and only its parts are
+// GTK's. The same rule as the button: a control does not have to be ONE native
+// widget.
+//
+// The dots are rebuilt when the COUNT changes and only recoloured when the
+// position does, because a rebuild on every page turn would be a new widget
+// per dot per swipe.
+
+fn dots_count_key() -> *u8 { return #str_ptr("facet-gtk-dots-n\0"); }
+
+fn create_page_dots(n: *core::Node) -> *u8 {
+    // Horizontal, with GTK's own small gap.
+    return gtk::Box::new(0 as i32, 6 as i32).upcast().raw();
+}
+
+fn visible_dots(p: *props::PageDotsProps) -> i64 {
+    var n: i64 = { (*p).count };
+    let cap: i64 = { (*p).max_dots };
+    if cap > (0 as i64) && n > cap { n = cap; }
+    if n < (0 as i64) { n = 0 as i64; }
+    return n;
+}
+
+fn apply_page_dots(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *props::PageDotsProps = props_of(n, props::K_PAGE_DOTS) as *props::PageDotsProps;
+    if p == (0 as *props::PageDotsProps) { return; }
+    let bx: gtk::Box = gtk::Box::from_raw(v);
+    let want: i64 = visible_dots(p);
+    let have: i64 = g::get_data(v, dots_count_key()) as i64;
+    if (dirty & (page_dots::P_COUNT | page_dots::P_MAX_DOTS)) != (0 as u64) || have != want {
+        rebuild_dots(bx, want);
+        g::set_data(v, dots_count_key(), want as *u8);
+    }
+    if (dirty & page_dots::P_HIDES_SINGLE) != (0 as u64) {
+        let hide: bool = { (*p).hides_single } && want <= (1 as i64);
+        gtk::Widget::from_raw(v).set_visible(!hide);
+    }
+    // Size, shape and both colours are per-DOT, so they are written onto the
+    // dots rather than into this widget's own CSS document.
+    if (dirty & (page_dots::P_POSITION | page_dots::P_DOT_COLOR
+                 | page_dots::P_SELECTED_DOT_COLOR | page_dots::P_DOT_SIZE
+                 | page_dots::P_DOT_SHAPE)) != (0 as u64) {
+        style_dots(bx, p, want);
+    }
+    return;
+}
+
+fn rebuild_dots(bx: gtk::Box, want: i64) {
+    // Empty it first: GtkBox has no "set child count", and a dot left over
+    // from a longer carousel is a dot the user can see.
+    var c: *u8 = first_child_raw(bx.raw());
+    while c != (0 as *u8) {
+        let next: *u8 = next_sibling_raw(c);
+        bx.remove(gtk::Widget::from_raw(c));
+        c = next;
+    }
+    var i: i64 = 0 as i64;
+    while i < want {
+        let d: gtk::Label = gtk::Label::new("");
+        bx.append(d.upcast());
+        i = i +% (1 as i64);
+    }
+    return;
+}
+
+// Each dot carries its OWN provider, for the reason `paint` gives: a document
+// per widget needs no invented selector and dies with the widget.
+fn style_dots(bx: gtk::Box, p: *props::PageDotsProps, want: i64) {
+    let size: i32 = { (*p).dot_size } as i32;
+    let radius: i32 = match { (*p).dot_shape } {
+        // A circle is a square with half its side as the radius; GTK has no
+        // shape property, only a border radius.
+        vocab::DotShape::Circle => size / (2 as i32),
+        vocab::DotShape::Square => 0 as i32,
+    };
+    var i: i64 = 0 as i64;
+    var c: *u8 = first_child_raw(bx.raw());
+    while c != (0 as *u8) {
+        let on: bool = i == { (*p).position };
+        let col: vocab::Color = if on { { (*p).selected_dot_color } } else { { (*p).dot_color } };
+        let w: gtk::Widget = gtk::Widget::from_raw(c);
+        w.set_size_request(size, size);
+        var body: text::Text = color_decl("background-color", col);
+        body = body.appending("border-radius: ${radius}px;");
+        dot_provider(c).load_from_string("* { ${body} }");
+        i = i +% (1 as i64);
+        c = next_sibling_raw(c);
+    }
+    return;
+}
+
+fn dot_provider(v: *u8) -> gtk::CssProvider {
+    let existing: *u8 = g::get_data(v, #str_ptr("facet-gtk-dot-css\0"));
+    if existing != (0 as *u8) { return gtk::CssProvider::from_raw(existing); }
+    let pr: gtk::CssProvider = gtk::CssProvider::new();
+    gtk::Widget::from_raw(v).get_style_context()
+        .add_provider(gtk::StyleProvider::from_raw(pr.raw()), 600 as u32);
+    g::set_data(v, #str_ptr("facet-gtk-dot-css\0"), pr.raw());
+    return pr;
+}
+
+fn first_child_raw(v: *u8) -> *u8 {
+    match gtk::Widget::from_raw(v).get_first_child() {
+        option::Option[gtk::Widget]::Some(c) => { return c.raw(); }
+        option::Option[gtk::Widget]::None => { return 0 as *u8; }
+    }
+}
+
+fn next_sibling_raw(v: *u8) -> *u8 {
+    match gtk::Widget::from_raw(v).get_next_sibling() {
+        option::Option[gtk::Widget]::Some(c) => { return c.raw(); }
+        option::Option[gtk::Widget]::None => { return 0 as *u8; }
+    }
+}
+
+// ================================================================================
+// scroll
+// ================================================================================
+//
+// THE ONE KIND THAT BREAKS THIS PACKAGE'S SIMPLIFYING RULE. Every other backed
+// container is a GtkFixed, so `insert` has exactly one child model; a
+// GtkScrolledWindow's children belong in its DOCUMENT, not in the scroll view.
+// So the scroll carries a GtkFixed of its own and `document_host` is what every
+// caller that hosts children asks first — `views::insert`, `views::remove` and
+// `geometry::reposition_children`.
+//
+// The same shape as `facet_appkit/controls::document_host`, and the same
+// reason: this is the only place a node's WIDGET and the widget that HOLDS ITS
+// CHILDREN differ.
+
+fn scroll_doc_key() -> *u8 { return #str_ptr("facet-gtk-scroll-doc\0"); }
+
+// The OTHER thing a scrolled window may hold: a GtkListView, which is what
+// `recycler` puts in a `list` or a `collection`.
+//
+// The key lives HERE rather than in `recycler` for one reason: `geometry` has
+// to ask the question (a recycling list has no Fixed for the refresh spinner to
+// sit in) and importing the recycler from geometry would be a cycle — the
+// recycler is a kind's body and geometry is under it. A g_object data key is
+// the smallest thing that can be shared, and this file already owns the sibling
+// key for the other answer.
+fn list_view_key() -> *u8 { return #str_ptr("facet-gtk-listview\0"); }
+
+fn list_view_of(v: *u8) -> *u8 {
+    if v == (0 as *u8) { return 0 as *u8; }
+    return g::get_data(v, list_view_key());
+}
+
+fn recycles(v: *u8) -> bool { return list_view_of(v) != (0 as *u8); }
+
+// The widget a node's children go into. Its own widget for every kind but one.
+fn document_host(v: *u8) -> *u8 {
+    if v == (0 as *u8) { return v; }
+    let d: *u8 = g::get_data(v, scroll_doc_key());
+    if d == (0 as *u8) { return v; }
+    return d;
+}
+
+fn create_scroll(n: *core::Node) -> *u8 {
+    let sw: gtk::ScrolledWindow = gtk::ScrolledWindow::new();
+    let doc: gtk::Fixed = gtk::Fixed::new();
+    sw.set_child(doc.upcast());
+    g::set_data(sw.raw(), scroll_doc_key(), doc.raw());
+    yields_to_its_container(n);
+    // GTK would otherwise ask the document how big it would LIKE to be and
+    // grow the scroll to fit — which under an external layout engine means a
+    // scroll that is never smaller than its content and therefore never
+    // scrolls.
+    sw.set_propagate_natural_width(false);
+    sw.set_propagate_natural_height(false);
+    input::arm_scroll(sw.raw(), n);
+    return sw.upcast().raw();
+}
+
+// Which axes this node actually scrolls. Read in two places — the policy here
+// and the document's size in `geometry` — and they must agree, because half
+// the nested-scroll answer is the policy and the other half is having nothing
+// to scroll on the axis that was declined.
+fn scrolls_vertically(p: *props::ScrollProps) -> bool {
+    return match { (*p).axis } {
+        vocab::ScrollAxis::Both => true,
+        vocab::ScrollAxis::Vertical => true,
+        vocab::ScrollAxis::Horizontal => false,
+        vocab::ScrollAxis::Neither => false,
+    };
+}
+
+fn scrolls_horizontally(p: *props::ScrollProps) -> bool {
+    return match { (*p).axis } {
+        vocab::ScrollAxis::Both => true,
+        vocab::ScrollAxis::Horizontal => true,
+        vocab::ScrollAxis::Vertical => false,
+        vocab::ScrollAxis::Neither => false,
+    };
+}
+
+// GtkPolicyType: 0 ALWAYS, 1 AUTOMATIC, 2 NEVER, 3 EXTERNAL.
+//
+// NEVER is not merely "hide the bar" in GTK 4 — a scrolled window whose policy
+// is NEVER on an axis does not CLAIM scroll events on it, so they reach an
+// enclosing scroll that can use them. That is GTK's own nested answer and it
+// is the same distinction AppKit makes with scroll elasticity, where getting it
+// wrong made a vertical lane swallow every horizontal scroll of the board it
+// sat in.
+fn policy_of(scrolls: bool, bars: vocab::ScrollBars) -> i32 {
+    if !scrolls { return 2; }
+    return match bars {
+        vocab::ScrollBars::Always => 0,
+        vocab::ScrollBars::Default => 1,
+        // `Never` hides the BAR and keeps the scrolling, which is what the
+        // verb says — EXTERNAL is GTK's "the bar is somewhere else", and it is
+        // the only policy that scrolls without drawing one.
+        vocab::ScrollBars::Never => 3,
+    };
+}
+
+fn apply_scroll(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *props::ScrollProps = props_of(n, props::K_SCROLL) as *props::ScrollProps;
+    if p == (0 as *props::ScrollProps) { return; }
+    let sw: gtk::ScrolledWindow = gtk::ScrolledWindow::from_raw(v);
+    if (dirty & (scroll::P_AXIS | scroll::P_HORIZONTAL_SCROLL_BARS
+                 | scroll::P_VERTICAL_SCROLL_BARS)) != (0 as u64) {
+        sw.set_policy(policy_of(scrolls_horizontally(p), { (*p).horizontal_scroll_bars }),
+                      policy_of(scrolls_vertically(p), { (*p).vertical_scroll_bars }));
+    }
+    if (dirty & scroll::P_SCROLL_X) != (0 as u64) {
+        let a: gtk::Adjustment = sw.get_hadjustment();
+        if a.get_value() != { (*p).scroll_x } { a.set_value({ (*p).scroll_x }); }
+    }
+    if (dirty & scroll::P_SCROLL_Y) != (0 as u64) {
+        let a: gtk::Adjustment = sw.get_vadjustment();
+        if a.get_value() != { (*p).scroll_y } { a.set_value({ (*p).scroll_y }); }
+    }
+    if (dirty & scroll::P_CASCADES_INPUT) != (0 as u64) {
+        // `cascades_input` only means anything on a node that is ALSO input
+        // transparent, and `input::arm` is where the pair is answered — this
+        // re-asks it so a live change to either one lands.
+        input::apply_input_transparency(v, n);
+    }
+    return;
+}
+
+// ================================================================================
+// pull to refresh
+// ================================================================================
+//
+// ONE MECHANISM, TWO ROWS. `refreshable` is a whole kind for it and `list`
+// carries six bits of the same feature, so both go through this — a spinner
+// this package owns, shown while a refresh is running, and a downward pull past
+// the top of a scroll that starts one.
+//
+// GTK HAS NO PULL-TO-REFRESH. It is not a control anywhere in the toolkit: what
+// exists is a scrolled window that reports its position and a spinner. So the
+// gesture is assembled here, and the ONE thing that makes it not fight the
+// scroll is that it only listens while the scroll is already AT THE TOP — a
+// scrolled window that still has room above it is a scrolled window that owns
+// the drag.
+
+fn refresh_spinner_key() -> *u8 { return #str_ptr("facet-gtk-refresh-spin\0"); }
+
+fn spinner_of(v: *u8) -> *u8 { return g::get_data(v, refresh_spinner_key()); }
+
+// The height the spinner occupies while it is showing. A refresh that pushed
+// the content down and back would be nicer and is a tween on the padding;
+// this holds it in the space above, which is where a pull leaves it anyway.
+fn refresh_height() -> f64 { return 32.0f64; }
+
+// Give a widget the spinner and the pull gesture. Called from the `create_*` of
+// every kind that can refresh, so the two rows cannot drift apart.
+fn add_refresh_affordance(host: *u8, n: *core::Node) {
+    let spin: gtk::Spinner = gtk::Spinner::new();
+    spin.upcast().set_visible(false);
+    spin.upcast().set_halign(3 as i32);              // GTK_ALIGN_CENTER
+    g::set_data(host, refresh_spinner_key(), spin.raw());
+    input::arm_pull_to_refresh(host, spin.raw(), n);
+    return;
+}
+
+// Show or hide the spinner, and colour it. A GtkSpinner draws in the
+// FOREGROUND colour, which is the same door `spinner`'s own `color` uses.
+fn set_refreshing(v: *u8, running: bool, tint: vocab::Color) {
+    let raw: *u8 = spinner_of(v);
+    if raw == (0 as *u8) { return; }
+    let spin: gtk::Spinner = gtk::Spinner::from_raw(raw);
+    spin.set_spinning(running);
+    spin.upcast().set_visible(running);
+    if tint.is_set() {
+        var body: text::Text = color_decl("color", tint);
+        strip_provider(raw).load_from_string("* { ${body} }");
+    }
+    return;
+}
+
+// ---- the `refreshable` kind ---------------------------------------------------
+
+fn refreshable_props(n: *core::Node) -> *props::RefreshableProps {
+    return props_of(n, props::K_REFRESHABLE) as *props::RefreshableProps;
+}
+
+fn create_refreshable(n: *core::Node) -> *u8 {
+    let fixed: gtk::Fixed = gtk::Fixed::new();
+    add_refresh_affordance(fixed.raw(), n);
+    // The spinner lives IN the container, above the content — `geometry`
+    // places it, the way it places a split's divider and a tab strip.
+    match option::Option[*u8]::Some(spinner_of(fixed.raw())) {
+        option::Option[*u8]::Some(sp) => {
+            if sp != (0 as *u8) { fixed.put(gtk::Widget::from_raw(sp), 0.0f64, 0.0f64); }
+        }
+        option::Option[*u8]::None => { }
+    }
+    return fixed.upcast().raw();
+}
+
+fn apply_refreshable(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *props::RefreshableProps = refreshable_props(n);
+    if p == (0 as *props::RefreshableProps) { return; }
+    if (dirty & (refreshable::P_IS_REFRESHING | refreshable::P_REFRESH_COLOR)) != (0 as u64) {
+        set_refreshing(v, { (*p).is_refreshing }, { (*p).refresh_color });
+    }
+    if (dirty & refreshable::P_IS_REFRESHABLE) != (0 as u64) {
+        // The gesture stays armed and the FLAG is what it reads, so switching
+        // the verb on and off costs nothing and cannot leave a half-armed
+        // control behind.
+        input::set_pull_enabled(v, { (*p).is_refreshable });
+    }
+    return;
+}
+
+// ================================================================================
+// bordered
+// ================================================================================
+//
+// A CSS border on the container the kind already gets, which answers four of
+// its eight verbs. The other four — cap, join, miter limit and dash offset —
+// are in MANIFEST.md §1: a CSS border has a STYLE and nothing else, and a
+// GtkFixed is not a canvas.
+//
+// What CSS does have and is easy to miss: `border-radius: 50%` is an ellipse,
+// so `stroke_shape` is answered whole rather than for its rounded case alone.
+
+fn bordered_decls(p: *props::BorderedProps) -> text::Text {
+    var body: text::Text = text::from_str("");
+    let w: f64 = { (*p).stroke_width };
+    if w > (0.0 as f64) {
+        let px: i32 = (w + (0.5 as f64)) as i32;
+        body = body.appending("border-width: ${px}px;");
+        body = body.appending("border-style: ${dash_style(p)};");
+    } else {
+        body = body.appending("border-width: 0;");
+    }
+    // A Brush is a gradient or a solid; a CSS border takes the solid. A
+    // gradient border is `border-image`, which is a different mechanism with a
+    // different box model — recorded in §2 rather than approximated with the
+    // gradient's first stop pretending to be the whole thing.
+    let brush: vocab::Brush = { (*p).stroke };
+    if !brush.is_gradient {
+        body = body.appending(color_decl("border-color", brush.start).view());
+    }
+    body = body.appending(shape_decl({ (*p).stroke_shape }).view());
+    return body;
+}
+
+// Any dash pattern at all is a DASHED border: CSS has three styles and no
+// array, so what a `Dashes` can say here is that it is not solid. A run
+// shorter than the stroke is round enough to read as dotted, which is the one
+// further distinction the three styles allow.
+fn dash_style(p: *props::BorderedProps) -> str {
+    let d: *vocab::Dashes = #addr_of((*p).stroke_dash);
+    if { (*d).count } == (0 as usize) { return "solid"; }
+    let on: f64 = { (*d).run(0 as usize) };
+    if on > (0.0 as f64) && on <= { (*p).stroke_width } { return "dotted"; }
+    return "dashed";
+}
+
+// `Shape.kind`: 0 none, 1 rect, 2 rounded, 3 ellipse. An ellipse IS a border
+// radius of half the box on every corner, which is what `50%` means.
+fn shape_decl(s: vocab::Shape) -> text::Text {
+    let kind: i64 = s.kind;
+    if kind == (3 as i64) { return text::from_str("border-radius: 50%;"); }
+    if kind == (2 as i64) { return corner_decl(s.corners); }
+    if kind == (1 as i64) { return text::from_str("border-radius: 0;"); }
+    return text::from_str("");
+}
+
+// ================================================================================
+// carousel
+// ================================================================================
+//
+// A horizontal scroll host whose children are PAGES. Not a stack like `tabs`:
+// a carousel PEEKS its neighbours (`peek_insets`), so the pages have to be side
+// by side and the position is a scroll offset rather than a choice of which one
+// exists.
+//
+// `wraps` is the ledger's `Loop`, and what it means to a program is that the
+// index arithmetic is CIRCULAR — a position off either end comes back at the
+// other. The touch paging that would make the pages themselves endless is the
+// other half of it and is not here; the AppKit backend records the same
+// division and the same reason.
+
+fn carousel_props(n: *core::Node) -> *props::CarouselProps {
+    return props_of(n, props::K_CAROUSEL) as *props::CarouselProps;
+}
+
+fn create_carousel(n: *core::Node) -> *u8 {
+    let sw: gtk::ScrolledWindow = gtk::ScrolledWindow::new();
+    let doc: gtk::Fixed = gtk::Fixed::new();
+    sw.set_child(doc.upcast());
+    g::set_data(sw.raw(), scroll_doc_key(), doc.raw());
+    sw.set_propagate_natural_width(false);
+    sw.set_propagate_natural_height(false);
+    yields_to_its_container(n);
+    input::arm_carousel(sw.raw(), n);
+    return sw.upcast().raw();
+}
+
+// A position off either end comes back at the other, when the carousel loops.
+// Without `wraps` it is clamped, because a position past the last page is not a
+// page and scrolling to nothing is worse than staying put.
+fn wrapped(n: *core::Node, at: i64, wraps: bool) -> i64 {
+    let count: i64 = core::child_count_of(n) as i64;
+    if count <= (0 as i64) { return 0 as i64; }
+    if !wraps {
+        if at < (0 as i64) { return 0 as i64; }
+        if at >= count { return count -% (1 as i64); }
+        return at;
+    }
+    var w: i64 = at % count;
+    if w < (0 as i64) { w = w +% count; }
+    return w;
+}
+
+// How wide one page is: the viewport, less whatever `peek_insets` leaves
+// showing of the neighbours, divided by however many are meant to be visible
+// at once.
+fn page_width(n: *core::Node, p: *props::CarouselProps) -> f64 {
+    let f: flex::Frame = { (*n).frame() };
+    let insets: vocab::Insets = { (*p).peek_insets };
+    var w: f64 = f.width - insets.leading - insets.trailing;
+    let cols: usize = { (*p).structured_items_view.columns };
+    if cols > (1 as usize) { w = w / (cols as f64); }
+    if w < (1.0 as f64) { return f.width; }
+    return w;
+}
+
+fn apply_carousel(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *props::CarouselProps = carousel_props(n);
+    if p == (0 as *props::CarouselProps) { return; }
+    let sw: gtk::ScrolledWindow = gtk::ScrolledWindow::from_raw(v);
+    if (dirty & (carousel::P_PEEK_INSETS | carousel::P_COLUMNS
+                 | carousel::P_ITEM_SIZING)) != (0 as u64) {
+        // Every page the same width, and it is a WIDTH rather than a grow:
+        // pages that shared the viewport would each shrink as more arrived,
+        // which is a strip and not a carousel.
+        //
+        // `item_sizing` asks whether every item is measured or only the first.
+        // Here they are all the same width by construction, so the two answers
+        // coincide and the verb costs nothing — which is worth saying rather
+        // than leaving the bit unnamed.
+        // The pages run ACROSS — the one thing about a carousel that is
+        // layout, and a node is a COLUMN by default. Written here rather than
+        // at create because it belongs with the sizing it makes sense of, and
+        // because a re-apply must be able to restore it.
+        { (*n).set_flex_direction(flex::FlexDirection::Row) };
+        let w: f64 = page_width(n, p);
+        var i: usize = 0 as usize;
+        let count: usize = core::child_count_of(n);
+        while i < count {
+            match core::child_of(n, i) {
+                option::Option[*core::Node]::Some(c) => {
+                    { (*c).set_width(flex::StyleLength::points(w)) };
+                    { (*c).set_flex_grow(0.0f64) };
+                    { (*c).set_flex_shrink(0.0f64) };
+                }
+                option::Option[*core::Node]::None => { }
+            }
+            i = i +% (1 as usize);
+        }
+    }
+    // `animates_scroll` is in the gate on purpose: it decides whether the move
+    // is a jump or a slide, so a write to it alone re-runs the move and the
+    // application SEES the setting it just chose.
+    if (dirty & (carousel::P_POSITION | carousel::P_WRAPS | carousel::P_SCROLL_TO
+                 | carousel::P_ANIMATES_SCROLL | carousel::P_SCROLL_ANCHOR
+                 | carousel::P_REMAINING_THRESHOLD)) != (0 as u64) {
+        let at: i64 = wrapped(n, { (*p).position }, { (*p).wraps });
+        // Written back, because `wraps` means the position ITSELF is circular:
+        // an application that set 7 on a three-page carousel reads back 1.
+        { (*p).position = at };
+        scroll_to_page(v, n, at, { (*p).animates_scroll });
+    }
+    if (dirty & (carousel::P_IS_SWIPEABLE | carousel::P_HORIZONTAL_SCROLL_BARS
+                 | carousel::P_VERTICAL_SCROLL_BARS)) != (0 as u64) {
+        // NEVER on the horizontal axis is how a carousel that is not swipeable
+        // declines the gesture — the same distinction a nested scroll makes,
+        // and the reason it is a policy rather than a hidden bar.
+        var h: i32 = 2;
+        if { (*p).is_swipeable } {
+            h = policy_of(true, { (*p).items_view.horizontal_scroll_bars });
+        }
+        sw.set_policy(h, policy_of(false, { (*p).items_view.vertical_scroll_bars }));
+    }
+    return;
+}
+
+// Scroll so the page at `at` sits at the leading edge. Its frame is flex's, so
+// this needs no measurement of its own.
+fn scroll_to_page(v: *u8, n: *core::Node, at: i64, animated: bool) {
+    if at < (0 as i64) { return; }
+    if (at as usize) >= core::child_count_of(n) { return; }
+    match core::child_of(n, at as usize) {
+        option::Option[*core::Node]::Some(c) => {
+            let cf: flex::Frame = { (*c).frame() };
+            let own: flex::Frame = { (*n).frame() };
+            let to: f64 = cf.left - own.left;
+            let adj: gtk::Adjustment = gtk::ScrolledWindow::from_raw(v).get_hadjustment();
+            if animated { input::tween_adjustment(adj.raw(), to); }
+            else { adj.set_value(to); }
+        }
+        option::Option[*core::Node]::None => { }
+    }
+    return;
+}
+
+// ================================================================================
+// date_picker and time_picker
+// ================================================================================
+//
+// A GtkMenuButton over a popover, which is a shape GTK gives and AppKit's
+// NSDatePicker does not: `is_open` is `set_active`, opening and closing are one
+// `notify::active`, and the popover's child is whatever the picker picks.
+//
+//   date   a GtkCalendar, which is GTK's own.
+//   time   TWO GtkSpinButtons, hours and minutes, because GTK has no time
+//          widget at all — a control does not have to be one native widget,
+//          and a pair of spinners is what every GTK app that needs one builds.
+//
+// ---- what `format` can honour -------------------------------------------------
+//
+// facet's `format` is MAUI's, which is .NET's pattern language; strftime is
+// not, and handing "D" to `g_date_time_format` prints "D". So the string is
+// read for WHICH COMPONENTS it names and the LOCALE formats them — `%x` for a
+// date, `%X` for a time. That is the AppKit backend's own reading, arrived at
+// because an NSDatePicker has an element mask and no format string: "the
+// ordering and the separators are the locale's, which is what a date picker is
+// for".
+
+fn date_props(n: *core::Node) -> *props::DatePickerProps {
+    return props_of(n, props::K_DATE_PICKER) as *props::DatePickerProps;
+}
+
+fn time_props(n: *core::Node) -> *props::TimePickerProps {
+    return props_of(n, props::K_TIME_PICKER) as *props::TimePickerProps;
+}
+
+fn picker_popover_key() -> *u8 { return #str_ptr("facet-gtk-picker-pop\0"); }
+fn picker_calendar_key() -> *u8 { return #str_ptr("facet-gtk-picker-cal\0"); }
+fn picker_hours_key() -> *u8 { return #str_ptr("facet-gtk-picker-hh\0"); }
+fn picker_minutes_key() -> *u8 { return #str_ptr("facet-gtk-picker-mm\0"); }
+
+fn calendar_of(v: *u8) -> *u8 { return g::get_data(v, picker_calendar_key()); }
+fn hours_of(v: *u8) -> *u8 { return g::get_data(v, picker_hours_key()); }
+fn minutes_of(v: *u8) -> *u8 { return g::get_data(v, picker_minutes_key()); }
+
+fn create_date_picker(n: *core::Node) -> *u8 {
+    let mb: gtk::MenuButton = gtk::MenuButton::new();
+    let pop: gtk::Popover = gtk::Popover::new();
+    let cal: gtk::Calendar = gtk::Calendar::new();
+    pop.set_child(cal.upcast());
+    mb.set_popover(pop.upcast());
+    g::set_data(mb.raw(), picker_popover_key(), pop.raw());
+    g::set_data(mb.raw(), picker_calendar_key(), cal.raw());
+    input::arm_date_picker(mb.raw(), cal.raw(), n);
+    return mb.upcast().raw();
+}
+
+fn create_time_picker(n: *core::Node) -> *u8 {
+    let mb: gtk::MenuButton = gtk::MenuButton::new();
+    let pop: gtk::Popover = gtk::Popover::new();
+    let row: gtk::Box = gtk::Box::new(0 as i32, 4 as i32);
+    // 0..23 and 0..59, wrapping — a spinner that stops at 23 and refuses to
+    // reach 0 is a clock that cannot cross midnight.
+    let hh: gtk::SpinButton = gtk::SpinButton::new_with_range(0.0f64, 23.0f64, 1.0f64);
+    let mm: gtk::SpinButton = gtk::SpinButton::new_with_range(0.0f64, 59.0f64, 1.0f64);
+    hh.set_wrap(true);
+    mm.set_wrap(true);
+    row.append(hh.upcast());
+    row.append(gtk::Label::new(":").upcast());
+    row.append(mm.upcast());
+    pop.set_child(row.upcast());
+    mb.set_popover(pop.upcast());
+    g::set_data(mb.raw(), picker_popover_key(), pop.raw());
+    g::set_data(mb.raw(), picker_hours_key(), hh.raw());
+    g::set_data(mb.raw(), picker_minutes_key(), mm.raw());
+    input::arm_time_picker(mb.raw(), hh.raw(), mm.raw(), n);
+    return mb.upcast().raw();
+}
+
+// Which components a format string NAMES. Not a layout: the letters are read
+// for what they mean and the locale supplies the order and the separators.
+fn names_date(f: str) -> bool {
+    var t: text::Text = text::from_str(f);
+    if t.contains("d") { return true; }
+    if t.contains("M") { return true; }
+    if t.contains("y") { return true; }
+    if t.contains("D") { return true; }
+    return false;
+}
+
+fn names_time(f: str) -> bool {
+    var t: text::Text = text::from_str(f);
+    if t.contains("h") { return true; }
+    if t.contains("H") { return true; }
+    if t.contains("m") { return true; }
+    if t.contains("s") { return true; }
+    if t.contains("t") { return true; }
+    return false;
+}
+
+// The strftime pattern for a format string, given what the control IS. An
+// empty format is the control's own default component.
+fn locale_pattern(f: str, is_date: bool) -> str {
+    if f == "" { if is_date { return "%x"; } return "%X"; }
+    let d: bool = names_date(f);
+    let t: bool = names_time(f);
+    if d && t { return "%x %X"; }
+    if t { return "%X"; }
+    if d { return "%x"; }
+    if is_date { return "%x"; }
+    return "%X";
+}
+
+// A date and a time as the LOCALE writes them. Answers empty when the parts do
+// not make a date at all — a zeroed `Date` is "unset", not year zero.
+fn format_moment(year: i64, month: i64, day: i64, hour: i64, minute: i64,
+                 pattern: str) -> text::Text {
+    if year <= (0 as i64) || month <= (0 as i64) || day <= (0 as i64) {
+        return text::new();
+    }
+    return match glib::DateTime::new_local(year as i32, month as i32, day as i32,
+                                           hour as i32, minute as i32, 0.0f64) {
+        option::Option[glib::DateTime]::Some(dt) => {
+            let out: text::Text = match dt.format(pattern) {
+                option::Option[text::Text]::Some(t) => t,
+                option::Option[text::Text]::None => text::new(),
+            };
+            dt.unref();
+            out
+        }
+        option::Option[glib::DateTime]::None => text::new(),
+    };
+}
+
+// Is `d` inside [min, max]? An unset bound is no bound, which is what a zeroed
+// Date means everywhere else in the contract.
+fn date_ordinal(d: vocab::Date) -> i64 {
+    return (d.year *% (10000 as i64)) +% (d.month *% (100 as i64)) +% d.day;
+}
+
+fn date_is_set(d: vocab::Date) -> bool { return d.year > (0 as i64); }
+
+fn date_within(d: vocab::Date, lo: vocab::Date, hi: vocab::Date) -> bool {
+    if date_is_set(lo) && date_ordinal(d) < date_ordinal(lo) { return false; }
+    if date_is_set(hi) && date_ordinal(d) > date_ordinal(hi) { return false; }
+    return true;
+}
+
+fn apply_date_picker(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *props::DatePickerProps = date_props(n);
+    if p == (0 as *props::DatePickerProps) { return; }
+    let cal: *u8 = calendar_of(v);
+    if (dirty & (date_picker::P_DATE | date_picker::P_MINIMUM_DATE
+                 | date_picker::P_MAXIMUM_DATE)) != (0 as u64) {
+        // The bounds are not GTK's to hold — a GtkCalendar has no range — so
+        // they are enforced where a pick happens (`input::date_chosen`) and
+        // used here only to refuse a write that is already outside them.
+        let d: vocab::Date = { (*p).date };
+        if cal != (0 as *u8) && date_is_set(d)
+            && date_within(d, { (*p).minimum_date }, { (*p).maximum_date }) {
+            let c: gtk::Calendar = gtk::Calendar::from_raw(cal);
+            c.set_year(d.year as i32);
+            // GTK counts months from ZERO and facet from one, which is the
+            // kind of difference that shows up as "every date is a month early".
+            c.set_month((d.month -% (1 as i64)) as i32);
+            c.set_day(d.day as i32);
+        }
+    }
+    if (dirty & (date_picker::P_DATE | date_picker::P_FORMAT)) != (0 as u64) {
+        let d: vocab::Date = { (*p).date };
+        let label: text::Text = format_moment(d.year, d.month, d.day, 0 as i64, 0 as i64,
+                                              locale_pattern({ (*p).format.view() }, true));
+        gtk::MenuButton::from_raw(v).set_label(label.view());
+    }
+    if (dirty & date_picker::P_IS_OPEN) != (0 as u64) {
+        gtk::MenuButton::from_raw(v).set_active({ (*p).is_open });
+    }
+    return;
+}
+
+fn apply_time_picker(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *props::TimePickerProps = time_props(n);
+    if p == (0 as *props::TimePickerProps) { return; }
+    if (dirty & time_picker::P_TIME) != (0 as u64) {
+        let secs: f64 = { (*p).time.seconds };
+        let hh: *u8 = hours_of(v);
+        let mm: *u8 = minutes_of(v);
+        if hh != (0 as *u8) {
+            gtk::SpinButton::from_raw(hh).set_value(((secs / (3600.0 as f64)) as i64 % (24 as i64)) as f64);
+        }
+        if mm != (0 as *u8) {
+            gtk::SpinButton::from_raw(mm).set_value((((secs / (60.0 as f64)) as i64) % (60 as i64)) as f64);
+        }
+    }
+    if (dirty & (time_picker::P_TIME | time_picker::P_FORMAT)) != (0 as u64) {
+        let secs: f64 = { (*p).time.seconds };
+        let h: i64 = (secs / (3600.0 as f64)) as i64 % (24 as i64);
+        let m: i64 = ((secs / (60.0 as f64)) as i64) % (60 as i64);
+        // A time has no date, and `g_date_time_new_local` insists on one — so
+        // the components are hung on an arbitrary valid day whose only job is
+        // to exist. `%X` never prints it.
+        let label: text::Text = format_moment(2000 as i64, 1 as i64, 1 as i64, h, m,
+                                              locale_pattern({ (*p).format.view() }, false));
+        gtk::MenuButton::from_raw(v).set_label(label.view());
+    }
+    if (dirty & time_picker::P_IS_OPEN) != (0 as u64) {
+        gtk::MenuButton::from_raw(v).set_active({ (*p).is_open });
+    }
+    return;
+}
+
+// ================================================================================
+// popup
+// ================================================================================
+//
+// A GtkDropDown over a GtkStringList, with BOTH of its factories used — which
+// is what makes `label` and `item_enabled` answerable rather than a pair of
+// rows in the cannot-ledger.
+//
+//   set_factory       the BUTTON's content. facet's `label` is "what the
+//                     button reads, whatever is selected", so the button is not
+//                     simply the selected row.
+//   set_list_factory  the ROWS in the popup, where `item_enabled` decides
+//                     whether a row may be picked at all.
+//
+// A GtkComboBoxText would have been one call and could express neither.
+
+// HAND-BOUND: `gtk_string_list_new` takes a NULL-terminated array of strings
+// and the GIR presents no type for it, so cpc-bindgen skipped the constructor
+// while emitting every method on the class. NULL is an EMPTY list, which is
+// what `append` then fills — and is the only shape this package needs.
+#[link_name = "gtk_string_list_new"]
+extern fn gtk_string_list_new(strings: *u8) -> *u8;
+
+fn new_string_list() -> gtk::StringList {
+    return gtk::StringList::from_raw({ gtk_string_list_new(0 as *u8) });
+}
+
+fn popup_props(n: *core::Node) -> *props::PopupProps {
+    return props_of(n, props::K_POPUP) as *props::PopupProps;
+}
+
+fn create_popup(n: *core::Node) -> *u8 {
+    // Both arguments NULL: the model arrives with `P_ITEMS` and the
+    // expression is what a dropdown uses INSTEAD of a factory to name its
+    // items — this one has factories, so it needs none.
+    let dd: gtk::DropDown = gtk::DropDown::new(gio::ListModel::from_raw(0 as *u8),
+                                               gtk::Expression::from_raw(0 as *u8));
+    let button: gtk::SignalListItemFactory = gtk::SignalListItemFactory::new();
+    let _bs: u64 = button.connect_setup(input::popup_cell_setup, n as *u8);
+    let _bb: u64 = button.connect_bind(input::popup_button_bind, n as *u8);
+    dd.set_factory(button.upcast());
+    let rows: gtk::SignalListItemFactory = gtk::SignalListItemFactory::new();
+    let _rs: u64 = rows.connect_setup(input::popup_cell_setup, n as *u8);
+    let _rb: u64 = rows.connect_bind(input::popup_row_bind, n as *u8);
+    dd.set_list_factory(rows.upcast());
+    input::arm_popup(dd.raw(), n);
+    return dd.upcast().raw();
+}
+
+fn apply_popup(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *props::PopupProps = popup_props(n);
+    if p == (0 as *props::PopupProps) { return; }
+    let dd: gtk::DropDown = gtk::DropDown::from_raw(v);
+    if (dirty & popup::P_ITEMS) != (0 as u64) {
+        // Rebuilt whole. A GtkStringList has `append` and `remove` and no
+        // "replace these strings"; a diff would be more code than the rebuild
+        // it replaces, and the list is a menu's worth of items.
+        let model: gtk::StringList = new_string_list();
+        let items: *vocab::TextList = #addr_of((*p).items);
+        var i: usize = 0 as usize;
+        while i < { (*items).count() } {
+            model.append({ (*items).at(i) });
+            i = i +% (1 as usize);
+        }
+        dd.set_model(model.as_list_model());
+    }
+    if (dirty & (popup::P_SELECTED_INDEX | popup::P_ITEMS)) != (0 as u64) {
+        let at: i64 = { (*p).selected_index };
+        // GTK_INVALID_LIST_POSITION is how GTK says "nothing chosen"; facet
+        // says -1, and the two have to be translated or a popup with no
+        // selection shows row 0.
+        if at < (0 as i64) { dd.set_selected(gtk_invalid_position()); }
+        else { dd.set_selected(at as u32); }
+    }
+    if (dirty & (popup::P_TITLE | popup::P_LABEL | popup::P_ITEM_ENABLED)) != (0 as u64) {
+        // The button's content is built by the factory, which reads these off
+        // the node — so a change to either has to make GTK re-bind, and
+        // re-setting the model is the only door GtkDropDown offers.
+        dd.set_selected(dd.get_selected());
+    }
+    if (dirty & popup::P_TEXT_ALIGN) != (0 as u64) {
+        gtk::Widget::from_raw(v).set_halign(halign_of({ (*p).text_align }));
+    }
+    if (dirty & popup::P_VERTICAL_ALIGN) != (0 as u64) {
+        gtk::Widget::from_raw(v).set_valign(valign_of({ (*p).vertical_align }));
+    }
+    return;
+}
+
+// GTK_INVALID_LIST_POSITION — `(guint) -1`, built arithmetically because a
+// literal 4294967295 is a number nobody can check.
+fn gtk_invalid_position() -> u32 { return (0 as u32) -% (1 as u32); }
+
+// GtkAlign: 0 FILL, 1 START, 2 END, 3 CENTER.
+fn halign_of(a: vocab::TextAlign) -> i32 {
+    return match a {
+        vocab::TextAlign::Start => 1,
+        vocab::TextAlign::Center => 3,
+        vocab::TextAlign::End => 2,
+        vocab::TextAlign::Justify => 0,
+    };
+}
+
+// ================================================================================
+// tabs
+// ================================================================================
+//
+// THE STRIP IS THIS PACKAGE'S, not GTK's. A GtkNotebook owns its pages'
+// geometry and their tab labels, and facet's `tabs` says neither — its pages
+// are ordinary children laid out by flex and their titles are the children's
+// KEYS. So the strip is a row of buttons this backend builds and places, and
+// the pages are shown one at a time through `Display::None`.
+//
+// That is the AppKit backend's answer too, arrived at from the other side: it
+// dropped NSTabView for the same reason.
+
+fn tabs_props(n: *core::Node) -> *props::TabsProps {
+    return props_of(n, props::K_TABS) as *props::TabsProps;
+}
+
+fn tab_strip_key() -> *u8 { return #str_ptr("facet-gtk-tab-strip\0"); }
+fn tab_count_key() -> *u8 { return #str_ptr("facet-gtk-tab-count\0"); }
+
+fn strip_height() -> f64 { return 28.0f64; }
+
+fn tab_strip_of(v: *u8) -> *u8 { return g::get_data(v, tab_strip_key()); }
+
+fn create_tabs(n: *core::Node) -> *u8 {
+    let fixed: gtk::Fixed = gtk::Fixed::new();
+    // Horizontal, homogeneous: every tab the same width, which is what a strip
+    // of equal buttons means and saves measuring each title.
+    let strip: gtk::Box = gtk::Box::new(0 as i32, 0 as i32);
+    strip.set_homogeneous(true);
+    strip.upcast().add_css_class("facet-tab-strip");
+    fixed.put(strip.upcast(), 0.0f64, 0.0f64);
+    g::set_data(fixed.raw(), tab_strip_key(), strip.raw());
+    return fixed.upcast().raw();
+}
+
+fn apply_tabs(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *props::TabsProps = tabs_props(n);
+    if p == (0 as *props::TabsProps) { return; }
+    // The strip lives in the node's PADDING, which is how flex is told it is
+    // there. Without this a pane is laid out OVER the strip.
+    if dirty == paint::all_bits() {
+        { (*n).set_padding(flex::Edge::Top, flex::StyleLength::points(strip_height())) };
+    }
+    // One button per pane, rebuilt when the panes change. A strip is short and
+    // a diff would be more code than the rebuild it replaces.
+    let want: usize = core::child_count_of(n);
+    if want != (g::get_data(v, tab_count_key()) as usize) {
+        rebuild_tab_strip(v, n, want);
+        g::set_data(v, tab_count_key(), want as *u8);
+    }
+    if (dirty & tabs::P_SELECTED_INDEX) != (0 as u64) {
+        show_selected_pane(n, { (*p).selected_index });
+    }
+    let colours: u64 = tabs::P_BAR_BACKGROUND | tabs::P_BAR_BACKGROUND_COLOR
+        | tabs::P_BAR_TEXT_COLOR | tabs::P_SELECTED_TAB_COLOR
+        | tabs::P_UNSELECTED_TAB_COLOR | tabs::P_SELECTED_INDEX;
+    if (dirty & colours) != (0 as u64) { style_tabs(v, p, { (*p).selected_index }); }
+    return;
+}
+
+// Only the selected pane is IN the layout. `Display::None` is flex's own word
+// for it, so the showing pane gets the whole box below the strip — hiding the
+// others with `is_visible` would leave them stacked in the layout and give the
+// selected one a fraction of the space.
+fn show_selected_pane(n: *core::Node, at: i64) {
+    var i: usize = 0 as usize;
+    let count: usize = core::child_count_of(n);
+    while i < count {
+        match core::child_of(n, i) {
+            option::Option[*core::Node]::Some(c) => {
+                if (i as i64) == at { { (*c).set_display(flex::Display::Flex) }; }
+                else { { (*c).set_display(flex::Display::None) }; }
+            }
+            option::Option[*core::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return;
+}
+
+fn rebuild_tab_strip(v: *u8, n: *core::Node, count: usize) {
+    let strip: *u8 = tab_strip_of(v);
+    if strip == (0 as *u8) { return; }
+    let bx: gtk::Box = gtk::Box::from_raw(strip);
+    var c: *u8 = first_child_raw(strip);
+    while c != (0 as *u8) {
+        let next: *u8 = next_sibling_raw(c);
+        bx.remove(gtk::Widget::from_raw(c));
+        c = next;
+    }
+    var i: usize = 0 as usize;
+    while i < count {
+        match core::child_of(n, i) {
+            option::Option[*core::Node]::Some(pane) => {
+                // The tab's TITLE is the pane's KEY. facet's `tabs` declares no
+                // title of its own, and a key is the one name every node has.
+                let b: gtk::Button = gtk::Button::new_with_label({ (*pane).key() });
+                b.upcast().add_css_class("flat");
+                input::arm_tab(b.raw(), n, i);
+                bx.append(b.upcast());
+            }
+            option::Option[*core::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return;
+}
+
+// The five bar colours. The strip and its buttons are ordinary widgets, so
+// this is ordinary CSS — and the selected tab is told apart by its position,
+// because the buttons carry no state of their own.
+fn style_tabs(v: *u8, p: *props::TabsProps, at: i64) {
+    let strip: *u8 = tab_strip_of(v);
+    if strip == (0 as *u8) { return; }
+    var back: vocab::Color = { (*p).bar_background_color };
+    // A Brush is a gradient or a solid; CSS borders and backgrounds here take
+    // the solid, and `bar_background_color` wins when both are set because it
+    // is the more specific verb.
+    if !back.is_set() {
+        let brush: vocab::Brush = { (*p).bar_background };
+        if brush.is_gradient == false { back = brush.start; }
+    }
+    var body: text::Text = color_decl("background-color", back);
+    strip_provider(strip).load_from_string("* { ${body} }");
+
+    var i: i64 = 0 as i64;
+    var c: *u8 = first_child_raw(strip);
+    while c != (0 as *u8) {
+        let on: bool = i == at;
+        var fg: vocab::Color = { (*p).bar_text_color };
+        let tab: vocab::Color = if on { { (*p).selected_tab_color } }
+                                else { { (*p).unselected_tab_color } };
+        var decls: text::Text = color_decl("background-color", tab);
+        decls = decls.appending(color_decl("color", fg).view());
+        strip_provider(c).load_from_string("* { ${decls} }");
+        i = i +% (1 as i64);
+        c = next_sibling_raw(c);
+    }
+    return;
+}
+
+fn strip_provider(v: *u8) -> gtk::CssProvider {
+    let existing: *u8 = g::get_data(v, #str_ptr("facet-gtk-strip-css\0"));
+    if existing != (0 as *u8) { return gtk::CssProvider::from_raw(existing); }
+    let pr: gtk::CssProvider = gtk::CssProvider::new();
+    gtk::Widget::from_raw(v).get_style_context()
+        .add_provider(gtk::StyleProvider::from_raw(pr.raw()), 600 as u32);
+    g::set_data(v, #str_ptr("facet-gtk-strip-css\0"), pr.raw());
+    return pr;
+}
+
+// ================================================================================
+// tree
+// ================================================================================
+//
+// MATERIALISED, not recycled. The AppKit backend routes `tree` to an
+// NSOutlineView and recycles; this package has no recycler yet, so every
+// visible row is built as an ordinary facet child of the tree node and mounted
+// through the ordinary walk. A collapsed branch costs nothing — the walk does
+// not descend through it — so what this pays for is the rows that are ON SCREEN
+// plus the ones scrolled past, which for a catalog is the whole point and for a
+// hundred-thousand-node file browser is the reason `MANIFEST.md` §2 still names
+// the recycler.
+//
+// The technique is `facet_appkit/controls`' own `materialise_tree`, which is
+// still there beside its recycler and is portable facet almost line for line —
+// the rows are `core::Node`s and the walk is over facet's model.
+//
+// WHAT IS NOT PORTABLE is the two gestures, and they are the reason a tree is a
+// control rather than a list of labels: the disclosure toggles expansion and
+// the row selects, and the disclosure sits INSIDE the row. That works because
+// declining is the default here — the triangle's gesture claims the click and
+// the row's never sees it, which is the same chain a nested scroll uses.
+
+fn tree_props(n: *core::Node) -> *tree::TreeProps {
+    let d: *core::Data = core::node_data(n);
+    if d == (0 as *core::Data) { return 0 as *tree::TreeProps; }
+    if { (*d).kind } != tree::K_TREE { return 0 as *tree::TreeProps; }
+    return { (*d).props } as *tree::TreeProps;
+}
+
+
+
+
+
+
+// A SCROLL HOST IS SIZED BY ITS CONTAINER, NOT BY ITS CONTENT, and in flex that
+// sentence is `flex-shrink: 1`.
+//
+// `flex_layout`'s default shrink is ZERO — not CSS's 1 — so a node whose
+// children are taller than the space keeps their height and overflows. For an
+// ordinary box that is right: nothing should silently squash. For a scroll it
+// is exactly backwards, and it is the whole reason the kind exists: the gallery
+// catalog laid out at 1148 points inside a 619-point pane and ran off the
+// bottom of the window with a scrollbar that had nothing to scroll.
+//
+// Written here rather than at every apply because it is STRUCTURAL — what the
+// kind IS — not a prop that can change.
+fn yields_to_its_container(n: *core::Node) {
+    if n == (0 as *core::Node) { return; }
+    { (*n).set_flex_shrink(1.0f64) };
+    return;
+}
+
+fn is_expanded(p: *tree::TreeProps, node: *tree::TreeNode) -> bool {
+    let id: str = { (*node).id_of() };
+    if id == "" { return false; }
+    let ex: *vocab::TextList = { #addr_of((*p).expanded) };
+    var i: usize = 0 as usize;
+    let n: usize = { (*ex).count() };
+    while i < n {
+        if { (*ex).at(i) } == id { return true; }
+        i = i +% (1 as usize);
+    }
+    return false;
+}
+
+fn indent_step() -> f64 { return 16.0f64; }
+fn default_row_height() -> f64 { return 28.0f64; }
+fn disclosure_width() -> f64 { return 16.0f64; }
+
+fn row_height_of(p: *tree::TreeProps) -> f64 {
+    let h: f64 = { (*p).row_height };
+    if h >= (1.0 as f64) { return h; }
+    return default_row_height();
+}
+
+// One row: the disclosure, then whatever the application's builder gave.
+//
+// THE ROW CARRIES THE MODEL NODE as its `item`, which is what `set_item` is
+// for — "what a shared handler tells its nodes apart by". One handler serves
+// every row and asks the sender which one it is, rather than a closure per row
+// that this language does not have and a table per tree that would have to be
+// kept in step with the model.
+fn build_tree_row(node: *tree::TreeNode, p: *tree::TreeProps, depth: i64) -> core::Node {
+    let h: f64 = row_height_of(p);
+    var cells: core::Builder = core::Builder::new();
+    cells.add(disclosure_cell(node, p));
+    cells.add(content_cell(node, p, h));
+
+    var row: core::Node = core::row(cells, key: row_key(node, p));
+    row.set_height(flex::StyleLength::points(h));
+    // Indentation IS layout, so it is flex's — a leading pad, not a
+    // backend-drawn gutter.
+    row.set_padding(flex::Edge::Left,
+                    flex::StyleLength::points((depth as f64) * indent_step()));
+    row.set_align(flex::Align::Center);
+    if is_selected(p, node) {
+        row.set_background_color(vocab::Color::selected_content_background());
+    }
+    core::set_item(#addr_of(row), node as *u8);
+    let click: gestures::Handler = input::tree_row_click;
+    return row.gesture(on_click: click);
+}
+
+// The row's name on the agent surface: the application's `row_id` when it gave
+// one, and the model node's own id otherwise. Untagged rows are invisible to
+// `describe_ui` and cannot be clicked over the socket, which is a tree nobody
+// can drive.
+fn row_key(node: *tree::TreeNode, p: *tree::TreeProps) -> str {
+    let f: fn(*tree::TreeNode, *u8) -> text::Text = { (*p).row_id };
+    if f != tree::no_row_id {
+        let t: text::Text = f(node, { (*p).row_id_ctx });
+        if t.view() != "" { return text::intern(t.view()); }
+    }
+    return { (*node).id_of() };
+}
+
+// A branch gets a triangle that toggles it; a leaf gets the same width of
+// nothing, so every row's content starts at the same x whatever its depth.
+fn disclosure_cell(node: *tree::TreeNode, p: *tree::TreeProps) -> core::Node {
+    let w: f64 = disclosure_width();
+    if !{ (*node).is_branch } {
+        var pad: core::Node = core::column(core::Builder::new());
+        pad.set_width(flex::StyleLength::points(w));
+        return pad;
+    }
+    let glyph: str = if is_expanded(p, node) { "▾" } else { "▸" };
+    var b: core::Builder = core::Builder::new();
+    // ONE LINE AND NO ELLIPSIS. facet's label default is tail truncation, and
+    // an ellipsizing GtkLabel reports its MINIMUM width as the ellipsis and its
+    // NATURAL width as the text — so a glyph narrower than "…" measures
+    // natural < minimum, which GTK reports as a warning per label per frame.
+    // A disclosure triangle has nothing to truncate; saying so is the fix.
+    b.add(label::label(glyph, font_size: 10.0f64,
+                       max_lines: 1 as i64,
+                       line_break: vocab::LineBreak::NoWrap,
+                       text_color: vocab::Color::text_secondary()));
+    var cell: core::Node = core::column(b);
+    cell.set_width(flex::StyleLength::points(w));
+    cell.set_justify(flex::Justify::Center);
+    cell.set_align(flex::Align::Center);
+    core::set_item(#addr_of(cell), node as *u8);
+    // ITS OWN gesture, inside the row's. The triangle claims the click and the
+    // row's handler never sees it — clicking the triangle expands, clicking
+    // anywhere else selects, which is what a tree does everywhere.
+    let toggle: gestures::Handler = input::tree_disclosure_click;
+    return cell.gesture(on_click: toggle);
+}
+
+// The application's row builder, or a plain label of the node's own text when
+// it gave none — a tree with no builder still shows its shape.
+//
+// Compared against `no_row`, NOT against null: the default is a real function
+// answering an empty node, so a null check is never false and the fallback
+// never runs. The AppKit backend records finding that the hard way.
+fn content_cell(node: *tree::TreeNode, p: *tree::TreeProps, h: f64) -> core::Node {
+    let f: fn(*tree::TreeNode, *u8) -> flex::Node = { (*p).row };
+    var content: core::Node = if f != tree::no_row {
+        f(node, { (*p).row_ctx })
+    } else {
+        label::label({ (*node).label_of() }, max_lines: 1 as i64,
+                     line_break: vocab::LineBreak::TailTruncation)
+    };
+    var b: core::Builder = core::Builder::new();
+    b.add(content);
+    var cell: core::Node = core::column(b);
+    cell.set_flex_grow(1.0f64);
+    cell.set_justify(flex::Justify::Center);
+    return cell;
+}
+
+fn is_selected(p: *tree::TreeProps, node: *tree::TreeNode) -> bool {
+    let sel: str = { (*p).selected.view() };
+    if sel == "" { return false; }
+    return sel == { (*node).id_of() };
+}
+
+// ================================================================================
+// split
+// ================================================================================
+//
+// A DIVIDER IS A CONTROL, and facet says so: "flex arranges what it is told,
+// and a divider is a control the USER drags". So the pane sizes are this
+// package's answer, not the layout engine's — and under an external layout
+// engine the way to give that answer is to WRITE IT AS STYLE on the two panes
+// and let flex do the arithmetic. The alternative is a GtkPaned, which owns its
+// children's geometry and would have to be fought for every frame; this backend
+// places every widget itself and a split is not the place to stop.
+//
+// The AppKit backend reaches the same result the other way round, because
+// NSSplitView exists and does the sizing for it. Same contract, opposite
+// mechanics, and this is the seam where that shows most.
+//
+// WITHOUT THIS the two panes are ordinary flex children with equal grow, so
+// `position: 240` was a 500/500 split whose content then overflowed the window
+// — which is what the gallery looked like, and what `FACET_GTK_FRAMES=1`
+// printed as `gallery:main  564,0 1000x680` inside a 1000-wide window.
+
+fn split_props(n: *core::Node) -> *split::SplitProps {
+    let d: *core::Data = core::node_data(n);
+    if d == (0 as *core::Data) { return 0 as *split::SplitProps; }
+    if { (*d).kind } != split::K_SPLIT { return 0 as *split::SplitProps; }
+    return { (*d).props } as *split::SplitProps;
+}
+
+fn split_divider_key() -> *u8 { return #str_ptr("facet-gtk-split-divider\0"); }
+
+// The divider a user drags. A widget of this package's own, in the split's
+// Fixed but NOT one of facet's children — `views::place_at_slot` counts only
+// widgets that carry a node, so an extra one here does not shift a slot.
+fn divider_of(v: *u8) -> *u8 { return g::get_data(v, split_divider_key()); }
+
+fn create_split(n: *core::Node) -> *u8 {
+    let fixed: gtk::Fixed = gtk::Fixed::new();
+    let bar: gtk::Box = gtk::Box::new(0 as i32, 0 as i32);
+    bar.upcast().add_css_class("facet-split-divider");
+    fixed.put(bar.upcast(), 0.0f64, 0.0f64);
+    g::set_data(fixed.raw(), split_divider_key(), bar.raw());
+    input::arm_split(bar.raw(), n);
+    return fixed.upcast().raw();
+}
+
+fn apply_split(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *split::SplitProps = split_props(n);
+    if p == (0 as *split::SplitProps) { return; }
+    if (dirty & (split::P_POSITION | split::P_AXIS | split::P_MIN_LEADING
+                 | split::P_MIN_TRAILING | split::P_COLLAPSED)) != (0 as u64) {
+        size_panes(n, p);
+    }
+    if (dirty & split::P_DIVIDER) != (0 as u64) {
+        let bar: *u8 = divider_of(v);
+        if bar != (0 as *u8) {
+            var body: text::Text = color_decl("background-color", { (*p).divider_color });
+            divider_provider(bar).load_from_string("* { ${body} }");
+        }
+    }
+    return;
+}
+
+// The one write. `position` becomes the leading pane's fixed extent and the
+// trailing pane takes the rest; the minimums become each pane's own minimum, so
+// flex refuses to shrink past them exactly as a real divider refuses to be
+// dragged past them.
+fn size_panes(n: *core::Node, p: *split::SplitProps) {
+    let columns: bool = match { (*p).axis } {
+        split::SplitAxis::Columns => true,
+        split::SplitAxis::Rows => false,
+    };
+    let lead: *core::Node = pane_of(n, 0 as usize);
+    let trail: *core::Node = pane_of(n, 1 as usize);
+    if lead == (0 as *core::Node) { return; }
+    // A collapsed pane is ZERO, and the position it had is remembered by facet
+    // (`saved_position`) rather than by this package — so expanding restores
+    // the divider where the user left it without the backend keeping a copy.
+    var extent: f64 = { (*p).position };
+    if { (*p).collapsed_leading } { extent = 0.0f64; }
+    let lead_min: f64 = if { (*p).collapsed_leading } { 0.0f64 } else { { (*p).min_leading } };
+    let trail_min: f64 = if { (*p).collapsed_trailing } { 0.0f64 } else { { (*p).min_trailing } };
+    // THE FAR MINIMUM IS A CLAMP ON THE POSITION, not a shrink on the pane.
+    //
+    // Making the leading pane shrinkable was tried and is wrong: flex shrinks
+    // it whenever there is ANY overflow, so a wide demo in the trailing pane
+    // pulled the gallery's 240-point sidebar down to 193 — the position the
+    // application set was quietly not the position it got.
+    //
+    // So the leading pane holds its extent exactly and the CLAMP happens here,
+    // against the split's own frame. That frame is a layout behind — zero
+    // before the first pass, the real width after it — which is why the drag
+    // handler clamps too, and immediately: `input::split_drag_update` has the
+    // live widget and is the path a person actually moves a divider by.
+    let avail: f64 = if columns { { (*n).frame().width } } else { { (*n).frame().height } };
+    if avail > (0.0 as f64) {
+        let cap: f64 = avail - trail_min;
+        if cap > lead_min && extent > cap { extent = cap; }
+    }
+    if columns {
+        { (*lead).set_width(flex::StyleLength::points(extent)) };
+        { (*lead).set_min_width(flex::StyleLength::points(lead_min)) };
+        { (*lead).set_flex_grow(0.0f64) };
+        { (*lead).set_flex_shrink(0.0f64) };
+    } else {
+        { (*lead).set_height(flex::StyleLength::points(extent)) };
+        { (*lead).set_min_height(flex::StyleLength::points(lead_min)) };
+        { (*lead).set_flex_grow(0.0f64) };
+        { (*lead).set_flex_shrink(0.0f64) };
+    }
+    if trail == (0 as *core::Node) { return; }
+    // The trailing pane takes what is left, and SHRINKS — its minimum is what
+    // stops it, not its content. Without the shrink a wide demo pushed the pane
+    // past the window's edge and took half of itself off screen.
+    { (*trail).set_flex_grow(1.0f64) };
+    { (*trail).set_flex_shrink(1.0f64) };
+    if columns {
+        { (*trail).set_min_width(flex::StyleLength::points(trail_min)) };
+    } else {
+        { (*trail).set_min_height(flex::StyleLength::points(trail_min)) };
+    }
+    if { (*p).collapsed_trailing } {
+        if columns { { (*trail).set_width(flex::StyleLength::points(0.0f64)) }; }
+        else { { (*trail).set_height(flex::StyleLength::points(0.0f64)) }; }
+        { (*trail).set_flex_grow(0.0f64) };
+        // With the trailing pane gone the leading one takes the space, which is
+        // what collapsing the OTHER pane means.
+        { (*lead).set_flex_grow(1.0f64) };
+    }
+    return;
+}
+
+// The nth IN-TREE pane. A third child is ignored rather than stacked — two
+// panes is what a divider divides, and facet's builder says so too.
+fn pane_of(n: *core::Node, i: usize) -> *core::Node {
+    if i >= core::child_count_of(n) { return 0 as *core::Node; }
+    return match core::child_of(n, i) {
+        option::Option[*core::Node]::Some(c) => c,
+        option::Option[*core::Node]::None => 0 as *core::Node,
+    };
+}
+
+fn divider_provider(v: *u8) -> gtk::CssProvider {
+    let existing: *u8 = g::get_data(v, #str_ptr("facet-gtk-divider-css\0"));
+    if existing != (0 as *u8) { return gtk::CssProvider::from_raw(existing); }
+    let pr: gtk::CssProvider = gtk::CssProvider::new();
+    gtk::Widget::from_raw(v).get_style_context()
+        .add_provider(gtk::StyleProvider::from_raw(pr.raw()), 600 as u32);
+    g::set_data(v, #str_ptr("facet-gtk-divider-css\0"), pr.raw());
+    return pr;
+}
+
+// ================================================================================
+// box / container
+// ================================================================================
 //
 // A GtkFixed, because facet computes every frame — see geometry.cplus. Every
 // backed node that can have children is one, so `insert` has exactly one child
-// model to implement.
+// model to implement. `box`'s own two verbs are colour and radius, and both are
+// CSS — see `css_decls`.
 
 fn create_box(n: *core::Node) -> *u8 {
     return gtk::Fixed::new().upcast().raw();

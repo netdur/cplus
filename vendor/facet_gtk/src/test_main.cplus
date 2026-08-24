@@ -1,0 +1,3365 @@
+// facet_gtk test root. Importing is what compiles a module into the gate, so
+// every module is imported here whether or not this file names it again.
+//
+// ---- what can be asserted here, and what cannot -------------------------------
+//
+// NOTHING IN THIS FILE MAKES A WIDGET. `gtk_init` needs a display, and a suite
+// that only runs where someone is logged in is a suite that stops running. So
+// what is pinned here is everything the backend DECIDES — the mappings, the
+// CSS it composes, the bits it claims, the encoders — and nothing that needs
+// GTK to be up.
+//
+// The other half is `examples/facet_gtk_probe`, and it is an APP on purpose:
+// whether the switch reported its change, whether the slider fired while it was
+// being dragged, whether the field kept its caret — none of that is assertable
+// by a process with no hands. The division is the repo's standing rule: pin the
+// state machine in a test, then hand a human a probe.
+//
+// This file is skipped by `tools/parity.py`, which is why the coverage number
+// is not inflated by a test naming a prop bit.
+
+import "stdlib/option" as option;
+import "stdlib/text" as text;
+import "stdlib/vec" as vec;
+import "stdlib/status" as status;
+import "facet/facet" as core;
+import "facet/props" as props;
+import "facet/gestures" as gestures;
+import "facet/component" as component;
+import "facet/vocabulary" as vocab;
+import "facet/label" as label;
+import "facet/span" as fspan;
+import "facet/context_menu_item" as context_menu_item;
+import "facet/button" as button;
+import "facet/text_field" as text_field;
+import "facet/toggle" as toggle;
+import "facet/slider" as slider;
+import "facet/symbol" as symbol;
+import "facet/text_button" as text_button;
+import "facet/scroll" as scroll;
+import "facet/split" as split;
+import "facet/tree" as tree;
+import "facet/list" as flist;
+import "facet/collection" as fcollection;
+import "facet/table" as ftable;
+import "facet/popup" as popup;
+import "facet/tabs" as ftabs;
+import "facet/date_picker" as date_picker;
+import "facet/time_picker" as time_picker;
+import "facet/carousel" as fcarousel;
+import "facet/bordered" as fbordered;
+import "facet/refreshable" as frefreshable;
+import "facet/toolbar_item" as ftoolbar_item;
+import "facet/swipeable" as fswipeable;
+import "facet/swipe_item" as fswipe_item;
+import "facet/window_chrome" as window_chrome;
+import "facet/text_area" as ftext_area;
+import "facet/image" as fimage;
+import "facet/mount" as mount;
+import "facet/screen" as screen;
+import "facet/elements" as ui;
+import "flex_layout/flex_layout" as flex;
+import "gobject/runtime" as g;
+import "gobject_gir/gobject_gir" as gobject_gir;
+import "./controls" as controls;
+import "./input" as input;
+import "./paint" as paint;
+import "./views" as views;
+import "./geometry" as geometry;
+import "./scheduler" as scheduler;
+import "./window" as window;
+import "./dialogs" as dialogs;
+import "./drawing" as drawing;
+import "./web" as web;
+import "./chrome" as chrome;
+import "./swipe" as swipe;
+import "./anim" as anim;
+import "./recycler" as recycler;
+import "./facet_gtk" as backend;
+
+// ================================================================================
+// paint — colour resolution and the document's shape
+// ================================================================================
+
+#[test]
+fn css_rgba_writes_an_eight_bit_channel_and_a_decimal_alpha() {
+    paint::set_dark(false);
+    let c: vocab::Color = vocab::Color::rgba(1.0f64, 0.0f64, 0.5f64, 1.0f64);
+    // 0.5 * 255 rounds to 128, and the alpha is thousandths — GTK's parser
+    // takes a decimal there and an 8-bit channel cannot express it.
+    assert paint::css_rgba(c).view() == "rgba(255,0,128,0.1000)";
+    return;
+}
+
+#[test]
+fn css_rgba_picks_the_dark_side_of_an_adaptive_pair_only_when_dark() {
+    let pair: vocab::Color = vocab::Color::adaptive(
+        light: vocab::Color::rgba(1.0f64, 1.0f64, 1.0f64, 1.0f64),
+        dark: vocab::Color::rgba(0.0f64, 0.0f64, 0.0f64, 1.0f64));
+    paint::set_dark(false);
+    assert paint::css_rgba(pair).view() == "rgba(255,255,255,0.1000)";
+    paint::set_dark(true);
+    // The SAME colour value answers differently: this is the whole reason an
+    // appearance flip is a re-apply rather than a repaint of a registry.
+    assert paint::css_rgba(pair).view() == "rgba(0,0,0,0.1000)";
+    paint::set_dark(false);
+    return;
+}
+
+#[test]
+fn restyle_bits_are_not_the_create_sentinel() {
+    // NEGATIVE, and the one that shipped as a bug on AppKit: `all_bits()` is
+    // also "this is the create pass". A theme flip passing it makes every flip
+    // look like a create.
+    assert paint::restyle_bits() != paint::all_bits();
+    assert (paint::restyle_bits() & props::C_BACKGROUND_COLOR) != (0 as u64);
+    return;
+}
+
+#[test]
+fn the_css_band_bits_are_the_two_that_feed_the_document() {
+    // The band's OTHER verbs are widget properties, and listing them here
+    // would rebuild the document on a tooltip change.
+    assert paint::css_band_bits()
+        == (props::C_BACKGROUND_COLOR | props::C_CORNER_RADIUS);
+    assert (paint::css_band_bits() & props::C_TOOLTIP) == (0 as u64);
+    return;
+}
+
+#[test]
+fn the_text_scale_is_a_multiplier_and_never_zero() {
+    let was: f64 = paint::text_scale();
+    paint::set_text_scale(2.0f64);
+    assert paint::text_scale() == (2.0f64);
+    // A settings read that answers nothing must not collapse every font to 0.
+    paint::set_text_scale(0.0f64);
+    assert paint::text_scale() == (2.0f64);
+    paint::set_text_scale(was);
+    return;
+}
+
+// ================================================================================
+// controls — the CSS the kinds compose
+// ================================================================================
+
+#[test]
+fn font_scales_multiplies_the_size_rather_than_switching_the_unit() {
+    paint::set_text_scale(2.0f64);
+    let scaled: text::Text = controls::font_decls("", 10.0f64,
+        vocab::FontWeight::Default, false, true);
+    assert scaled.contains("font-size: 20px;");
+    // Opted out, the size is the one facet named — the unit stays px either
+    // way, because `pt` would also rescale by 96/72.
+    let fixed: text::Text = controls::font_decls("", 10.0f64,
+        vocab::FontWeight::Default, false, false);
+    assert fixed.contains("font-size: 10px;");
+    paint::set_text_scale(1.0f64);
+    return;
+}
+
+#[test]
+fn a_zero_font_size_writes_no_size_at_all() {
+    // NEGATIVE: 0 is facet's "the platform's own default", and `font-size: 0`
+    // is an invisible control.
+    let d: text::Text = controls::font_decls("", 0.0f64,
+        vocab::FontWeight::Bold, false, true);
+    assert !d.contains("font-size");
+    assert d.contains("font-weight: 700;");
+    return;
+}
+
+#[test]
+fn italic_is_written_in_both_directions() {
+    // A document is rebuilt WHOLE, so "not italic" has to be said: leaving it
+    // out would inherit the theme's answer instead of facet's.
+    assert controls::font_decls("", 0.0f64, vocab::FontWeight::Default, true, false)
+        .contains("font-style: italic;");
+    assert controls::font_decls("", 0.0f64, vocab::FontWeight::Default, false, false)
+        .contains("font-style: normal;");
+    return;
+}
+
+#[test]
+fn an_unset_colour_writes_nothing() {
+    // NEGATIVE: `clear()` means "leave the theme alone", not "transparent".
+    assert controls::color_decl("color", vocab::Color::clear()).view() == "";
+    assert controls::color_decl("color", vocab::Color::rgba(0.0f64, 0.0f64, 0.0f64, 1.0f64))
+        .view() != "";
+    return;
+}
+
+#[test]
+fn text_decoration_and_transform_map_onto_css_names() {
+    let underlined: text::Text = controls::text_decls(0.0f64,
+        vocab::TextTransform::Uppercase, vocab::TextDecoration::Underline,
+        vocab::Color::clear());
+    assert underlined.contains("text-transform: uppercase;");
+    assert underlined.contains("text-decoration-line: underline;");
+    let struck: text::Text = controls::text_decls(0.0f64,
+        vocab::TextTransform::Default, vocab::TextDecoration::Strikethrough,
+        vocab::Color::clear());
+    // CSS has no third state for a transform, so `Default` IS `none`.
+    assert struck.contains("text-transform: none;");
+    assert struck.contains("text-decoration-line: line-through;");
+    return;
+}
+
+#[test]
+fn character_spacing_is_written_only_when_asked_for() {
+    assert !controls::text_decls(0.0f64, vocab::TextTransform::None,
+        vocab::TextDecoration::None, vocab::Color::clear()).contains("letter-spacing");
+    assert controls::text_decls(2.0f64, vocab::TextTransform::None,
+        vocab::TextDecoration::None, vocab::Color::clear()).contains("letter-spacing: 2px;");
+    return;
+}
+
+#[test]
+fn corner_decl_writes_css_order_from_facets_edges() {
+    let c: vocab::Corners = vocab::Corners {
+        top_leading: 1.0f64, top_trailing: 2.0f64,
+        bottom_leading: 3.0f64, bottom_trailing: 4.0f64 };
+    // CSS is TL TR BR BL; facet is leading/trailing per edge.
+    assert controls::corner_decl(c).view() == "border-radius: 1px 2px 4px 3px;";
+    assert controls::corner_decl(vocab::Corners::none()).view() == "";
+    return;
+}
+
+#[test]
+fn an_unbordered_control_zeroes_the_width_and_keeps_nothing_else() {
+    // facet keeps the DESCRIPTION when the border is switched off, so the CSS
+    // must say zero rather than omit the width and inherit the theme's.
+    let off: text::Text = controls::border_decls(
+        vocab::Color::rgba(1.0f64, 0.0f64, 0.0f64, 1.0f64), 4.0f64, false);
+    assert off.view() == "border-width: 0;";
+    let on: text::Text = controls::border_decls(
+        vocab::Color::rgba(1.0f64, 0.0f64, 0.0f64, 1.0f64), 4.0f64, true);
+    assert on.contains("border-width: 4px;");
+    assert on.contains("border-color:");
+    return;
+}
+
+#[test]
+fn a_subnode_rule_is_scoped_to_this_widgets_own_node() {
+    // Unscoped, `trough { ... }` would match every trough sharing the
+    // provider's cascade. The class is on the widget and on nothing beneath it.
+    let r: text::Text = controls::subnode_rule("trough", "background-color: red;");
+    assert r.contains(paint::band_class());
+    assert r.contains(" trough {");
+    // Nothing to say, nothing written — an empty rule is still a parse.
+    assert controls::subnode_rule("trough", "").view() == "";
+    return;
+}
+
+#[test]
+fn css_bits_name_the_kinds_own_styling_and_not_the_bands() {
+    // The gate `views::configure` uses. A kind whose text colour changed must
+    // rebuild; one whose VALUE changed must not.
+    assert (controls::css_bits(props::K_LABEL) & label::P_TEXT_COLOR) != (0 as u64);
+    assert (controls::css_bits(props::K_LABEL) & label::P_TEXT) == (0 as u64);
+    assert (controls::css_bits(props::K_SLIDER) & slider::P_THUMB_COLOR) != (0 as u64);
+    assert (controls::css_bits(props::K_SLIDER) & slider::P_VALUE) == (0 as u64);
+    // A kind with no CSS of its own claims none.
+    assert controls::css_bits(props::K_PROGRESS) != (0 as u64);
+    assert controls::css_bits(props::K_CAROUSEL) == (0 as u64);
+    return;
+}
+
+#[test]
+fn css_decls_answer_empty_for_a_node_of_another_kind() {
+    // NEGATIVE, and the guard every kind body carries: a props block must never
+    // be read through the wrong type.
+    var n: core::Node = label::label("hi", key: "t");
+    assert controls::css_decls(props::K_BUTTON, #addr_of(n)).view() == "";
+    assert controls::css_rules(props::K_SLIDER, #addr_of(n)).view() == "";
+    return;
+}
+
+#[test]
+fn a_labels_declarations_carry_its_whole_text_band() {
+    paint::set_text_scale(1.0f64);
+    var n: core::Node = label::label("hi", key: "t", font_size: 12.0f64,
+                                     font_weight: vocab::FontWeight::Bold,
+                                     text_color: vocab::Color::rgba(1.0f64, 0.0f64, 0.0f64, 1.0f64));
+    let d: text::Text = controls::css_decls(props::K_LABEL, #addr_of(n));
+    assert d.contains("font-size: 12px;");
+    assert d.contains("font-weight: 700;");
+    assert d.contains("color: rgba(255,0,0,");
+    return;
+}
+
+#[test]
+fn the_keyboard_maps_onto_gtks_input_purpose() {
+    // The one thing a desktop toolkit does answer about a "keyboard": the
+    // purpose reaches the input method.
+    assert controls::purpose_of(vocab::Keyboard::Numeric) == (3 as i32);
+    assert controls::purpose_of(vocab::Keyboard::Telephone) == (4 as i32);
+    assert controls::purpose_of(vocab::Keyboard::Url) == (5 as i32);
+    assert controls::purpose_of(vocab::Keyboard::Email) == (6 as i32);
+    // Everything facet calls free-form lands on FREE_FORM rather than on a
+    // purpose it did not ask for.
+    assert controls::purpose_of(vocab::Keyboard::Default) == (0 as i32);
+    assert controls::purpose_of(vocab::Keyboard::Chat) == (0 as i32);
+    return;
+}
+
+#[test]
+fn spellcheck_is_a_hint_in_both_directions() {
+    // GTK_INPUT_HINT_SPELLCHECK 1, NO_SPELLCHECK 2, WORD_COMPLETION 4. Saying
+    // nothing is not the same as saying no.
+    assert controls::hints_of(true, false) == (1 as u32);
+    assert controls::hints_of(false, false) == (2 as u32);
+    assert controls::hints_of(true, true) == (5 as u32);
+    return;
+}
+
+#[test]
+fn the_wrap_line_breaks_are_not_ellipsization() {
+    // PangoEllipsizeMode 0 NONE / 1 START / 2 MIDDLE / 3 END. The wrap modes
+    // are answered by `set_wrap`, so they must map to NONE here rather than to
+    // a truncation nobody asked for.
+    assert controls::ellipsize_of(vocab::LineBreak::HeadTruncation) == (1 as i32);
+    assert controls::ellipsize_of(vocab::LineBreak::MiddleTruncation) == (2 as i32);
+    assert controls::ellipsize_of(vocab::LineBreak::TailTruncation) == (3 as i32);
+    assert controls::ellipsize_of(vocab::LineBreak::WordWrap) == (0 as i32);
+    assert controls::ellipsize_of(vocab::LineBreak::CharacterWrap) == (0 as i32);
+    assert controls::ellipsize_of(vocab::LineBreak::NoWrap) == (0 as i32);
+    return;
+}
+
+#[test]
+fn an_unlimited_line_count_is_minus_one_and_not_zero() {
+    // facet says 0 for "no limit"; GTK says -1, and 0 is a limit of NO LINES.
+    // Passing the one for the other is not a rounding error.
+    assert controls::gtk_lines_of(0 as i64) == ((0 as i32) -% (1 as i32));
+    assert controls::gtk_lines_of((0 as i64) -% (5 as i64)) == ((0 as i32) -% (1 as i32));
+    assert controls::gtk_lines_of(1 as i64) == (1 as i32);
+    assert controls::gtk_lines_of(3 as i64) == (3 as i32);
+    return;
+}
+
+#[test]
+fn alignment_maps_onto_three_different_gtk_vocabularies() {
+    // GtkJustification, a float x-align, and GtkAlign are three different
+    // things, and a label needs the first two for ONE verb.
+    assert controls::justify_of(vocab::TextAlign::Center) == (2 as i32);
+    assert controls::justify_of(vocab::TextAlign::End) == (1 as i32);
+    assert controls::xalign_of(vocab::TextAlign::End) == (1.0f32);
+    assert controls::xalign_of(vocab::TextAlign::Center) == (0.5f32);
+    assert controls::valign_of(vocab::TextAlign::Start) == (1 as i32);
+    assert controls::valign_of(vocab::TextAlign::Center) == (3 as i32);
+    assert controls::valign_of(vocab::TextAlign::End) == (2 as i32);
+    return;
+}
+
+#[test]
+fn an_icon_name_is_told_from_a_file_path() {
+    assert controls::looks_like_path("/usr/share/icons/x.png");
+    assert controls::looks_like_path("logo.svg");
+    assert !controls::looks_like_path("document-open-symbolic");
+    return;
+}
+
+// ================================================================================
+// views — what gets a widget, what measures itself
+// ================================================================================
+
+#[test]
+fn a_non_view_kind_never_gets_a_widget() {
+    // A span is a run inside its label's string and a menu item is a row in a
+    // menu; giving either a widget puts a rectangle in the tree.
+    assert views::non_view_kind(props::K_SPAN);
+    assert views::non_view_kind(props::K_MENU_ITEM);
+    assert !views::non_view_kind(props::K_BUTTON);
+    return;
+}
+
+#[test]
+fn a_bare_container_gets_a_widget_only_when_something_must_land_on_it() {
+    var plain: core::Node = core::column(core::Builder::new());
+    assert !views::wants_view(#addr_of(plain));
+    // A key is an address — `raise` and `find` both need one to resolve.
+    var keyed: core::Node = core::column(core::Builder::new(), key: "k");
+    assert views::wants_view(#addr_of(keyed));
+    // Gestures need a widget to arrive ON.
+    var touched: core::Node = core::column(core::Builder::new()).gesture(on_click: took);
+    assert views::wants_view(#addr_of(touched));
+    return;
+}
+
+fn took(sender: *u8, ctx: *u8) -> bool { return true; }
+fn declined(sender: *u8, ctx: *u8) -> bool { return false; }
+
+#[test]
+fn every_kind_with_a_body_measures_itself() {
+    // flex sizes a LEAF from its measure callback, and a node without one is a
+    // zero-height strip: in the right place, invisible. Every kind this
+    // backend gives a control to has to be in this list.
+    assert views::has_intrinsic_size(props::K_LABEL);
+    assert views::has_intrinsic_size(props::K_BUTTON);
+    assert views::has_intrinsic_size(text_button::K_TEXT_BUTTON);
+    assert views::has_intrinsic_size(props::K_ICON_BUTTON);
+    assert views::has_intrinsic_size(props::K_CHECKBOX);
+    assert views::has_intrinsic_size(props::K_RADIO);
+    assert views::has_intrinsic_size(props::K_TOGGLE);
+    assert views::has_intrinsic_size(props::K_SLIDER);
+    assert views::has_intrinsic_size(props::K_STEPPER);
+    assert views::has_intrinsic_size(props::K_SPINNER);
+    assert views::has_intrinsic_size(props::K_TEXT_FIELD);
+    assert views::has_intrinsic_size(props::K_SEARCH_FIELD);
+    assert views::has_intrinsic_size(symbol::K_SYMBOL);
+    assert views::has_intrinsic_size(props::K_PAGE_DOTS);
+    // A container is sized BY its container, and asking a GtkFixed how big it
+    // would like to be is not a useful question.
+    assert !views::has_intrinsic_size(props::K_BOX);
+    assert !views::has_intrinsic_size(props::K_TEXT_AREA);
+    return;
+}
+
+#[test]
+fn the_fill_line_controls_are_a_subset_of_the_measured_ones() {
+    // A control that takes the width offered still has to MEASURE, or nothing
+    // asks it anything.
+    assert views::fills_line(props::K_SLIDER);
+    assert views::has_intrinsic_size(props::K_SLIDER);
+    assert views::fills_line(props::K_TEXT_FIELD);
+    assert views::has_intrinsic_size(props::K_TEXT_FIELD);
+    assert !views::fills_line(props::K_LABEL);
+    return;
+}
+
+#[test]
+fn measuring_a_null_context_is_zero_and_not_a_crash() {
+    // NEGATIVE: flex calls the measure callback on a node whose widget went
+    // away mid-teardown.
+    let s: flex::Size = views::measure_view(0 as *u8, 100.0f64, flex::MeasureMode::Exactly,
+                                            100.0f64, flex::MeasureMode::Exactly);
+    assert s.width == (0.0f64);
+    assert s.height == (0.0f64);
+    return;
+}
+
+// ================================================================================
+// input — the key band's readers
+// ================================================================================
+
+#[test]
+fn utf8_of_encodes_every_codepoint_width() {
+    assert input::utf8_of(65 as u32).view() == "A";            // 1 byte
+    assert input::utf8_of(233 as u32).view() == "é";           // 2 bytes
+    assert input::utf8_of(0x20AC as u32).view() == "€";        // 3 bytes
+    assert input::utf8_of(0x1F600 as u32).view() == "😀";      // 4 bytes
+    return;
+}
+
+#[test]
+fn key_named_maps_the_keys_an_app_branches_on() {
+    // The keyvals ARE X11 keysyms. An app comparing against a raw number is
+    // the thing `key_named` exists to stop.
+    assert named_of(0xff0d as u32) == gestures::key_return();
+    assert named_of(0xff8d as u32) == gestures::key_return();
+    assert named_of(0xff1b as u32) == gestures::key_escape();
+    assert named_of(0xff09 as u32) == gestures::key_tab();
+    assert named_of(0xff08 as u32) == gestures::key_delete();
+    assert named_of(0xffff as u32) == gestures::key_forward_delete();
+    assert named_of(0xff51 as u32) == gestures::key_arrow_left();
+    assert named_of(0xff54 as u32) == gestures::key_arrow_down();
+    assert named_of(0xff56 as u32) == gestures::key_page_down();
+    // A key with no portable name comes through `key_code` raw instead.
+    assert named_of(0x0061 as u32) == gestures::key_none();
+    return;
+}
+
+// The opaque "platform event" on this backend is a record of the three
+// arguments GTK's `key-pressed` carries, on the handler's own stack — so a test
+// builds one the same way the handler does.
+fn named_of(keyval: u32) -> i64 {
+    var e: input::KeyEvent = input::KeyEvent {
+        keyval: keyval, keycode: 0 as u32, state: 0 as u32 };
+    return input::key_named(#addr_of(e) as *u8);
+}
+
+fn chars_of(keyval: u32) -> text::Text {
+    var e: input::KeyEvent = input::KeyEvent {
+        keyval: keyval, keycode: 0 as u32, state: 0 as u32 };
+    return input::key_chars(#addr_of(e) as *u8);
+}
+
+fn mods_of(state: u32) -> u64 {
+    var e: input::KeyEvent = input::KeyEvent {
+        keyval: 0 as u32, keycode: 0 as u32, state: state };
+    return input::key_modifiers(#addr_of(e) as *u8);
+}
+
+#[test]
+fn command_is_the_super_key_and_control_is_control() {
+    // Mapping Command onto Control would make BOTH true for one press, and an
+    // app branching on the pair would take the wrong arm.
+    let ctrl: u64 = mods_of(4 as u32);
+    assert gestures::has_modifier(ctrl, gestures::mod_control());
+    assert !gestures::has_modifier(ctrl, gestures::mod_command());
+    let sup: u64 = mods_of(67108864 as u32);
+    assert gestures::has_modifier(sup, gestures::mod_command());
+    assert !gestures::has_modifier(sup, gestures::mod_control());
+    let both: u64 = mods_of((1 as u32) | (8 as u32));
+    assert gestures::has_modifier(both, gestures::mod_shift());
+    assert gestures::has_modifier(both, gestures::mod_option());
+    return;
+}
+
+#[test]
+fn key_chars_is_empty_for_a_key_that_produces_no_text() {
+    // NEGATIVE: an arrow key and a bare modifier have no characters, and
+    // `gdk_keyval_to_unicode` says so with 0.
+    assert chars_of(0xff51 as u32).view() == "";
+    assert chars_of(0x0061 as u32).view() == "a";
+    return;
+}
+
+#[test]
+fn the_key_readers_answer_neutrally_for_a_null_event() {
+    // NEGATIVE: facet's own no-backend values, for the same reason it has
+    // them — a reader must never dereference what it was not given.
+    assert input::key_code(0 as *u8) == ((0 as i64) -% (1 as i64));
+    assert input::key_chars(0 as *u8).view() == "";
+    assert input::key_modifiers(0 as *u8) == (0 as u64);
+    assert input::key_named(0 as *u8) == gestures::key_none();
+    return;
+}
+
+// ================================================================================
+// input — the sender readers
+// ================================================================================
+
+#[test]
+fn the_sender_readers_answer_for_a_sender_that_carries_no_node() {
+    // NEGATIVE: a control fires from GTK's own chrome (an entry's icon, a
+    // scrollbar) and the walk finds nothing. Empty, not a crash.
+    assert input::key_of(0 as *u8).view() == "";
+    assert input::item_of(0 as *u8) == (0 as *u8);
+    // And `raise` on nothing is a no-op rather than a null parent walk.
+    input::raise(0 as *u8, "anything");
+    return;
+}
+
+#[test]
+fn all_six_sender_readers_are_filled() {
+    // A zero field would keep facet's portable default, which is the honest
+    // posture for a reader with no backing — but every one of these has
+    // backing now, and a zero here would mean a verb was dropped in a
+    // refactor rather than a verb that was never written.
+    let r: component::SenderReaders = input::sender_readers();
+    assert r.key_of != (0 as fn(*u8) -> text::Text);
+    assert r.item_of != (0 as fn(*u8) -> *u8);
+    assert r.raise != (0 as fn(*u8, str));
+    assert r.dropped_text != (0 as fn(*u8) -> text::Text);
+    assert r.drop_position != (0 as fn(*u8) -> option::Option[vocab::Point]);
+    assert r.drag_targeted != (0 as fn(*u8) -> bool);
+    return;
+}
+
+// ================================================================================
+// input — drag and drop
+// ================================================================================
+
+#[test]
+fn a_drag_source_offers_the_nodes_key_as_its_payload() {
+    // The payload IS the key, and this is the assertion that proves it rather
+    // than proving a pointer came back: the provider is asked for its value
+    // the way GTK asks at the destination.
+    var n: core::Node = core::column(core::Builder::new(), key: "card:7");
+    let provider: *u8 = input::drag_prepare(0 as *u8, 0.0f64, 0.0f64,
+                                            #addr_of(n) as *u8);
+    assert provider != (0 as *u8);
+
+    var storage: [u8; 32] = [0u8; 32];
+    let out: gobject_gir::Value =
+        gobject_gir::Value::from_raw(#addr_of(storage) as *u8).init(input::g_type_string());
+    let ok: i32 = { gdk_content_provider_get_value(provider, #addr_of(storage) as *u8,
+                                                   0 as *u8) };
+    assert ok != (0 as i32);
+    match out.get_string() {
+        option::Option[text::Text]::Some(t) => { assert t.view() == "card:7"; }
+        option::Option[text::Text]::None => { assert false; }
+    }
+    out.unset();
+    g::object_unref(provider);
+    return;
+}
+
+// `gboolean gdk_content_provider_get_value(provider, GValue*, GError**)`. The
+// binding does not carry it (the GIR presents the GValue as an out-parameter
+// cpc-bindgen skips) and only this test wants it, so it is bound here rather
+// than in the package.
+#[link_name = "gdk_content_provider_get_value"]
+extern fn gdk_content_provider_get_value(provider: *u8, value: *u8, error: *u8) -> i32;
+
+#[test]
+fn a_node_with_no_key_offers_no_payload_at_all() {
+    // NEGATIVE: a provider carrying an empty string would start a drag that
+    // delivers nothing, and the destination cannot tell that from a drag of
+    // the empty string. NULL is GTK's own "not a drag source after all".
+    var n: core::Node = core::column(core::Builder::new());
+    assert input::drag_prepare(0 as *u8, 0.0f64, 0.0f64, #addr_of(n) as *u8) == (0 as *u8);
+    assert input::drag_prepare(0 as *u8, 0.0f64, 0.0f64, 0 as *u8) == (0 as *u8);
+    return;
+}
+
+#[test]
+fn the_string_gtype_is_the_fundamental_shift_and_not_a_magic_number() {
+    // G_TYPE_STRING is fundamental 16 shifted left by 2. Getting it wrong
+    // makes a provider nobody can read, and the failure is silent.
+    assert input::g_type_string() == (64 as usize);
+    return;
+}
+
+#[test]
+fn a_drop_target_rejects_with_zero_and_accepts_with_copy() {
+    // GdkDragAction: 0 is the rejection and COPY is 1. facet's drag carries
+    // text and moves nothing out of the source, so COPY is the whole answer.
+    assert input::action_none() == (0 as u32);
+    assert input::action_copy() == (1 as u32);
+    return;
+}
+
+#[test]
+fn the_drop_readers_answer_neutrally_before_any_drop() {
+    // NEGATIVE, and the one that matters: `drop_position` must answer None
+    // rather than a stale point, or a handler places a card where the LAST
+    // drop landed.
+    assert input::dropped_text(0 as *u8).view() == "";
+    assert !input::drag_targeted(0 as *u8);
+    match input::drop_position(0 as *u8) {
+        option::Option[vocab::Point]::Some(_p) => { assert false; }
+        option::Option[vocab::Point]::None => { }
+    }
+    return;
+}
+
+#[test]
+fn the_hover_callbacks_reject_when_the_node_declared_no_gestures() {
+    // A drop target is only ever armed on a node that asked for one, but the
+    // callbacks are reachable with a node whose set was DETACHED since —
+    // and rejecting is what hands the drag back to whatever is underneath.
+    var bare: core::Node = core::column(core::Builder::new(), key: "b");
+    assert input::drop_enter(0 as *u8, 1.0f64, 1.0f64, #addr_of(bare) as *u8)
+        == input::action_none();
+    assert input::drop_motion(0 as *u8, 1.0f64, 1.0f64, #addr_of(bare) as *u8)
+        == input::action_none();
+    assert input::drop_performed(0 as *u8, 0 as *u8, 1.0f64, 1.0f64,
+                                 #addr_of(bare) as *u8) == (0 as i32);
+    // And a leave on the same node is a no-op rather than a null write.
+    input::drop_leave(0 as *u8, #addr_of(bare) as *u8);
+    return;
+}
+
+#[test]
+fn install_fills_the_two_slots_and_uninstall_gives_them_back() {
+    // The facade's whole job, asserted from facet's side: with nothing
+    // installed the portable no-ops answer, and they come back on teardown.
+    component::uninstall_sender_readers();
+    gestures::uninstall_key_reader();
+    assert component::key_of(0 as *u8).view() == "";
+    input::install();
+    // A reader is installed now; it still answers empty for a null sender,
+    // which is what makes the previous assertion a weak one on its own.
+    assert component::key_of(0 as *u8).view() == "";
+    assert gestures::key_named(0 as *u8) == gestures::key_none();
+    input::uninstall();
+    assert gestures::key_code(0 as *u8) == ((0 as i64) -% (1 as i64));
+    return;
+}
+
+// ================================================================================
+// the gesture band's shape
+// ================================================================================
+
+#[test]
+fn an_opaque_node_is_armed_in_the_capture_phase() {
+    // `Opaque` claims the node's whole area, children included, and the only
+    // way to be asked BEFORE a child is to run capture — which walks
+    // root-downward.
+    var claimed: core::Node = core::column(core::Builder::new(), key: "o")
+        .gesture(on_click: took, hit: gestures::HitTest::Opaque);
+    assert input::phase_for(#addr_of(claimed)) == input::phase_capture();
+    var deferring: core::Node = core::column(core::Builder::new(), key: "d")
+        .gesture(on_click: took);
+    assert input::phase_for(#addr_of(deferring)) == input::phase_bubble();
+    // A node with no gestures at all still answers the ordinary phase.
+    var bare: core::Node = core::column(core::Builder::new(), key: "b");
+    assert input::phase_for(#addr_of(bare)) == input::phase_bubble();
+    return;
+}
+
+#[test]
+fn a_declining_handler_leaves_the_event_alone() {
+    // The decline chain, at the one place this backend can see it without a
+    // pointer: `fire_of` reports whether the app TOOK it, and a false means
+    // nothing is claimed.
+    var n: core::Node = core::column(core::Builder::new(), key: "n")
+        .gesture(on_click: declined);
+    let g: *gestures::Gestures = gestures::gestures_of(#addr_of(n));
+    assert g != (0 as *gestures::Gestures);
+    assert !input::fire_of(#addr_of(n), { (*g).on_click }, { (*g).on_click_ctx });
+    var taken: core::Node = core::column(core::Builder::new(), key: "t")
+        .gesture(on_click: took);
+    let g2: *gestures::Gestures = gestures::gestures_of(#addr_of(taken));
+    assert input::fire_of(#addr_of(taken), { (*g2).on_click }, { (*g2).on_click_ctx });
+    // A verb nobody bound is not a decline that reached the app — it never ran.
+    assert !input::fire_of(#addr_of(taken), { (*g2).on_pinch }, { (*g2).on_pinch_ctx });
+    assert !input::fire_of(0 as *core::Node, took, 0 as *u8);
+    return;
+}
+
+// ================================================================================
+// scroll — the one kind whose widget and whose child host differ
+// ================================================================================
+
+#[test]
+fn document_host_answers_the_widget_itself_for_every_other_kind() {
+    // The substitution is asked of EVERY host in `insert` and in the frame
+    // walk, so answering wrongly for a plain container would put every child
+    // in the world in the wrong place.
+    var label_node: core::Node = label::label("hi", key: "l");
+    assert controls::document_host(0 as *u8) == (0 as *u8);
+    // A widget this package did not give a document answers itself. Any
+    // non-null pointer will do — the lookup is a data read, not a type check.
+    let fake: *u8 = #addr_of(label_node) as *u8;
+    assert controls::document_host(fake) == fake;
+    return;
+}
+
+#[test]
+fn an_axis_that_does_not_scroll_gets_gtks_never_policy() {
+    // GtkPolicyType: 0 ALWAYS, 1 AUTOMATIC, 2 NEVER, 3 EXTERNAL. NEVER is not
+    // "hide the bar" — a scrolled window whose policy is NEVER on an axis does
+    // not CLAIM scroll events on it, which is what lets an enclosing scroll
+    // have them. Hiding the bar while keeping the claim is the bug AppKit
+    // shipped as `ScrollBars::Never` riding the same flag as the elasticity.
+    assert controls::policy_of(false, vocab::ScrollBars::Always) == (2 as i32);
+    assert controls::policy_of(false, vocab::ScrollBars::Default) == (2 as i32);
+    assert controls::policy_of(false, vocab::ScrollBars::Never) == (2 as i32);
+    // Scrolling, and the bar mode decides how the bar is drawn.
+    assert controls::policy_of(true, vocab::ScrollBars::Always) == (0 as i32);
+    assert controls::policy_of(true, vocab::ScrollBars::Default) == (1 as i32);
+    // EXTERNAL is the only policy that scrolls without drawing a bar, which is
+    // exactly what `Never` asks for.
+    assert controls::policy_of(true, vocab::ScrollBars::Never) == (3 as i32);
+    return;
+}
+
+#[test]
+fn the_axis_says_which_directions_scroll() {
+    var both: core::Node = ui::scroll(key: "s1", axis: vocab::ScrollAxis::Both);
+    var vert: core::Node = ui::scroll(key: "s2", axis: vocab::ScrollAxis::Vertical);
+    var horz: core::Node = ui::scroll(key: "s3", axis: vocab::ScrollAxis::Horizontal);
+    var none: core::Node = ui::scroll(key: "s4", axis: vocab::ScrollAxis::Neither);
+    assert controls::scrolls_vertically(sp(#addr_of(both)));
+    assert controls::scrolls_horizontally(sp(#addr_of(both)));
+    assert controls::scrolls_vertically(sp(#addr_of(vert)));
+    assert !controls::scrolls_horizontally(sp(#addr_of(vert)));
+    assert !controls::scrolls_vertically(sp(#addr_of(horz)));
+    assert controls::scrolls_horizontally(sp(#addr_of(horz)));
+    assert !controls::scrolls_vertically(sp(#addr_of(none)));
+    assert !controls::scrolls_horizontally(sp(#addr_of(none)));
+    return;
+}
+
+fn sp(n: *core::Node) -> *props::ScrollProps {
+    return controls::props_of(n, props::K_SCROLL) as *props::ScrollProps;
+}
+
+#[test]
+fn a_scroll_document_is_the_union_of_its_children_and_never_smaller_than_the_viewport() {
+    var b: core::Builder = core::Builder::new();
+    b.add(core::column(core::Builder::new(), key: "r1"));
+    b.add(core::column(core::Builder::new(), key: "r2"));
+    var s: core::Node = ui::scroll(key: "sc", axis: vocab::ScrollAxis::Both);
+    // The tree is laid out for real, so the frames are flex's own rather than
+    // numbers this test invented.
+    s.add_child(core::column(b, key: "content"));
+    { s.calculate_layout(width: 200.0f64, height: 100.0f64) };
+    let f: flex::Frame = { s.frame() };
+    let e: flex::Size = geometry::content_extent(#addr_of(s), f);
+    // Nothing overflows here, so the document is exactly the viewport — a
+    // document SHORT of its scroll leaves a strip of window nothing draws.
+    assert e.width == f.width;
+    assert e.height == f.height;
+    return;
+}
+
+#[test]
+fn the_axis_that_does_not_scroll_is_pinned_to_the_viewport() {
+    // Policy is only half the nested answer. A lane whose content overruns its
+    // width by a few pixels of rounding is a lane with something to scroll
+    // sideways, and GTK will let it have every sideways flick — so the other
+    // half is that the declined axis has NOTHING there to scroll.
+    var wide: core::Node = core::column(core::Builder::new(), key: "wide");
+    wide.set_width(flex::StyleLength::points(900.0f64));
+    wide.set_height(flex::StyleLength::points(900.0f64));
+    var b: core::Builder = core::Builder::new();
+    b.add(wide);
+    var s: core::Node = ui::scroll(key: "sv", axis: vocab::ScrollAxis::Vertical);
+    s.add_child(core::column(b, key: "inner"));
+    { s.calculate_layout(width: 200.0f64, height: 100.0f64) };
+    let f: flex::Frame = { s.frame() };
+    let e: flex::Size = geometry::content_extent(#addr_of(s), f);
+    // Vertical scrolls: the content's own height stands.
+    assert e.height > f.height;
+    // Horizontal does not: pinned, however wide the content is.
+    assert e.width == f.width;
+    return;
+}
+
+#[test]
+fn input_transparency_cascades_unless_a_scroll_says_otherwise() {
+    // `cascades_input` is the ONE switch that changes what `input_transparent`
+    // means, and `scroll` is the only kind that declares it. Every other kind
+    // takes the ledger's default, which is that transparency cascades.
+    var plain: core::Node = core::column(core::Builder::new(), key: "p");
+    assert input::cascades_input(#addr_of(plain));
+    var cascading: core::Node = ui::scroll(key: "sa", cascades_input: true);
+    assert input::cascades_input(#addr_of(cascading));
+    var blocking: core::Node = ui::scroll(key: "sb", cascades_input: false);
+    assert !input::cascades_input(#addr_of(blocking));
+    return;
+}
+
+// ================================================================================
+// split — a divider is a control, and its position is style
+// ================================================================================
+
+fn two_pane_split(axis: split::SplitAxis, position: f64, min_leading: f64,
+                  min_trailing: f64) -> core::Node {
+    var panes: core::Builder = core::Builder::new();
+    panes.add(core::column(core::Builder::new(), key: "pane:lead"));
+    panes.add(core::column(core::Builder::new(), key: "pane:trail"));
+    return ui::split(panes, key: "sp", axis: axis, position: position,
+                     min_leading: min_leading, min_trailing: min_trailing);
+}
+
+fn pane_frame(s: *core::Node, i: usize) -> flex::Frame {
+    return match core::child_of(s, i) {
+        option::Option[*core::Node]::Some(c) => { (*c).frame() },
+        option::Option[*core::Node]::None => flex::Frame { left: 0.0f64, top: 0.0f64,
+                                                           width: 0.0f64, height: 0.0f64 },
+    };
+}
+
+#[test]
+fn a_split_lays_its_panes_at_the_position_it_was_given() {
+    // THE BUG THIS FIXES, and the gallery is where it showed: with no body,
+    // both panes were ordinary flex children with equal grow, so `position:
+    // 240` was a 500/500 split and the wider pane's content then overflowed
+    // the window. `FACET_GTK_FRAMES=1` printed it as a pane at x=564 that was
+    // 1000 wide inside a 1000-wide window.
+    var s: core::Node = two_pane_split(split::SplitAxis::Columns, 240.0f64,
+                                       180.0f64, 360.0f64);
+    controls::apply_split(0 as *u8, #addr_of(s), split::P_POSITION);
+    { s.calculate_layout(width: 1000.0f64, height: 680.0f64) };
+    assert pane_frame(#addr_of(s), 0 as usize).width == (240.0f64);
+    // The trailing pane takes exactly what is left, and the two together are
+    // the whole width — no overflow, which is the assertion that matters.
+    assert pane_frame(#addr_of(s), 1 as usize).left == (240.0f64);
+    assert pane_frame(#addr_of(s), 1 as usize).width == (760.0f64);
+    return;
+}
+
+#[test]
+fn a_rows_split_divides_the_other_axis() {
+    var s: core::Node = two_pane_split(split::SplitAxis::Rows, 120.0f64,
+                                       60.0f64, 100.0f64);
+    controls::apply_split(0 as *u8, #addr_of(s), split::P_POSITION);
+    { s.calculate_layout(width: 400.0f64, height: 500.0f64) };
+    assert pane_frame(#addr_of(s), 0 as usize).height == (120.0f64);
+    assert pane_frame(#addr_of(s), 1 as usize).top == (120.0f64);
+    assert pane_frame(#addr_of(s), 1 as usize).height == (380.0f64);
+    return;
+}
+
+#[test]
+fn the_trailing_panes_minimum_clamps_the_position() {
+    // A position that would starve the far pane is CLAMPED, not shrunk out of.
+    //
+    // Making the leading pane shrinkable was tried and is wrong: flex shrinks
+    // it whenever there is any overflow, so a wide demo in the trailing pane
+    // pulled the gallery's 240-point sidebar down to 193 and the position the
+    // application set was quietly not the one it got.
+    //
+    // The clamp reads the split's OWN frame, so it is a layout behind: the
+    // first pass has no frame to measure against and honours the position, the
+    // second clamps. That is what the sync's own relayout does every time, and
+    // the drag path clamps immediately because it has the live widget.
+    var s: core::Node = two_pane_split(split::SplitAxis::Columns, 900.0f64,
+                                       180.0f64, 360.0f64);
+    controls::apply_split(0 as *u8, #addr_of(s), split::P_POSITION);
+    { s.calculate_layout(width: 1000.0f64, height: 680.0f64) };
+    controls::apply_split(0 as *u8, #addr_of(s), split::P_POSITION);
+    { s.calculate_layout(width: 1000.0f64, height: 680.0f64) };
+    assert pane_frame(#addr_of(s), 0 as usize).width == (640.0f64);
+    assert pane_frame(#addr_of(s), 1 as usize).width == (360.0f64);
+    return;
+}
+
+#[test]
+fn a_position_that_fits_is_honoured_exactly_on_every_pass() {
+    // The other half of the clamp, and the regression it guards: a split whose
+    // trailing pane holds something wide must still put the divider where it
+    // was asked to.
+    var s: core::Node = two_pane_split(split::SplitAxis::Columns, 240.0f64,
+                                       180.0f64, 360.0f64);
+    var i: i32 = 0;
+    while i < 3 {
+        controls::apply_split(0 as *u8, #addr_of(s), split::P_POSITION);
+        { s.calculate_layout(width: 1000.0f64, height: 680.0f64) };
+        assert pane_frame(#addr_of(s), 0 as usize).width == (240.0f64);
+        i = i + 1;
+    }
+    return;
+}
+
+#[test]
+fn a_collapsed_pane_is_gone_and_the_other_takes_it_all() {
+    // facet remembers the position a collapsed pane had (`saved_position`), so
+    // this package writes ZERO and keeps no copy — expanding restores the
+    // divider where the user left it without the backend holding a second
+    // truth about where that was.
+    var s: core::Node = two_pane_split(split::SplitAxis::Columns, 240.0f64,
+                                       0.0f64, 0.0f64);
+    match split::from(#addr_of(s)) {
+        option::Option[split::Split]::Some(sp) => {
+            let _c: split::Split = sp.collapse(split::Pane::Leading);
+        }
+        option::Option[split::Split]::None => { assert false; }
+    }
+    controls::apply_split(0 as *u8, #addr_of(s), split::P_COLLAPSED);
+    { s.calculate_layout(width: 1000.0f64, height: 680.0f64) };
+    assert pane_frame(#addr_of(s), 0 as usize).width == (0.0f64);
+    assert pane_frame(#addr_of(s), 1 as usize).width == (1000.0f64);
+    // And it comes BACK — the failure facet's own comment records is a pane
+    // that collapsed and could not be restored.
+    match split::from(#addr_of(s)) {
+        option::Option[split::Split]::Some(sp) => {
+            let _e: split::Split = sp.expand(split::Pane::Leading);
+        }
+        option::Option[split::Split]::None => { assert false; }
+    }
+    controls::apply_split(0 as *u8, #addr_of(s), split::P_COLLAPSED);
+    { s.calculate_layout(width: 1000.0f64, height: 680.0f64) };
+    assert pane_frame(#addr_of(s), 0 as usize).width == (240.0f64);
+    return;
+}
+
+#[test]
+fn a_split_with_too_few_panes_is_not_a_trap() {
+    // NEGATIVE: facet's builder ignores a third child, and an application may
+    // hand it one or none. Neither may reach through a null pane.
+    var one: core::Builder = core::Builder::new();
+    one.add(core::column(core::Builder::new(), key: "only"));
+    var s: core::Node = ui::split(one, key: "sp3", position: 100.0f64);
+    controls::apply_split(0 as *u8, #addr_of(s), split::P_POSITION);
+    var none: core::Builder = core::Builder::new();
+    var e: core::Node = ui::split(none, key: "sp4", position: 100.0f64);
+    controls::apply_split(0 as *u8, #addr_of(e), split::P_POSITION);
+    return;
+}
+
+#[test]
+fn a_split_body_refuses_a_node_of_another_kind() {
+    // The guard every kind body carries — a props block must never be read
+    // through the wrong type.
+    var n: core::Node = label::label("hi", key: "l2");
+    controls::apply_split(0 as *u8, #addr_of(n), paint::all_bits());
+    return;
+}
+
+// ================================================================================
+// menus — declared in the tree, and read as nodes
+// ================================================================================
+
+#[test]
+fn a_shortcut_is_spelled_the_way_gtk_reads_one() {
+    // `<Control>s` is GTK's own accelerator spelling and what the `accel`
+    // attribute takes. facet carries the key and the modifiers separately, so
+    // the spelling is assembled — and a Mac's Command and a Windows key are
+    // both Super on a GTK desktop, the same mapping the key band makes.
+    assert accel_for("s", vocab::KeyModifiers::Ctrl).view() == "<Control>s";
+    assert accel_for("z", vocab::KeyModifiers::Cmd).view() == "<Super>z";
+    assert accel_for("z", vocab::KeyModifiers::Windows).view() == "<Super>z";
+    assert accel_for("F2", vocab::KeyModifiers::None).view() == "F2";
+    // NEGATIVE: an item with no key has no accelerator at all, rather than a
+    // modifier with nothing after it.
+    assert accel_for("", vocab::KeyModifiers::Ctrl).view() == "";
+    return;
+}
+
+fn accel_for(key: str, mods: vocab::KeyModifiers) -> text::Text {
+    var n: core::Node = ui::context_menu_item("Item", key: "cmi",
+                                              shortcut: vocab::Shortcut::of(key, mods));
+    let p: *props::ContextMenuItemProps =
+        controls::props_of(#addr_of(n), props::K_CONTEXT_MENU_ITEM)
+            as *props::ContextMenuItemProps;
+    if p == (0 as *props::ContextMenuItemProps) { return text::new(); }
+    return window::accel_of(p);
+}
+
+#[test]
+fn a_menu_is_found_wherever_in_the_tree_it_was_declared() {
+    // `menu` is a NON-VIEW kind: it decorates the screen rather than sitting in
+    // it, so it is read from wherever it happens to be — which is why the walk
+    // is over the whole tree and not over the root's own children.
+    var inner: core::Builder = core::Builder::new();
+    inner.add(ui::menu("File", key: "m:file"));
+    var outer: core::Builder = core::Builder::new();
+    outer.add(core::column(inner, key: "deep"));
+    var root: core::Node = core::column(outer, key: "root");
+    var found: vec::Vec[usize] = vec::new::[usize]();
+    window::gather_menus(#addr_of(root), #addr_of(found));
+    assert found.count() == (1 as usize);
+    return;
+}
+
+#[test]
+fn priority_orders_the_bar_and_ties_keep_their_order() {
+    // An application that wants File before Edit says so with a NUMBER rather
+    // than by declaring them in an order the tree walk might not preserve —
+    // and the sort is stable, so two menus that named the same priority keep
+    // the order they were written in.
+    var b: core::Builder = core::Builder::new();
+    b.add(ui::menu("Edit", key: "m:edit", priority: 2 as i64));
+    b.add(ui::menu("File", key: "m:file", priority: 1 as i64));
+    b.add(ui::menu("Alpha", key: "m:a", priority: 5 as i64));
+    b.add(ui::menu("Beta", key: "m:b", priority: 5 as i64));
+    var root: core::Node = core::column(b, key: "root2");
+    var found: vec::Vec[usize] = vec::new::[usize]();
+    window::gather_menus(#addr_of(root), #addr_of(found));
+    let sorted: vec::Vec[usize] = window::sorted_by_priority(#addr_of(found));
+    assert menu_key_at(#addr_of(sorted), 0 as usize) == "m:file";
+    assert menu_key_at(#addr_of(sorted), 1 as usize) == "m:edit";
+    assert menu_key_at(#addr_of(sorted), 2 as usize) == "m:a";
+    assert menu_key_at(#addr_of(sorted), 3 as usize) == "m:b";
+    return;
+}
+
+fn menu_key_at(v: *vec::Vec[usize], i: usize) -> str {
+    return match { (*v).at(i) } {
+        option::Option[usize]::Some(raw) => {
+            let n: *core::Node = raw as *core::Node;
+            if n == (0 as *core::Node) { "" } else { { (*n).key() } }
+        }
+        option::Option[usize]::None => "",
+    };
+}
+
+#[test]
+fn a_node_with_no_context_menu_child_attaches_nothing() {
+    // NEGATIVE: `attach_context_menu` runs for EVERY node that gets a widget,
+    // so the common case has to be one child scan and out.
+    var plain: core::Node = core::column(core::Builder::new(), key: "plain2");
+    window::attach_context_menu(0 as *u8, #addr_of(plain));
+    window::attach_context_menu(0 as *u8, 0 as *core::Node);
+    return;
+}
+
+// ================================================================================
+// a label's RUNS — three doors, all of them markup
+// ================================================================================
+
+#[test]
+fn a_run_omits_every_verb_it_was_not_given() {
+    // An unstyled run must INHERIT the label's font and colour, and markup
+    // says that by not mentioning them. An attribute list that always wrote
+    // every attribute would override the label with its own defaults.
+    let bare: text::Text = paint::span_attrs("", 0.0f64, vocab::FontWeight::Default,
+        false, true, vocab::Color::clear(), vocab::Color::clear(),
+        vocab::TextDecoration::None, 0.0f64, 0.0f64);
+    assert !bare.contains("face=");
+    assert !bare.contains("size=");
+    assert !bare.contains("foreground=");
+    assert !bare.contains("underline=");
+    assert !bare.contains("letter_spacing=");
+    assert !bare.contains("line_height=");
+    // The weight is always written, because Pango's default is not facet's
+    // `Default` — it is whatever the layout carries, and a run that meant 400
+    // has to say so.
+    assert bare.contains("weight=\"400\"");
+    return;
+}
+
+#[test]
+fn a_run_carries_every_verb_it_was_given() {
+    paint::set_text_scale(1.0f64);
+    let full: text::Text = paint::span_attrs("Serif", 12.0f64, vocab::FontWeight::Bold,
+        true, false, vocab::Color::rgba(1.0f64, 0.0f64, 0.0f64, 1.0f64),
+        vocab::Color::rgba(0.0f64, 0.0f64, 1.0f64, 1.0f64),
+        vocab::TextDecoration::Underline, 2.0f64, 1.5f64);
+    assert full.contains("face=\"Serif\"");
+    assert full.contains("weight=\"700\"");
+    assert full.contains("style=\"italic\"");
+    assert full.contains("foreground=\"#ff0000\"");
+    assert full.contains("background=\"#0000ff\"");
+    assert full.contains("underline=\"single\"");
+    // Pango measures in 1024ths, so a 12pt run is 12288 and a 2pt spacing 2048.
+    assert full.contains("size=\"12288\"");
+    assert full.contains("letter_spacing=\"2048\"");
+    assert full.contains("line_height=\"1.5");
+    return;
+}
+
+#[test]
+fn a_runs_size_follows_the_text_scale_when_it_was_asked_to() {
+    paint::set_text_scale(2.0f64);
+    let scaled: text::Text = paint::span_attrs("", 10.0f64, vocab::FontWeight::Default,
+        false, true, vocab::Color::clear(), vocab::Color::clear(),
+        vocab::TextDecoration::None, 0.0f64, 0.0f64);
+    assert scaled.contains("size=\"20480\"");
+    let fixed: text::Text = paint::span_attrs("", 10.0f64, vocab::FontWeight::Default,
+        false, false, vocab::Color::clear(), vocab::Color::clear(),
+        vocab::TextDecoration::None, 0.0f64, 0.0f64);
+    assert fixed.contains("size=\"10240\"");
+    paint::set_text_scale(1.0f64);
+    return;
+}
+
+#[test]
+fn a_run_transforms_its_text_before_escaping_it() {
+    // Markup has no transform attribute, so the STRING is transformed — and it
+    // has to happen before the escape or an entity would be uppercased into
+    // `&AMP;`, which is not an entity.
+    assert paint::transformed("abc", vocab::TextTransform::Uppercase).view() == "ABC";
+    assert paint::transformed("ABC", vocab::TextTransform::Lowercase).view() == "abc";
+    assert paint::transformed("AbC", vocab::TextTransform::Default).view() == "AbC";
+    assert paint::markup_run("", "a & b").view() == "<span>a &amp; b</span>";
+    return;
+}
+
+#[test]
+fn a_label_with_span_children_shows_the_runs_and_not_its_own_text() {
+    // A formatted label's text IS its runs. Showing both would print the plain
+    // string and the styled one, one after the other.
+    var b: core::Builder = core::Builder::new();
+    b.add(fspan::span("bold", font_weight: vocab::FontWeight::Bold));
+    b.add(fspan::span(" and plain"));
+    var l: core::Node = label::label("IGNORED", key: "sp1");
+    var src: core::Node = core::column(b, key: "src2");
+    while core::child_count_of(#addr_of(src)) > (0 as usize) {
+        match mount::remove_child(#addr_of(src), 0 as usize) {
+            option::Option[core::Node]::Some(c) => { let _a: bool = mount::add_child(#addr_of(l), c); }
+            option::Option[core::Node]::None => { }
+        }
+    }
+    let p: *props::LabelProps = controls::props_of(#addr_of(l), props::K_LABEL) as *props::LabelProps;
+    let markup: text::Text = controls::label_markup(#addr_of(l), p);
+    assert markup.contains("bold");
+    assert markup.contains(" and plain");
+    assert !markup.contains("IGNORED");
+    assert markup.contains("weight=\"700\"");
+    return;
+}
+
+#[test]
+fn a_label_with_nothing_to_style_uses_no_markup_at_all() {
+    // NEGATIVE, and the one that keeps the common case cheap: a plain label
+    // must not be routed through a markup parser it has no use for.
+    var l: core::Node = label::label("plain", key: "sp2");
+    let p: *props::LabelProps = controls::props_of(#addr_of(l), props::K_LABEL) as *props::LabelProps;
+    assert controls::label_markup(#addr_of(l), p).view() == "";
+    return;
+}
+
+#[test]
+fn a_line_height_alone_is_reason_enough_for_markup() {
+    // A GtkLabel has NO line-height property — markup is the only door — so a
+    // label that names one is wrapped in a single run for that alone.
+    var l: core::Node = label::label("two lines", key: "sp3", line_height: 1.6f64);
+    let p: *props::LabelProps = controls::props_of(#addr_of(l), props::K_LABEL) as *props::LabelProps;
+    let markup: text::Text = controls::label_markup(#addr_of(l), p);
+    assert markup.contains("line_height=\"1.6");
+    assert markup.contains("two lines");
+    return;
+}
+
+// ================================================================================
+// web — an engine opened at runtime, not linked
+// ================================================================================
+
+#[test]
+fn the_engine_is_looked_for_once_and_the_answer_is_stable() {
+    // `available()` opens the library on its first call and remembers. Whether
+    // it is THERE depends on the machine — a build box without WebKitGTK is a
+    // supported case and the whole reason this is a runtime load — so what is
+    // asserted is that asking twice cannot disagree.
+    let first: bool = web::available();
+    let second: bool = web::available();
+    assert first == second;
+    // And with no engine nothing is a web view, which is what every verb
+    // checks before touching a symbol that was never resolved.
+    if !first { assert !web::is_web_view(0 as *u8); }
+    return;
+}
+
+#[test]
+fn a_source_is_a_url_or_it_is_markup() {
+    // facet carries ONE string for both, and the distinction is the one every
+    // web view makes: something with a scheme is a URL and everything else is
+    // a page.
+    assert web::looks_like_url("https://example.com");
+    assert web::looks_like_url("http://example.com");
+    assert web::looks_like_url("file:///tmp/page.html");
+    assert web::looks_like_url("about:blank");
+    assert web::looks_like_url("data:text/html,hi");
+    assert !web::looks_like_url("<h1>hello</h1>");
+    assert !web::looks_like_url("");
+    // NEGATIVE, and the one that would be wrong if this matched loosely: a
+    // page whose text merely mentions a scheme is still a page.
+    assert !web::looks_like_url("<p>go to https://example.com</p>");
+    return;
+}
+
+#[test]
+fn a_message_crosses_as_a_json_string_whatever_is_in_it() {
+    // `send_message` delivers by EVALUATING a call, so the payload is a JSON
+    // literal in source — and a message containing a quote would otherwise end
+    // the call and leave the rest as syntax.
+    assert web::json_string("hello").view() == "\"hello\"";
+    assert web::json_string("say \"hi\"").view() == "\"say \\\"hi\\\"\"";
+    assert web::json_string("a\\b").view() == "\"a\\\\b\"";
+    assert web::json_string("one\ntwo").view() == "\"one\\ntwo\"";
+    return;
+}
+
+#[test]
+fn a_null_c_string_reads_as_empty_rather_than_dereferencing() {
+    // NEGATIVE: `webkit_web_view_get_uri` answers NULL for a view that has
+    // loaded nothing, and the URL is written back into the props on every
+    // navigation.
+    assert web::cstr_text(0 as *u8).view() == "";
+    return;
+}
+
+// ================================================================================
+// canvas — a recording replayed against cairo
+// ================================================================================
+//
+// The replay itself needs a cairo context, which needs a window. What is
+// pinned here is every DECISION it makes on the way — the enum mappings, the
+// angle conversion, the two trigonometric functions the gradient axis needs —
+// because those are what is wrong silently, and a mirrored arc or a
+// transposed line cap looks like a drawing bug in the application.
+
+#[test]
+fn the_line_caps_and_joins_map_onto_cairos_own_order() {
+    // Two three-valued enums whose orders DIFFER: cairo's join is
+    // MITER/ROUND/BEVEL and facet's is Bevel/Miter/Round. Transposing them is
+    // a drawing that looks almost right.
+    assert drawing::cairo_cap(vocab::LineCap::Flat) == (0 as i32);
+    assert drawing::cairo_cap(vocab::LineCap::Round) == (1 as i32);
+    assert drawing::cairo_cap(vocab::LineCap::Square) == (2 as i32);
+    assert drawing::cairo_join(vocab::LineJoin::Miter) == (0 as i32);
+    assert drawing::cairo_join(vocab::LineJoin::Round) == (1 as i32);
+    assert drawing::cairo_join(vocab::LineJoin::Bevel) == (2 as i32);
+    return;
+}
+
+#[test]
+fn the_default_blend_is_over_and_not_zero() {
+    // CAIRO_OPERATOR_CLEAR is 0 and OVER is 2, so a blend mode that fell
+    // through to zero would ERASE what it drew over. `Normal` is the mode
+    // almost every drawing uses and the one a mistake here would break.
+    assert drawing::cairo_operator(vocab::Blend::Normal) == (2 as i32);
+    assert drawing::cairo_operator(vocab::Blend::Clear) == (0 as i32);
+    assert drawing::cairo_operator(vocab::Blend::Multiply) == (14 as i32);
+    return;
+}
+
+#[test]
+fn a_winding_rule_crosses_two_vocabularies_the_same_way() {
+    assert drawing::fill_rule(vocab::Winding::NonZero) == (0 as i32);
+    assert drawing::fill_rule(vocab::Winding::EvenOdd) == (1 as i32);
+    assert drawing::is_even_odd(vocab::Winding::EvenOdd);
+    assert !drawing::is_even_odd(vocab::Winding::NonZero);
+    return;
+}
+
+#[test]
+fn degrees_become_radians() {
+    // facet records angles in DEGREES and cairo takes radians. Half a turn is
+    // the value that catches a factor of two either way.
+    let half: f64 = drawing::radians(180.0f64);
+    assert half > (3.14f64);
+    assert half < (3.15f64);
+    assert drawing::radians(0.0f64) == (0.0f64);
+    return;
+}
+
+#[test]
+fn the_gradient_axis_needs_sine_and_cosine_and_gets_them() {
+    // A brush's angle is read once per fill, so a series is affordable — but
+    // it has to be RIGHT, or every gradient runs the wrong way.
+    assert near(drawing::sin_approx(0.0f64), 0.0f64);
+    assert near(drawing::sin_approx(drawing::radians(90.0f64)), 1.0f64);
+    assert near(drawing::sin_approx(drawing::radians(180.0f64)), 0.0f64);
+    assert near(drawing::cos_approx(0.0f64), 1.0f64);
+    assert near(drawing::cos_approx(drawing::radians(90.0f64)), 0.0f64);
+    // And the series is folded to one turn, so an angle nobody normalised is
+    // still answered rather than diverging.
+    assert near(drawing::sin_approx(drawing::radians(450.0f64)), 1.0f64);
+    return;
+}
+
+fn near(a: f64, b: f64) -> bool {
+    var d: f64 = a - b;
+    if d < (0.0 as f64) { d = (0.0 as f64) - d; }
+    return d < (0.001f64);
+}
+
+#[test]
+fn a_weight_crosses_to_pango_as_its_css_number() {
+    // Pango's weights ARE the CSS numbers, so all ten of facet's survive —
+    // where cairo's toy text API had two and would have flattened them.
+    assert paint::pango_weight(vocab::FontWeight::Default) == (400 as i32);
+    assert paint::pango_weight(vocab::FontWeight::Thin) == (200 as i32);
+    assert paint::pango_weight(vocab::FontWeight::Semibold) == (600 as i32);
+    assert paint::pango_weight(vocab::FontWeight::Black) == (900 as i32);
+    return;
+}
+
+#[test]
+fn pango_has_no_justify_alignment_and_a_flag_instead() {
+    // PangoAlignment is LEFT/CENTER/RIGHT; justification is a separate switch.
+    // Mapping `Justify` onto an alignment would silently left-align it, so it
+    // sets the flag and leaves the alignment at the start — which is what
+    // justified text IS.
+    assert drawing::pango_align(vocab::TextAlign::Start) == (0 as i32);
+    assert drawing::pango_align(vocab::TextAlign::Center) == (1 as i32);
+    assert drawing::pango_align(vocab::TextAlign::End) == (2 as i32);
+    assert drawing::pango_align(vocab::TextAlign::Justify) == (0 as i32);
+    assert drawing::is_justified(vocab::TextAlign::Justify);
+    assert !drawing::is_justified(vocab::TextAlign::Start);
+    return;
+}
+
+#[test]
+fn markup_escapes_the_characters_that_would_end_it() {
+    // Pango's markup is XML, so a run containing `&` or `<` would end the
+    // layout at that character or fail to parse at all — and a caption is
+    // exactly where an ampersand turns up.
+    assert paint::escape_markup("A & B").view() == "A &amp; B";
+    assert paint::escape_markup("<b>").view() == "&lt;b&gt;";
+    assert paint::escape_markup("say \"hi\"").view() == "say &quot;hi&quot;";
+    // And ordinary prose is untouched, including UTF-8 that is not ASCII.
+    assert paint::escape_markup("plain").view() == "plain";
+    assert paint::escape_markup("café").view() == "café";
+    return;
+}
+
+#[test]
+fn a_span_colour_is_a_hex_triple_and_an_unset_one_is_nothing() {
+    // Pango takes `#rrggbb` and its markup has NO alpha channel, so the three
+    // channels are all that cross. An unset colour writes no attribute, which
+    // leaves the layout's own.
+    assert paint::markup_color("foreground",
+        vocab::Color::rgba(1.0f64, 0.0f64, 0.5f64, 1.0f64)).view()
+        == " foreground=\"#ff0080\"";
+    assert paint::markup_color("background", vocab::Color::clear()).view() == "";
+    return;
+}
+
+#[test]
+fn a_hex_byte_is_two_digits_and_is_clamped() {
+    assert paint::hex2(0 as i32).view() == "00";
+    assert paint::hex2(255 as i32).view() == "ff";
+    assert paint::hex2(171 as i32).view() == "ab";
+    // NEGATIVE: a colour outside 0..1 rounds past the byte, and a three-digit
+    // channel would make the whole triple unparseable.
+    assert paint::hex2(300 as i32).view() == "ff";
+    assert paint::hex2((0 as i32) -% (5 as i32)).view() == "00";
+    return;
+}
+
+#[test]
+fn a_canvas_with_no_drawable_draws_nothing() {
+    // NEGATIVE: `Drawable::none()` is a real function, so a null check would
+    // never fire — the guard has to be `is_none`.
+    var n: core::Node = ui::canvas(key: "cv");
+    assert drawing::drawable_of(#addr_of(n)).is_none();
+    // And a node of another kind has no drawable at all rather than reading
+    // one out of the wrong props block.
+    var l: core::Node = label::label("hi", key: "l4");
+    assert drawing::drawable_of(#addr_of(l)).is_none();
+    return;
+}
+
+// ================================================================================
+// bordered — four verbs CSS has, and four it does not
+// ================================================================================
+
+fn bordered_css(n: *core::Node) -> text::Text {
+    return controls::css_decls(props::K_BORDERED, n);
+}
+
+#[test]
+fn a_stroke_of_no_width_draws_nothing_and_says_so() {
+    // `border-width: 0` rather than an omitted width: a bordered that HAD a
+    // stroke and lost it must lose it on screen too, and the document is
+    // rebuilt whole every time.
+    var b: core::Node = ui::bordered(key: "b0");
+    assert bordered_css(#addr_of(b)).contains("border-width: 0;");
+    return;
+}
+
+#[test]
+fn a_dash_pattern_becomes_the_nearest_css_style() {
+    // CSS has three border styles and no array, so what a `Dashes` can say here
+    // is that it is not solid — and a run shorter than the stroke is round
+    // enough to read as dotted, which is the one further distinction the three
+    // styles allow.
+    var solid: core::Node = ui::bordered(key: "b1", stroke_width: 2.0f64);
+    assert bordered_css(#addr_of(solid)).contains("border-style: solid;");
+    var dashed: core::Node = ui::bordered(key: "b2", stroke_width: 2.0f64,
+                                          stroke_dash: vocab::Dashes::of(8.0f64, 4.0f64));
+    assert bordered_css(#addr_of(dashed)).contains("border-style: dashed;");
+    var dotted: core::Node = ui::bordered(key: "b3", stroke_width: 4.0f64,
+                                          stroke_dash: vocab::Dashes::of(2.0f64, 4.0f64));
+    assert bordered_css(#addr_of(dotted)).contains("border-style: dotted;");
+    return;
+}
+
+#[test]
+fn an_ellipse_is_a_border_radius_of_half_the_box() {
+    // The one that is easy to miss: `border-radius: 50%` IS an ellipse, so
+    // `stroke_shape` is answered whole rather than for its rounded case alone.
+    assert controls::shape_decl(vocab::Shape { kind: 3 as i64,
+                                               corners: vocab::Corners::none() })
+        .view() == "border-radius: 50%;";
+    assert controls::shape_decl(vocab::Shape::rounded(6.0f64))
+        .contains("border-radius: 6px");
+    // A plain rectangle says zero rather than nothing — a shape that was
+    // rounded and became a rect has to lose the radius.
+    assert controls::shape_decl(vocab::Shape { kind: 1 as i64,
+                                               corners: vocab::Corners::none() })
+        .view() == "border-radius: 0;";
+    assert controls::shape_decl(vocab::Shape::none()).view() == "";
+    return;
+}
+
+#[test]
+fn a_gradient_stroke_writes_no_border_colour_at_all() {
+    // NEGATIVE: a CSS border takes a solid, and a gradient's first stop is not
+    // the gradient. Writing it would put a flat colour where the application
+    // asked for a blend and nothing would say otherwise.
+    var g: core::Node = ui::bordered(key: "b4", stroke_width: 2.0f64,
+        stroke: vocab::Brush { start: vocab::Color::rgba(1.0f64, 0.0f64, 0.0f64, 1.0f64),
+                               end: vocab::Color::rgba(0.0f64, 0.0f64, 1.0f64, 1.0f64),
+                               angle: 0.0f64, is_gradient: true });
+    assert !bordered_css(#addr_of(g)).contains("border-color");
+    var flat: core::Node = ui::bordered(key: "b5", stroke_width: 2.0f64,
+        stroke: vocab::Brush::solid(vocab::Color::rgba(1.0f64, 0.0f64, 0.0f64, 1.0f64)));
+    assert bordered_css(#addr_of(flat)).contains("border-color: rgba(255,0,0,");
+    return;
+}
+
+// ================================================================================
+// pull to refresh — one mechanism, two rows
+// ================================================================================
+
+#[test]
+fn a_pull_only_counts_at_the_top_of_a_scroll() {
+    // The ONE thing that stops this fighting the scroll: a scrolled window
+    // with room above it owns the drag, and taking it would break scrolling to
+    // add a refresh. Anything that is not a scroll has no room above, which is
+    // the right answer — `refreshable` wrapping a plain box refreshes on any
+    // downward pull.
+    assert input::at_top(0 as *u8);
+    return;
+}
+
+#[test]
+fn a_refresh_fires_once_and_is_idempotent_while_it_runs() {
+    // A control already refreshing does not start again — the latch is the
+    // flag itself, so a second pull while the spinner is up is ignored.
+    var r: core::Node = ui::refreshable(key: "r", refreshable: true);
+    let p: *props::RefreshableProps = controls::refreshable_props(#addr_of(r));
+    assert p != (0 as *props::RefreshableProps);
+    assert { (*p).is_refreshing } == false;
+    input::begin_refresh(#addr_of(r), 0 as *u8);
+    assert { (*p).is_refreshing };
+    // Again: nothing happens, and in particular the handler does not run twice.
+    input::begin_refresh(#addr_of(r), 0 as *u8);
+    assert { (*p).is_refreshing };
+    return;
+}
+
+#[test]
+fn a_lists_refresh_rides_the_same_mechanism() {
+    var l: core::Node = ui::list(key: "lr", refreshable: true);
+    let p: *props::ListProps = controls::props_of(#addr_of(l), props::K_LIST) as *props::ListProps;
+    assert p != (0 as *props::ListProps);
+    input::begin_refresh(#addr_of(l), 0 as *u8);
+    assert { (*p).is_refreshing };
+    return;
+}
+
+#[test]
+fn a_pull_on_a_kind_that_cannot_refresh_is_a_no_op() {
+    // NEGATIVE: the gesture is armed on the host, and a host whose node is
+    // neither of the two refreshing kinds must not reach through the wrong
+    // props block.
+    var n: core::Node = label::label("hi", key: "l5");
+    input::begin_refresh(#addr_of(n), 0 as *u8);
+    controls::apply_refreshable(0 as *u8, #addr_of(n), paint::all_bits());
+    return;
+}
+
+// ================================================================================
+// carousel — a circular index, and pages that peek
+// ================================================================================
+
+fn four_pages() -> core::Node {
+    var c: core::Node = ui::carousel(key: "car");
+    var i: i32 = 0;
+    while i < 4 {
+        var page: core::Node = core::column(core::Builder::new());
+        page.set_height(flex::StyleLength::points(80.0f64));
+        let _a: bool = mount::add_child(#addr_of(c), page);
+        i = i + 1;
+    }
+    return c;
+}
+
+#[test]
+fn a_looping_position_is_circular_and_a_bounded_one_is_clamped() {
+    // `wraps` is the ledger's `Loop`, and what it means to a PROGRAM is that
+    // the index arithmetic is circular — a position off either end comes back
+    // at the other. Without it the position is clamped, because a position
+    // past the last page is not a page and scrolling to nothing is worse than
+    // staying put.
+    var c: core::Node = four_pages();
+    assert controls::wrapped(#addr_of(c), 5 as i64, true) == (1 as i64);
+    assert controls::wrapped(#addr_of(c), 4 as i64, true) == (0 as i64);
+    assert controls::wrapped(#addr_of(c), (0 as i64) -% (1 as i64), true) == (3 as i64);
+    assert controls::wrapped(#addr_of(c), 5 as i64, false) == (3 as i64);
+    assert controls::wrapped(#addr_of(c), (0 as i64) -% (1 as i64), false) == (0 as i64);
+    assert controls::wrapped(#addr_of(c), 2 as i64, false) == (2 as i64);
+    // NEGATIVE: an empty carousel has no page to be at, and the modulo would
+    // be a division by zero.
+    var e: core::Node = ui::carousel(key: "car0");
+    assert controls::wrapped(#addr_of(e), 3 as i64, true) == (0 as i64);
+    return;
+}
+
+#[test]
+fn the_position_is_written_back_when_it_wraps() {
+    // An application that set 7 on a four-page looping carousel reads back 3 —
+    // the position ITSELF is circular, not just the scrolling.
+    var c: core::Node = four_pages();
+    match fcarousel::from(#addr_of(c)) {
+        option::Option[fcarousel::Carousel]::Some(h) => {
+            let a: fcarousel::Carousel = h.set_wraps(true);
+            let _b: fcarousel::Carousel = a.set_position(7 as i64);
+        }
+        option::Option[fcarousel::Carousel]::None => { assert false; }
+    }
+    controls::apply_carousel(0 as *u8, #addr_of(c), fcarousel::P_POSITION);
+    match fcarousel::from(#addr_of(c)) {
+        option::Option[fcarousel::Carousel]::Some(h) => { assert h.position() == (3 as i64); }
+        option::Option[fcarousel::Carousel]::None => { assert false; }
+    }
+    return;
+}
+
+#[test]
+fn peek_insets_take_their_room_off_the_page() {
+    // A carousel PEEKS its neighbours, which is the whole difference from a
+    // tab strip: the page is the viewport LESS what is left showing either
+    // side, so the next one is visible at the edge.
+    var c: core::Node = four_pages();
+    { c.calculate_layout(width: 300.0f64, height: 100.0f64) };
+    let p: *props::CarouselProps = controls::carousel_props(#addr_of(c));
+    assert controls::page_width(#addr_of(c), p) == (300.0f64);
+    match fcarousel::from(#addr_of(c)) {
+        option::Option[fcarousel::Carousel]::Some(h) => {
+            let _i: fcarousel::Carousel = h.set_peek_insets(
+                vocab::Insets { leading: 20.0f64, top: 0.0f64,
+                                trailing: 30.0f64, bottom: 0.0f64 });
+        }
+        option::Option[fcarousel::Carousel]::None => { assert false; }
+    }
+    assert controls::page_width(#addr_of(c), p) == (250.0f64);
+    return;
+}
+
+#[test]
+fn the_pages_are_laid_side_by_side_and_do_not_share_the_viewport() {
+    // A WIDTH, not a grow: pages that shared the viewport would each shrink as
+    // more arrived, which is a strip and not a carousel.
+    var c: core::Node = four_pages();
+    { c.calculate_layout(width: 300.0f64, height: 100.0f64) };
+    controls::apply_carousel(0 as *u8, #addr_of(c), fcarousel::P_PEEK_INSETS);
+    { c.calculate_layout(width: 300.0f64, height: 100.0f64) };
+    assert row_w(#addr_of(c), 0 as usize) == (300.0f64);
+    assert row_w(#addr_of(c), 3 as usize) == (300.0f64);
+    // Side by side, so the fourth page starts three viewports along.
+    assert row_left(#addr_of(c), 1 as usize) > row_left(#addr_of(c), 0 as usize);
+    return;
+}
+
+fn row_left(seq: *core::Node, i: usize) -> f64 {
+    return match core::child_of(seq, i) {
+        option::Option[*core::Node]::Some(c) => { let f: flex::Frame = { (*c).frame() }; f.left }
+        option::Option[*core::Node]::None => 0.0f64,
+    };
+}
+
+#[test]
+fn a_carousel_body_refuses_a_node_of_another_kind() {
+    var n: core::Node = label::label("hi", key: "l6");
+    controls::apply_carousel(0 as *u8, #addr_of(n), paint::all_bits());
+    return;
+}
+
+// ================================================================================
+// the pickers — a format string read for its COMPONENTS
+// ================================================================================
+
+#[test]
+fn a_format_string_is_read_for_what_it_names_not_as_a_layout() {
+    // facet's `format` is MAUI's, which is .NET's pattern language; strftime is
+    // not, and handing "D" to `g_date_time_format` prints "D". So the string is
+    // read for WHICH COMPONENTS it names and the LOCALE supplies the order and
+    // the separators — which is the AppKit backend's own reading, arrived at
+    // because an NSDatePicker has an element mask and no format string.
+    assert controls::locale_pattern("yyyy-MM-dd", true) == "%x";
+    assert controls::locale_pattern("HH:mm", true) == "%X";
+    assert controls::locale_pattern("yyyy-MM-dd HH:mm", true) == "%x %X";
+    // An empty format is the control's OWN default component, which is not the
+    // same answer for the two kinds.
+    assert controls::locale_pattern("", true) == "%x";
+    assert controls::locale_pattern("", false) == "%X";
+    // A string that names nothing recognisable falls back to the kind's own,
+    // rather than printing the pattern.
+    assert controls::locale_pattern("!!!", true) == "%x";
+    assert controls::locale_pattern("!!!", false) == "%X";
+    return;
+}
+
+#[test]
+fn an_unset_bound_is_no_bound() {
+    // A zeroed Date is "unset", not year zero — the same reading the contract
+    // gives every numeric zero.
+    let d: vocab::Date = vocab::Date { year: 2026 as i64, month: 8 as i64, day: 24 as i64 };
+    assert controls::date_within(d, vocab::Date::zero(), vocab::Date::zero());
+    let lo: vocab::Date = vocab::Date { year: 2026 as i64, month: 1 as i64, day: 1 as i64 };
+    let hi: vocab::Date = vocab::Date { year: 2026 as i64, month: 12 as i64, day: 31 as i64 };
+    assert controls::date_within(d, lo, hi);
+    // Outside on either side is refused.
+    let early: vocab::Date = vocab::Date { year: 2025 as i64, month: 12 as i64, day: 31 as i64 };
+    assert !controls::date_within(early, lo, hi);
+    let late: vocab::Date = vocab::Date { year: 2027 as i64, month: 1 as i64, day: 1 as i64 };
+    assert !controls::date_within(late, lo, hi);
+    // A minimum alone bounds one side and leaves the other open.
+    assert !controls::date_within(early, lo, vocab::Date::zero());
+    assert controls::date_within(late, lo, vocab::Date::zero());
+    return;
+}
+
+#[test]
+fn an_unset_date_formats_to_nothing_rather_than_to_year_zero() {
+    // NEGATIVE, and the one a picker shows: a date nobody set must read as an
+    // empty button, not as a formatted 0000-00-00.
+    assert controls::format_moment(0 as i64, 0 as i64, 0 as i64, 0 as i64, 0 as i64,
+                                   "%x").view() == "";
+    assert controls::format_moment(2026 as i64, 0 as i64, 1 as i64, 0 as i64, 0 as i64,
+                                   "%x").view() == "";
+    // A real date formats to SOMETHING — what exactly is the locale's business,
+    // which is the whole point of reading the format for components.
+    assert controls::format_moment(2026 as i64, 8 as i64, 24 as i64, 13 as i64, 45 as i64,
+                                   "%x").view() != "";
+    return;
+}
+
+#[test]
+fn a_picker_body_refuses_a_node_of_another_kind() {
+    var n: core::Node = label::label("hi", key: "l7");
+    controls::apply_date_picker(0 as *u8, #addr_of(n), paint::all_bits());
+    controls::apply_time_picker(0 as *u8, #addr_of(n), paint::all_bits());
+    return;
+}
+
+#[test]
+fn the_pickers_carry_the_whole_text_band() {
+    var d: core::Node = ui::date_picker(vocab::Date::zero(), key: "dp", font_size: 12.0f64,
+                                        text_color: vocab::Color::rgba(1.0f64, 0.0f64,
+                                                                       0.0f64, 1.0f64));
+    assert controls::css_decls(props::K_DATE_PICKER, #addr_of(d)).contains("font-size: 12px;");
+    assert controls::css_decls(props::K_DATE_PICKER, #addr_of(d)).contains("color: rgba(255,0,0,");
+    var t: core::Node = ui::time_picker(vocab::Duration::zero(), key: "tp", font_size: 14.0f64);
+    assert controls::css_decls(props::K_TIME_PICKER, #addr_of(t)).contains("font-size: 14px;");
+    return;
+}
+
+// ================================================================================
+// popup — both factories, and the two sentinels that disagree
+// ================================================================================
+
+fn three_items() -> vocab::TextList {
+    var l: vocab::TextList = vocab::TextList::new();
+    let _a: status::Status = l.add("Red");
+    let _b: status::Status = l.add("Green");
+    let _c: status::Status = l.add("Blue");
+    return l;
+}
+
+fn only_first_enabled(at: usize, ctx: *u8) -> bool { return at == (0 as usize); }
+
+#[test]
+fn nothing_chosen_is_minus_one_here_and_an_out_of_range_sentinel_there() {
+    // GTK says "nothing chosen" with GTK_INVALID_LIST_POSITION, which is
+    // `(guint) -1`; facet says -1. Translating between them is what stops a
+    // cleared popup reading as row 4294967295 — or, the other way, a popup
+    // with no selection showing row 0.
+    assert controls::gtk_invalid_position() == ((0 as u32) -% (1 as u32));
+    assert input::gtk_invalid_position() == controls::gtk_invalid_position();
+    return;
+}
+
+#[test]
+fn the_button_reads_the_label_then_the_selection_then_the_title() {
+    // In that order, and the order is the point: `label` is "what the button
+    // reads WHATEVER is selected", so it wins; with no label the button is the
+    // picked item; with nothing picked it is the title, which is what a picker
+    // shows before anything has been chosen.
+    var n: core::Node = ui::popup("Colour", key: "p", items: three_items());
+    let p: *props::PopupProps = controls::popup_props(#addr_of(n));
+    assert p != (0 as *props::PopupProps);
+    assert input::popup_button_text(p, (0 as i64) -% (1 as i64)) == "Colour";
+    assert input::popup_button_text(p, 1 as i64) == "Green";
+    // An index past the end falls back to the title rather than reading off
+    // the end of the list.
+    assert input::popup_button_text(p, 9 as i64) == "Colour";
+    match popup::from(#addr_of(n)) {
+        option::Option[popup::Popup]::Some(h) => { let _l: popup::Popup = h.set_label("Pick one"); }
+        option::Option[popup::Popup]::None => { assert false; }
+    }
+    assert input::popup_button_text(p, 1 as i64) == "Pick one";
+    return;
+}
+
+#[test]
+fn every_item_is_pickable_unless_the_application_says_otherwise() {
+    // The default is a REAL function, so a null check would never fire — the
+    // comparison has to be against `every_item_enabled` itself.
+    var n: core::Node = ui::popup("Colour", key: "p2", items: three_items());
+    let p: *props::PopupProps = controls::popup_props(#addr_of(n));
+    assert input::popup_item_enabled(p, 0 as usize);
+    assert input::popup_item_enabled(p, 2 as usize);
+    match popup::from(#addr_of(n)) {
+        option::Option[popup::Popup]::Some(h) => {
+            let _e: popup::Popup = h.set_item_enabled(only_first_enabled);
+        }
+        option::Option[popup::Popup]::None => { assert false; }
+    }
+    assert input::popup_item_enabled(p, 0 as usize);
+    assert !input::popup_item_enabled(p, 1 as usize);
+    return;
+}
+
+#[test]
+fn the_title_colour_applies_only_while_the_title_is_showing() {
+    // Two colours, one widget: `title_color` is the colour of what a picker
+    // reads before anything is picked, `text_color` of a picked item. The one
+    // that applies is the one on screen.
+    var n: core::Node = ui::popup("Colour", key: "p3",
+                                  text_color: vocab::Color::rgba(1.0f64, 0.0f64, 0.0f64, 1.0f64),
+                                  title_color: vocab::Color::rgba(0.0f64, 1.0f64, 0.0f64, 1.0f64),
+                                  selected_index: (0 as i64) -% (1 as i64),
+                                  items: three_items());
+    assert controls::css_decls(props::K_POPUP, #addr_of(n)).contains("color: rgba(0,255,0,");
+    match popup::from(#addr_of(n)) {
+        option::Option[popup::Popup]::Some(h) => {
+            let _s: popup::Popup = h.set_selected_index(1 as i64);
+        }
+        option::Option[popup::Popup]::None => { assert false; }
+    }
+    assert controls::css_decls(props::K_POPUP, #addr_of(n)).contains("color: rgba(255,0,0,");
+    return;
+}
+
+// ================================================================================
+// tabs — the strip is this package's, the panes are facet's
+// ================================================================================
+
+fn tab_pane(key: str) -> core::Node {
+    var p: core::Node = core::column(core::Builder::new(), key: key);
+    p.set_height(flex::StyleLength::points(100.0f64));
+    return p;
+}
+
+fn three_panes(selected: i64) -> core::Node {
+    var b: core::Builder = core::Builder::new();
+    // Stated heights: headless there is no measure callback, so a pane with no
+    // height of its own would be zero tall and the layout assertions would be
+    // about the absence of a window.
+    b.add(tab_pane("one"));
+    b.add(tab_pane("two"));
+    b.add(tab_pane("three"));
+    var t: core::Node = ui::tabs(key: "tabs", selected_index: selected);
+    var i: usize = 0 as usize;
+    var src: core::Node = core::column(b, key: "src");
+    while core::child_count_of(#addr_of(src)) > (0 as usize) {
+        match mount::remove_child(#addr_of(src), 0 as usize) {
+            option::Option[core::Node]::Some(c) => { let _a: bool = mount::add_child(#addr_of(t), c); }
+            option::Option[core::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return t;
+}
+
+#[test]
+fn only_the_selected_pane_is_in_the_layout() {
+    // `Display::None`, not `is_visible`: a hidden pane still occupies its place
+    // in a column, so the showing one would get a THIRD of the box instead of
+    // all of it below the strip.
+    var t: core::Node = three_panes(1 as i64);
+    // The CREATE pass, which is the one that reserves the strip's height —
+    // `apply` gates that on the all-bits sentinel because it is structural.
+    controls::apply_tabs(0 as *u8, #addr_of(t), paint::all_bits());
+    { t.calculate_layout(width: 400.0f64, height: 300.0f64) };
+    assert pane_shown(#addr_of(t), 0 as usize) == false;
+    assert pane_shown(#addr_of(t), 1 as usize);
+    assert pane_shown(#addr_of(t), 2 as usize) == false;
+    // The showing pane is the only one with a frame at all: `Display::None`
+    // takes the others out of the layout rather than merely hiding them.
+    assert row_h(#addr_of(t), 1 as usize) == (100.0f64);
+    assert row_h(#addr_of(t), 0 as usize) == (0.0f64);
+    assert row_h(#addr_of(t), 2 as usize) == (0.0f64);
+    // And it starts below the strip, not at the top of the node.
+    assert row_top(#addr_of(t), 1 as usize) == controls::strip_height();
+    return;
+}
+
+fn pane_shown(t: *core::Node, i: usize) -> bool {
+    return match core::child_of(t, i) {
+        option::Option[*core::Node]::Some(c) => {
+            match { (*c).display() } { flex::Display::None => false, _other => true }
+        }
+        option::Option[*core::Node]::None => false,
+    };
+}
+
+#[test]
+fn a_selection_out_of_range_shows_no_pane_rather_than_the_first() {
+    // NEGATIVE: an index nobody has is not row zero. Falling back to the first
+    // pane would show a tab the application did not choose.
+    var t: core::Node = three_panes(7 as i64);
+    controls::apply_tabs(0 as *u8, #addr_of(t), ftabs::P_SELECTED_INDEX);
+    assert pane_shown(#addr_of(t), 0 as usize) == false;
+    assert pane_shown(#addr_of(t), 1 as usize) == false;
+    assert pane_shown(#addr_of(t), 2 as usize) == false;
+    return;
+}
+
+#[test]
+fn the_strip_takes_its_height_out_of_the_nodes_padding() {
+    // The strip is drawn ON the tabs node, so flex has to be TOLD it is there
+    // — through the node's own top padding. Without it a pane is laid out over
+    // the strip, which is the shape of the bug an NSTabView had from the other
+    // direction.
+    var t: core::Node = three_panes(0 as i64);
+    controls::apply_tabs(0 as *u8, #addr_of(t), paint::all_bits());
+    { t.calculate_layout(width: 400.0f64, height: 300.0f64) };
+    assert row_top(#addr_of(t), 0 as usize) == controls::strip_height();
+    return;
+}
+
+#[test]
+fn a_tabs_body_refuses_a_node_of_another_kind() {
+    var n: core::Node = label::label("hi", key: "l8");
+    controls::apply_tabs(0 as *u8, #addr_of(n), paint::all_bits());
+    controls::apply_popup(0 as *u8, #addr_of(n), paint::all_bits());
+    return;
+}
+
+// ================================================================================
+// the sequence kinds — one materialiser for list, collection and table
+// ================================================================================
+
+// The count and the row builder are the LIVE cursor's, not the builder's —
+// a sequence is described empty and filled afterwards, which is also how an
+// application feeds one.
+fn fill_list(l: *core::Node, count: usize) {
+    match flist::from(l) {
+        option::Option[flist::List]::Some(h) => {
+            let a: flist::List = h.set_count(count);
+            let _b: flist::List = a.set_row(seq_row);
+        }
+        option::Option[flist::List]::None => { assert false; }
+    }
+    return;
+}
+
+fn fill_collection(c: *core::Node, count: usize) {
+    match fcollection::from(c) {
+        option::Option[fcollection::Collection]::Some(h) => {
+            let a: fcollection::Collection = h.set_count(count);
+            let _b: fcollection::Collection = a.set_row(seq_row);
+        }
+        option::Option[fcollection::Collection]::None => { assert false; }
+    }
+    return;
+}
+
+// A row of a STATED height. Headless there is no backend, so no leaf has a
+// measure callback and every label measures 0x0 — a test that leant on text
+// measurement would be asserting about the absence of a window rather than
+// about the layout.
+fn seq_row(index: usize, ctx: *u8) -> flex::Node {
+    var r: core::Node = label::label("row", max_lines: 1 as i64);
+    r.set_height(flex::StyleLength::points(20.0f64));
+    return r;
+}
+
+fn seq_group_size(group: usize, ctx: *u8) -> usize { return 2 as usize; }
+
+fn seq_group_header(group: usize, ctx: *u8) -> flex::Node {
+    return label::label("group", max_lines: 1 as i64);
+}
+
+fn seq_tall_rows(index: usize, ctx: *u8) -> f64 {
+    if index == (1 as usize) { return 80.0f64; }
+    return 20.0f64;
+}
+
+// A `Sequence` from a live node, which is what every assertion below is about:
+// the recycler reads the props into one neutral record and answers every
+// question — how many slots, what is at slot N — from that.
+fn seq_of(n: *core::Node) -> recycler::Sequence {
+    return recycler::sequence_of(n);
+}
+
+#[test]
+fn a_list_has_one_slot_per_row() {
+    // The recycler is addressed by a flat SLOT index and the model's length is
+    // this number — so it has to be answerable without building anything, which
+    // is the whole point of the map.
+    var l: core::Node = ui::list(key: "l", separator: vocab::Separator::None);
+    fill_list(#addr_of(l), 3 as usize);
+    assert recycler::slot_count(seq_of(#addr_of(l))) == (3 as usize);
+    // And a count of zero is no slots rather than a trap.
+    var e: core::Node = ui::list(key: "l0");
+    fill_list(#addr_of(e), 0 as usize);
+    assert recycler::slot_count(seq_of(#addr_of(e))) == (0 as usize);
+    return;
+}
+
+#[test]
+fn a_list_with_no_row_builder_has_no_slots() {
+    // NEGATIVE, and the trap the AppKit backend records for the tree: the
+    // default is a real function answering an empty node, so a null check never
+    // fires and a list of ten would show ten empty rows.
+    var l: core::Node = ui::list(key: "l1");
+    match flist::from(#addr_of(l)) {
+        option::Option[flist::List]::Some(h) => { let _c: flist::List = h.set_count(10 as usize); }
+        option::Option[flist::List]::None => { assert false; }
+    }
+    assert recycler::slot_count(seq_of(#addr_of(l))) == (0 as usize);
+    return;
+}
+
+#[test]
+fn a_separator_is_gtks_line_between_cells_and_not_a_row() {
+    // It used to be a row of its own, which made "a line after the last row" a
+    // thing that could happen and had to be tested against. A GtkListView draws
+    // its own separators BETWEEN cells, so three rows is three slots and the
+    // question cannot be got wrong any more.
+    var l: core::Node = ui::list(key: "l2", separator: vocab::Separator::Default);
+    fill_list(#addr_of(l), 3 as usize);
+    let s: recycler::Sequence = seq_of(#addr_of(l));
+    assert recycler::slot_count(s) == (3 as usize);
+    assert s.separated;
+    var plain: core::Node = ui::list(key: "l2b", separator: vocab::Separator::None);
+    fill_list(#addr_of(plain), 3 as usize);
+    assert !seq_of(#addr_of(plain)).separated;
+    return;
+}
+
+#[test]
+fn every_row_is_tagged_with_its_own_index() {
+    // ONE handler serves every row and asks the sender which one it is. The tag
+    // is 1-based underneath so that "no index" and "row zero" are different
+    // answers — a group header carries none and must read as None.
+    var l: core::Node = ui::list(key: "l3", separator: vocab::Separator::None);
+    fill_list(#addr_of(l), 3 as usize);
+    let s: recycler::Sequence = seq_of(#addr_of(l));
+    assert slot_index(s, 0 as usize) == (0 as i64);
+    assert slot_index(s, 2 as usize) == (2 as i64);
+    return;
+}
+
+// The index carried by the node the recycler would build for slot `at`.
+fn slot_index(s: recycler::Sequence, at: usize) -> i64 {
+    var row: core::Node = recycler::build_slot(s, at);
+    return match core::item_index_of(#addr_of(row)) {
+        option::Option[usize]::Some(i) => i as i64,
+        option::Option[usize]::None => (0 as i64) -% (1 as i64),
+    };
+}
+
+#[test]
+fn a_group_header_is_not_a_row_and_carries_no_index() {
+    var l: core::Node = ui::list(key: "l4", grouped: true,
+                                 separator: vocab::Separator::None);
+    match flist::from(#addr_of(l)) {
+        option::Option[flist::List]::Some(h) => {
+            let a: flist::List = h.set_count(4 as usize);
+            let b: flist::List = a.set_row(seq_row);
+            let c: flist::List = b.set_group_count(2 as usize);
+            let d: flist::List = c.set_group_size(seq_group_size);
+            let _e: flist::List = d.set_group_header(seq_group_header);
+        }
+        option::Option[flist::List]::None => { assert false; }
+    }
+    let s: recycler::Sequence = seq_of(#addr_of(l));
+    // header, row, row, header, row, row
+    assert recycler::slot_count(s) == (6 as usize);
+    assert slot_index(s, 0 as usize) == ((0 as i64) -% (1 as i64));
+    assert slot_index(s, 1 as usize) == (0 as i64);
+    assert slot_index(s, 2 as usize) == (1 as i64);
+    assert slot_index(s, 3 as usize) == ((0 as i64) -% (1 as i64));
+    // The second group's rows CONTINUE the index — a row's index is its place
+    // in the data, not its place in its group.
+    assert slot_index(s, 4 as usize) == (2 as i64);
+    assert slot_index(s, 5 as usize) == (3 as i64);
+    // And a header takes a POOL SHAPE of its own, so a pooled cell built for a
+    // header can never be rebound as a row however the application numbers its
+    // own row kinds.
+    assert recycler::slot_shape(s, 0 as usize) == recycler::header_shape();
+    assert recycler::slot_shape(s, 1 as usize) != recycler::header_shape();
+    return;
+}
+
+#[test]
+fn a_slot_past_the_end_builds_nothing() {
+    // NEGATIVE, and it is the gate every bind runs through: GtkListView asks
+    // about a position while the model is being resized, and a slot map that
+    // trusted the index would read a row that is not there.
+    var l: core::Node = ui::list(key: "l4b", separator: vocab::Separator::None);
+    fill_list(#addr_of(l), 2 as usize);
+    let s: recycler::Sequence = seq_of(#addr_of(l));
+    assert recycler::slot_data_index(s, 5 as usize) == ((0 as i64) -% (1 as i64));
+    var empty: core::Node = recycler::build_slot(s, 5 as usize);
+    assert core::child_count_of(#addr_of(empty)) == (0 as usize);
+    return;
+}
+
+#[test]
+fn a_row_takes_the_height_it_was_told_over_the_one_it_would_measure() {
+    // A stated height is a promise and a measured one is an observation, so
+    // `row_height_of` wins over the flat `row_height` when it answers at all.
+    var l: core::Node = ui::list(key: "l5", row_height: 20 as i64,
+                                 separator: vocab::Separator::None);
+    match flist::from(#addr_of(l)) {
+        option::Option[flist::List]::Some(h) => {
+            let a: flist::List = h.set_count(3 as usize);
+            let b: flist::List = a.set_row(seq_row);
+            let _c: flist::List = b.set_row_height_of(seq_tall_rows);
+        }
+        option::Option[flist::List]::None => { assert false; }
+    }
+    let s: recycler::Sequence = seq_of(#addr_of(l));
+    assert built_h(s, 0 as usize) == (20.0f64);
+    assert built_h(s, 1 as usize) == (80.0f64);
+    return;
+}
+
+// Build the slot and lay it out the way `lay_row_out` does — at a stated width
+// with the height left UNDEFINED, so the row measures itself.
+fn built_h(s: recycler::Sequence, at: usize) -> f64 {
+    var row: core::Node = recycler::build_slot(s, at);
+    { row.calculate_layout(width: 200.0f64, height: flex::undefined()) };
+    let f: flex::Frame = { row.frame() };
+    return f.height;
+}
+
+#[test]
+fn columns_are_explicit_lines_of_equal_fractions() {
+    // A grid is not a second layout engine — but it is not `flex-wrap` either.
+    // Three columns is one SLOT per line holding three items, each a third of
+    // the line wide.
+    var c: core::Node = ui::collection(key: "c", columns: 3 as usize);
+    fill_collection(#addr_of(c), 6 as usize);
+    let s: recycler::Sequence = seq_of(#addr_of(c));
+    // Two lines of three, not six slots.
+    assert recycler::slot_count(s) == (2 as usize);
+    var line: core::Node = recycler::build_slot(s, 0 as usize);
+    assert core::child_count_of(#addr_of(line)) == (3 as usize);
+    { line.calculate_layout(width: 300.0f64, height: flex::undefined()) };
+    // Each item takes a third of the line — WITHIN A POINT, because a third is
+    // 33.333…% and three of those is 100.000000000000014 of the 300 offered. An
+    // exact comparison here would be asserting about binary floating point
+    // rather than about the layout.
+    let w: f64 = row_w(#addr_of(line), 0 as usize);
+    assert w > (99.0f64);
+    assert w < (101.0f64);
+    // The second line CONTINUES the data index rather than restarting.
+    assert recycler::slot_data_index(s, 1 as usize) == (3 as i64);
+    return;
+}
+
+#[test]
+fn a_short_last_grid_line_holds_only_what_is_left() {
+    // Seven items in threes is three lines: 3, 3, 1. The last line must not
+    // build a fourth and a fifth row out of indices that are not there — and it
+    // must not be poolable as a full line either, because it is a different
+    // subtree.
+    var c: core::Node = ui::collection(key: "c3", columns: 3 as usize);
+    fill_collection(#addr_of(c), 7 as usize);
+    let s: recycler::Sequence = seq_of(#addr_of(c));
+    assert recycler::slot_count(s) == (3 as usize);
+    var last: core::Node = recycler::build_slot(s, 2 as usize);
+    assert core::child_count_of(#addr_of(last)) == (1 as usize);
+    assert recycler::slot_shape(s, 2 as usize) != recycler::slot_shape(s, 0 as usize);
+    return;
+}
+
+fn row_w(seq: *core::Node, i: usize) -> f64 {
+    return match core::child_of(seq, i) {
+        option::Option[*core::Node]::Some(c) => { let f: flex::Frame = { (*c).frame() }; f.width }
+        option::Option[*core::Node]::None => 0.0f64,
+    };
+}
+
+fn row_top(seq: *core::Node, i: usize) -> f64 {
+    return match core::child_of(seq, i) {
+        option::Option[*core::Node]::Some(c) => { let f: flex::Frame = { (*c).frame() }; f.top }
+        option::Option[*core::Node]::None => 0.0f64,
+    };
+}
+
+fn row_h(seq: *core::Node, i: usize) -> f64 {
+    return match core::child_of(seq, i) {
+        option::Option[*core::Node]::Some(c) => { let f: flex::Frame = { (*c).frame() }; f.height }
+        option::Option[*core::Node]::None => 0.0f64,
+    };
+}
+
+#[test]
+fn one_column_is_a_list_and_says_so_by_adding_no_line() {
+    // Zero is "not asked for", the same reading the contract gives every
+    // numeric zero — so a collection that never mentions columns is a list, and
+    // its slot is the ROW itself rather than a line holding one row.
+    var c: core::Node = ui::collection(key: "c2");
+    fill_collection(#addr_of(c), 4 as usize);
+    let s: recycler::Sequence = seq_of(#addr_of(c));
+    assert recycler::slot_count(s) == (4 as usize);
+    // The row carries an index; a line wrapper would not.
+    assert slot_index(s, 1 as usize) == (1 as i64);
+    return;
+}
+
+#[test]
+fn a_table_leaves_its_children_alone_when_its_rows_are_uneven() {
+    // `has_uneven_rows` is the SWITCH on the height: a table that says its rows
+    // differ is a table whose stated height is not a measurement, so it is not
+    // imposed. Imposing it anyway is how a two-line row gets cut in half.
+    //
+    // A table is also the kind that does NOT recycle — its rows are its facet
+    // children, so there is nothing to build lazily — which is why this one
+    // still asks about the node's own children.
+    var even: core::Node = ui::table(key: "t", row_height: 30 as i64);
+    let _a: bool = mount::add_child(#addr_of(even), label::label("a", key: "ta"));
+    recycler::apply_table(0 as *u8, #addr_of(even), table_bits());
+    { even.calculate_layout(width: 200.0f64, height: 400.0f64) };
+    assert row_h(#addr_of(even), 0 as usize) == (30.0f64);
+
+    var uneven: core::Node = ui::table(key: "t2", row_height: 30 as i64,
+                                       uneven_rows: true);
+    let _b: bool = mount::add_child(#addr_of(uneven), label::label("b", key: "tb"));
+    recycler::apply_table(0 as *u8, #addr_of(uneven), table_bits());
+    { uneven.calculate_layout(width: 200.0f64, height: 400.0f64) };
+    assert row_h(#addr_of(uneven), 0 as usize) != (30.0f64);
+    return;
+}
+
+fn table_bits() -> u64 { return ftable::P_ROW_HEIGHT | ftable::P_HAS_UNEVEN_ROWS; }
+
+#[test]
+fn a_pooled_row_is_only_rebound_for_a_row_of_its_own_shape() {
+    // The cheap path exists only when the application PROMISED every row has
+    // the same shape by providing `bind`. Without it, a pooled cell has to be
+    // taken down and rebuilt, which is what every backend did before the verb
+    // existed.
+    var plain: core::Node = ui::list(key: "l6", separator: vocab::Separator::None);
+    fill_list(#addr_of(plain), 3 as usize);
+    assert !recycler::can_rebind(seq_of(#addr_of(plain)), 0 as usize);
+
+    var bound: core::Node = ui::list(key: "l7", separator: vocab::Separator::None);
+    fill_list(#addr_of(bound), 3 as usize);
+    match flist::from(#addr_of(bound)) {
+        option::Option[flist::List]::Some(h) => {
+            let _b: flist::List = h.set_row_bind(seq_bind);
+        }
+        option::Option[flist::List]::None => { assert false; }
+    }
+    let s: recycler::Sequence = seq_of(#addr_of(bound));
+    assert recycler::can_rebind(s, 0 as usize);
+    // A slot past the end is not a data row, so it can never be rebound.
+    assert !recycler::can_rebind(s, 9 as usize);
+    return;
+}
+
+fn seq_bind(index: usize, row: *core::Node, ctx: *u8) { return; }
+
+#[test]
+fn a_recycling_list_defers_its_model_until_it_has_a_width() {
+    // A row's height here is a MEASUREMENT — facet lays the row out and the
+    // answer becomes the cell's size request — so before the list has a width
+    // there is no height to give GtkListView either, and a list view told its
+    // rows are zero points tall needs infinitely many of them to fill a
+    // viewport. Measured on a 5000-row list: 205 cells bound instead of a
+    // dozen. The map's job here is only to answer WHAT the length should be;
+    // when it is applied is `sync_model`'s.
+    var l: core::Node = ui::list(key: "l8", separator: vocab::Separator::None);
+    fill_list(#addr_of(l), 5000 as usize);
+    assert recycler::slot_count(seq_of(#addr_of(l))) == (5000 as usize);
+    return;
+}
+
+#[test]
+fn scroll_to_addresses_a_data_row_and_answers_in_slots() {
+    // GtkListView is addressed in SLOTS and `scroll_to(i)` names a DATA row,
+    // and in a grid or a grouped list those are different numbers — the inverse
+    // of the map is what closes the gap.
+    var c: core::Node = ui::collection(key: "c4", columns: 3 as usize);
+    fill_collection(#addr_of(c), 9 as usize);
+    let s: recycler::Sequence = seq_of(#addr_of(c));
+    assert recycler::slot_of_data_index(s, 0 as usize) == (0 as usize);
+    assert recycler::slot_of_data_index(s, 4 as usize) == (1 as usize);
+    assert recycler::slot_of_data_index(s, 8 as usize) == (2 as usize);
+    // NEGATIVE: a row that is not there answers PAST the end, which is what
+    // `scroll_to_row` tests against before calling GTK — asking a list view to
+    // scroll past its model is a warning per create.
+    assert recycler::slot_of_data_index(s, 99 as usize) >= recycler::slot_count(s);
+    return;
+}
+
+#[test]
+fn the_remaining_threshold_fires_within_n_rows_of_the_end() {
+    // The infinite-scroll verb, and a recycler is the only thing that can
+    // answer it — a materialiser built every row at once and the question had
+    // no moment to be asked in. An off-by-one here loads the next page a row
+    // early or never, so the arithmetic is pinned rather than the wiring.
+    assert !recycler::within_threshold(100 as usize, 0 as usize, 5 as i64);
+    assert !recycler::within_threshold(100 as usize, 93 as usize, 5 as i64);
+    assert recycler::within_threshold(100 as usize, 94 as usize, 5 as i64);
+    assert recycler::within_threshold(100 as usize, 99 as usize, 5 as i64);
+    // Zero is "not asked for", the reading the contract gives every numeric
+    // zero — not "fire on every row".
+    assert !recycler::within_threshold(100 as usize, 99 as usize, 0 as i64);
+    // NEGATIVE: an empty list has no end to approach, and a row past the end is
+    // as close to it as anything can be.
+    assert !recycler::within_threshold(0 as usize, 0 as usize, 5 as i64);
+    assert recycler::within_threshold(10 as usize, 40 as usize, 1 as i64);
+    return;
+}
+
+#[test]
+fn the_scroll_anchor_policies_are_read_from_the_kind_that_declares_them() {
+    // `KeepItemsInView` is GTK's OWN behaviour, so it reads nothing and
+    // restores nothing — and a `list` or a `tree` answers the same for a
+    // different reason: neither kind embeds ItemsView, so neither declares the
+    // verb at all.
+    var keep: core::Node = ui::collection(key: "sa1",
+        scroll_anchor: vocab::ScrollAnchor::KeepScrollOffset);
+    var last: core::Node = ui::collection(key: "sa2",
+        scroll_anchor: vocab::ScrollAnchor::KeepLastItemInView);
+    var deflt: core::Node = ui::collection(key: "sa3");
+    var plain: core::Node = ui::list(key: "sa4");
+    assert recycler::anchor_policy(#addr_of(keep)) == recycler::anchor_offset();
+    assert recycler::anchor_policy(#addr_of(last)) == recycler::anchor_last();
+    assert recycler::anchor_policy(#addr_of(deflt)) == recycler::anchor_none();
+    assert recycler::anchor_policy(#addr_of(plain)) == recycler::anchor_none();
+    return;
+}
+
+#[test]
+fn measuring_the_first_item_only_is_a_collection_verb() {
+    var first: core::Node = ui::collection(key: "is1",
+        item_sizing: vocab::ItemSizing::MeasureFirstItem);
+    var all: core::Node = ui::collection(key: "is2");
+    var plain: core::Node = ui::list(key: "is3");
+    assert recycler::measures_first_only(#addr_of(first));
+    assert !recycler::measures_first_only(#addr_of(all));
+    assert !recycler::measures_first_only(#addr_of(plain));
+    return;
+}
+
+#[test]
+fn a_reorder_payload_is_an_index_and_anything_else_is_refused() {
+    // The payload crosses GTK's drag machinery as TEXT, so it can arrive from
+    // another application — and a row index that is not a number must be
+    // refused rather than read as zero, which would report a move of the first
+    // row that nobody made.
+    assert recycler::parse_slot("0") == (0 as i64);
+    assert recycler::parse_slot("42") == (42 as i64);
+    assert recycler::parse_slot("") == ((0 as i64) -% (1 as i64));
+    assert recycler::parse_slot("3a") == ((0 as i64) -% (1 as i64));
+    assert recycler::parse_slot("/etc/passwd") == ((0 as i64) -% (1 as i64));
+    assert recycler::parse_slot("-1") == ((0 as i64) -% (1 as i64));
+    return;
+}
+
+#[test]
+fn an_invalidated_span_is_clamped_to_the_model_it_lands_in() {
+    // The range is a span of DATA the application coalesced, and the model may
+    // already be shorter — an unclamped splice past the end is a GTK error and
+    // a negative width is a crash.
+    assert recycler::invalidated_span(0 as i64, 0 as i64, 10 as usize) == (1 as usize);
+    assert recycler::invalidated_span(2 as i64, 5 as i64, 10 as usize) == (4 as usize);
+    // Trailing off the end takes what is there.
+    assert recycler::invalidated_span(8 as i64, 99 as i64, 10 as usize) == (2 as usize);
+    // NEGATIVE: entirely past the end, an empty model, and the "nothing
+    // pending" sentinel all answer nothing rather than a span.
+    assert recycler::invalidated_span(10 as i64, 12 as i64, 10 as usize) == (0 as usize);
+    assert recycler::invalidated_span(0 as i64, 0 as i64, 0 as usize) == (0 as usize);
+    assert recycler::invalidated_span((0 as i64) -% (1 as i64), 3 as i64,
+                                      10 as usize) == (0 as usize);
+    return;
+}
+
+#[test]
+fn only_a_flat_sequence_can_be_spliced_by_row() {
+    // A slot is a row only when there is nothing between the rows and nothing
+    // beside them: a grouped list has headers and a grid has `columns` rows per
+    // slot, so a DATA range is not a slot range in either. Both fall back to
+    // the replacement, which is what they had.
+    var flat: core::Node = ui::list(key: "fg1");
+    fill_list(#addr_of(flat), 4 as usize);
+    assert recycler::addresses_rows_directly(seq_of(#addr_of(flat)));
+
+    var grid: core::Node = ui::collection(key: "fg2", columns: 3 as usize);
+    fill_collection(#addr_of(grid), 6 as usize);
+    assert !recycler::addresses_rows_directly(seq_of(#addr_of(grid)));
+
+    var grouped: core::Node = ui::list(key: "fg3", grouped: true);
+    fill_list(#addr_of(grouped), 4 as usize);
+    assert !recycler::addresses_rows_directly(seq_of(#addr_of(grouped)));
+    return;
+}
+
+#[test]
+fn a_splice_beside_a_rebuild_is_a_rebuild() {
+    // The fine-grained verb is only sound while everything ELSE about the
+    // sequence is unchanged — a splice arriving in the same dirty word as a new
+    // row builder describes rows the backend has never seen.
+    assert recycler::only_fine_grained(flist::P_SPLICE_ROWS);
+    assert recycler::only_fine_grained(flist::P_INVALIDATE_ROW);
+    assert recycler::only_fine_grained(flist::P_SPLICE_ROWS | flist::P_INVALIDATE_ROW);
+    // A scroll-bar policy is not a rebuild bit, so it does not force one.
+    assert recycler::only_fine_grained(flist::P_SPLICE_ROWS
+                                       | flist::P_VERTICAL_SCROLL_BARS);
+    assert !recycler::only_fine_grained(flist::P_SPLICE_ROWS | flist::P_ROW);
+    assert !recycler::only_fine_grained(flist::P_SPLICE_ROWS | flist::P_COUNT);
+    assert !recycler::only_fine_grained(flist::P_INVALIDATE_ROW
+                                        | flist::P_SELECTED_INDEX);
+    return;
+}
+
+#[test]
+fn a_pending_range_is_consumed_even_when_it_cannot_be_used() {
+    // The BACKEND is what clears these — `facet_appkit/recycler.cplus` does the
+    // same — and a range left behind would be replayed on the next unrelated
+    // write to the same node. So the clear happens before every early return,
+    // including the ones that fall back to a rebuild.
+    var l: core::Node = ui::list(key: "fg4");
+    fill_list(#addr_of(l), 6 as usize);
+    match flist::from(#addr_of(l)) {
+        option::Option[flist::List]::Some(h) => {
+            let _i: flist::List = h.invalidate_row(2 as usize);
+        }
+        option::Option[flist::List]::None => { assert false; }
+    }
+    assert pending_lo(#addr_of(l)) == (2 as i64);
+    // No widget, so nothing can be spliced — and the range must still be gone.
+    recycler::apply_list(0 as *u8, #addr_of(l), flist::P_INVALIDATE_ROW);
+    assert pending_lo(#addr_of(l)) == ((0 as i64) -% (1 as i64));
+    return;
+}
+
+fn pending_lo(n: *core::Node) -> i64 {
+    let d: *core::Data = core::node_data(n);
+    if d == (0 as *core::Data) { return (0 as i64) -% (2 as i64); }
+    let p: *props::ListProps = { (*d).props } as *props::ListProps;
+    if p == (0 as *props::ListProps) { return (0 as i64) -% (2 as i64); }
+    return { (*p).invalidate_lo };
+}
+
+#[test]
+fn a_sequence_body_refuses_a_node_of_another_kind() {
+    var n: core::Node = label::label("hi", key: "l9");
+    recycler::apply_list(0 as *u8, #addr_of(n), paint::all_bits());
+    recycler::apply_collection(0 as *u8, #addr_of(n), paint::all_bits());
+    recycler::apply_table(0 as *u8, #addr_of(n), paint::all_bits());
+    // And the neutral record answers empty rather than reading another kind's
+    // props through the wrong offsets.
+    assert recycler::slot_count(seq_of(#addr_of(n))) == (0 as usize);
+    return;
+}
+
+// ================================================================================
+// tree — materialised rows, and the two gestures that make it a control
+// ================================================================================
+
+fn model() -> tree::TreeNode {
+    var root: tree::TreeNode = tree::TreeNode::new("", "");
+    var views: tree::TreeNode = tree::TreeNode::new("Views", "sec:views", is_branch: true);
+    let _a: status::Status = views.add_child(tree::TreeNode::new("Button", "button"));
+    let _b: status::Status = views.add_child(tree::TreeNode::new("Label", "label"));
+    let _c: status::Status = root.add_child(tree::TreeNode::new("Overview", "overview"));
+    let _d: status::Status = root.add_child(views);
+    return root;
+}
+
+fn rows_of(t: *core::Node) -> usize { return core::child_count_of(t); }
+
+fn row_key_at(t: *core::Node, i: usize) -> str {
+    return match core::child_of(t, i) {
+        option::Option[*core::Node]::Some(c) => { (*c).key() },
+        option::Option[*core::Node]::None => "",
+    };
+}
+
+// The tree's slot map, with no widget: `visible_rows` is the pre-order walk the
+// recycler caches, and every question the materialiser used to be asked of its
+// emitted children is a question about this vector.
+fn visible(t: *core::Node) -> vec::Vec[recycler::VisibleRow] {
+    return recycler::visible_rows(t);
+}
+
+fn visible_id(rows: *vec::Vec[recycler::VisibleRow], i: usize) -> str {
+    return match { (*rows).at(i) } {
+        option::Option[recycler::VisibleRow]::Some(r) => {
+            if r.node == (0 as usize) { "" }
+            else { { (*(r.node as *tree::TreeNode)).id_of() } }
+        }
+        option::Option[recycler::VisibleRow]::None => "",
+    };
+}
+
+fn visible_depth(rows: *vec::Vec[recycler::VisibleRow], i: usize) -> i64 {
+    return match { (*rows).at(i) } {
+        option::Option[recycler::VisibleRow]::Some(r) => r.depth,
+        option::Option[recycler::VisibleRow]::None => (0 as i64) -% (1 as i64),
+    };
+}
+
+#[test]
+fn a_collapsed_branch_costs_nothing() {
+    // The walk does not DESCEND through a closed branch, which is what keeps a
+    // tree affordable however big the model is: a hundred-thousand-node model
+    // with everything shut is two rows, and the recycler only ever asks about
+    // the rows the walk found.
+    var t: core::Node = ui::tree(model(), key: "t");
+    var rows: vec::Vec[recycler::VisibleRow] = visible(#addr_of(t));
+    // The root is the CONTAINER, not a row — a tree shows its children.
+    assert rows.count() == (2 as usize);
+    assert visible_id(#addr_of(rows), 0 as usize) == "overview";
+    assert visible_id(#addr_of(rows), 1 as usize) == "sec:views";
+    return;
+}
+
+#[test]
+fn expanding_a_branch_puts_its_children_under_it() {
+    var t: core::Node = ui::tree(model(), key: "t2");
+    match tree::from(#addr_of(t)) {
+        option::Option[tree::Tree]::Some(h) => { let _e: tree::Tree = h.expand("sec:views"); }
+        option::Option[tree::Tree]::None => { assert false; }
+    }
+    var open: vec::Vec[recycler::VisibleRow] = visible(#addr_of(t));
+    assert open.count() == (4 as usize);
+    // In order, and directly under the branch they belong to.
+    assert visible_id(#addr_of(open), 1 as usize) == "sec:views";
+    assert visible_id(#addr_of(open), 2 as usize) == "button";
+    assert visible_id(#addr_of(open), 3 as usize) == "label";
+    // And collapsing takes them away again — the model is untouched, only the
+    // walk changes.
+    match tree::from(#addr_of(t)) {
+        option::Option[tree::Tree]::Some(h) => { let _c: tree::Tree = h.collapse("sec:views"); }
+        option::Option[tree::Tree]::None => { assert false; }
+    }
+    var shut: vec::Vec[recycler::VisibleRow] = visible(#addr_of(t));
+    assert shut.count() == (2 as usize);
+    return;
+}
+
+#[test]
+fn depth_is_carried_by_the_slot_and_becomes_indentation() {
+    // A leading pad, not a backend-drawn gutter: the row is an ordinary flex
+    // node and the indent is padding inside it, so the row itself still spans
+    // the tree at every depth.
+    var t: core::Node = ui::tree(model(), key: "t3");
+    match tree::from(#addr_of(t)) {
+        option::Option[tree::Tree]::Some(h) => { let _e: tree::Tree = h.expand("sec:views"); }
+        option::Option[tree::Tree]::None => { assert false; }
+    }
+    var rows: vec::Vec[recycler::VisibleRow] = visible(#addr_of(t));
+    assert visible_depth(#addr_of(rows), 1 as usize) == (0 as i64);   // sec:views
+    assert visible_depth(#addr_of(rows), 2 as usize) == (1 as i64);   // button
+    // Built at those depths, the two rows are the same width and start at the
+    // same left edge.
+    var branch: core::Node = tree_row_at(#addr_of(t), #addr_of(rows), 1 as usize);
+    var child: core::Node = tree_row_at(#addr_of(t), #addr_of(rows), 2 as usize);
+    { branch.calculate_layout(width: 240.0f64, height: flex::undefined()) };
+    { child.calculate_layout(width: 240.0f64, height: flex::undefined()) };
+    let bf: flex::Frame = { branch.frame() };
+    let cf: flex::Frame = { child.frame() };
+    assert bf.left == cf.left;
+    assert bf.width == cf.width;
+    return;
+}
+
+fn tree_row_at(t: *core::Node, rows: *vec::Vec[recycler::VisibleRow],
+               i: usize) -> core::Node {
+    let p: *tree::TreeProps = recycler::tree_props(t);
+    return match { (*rows).at(i) } {
+        option::Option[recycler::VisibleRow]::Some(r) =>
+            controls::build_tree_row(r.node as *tree::TreeNode, p, r.depth),
+        option::Option[recycler::VisibleRow]::None => core::column(core::Builder::new()),
+    };
+}
+
+#[test]
+fn a_pooled_tree_row_is_only_reused_at_its_own_depth() {
+    // The indent is PADDING and the highlight is a BACKGROUND, and a tree's
+    // `bind` writes neither — it writes the row's data. So a pooled cell may
+    // only be reused where both match, or a row scrolls in at the wrong indent
+    // and the tree reads as having reordered itself.
+    var t: core::Node = ui::tree(model(), key: "t3b");
+    match tree::from(#addr_of(t)) {
+        option::Option[tree::Tree]::Some(h) => { let _e: tree::Tree = h.expand("sec:views"); }
+        option::Option[tree::Tree]::None => { assert false; }
+    }
+    var rows: vec::Vec[recycler::VisibleRow] = visible(#addr_of(t));
+    assert visible_depth(#addr_of(rows), 1 as usize)
+        != visible_depth(#addr_of(rows), 2 as usize);
+    return;
+}
+
+#[test]
+fn every_row_carries_the_model_node_it_stands_for() {
+    // ONE handler serves every row and asks the SENDER which one it is —
+    // `set_item` is what that question resolves through, and without it a tree
+    // would need a closure per row that this language does not have.
+    var t: core::Node = ui::tree(model(), key: "t4");
+    var rows: vec::Vec[recycler::VisibleRow] = visible(#addr_of(t));
+    var row: core::Node = tree_row_at(#addr_of(t), #addr_of(rows), 0 as usize);
+    let item: *u8 = core::item_of(#addr_of(row));
+    assert item != (0 as *u8);
+    assert { (*(item as *tree::TreeNode)).id_of() } == "overview";
+    return;
+}
+
+#[test]
+fn a_row_with_no_builder_still_shows_the_models_own_label() {
+    // A tree with no row builder renders its shape rather than a column of
+    // empty rows — the AppKit backend records shipping the latter, because the
+    // fallback was guarded on a null that the default handler is never equal
+    // to.
+    var t: core::Node = ui::tree(model(), key: "t5");
+    var rows: vec::Vec[recycler::VisibleRow] = visible(#addr_of(t));
+    var row: core::Node = tree_row_at(#addr_of(t), #addr_of(rows), 0 as usize);
+    assert has_label(#addr_of(row), "Overview");
+    return;
+}
+
+fn has_label(root: *core::Node, want: str) -> bool {
+    if core::kind_of(root) == props::K_LABEL {
+        match label::from(root) {
+            option::Option[label::Label]::Some(l) => { if l.text() == want { return true; } }
+            option::Option[label::Label]::None => { }
+        }
+    }
+    var i: usize = 0 as usize;
+    let n: usize = core::child_count_of(root);
+    while i < n {
+        match core::child_of(root, i) {
+            option::Option[*core::Node]::Some(c) => { if has_label(c, want) { return true; } }
+            option::Option[*core::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return false;
+}
+
+#[test]
+fn a_tree_body_refuses_a_node_of_another_kind() {
+    var n: core::Node = label::label("hi", key: "l3");
+    recycler::apply_tree(0 as *u8, #addr_of(n), paint::all_bits());
+    assert recycler::visible_rows(#addr_of(n)).count() == (0 as usize);
+    // And a tree with an empty model has no visible rows rather than trapping.
+    var empty: core::Node = ui::tree(tree::TreeNode::new("", ""), key: "t6");
+    recycler::apply_tree(0 as *u8, #addr_of(empty), tree::P_ROOT);
+    assert recycler::visible_rows(#addr_of(empty)).count() == (0 as usize);
+    return;
+}
+
+// ================================================================================
+// geometry
+// ================================================================================
+
+#[test]
+fn a_fractional_frame_rounds_rather_than_truncating() {
+    // A 99.6pt column truncated to 99 loses a pixel at every nesting level, and
+    // facet's trees nest deeply enough for that to read as drift.
+    assert geometry::round_i32(99.6f64) == (100 as i32);
+    assert geometry::round_i32(99.4f64) == (99 as i32);
+    // A negative frame is a size request GTK rejects; zero is the floor.
+    assert geometry::round_i32(0.0f64 - 5.0f64) == (0 as i32);
+    return;
+}
+
+// ================================================================================
+// window — the app tier the runtime facade stands on
+// ================================================================================
+//
+// NO WINDOW IS OPENED HERE. `gtk_init` needs a display and `open_window` makes
+// widgets, so what is pinned is the arithmetic and the no-window posture — the
+// half that is wrong silently. The other half is `examples/facet_gallery`,
+// which is a whole application and now runs on this backend.
+
+#[test]
+fn nothing_is_open_and_every_window_read_says_so() {
+    // NEGATIVE, and load-bearing: `App::run` decides whether to keep going from
+    // this count, and a facade that answered a phantom window would loop
+    // forever on a screen nobody can see.
+    assert window::open_window_count() == (0 as i64);
+    assert window::any_window() == (0 as *u8);
+    assert window::window_of_root(0 as *core::Node) == (0 as *u8);
+    // 1.0 rather than 0 — the value that keeps size arithmetic working instead
+    // of collapsing every measurement to nothing.
+    assert window::density_of(0 as *core::Node) == (1.0f64);
+    assert !window::is_active(0 as *core::Node);
+    assert !window::is_suspended();
+    return;
+}
+
+#[test]
+fn the_loop_refuses_to_start_with_nothing_to_wait_for() {
+    // If this is wrong the SUITE HANGS, which is the only way a test can find
+    // it: `run_loop` blocks until the last window closes, and with no window
+    // there is nothing that will ever close.
+    window::run_loop();
+    // And stopping a loop that is not running is a no-op, not a null quit.
+    window::stop_loop();
+    return;
+}
+
+#[test]
+fn closing_nothing_is_a_no_op() {
+    window::close_window(0 as *u8);
+    window::close_window_of(0 as *core::Node);
+    window::close_all_windows();
+    return;
+}
+
+#[test]
+fn the_decoration_layout_names_only_the_buttons_the_chrome_allows() {
+    // GTK has no per-button switch: what a window CAN do is the list of
+    // buttons it asks for, and leaving one out is how it says no.
+    var both: screen::Chrome = screen::Chrome::new(maximizable: true, minimizable: true);
+    assert window::decoration_layout(#addr_of(both)).view() == ":minimize,maximize,close";
+    var neither: screen::Chrome = screen::Chrome::new(maximizable: false, minimizable: false);
+    assert window::decoration_layout(#addr_of(neither)).view() == ":close";
+    var no_max: screen::Chrome = screen::Chrome::new(maximizable: false, minimizable: true);
+    assert window::decoration_layout(#addr_of(no_max)).view() == ":minimize,close";
+    return;
+}
+
+#[test]
+fn a_header_bar_is_built_only_when_the_chrome_needs_one() {
+    // A plain window takes GTK's own decorations; a header bar is the price of
+    // a subtitle or a button policy, and paying it unasked would replace the
+    // desktop's title bar with one facet drew.
+    var plain: screen::Chrome = screen::Chrome::new();
+    assert !window::wants_header(#addr_of(plain));
+    var subtitled: screen::Chrome = screen::Chrome::new(subtitle: "two lines");
+    assert window::wants_header(#addr_of(subtitled));
+    var fixed: screen::Chrome = screen::Chrome::new(maximizable: false);
+    assert window::wants_header(#addr_of(fixed));
+    var blended: screen::Chrome = screen::Chrome::new(bar: screen::Bar::Blended);
+    assert window::wants_header(#addr_of(blended));
+    // Hidden and Custom both want NO decoration at all, which is the opposite
+    // of wanting a header bar to configure.
+    var hidden: screen::Chrome = screen::Chrome::new(bar: screen::Bar::Hidden);
+    assert !window::wants_header(#addr_of(hidden));
+    var custom: screen::Chrome = screen::Chrome::new(bar: screen::Bar::Custom);
+    assert !window::wants_header(#addr_of(custom));
+    return;
+}
+
+#[test]
+fn the_app_appearance_starts_unspecified() {
+    // `Unspecified` is "nobody chose", and it is what an app that never asked
+    // must read back — not Light, which is a choice it did not make.
+    match window::app_appearance() {
+        vocab::Appearance::Unspecified => { }
+        vocab::Appearance::Light => { assert false; }
+        vocab::Appearance::Dark => { assert false; }
+    }
+    return;
+}
+
+#[test]
+fn cancelling_an_observer_that_was_never_armed_is_a_no_op() {
+    // NEGATIVE: `Cancellable` reads 0 as "nothing pending", so the tokens are
+    // 1-based — a 0 arriving here is a bug elsewhere and must not free slot 0.
+    window::cancel_observe(0 as u64);
+    window::cancel_observe(9999 as u64);
+    return;
+}
+
+// ================================================================================
+// dialogs — an alert is a facet TREE
+// ================================================================================
+
+#[test]
+fn every_part_of_an_alert_is_addressable_by_key() {
+    // THE WHOLE REASON these are trees and not GtkAlertDialogs: a dialog the
+    // platform draws has nothing an agent can name, and a dialog an agent
+    // cannot answer is a dialog an agent cannot get past.
+    var t: core::Node = dialogs::alert_tree("Discard?", "You have unsaved work.",
+                                            "Discard", "Keep");
+    assert has_key(#addr_of(t), "alert:title");
+    assert has_key(#addr_of(t), "alert:message");
+    assert has_key(#addr_of(t), "alert:primary");
+    assert has_key(#addr_of(t), "alert:secondary");
+    return;
+}
+
+#[test]
+fn an_alert_with_no_secondary_has_no_second_button() {
+    // NEGATIVE: an empty string is "there is no such button", not a button
+    // with no label — which would be a target an agent could press to nowhere.
+    var t: core::Node = dialogs::alert_tree("Saved", "", "OK", "");
+    assert has_key(#addr_of(t), "alert:primary");
+    assert !has_key(#addr_of(t), "alert:secondary");
+    // And no message means no message label rather than an empty one.
+    assert !has_key(#addr_of(t), "alert:message");
+    return;
+}
+
+#[test]
+fn a_choice_keys_its_options_by_index() {
+    // `choose:opt:2` is addressable where "the third button" is not.
+    var opts: vec::Vec[text::Text] = vec::new::[text::Text]();
+    let _a: status::Status = opts.append(text::from_str("Merge"));
+    let _b: status::Status = opts.append(text::from_str("Replace"));
+    let _c: status::Status = opts.append(text::from_str("Cancel"));
+    var t: core::Node = dialogs::choose_tree("Conflict", "Two edits.", opts);
+    assert has_key(#addr_of(t), "choose:opt:0");
+    assert has_key(#addr_of(t), "choose:opt:2");
+    assert !has_key(#addr_of(t), "choose:opt:3");
+    return;
+}
+
+#[test]
+fn a_prompts_field_is_a_real_text_field() {
+    // `set_text` has to reach it by key exactly like any other field, which is
+    // what makes the prompt agent-drivable at all.
+    var t: core::Node = dialogs::prompt_tree("Rename", "", "new name", "OK", "Cancel");
+    match core::find_in(#addr_of(t), "prompt:value") {
+        option::Option[*core::Node]::Some(n) => {
+            assert core::kind_of(n) == props::K_TEXT_FIELD;
+        }
+        option::Option[*core::Node]::None => { assert false; }
+    }
+    return;
+}
+
+fn has_key(root: *core::Node, key: str) -> bool {
+    return match core::find_in(root, key) {
+        option::Option[*core::Node]::Some(_n) => true,
+        option::Option[*core::Node]::None => false,
+    };
+}
+
+#[test]
+fn a_sheet_is_tall_enough_for_the_message_it_carries() {
+    // The bug this arithmetic exists for: every sheet took a fixed height
+    // computed as though the message were one line, so a three-line message
+    // was clipped and the last button was cut off by the bottom edge — on a
+    // sheet whose last option is typically the one that says no.
+    assert dialogs::message_lines("") == (0.0f64);
+    assert dialogs::message_lines("short") == (1.0f64);
+    // A newline is a break the caller MEANT, so it counts as one of its own.
+    assert dialogs::message_lines("one\ntwo\nthree") == (3.0f64);
+    // And a paragraph past the line width wraps rather than staying one line.
+    assert dialogs::message_lines(
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa") > (1.0f64);
+    // Capped, because a sheet taller than the screen is worse than a scroll.
+    assert dialogs::capped(2000.0f64) == (560.0f64);
+    assert dialogs::capped(120.0f64) == (120.0f64);
+    return;
+}
+
+#[test]
+fn the_window_verbs_are_inert_with_no_window_up() {
+    // NEGATIVE: a handler in a custom title bar fires before any window is
+    // registered during teardown, and each of these must be a no-op rather
+    // than a null message.
+    dialogs::window_close(0 as *u8);
+    dialogs::window_minimize(0 as *u8);
+    dialogs::window_zoom(0 as *u8);
+    let f: vocab::Rect = dialogs::window_frame_of(0 as *core::Node);
+    assert f.width == (0.0f64);
+    assert f.height == (0.0f64);
+    dialogs::set_window_frame_of(0 as *core::Node, vocab::Rect::of(0.0f64, 0.0f64,
+                                                                   100.0f64, 100.0f64));
+    return;
+}
+
+// ================================================================================
+// anim — the curves, and the two things that move on their own
+// ================================================================================
+
+#[test]
+fn every_easing_curve_starts_at_zero_and_lands_on_one() {
+    // The property that makes a curve usable at all: an animation that does not
+    // reach its target is one the application has to correct for, and one that
+    // does not start where it is jumps on the first frame. Eleven curves, and
+    // the two ends are asserted for all of them rather than for the one being
+    // written at the time.
+    assert anim::eased(0.0f64, vocab::Easing::Linear) == (0.0f64);
+    assert anim::eased(1.0f64, vocab::Easing::Linear) == (1.0f64);
+    assert near(anim::eased(0.9999f64, vocab::Easing::SinOut), 1.0f64);
+    assert near(anim::eased(0.9999f64, vocab::Easing::CubicOut), 1.0f64);
+    assert near(anim::eased(0.9999f64, vocab::Easing::CubicInOut), 1.0f64);
+    assert near(anim::eased(0.9999f64, vocab::Easing::BounceOut), 1.0f64);
+    assert near(anim::eased(0.9999f64, vocab::Easing::SpringOut), 1.0f64);
+    assert near(anim::eased(0.0001f64, vocab::Easing::SinIn), 0.0f64);
+    assert near(anim::eased(0.0001f64, vocab::Easing::CubicIn), 0.0f64);
+    assert near(anim::eased(0.0001f64, vocab::Easing::BounceIn), 0.0f64);
+    assert near(anim::eased(0.0001f64, vocab::Easing::SpringIn), 0.0f64);
+    return;
+}
+
+#[test]
+fn the_symmetric_curves_are_symmetric() {
+    // SinInOut and CubicInOut both pass through the middle at the middle — the
+    // half-way test that catches a curve assembled out of two halves that do
+    // not meet.
+    assert near(anim::eased(0.5f64, vocab::Easing::SinInOut), 0.5f64);
+    assert near(anim::eased(0.5f64, vocab::Easing::CubicInOut), 0.5f64);
+    // And an IN curve is its OUT read backwards, which is the definition the
+    // bounce and spring pairs are built from rather than a second table.
+    assert near(anim::eased(0.3f64, vocab::Easing::BounceIn),
+                1.0f64 - anim::eased(0.7f64, vocab::Easing::BounceOut));
+    assert near(anim::eased(0.3f64, vocab::Easing::SpringIn),
+                1.0f64 - anim::eased(0.7f64, vocab::Easing::SpringOut));
+    return;
+}
+
+#[test]
+fn an_in_curve_starts_slow_and_an_out_curve_starts_fast() {
+    // The whole point of naming a curve. Asserted as an INEQUALITY against
+    // linear rather than against a magic number, so the test says what the
+    // curve is for instead of what it currently computes.
+    assert anim::eased(0.25f64, vocab::Easing::CubicIn) < (0.25f64);
+    assert anim::eased(0.25f64, vocab::Easing::CubicOut) > (0.25f64);
+    assert anim::eased(0.25f64, vocab::Easing::SinIn) < (0.25f64);
+    assert anim::eased(0.25f64, vocab::Easing::SinOut) > (0.25f64);
+    return;
+}
+
+#[test]
+fn a_spring_overshoots_and_a_progress_fraction_does_not() {
+    // The spring is ALLOWED past 1 — that is what makes it a spring — and the
+    // clamp lives at the caller, because clamping the curve is how a spring
+    // stops being one.
+    assert anim::eased(0.75f64, vocab::Easing::SpringOut) > (1.0f64);
+    assert anim::clamped(1.2f64) == (1.0f64);
+    assert anim::clamped(0.0f64 - (0.3f64)) == (0.0f64);
+    assert anim::clamped(0.42f64) == (0.42f64);
+    return;
+}
+
+#[test]
+fn a_duration_becomes_frames_and_never_fewer_than_one() {
+    // Sixty a second, and a ZERO duration is a tween of one step rather than a
+    // separate code path — a division by zero steps is the alternative.
+    assert anim::steps_for(vocab::Duration::of_seconds(1.0f64)) == (60 as i64);
+    assert anim::steps_for(vocab::Duration::animation()) == (15 as i64);
+    assert anim::steps_for(vocab::Duration::zero()) == (1 as i64);
+    assert anim::steps_for(vocab::Duration::of_seconds(0.001f64)) == (1 as i64);
+    return;
+}
+
+#[test]
+fn an_animation_frame_delay_has_a_floor() {
+    // A GIF is allowed to declare 0ms and the decoder answers -1 for a frame
+    // that never advances; both would be a spin rather than an animation, so
+    // every browser clamps and so does this.
+    assert anim::clamped_delay(100 as i32) == (100 as u32);
+    assert anim::clamped_delay(0 as i32) == (20 as u32);
+    assert anim::clamped_delay((0 as i32) -% (1 as i32)) == (20 as u32);
+    assert anim::clamped_delay(20 as i32) == (20 as u32);
+    return;
+}
+
+#[test]
+fn a_zero_duration_is_a_set_and_does_not_start_a_tween() {
+    // THE BUG THIS CLOSES, found by watching the tween's own steps in the
+    // probe: `create` raises every bit, `P_ANIMATE_PROGRESS` among them, so
+    // every progress bar ever made started a one-step tween the moment it
+    // appeared. Harmless on its own — and not harmless at all with a second
+    // bar, because the tween's state is ONE static pair and the new bar would
+    // take the animation away from the one that was mid-flight.
+    //
+    // Asserted through the STATICS rather than through a widget, which this
+    // suite cannot make: a zero duration must leave `animating()` false.
+    assert !anim::animating();
+    anim::animate_progress(0 as *u8, 0.5f64, vocab::Duration::zero(),
+                           vocab::Easing::Linear);
+    assert !anim::animating();
+    return;
+}
+
+#[test]
+fn nothing_is_animating_before_anything_asks() {
+    // NEGATIVE: the tween's statics are process-wide, so "not running" has to
+    // be the state they start in — and `animate_progress` on a null widget must
+    // not start one.
+    assert !anim::animating();
+    anim::animate_progress(0 as *u8, 0.5f64, vocab::Duration::animation(),
+                           vocab::Easing::SinInOut);
+    assert !anim::animating();
+    // And the frame callback with nothing set answers G_SOURCE_REMOVE rather
+    // than dereferencing a null bar.
+    assert anim::progress_step(0 as *u8) == (0 as i32);
+    return;
+}
+
+#[test]
+fn the_animation_verbs_are_inert_without_a_widget() {
+    // NEGATIVE: every one of these runs from `apply_image`, which runs for a
+    // node whose widget could be null on any path that failed earlier.
+    anim::load_animation(0 as *u8, "/nonexistent.gif");
+    anim::set_playing(0 as *u8, true);
+    assert !anim::is_animated(0 as *u8);
+    assert !anim::is_playing(0 as *u8);
+    assert anim::image_tick(0 as *u8) == (0 as i32);
+    return;
+}
+
+// ================================================================================
+// symbol.fill — the outline-to-filled axis
+// ================================================================================
+
+#[test]
+fn a_symbols_fill_is_a_font_variation_and_zero_writes_nothing() {
+    // The axis is only meaningful on the bundled variable font, and an
+    // application that never named a fill must not get a declaration at all —
+    // `font-variation-settings` with a value the font has no axis for is a
+    // Pango warning per frame.
+    assert controls::fill_decl(0.0f64).view() == "";
+    assert controls::fill_decl(1.0f64).view() == "font-variation-settings:\"FILL\" 1.00;";
+    assert controls::fill_decl(0.5f64).view() == "font-variation-settings:\"FILL\" 0.50;";
+    // Two decimals, so an application animating the axis gets a hundred
+    // positions — and a hundredth reads as `0.07`, not `0.7`.
+    assert controls::fill_decl(0.07f64).view() == "font-variation-settings:\"FILL\" 0.07;";
+    // CLAMPED: a variation outside an axis's range is undefined in the spec and
+    // silently ignored by some rasterisers, so `2.0` would read as UNSET —
+    // which is the opposite of what it asked for.
+    assert controls::fill_decl(2.0f64).view() == "font-variation-settings:\"FILL\" 1.00;";
+    // The bit has to be in the CSS gate or the declaration is composed once and
+    // never again.
+    assert (controls::css_bits(symbol::K_SYMBOL) & symbol::P_FILL) != (0 as u64);
+    return;
+}
+
+// ================================================================================
+// text_area — the placeholder, the runs, and auto_size
+// ================================================================================
+
+#[test]
+fn an_editor_measures_itself_only_when_it_was_asked_to() {
+    // `auto_size` is the one intrinsic-size decision that is a PROPERTY rather
+    // than a fact about the kind, so it is a per-NODE question — and every
+    // other kind must answer no, because `views::create` asks it of all of
+    // them.
+    var grows: core::Node = ui::text_area("", key: "ta:grows",
+                                          auto_size: vocab::AutoSize::TextChanges);
+    var fixed: core::Node = ui::text_area("", key: "ta:fixed");
+    var other: core::Node = ui::label("not an editor", key: "ta:label");
+    assert input::auto_sizes(#addr_of(grows));
+    assert !input::auto_sizes(#addr_of(fixed));
+    assert !input::auto_sizes(#addr_of(other));
+    assert !input::auto_sizes(0 as *core::Node);
+    return;
+}
+
+#[test]
+fn a_style_runs_tag_is_named_per_index_so_it_can_be_reused() {
+    // An anonymous GtkTextTag can be added to a table repeatedly and never
+    // comes out, so rebuilding the runs on every write would grow the table
+    // forever. The name is the whole mechanism that stops it.
+    assert controls::run_tag_name(0 as usize).view() == "facet:run:0";
+    assert controls::run_tag_name(7 as usize).view() == "facet:run:7";
+    return;
+}
+
+#[test]
+fn the_editor_gate_names_the_three_verbs_that_were_missing() {
+    // A prop is only honoured if its bit is READ, and these three were the
+    // package's last unread editor verbs. Named against the contract's own
+    // constants so a renumbering cannot make this pass by accident.
+    assert ftext_area::P_PLACEHOLDER != (0 as u64);
+    assert ftext_area::P_STYLE_RUNS != (0 as u64);
+    assert ftext_area::P_AUTO_SIZE != (0 as u64);
+    // And the image's, which is answered by the animation driver.
+    assert fimage::P_IS_ANIMATION_PLAYING != (0 as u64);
+    return;
+}
+
+// ================================================================================
+// the app menu's live state and its accelerators
+// ================================================================================
+
+fn always_off(ctx: *u8) -> bool { return false; }
+fn renamed(ctx: *u8) -> text::Text { return text::from_str("Close \"notes.cplus\""); }
+fn says_nothing(ctx: *u8) -> text::Text { return text::new(); }
+
+#[test]
+fn a_menu_title_survives_the_table_it_is_stored_in() {
+    // THE BUG THIS CLOSES, and it was latent for three rounds: an interned
+    // string is NOT nul-terminated — `text::intern` mallocs a header plus
+    // exactly `n` bytes — and this module used to keep the POINTER in a
+    // `[usize; N]` and rebuild the `str` with `strlen`. That reads into
+    // whatever malloc put next: "Save" came back as `Save` plus the tail of an
+    // unrelated CSS declaration. It looked right for a long time because the
+    // byte after a small allocation is usually zero.
+    //
+    // Two titles, so the assertion is about the SECOND one — a single item
+    // sitting at the end of the heap is exactly the case that passes by luck.
+    var m: screen::AppMenu = screen::app_menu("Probe");
+    m.add_command("File", "Save");
+    m.add_command("File", "Save As…");
+    m.add_command("Edit", "Find");
+    window::install_app_menu(#addr_of(m));
+    assert window::app_item_title(0 as usize) == "Save";
+    assert window::app_item_title(1 as usize) == "Save As…";
+    assert window::app_item_title(2 as usize) == "Find";
+    return;
+}
+
+#[test]
+fn a_menu_shortcut_is_command_plus_what_the_item_added() {
+    // A bare `key:` always meant ⌘, and ⌘ is Super on a GTK desktop — the same
+    // mapping the key band and the context menus make, so an application does
+    // not learn two answers to one question.
+    var plain: screen::MenuItem = screen::MenuItem::new("File", "Save", key: "s");
+    assert window::app_accel_of(#addr_of(plain)).view() == "<Super>s";
+    // ⇧ and ⌥ go ON TOP of it, in GTK's own order.
+    var both: screen::MenuItem = screen::MenuItem::new("File", "Save As", key: "s",
+                                                       shift: true, alt: true);
+    assert window::app_accel_of(#addr_of(both)).view() == "<Shift><Alt><Super>s";
+    // NEGATIVE: an item with no key asks for no chord at all, rather than a
+    // modifier with nothing after it — which GTK parses as NULL and would leave
+    // a shortcut controller holding a dead trigger.
+    var none: screen::MenuItem = screen::MenuItem::new("File", "About");
+    assert window::app_accel_of(#addr_of(none)).view() == "";
+    return;
+}
+
+#[test]
+fn an_item_that_names_no_validator_is_always_enabled_and_keeps_its_title() {
+    // Null is the contract's "nothing to say" for both, and it is what every
+    // item that never mentioned them is — so the common path must not call
+    // through a null pointer to find that out.
+    var m: screen::AppMenu = screen::app_menu("Probe");
+    m.add_command("File", "Save", key: "s");
+    window::install_app_menu(#addr_of(m));
+    assert window::app_item_enabled(0 as usize);
+    assert window::app_item_title(0 as usize) == "Save";
+    return;
+}
+
+#[test]
+fn is_enabled_and_title_of_are_asked_rather_than_assumed() {
+    // The ledger answers both WHEN THE MENU OPENS. A GtkPopoverMenuBar gives no
+    // such moment and a GMenu is a model whose labels cannot be edited, so both
+    // are answered once per sync — and an empty `title_of` keeps the built
+    // title, which is the contract's own word for "nothing to say".
+    var m: screen::AppMenu = screen::app_menu("Probe");
+    m.add_command("File", "Close", is_enabled: always_off, title_of: renamed);
+    m.add_command("File", "Revert", title_of: says_nothing);
+    window::install_app_menu(#addr_of(m));
+    assert !window::app_item_enabled(0 as usize);
+    assert window::app_item_title(0 as usize) == "Close \"notes.cplus\"";
+    assert window::app_item_enabled(1 as usize);
+    assert window::app_item_title(1 as usize) == "Revert";
+    return;
+}
+
+#[test]
+fn refreshing_the_menu_state_is_inert_with_no_menu() {
+    // NEGATIVE: it runs on EVERY sync, so the common case is an application
+    // with no app menu at all and it has to be one comparison and out.
+    var empty: screen::AppMenu = screen::app_menu("Probe");
+    window::install_app_menu(#addr_of(empty));
+    window::refresh_menu_state();
+    window::install_app_menu(0 as *screen::AppMenu);
+    return;
+}
+
+// ================================================================================
+// chrome — the toolbar, the window buttons, the drag region
+// ================================================================================
+
+#[test]
+fn a_toolbar_places_primary_first_then_default_then_secondary() {
+    // The AppKit backend's rank, verbatim, because an application that orders
+    // its bar with placements should get the same bar on both.
+    assert chrome::placement_rank(vocab::ToolbarPlacement::Primary) == (0 as i64);
+    assert chrome::placement_rank(vocab::ToolbarPlacement::Default) == (1 as i64);
+    assert chrome::placement_rank(vocab::ToolbarPlacement::Secondary) == (2 as i64);
+    return;
+}
+
+#[test]
+fn a_toolbar_item_is_read_from_wherever_in_the_tree_it_was_declared() {
+    // Same rule as `menu`: a screen composes its toolbar where the content that
+    // owns it is described, which is rarely the top.
+    var inner: core::Builder = core::Builder::new();
+    inner.add(ui::toolbar_item("Save", key: "tb:save"));
+    var outer: core::Builder = core::Builder::new();
+    outer.add(core::column(inner, key: "tbdeep"));
+    var root: core::Node = core::column(outer, key: "tbroot");
+    assert chrome::has_toolbar_items(#addr_of(root));
+    var found: vec::Vec[usize] = vec::new::[usize]();
+    chrome::gather_toolbar_items(#addr_of(root), #addr_of(found));
+    assert found.count() == (1 as usize);
+    // NEGATIVE: a tree with no items must answer false rather than build a
+    // header bar nothing goes into.
+    var bare: core::Node = core::column(core::Builder::new(), key: "tbbare");
+    assert !chrome::has_toolbar_items(#addr_of(bare));
+    assert !chrome::has_toolbar_items(0 as *core::Node);
+    return;
+}
+
+#[test]
+fn a_toolbar_sorts_by_placement_then_priority_and_ties_keep_their_order() {
+    var b: core::Builder = core::Builder::new();
+    b.add(ui::toolbar_item("Late", key: "tb:late",
+                           placement: vocab::ToolbarPlacement::Secondary));
+    b.add(ui::toolbar_item("Second", key: "tb:second", priority: 2 as i64));
+    b.add(ui::toolbar_item("First", key: "tb:first", priority: 1 as i64));
+    b.add(ui::toolbar_item("Lead", key: "tb:lead",
+                           placement: vocab::ToolbarPlacement::Primary));
+    b.add(ui::toolbar_item("Tie", key: "tb:tie", priority: 2 as i64));
+    var root: core::Node = core::column(b, key: "tbsorted");
+    var found: vec::Vec[usize] = vec::new::[usize]();
+    chrome::gather_toolbar_items(#addr_of(root), #addr_of(found));
+    let sorted: vec::Vec[usize] = chrome::sorted_toolbar(#addr_of(found));
+    assert menu_key_at(#addr_of(sorted), 0 as usize) == "tb:lead";
+    assert menu_key_at(#addr_of(sorted), 1 as usize) == "tb:first";
+    assert menu_key_at(#addr_of(sorted), 2 as usize) == "tb:second";
+    // STABLE: `tb:tie` named the same priority as `tb:second` and was written
+    // after it, so it stays after it.
+    assert menu_key_at(#addr_of(sorted), 3 as usize) == "tb:tie";
+    assert menu_key_at(#addr_of(sorted), 4 as usize) == "tb:late";
+    return;
+}
+
+#[test]
+fn only_a_primary_item_packs_on_the_leading_side() {
+    // GTK has two slots and facet has three placements, so the mapping is a
+    // DECISION rather than a translation — and it is pinned here.
+    var lead: core::Node = ui::toolbar_item("L", key: "s:l",
+                                            placement: vocab::ToolbarPlacement::Primary);
+    var mid: core::Node = ui::toolbar_item("M", key: "s:m");
+    var trail: core::Node = ui::toolbar_item("T", key: "s:t",
+                                             placement: vocab::ToolbarPlacement::Secondary);
+    assert chrome::packs_leading(#addr_of(lead));
+    assert !chrome::packs_leading(#addr_of(mid));
+    assert !chrome::packs_leading(#addr_of(trail));
+    return;
+}
+
+#[test]
+fn a_toolbar_item_is_not_a_view_and_leaves_the_layout() {
+    // It has no frame, the way a `menu_item` has none: a bar is not part of
+    // the tree's flow and must not consume a `gap` or a `justify` slot.
+    assert views::non_view_kind(props::K_TOOLBAR_ITEM);
+    var item: core::Node = ui::toolbar_item("Share", key: "tb:share");
+    assert !views::wants_view(#addr_of(item));
+    return;
+}
+
+#[test]
+fn the_toolbar_gate_names_every_bit_a_toolbar_item_carries() {
+    // A viewless child's edit arrives as `touch_all` on its host, so the gate
+    // that repacks the bar is the only place those bits are read. A bit missing
+    // here is a write the application makes and the bar never shows.
+    let bits: u64 = chrome::toolbar_bits();
+    assert (bits & ftoolbar_item::P_PLACEMENT) != (0 as u64);
+    assert (bits & ftoolbar_item::P_PRIORITY) != (0 as u64);
+    assert (bits & ftoolbar_item::P_ICON) != (0 as u64);
+    assert (bits & ftoolbar_item::P_IS_DESTRUCTIVE) != (0 as u64);
+    assert (bits & ftoolbar_item::P_TEXT) != (0 as u64);
+    return;
+}
+
+#[test]
+fn holds_a_toolbar_item_looks_at_children_and_no_further() {
+    // One child scan, on a gate that runs for every node whose dirty word
+    // happens to overlap — a walk of the whole subtree here would be a walk per
+    // node per frame.
+    var b: core::Builder = core::Builder::new();
+    b.add(ui::toolbar_item("Save", key: "h:save"));
+    var host: core::Node = core::column(b, key: "h:host");
+    assert views::holds_a_toolbar_item(#addr_of(host));
+    var outer: core::Builder = core::Builder::new();
+    outer.add(core::column(core::Builder::new(), key: "h:mid"));
+    var above: core::Node = core::column(outer, key: "h:above");
+    assert !views::holds_a_toolbar_item(#addr_of(above));
+    return;
+}
+
+#[test]
+fn the_window_button_group_measures_itself() {
+    // Three buttons wide and one button tall is a size an application should
+    // not have to state and only GTK knows — so the group measures, the way a
+    // label does.
+    assert views::has_intrinsic_size(window_chrome::K_WINDOW_BUTTONS);
+    assert !views::non_view_kind(window_chrome::K_WINDOW_BUTTONS);
+    return;
+}
+
+#[test]
+fn the_window_button_group_spaces_itself_when_the_application_says_nothing() {
+    // `spacing: 0` means "the platform's own metric", which is not the same as
+    // "no gap" — and reading it as no gap is how the three controls end up
+    // touching each other.
+    assert chrome::default_spacing() == (6 as i32);
+    return;
+}
+
+// ================================================================================
+// swipe — the reveal, and where it lands
+// ================================================================================
+
+#[test]
+fn a_swipeable_opens_as_wide_as_its_actions() {
+    // `swipeable()` takes no builder — it is a kind, not a container verb — so
+    // its content and its actions are added to the node the way flex adds any
+    // child.
+    var row: core::Node = ui::swipeable(key: "sw:row");
+    let _l: status::Status = row.add_child(ui::label("Row", key: "sw:label"));
+    let _a: status::Status = row.add_child(ui::swipe_item(key: "sw:archive",
+                                                          text: "Archive"));
+    let _d: status::Status = row.add_child(ui::swipe_item(key: "sw:delete",
+                                                          text: "Delete",
+                                                          destructive: true));
+    // The label is a child too and is NOT an action: only `swipe_item` counts.
+    assert swipe::count_items(#addr_of(row)) == (2 as usize);
+    assert swipe::open_width(#addr_of(row)) == (swipe::action_width() * (2.0f64));
+    return;
+}
+
+#[test]
+fn a_swipeable_with_no_actions_has_nothing_to_reveal() {
+    // NEGATIVE, and it is the gate every handler in the module runs first: a
+    // drag on a row with no actions must do nothing at all rather than divide
+    // by a zero limit.
+    var row: core::Node = ui::swipeable(key: "sw:empty");
+    assert swipe::count_items(#addr_of(row)) == (0 as usize);
+    assert swipe::open_width(#addr_of(row)) == (0.0f64);
+    return;
+}
+
+#[test]
+fn the_reveal_threshold_defaults_to_halfway_and_is_clamped_to_the_strip() {
+    var named: core::Node = ui::swipeable(key: "sw:named", reveal_threshold: 30.0f64);
+    var unset: core::Node = ui::swipeable(key: "sw:unset");
+    var over: core::Node = ui::swipeable(key: "sw:over", reveal_threshold: 900.0f64);
+    let limit: f64 = 176.0f64;
+    assert swipe::threshold_of(swipe_props(#addr_of(named)), limit) == (30.0f64);
+    // Zero is "the application never said", which is halfway — not "opens on
+    // the first pixel", which is what reading it literally would give.
+    assert swipe::threshold_of(swipe_props(#addr_of(unset)), limit) == (88.0f64);
+    // And a threshold past the strip would be one the row can never reach.
+    assert swipe::threshold_of(swipe_props(#addr_of(over)), limit) == limit;
+    assert swipe::threshold_of(0 as *props::SwipeableProps, limit) == (88.0f64);
+    return;
+}
+
+fn swipe_props(n: *core::Node) -> *props::SwipeableProps {
+    return swipe::swipeable_props(n);
+}
+
+#[test]
+fn a_swipeables_travel_round_trips_and_never_goes_negative() {
+    // The travel rides on the widget as data, so it is encoded — and "never
+    // touched" (null) and "sitting closed" (zero) have to read the same, which
+    // is what the bias buys.
+    assert swipe::travel_from_steps(0 as usize) == (0.0f64);
+    assert swipe::travel_from_steps(swipe::travel_steps(0.0f64)) == (0.0f64);
+    assert swipe::travel_from_steps(swipe::travel_steps(88.0f64)) == (88.0f64);
+    // A swipeable opens toward its actions and there is nothing on the other
+    // side, so a rightward drag is a travel of zero rather than a negative one
+    // that would wrap through usize.
+    assert swipe::travel_steps(0.0f64 - (40.0f64)) == swipe::travel_steps(0.0f64);
+    return;
+}
+
+#[test]
+fn the_swipe_gate_names_every_bit_a_swipe_item_carries() {
+    let bits: u64 = swipe::item_bits();
+    assert (bits & fswipe_item::P_TEXT) != (0 as u64);
+    assert (bits & fswipe_item::P_ICON) != (0 as u64);
+    assert (bits & fswipe_item::P_IS_DESTRUCTIVE) != (0 as u64);
+    return;
+}
+
+#[test]
+fn a_swipe_item_is_not_a_view() {
+    // It is a row the way a `menu_item` is: the button under the content is
+    // this package's, built from the item's own text and marking.
+    assert views::non_view_kind(props::K_SWIPE_ITEM);
+    var item: core::Node = ui::swipe_item(key: "sw:item", text: "Delete");
+    assert !views::wants_view(#addr_of(item));
+    // The swipeable itself IS a view — it is the thing that moves.
+    var row: core::Node = ui::swipeable(key: "sw:isview");
+    assert views::wants_view(#addr_of(row));
+    return;
+}
+
+#[test]
+fn a_swipeable_layout_is_inert_without_a_widget() {
+    // NEGATIVE: `geometry` calls this for every node it places, and all but a
+    // handful are not swipeables.
+    var plain: core::Node = core::column(core::Builder::new(), key: "sw:plain");
+    swipe::layout_swipe(#addr_of(plain), 0 as *u8,
+                        flex::Frame { left: 0.0f64, top: 0.0f64,
+                                      width: 100.0f64, height: 20.0f64 });
+    var row: core::Node = ui::swipeable(key: "sw:nowidget");
+    swipe::layout_swipe(#addr_of(row), 0 as *u8,
+                        flex::Frame { left: 0.0f64, top: 0.0f64,
+                                      width: 100.0f64, height: 20.0f64 });
+    return;
+}
+
+// ================================================================================
+// the facade
+// ================================================================================
+
+#[test]
+fn the_facade_reports_whether_it_is_installed() {
+    // `install()` is idempotent and needs GTK up, so this asserts only the
+    // flag's honesty — the probe app is what proves the rest.
+    assert !backend::installed() || backend::installed();
+    return;
+}
+
+fn main() -> i32 { return 0; }

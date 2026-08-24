@@ -1411,9 +1411,9 @@ fn show_uri(parent: Window, uri: str, timestamp: u32) {
 
 // SKIPPED fn `show_uri_full`: param `callback` — unmapped type `Gio.AsyncReadyCallback`
 #[link_name = "gtk_show_uri_full_finish"]
-extern fn __c_gtk_show_uri_full_finish(parent: *u8, result: *u8) -> i32;
+extern fn __c_gtk_show_uri_full_finish(parent: *u8, result: *u8, __error: *u8) -> i32;
 fn show_uri_full_finish(parent: Window, result: gio::AsyncResult) -> bool {
-    let __r: i32 = { __c_gtk_show_uri_full_finish(parent.raw(), result.raw()) };
+    let __r: i32 = { __c_gtk_show_uri_full_finish(parent.raw(), result.raw(), 0 as *u8) };
     return __r != (0 as i32);
 }
 
@@ -2155,7 +2155,7 @@ impl Editable {
 #[link_name = "gtk_file_chooser_add_filter"]
 extern fn __c_gtk_file_chooser_add_filter(__recv: *u8, filter: *u8);
 #[link_name = "gtk_file_chooser_add_shortcut_folder"]
-extern fn __c_gtk_file_chooser_add_shortcut_folder(__recv: *u8, folder: *u8) -> i32;
+extern fn __c_gtk_file_chooser_add_shortcut_folder(__recv: *u8, folder: *u8, __error: *u8) -> i32;
 #[link_name = "gtk_file_chooser_get_action"]
 extern fn __c_gtk_file_chooser_get_action(__recv: *u8) -> i32;
 #[link_name = "gtk_file_chooser_get_choice"]
@@ -2183,7 +2183,7 @@ extern fn __c_gtk_file_chooser_remove_choice(__recv: *u8, id: *u8);
 #[link_name = "gtk_file_chooser_remove_filter"]
 extern fn __c_gtk_file_chooser_remove_filter(__recv: *u8, filter: *u8);
 #[link_name = "gtk_file_chooser_remove_shortcut_folder"]
-extern fn __c_gtk_file_chooser_remove_shortcut_folder(__recv: *u8, folder: *u8) -> i32;
+extern fn __c_gtk_file_chooser_remove_shortcut_folder(__recv: *u8, folder: *u8, __error: *u8) -> i32;
 #[link_name = "gtk_file_chooser_set_action"]
 extern fn __c_gtk_file_chooser_set_action(__recv: *u8, action: i32);
 #[link_name = "gtk_file_chooser_set_choice"]
@@ -2191,11 +2191,11 @@ extern fn __c_gtk_file_chooser_set_choice(__recv: *u8, id: *u8, option: *u8);
 #[link_name = "gtk_file_chooser_set_create_folders"]
 extern fn __c_gtk_file_chooser_set_create_folders(__recv: *u8, create_folders: i32);
 #[link_name = "gtk_file_chooser_set_current_folder"]
-extern fn __c_gtk_file_chooser_set_current_folder(__recv: *u8, file: *u8) -> i32;
+extern fn __c_gtk_file_chooser_set_current_folder(__recv: *u8, file: *u8, __error: *u8) -> i32;
 #[link_name = "gtk_file_chooser_set_current_name"]
 extern fn __c_gtk_file_chooser_set_current_name(__recv: *u8, name: *u8);
 #[link_name = "gtk_file_chooser_set_file"]
-extern fn __c_gtk_file_chooser_set_file(__recv: *u8, file: *u8) -> i32;
+extern fn __c_gtk_file_chooser_set_file(__recv: *u8, file: *u8, __error: *u8) -> i32;
 #[link_name = "gtk_file_chooser_set_filter"]
 extern fn __c_gtk_file_chooser_set_filter(__recv: *u8, filter: *u8);
 #[link_name = "gtk_file_chooser_set_select_multiple"]
@@ -2215,7 +2215,7 @@ impl FileChooser {
     }
 
     fn add_shortcut_folder(this, folder: gio::File) -> bool {
-        let __r: i32 = { __c_gtk_file_chooser_add_shortcut_folder(this._raw, folder.raw()) };
+        let __r: i32 = { __c_gtk_file_chooser_add_shortcut_folder(this._raw, folder.raw(), 0 as *u8) };
         return __r != (0 as i32);
     }
 
@@ -2294,7 +2294,7 @@ impl FileChooser {
     }
 
     fn remove_shortcut_folder(this, folder: gio::File) -> bool {
-        let __r: i32 = { __c_gtk_file_chooser_remove_shortcut_folder(this._raw, folder.raw()) };
+        let __r: i32 = { __c_gtk_file_chooser_remove_shortcut_folder(this._raw, folder.raw(), 0 as *u8) };
         return __r != (0 as i32);
     }
 
@@ -2318,7 +2318,7 @@ impl FileChooser {
     }
 
     fn set_current_folder(this, file: gio::File) -> bool {
-        let __r: i32 = { __c_gtk_file_chooser_set_current_folder(this._raw, file.raw()) };
+        let __r: i32 = { __c_gtk_file_chooser_set_current_folder(this._raw, file.raw(), 0 as *u8) };
         return __r != (0 as i32);
     }
 
@@ -2330,7 +2330,7 @@ impl FileChooser {
     }
 
     fn set_file(this, file: gio::File) -> bool {
-        let __r: i32 = { __c_gtk_file_chooser_set_file(this._raw, file.raw()) };
+        let __r: i32 = { __c_gtk_file_chooser_set_file(this._raw, file.raw(), 0 as *u8) };
         return __r != (0 as i32);
     }
 
@@ -3538,7 +3538,7 @@ extern fn __c_gtk_paper_size_new_from_gvariant(variant: *u8) -> *u8;
 #[link_name = "gtk_paper_size_new_from_ipp"]
 extern fn __c_gtk_paper_size_new_from_ipp(ipp_name: *u8, width: f64, height: f64) -> *u8;
 #[link_name = "gtk_paper_size_new_from_key_file"]
-extern fn __c_gtk_paper_size_new_from_key_file(key_file: *u8, group_name: *u8) -> *u8;
+extern fn __c_gtk_paper_size_new_from_key_file(key_file: *u8, group_name: *u8, __error: *u8) -> *u8;
 #[link_name = "gtk_paper_size_new_from_ppd"]
 extern fn __c_gtk_paper_size_new_from_ppd(ppd_name: *u8, ppd_display_name: *u8, width: f64, height: f64) -> *u8;
 #[link_name = "gtk_paper_size_copy"]
@@ -3614,7 +3614,7 @@ impl PaperSize {
 
     fn new_from_key_file(key_file: glib::KeyFile, group_name: str) -> PaperSize {
         let __cs_group_name: *u8 = bridge::str_to_cstring(group_name);
-        let __r: *u8 = { __c_gtk_paper_size_new_from_key_file(key_file.raw(), __cs_group_name) };
+        let __r: *u8 = { __c_gtk_paper_size_new_from_key_file(key_file.raw(), __cs_group_name, 0 as *u8) };
         bridge::free_cstring(__cs_group_name);
         return PaperSize::from_raw(__r);
     }
@@ -3759,7 +3759,7 @@ impl PrintSetup {
 }
 
 #[link_name = "gtk_recent_info_create_app_info"]
-extern fn __c_gtk_recent_info_create_app_info(__recv: *u8, app_name: *u8) -> *u8;
+extern fn __c_gtk_recent_info_create_app_info(__recv: *u8, app_name: *u8, __error: *u8) -> *u8;
 #[link_name = "gtk_recent_info_exists"]
 extern fn __c_gtk_recent_info_exists(__recv: *u8) -> i32;
 #[link_name = "gtk_recent_info_get_added"]
@@ -3814,7 +3814,7 @@ impl RecentInfo {
 
     fn create_app_info(this, app_name: str) -> option::Option[gio::AppInfo] {
         let __cs_app_name: *u8 = bridge::str_to_cstring(app_name);
-        let __r: *u8 = { __c_gtk_recent_info_create_app_info(this._raw, __cs_app_name) };
+        let __r: *u8 = { __c_gtk_recent_info_create_app_info(this._raw, __cs_app_name, 0 as *u8) };
         bridge::free_cstring(__cs_app_name);
         if __r == { 0 as *u8 } { return option::Option[gio::AppInfo]::None; }
         return option::some(gio::AppInfo::from_raw(__r));
@@ -5376,7 +5376,7 @@ impl Adjustment {
 // SKIPPED ctor `AlertDialog::new`: variadic
 // SKIPPED method `AlertDialog::choose`: param `callback` — unmapped type `Gio.AsyncReadyCallback`
 #[link_name = "gtk_alert_dialog_choose_finish"]
-extern fn __c_gtk_alert_dialog_choose_finish(__recv: *u8, result: *u8) -> i32;
+extern fn __c_gtk_alert_dialog_choose_finish(__recv: *u8, result: *u8, __error: *u8) -> i32;
 // SKIPPED method `AlertDialog::get_buttons`: return type — no <type> (array, callback, or varargs)
 #[link_name = "gtk_alert_dialog_get_cancel_button"]
 extern fn __c_gtk_alert_dialog_get_cancel_button(__recv: *u8) -> i32;
@@ -5411,7 +5411,7 @@ impl AlertDialog {
     fn from_raw(ptr: *u8) -> AlertDialog { return AlertDialog { _raw: ptr }; }
 
     fn choose_finish(this, result: gio::AsyncResult) -> i32 {
-        let __r: i32 = { __c_gtk_alert_dialog_choose_finish(this._raw, result.raw()) };
+        let __r: i32 = { __c_gtk_alert_dialog_choose_finish(this._raw, result.raw(), 0 as *u8) };
         return __r;
     }
 
@@ -6731,20 +6731,20 @@ extern fn __c_gtk_builder_new_from_resource(resource_path: *u8) -> *u8;
 #[link_name = "gtk_builder_new_from_string"]
 extern fn __c_gtk_builder_new_from_string(string: *u8, length: isize) -> *u8;
 #[link_name = "gtk_builder_add_from_file"]
-extern fn __c_gtk_builder_add_from_file(__recv: *u8, filename: *u8) -> i32;
+extern fn __c_gtk_builder_add_from_file(__recv: *u8, filename: *u8, __error: *u8) -> i32;
 #[link_name = "gtk_builder_add_from_resource"]
-extern fn __c_gtk_builder_add_from_resource(__recv: *u8, resource_path: *u8) -> i32;
+extern fn __c_gtk_builder_add_from_resource(__recv: *u8, resource_path: *u8, __error: *u8) -> i32;
 #[link_name = "gtk_builder_add_from_string"]
-extern fn __c_gtk_builder_add_from_string(__recv: *u8, buffer: *u8, length: isize) -> i32;
+extern fn __c_gtk_builder_add_from_string(__recv: *u8, buffer: *u8, length: isize, __error: *u8) -> i32;
 // SKIPPED method `Builder::add_objects_from_file`: param `object_ids` — no <type> (array, callback, or varargs)
 // SKIPPED method `Builder::add_objects_from_resource`: param `object_ids` — no <type> (array, callback, or varargs)
 // SKIPPED method `Builder::add_objects_from_string`: param `object_ids` — no <type> (array, callback, or varargs)
 #[link_name = "gtk_builder_create_closure"]
-extern fn __c_gtk_builder_create_closure(__recv: *u8, function_name: *u8, flags: u32, object: *u8) -> *u8;
+extern fn __c_gtk_builder_create_closure(__recv: *u8, function_name: *u8, flags: u32, object: *u8, __error: *u8) -> *u8;
 #[link_name = "gtk_builder_expose_object"]
 extern fn __c_gtk_builder_expose_object(__recv: *u8, name: *u8, object: *u8);
 #[link_name = "gtk_builder_extend_with_template"]
-extern fn __c_gtk_builder_extend_with_template(__recv: *u8, object: *u8, template_type: usize, buffer: *u8, length: isize) -> i32;
+extern fn __c_gtk_builder_extend_with_template(__recv: *u8, object: *u8, template_type: usize, buffer: *u8, length: isize, __error: *u8) -> i32;
 #[link_name = "gtk_builder_get_current_object"]
 extern fn __c_gtk_builder_get_current_object(__recv: *u8) -> *u8;
 #[link_name = "gtk_builder_get_object"]
@@ -6801,28 +6801,28 @@ impl Builder {
 
     fn add_from_file(this, filename: str) -> bool {
         let __cs_filename: *u8 = bridge::str_to_cstring(filename);
-        let __r: i32 = { __c_gtk_builder_add_from_file(this._raw, __cs_filename) };
+        let __r: i32 = { __c_gtk_builder_add_from_file(this._raw, __cs_filename, 0 as *u8) };
         bridge::free_cstring(__cs_filename);
         return __r != (0 as i32);
     }
 
     fn add_from_resource(this, resource_path: str) -> bool {
         let __cs_resource_path: *u8 = bridge::str_to_cstring(resource_path);
-        let __r: i32 = { __c_gtk_builder_add_from_resource(this._raw, __cs_resource_path) };
+        let __r: i32 = { __c_gtk_builder_add_from_resource(this._raw, __cs_resource_path, 0 as *u8) };
         bridge::free_cstring(__cs_resource_path);
         return __r != (0 as i32);
     }
 
     fn add_from_string(this, buffer: str, length: isize) -> bool {
         let __cs_buffer: *u8 = bridge::str_to_cstring(buffer);
-        let __r: i32 = { __c_gtk_builder_add_from_string(this._raw, __cs_buffer, length) };
+        let __r: i32 = { __c_gtk_builder_add_from_string(this._raw, __cs_buffer, length, 0 as *u8) };
         bridge::free_cstring(__cs_buffer);
         return __r != (0 as i32);
     }
 
     fn create_closure(this, function_name: str, flags: u32, object: gobject_gir::Object) -> option::Option[gobject_gir::Closure] {
         let __cs_function_name: *u8 = bridge::str_to_cstring(function_name);
-        let __r: *u8 = { __c_gtk_builder_create_closure(this._raw, __cs_function_name, flags, object.raw()) };
+        let __r: *u8 = { __c_gtk_builder_create_closure(this._raw, __cs_function_name, flags, object.raw(), 0 as *u8) };
         bridge::free_cstring(__cs_function_name);
         if __r == { 0 as *u8 } { return option::Option[gobject_gir::Closure]::None; }
         return option::some(gobject_gir::Closure::from_raw(__r));
@@ -6837,7 +6837,7 @@ impl Builder {
 
     fn extend_with_template(this, object: gobject_gir::Object, template_type: usize, buffer: str, length: isize) -> bool {
         let __cs_buffer: *u8 = bridge::str_to_cstring(buffer);
-        let __r: i32 = { __c_gtk_builder_extend_with_template(this._raw, object.raw(), template_type, __cs_buffer, length) };
+        let __r: i32 = { __c_gtk_builder_extend_with_template(this._raw, object.raw(), template_type, __cs_buffer, length, 0 as *u8) };
         bridge::free_cstring(__cs_buffer);
         return __r != (0 as i32);
     }
@@ -8824,7 +8824,7 @@ impl ColorChooserWidget {
 extern fn __c_gtk_color_dialog_new() -> *u8;
 // SKIPPED method `ColorDialog::choose_rgba`: param `callback` — unmapped type `Gio.AsyncReadyCallback`
 #[link_name = "gtk_color_dialog_choose_rgba_finish"]
-extern fn __c_gtk_color_dialog_choose_rgba_finish(__recv: *u8, result: *u8) -> *u8;
+extern fn __c_gtk_color_dialog_choose_rgba_finish(__recv: *u8, result: *u8, __error: *u8) -> *u8;
 #[link_name = "gtk_color_dialog_get_modal"]
 extern fn __c_gtk_color_dialog_get_modal(__recv: *u8) -> i32;
 #[link_name = "gtk_color_dialog_get_title"]
@@ -8852,7 +8852,7 @@ impl ColorDialog {
     }
 
     fn choose_rgba_finish(this, result: gio::AsyncResult) -> option::Option[gdk::RGBA] {
-        let __r: *u8 = { __c_gtk_color_dialog_choose_rgba_finish(this._raw, result.raw()) };
+        let __r: *u8 = { __c_gtk_color_dialog_choose_rgba_finish(this._raw, result.raw(), 0 as *u8) };
         if __r == { 0 as *u8 } { return option::Option[gdk::RGBA]::None; }
         return option::some(gdk::RGBA::from_raw(__r));
     }
@@ -12820,19 +12820,19 @@ extern fn __c_gtk_file_dialog_get_modal(__recv: *u8) -> i32;
 extern fn __c_gtk_file_dialog_get_title(__recv: *u8) -> *u8;
 // SKIPPED method `FileDialog::open`: param `callback` — unmapped type `Gio.AsyncReadyCallback`
 #[link_name = "gtk_file_dialog_open_finish"]
-extern fn __c_gtk_file_dialog_open_finish(__recv: *u8, result: *u8) -> *u8;
+extern fn __c_gtk_file_dialog_open_finish(__recv: *u8, result: *u8, __error: *u8) -> *u8;
 // SKIPPED method `FileDialog::open_multiple`: param `callback` — unmapped type `Gio.AsyncReadyCallback`
 #[link_name = "gtk_file_dialog_open_multiple_finish"]
-extern fn __c_gtk_file_dialog_open_multiple_finish(__recv: *u8, result: *u8) -> *u8;
+extern fn __c_gtk_file_dialog_open_multiple_finish(__recv: *u8, result: *u8, __error: *u8) -> *u8;
 // SKIPPED method `FileDialog::save`: param `callback` — unmapped type `Gio.AsyncReadyCallback`
 #[link_name = "gtk_file_dialog_save_finish"]
-extern fn __c_gtk_file_dialog_save_finish(__recv: *u8, result: *u8) -> *u8;
+extern fn __c_gtk_file_dialog_save_finish(__recv: *u8, result: *u8, __error: *u8) -> *u8;
 // SKIPPED method `FileDialog::select_folder`: param `callback` — unmapped type `Gio.AsyncReadyCallback`
 #[link_name = "gtk_file_dialog_select_folder_finish"]
-extern fn __c_gtk_file_dialog_select_folder_finish(__recv: *u8, result: *u8) -> *u8;
+extern fn __c_gtk_file_dialog_select_folder_finish(__recv: *u8, result: *u8, __error: *u8) -> *u8;
 // SKIPPED method `FileDialog::select_multiple_folders`: param `callback` — unmapped type `Gio.AsyncReadyCallback`
 #[link_name = "gtk_file_dialog_select_multiple_folders_finish"]
-extern fn __c_gtk_file_dialog_select_multiple_folders_finish(__recv: *u8, result: *u8) -> *u8;
+extern fn __c_gtk_file_dialog_select_multiple_folders_finish(__recv: *u8, result: *u8, __error: *u8) -> *u8;
 #[link_name = "gtk_file_dialog_set_accept_label"]
 extern fn __c_gtk_file_dialog_set_accept_label(__recv: *u8, accept_label: *u8);
 #[link_name = "gtk_file_dialog_set_default_filter"]
@@ -12910,31 +12910,31 @@ impl FileDialog {
     }
 
     fn open_finish(this, result: gio::AsyncResult) -> option::Option[gio::File] {
-        let __r: *u8 = { __c_gtk_file_dialog_open_finish(this._raw, result.raw()) };
+        let __r: *u8 = { __c_gtk_file_dialog_open_finish(this._raw, result.raw(), 0 as *u8) };
         if __r == { 0 as *u8 } { return option::Option[gio::File]::None; }
         return option::some(gio::File::from_raw(__r));
     }
 
     fn open_multiple_finish(this, result: gio::AsyncResult) -> option::Option[gio::ListModel] {
-        let __r: *u8 = { __c_gtk_file_dialog_open_multiple_finish(this._raw, result.raw()) };
+        let __r: *u8 = { __c_gtk_file_dialog_open_multiple_finish(this._raw, result.raw(), 0 as *u8) };
         if __r == { 0 as *u8 } { return option::Option[gio::ListModel]::None; }
         return option::some(gio::ListModel::from_raw(__r));
     }
 
     fn save_finish(this, result: gio::AsyncResult) -> option::Option[gio::File] {
-        let __r: *u8 = { __c_gtk_file_dialog_save_finish(this._raw, result.raw()) };
+        let __r: *u8 = { __c_gtk_file_dialog_save_finish(this._raw, result.raw(), 0 as *u8) };
         if __r == { 0 as *u8 } { return option::Option[gio::File]::None; }
         return option::some(gio::File::from_raw(__r));
     }
 
     fn select_folder_finish(this, result: gio::AsyncResult) -> option::Option[gio::File] {
-        let __r: *u8 = { __c_gtk_file_dialog_select_folder_finish(this._raw, result.raw()) };
+        let __r: *u8 = { __c_gtk_file_dialog_select_folder_finish(this._raw, result.raw(), 0 as *u8) };
         if __r == { 0 as *u8 } { return option::Option[gio::File]::None; }
         return option::some(gio::File::from_raw(__r));
     }
 
     fn select_multiple_folders_finish(this, result: gio::AsyncResult) -> option::Option[gio::ListModel] {
-        let __r: *u8 = { __c_gtk_file_dialog_select_multiple_folders_finish(this._raw, result.raw()) };
+        let __r: *u8 = { __c_gtk_file_dialog_select_multiple_folders_finish(this._raw, result.raw(), 0 as *u8) };
         if __r == { 0 as *u8 } { return option::Option[gio::ListModel]::None; }
         return option::some(gio::ListModel::from_raw(__r));
     }
@@ -13089,10 +13089,10 @@ extern fn __c_gtk_file_launcher_get_file(__recv: *u8) -> *u8;
 extern fn __c_gtk_file_launcher_get_writable(__recv: *u8) -> i32;
 // SKIPPED method `FileLauncher::launch`: param `callback` — unmapped type `Gio.AsyncReadyCallback`
 #[link_name = "gtk_file_launcher_launch_finish"]
-extern fn __c_gtk_file_launcher_launch_finish(__recv: *u8, result: *u8) -> i32;
+extern fn __c_gtk_file_launcher_launch_finish(__recv: *u8, result: *u8, __error: *u8) -> i32;
 // SKIPPED method `FileLauncher::open_containing_folder`: param `callback` — unmapped type `Gio.AsyncReadyCallback`
 #[link_name = "gtk_file_launcher_open_containing_folder_finish"]
-extern fn __c_gtk_file_launcher_open_containing_folder_finish(__recv: *u8, result: *u8) -> i32;
+extern fn __c_gtk_file_launcher_open_containing_folder_finish(__recv: *u8, result: *u8, __error: *u8) -> i32;
 #[link_name = "gtk_file_launcher_set_always_ask"]
 extern fn __c_gtk_file_launcher_set_always_ask(__recv: *u8, always_ask: i32);
 #[link_name = "gtk_file_launcher_set_file"]
@@ -13130,12 +13130,12 @@ impl FileLauncher {
     }
 
     fn launch_finish(this, result: gio::AsyncResult) -> bool {
-        let __r: i32 = { __c_gtk_file_launcher_launch_finish(this._raw, result.raw()) };
+        let __r: i32 = { __c_gtk_file_launcher_launch_finish(this._raw, result.raw(), 0 as *u8) };
         return __r != (0 as i32);
     }
 
     fn open_containing_folder_finish(this, result: gio::AsyncResult) -> bool {
-        let __r: i32 = { __c_gtk_file_launcher_open_containing_folder_finish(this._raw, result.raw()) };
+        let __r: i32 = { __c_gtk_file_launcher_open_containing_folder_finish(this._raw, result.raw(), 0 as *u8) };
         return __r != (0 as i32);
     }
 
@@ -13952,15 +13952,15 @@ impl FontChooserWidget {
 extern fn __c_gtk_font_dialog_new() -> *u8;
 // SKIPPED method `FontDialog::choose_face`: param `callback` — unmapped type `Gio.AsyncReadyCallback`
 #[link_name = "gtk_font_dialog_choose_face_finish"]
-extern fn __c_gtk_font_dialog_choose_face_finish(__recv: *u8, result: *u8) -> *u8;
+extern fn __c_gtk_font_dialog_choose_face_finish(__recv: *u8, result: *u8, __error: *u8) -> *u8;
 // SKIPPED method `FontDialog::choose_family`: param `callback` — unmapped type `Gio.AsyncReadyCallback`
 #[link_name = "gtk_font_dialog_choose_family_finish"]
-extern fn __c_gtk_font_dialog_choose_family_finish(__recv: *u8, result: *u8) -> *u8;
+extern fn __c_gtk_font_dialog_choose_family_finish(__recv: *u8, result: *u8, __error: *u8) -> *u8;
 // SKIPPED method `FontDialog::choose_font`: param `callback` — unmapped type `Gio.AsyncReadyCallback`
 // SKIPPED method `FontDialog::choose_font_and_features`: param `callback` — unmapped type `Gio.AsyncReadyCallback`
 // SKIPPED method `FontDialog::choose_font_and_features_finish`: out parameter `font_desc` — non-foldable out (value-struct/record out-param)
 #[link_name = "gtk_font_dialog_choose_font_finish"]
-extern fn __c_gtk_font_dialog_choose_font_finish(__recv: *u8, result: *u8) -> *u8;
+extern fn __c_gtk_font_dialog_choose_font_finish(__recv: *u8, result: *u8, __error: *u8) -> *u8;
 #[link_name = "gtk_font_dialog_get_filter"]
 extern fn __c_gtk_font_dialog_get_filter(__recv: *u8) -> *u8;
 #[link_name = "gtk_font_dialog_get_font_map"]
@@ -13996,19 +13996,19 @@ impl FontDialog {
     }
 
     fn choose_face_finish(this, result: gio::AsyncResult) -> option::Option[pango::FontFace] {
-        let __r: *u8 = { __c_gtk_font_dialog_choose_face_finish(this._raw, result.raw()) };
+        let __r: *u8 = { __c_gtk_font_dialog_choose_face_finish(this._raw, result.raw(), 0 as *u8) };
         if __r == { 0 as *u8 } { return option::Option[pango::FontFace]::None; }
         return option::some(pango::FontFace::from_raw(__r));
     }
 
     fn choose_family_finish(this, result: gio::AsyncResult) -> option::Option[pango::FontFamily] {
-        let __r: *u8 = { __c_gtk_font_dialog_choose_family_finish(this._raw, result.raw()) };
+        let __r: *u8 = { __c_gtk_font_dialog_choose_family_finish(this._raw, result.raw(), 0 as *u8) };
         if __r == { 0 as *u8 } { return option::Option[pango::FontFamily]::None; }
         return option::some(pango::FontFamily::from_raw(__r));
     }
 
     fn choose_font_finish(this, result: gio::AsyncResult) -> option::Option[pango::FontDescription] {
-        let __r: *u8 = { __c_gtk_font_dialog_choose_font_finish(this._raw, result.raw()) };
+        let __r: *u8 = { __c_gtk_font_dialog_choose_font_finish(this._raw, result.raw(), 0 as *u8) };
         if __r == { 0 as *u8 } { return option::Option[pango::FontDescription]::None; }
         return option::some(pango::FontDescription::from_raw(__r));
     }
@@ -20362,11 +20362,11 @@ impl PadController {
 #[link_name = "gtk_page_setup_new"]
 extern fn __c_gtk_page_setup_new() -> *u8;
 #[link_name = "gtk_page_setup_new_from_file"]
-extern fn __c_gtk_page_setup_new_from_file(file_name: *u8) -> *u8;
+extern fn __c_gtk_page_setup_new_from_file(file_name: *u8, __error: *u8) -> *u8;
 #[link_name = "gtk_page_setup_new_from_gvariant"]
 extern fn __c_gtk_page_setup_new_from_gvariant(variant: *u8) -> *u8;
 #[link_name = "gtk_page_setup_new_from_key_file"]
-extern fn __c_gtk_page_setup_new_from_key_file(key_file: *u8, group_name: *u8) -> *u8;
+extern fn __c_gtk_page_setup_new_from_key_file(key_file: *u8, group_name: *u8, __error: *u8) -> *u8;
 #[link_name = "gtk_page_setup_copy"]
 extern fn __c_gtk_page_setup_copy(__recv: *u8) -> *u8;
 #[link_name = "gtk_page_setup_get_bottom_margin"]
@@ -20390,9 +20390,9 @@ extern fn __c_gtk_page_setup_get_right_margin(__recv: *u8, unit: i32) -> f64;
 #[link_name = "gtk_page_setup_get_top_margin"]
 extern fn __c_gtk_page_setup_get_top_margin(__recv: *u8, unit: i32) -> f64;
 #[link_name = "gtk_page_setup_load_file"]
-extern fn __c_gtk_page_setup_load_file(__recv: *u8, file_name: *u8) -> i32;
+extern fn __c_gtk_page_setup_load_file(__recv: *u8, file_name: *u8, __error: *u8) -> i32;
 #[link_name = "gtk_page_setup_load_key_file"]
-extern fn __c_gtk_page_setup_load_key_file(__recv: *u8, key_file: *u8, group_name: *u8) -> i32;
+extern fn __c_gtk_page_setup_load_key_file(__recv: *u8, key_file: *u8, group_name: *u8, __error: *u8) -> i32;
 #[link_name = "gtk_page_setup_set_bottom_margin"]
 extern fn __c_gtk_page_setup_set_bottom_margin(__recv: *u8, margin: f64, unit: i32);
 #[link_name = "gtk_page_setup_set_left_margin"]
@@ -20408,7 +20408,7 @@ extern fn __c_gtk_page_setup_set_right_margin(__recv: *u8, margin: f64, unit: i3
 #[link_name = "gtk_page_setup_set_top_margin"]
 extern fn __c_gtk_page_setup_set_top_margin(__recv: *u8, margin: f64, unit: i32);
 #[link_name = "gtk_page_setup_to_file"]
-extern fn __c_gtk_page_setup_to_file(__recv: *u8, file_name: *u8) -> i32;
+extern fn __c_gtk_page_setup_to_file(__recv: *u8, file_name: *u8, __error: *u8) -> i32;
 #[link_name = "gtk_page_setup_to_gvariant"]
 extern fn __c_gtk_page_setup_to_gvariant(__recv: *u8) -> *u8;
 #[link_name = "gtk_page_setup_to_key_file"]
@@ -20429,7 +20429,7 @@ impl PageSetup {
 
     fn new_from_file(file_name: str) -> PageSetup {
         let __cs_file_name: *u8 = bridge::str_to_cstring(file_name);
-        let __r: *u8 = { __c_gtk_page_setup_new_from_file(__cs_file_name) };
+        let __r: *u8 = { __c_gtk_page_setup_new_from_file(__cs_file_name, 0 as *u8) };
         bridge::free_cstring(__cs_file_name);
         return PageSetup::from_raw(__r);
     }
@@ -20441,7 +20441,7 @@ impl PageSetup {
 
     fn new_from_key_file(key_file: glib::KeyFile, group_name: str) -> PageSetup {
         let __cs_group_name: *u8 = bridge::str_to_cstring(group_name);
-        let __r: *u8 = { __c_gtk_page_setup_new_from_key_file(key_file.raw(), __cs_group_name) };
+        let __r: *u8 = { __c_gtk_page_setup_new_from_key_file(key_file.raw(), __cs_group_name, 0 as *u8) };
         bridge::free_cstring(__cs_group_name);
         return PageSetup::from_raw(__r);
     }
@@ -20503,14 +20503,14 @@ impl PageSetup {
 
     fn load_file(this, file_name: str) -> bool {
         let __cs_file_name: *u8 = bridge::str_to_cstring(file_name);
-        let __r: i32 = { __c_gtk_page_setup_load_file(this._raw, __cs_file_name) };
+        let __r: i32 = { __c_gtk_page_setup_load_file(this._raw, __cs_file_name, 0 as *u8) };
         bridge::free_cstring(__cs_file_name);
         return __r != (0 as i32);
     }
 
     fn load_key_file(this, key_file: glib::KeyFile, group_name: str) -> bool {
         let __cs_group_name: *u8 = bridge::str_to_cstring(group_name);
-        let __r: i32 = { __c_gtk_page_setup_load_key_file(this._raw, key_file.raw(), __cs_group_name) };
+        let __r: i32 = { __c_gtk_page_setup_load_key_file(this._raw, key_file.raw(), __cs_group_name, 0 as *u8) };
         bridge::free_cstring(__cs_group_name);
         return __r != (0 as i32);
     }
@@ -20552,7 +20552,7 @@ impl PageSetup {
 
     fn to_file(this, file_name: str) -> bool {
         let __cs_file_name: *u8 = bridge::str_to_cstring(file_name);
-        let __r: i32 = { __c_gtk_page_setup_to_file(this._raw, __cs_file_name) };
+        let __r: i32 = { __c_gtk_page_setup_to_file(this._raw, __cs_file_name, 0 as *u8) };
         bridge::free_cstring(__cs_file_name);
         return __r != (0 as i32);
     }
@@ -21505,9 +21505,9 @@ extern fn __c_gtk_print_dialog_get_title(__recv: *u8) -> *u8;
 // SKIPPED method `PrintDialog::print`: param `callback` — unmapped type `Gio.AsyncReadyCallback`
 // SKIPPED method `PrintDialog::print_file`: param `callback` — unmapped type `Gio.AsyncReadyCallback`
 #[link_name = "gtk_print_dialog_print_file_finish"]
-extern fn __c_gtk_print_dialog_print_file_finish(__recv: *u8, result: *u8) -> i32;
+extern fn __c_gtk_print_dialog_print_file_finish(__recv: *u8, result: *u8, __error: *u8) -> i32;
 #[link_name = "gtk_print_dialog_print_finish"]
-extern fn __c_gtk_print_dialog_print_finish(__recv: *u8, result: *u8) -> *u8;
+extern fn __c_gtk_print_dialog_print_finish(__recv: *u8, result: *u8, __error: *u8) -> *u8;
 #[link_name = "gtk_print_dialog_set_accept_label"]
 extern fn __c_gtk_print_dialog_set_accept_label(__recv: *u8, accept_label: *u8);
 #[link_name = "gtk_print_dialog_set_modal"]
@@ -21520,7 +21520,7 @@ extern fn __c_gtk_print_dialog_set_print_settings(__recv: *u8, print_settings: *
 extern fn __c_gtk_print_dialog_set_title(__recv: *u8, title: *u8);
 // SKIPPED method `PrintDialog::setup`: param `callback` — unmapped type `Gio.AsyncReadyCallback`
 #[link_name = "gtk_print_dialog_setup_finish"]
-extern fn __c_gtk_print_dialog_setup_finish(__recv: *u8, result: *u8) -> *u8;
+extern fn __c_gtk_print_dialog_setup_finish(__recv: *u8, result: *u8, __error: *u8) -> *u8;
 // `PrintDialog` — GObject wrapper (non-owning handle); parent `GObject.Object`.
 struct PrintDialog {
     opaque _raw: *u8,
@@ -21561,12 +21561,12 @@ impl PrintDialog {
     }
 
     fn print_file_finish(this, result: gio::AsyncResult) -> bool {
-        let __r: i32 = { __c_gtk_print_dialog_print_file_finish(this._raw, result.raw()) };
+        let __r: i32 = { __c_gtk_print_dialog_print_file_finish(this._raw, result.raw(), 0 as *u8) };
         return __r != (0 as i32);
     }
 
     fn print_finish(this, result: gio::AsyncResult) -> option::Option[gio::OutputStream] {
-        let __r: *u8 = { __c_gtk_print_dialog_print_finish(this._raw, result.raw()) };
+        let __r: *u8 = { __c_gtk_print_dialog_print_finish(this._raw, result.raw(), 0 as *u8) };
         if __r == { 0 as *u8 } { return option::Option[gio::OutputStream]::None; }
         return option::some(gio::OutputStream::from_raw(__r));
     }
@@ -21601,7 +21601,7 @@ impl PrintDialog {
     }
 
     fn setup_finish(this, result: gio::AsyncResult) -> option::Option[PrintSetup] {
-        let __r: *u8 = { __c_gtk_print_dialog_setup_finish(this._raw, result.raw()) };
+        let __r: *u8 = { __c_gtk_print_dialog_setup_finish(this._raw, result.raw(), 0 as *u8) };
         if __r == { 0 as *u8 } { return option::Option[PrintSetup]::None; }
         return option::some(PrintSetup::from_raw(__r));
     }
@@ -21639,7 +21639,7 @@ extern fn __c_gtk_print_job_get_settings(__recv: *u8) -> *u8;
 #[link_name = "gtk_print_job_get_status"]
 extern fn __c_gtk_print_job_get_status(__recv: *u8) -> i32;
 #[link_name = "gtk_print_job_get_surface"]
-extern fn __c_gtk_print_job_get_surface(__recv: *u8) -> *u8;
+extern fn __c_gtk_print_job_get_surface(__recv: *u8, __error: *u8) -> *u8;
 #[link_name = "gtk_print_job_get_title"]
 extern fn __c_gtk_print_job_get_title(__recv: *u8) -> *u8;
 #[link_name = "gtk_print_job_get_track_print_status"]
@@ -21665,9 +21665,9 @@ extern fn __c_gtk_print_job_set_rotate(__recv: *u8, rotate: i32);
 #[link_name = "gtk_print_job_set_scale"]
 extern fn __c_gtk_print_job_set_scale(__recv: *u8, scale: f64);
 #[link_name = "gtk_print_job_set_source_fd"]
-extern fn __c_gtk_print_job_set_source_fd(__recv: *u8, fd: i32) -> i32;
+extern fn __c_gtk_print_job_set_source_fd(__recv: *u8, fd: i32, __error: *u8) -> i32;
 #[link_name = "gtk_print_job_set_source_file"]
-extern fn __c_gtk_print_job_set_source_file(__recv: *u8, filename: *u8) -> i32;
+extern fn __c_gtk_print_job_set_source_file(__recv: *u8, filename: *u8, __error: *u8) -> i32;
 #[link_name = "gtk_print_job_set_track_print_status"]
 extern fn __c_gtk_print_job_set_track_print_status(__recv: *u8, track_status: i32);
 // `PrintJob` — GObject wrapper (non-owning handle); parent `GObject.Object`.
@@ -21747,7 +21747,7 @@ impl PrintJob {
     }
 
     fn get_surface(this) -> cairo::Surface {
-        let __r: *u8 = { __c_gtk_print_job_get_surface(this._raw) };
+        let __r: *u8 = { __c_gtk_print_job_get_surface(this._raw, 0 as *u8) };
         return cairo::Surface::from_raw(__r);
     }
 
@@ -21807,13 +21807,13 @@ impl PrintJob {
     }
 
     fn set_source_fd(this, fd: i32) -> bool {
-        let __r: i32 = { __c_gtk_print_job_set_source_fd(this._raw, fd) };
+        let __r: i32 = { __c_gtk_print_job_set_source_fd(this._raw, fd, 0 as *u8) };
         return __r != (0 as i32);
     }
 
     fn set_source_file(this, filename: str) -> bool {
         let __cs_filename: *u8 = bridge::str_to_cstring(filename);
-        let __r: i32 = { __c_gtk_print_job_set_source_file(this._raw, __cs_filename) };
+        let __r: i32 = { __c_gtk_print_job_set_source_file(this._raw, __cs_filename, 0 as *u8) };
         bridge::free_cstring(__cs_filename);
         return __r != (0 as i32);
     }
@@ -21843,7 +21843,7 @@ extern fn __c_gtk_print_operation_get_default_page_setup(__recv: *u8) -> *u8;
 #[link_name = "gtk_print_operation_get_embed_page_setup"]
 extern fn __c_gtk_print_operation_get_embed_page_setup(__recv: *u8) -> i32;
 #[link_name = "gtk_print_operation_get_error"]
-extern fn __c_gtk_print_operation_get_error(__recv: *u8);
+extern fn __c_gtk_print_operation_get_error(__recv: *u8, __error: *u8);
 #[link_name = "gtk_print_operation_get_has_selection"]
 extern fn __c_gtk_print_operation_get_has_selection(__recv: *u8) -> i32;
 #[link_name = "gtk_print_operation_get_n_pages_to_print"]
@@ -21859,7 +21859,7 @@ extern fn __c_gtk_print_operation_get_support_selection(__recv: *u8) -> i32;
 #[link_name = "gtk_print_operation_is_finished"]
 extern fn __c_gtk_print_operation_is_finished(__recv: *u8) -> i32;
 #[link_name = "gtk_print_operation_run"]
-extern fn __c_gtk_print_operation_run(__recv: *u8, action: i32, parent: *u8) -> i32;
+extern fn __c_gtk_print_operation_run(__recv: *u8, action: i32, parent: *u8, __error: *u8) -> i32;
 #[link_name = "gtk_print_operation_set_allow_async"]
 extern fn __c_gtk_print_operation_set_allow_async(__recv: *u8, allow_async: i32);
 #[link_name = "gtk_print_operation_set_current_page"]
@@ -21931,7 +21931,7 @@ impl PrintOperation {
     }
 
     fn get_error(this) {
-        { __c_gtk_print_operation_get_error(this._raw) };
+        { __c_gtk_print_operation_get_error(this._raw, 0 as *u8) };
         return;
     }
 
@@ -21972,7 +21972,7 @@ impl PrintOperation {
     }
 
     fn run(this, action: i32, parent: Window) -> i32 {
-        let __r: i32 = { __c_gtk_print_operation_run(this._raw, action, parent.raw()) };
+        let __r: i32 = { __c_gtk_print_operation_run(this._raw, action, parent.raw(), 0 as *u8) };
         return __r;
     }
 
@@ -22116,11 +22116,11 @@ impl PrintOperation {
 #[link_name = "gtk_print_settings_new"]
 extern fn __c_gtk_print_settings_new() -> *u8;
 #[link_name = "gtk_print_settings_new_from_file"]
-extern fn __c_gtk_print_settings_new_from_file(file_name: *u8) -> *u8;
+extern fn __c_gtk_print_settings_new_from_file(file_name: *u8, __error: *u8) -> *u8;
 #[link_name = "gtk_print_settings_new_from_gvariant"]
 extern fn __c_gtk_print_settings_new_from_gvariant(variant: *u8) -> *u8;
 #[link_name = "gtk_print_settings_new_from_key_file"]
-extern fn __c_gtk_print_settings_new_from_key_file(key_file: *u8, group_name: *u8) -> *u8;
+extern fn __c_gtk_print_settings_new_from_key_file(key_file: *u8, group_name: *u8, __error: *u8) -> *u8;
 #[link_name = "gtk_print_settings_copy"]
 extern fn __c_gtk_print_settings_copy(__recv: *u8) -> *u8;
 // SKIPPED method `PrintSettings::foreach`: param `func` — unmapped type `PrintSettingsFunc`
@@ -22192,9 +22192,9 @@ extern fn __c_gtk_print_settings_get_use_color(__recv: *u8) -> i32;
 #[link_name = "gtk_print_settings_has_key"]
 extern fn __c_gtk_print_settings_has_key(__recv: *u8, key: *u8) -> i32;
 #[link_name = "gtk_print_settings_load_file"]
-extern fn __c_gtk_print_settings_load_file(__recv: *u8, file_name: *u8) -> i32;
+extern fn __c_gtk_print_settings_load_file(__recv: *u8, file_name: *u8, __error: *u8) -> i32;
 #[link_name = "gtk_print_settings_load_key_file"]
-extern fn __c_gtk_print_settings_load_key_file(__recv: *u8, key_file: *u8, group_name: *u8) -> i32;
+extern fn __c_gtk_print_settings_load_key_file(__recv: *u8, key_file: *u8, group_name: *u8, __error: *u8) -> i32;
 #[link_name = "gtk_print_settings_set"]
 extern fn __c_gtk_print_settings_set(__recv: *u8, key: *u8, value: *u8);
 #[link_name = "gtk_print_settings_set_bool"]
@@ -22255,7 +22255,7 @@ extern fn __c_gtk_print_settings_set_scale(__recv: *u8, scale: f64);
 #[link_name = "gtk_print_settings_set_use_color"]
 extern fn __c_gtk_print_settings_set_use_color(__recv: *u8, use_color: i32);
 #[link_name = "gtk_print_settings_to_file"]
-extern fn __c_gtk_print_settings_to_file(__recv: *u8, file_name: *u8) -> i32;
+extern fn __c_gtk_print_settings_to_file(__recv: *u8, file_name: *u8, __error: *u8) -> i32;
 #[link_name = "gtk_print_settings_to_gvariant"]
 extern fn __c_gtk_print_settings_to_gvariant(__recv: *u8) -> *u8;
 #[link_name = "gtk_print_settings_to_key_file"]
@@ -22278,7 +22278,7 @@ impl PrintSettings {
 
     fn new_from_file(file_name: str) -> PrintSettings {
         let __cs_file_name: *u8 = bridge::str_to_cstring(file_name);
-        let __r: *u8 = { __c_gtk_print_settings_new_from_file(__cs_file_name) };
+        let __r: *u8 = { __c_gtk_print_settings_new_from_file(__cs_file_name, 0 as *u8) };
         bridge::free_cstring(__cs_file_name);
         return PrintSettings::from_raw(__r);
     }
@@ -22290,7 +22290,7 @@ impl PrintSettings {
 
     fn new_from_key_file(key_file: glib::KeyFile, group_name: str) -> PrintSettings {
         let __cs_group_name: *u8 = bridge::str_to_cstring(group_name);
-        let __r: *u8 = { __c_gtk_print_settings_new_from_key_file(key_file.raw(), __cs_group_name) };
+        let __r: *u8 = { __c_gtk_print_settings_new_from_key_file(key_file.raw(), __cs_group_name, 0 as *u8) };
         bridge::free_cstring(__cs_group_name);
         return PrintSettings::from_raw(__r);
     }
@@ -22491,14 +22491,14 @@ impl PrintSettings {
 
     fn load_file(this, file_name: str) -> bool {
         let __cs_file_name: *u8 = bridge::str_to_cstring(file_name);
-        let __r: i32 = { __c_gtk_print_settings_load_file(this._raw, __cs_file_name) };
+        let __r: i32 = { __c_gtk_print_settings_load_file(this._raw, __cs_file_name, 0 as *u8) };
         bridge::free_cstring(__cs_file_name);
         return __r != (0 as i32);
     }
 
     fn load_key_file(this, key_file: glib::KeyFile, group_name: str) -> bool {
         let __cs_group_name: *u8 = bridge::str_to_cstring(group_name);
-        let __r: i32 = { __c_gtk_print_settings_load_key_file(this._raw, key_file.raw(), __cs_group_name) };
+        let __r: i32 = { __c_gtk_print_settings_load_key_file(this._raw, key_file.raw(), __cs_group_name, 0 as *u8) };
         bridge::free_cstring(__cs_group_name);
         return __r != (0 as i32);
     }
@@ -22674,7 +22674,7 @@ impl PrintSettings {
 
     fn to_file(this, file_name: str) -> bool {
         let __cs_file_name: *u8 = bridge::str_to_cstring(file_name);
-        let __r: i32 = { __c_gtk_print_settings_to_file(this._raw, __cs_file_name) };
+        let __r: i32 = { __c_gtk_print_settings_to_file(this._raw, __cs_file_name, 0 as *u8) };
         bridge::free_cstring(__cs_file_name);
         return __r != (0 as i32);
     }
@@ -23388,13 +23388,13 @@ extern fn __c_gtk_recent_manager_add_item(__recv: *u8, uri: *u8) -> i32;
 #[link_name = "gtk_recent_manager_has_item"]
 extern fn __c_gtk_recent_manager_has_item(__recv: *u8, uri: *u8) -> i32;
 #[link_name = "gtk_recent_manager_lookup_item"]
-extern fn __c_gtk_recent_manager_lookup_item(__recv: *u8, uri: *u8) -> *u8;
+extern fn __c_gtk_recent_manager_lookup_item(__recv: *u8, uri: *u8, __error: *u8) -> *u8;
 #[link_name = "gtk_recent_manager_move_item"]
-extern fn __c_gtk_recent_manager_move_item(__recv: *u8, uri: *u8, new_uri: *u8) -> i32;
+extern fn __c_gtk_recent_manager_move_item(__recv: *u8, uri: *u8, new_uri: *u8, __error: *u8) -> i32;
 #[link_name = "gtk_recent_manager_purge_items"]
-extern fn __c_gtk_recent_manager_purge_items(__recv: *u8) -> i32;
+extern fn __c_gtk_recent_manager_purge_items(__recv: *u8, __error: *u8) -> i32;
 #[link_name = "gtk_recent_manager_remove_item"]
-extern fn __c_gtk_recent_manager_remove_item(__recv: *u8, uri: *u8) -> i32;
+extern fn __c_gtk_recent_manager_remove_item(__recv: *u8, uri: *u8, __error: *u8) -> i32;
 // `RecentManager` — GObject wrapper (non-owning handle); parent `GObject.Object`.
 struct RecentManager {
     opaque _raw: *u8,
@@ -23425,7 +23425,7 @@ impl RecentManager {
 
     fn lookup_item(this, uri: str) -> option::Option[RecentInfo] {
         let __cs_uri: *u8 = bridge::str_to_cstring(uri);
-        let __r: *u8 = { __c_gtk_recent_manager_lookup_item(this._raw, __cs_uri) };
+        let __r: *u8 = { __c_gtk_recent_manager_lookup_item(this._raw, __cs_uri, 0 as *u8) };
         bridge::free_cstring(__cs_uri);
         if __r == { 0 as *u8 } { return option::Option[RecentInfo]::None; }
         return option::some(RecentInfo::from_raw(__r));
@@ -23434,20 +23434,20 @@ impl RecentManager {
     fn move_item(this, uri: str, new_uri: str) -> bool {
         let __cs_uri: *u8 = bridge::str_to_cstring(uri);
         let __cs_new_uri: *u8 = bridge::str_to_cstring(new_uri);
-        let __r: i32 = { __c_gtk_recent_manager_move_item(this._raw, __cs_uri, __cs_new_uri) };
+        let __r: i32 = { __c_gtk_recent_manager_move_item(this._raw, __cs_uri, __cs_new_uri, 0 as *u8) };
         bridge::free_cstring(__cs_uri);
         bridge::free_cstring(__cs_new_uri);
         return __r != (0 as i32);
     }
 
     fn purge_items(this) -> i32 {
-        let __r: i32 = { __c_gtk_recent_manager_purge_items(this._raw) };
+        let __r: i32 = { __c_gtk_recent_manager_purge_items(this._raw, 0 as *u8) };
         return __r;
     }
 
     fn remove_item(this, uri: str) -> bool {
         let __cs_uri: *u8 = bridge::str_to_cstring(uri);
-        let __r: i32 = { __c_gtk_recent_manager_remove_item(this._raw, __cs_uri) };
+        let __r: i32 = { __c_gtk_recent_manager_remove_item(this._raw, __cs_uri, 0 as *u8) };
         bridge::free_cstring(__cs_uri);
         return __r != (0 as i32);
     }
@@ -30163,7 +30163,7 @@ extern fn __c_gtk_uri_launcher_new(uri: *u8) -> *u8;
 extern fn __c_gtk_uri_launcher_get_uri(__recv: *u8) -> *u8;
 // SKIPPED method `UriLauncher::launch`: param `callback` — unmapped type `Gio.AsyncReadyCallback`
 #[link_name = "gtk_uri_launcher_launch_finish"]
-extern fn __c_gtk_uri_launcher_launch_finish(__recv: *u8, result: *u8) -> i32;
+extern fn __c_gtk_uri_launcher_launch_finish(__recv: *u8, result: *u8, __error: *u8) -> i32;
 #[link_name = "gtk_uri_launcher_set_uri"]
 extern fn __c_gtk_uri_launcher_set_uri(__recv: *u8, uri: *u8);
 // `UriLauncher` — GObject wrapper (non-owning handle); parent `GObject.Object`.
@@ -30189,7 +30189,7 @@ impl UriLauncher {
     }
 
     fn launch_finish(this, result: gio::AsyncResult) -> bool {
-        let __r: i32 = { __c_gtk_uri_launcher_launch_finish(this._raw, result.raw()) };
+        let __r: i32 = { __c_gtk_uri_launcher_launch_finish(this._raw, result.raw(), 0 as *u8) };
         return __r != (0 as i32);
     }
 

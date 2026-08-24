@@ -1,0 +1,416 @@
+// facet_gtk web — a WebKitGTK view, loaded at RUNTIME rather than linked.
+//
+// ---- why this is not a dependency ---------------------------------------------
+//
+// WebKitGTK is a browser engine. Linking it makes every facet application on
+// Linux depend on ~80MB of shared object and a build that fails outright where
+// the engine is not installed — for a kind most applications never use. The
+// AppKit backend does not face the choice: WebKit is part of macOS and is there
+// on every machine facet_appkit runs on.
+//
+// So the engine is opened with `g_module_open` when a `web` node is first
+// created, and every call goes through a symbol resolved from it. An
+// application that uses no `web` never touches it; one that does gets a real
+// web view where the engine is present, and a container that SAYS SO where it
+// is not — which is the honest answer and not a crash.
+//
+// That also makes the failure legible in the one place it matters: a machine
+// without `libwebkitgtk-6.0` prints one line naming the library, rather than
+// refusing to start with a linker error about a symbol nobody recognises.
+//
+// ---- what is resolved ----------------------------------------------------------
+//
+// Fourteen symbols, which is the whole of WebKit's C API that facet's contract
+// reaches. They are declared as function POINTERS rather than externs, because
+// an extern is a link-time promise and the point of this file is not to make
+// one.
+
+import "stdlib/option" as option;
+import "stdlib/text" as text;
+import "stdlib/io" as io;
+import "facet/facet" as core;
+import "facet/props" as props;
+import "facet/web" as web;
+import "facet/hybrid_web" as hybrid_web;
+import "gtk4/gtk4" as gtk;
+import "gobject/runtime" as g;
+
+// `g_module_open` / `g_module_symbol` — gmodule's binding carries neither (the
+// GIR presents GModule as a boxed type whose methods it skips), so they are
+// hand-bound the way this package hand-binds anything the generator misses.
+#[link_name = "g_module_open"]
+extern fn g_module_open(file_name: *u8, flags: u32) -> *u8;
+
+#[link_name = "g_module_symbol"]
+extern fn g_module_symbol(module: *u8, symbol_name: *u8, symbol: *u8) -> i32;
+
+// The library's SONAME, which is what is installed on a machine that has the
+// engine at all — `libwebkitgtk-6.0.so` without the version is part of the
+// -dev package and is exactly what a runtime load must not need.
+fn library_name() -> *u8 { return #str_ptr("libwebkitgtk-6.0.so.4\0"); }
+
+// The GTK 4 engine first, then the GTK 3 one under its own name — a machine
+// may have either, and a `web` that works on one of them is better than a
+// container on both.
+fn fallback_name() -> *u8 { return #str_ptr("libwebkit2gtk-4.1.so.0\0"); }
+
+// ---- the resolved API ----------------------------------------------------------
+
+struct WebKit {
+    view_new: fn() -> *u8,
+    load_uri: fn(*u8, *u8),
+    load_html: fn(*u8, *u8, *u8),
+    reload: fn(*u8),
+    go_back: fn(*u8),
+    go_forward: fn(*u8),
+    can_go_back: fn(*u8) -> i32,
+    can_go_forward: fn(*u8) -> i32,
+    get_uri: fn(*u8) -> *u8,
+    get_settings: fn(*u8) -> *u8,
+    set_user_agent: fn(*u8, *u8),
+    run_javascript: fn(*u8, *u8, i64, *u8, *u8, *u8, *u8, *u8),
+}
+
+static LOADED: bool = false;
+static AVAILABLE: bool = false;
+static API: WebKit = #zero::[WebKit]();
+
+fn available() -> bool {
+    if LOADED { return AVAILABLE; }
+    LOADED = true;
+    var handle: *u8 = { g_module_open(library_name(), 1 as u32) };   // G_MODULE_BIND_LAZY
+    if handle == (0 as *u8) { handle = { g_module_open(fallback_name(), 1 as u32) }; }
+    if handle == (0 as *u8) {
+        io::eprintln("facet_gtk: no WebKitGTK on this machine (libwebkitgtk-6.0.so.4 / libwebkit2gtk-4.1.so.0) — `web` renders as an empty container. Install the engine to use it.");
+        return false;
+    }
+    AVAILABLE = resolve(handle);
+    if !AVAILABLE {
+        // A library that opened but is missing a symbol is a VERSION mismatch,
+        // which is a different problem from not having one at all and deserves
+        // to say so rather than looking like an absent engine.
+        io::eprintln("facet_gtk: WebKitGTK opened but does not carry the API facet uses — `web` renders as an empty container.");
+    }
+    return AVAILABLE;
+}
+
+// Every symbol, or none. A half-resolved engine is worse than an absent one:
+// the view would build and then trap on the first call nobody checked.
+fn resolve(handle: *u8) -> bool {
+    var ok: bool = true;
+    API.view_new = sym(handle, #str_ptr("webkit_web_view_new\0"), #addr_of(ok)) as fn() -> *u8;
+    API.load_uri = sym(handle, #str_ptr("webkit_web_view_load_uri\0"), #addr_of(ok)) as fn(*u8, *u8);
+    API.load_html = sym(handle, #str_ptr("webkit_web_view_load_html\0"), #addr_of(ok)) as fn(*u8, *u8, *u8);
+    API.reload = sym(handle, #str_ptr("webkit_web_view_reload\0"), #addr_of(ok)) as fn(*u8);
+    API.go_back = sym(handle, #str_ptr("webkit_web_view_go_back\0"), #addr_of(ok)) as fn(*u8);
+    API.go_forward = sym(handle, #str_ptr("webkit_web_view_go_forward\0"), #addr_of(ok)) as fn(*u8);
+    API.can_go_back = sym(handle, #str_ptr("webkit_web_view_can_go_back\0"), #addr_of(ok)) as fn(*u8) -> i32;
+    API.can_go_forward = sym(handle, #str_ptr("webkit_web_view_can_go_forward\0"), #addr_of(ok)) as fn(*u8) -> i32;
+    API.get_uri = sym(handle, #str_ptr("webkit_web_view_get_uri\0"), #addr_of(ok)) as fn(*u8) -> *u8;
+    API.get_settings = sym(handle, #str_ptr("webkit_web_view_get_settings\0"), #addr_of(ok)) as fn(*u8) -> *u8;
+    API.set_user_agent = sym(handle, #str_ptr("webkit_settings_set_user_agent\0"), #addr_of(ok)) as fn(*u8, *u8);
+    // `evaluate_javascript` in WebKitGTK 6, `run_javascript` in 4.1 — the same
+    // call renamed, so the older name is tried when the newer one is absent
+    // rather than failing the whole resolve over it.
+    var eval: *u8 = sym_optional(handle, #str_ptr("webkit_web_view_evaluate_javascript\0"));
+    if eval == (0 as *u8) {
+        eval = sym_optional(handle, #str_ptr("webkit_web_view_run_javascript\0"));
+    }
+    if eval == (0 as *u8) { ok = false; }
+    API.run_javascript = eval as fn(*u8, *u8, i64, *u8, *u8, *u8, *u8, *u8);
+    return ok;
+}
+
+fn sym(handle: *u8, name: *u8, ok: *bool) -> *u8 {
+    var out: *u8 = 0 as *u8;
+    if { g_module_symbol(handle, name, #addr_of(out) as *u8) } == (0 as i32) {
+        { (*ok) = false };
+        return 0 as *u8;
+    }
+    return out;
+}
+
+fn sym_optional(handle: *u8, name: *u8) -> *u8 {
+    var out: *u8 = 0 as *u8;
+    if { g_module_symbol(handle, name, #addr_of(out) as *u8) } == (0 as i32) {
+        return 0 as *u8;
+    }
+    return out;
+}
+
+// ---- the kind ------------------------------------------------------------------
+
+// TWO KINDS, TWO PROPS BLOCKS. `hybrid_web` is not a `web` with extra fields —
+// it declares its own, so a body that read one through the other would be
+// reading the wrong offsets. What they share is the WIDGET and nothing else.
+fn web_props(n: *core::Node) -> *props::WebProps {
+    let d: *core::Data = core::node_data(n);
+    if d == (0 as *core::Data) { return 0 as *props::WebProps; }
+    if { (*d).kind } != props::K_WEB { return 0 as *props::WebProps; }
+    return { (*d).props } as *props::WebProps;
+}
+
+fn hybrid_props(n: *core::Node) -> *props::HybridWebProps {
+    let d: *core::Data = core::node_data(n);
+    if d == (0 as *core::Data) { return 0 as *props::HybridWebProps; }
+    if { (*d).kind } != props::K_HYBRID_WEB { return 0 as *props::HybridWebProps; }
+    return { (*d).props } as *props::HybridWebProps;
+}
+
+// Answers a real web view, or a plain container when the engine is not there.
+// The caller cannot tell, and does not need to: every verb below checks the
+// same flag.
+fn create_web(n: *core::Node) -> *u8 {
+    if !available() { return gtk::Fixed::new().upcast().raw(); }
+    let f: fn() -> *u8 = API.view_new;
+    let v: *u8 = f();
+    if v == (0 as *u8) { return gtk::Fixed::new().upcast().raw(); }
+    arm(v, n);
+    return v;
+}
+
+fn is_web_view(v: *u8) -> bool {
+    if !AVAILABLE { return false; }
+    return g::is_a(v, #str_ptr("WebKitWebView\0"));
+}
+
+fn apply_web(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *props::WebProps = web_props(n);
+    if p == (0 as *props::WebProps) { return; }
+    if !is_web_view(v) { return; }
+    // The USER AGENT before the source: a page loaded under the old agent is a
+    // page loaded wrong, and the same ordering trap the date picker's bounds
+    // have.
+    if (dirty & web::P_USER_AGENT) != (0 as u64) {
+        let ua: str = { (*p).user_agent.view() };
+        if ua != "" {
+            let get: fn(*u8) -> *u8 = API.get_settings;
+            let set: fn(*u8, *u8) = API.set_user_agent;
+            let settings: *u8 = get(v);
+            if settings != (0 as *u8) { with_cstr(ua, set, settings); }
+        }
+    }
+    if (dirty & web::P_SOURCE) != (0 as u64) { load(v, n, { (*p).source.view() }); }
+    if (dirty & web::P_RELOAD) != (0 as u64) { let f: fn(*u8) = API.reload; f(v); }
+    if (dirty & web::P_GO_BACK) != (0 as u64) { let f: fn(*u8) = API.go_back; f(v); }
+    if (dirty & web::P_GO_FORWARD) != (0 as u64) { let f: fn(*u8) = API.go_forward; f(v); }
+    if (dirty & web::P_EVAL) != (0 as u64) { eval(v, { (*p).eval_script.view() }); }
+    return;
+}
+
+// ---- hybrid_web ----------------------------------------------------------------
+//
+// The same widget and its own three verbs: a local page, its root, and a
+// message the host sends INTO it.
+
+fn apply_hybrid_web(v: *u8, n: *core::Node, dirty: u64) {
+    let h: *props::HybridWebProps = hybrid_props(n);
+    if h == (0 as *props::HybridWebProps) { return; }
+    if !is_web_view(v) { return; }
+    if dirty == all_bits_sentinel() {
+        // `WebViewInitializing` is before the view exists and `Initialized`
+        // after — and by the time a body runs it already does, so the first is
+        // reported at the same moment. Both fire once, on the create pass.
+        let a: fn(*u8, *u8) = { (*h).on_web_view_initializing };
+        if a != props::no_handler { a(v, { (*h).on_web_view_initializing_ctx }); }
+        let b: fn(*u8, *u8) = { (*h).on_web_view_initialized };
+        if b != props::no_handler { b(v, { (*h).on_web_view_initialized_ctx }); }
+    }
+    if (dirty & (hybrid_web::P_DEFAULT_FILE | hybrid_web::P_HYBRID_ROOT)) != (0 as u64) {
+        load_hybrid(v, n);
+    }
+    if (dirty & hybrid_web::P_SEND_MESSAGE) != (0 as u64) { send_message(v, n); }
+    return;
+}
+
+// The create sentinel, which is `props::C_ALL_STATE` — named here so the one
+// comparison reads as what it means rather than as a constant.
+fn all_bits_sentinel() -> u64 { return props::C_ALL_STATE; }
+
+// A SOURCE is a URL or a page. facet carries one string for both, and the
+// distinction is the one every web view makes: something with a scheme is a
+// URL and everything else is markup.
+fn load(v: *u8, n: *core::Node, source: str) {
+    if source == "" { return; }
+    if looks_like_url(source) {
+        let f: fn(*u8, *u8) = API.load_uri;
+        with_cstr(source, f, v);
+        return;
+    }
+    let f: fn(*u8, *u8, *u8) = API.load_html;
+    match text::from_str(source).c_str() {
+        option::Option[text::CString]::Some(cs) => { f(v, cs.as_ptr(), 0 as *u8); }
+        option::Option[text::CString]::None => { }
+    }
+    return;
+}
+
+fn looks_like_url(s: str) -> bool {
+    var t: text::Text = text::from_str(s);
+    if t.has_prefix("http://") { return true; }
+    if t.has_prefix("https://") { return true; }
+    if t.has_prefix("file://") { return true; }
+    if t.has_prefix("about:") { return true; }
+    if t.has_prefix("data:") { return true; }
+    return false;
+}
+
+// The hybrid pair: a root directory and a file inside it. `file://root/file` is
+// what a local page needs so that its own relative links resolve — a page
+// loaded as markup has no base and every `src=` in it is broken.
+fn load_hybrid(v: *u8, n: *core::Node) {
+    let h: *props::HybridWebProps = hybrid_props(n);
+    if h == (0 as *props::HybridWebProps) { return; }
+    let root: str = { (*h).hybrid_root.view() };
+    let file: str = { (*h).default_file.view() };
+    if file == "" { return; }
+    var url: text::Text = text::from_str("file://");
+    if root != "" {
+        url = url.appending(root);
+        if !text::from_str(root).has_suffix("/") { url = url.appending("/"); }
+    }
+    url = url.appending(file);
+    let f: fn(*u8, *u8) = API.load_uri;
+    with_cstr(url.view(), f, v);
+    return;
+}
+
+// `send_message` is the host talking TO the page, and WebKitGTK's own channel
+// runs the other way — so the message is delivered by evaluating a call to the
+// hook the page registered. That is what the AppKit backend's
+// `postMessage` bridge does underneath too; here it is visible.
+fn send_message(v: *u8, n: *core::Node) {
+    let h: *props::HybridWebProps = hybrid_props(n);
+    if h == (0 as *props::HybridWebProps) { return; }
+    let msg: str = { (*h).outgoing_message.view() };
+    if msg == "" { return; }
+    // JSON.parse of a quoted string, so the payload crosses whatever it
+    // contains — a message with a quote in it would otherwise end the call.
+    let script: text::Text = "window.dispatchEvent(new MessageEvent('message',{data:${json_string(msg)}}))";
+    eval(v, script.view());
+    return;
+}
+
+// A JSON string literal: the two characters that would end it, escaped. Not a
+// general encoder — a message is text, and the alternative is a JSON writer
+// this file has no other use for.
+fn json_string(s: str) -> text::Text {
+    var out: text::Text = text::from_str("\"");
+    let base: *u8 = { #str_ptr(s) };
+    var i: usize = 0 as usize;
+    let n: usize = { #str_len(s) };
+    while i < n {
+        let b: u8 = { *(((base as usize) +% i) as *u8) };
+        if b == (34 as u8) { out = out.appending("\\\""); }
+        else if b == (92 as u8) { out = out.appending("\\\\"); }
+        else if b == (10 as u8) { out = out.appending("\\n"); }
+        else {
+            let one: str = { #str_from_raw_parts(((base as usize) +% i) as *u8, 1 as usize) };
+            out = out.appending(one);
+        }
+        i = i +% (1 as usize);
+    }
+    return out.appending("\"");
+}
+
+fn eval(v: *u8, script: str) {
+    if script == "" { return; }
+    let f: fn(*u8, *u8, i64, *u8, *u8, *u8, *u8, *u8) = API.run_javascript;
+    match text::from_str(script).c_str() {
+        option::Option[text::CString]::Some(cs) => {
+            // length -1 (NUL-terminated), no world, no source URI, no
+            // cancellable, no callback. `run_javascript` in 4.1 takes four
+            // arguments where 6.0 takes eight — the extra ones are trailing and
+            // NULL, so one call shape serves both.
+            f(v, cs.as_ptr(), (0 as i64) -% (1 as i64), 0 as *u8, 0 as *u8,
+              0 as *u8, 0 as *u8, 0 as *u8);
+        }
+        option::Option[text::CString]::None => { }
+    }
+    return;
+}
+
+fn with_cstr(s: str, f: fn(*u8, *u8), a: *u8) {
+    match text::from_str(s).c_str() {
+        option::Option[text::CString]::Some(cs) => { f(a, cs.as_ptr()); }
+        option::Option[text::CString]::None => { }
+    }
+    return;
+}
+
+// ---- the reads and the handlers ------------------------------------------------
+//
+// `can_go_back` and `can_go_forward` are READS the application makes, and the
+// truth lives in the engine — so they are written into the props before any
+// handler runs, which is the rule every control in this package follows.
+
+#[link_name = "g_signal_connect_data"]
+extern fn sigc_load(instance: *u8, detailed_signal: *u8,
+                    handler: fn(*u8, i32, *u8),
+                    data: *u8, destroy_data: *u8, connect_flags: i32) -> u64;
+
+#[link_name = "g_signal_connect_data"]
+extern fn sigc_terminated(instance: *u8, detailed_signal: *u8,
+                          handler: fn(*u8, u32, *u8),
+                          data: *u8, destroy_data: *u8, connect_flags: i32) -> u64;
+
+// WebKitLoadEvent: 0 STARTED, 1 REDIRECTED, 2 COMMITTED, 3 FINISHED. facet has
+// two moments and WebKit has four, so STARTED is the navigation beginning and
+// FINISHED is it having happened; the middle two are steps of the same journey
+// and would fire a handler twice for one page.
+fn load_changed(view: *u8, event: i32, user: *u8) {
+    let n: *core::Node = user as *core::Node;
+    let p: *props::WebProps = web_props(n);
+    if p == (0 as *props::WebProps) { return; }
+    sync_history(view, p);
+    if event == (0 as i32) {
+        let h: fn(*u8, *u8) = { (*p).on_navigating };
+        if h != props::no_handler { h(view, { (*p).on_navigating_ctx }); }
+        return;
+    }
+    if event == (3 as i32) {
+        // The SOURCE is written back too: a page that redirected, or that the
+        // user navigated within, has a different URL from the one that was
+        // asked for, and `web.source()` must answer the one on screen.
+        let get: fn(*u8) -> *u8 = API.get_uri;
+        let uri: *u8 = get(view);
+        if uri != (0 as *u8) { { (*p).source = cstr_text(uri) }; }
+        let h: fn(*u8, *u8) = { (*p).on_navigated };
+        if h != props::no_handler { h(view, { (*p).on_navigated_ctx }); }
+    }
+    return;
+}
+
+fn sync_history(view: *u8, p: *props::WebProps) {
+    let back: fn(*u8) -> i32 = API.can_go_back;
+    let fwd: fn(*u8) -> i32 = API.can_go_forward;
+    { (*p).can_go_back = back(view) != (0 as i32) };
+    { (*p).can_go_forward = fwd(view) != (0 as i32) };
+    return;
+}
+
+fn web_process_terminated(view: *u8, reason: u32, user: *u8) {
+    let n: *core::Node = user as *core::Node;
+    let p: *props::WebProps = web_props(n);
+    if p == (0 as *props::WebProps) { return; }
+    let h: fn(*u8, *u8) = { (*p).on_process_terminated };
+    if h != props::no_handler { h(view, { (*p).on_process_terminated_ctx }); }
+    return;
+}
+
+fn cstr_text(p: *u8) -> text::Text {
+    if p == (0 as *u8) { return text::new(); }
+    return text::from_str({ #str_from_raw_parts(p, c_strlen(p)) });
+}
+
+#[link_name = "strlen"]
+extern fn c_strlen(s: *u8) -> usize;
+
+fn arm(v: *u8, n: *core::Node) {
+    let _l: u64 = { sigc_load(v, #str_ptr("load-changed\0"), load_changed,
+                              n as *u8, 0 as *u8, 0 as i32) };
+    let _t: u64 = { sigc_terminated(v, #str_ptr("web-process-terminated\0"),
+                                    web_process_terminated, n as *u8,
+                                    0 as *u8, 0 as i32) };
+    return;
+}

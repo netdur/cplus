@@ -1,0 +1,423 @@
+// facet_gtk/swipe — swipe-to-reveal, assembled.
+//
+// GTK has no swipeable row. It has GtkGestureDrag and it has a container that
+// takes explicit positions, and that is the whole recipe: a strip of action
+// buttons UNDER the content, the content translating with the pointer, and
+// where it lands when the pointer lifts decided by `reveal_threshold`.
+//
+// THE SAME SHAPE AS `facet_uikit/swipe.cplus`, which is not an accident — it is
+// the one backend that answers this kind as written, and it explains why the
+// idiomatic row API (`UISwipeActionsConfiguration`) could not be used: the
+// platform owns the distance at which a row opens and exposes no way to name
+// it. GTK has no such API to decline, so here the reason is simply that there
+// is nothing else.
+//
+// A `swipe_item` IS NOT A VIEW. It is a row the way a `menu_item` is, so the
+// buttons under the content are this module's, built from the items' text,
+// icon and destructive marking — and clicking one runs the item's `on_clicked`
+// and its `on_invoked`, in that order, which is the pair the ledger names.
+//
+// ---- where the offset lives ---------------------------------------------------
+//
+// On the widget, as `g_object_set_data`, in WHOLE POINTS plus one — so a
+// swipeable that has never been touched (null data) and one sitting closed
+// (zero travel) read the same, which is what they are. A swipe reveal is not a
+// subpixel affair and this buys a state that cannot outlive its widget: a
+// static would be one swipeable's travel shared by every swipeable on screen,
+// which a list of them makes wrong on the first row.
+
+import "stdlib/option" as option;
+import "facet/facet" as core;
+import "facet/props" as props;
+import "facet/swipeable" as swipeable;
+import "facet/swipe_item" as swipe_item;
+import "flex_layout/flex_layout" as flex;
+import "gtk4/gtk4" as gtk;
+import "gobject/runtime" as g;
+
+fn strip_key() -> *u8 { return #str_ptr("facet-gtk-swipe-strip\0"); }
+fn travel_key() -> *u8 { return #str_ptr("facet-gtk-swipe-travel\0"); }
+fn owner_key() -> *u8 { return #str_ptr("facet-gtk-swipe-owner\0"); }
+fn action_node_key() -> *u8 { return #str_ptr("facet-gtk-swipe-item\0"); }
+fn gesture_key() -> *u8 { return #str_ptr("facet-gtk-swipe-armed\0"); }
+
+// How wide one action is. GTK has no metric for this — a swipe action is not a
+// GTK idea — so the number is stated here, matching the iOS backend's, and it
+// is the same on both because an application that sizes a row around its
+// actions should not have to ask which desktop it is on.
+fn action_width() -> f64 { return 88.0f64; }
+
+fn swipeable_props(n: *core::Node) -> *props::SwipeableProps {
+    let d: *core::Data = core::node_data(n);
+    if d == (0 as *core::Data) { return 0 as *props::SwipeableProps; }
+    if { (*d).kind } != props::K_SWIPEABLE { return 0 as *props::SwipeableProps; }
+    return { (*d).props } as *props::SwipeableProps;
+}
+
+fn swipe_item_props(n: *core::Node) -> *props::SwipeItemProps {
+    let d: *core::Data = core::node_data(n);
+    if d == (0 as *core::Data) { return 0 as *props::SwipeItemProps; }
+    if { (*d).kind } != props::K_SWIPE_ITEM { return 0 as *props::SwipeItemProps; }
+    return { (*d).props } as *props::SwipeItemProps;
+}
+
+// ---- travel -------------------------------------------------------------------
+
+fn strip_of(v: *u8) -> *u8 {
+    if v == (0 as *u8) { return 0 as *u8; }
+    return g::get_data(v, strip_key());
+}
+
+// The ENCODING, as two pure functions, so the round trip is assertable without
+// a widget — which this package's suite has no way to make.
+fn travel_steps(x: f64) -> usize {
+    var t: f64 = x;
+    if t < (0.0 as f64) { t = 0.0f64; }
+    return ((t + (0.5 as f64)) as usize) +% (1 as usize);
+}
+
+fn travel_from_steps(steps: usize) -> f64 {
+    if steps == (0 as usize) { return 0.0f64; }
+    return (steps -% (1 as usize)) as f64;
+}
+
+// How far the content has been pulled LEFT, in points, never negative.
+fn travel_of(v: *u8) -> f64 {
+    if v == (0 as *u8) { return 0.0f64; }
+    return travel_from_steps({ #addr(g::get_data(v, travel_key())) });
+}
+
+fn set_travel(v: *u8, x: f64) {
+    if v == (0 as *u8) { return; }
+    g::set_data(v, travel_key(), travel_steps(x) as *u8);
+    return;
+}
+
+// ---- the strip ----------------------------------------------------------------
+
+fn count_items(n: *core::Node) -> usize {
+    var count: usize = 0 as usize;
+    var i: usize = 0 as usize;
+    let children: usize = core::child_count_of(n);
+    while i < children {
+        match core::child_of(n, i) {
+            option::Option[*core::Node]::Some(c) => {
+                if core::kind_of(c) == props::K_SWIPE_ITEM { count = count +% (1 as usize); }
+            }
+            option::Option[*core::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return count;
+}
+
+// How far this swipeable can open: its actions, side by side.
+fn open_width(n: *core::Node) -> f64 {
+    return action_width() * (count_items(n) as f64);
+}
+
+// Both handlers, then close. `on_clicked` is the menu item's and `on_invoked`
+// is the swipe item's, and the ledger fires them together.
+fn action_clicked(button: *u8, user: *u8) {
+    let item: *core::Node = user as *core::Node;
+    if item == (0 as *core::Node) { return; }
+    let p: *props::SwipeItemProps = swipe_item_props(item);
+    if p == (0 as *props::SwipeItemProps) { return; }
+    let mi: *props::MenuItemProps = { #addr_of((*p).menu_item) };
+    let click: fn(*u8, *u8) = { (*mi).on_clicked };
+    if click != props::no_handler { click(button, { (*mi).on_clicked_ctx }); }
+    let inv: fn(*u8, *u8) = { (*p).on_invoked };
+    if inv != props::no_handler { inv(button, { (*p).on_invoked_ctx }); }
+    // Tapping an action closes the row, which is what tapping an action means.
+    // button -> strip -> the swipeable's own Fixed.
+    let strip: *u8 = parent_of(button);
+    if strip == (0 as *u8) { return; }
+    let v: *u8 = parent_of(strip);
+    if v == (0 as *u8) { return; }
+    let owner: *core::Node = g::get_data(v, owner_key()) as *core::Node;
+    if owner == (0 as *core::Node) { return; }
+    settle(v, owner, false);
+    return;
+}
+
+fn parent_of(v: *u8) -> *u8 {
+    match gtk::Widget::from_raw(v).get_parent() {
+        option::Option[gtk::Widget]::Some(p) => { return p.raw(); }
+        option::Option[gtk::Widget]::None => { return 0 as *u8; }
+    }
+}
+
+fn first_child_raw(v: *u8) -> *u8 {
+    match gtk::Widget::from_raw(v).get_first_child() {
+        option::Option[gtk::Widget]::Some(c) => { return c.raw(); }
+        option::Option[gtk::Widget]::None => { return 0 as *u8; }
+    }
+}
+
+fn next_sibling_raw(v: *u8) -> *u8 {
+    match gtk::Widget::from_raw(v).get_next_sibling() {
+        option::Option[gtk::Widget]::Some(c) => { return c.raw(); }
+        option::Option[gtk::Widget]::None => { return 0 as *u8; }
+    }
+}
+
+// One action button. The item NODE rides on it, so the click finds what it
+// belongs to without a table keyed by index.
+fn build_action(item: *core::Node) -> *u8 {
+    let p: *props::SwipeItemProps = swipe_item_props(item);
+    if p == (0 as *props::SwipeItemProps) { return 0 as *u8; }
+    let mi: *props::MenuItemProps = { #addr_of((*p).menu_item) };
+    let b: gtk::Button = gtk::Button::new();
+    let icon: str = { (*mi).icon.view() };
+    let label: str = { (*mi).text.view() };
+    if icon != "" && label != "" {
+        let bx: gtk::Box = gtk::Box::new(1 as i32, 2 as i32);    // vertical
+        bx.append(gtk::Image::new_from_icon_name(icon).upcast());
+        bx.append(gtk::Label::new(label).upcast());
+        bx.upcast().set_valign(3 as i32);                        // GTK_ALIGN_CENTER
+        b.set_child(bx.upcast());
+    } else {
+        if icon != "" { b.set_icon_name(icon); }
+        else { b.set_label(label); }
+    }
+    // GTK's own name for the red one, which is what a destructive row action
+    // is on every desktop that has them.
+    if { (*mi).is_destructive } { b.upcast().add_css_class("destructive-action"); }
+    let name: str = { (*item).key() };
+    if name != "" { b.upcast().set_name(name); }
+    g::set_data(b.raw(), action_node_key(), item as *u8);
+    let _s: u64 = b.connect_clicked(action_clicked, item as *u8);
+    return b.upcast().raw();
+}
+
+// Rebuilt WHOLE whenever the items change. A `swipe_item` is viewless, so its
+// edit arrives as `touch_all` on this node and there is no way to know which
+// item moved — and three buttons are cheaper to rebuild than to diff.
+fn rebuild_strip(v: *u8, n: *core::Node) {
+    let strip: *u8 = strip_of(v);
+    if strip == (0 as *u8) { return; }
+    var cur: *u8 = first_child_raw(strip);
+    while cur != (0 as *u8) {
+        let next: *u8 = next_sibling_raw(cur);
+        gtk::Widget::from_raw(cur).unparent();
+        cur = next;
+    }
+    let bx: gtk::Box = gtk::Box::from_raw(strip);
+    var i: usize = 0 as usize;
+    let children: usize = core::child_count_of(n);
+    while i < children {
+        match core::child_of(n, i) {
+            option::Option[*core::Node]::Some(c) => {
+                if core::kind_of(c) == props::K_SWIPE_ITEM {
+                    let b: *u8 = build_action(c);
+                    if b != (0 as *u8) { bx.append(gtk::Widget::from_raw(b)); }
+                }
+            }
+            option::Option[*core::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return;
+}
+
+// ---- laying it out -------------------------------------------------------------
+//
+// Called from `geometry::reposition_children`, AFTER facet's own children have
+// been placed at their computed frames — so this moves them, rather than
+// computing where they go. The strip is this package's own widget and nothing
+// in the frame walk knows about it, the way nothing knows about a split's
+// divider.
+//
+// It runs on every layout pass and on every frame of a drag, which is why the
+// drag handler calls the same function rather than a second one: a swipeable
+// that is open when the window resizes has to stay open, and a swipeable that
+// is being dragged has to move. One rule, one place.
+
+fn round_i32(v: f64) -> i32 {
+    if v <= (0.0 as f64) { return 0 as i32; }
+    return (v + (0.5 as f64)) as i32;
+}
+
+fn layout_swipe(node: *core::Node, v: *u8, frame: flex::Frame) {
+    if core::kind_of(node) != props::K_SWIPEABLE { return; }
+    let strip: *u8 = strip_of(v);
+    if strip == (0 as *u8) { return; }
+    let fixed: gtk::Fixed = gtk::Fixed::from_raw(v);
+    let items: usize = count_items(node);
+    let w: f64 = action_width() * (items as f64);
+    let shown: f64 = travel_of(v);
+    // The strip is as wide as its actions and as tall as the row, pinned to the
+    // trailing edge — it does not move with the content, it is UNDER it.
+    gtk::Widget::from_raw(strip).set_size_request(round_i32(w), round_i32(frame.height));
+    gtk::Widget::from_raw(strip).set_visible(items > (0 as usize) && shown > (0.0 as f64));
+    fixed.move_(gtk::Widget::from_raw(strip), frame.width - w, 0.0f64);
+    // Each action takes its share; a GtkBox would otherwise size them by their
+    // labels, and a one-word action would be half the width of a two-word one.
+    var i: usize = 0 as usize;
+    var cur: *u8 = first_child_raw(strip);
+    while cur != (0 as *u8) {
+        gtk::Widget::from_raw(cur).set_size_request(round_i32(action_width()),
+                                                    round_i32(frame.height));
+        cur = next_sibling_raw(cur);
+    }
+    // The content, shifted by whatever the swipe has revealed.
+    let count: usize = core::child_count_of(node);
+    while i < count {
+        match core::child_of(node, i) {
+            option::Option[*core::Node]::Some(c) => {
+                let cv: *u8 = core::view_of(c);
+                if cv != (0 as *u8) {
+                    let cf: flex::Frame = { (*c).frame() };
+                    fixed.move_(gtk::Widget::from_raw(cv),
+                                (cf.left - frame.left) - shown, cf.top - frame.top);
+                }
+            }
+            option::Option[*core::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return;
+}
+
+// ---- the drag ------------------------------------------------------------------
+
+fn fire(h: fn(*u8, *u8), ctx: *u8, sender: *u8) {
+    if h == props::no_handler { return; }
+    h(sender, ctx);
+    return;
+}
+
+fn node_of(v: *u8) -> *core::Node {
+    if v == (0 as *u8) { return 0 as *core::Node; }
+    return g::get_data(v, owner_key()) as *core::Node;
+}
+
+fn swipe_began(gesture: *u8, x: f64, y: f64, user: *u8) {
+    let v: *u8 = user;
+    let n: *core::Node = node_of(v);
+    if n == (0 as *core::Node) { return; }
+    let p: *props::SwipeableProps = swipeable_props(n);
+    if p == (0 as *props::SwipeableProps) { return; }
+    if open_width(n) <= (0.0 as f64) { return; }
+    fire({ (*p).on_swipe_started }, { (*p).on_swipe_started_ctx }, v);
+    return;
+}
+
+fn swipe_moved(gesture: *u8, dx: f64, dy: f64, user: *u8) {
+    let v: *u8 = user;
+    let n: *core::Node = node_of(v);
+    if n == (0 as *core::Node) { return; }
+    let p: *props::SwipeableProps = swipeable_props(n);
+    if p == (0 as *props::SwipeableProps) { return; }
+    let limit: f64 = open_width(n);
+    if limit <= (0.0 as f64) { return; }
+    // Left only, and never past the strip: a swipeable opens toward its actions
+    // and there is nothing on the other side to reveal.
+    var shown: f64 = (0.0 as f64) - dx;
+    if shown < (0.0 as f64) { shown = 0.0f64; }
+    if shown > limit { shown = limit; }
+    set_travel(v, shown);
+    layout_swipe(n, v, { (*n).frame() });
+    fire({ (*p).observe_swipe_changing }, { (*p).observe_swipe_changing_ctx }, v);
+    // A drag that has actually moved the row is this gesture's, and a scroll
+    // above it must not also act on it.
+    let _s: bool = gtk::Gesture::from_raw(gesture).set_state(1 as i32);
+    return;
+}
+
+// THE THRESHOLD, which is the whole reason this is a drag rather than a
+// platform control: `reveal_threshold` is the distance past which letting go
+// opens rather than closes, and zero means halfway — what an application that
+// never named one expects.
+fn swipe_ended(gesture: *u8, dx: f64, dy: f64, user: *u8) {
+    let v: *u8 = user;
+    let n: *core::Node = node_of(v);
+    if n == (0 as *core::Node) { return; }
+    let p: *props::SwipeableProps = swipeable_props(n);
+    if p == (0 as *props::SwipeableProps) { return; }
+    let limit: f64 = open_width(n);
+    if limit <= (0.0 as f64) { return; }
+    settle(v, n, travel_of(v) >= threshold_of(p, limit));
+    fire({ (*p).on_swipe_ended }, { (*p).on_swipe_ended_ctx }, v);
+    return;
+}
+
+// Kept apart from the handler so a test can ask about it without a pointer.
+fn threshold_of(p: *props::SwipeableProps, limit: f64) -> f64 {
+    if p == (0 as *props::SwipeableProps) { return limit / (2.0 as f64); }
+    var bar: f64 = { (*p).reveal_threshold };
+    if bar <= (0.0 as f64) { bar = limit / (2.0 as f64); }
+    if bar > limit { bar = limit; }
+    return bar;
+}
+
+// Open or closed, and the matching handler told. `open_requested` and
+// `close_requested` are the two names the ledger gives this moment, and they
+// fire on the LANDING rather than on the gesture, because a swipe dragged back
+// to where it started requested nothing.
+//
+// IT LANDS RATHER THAN GLIDES. `scheduler` has a tween and this could use it;
+// what stopped it is that the settle would then be running while the next
+// layout pass writes the same positions, and two writers of one frame is the
+// bug this package has already paid for once. Recorded in MANIFEST.md §1.
+fn settle(v: *u8, n: *core::Node, open: bool) {
+    let p: *props::SwipeableProps = swipeable_props(n);
+    if p == (0 as *props::SwipeableProps) { return; }
+    var shown: f64 = 0.0f64;
+    if open { shown = open_width(n); }
+    set_travel(v, shown);
+    layout_swipe(n, v, { (*n).frame() });
+    if open { fire({ (*p).on_open_requested }, { (*p).on_open_requested_ctx }, v); }
+    else { fire({ (*p).on_close_requested }, { (*p).on_close_requested_ctx }, v); }
+    return;
+}
+
+// ---- the kind ------------------------------------------------------------------
+
+fn create_swipeable(n: *core::Node) -> *u8 {
+    let fixed: gtk::Fixed = gtk::Fixed::new();
+    let strip: gtk::Box = gtk::Box::new(0 as i32, 0 as i32);     // horizontal
+    strip.upcast().set_visible(false);
+    // FIRST into the Fixed, so it draws under everything the application put in
+    // the swipeable — the content is what has to cover it.
+    fixed.put(strip.upcast(), 0.0f64, 0.0f64);
+    // A GtkFixed neither clips nor negotiates for space — which is why it is the
+    // host under an external layout engine, and why an open row would otherwise
+    // draw its content over whatever sits to its left. `overflow: hidden` is
+    // GTK's own word for the clip this one kind needs, and it is set HERE rather
+    // than on every Fixed because nothing else in this package moves a child
+    // outside its own frame.
+    fixed.upcast().set_overflow(1 as i32);                       // GTK_OVERFLOW_HIDDEN
+    g::set_data(fixed.raw(), strip_key(), strip.raw());
+    g::set_data(fixed.raw(), owner_key(), n as *u8);
+    if g::get_data(fixed.raw(), gesture_key()) == (0 as *u8) {
+        let c: gtk::GestureDrag = gtk::GestureDrag::new();
+        let _a: u64 = c.connect_drag_begin(swipe_began, fixed.raw());
+        let _b: u64 = c.connect_drag_update(swipe_moved, fixed.raw());
+        let _e: u64 = c.connect_drag_end(swipe_ended, fixed.raw());
+        fixed.upcast().add_controller(c.upcast().upcast().upcast());
+        g::set_data(fixed.raw(), gesture_key(), 1 as *u8);
+    }
+    return fixed.upcast().raw();
+}
+
+// The bits a `swipe_item` carries, which is what a rebuild gates on: the item
+// is viewless, so its edit arrives here as `touch_all` on the swipeable.
+fn item_bits() -> u64 {
+    return swipe_item::P_TEXT | swipe_item::P_ICON | swipe_item::P_IS_DESTRUCTIVE;
+}
+
+fn apply_swipeable(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *props::SwipeableProps = swipeable_props(n);
+    if p == (0 as *props::SwipeableProps) { return; }
+    // The node is rebound on every apply because a description that was rebuilt
+    // hands the same widget a NEW node, and the drag reads the owner off the
+    // widget.
+    g::set_data(v, owner_key(), n as *u8);
+    if (dirty & item_bits()) != (0 as u64) { rebuild_strip(v, n); }
+    // `reveal_threshold` is read at the END of a drag rather than written to
+    // anything, so there is nothing to do when it changes — but the bit is
+    // named here so the gate is where a reader looks for it.
+    if (dirty & swipeable::P_REVEAL_THRESHOLD) != (0 as u64) { return; }
+    return;
+}

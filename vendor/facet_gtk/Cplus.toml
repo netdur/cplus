@@ -10,11 +10,19 @@ edition = "2026"
 #
 #   facet_gtk   the registration surface: install() and nothing else
 #   views       the Renderer's five verbs
-#   controls    one GTK body per node kind
+#   controls    one GTK body per node kind, and the CSS each one composes
+#   input       the READ half: gestures, keys, control actions, sender readers
 #   paint       the shared band (background / radius / opacity / enabled / tooltip)
-#   geometry    computed frames -> GtkFixed placements
+#   geometry    computed frames -> GtkFixed placements, and a scroll's extent
 #   scheduler   schedule + the Scheduler service, over the GLib main loop
-#   window      the GtkWindow host a root is laid into
+#   window      the GtkWindow host, the run loop, and the menus
+#   chrome      toolbar items, the window buttons, the window-drag region
+#   swipe       swipe-to-reveal, assembled — GTK has no such row
+#   anim        a progress tween and a GIF's frames — GTK animates neither
+#   recycler    list, collection and tree over GtkListView, and the two slot maps
+#   dialogs     alert / choose / prompt as facet trees, and the file chooser
+#   drawing     the canvas replay, against cairo and Pango
+#   web         a WebKitGTK view, opened at runtime rather than linked
 #
 # STATUS is a MEASUREMENT, not a claim: `python3 tools/parity.py` prints the
 # share of facet's declared prop bits this backend references, beside appkit
@@ -47,6 +55,8 @@ graphene    = "*"
 gsk         = "*"
 harfbuzz    = "*"
 pango       = "*"
+pangocairo  = "*"
+gmodule     = "*"
 
 [link]
 libs = ["gtk-4"]
