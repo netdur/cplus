@@ -816,11 +816,89 @@ running.
 must be made before the process can go on, with no window to attach to. An
 agent cannot reach it, which is exactly why it is not the default.
 
+### What a KEYBOARD does with a sheet, which is the half this section forgot
+
+Everything above describes the agent path completely and said nothing about the
+person at the keyboard — and that omission is the shape of the bug it hid.
+A native alert gives a window a default button and a cancel button for free.
+Building the sheet out of facet controls is what makes it keyed and drivable,
+and the price is that **everything the platform gave for nothing has to be
+supplied here**. It was not, for as long as this section existed.
+
+    alert     Return -> primary     Escape -> secondary
+    prompt    Return -> ok          Escape -> cancel
+    choose    neither
+
+`keyEquivalent` is `"\r"` on the primary and `"\x1b"` on the secondary, set
+after the mount because the buttons need their views. A default button also
+draws accented, so this is appearance as well as behaviour.
+
+**A `choose` binds neither, deliberately.** Its buttons are N options and none
+of them is "the obvious one", so binding Return would act on the user's behalf
+without being asked — and there is no cancel button for Escape to take, because
+the options ARE the answer. (The ledger disagrees: `ActionSheetArguments`
+declares `Cancel` and `Destruction` and facet has neither. That is unbuilt, not
+decided — `gen_contract`'s guard 8 prints it on every regen.)
+
+**Escape on a one-button alert does nothing**, and that is not an oversight
+either: a single-button alert is an ACKNOWLEDGEMENT, and dismissing it on
+Escape would acknowledge on the user's behalf.
+
+### THE FIELD EDITOR, and why Return "worked" and still did nothing
+
+The trap under the trap, and the one that actually cost the hours.
+
+An NSTextField does not hold the text you are typing. The window's shared FIELD
+EDITOR does, and `stringValue` is only refreshed from it when editing ENDS.
+Clicking a button ends editing on the way, because the click moves first
+responder. **Return does not**: it arrives through `performKeyEquivalent:`,
+which a window runs BEFORE the responder chain sees the key, so the button
+fires while the editor still holds everything that was typed.
+
+So `prompt_ok` read the value the sheet OPENED with. A Rename kept the old
+name; a New File got an empty one. From a person's side the sheet closes and
+nothing they typed happened — with the key equivalent set and asserted the
+whole time. `endEditingFor: nil` on the sheet before reading is AppKit's own
+commit and what every native dialog does.
+
+ASSERTING A PROPERTY IS NOT ASSERTING A BEHAVIOUR. The first attempt at this
+set `keyEquivalent`, asserted it read back, and called the rest "needs hands".
+Both remaining bugs were behind that. The checks drive a real `NSEvent` through
+the window's own order — `performKeyEquivalent:` first, then `sendEvent:` —
+which is the routing rather than a stand-in for it.
+
+### `prompt` opens on a value
+
+`initial:` is the ledger's `initialValue` and is NOT `placeholder`: one is the
+hint shown while the field is EMPTY, the other is what the field STARTS with
+and what a person then edits. Only the hint reached facet's signature at first,
+so a Rename opened on nothing with the old name greyed out behind the caret.
+
+The caret lands in the field and the old name is selected, so the first
+keystroke replaces it. **Neither is this package's doing** — AppKit makes the
+first valid key view the initial first responder when a window becomes key, and
+selects a text field's contents when it does. A `selectText:` call was added
+here on the assumption that they did not happen, and removed again when
+measuring showed it changed nothing. The check stays, because a change to the
+tree could take it away silently.
+
+`maxLength` and `keyboard` are the two rows of `DisplayPromptAsync` facet does
+not carry: a length limit belongs on `text_field` before it belongs on the
+dialog, and a keyboard TYPE is a touch idiom that macOS has no answer for.
+
 **The file pickers stay native, and that is a hole.** `choose_file` and
 `choose_directory` are NSOpenPanel, which an agent cannot drive and which
 cannot be reimplemented — the panel IS the sandbox door, and a facet-drawn
 imitation would grant nothing. An application that needs an agent to choose a
 file has to offer a path some other way.
+
+The argument above is about REIMPLEMENTING the panel and it holds. It does not
+cover the other half: `choose_file` and `choose_directory` still call
+`run_modal`, which is application-modal, so the whole app stops — including the
+agent channel, whose own request is what would have to return. Presenting the
+same NSOpenPanel with `beginSheetModalForWindow:completionHandler:` would keep
+the sandbox door and drop the block, at the cost of the verbs answering through
+a handler like every other dialog here. Unbuilt.
 
 ### The window tier: what a native window is asked
 
