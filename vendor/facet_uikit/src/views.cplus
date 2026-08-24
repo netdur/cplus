@@ -33,6 +33,7 @@ import "./input" as input;
 import "./text_input" as text_input;
 import "./keys" as keys;
 import "./controls" as controls;
+import "./menus" as menus;
 import "./swipe" as swipe;
 import "./web" as web;
 import "./recycler" as recycler;
@@ -62,6 +63,11 @@ fn wants_view(n: *core::Node) -> bool {
     if gestures::has_gestures(n) { return true; }
     // And a bare container that asks for PIXELS. Same claim, other tier.
     if wants_painting(n) { return true; }
+    // And a bare container carrying a CONTEXT MENU. Same claim, third tier: the
+    // interaction is attached to the node's OWN view, and UIKit lifts that view
+    // as the menu's preview — so without one the menu is built, retained and
+    // dropped, and there is not even a rectangle for the press to land on.
+    if menus::wants_menu(n) { return true; }
     return { (*n).key() } != "";
 }
 
@@ -139,18 +145,18 @@ fn create(ctx: *u8, n: *core::Node) -> *u8 {
         let nvk: u32 = core::kind_of(n);
         if non_view_kind(nvk) {
             { (*n).set_display(flex::Display::None) };
-            // NOT A RECTANGLE IS NOT THE SAME AS NOT A DEBT, and folding the two
-            // together is how a whole family went silent. A `context_menu`
-            // occupies no space here for the same reason it occupies none on
-            // AppKit — an NSMenu is not an NSView and a UIMenu is not a UIView —
-            // but AppKit goes on to BUILD one and this package does not. iOS 13+
-            // has the answer (`UIContextMenuInteraction` + `UIMenu` / `UIAction`,
-            // MANIFEST.md §"the menu bar" and the not-yet-built table), so this
-            // belongs in the third list, and the third list's whole rule is that
-            // it is AUDIBLE. Declaring a context menu here used to produce
-            // nothing at all — no menu, no warning, and `describe_ui` cannot
-            // show it either, because menu kinds are not views.
-            if controls::menu_kind(nvk) { unimplemented_kind(nvk, n); }
+            // NOT A RECTANGLE IS NOT THE SAME AS NOT A DEBT, and folding the
+            // two together is how this family went silent for a whole pass. A
+            // `context_menu` occupies no space for the same reason it occupies
+            // none on AppKit — a UIMenu is not a UIView any more than an NSMenu
+            // is an NSView — but occupying no space says nothing about whether
+            // anything was BUILT from it.
+            //
+            // It is built now: `menus.cplus` reads these same nodes when the
+            // parent's view is made and hangs a `UIContextMenuInteraction` on
+            // it. What is still only a non-view kind is the MENU BAR, which iOS
+            // does not have, and that one is decided rather than deferred.
+            if controls::menu_bar_kind(nvk) { unimplemented_kind(nvk, n); }
         }
         return 0 as *u8;
     }
@@ -167,6 +173,11 @@ fn create(ctx: *u8, n: *core::Node) -> *u8 {
     // Configure it WHOLE: the shared band, then the kind's own body with every
     // bit set. One code path with apply, so the two cannot drift.
     configure(v, n, paint::all_bits());
+    // The menu a `context_menu` child describes, hung on this view. Same place
+    // in the walk as facet_appkit's, and for the same reason: the menu
+    // decorates the node it sits under, so it is read when that node's view
+    // exists and never before.
+    menus::attach_context_menu(v, n);
     // Intrinsic size: the node measures itself through its view from here on.
     // `context` is flex's spare slot — facet's Data rides the ATTACHMENT, so
     // nothing else wants it.

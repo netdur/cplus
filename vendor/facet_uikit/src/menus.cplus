@@ -1,0 +1,382 @@
+// facet_uikit menus — a `context_menu`, as the platform's own long-press.
+//
+// RIGHT-CLICK AND TOUCH-AND-HOLD ARE ONE AFFORDANCE, and that is Apple's own
+// framing rather than a convenience: `NSView.menu` on a secondary click and
+// `UIContextMenuInteraction` on a press are the same thing — the menu of
+// actions about the element under the pointer or the finger. So the ledger's
+// `ContextFlyout` maps 1:1 and facet's contract never has to say "right click";
+// each backend picks the gesture its platform has, exactly as `swipeable` is a
+// menu on macOS and a pan here.
+//
+// THREE THINGS DIFFER FROM APPKIT, and each one is a decision rather than an
+// accident of porting:
+//
+//   * UIKit LIFTS the target view and shows a preview beside the menu. That is
+//     the default and it is what a person recognises, so it is kept — but it
+//     means the interaction has a VISIBLE target, and a menu hung on a
+//     zero-size or fully clipped container looks wrong here while looking fine
+//     on macOS. `views::wants_menu` is what makes sure there is a real view.
+//
+//   * THE MENU IS BUILT WHEN IT OPENS, not when it is attached. A `UIMenu` is
+//     immutable and arrives from a provider block, where AppKit mutates an
+//     NSMenu it built at attach time. That is BETTER for facet, not worse: the
+//     provider re-reads the nodes each time, so `enabled` and the titles are
+//     current with no refresh path at all.
+//
+//   * A UIACTION IS THE SENDER. `UIActionHandler` is `void (^)(UIAction *)` —
+//     the handler receives the action — so one block type covers every item and
+//     the action carries its own identity, the same way facet_appkit's fix made
+//     an NSMenuItem carry its own. `identifier` is the key and an associated
+//     object is the item, both read by `input::key_of` / `input::item_of`.
+//
+// THE BLOCKS ARE HAND-BUILT HERE rather than taken from the generated binding,
+// and the reason is the descriptor. `uikit.cplus`'s generated block helpers put
+// their `BlockDescriptor` on the FRAME, and `Block_copy` keeps the pointer to
+// it: for a completion handler that runs during the call that is survivable,
+// but a UIAction is retained by UIKit and lives as long as the menu, so its
+// descriptor must outlive the call that made it. `vendor/http` states the rule
+// — "the descriptor is SHARED by every copy and is read after the block is
+// copied, so it must outlive any one call — hence a `static`" — and these
+// follow it. See `bugs/` for the generated-binding half.
+
+import "stdlib/option" as option;
+import "stdlib/text" as text;
+import "stdlib/vec" as vec;
+import "stdlib/status" as status;
+import "facet/facet" as core;
+import "facet/props" as props;
+import "facet/vocabulary" as vocab;
+import "objc/runtime" as rt;
+import "objc/synthesis" as synth;
+import "objc/bridge" as bridge;
+import "uikit/uikit" as ui;
+import "./controls" as controls;
+import "./input" as input;
+
+// ---- associated keys ---------------------------------------------------------
+// facet_uikit owns 41000 and up; this file takes 41090.
+
+// The node a UIAction was built from, so the handler can find its props again.
+fn action_node_key() -> *u8 { return 41090 as *u8; }
+// The `context_menu` node hung on a view, read by the interaction delegate when
+// the menu is asked for.
+fn menu_node_key() -> *u8 { return 41091 as *u8; }
+// The interaction object itself, retained so it lives as long as the view.
+fn interaction_key() -> *u8 { return 41092 as *u8; }
+
+// ---- the blocks --------------------------------------------------------------
+
+#[repr(C)]
+struct _ActionBlock {
+    opaque isa: *u8,
+    flags: i32,
+    reserved: i32,
+    invoke: fn(*u8, *u8),
+    opaque descriptor: *u8,
+    opaque node: *u8,
+}
+
+#[repr(C)]
+struct _ProviderBlock {
+    opaque isa: *u8,
+    flags: i32,
+    reserved: i32,
+    invoke: fn(*u8, *u8) -> *u8,
+    opaque descriptor: *u8,
+    opaque node: *u8,
+}
+
+// STATIC, not a frame local: a UIAction is retained by UIKit for the life of
+// the menu and `Block_copy` keeps the descriptor POINTER, so a descriptor on
+// the frame that built the action is read after that frame is gone. Both
+// blocks are 48 bytes — isa, flags, reserved, invoke, descriptor, one POD
+// capture — and `the_menu_blocks_are_the_flags_zero_stack_shape` is the guard
+// that fails the moment either stops being.
+static _BLOCK_DESC: rt::BlockDescriptor = rt::BlockDescriptor {
+    reserved: 0 as u64,
+    size: 48 as u64,
+};
+
+fn _block_desc() -> *u8 { return { #addr_of(_BLOCK_DESC) as *u8 }; }
+
+// A menu item was chosen. The UIAction is the sender, which is what lets one
+// handler serve every row: `input::key_of` reads its identifier and
+// `input::item_of` reads the payload, exactly as they do off a view.
+fn _action_invoke(block: *u8, action: *u8) {
+    let b: *_ActionBlock = { block as *_ActionBlock };
+    let c: *core::Node = { { (*b).node } as *core::Node };
+    if c == (0 as *core::Node) { return; }
+    let p: *props::ContextMenuItemProps =
+        controls::props_of(c, props::K_CONTEXT_MENU_ITEM) as *props::ContextMenuItemProps;
+    if p == (0 as *props::ContextMenuItemProps) { return; }
+    let mi: *props::MenuItemProps = { #addr_of((*p).menu_item) };
+    let h: fn(*u8, *u8) = { (*mi).on_clicked };
+    if h == props::no_handler { return; }
+    h(action, { (*mi).on_clicked_ctx });
+    return;
+}
+
+// UIKit is asking for the menu, at open time. Re-read the nodes now: that is
+// the whole advantage of the deferred shape over AppKit's build-at-attach.
+fn _provider_invoke(block: *u8, _suggested: *u8) -> *u8 {
+    let b: *_ProviderBlock = { block as *_ProviderBlock };
+    let menu_node: *core::Node = { { (*b).node } as *core::Node };
+    return build_menu(menu_node);
+}
+
+// ---- building the menu -------------------------------------------------------
+
+// UIMenuOptionsDisplayInline — an inline sub-menu draws as a divided GROUP
+// rather than a submenu. It is UIKit's answer to a separator, which it has no
+// element for.
+fn menu_display_inline() -> u64 { return 1 as u64; }
+
+// One UIAction from a `context_menu_item` node, or None when it has nothing to
+// show. `identifier` is the facet key, so `input::key_of` answers off the
+// action; the node rides an associated object for `input::item_of`.
+fn make_action(c: *core::Node, mi: *props::MenuItemProps) -> option::Option[ui::MenuElement] {
+    let title: str = { (*mi).text.view() };
+    if title == "" { return option::Option[ui::MenuElement]::None; }
+
+    var blk: _ActionBlock = _ActionBlock {
+        isa: rt::stack_block_isa(),
+        flags: 0 as i32,
+        reserved: 0 as i32,
+        invoke: _action_invoke,
+        descriptor: _block_desc(),
+        node: c as *u8,
+    };
+    let bp: *u8 = { #addr_of(blk) as *u8 };
+
+    let icon: str = { (*mi).icon.view() };
+    var img: *u8 = 0 as *u8;
+    if icon != "" {
+        match controls::symbol_image(icon, 0.0f64) {
+            option::Option[ui::Image]::Some(im) => { img = im.raw(); }
+            option::Option[ui::Image]::None => { }
+        }
+    }
+    let raw: *u8 = { rt::msg_id_id_id_id_id(
+        rt::get_class(#str_ptr("UIAction\0")),
+        rt::sel(#str_ptr("actionWithTitle:image:identifier:handler:\0")),
+        bridge::nsstring(title), img, bridge::nsstring({ (*c).key() }), bp) };
+    if raw == (0 as *u8) { return option::Option[ui::MenuElement]::None; }
+
+    // DESTRUCTIVE is an attribute here, not a red title drawn by hand — UIKit
+    // owns the colour, which is the whole reason to say it declaratively.
+    if { (*mi).is_destructive } {
+        { rt::msg_void_u64(raw, rt::sel(#str_ptr("setAttributes:\0")), 2 as u64) };
+    }
+    // `enabled` is the shared band's, and UIKit spells a disabled menu element
+    // as an attribute too (1 = UIMenuElementAttributesDisabled).
+    if !core::is_enabled(c) {
+        let attrs: u64 = if { (*mi).is_destructive } { 3 as u64 } else { 1 as u64 };
+        { rt::msg_void_u64(raw, rt::sel(#str_ptr("setAttributes:\0")), attrs) };
+    }
+    // The payload half, the same slot a view carries it in — so a handler
+    // reads `component::item_of(sender)` off a menu action exactly as off a
+    // row. ASSIGN, never retain: the application owns the item.
+    synth::set_associated(raw, input::item_key(), core::item_of(c));
+    synth::set_associated(raw, action_node_key(), c as *u8);
+    return option::Option[ui::MenuElement]::Some(ui::MenuElement::from_raw(raw));
+}
+
+// Close a run of items into one inline group, which is what draws the divider.
+fn push_inline(groups: *vec::Vec[ui::MenuElement], take run: vec::Vec[ui::MenuElement]) {
+    var items: vec::Vec[ui::MenuElement] = run;
+    if items.count() == (0 as usize) { return; }
+    let g: ui::Menu = ui::Menu::menu_with_title_image("", ui::Image::from_raw(0 as *u8), "",
+                                                      menu_display_inline(), items);
+    let _s: status::Status = { (*groups).append(g.as_menu_element()) };
+    return;
+}
+
+// The UIMenu a `context_menu` node describes, or 0 when it has no items.
+//
+// A titleless item is a SEPARATOR — what every menu-building API means by one,
+// and what facet_appkit reads too. UIKit has no separator element, so a run of
+// items between separators becomes one inline sub-menu and UIKit draws the
+// divider between the runs.
+fn build_menu(menu_node: *core::Node) -> *u8 {
+    if menu_node == (0 as *core::Node) { return 0 as *u8; }
+    var groups: vec::Vec[ui::MenuElement] = vec::new::[ui::MenuElement]();
+    var current: vec::Vec[ui::MenuElement] = vec::new::[ui::MenuElement]();
+    var any: bool = false;
+
+    var i: usize = 0 as usize;
+    let count: usize = core::child_count_of(menu_node);
+    while i < count {
+        match core::child_of(menu_node, i) {
+            option::Option[*core::Node]::Some(c) => {
+                if core::kind_of(c) == props::K_CONTEXT_MENU_ITEM {
+                    let p: *props::ContextMenuItemProps =
+                        controls::props_of(c, props::K_CONTEXT_MENU_ITEM) as *props::ContextMenuItemProps;
+                    if p != (0 as *props::ContextMenuItemProps) {
+                        let mi: *props::MenuItemProps = { #addr_of((*p).menu_item) };
+                        if { (*mi).text.view() } == "" {
+                            push_inline(#addr_of(groups), current);
+                            current = vec::new::[ui::MenuElement]();
+                        } else {
+                            match make_action(c, mi) {
+                                option::Option[ui::MenuElement]::Some(e) => {
+                                    let _a: status::Status = current.append(e);
+                                    any = true;
+                                }
+                                option::Option[ui::MenuElement]::None => { }
+                            }
+                        }
+                    }
+                }
+            }
+            option::Option[*core::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    if !any { return 0 as *u8; }
+    push_inline(#addr_of(groups), current);
+    let m: ui::Menu = ui::Menu::menu_with_children(groups);
+    return m.raw();
+}
+
+// ---- the interaction ---------------------------------------------------------
+//
+// One delegate CLASS, shared by every interaction: which menu to build is read
+// off the view the interaction is attached to, not held per delegate, so a
+// screen with two hundred rows makes two hundred interactions and one class.
+
+fn delegate_class() -> *u8 {
+    let existing: *u8 = { rt::get_class(#str_ptr("FacetUIKitMenuDelegate\0")) };
+    if existing != (0 as *u8) { return existing; }
+    let cls: *u8 = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")),
+                                              #str_ptr("FacetUIKitMenuDelegate\0"), 0 as usize);
+    if cls == (0 as *u8) { return 0 as *u8; }
+    let _a: i8 = add_method_id_id_point(
+        cls, rt::sel(#str_ptr("contextMenuInteraction:configurationForMenuAtLocation:\0")),
+        imp_configuration_for_menu, #str_ptr("@@:@{CGPoint=dd}\0"));
+    synth::register_class_pair(cls);
+    return cls;
+}
+
+#[link_name = "class_addMethod"]
+extern fn add_method_id_id_point(cls: *u8, sel: *u8,
+                                 imp: fn(*u8, *u8, *u8, rt::Point) -> *u8,
+                                 types: *u8) -> i8;
+
+#[link_name = "objc_msgSend"]
+extern fn msg_id_id_id_id(recv: *u8, sel: *u8, a: *u8, b: *u8, c: *u8) -> *u8;
+
+// UIKit asks the DELEGATE, and the delegate asks the VIEW. The node is on the
+// view because that is what `attach` had in hand, and reading it here rather
+// than capturing it per delegate is what keeps one class serving every row.
+fn imp_configuration_for_menu(self_obj: *u8, cmd: *u8, interaction: *u8,
+                              _p: rt::Point) -> *u8 {
+    let v: *u8 = { rt::msg_id(interaction, rt::sel(#str_ptr("view\0"))) };
+    if v == (0 as *u8) { return 0 as *u8; }
+    let menu_node: *u8 = { synth::get_associated(v, menu_node_key()) };
+    return configuration_for_node(menu_node);
+}
+
+// The UIContextMenuConfiguration for a `context_menu` node, or 0.
+fn configuration_for_node(menu_node: *u8) -> *u8 {
+    if menu_node == (0 as *u8) { return 0 as *u8; }
+    // Nothing to show is answered as nil, which is UIKit's own way of saying
+    // "no menu here" — the press then does nothing instead of opening an empty
+    // sheet.
+    if build_menu(menu_node as *core::Node) == (0 as *u8) { return 0 as *u8; }
+
+    var blk: _ProviderBlock = _ProviderBlock {
+        isa: rt::stack_block_isa(),
+        flags: 0 as i32,
+        reserved: 0 as i32,
+        invoke: _provider_invoke,
+        descriptor: _block_desc(),
+        node: menu_node,
+    };
+    let bp: *u8 = { #addr_of(blk) as *u8 };
+    // `previewProvider: nil` takes UIKit's default preview, which is the target
+    // view itself — the lift a person recognises. Naming one would be facet
+    // inventing a look the application never asked for.
+    return { msg_id_id_id_id(rt::get_class(#str_ptr("UIContextMenuConfiguration\0")),
+                             rt::sel(#str_ptr("configurationWithIdentifier:previewProvider:actionProvider:\0")),
+                             0 as *u8, 0 as *u8, bp) };
+}
+
+// The configuration for whichever view in this subtree carries a menu node.
+//
+// A ROW'S MENU IS ON THE ROW'S VIEW, and UIKit asks the TABLE for it — the
+// exact split that made a `context_menu` in an NSOutlineView row unreachable on
+// AppKit. So the table's delegate finds the cell and asks here, and both paths
+// end up in one place: search DOWN from the cell, never up, because an
+// ancestor's menu is not this row's and answering it would give every row the
+// same one.
+fn configuration_in_subtree(v: *u8) -> *u8 {
+    if v == (0 as *u8) { return 0 as *u8; }
+    let own: *u8 = { synth::get_associated(v, menu_node_key()) };
+    if own != (0 as *u8) { return configuration_for_node(own); }
+    let subs: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("subviews\0"))) };
+    if subs == (0 as *u8) { return 0 as *u8; }
+    let count: u64 = { rt::msg_u64(subs, rt::sel(#str_ptr("count\0"))) };
+    var i: u64 = 0 as u64;
+    while i < count {
+        let child: *u8 = { rt::msg_id_u64(subs, rt::sel(#str_ptr("objectAtIndex:\0")), i) };
+        let found: *u8 = configuration_in_subtree(child);
+        if found != (0 as *u8) { return found; }
+        i = i +% (1 as u64);
+    }
+    return 0 as *u8;
+}
+
+// Hang the context menu a node's children describe on that node's view. The
+// pair to facet_appkit's `attach_context_menu`, called from the same place in
+// `views::create`.
+fn attach_context_menu(view: *u8, n: *core::Node) {
+    if view == (0 as *u8) { return; }
+    var i: usize = 0 as usize;
+    let count: usize = core::child_count_of(n);
+    while i < count {
+        match core::child_of(n, i) {
+            option::Option[*core::Node]::Some(c) => {
+                if core::kind_of(c) == props::K_CONTEXT_MENU {
+                    synth::set_associated(view, menu_node_key(), c as *u8);
+                    let cls: *u8 = delegate_class();
+                    if cls == (0 as *u8) { return; }
+                    let d: *u8 = synth::alloc_init_class(cls);
+                    if d == (0 as *u8) { return; }
+                    let it: ui::ContextMenuInteraction = ui::ContextMenuInteraction::new(d);
+                    { rt::msg_void_id(view, rt::sel(#str_ptr("addInteraction:\0")), it.raw()) };
+                    // Both retained on the view: UIKit holds the interaction
+                    // weakly through the view's list, and the delegate not at
+                    // all — a delegate that dies takes the menu with it.
+                    synth::retain_associated(view, interaction_key(), it.raw());
+                    synth::retain_associated(view, delegate_key(), d);
+                    rt::release(d);
+                    return;                     // one context menu per node
+                }
+            }
+            option::Option[*core::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return;
+}
+
+fn delegate_key() -> *u8 { return 41093 as *u8; }
+
+// Does this node carry a context menu that needs somewhere to hang? Direct
+// children only, so the rule agrees exactly with `attach_context_menu` above —
+// a predicate that looked deeper would promise a view to a node the attacher
+// then ignores.
+fn wants_menu(n: *core::Node) -> bool {
+    var i: usize = 0 as usize;
+    let count: usize = core::child_count_of(n);
+    while i < count {
+        match core::child_of(n, i) {
+            option::Option[*core::Node]::Some(c) => {
+                if core::kind_of(c) == props::K_CONTEXT_MENU { return true; }
+            }
+            option::Option[*core::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return false;
+}

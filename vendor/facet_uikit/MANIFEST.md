@@ -51,12 +51,43 @@ non-view kinds — they do not occupy space in the tree — which is the same an
 the AppKit backend gives for a different reason (there they are objects the
 application owns rather than rectangles).
 
-**Note:** iOS 13+ does have `UIMenu`, and the `context_menu` family has a real
-answer through `UIContextMenuInteraction`. That is in list 2, not here — and as
-of 2026-08-24 it BEHAVES like list 2: mounting a `context_menu` warns once on
-stderr, the way every other not-yet-built kind does. It used to produce nothing
-at all — no menu, no warning — because being a non-view kind was answered first
-and stopped the question there. Not a rectangle is not the same as not a debt.
+**Note:** the `context_menu` family is BUILT as of 2026-08-24 —
+`UIContextMenuInteraction` + `UIMenu` / `UIAction`, in `src/menus.cplus`. Only
+the menu BAR is decided-absent here; iOS has none.
+
+A right-click and a touch-and-hold are one affordance, which is Apple's own
+framing rather than a convenience, so the ledger's `ContextFlyout` maps 1:1 and
+facet's contract never says "right click" — each backend picks the gesture its
+platform has, the same way `swipeable` is a menu on macOS and a pan here.
+
+Three things differ from AppKit and each is a decision:
+
+* UIKit **lifts the target view** and shows a preview beside the menu. That is
+  the default and it is what a person recognises, so it is kept —
+  `previewProvider: nil` takes it. It does mean the interaction has a VISIBLE
+  target: a menu on a zero-size or fully clipped container looks wrong here and
+  fine on macOS.
+* The menu is **built when it opens**, not when it is attached. A `UIMenu` is
+  immutable and arrives from a provider block, where AppKit mutates an NSMenu
+  built at attach time. That is better for facet: the provider re-reads the
+  nodes each time, so `enabled` and the titles are current with no refresh path.
+* A **UIAction is the sender**. `UIActionHandler` is `void (^)(UIAction *)`, so
+  one block type serves every item and the action carries its own identity.
+  `UIAccessibilityIdentification` is not adopted by `UIMenuElement`, so the key
+  rides `UIAction.identifier` rather than `accessibilityIdentifier` — the slot
+  that means the same thing — and the payload rides an associated object.
+  `component::key_of` / `item_of` answer off a menu action exactly as off a row.
+
+**A separator is an inline group.** UIKit has no separator element. A titleless
+`context_menu_item` is a separator here as it is everywhere, and the runs either
+side of it become `UIMenuOptionsDisplayInline` sub-menus, which is what draws
+the divider.
+
+**Inside a table, the TABLE answers.** `tableView:contextMenuConfigurationFor
+RowAtIndexPath:point:` on the recycler's source, because UITableView intercepts
+the long press to arbitrate it against scrolling — the same split that made a
+`context_menu` in an NSOutlineView row unreachable on AppKit until
+`menuForEvent:` was overridden. Both paths end in one function.
 
 ### Dragging a split divider
 
@@ -152,7 +183,7 @@ an interaction the app never asked for and would collide with the context menu.
 | `web`, `hybrid_web` | `WKWebView` with a synthesized navigation delegate; `hybrid_web` loads from the bundle through `loadFileURL:allowingReadAccessToURL:` |
 | `canvas` | A `UIView` subclass with `drawRect:`, replaying facet's recorded display list against Core Graphics |
 | `split` | flex geometry plus a drawn divider (the drag is section 1) |
-| `context_menu`, `menu_item` | `UIContextMenuInteraction` + `UIMenu` / `UIAction` |
+| `menu`, `toolbar_item` | the menu BAR — iOS has none (section 1) |
 
 ### Why `swipeable` is a pan and not the table-row API
 

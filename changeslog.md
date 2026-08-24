@@ -699,6 +699,40 @@ by its *shape*, not a method-name allowlist, through every form it can leak:
   replaced. `cpc lsp` also stopped canonicalizing every file in the project
   on every request.
 
+### facet_uikit — a context menu, as the platform's own long press
+- **`context_menu` is built on iOS**: `UIContextMenuInteraction` + `UIMenu` /
+  `UIAction`, in `menus.cplus`. A right-click and a touch-and-hold are one
+  affordance — Apple's own framing — so the ledger's `ContextFlyout` maps 1:1
+  and facet's contract never says "right click"; each backend picks the
+  gesture its platform has, the way `swipeable` is a menu on macOS and a pan
+  on iOS.
+- **The menu is built when it OPENS**, not when it is attached. A `UIMenu` is
+  immutable and arrives from a provider block, where AppKit mutates an NSMenu
+  built at attach time — so the provider re-reads the nodes each time and
+  `enabled` and the titles are current with no refresh path at all.
+- **A UIAction is the sender.** `UIActionHandler` is `void (^)(UIAction *)`,
+  so one block type serves every item. `UIAccessibilityIdentification` is not
+  adopted by `UIMenuElement`, so the key rides `UIAction.identifier` — the
+  slot that means the same thing — and the payload rides an associated
+  object. `component::key_of` / `item_of` answer off a menu action exactly as
+  off a row, and reading a sender that is not a view answers empty instead of
+  raising, the same guard AppKit needed.
+- **A separator is an inline group.** UIKit has no separator element; the runs
+  either side of a titleless item become `UIMenuOptionsDisplayInline`
+  sub-menus, which is what draws the divider.
+- **Inside a table the TABLE answers** — `tableView:contextMenuConfiguration
+  ForRowAtIndexPath:point:` — because UITableView intercepts the long press to
+  arbitrate it against scrolling. The same split that made a `context_menu` in
+  an NSOutlineView row unreachable on AppKit. Both paths end in one function.
+- The blocks are hand-built with a **static** descriptor rather than taken
+  from the generated binding: `Block_copy` keeps the descriptor POINTER, and a
+  UIAction is retained by UIKit for the life of the menu, so a descriptor on
+  the frame that built the action is read after that frame is gone.
+- Six checks in `selftest.cplus`, run on a real simulator by
+  `tools/run_ios_tests.sh` — 78 passed, 0 failed. Disabling the two lines in
+  `wants_view` / `create` turns two of them red, which is what makes them
+  checks rather than decoration.
+
 ### facet — the payload half of a handler
 - **`item:` at construction**, on the eight controls whose ledger type
   declares `CommandParameter` — button, checkbox, icon_button, refreshable,
