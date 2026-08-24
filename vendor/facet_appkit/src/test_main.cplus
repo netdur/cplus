@@ -5700,6 +5700,36 @@ fn escape_cancels_a_prompt_for_real() {
 }
 
 #[test]
+fn a_disabled_default_button_does_not_fire_on_return() {
+    backend::install();
+    // WHAT ENTER ACTUALLY DOES, at the one branch worth knowing. The window
+    // walks its view tree asking each view to claim the key; NSButton claims it
+    // only when the equivalent matches AND the button is ENABLED. A disabled
+    // primary claims nothing, so `performKeyEquivalent:` answers NO and the key
+    // falls through to the responder chain — which is the right answer for an
+    // OK that is waiting for a valid name: Return does nothing rather than
+    // committing something the button itself refuses.
+    AL_ANSWER = -1;
+    dialogs::alert_sheet("Q", "", "Yes", "No", on_answer: al_answered, on_answer_ctx: 0 as *u8);
+    match button::find("alert:primary") {
+        option::Option[button::Button]::Some(b) => {
+            let v: *u8 = core::view_of(b.node());
+            { rt::msg_void_i8(v, rt::sel(#str_ptr("setEnabled:\0")), 0 as i8) };
+        }
+        option::Option[button::Button]::None => { assert false; }
+    }
+    let w: *u8 = window_of_key("alert:secondary");
+    assert w != (0 as *u8);
+    let ev: *u8 = key_event(w, "\r", 36 as u16);
+    assert { rt::msg_i8_id(w, rt::sel(#str_ptr("performKeyEquivalent:\0")), ev) } == (0 as i8);
+    assert AL_ANSWER == (-1 as i32);
+    // Escape still works — the two buttons are independent.
+    let _e: bool = send_key(w, "\x1b", 53 as u16);
+    assert AL_ANSWER == 1;
+    return;
+}
+
+#[test]
 fn a_choose_sheet_binds_neither_key() {
     backend::install();
     // NOT AN OVERSIGHT. A choose sheet's buttons are N options and none of them

@@ -844,6 +844,38 @@ decided — `gen_contract`'s guard 8 prints it on every regen.)
 either: a single-button alert is an ACKNOWLEDGEMENT, and dismissing it on
 Escape would acknowledge on the user's behalf.
 
+### What pressing Return actually does, step by step
+
+Worth spelling out, because every bug in this section came from a wrong belief
+about one of these steps.
+
+    1. NSWindow gets the key-down and runs `performKeyEquivalent:` FIRST —
+       before the responder chain, before `keyDown:`.
+    2. That walks the view tree asking each view to claim the key. NSButton
+       claims it when the characters and modifiers match its `keyEquivalent`
+       AND the button is ENABLED.
+    3. The claiming button calls `performClick:` ON ITSELF.
+    4. `performClick:` sends its action to its target — for facet, the
+       `action_ctx_target` trampoline and `cplusActionCtx:`.
+    5. The trampoline calls the node's handler with the BUTTON as `sender`.
+    6. `alert_primary` / `prompt_ok` runs, exactly as a mouse click would.
+
+**Return, a mouse click and an agent's `click` all converge on step 3.**
+`performClick:` is the same selector the agent surface sends, so there is one
+path through the handler and no simulated second one — which is why an agent
+answering a sheet and a person answering it cannot drift.
+
+**Step 1 is why the field editor bug existed**, and the bug is in turn the
+evidence for step 1: the button fired while the editor still held uncommitted
+text, which can only happen if the key equivalent ran before the responder
+chain. See the next section.
+
+**A disabled default button claims nothing** (step 2), so
+`performKeyEquivalent:` answers NO and the key falls through to the responder
+chain — Return does nothing rather than committing something the button itself
+refuses. That is the right answer for an OK waiting on a valid name, and it is
+checked rather than assumed.
+
 ### THE FIELD EDITOR, and why Return "worked" and still did nothing
 
 The trap under the trap, and the one that actually cost the hours.
