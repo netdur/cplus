@@ -31,6 +31,7 @@ import "stdlib/text" as text;
 import "facet/facet" as core;
 import "facet/props" as props;
 import "facet/vocabulary" as vocab;
+import "facet/theme" as theme;
 import "gtk4/gtk4" as gtk;
 import "gobject/runtime" as g;
 
@@ -71,18 +72,162 @@ static TEXT_SCALE: f64 = 1.0f64;
 fn set_text_scale(v: f64) { if v > (0.0 as f64) { TEXT_SCALE = v; } return; }
 fn text_scale() -> f64 { return TEXT_SCALE; }
 
-// The side of an adaptive pair the live appearance asks for, as a plain
-// colour. `css_rgba` writes it as CSS; `drawing` hands the four numbers to
-// cairo — so the resolution is here, once, rather than in each of them.
+// ---- resolving a colour ------------------------------------------------------
+//
+// A `vocab::Color` is FOUR different things wearing one struct, told apart by
+// `token`, and a backend that resolves only some of them renders the rest
+// BLACK — every component is 0 on a token colour, because the components were
+// never where the answer lived.
+//
+//   255        a literal rgba. Use the components.
+//   254        an adaptive PAIR. Pick a side from the live appearance.
+//   100..117   a THEME ROLE — `ink`, `surface`, `raised`. The application's
+//              theme answers it, or the platform does when the theme is silent.
+//   200..217   a DERIVED INK: "the readable ink over role N-100". Not a colour
+//              at all but a QUESTION, and only a backend can answer it,
+//              because the role beneath usually resolves to a platform token
+//              whose value nothing portable knows.
+//   1..24      a PLATFORM SEMANTIC colour — `text`, `accent`,
+//              `window_background`. This file is where GTK's answers live.
+//
+// This was the whole of the gallery's washed-out chrome: `Color::ink()` is
+// token 104 and arrived here with r=g=b=0, so every heading was drawn black on
+// a dark background. Nothing was wrong with the colours; three of the four
+// kinds were never being asked.
+
+// A TOKEN COLOUR CARRIES NO ALPHA, and this is the trap that cost a debugging
+// pass: `Color::tok` builds every named colour with `a: 0.0`, because the
+// components are not where its answer lives. Only the constructors that take
+// one write it — `Color::ink(0.5)` sets `a = 0.5`, plain `Color::ink()` sets
+// 1.0 — so a token that arrived through `theme_fallback` (which returns
+// `Color::text()`, a bare `tok`) has alpha 0 and multiplying by it makes the
+// resolved colour INVISIBLE.
+//
+// Measured, before the fix: every colour resolved to the right RGB and
+// `a=0.00`, and the gallery's whole content pane rendered transparent. So a
+// token's zero alpha means UNSPECIFIED, not transparent — a deliberately
+// invisible colour is `Color::none()`, which is token 0 and never reaches
+// here.
+fn alpha_of(c: vocab::Color) -> f64 {
+    if c.a > (0.0 as f64) { return c.a; }
+    return 1.0f64;
+}
+
+// Depth guard: a role resolves to a fallback which may itself be a role. The
+// chain is one step deep by design (`theme.cplus` says so, and says derived ink
+// is the one exception), so four is slack, not a limit anyone should reach.
+fn resolve_depth(c: vocab::Color, depth: i32) -> vocab::Color {
+    if depth <= (0 as i32) { return c; }
+    let t: u32 = c.token;
+    // Unset and literal: nothing to do.
+    if t == (0 as u32) { return c; }
+    if t == (255 as u32) { return c; }
+    // The adaptive pair.
+    if t == (254 as u32) {
+        if !DARK { return c; }
+        var out: vocab::Color = c;
+        out.r = c.r2;
+        out.g = c.g2;
+        out.b = c.b2;
+        out.a = c.a2;
+        return out;
+    }
+    // A theme role. The application's theme first; the platform's default when
+    // the theme left it unset. ALPHA IS THE CALLER'S: `Color::ink(0.5)` is the
+    // ink role at half strength, and resolving the role must not throw that
+    // away — it is carried on the token, not in the role's own colour.
+    if c.is_theme_role() {
+        var slot: vocab::Color = theme::theme_slot(t);
+        if !slot.is_set() { slot = theme::theme_fallback(t); }
+        var out: vocab::Color = resolve_depth(slot, depth -% (1 as i32));
+        out.a = alpha_of(out) * alpha_of(c);
+        return out;
+    }
+    // A derived ink: black or white over whatever the base role resolved to,
+    // by luminance. The threshold is 0.55 rather than 0.5 — human perception
+    // of a mid grey sits above the arithmetic midpoint, and a 0.5 threshold
+    // puts grey text on grey chrome.
+    if c.is_derived_ink() {
+        let base: vocab::Color = resolve_depth(c.derived_ink_base(), depth -% (1 as i32));
+        let lum: f64 = (0.2126 as f64) * base.r + (0.7152 as f64) * base.g
+                     + (0.0722 as f64) * base.b;
+        if lum > (0.55 as f64) {
+            return vocab::Color::rgba(0.0f64, 0.0f64, 0.0f64, alpha_of(c));
+        }
+        return vocab::Color::rgba(1.0f64, 1.0f64, 1.0f64, alpha_of(c));
+    }
+    // A platform semantic colour.
+    return platform_color(t, alpha_of(c));
+}
+
 fn resolved(c: vocab::Color) -> vocab::Color {
-    if c.token != (254 as u32) { return c; }
-    if !DARK { return c; }
-    var out: vocab::Color = c;
-    out.r = c.r2;
-    out.g = c.g2;
-    out.b = c.b2;
-    out.a = c.a2;
-    return out;
+    return resolve_depth(c, 4 as i32);
+}
+
+// GTK's answers to facet's platform tier.
+//
+// Stated as NUMBERS rather than read from the theme, and that is a decision
+// with a reason: GTK 4 removed `gtk_style_context_get_color`, and the CSS
+// custom properties a theme exposes (`@theme_fg_color`) are only readable by
+// parsing a stylesheet the toolkit does not hand out. What IS knowable is the
+// appearance, so these are the two Adwaita palettes — the values GNOME's own
+// HIG publishes — chosen by `DARK`.
+//
+// The accent is the one that should not be a constant. GNOME 47 exposes a user
+// accent colour and this build's GTK (4.14) does not, so it is Adwaita blue
+// and MANIFEST.md records the narrowing rather than the flat number pretending
+// to be a preference.
+fn platform_color(t: u32, alpha: f64) -> vocab::Color {
+    if t == (1 as u32) { return mono(1.0f64, 0.0f64, alpha); }            // text
+    if t == (2 as u32) { return mono(0.7f64, 0.36f64, alpha); }           // text_secondary
+    if t == (9 as u32) { return mono(0.55f64, 0.55f64, alpha); }          // text_tertiary
+    if t == (15 as u32) { return mono(0.55f64, 0.55f64, alpha); }         // placeholder
+    if t == (16 as u32) { return rgba_both(0.47f64, 0.68f64, 0.93f64,
+                                           0.11f64, 0.44f64, 0.85f64, alpha); }  // link
+    if t == (3 as u32) { return rgba_both(0.21f64, 0.52f64, 0.89f64,
+                                          0.21f64, 0.52f64, 0.89f64, alpha); }   // accent
+    if t == (11 as u32) { return mono(0.14f64, 0.98f64, alpha); }         // window_background
+    if t == (12 as u32) { return mono(0.09f64, 0.94f64, alpha); }         // under_page
+    if t == (13 as u32) { return mono(0.20f64, 1.0f64, alpha); }          // control_background
+    if t == (14 as u32) { return mono(0.28f64, 0.80f64, alpha); }         // fill
+    if t == (19 as u32) { return mono(0.24f64, 0.86f64, alpha); }         // fill_secondary
+    if t == (17 as u32) { return rgba_both(0.21f64, 0.52f64, 0.89f64,
+                                           0.21f64, 0.52f64, 0.89f64, alpha); }  // selected content
+    if t == (18 as u32) { return rgba_both(0.24f64, 0.36f64, 0.55f64,
+                                           0.70f64, 0.82f64, 0.98f64, alpha); }  // selected text bg
+    if t == (10 as u32) { return mono(0.30f64, 0.85f64, alpha); }         // separator
+    // The system palette. Fixed hues by definition — a "system red" that
+    // changed with the appearance would not be a named colour.
+    if t == (4 as u32) { return fixed(0.88f64, 0.11f64, 0.14f64, alpha); }    // red
+    if t == (5 as u32) { return fixed(0.18f64, 0.76f64, 0.49f64, alpha); }    // green
+    if t == (6 as u32) { return fixed(0.21f64, 0.52f64, 0.89f64, alpha); }    // blue
+    if t == (7 as u32) { return fixed(1.0f64, 0.47f64, 0.0f64, alpha); }      // orange
+    if t == (8 as u32) { return fixed(0.60f64, 0.60f64, 0.60f64, alpha); }    // gray
+    if t == (20 as u32) { return fixed(0.96f64, 0.83f64, 0.18f64, alpha); }   // yellow
+    if t == (21 as u32) { return fixed(0.57f64, 0.35f64, 0.78f64, alpha); }   // purple
+    if t == (22 as u32) { return fixed(0.91f64, 0.35f64, 0.60f64, alpha); }   // pink
+    if t == (23 as u32) { return fixed(0.13f64, 0.70f64, 0.72f64, alpha); }   // teal
+    if t == (24 as u32) { return fixed(0.35f64, 0.36f64, 0.78f64, alpha); }   // indigo
+    // An unknown token is NOT black. Black is what this whole function exists
+    // to stop being the answer to a question nobody mapped.
+    return mono(1.0f64, 0.0f64, alpha);
+}
+
+// A grey whose level depends on the appearance: `d` when dark, `l` when light.
+fn mono(d: f64, l: f64, alpha: f64) -> vocab::Color {
+    let v: f64 = if DARK { d } else { l };
+    return vocab::Color::rgba(v, v, v, alpha);
+}
+
+// An appearance-dependent colour, spelled out on both sides.
+fn rgba_both(dr: f64, dg: f64, db: f64, lr: f64, lg: f64, lb: f64,
+             alpha: f64) -> vocab::Color {
+    if DARK { return vocab::Color::rgba(dr, dg, db, alpha); }
+    return vocab::Color::rgba(lr, lg, lb, alpha);
+}
+
+fn fixed(r: f64, g: f64, b: f64, alpha: f64) -> vocab::Color {
+    return vocab::Color::rgba(r, g, b, alpha);
 }
 
 // `Color` -> a CSS `rgba(...)`. Resolves the adaptive pair against `DARK`.

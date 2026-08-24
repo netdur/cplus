@@ -480,15 +480,52 @@ extern fn g_object_get(obj: *u8, first: *u8, ...);
 #[link_name = "g_object_set"]
 extern fn g_object_set(obj: *u8, first: *u8, ...);
 
-// Is the running theme dark? Read from GtkSettings rather than guessed from a
-// colour, because a GTK theme states it.
+// Is the running theme dark?
+//
+// TWO QUESTIONS, and reading only the first is the bug this answers.
+// `gtk-application-prefer-dark-theme` is what an APPLICATION sets to ASK for
+// dark — `set_app_appearance` below writes exactly that property — and a
+// desktop that is already dark has no reason to touch it. Measured on this
+// machine:
+//
+//     prefer-dark = 0        gtk-theme-name = Yaru-magenta-dark
+//
+// So the flag said light on a plainly dark desktop, every `adaptive` colour
+// pair resolved to its LIGHT side, and the result was light-side text drawn on
+// a dark background: the gallery's headings were legible only if you knew where
+// to look. Nothing was wrong with the colours — the question was.
+//
+// The theme NAME is how GTK desktops actually signal this, and the convention
+// is a `-dark` suffix that Yaru, Adwaita, Breeze and Arc all follow. GNOME's
+// `color-scheme` GSetting would be the tidier source and is NOT available here
+// (`No such key "color-scheme"` on this GNOME), so it cannot be the only
+// answer even where it exists.
+//
+// Order matters: the FLAG wins when it is set, because an application that
+// asked for dark must get dark whatever the desktop is wearing.
 fn is_dark() -> bool {
     let s: *u8 = { gtk_settings_get_default() };
     if s == (0 as *u8) { return false; }
     var v: i32 = 0 as i32;
     { g_object_get(s, #str_ptr("gtk-application-prefer-dark-theme\0"),
                    #addr_of(v) as *u8, 0 as *u8) };
-    return v != (0 as i32);
+    if v != (0 as i32) { return true; }
+    return theme_name_is_dark();
+}
+
+// `gtk-theme-name` contains "dark", case-folded. A substring rather than a
+// suffix: "Yaru-magenta-dark" ends with it, but "Adwaita-dark-blue" and
+// similar variants do not, and none of the LIGHT themes carry the word.
+fn theme_name_is_dark() -> bool {
+    let s: *u8 = { gtk_settings_get_default() };
+    if s == (0 as *u8) { return false; }
+    // A string out-param is TRANSFER-FULL: g_object_get hands over an owned
+    // copy, and dropping it on the floor leaks a theme name per call.
+    var name: *u8 = 0 as *u8;
+    { g_object_get(s, #str_ptr("gtk-theme-name\0"), #addr_of(name) as *u8, 0 as *u8) };
+    if name == (0 as *u8) { return false; }
+    let t: text::Text = bridge::cstr_to_text_full(name);
+    return t.lowercased().view().contains("dark");
 }
 
 // The app's OWN preference, as against the desktop's.
