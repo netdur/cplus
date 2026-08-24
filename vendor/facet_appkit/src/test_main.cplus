@@ -5611,6 +5611,94 @@ fn return_commits_what_was_typed_not_what_was_there_before() {
     return;
 }
 
+fn key_event(window: *u8, chars: str, code: u16) -> *u8 {
+    let wnum: i64 = { rt::msg_i64(window, rt::sel(#str_ptr("windowNumber\0"))) };
+    return { msg_key_event(rt::get_class(#str_ptr("NSEvent\0")),
+        rt::sel(#str_ptr("keyEventWithType:location:modifierFlags:timestamp:windowNumber:context:characters:charactersIgnoringModifiers:isARepeat:keyCode:\0")),
+        10 as u64, rt::Point { x: 0.0f64, y: 0.0f64 }, 0 as u64, 0.0f64, wnum,
+        0 as *u8, bridge::nsstring(chars), bridge::nsstring(chars),
+        0 as i8, code) };
+}
+
+// Drive a key the way the WINDOW does: key equivalents first, then the
+// responder chain. That is `NSWindow.sendEvent:`'s own order, and the two
+// halves answer different keys — which is the whole reason to drive both
+// rather than assume one covers the other.
+fn send_key(window: *u8, chars: str, code: u16) -> bool {
+    let ev: *u8 = key_event(window, chars, code);
+    if ev == (0 as *u8) { return false; }
+    if { rt::msg_i8_id(window, rt::sel(#str_ptr("performKeyEquivalent:\0")), ev) } != (0 as i8) {
+        return true;
+    }
+    { rt::msg_void_id(window, rt::sel(#str_ptr("sendEvent:\0")), ev) };
+    return false;
+}
+
+#[test]
+fn an_alert_answers_return_and_escape_for_real() {
+    backend::install();
+    // ROUTING, not properties. The previous pass set `keyEquivalent` on these
+    // buttons, asserted the property, and called the rest "needs hands" — and
+    // a property is not evidence that AppKit delivers the key to it.
+    AL_ANSWER = -1;
+    dialogs::alert_sheet("Discard?", "Three edits will be lost.", "Discard", "Keep",
+                         on_answer: al_answered, on_answer_ctx: 0 as *u8);
+    let w: *u8 = window_of_key("alert:primary");
+    assert w != (0 as *u8);
+    let _r: bool = send_key(w, "\r", 36 as u16);          // kVK_Return
+    assert AL_ANSWER == 0;
+
+    // ESCAPE, which is a different path: `\x1b` with keyCode 53.
+    AL_ANSWER = -1;
+    dialogs::alert_sheet("Discard?", "", "Discard", "Keep",
+                         on_answer: al_answered, on_answer_ctx: 0 as *u8);
+    let w2: *u8 = window_of_key("alert:primary");
+    assert w2 != (0 as *u8);
+    let _e: bool = send_key(w2, "\x1b", 53 as u16);       // kVK_Escape
+    assert AL_ANSWER == 1;
+    return;
+}
+
+#[test]
+fn escape_on_a_one_button_alert_does_nothing_rather_than_guessing() {
+    backend::install();
+    // `alert_sheet(..., secondary: "")` builds ONE button, so there is nothing
+    // for Escape to bind to. It must leave the sheet up rather than fire the
+    // primary: an alert with a single button is an acknowledgement, and
+    // dismissing it on Escape would ACKNOWLEDGE on the user's behalf.
+    AL_ANSWER = -1;
+    let before: usize = app::window_count();
+    dialogs::alert_sheet("Saved", "", "OK", "", on_answer: al_answered, on_answer_ctx: 0 as *u8);
+    let w: *u8 = window_of_key("alert:primary");
+    assert w != (0 as *u8);
+    let _e: bool = send_key(w, "\x1b", 53 as u16);
+    assert AL_ANSWER == (-1 as i32);
+    assert app::window_count() == (before + (1 as usize));
+    click_key("alert:primary");
+    assert AL_ANSWER == 0;
+    assert app::window_count() == before;
+    return;
+}
+
+#[test]
+fn escape_cancels_a_prompt_for_real() {
+    backend::install();
+    AL_ANSWER = -1;
+    AL_TYPED = text::from_str("");
+    dialogs::prompt_sheet("Rename", "", "name", "Rename", "Cancel",
+                          on_typed: al_typed, on_typed_ctx: 0 as *u8,
+                          on_answer: al_answered, on_answer_ctx: 0 as *u8,
+                          initial: "old.cplus");
+    let w: *u8 = window_of_key("prompt:cancel");
+    assert w != (0 as *u8);
+    let _e: bool = send_key(w, "\x1b", 53 as u16);
+    // 1 is the secondary, and CANCEL MUST NOT TYPE: backing out of a rename
+    // that reports the name anyway would rename the file.
+    assert AL_ANSWER == 1;
+    assert AL_TYPED.view() == "";
+    return;
+}
+
 #[test]
 fn a_choose_sheet_binds_neither_key() {
     backend::install();
