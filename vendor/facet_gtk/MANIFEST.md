@@ -238,11 +238,6 @@ Everything not listed as live above. The large ones, in the order they matter:
 - **`scroll` has no kinetic tuning and no `edge_reached`.** GTK offers both;
   facet declares neither, so nothing is missing from the contract — noted only
   so the next reader does not go looking.
-- **`observe_size` answers 0** (a cancellation token meaning "nothing
-  registered") rather than half-wiring a size observer.
-- **`after` holds ONE outstanding timer.** A second call before the first fires
-  replaces it. facet's own uses are one-at-a-time; a caller needing more will
-  find this written down instead of discovering it.
 - **`relayout_all` re-lays every window on every sync**, at the window's
   current size. AppKit prunes on `layout_changed()`, and its `geometry.cplus`
   names two callers where that prune is WRONG — read that before copying it.
@@ -371,6 +366,21 @@ Everything not listed as live above. The large ones, in the order they matter:
   Graphics and was read as the shape, not ported: cairo keeps its path IN the
   context where CG builds one separately, and cairo is already top-left so
   there is no flip arithmetic anywhere.
+- **`observe_size` IS THE LAYOUT WALK, not a widget signal.** A GTK4 widget
+  has no `size-allocate` signal and no width property to `notify::` on, so
+  there is nothing to connect — which is why this answered 0 ("nothing
+  registered") for as long as it did. But this package owns the layout: every
+  frame is computed here and written onto a GtkFixed by
+  `geometry::reposition_children`, so the moment a size changes is a moment
+  this code is already standing in. The observer fires from there, and the
+  table lives in `observers`, a leaf, because `scheduler` (which registers)
+  imports `window` imports `geometry` (which fires). It is seeded with the
+  node's current size at registration, so the first report is a CHANGE rather
+  than an echo — which is what AppKit's KVO on `frame` does, and the two
+  backends would otherwise disagree about how many times a handler was called.
+  Firing is DRIVEN BY THE WALK, which is the lifetime answer too: an entry is
+  read only when the walk hands over the node it belongs to, so a node torn out
+  of the tree is simply never visited again.
 - **A SHADOW IS BUILT, because cairo has neither one nor a blur.** Core
   Graphics has `CGContextSetShadow`; cairo has nothing. So the path is copied
   out of the context, replayed into a scratch image surface under the same

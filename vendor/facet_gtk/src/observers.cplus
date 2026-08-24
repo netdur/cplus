@@ -1,0 +1,126 @@
+// facet_gtk observers — the size-observer table, and nothing else.
+//
+// A LEAF ON PURPOSE. `Scheduler.observe_size` is registered through
+// `scheduler` and fired from `geometry`'s layout walk, and `scheduler` imports
+// `window` imports `geometry` — so the table cannot live at either end without
+// closing a cycle. It lives here, where both can reach it and neither owns it.
+
+import "stdlib/option" as option;
+import "stdlib/vec" as vec;
+import "stdlib/status" as status;
+import "flex_layout/flex_layout" as flex;
+import "facet/facet" as core;
+
+//
+// `Scheduler.observe_size` answered 0 — "nothing was registered" — because the
+// GTK-shaped answer is not there: a GtkWidget in GTK4 has no width property to
+// `notify::` on and no `size-allocate` signal, so there is nothing to connect.
+//
+// But this package OWNS THE LAYOUT. Every frame in the tree is computed here
+// and written onto a GtkFixed by `geometry::reposition_children`, so the moment
+// a node's size changes is a moment this code is already standing in. The
+// observer is answered from THERE rather than from a signal that does not
+// exist — which is also more accurate than a widget hook would be, because it
+// is the node's frame and not a widget's allocation, and facet's verb takes a
+// node.
+//
+// FIRING IS DRIVEN BY THE WALK, and that is the lifetime answer too: an entry
+// is only ever read when the walk hands over the node it belongs to, so a node
+// that has been torn out of the tree is simply never visited again. Nothing
+// here dereferences a node pointer of its own accord.
+
+struct SizeObs { tag: u64, node: usize, f: fn(*u8), ctx: usize, w: f64, h: f64, live: bool }
+
+static SIZE_OBS: vec::Vec[SizeObs] = #zero::[vec::Vec[SizeObs]]();
+static NEXT_SIZE_TAG: u64 = 0;
+
+fn observe_size(n: *core::Node, f: fn(*u8), ctx: *u8) -> u64 {
+    if n == (0 as *core::Node) { return 0 as u64; }
+    if !f.is_not_null() { return 0 as u64; }
+    // SEEDED WITH THE CURRENT SIZE, so the first report is a CHANGE and not an
+    // echo of what the caller could already read. That is what AppKit's KVO on
+    // `frame` does, and an observer that fired once on registration would make
+    // the two backends disagree about how many times it was called.
+    let fr: flex::Frame = { (*n).frame() };
+    var slot: usize = 0 as usize;
+    var found: bool = false;
+    var i: usize = 0 as usize;
+    let count: usize = SIZE_OBS.count();
+    while i < count {
+        match SIZE_OBS.at_ptr(i) {
+            option::Option[*SizeObs]::Some(o) => {
+                if !{ (*o).live } { slot = i; found = true; i = count; }
+            }
+            option::Option[*SizeObs]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    NEXT_SIZE_TAG = NEXT_SIZE_TAG +% (1 as u64);
+    let entry: SizeObs = SizeObs {
+        tag: NEXT_SIZE_TAG, node: { #addr(n) }, f: f, ctx: { #addr(ctx) },
+        w: fr.width, h: fr.height, live: true,
+    };
+    if found {
+        match SIZE_OBS.at_ptr(slot) {
+            option::Option[*SizeObs]::Some(o) => { { (*o) = entry }; }
+            option::Option[*SizeObs]::None => { return 0 as u64; }
+        }
+    } else {
+        let _e: status::Status = SIZE_OBS.append(entry);
+    }
+    return NEXT_SIZE_TAG;
+}
+
+fn cancel_observe_size(tag: u64) {
+    if tag == (0 as u64) { return; }
+    var i: usize = 0 as usize;
+    let n: usize = SIZE_OBS.count();
+    while i < n {
+        match SIZE_OBS.at_ptr(i) {
+            option::Option[*SizeObs]::Some(o) => {
+                if { (*o).tag } == tag { { (*o).live = false }; return; }
+            }
+            option::Option[*SizeObs]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return;
+}
+
+// Called by `geometry` for every node it places, and by `window` for the root
+// it never places. COSTS NOTHING WHEN NOBODY IS WATCHING — the common case is
+// an empty table and one integer compare.
+fn note_size(n: *core::Node) {
+    let total: usize = SIZE_OBS.count();
+    if total == (0 as usize) { return; }
+    if n == (0 as *core::Node) { return; }
+    let key: usize = { #addr(n) };
+    let fr: flex::Frame = { (*n).frame() };
+    var i: usize = 0 as usize;
+    while i < total {
+        var f: fn(*u8) = 0 as fn(*u8);
+        var c: *u8 = 0 as *u8;
+        match SIZE_OBS.at_ptr(i) {
+            option::Option[*SizeObs]::Some(o) => {
+                if { (*o).live } && { (*o).node } == key {
+                    if { (*o).w } != fr.width || { (*o).h } != fr.height {
+                        { (*o).w = fr.width };
+                        { (*o).h = fr.height };
+                        f = { (*o).f };
+                        c = { (*o).ctx } as *u8;
+                    }
+                }
+            }
+            option::Option[*SizeObs]::None => { }
+        }
+        // FIRED OUTSIDE THE BORROW: an observer is entitled to register or
+        // cancel another, and `at_ptr` hands out a pointer into the vector's
+        // storage that an `append` would move.
+        if f.is_not_null() { f(c); }
+        i = i +% (1 as usize);
+    }
+    return;
+}
+
+fn size_observer_count() -> usize { return SIZE_OBS.count(); }
+

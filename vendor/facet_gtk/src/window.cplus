@@ -43,6 +43,7 @@ import "glib/glib" as glib;
 import "gobject/runtime" as g;
 import "gobject/signal" as sig;
 import "gobject/bridge" as bridge;
+import "./observers" as observers;
 import "./controls" as controls;
 import "./geometry" as geometry;
 import "./paint" as paint;
@@ -385,6 +386,9 @@ fn relayout(slot: usize, width: f64, height: f64) {
     if rv != (0 as *u8) {
         geometry::place(FIXEDS[slot] as *u8, rv, 0.0f64, 0.0f64, width, height);
     }
+    // The ROOT is the one node `reposition_children` never visits, and a
+    // screen's own size is the commonest thing to observe.
+    observers::note_size(root);
     geometry::reposition_children(root, host_for(slot), rf);
     // `FACET_GTK_FRAMES=1` — see geometry.cplus. After the walk, so the report
     // is of what was actually placed.

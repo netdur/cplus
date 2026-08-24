@@ -27,6 +27,7 @@ import "facet/props" as props;
 import "facet/vocabulary" as vocab;
 import "facet/split" as split;
 import "facet/refreshable" as refreshable;
+import "./observers" as observers;
 import "./controls" as controls;
 import "./swipe" as swipe;
 
@@ -145,6 +146,11 @@ fn reposition_children(node: *core::Node, host: *u8, host_abs: flex::Frame) {
         match core::child_of(node, i) {
             option::Option[*core::Node]::Some(c) => {
                 let cf: flex::Frame = { (*c).frame() };
+                // `Scheduler.observe_size` is answered from HERE — see
+                // `observers::note_size`. A GTK4 widget has no size-allocate
+                // signal and no width property to watch, but this walk is the
+                // moment a node's frame changes and it already has the node.
+                observers::note_size(c);
                 let v: *u8 = core::view_of(c);
                 if v != (0 as *u8) {
                     gtk::Widget::from_raw(v).set_visible(!core::is_hidden(c));

@@ -10,9 +10,14 @@
 // "run loop observer" position: every write from one event lands, then one
 // layout and one frame walk.
 
+import "stdlib/option" as option;
+import "stdlib/vec" as vec;
+import "stdlib/status" as status;
+import "flex_layout/flex_layout" as flex;
 import "facet/facet" as core;
 import "facet/mount" as mount;
 import "facet/services" as services;
+import "./observers" as observers;
 import "./window" as window;
 
 // `guint g_idle_add(GSourceFunc, gpointer)` — the callback returns FALSE to be
@@ -63,43 +68,125 @@ fn run_on_main(f: fn(*u8), ctx: *u8) {
     return;
 }
 
+// ---- timers --------------------------------------------------------------------
+//
 // A one-shot timer. facet's unit is SECONDS and GLib's is milliseconds.
-// A null fn-pointer rather than a no-op sentinel: a static initializer must be
-// a literal, and `is_not_null` is the blessed test on a fn pointer anyway.
-static AFTER_F: fn(*u8) = 0 as fn(*u8);
-static AFTER_CTX: usize = 0;
+//
+// MANY OUTSTANDING, not one. This held a single static pair until now, so a
+// second `after` before the first fired replaced it — which is fine for the
+// one-at-a-time uses facet itself has (a debounce, a settle) and silently
+// wrong for an application that sets two. The table costs nothing when empty
+// and the slot is what GLib carries as the callback's user data, so no
+// allocation rides on the timer.
+
+struct Timer { tag: u64, f: fn(*u8), ctx: usize, live: bool }
+
+static TIMERS: vec::Vec[Timer] = #zero::[vec::Vec[Timer]]();
+
+// A DEAD SLOT IS REUSED. An application that polls with `after` would
+// otherwise grow the table without bound — the entries are tiny, but a table
+// that only grows is a leak whatever the constant is.
+fn timer_slot() -> usize {
+    var i: usize = 0 as usize;
+    let n: usize = TIMERS.count();
+    while i < n {
+        match TIMERS.at_ptr(i) {
+            option::Option[*Timer]::Some(t) => { if !{ (*t).live } { return i; } }
+            option::Option[*Timer]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    let _e: status::Status = TIMERS.append(
+        Timer { tag: 0 as u64, f: 0 as fn(*u8), ctx: 0 as usize, live: false });
+    return n;
+}
 
 fn after_fire(user: *u8) -> i32 {
-    let f: fn(*u8) = AFTER_F;
-    let c: *u8 = AFTER_CTX as *u8;
+    // The slot is carried +1 so that it is never a null pointer.
+    let slot: usize = { #addr(user) } -% (1 as usize);
+    var f: fn(*u8) = 0 as fn(*u8);
+    var c: *u8 = 0 as *u8;
+    match TIMERS.at_ptr(slot) {
+        option::Option[*Timer]::Some(t) => {
+            if !{ (*t).live } { return 0 as i32; }
+            f = { (*t).f };
+            c = { (*t).ctx } as *u8;
+            // DEAD BEFORE THE CALL, because the callback is entitled to
+            // schedule another timer and would otherwise be handed back the
+            // slot it is standing in — and because a `cancel_after` from
+            // inside the callback must not try to remove a source GLib is
+            // already tearing down.
+            { (*t).live = false };
+        }
+        option::Option[*Timer]::None => { return 0 as i32; }
+    }
     if f.is_not_null() { f(c); }
+    // G_SOURCE_REMOVE: one shot.
     return 0 as i32;
 }
 
 fn after(seconds: f64, f: fn(*u8), ctx: *u8) -> u64 {
-    // ONE outstanding timer, and that is a stated limit rather than a bug: the
-    // slot is a static pair, so a second `after` before the first fires
-    // replaces it. facet's own uses are one-at-a-time (a debounce, a settle);
-    // MANIFEST.md records the limit so a caller that needs more finds it
-    // written down instead of discovering it.
-    AFTER_F = f;
-    AFTER_CTX = { #addr(ctx) };
+    let slot: usize = timer_slot();
+    match TIMERS.at_ptr(slot) {
+        option::Option[*Timer]::Some(t) => {
+            { (*t).f = f };
+            { (*t).ctx = { #addr(ctx) } };
+            { (*t).live = true };
+            { (*t).tag = 0 as u64 };
+        }
+        option::Option[*Timer]::None => { return 0 as u64; }
+    }
     let ms: f64 = seconds * (1000.0 as f64);
-    return { g_timeout_add(ms as u32, after_fire, 0 as *u8) } as u64;
+    let id: u64 = { g_timeout_add(ms as u32, after_fire,
+                                  (slot +% (1 as usize)) as *u8) } as u64;
+    match TIMERS.at_ptr(slot) {
+        option::Option[*Timer]::Some(t) => { { (*t).tag = id }; }
+        option::Option[*Timer]::None => { }
+    }
+    return id;
 }
 
 fn cancel_after(tag: u64) {
     if tag == (0 as u64) { return; }
-    let _r: i32 = { g_source_remove(tag as u32) };
+    var i: usize = 0 as usize;
+    let n: usize = TIMERS.count();
+    while i < n {
+        match TIMERS.at_ptr(i) {
+            option::Option[*Timer]::Some(t) => {
+                if { (*t).tag } == tag {
+                    // A tag that already FIRED is not a source any more, and
+                    // asking GLib to remove one prints a critical. The live
+                    // bit is the difference and it is why cancelling twice, or
+                    // cancelling after the fact, is quiet.
+                    if !{ (*t).live } { return; }
+                    { (*t).live = false };
+                    let _r: i32 = { g_source_remove(tag as u32) };
+                    return;
+                }
+            }
+            option::Option[*Timer]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
     return;
 }
 
-// NOT IMPLEMENTED, and answering 0 is the honest shape: facet reads the return
-// as a cancellation token, and 0 is "nothing was registered". A size observer
-// needs GtkWidget::notify::width-request or a size-allocate hook per node;
-// recorded in MANIFEST.md rather than half-wired.
-fn observe_size(n: *core::Node, f: fn(*u8), ctx: *u8) -> u64 { return 0 as u64; }
-fn cancel_observe_size(tag: u64) { return; }
+// For the suite: the table is a static nothing else can see, and "a dead slot
+// is reused" is the property worth pinning.
+fn timer_table_size() -> usize { return TIMERS.count(); }
+
+// ---- size observers ------------------------------------------------------------
+//
+// The table lives in `observers`, a leaf, because the two ends of this verb sit
+// on opposite sides of an import cycle: registration is a scheduler service,
+// and the moment a size actually changes is inside `geometry`'s layout walk —
+// and `scheduler` imports `window` imports `geometry`. A leaf both can reach is
+// the seam.
+fn observe_size(n: *core::Node, f: fn(*u8), ctx: *u8) -> u64 {
+    return observers::observe_size(n, f, ctx);
+}
+
+fn cancel_observe_size(tag: u64) { observers::cancel_observe_size(tag); return; }
 
 fn scheduler() -> services::Scheduler {
     return services::Scheduler {

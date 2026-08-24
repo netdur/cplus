@@ -67,6 +67,7 @@ import "./input" as input;
 import "./paint" as paint;
 import "./views" as views;
 import "./geometry" as geometry;
+import "./observers" as observers;
 import "./scheduler" as scheduler;
 import "./window" as window;
 import "./dialogs" as dialogs;
@@ -1246,6 +1247,114 @@ fn a_null_c_string_reads_as_empty_rather_than_dereferencing() {
 // angle conversion, the two trigonometric functions the gradient axis needs —
 // because those are what is wrong silently, and a mirrored arc or a
 // transposed line cap looks like a drawing bug in the application.
+
+// ---- the timer table and the size observers ------------------------------------
+
+static AFTER_HITS: usize = 0;
+fn count_after_hit(ctx: *u8) { AFTER_HITS = AFTER_HITS +% (1 as usize); return; }
+
+// TWO OUTSTANDING TIMERS. This held one static pair until now, so the second
+// `after` replaced the first and one caller was silently never called. The
+// table's tags must be distinct and both must still be cancellable.
+#[test]
+fn two_timers_can_be_outstanding_at_once() {
+    let a: u64 = scheduler::after(30.0f64, count_after_hit, 0 as *u8);
+    let b: u64 = scheduler::after(30.0f64, count_after_hit, 0 as *u8);
+    assert a != (0 as u64);
+    assert b != (0 as u64);
+    assert a != b;
+    scheduler::cancel_after(a);
+    scheduler::cancel_after(b);
+    // CANCELLING TWICE IS QUIET. The live bit is what makes it so — without it
+    // the second `g_source_remove` prints a critical for a source that is gone.
+    scheduler::cancel_after(a);
+    scheduler::cancel_after(b);
+}
+
+// A DEAD SLOT IS REUSED, or an application that polls with `after` grows the
+// table without bound.
+#[test]
+fn a_cancelled_timer_gives_its_slot_back() {
+    let a: u64 = scheduler::after(30.0f64, count_after_hit, 0 as *u8);
+    scheduler::cancel_after(a);
+    let size: usize = scheduler::timer_table_size();
+    let b: u64 = scheduler::after(30.0f64, count_after_hit, 0 as *u8);
+    assert scheduler::timer_table_size() == size;
+    scheduler::cancel_after(b);
+}
+
+static SIZE_HITS: usize = 0;
+fn count_size_hit(ctx: *u8) { SIZE_HITS = SIZE_HITS +% (1 as usize); return; }
+
+// `observe_size` answered 0 — "nothing registered" — and now answers a real
+// tag driven by the layout walk. The properties: a tag is handed out, the
+// observer fires when the node's frame SIZE changes, it does not fire when the
+// frame is merely re-visited unchanged, and cancelling stops it.
+#[test]
+fn a_size_observer_fires_only_when_the_size_actually_changes() {
+    var n: core::Node = core::column(core::Builder::new());
+    let target: *core::Node = #addr_of(n);
+    SIZE_HITS = 0 as usize;
+
+    { (*target).calculate_layout(width: 100.0f64, height: 50.0f64) };
+    let tag: u64 = observers::observe_size(target, count_size_hit, 0 as *u8);
+    assert tag != (0 as u64);
+
+    // SEEDED at registration, so re-visiting the same frame says nothing —
+    // an observer that fired once on registration would report a size the
+    // caller could already read, and would make this backend disagree with
+    // AppKit's KVO about how many times it was called.
+    observers::note_size(target);
+    assert SIZE_HITS == (0 as usize);
+
+    // A REAL CHANGE.
+    { (*target).calculate_layout(width: 200.0f64, height: 50.0f64) };
+    observers::note_size(target);
+    assert SIZE_HITS == (1 as usize);
+
+    // ...and it is not re-reported.
+    observers::note_size(target);
+    assert SIZE_HITS == (1 as usize);
+
+    // CANCELLED.
+    observers::cancel_observe_size(tag);
+    { (*target).calculate_layout(width: 300.0f64, height: 90.0f64) };
+    observers::note_size(target);
+    assert SIZE_HITS == (1 as usize);
+}
+
+// NEGATIVE: a null node and a null callback both answer 0, which is facet's
+// "nothing was registered" — and a `note_size` for a node NOBODY observes must
+// cost nothing and fire nothing.
+#[test]
+fn a_size_observer_refuses_a_null_node_or_handler() {
+    assert observers::observe_size(0 as *core::Node, count_size_hit, 0 as *u8) == (0 as u64);
+    var n: core::Node = core::column(core::Builder::new());
+    assert observers::observe_size(#addr_of(n), 0 as fn(*u8), 0 as *u8) == (0 as u64);
+
+    var other: core::Node = core::column(core::Builder::new());
+    SIZE_HITS = 0 as usize;
+    let tag: u64 = observers::observe_size(#addr_of(n), count_size_hit, 0 as *u8);
+    { other.calculate_layout(width: 40.0f64, height: 40.0f64) };
+    observers::note_size(#addr_of(other));
+    assert SIZE_HITS == (0 as usize);
+    observers::cancel_observe_size(tag);
+}
+
+// A CANCELLED ENTRY GIVES ITS SLOT BACK, the same as a timer's.
+#[test]
+fn a_cancelled_size_observer_gives_its_slot_back() {
+    var n: core::Node = core::column(core::Builder::new());
+    let a: u64 = observers::observe_size(#addr_of(n), count_size_hit, 0 as *u8);
+    observers::cancel_observe_size(a);
+    let size: usize = observers::size_observer_count();
+    let b: u64 = observers::observe_size(#addr_of(n), count_size_hit, 0 as *u8);
+    assert observers::size_observer_count() == size;
+    // TAGS ARE NEVER REUSED even when the slot is — a stale `Cancellable`
+    // holding `a` must not silently revoke `b`.
+    assert b != a;
+    observers::cancel_observe_size(b);
+}
 
 // ---- the shadow, cast for real -------------------------------------------------
 //
