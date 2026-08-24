@@ -756,9 +756,8 @@ static PUSHED: vec::Vec[PushedScreen] = #zero::[vec::Vec[PushedScreen]]();
 // `present_window` was never reclaimed.
 fn presented_closed(ctx: *u8) {
     if ctx == (0 as *u8) { return; }
-    // As `pushed_closed`: a presented window's tree is what a job was given, so
-    // nothing may free it while a worker is still in one.
-    settle_and_teardown(0 as *core::Node);
+    // As `pushed_closed`: no settle here, because it would spin the main
+    // thread inside a close callback. Same hole, same reason, same file.
     let _b: box::Box[Node] = box::from_raw::[Node](ctx);
     return;
 }
@@ -809,17 +808,16 @@ fn pushed_closed(ctx: *u8) {
     if ctx == (0 as *u8) { return; }
     { (*(ctx as *screen::ScreenBox)).on_detach() };
     pushed_remove(ctx);
-    // SETTLE BEFORE FREEING, the same rule `App::run` follows for the primary
-    // screen — and it was followed on exactly one of the three paths that free
-    // one. A pushed screen was freed here with its workers still inside it: the
-    // next screen is allocated into that memory and crashes reading its own
-    // fields, which is why the fault always appeared in whatever happened to be
-    // allocated next rather than in the screen that caused it.
+    // NO SETTLE HERE, and the attempt to add one is why: `settle_and_teardown`
+    // SPINS THE MAIN THREAD in `wait_for_jobs`, and this runs inside AppKit's
+    // window-close callback — on the main thread. A service that shells out
+    // (which is what these services do) froze the whole app for as long as the
+    // child took, and a worker that needs the main thread froze it for good.
     //
-    // Here rather than at the caller, because this is where the free is.
-    // `close_all_pushed` runs BEFORE `App::run`'s settle, so a wait at the
-    // caller would still be too late for these.
-    settle_and_teardown(0 as *core::Node);
+    // So the hole this was meant to close is still open and is filed as such:
+    // a pushed screen can be freed with a worker inside it. Closing it needs a
+    // wait that does not block the thread the workers are trying to reach —
+    // deferring the free until settled, rather than waiting for it here.
     let _b: box::Box[screen::ScreenBox] = box::from_raw::[screen::ScreenBox](ctx);
     return;
 }

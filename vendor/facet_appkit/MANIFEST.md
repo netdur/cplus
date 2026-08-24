@@ -847,57 +847,80 @@ Escape would acknowledge on the user's behalf.
 ### What pressing Return actually does, step by step
 
 Worth spelling out, because every bug in this section came from a wrong belief
-about one of these steps.
+about one of these steps — including the belief this section used to state.
 
-    1. NSWindow gets the key-down and runs `performKeyEquivalent:` FIRST —
-       before the responder chain, before `keyDown:`.
-    2. That walks the view tree asking each view to claim the key. NSButton
-       claims it when the characters and modifiers match its `keyEquivalent`
-       AND the button is ENABLED.
+**A key equivalent is not consulted while a field is being edited.** The field
+editor is first responder and it takes the key. Measured on a live sheet, one
+variable changed between the two runs and nothing else:
+
+    firstResponder = NSTextView   ->  NSApp sendEvent Return  ->  nothing
+    firstResponder = NSWindow     ->  NSApp sendEvent Return  ->  the button fires
+
+Which means a prompt is always in the case that does not work: the caret is in
+the field, because that is where a person is typing the name.
+
+So Return reaches a prompt through the FIELD, not around it:
+
+    1. The field editor gets the key and turns it into the control's ACTION
+       — `Entry.Completed`, which `text_input.cplus` delivers as `on_submit`
+       for a field (an editor submits on focus loss instead, because Return
+       inserts a newline there).
+    2. `prompt_tree` wires that action to `prompt_ok`, the same handler the
+       OK button's `on_click` carries.
+    3. `prompt_ok` reads the field and answers, exactly as a click would.
+
+Editing has ENDED by the time the action fires, so `stringValue` is already
+committed — the field editor cannot hand back stale text on this path.
+
+An `alert` or a `choose` has no text field, so nothing is editing and the key
+equivalent IS the live path for them:
+
+    1. NSWindow runs `performKeyEquivalent:`, walking the view tree.
+    2. NSButton claims the key when characters and modifiers match its
+       `keyEquivalent` AND the button is ENABLED.
     3. The claiming button calls `performClick:` ON ITSELF.
-    4. `performClick:` sends its action to its target — for facet, the
-       `action_ctx_target` trampoline and `cplusActionCtx:`.
-    5. The trampoline calls the node's handler with the BUTTON as `sender`.
-    6. `alert_primary` / `prompt_ok` runs, exactly as a mouse click would.
+    4. That sends its action through the `action_ctx_target` trampoline.
+    5. `alert_primary` / `alert_secondary` runs, as a mouse click would.
 
-**Return, a mouse click and an agent's `click` all converge on step 3.**
-`performClick:` is the same selector the agent surface sends, so there is one
-path through the handler and no simulated second one — which is why an agent
-answering a sheet and a person answering it cannot drift.
+**Return, a mouse click and an agent's `click` all converge on `performClick:`.**
+The agent surface sends the same selector, so there is one path through the
+handler and no simulated second one — an agent answering a sheet and a person
+answering it cannot drift.
 
-**Step 1 is why the field editor bug existed**, and the bug is in turn the
-evidence for step 1: the button fired while the editor still held uncommitted
-text, which can only happen if the key equivalent ran before the responder
-chain. See the next section.
+**A disabled default button claims nothing** (step 2), so the key falls through
+rather than committing something the button itself refuses.
 
-**A disabled default button claims nothing** (step 2), so
-`performKeyEquivalent:` answers NO and the key falls through to the responder
-chain — Return does nothing rather than committing something the button itself
-refuses. That is the right answer for an OK waiting on a valid name, and it is
-checked rather than assumed.
+**ESCAPE IS NOT THE SAME QUESTION and had to be asked separately.** NSTextView
+does not implement `cancelOperation:` — sending it directly raises — it
+RECEIVES it as a command from `interpretKeyEvents:` and passes it up, so the
+cancel button's key equivalent is reached even while the field has focus. That
+is measured, not assumed: `escape_in_the_field_cancels_the_prompt` drives
+`doCommandBySelector:` the way AppKit does.
 
-### THE FIELD EDITOR, and why Return "worked" and still did nothing
+### ASSERTING A PROPERTY IS NOT ASSERTING A BEHAVIOUR — twice
 
-The trap under the trap, and the one that actually cost the hours.
+The first attempt set `keyEquivalent`, asserted it read back, and called the
+rest "needs hands".
 
-An NSTextField does not hold the text you are typing. The window's shared FIELD
-EDITOR does, and `stringValue` is only refreshed from it when editing ENDS.
-Clicking a button ends editing on the way, because the click moves first
-responder. **Return does not**: it arrives through `performKeyEquivalent:`,
-which a window runs BEFORE the responder chain sees the key, so the button
-fires while the editor still holds everything that was typed.
+The second attempt drove an `NSEvent` — but by calling `performKeyEquivalent:`
+ITSELF and commenting that this was "the window's own order". That asserts the
+button ANSWERS when asked. It does not assert that anything ASKS, and while a
+field is being edited nothing does. Every keyboard test passed and the app
+ignored Enter, because the tests took the one path a real keystroke never takes.
 
-So `prompt_ok` read the value the sheet OPENED with. A Rename kept the old
-name; a New File got an empty one. From a person's side the sheet closes and
-nothing they typed happened — with the key equivalent set and asserted the
-whole time. `endEditingFor: nil` on the sheet before reading is AppKit's own
-commit and what every native dialog does.
+What closed it was prints in the live app: `prompt_ok` never fired at all. Not
+a wrong value, not a stale read — the handler was never reached, which ruled
+out the whole field-editor theory the previous pass had built.
 
-ASSERTING A PROPERTY IS NOT ASSERTING A BEHAVIOUR. The first attempt at this
-set `keyEquivalent`, asserted it read back, and called the rest "needs hands".
-Both remaining bugs were behind that. The checks drive a real `NSEvent` through
-the window's own order — `performKeyEquivalent:` first, then `sendEvent:` —
-which is the routing rather than a stand-in for it.
+The checks now drive the mechanism a keystroke actually becomes:
+`insertNewline:` on the field editor for Return, `doCommandBySelector:` for
+Escape. `return_in_the_field_answers_the_prompt_because_the_key_equivalent_never_will`
+fails if the `on_submit` wire is removed — it was run both ways.
+
+**A headless test cannot answer this one.** There is no key window and the app
+is not active, so `NSApp sendEvent:` does nothing for a reason that has nothing
+to do with the bug. A test built on it fails green. That is why the live app,
+with prints, is the instrument here.
 
 ### `prompt` opens on a value
 

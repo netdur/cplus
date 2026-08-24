@@ -394,7 +394,29 @@ fn prompt_tree(title: str, message: str, placeholder: str, primary: str, seconda
     // whole name again. An application can reach in and `set_text` the field
     // afterwards, and one did; that is a caller supplying a parameter the
     // dialog should take.
-    b.add(text_field::text_field(initial, key: "prompt:value", placeholder: placeholder));
+    //
+    // `on_submit` IS RETURN, and without it Return does nothing at all.
+    //
+    // A default button's key equivalent is NOT consulted while a field is being
+    // edited. The field editor is first responder and it takes the key; the
+    // window's default button is only reached when nothing is editing. Measured
+    // on a live sheet, one variable changed between the two runs:
+    //
+    //     fr=NSTextView   -> NSApp sendEvent Return -> nothing, sheet stays
+    //     fr=NSWindow     -> NSApp sendEvent Return -> the button fires
+    //
+    // Which is the exact case a prompt is always in: the caret is in the field,
+    // because that is where a person is typing the name.
+    //
+    // The native path is the CONTROL'S OWN ACTION — `Entry.Completed`, which
+    // `text_input.cplus` already delivers for a field on Enter. So Return goes
+    // through the field, not around it.
+    //
+    // This is also why the keyboard tests passed while the app ignored Enter:
+    // they call `performKeyEquivalent:` themselves, which is the one path a
+    // real keystroke never takes.
+    b.add(text_field::text_field(initial, key: "prompt:value", placeholder: placeholder,
+                                 on_submit: prompt_ok));
     var row: core::Builder = core::Builder::new();
     if secondary != "" {
         row.add(button::button(secondary, key: "prompt:cancel", on_click: prompt_cancel));

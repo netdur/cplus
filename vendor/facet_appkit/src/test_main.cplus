@@ -5611,6 +5611,77 @@ fn return_commits_what_was_typed_not_what_was_there_before() {
     return;
 }
 
+// RETURN AS THE FIELD EDITOR RECEIVES IT, which is the only way a person ever
+// sends it to a prompt. `send_key` below calls `performKeyEquivalent:` itself;
+// that path is never taken while a field is being edited, so every test built
+// on it passed while the app ignored Enter. Driving `insertNewline:` on the
+// editor is what a real Return becomes once the editor has focus.
+#[test]
+fn return_in_the_field_answers_the_prompt_because_the_key_equivalent_never_will() {
+    backend::install();
+    AL_ANSWER = -1;
+    AL_TYPED = text::from_str("");
+    dialogs::prompt_sheet("Rename", "", "name", "Rename", "Cancel",
+                          on_typed: al_typed, on_typed_ctx: 0 as *u8,
+                          on_answer: al_answered, on_answer_ctx: 0 as *u8,
+                          initial: "old.cplus");
+    match text_field::find("prompt:value") {
+        option::Option[text_field::TextField]::Some(f) => {
+            let fv: *u8 = core::view_of(f.node());
+            let ed: *u8 = { rt::msg_id(fv, rt::sel(#str_ptr("currentEditor\0"))) };
+            assert ed != (0 as *u8);
+            { rt::msg_void_id(ed, rt::sel(#str_ptr("setString:\0")),
+                              bridge::nsstring("new.cplus")) };
+            { rt::msg_void_id(ed, rt::sel(#str_ptr("insertNewline:\0")), 0 as *u8) };
+        }
+        option::Option[text_field::TextField]::None => { assert false; }
+    }
+    // Read, clean up, then assert: a sheet left standing is a modal window
+    // every later test finds by key instead of its own.
+    let answered: i32 = AL_ANSWER;
+    let typed: text::Text = AL_TYPED.clone();
+    if answered != (0 as i32) {
+        let w: *u8 = window_of_key("prompt:ok");
+        if w != (0 as *u8) { let _bye: bool = send_key(w, "\x1b", 53 as u16); }
+    }
+    assert answered == 0;
+    assert typed.view() == "new.cplus";
+    return;
+}
+
+// ESCAPE AS THE FIELD EDITOR RECEIVES IT. Same question as Return, and it has
+// to be asked separately: the editor takes the key first either way, and
+// whether it passes this one along is AppKit's business, not a thing to assume.
+#[test]
+fn escape_in_the_field_cancels_the_prompt() {
+    backend::install();
+    AL_ANSWER = -1;
+    dialogs::prompt_sheet("Rename", "", "name", "Rename", "Cancel",
+                          on_typed: al_typed, on_typed_ctx: 0 as *u8,
+                          on_answer: al_answered, on_answer_ctx: 0 as *u8,
+                          initial: "old.cplus");
+    match text_field::find("prompt:value") {
+        option::Option[text_field::TextField]::Some(f) => {
+            let fv: *u8 = core::view_of(f.node());
+            let ed: *u8 = { rt::msg_id(fv, rt::sel(#str_ptr("currentEditor\0"))) };
+            assert ed != (0 as *u8);
+            // `doCommandBySelector:`, not a direct send: NSTextView does not
+            // IMPLEMENT `cancelOperation:` (sending it raises), it RECEIVES it
+            // as a command from `interpretKeyEvents:` and decides where it goes.
+            { rt::msg_void_id(ed, rt::sel(#str_ptr("doCommandBySelector:\0")),
+                               rt::sel(#str_ptr("cancelOperation:\0"))) };
+        }
+        option::Option[text_field::TextField]::None => { assert false; }
+    }
+    let answered: i32 = AL_ANSWER;
+    if answered != (1 as i32) {
+        let w: *u8 = window_of_key("prompt:ok");
+        if w != (0 as *u8) { let _bye: bool = send_key(w, "\x1b", 53 as u16); }
+    }
+    assert answered == 1;
+    return;
+}
+
 fn key_event(window: *u8, chars: str, code: u16) -> *u8 {
     let wnum: i64 = { rt::msg_i64(window, rt::sel(#str_ptr("windowNumber\0"))) };
     return { msg_key_event(rt::get_class(#str_ptr("NSEvent\0")),

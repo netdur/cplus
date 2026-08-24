@@ -277,6 +277,12 @@ in both `alert` and `prompt`. A `choose` binds neither: its buttons are N
 options and none is the obvious one, and it carries no cancel. A one-button
 alert ignores Escape, because a single button is an acknowledgement.
 
+In a `prompt` that runs through the FIELD rather than through a default button:
+a platform does not offer a default button the key while a field is being
+edited, and in a prompt the caret is always in the field. So the same thing is
+true of a text field YOU build — a Return in it reaches nothing unless you wire
+`on_submit`. Giving a form an OK button does not give it Enter.
+
 `alert_blocking` returns the chosen index instead, for a decision that must be
 made before the process can go on with no window to attach to. An agent cannot
 reach it, which is why it is not the default.
