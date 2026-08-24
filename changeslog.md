@@ -722,6 +722,30 @@ by its *shape*, not a method-name allowlist, through every form it can leak:
   "an item IS the payload half of a handler" — this row's definition. The map
   now points at where it lives instead of contradicting the code.
 
+### facet — the contract closes over TYPES, not only rows
+- **Guard 7**: a type the ledger renders must be decided. A row could not
+  leave the ledger without a reason — an unmapped one fails the run — and a
+  TYPE could. The existing type closure builds its work list from the rows a
+  type declares, so a type whose surface is entirely INHERITED was never
+  asked about, which is exactly what a marker type looks like:
+  `MenuFlyoutSeparator` declares one member, its constructor.
+- The floor is the ledger's own definition of "this renders": every type it
+  puts on screen has an `I<Name>Handler`. Each must be extracted, aliased,
+  dropped by family, or **UNBUILT** — a fourth outcome the other three could
+  not express, because ALIAS claims "already covered, nothing refused".
+- Three were claiming exactly that and were wrong: `MenuFlyoutSubItem`
+  aliased to `MenuFlyout` (a submenu is not a flyout), `MenuBar` to
+  `MenuBarItem` (the item is not the bar), `SwipeItemView` to `SwipeItem`.
+  Six types now print each regen with the platform answer named:
+  MenuBar, MenuFlyoutSeparator, MenuFlyoutSubItem, ShapeView,
+  SwipeItemMenuItem, SwipeItemView.
+- The check runs from `gen_contract`, not from `ledger_spec`, because that is
+  where it RUNS: `ledger_spec.py` has not been able to regenerate the spec for
+  some time (`check_type_closure` fails on `Matrix`, `NavigationProxy`,
+  `Shape`, `TableModel` and the GIF decoder, none of which have a family
+  rule), so `ledger-spec.json` is a frozen artifact and a floor living only
+  there would never fire. Repairing that tool is its own job.
+
 ### facet — six gaps found building iris
 - **A `context_menu` in a tree or list row can now open.** A table or
   outline view handles right-click itself and asks its OWN `menu`, which

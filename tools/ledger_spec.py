@@ -66,6 +66,61 @@ CONTROLS = OrderedDict([
     ("ToolbarItem", "toolbar_item"),
 ])
 
+# ---- what the ledger renders and facet has not built ------------------------
+#
+# The type list has been closed since Stage 1 — `check_type_closure` fails on a
+# manifest type that is not EXTRACT / ALIAS / DROP. But it builds its work list
+# from `getters`, `events` and `methods`, so it only ever saw a type that
+# declares AT LEAST ONE ROW OF ITS OWN. A type whose whole surface is inherited
+# declares none and was never asked about — and that is exactly the shape of a
+# marker type. `MenuFlyoutSeparator` has one member, its constructor.
+#
+# So the floor is now the ledger's own definition of "this renders": every type
+# MAUI puts on screen has an `I<Name>Handler` interface. `check_handler_closure`
+# takes every one in the manifests and requires `<Name>` to classify. Nothing
+# else has to be decided, and nothing that has to be can hide behind having no
+# rows.
+#
+# UNBUILT is the fourth outcome that floor needed. EXTRACT/ALIAS/DROP could not
+# say this: ALIAS means "already covered, nothing is being refused" and DROP
+# means "facet answers this elsewhere or refuses it by rule". A type facet
+# WOULD carry and simply has not is neither, and saying either of the other two
+# is how three of these hid — `MenuFlyoutSubItem` was aliased to `MenuFlyout`
+# and `SwipeItemView` to `SwipeItem`, which reads as "covered" for surfaces
+# that do not exist.
+#
+# Each entry names the platform answer, so the next person reads a debt with a
+# route rather than a hole.
+UNBUILT = OrderedDict([
+    # The menu family. facet has `context_menu` (MenuFlyout) and
+    # `context_menu_item` (MenuFlyoutItem) and stops there.
+    ("MenuFlyoutSubItem",
+     "a submenu. NSMenu nests through `setSubmenu:`, so the platform answer is "
+     "on the backend facet already has — was ALIAS:MenuFlyout, which claimed a "
+     "flyout and a submenu are one surface"),
+    ("MenuFlyoutSeparator",
+     "the ledger has a separator as a TYPE; facet infers one from an empty "
+     "title, which is what every menu-building API means by one, but there is "
+     "no kind for it and nothing said so"),
+    ("MenuBar",
+     "facet has `menu` (MenuBarItem) and no bar to hold them — the app-menu "
+     "tier assembles one in screen.cplus — was ALIAS:MenuBarItem, which is the "
+     "ITEM, not the bar"),
+
+    # The swipe family beyond the adopted `swipe_item`.
+    ("SwipeItemView",
+     "a swipe action that is an arbitrary view rather than a titled item — was "
+     "ALIAS:SwipeItem, which is the titled one"),
+    ("SwipeItemMenuItem",
+     "the ledger's menu-flavoured swipe action; `swipe_item` is the adopted "
+     "shape and facet_appkit already builds swipe actions AS a menu"),
+
+    # Drawing.
+    ("ShapeView",
+     "vector shapes. `canvas` replays a recorded display list instead, which "
+     "covers the drawing but not the ledger's retained shape objects"),
+])
+
 # Shared bases: surface every control inherits. Reported once.
 SHARED_BASES = OrderedDict([
     ("VisualElement", "every element"),
@@ -148,14 +203,19 @@ ALIAS = {
     "HtmlWebViewSource": "str",
     "UrlWebViewSource": "str",
     "WebViewSource": "str",
-    "MenuFlyoutSubItem": "MenuFlyout",
-    "MenuBar": "MenuBarItem",
     "MenuItemCollection": "MenuItem",
     "SwipeItems": "SwipeItem",
-    "SwipeItemView": "SwipeItem",
     "TemplatedPage": "Page",
     "ContentView": "Border — a plain content container",
     "KnownColor": "Color",
+    # Named so the handler floor below has an answer for them. Each is already
+    # covered by an extracted type or an existing family rule in spirit; these
+    # say which, rather than leaving the floor to fail on a name nobody has
+    # thought about.
+    "NavigationView": "Page — the ledger's nav host; facet has nav + Screen",
+    "TabbedView": "TabbedPage — the tab band is the `tabs` control",
+    "Reload": "WebView — a verb on the control, not a type",
+    "DynamicResource": "the ledger's resource dictionary — MVVM, and facet has no resource tier",
 }
 
 # Family rules, in order. The reason strings match ledger_map.py's three.
@@ -217,6 +277,8 @@ def classify(ty):
         return "EXTRACT"
     if ty in ALIAS:
         return "ALIAS:" + ALIAS[ty]
+    if ty in UNBUILT:
+        return "UNBUILT:" + UNBUILT[ty]
     for pat, why in DROP_TYPE_RULES:
         if pat.search(ty):
             return "DROP:" + why
@@ -276,6 +338,43 @@ def band_split(getters, setters, ty):
         else:
             reads[prop] = vt
     return writes, reads
+
+
+def check_handler_closure(paths):
+    """Every type the ledger RENDERS is decided, whether or not it declares rows.
+
+    `check_type_closure` below builds its work list from the rows a type
+    declares, so a type whose surface is entirely inherited was never asked
+    about — which is exactly what a marker type looks like.
+    `MenuFlyoutSeparator` declares one member, its constructor.
+
+    The ledger says which types it renders without anyone having to judge:
+    each one has an `I<Name>Handler` interface. That IS the definition of "a
+    thing on screen with a platform body behind it", so it is the floor.
+
+    CALLED FROM `gen_contract.check`, not from `main` below, because that is
+    where it RUNS. This file regenerates the spec from the raw manifests and
+    has not been runnable for some time — `check_type_closure` fails on
+    `Matrix`, `NavigationProxy`, `Shape`, `TableModel` and the GIF decoder,
+    none of which have a family rule. So `ledger-spec.json` is a frozen
+    artifact, and a floor that only fires here would be a floor that never
+    fires. Repairing this tool is its own job; putting the check in the
+    generator that runs on every regen is not waiting for it.
+    """
+    seen = set()
+    for path in paths:
+        seen |= set(re.findall(r"(?<![A-Za-z])I([A-Z][A-Za-z]*)Handler\b",
+                               open(path).read()))
+    unclassified = sorted(t for t in seen if classify(t) is None)
+    if unclassified:
+        print("UNDECIDED RENDERABLE TYPES — the ledger has a handler for each of\n"
+              "these, so it renders them, and nothing here says what facet does\n"
+              "about them. Extract, alias to an extracted type, drop by family,\n"
+              "or record it in UNBUILT with the platform answer.\n", file=sys.stderr)
+        for ty in unclassified:
+            print(f"  {ty}", file=sys.stderr)
+        raise SystemExit(1)
+    return {t: classify(t)[8:] for t in sorted(seen) if classify(t).startswith("UNBUILT:")}
 
 
 def check_type_closure(getters, events, methods):

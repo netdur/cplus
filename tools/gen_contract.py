@@ -4282,6 +4282,37 @@ def check(rows_by_control, by_type):
             for (ty, member), why in sorted(absent.items()):
                 print(f"    {ty}.{member} — {why}")
 
+    # 7. every type the ledger RENDERS is decided — not just every row.
+    #
+    # Guard 5 above closes the ROWS. The type list has its own closure in
+    # `ledger_spec.check_type_closure`, and it builds its work list from the
+    # rows a type declares, so a type whose surface is entirely inherited was
+    # never asked about. That is exactly what a marker type looks like:
+    # `MenuFlyoutSeparator` declares one member, its constructor, and passed
+    # through every guard in this pipeline while facet had no separator kind.
+    #
+    # The ledger's own definition of "renders" is the floor — a type MAUI puts
+    # on screen has an `I<Name>Handler`. Three of them were labelled ALIAS,
+    # which claims "already covered, nothing refused": `MenuFlyoutSubItem` to
+    # `MenuFlyout` (a submenu is not a flyout), `MenuBar` to `MenuBarItem` (the
+    # item is not the bar), `SwipeItemView` to `SwipeItem`. They are UNBUILT
+    # now, which is a fourth outcome those three words could not express.
+    manifests = [os.path.join(ROOT, "plans", "facet", "spec", f)
+                 for f in sorted(os.listdir(os.path.join(ROOT, "plans", "facet", "spec")))
+                 if f.endswith(".txt")]
+    try:
+        unbuilt = ledger_spec.check_handler_closure(manifests)
+    except SystemExit:
+        problems.append(
+            "guard 7: a type the ledger renders (it has an `I<Name>Handler`) is "
+            "in neither the extracted lists, ALIAS, a DROP family rule, nor "
+            "UNBUILT — see the names printed above.")
+        unbuilt = {}
+    if unbuilt:
+        print(f"NOT BUILT: {len(unbuilt)} types the ledger renders and facet does not")
+        for ty, why in sorted(unbuilt.items()):
+            print(f"    {ty} — {why}")
+
     # 1. every ADOPT row reaching a control is carried by something
     for row_type, merged in sorted(rows_by_control.items()):
         for member, band, fn, note, src in merged:
