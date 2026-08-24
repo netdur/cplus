@@ -1536,8 +1536,34 @@ fn anchor_none() -> i64 { return 0 as i64; }
 fn anchor_offset() -> i64 { return 1 as i64; }
 fn anchor_last() -> i64 { return 2 as i64; }
 
+// A kind with NO VERB keeps its OFFSET, and that is a choice this backend
+// makes rather than one the contract makes for it.
+//
+// Only `collection` embeds ItemsView, so only `collection` declares
+// `scroll_anchor`. A `list` or a `tree` says nothing, and the assumption was
+// that GTK's own anchor keeping is good enough for them. MEASURED, IT IS NOT:
+// a tree parked at 592 with eight sections, expanding the LAST one — every new
+// row strictly below the viewport, where nothing should move —
+//
+//     [changed]  value=592  upper=1536
+//     -> expand s7
+//     [changed]  value=688  upper=1792
+//
+// moves the reader by 96 points, exactly three rows. It does the same for a
+// branch expanded ABOVE, where the correct shift would have been eight rows.
+// GtkListView's anchor is an item plus an offset, and a splice that replaces
+// the whole model gives it nothing to map the old anchor onto, so it picks
+// something near enough and the position walks. Do that a few times and the
+// reader is somewhere else — reported as "scroll on gallery then select
+// something, sometimes the scroll jumps".
+//
+// So the offset is kept. It is not perfect for rows inserted ABOVE — keeping
+// the pixel offset means the content slides — but it is PREDICTABLE, it is
+// exact for the common case of rows appearing below, and it does not drift.
+// A `collection` that explicitly asks for `KeepItemsInView` still gets GTK's
+// behaviour, because that is the application naming it.
 fn anchor_policy(n: *core::Node) -> i64 {
-    if core::kind_of(n) != props::K_COLLECTION { return anchor_none(); }
+    if core::kind_of(n) != props::K_COLLECTION { return anchor_offset(); }
     return match sequence_of(n).scroll_anchor {
         vocab::ScrollAnchor::KeepItemsInView => anchor_none(),
         vocab::ScrollAnchor::KeepScrollOffset => anchor_offset(),
@@ -1560,8 +1586,59 @@ fn restore_anchor(n: *core::Node, v: *u8, keep: f64, want: usize) {
                                               gtk::ScrollInfo::from_raw(0 as *u8));
         return;
     }
+    // NOT NOW — GtkListView RE-ANCHORS AFTER THE SPLICE, inside its own
+    // size-allocate, and whatever is written here is overwritten a moment
+    // later. Measured, with the restore done inline:
+    //
+    //     [restore] keep=496 before=496 after=496
+    //     [changed] value=592  upper=1536
+    //
+    // The restore took, and then the list moved the reader ninety-six points
+    // anyway. Same shape as `viewport_changed`, and the same answer: an idle
+    // runs once the allocation has finished.
     gtk::ScrolledWindow::from_raw(v).get_vadjustment().set_value(keep);
+    arm_offset_restore(v, keep);
     return;
+}
+
+// The deferred half. The target rides on the widget rather than a static,
+// because two lists can splice in one sync and a single slot would give the
+// second one the first one's offset.
+fn restore_to_key() -> *u8 { return #str_ptr("facet-gtk-restore-to\0"); }
+fn restore_pending_key() -> *u8 { return #str_ptr("facet-gtk-restore-pending\0"); }
+
+fn arm_offset_restore(v: *u8, keep: f64) {
+    if keep < (0.0 as f64) { return; }
+    // +1 so a target of zero is not the same as "nothing armed" — the top of a
+    // list is a real place to be, and it is the one a splice is most likely to
+    // knock the reader away from.
+    let px: usize = (keep as usize) +% (1 as usize);
+    g::set_data(v, restore_to_key(), px as *u8);
+    if g::get_data(v, restore_pending_key()) != (0 as *u8) { return; }
+    g::set_data(v, restore_pending_key(), 1 as *u8);
+    let _t: u32 = { g_idle_add_recycler(settle_offset, v) };
+    return;
+}
+
+fn settle_offset(user: *u8) -> i32 {
+    let v: *u8 = user;
+    if v == (0 as *u8) { return 0 as i32; }
+    g::set_data(v, restore_pending_key(), 0 as *u8);
+    let px: usize = { #addr(g::get_data(v, restore_to_key())) };
+    if px == (0 as usize) { return 0 as i32; }
+    g::set_data(v, restore_to_key(), 0 as *u8);
+    let want: f64 = (px -% (1 as usize)) as f64;
+    let adj: gtk::Adjustment = gtk::ScrolledWindow::from_raw(v).get_vadjustment();
+    // CLAMPED HERE rather than left to the adjustment, because a list that
+    // shrank has no such offset any more and GTK would answer the nearest
+    // legal one without saying so.
+    var target: f64 = want;
+    let top: f64 = { adj.get_upper() } - { adj.get_page_size() };
+    if target > top { target = top; }
+    if target < (0.0 as f64) { target = 0.0f64; }
+    if { adj.get_value() } != target { adj.set_value(target); }
+    // G_SOURCE_REMOVE.
+    return 0 as i32;
 }
 
 // ================================================================================

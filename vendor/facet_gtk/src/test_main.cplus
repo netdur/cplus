@@ -43,6 +43,7 @@ import "facet/text_button" as text_button;
 import "facet/scroll" as scroll;
 import "facet/split" as split;
 import "facet/tree" as tree;
+import "facet/collection" as collection;
 import "facet/list" as flist;
 import "facet/collection" as fcollection;
 import "facet/table" as ftable;
@@ -1270,6 +1271,64 @@ fn a_null_c_string_reads_as_empty_rather_than_dereferencing() {
 // angle conversion, the two trigonometric functions the gradient axis needs —
 // because those are what is wrong silently, and a mirrored arc or a
 // transposed line cap looks like a drawing bug in the application.
+
+// ---- a splice must not walk the reader -----------------------------------------
+//
+// bugs/09-scroll-jumps-on-selection.md. A tree parked at 592, expanding the
+// LAST section — every new row strictly below the viewport, where nothing
+// should move at all — walked the reader ninety-six points, exactly three
+// rows. It did the same for a branch expanded ABOVE, where the correct shift
+// would have been eight rows. Measured through `playground/tree_probe`.
+//
+// GtkListView's anchor is an item plus an offset, and a splice that replaces
+// the whole model gives it nothing to map the old anchor onto — so it picks
+// something near enough and the position walks. A few of those and the reader
+// is somewhere else.
+//
+// TWO PARTS, and the first alone does nothing. Only `collection` declares
+// `scroll_anchor`, so a `list` or a `tree` had NO policy and read and restored
+// nothing; and the restore has to be DEFERRED, because GtkListView re-anchors
+// after the splice inside its own size-allocate. Measured with the restore
+// done inline:
+//
+//     [restore] keep=496 before=496 after=496
+//     [changed] value=592  upper=1536
+//
+// The restore took, and the list moved the reader anyway.
+#[test]
+fn a_kind_with_no_anchor_verb_keeps_its_offset() {
+    var t: core::Node = ui::tree(tree::TreeNode::new("", id: "root", is_branch: true),
+                                 key: "anchor:t");
+    assert recycler::anchor_policy(#addr_of(t)) == recycler::anchor_offset();
+    var l: core::Node = ui::list(key: "anchor:l");
+    assert recycler::anchor_policy(#addr_of(l)) == recycler::anchor_offset();
+}
+
+// ...and a `collection` that NAMES a policy still gets the one it named. An
+// application asking for `KeepItemsInView` is asking for GTK's own behaviour,
+// and overriding that would make the verb a lie.
+#[test]
+fn a_collection_still_gets_the_anchor_policy_it_asked_for() {
+    var keep: core::Node = ui::collection(key: "anchor:c1", columns: 1 as usize);
+    match collection::find("anchor:c1", within: #addr_of(keep)) {
+        option::Option[collection::Collection]::Some(c) => {
+            let _s: collection::Collection =
+                c.set_scroll_anchor(vocab::ScrollAnchor::KeepItemsInView);
+        }
+        option::Option[collection::Collection]::None => { assert false; }
+    }
+    assert recycler::anchor_policy(#addr_of(keep)) == recycler::anchor_none();
+
+    var last: core::Node = ui::collection(key: "anchor:c2", columns: 1 as usize);
+    match collection::find("anchor:c2", within: #addr_of(last)) {
+        option::Option[collection::Collection]::Some(c) => {
+            let _s: collection::Collection =
+                c.set_scroll_anchor(vocab::ScrollAnchor::KeepLastItemInView);
+        }
+        option::Option[collection::Collection]::None => { assert false; }
+    }
+    assert recycler::anchor_policy(#addr_of(last)) == recycler::anchor_last();
+}
 
 // ---- a row is never wider than its frame ---------------------------------------
 //
@@ -3156,9 +3215,13 @@ fn the_remaining_threshold_fires_within_n_rows_of_the_end() {
 #[test]
 fn the_scroll_anchor_policies_are_read_from_the_kind_that_declares_them() {
     // `KeepItemsInView` is GTK's OWN behaviour, so it reads nothing and
-    // restores nothing — and a `list` or a `tree` answers the same for a
-    // different reason: neither kind embeds ItemsView, so neither declares the
-    // verb at all.
+    // restores nothing — the application named it and gets it.
+    //
+    // A `list` or a `tree` NO LONGER answers the same. It used to, on the
+    // reasoning that a kind which declares no verb should take the platform's
+    // behaviour; measured, the platform's behaviour walks the reader three
+    // rows on every splice, whichever side the rows went. See
+    // `a_kind_with_no_anchor_verb_keeps_its_offset`.
     var keep: core::Node = ui::collection(key: "sa1",
         scroll_anchor: vocab::ScrollAnchor::KeepScrollOffset);
     var last: core::Node = ui::collection(key: "sa2",
@@ -3168,7 +3231,7 @@ fn the_scroll_anchor_policies_are_read_from_the_kind_that_declares_them() {
     assert recycler::anchor_policy(#addr_of(keep)) == recycler::anchor_offset();
     assert recycler::anchor_policy(#addr_of(last)) == recycler::anchor_last();
     assert recycler::anchor_policy(#addr_of(deflt)) == recycler::anchor_none();
-    assert recycler::anchor_policy(#addr_of(plain)) == recycler::anchor_none();
+    assert recycler::anchor_policy(#addr_of(plain)) == recycler::anchor_offset();
     return;
 }
 
