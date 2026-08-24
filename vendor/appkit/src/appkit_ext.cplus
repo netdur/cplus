@@ -103,6 +103,41 @@ fn set_control_action_ctx(control: ak::Control, handler: fn(*u8, *u8), ctx: *u8)
     return;
 }
 
+// Take the action back off a control.
+//
+// The pair to `set_control_action_ctx`, and it exists because ARMING
+// UNCONDITIONALLY IS A LIE THE WIRE REPEATS. An NSControl carrying an action
+// says "clicking me does something"; a framework that installs one on every
+// control it builds — including the ones whose handler slot is empty — makes
+// that claim untrue for a control nobody can operate, and every inspector
+// downstream (the agent surface, lldb, Accessibility Inspector) reads the claim
+// rather than the truth. Removing the action is how a control says the honest
+// thing about itself.
+//
+// Also the un-apply path: a handler removed on a later update has to take the
+// action with it, or the control keeps the last one it was given.
+fn clear_control_action(control: ak::Control) {
+    synth::set_associated(control.raw(), action_ctx_pin_key(), 0 as *u8);
+    rt::msg_void_id(control.raw(), rt::sel(#str_ptr("setTarget:\0")), 0 as *u8);
+    rt::msg_void_id(control.raw(), rt::sel(#str_ptr("setAction:\0")), 0 as *u8);
+    return;
+}
+
+// Does this control have an action to send? The question an inspector asks, and
+// the honest answer once `clear_control_action` above is used.
+fn control_has_action(view: *u8) -> bool {
+    if view == (0 as *u8) { return false; }
+    return rt::msg_id(view, rt::sel(#str_ptr("action\0"))) != (0 as *u8);
+}
+
+// Is a primary-click handler attached to this agent-clickable view? The same
+// slot `agent_click_imp` reads before it fires — asked rather than driven, so a
+// reader and the dispatch cannot disagree.
+fn has_agent_click(view: *u8) -> bool {
+    if view == (0 as *u8) { return false; }
+    return synth::get_associated(view, agent_click_handler_key()) != (0 as *u8);
+}
+
 // `class_addMethod` for the `void (self, _cmd, id)` action shape — declared
 // locally, exactly as the generated binding declares its shims.
 #[link_name = "class_addMethod"]

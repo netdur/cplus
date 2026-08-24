@@ -82,6 +82,127 @@ extern fn msg_id_id_i64(recv: *u8, sel: *u8, a: *u8, b: i64) -> *u8;
 #[link_name = "objc_msgSend"]
 extern fn msg_void_rect(recv: *u8, sel: *u8, r: rt::Rect);
 
+// ---- right-click inside a row ------------------------------------------------
+//
+// A table or outline view HANDLES right-click itself: it does not let the click
+// walk down to the row's own view the way an ordinary NSView tree does. It asks
+// ITSELF for `menuForEvent:`, whose default answer is `[self menu]`. facet
+// never set one, so a `context_menu` nested in a row was built, retained,
+// attached to the row's content view — and unreachable. The view chain, walked
+// in a live process:
+//
+//     FlexFlippedView[HAS-MENU] < FacetRowCell < NSTableRowView < NSOutlineView
+//
+// Nothing looks wrong anywhere along it. The menu exists, it has the right
+// items, it is on a real view with a real frame, and `describe_ui` cannot show
+// any of it because menu kinds are not views. The only symptom is that
+// right-click does nothing.
+//
+// So both row hosts are facet subclasses now, and their `menuForEvent:` gives
+// back the menu belonging to the ROW THAT WAS CLICKED. Per-row falls out of
+// that: each row's view already carries its own menu, built from its own node,
+// so there is nothing to rebuild and no `clickedRow` to thread through the
+// handlers.
+//
+// SUPER IS CALLED FIRST AND ITS ANSWER IS KEPT. `NSTableView.menuForEvent:` is
+// what records `clickedRow`, and `clickedRow` is what draws the ring around the
+// row being acted on. Overriding without calling it would open the menu on a
+// row with no visible selection — right menu, no indication of what it is
+// about. Its answer is also the fallback, so a menu set on the table itself
+// still works for a click that lands on no row.
+
+struct RowSuper { opaque receiver: *u8, opaque super_class: *u8 }
+
+#[link_name = "objc_msgSendSuper"]
+extern fn msg_super_id_id(s: *RowSuper, sel: *u8, a: *u8) -> *u8;
+
+#[link_name = "objc_msgSend"]
+extern fn msg_point_point_id(recv: *u8, sel: *u8, a: rt::Point, b: *u8) -> rt::Point;
+
+#[link_name = "objc_msgSend"]
+extern fn msg_id_i64_i64_i8(recv: *u8, sel: *u8, a: i64, b: i64, c: i8) -> *u8;
+
+#[link_name = "class_getSuperclass"]
+extern fn row_class_getSuperclass(cls: *u8) -> *u8;
+
+// The deepest menu under a view, itself first. The row's node may or may not be
+// the one whose view AppKit hands back — `viewAtColumn:row:` answers the cell,
+// and `attach_context_menu` hung the menu on whichever view the menu-bearing
+// NODE got. Searching the subtree is what makes those two facts agree without
+// either side knowing the other's shape.
+fn menu_in_subtree(v: *u8) -> *u8 {
+    if v == (0 as *u8) { return 0 as *u8; }
+    let own: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("menu\0"))) };
+    if own != (0 as *u8) { return own; }
+    let subs: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("subviews\0"))) };
+    if subs == (0 as *u8) { return 0 as *u8; }
+    let count: u64 = { rt::msg_u64(subs, rt::sel(#str_ptr("count\0"))) };
+    var i: u64 = 0 as u64;
+    while i < count {
+        let child: *u8 = { rt::msg_id_u64(subs, rt::sel(#str_ptr("objectAtIndex:\0")), i) };
+        let found: *u8 = menu_in_subtree(child);
+        if found != (0 as *u8) { return found; }
+        i = i +% (1 as u64);
+    }
+    return 0 as *u8;
+}
+
+// The menu belonging to the row an event landed on, or 0 for a click on no row.
+fn menu_for_row_event(table: *u8, event: *u8) -> *u8 {
+    if table == (0 as *u8) { return 0 as *u8; }
+    if event == (0 as *u8) { return 0 as *u8; }
+    let in_window: rt::Point = { rt::msg_point(event, rt::sel(#str_ptr("locationInWindow\0"))) };
+    // `nil` as the from-view means "window coordinates", which is what an
+    // event's location is in.
+    let local: rt::Point = { msg_point_point_id(table, rt::sel(#str_ptr("convertPoint:fromView:\0")),
+                                                in_window, 0 as *u8) };
+    let row: i64 = { rt::msg_i64_point(table, rt::sel(#str_ptr("rowAtPoint:\0")), local) };
+    if row < (0 as i64) { return 0 as *u8; }
+    // `makeIfNecessary: NO` — a click landed on it, so it is realised. Asking
+    // AppKit to build one during menu tracking would be a mount inside an
+    // event, which is the shape of every reentrancy bug this backend has had.
+    let cell: *u8 = { msg_id_i64_i64_i8(table,
+                                        rt::sel(#str_ptr("viewAtColumn:row:makeIfNecessary:\0")),
+                                        0 as i64, row, 0 as i8) };
+    return menu_in_subtree(cell);
+}
+
+fn imp_row_menu_for_event(self_obj: *u8, cmd: *u8, event: *u8) -> *u8 {
+    let sup: RowSuper = RowSuper {
+        receiver: self_obj,
+        super_class: { row_class_getSuperclass(synth::object_class(self_obj)) },
+    };
+    let inherited: *u8 = { msg_super_id_id(#addr_of(sup), cmd, event) };
+    let mine: *u8 = menu_for_row_event(self_obj, event);
+    if mine != (0 as *u8) { return mine; }
+    return inherited;
+}
+
+// One IMP, two hosts. `list` is an NSTableView and `tree` an NSOutlineView, and
+// the interception is identical in both because it belongs to NSTableView,
+// which the outline view inherits.
+fn row_menu_class(base: *u8, name: *u8) -> *u8 {
+    let existing: *u8 = { rt::get_class(name) };
+    if existing != (0 as *u8) { return existing; }
+    let cls: *u8 = synth::allocate_class_pair(base, name, 0 as usize);
+    if cls == (0 as *u8) { return base; }
+    let ok: i8 = synth::add_method_id_1id(cls, rt::sel(#str_ptr("menuForEvent:\0")),
+                                          imp_row_menu_for_event, #str_ptr("@@:@\0"));
+    let _ = ok;
+    synth::register_class_pair(cls);
+    return cls;
+}
+
+fn facet_table_class() -> *u8 {
+    return row_menu_class(rt::get_class(#str_ptr("NSTableView\0")),
+                          #str_ptr("FacetTableView\0"));
+}
+
+fn facet_outline_class() -> *u8 {
+    return row_menu_class(rt::get_class(#str_ptr("NSOutlineView\0")),
+                          #str_ptr("FacetOutlineView\0"));
+}
+
 // ---- associated keys ---------------------------------------------------------
 // facet_appkit owns 29000 and up, in one block per file:
 //
@@ -1024,7 +1145,7 @@ fn row_removed_imp(self_obj: *u8, cmd: *u8, tv: *u8, rowview: *u8, row: i64) {
 fn create_recycling_list(n: *core::Node) -> *u8 {
     let scroll: ak::ScrollView = akx::new_scroll_view(
         rt::Rect { x: 0.0f64, y: 0.0f64, w: 0.0f64, h: 0.0f64 }, false);
-    let tv: *u8 = { rt::alloc_init(#str_ptr("NSTableView\0")) };
+    let tv: *u8 = synth::alloc_init_class(facet_table_class());
     if tv == (0 as *u8) { return rt::retain(scroll.as_view().raw()); }
 
     // One column, full width. facet's rows are whole nodes; a column is
@@ -2574,7 +2695,7 @@ fn select_by_id(ov: *u8, want: str) {
 fn create_recycling_tree(n: *core::Node) -> *u8 {
     let scroll: ak::ScrollView = akx::new_scroll_view(
         rt::Rect { x: 0.0f64, y: 0.0f64, w: 0.0f64, h: 0.0f64 }, false);
-    let ov: *u8 = { rt::alloc_init(#str_ptr("NSOutlineView\0")) };
+    let ov: *u8 = synth::alloc_init_class(facet_outline_class());
     if ov == (0 as *u8) { return rt::retain(scroll.as_view().raw()); }
 
     let col: *u8 = { rt::msg_id(rt::get_class(#str_ptr("NSTableColumn\0")),

@@ -1243,6 +1243,49 @@ fn a_tab_pane_is_an_ordinary_subview_and_gains_a_tab_for_it() {
 // ---- the menu tier: a kind that is not a view --------------------------------
 
 #[test]
+fn an_unkeyed_container_with_a_context_menu_is_backed() {
+    // The menu hangs on its PARENT'S view (`NSView.menu`), so a container
+    // carrying one is asking for a view exactly as one with a gesture or a
+    // background colour is. Without this the menu was built, retained, and
+    // dropped: right-click did nothing, and nothing anywhere said why —
+    // `describe_ui` cannot show it either, because menu kinds are not views.
+    var bare: core::Node = core::hstack(core::Builder::new());
+    assert views::wants_view(#addr_of(bare)) == false;
+
+    var withmenu: core::Node = core::hstack(core::Builder::new());
+    let wp: *core::Node = #addr_of(withmenu);
+    var menu: core::Node = context_menu::context_menu(key: "row:menu");
+    assert mount::add_child(#addr_of(menu), context_menu_item::context_menu_item("Rename"));
+    assert mount::add_child(wp, menu);
+    // A container with a context menu gets a view.
+    assert views::wants_view(wp);
+
+    // The menu itself is still not a view — the rule promotes the PARENT, not
+    // the menu, which is what keeps the native tree the shape facet's fake
+    // renderer agrees on.
+    match core::child_of(wp, 0 as usize) {
+        option::Option[*core::Node]::Some(c) => {
+            assert views::wants_view(c) == false;
+        }
+        option::Option[*core::Node]::None => { assert false; }
+    }
+    return;
+}
+
+#[test]
+fn a_container_with_an_ordinary_child_is_still_unbacked() {
+    // The negative half: the rule is about menus, not about having children.
+    // A predicate that promoted any parent would give a view to every
+    // pure-layout container in the tree and quietly undo the pass-through
+    // that makes a column inside a scroll view cost nothing.
+    var bare: core::Node = core::hstack(core::Builder::new());
+    let bp: *core::Node = #addr_of(bare);
+    assert mount::add_child(bp, label::label("hello"));
+    assert views::wants_view(bp) == false;
+    return;
+}
+
+#[test]
 fn a_context_menu_is_not_a_view_and_hangs_on_its_parent() {
     // An NSMenu is not an NSView. Both menu kinds answer wants_view false, so
     // the mount walk creates nothing for them and they take no place in the
@@ -1493,6 +1536,168 @@ fn a_tree_item_is_the_tree_node_itself() {
 // the label measuring itself — which it can only do once it has a native view.
 fn intrinsic_tree_row(n: *tree::TreeNode, ctx: *u8) -> core::Node {
     return label::label({ (*n).label.view() });
+}
+
+// ---- a menu item's own identity ----------------------------------------------
+
+#[test]
+fn a_menu_item_carries_its_key_and_its_item_like_every_other_sender() {
+    backend::install();
+    // A handler is `fn(sender, ctx)` and `ctx` is the component — the SAME
+    // pointer for every row — so everything telling one invocation from another
+    // is read off the sender. A menu item was the one control kind that carried
+    // neither half, because both bindings live in `views::create` and a menu
+    // kind never gets a view. One `Rename` handler, N rows, and no way to know
+    // which row: right menu, unattributable click.
+    var menu_node: core::Node = context_menu::context_menu(key: "cm:ident");
+    let mp: *core::Node = #addr_of(menu_node);
+    var ren: core::Node = context_menu_item::context_menu_item("Rename", key: "ctx:rename:/a/b");
+    core::set_item_index(#addr_of(ren), 7 as usize);
+    assert mount::add_child(mp, ren);
+    assert mount::add_child(mp, context_menu_item::context_menu_item("Delete", key: "ctx:delete:/a/b"));
+
+    let built: *u8 = controls::build_context_menu(mp);
+    assert built != (0 as *u8);
+    let m: ak::Menu = ak::Menu::from_raw(built);
+    assert m.number_of_items() == (2 as i64);
+
+    match m.item_at_index(0 as i64) {
+        option::Option[ak::MenuItem]::Some(mi) => {
+            // The key IS the accessibilityIdentifier here exactly as it is on a
+            // view, so `component::key_of(sender)` — the one line every button
+            // and row handler already writes — answers from a menu action too.
+            assert ak::Accessibility::from_raw(mi.raw()).accessibility_identifier().view()
+                   == "ctx:rename:/a/b";
+            assert input::key_of(mi.raw()).view() == "ctx:rename:/a/b";
+            // And the payload half: `set_item_index(7)` reads back as 7.
+            match component::item_index_of(mi.raw()) {
+                option::Option[usize]::Some(ix) => { assert ix == (7 as usize); }
+                option::Option[usize]::None => { assert false; }
+            }
+        }
+        option::Option[ak::MenuItem]::None => { assert false; }
+    }
+    // Two items, two identities — which is the whole point: they differ.
+    match m.item_at_index(1 as i64) {
+        option::Option[ak::MenuItem]::Some(mi) => {
+            assert input::key_of(mi.raw()).view() == "ctx:delete:/a/b";
+            // No index was set on this one, and `None` means "carries none"
+            // rather than row zero.
+            match component::item_index_of(mi.raw()) {
+                option::Option[usize]::Some(_ix) => { assert false; }
+                option::Option[usize]::None => { }
+            }
+        }
+        option::Option[ak::MenuItem]::None => { assert false; }
+    }
+    return;
+}
+
+#[test]
+fn reading_a_sender_that_is_not_a_view_answers_empty_rather_than_raising() {
+    backend::install();
+    // `key_of` and `item_of` walk `superview` when the first hop finds nothing,
+    // and an NSMenuItem does not answer `superview` at all — so the natural
+    // line raised an unrecognized selector from inside a menu action. An object
+    // with no superview has reached the top of its chain, which is what the
+    // walk's own termination condition already means.
+    let bare: ak::MenuItem = ak::MenuItem::new("Untagged", 0 as *u8, "");
+    assert input::key_of(bare.raw()).view() == "";
+    assert input::item_of(bare.raw()) == (0 as *u8);
+    // A separator is the other unkeyed shape a real menu contains.
+    let sep: ak::MenuItem = ak::MenuItem::separator_item();
+    assert input::key_of(sep.raw()).view() == "";
+    return;
+}
+
+// ---- right-click inside a row ------------------------------------------------
+
+// A tree row carrying a context menu. The container is deliberately UNKEYED:
+// the two failures this pair covers were found together and the keyed spelling
+// hides the first one.
+fn tree_row_with_menu(n: *tree::TreeNode, ctx: *u8) -> core::Node {
+    var b: core::Builder = core::Builder::new();
+    b.add(label::label({ (*n).label.view() }));
+    var menu: core::Node = context_menu::context_menu();
+    assert mount::add_child(#addr_of(menu), context_menu_item::context_menu_item("Rename"));
+    b.add(menu);
+    return core::hstack(b);
+}
+
+#[test]
+fn a_tree_row_menu_reaches_the_view_appkit_actually_asks() {
+    backend::install();
+    // The whole chain, in the order it failed: the row's container has to get
+    // a view (wants_view), the menu has to be attached to it
+    // (attach_context_menu), and the OUTLINE VIEW has to be able to find it —
+    // because AppKit asks the outline view and nothing else. Two of those three
+    // were broken and each hid the other.
+    var root: tree::TreeNode = tree::TreeNode::new("root", id: "root");
+    let _a: status::Status = root.add_child(tree::TreeNode::new("alpha", id: "alpha"));
+    var t: core::Node = tree::tree(root, key: "tm1", row: tree_row_with_menu);
+    let tp: *core::Node = #addr_of(t);
+    let v: *u8 = views::create(0 as *u8, tp);
+    core::set_view(tp, v, views::view_release);
+    views::apply(0 as *u8, tp);
+    assert recycler::tree_row_count_of(v) == (1 as i64);
+
+    let cell: *u8 = recycler::tree_view_for_row(v, 0 as i64);
+    assert cell != (0 as *u8);
+    // The menu is somewhere in the row's subtree — which view exactly is the
+    // backend's business, and is precisely why the lookup searches rather than
+    // assuming.
+    let menu: *u8 = recycler::menu_in_subtree(cell);
+    assert menu != (0 as *u8);
+    assert { rt::msg_u64(menu, rt::sel(#str_ptr("numberOfItems\0"))) } == (1 as u64);
+    return;
+}
+
+#[test]
+fn the_row_hosts_are_the_subclasses_that_answer_menu_for_event() {
+    backend::install();
+    // AppKit asks the table, not the row. A plain NSOutlineView answers
+    // `[self menu]`, which facet never sets — so the override is the only thing
+    // standing between a built menu and a right-click that does nothing.
+    var root: tree::TreeNode = tree::TreeNode::new("root", id: "root");
+    var t: core::Node = tree::tree(root, key: "tm2");
+    let tp: *core::Node = #addr_of(t);
+    let v: *u8 = views::create(0 as *u8, tp);
+    core::set_view(tp, v, views::view_release);
+    let ov: *u8 = recycler::table_of(v);
+    assert ov != (0 as *u8);
+    assert synth::object_class(ov) == rt::get_class(#str_ptr("FacetOutlineView\0"));
+    assert synth::class_responds(synth::object_class(ov),
+                                 rt::sel(#str_ptr("menuForEvent:\0"))) != (0 as i8);
+
+    var l: core::Node = list::list(key: "lm2");
+    let lp: *core::Node = #addr_of(l);
+    let lv: *u8 = views::create(0 as *u8, lp);
+    core::set_view(lp, lv, views::view_release);
+    let tv: *u8 = recycler::table_of(lv);
+    assert tv != (0 as *u8);
+    assert synth::object_class(tv) == rt::get_class(#str_ptr("FacetTableView\0"));
+    assert synth::class_responds(synth::object_class(tv),
+                                 rt::sel(#str_ptr("menuForEvent:\0"))) != (0 as i8);
+    return;
+}
+
+#[test]
+fn a_row_with_no_menu_answers_nothing_rather_than_the_nearest_one() {
+    backend::install();
+    // The search must not walk UP out of the row: a menu belonging to some
+    // ancestor is not this row's menu, and returning it would make every row
+    // answer with the last one that had one.
+    var root: tree::TreeNode = tree::TreeNode::new("root", id: "root");
+    let _a: status::Status = root.add_child(tree::TreeNode::new("plain", id: "plain"));
+    var t: core::Node = tree::tree(root, key: "tm3");
+    let tp: *core::Node = #addr_of(t);
+    let v: *u8 = views::create(0 as *u8, tp);
+    core::set_view(tp, v, views::view_release);
+    views::apply(0 as *u8, tp);
+    let cell: *u8 = recycler::tree_view_for_row(v, 0 as i64);
+    assert cell != (0 as *u8);
+    assert recycler::menu_in_subtree(cell) == (0 as *u8);
+    return;
 }
 
 // A tree renders rows you can SEE.
