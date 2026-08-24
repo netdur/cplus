@@ -8,9 +8,22 @@ listed here is a gap, and the gap is a bug.
 **Status: nearly all of the write surface, and the read surface exists.**
 
 ```
-360 declared prop bits     347 answered     96%
-                           (appkit 318/88%, uikit 311/86%)
+360 declared prop bits     353 answered     98%   (appkit 338, uikit 335)
+ 68 declared handlers       66 fired        97%   (appkit  68, uikit  67)
 ```
+
+Both axes are in `--check` now, with separate floors: the two surfaces fail
+differently — a missing prop is a control that ignores you, a missing handler
+is a control that never answers.
+
+**WHERE THE TOOL AND THIS FILE DISAGREE, THIS FILE IS RIGHT.** `parity.py`
+credits a prop when the backend names its bit OR touches its field, and a field
+name is not unique across Props structs. `menu_item.is_destructive` and
+`context_menu_item.is_destructive` are counted for that reason — something
+touches an `is_destructive` field, for a `toolbar_item` and a `swipe_item`,
+which are different kinds that really do answer it. The menu rows do not; see
+their entry below. The tool is an upper bound and this is what the slack looks
+like.
 
 `python3 tools/parity.py` prints it and `--check` fails if it drops. Run it
 before believing any adjective in this file.
@@ -104,12 +117,23 @@ answers less of than the contract asks for. They are in the same list on
 purpose: a verb half-answered and unrecorded is the same lie as one unanswered
 and unrecorded.
 
-- **`text_field.return_key` / `search_field.return_key`** — the label on a
-  virtual keyboard's return key (Done / Go / Search / Send). GTK has no soft
-  keyboard, and neither GtkInputPurpose nor GtkInputHints carries anything
-  about the return key; the on-screen keyboards that exist on a GTK desktop
-  (Caribou, Squeekboard) read the purpose and nothing finer. There is no
-  string to set and nothing to set it on.
+- **`text_field.return_key` / `search_field.return_key`** — NARROWED, not
+  absent, and this row was rewritten on 2026-08-24 when the answerable half was
+  found. FIVE of the six variants name a LABEL on a virtual keyboard's return
+  key (Default / Done / Go / Search / Send), and GTK has no soft keyboard:
+  neither GtkInputPurpose nor GtkInputHints carries anything about the return
+  key, and the on-screen keyboards that exist on a GTK desktop (Caribou,
+  Squeekboard) read the purpose and nothing finer. There is no string to set
+  and nothing to set it on.
+
+  The sixth names a BEHAVIOUR. `Next` moving to the field the application put
+  after it is the only thing "Next" can mean without a keyboard to draw it on
+  — which is word for word the reading `facet_appkit/MANIFEST.md` records for
+  the same verb — and GTK answers it directly: `child_focus` forward from the
+  widget's root is what Tab does. Both fields now advance focus on Return when
+  they carry `Next`, AFTER the submit handler has run, so an application that
+  submits on Return sees the field it was called about rather than the next
+  one. The five labels stay unanswerable; only they belong in this list.
 - **`image.is_opaque` / `icon_button.is_opaque`** — a *drawing* hint that the
   image has no alpha, so the compositor may skip what is behind it. GTK's
   render tree derives that from the texture itself; there is no widget-level

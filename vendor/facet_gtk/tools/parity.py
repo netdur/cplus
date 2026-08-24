@@ -141,27 +141,41 @@ def handler_parity():
     return totals.get("gtk", 0)
 
 
-def derived_writes(directory):
-    """Fields the backend ASSIGNS to — the derived half of the contract.
+def field_touches(directory):
+    """Props fields the backend READS or ASSIGNS.
 
-    A prop is usually a WRITE the backend performs on the control, gated on its
-    dirty bit, so naming the bit is the proxy. A DERIVED prop is the other
-    direction: the backend writes it BACK into the props block so the
-    application can read it (`is_scrolling`, a picker's `is_open`). Nothing is
-    gated, so the bit is never named and the reference proxy scores a correct
-    implementation as absent — the same flaw `fires()` fixes on the handler
-    axis, and with the same consequence if left: it pushes whoever is chasing
-    the number into naming a bit for no reason.
+    THREE SHAPES ANSWER A PROP, and the bit-reference proxy only sees the first.
 
-    Only ASSIGNMENT counts (`.field =`), never a read, so an ordinary
-    `{ (*p).text.view() }` somewhere else cannot inflate anything.
+      * an APPLIED prop is written onto the control in an `apply_*` body, gated
+        on its dirty bit -- `dirty & label::P_TEXT`. The bit is named, so the
+        proxy sees it.
+      * a DERIVED prop goes the other way: the backend writes it BACK into the
+        props block so the application can read it (`is_scrolling`). Nothing is
+        gated, so no bit is ever named.
+      * a CONSULTED prop is read at event time rather than applied -- a text
+        field's `return_key` decides what Enter does, inside the handler, and
+        there is no apply-time write it could be gated on.
+
+    The last two are answered by touching the FIELD, and scoring them absent
+    pushed the author toward naming a bit for no reason just to be counted --
+    which is the measurement changing the code rather than describing it.
+
+    A field name is not unique across Props structs (`text` is in half of
+    them), so a touch alone would credit every kind that happens to share the
+    name — measured: it moved facet_android from 6 to 39 without a line of
+    android changing. So the caller pairs it with EVIDENCE THAT THE BACKEND
+    IMPLEMENTS THAT KIND AT ALL: a field touch credits `<module>::P_<FIELD>`
+    only when the backend also names at least one other bit of that module.
+    A backend that has never heard of `carousel` cannot be credited with
+    `carousel.is_scrolling` because something else in it touches an
+    `is_scrolling` field.
     """
     out = set()
     for path in glob.glob(os.path.join(directory, "*.cplus")):
         if path.endswith("test_main.cplus"):
             continue
         text = strip_comments(open(path).read())
-        for f in re.findall(r"\.\s*([a-z_][a-z_0-9]*)\s*=[^=]", text):
+        for f in re.findall(r"\.\s*([a-z_][a-z_0-9]*)\b", text):
             out.add(f)
     return out
 
@@ -175,7 +189,7 @@ def main():
         return 2
 
     seen = {k: referenced(d) for k, d in BACKENDS.items() if os.path.isdir(d)}
-    written = {k: derived_writes(d) for k, d in BACKENDS.items() if os.path.isdir(d)}
+    written = {k: field_touches(d) for k, d in BACKENDS.items() if os.path.isdir(d)}
     totals = {k: 0 for k in seen}
     declared = 0
     rows = []
@@ -189,9 +203,13 @@ def main():
         declared += len(props)
         got = {}
         for k in seen:
+            named = seen[k].get(module, set())
+            # The field-touch fallback needs evidence this backend implements
+            # the KIND — see `field_touches`. One named bit is that evidence.
+            plausible = len(named) > 0
             got[k] = {p for p in props
-                      if p in seen[k].get(module, ())
-                      or p[2:].lower() in written[k]}
+                      if p in named
+                      or (plausible and p[2:].lower() in written[k])}
             totals[k] += len(got[k])
         if got.get("gtk"):
             rows.append((module, len(props), len(got["gtk"]),

@@ -1092,6 +1092,8 @@ fn search_activated(w: *u8, user: *u8) {
     { (*p).input_view.text = gtk::Editable::from_raw(w).get_text() };
     let h: fn(*u8, *u8) = { (*p).on_submit };
     if h != props::no_handler { h(w, { (*p).on_submit_ctx }); }
+    // Same reading as the text field's — see `advance_focus`.
+    if { (*p).return_key } == vocab::ReturnKey::Next { advance_focus(w); }
     return;
 }
 
@@ -1287,6 +1289,30 @@ fn field_changed(w: *u8, user: *u8) {
     return;
 }
 
+// `Entry.ReturnType` — and the reading is facet_appkit's, which is worth
+// stating because both toolkits arrive at it from the same place: FIVE of the
+// six variants name a LABEL on a software keyboard's return key ("Go",
+// "Search", "Send", "Done"), and neither a Mac nor a GTK desktop has one to
+// draw on — a hardware Return key has one label, engraved.
+//
+// The sixth names a BEHAVIOUR. `Next` moving to the field the application put
+// after it is the only thing "Next" can mean without a keyboard to draw it on,
+// and GTK answers that directly: `child_focus` in the forward direction from
+// the widget's root is exactly what Tab does.
+//
+// So the verb is ANSWERED, on the one variant that has meaning here, and the
+// five that do not are a ledger row rather than a gap.
+fn advance_focus(w: *u8) {
+    match gtk::Widget::from_raw(w).get_root() {
+        option::Option[gtk::Root]::Some(r) => {
+            // GTK_DIR_TAB_FORWARD is 0.
+            let _m: bool = gtk::Widget::from_raw(r.raw()).child_focus(0 as i32);
+        }
+        option::Option[gtk::Root]::None => { }
+    }
+    return;
+}
+
 fn field_activated(w: *u8, user: *u8) {
     let n: *core::Node = user as *core::Node;
     let p: *props::TextFieldProps = props_of(n, props::K_TEXT_FIELD) as *props::TextFieldProps;
@@ -1294,6 +1320,9 @@ fn field_activated(w: *u8, user: *u8) {
     { (*p).input_view.text = gtk::Editable::from_raw(w).get_text() };
     let h: fn(*u8, *u8) = { (*p).on_submit };
     if h != props::no_handler { h(w, { (*p).on_submit_ctx }); }
+    // AFTER the handler: an application that submits on Return expects its
+    // handler to see the field it was called about, not the next one.
+    if { (*p).return_key } == vocab::ReturnKey::Next { advance_focus(w); }
     return;
 }
 
