@@ -114,6 +114,37 @@ getting the model fill out of the size-allocate. Someone who knows
 `gtk_list_item_manager` could probably halve the working set in an afternoon;
 guessing at it from outside did not.
 
+---
+
+**SINCE THAT WAS WRITTEN** (2026-08-24), the read half closed and four more
+ledgered gaps did:
+
+  * `on_web_resource_requested` and `on_raw_message_received` — the last two
+    unfired handlers. **68 of 68 now**, level with facet_appkit. The message
+    channel needs a SECOND library (`jsc_value_to_string` is JavaScriptCore's,
+    not WebKit's) and the two engine generations hand the signal different
+    things; §3 has the details.
+  * the canvas draws its IMAGES and casts its SHADOWS. cairo has no blur, so
+    there is one now — three box passes over a scratch surface the path is
+    copied into. Both were "recorded commands that draw nothing".
+  * `observe_size` is answered from the LAYOUT WALK rather than from a GTK
+    signal that does not exist, and `after` holds more than one timer.
+  * RTL: the widget direction, and the logical-to-physical corner swap.
+  * the two background verbs nobody had answered — the brush and the image.
+
+And one BUG that had been there the whole time and that the suite was
+protecting: `css_rgba` wrote an opaque alpha as `0.1000`, which GTK parses as
+one tenth. Every explicitly-coloured thing this package drew was at a tenth of
+its opacity. Three tests asserted the broken string. **If a colour ever looks
+wrong here, print what GTK actually parsed** — `gdk_rgba_parse` in a five-line
+python-gi script settled this in a minute after the string had looked right to
+two readings.
+
+What is left in §2 is now mostly DECIDED rather than undone — design limits
+(an observation is per-window, a reorder is a drop on a row), perf that nothing
+has needed (the tree's flat walk, `relayout_all`'s missing prune), and the one
+measured number above.
+
 ## 3. What the gallery is now for
 
 It is the conformance target, it is running, and it is the queue: open a demo,

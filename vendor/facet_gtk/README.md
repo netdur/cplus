@@ -56,7 +56,7 @@ control stopped working.
 ## Two ways to check it
 
 ```bash
-cd vendor/facet_gtk && ../../target/release/cpc test    # 188 tests, no display needed
+cd vendor/facet_gtk && ../../target/release/cpc test    # 212 tests, no display needed
 cd examples/facet_gtk_probe && ../../target/release/cpc run
 cd examples/facet_gallery   && ../../target/release/cpc run
 ```
