@@ -20538,6 +20538,206 @@ fn mcp_completion_chain_runs_against_an_unsaved_buffer() {
     assert!(!on_disk.contains("scaled"));
 }
 
+/// `cpc query complete` — the composed verb, one-shot. Three carets, three
+/// different questions, decided from the text rather than by the caller.
+#[test]
+fn query_complete_classifies_the_caret_and_answers_that_question() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = graph_project();
+    let run = |pos: &str| -> serde_json::Value {
+        let out = Command::new(cpc)
+            .args(["query", "complete", pos])
+            .current_dir(&dir)
+            .output()
+            .expect("invoke cpc query complete");
+        assert!(out.status.success(), "cpc query complete {pos} failed");
+        serde_json::from_slice(&out.stdout).expect("complete answers JSON")
+    };
+    let names = |j: &serde_json::Value| -> Vec<String> {
+        j["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|e| e["name"].as_str().unwrap().to_string())
+            .collect()
+    };
+
+    // `return p.|sum();` — a member access.
+    let member = run("src/main.cplus:7:10");
+    assert_eq!(member["context"], "member");
+    assert_eq!(member["receiver_type"], "Point");
+    let ns = names(&member);
+    for want in ["x", "y", "sum"] {
+        assert!(ns.contains(&want.to_string()), "{want} missing from {ns:?}");
+    }
+
+    // `return p|.sum();` — a bare word, so what is in scope, ranked with the
+    // local ahead of the type that merely starts the same way.
+    let scope = run("src/main.cplus:7:9");
+    assert_eq!(scope["context"], "scope");
+    assert_eq!(scope["prefix"], "p");
+    assert_eq!(names(&scope), vec!["p".to_string(), "Point".to_string()]);
+    assert_eq!(scope["in"], "g.src.main::main");
+
+    // A file id works where a path does, same as the resident server.
+    let by_id = run("g.src.main:7:10");
+    assert_eq!(by_id["context"], "member");
+}
+
+/// Negative: `complete` reports a bad file or position rather than answering
+/// about the wrong place.
+#[test]
+fn query_complete_rejects_a_bad_position() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = graph_project();
+    for (pos, needle) in [
+        ("src/nope.cplus:1:1", "no source file matching"),
+        ("src/main.cplus:9999:1", "out of range"),
+        ("src/main.cplus:7", "expected FILE:LINE:COL"),
+        ("src/main.cplus:x:1", "must be numbers"),
+    ] {
+        let out = Command::new(cpc)
+            .args(["query", "complete", pos])
+            .current_dir(&dir)
+            .output()
+            .expect("invoke cpc query complete");
+        assert!(!out.status.success(), "`{pos}` should not succeed");
+        let err = String::from_utf8_lossy(&out.stderr);
+        assert!(err.contains(needle), "expected `{needle}` in: {err}");
+    }
+}
+
+/// The composed verb on the agent surface, against a buffer that was never
+/// saved: the classification reads the buffer, and so do the candidates once
+/// `did_change` has been absorbed.
+#[test]
+fn mcp_complete_at_answers_a_member_access_in_an_unsaved_buffer() {
+    let dir = graph_project();
+    let mut s = McpServer::start(&dir);
+    let buffer = concat!(
+        "struct Point { x: i32, y: i32 }\n",
+        "impl Point {\n",
+        "    fn sum(this) -> i32 { return this.x +% this.y; }\n",
+        "    fn scaled(this, k: i32) -> i32 { return this.sum() *% k; }\n",
+        "}\n",
+        "fn main() -> i32 {\n",
+        "    let q: Point = Point { x: 1, y: 2 };\n",
+        "    return q.sum();\n",
+        "}\n",
+    );
+    s.json(
+        "did_change",
+        serde_json::json!({"file": "src/main.cplus", "text": buffer, "wait": true}),
+    );
+    // Line 8 is `    return q.sum();`; col 14 is just past the `.`.
+    let j = s.json(
+        "complete_at",
+        serde_json::json!({"file": "src/main.cplus", "line": 8, "col": 14}),
+    );
+    assert_eq!(j["context"], "member");
+    assert_eq!(j["receiver_type"], "Point");
+    let names: Vec<String> = j["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| e["name"].as_str().unwrap().to_string())
+        .collect();
+    assert!(
+        names.contains(&"scaled".to_string()),
+        "a method that exists only in the buffer: {names:?}"
+    );
+    let on_disk = std::fs::read_to_string(dir.join("src/main.cplus")).unwrap();
+    assert!(!on_disk.contains("scaled"));
+
+    // Typing one more character narrows without another round trip.
+    let narrowed = s.json(
+        "complete_at",
+        serde_json::json!({"file": "src/main.cplus", "line": 8, "col": 15}),
+    );
+    assert_eq!(narrowed["prefix"], "s");
+    let ns: Vec<String> = narrowed["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| e["name"].as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(ns, vec!["scaled".to_string(), "sum".to_string()]);
+}
+
+/// `text` lets a caller who has not sent `did_change` ask about a buffer the
+/// server has never seen — the classification half needs no rebuild at all.
+#[test]
+fn mcp_complete_at_classifies_text_the_server_was_never_sent() {
+    let dir = graph_project();
+    let mut s = McpServer::start(&dir);
+    // The half-typed line is what differs; everything above it is byte-for-byte
+    // the file on disk, which is what keeps the graph's spans lined up. A
+    // caller whose earlier lines have moved sends `did_change` instead — that
+    // is the path that rebuilds, and it is why `text` is the convenience and
+    // not the recommendation.
+    let typed = concat!(
+        "struct Point { x: i32, y: i32 }\n",
+        "impl Point {\n",
+        "fn sum(this) -> i32 { return this.x +% this.y; }\n",
+        "}\n",
+        "fn main() -> i32 {\n",
+        "let p: Point = Point { x: 1, y: 2 };\n",
+        "return p.\n",
+        "}\n",
+    );
+    let j = s.json(
+        "complete_at",
+        serde_json::json!({"file": "src/main.cplus", "line": 7, "col": 10, "text": typed}),
+    );
+    assert_eq!(j["context"], "member", "{j}");
+    assert_eq!(j["receiver_type"], "Point");
+    // The server's own status is untouched: `text` classifies, it does not
+    // register a buffer.
+    let st = s.json("graph_status", serde_json::json!({}));
+    assert!(st["overlays"].as_array().unwrap().is_empty(), "{st}");
+}
+
+/// The composed verb is advertised to the model alongside the primitives it
+/// composes — an agent that never reads this file still finds it.
+#[test]
+fn mcp_tools_list_advertises_complete_at() {
+    use std::io::{BufRead, Write};
+    let dir = graph_project();
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let mut child = Command::new(cpc)
+        .arg("mcp")
+        .current_dir(&dir)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .expect("spawn cpc mcp");
+    {
+        let stdin = child.stdin.as_mut().expect("stdin");
+        writeln!(
+            stdin,
+            "{}",
+            serde_json::json!({"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}})
+        )
+        .unwrap();
+        stdin.flush().unwrap();
+    }
+    let mut out = std::io::BufReader::new(child.stdout.take().unwrap()).lines();
+    let line = out.next().expect("a response").expect("readable");
+    drop(child.stdin.take());
+    let _ = child.wait();
+    let v: serde_json::Value = serde_json::from_str(&line).unwrap();
+    let names: Vec<&str> = v["result"]["tools"]
+        .as_array()
+        .expect("a tools array")
+        .iter()
+        .map(|t| t["name"].as_str().unwrap())
+        .collect();
+    for want in ["complete_at", "scope_at", "type_at", "find_members"] {
+        assert!(names.contains(&want), "{want} missing from {names:?}");
+    }
+}
+
 /// Negative: the position verbs reject what they cannot resolve, rather than
 /// answering about the wrong place.
 #[test]

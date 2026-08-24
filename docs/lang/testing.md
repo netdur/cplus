@@ -58,8 +58,9 @@ fn parse_rejects_a_bad_digit() -> i32 {      // the other legal signature
 Names in the report are qualified by their origin:
 `plat::src::main::my_test`.
 
-The code graph knows which functions are tests: `cpc query scope-at` (the
-completion query) omits them, `cpc query symbols` marks them `is_test: true`,
+The code graph knows which functions are tests: `cpc query complete` and
+`cpc query scope-at` (the completion queries) omit them, `cpc query symbols`
+marks them `is_test: true`,
 and `callers` still reports a test as a caller of what it exercises — which
 is how you find out a helper is only reachable from the suite.
 

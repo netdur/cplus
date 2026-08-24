@@ -577,8 +577,9 @@ cpc mcp                             # resident MCP server: live overlays, non-bl
 cpc query <kind> [args]             # def · members · symbols · refs · callers · callees
                                     # call-hierarchy [--depth N] · context
                                     # type-at/value-refs/scope-at FILE:LINE:COL
+                                    # complete FILE:LINE:COL — the composed caret answer
 cpc graph                           # the whole graph as JSON
-cpc lsp [--log PATH]
+cpc lsp [--log PATH]                # resident: goto-def, refs, hover, outline, completion
 
 # source, docs, diagnostics
 cpc fmt FILE|DIR [--check|--emit|--stdin]

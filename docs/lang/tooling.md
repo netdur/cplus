@@ -83,7 +83,25 @@ def SYMBOL              members TYPE          symbols [FILE]
 refs SYMBOL             callers FN            callees FN
 call-hierarchy FN [--depth N]                 context FN
 type-at FILE:LINE:COL   value-refs FILE:LINE:COL   scope-at FILE:LINE:COL
+complete FILE:LINE:COL
 ```
+
+`complete` is the composed one. `scope-at`, `type-at` and `members` are the
+three primitives a caret question decomposes into, and deciding *which* of the
+three a caret is asking — after a `.`, after a `::`, or neither — is C+'s own
+rules, not the caller's policy. So that decision lives in the compiler and one
+verb answers it:
+
+```
+after a `.`    the receiver's fields and methods (variants are `::`, not `.`)
+after a `::`   the module an alias binds, or a type's methods and variants
+otherwise      everything in scope
+```
+
+The answer names its own `context` (`member` / `path` / `scope`), the `prefix`
+it filtered on, and the ranked `items`. `receiver_type` absent on a member
+answer means the receiver's type is not locally known — an empty list, never a
+guess.
 
 Every `cpc query` invocation pays the whole-project graph build (~2s). An
 editor asking on a keystroke wants `cpc mcp`, which builds once and answers
@@ -92,7 +110,7 @@ from memory.
 `cpc mcp` is the one to reach for from an agent. Beyond the read tools
 (`find_definition`, `find_references`, `find_callers`, `find_callees`,
 `call_hierarchy`, `find_members`, `file_symbols`, `code_context`,
-`type_at`, `scope_at`) it is **live**:
+`type_at`, `scope_at`, `complete_at`) it is **live**:
 
 - `did_change` hands over an unsaved buffer; every later answer is about
   that text. The caret is always in a buffer that differs from disk, so for
@@ -108,16 +126,21 @@ from memory.
   answer is wrong.
 
 `cpc lsp` starts the language server on stdin/stdout over the same index
-(it delegates to the `cpc-lsp` binary on PATH or next to `cpc`).
+(it delegates to the `cpc-lsp` binary on PATH or next to `cpc`). It is
+resident on the same terms as `cpc mcp` — one graph per project root, built on
+the first graph-backed request and kept warm, with open buffers overlaid onto
+it and rebuilds on a worker — and it serves `textDocument/completion` from the
+same `complete` composition, so an editor and an agent get the same answer at
+the same caret. Trigger characters are `.` and `:`.
 
 `code_context` deserves its own note: it is the one-shot edit pack for a
 function — signature, callers, callees, and the types it touches. Prefer it
 over three separate lookups when you are about to change something.
 
-**`#[test]` functions and completion.** `scope-at` answers "what can I type
-here", and a test function is never the answer — it takes no arguments, only
+**`#[test]` functions and completion.** `scope-at` and `complete` answer "what
+can I type here", and a test function is never the answer — it takes no arguments, only
 the harness calls it, and in a suite-carrying module the tests outnumber the
-API. So `scope-at` omits them. They stay everywhere else: `def`, `refs`,
+API. So both omit them. They stay everywhere else: `def`, `refs`,
 `callers`, and `callees` all find them, because a test calling a helper is a
 real call edge and hiding it would make `callers` lie. In `symbols` — the
 file outline, which should list tests — each one carries `is_test: true`, so

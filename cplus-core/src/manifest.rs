@@ -2353,3 +2353,25 @@ mod tests {
         assert!(m.entry.unwrap().ends_with("src/main.cplus"));
     }
 }
+
+/// The dependency names active on the running platform, and — as a side effect
+/// — the record of the ones gated out, so an import that fails can be explained
+/// as "declared, but not for this platform" rather than "not found".
+///
+/// In core because every front end needs it: `cpc` for a build, and `cpc lsp`
+/// for the project it resolves behind an open document. Without it the resolver
+/// runs in single-file mode and every vendored import reports E0401.
+pub fn active_dep_names(m: &Manifest) -> Vec<String> {
+    let platform = crate::target::active_platform();
+    let mut names: Vec<String> = Vec::with_capacity(m.dependencies.len());
+    let mut gated: std::collections::BTreeMap<String, String> = Default::default();
+    for dep in &m.dependencies {
+        if dep.active_on(platform) {
+            names.push(dep.name.clone());
+        } else {
+            gated.insert(dep.name.clone(), dep.platforms.join(", "));
+        }
+    }
+    crate::target::set_platform_gated_deps(gated);
+    names
+}
