@@ -26,6 +26,8 @@ import "stdlib/vec" as vec;
 import "stdlib/status" as status;
 import "stdlib/box" as box;
 import "stdlib/io" as io;
+import "stdlib/atomic" as atomic;
+import "stdlib/thread" as thread;
 import "flex_layout/flex_layout" as flex;
 import "facet/facet" as core;
 import "facet/vocabulary" as vocab;
@@ -236,13 +238,29 @@ fn run_screen[S: component::Component + component::Lifecycle + screen::Screen](
 // the job's address and runs when the loop next turns. So the loop is drained
 // until BOTH counters read zero — which is what `jobs_settled()` answers —
 // before anything a job was given can drop.
+// Wait until nothing is inside this screen's data, then let the caller free it.
+//
+// TWO COUNTERS, because they are two different waits. `wait_for_jobs` blocks
+// while a WORKER is in a job — it has no bailout and needs none, since a worker
+// that never returns is a hung worker and hiding it would not help. The loop
+// below is for a queued APPLY, which only lands when the main loop turns, and
+// the window is gone by now so this is the only thing turning it.
+//
+// THE BAILOUT SAYS SO. It exists because a teardown that wedges is a frozen
+// app, and 100,000 turns with nothing arriving means the apply is never coming.
+// But taking it means freeing memory an apply still points at — this crash by
+// another route — so it is not allowed to be silent. It has never been observed
+// to fire; the line is what would tell us if it did.
 fn settle_and_teardown(root: *core::Node) {
     services::wait_for_jobs();
     var spins: i64 = 0 as i64;
     while !services::jobs_settled() {
         drain_once();
         spins = spins +% (1 as i64);
-        if spins > (100000 as i64) { break; }   // never wedge a teardown
+        if spins > (100000 as i64) {
+            io::eprintln("facet_runtime: teardown gave up waiting for a queued apply after 100000 turns — freeing anyway. A job's owner is about to be freed with an apply still pointing at it.");
+            break;
+        }
     }
     return;
 }
@@ -738,6 +756,9 @@ static PUSHED: vec::Vec[PushedScreen] = #zero::[vec::Vec[PushedScreen]]();
 // `present_window` was never reclaimed.
 fn presented_closed(ctx: *u8) {
     if ctx == (0 as *u8) { return; }
+    // As `pushed_closed`: a presented window's tree is what a job was given, so
+    // nothing may free it while a worker is still in one.
+    settle_and_teardown(0 as *core::Node);
     let _b: box::Box[Node] = box::from_raw::[Node](ctx);
     return;
 }
@@ -788,6 +809,17 @@ fn pushed_closed(ctx: *u8) {
     if ctx == (0 as *u8) { return; }
     { (*(ctx as *screen::ScreenBox)).on_detach() };
     pushed_remove(ctx);
+    // SETTLE BEFORE FREEING, the same rule `App::run` follows for the primary
+    // screen — and it was followed on exactly one of the three paths that free
+    // one. A pushed screen was freed here with its workers still inside it: the
+    // next screen is allocated into that memory and crashes reading its own
+    // fields, which is why the fault always appeared in whatever happened to be
+    // allocated next rather than in the screen that caused it.
+    //
+    // Here rather than at the caller, because this is where the free is.
+    // `close_all_pushed` runs BEFORE `App::run`'s settle, so a wait at the
+    // caller would still be too late for these.
+    settle_and_teardown(0 as *core::Node);
     let _b: box::Box[screen::ScreenBox] = box::from_raw::[screen::ScreenBox](ctx);
     return;
 }
@@ -883,6 +915,58 @@ fn register_screen(route: str, factory: fn() -> screen::ScreenBox) -> bool {
 // run loop; these stay headless.
 
 fn rt_screen_factory() -> screen::ScreenBox { return screen::ScreenBox::invalid(); }
+
+// ---- teardown waits ----------------------------------------------------------
+
+// A job that stays in `run` until told to stop, so "is a worker still in it"
+// has a knowable answer at the moment teardown is asked.
+struct HeldService {
+    hold: u64,
+    ran: i32,
+}
+
+impl HeldService: services::Job {
+    fn run(ref this) {
+        let p: *u64 = { #addr_of(this.hold) };
+        while atomic::load_u64(p, atomic::Ordering::Acquire) != (0 as u64) {
+            services::sched_yield_once();
+        }
+        this.ran = this.ran + 1;
+        return;
+    }
+    fn apply(ref this) { return; }
+}
+
+#[test]
+fn teardown_does_not_return_while_a_worker_is_in_a_job() {
+    // THE CONTRACT, asserted rather than described. A screen is freed a few
+    // lines after this returns, so returning early means a worker writing into
+    // freed memory — and the fault then appears in whatever is allocated next,
+    // which is why this family of crash always looked like a bug in an
+    // unrelated subsystem.
+    var j: HeldService = HeldService { hold: 1 as u64, ran: 0 };
+    assert services::run_job::[HeldService](j);
+    assert services::jobs_in_flight() >= (1 as u64);
+
+    // Release it from another thread, so the wait below is a real wait rather
+    // than a formality: teardown must not return until that worker is out.
+    let h: thread::JoinHandle[i32] = thread::spawn_with::[*u64, i32](
+        { #addr_of(j.hold) }, release_after_a_moment);
+    settle_and_teardown(0 as *core::Node);
+    assert services::jobs_in_flight() == (0 as u64);
+    assert j.ran == 1;
+    let _r: i32 = h.join();
+    return;
+}
+
+fn release_after_a_moment(take p: *u64) -> i32 {
+    // Long enough that a teardown which did not wait would have returned.
+    var i: i64 = 0 as i64;
+    var acc: i32 = 0;
+    while i < (60000000 as i64) { acc = acc + (1 as i32); i = i +% (1 as i64); }
+    atomic::store_u64(p, 0 as u64, atomic::Ordering::Release);
+    return acc;
+}
 
 #[test]
 fn app_routes_register_and_resolve() {

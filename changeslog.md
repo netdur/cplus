@@ -699,6 +699,38 @@ by its *shape*, not a method-name allowlist, through every form it can leak:
   replaced. `cpc lsp` also stopped canonicalizing every file in the project
   on every request.
 
+### agent — `wired` was false for a gesture, and `click` acted then denied it
+- A regression from `wired` itself. It read appkit_ext's agent-click SLOT for
+  every non-control — a slot facet never fills — so every gesture-bound
+  container reported `wired=false`. That is the one CORRECT way to make a
+  non-control clickable, and the very form the flag was added to tell apart
+  from a dead button.
+- A framework swaps in a class that receives input only for a node that HAS
+  input: facet leaves a plain container as a `FlexFlippedView`, which does not
+  answer `performClick:`, and arms it into a `FacetInput00`, which does. So
+  answering the selector IS the answer. The exception is appkit_ext's own two
+  classes, whose `performClick:` reads the slot and does nothing when it is
+  empty — for those, and only those, the slot is the question.
+- **`click` no longer acts and then reports `no_handler`.** The first version
+  sent the click anyway on the reasoning that a report is not a refusal. That
+  was worse than the bug it replaced: a verb that performs the action and says
+  it did not cannot be trusted in either direction, and an agent retrying does
+  the thing twice. It refuses without sending now, so a disagreement is inert.
+
+### facet_runtime — a screen is not freed while its jobs are running
+- `App::run` settles before dropping the primary screen. **Two of the three
+  paths that free a screen did not.** `pushed_closed` calls `on_detach`, removes
+  the entry and frees the box; `presented_closed` frees the tree — neither
+  waited. A worker still inside that memory keeps writing, the next screen is
+  allocated into it, and the fault surfaces in whatever was allocated next,
+  which is why this family of crash never looked like the screen that caused it.
+- Both settle now, and the wait lives at the FREE rather than at a caller:
+  `close_all_pushed` runs before `App::run`'s settle, so a wait at the caller
+  would still have been too late for pushed screens.
+- **The bailout says so.** `spins > 100000` turns "teardown would wedge" into
+  "teardown frees anyway", which is the same crash by another route. It is now
+  a line on stderr rather than a silent `break`.
+
 ### facet — the dialogs answer the keyboard, and open on a value
 - **Return and Escape.** A native alert gives a window a default button and a
   cancel button for free; a facet sheet is built out of facet controls — which

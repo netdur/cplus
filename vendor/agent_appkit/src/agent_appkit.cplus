@@ -1392,16 +1392,24 @@ impl Surface {
                     }
                     return surface::Outcome::NotActionable;
                 }
-                // ANSWER WHAT ACTUALLY HAPPENED. `performClick:` on a control
-                // with no action, or on a facet clickable whose handler slot is
-                // empty, activates it and nothing runs — and answering
-                // `Allowed` for that is what let a 23-assertion sweep pass with
-                // a dead button in it. The click is still SENT: this is a
-                // report, not a refusal, and refusing would be a second guess
-                // about someone else's widget.
-                let wired: bool = view_wired(v, part);
+                // ANSWER WHAT ACTUALLY HAPPENED — and to answer it, do not do
+                // it. `performClick:` on a control with no action activates it
+                // and nothing runs, and answering `Allowed` for that is what
+                // let a 23-assertion sweep pass with a dead button in it.
+                //
+                // THE FIRST VERSION SENT THE CLICK ANYWAY and then reported
+                // `no_handler`, on the reasoning that a report is not a refusal.
+                // That is wrong, and it was worse than the bug it replaced: a
+                // verb that performs the action and says it did not cannot be
+                // trusted in EITHER direction, and an agent retrying on
+                // `no_handler` does the thing twice. A false `allowed` at least
+                // let a caller believe outcomes were conservative.
+                //
+                // So this refuses without sending. If the two ever disagree the
+                // failure is inert — a control unreachable over the wire —
+                // rather than an action nobody was told about.
+                if !view_wired(v, part) { return surface::Outcome::NoHandler; }
                 perform_on_main(v, rt::sel(#str_ptr("performClick:\0")), null());
-                if !wired { return surface::Outcome::NoHandler; }
                 return surface::Outcome::Allowed;
             }
             option::Option[usize]::None => {}
@@ -1942,7 +1950,24 @@ fn view_wired(v: *u8, part: u32) -> bool {
         return akx::control_has_action(v);
     }
     if responds_to(v, #str_ptr("performClick:\0")) {
-        return akx::has_agent_click(v);
+        // ANSWERING THE SELECTOR IS THE ANSWER, with one exception. A framework
+        // swaps in a class that receives input only for a node that HAS input —
+        // facet leaves a plain container as a `FlexFlippedView`, which does not
+        // answer this, and arms it into a `FacetInput00`, which does. So a view
+        // that answers is a view something armed.
+        //
+        // The exception is appkit_ext's own agent-clickable classes: their
+        // `performClick:` reads a handler slot and does nothing when it is
+        // empty, so for those two the slot is the question.
+        //
+        // Asking the slot for EVERY view was the bug this replaces. It reported
+        // `wired=false` for every gesture-bound container — the one correct way
+        // to make a non-control clickable, and the very form the flag was added
+        // to distinguish from a dead button. appkit_ext's agent-click plumbing
+        // is real and facet does not use it; reading it as though facet did is
+        // the "check the old tree first" trap from the other direction.
+        if akx::answers_agent_click_only(v) { return akx::has_agent_click(v); }
+        return true;
     }
     return can_select_row_of(v);
 }

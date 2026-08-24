@@ -91,6 +91,17 @@ fn control_has_action(view: *u8) -> bool ;
 // reader and the dispatch cannot disagree.
 fn has_agent_click(view: *u8) -> bool ;
 
+// Is this view one of the two classes above — the ones whose `performClick:`
+// reads the slot and does NOTHING when it is empty?
+//
+// It matters to anyone asking "would a click here reach a handler". Every other
+// class that answers `performClick:` does something by answering it: an
+// NSControl sends its action, and a framework that swaps in a class to receive
+// input only does so for a node that HAS input. These two are the exception —
+// they answer the selector unconditionally and then check — so they are the one
+// case where answering the selector is not the same as being wired.
+fn answers_agent_click_only(view: *u8) -> bool ;
+
 // `class_addMethod` for the `void (self, _cmd, id)` action shape — declared
 // locally, exactly as the generated binding declares its shims.
 #[link_name = "class_addMethod"]

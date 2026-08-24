@@ -17,6 +17,7 @@ import "stdlib/vec" as vec;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
 import "stdlib/io" as io;
+import "objc/synthesis" as synth;
 import "stdlib/thread" as thread;   // the off-main invoke_menu regression below needs a real second thread
 import "./agent_appkit" as agent;
 
@@ -232,6 +233,133 @@ fn click_on_view_without_performclick_reports_notactionable_not_raise() {
     var s: agent::Surface = agent::open(win.raw());
     assert surface::outcome_eq(s.click(auth::operator(), "plain-view"), surface::Outcome::NotActionable);
 }
+
+// ---- a gesture container is wired -------------------------------------------
+
+// A plain NSView subclass that ANSWERS `performClick:` and carries none of
+// appkit_ext's slots — the shape a framework produces when it swaps in a class
+// to receive input. facet's is `FacetInput00`; this is the same thing without
+// the dependency.
+static PROBE_CLICKS: i32 = 0;
+fn probe_perform_click(self_obj: *u8, cmd: *u8, sender: *u8) {
+    PROBE_CLICKS = PROBE_CLICKS + 1;
+    return;
+}
+
+fn armed_view_class() -> *u8 {
+    let existing: *u8 = { rt::get_class(#str_ptr("AgentProbeArmedView\0")) };
+    if existing != (0 as *u8) { return existing; }
+    let cls: *u8 = synth::allocate_class_pair(rt::get_class(#str_ptr("NSView\0")),
+                                              #str_ptr("AgentProbeArmedView\0"), 0 as usize);
+    let _a: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("performClick:\0")),
+                                         probe_perform_click, #str_ptr("v@:@\0"));
+    synth::register_class_pair(cls);
+    return cls;
+}
+
+#[test]
+fn a_view_that_answers_performclick_is_wired() {
+    // THE REGRESSION `wired` INTRODUCED. It was added so a dead control could
+    // be told from a live one, and it read appkit_ext's agent-click SLOT for
+    // every non-control — a slot facet never fills. So every gesture-bound
+    // container reported `wired=false`: the one CORRECT way to make a
+    // non-control clickable, and the very form the flag exists to distinguish
+    // from a dead button.
+    //
+    // A framework swaps in a class that receives input only for a node that HAS
+    // input, so answering `performClick:` is the answer. The exception is
+    // appkit_ext's own two classes, whose `performClick:` reads the slot and
+    // does nothing when it is empty — those are checked below.
+    let win = fixture_window(300.0f64, 200.0f64);
+    let content = content_of(win);
+
+    // A view that answers the selector and is NOT one of the slot-reading
+    // classes — the case the old rule got wrong. An NSButton would take the
+    // CONTROL branch and never reach this one, which is why the first version
+    // of this test passed against the bug.
+    PROBE_CLICKS = 0;
+    let armed: *u8 = synth::alloc_init_class(armed_view_class());
+    { rt::msg_void_rect(armed, rt::sel(#str_ptr("setFrame:\0")),
+                        rt::Rect { x: 5.0f64, y: 5.0f64, w: 40.0f64, h: 20.0f64 }) };
+    content.add_subview(ak::View::from_raw(armed));
+    agent::set_agent_id(armed, "live");
+
+    var s: agent::Surface = agent::open(win.raw());
+    let nodes: vec::Vec[agent::AppKitNode] = s.describe(auth::operator());
+    var saw: bool = false;
+    var i: usize = 0 as usize;
+    while i < nodes.count() {
+        match nodes.at_ptr(i) {
+            option::Option[*agent::AppKitNode]::Some(n) => {
+                if { (*n).id.view() } == "live" { saw = true; assert { (*n).wired }; }
+            }
+            option::Option[*agent::AppKitNode]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    assert saw;
+    // ...and `click` delivers to it.
+    assert surface::outcome_eq(s.click(auth::operator(), "live"), surface::Outcome::Allowed);
+    assert PROBE_CLICKS == 1;
+}
+
+#[test]
+fn an_agent_clickable_view_is_wired_only_with_a_handler() {
+    // The exception, both ways. appkit_ext's clickable view answers
+    // `performClick:` unconditionally and then reads a slot, so for THIS class
+    // — and only this class — answering the selector is not the same as being
+    // wired.
+    let win = fixture_window(300.0f64, 200.0f64);
+    let content = content_of(win);
+
+    let bare: ak::View = akx::new_clickable_view(rt::Rect { x: 5.0, y: 5.0, w: 40.0, h: 20.0 });
+    content.add_subview(ak::View::from_raw(bare.raw()));
+    agent::set_agent_id(bare.raw(), "slot-empty");
+
+    let armed: ak::View = akx::new_clickable_view(rt::Rect { x: 5.0, y: 40.0, w: 40.0, h: 20.0 });
+    content.add_subview(ak::View::from_raw(armed.raw()));
+    akx::set_agent_click(armed, on_probe_click_2, 0 as *u8);
+    agent::set_agent_id(armed.raw(), "slot-armed");
+
+    var s: agent::Surface = agent::open(win.raw());
+    let nodes: vec::Vec[agent::AppKitNode] = s.describe(auth::operator());
+    var i: usize = 0 as usize;
+    var saw_empty: bool = false;
+    var saw_armed: bool = false;
+    while i < nodes.count() {
+        match nodes.at_ptr(i) {
+            option::Option[*agent::AppKitNode]::Some(n) => {
+                if { (*n).id.view() } == "slot-empty" {
+                    saw_empty = true;
+                    assert { (*n).wired } == false;
+                }
+                if { (*n).id.view() } == "slot-armed" {
+                    saw_armed = true;
+                    assert { (*n).wired };
+                }
+            }
+            option::Option[*agent::AppKitNode]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    assert saw_empty;
+    assert saw_armed;
+
+    // AND `click` REFUSES WITHOUT ACTING. The first version sent the click and
+    // then reported `no_handler`, which is a verb that performs the action and
+    // says it did not — untrustworthy in both directions, and an agent retrying
+    // does the thing twice.
+    CLICKS_2 = 0;
+    assert surface::outcome_eq(s.click(auth::operator(), "slot-empty"),
+                               surface::Outcome::NoHandler);
+    assert CLICKS_2 == 0;
+    assert surface::outcome_eq(s.click(auth::operator(), "slot-armed"),
+                               surface::Outcome::Allowed);
+    assert CLICKS_2 == 1;
+}
+
+static CLICKS_2: i32 = 0;
+fn on_probe_click_2(sender: *u8, ctx: *u8) { CLICKS_2 = CLICKS_2 + 1; return; }
 
 // ---- the disclosure part -----------------------------------------------------
 //
