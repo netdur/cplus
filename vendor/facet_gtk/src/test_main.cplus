@@ -22,6 +22,7 @@ import "stdlib/option" as option;
 import "stdlib/text" as text;
 import "stdlib/vec" as vec;
 import "stdlib/status" as status;
+import "gdkpixbuf/gdkpixbuf" as pixbuf;
 import "facet/facet" as core;
 import "facet/props" as props;
 import "facet/gestures" as gestures;
@@ -353,9 +354,9 @@ fn alignment_maps_onto_three_different_gtk_vocabularies() {
 
 #[test]
 fn an_icon_name_is_told_from_a_file_path() {
-    assert controls::looks_like_path("/usr/share/icons/x.png");
-    assert controls::looks_like_path("logo.svg");
-    assert !controls::looks_like_path("document-open-symbolic");
+    assert paint::looks_like_path("/usr/share/icons/x.png");
+    assert paint::looks_like_path("logo.svg");
+    assert !paint::looks_like_path("document-open-symbolic");
     return;
 }
 
@@ -1245,6 +1246,322 @@ fn a_null_c_string_reads_as_empty_rather_than_dereferencing() {
 // angle conversion, the two trigonometric functions the gradient axis needs —
 // because those are what is wrong silently, and a mirrored arc or a
 // transposed line cap looks like a drawing bug in the application.
+
+// ---- the shadow, cast for real -------------------------------------------------
+//
+// cairo has no shadow and no blur, so `drawing` builds one: the path is copied
+// into a scratch surface, three box passes blur it, and the result composites
+// under the shape at the recorded offset. Every one of those steps can be
+// wrong in a way that still produces SOMETHING, so these read pixels.
+fn shadow_canvas(side: f64) -> vocab::Canvas {
+    return vocab::Canvas::of(vocab::Size::of(side, side), 1.0f64);
+}
+
+// A 40x40 surface, a 10x10 black square filled at (15,15), a shadow offset
+// (6,6) with no blur. The shadow must be a hard copy at (21,21).
+#[test]
+fn a_hard_shadow_lands_at_the_recorded_offset() {
+    let surf: *u8 = { cairo_image_surface_create(0 as i32, 40 as i32, 40 as i32) };
+    let cr: *u8 = { cairo_create(surf) };
+    var c: vocab::Canvas = shadow_canvas(40.0f64);
+    var sh: vocab::Shadow = vocab::Shadow {
+        color: vocab::Color::rgba(1.0f64, 0.0f64, 0.0f64, 1.0f64),
+        offset: vocab::Point::of(6.0f64, 6.0f64),
+        radius: 0.0f64,
+        opacity: 1.0f64,
+    };
+    let _e0: status::Status = c.set_shadow(sh);
+    let _e1: status::Status = c.set_fill(vocab::Color::rgba(0.0f64, 0.0f64, 1.0f64, 1.0f64));
+    let _e2: status::Status = c.fill_rect(vocab::Rect::of(15.0f64, 15.0f64, 10.0f64, 10.0f64));
+    drawing::replay(cr, #addr_of(c));
+
+    // The SHAPE is blue and opaque where it was drawn.
+    assert surface_pixel(surf, 18 as i32, 18 as i32) == (0xFF0000FF as u32);
+    // The SHADOW is red, offset by six, in the part the shape does not cover.
+    assert surface_pixel(surf, 28 as i32, 28 as i32) == (0xFFFF0000 as u32);
+    // BEFORE the shape and before the offset: nothing.
+    assert surface_pixel(surf, 5 as i32, 5 as i32) == (0 as u32);
+    // The shadow is UNDER the shape, not over it — the overlap is still blue.
+    assert surface_pixel(surf, 22 as i32, 22 as i32) == (0xFF0000FF as u32);
+
+    { cairo_destroy(cr) };
+    { cairo_surface_destroy(surf) };
+}
+
+// A BLUR SPREADS. With a radius the shadow reaches past the hard silhouette and
+// its own body comes down from opaque — both of which a copy-at-an-offset (the
+// thing a blur is easy to accidentally not be) does not do.
+#[test]
+fn a_blurred_shadow_spreads_past_its_silhouette_and_softens() {
+    let surf: *u8 = { cairo_image_surface_create(0 as i32, 60 as i32, 60 as i32) };
+    let cr: *u8 = { cairo_create(surf) };
+    var c: vocab::Canvas = shadow_canvas(60.0f64);
+    var sh: vocab::Shadow = vocab::Shadow {
+        color: vocab::Color::rgba(1.0f64, 0.0f64, 0.0f64, 1.0f64),
+        offset: vocab::Point::of(0.0f64, 0.0f64),
+        radius: 8.0f64,
+        opacity: 1.0f64,
+    };
+    let _e0: status::Status = c.set_shadow(sh);
+    let _e1: status::Status = c.set_fill(vocab::Color::rgba(0.0f64, 0.0f64, 1.0f64, 1.0f64));
+    let _e2: status::Status = c.fill_rect(vocab::Rect::of(20.0f64, 20.0f64, 20.0f64, 20.0f64));
+    drawing::replay(cr, #addr_of(c));
+
+    // OUTSIDE the square, where a hard shadow at offset zero would be exactly
+    // nothing: some red, and not much of it.
+    let out: u32 = surface_pixel(surf, 30 as i32, 16 as i32);
+    let out_a: u32 = (out >> (24 as u32)) & (0xFF as u32);
+    assert out_a > (0 as u32);
+    assert out_a < (0xFF as u32);
+    // FURTHER out is FAINTER — that is the gradient, and it is what tells a
+    // blur apart from a fatter hard shadow.
+    let far: u32 = surface_pixel(surf, 30 as i32, 12 as i32);
+    let far_a: u32 = (far >> (24 as u32)) & (0xFF as u32);
+    assert far_a < out_a;
+    // WELL outside the reach: nothing at all.
+    assert surface_pixel(surf, 30 as i32, 2 as i32) == (0 as u32);
+
+    { cairo_destroy(cr) };
+    { cairo_surface_destroy(surf) };
+}
+
+// The shadow is STATE and `restore` pops it. A recording that saved, armed a
+// shadow, drew, restored and drew again must get one shadow, not two.
+#[test]
+fn restoring_pops_the_shadow() {
+    let surf: *u8 = { cairo_image_surface_create(0 as i32, 60 as i32, 60 as i32) };
+    let cr: *u8 = { cairo_create(surf) };
+    var c: vocab::Canvas = shadow_canvas(60.0f64);
+    let _s0: status::Status = c.save();
+    var sh: vocab::Shadow = vocab::Shadow {
+        color: vocab::Color::rgba(1.0f64, 0.0f64, 0.0f64, 1.0f64),
+        offset: vocab::Point::of(5.0f64, 5.0f64),
+        radius: 0.0f64,
+        opacity: 1.0f64,
+    };
+    let _e0: status::Status = c.set_shadow(sh);
+    let _s1: status::Status = c.restore();
+    let _e1: status::Status = c.set_fill(vocab::Color::rgba(0.0f64, 0.0f64, 1.0f64, 1.0f64));
+    let _e2: status::Status = c.fill_rect(vocab::Rect::of(10.0f64, 10.0f64, 10.0f64, 10.0f64));
+    drawing::replay(cr, #addr_of(c));
+
+    assert surface_pixel(surf, 15 as i32, 15 as i32) == (0xFF0000FF as u32);
+    // Where the shadow WOULD have been if `restore` had not popped it.
+    assert surface_pixel(surf, 23 as i32, 23 as i32) == (0 as u32);
+
+    { cairo_destroy(cr) };
+    { cairo_surface_destroy(surf) };
+}
+
+// NEGATIVE: a fully transparent shadow colour, or a zero opacity, casts
+// NOTHING — and costs no scratch surface. Cheap to get wrong: a colour with
+// alpha zero still has a silhouette, and blurring it would paint a grey box.
+#[test]
+fn a_transparent_shadow_casts_nothing() {
+    let surf: *u8 = { cairo_image_surface_create(0 as i32, 40 as i32, 40 as i32) };
+    let cr: *u8 = { cairo_create(surf) };
+    var c: vocab::Canvas = shadow_canvas(40.0f64);
+    let _e0: status::Status = c.set_shadow(vocab::Shadow {
+        color: vocab::Color::rgba(1.0f64, 0.0f64, 0.0f64, 0.0f64),
+        offset: vocab::Point::of(8.0f64, 8.0f64),
+        radius: 0.0f64,
+        opacity: 1.0f64,
+    });
+    let _e1: status::Status = c.set_fill(vocab::Color::rgba(0.0f64, 0.0f64, 1.0f64, 1.0f64));
+    let _e2: status::Status = c.fill_rect(vocab::Rect::of(5.0f64, 5.0f64, 8.0f64, 8.0f64));
+    drawing::replay(cr, #addr_of(c));
+    assert surface_pixel(surf, 17 as i32, 17 as i32) == (0 as u32);
+
+    // ...and the same with a zero OPACITY and an opaque colour.
+    var c2: vocab::Canvas = shadow_canvas(40.0f64);
+    let _f0: status::Status = c2.set_shadow(vocab::Shadow {
+        color: vocab::Color::rgba(1.0f64, 0.0f64, 0.0f64, 1.0f64),
+        offset: vocab::Point::of(8.0f64, 8.0f64),
+        radius: 0.0f64,
+        opacity: 0.0f64,
+    });
+    let _f1: status::Status = c2.set_fill(vocab::Color::rgba(0.0f64, 0.0f64, 1.0f64, 1.0f64));
+    let _f2: status::Status = c2.fill_rect(vocab::Rect::of(5.0f64, 25.0f64, 8.0f64, 8.0f64));
+    drawing::replay(cr, #addr_of(c2));
+    assert surface_pixel(surf, 17 as i32, 37 as i32) == (0 as u32);
+
+    { cairo_destroy(cr) };
+    { cairo_surface_destroy(surf) };
+}
+
+// The BOX RADIUS is the blur's one tuning number, and it must never be zero —
+// a zero-width box is the identity, so a shadow asked to be soft would come
+// back hard and look like the blur was never called.
+#[test]
+fn the_box_radius_is_never_degenerate() {
+    assert drawing::box_radius_for(0.0f64) == (1 as i64);
+    assert drawing::box_radius_for(0.1f64) == (1 as i64);
+    assert drawing::box_radius_for(4.0f64) == (6 as i64);
+    assert drawing::box_radius_for(10.0f64) == (15 as i64);
+}
+
+// ---- the canvas image, drawn for real ------------------------------------------
+//
+// OFFSCREEN AND WITHOUT A DISPLAY: a cairo IMAGE surface is a buffer, a pixbuf
+// can be made in memory, and `paint_pixbuf` is the half of the image path with
+// geometry in it. So the thing that would otherwise need eyes — did the picture
+// land in the box, and only in the box — is an assertion about four pixels.
+#[link_name = "cairo_image_surface_create"]
+extern fn cairo_image_surface_create(format: i32, width: i32, height: i32) -> *u8;
+#[link_name = "cairo_create"]
+extern fn cairo_create(surface: *u8) -> *u8;
+#[link_name = "cairo_destroy"]
+extern fn cairo_destroy(cr: *u8);
+#[link_name = "cairo_surface_destroy"]
+extern fn cairo_surface_destroy(s: *u8);
+#[link_name = "cairo_surface_flush"]
+extern fn cairo_surface_flush(s: *u8);
+#[link_name = "cairo_image_surface_get_data"]
+extern fn cairo_image_surface_get_data(s: *u8) -> *u8;
+#[link_name = "cairo_image_surface_get_stride"]
+extern fn cairo_image_surface_get_stride(s: *u8) -> i32;
+
+// CAIRO_FORMAT_ARGB32 is 0, and its pixels are PREMULTIPLIED native-endian
+// 32-bit words — on x86_64 that is B, G, R, A in memory order.
+fn surface_pixel(surf: *u8, x: i32, y: i32) -> u32 {
+    { cairo_surface_flush(surf) };
+    let data: *u8 = { cairo_image_surface_get_data(surf) };
+    if data == (0 as *u8) { return 0 as u32; }
+    let stride: usize = { cairo_image_surface_get_stride(surf) } as usize;
+    let off: usize = (y as usize) *% stride +% ((x as usize) *% (4 as usize));
+    let px: *u8 = { (data as usize) +% off } as *u8;
+    let b: u32 = { *px } as u32;
+    let g: u32 = { *(((px as usize) +% (1 as usize)) as *u8) } as u32;
+    let r: u32 = { *(((px as usize) +% (2 as usize)) as *u8) } as u32;
+    let a: u32 = { *(((px as usize) +% (3 as usize)) as *u8) } as u32;
+    return (a << (24 as u32)) | (r << (16 as u32)) | (g << (8 as u32)) | b;
+}
+
+#[test]
+fn a_canvas_image_lands_inside_its_box_and_nowhere_else() {
+    // A 2x2 opaque RED pixbuf. GDK_COLORSPACE_RGB is 0 and `fill` takes RGBA.
+    let src: pixbuf::Pixbuf = match pixbuf::Pixbuf::new(0 as i32, true, 8 as i32,
+                                                        2 as i32, 2 as i32) {
+        option::Option[pixbuf::Pixbuf]::Some(x) => x,
+        option::Option[pixbuf::Pixbuf]::None => { assert false; return; }
+    };
+    src.fill(0xFF0000FF as u32);
+
+    let surf: *u8 = { cairo_image_surface_create(0 as i32, 20 as i32, 20 as i32) };
+    let cr: *u8 = { cairo_create(surf) };
+
+    // A box that is NOT the surface: 4,4 to 12,12. Everything outside must stay
+    // the transparent black a fresh ARGB32 surface starts as — that is the
+    // clip, and without it cairo paints the whole plane.
+    drawing::paint_pixbuf(cr, src.raw(),
+                          vocab::Rect { x: 4.0f64, y: 4.0f64,
+                                        width: 8.0f64, height: 8.0f64 },
+                          1.0f64);
+
+    // INSIDE, at three corners and the middle: opaque red.
+    assert surface_pixel(surf, 5 as i32, 5 as i32) == (0xFFFF0000 as u32);
+    assert surface_pixel(surf, 10 as i32, 10 as i32) == (0xFFFF0000 as u32);
+    assert surface_pixel(surf, 4 as i32, 11 as i32) == (0xFFFF0000 as u32);
+    // OUTSIDE, on every side: untouched.
+    assert surface_pixel(surf, 0 as i32, 0 as i32) == (0 as u32);
+    assert surface_pixel(surf, 3 as i32, 8 as i32) == (0 as u32);
+    assert surface_pixel(surf, 12 as i32, 8 as i32) == (0 as u32);
+    assert surface_pixel(surf, 8 as i32, 19 as i32) == (0 as u32);
+
+    { cairo_destroy(cr) };
+    { cairo_surface_destroy(surf) };
+}
+
+// `opacity` is not a cairo state — it is folded into the paint. A canvas that
+// set it and then drew an image would otherwise get an opaque one.
+#[test]
+fn a_canvas_image_honours_the_recorded_opacity() {
+    let src: pixbuf::Pixbuf = match pixbuf::Pixbuf::new(0 as i32, true, 8 as i32,
+                                                        2 as i32, 2 as i32) {
+        option::Option[pixbuf::Pixbuf]::Some(x) => x,
+        option::Option[pixbuf::Pixbuf]::None => { assert false; return; }
+    };
+    src.fill(0xFF0000FF as u32);
+    let surf: *u8 = { cairo_image_surface_create(0 as i32, 8 as i32, 8 as i32) };
+    let cr: *u8 = { cairo_create(surf) };
+    drawing::paint_pixbuf(cr, src.raw(),
+                          vocab::Rect { x: 0.0f64, y: 0.0f64,
+                                        width: 8.0f64, height: 8.0f64 },
+                          0.5f64);
+    // Half alpha, and PREMULTIPLIED — so the red channel comes down with it.
+    // 0x80 or 0x7F depending on cairo's rounding; the assertion is the band.
+    let px: u32 = surface_pixel(surf, 4 as i32, 4 as i32);
+    let a: u32 = (px >> (24 as u32)) & (0xFF as u32);
+    let r: u32 = (px >> (16 as u32)) & (0xFF as u32);
+    assert a >= (0x7E as u32);
+    assert a <= (0x82 as u32);
+    assert r >= (0x7E as u32);
+    assert r <= (0x82 as u32);
+    { cairo_destroy(cr) };
+    { cairo_surface_destroy(surf) };
+}
+
+// NEGATIVE: a zero or negative box draws NOTHING. cairo's scale would be a
+// division by zero and the clip would be empty, so the guard is what keeps a
+// degenerate recording from being a NaN transform.
+#[test]
+fn a_canvas_image_with_an_empty_box_draws_nothing() {
+    let src: pixbuf::Pixbuf = match pixbuf::Pixbuf::new(0 as i32, true, 8 as i32,
+                                                        2 as i32, 2 as i32) {
+        option::Option[pixbuf::Pixbuf]::Some(x) => x,
+        option::Option[pixbuf::Pixbuf]::None => { assert false; return; }
+    };
+    src.fill(0xFF0000FF as u32);
+    let surf: *u8 = { cairo_image_surface_create(0 as i32, 8 as i32, 8 as i32) };
+    let cr: *u8 = { cairo_create(surf) };
+    drawing::paint_pixbuf(cr, src.raw(),
+                          vocab::Rect { x: 0.0f64, y: 0.0f64,
+                                        width: 0.0f64, height: 8.0f64 },
+                          1.0f64);
+    drawing::paint_pixbuf(cr, src.raw(),
+                          vocab::Rect { x: 0.0f64, y: 0.0f64,
+                                        width: 8.0f64, height: 0.0f64 },
+                          1.0f64);
+    // And a NULL pixbuf, which is what a source that would not load resolves to.
+    drawing::paint_pixbuf(cr, 0 as *u8,
+                          vocab::Rect { x: 0.0f64, y: 0.0f64,
+                                        width: 8.0f64, height: 8.0f64 },
+                          1.0f64);
+    assert surface_pixel(surf, 4 as i32, 4 as i32) == (0 as u32);
+    { cairo_destroy(cr) };
+    { cairo_surface_destroy(surf) };
+}
+
+// A CANVAS IMAGE IS CACHED BY SOURCE, and a MISS IS CACHED TOO — a canvas that
+// names a file which is not there re-runs at 60Hz, and re-opening it sixty
+// times a second is the expensive case, not the hit.
+//
+// No display and no file needed: these are questions about the table, which is
+// the part that can be wrong without anyone seeing a blank box.
+#[test]
+fn a_canvas_image_source_is_looked_up_once_and_a_miss_is_remembered() {
+    let before: usize = drawing::image_cache_count();
+    let a: *u8 = drawing::cached_pixbuf("/nonexistent/facet-gtk-suite-a.png");
+    assert a == (0 as *u8);
+    assert drawing::image_cache_count() == before +% (1 as usize);
+    // The SAME source again seats nothing new.
+    let b: *u8 = drawing::cached_pixbuf("/nonexistent/facet-gtk-suite-a.png");
+    assert b == (0 as *u8);
+    assert drawing::image_cache_count() == before +% (1 as usize);
+    // A DIFFERENT source does.
+    let c: *u8 = drawing::cached_pixbuf("/nonexistent/facet-gtk-suite-b.png");
+    assert c == (0 as *u8);
+    assert drawing::image_cache_count() == before +% (2 as usize);
+}
+
+// NEGATIVE: an empty source is not a path and not an icon name. It must not
+// reach the icon theme, which on a machine with one would answer the
+// missing-image glyph and put a broken-image icon where the recording asked
+// for nothing at all.
+#[test]
+fn an_empty_canvas_image_source_loads_nothing() {
+    assert drawing::load_pixbuf("") == (0 as *u8);
+}
 
 #[test]
 fn the_line_caps_and_joins_map_onto_cairos_own_order() {

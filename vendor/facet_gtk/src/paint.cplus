@@ -527,3 +527,19 @@ fn band(v: *u8, n: *core::Node, d: u64) {
     // reloading it from the band would drop whatever the kind had put in it.
     return;
 }
+
+// GtkImage takes an icon NAME or a file. facet's source is one string for
+// both, so it is read the way every toolkit reads it: a path has a separator
+// or an extension, a theme icon has neither.
+//
+// It lives HERE, in the leaf both callers already import, because `controls`
+// and `drawing` have to answer it the same way — an app that puts
+// `"folder-symbolic"` in an `image` and in a canvas gets one picture, not two
+// readings of one string. `drawing` cannot import `controls` (that is a cycle
+// through `anim`), and a second copy is where the two would drift.
+fn looks_like_path(s: str) -> bool {
+    var t: text::Text = text::from_str(s);
+    if t.contains("/") { return true; }
+    if t.contains(".") { return true; }
+    return false;
+}

@@ -253,10 +253,6 @@ Everything not listed as live above. The large ones, in the order they matter:
   left/right, which coincide only in a left-to-right flow. `C_FLOW_DIRECTION`
   is unanswered.
 
-- **The canvas's SHADOW and IMAGE.** A shadow is a group, a blur and a
-  composite, and cairo has no blur of its own; an image needs its source decoded
-  to a cairo surface and this package has no image cache. Both are recorded
-  commands that currently draw nothing.
 - **A gradient BORDER.** `bordered.stroke` is a Brush and a CSS border takes a
   solid; a gradient is `border-image`, which is a different mechanism with a
   different box model. Today a gradient stroke writes no border colour at all
@@ -375,6 +371,29 @@ Everything not listed as live above. The large ones, in the order they matter:
   Graphics and was read as the shape, not ported: cairo keeps its path IN the
   context where CG builds one separately, and cairo is already top-left so
   there is no flip arithmetic anywhere.
+- **A SHADOW IS BUILT, because cairo has neither one nor a blur.** Core
+  Graphics has `CGContextSetShadow`; cairo has nothing. So the path is copied
+  out of the context, replayed into a scratch image surface under the same
+  matrix, blurred with three box passes — the standard gaussian approximation,
+  and correct on premultiplied ARGB precisely because every channel is already
+  colour×alpha — and composited under the shape at the recorded offset. Copying
+  the PATH rather than rebuilding the shape is what makes one implementation
+  serve rects, ellipses, arcs, lines and an arbitrary `Path`, and what makes a
+  rotated canvas cast a rotated shadow. The pen is copied with it; the DASH is
+  not, so a dashed stroke's shadow is solid. A shadow whose scratch surface
+  would exceed 4096 on a side is dropped rather than drawn at the wrong size.
+- **A CANVAS IMAGE IS STRETCHED INTO ITS BOX.** `draw_image(source, box)`
+  carries a rect and no content mode, so "fit" and "fill" are not choices the
+  recording offers and stretching is the literal reading of the one argument
+  there is — an application that wants an aspect preserved passes a box with
+  that aspect, which it can compute and this cannot. The source string is read
+  exactly as an `image` control reads one (a path has a separator or an
+  extension, a theme icon has neither), and the predicate lives in `paint` so
+  the two cannot drift. Decoded pixbufs are cached by source and MISSES ARE
+  CACHED TOO, because a replay runs at 60Hz and re-opening a file that is not
+  there is the expensive case. A theme icon that is not file-backed draws
+  nothing; the cairo source is `EXTEND_PAD`, without which a stretched image
+  gets a translucent fringe where the filter kernel falls off the edge.
 - **A pull-to-refresh is ASSEMBLED, not adopted.** GTK has no such control
   anywhere: what exists is a scrolled window that reports its position and a
   spinner. The one thing that stops the gesture fighting the scroll is that it

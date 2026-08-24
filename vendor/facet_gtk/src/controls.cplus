@@ -930,19 +930,9 @@ fn build_button_content(v: *u8) {
     return;
 }
 
-// GtkImage takes an icon NAME or a file. facet's source is one string for
-// both, so it is read the way every toolkit reads it: a path has a separator
-// or an extension, a theme icon has neither.
-fn looks_like_path(s: str) -> bool {
-    var t: text::Text = text::from_str(s);
-    if t.contains("/") { return true; }
-    if t.contains(".") { return true; }
-    return false;
-}
-
 fn set_image_source(img: gtk::Image, source: str) {
     if source == "" { img.clear(); return; }
-    if looks_like_path(source) { img.set_from_file(source); return; }
+    if paint::looks_like_path(source) { img.set_from_file(source); return; }
     img.set_from_icon_name(source);
     return;
 }
