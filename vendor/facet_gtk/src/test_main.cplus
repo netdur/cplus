@@ -1271,6 +1271,49 @@ fn a_null_c_string_reads_as_empty_rather_than_dereferencing() {
 // because those are what is wrong silently, and a mirrored arc or a
 // transposed line cap looks like a drawing bug in the application.
 
+// ---- a row is never wider than its frame ---------------------------------------
+//
+// bugs/08-collection-width-keeps-growing.md. A collection grew about 40 points
+// per sync, without bound — measured through `playground/width_probe`:
+// 568, 582, 612, 648, ...
+//
+// THE LOOP. A row host is a GtkFixed, so its minimum width is the bounding box
+// of the children this module placed — at whatever `row_width` last answered.
+// The list view's minimum is that. The scrolled window's cross axis is
+// GTK_POLICY_NEVER, and NEVER makes a scrolled window demand its child's WHOLE
+// minimum: measured with `gtk_widget_measure` on a 4000-wide child,
+//
+//     ALWAYS 46 · AUTOMATIC 46 · NEVER 4000 · EXTERNAL 0
+//
+// `geometry::place` then writes the frame as a size request, a request is a
+// minimum, the GtkFixed above grows, the window's content grows, flex lays the
+// tree out wider, and the rows are laid out wider again.
+//
+// THE POLICY IS NOT THE PLACE TO CUT IT, even though EXTERNAL asks for nothing.
+// GTK4's `may_hscroll` is `hscrollbar_visible || policy == EXTERNAL`, so
+// EXTERNAL would let a lane claim sideways flicks meant for whatever encloses
+// it — the nested-scroll bug this backend already records paying for once. The
+// cut is the FRAME: flex computed it from the window and no row feeds back
+// into it.
+#[test]
+fn a_rows_width_is_capped_by_the_nodes_frame() {
+    // The allocation refines DOWNWARD — a vertical scrollbar taking its width
+    // is exactly why the allocation is consulted at all.
+    assert recycler::cap_row_width(600.0f64, 583.0f64) == 583.0f64;
+    // ...and never upward, which is the loop.
+    assert recycler::cap_row_width(600.0f64, 640.0f64) == 600.0f64;
+    assert recycler::cap_row_width(600.0f64, 600.0f64) == 600.0f64;
+}
+
+// NEGATIVE: before the first layout the frame is ZERO, and a zero cap would
+// pin every row to nothing. An unmeasured frame is "no answer yet", not "zero
+// wide" — the same reading the contract gives every numeric zero.
+#[test]
+fn a_row_with_no_frame_yet_takes_the_allocation() {
+    assert recycler::cap_row_width(0.0f64, 583.0f64) == 583.0f64;
+    assert recycler::cap_row_width(0.0f64 - 1.0f64, 583.0f64) == 583.0f64;
+}
+
 // ---- the split divider ---------------------------------------------------------
 //
 // Reported as: "when I drag split it looks like resisting me, to the point I

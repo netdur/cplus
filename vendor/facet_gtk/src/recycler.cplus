@@ -1259,14 +1259,46 @@ fn lay_row_out(n: *core::Node, host: *u8, node: *core::Node) {
 // NODE's frame before that, which is what facet computed. Zero means neither
 // has happened yet, and a row laid out at zero would be a row of nothing — so
 // `lay_row_out` declines, and the width change that follows re-lays it.
+// PURE, so the suite can pin it: the cap is the whole of the fix and it has no
+// widget in it.
+//
+// A frame of zero or less is "not laid out yet", not "zero wide" — capping to
+// it would pin every row to nothing before the first layout.
+fn cap_row_width(frame_width: f64, allocated: f64) -> f64 {
+    if frame_width <= (0.0 as f64) { return allocated; }
+    if allocated > frame_width { return frame_width; }
+    return allocated;
+}
+
 fn row_width(n: *core::Node) -> f64 {
+    let f: flex::Frame = { (*n).frame() };
     let v: *u8 = core::view_of(n);
     let lv: *u8 = list_view_of(v);
     if lv != (0 as *u8) {
         let w: i32 = gtk::Widget::from_raw(lv).get_width();
-        if w > (0 as i32) { return w as f64; }
+        // NEVER WIDER THAN THE FRAME, and this clamp is the whole of
+        // bugs/08-collection-width-keeps-growing.md.
+        //
+        // The allocation alone is a FEEDBACK PATH. A row host is a GtkFixed, so
+        // its minimum width is the bounding box of the children this module
+        // placed — placed at whatever `row_width` last answered. The list view's
+        // minimum is that; the scrolled window's cross-axis policy is
+        // GTK_POLICY_NEVER, which makes it demand its child's WHOLE minimum
+        // (measured: a 4000-wide child gives a scrolled window a minimum of
+        // 4000 under NEVER, and 46 under AUTOMATIC); `geometry::place` writes
+        // the frame as a size request and a request is a MINIMUM, so the
+        // GtkFixed above grows, so the window's content width grows, so flex
+        // lays the tree out wider, so the rows are laid out wider — and round
+        // it goes. Measured through `playground/width_probe`: 568, 582, 612,
+        // 648, +40 a sync without bound.
+        //
+        // The FRAME is the authority: flex computed it from the window, and
+        // nothing a row does feeds back into it. The allocation may still
+        // refine it DOWNWARD — that is a vertical scrollbar taking its width —
+        // which is the accuracy the allocation was reached for in the first
+        // place.
+        if w > (0 as i32) { return cap_row_width(f.width, w as f64); }
     }
-    let f: flex::Frame = { (*n).frame() };
     return f.width;
 }
 
