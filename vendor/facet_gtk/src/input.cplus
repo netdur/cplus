@@ -2007,16 +2007,72 @@ fn tree_row_click(sender: *u8, ctx: *u8) -> bool {
 // application that never wrote `.gesture(...)` still expects to be able to drag
 // a split.
 //
-// The offset GTK reports is from where the drag STARTED, so the position at
-// that moment is what it is added to; reading the live position each update
-// would compound every delta.
-static DRAG_ORIGIN: f64 = 0.0f64;
+// THE OFFSET GTK REPORTS IS NOT THE ONE TO USE, and this is the whole bug.
+//
+// A GtkGestureDrag's `offset` is the current point MINUS the press point, both
+// measured in the coordinate space of the widget the gesture is attached to —
+// and the widget this one is attached to is the divider, which this code MOVES
+// on every update. So the divider slides out from under its own coordinate
+// origin, and the offset comes back short by however far it just travelled.
+//
+// The loop that makes: move the divider by `d`, and the next report is `d`
+// smaller than the pointer actually moved. The divider converges on roughly
+// half the pointer's travel — it TRAILS THE CURSOR AND FEELS LIKE IT IS
+// RESISTING, which is exactly how it was reported: "it looks like resisting me,
+// to the point I can see two splitters — one where I am dragging and one where
+// it wants to be". The two were the cursor and the divider.
+//
+// So the position is read in the HOST's space, which does not move. The
+// gesture stays on the divider (that is what decides a drag has started at
+// all); only the arithmetic changes — the current point is translated out of
+// the divider and into the split, where an absolute coordinate means something
+// and nothing this code does can shift the origin under it.
+//
+// GRAB_DELTA keeps the point of the divider you took hold of. Without it the
+// first motion snaps the divider's centre to the cursor, which is its own small
+// jump on a grab zone six pixels wide.
+static GRAB_DELTA: f64 = 0.0f64;
+static GRAB_VALID: bool = false;
+
+#[link_name = "gtk_event_controller_get_widget"]
+extern fn gtk_event_controller_get_widget(controller: *u8) -> *u8;
+
+// The pointer, in the split host's coordinates. `false` when the gesture has no
+// point yet or the two widgets share no ancestor — a drag that cannot be
+// measured must not be guessed at.
+fn split_point_in_host(gesture: *u8, n: *core::Node, ref out: f64) -> bool {
+    let p: *split::SplitProps = split_props(n);
+    if p == (0 as *split::SplitProps) { return false; }
+    let host: *u8 = core::view_of(n);
+    if host == (0 as *u8) { return false; }
+    // The gesture's OWN widget, which is the divider — that is the space
+    // `get_point` answers in, so asking the controller is both exact and one
+    // fewer lookup than reaching for `controls::divider_of` (which `input`
+    // cannot import anyway: `controls` imports `input`).
+    let bar: *u8 = { gtk_event_controller_get_widget(gesture) };
+    if bar == (0 as *u8) { return false; }
+    var lx: f64 = 0.0f64;
+    var ly: f64 = 0.0f64;
+    let g: gtk::Gesture = gtk::Gesture::from_raw(gesture);
+    if !g.get_point(gdk::EventSequence::from_raw(0 as *u8), lx, ly) { return false; }
+    var hx: f64 = 0.0f64;
+    var hy: f64 = 0.0f64;
+    if !gtk::Widget::from_raw(bar).translate_coordinates(
+            gtk::Widget::from_raw(host), lx, ly, hx, hy) { return false; }
+    out = match { (*p).axis } {
+        split::SplitAxis::Columns => hx,
+        split::SplitAxis::Rows => hy,
+    };
+    return true;
+}
 
 fn split_drag_begin(gesture: *u8, x: f64, y: f64, user: *u8) {
     let n: *core::Node = user as *core::Node;
     let p: *split::SplitProps = split_props(n);
     if p == (0 as *split::SplitProps) { return; }
-    DRAG_ORIGIN = { (*p).position };
+    var at: f64 = 0.0f64;
+    GRAB_VALID = split_point_in_host(gesture, n, at);
+    if GRAB_VALID { GRAB_DELTA = { (*p).position } - at; }
     return;
 }
 
@@ -2024,26 +2080,17 @@ fn split_drag_update(gesture: *u8, dx: f64, dy: f64, user: *u8) {
     let n: *core::Node = user as *core::Node;
     let p: *split::SplitProps = split_props(n);
     if p == (0 as *split::SplitProps) { return; }
-    let along: f64 = match { (*p).axis } {
-        split::SplitAxis::Columns => dx,
-        split::SplitAxis::Rows => dy,
-    };
-    var next: f64 = DRAG_ORIGIN + along;
+    // `dx`/`dy` are deliberately UNUSED — see the note above. They are the
+    // divider's own coordinates and the divider is what moves.
+    if !GRAB_VALID { return; }
+    var at: f64 = 0.0f64;
+    if !split_point_in_host(gesture, n, at) { return; }
+    var next: f64 = at + GRAB_DELTA;
     // BOTH minimums, here, because this is the path a person moves a divider
     // by and the live widget is in hand — its allocation is what `min_trailing`
     // has to be measured against, and `apply_split`'s own clamp reads a frame
     // that is one layout behind.
-    if next < { (*p).min_leading } { next = { (*p).min_leading }; }
-    let host: *u8 = core::view_of(n);
-    if host != (0 as *u8) {
-        let w: gtk::Widget = gtk::Widget::from_raw(host);
-        let avail: f64 = match { (*p).axis } {
-            split::SplitAxis::Columns => { w.get_width() } as f64,
-            split::SplitAxis::Rows => { w.get_height() } as f64,
-        };
-        let cap: f64 = avail - { (*p).min_trailing };
-        if avail > (0.0 as f64) && cap > { (*p).min_leading } && next > cap { next = cap; }
-    }
+    next = clamp_split(p, n, next);
     { (*p).position = next };
     // Through the ordinary dirty word, so `apply_split` re-writes the panes'
     // style and the sync's own relayout puts them there. Nothing here places a
@@ -2052,6 +2099,34 @@ fn split_drag_update(gesture: *u8, dx: f64, dy: f64, user: *u8) {
     let h: fn(*u8, *u8) = { (*p).on_move };
     if h != props::no_handler { h(core::view_of(n), { (*p).ctx }); }
     return;
+}
+
+// PURE, so the suite can pin it: the clamp is the half of this that decides
+// what a person is allowed to do, and it is the half that has no widget in it.
+fn clamp_split_to(min_leading: f64, min_trailing: f64, avail: f64, want: f64) -> f64 {
+    var next: f64 = want;
+    if next < min_leading { next = min_leading; }
+    if avail <= (0.0 as f64) { return next; }
+    let cap: f64 = avail - min_trailing;
+    // A host too small to honour BOTH minimums cannot be clamped to both, and
+    // the leading one wins — a divider shoved past the trailing minimum is
+    // recoverable by dragging back, one pinned at zero width is not.
+    if cap <= min_leading { return next; }
+    if next > cap { next = cap; }
+    return next;
+}
+
+fn clamp_split(p: *split::SplitProps, n: *core::Node, want: f64) -> f64 {
+    var avail: f64 = 0.0f64;
+    let host: *u8 = core::view_of(n);
+    if host != (0 as *u8) {
+        let w: gtk::Widget = gtk::Widget::from_raw(host);
+        avail = match { (*p).axis } {
+            split::SplitAxis::Columns => { w.get_width() } as f64,
+            split::SplitAxis::Rows => { w.get_height() } as f64,
+        };
+    }
+    return clamp_split_to({ (*p).min_leading }, { (*p).min_trailing }, avail, want);
 }
 
 fn split_props(n: *core::Node) -> *split::SplitProps {

@@ -101,13 +101,34 @@ fn slot_of_root(r: *core::Node) -> usize {
 // GTK draws the frame client-side, so all four are reachable — but two of them
 // need a GtkHeaderBar to say anything at all, because the close/minimise/
 // maximise buttons belong to the header rather than to the window.
+// A GTK4 APPLICATION'S NATIVE BAR IS A GtkHeaderBar. That is not a stylistic
+// reading of `Bar::Native` — it is what the platform's own window frame IS
+// here, the way an NSWindow's titlebar is on AppKit.
+//
+// This answered FALSE for `Native`, which left the default window — every
+// window nobody configured — with no header at all. Three things followed,
+// and all three were reported as separate bugs:
+//
+//   * `set_decoration_layout` and `set_title_widget` are calls ON the header,
+//     so a window without one silently dropped `maximizable`, `minimizable`
+//     and its own TITLE;
+//   * on Wayland there are no server-side decorations — GNOME provides none —
+//     so a decorated window with no titlebar falls back to GTK's minimal one,
+//     which is where "no window border until I resize" came from;
+//   * the maximise button and double-click-to-maximise live on the titlebar,
+//     so with no real one there was nothing to click.
+//
+// The asymmetry gives the bug away on its own: `maximizable: false` built a
+// header and `maximizable: true` — the DEFAULT — did not. The special case was
+// answered and the common one was not.
+//
+// `Hidden` and `Custom` still say no, and they mean it: both call
+// `set_decorated(false)`, and `Custom` is an application drawing the bar
+// itself.
 fn wants_header(c: *screen::Chrome) -> bool {
-    if { (*c).subtitle_text.view() } != "" { return true; }
-    if !{ (*c).maximizable } { return true; }
-    if !{ (*c).minimizable } { return true; }
     return match { (*c).bar } {
+        screen::Bar::Native => true,
         screen::Bar::Blended => true,
-        screen::Bar::Native => false,
         screen::Bar::Hidden => false,
         screen::Bar::Custom => false,
     };

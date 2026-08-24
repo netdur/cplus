@@ -1271,6 +1271,53 @@ fn a_null_c_string_reads_as_empty_rather_than_dereferencing() {
 // because those are what is wrong silently, and a mirrored arc or a
 // transposed line cap looks like a drawing bug in the application.
 
+// ---- the split divider ---------------------------------------------------------
+//
+// Reported as: "when I drag split it looks like resisting me, to the point I
+// can see two splitters — one where I am dragging and one where it wants to
+// be." The two were the CURSOR and the divider.
+//
+// A GtkGestureDrag's offset is the current point minus the press point, both
+// in the coordinate space of the widget the gesture is on — and the widget it
+// is on is the divider, which the drag handler MOVES on every update. The
+// divider slides out from under its own origin, so each report comes back
+// short by however far it just travelled, and it converges on about half the
+// pointer's travel.
+//
+// The fix reads the pointer in the HOST's space, which does not move. The
+// arithmetic that decides what a person is ALLOWED to do is the clamp, and
+// that half is pure.
+#[test]
+fn a_split_clamps_to_both_minimums() {
+    // Room for both: the trailing minimum caps it.
+    assert input::clamp_split_to(150.0f64, 240.0f64, 1000.0f64, 500.0f64) == 500.0f64;
+    assert input::clamp_split_to(150.0f64, 240.0f64, 1000.0f64, 900.0f64) == 760.0f64;
+    assert input::clamp_split_to(150.0f64, 240.0f64, 1000.0f64, 10.0f64) == 150.0f64;
+}
+
+// A host with NO ALLOCATION YET cannot measure a trailing minimum against
+// anything — the leading one still applies, and the trailing one is skipped
+// rather than clamping everything to a negative cap. Before the first
+// allocation this is every split there is.
+#[test]
+fn a_split_with_no_allocation_yet_still_honours_the_leading_minimum() {
+    assert input::clamp_split_to(150.0f64, 240.0f64, 0.0f64, 10.0f64) == 150.0f64;
+    assert input::clamp_split_to(150.0f64, 240.0f64, 0.0f64, 900.0f64) == 900.0f64;
+}
+
+// NEGATIVE: a host too small to honour BOTH minimums cannot be clamped to
+// both. The LEADING one wins — a divider shoved past the trailing minimum is
+// recoverable by dragging back, one pinned at zero width is not. Clamping to
+// `avail - min_trailing` here would answer a number below `min_leading` and
+// invert the two.
+#[test]
+fn a_split_too_small_for_both_minimums_keeps_the_leading_one() {
+    // 300 wide, but the two minimums want 390.
+    let got: f64 = input::clamp_split_to(150.0f64, 240.0f64, 300.0f64, 200.0f64);
+    assert got >= (150.0f64);
+    assert input::clamp_split_to(150.0f64, 240.0f64, 300.0f64, 10.0f64) == 150.0f64;
+}
+
 // ---- image ---------------------------------------------------------------------
 //
 // The gallery's image hosts showed nothing, and the control was not the reason:
@@ -3476,12 +3523,19 @@ fn the_decoration_layout_names_only_the_buttons_the_chrome_allows() {
 }
 
 #[test]
-fn a_header_bar_is_built_only_when_the_chrome_needs_one() {
-    // A plain window takes GTK's own decorations; a header bar is the price of
-    // a subtitle or a button policy, and paying it unasked would replace the
-    // desktop's title bar with one facet drew.
+fn a_header_bar_is_built_for_every_bar_that_has_one() {
+    // THIS USED TO ASSERT THE OPPOSITE for a plain window, on the reasoning
+    // that a header bar "would replace the desktop's title bar with one facet
+    // drew". There is no desktop title bar to replace: GTK4 draws the frame
+    // client-side, and on Wayland GNOME provides no server-side decorations at
+    // all. So a default window got no header, and with it no title widget, no
+    // decoration layout, no working maximise button and — on Wayland — no
+    // border until something forced a re-configure.
+    //
+    // The asymmetry gave it away: `maximizable: false` built a header and
+    // `maximizable: true`, the default, did not.
     var plain: screen::Chrome = screen::Chrome::new();
-    assert !window::wants_header(#addr_of(plain));
+    assert window::wants_header(#addr_of(plain));
     var subtitled: screen::Chrome = screen::Chrome::new(subtitle: "two lines");
     assert window::wants_header(#addr_of(subtitled));
     var fixed: screen::Chrome = screen::Chrome::new(maximizable: false);
@@ -3494,6 +3548,14 @@ fn a_header_bar_is_built_only_when_the_chrome_needs_one() {
     assert !window::wants_header(#addr_of(hidden));
     var custom: screen::Chrome = screen::Chrome::new(bar: screen::Bar::Custom);
     assert !window::wants_header(#addr_of(custom));
+    // ...and the button policy no longer decides it, because the policy is
+    // WRITTEN ON the header — a window that wanted one and got none was the
+    // bug, not the design.
+    var no_min: screen::Chrome = screen::Chrome::new(minimizable: false);
+    assert window::wants_header(#addr_of(no_min));
+    var hidden_no_max: screen::Chrome =
+        screen::Chrome::new(bar: screen::Bar::Hidden, maximizable: false);
+    assert !window::wants_header(#addr_of(hidden_no_max));
     return;
 }
 
