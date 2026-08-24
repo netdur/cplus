@@ -39,6 +39,7 @@ import "facet/services" as services;
 import "facet/theme" as theme;
 import "facet/application" as app;
 import "gtk4/gtk4" as gtk;
+import "./controls" as controls;
 import "./input" as input;
 import "./views" as views;
 import "./paint" as paint;
@@ -68,6 +69,13 @@ fn install() {
     // `mount::mount`. Idempotent in GTK itself, so a caller that already
     // called it loses nothing.
     gtk::init();
+    // THE ICON FONT, BEFORE ANYTHING RENDERS. Pango caches its family list on
+    // first use and adding a font to fontconfig does not invalidate it, so
+    // registering late means a font that is present and unreachable —
+    // `controls::register_bundled_font` explains the measurement. Free when the
+    // font is already installed system-wide, and it says so once when it is
+    // nowhere.
+    let _font: bool = controls::register_bundled_font();
     mount::install(renderer());
     services::install_scheduler(scheduler::scheduler());
     input::install();

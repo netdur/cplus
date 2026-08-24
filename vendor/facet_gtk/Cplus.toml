@@ -59,4 +59,12 @@ pangocairo  = "*"
 gmodule     = "*"
 
 [link]
-libs = ["gtk-4"]
+# fontconfig is not an extra dependency: it is how GTK finds fonts on Linux and
+# is already in the closure through pango. It is named here because
+# `controls::register_bundled_font` calls it DIRECTLY, and GNU ld resolves a
+# direct reference only from a library on the command line — being a
+# DT_NEEDED of pangoft2 is not enough.
+# pangoft2 for the same reason: `pango_fc_font_map_config_changed` is the one
+# call that makes an app font visible to a fontmap that has already cached its
+# family list.
+libs = ["gtk-4", "fontconfig", "pangoft2-1.0"]

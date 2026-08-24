@@ -33,6 +33,8 @@
 
 import "stdlib/option" as option;
 import "stdlib/text" as text;
+import "stdlib/io" as io;
+import "stdlib/fs" as fs;
 import "facet/facet" as core;
 import "facet/props" as props;
 import "facet/vocabulary" as vocab;
@@ -575,7 +577,15 @@ fn css_decls(kind: u32, n: *core::Node) -> text::Text {
         // icons recolour themselves to it); a glyph takes font AND colour.
         var b: text::Text = color_decl("color", { (*p).color });
         if !symbol_is_system(n) {
-            b = b.appending(font_decls({ (*p).font.view() }, { (*p).size },
+            // AN EMPTY `font` MEANS FACET'S BUNDLED ONE, not "no font" —
+            // `symbol.cplus` says so at the field. This passed the empty string
+            // straight through to `font_decls`, which writes no `font-family`
+            // at all, so the glyph was asked of the UI font and came back as a
+            // box. The two halves of that bug are here and in
+            // `register_bundled_font`; either one alone still shows boxes.
+            var family: str = { (*p).font.view() };
+            if family == "" { family = bundled_family(); }
+            b = b.appending(font_decls(family, { (*p).size },
                                        vocab::FontWeight::Default, false, false).view());
             b = b.appending(fill_decl({ (*p).fill }).view());
         }
@@ -1795,7 +1805,177 @@ fn symbol_is_system(n: *core::Node) -> bool {
     };
 }
 
+// ---- the bundled icon font -----------------------------------------------------
+//
+// `symbol(icons::home)` is a CODEPOINT in an icon font, and the font has to be
+// somewhere. facet ships one — `vendor/facet/assets/MaterialSymbolsOutlined.ttf`,
+// 4,268 icons, Apache 2.0 — and `symbol.cplus` says a backend "registers the
+// font once at startup and renders the codepoint through its ordinary text
+// stack". THIS BACKEND NEVER DID, which is why every bundled symbol rendered as
+// a tofu box with its own codepoint printed inside it: the text reached Pango
+// correctly and there was no glyph for it.
+//
+// On Linux the font stack is fontconfig, and an application font that is not
+// installed system-wide is added with `FcConfigAppFontAddFile` — the exact
+// counterpart of AppKit's `CTFontManagerRegisterFontsForURL`, which
+// `facet_appkit/controls.cplus` calls in the same place for the same reason.
+//
+// THE FONT IS FOUND, NOT ASSUMED, in the order an application actually ships
+// one: its own `assets/` first (a packaged app, and the tree's own convention —
+// `assets/hat.png` sits beside it), then the vendored copy from a source tree.
+// Same search order as the AppKit backend, so an application that works there
+// works here.
+
+#[link_name = "FcConfigGetCurrent"]
+extern fn fc_config_get_current() -> *u8;
+#[link_name = "FcConfigAppFontAddFile"]
+extern fn fc_config_app_font_add_file(config: *u8, file: *u8) -> i32;
+
+fn bundled_family() -> str { return "Material Symbols Outlined"; }
+
+static SYMBOL_FONT_TRIED: bool = false;
+static SYMBOL_FONT_OK: bool = false;
+
+fn register_bundled_font() -> bool {
+    if SYMBOL_FONT_TRIED { return SYMBOL_FONT_OK; }
+    SYMBOL_FONT_TRIED = true;
+    // Already installed system-wide? Then there is nothing to add, and adding
+    // it again would give fontconfig two copies of one family.
+    if font_family_is_known(bundled_family()) { SYMBOL_FONT_OK = true; return true; }
+    if search_up("assets/MaterialSymbolsOutlined.ttf") { SYMBOL_FONT_OK = true; return true; }
+    if search_up("vendor/facet/assets/MaterialSymbolsOutlined.ttf") { SYMBOL_FONT_OK = true; return true; }
+    // ONCE, and naming the file — a symbol that fails silently is
+    // indistinguishable from a symbol that is not there, and on this backend
+    // that verb spent its whole life indistinguishable from working.
+    io::eprintln("facet_gtk: the bundled symbol font was not found (assets/MaterialSymbolsOutlined.ttf, or vendor/facet/assets/) — symbol(icons::*) renders as codepoint boxes. Ship the font beside the binary to fix it.");
+    return false;
+}
+
+// UP THE TREE, not at a guessed depth. A hard-coded `../../` is right for an
+// example run from `examples/<name>/` and wrong for everything else — the
+// suite's own binary runs from somewhere else again, which is how this was
+// found. Walking up costs a handful of failed opens, once per process.
+//
+// FOUR LEVELS is the depth of this tree from any package or example directory
+// with room to spare; past that, a font that is not there is not there.
+fn find_up(suffix: str) -> text::Text {
+    var up: text::Text = text::from_str("");
+    var depth: i32 = 0 as i32;
+    while depth <= (4 as i32) {
+        let candidate: text::Text = up.appending(suffix);
+        if fs::exists(candidate.view()) { return candidate; }
+        up = up.appending("../");
+        depth = depth +% (1 as i32);
+    }
+    return text::from_str("");
+}
+
+fn search_up(suffix: str) -> bool {
+    let found: text::Text = find_up(suffix);
+    if found.view() == "" { return false; }
+    return add_app_font(found.view());
+}
+
+fn add_app_font(path: str) -> bool {
+    let cfg: *u8 = { fc_config_get_current() };
+    if cfg == (0 as *u8) { return false; }
+    var ok: bool = false;
+    match text::from_str(path).c_str() {
+        option::Option[text::CString]::Some(cs) => {
+            ok = { fc_config_app_font_add_file(cfg, cs.as_ptr()) } != (0 as i32);
+        }
+        option::Option[text::CString]::None => { }
+    }
+    if !ok { return false; }
+    // PANGO CACHES ITS FAMILY LIST, and adding a font to fontconfig does not
+    // invalidate it. Measured: touch the default fontmap once, then add the
+    // font, and `load_font("Material Symbols Outlined")` still comes back as
+    // Noto Sans — a substitution, which is exactly the tofu box that was on
+    // screen. So the map is told.
+    //
+    // Registration runs from `install()`, before anything renders, and this is
+    // the belt to that braces: a host application that had already drawn text
+    // would otherwise get a font that is present and unreachable.
+    notify_font_config_changed();
+    // FcConfigAppFontAddFile answers TRUE for a file it could read, which is
+    // not the same as "the family this package wants is now there". Ask Pango,
+    // because Pango is what will actually be asked for the glyph.
+    return font_family_is_known(bundled_family());
+}
+
+// `pango_fc_font_map_config_changed` lives in pangoft2 and takes a
+// PangoFcFontMap. On a Linux desktop the default pangocairo map IS one, but
+// that is a property of the build rather than of the API — so the cast is
+// GUARDED. A map that is not an FcFontMap is not one this call can be made on,
+// and the font is then simply picked up by whatever the next map is.
+#[link_name = "pango_fc_font_map_config_changed"]
+extern fn pango_fc_font_map_config_changed(map: *u8);
+
+fn notify_font_config_changed() {
+    let map: *u8 = { pango_cairo_font_map_get_default() };
+    if map == (0 as *u8) { return; }
+    if !g::is_a(map, #str_ptr("PangoFcFontMap\0")) { return; }
+    { pango_fc_font_map_config_changed(map) };
+    return;
+}
+
+// Does Pango know this family by name?
+//
+// `pango_font_map_load_font` ALWAYS answers something — fontconfig substitutes
+// rather than failing — so the test is not "did a font come back" but "is the
+// font that came back the one asked for". A substituted font is exactly the
+// failure that was on screen.
+#[link_name = "pango_cairo_font_map_get_default"]
+extern fn pango_cairo_font_map_get_default() -> *u8;
+#[link_name = "pango_font_map_load_font"]
+extern fn pango_font_map_load_font(map: *u8, ctx: *u8, desc: *u8) -> *u8;
+#[link_name = "pango_font_map_create_context"]
+extern fn pango_font_map_create_context(map: *u8) -> *u8;
+#[link_name = "pango_font_describe"]
+extern fn pango_font_describe(font: *u8) -> *u8;
+#[link_name = "pango_font_description_from_string"]
+extern fn pango_font_description_from_string(s: *u8) -> *u8;
+#[link_name = "pango_font_description_get_family"]
+extern fn pango_font_description_get_family(desc: *u8) -> *u8;
+#[link_name = "pango_font_description_free"]
+extern fn pango_font_description_free(desc: *u8);
+
+fn font_family_is_known(family: str) -> bool {
+    let map: *u8 = { pango_cairo_font_map_get_default() };
+    if map == (0 as *u8) { return false; }
+    var desc: *u8 = 0 as *u8;
+    match text::from_str("${family} 12").c_str() {
+        option::Option[text::CString]::Some(cs) => {
+            desc = { pango_font_description_from_string(cs.as_ptr()) };
+        }
+        option::Option[text::CString]::None => { }
+    }
+    if desc == (0 as *u8) { return false; }
+    let ctx: *u8 = { pango_font_map_create_context(map) };
+    var same: bool = false;
+    if ctx != (0 as *u8) {
+        let font: *u8 = { pango_font_map_load_font(map, ctx, desc) };
+        if font != (0 as *u8) {
+            let got: *u8 = { pango_font_describe(font) };
+            if got != (0 as *u8) {
+                let name: *u8 = { pango_font_description_get_family(got) };
+                if name != (0 as *u8) {
+                    same = paint::cstr_equals_ignoring_case(name, family);
+                }
+                { pango_font_description_free(got) };
+            }
+            { g::object_unref(font) };
+        }
+        { g::object_unref(ctx) };
+    }
+    { pango_font_description_free(desc) };
+    return same;
+}
+
 fn create_symbol(n: *core::Node) -> *u8 {
+    // Registration is LAZY and once: an application that draws no bundled
+    // symbol never reads the file, and one that draws forty reads it once.
+    if !symbol_is_system(n) { let _ok: bool = register_bundled_font(); }
     if symbol_is_system(n) { return gtk::Image::new().upcast().raw(); }
     let l: gtk::Label = gtk::Label::new("");
     let w: gtk::Widget = l.upcast();

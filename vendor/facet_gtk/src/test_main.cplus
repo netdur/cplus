@@ -21,7 +21,10 @@
 import "stdlib/option" as option;
 import "stdlib/text" as text;
 import "stdlib/vec" as vec;
+import "stdlib/io" as io;
 import "stdlib/status" as status;
+import "gtk4/gtk4" as gtk;
+import "gdk/gdk" as gdk;
 import "gdkpixbuf/gdkpixbuf" as pixbuf;
 import "facet/facet" as core;
 import "facet/props" as props;
@@ -1267,6 +1270,185 @@ fn a_null_c_string_reads_as_empty_rather_than_dereferencing() {
 // angle conversion, the two trigonometric functions the gradient axis needs —
 // because those are what is wrong silently, and a mirrored arc or a
 // transposed line cap looks like a drawing bug in the application.
+
+// ---- image ---------------------------------------------------------------------
+//
+// The gallery's image hosts showed nothing, and the control was not the reason:
+// `apply_image` builds a GtkPicture, calls `set_filename` and maps facet's four
+// fit modes onto GtkContentFit exactly. What the demo NAMED was `photo` and
+// `star.fill` — SF Symbols, which exist on AppKit and nowhere else.
+//
+// `star.fill` is the instructive one. It has a dot in it, so "a path has a
+// separator or an extension" reads it as a FILE NAME and looks for a file
+// called `star.fill`. An SF Symbol name is not distinguishable from a path by
+// inspection, which is why the source string is a portability seam and not
+// just a string.
+//
+// THESE RUN HEADLESS, so they test the decode rather than the widget: a
+// GtkPicture needs GTK initialised, which needs a display, and this suite
+// makes no widget on purpose. The decode is the half a real file fails at.
+#[test]
+fn the_sample_image_is_one_the_gtk_stack_can_actually_decode() {
+    let path: text::Text = controls::find_up("assets/hat.png");
+    // The tree's own sample image. If it moves, this says so rather than
+    // quietly passing on a file nobody loaded.
+    assert path.view() != "";
+    let ok: bool = match pixbuf::Pixbuf::new_from_file(path.view()) {
+        option::Option[pixbuf::Pixbuf]::Some(_p) => true,
+        option::Option[pixbuf::Pixbuf]::None => false,
+    };
+    assert ok;
+}
+
+// NEGATIVE, and it is what makes the test above mean anything: a path that is
+// not there, and a path that IS there and is not an image, both decode to
+// nothing. Without these, a decoder that answered Some unconditionally would
+// pass.
+#[test]
+fn a_missing_or_non_image_file_decodes_to_nothing() {
+    assert match pixbuf::Pixbuf::new_from_file("/nonexistent/facet-suite-image.png") {
+        option::Option[pixbuf::Pixbuf]::Some(_p) => false,
+        option::Option[pixbuf::Pixbuf]::None => true,
+    };
+    let font: text::Text = controls::find_up("vendor/facet/assets/MaterialSymbolsOutlined.ttf");
+    assert font.view() != "";
+    assert match pixbuf::Pixbuf::new_from_file(font.view()) {
+        option::Option[pixbuf::Pixbuf]::Some(_p) => false,
+        option::Option[pixbuf::Pixbuf]::None => true,
+    };
+}
+
+// THE TRAP, pinned: an SF Symbol name with a dot in it is read as a path. That
+// is not a bug in `looks_like_path` — a name and a path really are
+// indistinguishable — it is the reason a demo must not name one.
+#[test]
+fn an_sf_symbol_name_with_a_dot_reads_as_a_path() {
+    assert paint::looks_like_path("star.fill");
+    assert paint::looks_like_path("assets/hat.png");
+    // ...and a plain theme name does not, so it reaches the icon lookup.
+    assert !paint::looks_like_path("folder-symbolic");
+}
+
+// `find_up` is what makes an asset reachable whatever directory the binary was
+// started in. The font bug was found exactly here: a hard-coded `../../` is
+// right for an example run from `examples/<name>/` and wrong for the suite.
+#[test]
+fn find_up_walks_the_tree_and_gives_up() {
+    assert controls::find_up("assets/hat.png").view() != "";
+    assert controls::find_up("no/such/file/facet-suite-8817").view() == "";
+}
+
+// ---- WebKit's sandbox ----------------------------------------------------------
+//
+// The crash that prompted this was not a broken web view — it was an aborted
+// process. WebKit calls `g_error` when its bubblewrap sandbox cannot start,
+// and GLib makes `g_error` fatal by contract: the handler must not return.
+// There is nothing to catch, so the only defence is to ask first.
+
+// The probe answers a BOOLEAN and does not abort, which is the whole point:
+// whatever this machine's answer is, asking the question must be survivable.
+#[test]
+fn the_sandbox_probe_answers_without_aborting() {
+    let a: bool = web::sandbox_can_run();
+    // Idempotent — it spawns a process, and a probe that answered differently
+    // on the second call would make the policy depend on call order.
+    assert web::sandbox_can_run() == a;
+}
+
+// The variable name is a deliberate mouthful and BOTH engine generations
+// honour exactly it. `webkit_web_context_set_sandbox_enabled` is the
+// documented lever and is not the one to use: webkit2gtk-4.1 exports it and
+// webkitgtk-6.0 removed it, so an API call would fix one generation and leave
+// the other aborting.
+#[test]
+fn the_sandbox_escape_is_the_variable_both_generations_read() {
+    assert paint::cstr_equals_ignoring_case(
+        web::disable_var(), "WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS");
+}
+
+// SETTLING IS ONCE. It spawns a process and may write the environment; doing
+// either per web view would be a fork per node.
+#[test]
+fn the_sandbox_policy_settles_once() {
+    web::settle_sandbox_policy();
+    web::settle_sandbox_policy();
+    assert web::sandbox_settled();
+}
+
+// ---- the bundled icon font -----------------------------------------------------
+//
+// Every `symbol(icons::*)` rendered as a tofu box with its own codepoint
+// printed inside it. TWO bugs, and either one alone still shows boxes:
+// the font was never registered with fontconfig, and an empty `font` field —
+// which `symbol.cplus` defines as "facet's bundled one" — was passed straight
+// to `font_decls`, which writes no `font-family` at all.
+
+// The registration is REAL and is checked against Pango, not against
+// fontconfig's return value. `FcConfigAppFontAddFile` answers true for a file
+// it could read; what matters is whether the family the CSS names is the family
+// Pango hands back, because fontconfig SUBSTITUTES rather than failing — and a
+// substituted font is exactly what was on screen.
+#[test]
+fn the_bundled_symbol_font_registers_and_pango_can_find_it() {
+    assert controls::register_bundled_font();
+    assert controls::font_family_is_known(controls::bundled_family());
+}
+
+// NEGATIVE, and the one that makes the test above mean anything: a family
+// nobody has is NOT reported as known. Without this, `font_family_is_known`
+// answering `true` unconditionally would pass the test above and the boxes
+// would still be on screen.
+#[test]
+fn a_family_nobody_ships_is_not_reported_as_known() {
+    assert !controls::font_family_is_known("Facet Suite No Such Family 8817");
+}
+
+// An empty `font` is facet's BUNDLED one, not "no font".
+#[test]
+fn a_bundled_symbol_names_the_bundled_family_in_its_css() {
+    var n: core::Node = ui::symbol(0xE9B2u32, size: 24.0f64);
+    let css: text::Text = controls::css_decls(symbol::K_SYMBOL, #addr_of(n));
+    assert css.contains("font-family: \"Material Symbols Outlined\";");
+    assert css.contains("font-size: 24px;");
+}
+
+// ...and an application's OWN icon font still wins. `symbol.cplus` keeps the
+// field for exactly that, and defaulting over it would make a named font
+// unreachable.
+#[test]
+fn an_application_font_beats_the_bundled_one() {
+    var n: core::Node = ui::symbol(0xE9B2u32, size: 24.0f64, font: "My Icons");
+    let css: text::Text = controls::css_decls(symbol::K_SYMBOL, #addr_of(n));
+    assert css.contains("font-family: \"My Icons\";");
+    assert !css.contains("Material Symbols Outlined");
+}
+
+// A SYSTEM icon is a GtkImage and takes no font at all — writing one would put
+// a font-family on a widget that has no text.
+#[test]
+fn a_system_symbol_takes_no_font_family() {
+    var n: core::Node = symbol::system_symbol("folder-symbolic", size: 24.0f64);
+    let css: text::Text = controls::css_decls(symbol::K_SYMBOL, #addr_of(n));
+    assert !css.contains("font-family");
+}
+
+// The ASCII fold, because font family names match case-insensitively
+// everywhere — a case-sensitive test would report a correctly-loaded font as a
+// substitution.
+#[test]
+fn a_family_name_compares_case_insensitively_and_to_the_end() {
+    assert paint::cstr_equals_ignoring_case(#str_ptr("Material Symbols Outlined\0"),
+                                            "material symbols outlined");
+    assert paint::cstr_equals_ignoring_case(#str_ptr("MATERIAL\0"), "material");
+    // NEGATIVE: a PREFIX is not a match. "Material" must not pass for
+    // "Material Symbols Outlined", or every substitution starting with the
+    // right word would read as a hit.
+    assert !paint::cstr_equals_ignoring_case(#str_ptr("Material\0"),
+                                             "Material Symbols Outlined");
+    assert !paint::cstr_equals_ignoring_case(#str_ptr("Material Symbols Outlined\0"),
+                                             "Material");
+    assert !paint::cstr_equals_ignoring_case(0 as *u8, "anything");
+}
 
 // ---- the background brush, the background image, and gradients -----------------
 //

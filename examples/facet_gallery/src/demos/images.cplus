@@ -15,11 +15,15 @@ impl Images {
     fn new() -> Images { return Images { n: 0 }; }
 }
 
+// The tree's own sample image. One place, because four hosts show it and a
+// path repeated four times is a path that gets fixed three times.
+fn hat() -> str { return "../../assets/hat.png"; }
+
 impl Images: component::Component {
     fn build(ref this) -> core::Node {
         var body: core::Builder = core::Builder::new();
 
-        body.add(shell::caption("image  ·  source is a path or SF Symbol name"));
+        body.add(shell::caption("image  ·  source is a path, or a platform icon name"));
         body.add(ui::label(
             "Fit modes: AspectFit, AspectFill, Center, Fill. Size the host with layout verbs.",
             key: "img:note",
@@ -29,15 +33,28 @@ impl Images: component::Component {
             line_break: vocab::LineBreak::WordWrap,
         ));
 
+        // A REAL FILE, because that is the portable half of `source`. This
+        // demo used to name `photo` and `star.fill` — SF Symbols, which exist
+        // on AppKit and nowhere else, so every fit mode rendered nothing on
+        // Linux and the demo looked like a broken control rather than a
+        // missing icon set. `star.fill` was the worse of the two: it has a dot
+        // in it, so a backend reading the source as "a path has a separator or
+        // an extension" treats it as a FILE NAME and looks for one.
+        //
+        // The path is relative to where the example is RUN from, which for
+        // `cpc run` is the example's own directory.
         var row: core::Builder = core::Builder::new();
-        row.add(ui::image("photo", key: "img:fit",
+        row.add(ui::image(hat(), key: "img:fit",
             fit: vocab::ImageFit::AspectFit)
             .width(96.0f64).height(72.0f64));
-        row.add(ui::image("photo", key: "img:fill",
+        row.add(ui::image(hat(), key: "img:fill",
             fit: vocab::ImageFit::AspectFill)
             .width(96.0f64).height(72.0f64));
-        row.add(ui::image("star.fill", key: "img:star",
+        row.add(ui::image(hat(), key: "img:center",
             fit: vocab::ImageFit::Center)
+            .width(72.0f64).height(72.0f64));
+        row.add(ui::image(hat(), key: "img:stretch",
+            fit: vocab::ImageFit::Fill)
             .width(72.0f64).height(72.0f64));
         body.add(core::row(row).gap(12.0f64));
 
@@ -48,13 +65,15 @@ impl Images: component::Component {
             text_color: vocab::Color::ink(0.5f64)).width(96.0f64));
         labels.add(ui::label("Center", key: "", font_size: 11.0f64,
             text_color: vocab::Color::ink(0.5f64)).width(72.0f64));
+        labels.add(ui::label("Fill", key: "", font_size: 11.0f64,
+            text_color: vocab::Color::ink(0.5f64)).width(72.0f64));
         body.add(core::row(labels).gap(12.0f64));
 
         return shell::panel(
             "Image",
             "Raster or symbol image host. Layout owns size; fit owns how the content maps into it.",
             core::column(body).gap(12.0f64),
-            howto: "ui::image(\"photo\", key: \"img\", fit: ImageFit::AspectFit)\n    .width(96.0).height(72.0)",
+            howto: "ui::image(\"assets/hat.png\", key: \"img\", fit: ImageFit::AspectFit)\n    .width(96.0).height(72.0)",
         );
     }
 }

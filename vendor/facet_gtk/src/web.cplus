@@ -94,9 +94,108 @@ static AVAILABLE: bool = false;
 static IS_GTK4_ENGINE: bool = false;
 static API: WebKit = #zero::[WebKit]();
 
+// ---- the sandbox, which is the platform's and not ours -------------------------
+//
+// WebKitGTK runs its network and web processes inside a `bubblewrap` sandbox
+// with an `xdg-dbus-proxy` beside it. Where that cannot be set up — no `bwrap`
+// on the machine, unprivileged user namespaces denied by the kernel or by an
+// AppArmor profile, a container that forbids nesting — WebKit calls
+// `g_error`, and **g_error is fatal by design in GLib**. It aborts the
+// process. There is no return value to check and no handler that can decline
+// it: the documented contract is that a G_LOG_LEVEL_ERROR handler must not
+// return.
+//
+// So an application using `web` on such a machine did not get a broken web
+// view. It got a core dump:
+//
+//     bwrap: setting up uid map: Permission denied
+//     ** ERROR **: Failed to fully launch dbus-proxy
+//     Trace/breakpoint trap (core dumped)
+//
+// THE ONLY DEFENCE IS TO ASK FIRST, because after the fact there is nothing
+// left to ask with. So the sandbox is probed once, by running `bwrap` the way
+// WebKit will, and if it cannot run the engine is told not to try.
+//
+// `webkit_web_context_set_sandbox_enabled` is NOT the lever, despite being the
+// documented one: webkit2gtk-4.1 exports it and **webkitgtk-6.0 removed it** —
+// the sandbox is mandatory there. What both honour is the environment
+// variable, whose name is a deliberate mouthful and is quoted here exactly.
+//
+// SET ONLY WHEN THE SANDBOX PROVABLY CANNOT RUN. A machine where it works
+// keeps it; weakening a browser engine's isolation on every Linux desktop to
+// spare one that cannot is the wrong trade, and this package does not get to
+// make it on an application's behalf.
+
+#[link_name = "g_spawn_sync"]
+extern fn g_spawn_sync(working_dir: *u8, argv: *u8, envp: *u8, flags: i32,
+                       child_setup: *u8, user_data: *u8,
+                       out: *u8, err: *u8, status: *i32, gerror: *u8) -> i32;
+#[link_name = "g_setenv"]
+extern fn g_setenv(name: *u8, value: *u8, overwrite: i32) -> i32;
+#[link_name = "g_getenv"]
+extern fn g_getenv(name: *u8) -> *u8;
+
+fn disable_var() -> *u8 { return #str_ptr("WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS\0"); }
+
+static SANDBOX_SETTLED: bool = false;
+
+fn settle_sandbox_policy() {
+    if SANDBOX_SETTLED { return; }
+    SANDBOX_SETTLED = true;
+    // An application (or the person running it) has already decided. Leave it.
+    if { g_getenv(disable_var()) } != (0 as *u8) { return; }
+    if sandbox_can_run() { return; }
+    io::eprintln("facet_gtk: WebKitGTK's bubblewrap sandbox cannot start on this machine, so `web` is running WITHOUT it. That is a real reduction in isolation, and it is done because the alternative is not a degraded web view but an aborted process — WebKit calls g_error, which GLib makes fatal. Install `bwrap` and allow unprivileged user namespaces to get the sandbox back.");
+    let _ok: i32 = { g_setenv(disable_var(), #str_ptr("1\0"), 1 as i32) };
+    return;
+}
+
+// Run `bwrap` the way WebKit will. THIS IS A PROBE, NOT A PROOF: a minimal
+// invocation that succeeds does not guarantee WebKit's fuller one will, and
+// the report that prompted this was a failure at the uid-map step which a
+// simpler call can clear. What it catches exactly is the common shape — no
+// bwrap installed, or user namespaces denied outright — and the cost of being
+// wrong in the optimistic direction is the crash that was already happening,
+// not a new one.
+fn sandbox_settled() -> bool { return SANDBOX_SETTLED; }
+
+fn sandbox_can_run() -> bool {
+    // GSpawnFlags: SEARCH_PATH 4 | STDOUT_TO_DEV_NULL 8 | STDERR_TO_DEV_NULL 16.
+    // Quiet on purpose: a probe that printed bwrap's complaint would look like
+    // the failure it is checking for — which is exactly what the first version
+    // of this did, because it used 64 and 128 (FILE_AND_ARGV_ZERO and
+    // SEARCH_PATH_FROM_ENVP) and bwrap's usage text went straight to the
+    // terminal.
+    let flags: i32 = (4 as i32) | (8 as i32) | (16 as i32);
+    // A COMMAND IS REQUIRED. Without one bwrap prints its usage and exits
+    // non-zero, which reads as "the sandbox cannot run" on every machine —
+    // the first version of this had that bug and reported failure everywhere.
+    var argv: [*u8; 7] = [
+        #str_ptr("bwrap\0"),
+        #str_ptr("--unshare-user\0"),
+        #str_ptr("--ro-bind\0"),
+        #str_ptr("/\0"),
+        #str_ptr("/\0"),
+        #str_ptr("/bin/true\0"),
+        0 as *u8,
+    ];
+    var status: i32 = 0 as i32;
+    let spawned: i32 = { g_spawn_sync(0 as *u8, #addr_of(argv) as *u8, 0 as *u8,
+                                      flags, 0 as *u8, 0 as *u8,
+                                      0 as *u8, 0 as *u8, #addr_of(status),
+                                      0 as *u8) };
+    // A spawn that FAILED is bwrap not being there, which is the clearest
+    // "the sandbox cannot run" there is.
+    if spawned == (0 as i32) { return false; }
+    return status == (0 as i32);
+}
+
 fn available() -> bool {
     if LOADED { return AVAILABLE; }
     LOADED = true;
+    // BEFORE the engine is opened, because the variable is read when WebKit
+    // spawns its children and the first `web` view is what does that.
+    settle_sandbox_policy();
     var handle: *u8 = { g_module_open(library_name(), 1 as u32) };   // G_MODULE_BIND_LAZY
     IS_GTK4_ENGINE = handle != (0 as *u8);
     if handle == (0 as *u8) { handle = { g_module_open(fallback_name(), 1 as u32) }; }

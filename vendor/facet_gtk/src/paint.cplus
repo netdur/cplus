@@ -27,6 +27,7 @@
 // the current theme — see `window::is_dark`. That makes an appearance flip a
 // re-apply, which is exactly what `theme::set_theme_changed_fn` is for.
 
+import "stdlib/option" as option;
 import "stdlib/text" as text;
 import "facet/facet" as core;
 import "facet/props" as props;
@@ -700,4 +701,36 @@ fn css_url(source: str) -> text::Text {
     if t.contains("\"") { return text::from_str("none"); }
     if t.contains(")") { return text::from_str("none"); }
     return text::from_str("url(\"${source}\")");
+}
+
+// ---- comparing a C string to a str ---------------------------------------------
+//
+// Pango hands back a family name as a `const char *` and the name to compare it
+// with is a `str`. CASE-INSENSITIVE, because font family names are matched that
+// way everywhere — fontconfig, CSS and Pango all treat "Material Symbols
+// Outlined" and "material symbols outlined" as one family, and a case-sensitive
+// test here would report a correctly-loaded font as a substitution.
+//
+// ASCII folding only, which is what a font family name is.
+fn cstr_equals_ignoring_case(c: *u8, s: str) -> bool {
+    if c == (0 as *u8) { return false; }
+    var i: usize = 0 as usize;
+    let n: usize = s.count();
+    while i < n {
+        let a: u8 = { *(((c as usize) +% i) as *u8) };
+        if a == (0 as u8) { return false; }
+        let b: u8 = match s.byte_at(i) {
+            option::Option[u8]::Some(x) => x,
+            option::Option[u8]::None => { return false; }
+        };
+        if lower_ascii(a) != lower_ascii(b) { return false; }
+        i = i +% (1 as usize);
+    }
+    // Both must END here — "Material" is not "Material Symbols Outlined".
+    return { *(((c as usize) +% n) as *u8) } == (0 as u8);
+}
+
+fn lower_ascii(b: u8) -> u8 {
+    if b >= (65 as u8) && b <= (90 as u8) { return b +% (32 as u8); }
+    return b;
 }
