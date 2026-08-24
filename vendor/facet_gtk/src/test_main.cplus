@@ -119,11 +119,16 @@ fn restyle_bits_are_not_the_create_sentinel() {
 }
 
 #[test]
-fn the_css_band_bits_are_the_two_that_feed_the_document() {
+fn the_css_band_bits_are_only_the_ones_that_feed_the_document() {
     // The band's OTHER verbs are widget properties, and listing them here
     // would rebuild the document on a tooltip change.
+    //
+    // THREE, not two: the flow direction joined them because a corner radius
+    // is logical and CSS's is physical, so flipping the flow changes the
+    // document with no radius having moved.
     assert paint::css_band_bits()
-        == (props::C_BACKGROUND_COLOR | props::C_CORNER_RADIUS);
+        == (props::C_BACKGROUND_COLOR | props::C_CORNER_RADIUS
+            | props::C_FLOW_DIRECTION);
     assert (paint::css_band_bits() & props::C_TOOLTIP) == (0 as u64);
     return;
 }
@@ -1247,6 +1252,58 @@ fn a_null_c_string_reads_as_empty_rather_than_dereferencing() {
 // angle conversion, the two trigonometric functions the gradient axis needs —
 // because those are what is wrong silently, and a mirrored arc or a
 // transposed line cap looks like a drawing bug in the application.
+
+// ---- the flow direction --------------------------------------------------------
+//
+// `C_FLOW_DIRECTION` was unanswered, and the corner radius said so in a
+// comment: CSS's four corners are PHYSICAL and facet's are LOGICAL, so they
+// coincide in a left-to-right flow and swap in a right-to-left one. GTK's CSS
+// engine does not implement the logical corner properties, so the mirroring is
+// this package's.
+#[test]
+fn a_corner_radius_mirrors_in_a_right_to_left_flow() {
+    var n: core::Node = core::column(core::Builder::new());
+    n.set_corner_radius(vocab::Corners {
+        top_leading: 1.0f64, top_trailing: 2.0f64,
+        bottom_leading: 3.0f64, bottom_trailing: 4.0f64,
+    });
+    n.set_flow_direction(vocab::FlowDirection::LeftToRight);
+    // CSS order is TL TR BR BL. LEADING is the left in an LTR flow.
+    assert paint::band_css(#addr_of(n)).contains("border-radius: 1px 2px 4px 3px;");
+
+    n.set_flow_direction(vocab::FlowDirection::RightToLeft);
+    // ...and the right in an RTL one, so top-leading is now the top RIGHT.
+    assert paint::band_css(#addr_of(n)).contains("border-radius: 2px 1px 3px 4px;");
+}
+
+// `MatchParent` is the DEFAULT, and it is the case that cannot be answered
+// from the node — it resolves to GTK's own default direction, which is the
+// locale's. The suite runs in one locale, so what is pinned is the AGREEMENT:
+// whatever `MatchParent` resolves to, it is what the locale says, and it is one
+// of the two explicit answers rather than a third.
+#[test]
+fn match_parent_resolves_to_the_locale_direction() {
+    var n: core::Node = core::column(core::Builder::new());
+    n.set_flow_direction(vocab::FlowDirection::MatchParent);
+    assert paint::is_rtl(#addr_of(n)) == paint::locale_is_rtl();
+
+    var ltr: core::Node = core::column(core::Builder::new());
+    ltr.set_flow_direction(vocab::FlowDirection::LeftToRight);
+    assert !paint::is_rtl(#addr_of(ltr));
+    var rtl: core::Node = core::column(core::Builder::new());
+    rtl.set_flow_direction(vocab::FlowDirection::RightToLeft);
+    assert paint::is_rtl(#addr_of(rtl));
+}
+
+// The flow is part of the CSS-DOCUMENT word, not just the widget word. A
+// radius that did not itself change still has to be re-emitted when the flow
+// flips, and `views::configure` decides whether to recompose from this set —
+// so leaving the bit out is a mirrored radius that never reaches the widget.
+#[test]
+fn the_flow_direction_forces_a_css_recompose() {
+    assert (paint::css_band_bits() & props::C_FLOW_DIRECTION) != (0 as u64);
+    assert (paint::band_bits() & props::C_FLOW_DIRECTION) != (0 as u64);
+}
 
 // ---- the timer table and the size observers ------------------------------------
 

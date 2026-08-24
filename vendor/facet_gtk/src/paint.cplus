@@ -46,7 +46,11 @@ fn restyle_bits() -> u64 { return props::C_RESTYLE; }
 // plain widget properties. `views::configure` asks for these when deciding
 // whether the document has to be rebuilt.
 fn css_band_bits() -> u64 {
-    return props::C_BACKGROUND_COLOR | props::C_CORNER_RADIUS;
+    // C_FLOW_DIRECTION is here because a corner radius is LOGICAL and CSS's is
+    // PHYSICAL: changing the flow swaps leading for trailing, so the document
+    // has to be recomposed even though no radius moved.
+    return props::C_BACKGROUND_COLOR | props::C_CORNER_RADIUS
+         | props::C_FLOW_DIRECTION;
 }
 
 // The band's own bits, so a caller can ask "is any of this dirty?" without
@@ -54,7 +58,7 @@ fn css_band_bits() -> u64 {
 fn band_bits() -> u64 {
     return props::C_OPACITY | props::C_BACKGROUND_COLOR | props::C_CORNER_RADIUS
          | props::C_IS_ENABLED | props::C_IS_VISIBLE | props::C_TOOLTIP
-         | props::C_SHADOW | props::C_CLIP;
+         | props::C_SHADOW | props::C_CLIP | props::C_FLOW_DIRECTION;
 }
 
 // Which side of an adaptive pair is live. Set by the window tier at install
@@ -439,13 +443,17 @@ fn band_css(n: *core::Node) -> text::Text {
     let cr: vocab::Corners = core::corner_radius(n);
     if cr.top_leading > (0.0 as f64) || cr.top_trailing > (0.0 as f64)
         || cr.bottom_leading > (0.0 as f64) || cr.bottom_trailing > (0.0 as f64) {
-        // CSS order is TL TR BR BL; facet's is leading/trailing per edge. In a
-        // left-to-right flow they coincide; RTL is a `C_FLOW_DIRECTION` job and
-        // is recorded in MANIFEST.md rather than guessed at here.
-        let tl: i32 = cr.top_leading as i32;
-        let tr: i32 = cr.top_trailing as i32;
-        let br: i32 = cr.bottom_trailing as i32;
-        let bl: i32 = cr.bottom_leading as i32;
+        // CSS order is TL TR BR BL and is PHYSICAL; facet's is
+        // leading/trailing per edge and is LOGICAL. In a left-to-right flow
+        // they coincide; in a right-to-left one leading IS the right side, so
+        // the pairs swap. CSS has logical corner properties
+        // (`border-start-start-radius`) and GTK's CSS engine does not
+        // implement them, so the mirroring is done here.
+        let rtl: bool = is_rtl(n);
+        let tl: i32 = if rtl { cr.top_trailing as i32 } else { cr.top_leading as i32 };
+        let tr: i32 = if rtl { cr.top_leading as i32 } else { cr.top_trailing as i32 };
+        let br: i32 = if rtl { cr.bottom_leading as i32 } else { cr.bottom_trailing as i32 };
+        let bl: i32 = if rtl { cr.bottom_trailing as i32 } else { cr.bottom_leading as i32 };
         body = body.appending("border-radius: ${tl}px ${tr}px ${br}px ${bl}px;");
     }
     return body;
@@ -522,6 +530,9 @@ fn band(v: *u8, n: *core::Node, d: u64) {
         let t: str = core::tooltip(n);
         if t != "" { w.set_tooltip_text(t); }
     }
+    if (d & props::C_FLOW_DIRECTION) != (0 as u64) {
+        apply_flow_direction(w, n);
+    }
     // The CSS document is NOT written here. It is one document per widget with
     // no per-declaration edit, so composing it is `views::configure`'s job —
     // reloading it from the band would drop whatever the kind had put in it.
@@ -543,3 +554,42 @@ fn looks_like_path(s: str) -> bool {
     if t.contains(".") { return true; }
     return false;
 }
+
+// ---- the flow direction --------------------------------------------------------
+//
+// `C_FLOW_DIRECTION` — RTL. Two halves, and facet already does the harder one:
+// `core::set_flow_direction` hands flex its own direction, and flex mirrors row
+// layout, justification and edge resolution from there. What is left is the
+// WIDGET, which GTK propagates to every descendant that has not set its own —
+// text alignment, entry base direction, scale fill, and the arrows on a
+// spin button all follow it.
+fn apply_flow_direction(w: gtk::Widget, n: *core::Node) {
+    // GtkTextDirection: NONE 0, LTR 1, RTL 2. `MatchParent` is NONE, which is
+    // GTK's own word for "take the parent's" — not a third direction.
+    w.set_direction(match core::flow_direction(n) {
+        vocab::FlowDirection::LeftToRight => 1 as i32,
+        vocab::FlowDirection::RightToLeft => 2 as i32,
+        vocab::FlowDirection::MatchParent => 0 as i32,
+    });
+    return;
+}
+
+// Does this node resolve to a right-to-left flow?
+//
+// `MatchParent` is the DEFAULT and it is the case that has to be answered from
+// somewhere other than the node — GTK's own default direction, which is the
+// locale's, and which a `MatchParent` node inherits through the widget tree.
+// So the question is asked of GTK rather than walked up facet's tree: the two
+// agree by construction, because the widget direction is set from the node's.
+fn is_rtl(n: *core::Node) -> bool {
+    return match core::flow_direction(n) {
+        vocab::FlowDirection::LeftToRight => false,
+        vocab::FlowDirection::RightToLeft => true,
+        vocab::FlowDirection::MatchParent => locale_is_rtl(),
+    };
+}
+
+fn locale_is_rtl() -> bool { return { gtk_get_locale_direction() } == (2 as i32); }
+
+#[link_name = "gtk_widget_get_default_direction"]
+extern fn gtk_get_locale_direction() -> i32;

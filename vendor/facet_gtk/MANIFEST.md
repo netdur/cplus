@@ -244,9 +244,6 @@ Everything not listed as live above. The large ones, in the order they matter:
 - **A gesture band is never REMOVED once armed.** Handlers are read off the
   node at fire time, so a detached set makes every one of them `no_gesture` and
   the controller fires nothing — dead weight, not wrong behaviour.
-- **RTL.** `corner_radius` maps facet's leading/trailing onto CSS's
-  left/right, which coincide only in a left-to-right flow. `C_FLOW_DIRECTION`
-  is unanswered.
 
 - **A gradient BORDER.** `bordered.stroke` is a Brush and a CSS border takes a
   solid; a gradient is `border-image`, which is a different mechanism with a
@@ -366,6 +363,19 @@ Everything not listed as live above. The large ones, in the order they matter:
   Graphics and was read as the shape, not ported: cairo keeps its path IN the
   context where CG builds one separately, and cairo is already top-left so
   there is no flip arithmetic anywhere.
+- **RTL is TWO HALVES, and facet already does the harder one.**
+  `core::set_flow_direction` hands flex its own direction, and flex mirrors
+  row layout, justification and edge resolution from there. What this package
+  adds is the WIDGET — `gtk_widget_set_direction`, which GTK propagates to
+  every descendant that has not set its own, so text alignment, an entry's base
+  direction and a scale's fill all follow — and the CORNER RADIUS, because
+  facet's corners are LOGICAL (leading/trailing) and CSS's are PHYSICAL (left/
+  right). CSS has logical corner properties and GTK's engine does not implement
+  them, so the pairs are swapped here. `MatchParent` is GTK's `NONE`, which is
+  its own word for "take the parent's" rather than a third direction; where the
+  radius needs a concrete answer for it, the question goes to GTK's default
+  direction — the locale's — which the two agree on by construction, because
+  the widget direction is set from the node's.
 - **`observe_size` IS THE LAYOUT WALK, not a widget signal.** A GTK4 widget
   has no `size-allocate` signal and no width property to `notify::` on, so
   there is nothing to connect — which is why this answered 0 ("nothing
