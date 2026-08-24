@@ -39,6 +39,16 @@ BACKENDS = {
 # refactor that quietly drops a verb is caught at the number rather than by
 # someone noticing a control stopped working.
 FLOOR = 347
+# Same gate on the READ half. Kept separate because the two surfaces fail
+# differently: a missing prop is a control that ignores you, a missing handler
+# is a control that never answers.
+HANDLER_FLOOR = 66
+
+# Handlers facet fires ITSELF, from `mount.cplus`'s post-walk notification
+# queue (M4). A backend neither can nor should wire them, so counting them
+# against one is measuring the wrong thing — facet_appkit "answers" both only
+# by mentioning them in a comment.
+FACET_FIRED = {"on_attach", "on_detach"}
 
 
 def strip_comments(text):
@@ -70,6 +80,92 @@ def referenced(directory):
     return hits
 
 
+def handlers():
+    """Props struct -> its handler fields, from facet's own declarations."""
+    out = {}
+    for path in glob.glob(os.path.join(FACET, "*.cplus")):
+        if path.endswith("test_main.cplus"):
+            continue
+        for m in re.finditer(r"struct (\w+Props) \{(.*?)\n\}",
+                             open(path).read(), re.S):
+            hs = sorted({h for h in re.findall(
+                r"^\s+(on_\w+|observe_\w+): fn\(", m.group(2), re.M)
+                if h not in FACET_FIRED})
+            if hs:
+                out[m.group(1)] = hs
+    return out
+
+
+def fires(source, handler):
+    """Does this backend deliver `handler`?
+
+    TWO SHAPES COUNT, and the second is the one a naive proxy misses. A backend
+    usually reads the field off the props block (`{ (*p).on_click }`), but for
+    the handlers facet owns the delivery of it calls the blessed API instead —
+    `core::fire_focus_handler` for `on_focus`. Counting only the field access
+    marks a correct implementation as missing, which pushes whoever is chasing
+    the number toward touching the struct directly just to be counted.
+    """
+    if re.search(r"\." + handler + r"\b", source):
+        return True
+    stem = handler[3:] if handler.startswith("on_") else handler
+    return re.search(r"fire_" + stem + r"_handler\b", source) is not None
+
+
+def handler_parity():
+    src = {}
+    for k, d in BACKENDS.items():
+        if not os.path.isdir(d):
+            continue
+        src[k] = strip_comments("".join(
+            open(p).read() for p in glob.glob(os.path.join(d, "*.cplus"))
+            if not p.endswith("test_main.cplus")))
+    H = handlers()
+    declared = sum(len(v) for v in H.values())
+    totals = {k: sum(len([h for h in hs if fires(src[k], h)])
+                     for hs in H.values()) for k in src}
+    print(f"\n{declared} handlers declared across facet's Props structs\n")
+    for k in ("appkit", "uikit", "gtk", "android"):
+        if k not in totals:
+            continue
+        pct = totals[k] * 100 // declared if declared else 0
+        mark = "  <-- this package" if k == "gtk" else ""
+        print(f"  {k:<8} {totals[k]:>4} / {declared}   {pct:>3}%{mark}")
+    gaps = [(s, [h for h in hs if not fires(src["gtk"], h)])
+            for s, hs in sorted(H.items())]
+    gaps = [(s, m) for s, m in gaps if m]
+    if gaps:
+        print("\n  gtk does not fire:")
+        for s, m in gaps:
+            print(f"    {s:24} {' '.join(m)}")
+    return totals.get("gtk", 0)
+
+
+def derived_writes(directory):
+    """Fields the backend ASSIGNS to — the derived half of the contract.
+
+    A prop is usually a WRITE the backend performs on the control, gated on its
+    dirty bit, so naming the bit is the proxy. A DERIVED prop is the other
+    direction: the backend writes it BACK into the props block so the
+    application can read it (`is_scrolling`, a picker's `is_open`). Nothing is
+    gated, so the bit is never named and the reference proxy scores a correct
+    implementation as absent — the same flaw `fires()` fixes on the handler
+    axis, and with the same consequence if left: it pushes whoever is chasing
+    the number into naming a bit for no reason.
+
+    Only ASSIGNMENT counts (`.field =`), never a read, so an ordinary
+    `{ (*p).text.view() }` somewhere else cannot inflate anything.
+    """
+    out = set()
+    for path in glob.glob(os.path.join(directory, "*.cplus")):
+        if path.endswith("test_main.cplus"):
+            continue
+        text = strip_comments(open(path).read())
+        for f in re.findall(r"\.\s*([a-z_][a-z_0-9]*)\s*=[^=]", text):
+            out.add(f)
+    return out
+
+
 def main():
     root = os.path.dirname(os.path.dirname(os.path.dirname(
         os.path.dirname(os.path.abspath(__file__)))))
@@ -79,6 +175,7 @@ def main():
         return 2
 
     seen = {k: referenced(d) for k, d in BACKENDS.items() if os.path.isdir(d)}
+    written = {k: derived_writes(d) for k, d in BACKENDS.items() if os.path.isdir(d)}
     totals = {k: 0 for k in seen}
     declared = 0
     rows = []
@@ -92,7 +189,9 @@ def main():
         declared += len(props)
         got = {}
         for k in seen:
-            got[k] = {p for p in props if p in seen[k].get(module, ())}
+            got[k] = {p for p in props
+                      if p in seen[k].get(module, ())
+                      or p[2:].lower() in written[k]}
             totals[k] += len(got[k])
         if got.get("gtk"):
             rows.append((module, len(props), len(got["gtk"]),
@@ -115,13 +214,22 @@ def main():
         mark = "  <-- this package" if k == "gtk" else ""
         print(f"  {k:<8} {totals[k]:>4} / {declared}   {pct:>3}%{mark}")
 
+    fired = handler_parity()
+
     if "--check" in sys.argv:
         got = totals.get("gtk", 0)
+        bad = False
         if got < FLOOR:
-            print(f"\nFAIL: gtk covers {got}, floor is {FLOOR} — a verb was dropped.",
+            print(f"\nFAIL: gtk answers {got} props, floor is {FLOOR} — a verb was dropped.",
                   file=sys.stderr)
+            bad = True
+        if fired < HANDLER_FLOOR:
+            print(f"FAIL: gtk fires {fired} handlers, floor is {HANDLER_FLOOR}.",
+                  file=sys.stderr)
+            bad = True
+        if bad:
             return 1
-        print(f"\nok: gtk covers {got} (floor {FLOOR})")
+        print(f"\nok: props {got} (floor {FLOOR}), handlers {fired} (floor {HANDLER_FLOOR})")
     return 0
 
 

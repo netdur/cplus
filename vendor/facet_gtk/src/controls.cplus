@@ -2622,6 +2622,38 @@ fn create_popup(n: *core::Node) -> *u8 {
     return dd.upcast().raw();
 }
 
+// A GtkDropDown's popover, found by walking its children.
+//
+// `is_open` is a two-way verb and GtkDropDown answers NEITHER half: it has no
+// `popup()`, no `popdown()`, and no property saying whether its list is
+// showing. What it does have is a GtkPopover among its children, and a
+// GtkPopover has all three.
+//
+// This is the "a control does not have to be one native widget" reading the
+// AppKit manifest records — sixty-odd rows left its cannot-ledger under it. The
+// alternative here was answering the OPEN half through `gtk_widget_activate`
+// (whose default handler shows the list) and leaving `is_open: false` doing
+// nothing, which is worse than not answering: a verb that works in one
+// direction looks like it works.
+//
+// Walks rather than assumes a position — GtkDropDown's child order is internal
+// and has changed across 4.x.
+fn popover_of(v: *u8) -> *u8 {
+    var child: *u8 = child_ptr(gtk::Widget::from_raw(v).get_first_child());
+    while child != (0 as *u8) {
+        if g::is_a(child, #str_ptr("GtkPopover\0")) { return child; }
+        child = child_ptr(gtk::Widget::from_raw(child).get_next_sibling());
+    }
+    return 0 as *u8;
+}
+
+fn child_ptr(o: option::Option[gtk::Widget]) -> *u8 {
+    match o {
+        option::Option[gtk::Widget]::Some(w) => { return w.raw(); }
+        option::Option[gtk::Widget]::None => { return 0 as *u8; }
+    }
+}
+
 fn apply_popup(v: *u8, n: *core::Node, dirty: u64) {
     let p: *props::PopupProps = popup_props(n);
     if p == (0 as *props::PopupProps) { return; }
@@ -2658,6 +2690,13 @@ fn apply_popup(v: *u8, n: *core::Node, dirty: u64) {
     }
     if (dirty & popup::P_VERTICAL_ALIGN) != (0 as u64) {
         gtk::Widget::from_raw(v).set_valign(valign_of({ (*p).vertical_align }));
+    }
+    if (dirty & popup::P_IS_OPEN) != (0 as u64) {
+        let pop: *u8 = popover_of(v);
+        if pop != (0 as *u8) {
+            if { (*p).is_open } { gtk::Popover::from_raw(pop).popup(); }
+            else { gtk::Popover::from_raw(pop).popdown(); }
+        }
     }
     return;
 }

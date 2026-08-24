@@ -1636,19 +1636,52 @@ fn page_under(n: *core::Node, offset: f64) -> i64 {
     return best;
 }
 
+// `CarouselView.IsScrolling` — a DERIVED bit, in the AppKit manifest's sense:
+// the backend writes it BACK so the application can read whether a scroll is in
+// progress. The adjustment cannot answer it (a `value-changed` fires for a
+// programmatic `set_position` exactly as it does for a finger), so the edges
+// come from the scroll controller, which has `scroll-begin` and `scroll-end`
+// for precisely this.
+fn carousel_scroll_begin(controller: *u8, user: *u8) {
+    set_is_scrolling(user as *core::Node, true);
+    return;
+}
+
+fn carousel_scroll_end(controller: *u8, user: *u8) {
+    set_is_scrolling(user as *core::Node, false);
+    return;
+}
+
+fn set_is_scrolling(n: *core::Node, v: bool) {
+    let p: *props::CarouselProps = props_of(n, props::K_CAROUSEL) as *props::CarouselProps;
+    if p == (0 as *props::CarouselProps) { return; }
+    { (*p).is_scrolling = v };
+    return;
+}
+
 fn arm_carousel(v: *u8, n: *core::Node) {
     let sw: gtk::ScrolledWindow = gtk::ScrolledWindow::from_raw(v);
     let _h: u64 = sw.get_hadjustment().connect_value_changed(carousel_scrolled, n as *u8);
+    // GTK_EVENT_CONTROLLER_SCROLL_BOTH_AXES (3). The controller is here for its
+    // BEGIN/END edges only — the scrolling itself is the ScrolledWindow's, and
+    // this one never handles an event.
+    let sc: gtk::EventControllerScroll = gtk::EventControllerScroll::new(3 as u32);
+    let _b: u64 = sc.connect_scroll_begin(carousel_scroll_begin, n as *u8);
+    let _e: u64 = sc.connect_scroll_end(carousel_scroll_end, n as *u8);
+    add_controller(v, sc.upcast(), phase_bubble());
     return;
 }
 
 // ---- the pickers -------------------------------------------------------------
 //
 // A GtkMenuButton's popover is a PROPERTY (`active`), so opening and closing
-// are one `notify::active` — which is what makes `is_open`, `on_opened` and
-// `on_closed` all answerable here where a GtkDropDown's private popover made
-// them a cannot-row for `popup`. The same three verbs, two controls, opposite
-// answers, and the difference is only which widget GTK chose to expose.
+// are one `notify::active` — three verbs from one signal.
+//
+// A GtkDropDown's popover is not a property and the widget exposes no
+// popup/popdown of its own, so `popup`'s `is_open` is answered a tier lower:
+// `controls::popover_of` walks the drop-down's children for the GtkPopover and
+// uses ITS popup/popdown. Same verb, two controls, two different depths — but
+// both answered, so neither is a cannot-row.
 
 fn picker_open_changed(button: *u8, pspec: *u8, user: *u8) {
     let n: *core::Node = user as *core::Node;
