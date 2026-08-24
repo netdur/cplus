@@ -60,6 +60,24 @@ struct UiNode {
     // and for which this flag is the whole of what it knows — had to spend a
     // click on each to find out. See `actionable` above for the other half.
     clickable: bool,
+    // DELIVERY: would that click reach a HANDLER? The third question, and the
+    // one nothing was asking.
+    //
+    // `actionable` is permission and `clickable` is capability, and a control
+    // can pass both and still be dead: an NSButton written with a gesture band
+    // instead of its own `on_click` consumes its own mouse event through
+    // target/action, so the gesture never fires. iris shipped one. Every signal
+    // on this wire read identically to a working button — same role, same
+    // actionable, same clickable, same hit_test, same AppKit action — and a
+    // 23-assertion sweep stayed green, including the assertion about that
+    // button, because `click` invokes the handler directly and answers
+    // `Allowed` for a control no person can operate.
+    //
+    // `None` means THIS BACKEND CANNOT ANSWER, and is not a soft "no". The same
+    // posture `hit_test` takes with `supported: false`: a plausible answer here
+    // is worse than an absent one, because an agent has no eyes and this flag is
+    // the whole of what it knows.
+    wired: option::Option[bool],
     // SENSITIVITY, in two fields because they answer two questions.
     //
     // `tier` is what the APPLICATION declared (open / protected / private) and

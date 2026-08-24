@@ -580,6 +580,10 @@ impl Surface {
                 // advertises writes every attempt then refuses.
                 actionable: this.reg.can_act(grant, node),
                 clickable: view_clickable(view),
+                // UIKit has the same NSControl-shaped hazard (a UIControl consumes
+                // its own touch), but the reader has not been written here.
+                // `None` says "not answered", which is the only honest value.
+                wired: option::Option[bool]::None,
                 parent: parent,
             });
             node = node +% (1 as usize);
@@ -961,6 +965,9 @@ fn mcp_describe_exposed(p: *u8, grant: auth::Grant) -> vec::Vec[mcpb::UiNode] {
                     readable: { (*n).readable },
                     actionable: { (*n).actionable },
                     clickable: view_clickable(live),
+                    // This backend has not been taught the question; `None` says so
+                    // rather than guessing. See backend::UiNode.wired.
+                    wired: option::Option[bool]::None,
                     parent: { (*n).parent },
                 });
             }

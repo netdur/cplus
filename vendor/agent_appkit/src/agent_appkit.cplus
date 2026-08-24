@@ -32,6 +32,7 @@ import "agent_core/surface" as surface;
 import "agent_core/auth" as auth;
 import "agent_core/events" as events;
 import "agent_core/backend" as mcpb;
+import "appkit/appkit_ext" as akx;
 
 fn null() -> *u8 {
     return { 0 as *u8 };
@@ -404,6 +405,7 @@ struct AppKitNode {
     name: text::Text,
     actionable: bool,
     clickable: bool,
+    wired: bool,
     parent: option::Option[usize],
 }
 
@@ -1268,6 +1270,7 @@ impl Surface {
                 // attempt then refuses.
                 actionable: this.reg.can_act(grant, node),
                 clickable: view_clickable(view, this.part_of(node)),
+                wired: view_wired(view, this.part_of(node)),
                 parent: parent,
             });
             node = node +% (1 as usize);
@@ -1389,7 +1392,16 @@ impl Surface {
                     }
                     return surface::Outcome::NotActionable;
                 }
+                // ANSWER WHAT ACTUALLY HAPPENED. `performClick:` on a control
+                // with no action, or on a facet clickable whose handler slot is
+                // empty, activates it and nothing runs — and answering
+                // `Allowed` for that is what let a 23-assertion sweep pass with
+                // a dead button in it. The click is still SENT: this is a
+                // report, not a refusal, and refusing would be a second guess
+                // about someone else's widget.
+                let wired: bool = view_wired(v, part);
                 perform_on_main(v, rt::sel(#str_ptr("performClick:\0")), null());
+                if !wired { return surface::Outcome::NoHandler; }
                 return surface::Outcome::Allowed;
             }
             option::Option[usize]::None => {}
@@ -1648,6 +1660,7 @@ fn mcp_describe(p: *u8, grant: auth::Grant) -> vec::Vec[mcpb::UiNode] {
                     readable: { (*n).readable },
                     actionable: { (*n).actionable },
                     clickable: { (*n).clickable },
+                    wired: option::Option[bool]::Some({ (*n).wired }),
                     parent: { (*n).parent },
                 });
             }
@@ -1890,6 +1903,50 @@ fn view_clickable(v: *u8, part: u32) -> bool {
     return can_select_row_of(v);
 }
 
+// Would a click on this view reach a HANDLER? The third question `describe`
+// answers, beside permission (`actionable`) and capability (`clickable`).
+//
+// The two existing flags cannot catch a dead control, and the reason is a
+// platform fact rather than an oversight: AN NSCONTROL IS DRIVEN BY ITS
+// TARGET/ACTION AND ONLY BY THAT. It consumes its own mouse event, so a gesture
+// recognizer attached to one never fires however correctly it was built. A
+// button written `ui::button(...).gesture(on_click: h)` is therefore dead, and
+// looks exactly like a live one from every other angle.
+//
+// So the answer is asked of the mechanism that would actually run:
+//
+//   an NSControl            -> does it carry an action to send
+//   a facet clickable view  -> is a primary handler in the slot `performClick:`
+//                              reads (`agent_click_imp` checks the same slot,
+//                              so the reader and the dispatch cannot disagree)
+//   a row cell              -> selection IS the drive, and it always lands
+//   a part                  -> driven through its owner, as in `clickable`
+//
+// This is honest only because facet stopped arming an action on a control with
+// nothing behind it (`controls::arm_control`). Before that, every button
+// carried an action and this would have answered true for the dead one too.
+fn view_wired(v: *u8, part: u32) -> bool {
+    if is_null(v) { return false; }
+    if part != PART_SELF {
+        return part == PART_SEARCH || part == PART_CLEAR || part == PART_DISCLOSURE;
+    }
+    match get_declared_drive(v) {
+        option::Option[u32]::Some(d) => {
+            if d != identity::drive_click() { return false; }
+        }
+        option::Option[u32]::None => { }
+    }
+    // NSControl first: `respondsToSelector:@selector(action)` is what separates
+    // a control from a facet view that merely answers `performClick:`.
+    if responds_to(v, #str_ptr("action\0")) {
+        return akx::control_has_action(v);
+    }
+    if responds_to(v, #str_ptr("performClick:\0")) {
+        return akx::has_agent_click(v);
+    }
+    return can_select_row_of(v);
+}
+
 // ---- pointer reachability ---------------------------------------------------
 // AppKit's own hit-testing, asked a question rather than driven. Nothing here
 // synthesizes an event.
@@ -2008,6 +2065,7 @@ fn mcp_describe_exposed(p: *u8, grant: auth::Grant) -> vec::Vec[mcpb::UiNode] {
                     readable: { (*n).readable },
                     actionable: { (*n).actionable },
                     clickable: view_clickable(live, part),
+                    wired: option::Option[bool]::Some(view_wired(live, part)),
                     parent: { (*n).parent },
                 });
             }
