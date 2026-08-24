@@ -52,7 +52,11 @@ the AppKit backend gives for a different reason (there they are objects the
 application owns rather than rectangles).
 
 **Note:** iOS 13+ does have `UIMenu`, and the `context_menu` family has a real
-answer through `UIContextMenuInteraction`. That is in list 2, not here.
+answer through `UIContextMenuInteraction`. That is in list 2, not here — and as
+of 2026-08-24 it BEHAVES like list 2: mounting a `context_menu` warns once on
+stderr, the way every other not-yet-built kind does. It used to produce nothing
+at all — no menu, no warning — because being a non-view kind was answered first
+and stopped the question there. Not a rectangle is not the same as not a debt.
 
 ### Dragging a split divider
 

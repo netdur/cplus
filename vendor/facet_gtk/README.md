@@ -44,9 +44,34 @@ the owning component re-renders explicitly (`render_into`). There is no
 | `text_area`, `composer` | **partial** — GtkTextView in a GtkScrolledWindow, displays `value`; **no** event wiring or text read-back yet (needs hand-bound `GtkTextBuffer` iterators — the generated binding omits them) |
 | `bordered`, `clickable` | **pass-through** (content shown; no border / no gesture yet) |
 | `split` | **flex row** of the two panes (no GtkPaned divider yet) |
+| `context_menu`, `context_menu_item` | **not built** — `GtkPopoverMenu` + `GMenuModel` is the answer, and the kinds are not mentioned in this package at all |
 
 Each gap is localized and greppable (`TODO(gtk,linux)`), the shape the plan
 sanctions — a second pass grows each into a real op.
+
+### The menu family, stated so it is a decision and not a discovery
+
+`ui::context_menu` and `ui::context_menu_item` live in `facet/elements`, so they
+read as portable. Only AppKit builds anything: this package does not mention the
+kinds, and `facet_uikit` classifies them as a debt and warns once when one is
+mounted. An app that declares a context menu therefore gets one on macOS and
+silence here.
+
+That is **not** a decided-absent, the way `refreshable` and `swipeable` are
+decided-absent on iOS. GTK has a real answer — `GtkPopoverMenu` driven from a
+`GMenuModel`, with `gtk_popover_menu_new_from_model` and a right-click
+`GtkGestureClick` — so this is unbuilt work, not a thing the platform cannot
+do. It is recorded here rather than built because this package is Phase 1,
+type-checked and never run, and `facet_appkit` is the reference: writing a menu
+tier that no one can execute would add a second unverified surface to a package
+whose whole status line is that nothing in it has been executed.
+
+The AppKit side of this family was finished on 2026-08-24 (a `context_menu` in a
+tree or list row could never open, for two unrelated reasons). Anyone porting it
+here should read `facet_appkit/src/controls.cplus` `attach_context_menu` and
+`recycler.cplus` `menuForEvent:` together — the second is the half that is easy
+to miss, because a table widget handles its own right-click and never asks the
+row.
 
 ## What must be validated on Linux (before relying on this)
 

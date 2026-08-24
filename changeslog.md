@@ -665,6 +665,91 @@ by its *shape*, not a method-name allowlist, through every form it can leak:
   it binds a name; raw-pointer assignment drops old value; noalias and
   TBAA fixes under -O2/+).
 
+### Completion — one composed answer, three front doors
+- **`complete FILE:LINE:COL`** — the caret question, answered whole. The
+  graph decides whether a caret follows a `.` (the receiver's fields and
+  methods), a `::` (a module's items or a type's methods and variants), or
+  neither (everything in scope), filters by the word already typed, and
+  ranks nearest-binding-first. `scope-at` / `type-at` / `members` remain the
+  primitives; deciding *which* of them a caret is asking is C+'s rules, so
+  it lives in the compiler rather than in each caller. Available as
+  `cpc query complete`, as the `complete_at` MCP tool, and as the LSP's
+  `textDocument/completion` — all three call one function in core.
+- **`cpc lsp` is resident.** It used to rebuild the whole project on *every*
+  request (~2 s each on a large one), which is why it had no completion.
+  The graph is now built once per project root and kept warm, with open
+  buffers overlaid and rebuilds on a worker — the same session type
+  `cpc mcp` uses, now shared from `cplus-core::session` rather than
+  duplicated. Measured on a 185-module project: 3.7 s for the first
+  answer, 3.7 ms for every one after it.
+- **`cpc lsp` resolves dependencies.** It loaded projects without their
+  declared `[dependencies]`, so every vendored import reported *E0401
+  imported file not found*, the graph never built, and the editor silently
+  fell back to single-file behaviour on any real project. It now resolves
+  the way `cpc build` does, and diagnostics for such a project are the
+  program's own instead of a fabricated missing import.
+- **The graph is indexed.** `CodeGraph` carries `by_id` / `by_name` (symbol
+  id and bare name to node indices), built once with it, so `def`,
+  `members`, `symbols`, `callable_ids` and the completion walks stop
+  scanning the whole node vector. Measured on a 43k-node project:
+  `find_members` 1.63 → 0.29 ms, 2.67 → 0.43 ms on a 107-member type,
+  `file_symbols` 0.12 → 0.07 ms. A symbol id can repeat (two `impl` blocks,
+  one method name), so both maps hold a list — and answers stay in
+  declaration order, so an indexed query answers identically to the scan it
+  replaced. `cpc lsp` also stopped canonicalizing every file in the project
+  on every request.
+
+### facet — six gaps found building iris
+- **A `context_menu` in a tree or list row can now open.** A table or
+  outline view handles right-click itself and asks its OWN `menu`, which
+  facet never set — so a menu nested in a row was built, attached to the
+  row's view, and unreachable. Both row hosts are facet subclasses now
+  (`FacetTableView` / `FacetOutlineView`) whose `menuForEvent:` answers with
+  the clicked row's menu, after calling super so `clickedRow` still draws
+  the ring. `swipeable`/`swipe_item` was unreachable the same way and is
+  reachable for the same reason.
+- **A `context_menu` under an unkeyed container is no longer dropped.** A
+  node carrying one asks for a view exactly as one with a gesture or a
+  background does — `wants_menu` joins `has_gestures` and `wants_painting`.
+  Direct children only, so the rule agrees with `attach_context_menu`.
+- **`run_job` answers whether it started, and refuses a second flight.**
+  Two workers inside one job's `run()` assign the same fields; where those
+  are `Text` or `Vec` the second frees what the first is writing. It shipped
+  as a SIGSEGV. A 64-slot table of job addresses, claimed before the worker
+  spawns and released when the apply is done. `job_in_flight` is the
+  question five services were each answering with a private flag.
+- **The agent surface tells a wired control from a dead one.** `describe_ui`
+  reports `wired` beside `actionable` and `clickable`, and `click` answers
+  `no_handler` — because an NSControl is driven by its target/action and
+  ONLY that, so a gesture band on a button never fires. Made honest at the
+  source: `controls::arm_control` installs an action when there is something
+  on the other end and clears it when there is not, so lldb and
+  Accessibility Inspector read the same fact.
+- **The neutral runtime facade compiles, and keeps the facade's surface.**
+  `runtime.cplus` promises app code type-checks on every target; it had
+  stopped compiling on all of them (`Appearance::System` never existed) and
+  was missing eight members the real facades carry. Build it with
+  `cpc build --target android-arm64` — a platform-shadowed file is unbuilt
+  by default on the platform you are standing on.
+- **A `context_menu_item` handler can tell which item fired it.** A handler
+  is `fn(sender, ctx)` and `ctx` is the component — the same pointer for
+  every row — so identity is read off the sender, and a menu item was the
+  one control kind carrying neither half, because both bindings live in
+  `views::create` and a menu kind never gets a view. `bind_menu_identity`
+  gives it the key as its `accessibilityIdentifier` and the item pointer as
+  an associated object, so `component::key_of` / `item_of` answer from a
+  menu action exactly as from a button. `swipe_item` gets it too.
+- **A sender that is not a view no longer raises.** `key_of` and `item_of`
+  walk `superview` when the first hop finds nothing, and an NSMenuItem does
+  not answer it — so the natural line sent an unrecognised selector from
+  inside a menu action. `input::superview_of` answers 0 for an object with
+  no superview, which is what the walk's termination condition already
+  means.
+- **`context_menu` on iOS is an audible debt.** Being a non-view kind was
+  answered first and stopped the question, so declaring one produced no
+  menu and no warning. It warns once now, like every other not-yet-built
+  kind. `facet_gtk`'s README carries the same decision in writing.
+
 ### Docs & process
 - Vendor tutorial / guide / ref layout across packages; facet and
   facet_appkit docs closed Stage 4 / audit.

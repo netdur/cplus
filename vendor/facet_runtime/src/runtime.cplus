@@ -181,7 +181,11 @@ fn set_app_appearance(a: vocab::Appearance) {
 
 fn app_appearance() -> vocab::Appearance {
     no_backend("app_appearance");
-    return vocab::Appearance::System;
+    // `Unspecified` is the "ask the system" value — the same one the macOS
+    // facade documents as giving the system back. There has never been a
+    // `System` variant; this file simply had not been compiled since the
+    // vocabulary was written.
+    return vocab::Appearance::Unspecified;
 }
 
 // `alert` DIVERGED, which is worse than being missing: the base was blocking
@@ -369,6 +373,91 @@ fn register_screen(route: str, factory: fn() -> screen::ScreenBox) -> bool {
     return true;
 }
 
+// ---- the dialog and navigation tier, mirrored here --------------------------
+//
+// Same drift as the window/app tier above, and found the same way: an app
+// called `runtime::prompt`, which both real facades carry, and the base did
+// not — so the code compiled on a Mac and on iOS and failed to TYPE-CHECK
+// anywhere else. That is precisely the failure this file's header promises to
+// prevent, so a member reaching a facade without reaching here is a bug in the
+// base, not a feature of the facade.
+//
+// Sweeping for the rest of it (`^fn` in each facade against `^fn` here) turned
+// up eight, not one. They are all below, in two kinds:
+//
+//   * BACKEND ENTRY POINTS — `prompt`, `choose`, `close_current`,
+//     `push_screen`, `pop_screen`. Something has to be on screen for these to
+//     mean anything, so they take the no-backend posture: say so once, answer
+//     harmlessly.
+//   * PURE ADAPTERS — `chrome_of_window`, `default_should_close`,
+//     `default_will_close`. These touch no toolkit; they read an interface the
+//     app implements, or are the trivial default of a callback pair. A
+//     loud-failing copy would be WRONG, not merely absent: it would fail on a
+//     platform where the answer is knowable. They are the real thing here,
+//     identical to both facades.
+
+// A one-field naming sheet — the shape behind "New Folder", "Add Column".
+fn prompt(title: str, message: str, placeholder: str = "", primary: str = "OK",
+          secondary: str = "Cancel",
+          on_typed: fn(str, *u8) = 0 as fn(str, *u8),
+          on_typed_ctx: *u8 = 0 as *u8,
+          on_answer: fn(i32, *u8) = 0 as fn(i32, *u8),
+          on_answer_ctx: *u8 = 0 as *u8) {
+    no_backend("prompt");
+    return;
+}
+
+// `options` is TAKEN on both facades, so it is taken here too — a base that
+// borrowed where the real one consumes would move the compile error rather
+// than remove it.
+fn choose(title: str, message: str, take options: vec::Vec[text::Text],
+          on_answer: fn(i32, *u8) = 0 as fn(i32, *u8),
+          on_answer_ctx: *u8 = 0 as *u8) {
+    var owned: vec::Vec[text::Text] = options;
+    no_backend("choose");
+    return;
+}
+
+fn close_current() {
+    no_backend("close_current");
+    return;
+}
+
+fn push_screen(route: str, arg: str) -> bool {
+    no_backend("push_screen");
+    return false;
+}
+
+fn pop_screen() -> bool {
+    no_backend("pop_screen");
+    return false;
+}
+
+// Reads the app's own `Window` implementation. No toolkit is involved, so this
+// answers for real on every target.
+fn chrome_of_window[W: Window](ref w: W) -> Chrome {
+    return screen::Chrome::new(
+        title: w.title(),
+        width: w.width(),
+        height: w.height(),
+        min_width: w.min_width(),
+        min_height: w.min_height(),
+        bar: w.bar(),
+        maximizable: w.is_maximizable(),
+        minimizable: w.is_minimizable(),
+        max_width: w.max_width(),
+        max_height: w.max_height(),
+        zoomable: w.wants_pinch_zoom(),
+        min_zoom: w.min_zoom(),
+        max_zoom: w.max_zoom(),
+    );
+}
+
+// The default halves of the close-callback pair: allow the close, do nothing
+// on the way out.
+fn default_should_close(ctx: *u8) -> bool { return true; }
+fn default_will_close(ctx: *u8) { return; }
+
 // ---- tests ------------------------------------------------------------------
 
 fn rt_screen_factory() -> screen::ScreenBox { return screen::ScreenBox::invalid(); }
@@ -400,5 +489,22 @@ fn app_run_without_a_backend_refuses_loudly() {
     var a: App = App::new();
     let s: status::Status = a.run("main");
     assert s == status::Status::InvalidInput;
+    return;
+}
+
+#[test]
+fn the_dialog_and_nav_tier_is_present_and_inert() {
+    // The base's promise is that app code TYPE-CHECKS here. This test is that
+    // promise: it does not assert behaviour, it asserts these names exist with
+    // these signatures on a target with no backend. It stops compiling the day
+    // one of them is dropped again.
+    prompt("Rename", "New name", placeholder: "name");
+    choose("Pick", "one", vec::Vec[text::Text]::new());
+    close_current();
+    assert push_screen("workspace", "") == false;
+    assert pop_screen() == false;
+    // The pure adapters answer for real, with no backend anywhere.
+    assert default_should_close(0 as *u8) == true;
+    default_will_close(0 as *u8);
     return;
 }
