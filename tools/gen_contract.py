@@ -410,6 +410,53 @@ def control_rows():
     return out, by_type
 
 
+# ---- the payload parameter -------------------------------------------------
+# Which controls name `item` at construction: the ones whose ledger type
+# declares `CommandParameter`, own or inherited.
+#
+# `key` is the other shared-band word a constructor names, and the pair is the
+# point: key is the ADDRESS a node answers to, item is the PAYLOAD its handler
+# receives. Both live on the node rather than in a control's props, because a
+# node has one of each however many handlers it carries.
+#
+# WHY IT HAS TO BE NAMEABLE HERE rather than only through `core::set_item`. A
+# handler is `fn(sender, ctx)` and a bound method fills ctx with its RECEIVER
+# (E0824) — the same pointer for every row — so the payload is the only thing
+# that can say which one, and it has to be settable in the same expression that
+# sets the handler. Reached only through a setter, it forces a builder call to
+# be broken into three statements, which is why the one application that needed
+# it encoded the payload into the KEY instead and parsed it back out.
+#
+# Ordered LAST, and that is deliberate: C+ parameters are named and defaulted,
+# so appending cannot move anything a caller already passes positionally.
+PARAM_MEMBER = "CommandParameter"
+
+
+_PARAM_TYPES = None
+
+
+def param_types():
+    """Ledger types with a `CommandParameter` row, read from the spec directly.
+
+    Not from `control_rows`: that keeps ADOPT rows only, and this one is a DROP
+    — the map records where it went rather than emitting a props field for it.
+    """
+    global _PARAM_TYPES
+    if _PARAM_TYPES is None:
+        with open(ledger_map.SPEC) as f:
+            spec = json.load(f)
+        _PARAM_TYPES = {t for t, v in spec.items()
+                        if PARAM_MEMBER in (v.get("writes") or {})}
+    return _PARAM_TYPES
+
+
+def carries_param(row_type):
+    """Does this control's ledger type declare `CommandParameter`, own or inherited?"""
+    have = param_types()
+    return any(src in have
+               for src in [row_type] + EXTRA_BASES.get(row_type, []) + COMMON_BASES)
+
+
 # The content parameter: naming_guideline's "constructors take their content".
 # It leads the signature, then `key`, then everything else defaulted.
 PRIMARY = {
@@ -2870,6 +2917,11 @@ def ctor_params(row_type, writes, reads, events, owned=()):
     # door for filling one later.
     for field, ty, _m, _s, _p in owned:
         params.append(("take " + field, cplus_type(ty), default_of(ty, _s, _m)))
+    # The ledger's `CommandParameter`, on the shared band beside `key`. LAST in
+    # the list so appending it cannot move a parameter a caller already passes
+    # positionally — see PARAM_MEMBER above for why it is nameable here at all.
+    if carries_param(row_type):
+        params.append(("item", "*u8", "0 as *u8"))
     return params
 
 
@@ -2951,12 +3003,20 @@ def emit_control(row_type, merged):
         o.append("    p.selected_index = selected_index;\n")
         o.append("    p.on_tab_changed = on_tab_changed;\n")
         o.append("    p.on_tab_changed_ctx = on_tab_changed_ctx;\n")
-    o.append(f"    return match box::new::[props::{props}](p) {{\n")
+    keep = "    var n: core::Node = match" if carries_param(row_type) else "    return match"
+    o.append(f"{keep} box::new::[props::{props}](p) {{\n")
     o.append(f"        option::Option[box::Box[props::{props}]]::Some(b) =>\n")
     o.append(f"            core::node_with(key, props::K_{up}, b.into_raw(), props::release_{mod}_props),\n")
     o.append(f"        option::Option[box::Box[props::{props}]]::None =>\n")
     o.append(f"            core::node_with(key, props::K_{up}, 0 as *u8, props::release_{mod}_props),\n")
-    o.append("    };\n}\n\n")
+    o.append("    };\n")
+    if carries_param(row_type):
+        # Only when one was given: `set_item` touches C_HANDLERS, and a node
+        # built with no payload should not arrive dirty for one it does not
+        # have.
+        o.append("    if item != (0 as *u8) { core::set_item(#addr_of(n), item); }\n")
+        o.append("    return n;\n")
+    o.append("}\n\n")
 
     # ---- cursor
     o.append("// ---- live --------------------------------------------------------------\n")

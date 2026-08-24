@@ -32,6 +32,7 @@ fn menu_item(
     destructive: bool = false,
     on_clicked: fn(*u8, *u8) = props::no_handler,
     on_clicked_ctx: *u8 = 0 as *u8,
+    item: *u8 = 0 as *u8,
 ) -> core::Node {
     var p: props::MenuItemProps = props::MenuItemProps::new();
     p.icon = text::from_str(icon);
@@ -39,12 +40,14 @@ fn menu_item(
     p.text = text::from_str(text);
     p.on_clicked = on_clicked;
     p.on_clicked_ctx = on_clicked_ctx;
-    return match box::new::[props::MenuItemProps](p) {
+    var n: core::Node = match box::new::[props::MenuItemProps](p) {
         option::Option[box::Box[props::MenuItemProps]]::Some(b) =>
             core::node_with(key, props::K_MENU_ITEM, b.into_raw(), props::release_menu_item_props),
         option::Option[box::Box[props::MenuItemProps]]::None =>
             core::node_with(key, props::K_MENU_ITEM, 0 as *u8, props::release_menu_item_props),
     };
+    if item != (0 as *u8) { core::set_item(#addr_of(n), item); }
+    return n;
 }
 
 // ---- live --------------------------------------------------------------

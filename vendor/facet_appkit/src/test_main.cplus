@@ -1551,8 +1551,10 @@ fn a_menu_item_carries_its_key_and_its_item_like_every_other_sender() {
     // which row: right menu, unattributable click.
     var menu_node: core::Node = context_menu::context_menu(key: "cm:ident");
     let mp: *core::Node = #addr_of(menu_node);
-    var ren: core::Node = context_menu_item::context_menu_item("Rename", key: "ctx:rename:/a/b");
-    core::set_item_index(#addr_of(ren), 7 as usize);
+    // The payload named where the handler would be — the ledger's
+    // `CommandParameter`, on the shared band beside `key`.
+    var ren: core::Node = context_menu_item::context_menu_item("Rename", key: "ctx:rename:/a/b",
+                                                               item: (7 as usize +% (1 as usize)) as *u8);
     assert mount::add_child(mp, ren);
     assert mount::add_child(mp, context_menu_item::context_menu_item("Delete", key: "ctx:delete:/a/b"));
 
@@ -1569,7 +1571,9 @@ fn a_menu_item_carries_its_key_and_its_item_like_every_other_sender() {
             assert ak::Accessibility::from_raw(mi.raw()).accessibility_identifier().view()
                    == "ctx:rename:/a/b";
             assert input::key_of(mi.raw()).view() == "ctx:rename:/a/b";
-            // And the payload half: `set_item_index(7)` reads back as 7.
+            // And the payload half: `item:` at construction reads back as 7
+            // through `component::item_index_of(sender)` — builder to handler,
+            // across a control kind that never gets a view.
             match component::item_index_of(mi.raw()) {
                 option::Option[usize]::Some(ix) => { assert ix == (7 as usize); }
                 option::Option[usize]::None => { assert false; }

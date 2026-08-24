@@ -34,6 +34,7 @@ fn context_menu_item(
     destructive: bool = false,
     on_clicked: fn(*u8, *u8) = props::no_handler,
     on_clicked_ctx: *u8 = 0 as *u8,
+    item: *u8 = 0 as *u8,
 ) -> core::Node {
     var p: props::ContextMenuItemProps = props::ContextMenuItemProps::new();
     p.shortcut_key = text::from_str(shortcut.key);
@@ -43,12 +44,14 @@ fn context_menu_item(
     p.menu_item.text = text::from_str(text);
     p.menu_item.on_clicked = on_clicked;
     p.menu_item.on_clicked_ctx = on_clicked_ctx;
-    return match box::new::[props::ContextMenuItemProps](p) {
+    var n: core::Node = match box::new::[props::ContextMenuItemProps](p) {
         option::Option[box::Box[props::ContextMenuItemProps]]::Some(b) =>
             core::node_with(key, props::K_CONTEXT_MENU_ITEM, b.into_raw(), props::release_context_menu_item_props),
         option::Option[box::Box[props::ContextMenuItemProps]]::None =>
             core::node_with(key, props::K_CONTEXT_MENU_ITEM, 0 as *u8, props::release_context_menu_item_props),
     };
+    if item != (0 as *u8) { core::set_item(#addr_of(n), item); }
+    return n;
 }
 
 // ---- live --------------------------------------------------------------

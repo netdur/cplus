@@ -234,6 +234,7 @@ fn button(
     toggles: bool = false,
     on: bool = false,
     bordered: bool = true,
+    item: *u8 = 0 as *u8,
 ) -> core::Node {
     return m_button::button(
         title,
@@ -261,6 +262,7 @@ fn button(
         toggles: toggles,
         on: on,
         bordered: bordered,
+        item: item,
     );
 }
 
@@ -836,6 +838,7 @@ fn checkbox(
     color: vocab::Color = vocab::Color::clear(),
     on_checked_changed: fn(*u8, *u8) = props::no_handler,
     on_checked_changed_ctx: *u8 = 0 as *u8,
+    item: *u8 = 0 as *u8,
 ) -> core::Node {
     return m_checkbox::checkbox(
         on,
@@ -843,6 +846,7 @@ fn checkbox(
         color: color,
         on_checked_changed: on_checked_changed,
         on_checked_changed_ctx: on_checked_changed_ctx,
+        item: item,
     );
 }
 
@@ -963,6 +967,7 @@ fn icon_button(
     toggles: bool = false,
     on: bool = false,
     bordered: bool = true,
+    item: *u8 = 0 as *u8,
 ) -> core::Node {
     return m_icon_button::icon_button(
         source,
@@ -981,6 +986,7 @@ fn icon_button(
         toggles: toggles,
         on: on,
         bordered: bordered,
+        item: item,
     );
 }
 
@@ -1081,6 +1087,7 @@ fn refreshable(
     refresh_color: vocab::Color = vocab::Color::clear(),
     on_refreshing: fn(*u8, *u8) = props::no_handler,
     on_refreshing_ctx: *u8 = 0 as *u8,
+    item: *u8 = 0 as *u8,
 ) -> core::Node {
     return m_refreshable::refreshable(
         key: key,
@@ -1089,6 +1096,7 @@ fn refreshable(
         refresh_color: refresh_color,
         on_refreshing: on_refreshing,
         on_refreshing_ctx: on_refreshing_ctx,
+        item: item,
     );
 }
 
@@ -1131,6 +1139,7 @@ fn swipe_item(
     on_invoked_ctx: *u8 = 0 as *u8,
     on_clicked: fn(*u8, *u8) = props::no_handler,
     on_clicked_ctx: *u8 = 0 as *u8,
+    item: *u8 = 0 as *u8,
 ) -> core::Node {
     return m_swipe_item::swipe_item(
         key: key,
@@ -1141,6 +1150,7 @@ fn swipe_item(
         on_invoked_ctx: on_invoked_ctx,
         on_clicked: on_clicked,
         on_clicked_ctx: on_clicked_ctx,
+        item: item,
     );
 }
 
@@ -1255,6 +1265,7 @@ fn menu_item(
     destructive: bool = false,
     on_clicked: fn(*u8, *u8) = props::no_handler,
     on_clicked_ctx: *u8 = 0 as *u8,
+    item: *u8 = 0 as *u8,
 ) -> core::Node {
     return m_menu_item::menu_item(
         text,
@@ -1263,6 +1274,7 @@ fn menu_item(
         destructive: destructive,
         on_clicked: on_clicked,
         on_clicked_ctx: on_clicked_ctx,
+        item: item,
     );
 }
 
@@ -1294,6 +1306,7 @@ fn context_menu_item(
     destructive: bool = false,
     on_clicked: fn(*u8, *u8) = props::no_handler,
     on_clicked_ctx: *u8 = 0 as *u8,
+    item: *u8 = 0 as *u8,
 ) -> core::Node {
     return m_context_menu_item::context_menu_item(
         text,
@@ -1303,6 +1316,7 @@ fn context_menu_item(
         destructive: destructive,
         on_clicked: on_clicked,
         on_clicked_ctx: on_clicked_ctx,
+        item: item,
     );
 }
 
@@ -1315,6 +1329,7 @@ fn toolbar_item(
     destructive: bool = false,
     on_clicked: fn(*u8, *u8) = props::no_handler,
     on_clicked_ctx: *u8 = 0 as *u8,
+    item: *u8 = 0 as *u8,
 ) -> core::Node {
     return m_toolbar_item::toolbar_item(
         text,
@@ -1325,6 +1340,7 @@ fn toolbar_item(
         destructive: destructive,
         on_clicked: on_clicked,
         on_clicked_ctx: on_clicked_ctx,
+        item: item,
     );
 }
 

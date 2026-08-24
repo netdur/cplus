@@ -699,6 +699,29 @@ by its *shape*, not a method-name allowlist, through every form it can leak:
   replaced. `cpc lsp` also stopped canonicalizing every file in the project
   on every request.
 
+### facet — the payload half of a handler
+- **`item:` at construction**, on the eight controls whose ledger type
+  declares `CommandParameter` — button, checkbox, icon_button, refreshable,
+  menu_item, context_menu_item, swipe_item, toolbar_item. It sits on the
+  shared band beside `key`, and the pair is the point: **key is the ADDRESS a
+  node answers to, item is the PAYLOAD its handler receives.**
+- It had to be a *constructor parameter* rather than only `core::set_item`.
+  A handler is `fn(sender, ctx)` and a bound method fills `ctx` with its
+  RECEIVER (E0824) — the same pointer for every row — so the payload is the
+  only thing that can say which one, and it has to be settable in the same
+  expression that sets the handler. Reached only through a setter it forces a
+  builder call into three statements, which is why an application that needed
+  it encoded the payload into the KEY and parsed it back out instead.
+- Appended LAST in each signature, so nothing a caller already passes
+  positionally moves; every existing call site compiles unchanged.
+- **`CommandParameter` stopped being dropped as MVVM.** It shared one regex
+  and one reason string with `Command` — but `Command` is `ICommand`, which
+  IS the view-model and is rightly dropped, while `CommandParameter` is the
+  ARGUMENT the handler needs. facet had already rebuilt the concept from
+  first principles as `core::set_item` / `item_of`, whose own comment reads
+  "an item IS the payload half of a handler" — this row's definition. The map
+  now points at where it lives instead of contradicting the code.
+
 ### facet — six gaps found building iris
 - **A `context_menu` in a tree or list row can now open.** A table or
   outline view handles right-click itself and asks its OWN `menu`, which

@@ -154,9 +154,37 @@ DROP_TYPES = {
     "IBindableLayout": LAYOUT,
 }
 
+# What `CommandParameter` became. Not a drop reason — a POINTER, so the map
+# stops contradicting the code.
+#
+# `Command` is `ICommand` and is MVVM by definition: the view-model IS the
+# command, so dropping it is right and the reason above says so. For a long time
+# `CommandParameter` was dropped by the SAME regex — `Command(Parameter)?$` —
+# and inherited that reason word for word. It is not the same thing. `Command`
+# is the handler; `CommandParameter` is the ARGUMENT the handler needs, and
+# facet's replacement for `Command` (a fn-pointer plus a ctx slot) does not
+# carry one, because a bound method consumes the ctx slot for its receiver
+# (E0824).
+#
+# So facet built it anyway, from first principles, and did not name it after
+# this row: `core::set_item` / `core::item_of`, whose own comment reads "an item
+# IS the payload half of a handler" — which is this row's definition. One
+# concept, decided absent in the map and present in the tree.
+#
+# It stays out of the props band, and that part of the old decision was right:
+# a `CommandParameter` is not per-control state, it is one payload per NODE, so
+# it belongs on the shared band beside `key` — key is the ADDRESS, item is the
+# PAYLOAD. `gen_contract.ctor_params` names it at construction for the controls
+# whose ledger type declares this row, which is what makes it reachable where
+# the handler is set instead of through a second statement afterwards.
+PARAM = ("the payload half of a handler — facet carries it on the shared band as "
+         "the node's `item`, named at construction and read with "
+         "`component::item_of(sender)`; see gen_contract.ctor_params")
+
 # ---- member-name rules, applied before the type rules -----------------------
 DROP_PATTERNS = [
-    (re.compile(r"Command(Parameter)?$"), MODEL),
+    (re.compile(r"CommandParameter$"), PARAM),
+    (re.compile(r"Command$"), MODEL),
     (re.compile(r"Template$"), MODEL),
     (re.compile(r"^(ItemsSource|SelectedItems|BindingContext|Style|StyleClass|"
                 r"Resources|Triggers|Behaviors|Effects|Navigation|Parent|"
