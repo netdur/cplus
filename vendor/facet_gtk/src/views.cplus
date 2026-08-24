@@ -292,11 +292,45 @@ fn measure_natural(v: *u8, orientation: i32, for_size: i32) -> f64 {
     return nat as f64;
 }
 
+// MEASURE THE WIDGET, NOT WHAT WE LAST TOLD IT TO BE.
+//
+// `geometry::place` sets the frame with `set_size_request`, and a size request
+// is a MINIMUM: `gtk_widget_measure` can never answer less than one. So asking
+// a placed widget for its natural size returns `max(natural, what we asked for
+// last pass)` — the measurement reads back our own previous answer.
+//
+// That is a RATCHET, and it is what made the gallery walk off the bottom of
+// the window. A wrapping label's height is measured against an offered width;
+// any pass where that width came out a little narrower produced a taller
+// label, `place` wrote the taller height into the request, and the next
+// measurement could never go below it again. Each click added another line —
+// measured at ~31px per click on the Button demo, whose snippet grew from 81px
+// to 680px over nineteen clicks and pushed everything after it off-screen.
+//
+// So the request is lifted for the duration of the measurement and put back
+// immediately. Nothing else may run in between: this is the same widget the
+// caller is about to place, and leaving it unconstrained would let one
+// intervening layout pass see a size nobody asked for.
+//
+// The AppKit backend has no equivalent guard and needs none — `setFrame:` does
+// not change what `fittingSize` answers.
+fn measure_unconstrained(v: *u8, orientation: i32, for_size: i32) -> f64 {
+    let w: gtk::Widget = gtk::Widget::from_raw(v);
+    var req_w: i32 = 0 as i32;
+    var req_h: i32 = 0 as i32;
+    w.get_size_request(req_w, req_h);
+    let none: i32 = 0 -% (1 as i32);
+    w.set_size_request(none, none);
+    let n: f64 = measure_natural(v, orientation, for_size);
+    w.set_size_request(req_w, req_h);
+    return n;
+}
+
 fn measure_view(ctx: *u8, avail_w: f64, wm: flex::MeasureMode,
                 avail_h: f64, hm: flex::MeasureMode) -> flex::Size {
     if ctx == (0 as *u8) { return flex::Size { width: 0.0f64, height: 0.0f64 }; }
     // Width first, unconstrained: what the widget would like.
-    var w: f64 = measure_natural(ctx, 0 as i32, 0 -% (1 as i32));
+    var w: f64 = measure_unconstrained(ctx, 0 as i32, 0 -% (1 as i32));
     // `avail_w == avail_w` is the NaN test — flex passes NaN for "no
     // constraint", and NaN is the one value not equal to itself.
     if avail_w == avail_w && avail_w > (0.0 as f64) {
@@ -304,7 +338,7 @@ fn measure_view(ctx: *u8, avail_w: f64, wm: flex::MeasureMode,
     }
     // Height AGAINST that width: a label that wraps needs the width to know
     // how tall it is, which is the whole reason `for_size` exists.
-    let h: f64 = measure_natural(ctx, 1 as i32, w as i32);
+    let h: f64 = measure_unconstrained(ctx, 1 as i32, w as i32);
     return flex::Size { width: w, height: h };
 }
 
@@ -312,9 +346,9 @@ fn measure_view(ctx: *u8, avail_w: f64, wm: flex::MeasureMode,
 fn measure_filling(ctx: *u8, avail_w: f64, wm: flex::MeasureMode,
                    avail_h: f64, hm: flex::MeasureMode) -> flex::Size {
     if ctx == (0 as *u8) { return flex::Size { width: 0.0f64, height: 0.0f64 }; }
-    var w: f64 = measure_natural(ctx, 0 as i32, 0 -% (1 as i32));
+    var w: f64 = measure_unconstrained(ctx, 0 as i32, 0 -% (1 as i32));
     if avail_w == avail_w && avail_w > (0.0 as f64) { w = avail_w; }
-    let h: f64 = measure_natural(ctx, 1 as i32, w as i32);
+    let h: f64 = measure_unconstrained(ctx, 1 as i32, w as i32);
     return flex::Size { width: w, height: h };
 }
 
