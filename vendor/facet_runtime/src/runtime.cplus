@@ -402,7 +402,8 @@ fn prompt(title: str, message: str, placeholder: str = "", primary: str = "OK",
           on_typed: fn(str, *u8) = 0 as fn(str, *u8),
           on_typed_ctx: *u8 = 0 as *u8,
           on_answer: fn(i32, *u8) = 0 as fn(i32, *u8),
-          on_answer_ctx: *u8 = 0 as *u8) {
+          on_answer_ctx: *u8 = 0 as *u8,
+          initial: str = "") {
     no_backend("prompt");
     return;
 }
@@ -498,7 +499,7 @@ fn the_dialog_and_nav_tier_is_present_and_inert() {
     // promise: it does not assert behaviour, it asserts these names exist with
     // these signatures on a target with no backend. It stops compiling the day
     // one of them is dropped again.
-    prompt("Rename", "New name", placeholder: "name");
+    prompt("Rename", "New name", placeholder: "name", initial: "old.txt");
     choose("Pick", "one", vec::Vec[text::Text]::new());
     close_current();
     assert push_screen("workspace", "") == false;

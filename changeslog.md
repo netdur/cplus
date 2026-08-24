@@ -699,6 +699,34 @@ by its *shape*, not a method-name allowlist, through every form it can leak:
   replaced. `cpc lsp` also stopped canonicalizing every file in the project
   on every request.
 
+### facet — the dialogs answer the keyboard, and open on a value
+- **Return and Escape.** A native alert gives a window a default button and a
+  cancel button for free; a facet sheet is built out of facet controls — which
+  is what makes it keyed and agent-drivable — and the cost is that everything
+  the platform did for nothing has to be said. It was not said, so typing a
+  name into a prompt and pressing Return did nothing, and the only way out of
+  any sheet was the mouse. The primary button now carries `keyEquivalent
+  "\r"` and the secondary `"\x1b"`, which also draws the default accented.
+  Return fires while the text field has focus, because a window's default
+  button answers regardless of first responder.
+- **A `choose` sheet binds neither**, deliberately: its buttons are N options
+  and none is "the obvious one", so binding Return would act on the user's
+  behalf without being asked.
+- **`prompt` opens on a value.** `initial:` — the ledger's `initialValue`,
+  which is NOT the placeholder: one is the hint shown while the field is
+  empty, the other is what the field starts with and what a person then
+  edits. Only the hint had reached facet's signature, so Rename opened on
+  nothing with the old name greyed out behind the caret. Appended last, on
+  the neutral base and both facades.
+- **Guard 8: an implementation CLAIM accounts for the row's parameters.**
+  `METHOD_DROPS` says "facet says it as `runtime::prompt`" and that was
+  checked at the METHOD level only — the verb exists, so the row is answered.
+  A claim on a row with three or more parameters now has to say what each one
+  is carried as, or that it is absent and why. It found two more the moment it
+  ran: `DisplayActionSheet`'s `cancel` and `destruction` — a choose sheet has
+  no cancel button and no way to mark an option destructive, and neither
+  absence had been decided. Nine unaccounted parameters print on every regen.
+
 ### facet_uikit — a context menu, as the platform's own long press
 - **`context_menu` is built on iOS**: `UIContextMenuInteraction` + `UIMenu` /
   `UIAction`, in `menus.cplus`. A right-click and a touch-and-hold are one

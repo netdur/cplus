@@ -5423,6 +5423,96 @@ fn an_alert_is_a_facet_tree_the_agent_can_address() {
     return;
 }
 
+// ---- Return, Escape, and the value a prompt opens on -------------------------
+
+fn key_equivalent_of(key: str) -> text::Text {
+    match mount::find(key) {
+        option::Option[*core::Node]::Some(n) => {
+            let v: *u8 = core::view_of(n);
+            if v == (0 as *u8) { return text::new(); }
+            let ns: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("keyEquivalent\0"))) };
+            if ns == (0 as *u8) { return text::new(); }
+            return bridge::to_text(ns);
+        }
+        option::Option[*core::Node]::None => { return text::new(); }
+    }
+}
+
+#[test]
+fn a_sheet_answers_return_and_escape() {
+    backend::install();
+    // A NATIVE ALERT GIVES THESE AWAY FREE and a facet sheet has to supply
+    // them: the sheet is built out of facet controls, which is what makes it
+    // keyed and agent-drivable, and the cost is that everything the platform
+    // alert did for nothing has to be said. It was not said, so typing a name
+    // into a prompt and pressing Return did nothing — immediately after typing,
+    // which is the most common keyboard reflex there is.
+    AL_ANSWER = -1;
+    dialogs::prompt_sheet("Rename", "", "name", "Rename", "Cancel",
+                          on_answer: al_answered, on_answer_ctx: 0 as *u8);
+    assert key_equivalent_of("prompt:ok").view() == "\r";
+    assert key_equivalent_of("prompt:cancel").view() == "\x1b";
+    click_key("prompt:cancel");
+
+    // The same on an alert, which is the other sheet with a primary and a
+    // secondary.
+    dialogs::alert_sheet("Discard?", "", "Discard", "Keep",
+                         on_answer: al_answered, on_answer_ctx: 0 as *u8);
+    assert key_equivalent_of("alert:primary").view() == "\r";
+    assert key_equivalent_of("alert:secondary").view() == "\x1b";
+    click_key("alert:primary");
+    return;
+}
+
+#[test]
+fn a_choose_sheet_binds_neither_key() {
+    backend::install();
+    // NOT AN OVERSIGHT. A choose sheet's buttons are N options and none of them
+    // is "the obvious one", so binding Return would act on the user's behalf
+    // without being asked — and there is no cancel button for Escape to take,
+    // because the options ARE the answer.
+    var opts: vec::Vec[text::Text] = vec::new::[text::Text]();
+    let _a: status::Status = opts.append(text::from_str("Red"));
+    let _b: status::Status = opts.append(text::from_str("Blue"));
+    dialogs::choose_sheet("Pick", "", opts, on_answer: al_answered, on_answer_ctx: 0 as *u8);
+    assert key_equivalent_of("choose:opt:0").view() == "";
+    assert key_equivalent_of("choose:opt:1").view() == "";
+    click_key("choose:opt:0");
+    return;
+}
+
+#[test]
+fn a_prompt_opens_on_the_value_it_is_given() {
+    backend::install();
+    // The ledger's `initialValue`, which is NOT the placeholder: one is the hint
+    // shown while the field is EMPTY, the other is what the field starts with
+    // and what a person then edits. Only the hint had reached facet's
+    // signature, so a Rename opened on nothing and the old name sat greyed out
+    // behind the caret — every rename meant typing the whole name again.
+    AL_ANSWER = -1;
+    dialogs::prompt_sheet("Rename", "", "name", "Rename", "Cancel",
+                          on_answer: al_answered, on_answer_ctx: 0 as *u8,
+                          initial: "files_tree.cplus");
+    match text_field::find("prompt:value") {
+        option::Option[text_field::TextField]::Some(f) => {
+            assert f.text() == "files_tree.cplus";
+        }
+        option::Option[text_field::TextField]::None => { assert false; }
+    }
+    click_key("prompt:cancel");
+
+    // And with none given it still opens empty, so the placeholder does its own
+    // job — the two are different rows and stay different.
+    dialogs::prompt_sheet("New File", "", "name.cplus", "Create", "Cancel",
+                          on_answer: al_answered, on_answer_ctx: 0 as *u8);
+    match text_field::find("prompt:value") {
+        option::Option[text_field::TextField]::Some(f) => { assert f.text() == ""; }
+        option::Option[text_field::TextField]::None => { assert false; }
+    }
+    click_key("prompt:cancel");
+    return;
+}
+
 #[test]
 fn an_alert_with_one_button_has_no_second_one() {
     backend::install();

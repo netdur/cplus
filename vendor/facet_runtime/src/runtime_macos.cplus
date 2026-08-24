@@ -294,14 +294,25 @@ fn choose(title: str, message: str, take options: vec::Vec[text::Text],
 // primary button and 1 for the secondary, so a caller can tell "typed nothing"
 // from "cancelled". The field is a real facet text_field keyed `prompt:value`,
 // so `set_text` reaches it exactly like any other.
+// `initial` IS THE LEDGER'S `initialValue`, and it is a different thing from
+// `placeholder`: one is the hint shown while the field is EMPTY, the other is
+// what the field starts with and what a person then edits. The row declares
+// both — `DisplayPromptAsync(title, message, accept, cancel, placeholder,
+// maxLength, keyboard, initialValue)` — and only the hint reached this
+// signature, so a Rename opened on nothing and the old name sat greyed out
+// behind the caret.
+//
+// APPENDED LAST, so no caller that passes positionally moves.
 fn prompt(title: str, message: str, placeholder: str = "", primary: str = "OK",
           secondary: str = "Cancel",
           on_typed: fn(str, *u8) = dialogs::no_typed,
           on_typed_ctx: *u8 = 0 as *u8,
           on_answer: fn(i32, *u8) = 0 as fn(i32, *u8),
-          on_answer_ctx: *u8 = 0 as *u8) {
+          on_answer_ctx: *u8 = 0 as *u8,
+          initial: str = "") {
     dialogs::prompt_sheet(title, message, placeholder, primary, secondary,
-                          on_typed, on_typed_ctx, on_answer, on_answer_ctx);
+                          on_typed, on_typed_ctx, on_answer, on_answer_ctx,
+                          initial: initial);
     return;
 }
 

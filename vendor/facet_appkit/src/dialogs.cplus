@@ -354,7 +354,8 @@ fn choose_tree(title: str, message: str, take options: vec::Vec[text::Text]) -> 
     return core::column(b, key: "choose").padding(20.0f64).gap(12.0f64);
 }
 
-fn prompt_tree(title: str, message: str, placeholder: str, primary: str, secondary: str) -> core::Node {
+fn prompt_tree(title: str, message: str, placeholder: str, primary: str, secondary: str,
+               initial: str) -> core::Node {
     var b: core::Builder = core::Builder::new();
     b.add(label::label(title, key: "prompt:title", font_size: 15.0f64,
                        font_weight: vocab::FontWeight::Bold,
@@ -370,7 +371,16 @@ fn prompt_tree(title: str, message: str, placeholder: str, primary: str, seconda
     }
     // A real facet text_field, which is what makes the prompt agent-drivable:
     // `set_text` reaches it by key like any other field.
-    b.add(text_field::text_field("", key: "prompt:value", placeholder: placeholder));
+    //
+    // `initial` IS THE LEDGER'S `initialValue`, and it is not the placeholder.
+    // One is the hint shown while the field is EMPTY; the other is what the
+    // field starts with and what a person then edits. Only the hint had
+    // survived into facet's signature, so a Rename opened on nothing and the
+    // old name was greyed out behind the caret — every rename meant typing the
+    // whole name again. An application can reach in and `set_text` the field
+    // afterwards, and one did; that is a caller supplying a parameter the
+    // dialog should take.
+    b.add(text_field::text_field(initial, key: "prompt:value", placeholder: placeholder));
     var row: core::Builder = core::Builder::new();
     if secondary != "" {
         row.add(button::button(secondary, key: "prompt:cancel", on_click: prompt_cancel));
@@ -391,7 +401,8 @@ fn alert_sheet(title: str, message: str, primary: str, secondary: str = "",
     // Title, buttons and padding, plus however many lines the message runs to.
     present_sheet(alert_tree(title, message, primary, secondary),
                   capped(116.0f64 + message_height(message)),
-                  on_answer, on_answer_ctx, no_typed, 0 as *u8);
+                  on_answer, on_answer_ctx, no_typed, 0 as *u8,
+                  default_key: "alert:primary", cancel_key: "alert:secondary");
     return;
 }
 
@@ -404,6 +415,10 @@ fn choose_sheet(title: str, message: str, take options: vec::Vec[text::Text],
     // last option off the bottom edge — on a sheet whose last option is
     // typically the one that says no.
     let n: f64 = options.count() as f64;
+    // NO DEFAULT ON A CHOOSE, deliberately. Its buttons are N options and none
+    // of them is "the obvious one" — making Return pick the first would act on
+    // the user's behalf without being asked. Escape has no button to bind to
+    // either: a choose sheet carries no cancel, its options ARE the answer.
     present_sheet(choose_tree(title, message, options),
                   capped(78.0f64 + (n * 34.0f64) + message_height(message)),
                   on_answer, on_answer_ctx, no_typed, 0 as *u8);
@@ -414,16 +429,72 @@ fn prompt_sheet(title: str, message: str, placeholder: str, primary: str,
                 secondary: str = "",
                 on_typed: fn(str, *u8) = no_typed, on_typed_ctx: *u8 = 0 as *u8,
                 on_answer: fn(i32, *u8) = 0 as fn(i32, *u8),
-                on_answer_ctx: *u8 = 0 as *u8) {
-    present_sheet(prompt_tree(title, message, placeholder, primary, secondary),
+                on_answer_ctx: *u8 = 0 as *u8,
+                // LAST, so no caller that passes positionally moves — the
+                // whole reason `item:` was appended rather than inserted.
+                initial: str = "") {
+    present_sheet(prompt_tree(title, message, placeholder, primary, secondary, initial),
                   capped(151.0f64 + message_height(message)),
-                  on_answer, on_answer_ctx, on_typed, on_typed_ctx);
+                  on_answer, on_answer_ctx, on_typed, on_typed_ctx,
+                  default_key: "prompt:ok", cancel_key: "prompt:cancel");
+    return;
+}
+
+// ---- Return and Escape -------------------------------------------------------
+//
+// A NATIVE ALERT GIVES THESE AWAY FREE and a facet sheet has to supply them.
+// AppKit makes a button the window's DEFAULT by its key equivalent — `"\r"` for
+// Return, `"\033"` for Escape — and that is also what draws the default button
+// accented. facet builds its sheets out of facet controls, which is what makes
+// them keyed and agent-drivable, and the cost is that everything the platform
+// alert did for free has to be said here.
+//
+// It was not said. Typing a name into a prompt and pressing Return did nothing;
+// Escape did nothing; the only way out of any sheet was the mouse, immediately
+// after typing, which is the most common keyboard reflex there is.
+//
+// SET ON THE VIEW, not through a facet prop. A default button is a property of
+// the SHEET rather than of `button` — the ledger gives `KeyboardAccelerators` to
+// a menu item and not to a button, and inventing a shortcut row on every button
+// to serve three dialogs would be facet growing vocabulary for its own internals.
+// These trees are this file's own, so this file wires them.
+//
+// RETURN WORKS WHILE THE FIELD HAS FOCUS, which is the case that matters: a
+// window's default button fires on Return regardless of first responder, so long
+// as the responder does not consume the key. An NSTextField does not.
+fn set_key_equivalent(root: *core::Node, key: str, equiv: str) {
+    match mount::find(key, within: root) {
+        option::Option[*core::Node]::Some(n) => {
+            let v: *u8 = core::view_of(n);
+            if v == (0 as *u8) { return; }
+            if synth::class_responds(synth::object_class(v),
+                                     rt::sel(#str_ptr("setKeyEquivalent:\0"))) == (0 as i8) {
+                return;
+            }
+            { rt::msg_void_id(v, rt::sel(#str_ptr("setKeyEquivalent:\0")),
+                              bridge::nsstring(equiv)) };
+        }
+        option::Option[*core::Node]::None => { }
+    }
+    return;
+}
+
+// Return, and Escape. Called for every sheet with the keys that sheet uses;
+// a key that is not in this tree is simply not found, so one call site serves
+// all three shapes.
+fn arm_default_buttons(root: *core::Node, default_key: str, cancel_key: str) {
+    if default_key != "" { set_key_equivalent(root, default_key, "\r"); }
+    // ESCAPE, as the byte AppKit compares against — `\x1b`, which C's `\033`
+    // spells in octal. A button carrying it takes the window's cancel role and
+    // answers ⌘. for free with it.
+    if cancel_key != "" { set_key_equivalent(root, cancel_key, "\x1b"); }
     return;
 }
 
 fn present_sheet(take tree: core::Node, height: f64,
                  on_answer: fn(i32, *u8), on_answer_ctx: *u8,
-                 on_typed: fn(str, *u8), on_typed_ctx: *u8) {
+                 on_typed: fn(str, *u8), on_typed_ctx: *u8,
+                 default_key: str = "", cancel_key: str = "") {
     let parent: *u8 = app::window_native(app::newest_window_root());
     var root: core::Node = tree;
 
@@ -467,6 +538,9 @@ fn present_sheet(take tree: core::Node, height: f64,
         { rt::msg_void_rect(rv, rt::sel(#str_ptr("setFrame:\0")),
                             rt::Rect { x: 0.0f64, y: 0.0f64, w: 380.0f64, h: height }) };
     }
+
+    // After the mount, because the buttons need their views to exist.
+    arm_default_buttons(rp, default_key, cancel_key);
 
     match box::new::[AlertHost](AlertHost {
         root: rp, sheet: w, parent: parent,

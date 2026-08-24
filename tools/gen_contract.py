@@ -4228,6 +4228,48 @@ def check_node_band():
     return problems
 
 
+_SPEC_METHODS = None
+
+
+def spec_methods():
+    """`type -> {method -> {params, returns}}` from the spec, loaded once."""
+    global _SPEC_METHODS
+    if _SPEC_METHODS is None:
+        with open(ledger_map.SPEC) as f:
+            spec = json.load(f)
+        _SPEC_METHODS = {t: (v.get("methods") or {}) for t, v in spec.items()}
+    return _SPEC_METHODS
+
+
+def param_names(raw):
+    """The parameter NAMES of a ledger signature string.
+
+    `string accept = "OK"` is one parameter called `accept`; the type is in
+    front and a default may follow. Splitting on top-level commas keeps a
+    generic like `IList<int>` in one piece.
+    """
+    out, depth, cur = [], 0, ""
+    for ch in raw:
+        if ch in "<[(":
+            depth += 1
+        elif ch in ">])":
+            depth -= 1
+        if ch == "," and depth == 0:
+            out.append(cur)
+            cur = ""
+        else:
+            cur += ch
+    if cur.strip():
+        out.append(cur)
+    names = []
+    for piece in out:
+        head = piece.split("=")[0].strip()
+        if not head:
+            continue
+        names.append(head.split()[-1].lstrip("@"))
+    return names
+
+
 def check(rows_by_control, by_type):
     """Fail the run, by name, on anything the emitters would drop in silence."""
     problems = []
@@ -4312,6 +4354,49 @@ def check(rows_by_control, by_type):
         print(f"NOT BUILT: {len(unbuilt)} types the ledger renders and facet does not")
         for ty, why in sorted(unbuilt.items()):
             print(f"    {ty} — {why}")
+
+    # 8. an implementation CLAIM accounts for the row's parameters.
+    #
+    # Guard 5b checks that a tier row has a disposition and `METHOD_DROPS`
+    # carries "facet says it as <verb>" for the rest — both at the METHOD level.
+    # Neither says anything about the row's PARAMETERS, and that is where the
+    # drift hides: `DisplayPromptAsync` was answered by `runtime::prompt` while
+    # `initialValue` was absent from it, so a rename sheet opened on nothing and
+    # every application that renames anything reached into the dialog to set the
+    # field itself.
+    #
+    # Three parameters is the threshold, because that is where one can hide. A
+    # one-argument verb either takes its argument or obviously does not.
+    unaccounted = []
+    for (ty, member), why in sorted(ledger_map.METHOD_DROPS.items()):
+        if "facet says it as" not in why:
+            continue
+        raw = ((spec_methods().get(ty) or {}).get(member) or {}).get("params", "")
+        names = param_names(raw)
+        if len(names) < 3:
+            continue
+        table = ledger_map.IMPLEMENTED_PARAMS.get((ty, member))
+        if table is None:
+            problems.append(
+                f"guard 8: {ty}.{member} claims an implementation and takes "
+                f"{len(names)} parameters, with no entry in IMPLEMENTED_PARAMS — "
+                f"say what each of {', '.join(names)} is carried as, or that it "
+                f"is absent and why.")
+            continue
+        for nm in names:
+            if nm not in table:
+                problems.append(
+                    f"guard 8: {ty}.{member}'s parameter `{nm}` is unaccounted "
+                    f"for — add it to IMPLEMENTED_PARAMS as `carried as X` or "
+                    f"`absent: why`.")
+        for nm, note in sorted(table.items()):
+            if note.startswith("absent"):
+                unaccounted.append((f"{ty}.{member}", nm, note[len("absent:"):].strip()))
+    if unaccounted and not problems:
+        print(f"NOT CARRIED: {len(unaccounted)} parameters of rows facet says it "
+              f"implements")
+        for row, nm, why in unaccounted:
+            print(f"    {row}({nm}) — {why}")
 
     # 1. every ADOPT row reaching a control is carried by something
     for row_type, merged in sorted(rows_by_control.items()):
