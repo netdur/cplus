@@ -54,6 +54,14 @@ fn library_name() -> *u8 { return #str_ptr("libwebkitgtk-6.0.so.4\0"); }
 // container on both.
 fn fallback_name() -> *u8 { return #str_ptr("libwebkit2gtk-4.1.so.0\0"); }
 
+// JavaScriptCore, which is where a script message's VALUE is read. A separate
+// library from WebKit and versioned in step with it, so the generation that
+// opened decides which one to ask for.
+fn jsc_library_name() -> *u8 {
+    if IS_GTK4_ENGINE { return #str_ptr("libjavascriptcoregtk-6.0.so.1\0"); }
+    return #str_ptr("libjavascriptcoregtk-4.1.so.0\0");
+}
+
 // ---- the resolved API ----------------------------------------------------------
 
 struct WebKit {
@@ -69,16 +77,28 @@ struct WebKit {
     get_settings: fn(*u8) -> *u8,
     set_user_agent: fn(*u8, *u8),
     run_javascript: fn(*u8, *u8, i64, *u8, *u8, *u8, *u8, *u8),
+    // The page-to-host message channel, and the JavaScriptCore call that reads
+    // its payload. OPTIONAL, all three: an engine without them still renders
+    // pages, and `on_raw_message_received` is the only verb that goes dark.
+    content_manager: fn(*u8) -> *u8,
+    register_handler: fn(*u8, *u8, *u8) -> i32,
+    js_result_get_value: fn(*u8) -> *u8,
+    jsc_to_string: fn(*u8) -> *u8,
 }
 
 static LOADED: bool = false;
 static AVAILABLE: bool = false;
+// Which generation opened. The message channel's handler is handed a JSCValue
+// by webkitgtk-6.0 and a WebKitJavascriptResult by webkit2gtk-4.1, so the two
+// need different unwrapping — see `script_message_received`.
+static IS_GTK4_ENGINE: bool = false;
 static API: WebKit = #zero::[WebKit]();
 
 fn available() -> bool {
     if LOADED { return AVAILABLE; }
     LOADED = true;
     var handle: *u8 = { g_module_open(library_name(), 1 as u32) };   // G_MODULE_BIND_LAZY
+    IS_GTK4_ENGINE = handle != (0 as *u8);
     if handle == (0 as *u8) { handle = { g_module_open(fallback_name(), 1 as u32) }; }
     if handle == (0 as *u8) {
         io::eprintln("facet_gtk: no WebKitGTK on this machine (libwebkitgtk-6.0.so.4 / libwebkit2gtk-4.1.so.0) — `web` renders as an empty container. Install the engine to use it.");
@@ -112,6 +132,21 @@ fn resolve(handle: *u8) -> bool {
     // `evaluate_javascript` in WebKitGTK 6, `run_javascript` in 4.1 — the same
     // call renamed, so the older name is tried when the newer one is absent
     // rather than failing the whole resolve over it.
+    // The message channel is resolved OPTIONALLY and separately, because
+    // `jsc_value_to_string` is not in WebKit at all — JavaScriptCore is its own
+    // library, and a machine can have the one without the other.
+    API.content_manager = sym_optional(handle,
+        #str_ptr("webkit_web_view_get_user_content_manager\0")) as fn(*u8) -> *u8;
+    API.register_handler = sym_optional(handle,
+        #str_ptr("webkit_user_content_manager_register_script_message_handler\0"))
+        as fn(*u8, *u8, *u8) -> i32;
+    API.js_result_get_value = sym_optional(handle,
+        #str_ptr("webkit_javascript_result_get_js_value\0")) as fn(*u8) -> *u8;
+    let jsc: *u8 = { g_module_open(jsc_library_name(), 1 as u32) };
+    if jsc != (0 as *u8) {
+        API.jsc_to_string = sym_optional(jsc, #str_ptr("jsc_value_to_string\0"))
+            as fn(*u8) -> *u8;
+    }
     var eval: *u8 = sym_optional(handle, #str_ptr("webkit_web_view_evaluate_javascript\0"));
     if eval == (0 as *u8) {
         eval = sym_optional(handle, #str_ptr("webkit_web_view_run_javascript\0"));
@@ -406,11 +441,117 @@ fn cstr_text(p: *u8) -> text::Text {
 #[link_name = "strlen"]
 extern fn c_strlen(s: *u8) -> usize;
 
+// `HybridWebView.WebResourceRequested` — every sub-resource the page asks for,
+// as it is asked for.
+//
+// WebKitWebView's `resource-load-started` carries the WebKitWebResource and the
+// WebKitURIRequest; the resource is the one that survives the load, so the URI
+// is read from it. A THIRD argument the generated binding never saw — this
+// class is dlopen'd, not linked, so every signal on it is hand-bound anyway.
+//
+// It is a NOTIFICATION, not a veto. facet's verb reports what was requested;
+// WebKit's own door for refusing one is `send-request`, which returns a
+// gboolean and is a different question than the one the contract asks. Recorded
+// in MANIFEST.md rather than answered with a signal that means something else.
+#[link_name = "g_signal_connect_data"]
+extern fn sigc_resource(instance: *u8, detailed_signal: *u8,
+                        handler: fn(*u8, *u8, *u8, *u8),
+                        data: *u8, destroy_data: *u8, connect_flags: i32) -> u64;
+
+fn resource_load_started(view: *u8, resource: *u8, request: *u8, user: *u8) {
+    let n: *core::Node = user as *core::Node;
+    if n == (0 as *core::Node) { return; }
+    let p: *props::HybridWebProps = hybrid_props(n);
+    if p == (0 as *props::HybridWebProps) { return; }
+    let h: fn(*u8, *u8) = { (*p).on_web_resource_requested };
+    if h == props::no_handler { return; }
+    // NO PAYLOAD, because the contract declares none: the handler's shape is
+    // `fn(sender, ctx)` and `HybridWebProps` has no field for a URL. So this
+    // reports THAT a resource was requested and not WHICH — a narrowing, and
+    // one that belongs to facet's own model rather than to WebKit, which hands
+    // us both the resource and the request. MANIFEST.md §1 records it.
+    h(view, { (*p).on_web_resource_requested_ctx });
+    return;
+}
+
+// ---- the page-to-host message channel ----------------------------------------
+//
+// `HybridWebView.RawMessageReceived`. A page calls
+// `window.webkit.messageHandlers.facet.postMessage(...)` and this is where it
+// lands.
+//
+// THE PAYLOAD ARRIVES AS THE SENDER, which is facet's own convention for this
+// verb and not an invention here — `facet_appkit/web.cplus` does the same thing
+// with `WKScriptMessage.body`'s description, and the contract gives the handler
+// no field to read a message out of. So `sender` is the string the page sent.
+//
+// TWO ENGINE GENERATIONS, one signal. webkitgtk-6.0 hands the handler a
+// JSCValue directly; webkit2gtk-4.1 hands it a WebKitJavascriptResult that has
+// to be unwrapped first. The unwrap is resolved optionally and used when it is
+// there, which is also what makes this work if a future generation drops it.
+#[link_name = "g_signal_connect_data"]
+extern fn sigc_message(instance: *u8, detailed_signal: *u8,
+                       handler: fn(*u8, *u8, *u8),
+                       data: *u8, destroy_data: *u8, connect_flags: i32) -> u64;
+
+// The handler NAME is what the page addresses, so it is part of the contract
+// between an app and its page. `facet` rather than something generated: a page
+// author has to be able to write it down.
+fn message_handler_name() -> *u8 { return #str_ptr("facet\0"); }
+
+fn script_message_received(manager: *u8, value: *u8, user: *u8) {
+    let n: *core::Node = user as *core::Node;
+    if n == (0 as *core::Node) { return; }
+    let p: *props::HybridWebProps = hybrid_props(n);
+    if p == (0 as *props::HybridWebProps) { return; }
+    let h: fn(*u8, *u8) = { (*p).on_raw_message_received };
+    if h == props::no_handler { return; }
+    var jsval: *u8 = value;
+    let unwrap: fn(*u8) -> *u8 = API.js_result_get_value;
+    if unwrap.is_not_null() { jsval = unwrap(value); }
+    let to_str: fn(*u8) -> *u8 = API.jsc_to_string;
+    if !to_str.is_not_null() { return; }
+    let raw: *u8 = to_str(jsval);
+    if raw == (0 as *u8) { return; }
+    // `jsc_value_to_string` is TRANSFER-FULL. The handler is called while the
+    // string is still alive and it is freed after — a handler that wants to
+    // keep it copies it, which is what every sender reading in this package
+    // already requires.
+    h(raw, { (*p).on_raw_message_received_ctx });
+    { g::free(raw) };
+    return;
+}
+
+// Register the channel on the view's content manager. Idempotent per view:
+// `arm` runs once at create.
+fn arm_messages(v: *u8, n: *core::Node) {
+    let get_mgr: fn(*u8) -> *u8 = API.content_manager;
+    let reg: fn(*u8, *u8, *u8) -> i32 = API.register_handler;
+    if !get_mgr.is_not_null() { return; }
+    if !reg.is_not_null() { return; }
+    let mgr: *u8 = get_mgr(v);
+    if mgr == (0 as *u8) { return; }
+    // The third argument is the script WORLD, and null means the default one —
+    // webkit2gtk-4.1's registration takes only two, but a C varargs-free call
+    // with one extra pointer argument is harmless on both ABIs here.
+    let _r: i32 = reg(mgr, message_handler_name(), 0 as *u8);
+    // `script-message-received::facet` — the detail is the handler name, which
+    // is how one manager serves several channels.
+    let _s: u64 = { sigc_message(mgr, #str_ptr("script-message-received::facet\0"),
+                                 script_message_received, n as *u8,
+                                 0 as *u8, 0 as i32) };
+    return;
+}
+
 fn arm(v: *u8, n: *core::Node) {
     let _l: u64 = { sigc_load(v, #str_ptr("load-changed\0"), load_changed,
                               n as *u8, 0 as *u8, 0 as i32) };
     let _t: u64 = { sigc_terminated(v, #str_ptr("web-process-terminated\0"),
                                     web_process_terminated, n as *u8,
                                     0 as *u8, 0 as i32) };
+    let _r: u64 = { sigc_resource(v, #str_ptr("resource-load-started\0"),
+                                  resource_load_started, n as *u8,
+                                  0 as *u8, 0 as i32) };
+    arm_messages(v, n);
     return;
 }

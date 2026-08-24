@@ -29,16 +29,24 @@ web         a WebKitGTK view, opened at runtime rather than linked
 
 ```
 $ python3 tools/parity.py
-  appkit    318 / 360    88%
-  uikit     311 / 360    86%
-  gtk       347 / 360    96%   <-- this package
+  appkit    338 / 360    93%
+  uikit     335 / 360    93%
+  gtk       353 / 360    98%   <-- this package
+
+  appkit     68 / 68    100%
+  uikit      67 / 68     98%
+  gtk        68 / 68    100%   <-- this package
 ```
 
-**96%, and that is only the WRITE number.** Props are writes and handlers are
-reads, and a backend at 100% on props can still be a control that is clicked
-and calls nothing. The read half has no tool, so `MANIFEST.md` states it in
-words: the gesture band, the key band, every implemented kind's own action,
-drag and drop, and all six sender readers.
+**Two numbers, because props are WRITES and handlers are READS** — a backend at
+100% on props can still be a control that is clicked and calls nothing. Both
+are measured now, and both are gated: `--check` carries a floor per axis,
+because the two fail differently. A missing prop is a control that ignores you;
+a missing handler is a control that never answers.
+
+The second number reaching 68/68 does not mean every handler is EXACT — two are
+narrowed by facet's own contract rather than by GTK, and `MANIFEST.md` §3 names
+both. What it means is that no declared handler is silently dead.
 
 Read [MANIFEST.md](MANIFEST.md) before trusting any adjective — including that
 one. `tools/parity.py --check` fails if the number drops, so a refactor that

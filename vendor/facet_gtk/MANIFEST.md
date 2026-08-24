@@ -9,7 +9,7 @@ listed here is a gap, and the gap is a bug.
 
 ```
 360 declared prop bits     353 answered     98%   (appkit 338, uikit 335)
- 68 declared handlers       66 fired        97%   (appkit  68, uikit  67)
+ 68 declared handlers       68 fired       100%   (appkit  68, uikit  67)
 ```
 
 Both axes are in `--check` now, with separate floors: the two surfaces fail
@@ -55,9 +55,14 @@ read half covers:
 | toolbar_item | `on_clicked`, from the GtkButton this package builds for it in the header bar |
 | swipeable · swipe_item | all five of the swipeable's — `on_swipe_started` · `observe_swipe_changing` · `on_swipe_ended` · `on_open_requested` · `on_close_requested` — and the item's `on_clicked` and `on_invoked`, in that order |
 | window_buttons | minimise / maximise-or-restore / close, each acting on the real GtkWindow; close goes through `close-request`, so `should_close` still gets its veto |
+| web · hybrid_web | `on_load_started` / `on_load_finished` / `on_load_failed` from one `load-changed`, `on_process_crashed` from `web-process-terminated`, `on_web_resource_requested` from `resource-load-started`, and `on_raw_message_received` from the page's own `window.webkit.messageHandlers.facet` — every one of them through a symbol resolved out of the opened engine, so a machine with no WebKit gets an empty container rather than a link error |
 
-NOT covered, and named again in §2: every kind that has no body yet, and the
-recycler the list kinds need.
+**Every handler facet declares is now fired.** That is 68 of 68 and the gate
+holds it there. It does not mean every one is EXACT: two of the web verbs are
+narrowed by facet's own contract — the resource verb reports THAT and not
+WHICH, and the message verb carries its payload in the sender — and both are
+written down in §3. What the number means is that no declared handler is
+silently dead.
 
 ## What is live
 
@@ -315,6 +320,32 @@ Everything not listed as live above. The large ones, in the order they matter:
 - **`web` and `hybrid_web` are TWO PROPS BLOCKS, not one with extras.**
   `hybrid_web` declares its own — a body reading one through the other would be
   reading the wrong offsets. What they share is the widget and nothing else.
+- **`on_web_resource_requested` reports THAT, not WHICH.** WebKit's
+  `resource-load-started` hands over both the WebKitWebResource and its
+  WebKitURIRequest, and facet's handler has nowhere to put either: the shape is
+  `fn(sender, ctx)` and `HybridWebProps` declares no field for a URL. So the
+  verb fires per sub-resource with the view as the sender. The narrowing is
+  facet's, not GTK's — the URL is sitting in the signal, unread, and the day
+  the contract grows a field it is one line away.
+- **`on_raw_message_received` is a NAMED channel, and the name is `facet`.** A
+  page reaches the host with
+  `window.webkit.messageHandlers.facet.postMessage(x)`. WebKit's channel is
+  registered per name on the view's user-content manager, so the name is part
+  of the contract between an application and its page rather than an internal
+  detail — generating it would leave a page author with nothing to write down.
+  **The payload arrives AS THE SENDER**, which is facet's convention for this
+  verb (`facet_appkit` does the same with `WKScriptMessage.body`) and again a
+  contract with no field of its own to read a message out of. The string is
+  transfer-full and freed after the handler returns: a handler that keeps it
+  copies it.
+- **The message channel needs a SECOND library.** `jsc_value_to_string` is
+  JavaScriptCore's, not WebKit's, so reading a message means opening
+  `libjavascriptcoregtk` beside the engine — the generation that opened decides
+  which. And the two engine generations hand the signal different things:
+  webkitgtk-6.0 passes a JSCValue, webkit2gtk-4.1 a WebKitJavascriptResult that
+  must be unwrapped first. The unwrap is resolved OPTIONALLY and used when it is
+  there, which is measured rather than assumed — 6.0 does not export it at all —
+  and is what makes one body correct on both.
 - **`hybrid_web.send_message` is an EVALUATED call.** WebKitGTK's own message
   channel runs page-to-host; sending the other way is dispatching a
   `MessageEvent` into the page, with the payload as a JSON literal so that a

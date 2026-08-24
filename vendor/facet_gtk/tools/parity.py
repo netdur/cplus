@@ -38,11 +38,11 @@ BACKENDS = {
 # The floor this backend has already reached. `--check` fails below it, so a
 # refactor that quietly drops a verb is caught at the number rather than by
 # someone noticing a control stopped working.
-FLOOR = 347
+FLOOR = 353
 # Same gate on the READ half. Kept separate because the two surfaces fail
 # differently: a missing prop is a control that ignores you, a missing handler
 # is a control that never answers.
-HANDLER_FLOOR = 66
+HANDLER_FLOOR = 68
 
 # Handlers facet fires ITSELF, from `mount.cplus`'s post-walk notification
 # queue (M4). A backend neither can nor should wire them, so counting them

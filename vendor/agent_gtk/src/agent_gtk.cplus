@@ -377,7 +377,10 @@ fn open(window: *u8) -> Surface {
 // Convenience: the read-only snapshot of a window in one call.
 fn describe(window: *u8, grant: auth::Grant) -> vec::Vec[GtkNode] {
     let s: Surface = open(window);
-    return s.describe();
+    // The grant is the CALLER'S and is forwarded, not re-minted. `Surface::describe`
+    // is the one that checks it; a convenience wrapper that dropped it here would
+    // be a read with nobody's permission behind it.
+    return s.describe(grant);
 }
 
 impl Surface {
