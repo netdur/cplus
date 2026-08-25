@@ -1,0 +1,431 @@
+// agent_gtk — the suite.
+//
+// This package had NO TESTS. It is the door an agent uses to read and drive a
+// live GTK application, so an untested claim here is not a cosmetic risk: a
+// verb that reports `Allowed` and does nothing tells an agent it acted when it
+// did not, and everything the agent decides afterwards is built on that.
+//
+// ---- why some of these need a display ------------------------------------------
+//
+// agent_gtk's whole job is LIVE INTROSPECTION — it walks real widgets and asks
+// GTK what is where. `facet_gtk`'s suite makes no widget on purpose ("a suite
+// that needs a login session is a suite that stops running"), and that rule is
+// right for a backend whose decisions are all mappings. It is the wrong rule
+// here, because the decisions ARE the widgets.
+//
+// So the suite is in two halves. The pure half runs anywhere. The live half is
+// gated on `gtk_init_check`, and where there is no display it SKIPS AND SAYS SO
+// rather than passing quietly — a green suite that tested nothing is the
+// failure this file exists to prevent.
+
+import "stdlib/vec" as vec;
+import "stdlib/option" as option;
+import "stdlib/text" as text;
+import "stdlib/io" as io;
+import "gobject/bridge" as convert;
+import "agent_core/identity" as identity;
+import "agent_core/surface" as surface;
+import "agent_core/auth" as auth;
+import "./agent_gtk" as agent;
+
+#[link_name = "gtk_init_check"]
+extern fn gtk_init_check() -> i32;
+#[link_name = "gtk_widget_realize"]
+extern fn gtk_widget_realize(w: *u8);
+#[link_name = "gtk_window_new"]
+extern fn gtk_window_new() -> *u8;
+#[link_name = "gtk_window_set_child"]
+extern fn gtk_window_set_child(w: *u8, child: *u8);
+#[link_name = "gtk_window_set_title"]
+extern fn gtk_window_set_title(w: *u8, t: *u8);
+#[link_name = "gtk_fixed_new"]
+extern fn gtk_fixed_new() -> *u8;
+#[link_name = "gtk_fixed_put"]
+extern fn gtk_fixed_put(f: *u8, child: *u8, x: f64, y: f64);
+#[link_name = "gtk_button_new"]
+extern fn gtk_button_new() -> *u8;
+#[link_name = "gtk_entry_new"]
+extern fn gtk_entry_new() -> *u8;
+#[link_name = "gtk_label_new"]
+extern fn gtk_label_new(t: *u8) -> *u8;
+#[link_name = "gtk_widget_set_size_request"]
+extern fn gtk_widget_set_size_request(w: *u8, x: i32, y: i32);
+#[link_name = "gtk_editable_set_text"]
+extern fn gtk_editable_set_text(e: *u8, t: *u8);
+#[link_name = "gtk_editable_get_selection_bounds"]
+extern fn gtk_editable_get_selection_bounds(e: *u8, start: *i32, end: *i32) -> i32;
+#[link_name = "gtk_gesture_click_new"]
+extern fn gtk_gesture_click_new() -> *u8;
+#[link_name = "gtk_widget_add_controller"]
+extern fn gtk_widget_add_controller(w: *u8, c: *u8);
+#[link_name = "g_signal_connect_data"]
+extern fn sigc(instance: *u8, signal: *u8, handler: fn(*u8, i32, f64, f64, *u8),
+               data: *u8, destroy: *u8, flags: i32) -> u64;
+#[link_name = "g_signal_connect_data"]
+extern fn sigc_clicked(instance: *u8, signal: *u8, handler: fn(*u8, *u8),
+                       data: *u8, destroy: *u8, flags: i32) -> u64;
+
+fn null() -> *u8 { return 0 as *u8; }
+
+// A HIT TEST NEEDS A LAID-OUT WINDOW, and that is inherent rather than a
+// shortcoming: "what is at this point" has no answer until there are points.
+// Realizing is not enough — an unmapped window has no allocation, so
+// `gtk_widget_compute_bounds` gives a zero rect and `gtk_widget_pick` has
+// nothing to pick.
+//
+// So these few tests PRESENT, turn the main loop until the geometry arrives,
+// and close again. Bounded, because a loop that waits forever for a compositor
+// that is not coming is a suite that hangs instead of failing.
+#[link_name = "gtk_window_present"]
+extern fn gtk_window_present(w: *u8);
+#[link_name = "gtk_window_destroy"]
+extern fn gtk_window_destroy(w: *u8);
+#[link_name = "gtk_widget_get_width"]
+extern fn gtk_widget_get_width(w: *u8) -> i32;
+#[link_name = "g_main_context_iteration"]
+extern fn g_main_context_iteration(ctx: *u8, may_block: i32) -> i32;
+
+fn show_and_settle(win: *u8) -> bool {
+    { gtk_window_present(win) };
+    var spins: i32 = 0 as i32;
+    while spins < (400 as i32) {
+        let _p: i32 = { g_main_context_iteration(null(), 0 as i32) };
+        if { gtk_widget_get_width(win) } > (0 as i32) { return true; }
+        spins = spins +% (1 as i32);
+    }
+    return { gtk_widget_get_width(win) } > (0 as i32);
+}
+
+// A display, or none. Cached: `gtk_init_check` is idempotent but the answer is
+// what decides whether half this file runs, and it should not be re-asked.
+static DISPLAY_READ: bool = false;
+static DISPLAY_OK: bool = false;
+
+fn has_display() -> bool {
+    if !DISPLAY_READ {
+        DISPLAY_READ = true;
+        DISPLAY_OK = { gtk_init_check() } != (0 as i32);
+        if !DISPLAY_OK {
+            io::eprintln("agent_gtk suite: no display — the LIVE half is skipped. The pure half still ran; run this on a session to exercise the rest.");
+        }
+    }
+    return DISPLAY_OK;
+}
+
+// ================================================================================
+// the pure half — runs anywhere
+// ================================================================================
+
+// facet's caret offsets are BYTES and `gtk_editable_select_region` counts
+// CHARACTERS. The two agree for ASCII and diverge on the first accent, which is
+// the kind of bug that ships: it works for everyone who tests in English and
+// puts the caret in the wrong column for everyone else.
+#[test]
+fn a_byte_offset_becomes_a_character_offset() {
+    assert agent::chars_before_byte("hello", 0 as usize) == (0 as i32);
+    assert agent::chars_before_byte("hello", 3 as usize) == (3 as i32);
+    assert agent::chars_before_byte("hello", 5 as usize) == (5 as i32);
+}
+
+// THE WHOLE POINT: a two-byte character counts once. "é" is 0xC3 0xA9, so byte
+// 2 is one character in, not two.
+#[test]
+fn a_multibyte_character_counts_once() {
+    // "é" (2 bytes) + "x"
+    assert agent::chars_before_byte("éx", 0 as usize) == (0 as i32);
+    assert agent::chars_before_byte("éx", 2 as usize) == (1 as i32);
+    assert agent::chars_before_byte("éx", 3 as usize) == (2 as i32);
+    // A four-byte character — an emoji — is still one.
+    assert agent::chars_before_byte("😀", 4 as usize) == (1 as i32);
+    assert agent::chars_before_byte("a😀b", 5 as usize) == (2 as i32);
+}
+
+// NEGATIVE: an offset past the end CLAMPS rather than walking off. An agent
+// that asks for a caret past the text is asking for the end, and a read past
+// the buffer is the other way this goes wrong.
+#[test]
+fn an_offset_past_the_end_clamps() {
+    assert agent::chars_before_byte("abc", 99 as usize) == (3 as i32);
+    assert agent::chars_before_byte("", 5 as usize) == (0 as i32);
+    assert agent::chars_before_byte("", 0 as usize) == (0 as i32);
+    // A byte offset that lands INSIDE a character counts the characters that
+    // started before it — it does not invent a partial one.
+    assert agent::chars_before_byte("éx", 1 as usize) == (0 as i32);
+}
+
+// ================================================================================
+// the live half — real widgets, gated on a display
+// ================================================================================
+
+// Did the gesture fire? A static rather than a boxed context: the handler is a
+// plain fn and the test is single-threaded.
+static CLICKS: i32 = 0;
+fn count_press(gesture: *u8, n_press: i32, x: f64, y: f64, user: *u8) {
+    CLICKS = CLICKS +% (1 as i32);
+    return;
+}
+fn count_clicked(button: *u8, user: *u8) {
+    CLICKS = CLICKS +% (1 as i32);
+    return;
+}
+
+// A window holding one Fixed, which is the shape facet_gtk builds.
+fn fixture(child: *u8, id: *u8) -> *u8 {
+    let win: *u8 = { gtk_window_new() };
+    { gtk_window_set_title(win, #str_ptr("probe\0")) };
+    let host: *u8 = { gtk_fixed_new() };
+    { gtk_widget_set_size_request(host, 200 as i32, 200 as i32) };
+    if child != null() {
+        agent::set_agent_id(child, id);
+        { gtk_widget_set_size_request(child, 80 as i32, 30 as i32) };
+        { gtk_fixed_put(host, child, 10.0f64, 10.0f64) };
+    }
+    { gtk_window_set_child(win, host) };
+    // REALIZED, because an unrealized widget will not act — a GtkButton's
+    // activate handler needs a surface, and an agent drives a window someone
+    // is looking at. Not PRESENTED: mapping needs the main loop to turn, and a
+    // suite should not put windows on anyone's screen.
+    { gtk_widget_realize(win) };
+    return win;
+}
+
+// THE BUG THIS PACKAGE SHIPPED: `click` called `gtk_widget_activate`, which
+// emits a widget's DEFAULT ACTION — and a facet row, card or tappable box is a
+// GtkFixed carrying a GtkGestureClick, which activates NOTHING. So click
+// authorized, called activate, and returned `Allowed` while nothing happened.
+// An agent was told it had clicked.
+#[test]
+fn clicking_a_gesture_only_widget_actually_fires_it() {
+    if !has_display() { return; }
+    CLICKS = 0 as i32;
+    let target: *u8 = { gtk_fixed_new() };
+    let gesture: *u8 = { gtk_gesture_click_new() };
+    let _h: u64 = { sigc(gesture, #str_ptr("pressed\0"), count_press,
+                         null(), null(), 0 as i32) };
+    { gtk_widget_add_controller(target, gesture) };
+    let win: *u8 = fixture(target, #str_ptr("row:1\0"));
+
+    var s: agent::Surface = agent::open(win);
+    let oc: surface::Outcome = s.click(auth::protected_operator(), "row:1");
+    assert surface::outcome_eq(oc, surface::Outcome::Allowed);
+    // The ASSERTION THAT MATTERS. Before this, the outcome was Allowed and the
+    // count stayed zero.
+    assert CLICKS == (1 as i32);
+}
+
+// A real GtkButton has a default action, and that is the more faithful path for
+// one — the gesture is the FALLBACK, not the replacement.
+#[test]
+fn clicking_a_button_goes_through_its_own_activation() {
+    if !has_display() { return; }
+    CLICKS = 0 as i32;
+    let b: *u8 = { gtk_button_new() };
+    let _h: u64 = { sigc_clicked(b, #str_ptr("clicked\0"), count_clicked,
+                                 null(), null(), 0 as i32) };
+    let win: *u8 = fixture(b, #str_ptr("btn:1\0"));
+    var s: agent::Surface = agent::open(win);
+    let oc: surface::Outcome = s.click(auth::protected_operator(), "btn:1");
+    assert surface::outcome_eq(oc, surface::Outcome::Allowed);
+    assert CLICKS == (1 as i32);
+}
+
+// NEGATIVE, and it is the other half of the same lesson: a widget with NEITHER
+// a default action nor a gesture cannot be clicked, and must SAY SO. A false
+// `Allowed` is what sent an agent on believing a click landed; `NotActionable`
+// is something it can act on.
+#[test]
+fn clicking_something_with_no_action_at_all_refuses() {
+    if !has_display() { return; }
+    let inert: *u8 = { gtk_label_new(#str_ptr("just text\0")) };
+    let win: *u8 = fixture(inert, #str_ptr("lbl:1\0"));
+    var s: agent::Surface = agent::open(win);
+    let oc: surface::Outcome = s.click(auth::protected_operator(), "lbl:1");
+    assert surface::outcome_eq(oc, surface::Outcome::NotActionable);
+}
+
+// A node nobody tagged is not addressable, and a grant that cannot act does not
+// act — the two gates every verb goes through.
+#[test]
+fn click_refuses_an_unknown_id_and_an_unprivileged_grant() {
+    if !has_display() { return; }
+    CLICKS = 0 as i32;
+    let b: *u8 = { gtk_button_new() };
+    let _h: u64 = { sigc_clicked(b, #str_ptr("clicked\0"), count_clicked,
+                                 null(), null(), 0 as i32) };
+    let win: *u8 = fixture(b, #str_ptr("btn:2\0"));
+    var s: agent::Surface = agent::open(win);
+    assert surface::outcome_eq(s.click(auth::protected_operator(), "nope"),
+                               surface::Outcome::NotFound);
+    // A READER may not act.
+    let denied: surface::Outcome = s.click(auth::reader(), "btn:2");
+    assert !surface::outcome_eq(denied, surface::Outcome::Allowed);
+    assert CLICKS == (0 as i32);
+}
+
+// ---- the caret ------------------------------------------------------------------
+
+fn selection_of(e: *u8) -> i32 {
+    var start: i32 = 0 as i32;
+    var end: i32 = 0 as i32;
+    let _ok: i32 = { gtk_editable_get_selection_bounds(e, #addr_of(start), #addr_of(end)) };
+    return start;
+}
+
+fn selection_end_of(e: *u8) -> i32 {
+    var start: i32 = 0 as i32;
+    var end: i32 = 0 as i32;
+    let _ok: i32 = { gtk_editable_get_selection_bounds(e, #addr_of(start), #addr_of(end)) };
+    return end;
+}
+
+#[test]
+fn a_caret_lands_where_it_was_asked_to() {
+    if !has_display() { return; }
+    let e: *u8 = { gtk_entry_new() };
+    { gtk_editable_set_text(e, #str_ptr("hello world\0")) };
+    let win: *u8 = fixture(e, #str_ptr("field:1\0"));
+    var s: agent::Surface = agent::open(win);
+    let oc: surface::Outcome = s.set_caret(auth::protected_operator(), "field:1",
+                                           6 as u64, 5 as u64);
+    assert surface::outcome_eq(oc, surface::Outcome::Allowed);
+    assert selection_of(e) == (6 as i32);
+    assert selection_end_of(e) == (11 as i32);
+}
+
+// THE ONE THAT MATTERS. The offsets are BYTES and GTK counts CHARACTERS, so a
+// caret placed past an accent lands in the wrong column — silently, and only
+// for people whose language has one. "héllo" is six BYTES and five characters.
+#[test]
+fn a_caret_past_a_multibyte_character_lands_on_the_right_column() {
+    if !has_display() { return; }
+    let e: *u8 = { gtk_entry_new() };
+    { gtk_editable_set_text(e, #str_ptr("héllo\0")) };
+    let win: *u8 = fixture(e, #str_ptr("field:2\0"));
+    var s: agent::Surface = agent::open(win);
+    // Byte 6 is the end of the string; as CHARACTERS that is 5, not 6.
+    let oc: surface::Outcome = s.set_caret(auth::protected_operator(), "field:2",
+                                           6 as u64, 0 as u64);
+    assert surface::outcome_eq(oc, surface::Outcome::Allowed);
+    assert selection_of(e) == (5 as i32);
+}
+
+// NEGATIVE: a LABEL has text and no caret. Answering `Allowed` for one would be
+// the same false claim `click` used to make.
+#[test]
+fn a_caret_on_something_uneditable_refuses() {
+    if !has_display() { return; }
+    let l: *u8 = { gtk_label_new(#str_ptr("not editable\0")) };
+    let win: *u8 = fixture(l, #str_ptr("lbl:2\0"));
+    var s: agent::Surface = agent::open(win);
+    assert surface::outcome_eq(
+        s.set_caret(auth::protected_operator(), "lbl:2", 0 as u64, 0 as u64),
+        surface::Outcome::NotActionable);
+    assert surface::outcome_eq(
+        s.set_caret(auth::protected_operator(), "nope", 0 as u64, 0 as u64),
+        surface::Outcome::NotFound);
+}
+
+// ---- the hit test ---------------------------------------------------------------
+
+// A widget alone in its host is what is at its own centre.
+#[test]
+fn an_uncovered_node_is_reachable() {
+    if !has_display() { return; }
+    let b: *u8 = { gtk_button_new() };
+    let win: *u8 = fixture(b, #str_ptr("btn:3\0"));
+    if !show_and_settle(win) { { gtk_window_destroy(win) }; return; }
+    let ht: surface::HitTest = agent::open(win).hit_test(auth::protected_operator(), "btn:3");
+    assert surface::outcome_eq(ht.outcome, surface::Outcome::Allowed);
+    // SUPPORTED is the claim that matters first: this backend used to answer
+    // `false` here and refuse the question outright.
+    assert ht.supported;
+    assert ht.reachable;
+    assert !ht.covered;
+    { gtk_window_destroy(win) };
+}
+
+// ...and one with something on top is not. The coverer is placed over the same
+// point, which is exactly what a popover or an overlapping card does.
+#[test]
+fn a_covered_node_reports_what_is_on_top() {
+    if !has_display() { return; }
+    let win: *u8 = { gtk_window_new() };
+    let host: *u8 = { gtk_fixed_new() };
+    { gtk_widget_set_size_request(host, 200 as i32, 200 as i32) };
+    let under: *u8 = { gtk_button_new() };
+    agent::set_agent_id(under, #str_ptr("under\0"));
+    { gtk_widget_set_size_request(under, 80 as i32, 40 as i32) };
+    { gtk_fixed_put(host, under, 10.0f64, 10.0f64) };
+    // ON TOP, over the same rectangle. A later child of a GtkFixed draws over
+    // an earlier one, which is what makes this a cover and not a sibling.
+    let over: *u8 = { gtk_button_new() };
+    agent::set_agent_id(over, #str_ptr("over\0"));
+    { gtk_widget_set_size_request(over, 80 as i32, 40 as i32) };
+    { gtk_fixed_put(host, over, 10.0f64, 10.0f64) };
+    { gtk_window_set_child(win, host) };
+    if !show_and_settle(win) { { gtk_window_destroy(win) }; return; }
+
+    let ht: surface::HitTest = agent::open(win).hit_test(auth::protected_operator(), "under");
+    assert ht.supported;
+    assert !ht.reachable;
+    assert ht.covered;
+    // NAMED, because the thing on top is exposed — an agent can act on that.
+    assert ht.covered_by.view() == "over";
+    { gtk_window_destroy(win) };
+}
+
+// NEGATIVE: an unknown id is not a hit test that failed, it is a node that is
+// not there — and the two are different answers.
+#[test]
+fn a_hit_test_on_an_unknown_id_is_not_found() {
+    if !has_display() { return; }
+    let b: *u8 = { gtk_button_new() };
+    let win: *u8 = fixture(b, #str_ptr("btn:4\0"));
+    let ht: surface::HitTest = agent::open(win).hit_test(auth::protected_operator(), "ghost");
+    assert surface::outcome_eq(ht.outcome, surface::Outcome::NotFound);
+    assert !ht.reachable;
+}
+
+// ---- describe and set_text -------------------------------------------------------
+
+#[test]
+fn describe_finds_a_tagged_widget_and_its_text() {
+    if !has_display() { return; }
+    let e: *u8 = { gtk_entry_new() };
+    { gtk_editable_set_text(e, #str_ptr("typed\0")) };
+    let win: *u8 = fixture(e, #str_ptr("field:3\0"));
+    var s: agent::Surface = agent::open(win);
+    let nodes: vec::Vec[agent::GtkNode] = s.describe(auth::protected_operator());
+    var found: bool = false;
+    var i: usize = 0 as usize;
+    let n: usize = nodes.count();
+    while i < n {
+        match nodes.at_ptr(i) {
+            option::Option[*agent::GtkNode]::Some(g) => {
+                if { (*g).id.view() } == "field:3" { found = true; }
+            }
+            option::Option[*agent::GtkNode]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    assert found;
+}
+
+#[test]
+fn set_text_writes_and_bumps_the_version() {
+    if !has_display() { return; }
+    let e: *u8 = { gtk_entry_new() };
+    { gtk_editable_set_text(e, #str_ptr("before\0")) };
+    let win: *u8 = fixture(e, #str_ptr("field:4\0"));
+    var s: agent::Surface = agent::open(win);
+    let oc: surface::Outcome = s.set_text(auth::protected_operator(), "field:4", "after", 0 as u64);
+    assert surface::outcome_eq(oc, surface::Outcome::Allowed);
+    assert convert::cstr_to_text({ gtk_editable_get_text_t(e) }).view() == "after";
+    // A SECOND write against the SAME base version is a racing edit and must be
+    // refused — that is what optimistic concurrency is for.
+    let again: surface::Outcome = s.set_text(auth::protected_operator(), "field:4", "third", 0 as u64);
+    assert !surface::outcome_eq(again, surface::Outcome::Allowed);
+}
+
+#[link_name = "gtk_editable_get_text"]
+extern fn gtk_editable_get_text_t(e: *u8) -> *u8;

@@ -11,6 +11,31 @@ edition = "2026"
 # id/role/surface model); the live introspection uses plain GTK/GObject C calls
 # (gtk_widget_get_first_child / g_type_name_from_instance / gtk_editable_get_text
 # / …) and `gtk/convert` for the str↔char* bridges.
+#
+# ---- what is answered, and what is not ---------------------------------------
+#
+#   describe / describe_exposed   the identity tree, curated and full
+#   click                         per class, and MEASURED — see `press`
+#   set_text                      with optimistic concurrency
+#   navigate                      keyboard focus
+#   set_caret                     byte offsets converted to characters
+#   hit_test                      gtk_widget_pick from the node's own centre
+#
+#   read_runs                     NOT ANSWERED. Reading how text is DRAWN means
+#                                 walking a PangoAttrList off the layout, run by
+#                                 run, and mapping each attribute back to
+#                                 agent-core's vocabulary. It reports
+#                                 `supported: false` rather than a plausible
+#                                 answer — the same rule the `clickable` field
+#                                 exists for.
+#   invoke_menu                   NOT ANSWERED. facet_gtk's app menu is a GMenu
+#                                 whose items are ACTIONS addressed by name, so
+#                                 the path-to-action mapping lives there, not
+#                                 here. It answers NotFound.
+#
+# `cpc test` runs both halves of the suite; the LIVE half is gated on
+# `gtk_init_check` and says so when it skips, because a green suite that tested
+# nothing is the failure the package exists to prevent.
 [dependencies]
 stdlib     = "*"
 gobject    = "*"

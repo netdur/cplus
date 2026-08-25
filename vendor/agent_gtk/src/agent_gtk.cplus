@@ -460,7 +460,7 @@ impl Surface {
                 if !surface::outcome_eq(oc, surface::Outcome::Allowed) {
                     return oc;
                 }
-                { gtk_widget_activate(this.widget_of(node)); }
+                if !press(this.widget_of(node)) { return surface::Outcome::NotActionable; }
                 return surface::Outcome::Allowed;
             }
             option::Option[usize]::None => {}
@@ -488,6 +488,90 @@ impl Surface {
             option::Option[usize]::None => {}
         }
         return surface::Outcome::NotFound;
+    }
+
+    // WRITE: place the caret, or select a range.
+    //
+    // THE OFFSETS ARE BYTES and `gtk_editable_select_region` counts CHARACTERS.
+    // A caret placed by an index that means something else is worse than no
+    // caret verb at all — it lands in the wrong column and says it worked, and
+    // it only ever shows up once someone types an accent. `agent_appkit`
+    // records the same trap from the other side (its offsets are UTF-16).
+    fn set_caret(ref this, grant: auth::Grant, id: str, at: u64, length: u64) -> surface::Outcome {
+        match this.reg.lookup(id) {
+            option::Option[usize]::Some(node) => {
+                let oc: surface::Outcome = surface::authorize_action(this.reg, grant, node);
+                if !surface::outcome_eq(oc, surface::Outcome::Allowed) { return oc; }
+                let w: *u8 = this.widget_of(node);
+                if is_null(w) { return surface::Outcome::Stale; }
+                // A caret belongs to something EDITABLE. A label has text and
+                // no caret, and answering `Allowed` for one would be the same
+                // false claim `click` used to make.
+                if !is_a(w, #str_ptr("GtkEditable\0")) { return surface::Outcome::NotActionable; }
+                let body: text::Text = convert::cstr_to_text({ gtk_editable_get_text(w) });
+                let start: i32 = chars_before_byte({ body.view() }, at as usize);
+                let end: i32 = chars_before_byte({ body.view() }, (at +% length) as usize);
+                { gtk_editable_select_region(w, start, end) };
+                return surface::Outcome::Allowed;
+            }
+            option::Option[usize]::None => {}
+        }
+        return surface::Outcome::NotFound;
+    }
+
+    // READ: is this node the thing at its own centre, or is something on top?
+    //
+    // `gtk_widget_pick` is GTK's own answer to "what is under this point", and
+    // it is the same question the compositor asks — so a node covered by a
+    // popover, a dialog or an overlapping sibling reports COVERED here for the
+    // same reason a person's click would miss it.
+    //
+    // THE CENTRE, not a corner: a corner is on the boundary and picks whatever
+    // rounding puts there.
+    fn hit_test(this, grant: auth::Grant, id: str) -> surface::HitTest {
+        match this.reg.lookup(id) {
+            option::Option[usize]::Some(node) => {
+                let oc: surface::Outcome = surface::authorize_read(this.reg, grant, node);
+                if !surface::outcome_eq(oc, surface::Outcome::Allowed) {
+                    return surface::hit_test_refused(oc, true);
+                }
+                let w: *u8 = this.widget_of(node);
+                if is_null(w) { return surface::hit_test_refused(surface::Outcome::Stale, true); }
+                let root: *u8 = { gtk_widget_get_root(w) };
+                if is_null(root) { return surface::hit_test_refused(surface::Outcome::Stale, true); }
+                let r: Rect = frame_of(w);
+                if r.w <= (0.0 as f32) || r.h <= (0.0 as f32) {
+                    // A node with no area is not covered — it is not THERE.
+                    return surface::HitTest { outcome: surface::Outcome::Allowed,
+                                              supported: true, reachable: false,
+                                              covered: false, covered_by: text::new() };
+                }
+                let cx: f64 = (r.x + (r.w / (2.0 as f32))) as f64;
+                let cy: f64 = (r.y + (r.h / (2.0 as f32))) as f64;
+                // GTK_PICK_DEFAULT — insensitive and non-targetable widgets are
+                // skipped, which is what a pointer does too.
+                let hit: *u8 = { gtk_widget_pick(root, cx, cy, 0 as u32) };
+                if is_null(hit) {
+                    return surface::HitTest { outcome: surface::Outcome::Allowed,
+                                              supported: true, reachable: false,
+                                              covered: false, covered_by: text::new() };
+                }
+                // REACHABLE means the hit is this widget or INSIDE it: a click
+                // landing on a node's own label has still reached the node.
+                if is_at_or_inside(hit, w) {
+                    return surface::HitTest { outcome: surface::Outcome::Allowed,
+                                              supported: true, reachable: true,
+                                              covered: false, covered_by: text::new() };
+                }
+                // Something else is on top. Name it only if it is EXPOSED —
+                // an internal widget's id would be noise an agent cannot act on.
+                return surface::HitTest { outcome: surface::Outcome::Allowed,
+                                          supported: true, reachable: false,
+                                          covered: true, covered_by: exposed_id_of(hit) };
+            }
+            option::Option[usize]::None => {}
+        }
+        return surface::hit_test_refused(surface::Outcome::NotFound, true);
     }
 
     // NAV: move keyboard focus to a node (a GtkViewport follows focus, so this
@@ -633,7 +717,8 @@ fn mcp_describe_exposed(p: *u8, grant: auth::Grant) -> vec::Vec[mcpb::UiNode] {
 // honest refusal — a caller trusting a fabricated "reachable" would conclude
 // the human path is verified when nothing verified it.
 fn mcp_hit_test(p: *u8, grant: auth::Grant, id: str) -> surface::HitTest {
-    return surface::hit_test_refused(surface::Outcome::Allowed, false);
+    let s: *Surface = { p as *Surface };
+    return (*s).hit_test(grant, id);
 }
 
 
@@ -643,7 +728,8 @@ fn mcp_hit_test(p: *u8, grant: auth::Grant, id: str) -> surface::HitTest {
 // to a verb. AppKit is where the agent surface is built first (backend
 // priority: AppKit -> uikit -> android -> gtk4 -> win32).
 fn mcp_set_caret(p: *u8, grant: auth::Grant, id: str, at: u64, length: u64) -> surface::Outcome {
-    return surface::Outcome::NotActionable;
+    let s: *Surface = { p as *Surface };
+    return (*s).set_caret(grant, id, at, length);
 }
 
 fn mcp_read_runs(p: *u8, grant: auth::Grant, id: str) -> surface::Runs {
@@ -667,3 +753,228 @@ fn mcp_backend() -> mcpb::Backend {
         invoke_menu: mcp_invoke_menu,
     };
 }
+
+// ---- clicking something that is not a GtkButton --------------------------------
+//
+// `gtk_widget_activate` emits a widget's DEFAULT ACTION, and a great deal of a
+// facet application has none: a row, a card, a tappable box is a GtkFixed
+// carrying a GtkGestureClick, and a GtkFixed activates nothing. So `click`
+// authorized the action, called activate, returned `Allowed` — and NOTHING
+// HAPPENED. An agent was told it had clicked.
+//
+// That is the same failure the `clickable` field exists to prevent, one level
+// down: a capability claimed and not delivered.
+//
+// So the CONTROLLER is found and told. A GtkGestureClick emits `pressed` and
+// `released`, and emitting them runs the real handler inside GTK's own
+// emission — the sequence a pointer would produce, minus the pointer. GTK 4
+// has no public door for a synthetic event; this is the nearest true thing.
+//
+// ACTIVATE IS STILL TRIED FIRST, because a real GtkButton, GtkSwitch or
+// GtkEntry has a default action and that is the more faithful path for one.
+// The gesture is the fallback, and answering `NotActionable` when there is
+// neither is the honest end — an agent can act on that, where a false
+// `Allowed` leaves it believing a click landed.
+
+#[link_name = "gtk_widget_observe_controllers"]
+extern fn gtk_widget_observe_controllers(w: *u8) -> *u8;
+#[link_name = "g_list_model_get_n_items"]
+extern fn g_list_model_get_n_items(m: *u8) -> u32;
+#[link_name = "g_list_model_get_item"]
+extern fn g_list_model_get_item(m: *u8, i: u32) -> *u8;
+#[link_name = "g_signal_emit_by_name"]
+extern fn emit_click(o: *u8, name: *u8, n_press: i32, x: f64, y: f64);
+#[link_name = "g_object_unref"]
+extern fn g_object_unref_(o: *u8);
+
+// Does this widget answer `activate` itself? GtkWidget's activate signal is
+// declared per CLASS, and asking the type is how to tell a GtkButton from a
+// GtkFixed without a table of class names.
+#[link_name = "gtk_widget_class_get_activate_signal"]
+extern fn gtk_widget_class_get_activate_signal(klass: *u8) -> u32;
+#[link_name = "g_type_check_instance_cast"]
+extern fn g_type_check_instance_cast(inst: *u8, t: usize) -> *u8;
+
+fn activates(w: *u8) -> bool {
+    if w == (0 as *u8) { return false; }
+    // The instance's class pointer is the first word of a GTypeInstance.
+    let klass: *u8 = { *(w as **u8) };
+    if klass == (0 as *u8) { return false; }
+    return { gtk_widget_class_get_activate_signal(klass) } != (0 as u32);
+}
+
+// The first GtkGestureClick armed on this widget, or on its immediate child —
+// facet arms the band on the node's own widget, and a control that is several
+// widgets (a button is a box holding an image and a label) carries it one down.
+fn click_gesture_of(w: *u8) -> *u8 {
+    if w == (0 as *u8) { return 0 as *u8; }
+    let m: *u8 = { gtk_widget_observe_controllers(w) };
+    if m == (0 as *u8) { return 0 as *u8; }
+    let n: u32 = { g_list_model_get_n_items(m) };
+    var i: u32 = 0 as u32;
+    var found: *u8 = 0 as *u8;
+    while i < n {
+        let c: *u8 = { g_list_model_get_item(m, i) };
+        if c != (0 as *u8) {
+            if found == (0 as *u8) && is_a(c, #str_ptr("GtkGestureClick\0")) { found = c; }
+            // `get_item` is transfer-full; the controller outlives this
+            // borrow because the widget holds it.
+            { g_object_unref_(c) };
+        }
+        i = i +% (1 as u32);
+    }
+    { g_object_unref_(m) };
+    return found;
+}
+
+// ---- MEASURED, because every obvious answer here is wrong ----------------------
+//
+// `gtk_widget_activate` IS NOT A CLICK. On a GtkButton it returns TRUE and
+// emits nothing: it starts the key-binding press ANIMATION, and `clicked`
+// arrives later only if a main loop turns. Measured, on a realized button with
+// a `clicked` handler attached:
+//
+//     unrealized activate -> True   hits 0
+//     realized   activate -> True   hits 0
+//     presented  activate -> True   hits 0
+//
+// Emitting on the button's OWN GtkGestureClick does not work either — its
+// handler reads the real event sequence, and a synthetic emission has none:
+//
+//     controllers on button: [EventControllerKey, GestureClick, ShortcutController]
+//     after gesture emit, hits = 0
+//
+// What works is per class, so this is a small table rather than one call:
+//
+//     GtkButton   emit "clicked"        -> fires, synchronously. Toggles a
+//                                          GtkToggleButton correctly too, which
+//                                          matters because facet_gtk builds
+//                                          EVERY button kind as one.
+//     GtkSwitch   activate()            -> does NOT toggle. Set the state.
+//     a Fixed with a facet GtkGestureClick
+//                 emit pressed/released -> fires: facet's handlers read the
+//                                          SENDER, not the event.
+//
+// The point of the table is that each entry was checked. An agent told
+// `Allowed` over a click that did not happen is worse than one told it cannot
+// click at all.
+
+#[link_name = "g_signal_emit_by_name"]
+extern fn emit_bare(o: *u8, name: *u8);
+#[link_name = "gtk_switch_get_active"]
+extern fn gtk_switch_get_active(w: *u8) -> i32;
+#[link_name = "gtk_switch_set_active"]
+extern fn gtk_switch_set_active(w: *u8, on: i32);
+
+fn press(w: *u8) -> bool {
+    if w == (0 as *u8) { return false; }
+    // Every button kind — GtkToggleButton, GtkCheckButton and GtkLinkButton are
+    // all GtkButtons, and so is every button facet_gtk builds.
+    if is_a(w, #str_ptr("GtkButton\0")) {
+        { emit_bare(w, #str_ptr("clicked\0")) };
+        return true;
+    }
+    if is_a(w, #str_ptr("GtkSwitch\0")) {
+        let on: i32 = { gtk_switch_get_active(w) };
+        { gtk_switch_set_active(w, if on != (0 as i32) { 0 as i32 } else { 1 as i32 }) };
+        return true;
+    }
+    // A facet row, card or tappable box: a GtkFixed carrying a gesture.
+    var g_: *u8 = click_gesture_of(w);
+    if g_ == (0 as *u8) {
+        // One level down, for a control built out of parts.
+        var child: *u8 = { gtk_widget_get_first_child(w) };
+        while child != (0 as *u8) && g_ == (0 as *u8) {
+            g_ = click_gesture_of(child);
+            child = { gtk_widget_get_next_sibling(child) };
+        }
+    }
+    if g_ != (0 as *u8) {
+        // A press and a release at the widget's own origin. The coordinates are
+        // the gesture's to interpret and facet's handlers read the SENDER, not
+        // the point — see `input::tree_row_click`, which takes the row from the
+        // widget and never looks at where in it the click landed.
+        { emit_click(g_, #str_ptr("pressed\0"), 1 as i32, 1.0f64, 1.0f64) };
+        { emit_click(g_, #str_ptr("released\0"), 1 as i32, 1.0f64, 1.0f64) };
+        return true;
+    }
+    // LAST, and its answer is believed: `activate` returns FALSE where the
+    // widget will not act. It is kept for the classes neither branch above
+    // covers and nothing else — it is not a click on its own.
+    if activates(w) {
+        if { gtk_widget_activate(w) } != (0 as i32) { return true; }
+    }
+    return false;
+}
+
+// ---- byte offsets to character offsets ------------------------------------------
+//
+// facet's caret offsets are BYTES; `gtk_editable_select_region` counts
+// CHARACTERS. The two agree for ASCII and diverge on the first accent, which is
+// exactly the kind of bug that ships: it works for everyone who tests in
+// English and puts the caret in the wrong column for everyone else.
+//
+// A UTF-8 continuation byte is `10xxxxxx`, so a character starts at every byte
+// that is NOT one. Counting starts is the whole conversion.
+fn chars_before_byte(s: str, at: usize) -> i32 {
+    let n: usize = s.count();
+    var stop: usize = at;
+    if stop > n { stop = n; }
+    var chars: i32 = 0 as i32;
+    var i: usize = 0 as usize;
+    while i < stop {
+        match s.byte_at(i) {
+            option::Option[u8]::Some(b) => {
+                // Not a continuation byte: 0b10xxxxxx is 0x80..0xBF.
+                if (b & (0xC0 as u8)) != (0x80 as u8) { chars = chars +% (1 as i32); }
+            }
+            option::Option[u8]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    // AND THE ONE IT MAY BE STANDING INSIDE. An offset that lands mid-character
+    // has counted a character that has not finished — so the caret would go
+    // AFTER a glyph the offset points into the middle of. Clamping back to the
+    // boundary is the only reading that cannot overshoot.
+    if stop < n {
+        match s.byte_at(stop) {
+            option::Option[u8]::Some(b) => {
+                if (b & (0xC0 as u8)) == (0x80 as u8) { chars = chars -% (1 as i32); }
+            }
+            option::Option[u8]::None => { }
+        }
+    }
+    if chars < (0 as i32) { return 0 as i32; }
+    return chars;
+}
+
+// The agent id of whatever is on top, when it is one an agent could act on.
+// An INTERNAL widget's id is noise: it names something the surface never
+// exposed and nothing can be done with.
+fn exposed_id_of(w: *u8) -> text::Text {
+    var cur: *u8 = w;
+    while !is_null(cur) {
+        let pinned: *u8 = get_agent_id(cur);
+        if !is_null(pinned) { return convert::cstr_to_text(pinned); }
+        cur = { gtk_widget_get_parent(cur) };
+    }
+    return text::new();
+}
+
+// Is `hit` the widget `w`, or inside it? A click landing on a node's own label
+// has still reached the node.
+fn is_at_or_inside(hit: *u8, w: *u8) -> bool {
+    var cur: *u8 = hit;
+    while !is_null(cur) {
+        if cur == w { return true; }
+        cur = { gtk_widget_get_parent(cur) };
+    }
+    return false;
+}
+
+#[link_name = "gtk_widget_get_parent"]
+extern fn gtk_widget_get_parent(w: *u8) -> *u8;
+#[link_name = "gtk_widget_pick"]
+extern fn gtk_widget_pick(w: *u8, x: f64, y: f64, flags: u32) -> *u8;
+#[link_name = "gtk_editable_select_region"]
+extern fn gtk_editable_select_region(e: *u8, start: i32, end: i32);
