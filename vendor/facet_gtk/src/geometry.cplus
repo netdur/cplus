@@ -28,6 +28,7 @@ import "facet/vocabulary" as vocab;
 import "facet/split" as split;
 import "facet/refreshable" as refreshable;
 import "./observers" as observers;
+import "./transform" as transform;
 import "./controls" as controls;
 import "./swipe" as swipe;
 
@@ -124,9 +125,18 @@ fn place(host: *u8, child: *u8, x: f64, y: f64, w: f64, h: f64) {
     cw.set_size_request(round_i32(w), round_i32(h));
     if parent_raw(child) == host {
         gtk::Fixed::from_raw(host).move_(cw, x, y);
+        // A POSITION AND A TRANSFORM ARE ONE SLOT in a GtkFixed —
+        // `gtk_fixed_put(x, y)` IS `translate(x, y)` on GtkFixedLayoutChild,
+        // and `move_` has just overwritten whatever `transform` wrote. So the
+        // position is recorded and the transform re-asserted on top of it.
+        // Without this, every laid-out frame silently cancelled the node's
+        // scale and rotation.
+        transform::placed(child, x, y);
+        transform::reapply(child, flex::Frame { left: x, top: y, width: w, height: h });
         return;
     }
     gtk::Fixed::from_raw(host).put(cw, x, y);
+    transform::placed(child, x, y);
     return;
 }
 

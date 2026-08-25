@@ -1276,6 +1276,70 @@ fn a_null_c_string_reads_as_empty_rather_than_dereferencing() {
 // because those are what is wrong silently, and a mirrored arc or a
 // transposed line cap looks like a drawing bug in the application.
 
+// ---- a position and a transform are ONE SLOT -----------------------------------
+//
+// `gtk_fixed_put(child, x, y)` IS a transform: GtkFixedLayoutChild has one
+// slot and `put` fills it with `translate(x, y)`. Measured with GTK itself —
+//
+//     after put(120, 80)         -> translate(120, 80)
+//     after set_child_transform  -> scale(2)
+//
+// — so writing a transform DESTROYED the widget's placement and dropped it at
+// the host's origin. Reported as "the centre of the element resets to 0,0".
+//
+// The answer is that one slot must carry both, and this is the assertion that
+// keeps it that way. A GskTransform is opaque; `gsk_transform_to_string` is
+// the only legible view of one, which matters precisely because the placement
+// riding inside it is invisible from every other angle.
+#[test]
+fn a_transform_carries_the_widgets_placement_with_it() {
+    var x: transform::Xform = transform::identity();
+    x.scale_x = 2.0f64;
+    x.scale_y = 2.0f64;
+    let f: flex::Frame = flex::Frame { left: 0.0f64, top: 0.0f64,
+                                       width: 120.0f64, height: 80.0f64 };
+    let m: text::Text = transform::describe(24.0f64, 24.0f64, x, f);
+    // GSK FUSES ADJACENT TRANSLATES, so the placement (24, 24) and the anchor
+    // (60, 40) arrive as one `translate(84, 64)` rather than two. That is
+    // worth knowing before reading a printed matrix: the placement is in
+    // there, it just does not appear under its own name.
+    assert m.view() == "translate(84, 64) scale(2) translate(-60, -40)";
+}
+
+// The ANCHOR is a sandwich, and the centre is the default: translate to the
+// anchor, transform, translate back. A 120x80 box anchored at its centre puts
+// the inner translate at -60, -40.
+#[test]
+fn the_anchor_brackets_the_transform() {
+    var x: transform::Xform = transform::identity();
+    x.scale_x = 2.0f64;
+    let f: flex::Frame = flex::Frame { left: 0.0f64, top: 0.0f64,
+                                       width: 120.0f64, height: 80.0f64 };
+    let centred: text::Text = transform::describe(0.0f64, 0.0f64, x, f);
+    assert centred.view().contains("-60");
+    // ...and an anchor at the TOP-LEFT needs no sandwich at all, because the
+    // origin is already where the transform should happen.
+    x.anchor_x = 0.0f64;
+    x.anchor_y = 0.0f64;
+    let cornered: text::Text = transform::describe(0.0f64, 0.0f64, x, f);
+    assert !cornered.view().contains("-60");
+}
+
+// NEGATIVE, and it is the other half of the same bug: a node returning to the
+// IDENTITY must go back to its placement, not to nothing. Clearing the slot
+// outright would drop the widget at the host's origin just as surely as
+// writing a bare transform did.
+#[test]
+fn an_identity_transform_still_describes_the_placement() {
+    let f: flex::Frame = flex::Frame { left: 0.0f64, top: 0.0f64,
+                                       width: 120.0f64, height: 80.0f64 };
+    // The identity's anchor sandwich cancels — translate(84, 64) against
+    // translate(-60, -40) — and GSK fuses what is left back to the placement
+    // alone. That IS the placement, which is the whole point.
+    let m: text::Text = transform::describe(24.0f64, 24.0f64, transform::identity(), f);
+    assert m.view() == "translate(24, 24)";
+}
+
 // ---- the drop shadow and the clip ----------------------------------------------
 //
 // Both were NAMED in `paint::band_bits()` and answered by nothing — a claim

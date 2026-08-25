@@ -297,6 +297,9 @@ fn open_window(root: *core::Node, take chrome: screen::Chrome,
     let _id: u64 = win.connect_close_request(close_request, win.raw());
     relayout(slot, c.width, c.height);
     win.present();
+    // AFTER `present`, because a window has no GdkSurface until it is
+    // realised, and the surface is the only thing that reports a resize.
+    watch_for_resize(slot);
     return win.raw();
 }
 
@@ -680,6 +683,13 @@ extern fn sigc_notify(instance: *u8, detailed_signal: *u8,
 fn observe_window_property(detailed: *u8, cb: fn(*u8), ctx: *u8) -> u64 {
     let w: *u8 = any_window();
     if w == (0 as *u8) { return 0 as u64; }
+    return observe_property_on(w, detailed, cb, ctx);
+}
+
+// The same registration against ANY instance, because a window resize is
+// reported by the SURFACE and every other observation by the window.
+fn observe_property_on(w: *u8, detailed: *u8, cb: fn(*u8), ctx: *u8) -> u64 {
+    if w == (0 as *u8) { return 0 as u64; }
     let slot: usize = observer_slot();
     if slot >= MAX_OBSERVERS { return 0 as u64; }
     let token: usize = slot +% (1 as usize);
@@ -697,11 +707,23 @@ fn observe_active(cb: fn(*u8), ctx: *u8) -> u64 {
     return observe_window_property(#str_ptr("notify::is-active\0"), cb, ctx);
 }
 
-// GTK 4 tracks the window's CURRENT size in `default-width`/`default-height`,
-// not only the size it was opened at — so a resize is a notify on those two.
-// There is no size-allocate signal on a GtkWidget any more.
+// A WINDOW RESIZE IS A SURFACE PROPERTY, NOT A WINDOW ONE.
+//
+// This watched `notify::default-height` on the assumption — written down here
+// as fact — that GTK 4 keeps `default-width`/`default-height` current as the
+// window is resized. IT DOES NOT. Measured: maximising a 400x300 window whose
+// GtkFixed then read 1470x795 fired those notifies ZERO times, while the
+// GdkSurface's own `width`/`height` fired twice. So this verb reported nothing,
+// ever, and said in a comment that it did.
+//
+// GTK 4 dropped `size-allocate` on GtkWidget, which is what the old comment was
+// working around; the surface is the thing that actually knows.
 fn observe_size_changed(cb: fn(*u8), ctx: *u8) -> u64 {
-    return observe_window_property(#str_ptr("notify::default-height\0"), cb, ctx);
+    let w: *u8 = any_window();
+    if w == (0 as *u8) { return 0 as u64; }
+    let surface: *u8 = surface_of(w);
+    if surface == (0 as *u8) { return 0 as u64; }
+    return observe_property_on(surface, #str_ptr("notify::height\0"), cb, ctx);
 }
 
 fn observe_density(cb: fn(*u8), ctx: *u8) -> u64 {
@@ -1474,5 +1496,58 @@ fn remove_existing_bar(shell: gtk::Box) {
         }
         option::Option[gtk::Widget]::None => { }
     }
+    return;
+}
+
+// ---- a resize has to reach the layout ------------------------------------------
+//
+// NOTHING RE-LAID THE TREE WHEN THE WINDOW CHANGED SIZE. `relayout_all` runs
+// from `scheduler::drain`, and a drain happens when facet TOUCHES a node — but
+// a resize touches nothing, so the frames stayed at whatever the last sync
+// computed and the content sat there at its old size while the window grew
+// around it.
+//
+// AND THE OBVIOUS SIGNAL DOES NOT EXIST. GTK 4 dropped `size-allocate` on
+// GtkWidget, and `observe_size_changed` below reaches for
+// `notify::default-width` / `notify::default-height` on the assumption that
+// GTK keeps them current. IT DOES NOT — measured, maximising a 400x300 window
+// whose GtkFixed then read 1470x795 fired those notifies ZERO times. (That
+// makes the application-facing window-size observer wrong for the same reason;
+// it is moved onto the surface here too.)
+//
+// The GdkSurface is what knows. Its `width` and `height` ARE properties and
+// they do notify — the same test saw two — so the resize is watched there. A
+// window has no surface until it is realised, which is why this is armed after
+// `present`.
+#[link_name = "gtk_native_get_surface"]
+extern fn gtk_native_get_surface(native: *u8) -> *u8;
+
+fn surface_of(win: *u8) -> *u8 {
+    if win == (0 as *u8) { return 0 as *u8; }
+    return { gtk_native_get_surface(win) };
+}
+
+// The slot rides as the callback's user data, +1 so it is never null.
+fn resized(instance: *u8, pspec: *u8, user: *u8) {
+    let slot: usize = { #addr(user) } -% (1 as usize);
+    if slot >= MAX_WINDOWS { return; }
+    if ROOTS[slot] == (0 as usize) { return; }
+    // THE FIXED'S OWN ALLOCATION, not the surface's size: a menu bar takes its
+    // height off the top and the tree is laid into what is left. `relayout_all`
+    // already knows how to read that, and going through it keeps one answer to
+    // "how big is the content".
+    relayout_all();
+    return;
+}
+
+fn watch_for_resize(slot: usize) {
+    let win: *u8 = WINDOWS[slot] as *u8;
+    let surface: *u8 = surface_of(win);
+    if surface == (0 as *u8) { return; }
+    let token: *u8 = (slot +% (1 as usize)) as *u8;
+    let _w: u64 = { sigc_notify(surface, #str_ptr("notify::width\0"), resized,
+                                token, 0 as *u8, 0 as i32) };
+    let _h: u64 = { sigc_notify(surface, #str_ptr("notify::height\0"), resized,
+                                token, 0 as *u8, 0 as i32) };
     return;
 }

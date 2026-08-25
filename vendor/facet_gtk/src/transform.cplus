@@ -37,6 +37,7 @@
 
 import "stdlib/option" as option;
 import "stdlib/vec" as vec;
+import "stdlib/text" as text;
 import "stdlib/status" as status;
 import "flex_layout/flex_layout" as flex;
 import "facet/facet" as core;
@@ -146,10 +147,15 @@ fn blend(from: Xform, to: Xform, t: f64) -> Xform {
 // about X, about Z, then put the anchor back and apply the translation.
 //
 // A NULL receiver is the identity, so the chain starts from one.
-fn build(x: Xform, frame: flex::Frame) -> *u8 {
+fn build_at(home: Point, x: Xform, frame: flex::Frame) -> *u8 {
     let ax: f64 = frame.width * x.anchor_x;
     let ay: f64 = frame.height * x.anchor_y;
     var t: *u8 = 0 as *u8;
+    // THE PLACEMENT FIRST, because it is the outermost thing: everything below
+    // happens in the widget's own box, and this is where that box sits in the
+    // host. `gtk_fixed_put` would have written exactly this and nothing else.
+    var at: Point = home;
+    t = { gsk_transform_translate(t, #addr_of(at)) };
     // The anchor, plus the translation the application asked for.
     var back: Point = Point { x: (ax + x.translation_x) as f32,
                               y: (ay + x.translation_y) as f32 };
@@ -211,16 +217,37 @@ fn apply_to(v: *u8, x: Xform, frame: flex::Frame) {
         // on "the values are identity" would leave it there — the same hole
         // `facet_appkit/paint.cplus` records finding on the layer.
         if g::get_data(v, marked_key()) == (0 as *u8) { return; }
-        fixed.set_child_transform(w, gsk::Transform::from_raw(0 as *u8));
+        // BACK TO THE PLACEMENT, not to nothing. Clearing the slot outright
+        // would drop the widget at the host's origin, because the placement
+        // lives in the same slot.
+        var home: Point = placement_of(v);
+        let plain: *u8 = { gsk_transform_translate(0 as *u8, #addr_of(home)) };
+        fixed.set_child_transform(w, gsk::Transform::from_raw(plain));
+        if plain != (0 as *u8) { { gsk_transform_unref(plain) }; }
         g::set_data(v, marked_key(), 0 as *u8);
         return;
     }
-    let t: *u8 = build(x, frame);
+    let t: *u8 = build_at(placement_of(v), x, frame);
     fixed.set_child_transform(w, gsk::Transform::from_raw(t));
     g::set_data(v, marked_key(), 1 as *u8);
     // `set_child_transform` takes its OWN reference; this one is ours to drop.
     if t != (0 as *u8) { { gsk_transform_unref(t) }; }
     return;
+}
+
+// Re-assert whatever this widget should be showing. Called by
+// `geometry::place` after it records a new position, because the position and
+// the transform are one slot and the last writer wins.
+fn reapply(v: *u8, frame: flex::Frame) {
+    if g::get_data(v, marked_key()) == (0 as *u8) { return; }
+    apply_to(v, last_applied(v), frame);
+    return;
+}
+
+// Does this widget carry a transform? `geometry::place` asks before choosing
+// between an ordinary `move_` and the combined write.
+fn is_transformed(v: *u8) -> bool {
+    return g::get_data(v, marked_key()) != (0 as *u8);
 }
 
 // The band's entry point: read the node, apply what it says.
@@ -283,33 +310,84 @@ extern fn gtk_widget_get_opacity(w: *u8) -> f64;
 // What this module last applied to a widget, so an animation knows where it is
 // starting from. Kept per widget rather than on the node: the node's fields
 // already hold the END values by the time `C_ANIMATE` is seen.
-struct Applied { view: usize, x: Xform, live: bool }
+// THE PLACEMENT RIDES WITH IT, and that is the whole of the displacement bug.
+//
+// `gtk_fixed_put(child, x, y)` IS A TRANSFORM — GtkFixedLayoutChild has one
+// slot, and `put` fills it with `translate(x, y)`. Measured:
+//
+//     after put(120, 80)         -> translate(120, 80)
+//     after set_child_transform  -> scale(2)
+//
+// So writing a transform DESTROYED the widget's position and dropped it at the
+// host's origin. Reported as "the centre of the element resets to 0,0". The
+// answer is that there is one slot and it must therefore carry both: every
+// transform this module writes is `translate(placement) * facet`.
+struct Applied { view: usize, x: Xform, px: f64, py: f64, placed: bool, live: bool }
 static APPLIED: vec::Vec[Applied] = #zero::[vec::Vec[Applied]]();
 
-fn remember(v: *u8, x: Xform) {
+fn entry_for(v: *u8) -> *Applied {
     var i: usize = 0 as usize;
     let n: usize = APPLIED.count();
     var free: usize = n;
     while i < n {
         match APPLIED.at_ptr(i) {
             option::Option[*Applied]::Some(a) => {
-                if { (*a).live } && { (*a).view } == { #addr(v) } { { (*a).x = x }; return; }
+                if { (*a).live } && { (*a).view } == { #addr(v) } { return a; }
                 if !{ (*a).live } && free == n { free = i; }
             }
             option::Option[*Applied]::None => { }
         }
         i = i +% (1 as usize);
     }
-    let entry: Applied = Applied { view: { #addr(v) }, x: x, live: true };
+    let fresh: Applied = Applied { view: { #addr(v) }, x: identity(),
+                                   px: 0.0f64, py: 0.0f64,
+                                   placed: false, live: true };
     if free < n {
         match APPLIED.at_ptr(free) {
-            option::Option[*Applied]::Some(a) => { { (*a) = entry }; }
+            option::Option[*Applied]::Some(a) => { { (*a) = fresh }; return a; }
             option::Option[*Applied]::None => { }
         }
-        return;
     }
-    let _e: status::Status = APPLIED.append(entry);
+    let _e: status::Status = APPLIED.append(fresh);
+    return match APPLIED.at_ptr(APPLIED.count() -% (1 as usize)) {
+        option::Option[*Applied]::Some(a) => a,
+        option::Option[*Applied]::None => 0 as *Applied,
+    };
+}
+
+fn remember(v: *u8, x: Xform) {
+    let a: *Applied = entry_for(v);
+    if a == (0 as *Applied) { return; }
+    { (*a).x = x };
     return;
+}
+
+// `geometry::place` calls this INSTEAD of `move_` / `put` for the position, so
+// the one transform slot is written once with both halves in it.
+fn placed(v: *u8, x: f64, y: f64) {
+    let a: *Applied = entry_for(v);
+    if a == (0 as *Applied) { return; }
+    { (*a).px = x };
+    { (*a).py = y };
+    { (*a).placed = true };
+    return;
+}
+
+fn placement_of(v: *u8) -> Point {
+    var i: usize = 0 as usize;
+    let n: usize = APPLIED.count();
+    while i < n {
+        match APPLIED.at_ptr(i) {
+            option::Option[*Applied]::Some(a) => {
+                if { (*a).live } && { (*a).view } == { #addr(v) } && { (*a).placed } {
+                    return Point { x: { (*a).px } as f32, y: { (*a).py } as f32 };
+                }
+            }
+            option::Option[*Applied]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return Point { x: 0.0f32, y: 0.0f32 };
 }
 
 fn last_applied(v: *u8) -> Xform {
@@ -514,3 +592,24 @@ fn released(v: *u8) {
 // the only place the applied transform is legible — a GskTransform does not
 // decompose back into facet's numbers unambiguously.
 fn last_applied_scale_x(v: *u8) -> f64 { return last_applied(v).scale_x; }
+
+// For the suite: the matrix as GSK prints it. A GskTransform is opaque and
+// this is the only legible view of one — which matters because the PLACEMENT
+// riding inside it is invisible from every other angle, and that is exactly
+// the half that was missing.
+#[link_name = "gsk_transform_to_string"]
+extern fn gsk_transform_to_string(t: *u8) -> *u8;
+#[link_name = "strlen"]
+extern fn c_strlen(s: *u8) -> usize;
+
+fn describe(home_x: f64, home_y: f64, x: Xform, frame: flex::Frame) -> text::Text {
+    let home: Point = Point { x: home_x as f32, y: home_y as f32 };
+    let t: *u8 = build_at(home, x, frame);
+    if t == (0 as *u8) { return text::from_str(""); }
+    let raw: *u8 = { gsk_transform_to_string(t) };
+    if raw == (0 as *u8) { { gsk_transform_unref(t) }; return text::from_str(""); }
+    let out: text::Text = text::from_str({ #str_from_raw_parts(raw, c_strlen(raw)) });
+    if raw != (0 as *u8) { { g::free(raw) }; }
+    { gsk_transform_unref(t) };
+    return out;
+}
