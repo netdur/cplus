@@ -117,6 +117,21 @@ axis, so both views are the FULL row width — and Android draws a CheckBox's bo
 at the leading edge and a Switch's track at the trailing one, with the (absent)
 label filling the gap. An app that wants either hugged gives it a width.
 
+### A radio group has no widget
+
+`RadioButton` is a `CompoundButton` like a checkbox: a tap TOGGLES it, and
+nothing turns its siblings off. Exclusivity on Android belongs to `RadioGroup`
+— which is a `LinearLayout`, one of the layout containers this backend never
+binds because facet owns geometry. So the group is the backend's own business,
+as it is on uikit and appkit, and `controls::radio_changed` is a port of
+`facet_uikit::input::radio_pressed` with one root instead of a window list.
+
+Two rules, and the second is the one a checkbox does not have: turning one ON
+turns every other in its group OFF, and a radio cannot be turned off BY TAPPING
+IT — Android will have toggled the control already, so the answer is to put it
+back and tell no handler about a change that did not happen. A radio with an
+empty group name stands alone, having nothing to be exclusive with.
+
 ### Two writers, one visibility
 
 `paint::visibility_of` is the ONLY function that decides whether a view shows,

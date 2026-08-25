@@ -7,11 +7,13 @@
 // wrong on its first update.
 
 import "stdlib/text" as text;
+import "stdlib/option" as option;
 import "jni/jni" as jni;
 import "android_view/runtime" as rt;
 import "android_view/widgets" as w;
 import "facet/facet" as core;
 import "facet/props" as props;
+import "facet/mount" as mount;
 import "facet/label" as label;
 import "facet/button" as button;
 import "facet/checkbox" as checkbox;
@@ -339,11 +341,83 @@ fn fire_checked(token: i64, on: bool) {
         return;
     }
     if kind == props::K_RADIO {
-        let p: *props::RadioProps = raw as *props::RadioProps;
-        { (*p).on = on };
-        let h: fn(*u8, *u8) = { (*p).on_checked_changed };
-        if h != props::no_handler { h(core::view_of(n), { (*p).on_checked_changed_ctx }); }
+        radio_changed(n, raw as *props::RadioProps, on);
         return;
+    }
+    return;
+}
+
+// A RADIO IS NOT A CHECKBOX, and Android does not know the difference.
+//
+// `RadioButton` is a CompoundButton like the other two, so a tap TOGGLES it and
+// nothing turns its siblings off. Exclusivity on Android is `RadioGroup`'s job
+// — and RadioGroup is a LinearLayout, one of the layout containers this backend
+// deliberately never binds because facet owns geometry. So the group is this
+// side's business, exactly as it is on uikit and appkit, and this is a port of
+// `facet_uikit::input::radio_pressed` with one root instead of a window list.
+//
+// Two rules, and the second is the one a checkbox does not have:
+//   * turning one ON turns every other in its group OFF;
+//   * a radio cannot be turned off BY TAPPING IT. Android will have toggled the
+//     control already, so the answer is to put it back.
+fn radio_changed(n: *core::Node, p: *props::RadioProps, on: bool) {
+    if p == (0 as *props::RadioProps) { return; }
+    if !on {
+        // The person tapped the one that was already selected. Android toggled
+        // the widget; facet's model says nothing happened, so the widget is
+        // corrected and no handler hears about a change that did not occur.
+        if { (*p).on } { core::touch(n, radio::P_ON); }
+        return;
+    }
+    if { (*p).on } { return; }
+    { (*p).on = true };
+    core::touch(n, radio::P_ON);
+    turn_off_group_siblings(n, { (*p).group.view() });
+    let h: fn(*u8, *u8) = { (*p).on_checked_changed };
+    if h != props::no_handler { h(core::view_of(n), { (*p).on_checked_changed_ctx }); }
+    return;
+}
+
+// Every other radio in the same group, off. Walked from the mounted root
+// because a node carries no parent pointer.
+//
+// An EMPTY group is a radio that is in no group, and it stands alone — the same
+// answer the other backends give, and the reason is that a radio with no group
+// name has nothing to be exclusive WITH.
+fn turn_off_group_siblings(me: *core::Node, group: str) {
+    if group == "" { return; }
+    let root: *core::Node = mount::mounted_root();
+    if root == (0 as *core::Node) { return; }
+    group_walk(root, me, group);
+    return;
+}
+
+fn group_walk(node: *core::Node, me: *core::Node, group: str) {
+    if node != me {
+        if core::kind_of(node) == props::K_RADIO {
+            let rp: *props::RadioProps = props_of(node, props::K_RADIO) as *props::RadioProps;
+            if rp != (0 as *props::RadioProps) {
+                if { (*rp).group.view() } == group {
+                    if { (*rp).on } {
+                        { (*rp).on = false };
+                        // TOUCHED, not written straight to the widget: the
+                        // sibling's own `apply` is the one place that knows how
+                        // to write it, and the tick coalesces the whole group
+                        // into one pass.
+                        core::touch(node, radio::P_ON);
+                    }
+                }
+            }
+        }
+    }
+    var i: usize = 0 as usize;
+    let count: usize = core::child_count_of(node);
+    while i < count {
+        match core::child_of(node, i) {
+            option::Option[*core::Node]::Some(c) => { group_walk(c, me, group); }
+            option::Option[*core::Node]::None => { }
+        }
+        i = i +% (1 as usize);
     }
     return;
 }
