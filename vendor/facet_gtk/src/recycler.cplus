@@ -79,6 +79,8 @@ import "gobject/runtime" as g;
 import "gobject_gir/gobject_gir" as gobject_gir;
 import "gdk/gdk" as gdk;
 import "stdlib/text" as text;
+import "stdlib/io" as io;
+import "stdlib/env" as env;
 import "./controls" as controls;
 import "./geometry" as geometry;
 import "./input" as input;
@@ -710,6 +712,7 @@ fn create_sequence(n: *core::Node) -> *u8 {
     }
     // The viewport's own width, watched — see `viewport_changed`.
     let _w: u64 = sw.get_hadjustment().connect_changed(viewport_changed, n as *u8);
+    arm_scroll_trace(sw.raw());
     return sw.upcast().raw();
 }
 
@@ -1502,6 +1505,7 @@ fn sync_model(n: *core::Node, v: *u8) {
     // GtkListView has no such policy, so the two policies that are not its own
     // behaviour are applied around the splice: the offset is read here and
     // restored (or sent to the end) after.
+    trace("sync_model: before splice", v);
     let keep: f64 = anchored_offset(n, v);
     // The count and the SHAPE both changed, potentially — a row that is now
     // selected, or taller, is a row whose pooled cell must not be reused as it
@@ -1509,7 +1513,9 @@ fn sync_model(n: *core::Node, v: *u8) {
     // which rebinds every live cell and lets the shape check in `item_bind`
     // decide what may be kept.
     set_model_length(v, want, force: true);
+    trace("sync_model: after splice", v);
     restore_anchor(n, v, keep, want);
+    trace("sync_model: after restore", v);
     return;
 }
 
@@ -1627,6 +1633,7 @@ fn settle_offset(user: *u8) -> i32 {
     let px: usize = { #addr(g::get_data(v, restore_to_key())) };
     if px == (0 as usize) { return 0 as i32; }
     g::set_data(v, restore_to_key(), 0 as *u8);
+    trace("settle_offset: idle ran", v);
     let want: f64 = (px -% (1 as usize)) as f64;
     let adj: gtk::Adjustment = gtk::ScrolledWindow::from_raw(v).get_vadjustment();
     // CLAMPED HERE rather than left to the adjustment, because a list that
@@ -1889,4 +1896,61 @@ fn slot_of_data_index(s: Sequence, want: usize) -> usize {
         at = at +% (1 as usize);
     }
     return total;
+}
+
+// ---- FACET_GTK_SCROLL=1 --------------------------------------------------------
+//
+// EVERY MOVE A RECYCLER'S SCROLL MAKES, as it makes it, with who asked.
+//
+// A scroll that jumps is a TRANSIENT: the offset is right before and right
+// after, and wrong for one frame in between, so sampling it on a timer misses
+// it entirely. It also cannot be reproduced from a synthetic selection — every
+// path this module can drive itself (select, expand, `set_content`, a focus
+// grab) was measured keeping the offset — which leaves the real pointer click,
+// and only a person has one of those.
+//
+// So the instrument ships. `FACET_GTK_SCROLL=1` prints each adjustment change
+// against the widget it belongs to, and the module's own writes announce
+// themselves first, so the log says whether a jump came from here or from GTK.
+static SCROLL_READ: bool = false;
+static SCROLL_ON: bool = false;
+
+fn tracing_scroll() -> bool {
+    if !SCROLL_READ {
+        SCROLL_READ = true;
+        SCROLL_ON = env::has_var("FACET_GTK_SCROLL");
+    }
+    return SCROLL_ON;
+}
+
+fn trace(what: str, v: *u8) {
+    if !tracing_scroll() { return; }
+    if v == (0 as *u8) { return; }
+    let adj: gtk::Adjustment = gtk::ScrolledWindow::from_raw(v).get_vadjustment();
+    let value: i64 = { adj.get_value() } as i64;
+    let upper: i64 = { adj.get_upper() } as i64;
+    let page: i64 = { adj.get_page_size() } as i64;
+    let who: usize = { #addr(v) } & (0xFFFF as usize);
+    io::eprintln("[scroll ${who}] ${what}  value=${value} upper=${upper} page=${page}");
+    return;
+}
+
+// Armed once per recycler, from `create_sequence`, so GTK's OWN moves show up
+// beside this module's — which is the whole point: the question is not what
+// the offset is, it is who last wrote it.
+fn adjustment_moved(a: *u8, user: *u8) {
+    if !tracing_scroll() { return; }
+    let adj: gtk::Adjustment = gtk::Adjustment::from_raw(a);
+    let value: i64 = { adj.get_value() } as i64;
+    let upper: i64 = { adj.get_upper() } as i64;
+    let who: usize = { #addr(user) } & (0xFFFF as usize);
+    io::eprintln("[scroll ${who}]   .. moved to ${value} (upper ${upper})");
+    return;
+}
+
+fn arm_scroll_trace(sw: *u8) {
+    if !tracing_scroll() { return; }
+    let _v: u64 = gtk::ScrolledWindow::from_raw(sw).get_vadjustment()
+        .connect_value_changed(adjustment_moved, sw);
+    return;
 }
