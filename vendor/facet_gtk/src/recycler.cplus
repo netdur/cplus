@@ -1977,6 +1977,10 @@ fn adjustment_moved(a: *u8, user: *u8) {
 // The BOUNDS as well as the value. A jump is often not a write at all — it is
 // `upper` collapsing under a value that then has nowhere to be, and GTK
 // clamping it. That shows up here and nowhere else.
+#[link_name = "g_signal_connect_data"]
+extern fn sigc_focus(instance: *u8, signal: *u8, handler: fn(*u8, *u8, *u8),
+                     data: *u8, destroy: *u8, flags: i32) -> u64;
+
 fn adjustment_bounds(a: *u8, user: *u8) {
     if !tracing_scroll() { return; }
     let adj: gtk::Adjustment = gtk::Adjustment::from_raw(a);
@@ -1989,8 +1993,45 @@ fn adjustment_bounds(a: *u8, user: *u8) {
     return;
 }
 
+// WHO HAS FOCUS, traced beside the offset.
+//
+// The reporter's bracket showed the jump happening AFTER `settle_offset` ran
+// and with `upper` unchanged — so it is not a clamp, something set the value
+// to zero deliberately. GtkListView scrolls its FOCUS into view, and a splice
+// tears down the cell that had it; if GTK then re-homes focus to item 0, the
+// list scrolls to the top and that is the whole bug.
+fn focus_moved(instance: *u8, pspec: *u8, user: *u8) {
+    if !tracing_scroll() { return; }
+    let who: usize = { #addr(user) } & (0xFFFF as usize);
+    let has: i32 = if { gtk_widget_has_focus(instance) } != (0 as i32) { 1 as i32 }
+                   else { 0 as i32 };
+    io::eprintln("[scroll ${who}]   .. LIST focus=${has}");
+    return;
+}
+
+fn focus_child_moved(instance: *u8, pspec: *u8, user: *u8) {
+    if !tracing_scroll() { return; }
+    let who: usize = { #addr(user) } & (0xFFFF as usize);
+    let child: *u8 = { gtk_widget_get_focus_child(instance) };
+    let named: i32 = if child == (0 as *u8) { 0 as i32 } else { 1 as i32 };
+    io::eprintln("[scroll ${who}]   .. LIST focus-child now=${named}");
+    return;
+}
+
+#[link_name = "gtk_widget_has_focus"]
+extern fn gtk_widget_has_focus(w: *u8) -> i32;
+#[link_name = "gtk_widget_get_focus_child"]
+extern fn gtk_widget_get_focus_child(w: *u8) -> *u8;
+
 fn arm_scroll_trace(sw: *u8) {
     if !tracing_scroll() { return; }
+    let lv: *u8 = list_view_of(sw);
+    if lv != (0 as *u8) {
+        let _f: u64 = { sigc_focus(lv, #str_ptr("notify::has-focus\0"), focus_moved,
+                                   sw, 0 as *u8, 0 as i32) };
+        let _c: u64 = { sigc_focus(lv, #str_ptr("notify::focus-widget\0"),
+                                   focus_child_moved, sw, 0 as *u8, 0 as i32) };
+    }
     let adj: gtk::Adjustment = gtk::ScrolledWindow::from_raw(sw).get_vadjustment();
     let _v: u64 = adj.connect_value_changed(adjustment_moved, sw);
     let _c: u64 = adj.connect_changed(adjustment_bounds, sw);
