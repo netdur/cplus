@@ -862,8 +862,13 @@ fn mcp_read_runs(p: *u8, grant: auth::Grant, id: str) -> surface::Runs {
     return (*s).read_runs(grant, id);
 }
 
+// ON THE MAIN THREAD, unlike `read_runs`: this one ACTS. Firing a GAction runs
+// the application's own handler, and a handler is entitled to assume it is on
+// the thread that owns the widgets.
 fn mcp_invoke_menu(p: *u8, grant: auth::Grant, path: str) -> surface::Outcome {
-    return surface::Outcome::NotFound;
+    refresh_surface(p);
+    return run_on_main(act_invoke_menu(), p, grant, path, "",
+                       0 as u64, 0 as u64, 0 as u64);
 }
 
 fn mcp_backend() -> mcpb::Backend {
@@ -1334,6 +1339,10 @@ fn act_click() -> i32 { return 1 as i32; }
 fn act_set_text() -> i32 { return 2 as i32; }
 fn act_navigate() -> i32 { return 3 as i32; }
 fn act_set_caret() -> i32 { return 4 as i32; }
+// Addressed by PATH, not by node id — the only verb that is, because a menu
+// item is not in the widget tree until its menu is open. `ACT_ID` carries the
+// path; the surface's own root is the window the model hangs off.
+fn act_invoke_menu() -> i32 { return 5 as i32; }
 
 static ACT_KIND: i32 = 0;
 static ACT_SURFACE: usize = 0;
@@ -1374,6 +1383,11 @@ fn perform_on_main(user: *u8) -> i32 {
         }
         if ACT_KIND == act_set_caret() {
             oc = (*s).set_caret(ACT_GRANT, id, ACT_AT, ACT_LEN);
+        }
+        if ACT_KIND == act_invoke_menu() {
+            // The window is NodeId 1 — NodeId 0 is the synthetic app root,
+            // the same convention `refresh_on_main` walks from.
+            oc = invoke_menu_path((*s).widget_of(1 as usize), id);
         }
         ACT_OUT = surface::outcome_index(oc);
     }
@@ -1794,3 +1808,201 @@ extern fn pango_attr_iterator_get(iter: *u8, kind: i32) -> *u8;
 extern fn pango_attr_iterator_next(iter: *u8) -> i32;
 #[link_name = "pango_attr_iterator_destroy"]
 extern fn pango_attr_iterator_destroy(iter: *u8);
+
+// ---- invoke_menu -------------------------------------------------------------
+//
+// A menu item is an ACTION WITH A NAME — the same thing `click` fires on a
+// button — and it is addressed by that name rather than by a point, so it is
+// not the gesture verb the backend contract forbids. What it will not do is
+// open menus for exploration: the item either exists and is enabled, or the
+// answer is NotFound / NotActionable.
+//
+// GTK's menu is a MODEL, not a widget tree. A GtkPopoverMenuBar is built from a
+// GMenuModel whose items carry a `label` attribute and an `action` attribute
+// naming a GAction by string, and the items exist as widgets only while a menu
+// is open. So the path is matched against the MODEL, which is there whether or
+// not anyone has clicked anything.
+//
+// SECTIONS ARE FLATTENED. A GMenu section is a visual grouping — it draws a
+// separator and has no label of its own — so its items belong to the menu that
+// contains it. A path segment must never have to name one; a person reading
+// the menu cannot see that it is there.
+
+// One string attribute off a menu item, COPIED OUT: the GVariant is
+// transfer-full and the string points into it, so reading it after the unref
+// is a use-after-free. "" when the item has no such attribute.
+fn menu_attr(model: *u8, i: i32, key: *u8) -> text::Text {
+    let v: *u8 = { g_menu_model_get_item_attribute_value(model, i, key, null()) };
+    if is_null(v) { return text::new(); }
+    let owned: text::Text = convert::cstr_to_text({ g_variant_get_string(v, null()) });
+    { g_variant_unref(v) };
+    return owned;
+}
+
+// `from`..`to`, or "" — the bounds here are computed from the string's own
+// length, so a None means a bug rather than bad input.
+fn cut(s: str, from: usize, to: usize) -> str {
+    return match s.slice(from, to) {
+        option::Option[str]::Some(x) => x,
+        option::Option[str]::None => "",
+    };
+}
+
+// The action named by `path` within `model`, or "" — matching one segment at a
+// time and descending through `submenu` links.
+fn action_at_path(model: *u8, path: str) -> text::Text {
+    if is_null(model) { return text::new(); }
+    let at: usize = index_of_slash(path);
+    let head: str = if at == path.count() { path } else { cut(path, 0 as usize, at) };
+    let tail: str = if at == path.count() {
+        ""
+    } else {
+        cut(path, at +% (1 as usize), path.count())
+    };
+    let n: i32 = { g_menu_model_get_n_items(model) };
+    var i: i32 = 0 as i32;
+    while i < n {
+        // A SECTION FIRST, because it has no label to match and its items are
+        // the containing menu's. Recursing with the WHOLE path, not the tail.
+        let sect: *u8 = { g_menu_model_get_item_link(model, i, #str_ptr("section\0")) };
+        if !is_null(sect) {
+            let found: text::Text = action_at_path(sect, path);
+            { g_object_unref_t(sect) };
+            if { found.view() } != "" { return found; }
+        }
+        let label: text::Text = menu_attr(model, i, #str_ptr("label\0"));
+        if { label.view() } != "" && { label.view() } == head {
+            if tail == "" {
+                return menu_attr(model, i, #str_ptr("action\0"));
+            }
+            let sub: *u8 = { g_menu_model_get_item_link(model, i, #str_ptr("submenu\0")) };
+            if is_null(sub) { return text::new(); }
+            let found: text::Text = action_at_path(sub, tail);
+            { g_object_unref_t(sub) };
+            return found;
+        }
+        i = i +% (1 as i32);
+    }
+    return text::new();
+}
+
+fn index_of_slash(s: str) -> usize {
+    var i: usize = 0 as usize;
+    while i < s.count() {
+        match s.byte_at(i) {
+            option::Option[u8]::Some(b) => { if b == (47 as u8) { return i; } }
+            option::Option[u8]::None => {}
+        }
+        i = i +% (1 as usize);
+    }
+    return s.count();
+}
+
+// The GtkPopoverMenuBar's model, found by walking the window rather than by
+// assuming where the bar sits — facet prepends it to the shell box, but that is
+// facet's arrangement and this reader is not only facet's.
+fn menu_model_of(win: *u8) -> *u8 {
+    let bar: *u8 = first_of_class(win, #str_ptr("GtkPopoverMenuBar\0"));
+    if is_null(bar) { return null(); }
+    return { gtk_popover_menu_bar_get_menu_model(bar) };
+}
+
+fn first_of_class(w: *u8, cls: *u8) -> *u8 {
+    if is_null(w) { return null(); }
+    if is_a(w, cls) { return w; }
+    var child: *u8 = { gtk_widget_get_first_child(w) };
+    while !is_null(child) {
+        let hit: *u8 = first_of_class(child, cls);
+        if !is_null(hit) { return hit; }
+        child = { gtk_widget_get_next_sibling(child) };
+    }
+    return null();
+}
+
+// The GActionGroup that owns `prefix`, and the reason there are three sources.
+//
+// `gtk_widget_insert_action_group` HAS NO PUBLIC GETTER, so an action group a
+// widget owns is unreachable — which matters because a disabled GSimpleAction
+// activates silently rather than refusing, and reporting `Allowed` for a
+// greyed-out item is exactly the false claim this package exists to prevent.
+// `facet_gtk` therefore stamps its group under a stable key, the same channel
+// as the row slot. An idiomatic GTK application needs no stamp: `win.` is the
+// GtkApplicationWindow itself and `app.` is its GtkApplication, both of which
+// ARE GActionGroups and both of which are publicly reachable.
+fn action_group_for(win: *u8, prefix: str) -> *u8 {
+    let stamped: *u8 = { g_object_get_data(win, #str_ptr("facet-gtk-actions\0")) };
+    if !is_null(stamped) && prefix == "app" { return stamped; }
+    if prefix == "win" { return win; }
+    if prefix == "app" { return { gtk_window_get_application(win) }; }
+    return null();
+}
+
+fn invoke_menu_path(win: *u8, path: str) -> surface::Outcome {
+    if is_null(win) { return surface::Outcome::NotFound; }
+    let model: *u8 = menu_model_of(win);
+    if is_null(model) { return surface::Outcome::NotFound; }
+    let full: text::Text = action_at_path(model, path);
+    if { full.view() } == "" { return surface::Outcome::NotFound; }
+    let spelled: str = { full.view() };
+    let dot: usize = index_of_dot(spelled);
+    // An action with NO PREFIX is not one this reader can resolve to a group,
+    // and guessing which group owns it is how the wrong menu gets invoked.
+    if dot == spelled.count() { return surface::Outcome::NotFound; }
+    let prefix: str = cut(spelled, 0 as usize, dot);
+    let name: str = cut(spelled, dot +% (1 as usize), spelled.count());
+    let group: *u8 = action_group_for(win, prefix);
+    // NO GROUP IS NOT "GO AHEAD ANYWAY". Activating through the widget would
+    // work and would report `Allowed` for an item this reader could not
+    // confirm is live — the same lie by a different route.
+    if is_null(group) { return surface::Outcome::NoHandler; }
+    let cname: *u8 = convert::str_to_cstring(name);
+    if { g_action_group_has_action(group, cname) } == (0 as i32) {
+        convert::free_cstring(cname);
+        return surface::Outcome::NotFound;
+    }
+    // A DISABLED GSimpleAction ACTIVATES SILENTLY — `g_simple_action_activate`
+    // checks `enabled` and returns without emitting, so the call succeeds and
+    // nothing happens. Asked first, or every greyed-out item reports Allowed.
+    if { g_action_group_get_action_enabled(group, cname) } == (0 as i32) {
+        convert::free_cstring(cname);
+        return surface::Outcome::NotActionable;
+    }
+    { g_action_group_activate_action(group, cname, null()) };
+    convert::free_cstring(cname);
+    return surface::Outcome::Allowed;
+}
+
+fn index_of_dot(s: str) -> usize {
+    var i: usize = 0 as usize;
+    while i < s.count() {
+        match s.byte_at(i) {
+            option::Option[u8]::Some(b) => { if b == (46 as u8) { return i; } }
+            option::Option[u8]::None => {}
+        }
+        i = i +% (1 as usize);
+    }
+    return s.count();
+}
+
+#[link_name = "gtk_popover_menu_bar_get_menu_model"]
+extern fn gtk_popover_menu_bar_get_menu_model(bar: *u8) -> *u8;
+#[link_name = "gtk_window_get_application"]
+extern fn gtk_window_get_application(win: *u8) -> *u8;
+#[link_name = "g_menu_model_get_n_items"]
+extern fn g_menu_model_get_n_items(m: *u8) -> i32;
+#[link_name = "g_menu_model_get_item_link"]
+extern fn g_menu_model_get_item_link(m: *u8, i: i32, link: *u8) -> *u8;
+#[link_name = "g_menu_model_get_item_attribute_value"]
+extern fn g_menu_model_get_item_attribute_value(m: *u8, i: i32, key: *u8, ty: *u8) -> *u8;
+#[link_name = "g_variant_get_string"]
+extern fn g_variant_get_string(v: *u8, len: *u8) -> *u8;
+#[link_name = "g_variant_unref"]
+extern fn g_variant_unref(v: *u8);
+#[link_name = "g_object_unref"]
+extern fn g_object_unref_t(o: *u8);
+#[link_name = "g_action_group_has_action"]
+extern fn g_action_group_has_action(g: *u8, name: *u8) -> i32;
+#[link_name = "g_action_group_get_action_enabled"]
+extern fn g_action_group_get_action_enabled(g: *u8, name: *u8) -> i32;
+#[link_name = "g_action_group_activate_action"]
+extern fn g_action_group_activate_action(g: *u8, name: *u8, param: *u8);

@@ -1485,6 +1485,16 @@ fn attach_menu_bar(model: gio::Menu, group: gio::SimpleActionGroup) {
                     bx.prepend(bar.upcast());
                     gtk::Widget::from_raw(win).insert_action_group("app",
                         group.as_action_group());
+                    // ...AND STAMPED WHERE A READER CAN FIND IT.
+                    // `insert_action_group` has no public getter in GTK4, so
+                    // nothing outside this call can ask whether `app.m3` is
+                    // enabled — and `agent_gtk`'s `invoke_menu` must, or it
+                    // reports Allowed for a greyed-out item, which is the one
+                    // answer that package refuses to give. Same channel as the
+                    // row slot: a backend writes a stable key, the reader reads
+                    // it, and a plain GTK app simply has neither.
+                    g::set_data(win, #str_ptr("facet-gtk-actions\0"),
+                                group.as_action_group().raw());
                     attach_shortcuts(win);
                 }
                 option::Option[gtk::Widget]::None => { }

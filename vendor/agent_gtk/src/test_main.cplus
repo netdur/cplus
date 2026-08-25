@@ -847,3 +847,145 @@ fn a_private_labels_runs_never_reach_an_ordinary_operator() {
     assert ok.runs.count() == (1 as usize);
     return;
 }
+
+// ---- invoke_menu -------------------------------------------------------------
+
+#[link_name = "g_menu_new"]
+extern fn g_menu_new() -> *u8;
+#[link_name = "g_menu_append"]
+extern fn g_menu_append(m: *u8, label: *u8, action: *u8);
+#[link_name = "g_menu_append_submenu"]
+extern fn g_menu_append_submenu(m: *u8, label: *u8, sub: *u8);
+#[link_name = "g_menu_append_section"]
+extern fn g_menu_append_section(m: *u8, label: *u8, sect: *u8);
+#[link_name = "g_simple_action_group_new"]
+extern fn g_simple_action_group_new() -> *u8;
+#[link_name = "g_simple_action_new"]
+extern fn g_simple_action_new(name: *u8, ty: *u8) -> *u8;
+#[link_name = "g_simple_action_set_enabled"]
+extern fn g_simple_action_set_enabled(a: *u8, on: i32);
+#[link_name = "g_action_map_add_action"]
+extern fn g_action_map_add_action(map: *u8, a: *u8);
+#[link_name = "gtk_popover_menu_bar_new_from_model"]
+extern fn gtk_popover_menu_bar_new_from_model(m: *u8) -> *u8;
+#[link_name = "gtk_widget_insert_action_group"]
+extern fn gtk_widget_insert_action_group(w: *u8, prefix: *u8, g: *u8);
+#[link_name = "g_object_set_data"]
+extern fn g_object_set_data_m(obj: *u8, key: *u8, data: *u8);
+#[link_name = "g_signal_connect_data"]
+extern fn sig_connect(o: *u8, sig: *u8, cb: fn(*u8, *u8, *u8), data: *u8,
+                      destroy: *u8, flags: i32) -> u64;
+
+static MENU_FIRED: i32 = 0;
+
+fn on_menu_action(action: *u8, param: *u8, user: *u8) {
+    MENU_FIRED = MENU_FIRED +% (1 as i32);
+    return;
+}
+
+// A window with a real GtkPopoverMenuBar over a real GMenu, its actions in a
+// real GSimpleActionGroup — the arrangement facet_gtk builds, and the one an
+// idiomatic GTK application builds. `save` is enabled and wired; `revert` is
+// present and DISABLED, which is the case the whole design turns on.
+fn menu_fixture() -> *u8 {
+    let group: *u8 = { g_simple_action_group_new() };
+    let save: *u8 = { g_simple_action_new(#str_ptr("save\0"), 0 as *u8) };
+    let _s: u64 = { sig_connect(save, #str_ptr("activate\0"), on_menu_action,
+                                0 as *u8, 0 as *u8, 0 as i32) };
+    { g_action_map_add_action(group, save) };
+    let revert: *u8 = { g_simple_action_new(#str_ptr("revert\0"), 0 as *u8) };
+    { g_simple_action_set_enabled(revert, 0 as i32) };
+    let _r: u64 = { sig_connect(revert, #str_ptr("activate\0"), on_menu_action,
+                                0 as *u8, 0 as *u8, 0 as i32) };
+    { g_action_map_add_action(group, revert) };
+
+    let file: *u8 = { g_menu_new() };
+    { g_menu_append(file, #str_ptr("Save\0"), #str_ptr("app.save\0")) };
+    // A SECTION, unlabelled, holding an item — a path must reach `Revert`
+    // without naming the grouping, because a person reading the menu cannot
+    // see that it is there.
+    let sect: *u8 = { g_menu_new() };
+    { g_menu_append(sect, #str_ptr("Revert\0"), #str_ptr("app.revert\0")) };
+    { g_menu_append_section(file, 0 as *u8, sect) };
+
+    let bar_model: *u8 = { g_menu_new() };
+    { g_menu_append_submenu(bar_model, #str_ptr("File\0"), file) };
+
+    let bar: *u8 = { gtk_popover_menu_bar_new_from_model(bar_model) };
+    let win: *u8 = fixture(bar, #str_ptr("menu:bar\0"));
+    { gtk_widget_insert_action_group(win, #str_ptr("app\0"), group) };
+    { g_object_set_data_m(win, #str_ptr("facet-gtk-actions\0"), group) };
+    return win;
+}
+
+#[test]
+fn a_menu_item_is_invoked_by_the_titles_as_built() {
+    if !has_display() { return; }
+    let win: *u8 = menu_fixture();
+    var s: agent::Surface = agent::open(win);
+    MENU_FIRED = 0 as i32;
+    let oc: surface::Outcome = agent::mcp_invoke_menu({ #addr_of(s) as *u8 },
+                                                      auth::operator(), "File/Save");
+    assert surface::outcome_eq(oc, surface::Outcome::Allowed);
+    // ALLOWED IS NOT THE ASSERTION. The handler ran, or the verb told an agent
+    // it acted when it did not — the exact failure `wired` was added for.
+    assert MENU_FIRED == (1 as i32);
+    return;
+}
+
+#[test]
+fn a_section_is_flattened_into_the_menu_that_contains_it() {
+    if !has_display() { return; }
+    // A GMenu section draws a separator and has no label of its own, so its
+    // items belong to the containing menu. `File/Revert`, never
+    // `File//Revert` — an agent addressing what it can read.
+    let win: *u8 = menu_fixture();
+    var s: agent::Surface = agent::open(win);
+    let oc: surface::Outcome = agent::mcp_invoke_menu({ #addr_of(s) as *u8 },
+                                                      auth::operator(), "File/Revert");
+    // Found through the section — and REFUSED, because it is disabled.
+    assert surface::outcome_eq(oc, surface::Outcome::NotActionable);
+    return;
+}
+
+#[test]
+fn a_disabled_item_refuses_instead_of_reporting_success() {
+    if !has_display() { return; }
+    // THE CASE THE DESIGN TURNS ON. `g_simple_action_activate` checks `enabled`
+    // and returns without emitting, so activating a greyed-out item SUCCEEDS
+    // and does nothing. Without the enabled check this verb answers Allowed
+    // and the agent believes it saved.
+    let win: *u8 = menu_fixture();
+    var s: agent::Surface = agent::open(win);
+    MENU_FIRED = 0 as i32;
+    let oc: surface::Outcome = agent::mcp_invoke_menu({ #addr_of(s) as *u8 },
+                                                      auth::operator(), "File/Revert");
+    assert surface::outcome_eq(oc, surface::Outcome::NotActionable);
+    assert MENU_FIRED == (0 as i32);
+    return;
+}
+
+#[test]
+fn a_path_that_names_nothing_is_not_found() {
+    if !has_display() { return; }
+    let win: *u8 = menu_fixture();
+    var s: agent::Surface = agent::open(win);
+    MENU_FIRED = 0 as i32;
+    assert surface::outcome_eq(
+        agent::mcp_invoke_menu({ #addr_of(s) as *u8 }, auth::operator(), "File/Nope"),
+        surface::Outcome::NotFound);
+    // ...and a top level that does not exist, which is a different miss.
+    assert surface::outcome_eq(
+        agent::mcp_invoke_menu({ #addr_of(s) as *u8 }, auth::operator(), "Edit/Save"),
+        surface::Outcome::NotFound);
+    // NO MENU AT ALL is also NotFound rather than a crash: the verb is asked
+    // of every backend, and most windows have no menu bar.
+    let plain: *u8 = fixture({ gtk_label_new_t(#str_ptr("hi\0")) },
+                             #str_ptr("label:only\0"));
+    var bare: agent::Surface = agent::open(plain);
+    assert surface::outcome_eq(
+        agent::mcp_invoke_menu({ #addr_of(bare) as *u8 }, auth::operator(), "File/Save"),
+        surface::Outcome::NotFound);
+    assert MENU_FIRED == (0 as i32);
+    return;
+}

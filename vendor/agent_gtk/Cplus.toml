@@ -37,10 +37,15 @@ edition = "2026"
 #                                 `supported: false` rather than an empty run
 #                                 list — the same rule the `clickable` field
 #                                 exists for.
-#   invoke_menu                   NOT ANSWERED. facet_gtk's app menu is a GMenu
-#                                 whose items are ACTIONS addressed by name, so
-#                                 the path-to-action mapping lives there, not
-#                                 here. It answers NotFound.
+#   invoke_menu                   ANSWERED. `Menu/Item` is matched against the
+#                                 GtkPopoverMenuBar's GMenuModel — the model is
+#                                 there whether or not a menu is open, which the
+#                                 item WIDGETS are not — and sections are
+#                                 flattened, because a person cannot see them.
+#                                 A DISABLED item answers NotActionable: a
+#                                 disabled GSimpleAction activates silently, so
+#                                 without the check the verb reports success for
+#                                 a greyed-out command.
 #
 # `cpc test` runs both halves of the suite; the LIVE half is gated on
 # `gtk_init_check` and says so when it skips, because a green suite that tested
