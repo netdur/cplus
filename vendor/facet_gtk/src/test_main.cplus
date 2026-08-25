@@ -4802,3 +4802,27 @@ fn the_facade_reports_whether_it_is_installed() {
 }
 
 fn main() -> i32 { return 0; }
+
+#[test]
+fn a_handler_swapped_in_after_mount_still_gets_its_controller() {
+    // THE BUG THIS PINS: `input::arm` was re-run on `C_GESTURES` alone. The
+    // shared band's `on_focus` / `on_blur` are NOT gestures — every node may
+    // carry them, gestures or not — and swapping one in raises `C_HANDLERS`,
+    // never `C_GESTURES`. `arm` guards its focus band on `wants_focus_events`,
+    // so a node that mounted without a focus handler and gained one later was
+    // never re-asked: the controller was never added, and the handler could
+    // not fire for the life of the node. Silent, and it reads as an app bug.
+    //
+    // `set_item` rides the same bit — the item IS the payload half of a
+    // handler — so this is also what keeps a swapped item reachable.
+    assert (views::rearm_bits() & props::C_HANDLERS) != (0 as u64);
+    // ...and the two that were already right, so a future edit cannot trade
+    // one for another and still pass.
+    assert (views::rearm_bits() & core::C_GESTURES) != (0 as u64);
+    assert (views::rearm_bits() & props::C_INPUT_TRANSPARENT) != (0 as u64);
+    // NOT a blanket. `rearm_bits()` is asked against every sync's dirty word,
+    // so widening it to everything would re-arm on every colour change.
+    assert (views::rearm_bits() & props::C_BACKGROUND) == (0 as u64);
+    assert (views::rearm_bits() & props::C_FOCUS) == (0 as u64);
+    return;
+}

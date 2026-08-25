@@ -428,6 +428,14 @@ fn create(ctx: *u8, n: *core::Node) -> *u8 {
     return v;
 }
 
+// The bits that mean "ask `input::arm` again". Named so the suite can pin it:
+// this backend builds no widgets in tests, so the only place a missing bit can
+// be caught is the mask itself — and a missing bit here is a handler that
+// never fires, which is silent at runtime and looks like an application bug.
+fn rearm_bits() -> u64 {
+    return core::C_GESTURES | props::C_INPUT_TRANSPARENT | props::C_HANDLERS;
+}
+
 fn apply(ctx: *u8, n: *core::Node) {
     if n == (0 as *core::Node) { return; }
     let v: *u8 = core::view_of(n);
@@ -439,7 +447,18 @@ fn apply(ctx: *u8, n: *core::Node) {
     // is idempotent per band — so a set that gained a verb gains its
     // controller here, and one that gained nothing pays a handful of null
     // reads. `C_INPUT_TRANSPARENT` rides along because `arm` answers it.
-    if (d & (core::C_GESTURES | props::C_INPUT_TRANSPARENT)) != (0 as u64) {
+    //
+    // AND `C_HANDLERS`, which was missing and is a different bit for a
+    // different thing. The shared band's `on_focus` / `on_blur` are not
+    // gestures — every node may carry them, gestures or not — and swapping one
+    // in raises C_HANDLERS, never C_GESTURES. `arm` guards its focus band on
+    // `wants_focus_events`, so a node that mounted without a focus handler and
+    // gained one later was never re-asked: the controller was never added and
+    // the handler could not fire, silently and for the life of the node.
+    //
+    // Idempotent, so the cost of adding the bit is the same handful of null
+    // reads the comment above already accepts.
+    if (d & rearm_bits()) != (0 as u64) {
         input::arm(v, n);
     }
     // A `menu` subtree changed under this node. A viewless child cannot say
