@@ -555,6 +555,68 @@ impl Surface {
         return surface::Outcome::NotFound;
     }
 
+    // READ BACK WHAT IS ACTUALLY DRAWN.
+    //
+    // Every other read verb answers `text` — WHAT the control holds — and
+    // nothing answered HOW it is drawn, so "did the syntax colour land" needed
+    // a probe compiled into the app. This is that answer for GTK.
+    //
+    // ---- where the styling actually lives, which is two places --------------
+    //
+    // A GtkLabel draws through a PangoLayout, and the layout carries a
+    // PangoAttrList: one attribute per SPAN, which is what markup and
+    // `set_attributes` produce, and exactly the shape the contract's runs want.
+    // `pango_attr_iterator` already walks it as maximal stretches of uniform
+    // attributes, so the run boundaries are Pango's, not invented here.
+    //
+    // But the attr list holds only the OVERRIDES. A label made bold by CSS —
+    // `.title { font-weight: bold }`, which is how a themed application does it
+    // — has no weight attribute anywhere, and reading the list alone reports
+    // `is_bold: false` for a label that is visibly bold. That is precisely the
+    // plausible-and-wrong answer this package refuses to give, and `is_bold`
+    // is a bool with no "unset" to hide in. So the BASE font description off
+    // the layout's context supplies the default that each run's own attribute
+    // then overrides.
+    //
+    // COLOUR IS NOT FOLDED IN THE SAME WAY, and the asymmetry is deliberate:
+    // the contract says `color` is `#rrggbb` for a run with a colour OF ITS
+    // OWN and `""` otherwise, so the widget's inherited CSS colour is left out
+    // and `""` keeps meaning "this run does not set one". A bool has no such
+    // sentinel, which is the whole reason the two fields are treated
+    // differently.
+    //
+    // ---- what is NOT supported, and says so ---------------------------------
+    //
+    // GtkEditable (GtkEntry, GtkText) has no public accessor for its layout,
+    // and GtkTextView styles through GtkTextTags — a different model that maps
+    // to runs differently and is not guessed at here. Both report
+    // `supported: false` rather than an empty run list, which would read as
+    // "no styling" and be a lie in the shape of a fact.
+    fn read_runs(this, grant: auth::Grant, id: str) -> surface::Runs {
+        match this.reg.lookup(id) {
+            option::Option[usize]::Some(node) => {
+                // VALUE READ, not `authorize_read`. `authorize_read` answers
+                // "may this agent know the node exists", which a gated node
+                // still answers yes to — and a redacted field reporting "one
+                // run, sixteen characters" has told an agent the length of a
+                // card number.
+                let oc: surface::Outcome =
+                    surface::authorize_value_read(this.reg, grant, node);
+                if !surface::outcome_eq(oc, surface::Outcome::Allowed) {
+                    return surface::runs_refused(oc, true);
+                }
+                let w: *u8 = this.widget_of(node);
+                if is_null(w) { return surface::runs_refused(surface::Outcome::Stale, true); }
+                if !is_a(w, #str_ptr("GtkLabel\0")) {
+                    return surface::runs_refused(surface::Outcome::Allowed, false);
+                }
+                return label_runs(w);
+            }
+            option::Option[usize]::None => {}
+        }
+        return surface::runs_refused(surface::Outcome::NotFound, true);
+    }
+
     // READ: is this node the thing at its own centre, or is something on top?
     //
     // `gtk_widget_pick` is GTK's own answer to "what is under this point", and
@@ -791,9 +853,13 @@ fn mcp_set_caret(p: *u8, grant: auth::Grant, id: str, at: u64, length: u64) -> s
 }
 
 
+// Same posture as `mcp_describe`: re-walk on the main thread, then read. The
+// threading assumption is the file's, not this verb's.
 fn mcp_read_runs(p: *u8, grant: auth::Grant, id: str) -> surface::Runs {
     refresh_surface(p);
-    return surface::runs_refused(surface::Outcome::Allowed, false);
+    if is_null(p) { return surface::runs_refused(surface::Outcome::NotFound, true); }
+    let s: *Surface = { p as *Surface };
+    return (*s).read_runs(grant, id);
 }
 
 fn mcp_invoke_menu(p: *u8, grant: auth::Grant, path: str) -> surface::Outcome {
@@ -1519,3 +1585,212 @@ fn scroll_into_view(w: *u8) {
     { gtk_list_view_scroll_to(slot.view, slot.at, 0 as u32, null()) };
     return;
 }
+
+// ---- the Pango side of `read_runs` -------------------------------------------
+//
+// THE STRUCT LAYOUTS BELOW ARE PANGO'S PUBLIC ABI. `PangoAttribute` and its
+// `PangoAttrInt` / `PangoAttrColor` subclasses are declared in the installed
+// `pango-attributes.h` with public fields — reading `value` off an attribute is
+// what a C caller does, and there is no accessor function to prefer. They are
+// mirrored rather than poked at by byte offset so the compiler does the
+// alignment, and they must stay in this order.
+struct PangoAttrInt {
+    opaque klass: *u8,
+    start_index: u32,
+    end_index: u32,
+    value: i32,
+}
+
+struct PangoAttrColor {
+    opaque klass: *u8,
+    start_index: u32,
+    end_index: u32,
+    red: u16,
+    green: u16,
+    blue: u16,
+}
+
+// PangoAttrType, from the same header. Only the four the contract reports.
+fn attr_style() -> i32 { return 3 as i32; }
+fn attr_weight() -> i32 { return 4 as i32; }
+fn attr_foreground() -> i32 { return 9 as i32; }
+fn attr_underline() -> i32 { return 11 as i32; }
+
+// PANGO_WEIGHT_BOLD is 700, and "bold" is >= it rather than == it: a label set
+// to HEAVY or ULTRABOLD is drawn bolder than bold, and reporting `false` for it
+// would be the same wrong answer as reporting `false` for CSS bold.
+fn weight_is_bold(v: i32) -> bool { return v >= (700 as i32); }
+// PangoStyle: NORMAL 0, OBLIQUE 1, ITALIC 2. Oblique is slanted type, which is
+// what an agent asking "is this italic" wants to know.
+fn style_is_italic(v: i32) -> bool { return v != (0 as i32); }
+// PANGO_UNDERLINE_NONE is 0; every other member draws a line.
+fn underline_is_on(v: i32) -> bool { return v != (0 as i32); }
+
+fn hex_nibble(v: u32) -> u8 {
+    if v < (10 as u32) { return ((48 as u32) +% v) as u8; }
+    return ((87 as u32) +% v) as u8;
+}
+
+// Pango carries 16 bits per channel; CSS wants 8. The high byte is the
+// conversion Pango's own `pango_color_to_string` uses at 8-bit width.
+fn css_hex(r: u16, g: u16, b: u16) -> text::Text {
+    var bytes: vec::Vec[u8] = vec::new::[u8]();
+    bytes.append(35 as u8);
+    let ch: vec::Vec[u16] = vec::new::[u16]();
+    var chans: vec::Vec[u16] = ch;
+    chans.append(r);
+    chans.append(g);
+    chans.append(b);
+    var i: usize = 0 as usize;
+    while i < chans.count() {
+        match chans.at(i) {
+            option::Option[u16]::Some(c) => {
+                let byte: u32 = (c as u32) >> (8 as u32);
+                bytes.append(hex_nibble((byte >> (4 as u32)) & (15 as u32)));
+                bytes.append(hex_nibble(byte & (15 as u32)));
+            }
+            option::Option[u16]::None => {}
+        }
+        i = i +% (1 as usize);
+    }
+    return match text::from_utf8(bytes) {
+        option::Option[text::Text]::Some(t) => t,
+        option::Option[text::Text]::None => text::new(),
+    };
+}
+
+fn attr_int_value(a: *u8, fallback: i32) -> i32 {
+    if is_null(a) { return fallback; }
+    return { (*(a as *PangoAttrInt)).value };
+}
+
+// One run per maximal stretch of uniform attributes, which is what the Pango
+// iterator already produces — with two corrections it does not make.
+fn label_runs(w: *u8) -> surface::Runs {
+    let layout: *u8 = { gtk_label_get_layout(w) };
+    if is_null(layout) { return surface::runs_refused(surface::Outcome::Stale, true); }
+    let body: *u8 = { pango_layout_get_text(layout) };
+    let len: i32 = if is_null(body) { 0 as i32 } else { { strlen(body) } as i32 };
+
+    // THE BASE, from the layout's own font description or, when it has none of
+    // its own, the context's — which is where the widget's CSS font lands.
+    var base_weight: i32 = 400 as i32;
+    var base_style: i32 = 0 as i32;
+    var desc: *u8 = { pango_layout_get_font_description(layout) };
+    if is_null(desc) {
+        let ctx: *u8 = { pango_layout_get_context(layout) };
+        if !is_null(ctx) { desc = { pango_context_get_font_description(ctx) }; }
+    }
+    if !is_null(desc) {
+        base_weight = { pango_font_description_get_weight(desc) };
+        base_style = { pango_font_description_get_style(desc) };
+    }
+
+    var out: vec::Vec[surface::TextRun] = vec::new::[surface::TextRun]();
+    let attrs: *u8 = { pango_layout_get_attributes(layout) };
+    if is_null(attrs) {
+        // No spans at all: the whole label is drawn in the base font. ONE RUN,
+        // not zero — an empty list would read as "nothing is styled" for a
+        // label that CSS made bold.
+        if len > (0 as i32) {
+            out.append(surface::TextRun {
+                start: 0 as u64,
+                length: len as u64,
+                color: text::new(),
+                is_bold: weight_is_bold(base_weight),
+                is_italic: style_is_italic(base_style),
+                is_underlined: false,
+            });
+        }
+        return surface::Runs { outcome: surface::Outcome::Allowed, supported: true, runs: out };
+    }
+
+    let iter: *u8 = { pango_attr_list_get_iterator(attrs) };
+    if is_null(iter) { return surface::runs_refused(surface::Outcome::Stale, true); }
+    var more: bool = true;
+    while more {
+        var start: i32 = 0 as i32;
+        var end: i32 = 0 as i32;
+        { pango_attr_iterator_range(iter, { #addr_of(start) as *i32 }, { #addr_of(end) as *i32 }) };
+        // THE LAST RANGE ENDS AT G_MAXINT, because Pango's final stretch runs to
+        // infinity rather than to the end of the string. Handed over as-is it
+        // is a run two billion bytes long.
+        if end > len { end = len; }
+        if start < (0 as i32) { start = 0 as i32; }
+        if end > start {
+            let fg: *u8 = { pango_attr_iterator_get(iter, attr_foreground()) };
+            let colour: text::Text = if is_null(fg) {
+                text::new()
+            } else {
+                css_hex({ (*(fg as *PangoAttrColor)).red },
+                        { (*(fg as *PangoAttrColor)).green },
+                        { (*(fg as *PangoAttrColor)).blue })
+            };
+            let run: surface::TextRun = surface::TextRun {
+                start: start as u64,
+                length: (end -% start) as u64,
+                color: colour,
+                is_bold: weight_is_bold(attr_int_value(
+                    { pango_attr_iterator_get(iter, attr_weight()) }, base_weight)),
+                is_italic: style_is_italic(attr_int_value(
+                    { pango_attr_iterator_get(iter, attr_style()) }, base_style)),
+                is_underlined: underline_is_on(attr_int_value(
+                    { pango_attr_iterator_get(iter, attr_underline()) }, 0 as i32)),
+            };
+            // COALESCE. Pango splits on attributes this contract does not
+            // report — a font-family span, a letter-spacing span — and two
+            // adjacent runs identical in all four reported fields are, to the
+            // agent reading them, one run. Splitting them advertises a
+            // difference it cannot see and cannot act on.
+            var merged: bool = false;
+            if out.count() > (0 as usize) {
+                match out.at_ptr(out.count() -% (1 as usize)) {
+                    option::Option[*surface::TextRun]::Some(prev) => {
+                        if ({ (*prev).start } +% { (*prev).length }) == { run.start }
+                            && { (*prev).is_bold } == { run.is_bold }
+                            && { (*prev).is_italic } == { run.is_italic }
+                            && { (*prev).is_underlined } == { run.is_underlined }
+                            && { (*prev).color.view() } == { run.color.view() } {
+                            { (*prev).length = { (*prev).length } +% { run.length } };
+                            merged = true;
+                        }
+                    }
+                    option::Option[*surface::TextRun]::None => {}
+                }
+            }
+            if !merged { out.append(run); }
+        }
+        more = { pango_attr_iterator_next(iter) } != (0 as i32);
+    }
+    { pango_attr_iterator_destroy(iter) };
+    return surface::Runs { outcome: surface::Outcome::Allowed, supported: true, runs: out };
+}
+
+#[link_name = "strlen"]
+extern fn strlen(s: *u8) -> usize;
+#[link_name = "gtk_label_get_layout"]
+extern fn gtk_label_get_layout(label: *u8) -> *u8;
+#[link_name = "pango_layout_get_text"]
+extern fn pango_layout_get_text(layout: *u8) -> *u8;
+#[link_name = "pango_layout_get_attributes"]
+extern fn pango_layout_get_attributes(layout: *u8) -> *u8;
+#[link_name = "pango_layout_get_font_description"]
+extern fn pango_layout_get_font_description(layout: *u8) -> *u8;
+#[link_name = "pango_layout_get_context"]
+extern fn pango_layout_get_context(layout: *u8) -> *u8;
+#[link_name = "pango_context_get_font_description"]
+extern fn pango_context_get_font_description(ctx: *u8) -> *u8;
+#[link_name = "pango_font_description_get_weight"]
+extern fn pango_font_description_get_weight(desc: *u8) -> i32;
+#[link_name = "pango_font_description_get_style"]
+extern fn pango_font_description_get_style(desc: *u8) -> i32;
+#[link_name = "pango_attr_list_get_iterator"]
+extern fn pango_attr_list_get_iterator(list: *u8) -> *u8;
+#[link_name = "pango_attr_iterator_range"]
+extern fn pango_attr_iterator_range(iter: *u8, start: *i32, end: *i32);
+#[link_name = "pango_attr_iterator_get"]
+extern fn pango_attr_iterator_get(iter: *u8, kind: i32) -> *u8;
+#[link_name = "pango_attr_iterator_next"]
+extern fn pango_attr_iterator_next(iter: *u8) -> i32;
+#[link_name = "pango_attr_iterator_destroy"]
+extern fn pango_attr_iterator_destroy(iter: *u8);

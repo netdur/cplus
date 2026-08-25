@@ -703,3 +703,147 @@ fn a_stamp_with_no_list_above_it_is_not_a_scroll_target() {
     assert !agent::row_slot_above(orphan).found;
     return;
 }
+
+// ---- read_runs: how the text is DRAWN ---------------------------------------
+
+#[link_name = "gtk_label_new"]
+extern fn gtk_label_new_t(t: *u8) -> *u8;
+#[link_name = "gtk_label_set_markup"]
+extern fn gtk_label_set_markup_t(l: *u8, m: *u8);
+
+// One run, asserted field by field. `at_ptr` rather than a copy because
+// `TextRun` carries a `text::Text`.
+fn assert_run(r: surface::Runs, i: usize, start: u64, length: u64,
+              bold: bool, italic: bool, underlined: bool, color: str) {
+    assert i < r.runs.count();
+    match r.runs.at_ptr(i) {
+        option::Option[*surface::TextRun]::Some(x) => {
+            assert { (*x).start } == start;
+            assert { (*x).length } == length;
+            assert { (*x).is_bold } == bold;
+            assert { (*x).is_italic } == italic;
+            assert { (*x).is_underlined } == underlined;
+            assert { (*x).color.view() } == color;
+        }
+        option::Option[*surface::TextRun]::None => { assert false; }
+    }
+    return;
+}
+
+#[test]
+fn a_markup_label_reports_the_spans_it_draws() {
+    if !has_display() { return; }
+    // THE BYTE OFFSETS ARE THE CONTRACT'S: "plain " is 6 bytes, "bold" is 4.
+    // An agent asked to underline the emphasised word addresses it with these,
+    // so an off-by-one here is an edit landing in the wrong place.
+    let l: *u8 = { gtk_label_new_t(#str_ptr("x\0")) };
+    { gtk_label_set_markup_t(l, #str_ptr("plain <b>bold</b> tail\0")) };
+    let win: *u8 = fixture(l, #str_ptr("label:styled\0"));
+    var s: agent::Surface = agent::open(win);
+    let r: surface::Runs = s.read_runs(auth::operator(), "label:styled");
+    assert surface::outcome_eq({ r.outcome }, surface::Outcome::Allowed);
+    assert r.supported;
+    assert r.runs.count() == (3 as usize);
+    assert_run(r, 0 as usize, 0 as u64, 6 as u64, false, false, false, "");
+    assert_run(r, 1 as usize, 6 as u64, 4 as u64, true, false, false, "");
+    assert_run(r, 2 as usize, 10 as u64, 5 as u64, false, false, false, "");
+    return;
+}
+
+#[test]
+fn a_colour_span_comes_back_as_css_hex() {
+    if !has_display() { return; }
+    // "Did the syntax colour land" is the question this verb exists for, and
+    // an agent compares STRINGS — it cannot dereference a PangoColor. Pango
+    // carries 16 bits per channel and CSS wants 8.
+    let l: *u8 = { gtk_label_new_t(#str_ptr("x\0")) };
+    { gtk_label_set_markup_t(l,
+        #str_ptr("ok <span foreground=\"#ff0000\"><i>bad</i></span>\0")) };
+    let win: *u8 = fixture(l, #str_ptr("label:coloured\0"));
+    var s: agent::Surface = agent::open(win);
+    let r: surface::Runs = s.read_runs(auth::operator(), "label:coloured");
+    assert r.supported;
+    assert r.runs.count() == (2 as usize);
+    assert_run(r, 0 as usize, 0 as u64, 3 as u64, false, false, false, "");
+    assert_run(r, 1 as usize, 3 as u64, 3 as u64, false, true, false, "#ff0000");
+    return;
+}
+
+#[test]
+fn an_unstyled_label_is_one_run_and_not_zero() {
+    if !has_display() { return; }
+    // ZERO RUNS WOULD READ AS "no text to describe". The label is drawn, in
+    // the base font, and that is what one run covering the whole string says.
+    let l: *u8 = { gtk_label_new_t(#str_ptr("hello\0")) };
+    let win: *u8 = fixture(l, #str_ptr("label:plain\0"));
+    var s: agent::Surface = agent::open(win);
+    let r: surface::Runs = s.read_runs(auth::operator(), "label:plain");
+    assert r.supported;
+    assert r.runs.count() == (1 as usize);
+    assert_run(r, 0 as usize, 0 as u64, 5 as u64, false, false, false, "");
+    return;
+}
+
+#[test]
+fn a_control_with_no_attribute_model_says_so_rather_than_reporting_nothing() {
+    if !has_display() { return; }
+    // GtkEntry has no public accessor for its layout. `supported: false` and
+    // NOT an empty run list, which would read as "this text has no styling" —
+    // a lie in the shape of a fact, which is the whole reason the field exists.
+    let e: *u8 = { gtk_entry_new() };
+    let win: *u8 = fixture(e, #str_ptr("field:x\0"));
+    var s: agent::Surface = agent::open(win);
+    let r: surface::Runs = s.read_runs(auth::operator(), "field:x");
+    assert !r.supported;
+    assert r.runs.count() == (0 as usize);
+    return;
+}
+
+#[test]
+fn a_missing_node_is_not_found_and_not_unsupported() {
+    if !has_display() { return; }
+    // The two answers mean different things: "there is no such node" is not
+    // "this backend cannot read attributes", and an agent retrying on the
+    // wrong one wastes its turn.
+    let l: *u8 = { gtk_label_new_t(#str_ptr("hi\0")) };
+    let win: *u8 = fixture(l, #str_ptr("label:here\0"));
+    var s: agent::Surface = agent::open(win);
+    let r: surface::Runs = s.read_runs(auth::operator(), "label:nowhere");
+    assert surface::outcome_eq({ r.outcome }, surface::Outcome::NotFound);
+    assert r.supported;
+    assert r.runs.count() == (0 as usize);
+    return;
+}
+
+
+#[test]
+fn a_private_labels_runs_never_reach_an_ordinary_operator() {
+    if !has_display() { return; }
+    // THE BUG agent_core's own header names: `read_runs` shipped once on
+    // `authorize_read`, which answers "may this agent know the node exists" —
+    // a question every gated node still answers yes to. The text is redacted
+    // and the RUNS ARE NOT, and a redacted field reporting "one run, sixteen
+    // characters" has told an agent the length of a card number.
+    //
+    // So this asserts the absence, not the emptiness of a string: no runs at
+    // all, and a refusal that says why.
+    let secret: *u8 = { gtk_label_new_t(#str_ptr("4111111111111111\0")) };
+    agent::set_agent_policy(secret, identity::policy_private());
+    let win: *u8 = fixture(secret, #str_ptr("card:number\0"));
+    var s: agent::Surface = agent::open(win);
+    let r: surface::Runs = s.read_runs(auth::operator(), "card:number");
+    assert r.runs.count() == (0 as usize);
+    assert !surface::outcome_eq({ r.outcome }, surface::Outcome::Allowed);
+    // `supported: true` — this backend CAN read attributes; it declined to.
+    // Reporting `false` would tell the agent to stop asking on every node.
+    assert r.supported;
+
+    // ...and the same label, read by a grant that may see private content,
+    // still answers — or the gate would be a blanket rather than a tier.
+    let wide: auth::Grant = auth::operator().with(identity::read_caps_for_tier(
+        identity::tier_private()));
+    let ok: surface::Runs = s.read_runs(wide, "card:number");
+    assert surface::outcome_eq({ ok.outcome }, surface::Outcome::Allowed);
+    assert ok.runs.count() == (1 as usize);
+    return;
+}
