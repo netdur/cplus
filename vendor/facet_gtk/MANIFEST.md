@@ -41,15 +41,17 @@ before believing any adjective in this file.
 
 **EVERY DECLARED VERB IS NOW EITHER IMPLEMENTED OR RECORDED — on all three
 axes.** The three shared-band bits the tool counts as unanswered are `C_FLUSH`
-(nothing to do, and no backend names it), `C_HANDLERS` (free here, because
-handlers are read off the node at fire time) and `C_SAFE_AREA` (a GTK window
-under a compositor has no such inset). All three are in §1.
+(nothing to do, and no backend names it) and `C_SAFE_AREA` (a GTK window under
+a compositor has no such inset). Both are in §1. `C_HANDLERS` used to be a
+third and was WRONG — see its struck-through row.
 
-**EVERY DECLARED PROP IS NOW EITHER IMPLEMENTED OR RECORDED.** The seven the
-tool counts as unanswered are the four `bordered` stroke verbs, the two
-`is_opaque` hints and `carousel.bounces` — all in §1, all because GTK offers
-nothing to write them to. That is the state INTENT's rule asks for: the number
-is 353 and the remaining seven are a list, not a gap.
+**EVERY DECLARED PROP IS NOW EITHER IMPLEMENTED OR RECORDED,** and the tool
+enforces it rather than the prose claiming it: `parity.py` reads §1 for the
+names it argues about, so an unanswered verb that is not in either place is
+printed as UNRECORDED and is the only line on that report anyone has to act on.
+The three the tool counts as unanswered are the two `is_opaque` hints and
+`carousel.bounces` — all in §1, all because GTK offers nothing to write them
+to. The number is 357 and the remaining three are a list, not a gap.
 
 ## TWO NUMBERS, and the one above is only the first
 
@@ -111,7 +113,7 @@ silently dead.
 | tabs | the panes shown one at a time through `Display::None`, and a tab strip of the panes' own keys that this package builds, places and colours |
 | date_picker · time_picker | a GtkMenuButton over a popover — a GtkCalendar for one, a pair of spinners for the other — with the whole text band, `is_open` both ways, and the bounds enforced at the pick |
 | carousel | pages side by side in a horizontal scroll host: a circular position, peek insets, swipeability as a scroll policy, and an eased slide where GTK offers only a jump |
-| bordered | the four verbs a CSS border has — stroke colour, width, dash style and shape, with an ellipse as a radius of half the box |
+| bordered | ALL EIGHT. The four a CSS border has — stroke colour, width, dash style and shape, with an ellipse as a radius of half the box — and the four it does not: cap, join, miter limit and dash phase, drawn with cairo on a `GtkDrawingArea` over the node, which appears only for a stroke CSS cannot spell and stands the border down when it does |
 | pull to refresh | ONE mechanism for two rows: `refreshable` whole, and `list`'s six bits — a spinner this package owns and a downward pull past the top of a scroll |
 | web · hybrid_web | a WebKitGTK view opened at RUNTIME rather than linked: source, user agent, eval, the three navigation commands, both history reads, a local page with its root, and a message sent into it |
 | canvas | the recording replayed against cairo: the whole state band, the transform stack, clipping, every shape, recorded paths, linear gradients, and all three text commands through Pango — a string at a baseline, a wrapped and aligned block, and per-run styled spans |
@@ -134,16 +136,26 @@ and the boxes are in the right places, and the control's own verbs are unwritten
 
 ## 1. Decided absent — GTK has no such thing
 
-Eleven rows, and each was looked for before it was written down. The bar is the
+Fourteen rows, and each was looked for before it was written down. The bar is the
 one `facet_appkit` records as *a control does not have to be one native
 widget*: sixty-odd rows left its ledger once the answer was allowed to be built
 from two classes instead of one, and `button`, `page_dots` and `swipeable` here
 are all built that way rather than declared impossible.
 
-Four of the eleven are NARROWINGS rather than absences — a verb this backend
-answers less of than the contract asks for. They are in the same list on
-purpose: a verb half-answered and unrecorded is the same lie as one unanswered
-and unrecorded.
+Four of them are NARROWINGS rather than absences — a verb this backend answers
+less of than the contract asks for. They are in the same list on purpose: a
+verb half-answered and unrecorded is the same lie as one unanswered and
+unrecorded.
+
+ONE IS A STRUCK-THROUGH MISTAKE, kept rather than deleted. This list is what
+the next reader trusts instead of re-deriving, so a row that was wrong is worth
+more standing with its correction than gone — see `C_HANDLERS` below.
+
+AND ONE ROW LEFT BY BEING BUILT (2026-08-25). `bordered`'s cap, join, miter
+limit and dash offset were here on the grounds that "a GtkFixed is not a
+canvas". It is not, but it can HOLD one — the row had stopped at the first
+mechanism, which is the same shape of mistake `C_HANDLERS` records. Anything
+still in this list is worth re-reading with that in mind.
 
 - **`text_field.return_key` / `search_field.return_key`** — NARROWED, not
   absent, and this row was rewritten on 2026-08-24 when the answerable half was
@@ -162,11 +174,6 @@ and unrecorded.
   they carry `Next`, AFTER the submit handler has run, so an application that
   submits on Return sees the field it was called about rather than the next
   one. The five labels stay unanswerable; only they belong in this list.
-- **`image.is_opaque` / `icon_button.is_opaque`** — a *drawing* hint that the
-  image has no alpha, so the compositor may skip what is behind it. GTK's
-  render tree derives that from the texture itself; there is no widget-level
-  override, and inventing one out of a CSS background would change what is
-  DRAWN rather than how it is composited, which is a different verb.
 - **`window_frame`'s POSITION.** GTK 4 removed `gtk_window_move` and
   `gtk_window_get_position` outright, because Wayland has no global coordinate
   space to express them in and a toolkit that answered anyway would be
@@ -227,12 +234,6 @@ and unrecorded.
   wants the newer target) and the wrong one for two bars. A per-widget tween is a
   timeout and a state struct per bar, which nothing has needed; written down so
   the next reader finds it here rather than in a bar that jumps.
-- **`bordered.stroke_cap` / `stroke_join` / `stroke_miter_limit` /
-  `stroke_dash_offset`** — CSS borders have a style (`solid`, `dashed`,
-  `dotted`) and nothing else. There is no cap, no join, no miter limit and no
-  dash phase in GTK's CSS border model, and a GtkFixed is not a canvas. A
-  `bordered` that needed them would have to be drawn, which is the `canvas`
-  kind's job and is listed as debt below rather than smuggled in here.
 
 - **`image.is_opaque` / `icon_button.is_opaque` — GTK 4 HAS NO SUCH HINT.**
   The verb is a COMPOSITING promise, not an appearance one: AppKit writes it to
@@ -242,23 +243,35 @@ and unrecorded.
   `gdk_surface_set_opaque_region`, which is a WINDOW-level region and says
   nothing about one widget. Approximating it with a background colour would
   change what is drawn, which is the one thing a hint must not do.
-- **`carousel.bounces` — there is no bounce to switch off.** It is the
-  rubber-band overscroll a UIScrollView does at its ends. GtkScrolledWindow has
-  no bounce and no property for one; the header carries nothing named `bounce`,
-  `overshoot` or `rubber`. A carousel here simply stops at its ends, which is
-  what every GTK scroll does.
-
 - **`C_FLUSH` is nothing to do, and NO BACKEND NAMES IT** — not this one, not
   appkit, not uikit. It is raised when a `begin_updates` / `end_updates` batch
   closes, and by then every bit the batch raised is already on the node. The
   sync walk applies those. A backend acting on the flush as well would re-apply
   the same node twice for one edit.
-- **`C_HANDLERS` is free HERE, and that is a property of this backend rather
-  than of GTK.** The bit says a shared-band handler pair was swapped live. This
-  package reads handlers OFF THE NODE AT FIRE TIME — §2's "a gesture band is
-  never removed once armed" is the same fact from the other side — so a swap is
-  picked up by the next event with nothing re-bound. AppKit names the bit
-  because its controls hold a target/action pair that has to be re-set.
+- ~~**`C_HANDLERS` is free HERE**~~ — **WRONG, and it cost a real bug. Corrected
+  2026-08-25; the bit is acted on now and this row is kept as the record.**
+
+  The claim was that this package reads handlers OFF THE NODE AT FIRE TIME, so a
+  live swap is picked up by the next event with nothing re-bound. That half is
+  true, and it is why `button_clicked`, `fire_of` and the text delegates need
+  nothing. What it missed is that AN EVENT HAS TO ARRIVE FIRST.
+
+  `input::arm` adds the focus controller only `if core::wants_focus_events(n)`,
+  and it was re-run on `C_GESTURES | C_INPUT_TRANSPARENT`. A shared-band swap
+  raises neither — `C_GESTURES` exists precisely so a backend can tell "the
+  gesture set was replaced" from "a focus/blur/attach/detach handler was
+  swapped". So a node that mounted with no focus handler and gained one later
+  was never re-asked, never got a controller, and could not receive the event
+  that fire-time reading depends on. Silent for the life of the node, and it
+  reads as an application bug.
+
+  `set_item` rides the same bit, so a swapped item was unreachable the same way.
+
+  The mask is `views::rearm_bits()` now, and the suite pins it — this backend
+  builds no widgets in tests, so the mask is the only place a missing bit can be
+  caught. THE LESSON IS THE ROW ITSELF: "we do it differently and therefore do
+  not need the bit" is a claim about two mechanisms, and it was checked against
+  one of them.
 - **`C_SAFE_AREA` has nothing to answer.** A safe area is the part of a window
   the system furniture does not cover — a notch, a home indicator, a rounded
   display corner. A GTK window under a desktop compositor has no such inset:

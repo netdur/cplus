@@ -38,7 +38,7 @@ BACKENDS = {
 # The floor this backend has already reached. `--check` fails below it, so a
 # refactor that quietly drops a verb is caught at the number rather than by
 # someone noticing a control stopped working.
-FLOOR = 353
+FLOOR = 357
 # Same gate on the READ half. Kept separate because the two surfaces fail
 # differently: a missing prop is a control that ignores you, a missing handler
 # is a control that never answers.
@@ -46,7 +46,7 @@ HANDLER_FLOOR = 68
 # The SHARED band, which had no floor at all — and that is how four verbs every
 # node has (`C_ANIMATE`, `C_TRANSFORM`, `C_SHADOW`, `C_CLIP`) sat unanswered
 # while the two numbers above read 98% and 100%. See `shared_band`.
-SHARED_FLOOR = 18
+SHARED_FLOOR = 19
 
 # Handlers facet fires ITSELF, from `mount.cplus`'s post-walk notification
 # queue (M4). A backend neither can nor should wire them, so counting them
@@ -82,6 +82,48 @@ def referenced(directory):
         for name, prop in re.findall(r"\b(\w+)::(P_[A-Z0-9_]+)\b", text):
             hits.setdefault(alias.get(name, name), set()).add(prop)
     return hits
+
+
+MANIFEST = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                        "MANIFEST.md")
+
+
+def decided_absent():
+    """Names this backend has DECIDED it cannot answer, read out of MANIFEST §1.
+
+    WHY THE TOOL READS PROSE. Everything above is an upper bound on what is
+    answered; what it could not say is whether an unanswered verb had been
+    LOOKED AT. Those are different states and only one of them is debt — GTK has
+    no per-widget opaque hint and no safe area, and no amount of work changes
+    that, so counting them against the package makes the number stop meaning
+    anything and the next reader re-derives the same dead ends.
+
+    §1's rule is that every row was looked for before it was written down, so a
+    name appearing there is a decision with an argument attached. A name that is
+    in NEITHER the code NOR §1 is the only thing that should raise an alarm.
+
+    Deliberately literal: the backticked identifiers in §1's rows, nothing
+    inferred. A row that forgets to name its verb does not get counted, which
+    fails towards reporting debt that is not there rather than hiding debt that
+    is.
+    """
+    if not os.path.isfile(MANIFEST):
+        return set()
+    body = open(MANIFEST).read()
+    start = body.find("\n## 1.")
+    end = body.find("\n## 2.", start + 1)
+    if start < 0 or end < 0:
+        return set()
+    section = body[start:end]
+    names = set()
+    for tick in re.findall(r"`([^`]+)`", section):
+        # `carousel.bounces` -> bounces ; `C_SAFE_AREA` -> C_SAFE_AREA
+        leaf = tick.split(".")[-1].strip()
+        if re.fullmatch(r"C_[A-Z0-9_]+", leaf):
+            names.add(leaf)
+        elif re.fullmatch(r"[a-z][a-z0-9_]*", leaf):
+            names.add(leaf)
+    return names
 
 
 def shared_band():
@@ -257,13 +299,20 @@ def main():
             rows.append((module, len(props), len(got["gtk"]),
                          sorted(p[2:].lower() for p in set(props) - got["gtk"])))
 
+    absent = decided_absent()
     print("facet_gtk — per kind, where anything is answered at all:\n")
+    unrecorded = []
     for module, n, g, missing in sorted(rows, key=lambda r: -r[2]):
+        open_debt = [m for m in missing if m not in absent]
+        unrecorded += [f"{module}.{m}" for m in open_debt]
         line = f"  {module:14} {g:>2}/{n:<2}"
-        if missing:
-            line += "   not yet: " + " ".join(missing[:8])
-            if len(missing) > 8:
-                line += f" (+{len(missing) - 8})"
+        if open_debt:
+            line += "   not yet: " + " ".join(open_debt[:8])
+            if len(open_debt) > 8:
+                line += f" (+{len(open_debt) - 8})"
+        elif missing:
+            # Named in MANIFEST §1: looked at, argued, and closed.
+            line += "   decided absent: " + " ".join(missing[:6])
         print(line)
 
     print(f"\n{declared} prop bits declared across facet's kind modules\n")
@@ -288,7 +337,22 @@ def main():
     if missing:
         print("\n  gtk does not name:")
         for c in missing:
-            print(f"    {c}")
+            mark = "  (decided absent — MANIFEST §1)" if c in absent else "  <-- UNRECORDED"
+            print(f"    {c}{mark}")
+    unrecorded += [c for c in missing if c not in absent]
+
+    # THE ONE LINE THAT IS ACTIONABLE. Everything else on this report is a
+    # measurement; this is the list of verbs that are neither answered nor
+    # argued about anywhere, which is the only state that needs a decision.
+    print()
+    if unrecorded:
+        print(f"{len(unrecorded)} unanswered and UNRECORDED — decide each, "
+              f"then build it or write it into MANIFEST §1:")
+        for u in unrecorded:
+            print(f"    {u}")
+    else:
+        print("Nothing unanswered is unrecorded: every gap is either built "
+              "or argued in MANIFEST §1.")
     shared = len(named.get("gtk", []))
 
     if "--check" in sys.argv:

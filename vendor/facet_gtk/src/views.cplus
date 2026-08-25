@@ -236,6 +236,12 @@ fn configure(v: *u8, n: *core::Node, d: u64) {
         let decls: text::Text = controls::css_decls(kind, n);
         let rules: text::Text = controls::css_rules(kind, n);
         paint::set_css(v, n, decls.view(), rules.view());
+        // AFTER the CSS, on the same bits. A `bordered` whose stroke asks for a
+        // cap, a join, a miter limit or a dash phase gets a cairo path over the
+        // node instead of a border CSS cannot spell; this is where the overlay
+        // appears, goes away, or is asked to repaint. `css_decls` reads the same
+        // trigger and writes `border-width: 0` when this one takes over.
+        drawing::sync_stroke(v, n);
     }
     apply_for_kind(kind, v, n, d);
     return;

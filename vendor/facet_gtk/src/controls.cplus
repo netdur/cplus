@@ -81,6 +81,8 @@ import "gobject/runtime" as g;
 import "./input" as input;
 import "./anim" as anim;
 import "./paint" as paint;
+// One trigger for "is the stroke drawn", read here and in `views`.
+import "./drawing" as drawing;
 
 // The typed prop block for a node, or null when the kind does not match.
 // Same guard as the AppKit backend: a kind body must never read another
@@ -406,8 +408,15 @@ fn css_bits(kind: u32) -> u64 {
     if kind == props::K_SPINNER { return spinner::P_COLOR; }
     if kind == props::K_BOX { return fbox::P_COLOR | fbox::P_CORNER_RADIUS; }
     if kind == props::K_BORDERED {
+        // The last four are not CSS — `drawing::sync_stroke` answers them with
+        // a path. They are here because they ride the same apply: the choice
+        // between the CSS border and the drawn one is made from the same props
+        // at the same moment, and splitting the bits across two sites is how
+        // the two would come to disagree about which is drawing.
         return bordered::P_STROKE | bordered::P_STROKE_WIDTH
-             | bordered::P_STROKE_DASH | bordered::P_STROKE_SHAPE;
+             | bordered::P_STROKE_DASH | bordered::P_STROKE_SHAPE
+             | bordered::P_STROKE_CAP | bordered::P_STROKE_JOIN
+             | bordered::P_STROKE_MITER_LIMIT | bordered::P_STROKE_DASH_OFFSET;
     }
     if kind == symbol::K_SYMBOL {
         return symbol::P_COLOR | symbol::P_SIZE | symbol::P_FONT | symbol::P_FILL;
@@ -2482,7 +2491,12 @@ fn apply_refreshable(v: *u8, n: *core::Node, dirty: u64) {
 fn bordered_decls(p: *props::BorderedProps) -> text::Text {
     var body: text::Text = text::from_str("");
     let w: f64 = { (*p).stroke_width };
-    if w > (0.0 as f64) {
+    // BOTH WOULD DRAW. When the stroke asks for something CSS cannot spell —
+    // a cap, a join, a miter limit, a dash phase — `drawing::sync_stroke` puts
+    // a cairo path over the node, and a CSS border left standing underneath it
+    // would show through as a second, differently-shaped outline. The two are
+    // exclusive by construction: one trigger, read here and there.
+    if w > (0.0 as f64) && !drawing::wants_drawn_stroke(p) {
         let px: i32 = (w + (0.5 as f64)) as i32;
         body = body.appending("border-width: ${px}px;");
         body = body.appending("border-style: ${dash_style(p)};");

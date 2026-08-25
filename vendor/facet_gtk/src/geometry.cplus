@@ -31,6 +31,7 @@ import "./observers" as observers;
 import "./transform" as transform;
 import "./controls" as controls;
 import "./swipe" as swipe;
+import "./drawing" as drawing;
 
 // ---- seeing what was computed ------------------------------------------------
 //
@@ -177,6 +178,10 @@ fn reposition_children(node: *core::Node, host: *u8, host_abs: flex::Frame) {
                     // content sits wherever the last swipe left it — which is a
                     // MOVE applied after the frames, not a frame of its own.
                     swipe::layout_swipe(c, v, cf);
+                    // A GtkFixed does not size its children, and a drawn
+                    // stroke covers the whole node — so the overlay is sized
+                    // here or it paints into a 0x0 box.
+                    drawing::layout_stroke(c, v, cf);
                 } else {
                     reposition_children(c, host, host_abs);
                 }

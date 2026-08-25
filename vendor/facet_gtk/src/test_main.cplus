@@ -27,6 +27,7 @@ import "gtk4/gtk4" as gtk;
 import "gdk/gdk" as gdk;
 import "gdkpixbuf/gdkpixbuf" as pixbuf;
 import "facet/facet" as core;
+import "facet/bordered" as bordered;
 import "facet/props" as props;
 import "facet/gestures" as gestures;
 import "facet/component" as component;
@@ -4824,5 +4825,119 @@ fn a_handler_swapped_in_after_mount_still_gets_its_controller() {
     // so widening it to everything would re-arm on every colour change.
     assert (views::rearm_bits() & props::C_BACKGROUND) == (0 as u64);
     assert (views::rearm_bits() & props::C_FOCUS) == (0 as u64);
+    return;
+}
+
+// ---- ...and the four it does not ---------------------------------------------
+
+fn bordered_props_of(n: *core::Node) -> *props::BorderedProps {
+    return controls::props_of(n, props::K_BORDERED) as *props::BorderedProps;
+}
+
+#[test]
+fn a_default_stroke_stays_on_the_css_border() {
+    // THE REGRESSION GUARD, and the reason the trigger is narrower than
+    // AppKit's. Every `bordered` written before these four props existed uses
+    // the defaults, and swapping its working CSS border for a hand-drawn path
+    // to answer a verb nobody set would be a regression wearing a feature's
+    // clothes. `Flat` and `Miter` ARE what a CSS border draws.
+    var b: core::Node = ui::bordered(key: "d0", stroke_width: 2.0f64);
+    assert !drawing::wants_drawn_stroke(bordered_props_of(#addr_of(b)));
+    assert bordered_css(#addr_of(b)).contains("border-width: 2px;");
+    // A dashed or rounded border keeps CSS too — CSS spells both.
+    var dashed: core::Node = ui::bordered(key: "d1", stroke_width: 2.0f64,
+                                          stroke_dash: vocab::Dashes::of(8.0f64, 4.0f64));
+    assert !drawing::wants_drawn_stroke(bordered_props_of(#addr_of(dashed)));
+    var round: core::Node = ui::bordered(key: "d2", stroke_width: 2.0f64,
+                                         stroke_shape: vocab::Shape::rounded(6.0f64));
+    assert !drawing::wants_drawn_stroke(bordered_props_of(#addr_of(round)));
+    return;
+}
+
+#[test]
+fn a_cap_a_join_or_a_miter_limit_takes_the_drawn_path() {
+    // The three CSS has no words for at all. A border has a style and nothing
+    // else: no cap, no join, no miter limit.
+    var cap: core::Node = ui::bordered(key: "d3", stroke_width: 3.0f64,
+                                       stroke_cap: vocab::LineCap::Round);
+    assert drawing::wants_drawn_stroke(bordered_props_of(#addr_of(cap)));
+    var join: core::Node = ui::bordered(key: "d4", stroke_width: 3.0f64,
+                                        stroke_join: vocab::LineJoin::Bevel);
+    assert drawing::wants_drawn_stroke(bordered_props_of(#addr_of(join)));
+    var miter: core::Node = ui::bordered(key: "d5", stroke_width: 3.0f64,
+                                         stroke_miter_limit: 4.0f64);
+    assert drawing::wants_drawn_stroke(bordered_props_of(#addr_of(miter)));
+    return;
+}
+
+#[test]
+fn a_dash_offset_counts_only_where_there_are_dashes() {
+    // A phase shifts a pattern along the path. With no pattern there is nothing
+    // to shift, and taking the drawn path for it would trade a working CSS
+    // border for a cairo one to honour a verb that cannot show.
+    var alone: core::Node = ui::bordered(key: "d6", stroke_width: 2.0f64,
+                                         stroke_dash_offset: 4.0f64);
+    assert !drawing::wants_drawn_stroke(bordered_props_of(#addr_of(alone)));
+    var both: core::Node = ui::bordered(key: "d7", stroke_width: 2.0f64,
+                                        stroke_dash: vocab::Dashes::of(8.0f64, 4.0f64),
+                                        stroke_dash_offset: 4.0f64);
+    assert drawing::wants_drawn_stroke(bordered_props_of(#addr_of(both)));
+    return;
+}
+
+#[test]
+fn a_stroke_of_no_width_never_takes_the_drawn_path() {
+    // Nothing to draw, whatever the shaping asks for — and an overlay that
+    // painted a zero-width stroke would still cover the node.
+    var b: core::Node = ui::bordered(key: "d8", stroke_cap: vocab::LineCap::Round,
+                                     stroke_join: vocab::LineJoin::Round);
+    assert !drawing::wants_drawn_stroke(bordered_props_of(#addr_of(b)));
+    return;
+}
+
+#[test]
+fn the_css_border_stands_down_where_the_path_takes_over() {
+    // BOTH WOULD DRAW otherwise, and the second outline is the bug: a CSS
+    // border left under the cairo path shows through as a differently-shaped
+    // one. `css_decls` and `sync_stroke` read the SAME trigger so they cannot
+    // disagree about which is drawing.
+    var drawn: core::Node = ui::bordered(key: "d9", stroke_width: 3.0f64,
+                                         stroke_cap: vocab::LineCap::Square);
+    let css: text::Text = bordered_css(#addr_of(drawn));
+    assert css.contains("border-width: 0;");
+    assert !css.contains("border-style:");
+    // ...and the CSS block is still WRITTEN, colour and all — it is rebuilt
+    // whole on every apply, so a node that flips back to the plain border must
+    // not find a stale rule where its colour should be.
+    var coloured: core::Node = ui::bordered(key: "da", stroke_width: 3.0f64,
+                                            stroke: vocab::Brush::solid(vocab::Color::rgba(1.0f64, 0.0f64, 0.0f64)),
+                                            stroke_cap: vocab::LineCap::Square);
+    let with_color: text::Text = bordered_css(#addr_of(coloured));
+    assert with_color.contains("border-color");
+    assert with_color.contains("border-width: 0;");
+    // and the same node WITHOUT the cap keeps its real border, which is the
+    // pair that proves the trigger is what moved it.
+    var plain: core::Node = ui::bordered(key: "db", stroke_width: 3.0f64,
+                                         stroke: vocab::Brush::solid(vocab::Color::rgba(1.0f64, 0.0f64, 0.0f64)));
+    assert bordered_css(#addr_of(plain)).contains("border-width: 3px;");
+    return;
+}
+
+#[test]
+fn the_four_verbs_reach_the_apply_at_all() {
+    // A prop whose bit is not in `css_bits` is a prop that changes nothing
+    // after mount: the sync sees the dirty word, finds no overlap, and skips
+    // the whole style pass. All four were missing until the path existed to
+    // answer them.
+    let bits: u64 = controls::css_bits(props::K_BORDERED);
+    assert (bits & bordered::P_STROKE_CAP) != (0 as u64);
+    assert (bits & bordered::P_STROKE_JOIN) != (0 as u64);
+    assert (bits & bordered::P_STROKE_MITER_LIMIT) != (0 as u64);
+    assert (bits & bordered::P_STROKE_DASH_OFFSET) != (0 as u64);
+    // and the four that were already there
+    assert (bits & bordered::P_STROKE) != (0 as u64);
+    assert (bits & bordered::P_STROKE_WIDTH) != (0 as u64);
+    assert (bits & bordered::P_STROKE_DASH) != (0 as u64);
+    assert (bits & bordered::P_STROKE_SHAPE) != (0 as u64);
     return;
 }
