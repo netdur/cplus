@@ -282,7 +282,20 @@ still in this list is worth re-reading with that in mind.
 
 ## 2. Not built yet — the debt
 
-Everything not listed as live above. The large ones, in the order they matter:
+Everything not listed as live above. The large ones, in the order they matter.
+
+READ THESE AS CLAIMS, NOT AS FACTS. Every row here was written from reasoning
+rather than from a measurement, and a pass over them on 2026-08-25 found that
+of the four largest, one described work that was already done, one pointed at a
+fix that would have bought three percent of the wrong half, and one was a live
+bug being recorded as a design. Two rows are struck through with what was
+actually measured. `FACET_GTK_SYNC=1` is how the timings were taken and is
+cheaper than another round of reasoning.
+
+The pattern in every one of them: a row that says "we do it differently here,
+so the thing the other backend does is unnecessary" is a claim about two
+mechanisms, and it was checked against one. §1's `C_HANDLERS` row is the same
+shape and was the same mistake.
 
 
 - **A tree's flat index is rebuilt whole on every structural change.** NOT a
