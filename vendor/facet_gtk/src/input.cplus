@@ -1884,12 +1884,25 @@ fn list_row_click(owner: *core::Node, at: usize, sender: *u8) -> bool {
     // The READ is written back BEFORE the handler, as everywhere else:
     // `list.selected_index()` answers from the props, so a handler asking
     // which row it is on must be given the one that caused the call.
+    // SELECTED AND TAPPED ARE DIFFERENT VERBS, and the split is the answer to
+    // "what should a click on the already-selected row do". A tap is a tap
+    // whichever row it lands on; a SELECTION only happened if the selection
+    // moved. Firing `on_item_selected` on a re-click made an application
+    // re-select what it already had — and where the handler rebuilds a pane,
+    // that is a whole pane rebuilt for nothing.
+    //
+    // `facet_appkit` is driven by `outlineViewSelectionDidChange:`, which
+    // AppKit does not post for a click on the selected row, so this also
+    // stops the two backends disagreeing.
     if selects({ (*p).selection_mode }) {
-        { (*p).selected_index = at as i64 };
-        core::touch(owner, list::P_SELECTED_INDEX);
-        let sel: fn(*u8, *u8) = { (*p).on_item_selected };
-        if sel != props::no_handler { sel(sender, { (*p).on_item_selected_ctx }); }
+        if { (*p).selected_index } != (at as i64) {
+            { (*p).selected_index = at as i64 };
+            core::touch(owner, list::P_SELECTED_INDEX);
+            let sel: fn(*u8, *u8) = { (*p).on_item_selected };
+            if sel != props::no_handler { sel(sender, { (*p).on_item_selected_ctx }); }
+        }
     }
+    // ...and the TAP fires either way, because it did happen.
     let tap: fn(*u8, *u8) = { (*p).on_item_tapped };
     if tap != props::no_handler { tap(sender, { (*p).on_item_tapped_ctx }); }
     return true;
@@ -1900,6 +1913,10 @@ fn collection_row_click(owner: *core::Node, at: usize, sender: *u8) -> bool {
         props_of(owner, props::K_COLLECTION) as *props::CollectionProps;
     if p == (0 as *props::CollectionProps) { return false; }
     if !selects({ (*p).selectable_items_view.selection_mode }) { return false; }
+    // `on_selection_CHANGED` — the name says it, and a click on the row that is
+    // already selected changed nothing. See `list_row_click` for the same rule
+    // and why AppKit never had this.
+    if { (*p).selected_index } == (at as i64) { return true; }
     { (*p).selected_index = at as i64 };
     core::touch(owner, collection::P_SELECTED_INDEX);
     let h: fn(*u8, *u8) = { (*p).selectable_items_view.on_selection_changed };
@@ -1985,8 +2002,23 @@ fn tree_row_click(sender: *u8, ctx: *u8) -> bool {
     let p: *tree::TreeProps = tree_props_of(owner);
     if p == (0 as *tree::TreeProps) { return false; }
     let id: str = { (*tn).id_of() };
-    { (*p).selected = text::from_str(id) };
-    core::touch(owner, tree::P_SELECTED);
+    // A RE-CLICK ON THE SELECTED ROW IS NOT A SELECTION, and this fired anyway.
+    //
+    // `on_select` is a selection-CHANGED verb: `facet_appkit` drives it from
+    // `outlineViewSelectionDidChange:`, which AppKit does not post when the
+    // clicked row is already the selected one. This backend touched the bit and
+    // called the handler on every click, so an application re-navigated to the
+    // page it was already on — and with `set_content` behind the handler, that
+    // is a whole pane rebuilt for nothing.
+    //
+    // The EXPANSION still toggles: clicking a folder opens or closes it whether
+    // or not it is the selected row, which is what every desktop does and is a
+    // different question from selection.
+    let changed: bool = { (*p).selected.view() } != id;
+    if changed {
+        { (*p).selected = text::from_str(id) };
+        core::touch(owner, tree::P_SELECTED);
+    }
     if { (*tn).is_branch } {
         match tree::from(owner) {
             option::Option[tree::Tree]::Some(t) => {
@@ -2006,6 +2038,7 @@ fn tree_row_click(sender: *u8, ctx: *u8) -> bool {
     //
     // The `FACET_GTK_SCROLL=1` trace fills in what moved BETWEEN these lines;
     // this says whether the reader ended up somewhere else at all.
+    if !changed { return true; }
     select_trace(owner, id, "at click");
     let h: fn(*tree::TreeNode, *u8) = { (*p).on_select };
     if h != tree::no_select { h(tn, { (*p).on_select_ctx }); }

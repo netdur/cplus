@@ -3777,8 +3777,15 @@ fn a_splice_beside_a_rebuild_is_a_rebuild() {
                                        | flist::P_VERTICAL_SCROLL_BARS);
     assert !recycler::only_fine_grained(flist::P_SPLICE_ROWS | flist::P_ROW);
     assert !recycler::only_fine_grained(flist::P_SPLICE_ROWS | flist::P_COUNT);
-    assert !recycler::only_fine_grained(flist::P_INVALIDATE_ROW
-                                        | flist::P_SELECTED_INDEX);
+    // SELECTION NO LONGER FORCES ONE, and this assertion used to say it did.
+    // It is a background colour on a row, written onto the node that is already
+    // there — so a splice arriving beside a selection change is still a splice,
+    // and the selection is a separate prop write. Neither needs the model
+    // replaced. See `restyle_sequence_selection`.
+    assert recycler::only_fine_grained(flist::P_INVALIDATE_ROW
+                                       | flist::P_SELECTED_INDEX);
+    // ...while a bit that really does describe DIFFERENT ROWS still does.
+    assert !recycler::only_fine_grained(flist::P_INVALIDATE_ROW | flist::P_GROUP);
     return;
 }
 

@@ -1422,7 +1422,7 @@ fn next_sibling_raw(v: *u8) -> *u8 {
 // range is in the props waiting for someone who has measured that it matters.
 fn rebuild_bits() -> u64 {
     return list::P_COUNT | list::P_ROW | list::P_GROUP_COUNT | list::P_GROUP
-         | list::P_SELECTED_INDEX | list::P_ROW_HEIGHT | list::P_SEPARATOR
+         | list::P_ROW_HEIGHT | list::P_SEPARATOR
          | list::P_SEPARATOR_COLOR | list::P_IS_GROUPED | list::P_INVALIDATE_ROW
          | list::P_SPLICE_ROWS | list::P_REORDER | list::P_HAS_UNEVEN_ROWS
          | list::P_SELECTION_MODE;
@@ -1843,6 +1843,10 @@ fn apply_list(v: *u8, n: *core::Node, dirty: u64) {
         #addr_of((*p).invalidate_lo), #addr_of((*p).invalidate_hi),
         #addr_of((*p).splice_at), #addr_of((*p).splice_count));
     if !handled && (dirty & rebuild_bits()) != (0 as u64) { refresh(n, v, s); }
+    // SELECTION IS A PROP, not a rebuild — see `restyle_sequence_selection`.
+    if (dirty & list::P_SELECTED_INDEX) != (0 as u64) {
+        restyle_sequence_selection(n, v);
+    }
     if (dirty & (list::P_HORIZONTAL_SCROLL_BARS | list::P_VERTICAL_SCROLL_BARS)) != (0 as u64) {
         policy(v, s);
     }
@@ -1869,7 +1873,7 @@ fn apply_collection(v: *u8, n: *core::Node, dirty: u64) {
     if p == (0 as *props::CollectionProps) { return; }
     let s: Sequence = sequence_of_collection(p);
     let bits: u64 = collection::P_COUNT | collection::P_ROW | collection::P_GROUP_COUNT
-        | collection::P_GROUP | collection::P_SELECTED_INDEX | collection::P_COLUMNS
+        | collection::P_GROUP | collection::P_COLUMNS
         | collection::P_IS_GROUPED | collection::P_INVALIDATE_ROW
         | collection::P_SPLICE_ROWS | collection::P_REORDER
         | collection::P_ITEM_SIZING | collection::P_SELECTION_MODE
@@ -1878,6 +1882,10 @@ fn apply_collection(v: *u8, n: *core::Node, dirty: u64) {
         #addr_of((*p).invalidate_lo), #addr_of((*p).invalidate_hi),
         #addr_of((*p).splice_at), #addr_of((*p).splice_count));
     if !handled && (dirty & bits) != (0 as u64) { refresh(n, v, s); }
+    // SELECTION IS A PROP, not a rebuild — see `restyle_sequence_selection`.
+    if (dirty & collection::P_SELECTED_INDEX) != (0 as u64) {
+        restyle_sequence_selection(n, v);
+    }
     if (dirty & (collection::P_HORIZONTAL_SCROLL_BARS
                  | collection::P_VERTICAL_SCROLL_BARS)) != (0 as u64) {
         policy(v, s);
@@ -2152,4 +2160,74 @@ fn touch_subtree(n: *core::Node, bits: u64) {
 // before reaching in, so a tree of boxes and labels costs one kind compare.
 fn holds_rows(n: *core::Node) -> bool {
     return kind_recycles(core::kind_of(n));
+}
+
+// ---- a sequence's selection is a prop too ---------------------------------------
+//
+// The same shape the tree had, found by auditing for it after the tree's was
+// fixed: `P_SELECTED_INDEX` sat in the word that forces a full `refresh`, so
+// selecting a row in a list or a collection replaced the whole model and
+// rebuilt every visible row. facet is not reactive — a component builds once
+// and the live tree is manipulated — so a rebuild here is the same mistake in
+// a different kind.
+//
+// What selection actually does to a sequence row is one line in `row_node`:
+//
+//     if s.selected == at { row.set_background_color(selected_content_background()) }
+//
+// So it is written onto the rows that are already there. A row that is not
+// realised needs nothing: `row_node` reads the selection when it builds one.
+fn restyle_sequence_selection(n: *core::Node, v: *u8) {
+    let lv: *u8 = list_view_of(v);
+    if lv == (0 as *u8) { return; }
+    let s: Sequence = sequence_of(n);
+    var cell: *u8 = first_child_raw(lv);
+    while cell != (0 as *u8) {
+        restyle_sequence_cell(s, first_child_raw(cell));
+        cell = next_sibling_raw(cell);
+    }
+    return;
+}
+
+fn restyle_sequence_cell(s: Sequence, host: *u8) {
+    if host == (0 as *u8) { return; }
+    let raw: *u8 = g::get_data(host, row_node_key());
+    if raw == (0 as *u8) { return; }
+    let slot: i64 = row_slot_of(host);
+    if slot < (0 as i64) { return; }
+    let row: *core::Node = raw as *core::Node;
+    // A SLOT IS NOT A ROW in a grid or a grouped list — a slot holds `span`
+    // rows, or a header — so the styling walks the slot's own children when it
+    // carries more than one. `row_node` writes the colour on the ROW, and for a
+    // line of rows the slot node is their container.
+    let sl: Slot = slot_at(s, slot as usize);
+    if sl.is_header { return; }
+    if sl.span <= (1 as usize) {
+        paint_selected(row, s, sl.first);
+    } else {
+        var i: usize = 0 as usize;
+        while i < sl.span {
+            match core::child_of(row, i) {
+                option::Option[*core::Node]::Some(c) => {
+                    paint_selected(c, s, sl.first +% i);
+                }
+                option::Option[*core::Node]::None => { }
+            }
+            i = i +% (1 as usize);
+        }
+    }
+    mount::sync_from(row);
+    return;
+}
+
+fn paint_selected(row: *core::Node, s: Sequence, at: usize) {
+    if s.selected >= (0 as i64) && (s.selected as usize) == at {
+        { (*row).set_background_color(vocab::Color::selected_content_background()) };
+    } else {
+        // CLEARED, not painted: `clear()` is the unset colour, and putting the
+        // surface colour here would be an opaque patch over whatever the row
+        // actually sits on.
+        { (*row).set_background_color(vocab::Color::clear()) };
+    }
+    return;
 }
