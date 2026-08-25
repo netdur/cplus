@@ -377,11 +377,26 @@ shape and was the same mistake.
   node at fire time, so a detached set makes every one of them `no_gesture` and
   the controller fires nothing — dead weight, not wrong behaviour.
 
-- **A splice is fine-grained only where a SLOT IS A ROW.** A grouped list has
-  headers between its rows and a grid has `columns` rows per slot, so a data
-  range is not a slot range in either — and computing one from the other is the
-  map's inverse over the whole sequence, which costs more than the rebuild it
-  would save. Both fall back to the replacement, which is what they had.
+- **A splice is fine-grained only where a SLOT IS A ROW**, and the reason this
+  row used to give was WRONG. It said computing a slot range from a data range
+  is "the map's inverse over the whole sequence, which costs more than the
+  rebuild it would save". Cost is not the obstacle and there is no walk: for an
+  ungrouped grid the inverse is `slot = data / columns`, arithmetic; for a
+  grouped list the walk is over GROUPS, of which there are a handful. Both are
+  pinned in the suite now.
+
+  THE REAL OBSTACLE IS REFLOW. An insert that is not a whole number of columns
+  moves every later item across slot boundaries — insert one item at index 3 of
+  a three-column grid and slot 1 still spans data 3..5, but they are different
+  items. Nothing was spliced into that slot and its contents changed anyway. So
+  a data splice is a slot splice AT THE END plus an invalidate from the
+  insertion point, which is a different piece of work from the one the old
+  reason implied and is buildable.
+
+  WHAT THE FALLBACK COSTS, which the row also did not say: a full model
+  replacement discards GtkListView's scroll anchor. That is the same
+  user-visible jump `bugs/09` was — a splice into a long grid scrolls it to the
+  top.
 - **A menu accelerator is ⌘ = SUPER, and a desktop may have taken it first.**
   The mapping is the key band's and the context menus', so an application does
   not learn two answers to one question — but GNOME binds a good many Super

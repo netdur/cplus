@@ -5224,3 +5224,102 @@ fn a_text_area_submits_on_focus_loss_and_a_field_does_not() {
     assert { (*q).on_submit } == sub;
     return;
 }
+
+// ---- why a grid and a grouped list fall back ---------------------------------
+//
+// MANIFEST §2 said a data range cannot become a slot range because "computing
+// one from the other is the map's inverse over the whole sequence, which costs
+// more than the rebuild it would save". THE COST CLAIM IS FALSE and these pin
+// what is actually true, because a wrong reason sends the next reader after the
+// wrong fix.
+//
+// For an ungrouped grid the inverse is `slot = data / columns` — arithmetic, not
+// a walk. The real obstacle is REFLOW: an insert that is not a whole number of
+// columns moves every later item across slot boundaries, so the slots after the
+// insertion point hold different data even though nothing was spliced into
+// them. That is not a splice; it is a splice plus an invalidate-to-the-end.
+
+#[test]
+fn a_grid_slot_is_arithmetic_and_not_a_walk() {
+    // The claim the MANIFEST got wrong. `slot_at` for an ungrouped sequence
+    // does no walking at all: the first data index of slot N is N * columns.
+    var c: core::Node = ui::collection(key: "gr1", columns: 3 as usize);
+    let p: *props::CollectionProps =
+        controls::props_of(#addr_of(c), props::K_COLLECTION) as *props::CollectionProps;
+    { (*p).count = 7 as i64 };
+    { (*p).row = grid_row_probe };
+    let s: recycler::Sequence = recycler::sequence_of(#addr_of(c));
+    assert recycler::slot_at(s, 0 as usize).first == (0 as usize);
+    assert recycler::slot_at(s, 1 as usize).first == (3 as usize);
+    assert recycler::slot_at(s, 2 as usize).first == (6 as usize);
+    // ...and the last line is SHORT rather than padded, which is the other half
+    // of the arithmetic being exact.
+    assert recycler::slot_at(s, 2 as usize).span == (1 as usize);
+    assert recycler::slot_at(s, 0 as usize).span == (3 as usize);
+    return;
+}
+
+#[test]
+fn an_insert_into_a_grid_reflows_every_slot_after_it() {
+    // THE REAL REASON, and it is not cost. Insert ONE item at data index 3 of a
+    // 3-column grid: slot 1 held {3,4,5} before and holds {3,4,5} after — but
+    // they are now DIFFERENT ITEMS, because everything from 3 on shifted by
+    // one. Nothing was spliced into slot 1 and its contents changed anyway.
+    //
+    // So a data splice is not a slot splice here. It is a slot splice at the
+    // end plus an invalidate from the insertion point — which is buildable, and
+    // is a different piece of work from the one the old reason implied.
+    var before: core::Node = ui::collection(key: "gr2", columns: 3 as usize);
+    let b: *props::CollectionProps =
+        controls::props_of(#addr_of(before), props::K_COLLECTION) as *props::CollectionProps;
+    { (*b).count = 6 as i64 };
+    { (*b).row = grid_row_probe };
+    var after: core::Node = ui::collection(key: "gr3", columns: 3 as usize);
+    let a: *props::CollectionProps =
+        controls::props_of(#addr_of(after), props::K_COLLECTION) as *props::CollectionProps;
+    { (*a).count = 7 as i64 };
+    { (*a).row = grid_row_probe };
+    let sb: recycler::Sequence = recycler::sequence_of(#addr_of(before));
+    let sa: recycler::Sequence = recycler::sequence_of(#addr_of(after));
+    // Slot 1 spans the same data INDICES either way...
+    assert recycler::slot_at(sb, 1 as usize).first == recycler::slot_at(sa, 1 as usize).first;
+    // ...and the sequence gained a slot, which is the only part a splice sees.
+    assert recycler::slot_count(sb) == (2 as usize);
+    assert recycler::slot_count(sa) == (3 as usize);
+    return;
+}
+
+#[test]
+fn a_grouped_slot_walks_groups_and_not_rows() {
+    // The other half of the corrected reason: a GROUPED list does need a walk,
+    // but it is over GROUPS — of which there are a handful — and not over the
+    // whole sequence. Cost was never what made either of these fall back.
+    var l: core::Node = ui::list(key: "gp1");
+    let p: *props::ListProps =
+        controls::props_of(#addr_of(l), props::K_LIST) as *props::ListProps;
+    { (*p).row = grid_row_probe };
+    { (*p).is_grouped = true };
+    { (*p).group_count = 2 as i64 };
+    { (*p).group_size = group_size_probe };
+    // A HEADER ONLY EXISTS IF SOMETHING BUILDS IT — `has_headers` asks whether
+    // `group_header` was set, so a grouped list with no builder is groups
+    // without separators, and its slots are plain rows.
+    { (*p).group_header = group_header_probe };
+    let s: recycler::Sequence = recycler::sequence_of(#addr_of(l));
+    // header, 2 rows, header, 2 rows — the walk visits 2 groups, not 4 rows.
+    assert recycler::slot_at(s, 0 as usize).is_header;
+    assert !recycler::slot_at(s, 1 as usize).is_header;
+    assert recycler::slot_at(s, 3 as usize).is_header;
+    assert recycler::slot_at(s, 3 as usize).group == (1 as usize);
+    return;
+}
+
+fn grid_row_probe(at: usize, ctx: *u8) -> core::Node {
+    return label::label("cell", key: "c");
+}
+
+fn group_size_probe(group: usize, ctx: *u8) -> usize { return 2 as usize; }
+
+fn group_header_probe(group: usize, ctx: *u8) -> core::Node {
+    return label::label("head", key: "h");
+}

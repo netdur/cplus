@@ -1785,9 +1785,20 @@ fn settle_offset(user: *u8) -> i32 {
 //
 // ONLY WHEN A SLOT IS A ROW. A grouped list has headers between its rows and a
 // grid has `columns` rows per slot, so a DATA range is not a slot range in
-// either — and computing one from the other is the map's inverse over the whole
-// sequence, which costs more than the rebuild it would save. Those fall back to
-// the replace, which is what they had.
+// either.
+//
+// NOT BECAUSE THE INVERSE IS EXPENSIVE — this comment used to say that and it
+// is false. `slot_at` for an ungrouped grid is `data / columns` with no walk at
+// all, and the grouped walk is over GROUPS rather than rows. `a_grid_slot_is
+// _arithmetic_and_not_a_walk` pins it.
+//
+// It is REFLOW. An insert that is not a whole number of columns moves every
+// later item across slot boundaries: insert one at data 3 of a three-column
+// grid and slot 1 still spans 3..5 while holding different items. So the
+// fine-grained answer here is a splice at the END plus an invalidate from the
+// insertion point — buildable, and not what this gate would have to become to
+// allow it. Until then both fall back to the replace, which costs the scroll
+// anchor (see MANIFEST §2).
 fn addresses_rows_directly(s: Sequence) -> bool {
     if s.is_grouped { return false; }
     return columns_of(s) == (1 as usize);
