@@ -20,6 +20,9 @@ edition = "2026"
 #   navigate                      keyboard focus
 #   set_caret                     byte offsets converted to characters
 #   hit_test                      gtk_widget_pick from the node's own centre
+#   wired                         ANSWERED, not `None`: g_signal_has_handler_pending
+#                                 over the same branches `press` drives, so the
+#                                 wire tells a live control from a dead one
 #
 #   read_runs                     NOT ANSWERED. Reading how text is DRAWN means
 #                                 walking a PangoAttrList off the layout, run by

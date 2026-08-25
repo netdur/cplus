@@ -460,7 +460,18 @@ impl Surface {
                 if !surface::outcome_eq(oc, surface::Outcome::Allowed) {
                     return oc;
                 }
-                if !press(this.widget_of(node)) { return surface::Outcome::NotActionable; }
+                let w: *u8 = this.widget_of(node);
+                // NOTHING LISTENING IS ITS OWN ANSWER. `NoHandler` means the
+                // click was permitted and would have landed, and there is no
+                // handler at the other end — which is a different fact from
+                // "this cannot be clicked" and the one an agent needs to stop
+                // retrying. Reporting `Allowed` here is what let a dead control
+                // read identically to a working one.
+                if !widget_wired(w) {
+                    if !press(w) { return surface::Outcome::NotActionable; }
+                    return surface::Outcome::NoHandler;
+                }
+                if !press(w) { return surface::Outcome::NotActionable; }
                 return surface::Outcome::Allowed;
             }
             option::Option[usize]::None => {}
@@ -644,9 +655,8 @@ fn mcp_describe(p: *u8, grant: auth::Grant) -> vec::Vec[mcpb::UiNode] {
                     description: text::new(),
                     actionable: { (*n).actionable },
                     clickable: { (*n).actionable },
-                    // This backend has not been taught the question; `None` says so
-                    // rather than guessing. See backend::UiNode.wired.
-                    wired: option::Option[bool]::None,
+                    wired: option::Option[bool]::Some(
+                        widget_wired(widget_for_id(s, { (*n).id.view() }))),
                     parent: { (*n).parent },
                 });
             }
@@ -705,9 +715,8 @@ fn mcp_describe_exposed(p: *u8, grant: auth::Grant) -> vec::Vec[mcpb::UiNode] {
                     actionable: { (*n).actionable },
                     // See the note in the full describe above.
                     clickable: { (*n).actionable },
-                    // This backend has not been taught the question; `None` says so
-                    // rather than guessing. See backend::UiNode.wired.
-                    wired: option::Option[bool]::None,
+                    wired: option::Option[bool]::Some(
+                        widget_wired(widget_for_id(s, { (*n).id.view() }))),
                     parent: { (*n).parent },
                 });
             }
@@ -984,3 +993,79 @@ extern fn gtk_widget_get_parent(w: *u8) -> *u8;
 extern fn gtk_widget_pick(w: *u8, x: f64, y: f64, flags: u32) -> *u8;
 #[link_name = "gtk_editable_select_region"]
 extern fn gtk_editable_select_region(e: *u8, start: i32, end: i32);
+
+// ---- DELIVERY: would a click reach a HANDLER? ----------------------------------
+//
+// `backend::UiNode.wired`, the third question after permission (`actionable`)
+// and capability (`clickable`). A control can pass both and still be dead, and
+// nothing on the wire could tell the difference — every signal read identically
+// to a working button.
+//
+// This backend answered `None` ("cannot answer"), which was honest and is no
+// longer necessary: `press` already knows exactly what it would do to each
+// class, so the same table answers what a click would REACH. Measured with
+// GObject itself, on two buttons that differ only in whether anything is
+// connected:
+//
+//     with handler -> True
+//     no handler   -> False
+//
+// `g_signal_has_handler_pending` is the question, and it is the same question
+// for every branch — the only thing that changes is WHICH signal.
+#[link_name = "g_signal_lookup"]
+extern fn g_signal_lookup(name: *u8, itype: usize) -> u32;
+#[link_name = "g_signal_has_handler_pending"]
+extern fn g_signal_has_handler_pending(instance: *u8, signal_id: u32,
+                                       detail: u32, may_be_blocked: i32) -> i32;
+#[link_name = "g_type_from_name"]
+extern fn g_type_from_name(name: *u8) -> usize;
+
+fn listens(instance: *u8, type_name: *u8, signal: *u8) -> bool {
+    if is_null(instance) { return false; }
+    let t: usize = { g_type_from_name(type_name) };
+    if t == (0 as usize) { return false; }
+    let sid: u32 = { g_signal_lookup(signal, t) };
+    if sid == (0 as u32) { return false; }
+    // `may_be_blocked = FALSE`: a handler that is connected but blocked would
+    // not run, and "would this reach a handler" has to mean the live answer.
+    return { g_signal_has_handler_pending(instance, sid, 0 as u32, 0 as i32) } != (0 as i32);
+}
+
+// The same branches `press` takes, asked as a question instead of an action.
+// The two must stay together: a class `press` learns to drive is a class this
+// has to learn to report, or the wire says dead about something an agent can
+// operate — which is the failure the flag exists to name.
+// A node is named on the wire by its DEVELOPER id, not its NodeId, so the
+// widget comes back through the registry the same way every verb reaches one.
+fn widget_for_id(s: *Surface, id: str) -> *u8 {
+    if id == "" { return null(); }
+    return match (*s).reg.lookup(id) {
+        option::Option[usize]::Some(node) => (*s).widget_of(node),
+        option::Option[usize]::None => null(),
+    };
+}
+
+fn widget_wired(w: *u8) -> bool {
+    if is_null(w) { return false; }
+    if is_a(w, #str_ptr("GtkButton\0")) {
+        return listens(w, #str_ptr("GtkButton\0"), #str_ptr("clicked\0"));
+    }
+    // A SWITCH IS ALWAYS WIRED. `press` sets its state, and the state IS the
+    // effect — an application reads `active` rather than connecting to it, so
+    // "nothing is listening" does not mean "nothing happens" here.
+    if is_a(w, #str_ptr("GtkSwitch\0")) { return true; }
+    var g_: *u8 = click_gesture_of(w);
+    if g_ == (0 as *u8) {
+        var child: *u8 = { gtk_widget_get_first_child(w) };
+        while child != (0 as *u8) && g_ == (0 as *u8) {
+            g_ = click_gesture_of(child);
+            child = { gtk_widget_get_next_sibling(child) };
+        }
+    }
+    if g_ != (0 as *u8) {
+        // The gesture exists; the question is whether anything is on it.
+        // facet arms `pressed`, which is what `press` emits.
+        return listens(g_, #str_ptr("GtkGestureClick\0"), #str_ptr("pressed\0"));
+    }
+    return false;
+}

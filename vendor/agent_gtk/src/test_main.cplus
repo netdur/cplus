@@ -26,6 +26,7 @@ import "gobject/bridge" as convert;
 import "agent_core/identity" as identity;
 import "agent_core/surface" as surface;
 import "agent_core/auth" as auth;
+import "agent_core/backend" as mcpb;
 import "./agent_gtk" as agent;
 
 #[link_name = "gtk_init_check"]
@@ -429,3 +430,113 @@ fn set_text_writes_and_bumps_the_version() {
 
 #[link_name = "gtk_editable_get_text"]
 extern fn gtk_editable_get_text_t(e: *u8) -> *u8;
+
+// ---- wired: would a click reach a HANDLER? --------------------------------------
+//
+// The third question, after permission (`actionable`) and capability
+// (`clickable`). A control can pass both and still be dead, and nothing on the
+// wire could tell the difference — every signal read identically to a working
+// button. This backend answered `None` ("cannot answer"), which was honest and
+// stopped being necessary once `press` knew what it would do to each class:
+// the same table answers what a click would REACH.
+
+#[test]
+fn a_button_with_a_handler_is_wired_and_one_without_is_not() {
+    if !has_display() { return; }
+    let live: *u8 = { gtk_button_new() };
+    let _h: u64 = { sigc_clicked(live, #str_ptr("clicked\0"), count_clicked,
+                                 null(), null(), 0 as i32) };
+    assert agent::widget_wired(live);
+    // THE CASE THE FLAG EXISTS FOR: identical in every other respect —
+    // same class, same role, same actionable, same clickable — and dead.
+    let dead: *u8 = { gtk_button_new() };
+    assert !agent::widget_wired(dead);
+}
+
+// A facet row is a Fixed with a gesture, and the gesture is only wired if
+// something is on it. A gesture ADDED and never connected is the same dead
+// control in a different coat.
+#[test]
+fn a_gesture_is_wired_only_when_something_listens() {
+    if !has_display() { return; }
+    let armed: *u8 = { gtk_fixed_new() };
+    let g1: *u8 = { gtk_gesture_click_new() };
+    let _h: u64 = { sigc(g1, #str_ptr("pressed\0"), count_press, null(), null(), 0 as i32) };
+    { gtk_widget_add_controller(armed, g1) };
+    assert agent::widget_wired(armed);
+
+    let bare: *u8 = { gtk_fixed_new() };
+    let g2: *u8 = { gtk_gesture_click_new() };
+    { gtk_widget_add_controller(bare, g2) };
+    assert !agent::widget_wired(bare);
+
+    // ...and no gesture at all is not wired either.
+    let plain: *u8 = { gtk_fixed_new() };
+    assert !agent::widget_wired(plain);
+    let lbl: *u8 = { gtk_label_new(#str_ptr("inert\0")) };
+    assert !agent::widget_wired(lbl);
+}
+
+// A SWITCH IS ALWAYS WIRED, and that is a judgement rather than a measurement:
+// `press` sets its state and the state IS the effect, so an application that
+// reads `active` without connecting to anything still sees the click land.
+#[test]
+fn a_switch_is_wired_because_its_state_is_the_effect() {
+    if !has_display() { return; }
+    let sw: *u8 = { gtk_switch_new() };
+    assert agent::widget_wired(sw);
+}
+
+// THE OUTCOME SAYS IT TOO. `NoHandler` means the click was permitted and would
+// have landed and there is nobody at the other end — a different fact from
+// "this cannot be clicked", and the one that stops an agent retrying.
+#[test]
+fn clicking_a_dead_control_reports_no_handler_not_allowed() {
+    if !has_display() { return; }
+    let dead: *u8 = { gtk_button_new() };
+    let win: *u8 = fixture(dead, #str_ptr("btn:dead\0"));
+    var s: agent::Surface = agent::open(win);
+    let oc: surface::Outcome = s.click(auth::protected_operator(), "btn:dead");
+    assert surface::outcome_eq(oc, surface::Outcome::NoHandler);
+    // NOT NotActionable: the control is perfectly clickable, which is exactly
+    // why the two answers have to differ.
+    assert !surface::outcome_eq(oc, surface::Outcome::NotActionable);
+    assert !surface::outcome_eq(oc, surface::Outcome::Allowed);
+}
+
+// ...and describe carries the same answer, so an agent never has to spend a
+// click to find out.
+#[test]
+fn describe_reports_wired_for_a_live_and_a_dead_control() {
+    if !has_display() { return; }
+    let live: *u8 = { gtk_button_new() };
+    let _h: u64 = { sigc_clicked(live, #str_ptr("clicked\0"), count_clicked,
+                                 null(), null(), 0 as i32) };
+    let win: *u8 = fixture(live, #str_ptr("btn:live\0"));
+    var s: agent::Surface = agent::open(win);
+    let nodes: vec::Vec[mcpb::UiNode] = agent::mcp_describe(#addr_of(s) as *u8,
+                                                            auth::protected_operator());
+    var seen: bool = false;
+    var i: usize = 0 as usize;
+    let n: usize = nodes.count();
+    while i < n {
+        match nodes.at_ptr(i) {
+            option::Option[*mcpb::UiNode]::Some(u) => {
+                if { (*u).id.view() } == "btn:live" {
+                    seen = true;
+                    match { (*u).wired } {
+                        // ANSWERED, not None — that is the whole change.
+                        option::Option[bool]::Some(w) => { assert w; }
+                        option::Option[bool]::None => { assert false; }
+                    }
+                }
+            }
+            option::Option[*mcpb::UiNode]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    assert seen;
+}
+
+#[link_name = "gtk_switch_new"]
+extern fn gtk_switch_new() -> *u8;
