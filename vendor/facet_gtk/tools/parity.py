@@ -38,7 +38,14 @@ BACKENDS = {
 # The floor this backend has already reached. `--check` fails below it, so a
 # refactor that quietly drops a verb is caught at the number rather than by
 # someone noticing a control stopped working.
-FLOOR = 357
+#
+# IT WENT DOWN ONCE, from 357 to 356, and not because a verb was dropped: the
+# field-touch fallback was attributed per Props struct (see `field_touches`),
+# and `context_menu_item.is_destructive` stopped being credited by a touch that
+# belonged to another kind. MANIFEST §1 had it as absent all along, so the
+# stricter measure agreed with the document against the old number. A floor is
+# only worth having if it moves for that reason and no other.
+FLOOR = 356
 # Same gate on the READ half. Kept separate because the two surfaces fail
 # differently: a missing prop is a control that ignores you, a missing handler
 # is a control that never answers.
@@ -305,15 +312,42 @@ def field_touches(directory):
     A backend that has never heard of `carousel` cannot be credited with
     `carousel.is_scrolling` because something else in it touches an
     `is_scrolling` field.
+
+    ATTRIBUTED PER STRUCT, for the reason the handler measure had to be: a
+    global set of field names credits a kind for a touch that belonged to a
+    different one, and that is exactly how four dead handlers sat behind a
+    68/68. The mitigation this used to rely on — "the backend names at least one
+    other bit of that module" — bounds the damage to kinds the backend has heard
+    of and does nothing within them.
+
+    So the scope rule is the same one `reads_by_struct` uses: every Props type
+    annotated anywhere in a function is in scope for the reads in it, plus the
+    embedded-block shape where the field qualifier names the struct outright.
     """
-    out = set()
+    per = {}
     for path in glob.glob(os.path.join(directory, "*.cplus")):
         if path.endswith("test_main.cplus"):
             continue
         text = strip_comments(open(path).read())
-        for f in re.findall(r"\.\s*([a-z_][a-z_0-9]*)\b", text):
-            out.add(f)
-    return out
+        for body in re.split(r"\n(?=fn |impl )", text):
+            in_scope = set(re.findall(r"\*\w+::(\w+Props)\b", body))
+            for m in re.finditer(r"\.\s*(?:(\w+)\.)?([a-z_][a-z_0-9]*)\b", body):
+                qualifier, field = m.group(1), m.group(2)
+                if qualifier:
+                    embedded = "".join(x.title() for x in qualifier.split("_")) + "Props"
+                    per.setdefault(embedded, set()).add(field)
+                    # The qualifier is itself a field of whatever is in scope.
+                    for st in in_scope:
+                        per.setdefault(st, set()).add(qualifier)
+                    continue
+                for st in in_scope:
+                    per.setdefault(st, set()).add(field)
+    return per
+
+
+def struct_for(module):
+    """`text_field` -> `TextFieldProps`, facet's own naming convention."""
+    return "".join(x.title() for x in module.split("_")) + "Props"
 
 
 def main():
@@ -343,9 +377,10 @@ def main():
             # The field-touch fallback needs evidence this backend implements
             # the KIND — see `field_touches`. One named bit is that evidence.
             plausible = len(named) > 0
+            fields = written[k].get(struct_for(module), set())
             got[k] = {p for p in props
                       if p in named
-                      or (plausible and p[2:].lower() in written[k])}
+                      or (plausible and p[2:].lower() in fields)}
             totals[k] += len(got[k])
         if got.get("gtk"):
             rows.append((module, len(props), len(got["gtk"]),
