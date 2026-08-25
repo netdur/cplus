@@ -80,6 +80,38 @@ export extern fn facet_android_after(envp: *jni::JNIEnv, cls: jni::jobject, toke
     return;
 }
 
+export extern fn facet_android_checked(envp: *jni::JNIEnv, cls: jni::jobject, token: i64, on: u8) {
+    e::set_env(rt::from_native(envp));
+    // jboolean is a byte and JNI promises 0 or 1; anything non-zero is true so
+    // a JVM that ever widened it could not turn a tick into an untick.
+    controls::fire_checked(token, on != (0 as u8));
+    return;
+}
+
+export extern fn facet_android_progress(envp: *jni::JNIEnv, cls: jni::jobject, token: i64, p: i32) {
+    e::set_env(rt::from_native(envp));
+    controls::fire_progress(token, p);
+    return;
+}
+
+export extern fn facet_android_seek_start(envp: *jni::JNIEnv, cls: jni::jobject, token: i64) {
+    e::set_env(rt::from_native(envp));
+    controls::fire_seek_edge(token, true);
+    return;
+}
+
+export extern fn facet_android_seek_stop(envp: *jni::JNIEnv, cls: jni::jobject, token: i64) {
+    e::set_env(rt::from_native(envp));
+    controls::fire_seek_edge(token, false);
+    return;
+}
+
+export extern fn facet_android_text(envp: *jni::JNIEnv, cls: jni::jobject, token: i64, s: jni::jobject) {
+    e::set_env(rt::from_native(envp));
+    controls::fire_text(token, s);
+    return;
+}
+
 export extern fn facet_android_size_changed(envp: *jni::JNIEnv, cls: jni::jobject, wd: i32, ht: i32) {
     e::set_env(rt::from_native(envp));
     window::size_changed(wd, ht);

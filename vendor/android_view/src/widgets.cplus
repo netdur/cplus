@@ -10573,4 +10573,1220 @@ impl ProgressBar {
 
 }
 
-// cpc-bindgen --java: 1540 items emitted, 59 SKIPPED.
+// android.widget.CompoundButton
+struct CompoundButton {
+    _env: rt::Env,
+    _obj: jni::jobject,
+}
+
+impl CompoundButton {
+    fn drop(ref this) {
+        // `into_raw` nulls `_obj`; DeleteGlobalRef does not admit NULL.
+        if this._obj != { 0 as jni::jobject } { this._env.delete_global_ref(this._obj); }
+        return;
+    }
+
+    fn from_global(env: rt::Env, obj: jni::jobject) -> CompoundButton { return CompoundButton { _env: env, _obj: obj }; }
+
+    fn from_local(env: rt::Env, obj: jni::jobject) -> CompoundButton { return CompoundButton { _env: env, _obj: env.retain_local_as_global(obj) }; }
+
+    fn as_obj(this) -> jni::jobject { return this._obj; }
+
+    fn into_raw(ref this) -> jni::jobject {
+        let p: jni::jobject = this._obj;
+        this._obj = { 0 as jni::jobject };
+        return p;
+    }
+
+    // javap lists DECLARED members only; the inherited surface is here.
+    //
+    // Takes a FRESH global ref rather than sharing this one. Both
+    // wrappers own what they hold and both drops run, so handing the
+    // same ref over would DeleteGlobalRef it twice.
+    fn as_button(this) -> Button { return Button::from_global(this._env, this._env.new_global_ref(this._obj)); }
+
+    fn autofill(this, arg0: jni::jobject) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/CompoundButton\0"), #str_ptr("autofill\0"), #str_ptr("(Landroid/view/autofill/AutofillValue;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn drawable_hotspot_changed(this, arg0: f32, arg1: f32) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/CompoundButton\0"), #str_ptr("drawableHotspotChanged\0"), #str_ptr("(FF)V\0"));
+        var args: [jni::JValue; 2] = [jni::arg_float(arg0), jni::arg_float(arg1)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn drawable_state_changed(this) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/CompoundButton\0"), #str_ptr("drawableStateChanged\0"), #str_ptr("()V\0"));
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue); };
+        return;
+    }
+
+    fn get_accessibility_class_name(this) -> *u8 {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/CompoundButton\0"), #str_ptr("getAccessibilityClassName\0"), #str_ptr("()Ljava/lang/CharSequence;\0"));
+        let r: *u8 = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_autofill_type(this) -> i32 {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/CompoundButton\0"), #str_ptr("getAutofillType\0"), #str_ptr("()I\0"));
+        let r: i32 = { (*(*this._env.raw())).CallIntMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_autofill_value(this) -> jni::jobject {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/CompoundButton\0"), #str_ptr("getAutofillValue\0"), #str_ptr("()Landroid/view/autofill/AutofillValue;\0"));
+        let r: jni::jobject = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_button_drawable(this) -> jni::jobject {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/CompoundButton\0"), #str_ptr("getButtonDrawable\0"), #str_ptr("()Landroid/graphics/drawable/Drawable;\0"));
+        let r: jni::jobject = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_button_tint_blend_mode(this) -> jni::jobject {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/CompoundButton\0"), #str_ptr("getButtonTintBlendMode\0"), #str_ptr("()Landroid/graphics/BlendMode;\0"));
+        let r: jni::jobject = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_button_tint_list(this) -> jni::jobject {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/CompoundButton\0"), #str_ptr("getButtonTintList\0"), #str_ptr("()Landroid/content/res/ColorStateList;\0"));
+        let r: jni::jobject = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_button_tint_mode(this) -> jni::jobject {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/CompoundButton\0"), #str_ptr("getButtonTintMode\0"), #str_ptr("()Landroid/graphics/PorterDuff$Mode;\0"));
+        let r: jni::jobject = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_compound_padding_left(this) -> i32 {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/CompoundButton\0"), #str_ptr("getCompoundPaddingLeft\0"), #str_ptr("()I\0"));
+        let r: i32 = { (*(*this._env.raw())).CallIntMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_compound_padding_right(this) -> i32 {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/CompoundButton\0"), #str_ptr("getCompoundPaddingRight\0"), #str_ptr("()I\0"));
+        let r: i32 = { (*(*this._env.raw())).CallIntMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn is_checked(this) -> bool {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/CompoundButton\0"), #str_ptr("isChecked\0"), #str_ptr("()Z\0"));
+        let r: jni::jboolean = { (*(*this._env.raw())).CallBooleanMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r as i8 != 0;
+    }
+
+    fn jump_drawables_to_current_state(this) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/CompoundButton\0"), #str_ptr("jumpDrawablesToCurrentState\0"), #str_ptr("()V\0"));
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue); };
+        return;
+    }
+
+    fn new_context(env: rt::Env, arg0: jni::jobject) -> CompoundButton {
+        let mid: jni::jmethodID = env.method(#str_ptr("android/widget/CompoundButton\0"), #str_ptr("<init>\0"), #str_ptr("(Landroid/content/Context;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        let cls: jni::jclass = env.class_cached(#str_ptr("android/widget/CompoundButton\0"));
+        let obj: jni::jobject = { (*(*env.raw())).NewObjectA(env.raw(), cls, mid, #addr_of(args[0])) };
+        return CompoundButton { _env: env, _obj: env.retain_local_as_global(obj) };
+    }
+
+    fn new_context_attribute_set(env: rt::Env, arg0: jni::jobject, arg1: jni::jobject) -> CompoundButton {
+        let mid: jni::jmethodID = env.method(#str_ptr("android/widget/CompoundButton\0"), #str_ptr("<init>\0"), #str_ptr("(Landroid/content/Context;Landroid/util/AttributeSet;)V\0"));
+        var args: [jni::JValue; 2] = [jni::arg_object(arg0), jni::arg_object(arg1)];
+        let cls: jni::jclass = env.class_cached(#str_ptr("android/widget/CompoundButton\0"));
+        let obj: jni::jobject = { (*(*env.raw())).NewObjectA(env.raw(), cls, mid, #addr_of(args[0])) };
+        return CompoundButton { _env: env, _obj: env.retain_local_as_global(obj) };
+    }
+
+    fn new_context_attribute_set_i(env: rt::Env, arg0: jni::jobject, arg1: jni::jobject, arg2: i32) -> CompoundButton {
+        let mid: jni::jmethodID = env.method(#str_ptr("android/widget/CompoundButton\0"), #str_ptr("<init>\0"), #str_ptr("(Landroid/content/Context;Landroid/util/AttributeSet;I)V\0"));
+        var args: [jni::JValue; 3] = [jni::arg_object(arg0), jni::arg_object(arg1), jni::arg_int(arg2)];
+        let cls: jni::jclass = env.class_cached(#str_ptr("android/widget/CompoundButton\0"));
+        let obj: jni::jobject = { (*(*env.raw())).NewObjectA(env.raw(), cls, mid, #addr_of(args[0])) };
+        return CompoundButton { _env: env, _obj: env.retain_local_as_global(obj) };
+    }
+
+    fn new_context_attribute_set_i_i(env: rt::Env, arg0: jni::jobject, arg1: jni::jobject, arg2: i32, arg3: i32) -> CompoundButton {
+        let mid: jni::jmethodID = env.method(#str_ptr("android/widget/CompoundButton\0"), #str_ptr("<init>\0"), #str_ptr("(Landroid/content/Context;Landroid/util/AttributeSet;II)V\0"));
+        var args: [jni::JValue; 4] = [jni::arg_object(arg0), jni::arg_object(arg1), jni::arg_int(arg2), jni::arg_int(arg3)];
+        let cls: jni::jclass = env.class_cached(#str_ptr("android/widget/CompoundButton\0"));
+        let obj: jni::jobject = { (*(*env.raw())).NewObjectA(env.raw(), cls, mid, #addr_of(args[0])) };
+        return CompoundButton { _env: env, _obj: env.retain_local_as_global(obj) };
+    }
+
+    fn on_create_drawable_state(this, arg0: i32) -> jni::jarray {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/CompoundButton\0"), #str_ptr("onCreateDrawableState\0"), #str_ptr("(I)[I\0"));
+        var args: [jni::JValue; 1] = [jni::arg_int(arg0)];
+        let r: jni::jarray = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])) };
+        return r;
+    }
+
+    fn on_draw(this, arg0: jni::jobject) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/CompoundButton\0"), #str_ptr("onDraw\0"), #str_ptr("(Landroid/graphics/Canvas;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn on_restore_instance_state(this, arg0: jni::jobject) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/CompoundButton\0"), #str_ptr("onRestoreInstanceState\0"), #str_ptr("(Landroid/os/Parcelable;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn on_save_instance_state(this) -> jni::jobject {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/CompoundButton\0"), #str_ptr("onSaveInstanceState\0"), #str_ptr("()Landroid/os/Parcelable;\0"));
+        let r: jni::jobject = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn perform_click(this) -> bool {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/CompoundButton\0"), #str_ptr("performClick\0"), #str_ptr("()Z\0"));
+        let r: jni::jboolean = { (*(*this._env.raw())).CallBooleanMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r as i8 != 0;
+    }
+
+    fn set_button_drawable_drawable(this, arg0: jni::jobject) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/CompoundButton\0"), #str_ptr("setButtonDrawable\0"), #str_ptr("(Landroid/graphics/drawable/Drawable;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_button_drawable_i(this, arg0: i32) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/CompoundButton\0"), #str_ptr("setButtonDrawable\0"), #str_ptr("(I)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_int(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_button_icon(this, arg0: jni::jobject) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/CompoundButton\0"), #str_ptr("setButtonIcon\0"), #str_ptr("(Landroid/graphics/drawable/Icon;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_button_tint_blend_mode(this, arg0: jni::jobject) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/CompoundButton\0"), #str_ptr("setButtonTintBlendMode\0"), #str_ptr("(Landroid/graphics/BlendMode;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_button_tint_list(this, arg0: jni::jobject) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/CompoundButton\0"), #str_ptr("setButtonTintList\0"), #str_ptr("(Landroid/content/res/ColorStateList;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_button_tint_mode(this, arg0: jni::jobject) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/CompoundButton\0"), #str_ptr("setButtonTintMode\0"), #str_ptr("(Landroid/graphics/PorterDuff$Mode;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_checked(this, arg0: bool) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/CompoundButton\0"), #str_ptr("setChecked\0"), #str_ptr("(Z)V\0"));
+        var args: [jni::JValue; 1] = [rt::arg_bool(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_on_checked_change_listener(this, arg0: jni::jobject) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/CompoundButton\0"), #str_ptr("setOnCheckedChangeListener\0"), #str_ptr("(Landroid/widget/CompoundButton$OnCheckedChangeListener;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_state_description(this, arg0: *u8) {
+        let arg0_s: jni::jstring = this._env.new_string_utf(arg0);
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/CompoundButton\0"), #str_ptr("setStateDescription\0"), #str_ptr("(Ljava/lang/CharSequence;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0_s)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        this._env.delete_local_ref(arg0_s);
+        return;
+    }
+
+    fn toggle(this) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/CompoundButton\0"), #str_ptr("toggle\0"), #str_ptr("()V\0"));
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue); };
+        return;
+    }
+
+    fn verify_drawable(this, arg0: jni::jobject) -> bool {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/CompoundButton\0"), #str_ptr("verifyDrawable\0"), #str_ptr("(Landroid/graphics/drawable/Drawable;)Z\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        let r: jni::jboolean = { (*(*this._env.raw())).CallBooleanMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])) };
+        return r as i8 != 0;
+    }
+
+}
+
+// android.widget.CheckBox
+struct CheckBox {
+    _env: rt::Env,
+    _obj: jni::jobject,
+}
+
+impl CheckBox {
+    fn drop(ref this) {
+        // `into_raw` nulls `_obj`; DeleteGlobalRef does not admit NULL.
+        if this._obj != { 0 as jni::jobject } { this._env.delete_global_ref(this._obj); }
+        return;
+    }
+
+    fn from_global(env: rt::Env, obj: jni::jobject) -> CheckBox { return CheckBox { _env: env, _obj: obj }; }
+
+    fn from_local(env: rt::Env, obj: jni::jobject) -> CheckBox { return CheckBox { _env: env, _obj: env.retain_local_as_global(obj) }; }
+
+    fn as_obj(this) -> jni::jobject { return this._obj; }
+
+    fn into_raw(ref this) -> jni::jobject {
+        let p: jni::jobject = this._obj;
+        this._obj = { 0 as jni::jobject };
+        return p;
+    }
+
+    // javap lists DECLARED members only; the inherited surface is here.
+    //
+    // Takes a FRESH global ref rather than sharing this one. Both
+    // wrappers own what they hold and both drops run, so handing the
+    // same ref over would DeleteGlobalRef it twice.
+    fn as_compound_button(this) -> CompoundButton { return CompoundButton::from_global(this._env, this._env.new_global_ref(this._obj)); }
+
+    fn get_accessibility_class_name(this) -> *u8 {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/CheckBox\0"), #str_ptr("getAccessibilityClassName\0"), #str_ptr("()Ljava/lang/CharSequence;\0"));
+        let r: *u8 = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn new_context(env: rt::Env, arg0: jni::jobject) -> CheckBox {
+        let mid: jni::jmethodID = env.method(#str_ptr("android/widget/CheckBox\0"), #str_ptr("<init>\0"), #str_ptr("(Landroid/content/Context;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        let cls: jni::jclass = env.class_cached(#str_ptr("android/widget/CheckBox\0"));
+        let obj: jni::jobject = { (*(*env.raw())).NewObjectA(env.raw(), cls, mid, #addr_of(args[0])) };
+        return CheckBox { _env: env, _obj: env.retain_local_as_global(obj) };
+    }
+
+    fn new_context_attribute_set(env: rt::Env, arg0: jni::jobject, arg1: jni::jobject) -> CheckBox {
+        let mid: jni::jmethodID = env.method(#str_ptr("android/widget/CheckBox\0"), #str_ptr("<init>\0"), #str_ptr("(Landroid/content/Context;Landroid/util/AttributeSet;)V\0"));
+        var args: [jni::JValue; 2] = [jni::arg_object(arg0), jni::arg_object(arg1)];
+        let cls: jni::jclass = env.class_cached(#str_ptr("android/widget/CheckBox\0"));
+        let obj: jni::jobject = { (*(*env.raw())).NewObjectA(env.raw(), cls, mid, #addr_of(args[0])) };
+        return CheckBox { _env: env, _obj: env.retain_local_as_global(obj) };
+    }
+
+    fn new_context_attribute_set_i(env: rt::Env, arg0: jni::jobject, arg1: jni::jobject, arg2: i32) -> CheckBox {
+        let mid: jni::jmethodID = env.method(#str_ptr("android/widget/CheckBox\0"), #str_ptr("<init>\0"), #str_ptr("(Landroid/content/Context;Landroid/util/AttributeSet;I)V\0"));
+        var args: [jni::JValue; 3] = [jni::arg_object(arg0), jni::arg_object(arg1), jni::arg_int(arg2)];
+        let cls: jni::jclass = env.class_cached(#str_ptr("android/widget/CheckBox\0"));
+        let obj: jni::jobject = { (*(*env.raw())).NewObjectA(env.raw(), cls, mid, #addr_of(args[0])) };
+        return CheckBox { _env: env, _obj: env.retain_local_as_global(obj) };
+    }
+
+    fn new_context_attribute_set_i_i(env: rt::Env, arg0: jni::jobject, arg1: jni::jobject, arg2: i32, arg3: i32) -> CheckBox {
+        let mid: jni::jmethodID = env.method(#str_ptr("android/widget/CheckBox\0"), #str_ptr("<init>\0"), #str_ptr("(Landroid/content/Context;Landroid/util/AttributeSet;II)V\0"));
+        var args: [jni::JValue; 4] = [jni::arg_object(arg0), jni::arg_object(arg1), jni::arg_int(arg2), jni::arg_int(arg3)];
+        let cls: jni::jclass = env.class_cached(#str_ptr("android/widget/CheckBox\0"));
+        let obj: jni::jobject = { (*(*env.raw())).NewObjectA(env.raw(), cls, mid, #addr_of(args[0])) };
+        return CheckBox { _env: env, _obj: env.retain_local_as_global(obj) };
+    }
+
+}
+
+// android.widget.Switch
+struct Switch {
+    _env: rt::Env,
+    _obj: jni::jobject,
+}
+
+impl Switch {
+    fn drop(ref this) {
+        // `into_raw` nulls `_obj`; DeleteGlobalRef does not admit NULL.
+        if this._obj != { 0 as jni::jobject } { this._env.delete_global_ref(this._obj); }
+        return;
+    }
+
+    fn from_global(env: rt::Env, obj: jni::jobject) -> Switch { return Switch { _env: env, _obj: obj }; }
+
+    fn from_local(env: rt::Env, obj: jni::jobject) -> Switch { return Switch { _env: env, _obj: env.retain_local_as_global(obj) }; }
+
+    fn as_obj(this) -> jni::jobject { return this._obj; }
+
+    fn into_raw(ref this) -> jni::jobject {
+        let p: jni::jobject = this._obj;
+        this._obj = { 0 as jni::jobject };
+        return p;
+    }
+
+    // javap lists DECLARED members only; the inherited surface is here.
+    //
+    // Takes a FRESH global ref rather than sharing this one. Both
+    // wrappers own what they hold and both drops run, so handing the
+    // same ref over would DeleteGlobalRef it twice.
+    fn as_compound_button(this) -> CompoundButton { return CompoundButton::from_global(this._env, this._env.new_global_ref(this._obj)); }
+
+    fn draw(this, arg0: jni::jobject) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/Switch\0"), #str_ptr("draw\0"), #str_ptr("(Landroid/graphics/Canvas;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn drawable_hotspot_changed(this, arg0: f32, arg1: f32) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/Switch\0"), #str_ptr("drawableHotspotChanged\0"), #str_ptr("(FF)V\0"));
+        var args: [jni::JValue; 2] = [jni::arg_float(arg0), jni::arg_float(arg1)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn drawable_state_changed(this) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/Switch\0"), #str_ptr("drawableStateChanged\0"), #str_ptr("()V\0"));
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue); };
+        return;
+    }
+
+    fn get_accessibility_class_name(this) -> *u8 {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/Switch\0"), #str_ptr("getAccessibilityClassName\0"), #str_ptr("()Ljava/lang/CharSequence;\0"));
+        let r: *u8 = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_compound_padding_left(this) -> i32 {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/Switch\0"), #str_ptr("getCompoundPaddingLeft\0"), #str_ptr("()I\0"));
+        let r: i32 = { (*(*this._env.raw())).CallIntMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_compound_padding_right(this) -> i32 {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/Switch\0"), #str_ptr("getCompoundPaddingRight\0"), #str_ptr("()I\0"));
+        let r: i32 = { (*(*this._env.raw())).CallIntMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_show_text(this) -> bool {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/Switch\0"), #str_ptr("getShowText\0"), #str_ptr("()Z\0"));
+        let r: jni::jboolean = { (*(*this._env.raw())).CallBooleanMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r as i8 != 0;
+    }
+
+    fn get_split_track(this) -> bool {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/Switch\0"), #str_ptr("getSplitTrack\0"), #str_ptr("()Z\0"));
+        let r: jni::jboolean = { (*(*this._env.raw())).CallBooleanMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r as i8 != 0;
+    }
+
+    fn get_switch_min_width(this) -> i32 {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/Switch\0"), #str_ptr("getSwitchMinWidth\0"), #str_ptr("()I\0"));
+        let r: i32 = { (*(*this._env.raw())).CallIntMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_switch_padding(this) -> i32 {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/Switch\0"), #str_ptr("getSwitchPadding\0"), #str_ptr("()I\0"));
+        let r: i32 = { (*(*this._env.raw())).CallIntMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_text_off(this) -> *u8 {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/Switch\0"), #str_ptr("getTextOff\0"), #str_ptr("()Ljava/lang/CharSequence;\0"));
+        let r: *u8 = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_text_on(this) -> *u8 {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/Switch\0"), #str_ptr("getTextOn\0"), #str_ptr("()Ljava/lang/CharSequence;\0"));
+        let r: *u8 = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_thumb_drawable(this) -> jni::jobject {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/Switch\0"), #str_ptr("getThumbDrawable\0"), #str_ptr("()Landroid/graphics/drawable/Drawable;\0"));
+        let r: jni::jobject = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_thumb_text_padding(this) -> i32 {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/Switch\0"), #str_ptr("getThumbTextPadding\0"), #str_ptr("()I\0"));
+        let r: i32 = { (*(*this._env.raw())).CallIntMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_thumb_tint_blend_mode(this) -> jni::jobject {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/Switch\0"), #str_ptr("getThumbTintBlendMode\0"), #str_ptr("()Landroid/graphics/BlendMode;\0"));
+        let r: jni::jobject = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_thumb_tint_list(this) -> jni::jobject {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/Switch\0"), #str_ptr("getThumbTintList\0"), #str_ptr("()Landroid/content/res/ColorStateList;\0"));
+        let r: jni::jobject = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_thumb_tint_mode(this) -> jni::jobject {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/Switch\0"), #str_ptr("getThumbTintMode\0"), #str_ptr("()Landroid/graphics/PorterDuff$Mode;\0"));
+        let r: jni::jobject = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_track_drawable(this) -> jni::jobject {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/Switch\0"), #str_ptr("getTrackDrawable\0"), #str_ptr("()Landroid/graphics/drawable/Drawable;\0"));
+        let r: jni::jobject = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_track_tint_blend_mode(this) -> jni::jobject {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/Switch\0"), #str_ptr("getTrackTintBlendMode\0"), #str_ptr("()Landroid/graphics/BlendMode;\0"));
+        let r: jni::jobject = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_track_tint_list(this) -> jni::jobject {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/Switch\0"), #str_ptr("getTrackTintList\0"), #str_ptr("()Landroid/content/res/ColorStateList;\0"));
+        let r: jni::jobject = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_track_tint_mode(this) -> jni::jobject {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/Switch\0"), #str_ptr("getTrackTintMode\0"), #str_ptr("()Landroid/graphics/PorterDuff$Mode;\0"));
+        let r: jni::jobject = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn jump_drawables_to_current_state(this) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/Switch\0"), #str_ptr("jumpDrawablesToCurrentState\0"), #str_ptr("()V\0"));
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue); };
+        return;
+    }
+
+    fn new_context(env: rt::Env, arg0: jni::jobject) -> Switch {
+        let mid: jni::jmethodID = env.method(#str_ptr("android/widget/Switch\0"), #str_ptr("<init>\0"), #str_ptr("(Landroid/content/Context;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        let cls: jni::jclass = env.class_cached(#str_ptr("android/widget/Switch\0"));
+        let obj: jni::jobject = { (*(*env.raw())).NewObjectA(env.raw(), cls, mid, #addr_of(args[0])) };
+        return Switch { _env: env, _obj: env.retain_local_as_global(obj) };
+    }
+
+    fn new_context_attribute_set(env: rt::Env, arg0: jni::jobject, arg1: jni::jobject) -> Switch {
+        let mid: jni::jmethodID = env.method(#str_ptr("android/widget/Switch\0"), #str_ptr("<init>\0"), #str_ptr("(Landroid/content/Context;Landroid/util/AttributeSet;)V\0"));
+        var args: [jni::JValue; 2] = [jni::arg_object(arg0), jni::arg_object(arg1)];
+        let cls: jni::jclass = env.class_cached(#str_ptr("android/widget/Switch\0"));
+        let obj: jni::jobject = { (*(*env.raw())).NewObjectA(env.raw(), cls, mid, #addr_of(args[0])) };
+        return Switch { _env: env, _obj: env.retain_local_as_global(obj) };
+    }
+
+    fn new_context_attribute_set_i(env: rt::Env, arg0: jni::jobject, arg1: jni::jobject, arg2: i32) -> Switch {
+        let mid: jni::jmethodID = env.method(#str_ptr("android/widget/Switch\0"), #str_ptr("<init>\0"), #str_ptr("(Landroid/content/Context;Landroid/util/AttributeSet;I)V\0"));
+        var args: [jni::JValue; 3] = [jni::arg_object(arg0), jni::arg_object(arg1), jni::arg_int(arg2)];
+        let cls: jni::jclass = env.class_cached(#str_ptr("android/widget/Switch\0"));
+        let obj: jni::jobject = { (*(*env.raw())).NewObjectA(env.raw(), cls, mid, #addr_of(args[0])) };
+        return Switch { _env: env, _obj: env.retain_local_as_global(obj) };
+    }
+
+    fn new_context_attribute_set_i_i(env: rt::Env, arg0: jni::jobject, arg1: jni::jobject, arg2: i32, arg3: i32) -> Switch {
+        let mid: jni::jmethodID = env.method(#str_ptr("android/widget/Switch\0"), #str_ptr("<init>\0"), #str_ptr("(Landroid/content/Context;Landroid/util/AttributeSet;II)V\0"));
+        var args: [jni::JValue; 4] = [jni::arg_object(arg0), jni::arg_object(arg1), jni::arg_int(arg2), jni::arg_int(arg3)];
+        let cls: jni::jclass = env.class_cached(#str_ptr("android/widget/Switch\0"));
+        let obj: jni::jobject = { (*(*env.raw())).NewObjectA(env.raw(), cls, mid, #addr_of(args[0])) };
+        return Switch { _env: env, _obj: env.retain_local_as_global(obj) };
+    }
+
+    fn on_create_drawable_state(this, arg0: i32) -> jni::jarray {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/Switch\0"), #str_ptr("onCreateDrawableState\0"), #str_ptr("(I)[I\0"));
+        var args: [jni::JValue; 1] = [jni::arg_int(arg0)];
+        let r: jni::jarray = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])) };
+        return r;
+    }
+
+    fn on_draw(this, arg0: jni::jobject) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/Switch\0"), #str_ptr("onDraw\0"), #str_ptr("(Landroid/graphics/Canvas;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn on_layout(this, arg0: bool, arg1: i32, arg2: i32, arg3: i32, arg4: i32) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/Switch\0"), #str_ptr("onLayout\0"), #str_ptr("(ZIIII)V\0"));
+        var args: [jni::JValue; 5] = [rt::arg_bool(arg0), jni::arg_int(arg1), jni::arg_int(arg2), jni::arg_int(arg3), jni::arg_int(arg4)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn on_measure(this, arg0: i32, arg1: i32) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/Switch\0"), #str_ptr("onMeasure\0"), #str_ptr("(II)V\0"));
+        var args: [jni::JValue; 2] = [jni::arg_int(arg0), jni::arg_int(arg1)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn on_touch_event(this, arg0: jni::jobject) -> bool {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/Switch\0"), #str_ptr("onTouchEvent\0"), #str_ptr("(Landroid/view/MotionEvent;)Z\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        let r: jni::jboolean = { (*(*this._env.raw())).CallBooleanMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])) };
+        return r as i8 != 0;
+    }
+
+    fn set_checked(this, arg0: bool) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/Switch\0"), #str_ptr("setChecked\0"), #str_ptr("(Z)V\0"));
+        var args: [jni::JValue; 1] = [rt::arg_bool(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_show_text(this, arg0: bool) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/Switch\0"), #str_ptr("setShowText\0"), #str_ptr("(Z)V\0"));
+        var args: [jni::JValue; 1] = [rt::arg_bool(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_split_track(this, arg0: bool) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/Switch\0"), #str_ptr("setSplitTrack\0"), #str_ptr("(Z)V\0"));
+        var args: [jni::JValue; 1] = [rt::arg_bool(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_switch_min_width(this, arg0: i32) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/Switch\0"), #str_ptr("setSwitchMinWidth\0"), #str_ptr("(I)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_int(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_switch_padding(this, arg0: i32) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/Switch\0"), #str_ptr("setSwitchPadding\0"), #str_ptr("(I)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_int(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_switch_text_appearance(this, arg0: jni::jobject, arg1: i32) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/Switch\0"), #str_ptr("setSwitchTextAppearance\0"), #str_ptr("(Landroid/content/Context;I)V\0"));
+        var args: [jni::JValue; 2] = [jni::arg_object(arg0), jni::arg_int(arg1)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_switch_typeface_typeface(this, arg0: jni::jobject) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/Switch\0"), #str_ptr("setSwitchTypeface\0"), #str_ptr("(Landroid/graphics/Typeface;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_switch_typeface_typeface_i(this, arg0: jni::jobject, arg1: i32) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/Switch\0"), #str_ptr("setSwitchTypeface\0"), #str_ptr("(Landroid/graphics/Typeface;I)V\0"));
+        var args: [jni::JValue; 2] = [jni::arg_object(arg0), jni::arg_int(arg1)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_text_off(this, arg0: *u8) {
+        let arg0_s: jni::jstring = this._env.new_string_utf(arg0);
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/Switch\0"), #str_ptr("setTextOff\0"), #str_ptr("(Ljava/lang/CharSequence;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0_s)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        this._env.delete_local_ref(arg0_s);
+        return;
+    }
+
+    fn set_text_on(this, arg0: *u8) {
+        let arg0_s: jni::jstring = this._env.new_string_utf(arg0);
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/Switch\0"), #str_ptr("setTextOn\0"), #str_ptr("(Ljava/lang/CharSequence;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0_s)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        this._env.delete_local_ref(arg0_s);
+        return;
+    }
+
+    fn set_thumb_drawable(this, arg0: jni::jobject) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/Switch\0"), #str_ptr("setThumbDrawable\0"), #str_ptr("(Landroid/graphics/drawable/Drawable;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_thumb_icon(this, arg0: jni::jobject) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/Switch\0"), #str_ptr("setThumbIcon\0"), #str_ptr("(Landroid/graphics/drawable/Icon;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_thumb_resource(this, arg0: i32) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/Switch\0"), #str_ptr("setThumbResource\0"), #str_ptr("(I)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_int(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_thumb_text_padding(this, arg0: i32) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/Switch\0"), #str_ptr("setThumbTextPadding\0"), #str_ptr("(I)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_int(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_thumb_tint_blend_mode(this, arg0: jni::jobject) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/Switch\0"), #str_ptr("setThumbTintBlendMode\0"), #str_ptr("(Landroid/graphics/BlendMode;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_thumb_tint_list(this, arg0: jni::jobject) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/Switch\0"), #str_ptr("setThumbTintList\0"), #str_ptr("(Landroid/content/res/ColorStateList;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_thumb_tint_mode(this, arg0: jni::jobject) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/Switch\0"), #str_ptr("setThumbTintMode\0"), #str_ptr("(Landroid/graphics/PorterDuff$Mode;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_track_drawable(this, arg0: jni::jobject) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/Switch\0"), #str_ptr("setTrackDrawable\0"), #str_ptr("(Landroid/graphics/drawable/Drawable;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_track_icon(this, arg0: jni::jobject) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/Switch\0"), #str_ptr("setTrackIcon\0"), #str_ptr("(Landroid/graphics/drawable/Icon;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_track_resource(this, arg0: i32) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/Switch\0"), #str_ptr("setTrackResource\0"), #str_ptr("(I)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_int(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_track_tint_blend_mode(this, arg0: jni::jobject) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/Switch\0"), #str_ptr("setTrackTintBlendMode\0"), #str_ptr("(Landroid/graphics/BlendMode;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_track_tint_list(this, arg0: jni::jobject) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/Switch\0"), #str_ptr("setTrackTintList\0"), #str_ptr("(Landroid/content/res/ColorStateList;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_track_tint_mode(this, arg0: jni::jobject) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/Switch\0"), #str_ptr("setTrackTintMode\0"), #str_ptr("(Landroid/graphics/PorterDuff$Mode;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn toggle(this) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/Switch\0"), #str_ptr("toggle\0"), #str_ptr("()V\0"));
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue); };
+        return;
+    }
+
+    fn verify_drawable(this, arg0: jni::jobject) -> bool {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/Switch\0"), #str_ptr("verifyDrawable\0"), #str_ptr("(Landroid/graphics/drawable/Drawable;)Z\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        let r: jni::jboolean = { (*(*this._env.raw())).CallBooleanMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])) };
+        return r as i8 != 0;
+    }
+
+}
+
+// android.widget.RadioButton
+struct RadioButton {
+    _env: rt::Env,
+    _obj: jni::jobject,
+}
+
+impl RadioButton {
+    fn drop(ref this) {
+        // `into_raw` nulls `_obj`; DeleteGlobalRef does not admit NULL.
+        if this._obj != { 0 as jni::jobject } { this._env.delete_global_ref(this._obj); }
+        return;
+    }
+
+    fn from_global(env: rt::Env, obj: jni::jobject) -> RadioButton { return RadioButton { _env: env, _obj: obj }; }
+
+    fn from_local(env: rt::Env, obj: jni::jobject) -> RadioButton { return RadioButton { _env: env, _obj: env.retain_local_as_global(obj) }; }
+
+    fn as_obj(this) -> jni::jobject { return this._obj; }
+
+    fn into_raw(ref this) -> jni::jobject {
+        let p: jni::jobject = this._obj;
+        this._obj = { 0 as jni::jobject };
+        return p;
+    }
+
+    // javap lists DECLARED members only; the inherited surface is here.
+    //
+    // Takes a FRESH global ref rather than sharing this one. Both
+    // wrappers own what they hold and both drops run, so handing the
+    // same ref over would DeleteGlobalRef it twice.
+    fn as_compound_button(this) -> CompoundButton { return CompoundButton::from_global(this._env, this._env.new_global_ref(this._obj)); }
+
+    fn get_accessibility_class_name(this) -> *u8 {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/RadioButton\0"), #str_ptr("getAccessibilityClassName\0"), #str_ptr("()Ljava/lang/CharSequence;\0"));
+        let r: *u8 = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn new_context(env: rt::Env, arg0: jni::jobject) -> RadioButton {
+        let mid: jni::jmethodID = env.method(#str_ptr("android/widget/RadioButton\0"), #str_ptr("<init>\0"), #str_ptr("(Landroid/content/Context;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        let cls: jni::jclass = env.class_cached(#str_ptr("android/widget/RadioButton\0"));
+        let obj: jni::jobject = { (*(*env.raw())).NewObjectA(env.raw(), cls, mid, #addr_of(args[0])) };
+        return RadioButton { _env: env, _obj: env.retain_local_as_global(obj) };
+    }
+
+    fn new_context_attribute_set(env: rt::Env, arg0: jni::jobject, arg1: jni::jobject) -> RadioButton {
+        let mid: jni::jmethodID = env.method(#str_ptr("android/widget/RadioButton\0"), #str_ptr("<init>\0"), #str_ptr("(Landroid/content/Context;Landroid/util/AttributeSet;)V\0"));
+        var args: [jni::JValue; 2] = [jni::arg_object(arg0), jni::arg_object(arg1)];
+        let cls: jni::jclass = env.class_cached(#str_ptr("android/widget/RadioButton\0"));
+        let obj: jni::jobject = { (*(*env.raw())).NewObjectA(env.raw(), cls, mid, #addr_of(args[0])) };
+        return RadioButton { _env: env, _obj: env.retain_local_as_global(obj) };
+    }
+
+    fn new_context_attribute_set_i(env: rt::Env, arg0: jni::jobject, arg1: jni::jobject, arg2: i32) -> RadioButton {
+        let mid: jni::jmethodID = env.method(#str_ptr("android/widget/RadioButton\0"), #str_ptr("<init>\0"), #str_ptr("(Landroid/content/Context;Landroid/util/AttributeSet;I)V\0"));
+        var args: [jni::JValue; 3] = [jni::arg_object(arg0), jni::arg_object(arg1), jni::arg_int(arg2)];
+        let cls: jni::jclass = env.class_cached(#str_ptr("android/widget/RadioButton\0"));
+        let obj: jni::jobject = { (*(*env.raw())).NewObjectA(env.raw(), cls, mid, #addr_of(args[0])) };
+        return RadioButton { _env: env, _obj: env.retain_local_as_global(obj) };
+    }
+
+    fn new_context_attribute_set_i_i(env: rt::Env, arg0: jni::jobject, arg1: jni::jobject, arg2: i32, arg3: i32) -> RadioButton {
+        let mid: jni::jmethodID = env.method(#str_ptr("android/widget/RadioButton\0"), #str_ptr("<init>\0"), #str_ptr("(Landroid/content/Context;Landroid/util/AttributeSet;II)V\0"));
+        var args: [jni::JValue; 4] = [jni::arg_object(arg0), jni::arg_object(arg1), jni::arg_int(arg2), jni::arg_int(arg3)];
+        let cls: jni::jclass = env.class_cached(#str_ptr("android/widget/RadioButton\0"));
+        let obj: jni::jobject = { (*(*env.raw())).NewObjectA(env.raw(), cls, mid, #addr_of(args[0])) };
+        return RadioButton { _env: env, _obj: env.retain_local_as_global(obj) };
+    }
+
+    fn on_initialize_accessibility_node_info(this, arg0: jni::jobject) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/RadioButton\0"), #str_ptr("onInitializeAccessibilityNodeInfo\0"), #str_ptr("(Landroid/view/accessibility/AccessibilityNodeInfo;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn toggle(this) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/RadioButton\0"), #str_ptr("toggle\0"), #str_ptr("()V\0"));
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue); };
+        return;
+    }
+
+}
+
+// android.widget.AbsSeekBar
+struct AbsSeekBar {
+    _env: rt::Env,
+    _obj: jni::jobject,
+}
+
+impl AbsSeekBar {
+    fn drop(ref this) {
+        // `into_raw` nulls `_obj`; DeleteGlobalRef does not admit NULL.
+        if this._obj != { 0 as jni::jobject } { this._env.delete_global_ref(this._obj); }
+        return;
+    }
+
+    fn from_global(env: rt::Env, obj: jni::jobject) -> AbsSeekBar { return AbsSeekBar { _env: env, _obj: obj }; }
+
+    fn from_local(env: rt::Env, obj: jni::jobject) -> AbsSeekBar { return AbsSeekBar { _env: env, _obj: env.retain_local_as_global(obj) }; }
+
+    fn as_obj(this) -> jni::jobject { return this._obj; }
+
+    fn into_raw(ref this) -> jni::jobject {
+        let p: jni::jobject = this._obj;
+        this._obj = { 0 as jni::jobject };
+        return p;
+    }
+
+    // javap lists DECLARED members only; the inherited surface is here.
+    //
+    // Takes a FRESH global ref rather than sharing this one. Both
+    // wrappers own what they hold and both drops run, so handing the
+    // same ref over would DeleteGlobalRef it twice.
+    fn as_progress_bar(this) -> ProgressBar { return ProgressBar::from_global(this._env, this._env.new_global_ref(this._obj)); }
+
+    fn drawable_hotspot_changed(this, arg0: f32, arg1: f32) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsSeekBar\0"), #str_ptr("drawableHotspotChanged\0"), #str_ptr("(FF)V\0"));
+        var args: [jni::JValue; 2] = [jni::arg_float(arg0), jni::arg_float(arg1)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn drawable_state_changed(this) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsSeekBar\0"), #str_ptr("drawableStateChanged\0"), #str_ptr("()V\0"));
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue); };
+        return;
+    }
+
+    fn get_accessibility_class_name(this) -> *u8 {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsSeekBar\0"), #str_ptr("getAccessibilityClassName\0"), #str_ptr("()Ljava/lang/CharSequence;\0"));
+        let r: *u8 = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_key_progress_increment(this) -> i32 {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsSeekBar\0"), #str_ptr("getKeyProgressIncrement\0"), #str_ptr("()I\0"));
+        let r: i32 = { (*(*this._env.raw())).CallIntMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_split_track(this) -> bool {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsSeekBar\0"), #str_ptr("getSplitTrack\0"), #str_ptr("()Z\0"));
+        let r: jni::jboolean = { (*(*this._env.raw())).CallBooleanMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r as i8 != 0;
+    }
+
+    fn get_thumb(this) -> jni::jobject {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsSeekBar\0"), #str_ptr("getThumb\0"), #str_ptr("()Landroid/graphics/drawable/Drawable;\0"));
+        let r: jni::jobject = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_thumb_offset(this) -> i32 {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsSeekBar\0"), #str_ptr("getThumbOffset\0"), #str_ptr("()I\0"));
+        let r: i32 = { (*(*this._env.raw())).CallIntMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_thumb_tint_blend_mode(this) -> jni::jobject {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsSeekBar\0"), #str_ptr("getThumbTintBlendMode\0"), #str_ptr("()Landroid/graphics/BlendMode;\0"));
+        let r: jni::jobject = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_thumb_tint_list(this) -> jni::jobject {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsSeekBar\0"), #str_ptr("getThumbTintList\0"), #str_ptr("()Landroid/content/res/ColorStateList;\0"));
+        let r: jni::jobject = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_thumb_tint_mode(this) -> jni::jobject {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsSeekBar\0"), #str_ptr("getThumbTintMode\0"), #str_ptr("()Landroid/graphics/PorterDuff$Mode;\0"));
+        let r: jni::jobject = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_tick_mark(this) -> jni::jobject {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsSeekBar\0"), #str_ptr("getTickMark\0"), #str_ptr("()Landroid/graphics/drawable/Drawable;\0"));
+        let r: jni::jobject = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_tick_mark_tint_blend_mode(this) -> jni::jobject {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsSeekBar\0"), #str_ptr("getTickMarkTintBlendMode\0"), #str_ptr("()Landroid/graphics/BlendMode;\0"));
+        let r: jni::jobject = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_tick_mark_tint_list(this) -> jni::jobject {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsSeekBar\0"), #str_ptr("getTickMarkTintList\0"), #str_ptr("()Landroid/content/res/ColorStateList;\0"));
+        let r: jni::jobject = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_tick_mark_tint_mode(this) -> jni::jobject {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsSeekBar\0"), #str_ptr("getTickMarkTintMode\0"), #str_ptr("()Landroid/graphics/PorterDuff$Mode;\0"));
+        let r: jni::jobject = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn jump_drawables_to_current_state(this) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsSeekBar\0"), #str_ptr("jumpDrawablesToCurrentState\0"), #str_ptr("()V\0"));
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue); };
+        return;
+    }
+
+    fn new_context(env: rt::Env, arg0: jni::jobject) -> AbsSeekBar {
+        let mid: jni::jmethodID = env.method(#str_ptr("android/widget/AbsSeekBar\0"), #str_ptr("<init>\0"), #str_ptr("(Landroid/content/Context;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        let cls: jni::jclass = env.class_cached(#str_ptr("android/widget/AbsSeekBar\0"));
+        let obj: jni::jobject = { (*(*env.raw())).NewObjectA(env.raw(), cls, mid, #addr_of(args[0])) };
+        return AbsSeekBar { _env: env, _obj: env.retain_local_as_global(obj) };
+    }
+
+    fn new_context_attribute_set(env: rt::Env, arg0: jni::jobject, arg1: jni::jobject) -> AbsSeekBar {
+        let mid: jni::jmethodID = env.method(#str_ptr("android/widget/AbsSeekBar\0"), #str_ptr("<init>\0"), #str_ptr("(Landroid/content/Context;Landroid/util/AttributeSet;)V\0"));
+        var args: [jni::JValue; 2] = [jni::arg_object(arg0), jni::arg_object(arg1)];
+        let cls: jni::jclass = env.class_cached(#str_ptr("android/widget/AbsSeekBar\0"));
+        let obj: jni::jobject = { (*(*env.raw())).NewObjectA(env.raw(), cls, mid, #addr_of(args[0])) };
+        return AbsSeekBar { _env: env, _obj: env.retain_local_as_global(obj) };
+    }
+
+    fn new_context_attribute_set_i(env: rt::Env, arg0: jni::jobject, arg1: jni::jobject, arg2: i32) -> AbsSeekBar {
+        let mid: jni::jmethodID = env.method(#str_ptr("android/widget/AbsSeekBar\0"), #str_ptr("<init>\0"), #str_ptr("(Landroid/content/Context;Landroid/util/AttributeSet;I)V\0"));
+        var args: [jni::JValue; 3] = [jni::arg_object(arg0), jni::arg_object(arg1), jni::arg_int(arg2)];
+        let cls: jni::jclass = env.class_cached(#str_ptr("android/widget/AbsSeekBar\0"));
+        let obj: jni::jobject = { (*(*env.raw())).NewObjectA(env.raw(), cls, mid, #addr_of(args[0])) };
+        return AbsSeekBar { _env: env, _obj: env.retain_local_as_global(obj) };
+    }
+
+    fn new_context_attribute_set_i_i(env: rt::Env, arg0: jni::jobject, arg1: jni::jobject, arg2: i32, arg3: i32) -> AbsSeekBar {
+        let mid: jni::jmethodID = env.method(#str_ptr("android/widget/AbsSeekBar\0"), #str_ptr("<init>\0"), #str_ptr("(Landroid/content/Context;Landroid/util/AttributeSet;II)V\0"));
+        var args: [jni::JValue; 4] = [jni::arg_object(arg0), jni::arg_object(arg1), jni::arg_int(arg2), jni::arg_int(arg3)];
+        let cls: jni::jclass = env.class_cached(#str_ptr("android/widget/AbsSeekBar\0"));
+        let obj: jni::jobject = { (*(*env.raw())).NewObjectA(env.raw(), cls, mid, #addr_of(args[0])) };
+        return AbsSeekBar { _env: env, _obj: env.retain_local_as_global(obj) };
+    }
+
+    fn on_draw(this, arg0: jni::jobject) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsSeekBar\0"), #str_ptr("onDraw\0"), #str_ptr("(Landroid/graphics/Canvas;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn on_key_down(this, arg0: i32, arg1: jni::jobject) -> bool {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsSeekBar\0"), #str_ptr("onKeyDown\0"), #str_ptr("(ILandroid/view/KeyEvent;)Z\0"));
+        var args: [jni::JValue; 2] = [jni::arg_int(arg0), jni::arg_object(arg1)];
+        let r: jni::jboolean = { (*(*this._env.raw())).CallBooleanMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])) };
+        return r as i8 != 0;
+    }
+
+    fn on_measure(this, arg0: i32, arg1: i32) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsSeekBar\0"), #str_ptr("onMeasure\0"), #str_ptr("(II)V\0"));
+        var args: [jni::JValue; 2] = [jni::arg_int(arg0), jni::arg_int(arg1)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn on_rtl_properties_changed(this, arg0: i32) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsSeekBar\0"), #str_ptr("onRtlPropertiesChanged\0"), #str_ptr("(I)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_int(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn on_size_changed(this, arg0: i32, arg1: i32, arg2: i32, arg3: i32) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsSeekBar\0"), #str_ptr("onSizeChanged\0"), #str_ptr("(IIII)V\0"));
+        var args: [jni::JValue; 4] = [jni::arg_int(arg0), jni::arg_int(arg1), jni::arg_int(arg2), jni::arg_int(arg3)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn on_touch_event(this, arg0: jni::jobject) -> bool {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsSeekBar\0"), #str_ptr("onTouchEvent\0"), #str_ptr("(Landroid/view/MotionEvent;)Z\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        let r: jni::jboolean = { (*(*this._env.raw())).CallBooleanMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])) };
+        return r as i8 != 0;
+    }
+
+    fn set_key_progress_increment(this, arg0: i32) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsSeekBar\0"), #str_ptr("setKeyProgressIncrement\0"), #str_ptr("(I)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_int(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_max(this, arg0: i32) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsSeekBar\0"), #str_ptr("setMax\0"), #str_ptr("(I)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_int(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_min(this, arg0: i32) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsSeekBar\0"), #str_ptr("setMin\0"), #str_ptr("(I)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_int(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_split_track(this, arg0: bool) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsSeekBar\0"), #str_ptr("setSplitTrack\0"), #str_ptr("(Z)V\0"));
+        var args: [jni::JValue; 1] = [rt::arg_bool(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_system_gesture_exclusion_rects(this, arg0: jni::jobject) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsSeekBar\0"), #str_ptr("setSystemGestureExclusionRects\0"), #str_ptr("(Ljava/util/List;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_thumb(this, arg0: jni::jobject) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsSeekBar\0"), #str_ptr("setThumb\0"), #str_ptr("(Landroid/graphics/drawable/Drawable;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_thumb_offset(this, arg0: i32) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsSeekBar\0"), #str_ptr("setThumbOffset\0"), #str_ptr("(I)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_int(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_thumb_tint_blend_mode(this, arg0: jni::jobject) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsSeekBar\0"), #str_ptr("setThumbTintBlendMode\0"), #str_ptr("(Landroid/graphics/BlendMode;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_thumb_tint_list(this, arg0: jni::jobject) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsSeekBar\0"), #str_ptr("setThumbTintList\0"), #str_ptr("(Landroid/content/res/ColorStateList;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_thumb_tint_mode(this, arg0: jni::jobject) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsSeekBar\0"), #str_ptr("setThumbTintMode\0"), #str_ptr("(Landroid/graphics/PorterDuff$Mode;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_tick_mark(this, arg0: jni::jobject) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsSeekBar\0"), #str_ptr("setTickMark\0"), #str_ptr("(Landroid/graphics/drawable/Drawable;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_tick_mark_tint_blend_mode(this, arg0: jni::jobject) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsSeekBar\0"), #str_ptr("setTickMarkTintBlendMode\0"), #str_ptr("(Landroid/graphics/BlendMode;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_tick_mark_tint_list(this, arg0: jni::jobject) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsSeekBar\0"), #str_ptr("setTickMarkTintList\0"), #str_ptr("(Landroid/content/res/ColorStateList;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_tick_mark_tint_mode(this, arg0: jni::jobject) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsSeekBar\0"), #str_ptr("setTickMarkTintMode\0"), #str_ptr("(Landroid/graphics/PorterDuff$Mode;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn verify_drawable(this, arg0: jni::jobject) -> bool {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsSeekBar\0"), #str_ptr("verifyDrawable\0"), #str_ptr("(Landroid/graphics/drawable/Drawable;)Z\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        let r: jni::jboolean = { (*(*this._env.raw())).CallBooleanMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])) };
+        return r as i8 != 0;
+    }
+
+}
+
+// android.widget.SeekBar
+struct SeekBar {
+    _env: rt::Env,
+    _obj: jni::jobject,
+}
+
+impl SeekBar {
+    fn drop(ref this) {
+        // `into_raw` nulls `_obj`; DeleteGlobalRef does not admit NULL.
+        if this._obj != { 0 as jni::jobject } { this._env.delete_global_ref(this._obj); }
+        return;
+    }
+
+    fn from_global(env: rt::Env, obj: jni::jobject) -> SeekBar { return SeekBar { _env: env, _obj: obj }; }
+
+    fn from_local(env: rt::Env, obj: jni::jobject) -> SeekBar { return SeekBar { _env: env, _obj: env.retain_local_as_global(obj) }; }
+
+    fn as_obj(this) -> jni::jobject { return this._obj; }
+
+    fn into_raw(ref this) -> jni::jobject {
+        let p: jni::jobject = this._obj;
+        this._obj = { 0 as jni::jobject };
+        return p;
+    }
+
+    // javap lists DECLARED members only; the inherited surface is here.
+    //
+    // Takes a FRESH global ref rather than sharing this one. Both
+    // wrappers own what they hold and both drops run, so handing the
+    // same ref over would DeleteGlobalRef it twice.
+    fn as_abs_seek_bar(this) -> AbsSeekBar { return AbsSeekBar::from_global(this._env, this._env.new_global_ref(this._obj)); }
+
+    fn get_accessibility_class_name(this) -> *u8 {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/SeekBar\0"), #str_ptr("getAccessibilityClassName\0"), #str_ptr("()Ljava/lang/CharSequence;\0"));
+        let r: *u8 = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn new_context(env: rt::Env, arg0: jni::jobject) -> SeekBar {
+        let mid: jni::jmethodID = env.method(#str_ptr("android/widget/SeekBar\0"), #str_ptr("<init>\0"), #str_ptr("(Landroid/content/Context;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        let cls: jni::jclass = env.class_cached(#str_ptr("android/widget/SeekBar\0"));
+        let obj: jni::jobject = { (*(*env.raw())).NewObjectA(env.raw(), cls, mid, #addr_of(args[0])) };
+        return SeekBar { _env: env, _obj: env.retain_local_as_global(obj) };
+    }
+
+    fn new_context_attribute_set(env: rt::Env, arg0: jni::jobject, arg1: jni::jobject) -> SeekBar {
+        let mid: jni::jmethodID = env.method(#str_ptr("android/widget/SeekBar\0"), #str_ptr("<init>\0"), #str_ptr("(Landroid/content/Context;Landroid/util/AttributeSet;)V\0"));
+        var args: [jni::JValue; 2] = [jni::arg_object(arg0), jni::arg_object(arg1)];
+        let cls: jni::jclass = env.class_cached(#str_ptr("android/widget/SeekBar\0"));
+        let obj: jni::jobject = { (*(*env.raw())).NewObjectA(env.raw(), cls, mid, #addr_of(args[0])) };
+        return SeekBar { _env: env, _obj: env.retain_local_as_global(obj) };
+    }
+
+    fn new_context_attribute_set_i(env: rt::Env, arg0: jni::jobject, arg1: jni::jobject, arg2: i32) -> SeekBar {
+        let mid: jni::jmethodID = env.method(#str_ptr("android/widget/SeekBar\0"), #str_ptr("<init>\0"), #str_ptr("(Landroid/content/Context;Landroid/util/AttributeSet;I)V\0"));
+        var args: [jni::JValue; 3] = [jni::arg_object(arg0), jni::arg_object(arg1), jni::arg_int(arg2)];
+        let cls: jni::jclass = env.class_cached(#str_ptr("android/widget/SeekBar\0"));
+        let obj: jni::jobject = { (*(*env.raw())).NewObjectA(env.raw(), cls, mid, #addr_of(args[0])) };
+        return SeekBar { _env: env, _obj: env.retain_local_as_global(obj) };
+    }
+
+    fn new_context_attribute_set_i_i(env: rt::Env, arg0: jni::jobject, arg1: jni::jobject, arg2: i32, arg3: i32) -> SeekBar {
+        let mid: jni::jmethodID = env.method(#str_ptr("android/widget/SeekBar\0"), #str_ptr("<init>\0"), #str_ptr("(Landroid/content/Context;Landroid/util/AttributeSet;II)V\0"));
+        var args: [jni::JValue; 4] = [jni::arg_object(arg0), jni::arg_object(arg1), jni::arg_int(arg2), jni::arg_int(arg3)];
+        let cls: jni::jclass = env.class_cached(#str_ptr("android/widget/SeekBar\0"));
+        let obj: jni::jobject = { (*(*env.raw())).NewObjectA(env.raw(), cls, mid, #addr_of(args[0])) };
+        return SeekBar { _env: env, _obj: env.retain_local_as_global(obj) };
+    }
+
+    fn set_on_seek_bar_change_listener(this, arg0: jni::jobject) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/SeekBar\0"), #str_ptr("setOnSeekBarChangeListener\0"), #str_ptr("(Landroid/widget/SeekBar$OnSeekBarChangeListener;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+}
+
+// cpc-bindgen --java: 1694 items emitted, 59 SKIPPED.

@@ -110,3 +110,35 @@ fn configure(v: *u8, n: *core::Node, dirty: u64) {
     unwrap_keep(view);
     return;
 }
+
+// ---- C string helpers --------------------------------------------------------
+// `cstr` above writes them; these two read them back. Both exist because the
+// JNI boundary deals in NUL-terminated bytes and facet deals in `str`, which
+// carries its own length.
+
+fn cstr_len(p: *u8) -> usize {
+    var i: usize = 0 as usize;
+    var going: bool = true;
+    while going {
+        let c: *u8 = { ({ #addr(p) } +% i) as *u8 };
+        if { (*c) } == (0 as u8) { going = false; } else { i = i +% (1 as usize); }
+    }
+    return i;
+}
+
+fn same_cstr(a: *u8, b: *u8) -> bool {
+    var i: usize = 0 as usize;
+    var going: bool = true;
+    var same: bool = true;
+    while going {
+        let pa: *u8 = { ({ #addr(a) } +% i) as *u8 };
+        let pb: *u8 = { ({ #addr(b) } +% i) as *u8 };
+        let ca: u8 = { (*pa) };
+        let cb: u8 = { (*pb) };
+        if ca != cb { same = false; going = false; }
+        if going {
+            if ca == (0 as u8) { going = false; } else { i = i +% (1 as usize); }
+        }
+    }
+    return same;
+}

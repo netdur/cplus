@@ -25,6 +25,12 @@ BINDGEN="${BINDGEN:-../../target/release/cpc-bindgen}"
     android.widget.EditText \
     android.widget.ImageView \
     android.widget.ProgressBar \
+    android.widget.CompoundButton \
+    android.widget.CheckBox \
+    android.widget.Switch \
+    android.widget.RadioButton \
+    android.widget.AbsSeekBar \
+    android.widget.SeekBar \
     > src/widgets.cplus
 
 wc -l src/widgets.cplus

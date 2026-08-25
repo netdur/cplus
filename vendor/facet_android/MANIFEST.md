@@ -44,12 +44,19 @@ rather than all of `android.widget`.
 Everything here is a debt, not a decision. Kinds with no body **warn once**
 through liblog (`adb logcat -s facet`) and render an empty container.
 
-- **Every control except `label`, `button`, `box` and the plain container.**
-  `text_field`, `image`, `scroll`, `checkbox`, `radio`, `toggle`, `slider`,
-  `progress`, `spinner`, `stepper`, `popup`, `tabs`, `list`, `collection`,
-  `table`, `tree`, `canvas`, `web`, the pickers, the menu tier. `views.cplus`
-  dispatches on kind; each needs a `create_` / `apply_` pair in
+- **The controls still without a body.** `text_area`, `search_field`, `image`,
+  `scroll`, `stepper`, `popup`, `tabs`, `list`, `collection`, `table`, `tree`,
+  `canvas`, `web`, `span`, `bordered`, `icon_button`, `text_button`,
+  `page_dots`, `carousel`, `refreshable`, the pickers, the menu tier.
+  `views.cplus` dispatches on kind; each needs a `create_` / `apply_` pair in
   `controls.cplus`.
+
+  Built so far: `label`, `button`, `box` and the plain container, plus
+  `checkbox`, `toggle`, `radio`, `slider`, `progress`, `spinner` and
+  `text_field` — each with BOTH halves, the props write and the event read.
+  Half a control is worse than none: it looks finished and reports nothing,
+  which is the shape of the bug facet_uikit carried in its checkbox until
+  2026-08-25.
 - **The gesture band.** `gestures::install_key_reader` and
   `component::install_sender_readers` are not filled, so only a button's
   `on_click` fires. `wants_view` already answers true for a node with gestures,
@@ -62,10 +69,11 @@ through liblog (`adb logcat -s facet`) and render an empty container.
   plan.android.md rung 5.
 - **`theme::set_theme_changed_fn`.** `is_dark` is filled; the repaint-on-flip
   hook is not.
-- **Prop parity is unmeasured.** `tools/parity.py` counts props AND handlers for
-  the other two backends; this one has no numbers yet. The uikit lesson stands —
-  a prop-only count is misleading, because a control can honour every prop bit
-  and still call nothing on tap.
+- **Prop parity, measured.** `vendor/facet_gtk/tools/parity.py` scores every
+  backend: android reads **23/360 props (6%) and 8/68 handlers (11%)**, against
+  gtk 98%/100%, appkit 92%/100%, uikit 89%/95%. Both numbers are quoted because
+  either alone misleads — a control can honour every prop bit and still call
+  nothing on tap, which is exactly what the tool was taught to catch.
 
 ---
 
@@ -91,6 +99,14 @@ statics survive; every jobject does not. `window::attach_root` unmounts, marks
 the whole tree dirty (`core::touch_all` per node) and re-mounts — which is
 facet's `create` == `apply`-with-all-bits rule, and here it is the only thing
 that makes recreation survivable. Verified: a tap count survives a rotation.
+
+### A stretched compound button draws at the far end
+
+A `Switch` in a column looks right-aligned and a `CheckBox` looks left-aligned.
+Neither is a layout bug: flex stretches a column's children across the cross
+axis, so both views are the FULL row width — and Android draws a CheckBox's box
+at the leading edge and a Switch's track at the trailing one, with the (absent)
+label filling the gap. An app that wants either hugged gives it a width.
 
 ### stderr goes nowhere
 

@@ -14,6 +14,13 @@ import "facet/facet" as core;
 import "facet/props" as props;
 import "facet/label" as label;
 import "facet/button" as button;
+import "facet/checkbox" as checkbox;
+import "facet/toggle" as toggle;
+import "facet/radio" as radio;
+import "facet/slider" as slider;
+import "facet/progress" as progress;
+import "facet/spinner" as spinner;
+import "facet/text_field" as text_field;
 import "facet/vocabulary" as vocab;
 import "./env" as e;
 import "./paint" as paint;
@@ -175,3 +182,414 @@ fn create_container(n: *core::Node) -> *u8 {
 }
 
 fn apply_container(v: *u8, n: *core::Node, dirty: u64) { return; }
+
+// ---- the compound buttons: checkbox, toggle, radio ---------------------------
+// CheckBox, Switch and RadioButton are all CompoundButton, so the read half is
+// ONE adapter and one native. They differ only in which props struct holds the
+// `on` bit — which is exactly the seam the uikit backend got wrong: a handler
+// name read for one kind counted for every kind that declares one, and the
+// checkbox was live on screen and dead to facet for it. Each kind below names
+// its own struct.
+//
+// `set_checked` from an apply pass fires the listener too. The C+ side is
+// idempotent — it writes the same value into the props it just read from and
+// calls the handler with a state that did not change — so the guard is to
+// compare before writing, not to mute the listener.
+
+fn arm_checked(env: rt::Env, raw: *u8, n: *core::Node) {
+    let listener: jni::jobject =
+        dex::new_with_token(env, dex::checked_class(), { #addr(n) as i64 });
+    var cb: w::CompoundButton = w::CompoundButton::from_global(env, raw);
+    cb.set_on_checked_change_listener(listener);
+    let _keep: *u8 = cb.into_raw();
+    env.delete_local_ref(listener);
+    return;
+}
+
+fn create_checkbox(n: *core::Node) -> *u8 {
+    let env: rt::Env = e::env();
+    var c: w::CheckBox = w::CheckBox::new_context(env, e::context());
+    let raw: *u8 = c.into_raw();
+    arm_checked(env, raw, n);
+    return raw;
+}
+
+fn apply_checkbox(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *props::CheckboxProps = props_of(n, props::K_CHECKBOX) as *props::CheckboxProps;
+    if p == (0 as *props::CheckboxProps) { return; }
+    let env: rt::Env = e::env();
+    var c: w::CheckBox = w::CheckBox::from_global(env, v);
+    if (dirty & checkbox::P_ON) != (0 as u64) {
+        var cb: w::CompoundButton = c.as_compound_button();
+        if cb.is_checked() != { (*p).on } { cb.set_checked({ (*p).on }); }
+    }
+    if (dirty & checkbox::P_COLOR) != (0 as u64) {
+        let col: vocab::Color = { (*p).color };
+        if col.is_set() {
+            var tv: w::TextView = c.as_compound_button().as_button().as_text_view();
+            tv.set_text_color_i(paint::argb_of(col));
+        }
+    }
+    let _keep: *u8 = c.into_raw();
+    return;
+}
+
+fn create_toggle(n: *core::Node) -> *u8 {
+    let env: rt::Env = e::env();
+    var s: w::Switch = w::Switch::new_context(env, e::context());
+    let raw: *u8 = s.into_raw();
+    arm_checked(env, raw, n);
+    return raw;
+}
+
+fn apply_toggle(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *props::ToggleProps = props_of(n, props::K_TOGGLE) as *props::ToggleProps;
+    if p == (0 as *props::ToggleProps) { return; }
+    let env: rt::Env = e::env();
+    var s: w::Switch = w::Switch::from_global(env, v);
+    if (dirty & toggle::P_ON) != (0 as u64) {
+        var cb: w::CompoundButton = s.as_compound_button();
+        if cb.is_checked() != { (*p).on } { cb.set_checked({ (*p).on }); }
+    }
+    let _keep: *u8 = s.into_raw();
+    return;
+}
+
+fn create_radio(n: *core::Node) -> *u8 {
+    let env: rt::Env = e::env();
+    var r: w::RadioButton = w::RadioButton::new_context(env, e::context());
+    let raw: *u8 = r.into_raw();
+    arm_checked(env, raw, n);
+    return raw;
+}
+
+fn apply_radio(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *props::RadioProps = props_of(n, props::K_RADIO) as *props::RadioProps;
+    if p == (0 as *props::RadioProps) { return; }
+    let env: rt::Env = e::env();
+    var r: w::RadioButton = w::RadioButton::from_global(env, v);
+    if (dirty & radio::P_ON) != (0 as u64) {
+        var cb: w::CompoundButton = r.as_compound_button();
+        if cb.is_checked() != { (*p).on } { cb.set_checked({ (*p).on }); }
+    }
+    if (dirty & radio::P_TEXT) != (0 as u64) {
+        var buf: [u8; 512] = #zero::[[u8; 512]]();
+        let base: *u8 = { #addr_of(buf[0]) };
+        if paint::cstr({ (*p).text.view() }, base, 512 as usize) {
+            var tv: w::TextView = r.as_compound_button().as_button().as_text_view();
+            tv.set_text_str(base);
+        }
+    }
+    if (dirty & radio::P_TEXT_COLOR) != (0 as u64) {
+        let col: vocab::Color = { (*p).text_color };
+        if col.is_set() {
+            var tv: w::TextView = r.as_compound_button().as_button().as_text_view();
+            tv.set_text_color_i(paint::argb_of(col));
+        }
+    }
+    if (dirty & radio::P_FONT_SIZE) != (0 as u64) {
+        let sz: f64 = { (*p).font_size };
+        if sz > 0.0f64 {
+            var tv: w::TextView = r.as_compound_button().as_button().as_text_view();
+            tv.set_text_size_f({ sz as f32 });
+        }
+    }
+    let _keep: *u8 = r.into_raw();
+    return;
+}
+
+// A compound button reported a change. Which props struct holds the bit is the
+// kind's business, so this asks the node rather than assuming.
+fn fire_checked(token: i64, on: bool) {
+    let n: *core::Node = { token as *core::Node };
+    if n == (0 as *core::Node) { return; }
+    let d: *core::Data = core::node_data(n);
+    if d == (0 as *core::Data) { return; }
+    let kind: u32 = { (*d).kind };
+    let raw: *u8 = { (*d).props };
+    if raw == (0 as *u8) { return; }
+
+    if kind == props::K_CHECKBOX {
+        let p: *props::CheckboxProps = raw as *props::CheckboxProps;
+        // WRITTEN BACK FIRST, so a handler asking `checkbox.on()` is told the
+        // state that caused the call and not the one before it.
+        { (*p).on = on };
+        let h: fn(*u8, *u8) = { (*p).on_checked_changed };
+        if h != props::no_handler { h(core::view_of(n), { (*p).on_checked_changed_ctx }); }
+        return;
+    }
+    if kind == props::K_TOGGLE {
+        let p: *props::ToggleProps = raw as *props::ToggleProps;
+        { (*p).on = on };
+        let h: fn(*u8, *u8) = { (*p).on_toggled };
+        if h != props::no_handler { h(core::view_of(n), { (*p).on_toggled_ctx }); }
+        return;
+    }
+    if kind == props::K_RADIO {
+        let p: *props::RadioProps = raw as *props::RadioProps;
+        { (*p).on = on };
+        let h: fn(*u8, *u8) = { (*p).on_checked_changed };
+        if h != props::no_handler { h(core::view_of(n), { (*p).on_checked_changed_ctx }); }
+        return;
+    }
+    return;
+}
+
+// ---- slider ------------------------------------------------------------------
+// A SeekBar counts in whole steps from 0; facet's slider is a f64 range with a
+// minimum that need not be zero. So the range is mapped onto a fixed number of
+// steps and the value converted at the boundary — the alternative, setting
+// `setMin` to facet's minimum, only works when both ends are integers.
+//
+// STEPS is the resolution of a drag, not of the value: a handler still receives
+// the f64 it declared.
+const SLIDER_STEPS: i32 = 1000 as i32;
+
+fn slider_span(p: *props::SliderProps) -> f64 {
+    let lo: f64 = { (*p).minimum };
+    let hi: f64 = { (*p).maximum };
+    if hi <= lo { return 0.0f64; }
+    return hi - lo;
+}
+
+fn create_slider(n: *core::Node) -> *u8 {
+    let env: rt::Env = e::env();
+    var sb: w::SeekBar = w::SeekBar::new_context(env, e::context());
+    let raw: *u8 = sb.into_raw();
+    let listener: jni::jobject =
+        dex::new_with_token(env, dex::seek_class(), { #addr(n) as i64 });
+    var b: w::SeekBar = w::SeekBar::from_global(env, raw);
+    b.set_on_seek_bar_change_listener(listener);
+    let _keep: *u8 = b.into_raw();
+    env.delete_local_ref(listener);
+    return raw;
+}
+
+fn apply_slider(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *props::SliderProps = props_of(n, props::K_SLIDER) as *props::SliderProps;
+    if p == (0 as *props::SliderProps) { return; }
+    let env: rt::Env = e::env();
+    var sb: w::SeekBar = w::SeekBar::from_global(env, v);
+    var pb: w::ProgressBar = sb.as_abs_seek_bar().as_progress_bar();
+
+    // The step count is fixed, so it is written once — but MINIMUM and MAXIMUM
+    // still dirty the value, because the same f64 lands on a different step
+    // when the range moves under it.
+    if (dirty & (slider::P_MINIMUM | slider::P_MAXIMUM | slider::P_VALUE)) != (0 as u64) {
+        pb.set_max(SLIDER_STEPS);
+        let span: f64 = slider_span(p);
+        if span > 0.0f64 {
+            let frac: f64 = ({ (*p).value } - { (*p).minimum }) / span;
+            var step: i32 = { (frac * (SLIDER_STEPS as f64)) as i32 };
+            if step < (0 as i32) { step = 0 as i32; }
+            if step > SLIDER_STEPS { step = SLIDER_STEPS; }
+            pb.set_progress_i(step);
+        }
+    }
+    let _keep: *u8 = sb.into_raw();
+    return;
+}
+
+// The thumb moved. The step comes back; the f64 is this side's business.
+fn fire_progress(token: i64, step: i32) {
+    let n: *core::Node = { token as *core::Node };
+    if n == (0 as *core::Node) { return; }
+    let p: *props::SliderProps = props_of(n, props::K_SLIDER) as *props::SliderProps;
+    if p == (0 as *props::SliderProps) { return; }
+    let span: f64 = slider_span(p);
+    if span > 0.0f64 {
+        { (*p).value = { (*p).minimum } + (({ step as f64 }) / (SLIDER_STEPS as f64)) * span };
+    }
+    let h: fn(*u8, *u8) = { (*p).on_value_changed };
+    if h != props::no_handler { h(core::view_of(n), { (*p).on_value_changed_ctx }); }
+    return;
+}
+
+fn fire_seek_edge(token: i64, started: bool) {
+    let n: *core::Node = { token as *core::Node };
+    if n == (0 as *core::Node) { return; }
+    let p: *props::SliderProps = props_of(n, props::K_SLIDER) as *props::SliderProps;
+    if p == (0 as *props::SliderProps) { return; }
+    if started {
+        let h: fn(*u8, *u8) = { (*p).on_drag_started };
+        if h != props::no_handler { h(core::view_of(n), { (*p).on_drag_started_ctx }); }
+        return;
+    }
+    let h: fn(*u8, *u8) = { (*p).on_drag_completed };
+    if h != props::no_handler { h(core::view_of(n), { (*p).on_drag_completed_ctx }); }
+    return;
+}
+
+// ---- progress and spinner ----------------------------------------------------
+// ONE Android widget, two facet kinds. A ProgressBar is determinate or not, and
+// which it is decides everything else — so `progress` creates it horizontal and
+// determinate, `spinner` creates it indeterminate and never touches a value.
+//
+// The style is a CONSTRUCTOR argument on Android (there is no setter that turns
+// a spinner into a bar), so the two cannot share a create.
+
+fn create_progress(n: *core::Node) -> *u8 {
+    let env: rt::Env = e::env();
+    // style="?android:attr/progressBarStyleHorizontal" — the platform's own id,
+    // asked for rather than hard-coded, which is the same posture rung 0 took
+    // with MeasureSpec.
+    let attrs: jni::jclass = env.class_cached(#str_ptr("android/R$attr\0"));
+    let fid: jni::jfieldID = env.static_field_id(
+        attrs, #str_ptr("progressBarStyleHorizontal\0"), #str_ptr("I\0"));
+    let style: i32 = { (*(*env.raw())).GetStaticIntField(env.raw(), attrs, fid) };
+    var pb: w::ProgressBar = w::ProgressBar::new_context_attribute_set_i(
+        env, e::context(), 0 as jni::jobject, style);
+    let raw: *u8 = pb.into_raw();
+    var b: w::ProgressBar = w::ProgressBar::from_global(env, raw);
+    b.set_indeterminate(false);
+    b.set_max(PROGRESS_STEPS);
+    let _keep: *u8 = b.into_raw();
+    return raw;
+}
+
+const PROGRESS_STEPS: i32 = 1000 as i32;
+
+fn apply_progress(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *props::ProgressProps = props_of(n, props::K_PROGRESS) as *props::ProgressProps;
+    if p == (0 as *props::ProgressProps) { return; }
+    let env: rt::Env = e::env();
+    var pb: w::ProgressBar = w::ProgressBar::from_global(env, v);
+    if (dirty & progress::P_PROGRESS) != (0 as u64) {
+        var step: i32 = { ({ (*p).progress } * (PROGRESS_STEPS as f64)) as i32 };
+        if step < (0 as i32) { step = 0 as i32; }
+        if step > PROGRESS_STEPS { step = PROGRESS_STEPS; }
+        pb.set_progress_i(step);
+    }
+    let _keep: *u8 = pb.into_raw();
+    return;
+}
+
+fn create_spinner(n: *core::Node) -> *u8 {
+    let env: rt::Env = e::env();
+    var pb: w::ProgressBar = w::ProgressBar::new_context(env, e::context());
+    let raw: *u8 = pb.into_raw();
+    var b: w::ProgressBar = w::ProgressBar::from_global(env, raw);
+    b.set_indeterminate(true);
+    let _keep: *u8 = b.into_raw();
+    return raw;
+}
+
+fn apply_spinner(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *props::SpinnerProps = props_of(n, props::K_SPINNER) as *props::SpinnerProps;
+    if p == (0 as *props::SpinnerProps) { return; }
+    let env: rt::Env = e::env();
+    var pb: w::ProgressBar = w::ProgressBar::from_global(env, v);
+    if (dirty & spinner::P_IS_RUNNING) != (0 as u64) {
+        // Android has no stop/start — a spinner that is not running is hidden.
+        // GONE (8), not INVISIBLE: facet lays this tree out itself and a hidden
+        // spinner should take no space.
+        var view: w::View = pb.as_view();
+        if { (*p).is_running } { view.set_visibility(0 as i32); }
+        if !{ (*p).is_running } { view.set_visibility(8 as i32); }
+    }
+    let _keep: *u8 = pb.into_raw();
+    return;
+}
+
+// ---- text field --------------------------------------------------------------
+
+fn create_text_field(n: *core::Node) -> *u8 {
+    let env: rt::Env = e::env();
+    var et: w::EditText = w::EditText::new_context(env, e::context());
+    let raw: *u8 = et.into_raw();
+    let watcher: jni::jobject =
+        dex::new_with_token(env, dex::text_class(), { #addr(n) as i64 });
+    var t: w::EditText = w::EditText::from_global(env, raw);
+    var tv: w::TextView = t.as_text_view();
+    tv.add_text_changed_listener(watcher);
+    let _keep: *u8 = t.into_raw();
+    // The watcher is kept alive by the TextView's own list; the local ref is
+    // not what holds it.
+    env.delete_local_ref(watcher);
+    return raw;
+}
+
+fn apply_text_field(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *props::TextFieldProps = props_of(n, props::K_TEXT_FIELD) as *props::TextFieldProps;
+    if p == (0 as *props::TextFieldProps) { return; }
+    let env: rt::Env = e::env();
+    var et: w::EditText = w::EditText::from_global(env, v);
+    var tv: w::TextView = et.as_text_view();
+
+    if (dirty & text_field::P_TEXT) != (0 as u64) {
+        var buf: [u8; 1024] = #zero::[[u8; 1024]]();
+        let base: *u8 = { #addr_of(buf[0]) };
+        if paint::cstr({ (*p).input_view.text.view() }, base, 1024 as usize) {
+            // ONLY WHEN IT DIFFERS. `setText` moves the caret to the end, so
+            // writing the value the field already holds would fight the person
+            // typing — the application's own echo of a keystroke arrives here
+            // one tick later and would jump the caret on every character.
+            var have: [u8; 1024] = #zero::[[u8; 1024]]();
+            let hbase: *u8 = { #addr_of(have[0]) };
+            read_field_text(env, v, hbase, 1024 as usize);
+            if !paint::same_cstr(base, hbase) { tv.set_text_str(base); }
+        }
+    }
+    if (dirty & text_field::P_PLACEHOLDER) != (0 as u64) {
+        var buf: [u8; 512] = #zero::[[u8; 512]]();
+        let base: *u8 = { #addr_of(buf[0]) };
+        if paint::cstr({ (*p).input_view.placeholder.view() }, base, 512 as usize) {
+            let hint: jni::jstring = env.new_string_utf(base);
+            env.call_void_1(v, #str_ptr("android/widget/TextView\0"),
+                            #str_ptr("setHint\0"),
+                            #str_ptr("(Ljava/lang/CharSequence;)V\0"),
+                            rt::arg_object(hint));
+            env.delete_local_ref(hint);
+        }
+    }
+    if (dirty & text_field::P_TEXT_COLOR) != (0 as u64) {
+        let c: vocab::Color = { (*p).input_view.text_color };
+        if c.is_set() { tv.set_text_color_i(paint::argb_of(c)); }
+    }
+    if (dirty & text_field::P_FONT_SIZE) != (0 as u64) {
+        let s: f64 = { (*p).input_view.font_size };
+        if s > 0.0f64 { tv.set_text_size_f({ s as f32 }); }
+    }
+    if (dirty & text_field::P_IS_SECURE) != (0 as u64) {
+        // TYPE_CLASS_TEXT | TYPE_TEXT_VARIATION_PASSWORD = 0x81, and plain text
+        // is TYPE_CLASS_TEXT. Constants rather than a platform read: these are
+        // in InputType, which is not in the bound class list.
+        var kind: i32 = 1 as i32;
+        if { (*p).is_secure } { kind = 129 as i32; }
+        tv.set_input_type(kind);
+    }
+    let _keep: *u8 = et.into_raw();
+    return;
+}
+
+fn read_field_text(env: rt::Env, v: *u8, buf: *u8, cap: usize) {
+    let cs: jni::jobject = env.call_object_0(
+        v, #str_ptr("android/widget/TextView\0"), #str_ptr("getText\0"),
+        #str_ptr("()Ljava/lang/CharSequence;\0"));
+    if cs == (0 as jni::jobject) { { (*buf) = 0 as u8 }; return; }
+    let s: jni::jobject = env.call_object_0(
+        cs, #str_ptr("java/lang/Object\0"), #str_ptr("toString\0"),
+        #str_ptr("()Ljava/lang/String;\0"));
+    let _ok: bool = env.string_utf_into(s, buf, cap);
+    env.delete_local_ref(s);
+    env.delete_local_ref(cs);
+    return;
+}
+
+// A keystroke arrived, with the whole text beside it.
+fn fire_text(token: i64, s: jni::jstring) {
+    let n: *core::Node = { token as *core::Node };
+    if n == (0 as *core::Node) { return; }
+    let p: *props::TextFieldProps = props_of(n, props::K_TEXT_FIELD) as *props::TextFieldProps;
+    if p == (0 as *props::TextFieldProps) { return; }
+    var buf: [u8; 1024] = #zero::[[u8; 1024]]();
+    let base: *u8 = { #addr_of(buf[0]) };
+    if !e::env().string_utf_into(s, base, 1024 as usize) { return; }
+    // WRITTEN BACK FIRST, so a handler asking `field.text()` is told what was
+    // typed rather than what was there before it.
+    let n_bytes: usize = paint::cstr_len(base);
+    { (*p).input_view.text = text::from_str({ #str_from_raw_parts(base, n_bytes) }) };
+    let h: fn(*u8, *u8) = { (*p).input_view.on_text_changed };
+    if h != props::no_handler { h(core::view_of(n), { (*p).input_view.on_text_changed_ctx }); }
+    return;
+}

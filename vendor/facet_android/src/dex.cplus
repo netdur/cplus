@@ -1,8 +1,10 @@
 // The package's own Java side, shipped as a precompiled DEX.
 //
 // Java interfaces and ViewGroup subclasses cannot be written from native code,
-// so four small classes have to exist on the JVM side: the do-nothing-layout
-// host, the Choreographer tick, the click adapter and the delayed-post adapter.
+// so a handful of small classes have to exist on the JVM side: the
+// do-nothing-layout host, the Choreographer tick, the delayed-post adapter, and
+// one listener adapter per event shape a control reports — click, checked
+// change, seek, text.
 // They ship INSIDE this package (tools/build_dex.sh regenerates
 // facet_android.dex; consumers never run it), are embedded here with
 // `#include_bytes`, and are loaded at runtime with `InMemoryDexClassLoader`.
@@ -19,13 +21,16 @@ import "jni/jni" as jni;
 import "android_view/runtime" as rt;
 
 // Kept in step by tools/build_dex.sh; do not hand-edit.
-const DEX_LEN: usize = 2164;
+const DEX_LEN: usize = 3920;
 
 static LOADER: usize = 0;
 static C_HOST: usize = 0;
 static C_TICK: usize = 0;
 static C_CLICK: usize = 0;
 static C_POST: usize = 0;
+static C_CHECKED: usize = 0;
+static C_SEEK: usize = 0;
+static C_TEXT: usize = 0;
 
 // jni.h's JNINativeMethod with the fn slot concretely typed per shape.
 #[repr(C)]
@@ -43,6 +48,29 @@ struct Native1L {
 }
 
 #[repr(C)]
+struct Native2LZ {
+    opaque name: *u8,
+    opaque signature: *u8,
+    // JNI's jboolean is an unsigned byte, not C+'s bool — the JVM passes 0 or 1
+    // in a byte-wide slot and a wider `bool` would read the neighbouring bytes.
+    fn_ptr: fn(*jni::JNIEnv, jni::jobject, i64, u8),
+}
+
+#[repr(C)]
+struct Native2LI {
+    opaque name: *u8,
+    opaque signature: *u8,
+    fn_ptr: fn(*jni::JNIEnv, jni::jobject, i64, i32),
+}
+
+#[repr(C)]
+struct Native2LO {
+    opaque name: *u8,
+    opaque signature: *u8,
+    fn_ptr: fn(*jni::JNIEnv, jni::jobject, i64, jni::jobject),
+}
+
+#[repr(C)]
 struct Native2I {
     opaque name: *u8,
     opaque signature: *u8,
@@ -53,11 +81,19 @@ extern fn facet_android_tick(envp: *jni::JNIEnv, cls: jni::jobject);
 extern fn facet_android_click(envp: *jni::JNIEnv, cls: jni::jobject, token: i64);
 extern fn facet_android_after(envp: *jni::JNIEnv, cls: jni::jobject, token: i64);
 extern fn facet_android_size_changed(envp: *jni::JNIEnv, cls: jni::jobject, w: i32, h: i32);
+extern fn facet_android_checked(envp: *jni::JNIEnv, cls: jni::jobject, token: i64, on: u8);
+extern fn facet_android_progress(envp: *jni::JNIEnv, cls: jni::jobject, token: i64, p: i32);
+extern fn facet_android_seek_start(envp: *jni::JNIEnv, cls: jni::jobject, token: i64);
+extern fn facet_android_seek_stop(envp: *jni::JNIEnv, cls: jni::jobject, token: i64);
+extern fn facet_android_text(envp: *jni::JNIEnv, cls: jni::jobject, token: i64, s: jni::jobject);
 
 fn host_class() -> jni::jclass { return { C_HOST as *u8 }; }
 fn tick_class() -> jni::jclass { return { C_TICK as *u8 }; }
 fn click_class() -> jni::jclass { return { C_CLICK as *u8 }; }
 fn post_class() -> jni::jclass { return { C_POST as *u8 }; }
+fn checked_class() -> jni::jclass { return { C_CHECKED as *u8 }; }
+fn seek_class() -> jni::jclass { return { C_SEEK as *u8 }; }
+fn text_class() -> jni::jclass { return { C_TEXT as *u8 }; }
 fn loaded() -> bool { return LOADER != 0; }
 
 // Load the dex and bind every native. Idempotent; `any_view` is only needed to
@@ -65,7 +101,7 @@ fn loaded() -> bool { return LOADER != 0; }
 // must be parented to it or the app's own classes become invisible to it.
 fn ensure_loaded(env: rt::Env, any_view: jni::jobject) {
     if LOADER != 0 { return; }
-    let dex: *[u8; 2164] = #include_bytes("../facet_android.dex");
+    let dex: *[u8; 3920] = #include_bytes("../facet_android.dex");
     let buffer: jni::jobject = {
         (*(*env.raw())).NewDirectByteBuffer(env.raw(), { dex as *u8 }, DEX_LEN as i64)
     };
@@ -89,6 +125,9 @@ fn ensure_loaded(env: rt::Env, any_view: jni::jobject) {
     C_TICK = { #addr(load_class(env, loader, #str_ptr("cplus.facet.FacetTick\0"))) };
     C_CLICK = { #addr(load_class(env, loader, #str_ptr("cplus.facet.FacetClick\0"))) };
     C_POST = { #addr(load_class(env, loader, #str_ptr("cplus.facet.FacetPost\0"))) };
+    C_CHECKED = { #addr(load_class(env, loader, #str_ptr("cplus.facet.FacetChecked\0"))) };
+    C_SEEK = { #addr(load_class(env, loader, #str_ptr("cplus.facet.FacetSeek\0"))) };
+    C_TEXT = { #addr(load_class(env, loader, #str_ptr("cplus.facet.FacetText\0"))) };
 
     var tick_rec: Native0 = Native0 {
         name: #str_ptr("nativeTick\0"),
@@ -118,6 +157,46 @@ fn ensure_loaded(env: rt::Env, any_view: jni::jobject) {
     };
     let _r3: i32 = { (*(*env.raw())).RegisterNatives(env.raw(), { C_HOST as *u8 },
                                                      #addr_of(size_rec) as *u8, 1) };
+
+    var checked_rec: Native2LZ = Native2LZ {
+        name: #str_ptr("nativeChecked\0"),
+        signature: #str_ptr("(JZ)V\0"),
+        fn_ptr: facet_android_checked,
+    };
+    let _r4: i32 = { (*(*env.raw())).RegisterNatives(env.raw(), { C_CHECKED as *u8 },
+                                                     #addr_of(checked_rec) as *u8, 1) };
+    // THREE IN ONE CALL, because RegisterNatives takes an ARRAY and a slider
+    // reports three things. Registering them one at a time would work as well;
+    // the array is what jni.h's shape is for, and it keeps the three names that
+    // must match FacetSeek.java side by side.
+    var seek_recs: [Native2LI; 1] = [Native2LI {
+        name: #str_ptr("nativeProgress\0"),
+        signature: #str_ptr("(JI)V\0"),
+        fn_ptr: facet_android_progress,
+    }];
+    let _r5: i32 = { (*(*env.raw())).RegisterNatives(env.raw(), { C_SEEK as *u8 },
+                                                     #addr_of(seek_recs[0]) as *u8, 1) };
+    var track_recs: [Native1L; 2] = [
+        Native1L {
+            name: #str_ptr("nativeSeekStart\0"),
+            signature: #str_ptr("(J)V\0"),
+            fn_ptr: facet_android_seek_start,
+        },
+        Native1L {
+            name: #str_ptr("nativeSeekStop\0"),
+            signature: #str_ptr("(J)V\0"),
+            fn_ptr: facet_android_seek_stop,
+        },
+    ];
+    let _r6: i32 = { (*(*env.raw())).RegisterNatives(env.raw(), { C_SEEK as *u8 },
+                                                     #addr_of(track_recs[0]) as *u8, 2) };
+    var text_rec: Native2LO = Native2LO {
+        name: #str_ptr("nativeText\0"),
+        signature: #str_ptr("(JLjava/lang/String;)V\0"),
+        fn_ptr: facet_android_text,
+    };
+    let _r7: i32 = { (*(*env.raw())).RegisterNatives(env.raw(), { C_TEXT as *u8 },
+                                                     #addr_of(text_rec) as *u8, 1) };
 
     env.delete_local_ref(loader);
     env.delete_local_ref(imdcl);
