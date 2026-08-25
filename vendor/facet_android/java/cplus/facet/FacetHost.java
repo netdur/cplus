@@ -15,21 +15,55 @@ public final class FacetHost extends android.view.ViewGroup {
         setClipChildren(false);
     }
 
+    // The size facet last gave this host, remembered for the ONE case where
+    // Android asks rather than tells: a ScrollView measures its child with an
+    // UNSPECIFIED height so the child can be taller than the viewport, and
+    // `MeasureSpec.getSize` of an UNSPECIFIED spec is ZERO. A document that
+    // measures zero gives the ScrollView a scroll range of zero, so the page
+    // renders in full and does not move — which looks exactly like a scroll
+    // that works on content that happens to fit.
+    private int wantW, wantH;
+
+    public void setWanted(int w, int h) { wantW = w; wantH = h; }
+
     @Override protected void onMeasure(int wSpec, int hSpec) {
-        setMeasuredDimension(
-            android.view.View.MeasureSpec.getSize(wSpec),
-            android.view.View.MeasureSpec.getSize(hSpec));
+        setMeasuredDimension(resolve(wSpec, wantW), resolve(hSpec, wantH));
+    }
+
+    // EXACTLY still wins: when Android pins a size, that is the size. The
+    // remembered one only fills in what a loose spec leaves open.
+    private static int resolve(int spec, int want) {
+        int mode = android.view.View.MeasureSpec.getMode(spec);
+        int size = android.view.View.MeasureSpec.getSize(spec);
+        if (mode == android.view.View.MeasureSpec.EXACTLY) return size;
+        if (want <= 0) return size;
+        if (mode == android.view.View.MeasureSpec.AT_MOST) return Math.min(want, size);
+        return want;
     }
 
     @Override protected void onLayout(boolean changed, int l, int t, int r, int b) {
         // Deliberately empty. See above.
     }
 
+    // ONLY THE ROOT REPORTS. Every box, and every scroll document, is a
+    // FacetHost too — and each of them is resized by facet's own layout pass.
+    // A host that reported its own size would hand that back as THE WINDOW
+    // SIZE and the next pass would lay the tree out against it: a document
+    // sized to its 2979px content told facet the window was 2979 tall, so the
+    // scroll's viewport became as tall as its content and there was nothing
+    // left to scroll.
+    //
+    // Latent for as long as the root was the only host in the tree, which it
+    // was until a `box` or a `scroll` appeared.
+    private boolean reportsSize;
+
+    public void setReportsSize(boolean r) { reportsSize = r; }
+
     // The window changed size (rotation, split screen, IME). facet has to
     // re-run layout, and only the host knows when.
     @Override protected void onSizeChanged(int w, int h, int ow, int oh) {
         super.onSizeChanged(w, h, ow, oh);
-        nativeSizeChanged(w, h);
+        if (reportsSize) nativeSizeChanged(w, h);
     }
 
     private static native void nativeSizeChanged(int w, int h);

@@ -21,10 +21,18 @@ import "facet/slider" as slider;
 import "facet/progress" as progress;
 import "facet/spinner" as spinner;
 import "facet/text_field" as text_field;
+import "facet/text_area" as text_area;
+import "facet/search_field" as search_field;
+import "facet/text_button" as text_button;
+import "facet/image" as image;
+import "facet/icon_button" as icon_button;
+import "facet/scroll" as scroll;
+import "facet/stepper" as stepper;
 import "facet/vocabulary" as vocab;
 import "./env" as e;
 import "./paint" as paint;
 import "./dex" as dex;
+import "./log" as log;
 
 fn props_of(n: *core::Node, kind: u32) -> *u8 {
     let d: *core::Data = core::node_data(n);
@@ -165,6 +173,11 @@ fn apply_button(v: *u8, n: *core::Node, dirty: u64) {
 fn fire_click(token: i64) {
     let n: *core::Node = { token as *core::Node };
     if n == (0 as *core::Node) { return; }
+    // A text_button is a different KIND with a different props struct, and it
+    // shares this adapter. Asking it first costs one compare and stops a
+    // TextButtonProps being read through ButtonProps' layout.
+    if fire_text_button_click(n) { return; }
+    if fire_icon_button_click(n) { return; }
     let p: *props::ButtonProps = props_of(n, props::K_BUTTON) as *props::ButtonProps;
     if p == (0 as *props::ButtonProps) { return; }
     let h: fn(*u8, *u8) = { (*p).on_click };
@@ -580,16 +593,604 @@ fn read_field_text(env: rt::Env, v: *u8, buf: *u8, cap: usize) {
 fn fire_text(token: i64, s: jni::jstring) {
     let n: *core::Node = { token as *core::Node };
     if n == (0 as *core::Node) { return; }
-    let p: *props::TextFieldProps = props_of(n, props::K_TEXT_FIELD) as *props::TextFieldProps;
-    if p == (0 as *props::TextFieldProps) { return; }
+    // A field, an area and a search field all arrive here: one watcher class,
+    // three kinds, and the shared `input_view` block is what they have in
+    // common. Asking the KIND is what keeps the three props structs apart.
+    let iv: *props::InputViewProps = input_view_of(n);
+    if iv == (0 as *props::InputViewProps) { return; }
     var buf: [u8; 1024] = #zero::[[u8; 1024]]();
     let base: *u8 = { #addr_of(buf[0]) };
     if !e::env().string_utf_into(s, base, 1024 as usize) { return; }
     // WRITTEN BACK FIRST, so a handler asking `field.text()` is told what was
     // typed rather than what was there before it.
     let n_bytes: usize = paint::cstr_len(base);
-    { (*p).input_view.text = text::from_str({ #str_from_raw_parts(base, n_bytes) }) };
-    let h: fn(*u8, *u8) = { (*p).input_view.on_text_changed };
-    if h != props::no_handler { h(core::view_of(n), { (*p).input_view.on_text_changed_ctx }); }
+    { (*iv).text = text::from_str({ #str_from_raw_parts(base, n_bytes) }) };
+    let h: fn(*u8, *u8) = { (*iv).on_text_changed };
+    if h != props::no_handler { h(core::view_of(n), { (*iv).on_text_changed_ctx }); }
     return;
+}
+
+// ---- text_button -------------------------------------------------------------
+// A borderless Button. facet's `text_button` is its own kind (K_TEXT_BUTTON,
+// numbered in its own module rather than props.cplus) and its own props struct,
+// so it gets its own pair rather than sharing the button's: the two structs have
+// different layouts and a shared body would read one through the other.
+//
+// The style is a CONSTRUCTOR argument, as it was for the progress bar.
+
+fn borderless_style(env: rt::Env) -> i32 {
+    let attrs: jni::jclass = env.class_cached(#str_ptr("android/R$attr\0"));
+    let fid: jni::jfieldID = env.static_field_id(
+        attrs, #str_ptr("borderlessButtonStyle\0"), #str_ptr("I\0"));
+    return { (*(*env.raw())).GetStaticIntField(env.raw(), attrs, fid) };
+}
+
+fn create_text_button(n: *core::Node) -> *u8 {
+    let env: rt::Env = e::env();
+    var b: w::Button = w::Button::new_context_attribute_set_i(
+        env, e::context(), 0 as jni::jobject, borderless_style(env));
+    let raw: *u8 = b.into_raw();
+    let listener: jni::jobject = dex::new_with_token(env, dex::click_class(), { #addr(n) as i64 });
+    var view: w::View = w::View::from_global(env, raw);
+    view.set_on_click_listener(listener);
+    paint::unwrap_keep(view);
+    env.delete_local_ref(listener);
+    return raw;
+}
+
+fn apply_text_button(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *text_button::TextButtonProps = props_of(n, text_button::K_TEXT_BUTTON) as *text_button::TextButtonProps;
+    if p == (0 as *text_button::TextButtonProps) { return; }
+    let env: rt::Env = e::env();
+    var b: w::Button = w::Button::from_global(env, v);
+    var tv: w::TextView = b.as_text_view();
+    if (dirty & text_button::P_TITLE) != (0 as u64) {
+        var buf: [u8; 512] = #zero::[[u8; 512]]();
+        let base: *u8 = { #addr_of(buf[0]) };
+        if paint::cstr({ (*p).title.view() }, base, 512 as usize) { tv.set_text_str(base); }
+    }
+    if (dirty & text_button::P_TEXT_COLOR) != (0 as u64) {
+        let c: vocab::Color = { (*p).text_color };
+        if c.is_set() { tv.set_text_color_i(paint::argb_of(c)); }
+    }
+    if (dirty & text_button::P_FONT_SIZE) != (0 as u64) {
+        let s: f64 = { (*p).font_size };
+        if s > 0.0f64 { tv.set_text_size_f({ s as f32 }); }
+    }
+    var bv: w::View = w::View::from_global(env, b.into_raw());
+    paint::unwrap_keep(bv);
+    return;
+}
+
+fn fire_text_button_click(n: *core::Node) -> bool {
+    let p: *text_button::TextButtonProps =
+        props_of(n, text_button::K_TEXT_BUTTON) as *text_button::TextButtonProps;
+    if p == (0 as *text_button::TextButtonProps) { return false; }
+    let h: fn(*u8, *u8) = { (*p).on_click };
+    if h != props::no_handler { h(core::view_of(n), { (*p).on_click_ctx }); }
+    return true;
+}
+
+// ---- text_area and search_field ----------------------------------------------
+// Both are an EditText with a different posture, which is also how facet
+// describes them: each carries the SAME embedded `input_view` block as
+// text_field, so the text, placeholder, colour and per-keystroke callback are
+// one implementation reached three ways.
+
+fn create_multiline(n: *core::Node) -> *u8 {
+    let env: rt::Env = e::env();
+    var et: w::EditText = w::EditText::new_context(env, e::context());
+    let raw: *u8 = et.into_raw();
+    let watcher: jni::jobject = dex::new_with_token(env, dex::text_class(), { #addr(n) as i64 });
+    var t: w::EditText = w::EditText::from_global(env, raw);
+    var tv: w::TextView = t.as_text_view();
+    tv.add_text_changed_listener(watcher);
+    tv.set_single_line_z(false);
+    // TOP|START (0x30 | 0x800003). A multi-line field whose text sits centred
+    // vertically is the tell that nobody set this.
+    tv.set_gravity(8388659 as i32);
+    let _keep: *u8 = t.into_raw();
+    env.delete_local_ref(watcher);
+    return raw;
+}
+
+fn create_search_field(n: *core::Node) -> *u8 {
+    let env: rt::Env = e::env();
+    var et: w::EditText = w::EditText::new_context(env, e::context());
+    let raw: *u8 = et.into_raw();
+    let watcher: jni::jobject = dex::new_with_token(env, dex::text_class(), { #addr(n) as i64 });
+    var t: w::EditText = w::EditText::from_global(env, raw);
+    var tv: w::TextView = t.as_text_view();
+    tv.add_text_changed_listener(watcher);
+    tv.set_single_line_z(true);
+    // IME_ACTION_SEARCH — the magnifier on the keyboard's action key. Android
+    // has no search-field WIDGET; the search-ness is the IME action plus, on a
+    // real design, an icon. MANIFEST §2 carries the icon as a debt.
+    tv.set_ime_options(3 as i32);
+    let _keep: *u8 = t.into_raw();
+    env.delete_local_ref(watcher);
+    return raw;
+}
+
+// The input_view block is shared, so the apply is too — only the dirty BITS
+// differ per kind, and they happen to sit at the same offsets because
+// gen_contract.py emits the block once.
+fn apply_input_common(v: *u8, iv: *props::InputViewProps, text_bit: bool,
+                      placeholder_bit: bool, color_bit: bool, size_bit: bool) {
+    let env: rt::Env = e::env();
+    var et: w::EditText = w::EditText::from_global(env, v);
+    var tv: w::TextView = et.as_text_view();
+    if text_bit {
+        var buf: [u8; 1024] = #zero::[[u8; 1024]]();
+        let base: *u8 = { #addr_of(buf[0]) };
+        if paint::cstr({ (*iv).text.view() }, base, 1024 as usize) {
+            var have: [u8; 1024] = #zero::[[u8; 1024]]();
+            let hbase: *u8 = { #addr_of(have[0]) };
+            read_field_text(env, v, hbase, 1024 as usize);
+            if !paint::same_cstr(base, hbase) { tv.set_text_str(base); }
+        }
+    }
+    if placeholder_bit {
+        var buf: [u8; 512] = #zero::[[u8; 512]]();
+        let base: *u8 = { #addr_of(buf[0]) };
+        if paint::cstr({ (*iv).placeholder.view() }, base, 512 as usize) {
+            let hint: jni::jstring = env.new_string_utf(base);
+            env.call_void_1(v, #str_ptr("android/widget/TextView\0"), #str_ptr("setHint\0"),
+                            #str_ptr("(Ljava/lang/CharSequence;)V\0"), rt::arg_object(hint));
+            env.delete_local_ref(hint);
+        }
+    }
+    if color_bit {
+        let c: vocab::Color = { (*iv).text_color };
+        if c.is_set() { tv.set_text_color_i(paint::argb_of(c)); }
+    }
+    if size_bit {
+        let s: f64 = { (*iv).font_size };
+        if s > 0.0f64 { tv.set_text_size_f({ s as f32 }); }
+    }
+    let _keep: *u8 = et.into_raw();
+    return;
+}
+
+fn apply_text_area(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *props::TextAreaProps = props_of(n, props::K_TEXT_AREA) as *props::TextAreaProps;
+    if p == (0 as *props::TextAreaProps) { return; }
+    apply_input_common(v, { #addr_of((*p).input_view) },
+                       (dirty & text_area::P_TEXT) != (0 as u64),
+                       (dirty & text_area::P_PLACEHOLDER) != (0 as u64),
+                       (dirty & text_area::P_TEXT_COLOR) != (0 as u64),
+                       (dirty & text_area::P_FONT_SIZE) != (0 as u64));
+    return;
+}
+
+fn apply_search_field(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *props::SearchFieldProps = props_of(n, props::K_SEARCH_FIELD) as *props::SearchFieldProps;
+    if p == (0 as *props::SearchFieldProps) { return; }
+    apply_input_common(v, { #addr_of((*p).input_view) },
+                       (dirty & search_field::P_TEXT) != (0 as u64),
+                       (dirty & search_field::P_PLACEHOLDER) != (0 as u64),
+                       (dirty & search_field::P_TEXT_COLOR) != (0 as u64),
+                       (dirty & search_field::P_FONT_SIZE) != (0 as u64));
+    return;
+}
+
+// The input block is reached by KIND, because the three structs put it at their
+// own offsets and only the kind says which is there.
+fn input_view_of(n: *core::Node) -> *props::InputViewProps {
+    let d: *core::Data = core::node_data(n);
+    if d == (0 as *core::Data) { return 0 as *props::InputViewProps; }
+    let raw: *u8 = { (*d).props };
+    if raw == (0 as *u8) { return 0 as *props::InputViewProps; }
+    let kind: u32 = { (*d).kind };
+    if kind == props::K_TEXT_FIELD {
+        let p: *props::TextFieldProps = raw as *props::TextFieldProps;
+        return { #addr_of((*p).input_view) };
+    }
+    if kind == props::K_TEXT_AREA {
+        let p: *props::TextAreaProps = raw as *props::TextAreaProps;
+        return { #addr_of((*p).input_view) };
+    }
+    if kind == props::K_SEARCH_FIELD {
+        let p: *props::SearchFieldProps = raw as *props::SearchFieldProps;
+        return { #addr_of((*p).input_view) };
+    }
+    return 0 as *props::InputViewProps;
+}
+
+// ---- image and icon_button ---------------------------------------------------
+// WHERE AN IMAGE COMES FROM is the Android-shaped question here, and this pass
+// answers only half of it. `BitmapFactory.decodeFile` reads a FILESYSTEM path,
+// which covers a source the app wrote or downloaded; an image packed into the
+// APK lives in `assets/` and is reached through an AssetManager instead, and
+// that is MANIFEST §2's debt. A source that decodes to null leaves the view
+// empty and warns once rather than drawing a placeholder — an image that
+// silently is not there looks like a layout bug.
+//
+// The FIT enum is an object-typed static field (`ImageView$ScaleType.CENTER_CROP`
+// and friends), which the generator SKIPS by design — it emits no invented
+// objects. So the four are read by hand.
+
+fn scale_type(env: rt::Env, name: *u8) -> jni::jobject {
+    let cls: jni::jclass = env.class_cached(#str_ptr("android/widget/ImageView$ScaleType\0"));
+    let fid: jni::jfieldID = env.static_field_id(
+        cls, name, #str_ptr("Landroid/widget/ImageView$ScaleType;\0"));
+    if fid == (0 as jni::jfieldID) { return 0 as jni::jobject; }
+    return { (*(*env.raw())).GetStaticObjectField(env.raw(), cls, fid) };
+}
+
+fn scale_type_for(env: rt::Env, fit: vocab::ImageFit) -> jni::jobject {
+    return match fit {
+        // CENTER_CROP fills the box and crops the overflow; FIT_CENTER fits the
+        // whole image inside it. The two are easy to swap and the difference is
+        // invisible until an image is the wrong aspect.
+        vocab::ImageFit::AspectFill => scale_type(env, #str_ptr("CENTER_CROP\0")),
+        vocab::ImageFit::AspectFit => scale_type(env, #str_ptr("FIT_CENTER\0")),
+        vocab::ImageFit::Center => scale_type(env, #str_ptr("CENTER\0")),
+        vocab::ImageFit::Fill => scale_type(env, #str_ptr("FIT_XY\0")),
+    };
+}
+
+fn set_source(env: rt::Env, v: *u8, source: str) {
+    var buf: [u8; 1024] = #zero::[[u8; 1024]]();
+    let base: *u8 = { #addr_of(buf[0]) };
+    if !paint::cstr(source, base, 1024 as usize) { return; }
+    let bmp: jni::jobject = w::BitmapFactory::decode_file_str(env, base);
+    if bmp == (0 as jni::jobject) {
+        log::warn(#str_ptr("image: decodeFile answered null (an APK asset needs an AssetManager, see MANIFEST 2)\0"));
+        return;
+    }
+    var iv: w::ImageView = w::ImageView::from_global(env, v);
+    iv.set_image_bitmap(bmp);
+    let _keep: *u8 = iv.into_raw();
+    env.delete_local_ref(bmp);
+    return;
+}
+
+fn set_fit(env: rt::Env, v: *u8, fit: vocab::ImageFit) {
+    let st: jni::jobject = scale_type_for(env, fit);
+    if st == (0 as jni::jobject) { return; }
+    env.call_void_1(v, #str_ptr("android/widget/ImageView\0"), #str_ptr("setScaleType\0"),
+                    #str_ptr("(Landroid/widget/ImageView$ScaleType;)V\0"), rt::arg_object(st));
+    env.delete_local_ref(st);
+    return;
+}
+
+fn create_image(n: *core::Node) -> *u8 {
+    let env: rt::Env = e::env();
+    var iv: w::ImageView = w::ImageView::new_context(env, e::context());
+    return iv.into_raw();
+}
+
+fn apply_image(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *props::ImageProps = props_of(n, props::K_IMAGE) as *props::ImageProps;
+    if p == (0 as *props::ImageProps) { return; }
+    let env: rt::Env = e::env();
+    if (dirty & image::P_SOURCE) != (0 as u64) { set_source(env, v, { (*p).source.view() }); }
+    if (dirty & image::P_FIT) != (0 as u64) { set_fit(env, v, { (*p).fit }); }
+    return;
+}
+
+fn create_icon_button(n: *core::Node) -> *u8 {
+    let env: rt::Env = e::env();
+    var ib: w::ImageButton = w::ImageButton::new_context(env, e::context());
+    let raw: *u8 = ib.into_raw();
+    let listener: jni::jobject = dex::new_with_token(env, dex::click_class(), { #addr(n) as i64 });
+    var view: w::View = w::View::from_global(env, raw);
+    view.set_on_click_listener(listener);
+    paint::unwrap_keep(view);
+    env.delete_local_ref(listener);
+    return raw;
+}
+
+fn apply_icon_button(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *props::IconButtonProps = props_of(n, props::K_ICON_BUTTON) as *props::IconButtonProps;
+    if p == (0 as *props::IconButtonProps) { return; }
+    let env: rt::Env = e::env();
+    if (dirty & icon_button::P_SOURCE) != (0 as u64) { set_source(env, v, { (*p).source.view() }); }
+    if (dirty & icon_button::P_FIT) != (0 as u64) { set_fit(env, v, { (*p).fit }); }
+    return;
+}
+
+fn fire_icon_button_click(n: *core::Node) -> bool {
+    let p: *props::IconButtonProps =
+        props_of(n, props::K_ICON_BUTTON) as *props::IconButtonProps;
+    if p == (0 as *props::IconButtonProps) { return false; }
+    let h: fn(*u8, *u8) = { (*p).on_clicked };
+    if h != props::no_handler { h(core::view_of(n), { (*p).on_clicked_ctx }); }
+    return true;
+}
+
+// ---- scroll ------------------------------------------------------------------
+// A ScrollView takes exactly ONE child, so facet's children go into a FacetHost
+// inside it and the scroll's own view is never their parent. `document_host`
+// below is the redirect, and `insert` / `remove` go through it — the same shape
+// facet_gtk uses for its ScrolledWindow, and for the same reason.
+//
+// The document is sized by `geometry`, not here: it is the union of the
+// children and never smaller than the viewport, because a document SHORT of its
+// scroll leaves a strip nothing draws. A document that merely wrapped its
+// content would also never scroll, since Android would size the ScrollView to
+// fit it.
+//
+// The axis is a CONSTRUCTOR choice: ScrollView scrolls vertically and
+// HorizontalScrollView horizontally, and neither turns into the other.
+// `ScrollAxis::Both` has no single Android widget — nesting one in the other is
+// the usual trick and it fights the gesture arbiter — so it takes the vertical
+// one and MANIFEST §2 carries the difference.
+
+// Keyed-tag ids. Shaped like application resource ids because
+// `View.setTag(int, Object)` insists: `key >>> 24` must be at least 2.
+const SCROLL_DOC_TAG: i32 = 2131886081 as i32;   // 0x7F0F0001
+
+fn create_scroll(n: *core::Node) -> *u8 {
+    let env: rt::Env = e::env();
+    let p: *props::ScrollProps = props_of(n, props::K_SCROLL) as *props::ScrollProps;
+    var horizontal: bool = false;
+    if p != (0 as *props::ScrollProps) {
+        horizontal = match { (*p).axis } {
+            vocab::ScrollAxis::Horizontal => true,
+            vocab::ScrollAxis::Both => false,
+            vocab::ScrollAxis::Vertical => false,
+            vocab::ScrollAxis::Neither => false,
+        };
+    }
+    // A SCROLL YIELDS TO ITS CONTAINER. Without this a scroll nested in a column
+    // grows to its content for the same reason the root did — flex sizes an
+    // auto node from its children, and a viewport that is as tall as what it
+    // holds never scrolls. facet_gtk says the same thing to GTK with
+    // `set_propagate_natural_height(false)`.
+    { (*n).set_flex_shrink(1.0f64) };
+    var raw: *u8 = 0 as *u8;
+    if horizontal {
+        var hs: w::HorizontalScrollView = w::HorizontalScrollView::new_context(env, e::context());
+        raw = hs.into_raw();
+    } else {
+        var vs: w::ScrollView = w::ScrollView::new_context(env, e::context());
+        raw = vs.into_raw();
+    }
+    // The document, and the KEYED tag that finds it again. A keyed tag rather
+    // than the plain one because `paint::configure` already owns
+    // `setTag(Object)` — it carries the node's key there, Android having no
+    // accessibilityIdentifier — and a second writer would silently take it
+    // over. Reading it back as the document is worse: `getTag` then answers a
+    // java.lang.String, and `addView` on a String is a CheckJNI abort with a
+    // stack pointing at the innocent call that came after it.
+    //
+    // The key must look like a RESOURCE id. `View.setTag(int, Object)` rejects
+    // anything with `key >>> 24 < 2` — an application-specific id is the
+    // contract, and a small integer throws.
+    let doc: jni::jobject = dex::new_host(env, e::context());
+    var group: w::ViewGroup = w::ViewGroup::from_global(env, raw);
+    group.add_view_view(doc);
+    var gv: w::View = w::View::from_global(env, group.into_raw());
+    gv.set_tag_i_object(SCROLL_DOC_TAG, doc);
+    paint::unwrap_keep(gv);
+    env.delete_local_ref(doc);
+    return raw;
+}
+
+fn apply_scroll(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *props::ScrollProps = props_of(n, props::K_SCROLL) as *props::ScrollProps;
+    if p == (0 as *props::ScrollProps) { return; }
+    let env: rt::Env = e::env();
+    if (dirty & (scroll::P_SCROLL_X | scroll::P_SCROLL_Y)) != (0 as u64) {
+        var view: w::View = w::View::from_global(env, v);
+        view.scroll_to({ { (*p).scroll_x } as i32 }, { { (*p).scroll_y } as i32 });
+        paint::unwrap_keep(view);
+    }
+    if (dirty & scroll::P_VERTICAL_SCROLL_BARS) != (0 as u64) {
+        var view: w::View = w::View::from_global(env, v);
+        view.set_vertical_scroll_bar_enabled(bars_shown({ (*p).vertical_scroll_bars }));
+        paint::unwrap_keep(view);
+    }
+    if (dirty & scroll::P_HORIZONTAL_SCROLL_BARS) != (0 as u64) {
+        var view: w::View = w::View::from_global(env, v);
+        view.set_horizontal_scroll_bar_enabled(bars_shown({ (*p).horizontal_scroll_bars }));
+        paint::unwrap_keep(view);
+    }
+    return;
+}
+
+fn bars_shown(b: vocab::ScrollBars) -> bool {
+    return match b {
+        vocab::ScrollBars::Default => true,
+        vocab::ScrollBars::Always => true,
+        vocab::ScrollBars::Never => false,
+    };
+}
+
+// The view a node's children go into: its own, except for a scroll, where it is
+// the document tagged onto it at create.
+fn document_host(v: *u8) -> *u8 {
+    if v == (0 as *u8) { return v; }
+    if !e::have_env() { return v; }
+    let env: rt::Env = e::env();
+    var view: w::View = w::View::from_global(env, v);
+    let tag: jni::jobject = view.get_tag_i(SCROLL_DOC_TAG);
+    paint::unwrap_keep(view);
+    if tag == (0 as jni::jobject) { return v; }
+    // The tag is a LOCAL ref from getTag and the caller is about to add a view
+    // to it, which is fine within this native call — but it must not be handed
+    // back as if it were the global facet holds.
+    let g: jni::jobject = env.new_global_ref(tag);
+    env.delete_local_ref(tag);
+    return g;
+}
+
+// ---- stepper -----------------------------------------------------------------
+// THREE ANDROID VIEWS INSIDE ONE FACET NODE, and the only control here that is
+// a composite. Android has no stepper widget: it is a minus, a value and a plus.
+//
+// A horizontal LinearLayout arranges them, and that is not a breach of "facet
+// owns geometry". facet owns the layout of facet's TREE; these three views are
+// not in it — no node, no frame, nothing for flex to place — so something has to
+// arrange them and LinearLayout is the platform's answer. A layout container
+// reaching a facet CHILD would still be wrong.
+//
+// The two buttons share the node as their token and are told apart by a delta,
+// which is why `FacetStep` carries a second field.
+
+const STEP_VALUE_TAG: i32 = 2131886082 as i32;   // 0x7F0F0002 — see SCROLL_DOC_TAG
+
+fn step_button(env: rt::Env, n: *core::Node, caption: *u8, delta: i32) -> jni::jobject {
+    var b: w::Button = w::Button::new_context_attribute_set_i(
+        env, e::context(), 0 as jni::jobject, borderless_style(env));
+    let raw: *u8 = b.into_raw();
+    var tv: w::TextView = w::TextView::from_global(env, raw);
+    tv.set_text_str(caption);
+    let _k1: *u8 = tv.into_raw();
+    let listener: jni::jobject =
+        dex::new_with_token_i(env, dex::step_class(), { #addr(n) as i64 }, delta);
+    var view: w::View = w::View::from_global(env, raw);
+    view.set_on_click_listener(listener);
+    let _k2: *u8 = view.into_raw();
+    env.delete_local_ref(listener);
+    return raw;
+}
+
+fn create_stepper(n: *core::Node) -> *u8 {
+    let env: rt::Env = e::env();
+    var row: w::LinearLayout = w::LinearLayout::new_context(env, e::context());
+    let raw: *u8 = row.into_raw();
+    var r: w::LinearLayout = w::LinearLayout::from_global(env, raw);
+    r.set_orientation(0 as i32);   // HORIZONTAL
+    r.set_gravity(16 as i32);      // CENTER_VERTICAL
+
+    let minus: jni::jobject = step_button(env, n, #str_ptr("-\0"), (0 as i32) -% (1 as i32));
+    var value: w::TextView = w::TextView::new_context(env, e::context());
+    let value_raw: *u8 = value.into_raw();
+    // Tagged ON THE ROW, which is the view facet holds and the only one `apply`
+    // is given. Tagging the value view with itself finds nothing: the lookup
+    // starts from the row.
+    var rv: w::View = w::View::from_global(env, raw);
+    rv.set_tag_i_object(STEP_VALUE_TAG, value_raw);
+    let _k: *u8 = rv.into_raw();
+    let plus: jni::jobject = step_button(env, n, #str_ptr("+\0"), 1 as i32);
+
+    var group: w::ViewGroup = w::ViewGroup::from_global(env, raw);
+    group.add_view_view(minus);
+    group.add_view_view(value_raw);
+    group.add_view_view(plus);
+    let _k3: *u8 = group.into_raw();
+    let _k4: *u8 = r.into_raw();
+    return raw;
+}
+
+fn stepper_value_view(env: rt::Env, v: *u8) -> jni::jobject {
+    var view: w::View = w::View::from_global(env, v);
+    let t: jni::jobject = view.get_tag_i(STEP_VALUE_TAG);
+    paint::unwrap_keep(view);
+    return t;
+}
+
+fn apply_stepper(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *props::StepperProps = props_of(n, props::K_STEPPER) as *props::StepperProps;
+    if p == (0 as *props::StepperProps) { return; }
+    if (dirty & stepper::P_VALUE) == (0 as u64) { return; }
+    let env: rt::Env = e::env();
+    let mid: jni::jobject = stepper_value_view(env, v);
+    if mid == (0 as jni::jobject) { return; }
+    var buf: [u8; 64] = #zero::[[u8; 64]]();
+    let base: *u8 = { #addr_of(buf[0]) };
+    let i: usize = put_f64(base, 0 as usize, { (*p).value });
+    put_byte(base, i, 0 as u8);
+    var tv: w::TextView = w::TextView::from_global(env, mid);
+    tv.set_text_str(base);
+    paint::unwrap_keep(w::View::from_global(env, tv.into_raw()));
+    return;
+}
+
+// A step arrived. The clamp is this side's, because Android's two buttons know
+// nothing about a range.
+fn fire_step(token: i64, delta: i32) {
+    let n: *core::Node = { token as *core::Node };
+    if n == (0 as *core::Node) { return; }
+    let p: *props::StepperProps = props_of(n, props::K_STEPPER) as *props::StepperProps;
+    if p == (0 as *props::StepperProps) { return; }
+    var inc: f64 = { (*p).increment };
+    if inc <= 0.0f64 { inc = 1.0f64; }
+    var next: f64 = { (*p).value } + ({ delta as f64 } * inc);
+    let lo: f64 = { (*p).minimum };
+    let hi: f64 = { (*p).maximum };
+    if hi > lo {
+        if next < lo { next = lo; }
+        if next > hi { next = hi; }
+    }
+    if next == { (*p).value } { return; }
+    { (*p).value = next };
+    // The middle view is written from here rather than waiting for an apply:
+    // nothing marked the node dirty, because the change came from the platform
+    // and not from the application.
+    let env: rt::Env = e::env();
+    let mid: jni::jobject = stepper_value_view(env, core::view_of(n));
+    if mid != (0 as jni::jobject) {
+        var buf: [u8; 64] = #zero::[[u8; 64]]();
+        let base: *u8 = { #addr_of(buf[0]) };
+        let i: usize = put_f64(base, 0 as usize, next);
+        put_byte(base, i, 0 as u8);
+        var tv: w::TextView = w::TextView::from_global(env, mid);
+        tv.set_text_str(base);
+        paint::unwrap_keep(w::View::from_global(env, tv.into_raw()));
+    }
+    let h: fn(*u8, *u8) = { (*p).on_value_changed };
+    if h != props::no_handler { h(core::view_of(n), { (*p).on_value_changed_ctx }); }
+    return;
+}
+
+// A number, printed without stdlib's formatter: this runs on the UI thread per
+// tap and the value is a stepper's, which is small and usually whole.
+fn put_f64(buf: *u8, at: usize, v: f64) -> usize {
+    var i: usize = at;
+    var x: f64 = v;
+    if x < 0.0f64 { i = put_byte(buf, i, 45 as u8); x = 0.0f64 - x; }
+    let whole: i64 = { x as i64 };
+    i = put_i64(buf, i, whole);
+    let frac: f64 = x - { whole as f64 };
+    // One decimal, and only when there is one: "3" reads better than "3.0" on a
+    // stepper whose increment is whole, which is the common case.
+    let tenths: i64 = { ((frac * 10.0f64) + 0.5f64) as i64 };
+    if tenths > (0 as i64) {
+        i = put_byte(buf, i, 46 as u8);
+        i = put_i64(buf, i, tenths);
+    }
+    return i;
+}
+
+fn put_i64(buf: *u8, at: usize, v: i64) -> usize {
+    if v == (0 as i64) { return put_byte(buf, at, 48 as u8); }
+    var digits: [u8; 24] = #zero::[[u8; 24]]();
+    var n: usize = 0 as usize;
+    var x: i64 = v;
+    while x > (0 as i64) {
+        { digits[n] = { ((x % (10 as i64)) as u8) } +% (48 as u8) };
+        x = x / (10 as i64);
+        n = n +% (1 as usize);
+    }
+    var i: usize = at;
+    while n > (0 as usize) {
+        n = n -% (1 as usize);
+        i = put_byte(buf, i, { digits[n] });
+    }
+    return i;
+}
+
+fn put_byte(buf: *u8, at: usize, b: u8) -> usize {
+    let d: *u8 = { ({ #addr(buf) } +% at) as *u8 };
+    { (*d) = b };
+    return at +% (1 as usize);
+}
+
+fn put_str_at(buf: *u8, at: usize, s: *u8) -> usize {
+    var i: usize = at;
+    var j: usize = 0 as usize;
+    var going: bool = true;
+    while going {
+        let p: *u8 = { ({ #addr(s) } +% j) as *u8 };
+        let c: u8 = { (*p) };
+        if c == (0 as u8) { going = false; } else {
+            i = put_byte(buf, i, c);
+            j = j +% (1 as usize);
+        }
+    }
+    return i;
 }

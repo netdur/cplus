@@ -10,6 +10,7 @@ import "android_view/widgets" as w;
 import "flex_layout/flex_layout" as flex;
 import "facet/facet" as core;
 import "facet/props" as props;
+import "facet/text_button" as text_button;
 import "facet/gestures" as gestures;
 import "facet/vocabulary" as vocab;
 import "./env" as e;
@@ -89,6 +90,13 @@ fn create_for_kind(kind: u32, n: *core::Node) -> *u8 {
     if kind == props::K_PROGRESS { return controls::create_progress(n); }
     if kind == props::K_SPINNER { return controls::create_spinner(n); }
     if kind == props::K_TEXT_FIELD { return controls::create_text_field(n); }
+    if kind == text_button::K_TEXT_BUTTON { return controls::create_text_button(n); }
+    if kind == props::K_TEXT_AREA { return controls::create_multiline(n); }
+    if kind == props::K_SEARCH_FIELD { return controls::create_search_field(n); }
+    if kind == props::K_IMAGE { return controls::create_image(n); }
+    if kind == props::K_ICON_BUTTON { return controls::create_icon_button(n); }
+    if kind == props::K_SCROLL { return controls::create_scroll(n); }
+    if kind == props::K_STEPPER { return controls::create_stepper(n); }
     // Not built yet. A backend that silently substituted a blank container for
     // a control it does not have would be indistinguishable from a finished
     // one, so MANIFEST.md §2 names every kind that lands here and each warns
@@ -126,6 +134,13 @@ fn apply_for_kind(kind: u32, v: *u8, n: *core::Node, dirty: u64) {
     if kind == props::K_PROGRESS { controls::apply_progress(v, n, dirty); return; }
     if kind == props::K_SPINNER { controls::apply_spinner(v, n, dirty); return; }
     if kind == props::K_TEXT_FIELD { controls::apply_text_field(v, n, dirty); return; }
+    if kind == text_button::K_TEXT_BUTTON { controls::apply_text_button(v, n, dirty); return; }
+    if kind == props::K_TEXT_AREA { controls::apply_text_area(v, n, dirty); return; }
+    if kind == props::K_SEARCH_FIELD { controls::apply_search_field(v, n, dirty); return; }
+    if kind == props::K_IMAGE { controls::apply_image(v, n, dirty); return; }
+    if kind == props::K_ICON_BUTTON { controls::apply_icon_button(v, n, dirty); return; }
+    if kind == props::K_SCROLL { controls::apply_scroll(v, n, dirty); return; }
+    if kind == props::K_STEPPER { controls::apply_stepper(v, n, dirty); return; }
     return;
 }
 
@@ -143,6 +158,14 @@ fn has_intrinsic_size(kind: u32) -> bool {
     if kind == props::K_PROGRESS { return true; }
     if kind == props::K_SPINNER { return true; }
     if kind == props::K_TEXT_FIELD { return true; }
+    if kind == text_button::K_TEXT_BUTTON { return true; }
+    if kind == props::K_TEXT_AREA { return true; }
+    if kind == props::K_SEARCH_FIELD { return true; }
+    // An image measures from its BITMAP, which arrives with the source — so it
+    // is intrinsic in exactly the same sense a label is.
+    if kind == props::K_IMAGE { return true; }
+    if kind == props::K_ICON_BUTTON { return true; }
+    if kind == props::K_STEPPER { return true; }
     return false;
 }
 
@@ -160,10 +183,15 @@ fn insert(ctx: *u8, host: *u8, child: *u8, slot: usize) {
     if child == (0 as *u8) { return; }
     if !e::have_env() { return; }
     let env: rt::Env = e::env();
-    var h: w::ViewGroup = w::ViewGroup::from_global(env, host);
+    // A scroll's children belong to its DOCUMENT, not to the ScrollView, which
+    // takes exactly one child of its own.
+    let target: *u8 = controls::document_host(host);
+    var h: w::ViewGroup = w::ViewGroup::from_global(env, target);
     h.add_view_view_i(child, { slot as i32 });
-    var hv: w::View = w::View::from_global(env, h.into_raw());
-    paint::unwrap_keep(hv);
+    if target == host {
+        var hv: w::View = w::View::from_global(env, h.into_raw());
+        paint::unwrap_keep(hv);
+    }
     return;
 }
 
@@ -172,10 +200,13 @@ fn remove(ctx: *u8, host: *u8, child: *u8) {
     if child == (0 as *u8) { return; }
     if !e::have_env() { return; }
     let env: rt::Env = e::env();
-    var h: w::ViewGroup = w::ViewGroup::from_global(env, host);
+    let target: *u8 = controls::document_host(host);
+    var h: w::ViewGroup = w::ViewGroup::from_global(env, target);
     h.remove_view(child);
-    var hv: w::View = w::View::from_global(env, h.into_raw());
-    paint::unwrap_keep(hv);
+    if target == host {
+        var hv: w::View = w::View::from_global(env, h.into_raw());
+        paint::unwrap_keep(hv);
+    }
     return;
 }
 

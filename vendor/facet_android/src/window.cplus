@@ -45,6 +45,8 @@ fn attach_root(env: rt::Env, activity: jni::jobject, root: *core::Node) -> jni::
     let host_local: jni::jobject = dex::new_host(env, activity);
     let host: jni::jobject = env.new_global_ref(host_local);
     e::set_host(host);
+    // This one, and no other, speaks for the window.
+    dex::host_reports_size(env, host);
     env.delete_local_ref(host_local);
 
     // RE-MOUNT. If this Activity is a recreation, the tree is already marked

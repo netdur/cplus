@@ -112,6 +112,12 @@ export extern fn facet_android_text(envp: *jni::JNIEnv, cls: jni::jobject, token
     return;
 }
 
+export extern fn facet_android_step(envp: *jni::JNIEnv, cls: jni::jobject, token: i64, delta: i32) {
+    e::set_env(rt::from_native(envp));
+    controls::fire_step(token, delta);
+    return;
+}
+
 export extern fn facet_android_size_changed(envp: *jni::JNIEnv, cls: jni::jobject, wd: i32, ht: i32) {
     e::set_env(rt::from_native(envp));
     window::size_changed(wd, ht);

@@ -44,19 +44,28 @@ rather than all of `android.widget`.
 Everything here is a debt, not a decision. Kinds with no body **warn once**
 through liblog (`adb logcat -s facet`) and render an empty container.
 
-- **The controls still without a body.** `text_area`, `search_field`, `image`,
-  `scroll`, `stepper`, `popup`, `tabs`, `list`, `collection`, `table`, `tree`,
-  `canvas`, `web`, `span`, `bordered`, `icon_button`, `text_button`,
-  `page_dots`, `carousel`, `refreshable`, the pickers, the menu tier.
-  `views.cplus` dispatches on kind; each needs a `create_` / `apply_` pair in
-  `controls.cplus`.
+- **The controls still without a body.** `popup`, `tabs`, `list`, `collection`,
+  `table`, `tree`, `canvas`, `web`, `span`, `bordered`, `page_dots`, `carousel`,
+  `refreshable`, `swipeable`, `split`, the pickers, the menu tier. `views.cplus`
+  dispatches on kind; each needs a `create_` / `apply_` pair in `controls.cplus`.
 
-  Built so far: `label`, `button`, `box` and the plain container, plus
-  `checkbox`, `toggle`, `radio`, `slider`, `progress`, `spinner` and
-  `text_field` — each with BOTH halves, the props write and the event read.
+  Built: `label`, `button`, `box` and the plain container, plus `checkbox`,
+  `toggle`, `radio`, `slider`, `progress`, `spinner`, `text_field`,
+  `text_button`, `text_area`, `search_field`, `image`, `icon_button`, `scroll`
+  and `stepper` — each with BOTH halves, the props write and the event read.
   Half a control is worse than none: it looks finished and reports nothing,
   which is the shape of the bug facet_uikit carried in its checkbox until
   2026-08-25.
+
+- **An image can only come from the FILESYSTEM.** `BitmapFactory.decodeFile`
+  reads a path; an image packed into the APK lives in `assets/` and needs an
+  AssetManager. A source that does not decode leaves the view empty and warns
+  once — a placeholder would read as a layout bug.
+
+- **`ScrollAxis::Both` scrolls vertically only.** ScrollView and
+  HorizontalScrollView are separate widgets and neither becomes the other;
+  nesting one in the other is the usual trick and it fights the gesture
+  arbiter. Vertical is the phone-shaped default.
 - **The gesture band.** `gestures::install_key_reader` and
   `component::install_sender_readers` are not filled, so only a button's
   `on_click` fires. `wants_view` already answers true for a node with gestures,
@@ -70,7 +79,7 @@ through liblog (`adb logcat -s facet`) and render an empty container.
 - **`theme::set_theme_changed_fn`.** `is_dark` is filled; the repaint-on-flip
   hook is not.
 - **Prop parity, measured.** `vendor/facet_gtk/tools/parity.py` scores every
-  backend: android reads **23/360 props (6%) and 8/68 handlers (11%)**, against
+  backend: android reads **47/360 props (13%) and 11/68 handlers (16%)**, against
   gtk 98%/100%, appkit 92%/100%, uikit 89%/95%. Both numbers are quoted because
   either alone misleads — a control can honour every prop bit and still call
   nothing on tap, which is exactly what the tool was taught to catch.

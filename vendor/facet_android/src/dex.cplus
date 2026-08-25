@@ -21,7 +21,7 @@ import "jni/jni" as jni;
 import "android_view/runtime" as rt;
 
 // Kept in step by tools/build_dex.sh; do not hand-edit.
-const DEX_LEN: usize = 3920;
+const DEX_LEN: usize = 4560;
 
 static LOADER: usize = 0;
 static C_HOST: usize = 0;
@@ -31,6 +31,7 @@ static C_POST: usize = 0;
 static C_CHECKED: usize = 0;
 static C_SEEK: usize = 0;
 static C_TEXT: usize = 0;
+static C_STEP: usize = 0;
 
 // jni.h's JNINativeMethod with the fn slot concretely typed per shape.
 #[repr(C)]
@@ -86,6 +87,7 @@ extern fn facet_android_progress(envp: *jni::JNIEnv, cls: jni::jobject, token: i
 extern fn facet_android_seek_start(envp: *jni::JNIEnv, cls: jni::jobject, token: i64);
 extern fn facet_android_seek_stop(envp: *jni::JNIEnv, cls: jni::jobject, token: i64);
 extern fn facet_android_text(envp: *jni::JNIEnv, cls: jni::jobject, token: i64, s: jni::jobject);
+extern fn facet_android_step(envp: *jni::JNIEnv, cls: jni::jobject, token: i64, delta: i32);
 
 fn host_class() -> jni::jclass { return { C_HOST as *u8 }; }
 fn tick_class() -> jni::jclass { return { C_TICK as *u8 }; }
@@ -94,6 +96,7 @@ fn post_class() -> jni::jclass { return { C_POST as *u8 }; }
 fn checked_class() -> jni::jclass { return { C_CHECKED as *u8 }; }
 fn seek_class() -> jni::jclass { return { C_SEEK as *u8 }; }
 fn text_class() -> jni::jclass { return { C_TEXT as *u8 }; }
+fn step_class() -> jni::jclass { return { C_STEP as *u8 }; }
 fn loaded() -> bool { return LOADER != 0; }
 
 // Load the dex and bind every native. Idempotent; `any_view` is only needed to
@@ -101,7 +104,7 @@ fn loaded() -> bool { return LOADER != 0; }
 // must be parented to it or the app's own classes become invisible to it.
 fn ensure_loaded(env: rt::Env, any_view: jni::jobject) {
     if LOADER != 0 { return; }
-    let dex: *[u8; 3920] = #include_bytes("../facet_android.dex");
+    let dex: *[u8; 4560] = #include_bytes("../facet_android.dex");
     let buffer: jni::jobject = {
         (*(*env.raw())).NewDirectByteBuffer(env.raw(), { dex as *u8 }, DEX_LEN as i64)
     };
@@ -128,6 +131,7 @@ fn ensure_loaded(env: rt::Env, any_view: jni::jobject) {
     C_CHECKED = { #addr(load_class(env, loader, #str_ptr("cplus.facet.FacetChecked\0"))) };
     C_SEEK = { #addr(load_class(env, loader, #str_ptr("cplus.facet.FacetSeek\0"))) };
     C_TEXT = { #addr(load_class(env, loader, #str_ptr("cplus.facet.FacetText\0"))) };
+    C_STEP = { #addr(load_class(env, loader, #str_ptr("cplus.facet.FacetStep\0"))) };
 
     var tick_rec: Native0 = Native0 {
         name: #str_ptr("nativeTick\0"),
@@ -198,6 +202,14 @@ fn ensure_loaded(env: rt::Env, any_view: jni::jobject) {
     let _r7: i32 = { (*(*env.raw())).RegisterNatives(env.raw(), { C_TEXT as *u8 },
                                                      #addr_of(text_rec) as *u8, 1) };
 
+    var step_rec: Native2LI = Native2LI {
+        name: #str_ptr("nativeStep\0"),
+        signature: #str_ptr("(JI)V\0"),
+        fn_ptr: facet_android_step,
+    };
+    let _r8: i32 = { (*(*env.raw())).RegisterNatives(env.raw(), { C_STEP as *u8 },
+                                                     #addr_of(step_rec) as *u8, 1) };
+
     env.delete_local_ref(loader);
     env.delete_local_ref(imdcl);
     env.delete_local_ref(app_loader);
@@ -224,9 +236,42 @@ fn new_with_token(env: rt::Env, cls: jni::jclass, token: i64) -> jni::jobject {
     return { (*(*env.raw())).NewObjectA(env.raw(), cls, ctor, #addr_of(args[0])) };
 }
 
+// `new FacetStep(token, delta)` — the only adapter whose token is not the whole
+// story, because a stepper has two buttons behind one node.
+fn new_with_token_i(env: rt::Env, cls: jni::jclass, token: i64, arg: i32) -> jni::jobject {
+    let ctor: jni::jmethodID = env.method_id(cls, #str_ptr("<init>\0"), #str_ptr("(JI)V\0"));
+    var args: [jni::JValue; 2] = [jni::arg_long(token), jni::arg_int(arg)];
+    return { (*(*env.raw())).NewObjectA(env.raw(), cls, ctor, #addr_of(args[0])) };
+}
+
 fn new_no_args(env: rt::Env, cls: jni::jclass) -> jni::jobject {
     let ctor: jni::jmethodID = env.method_id(cls, #str_ptr("<init>\0"), #str_ptr("()V\0"));
     return { (*(*env.raw())).NewObjectA(env.raw(), cls, ctor, 0 as *jni::JValue) };
+}
+
+// Tell a FacetHost the size facet gave it, so its `onMeasure` can answer when
+// Android asks with a loose spec. Resolved against the DEX's class handle
+// rather than by name: `FindClass` cannot see a class that lives in an
+// in-memory loader.
+fn host_set_wanted(env: rt::Env, host: jni::jobject, wd: i32, ht: i32) {
+    if C_HOST == 0 { return; }
+    let mid: jni::jmethodID = env.method_id({ C_HOST as *u8 }, #str_ptr("setWanted\0"),
+                                            #str_ptr("(II)V\0"));
+    if mid == (0 as jni::jmethodID) { return; }
+    var args: [jni::JValue; 2] = [jni::arg_int(wd), jni::arg_int(ht)];
+    { (*(*env.raw())).CallVoidMethodA(env.raw(), host, mid, #addr_of(args[0])) };
+    return;
+}
+
+// Mark the one host whose size IS the window's. See FacetHost.setReportsSize.
+fn host_reports_size(env: rt::Env, host: jni::jobject) {
+    if C_HOST == 0 { return; }
+    let mid: jni::jmethodID = env.method_id({ C_HOST as *u8 }, #str_ptr("setReportsSize\0"),
+                                            #str_ptr("(Z)V\0"));
+    if mid == (0 as jni::jmethodID) { return; }
+    var args: [jni::JValue; 1] = [jni::arg_bool(1 as jni::jboolean)];
+    { (*(*env.raw())).CallVoidMethodA(env.raw(), host, mid, #addr_of(args[0])) };
+    return;
 }
 
 // `new FacetHost(context)`.

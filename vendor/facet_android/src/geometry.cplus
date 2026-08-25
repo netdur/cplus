@@ -24,6 +24,9 @@ import "android_view/widgets" as w;
 import "facet/facet" as core;
 import "./env" as e;
 import "./paint" as paint;
+import "./controls" as controls;
+import "./dex" as dex;
+import "facet/props" as props;
 
 type Node = flex::Node;
 
@@ -111,9 +114,70 @@ fn place(v: *u8, x: f64, y: f64, wd: f64, ht: f64) {
     return;
 }
 
+// A scroll's DOCUMENT, sized to what it holds.
+//
+// The document is a second view inside the scroll's own, and nothing in facet's
+// tree corresponds to it — so nothing else in this walk would ever place it, and
+// an unplaced FacetHost is zero by zero. The rule is facet_gtk's, ported whole:
+// the union of the children, and never SMALLER than the viewport, because a
+// document short of its scroll leaves a strip nothing draws.
+//
+// Sized at the origin: the children are placed against the scroll's frame
+// already, and the document shares that origin.
+fn size_document(n: *core::Node, v: *u8, frame: flex::Frame) {
+    if core::kind_of(n) != props::K_SCROLL { return; }
+    let doc: *u8 = controls::document_host(v);
+    if doc == v { return; }
+    let e_size: flex::Size = content_extent(n, frame);
+    // TOLD BEFORE PLACED. `place` measures EXACTLY, which is right — but the
+    // ScrollView will measure this same child AGAIN on its own terms, with an
+    // UNSPECIFIED height, and take THAT as the scroll range. The host has to be
+    // able to answer that question on its own.
+    if e::have_env() {
+        dex::host_set_wanted(e::env(), doc, { e_size.width as i32 }, { e_size.height as i32 });
+    }
+    place(doc, 0.0f64, 0.0f64, e_size.width, e_size.height);
+    if !e::have_env() { return; }
+    e::env().delete_global_ref(doc);
+    return;
+}
+
+fn content_extent(node: *core::Node, frame: flex::Frame) -> flex::Size {
+    var wd: f64 = 0.0f64;
+    var ht: f64 = 0.0f64;
+    var i: usize = 0 as usize;
+    let count: usize = core::child_count_of(node);
+    while i < count {
+        match core::child_of(node, i) {
+            option::Option[*core::Node]::Some(c) => {
+                let cf: flex::Frame = core::frame_of(c);
+                let right: f64 = (cf.left - frame.left) + cf.width;
+                let bottom: f64 = (cf.top - frame.top) + cf.height;
+                if right > wd { wd = right; }
+                if bottom > ht { ht = bottom; }
+            }
+            option::Option[*core::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    if wd < frame.width { wd = frame.width; }
+    if ht < frame.height { ht = frame.height; }
+    return flex::Size { width: wd, height: ht };
+}
+
 // Re-run the layout for a root at a given size, then push every frame.
 fn relayout_root(root: *core::Node, width: f64, height: f64) {
     if root == (0 as *core::Node) { return; }
+    // THE ROOT FILLS ITS WINDOW, stated as style rather than assumed.
+    //
+    // `calculate_layout` takes the AVAILABLE space, not the size — a root whose
+    // height is `auto` still sizes to its content. That is invisible while
+    // every root is a column of leaves, and wrong the moment one is a `scroll`:
+    // the scroll grew to the height of what it held (2979 against a 2593 screen
+    // in the probe), so the ScrollView had exactly nothing to scroll and the
+    // page simply ran off the bottom of the window.
+    { (*root).set_width(flex::StyleLength::points(width)) };
+    { (*root).set_height(flex::StyleLength::points(height)) };
     { (*root).calculate_layout(width, height) };
     reposition(root);
     return;
@@ -126,6 +190,17 @@ fn relayout_root(root: *core::Node, width: f64, height: f64) {
 fn reposition(root: *core::Node) {
     if root == (0 as *core::Node) { return; }
     let f: flex::Frame = core::frame_of(root);
+    // THE ROOT'S OWN VIEW, which the walk below never reaches: it places
+    // CHILDREN. This was invisible for as long as every root was a keyless
+    // column — a viewless root contributes nothing to place, and
+    // `add_root_views` hands its backed descendants to the Activity's host
+    // directly. The moment an app makes its whole page one `scroll`, which is
+    // the ordinary shape on a phone, the root HAS a view, nothing measures or
+    // lays it out, and the screen is blank with nothing in the log.
+    let rv: *u8 = core::view_of(root);
+    if rv != (0 as *u8) { place(rv, f.left, f.top, f.width, f.height); }
+    // And its document, for the same reason one layer down.
+    size_document(root, rv, f);
     reposition_children(root, f);
     return;
 }
@@ -142,6 +217,7 @@ fn reposition_children(node: *core::Node, host_abs: flex::Frame) {
                     // Host-relative: flex frames are absolute in the root's
                     // space, so subtract the host's origin.
                     place(v, cf.left - host_abs.left, cf.top - host_abs.top, cf.width, cf.height);
+                    size_document(c, v, cf);
                     reposition_children(c, cf);
                 } else {
                     // Viewless: pass the SAME host down, so a keyless container

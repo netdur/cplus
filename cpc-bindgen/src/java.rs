@@ -415,8 +415,14 @@ impl Emitter {
         }
 
         let mname = if m.is_ctor { "<init>" } else { &m.name };
+        // A STATIC method's id comes from GetStaticMethodID, and the two
+        // lookups are not interchangeable: ART answers NoSuchMethodError ("no
+        // non-static method ...") for a static asked of the instance table, and
+        // the error surfaces at whatever JNI call runs NEXT. A constructor is
+        // an instance member even though the C+ wrapper takes `env`.
+        let midfn = if m.is_static { "method_static" } else { "method" };
         self.out.push_str(&format!(
-            "        let mid: jni::jmethodID = {envx}.method(#str_ptr(\"{jni_cls}\\0\"), #str_ptr(\"{mname}\\0\"), #str_ptr(\"{}\\0\"));\n",
+            "        let mid: jni::jmethodID = {envx}.{midfn}(#str_ptr(\"{jni_cls}\\0\"), #str_ptr(\"{mname}\\0\"), #str_ptr(\"{}\\0\"));\n",
             m.desc
         ));
 
@@ -710,6 +716,8 @@ public class android.widget.TextView extends android.view.View implements androi
     descriptor: (F)V
   public boolean isFocused();
     descriptor: ()Z
+  public static android.widget.TextView inflate(android.content.Context);
+    descriptor: (Landroid/content/Context;)Landroid/widget/TextView;
   static {};
     descriptor: ()V
 }
@@ -827,6 +835,29 @@ public class android.widget.TextView extends android.view.View implements androi
         let out = emit(&parse_javap(FIXTURE));
         assert!(out.contains("this._env.method(#str_ptr(\"android/widget/TextView\\0\")"));
         assert!(!out.contains("find_class(#str_ptr(\"android/widget/TextView"));
+    }
+
+    #[test]
+    fn a_static_method_resolves_its_id_from_the_static_table() {
+        // GetMethodID and GetStaticMethodID search DIFFERENT tables. Asking the
+        // instance one for a static answers NoSuchMethodError — "no non-static
+        // method ..." — and JNI leaves that exception PENDING, so the abort
+        // lands on whatever call runs next with a stack pointing somewhere
+        // innocent. Every static binding was emitted this way until 2026-08-25;
+        // nothing had called one, so nothing had noticed.
+        let out = emit(&parse_javap(FIXTURE));
+        assert!(out.contains("env.method_static(#str_ptr(\"android/widget/TextView\\0\"), #str_ptr(\"inflate\\0\")"));
+        // And the instance methods must NOT have moved to the static table.
+        assert!(out.contains("this._env.method(#str_ptr(\"android/widget/TextView\\0\"), #str_ptr(\"setTextSize\\0\")"));
+        assert!(!out.contains("method_static(#str_ptr(\"android/widget/TextView\\0\"), #str_ptr(\"setTextSize"));
+    }
+
+    #[test]
+    fn a_constructor_is_an_instance_member_however_it_is_called() {
+        // A ctor's C+ wrapper takes `env` like a static's does, which is what
+        // made this worth pinning: `<init>` is still GetMethodID.
+        let out = emit(&parse_javap(FIXTURE));
+        assert!(out.contains("env.method(#str_ptr(\"android/widget/TextView\\0\"), #str_ptr(\"<init>\\0\")"));
     }
 
     #[test]

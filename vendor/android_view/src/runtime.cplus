@@ -58,6 +58,9 @@ struct MethodCache { ka: [usize; 256], kb: [usize; 256], kc: [usize; 256], val: 
 
 static CLASSES: ClassCache = #zero::[ClassCache]();
 static METHODS: MethodCache = #zero::[MethodCache]();
+// The static half. Separate table, because GetMethodID and GetStaticMethodID
+// search different ones and a class may declare both with the same signature.
+static STATIC_METHODS: MethodCache = #zero::[MethodCache]();
 
 fn mix3(a: usize, b: usize, c: usize) -> usize {
     var h: usize = a >> (4 as usize);
@@ -205,6 +208,49 @@ impl Env {
         // Table full — the old uncached path, still correct.
         let cls2: jni::jclass = this.find_class(class_name);
         let mid2: jni::jmethodID = this.method_id(cls2, name, sig);
+        this.delete_local_ref(cls2);
+        return mid2;
+    }
+
+    // The STATIC half of the cache above, and it must be a separate table.
+    //
+    // `GetMethodID` and `GetStaticMethodID` search different tables: asking the
+    // instance one for a static answers NoSuchMethodError, "no non-static
+    // method ...". Worse, that exception stays PENDING — JNI raises rather than
+    // returning — so the abort surfaces at whatever JNI call comes next, with a
+    // stack pointing at an innocent function. Every generated binding for a
+    // static routes here.
+    //
+    // Sharing one table keyed only on the three strings would be wrong for the
+    // same reason a shared lookup is: a class may declare a static and an
+    // instance method with the SAME name and descriptor, and the two ids are
+    // different.
+    fn method_static(this, class_name: *u8, name: *u8, sig: *u8) -> jni::jmethodID {
+        let ka: usize = { #addr(class_name) };
+        let kb: usize = { #addr(name) };
+        let kc: usize = { #addr(sig) };
+        var i: usize = mix3(ka, kb, kc);
+        var probes: usize = 0 as usize;
+        while probes < MID_SLOTS {
+            if STATIC_METHODS.ka[i] == ka {
+                if STATIC_METHODS.kb[i] == kb {
+                    if STATIC_METHODS.kc[i] == kc { return { STATIC_METHODS.val[i] as *u8 }; }
+                }
+            }
+            if STATIC_METHODS.ka[i] == (0 as usize) {
+                let cls: jni::jclass = this.class_cached(class_name);
+                let mid: jni::jmethodID = this.method_id_static(cls, name, sig);
+                STATIC_METHODS.ka[i] = ka;
+                STATIC_METHODS.kb[i] = kb;
+                STATIC_METHODS.kc[i] = kc;
+                STATIC_METHODS.val[i] = { #addr(mid) };
+                return mid;
+            }
+            i = (i +% (1 as usize)) & (MID_SLOTS -% (1 as usize));
+            probes = probes +% (1 as usize);
+        }
+        let cls2: jni::jclass = this.find_class(class_name);
+        let mid2: jni::jmethodID = this.method_id_static(cls2, name, sig);
         this.delete_local_ref(cls2);
         return mid2;
     }
