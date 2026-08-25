@@ -1,0 +1,302 @@
+// The recycler: `list` today, and the machinery `tree`, `table` and
+// `collection` will sit on.
+//
+// A RECYCLED ROW IS A SUBTREE THE PLATFORM OWNS. ListView creates, pools and
+// destroys cells on its own schedule, and a row is not in the window walk — so
+// facet's own door is `mount::realise` / `unrealise` / `sync_from` rather than
+// anything this file invents. That door exists precisely for this.
+//
+// The cycle, and the reason it is worth the machinery:
+//
+//   first sight of a shape   build the row's node, realise it INTO the cell
+//   every row after that     bind() writes props into the SAME subtree,
+//                            sync_from carries them across
+//
+// Without a bind the cell is emptied and rebuilt, which is a subtree, a layout
+// and a view per node per row — what a list costs before the contract can say
+// otherwise. facet_appkit's recycler makes the same split and this is a port of
+// its `fill_cell`.
+
+import "stdlib/box" as box;
+import "stdlib/option" as option;
+import "jni/jni" as jni;
+import "android_view/runtime" as rt;
+import "android_view/widgets" as w;
+import "flex_layout/flex_layout" as flex;
+import "facet/facet" as core;
+import "facet/props" as props;
+import "facet/mount" as mount;
+import "facet/list" as list;
+import "./env" as e;
+import "./paint" as paint;
+import "./dex" as dex;
+import "./geometry" as geometry;
+import "./scheduler" as scheduler;
+import "./log" as log;
+import "./controls" as controls;
+
+// Keyed tags on the LIST's view, so a re-entry finds what it made. Resource-id
+// shaped, because `View.setTag(int, Object)` refuses anything whose top byte is
+// under 2 — see controls::SCROLL_DOC_TAG.
+const LIST_ADAPTER_TAG: i32 = 2131886083 as i32;   // 0x7F0F0003
+// And on the CELL: the boxed row node it is currently showing.
+const CELL_NODE_TAG: i32 = 2131886084 as i32;      // 0x7F0F0004
+
+fn list_props(n: *core::Node) -> *props::ListProps {
+    return controls::props_of(n, props::K_LIST) as *props::ListProps;
+}
+
+fn create_list(n: *core::Node) -> *u8 {
+    let env: rt::Env = e::env();
+    var lv: w::ListView = w::ListView::new_context(env, e::context());
+    let raw: *u8 = lv.into_raw();
+
+    // The adapter and the tap listener both carry the NODE as their token, so
+    // one hook routes any number of lists and there is no side table.
+    let token: i64 = { #addr(n) as i64 };
+    let adapter: jni::jobject = dex::new_with_token(env, dex::rows_class(), token);
+    var av: w::AdapterView = w::AdapterView::from_global(env, env.new_global_ref(raw));
+    av.set_adapter(adapter);
+    let tap: jni::jobject = dex::new_with_token(env, dex::rowtap_class(), token);
+    av.set_on_item_click_listener(tap);
+    let _keep: *u8 = av.into_raw();
+
+    // The adapter is KEPT: `notifyDataSetChanged` needs the same object, and a
+    // local ref does not survive the call that made it.
+    var view: w::View = w::View::from_global(env, raw);
+    view.set_tag_i_object(LIST_ADAPTER_TAG, adapter);
+    paint::unwrap_keep(view);
+    env.delete_local_ref(adapter);
+    env.delete_local_ref(tap);
+    return raw;
+}
+
+fn adapter_of(env: rt::Env, v: *u8) -> jni::jobject {
+    var view: w::View = w::View::from_global(env, v);
+    let t: jni::jobject = view.get_tag_i(LIST_ADAPTER_TAG);
+    paint::unwrap_keep(view);
+    return t;
+}
+
+fn apply_list(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *props::ListProps = list_props(n);
+    if p == (0 as *props::ListProps) { return; }
+    let env: rt::Env = e::env();
+
+    // ANY of these means the model moved, and the answer is the same: ask the
+    // adapter again. ListView re-reads the count and re-binds what is on
+    // screen; the rows it is not showing cost nothing.
+    let moved: u64 = list::P_COUNT | list::P_ROW | list::P_INVALIDATE_ROW
+                   | list::P_SPLICE_ROWS | list::P_GROUP | list::P_GROUP_COUNT;
+    if (dirty & moved) != (0 as u64) {
+        let a: jni::jobject = adapter_of(env, v);
+        if a != (0 as jni::jobject) {
+            dex::rows_changed(env, a);
+            env.delete_local_ref(a);
+        }
+    }
+    if (dirty & list::P_SELECTED_INDEX) != (0 as u64) {
+        let idx: i64 = { (*p).selected_index };
+        if idx >= (0 as i64) {
+            var av: w::AdapterView = w::AdapterView::from_global(env, env.new_global_ref(v));
+            av.set_selection({ idx as i32 });
+            let _k: *u8 = av.into_raw();
+        }
+    }
+    if (dirty & list::P_SCROLL_TO) != (0 as u64) {
+        let idx: i64 = { (*p).scroll_to_index };
+        // PAST THE END IS NOT A SCROLL. The same guard `cv_scroll_to` needed on
+        // the other backend, for the same reason: a target the model does not
+        // have is a request that cannot be honoured, not one to approximate.
+        if idx >= (0 as i64) && idx < { (*p).count } {
+            var lv: w::ListView = w::ListView::from_global(env, env.new_global_ref(v));
+            var av2: w::AdapterView = lv.as_abs_list_view().as_adapter_view();
+            av2.set_selection({ idx as i32 });
+            let _k: *u8 = lv.into_raw();
+        }
+    }
+    return;
+}
+
+// ---- the adapter's two questions ---------------------------------------------
+
+fn row_count(token: i64) -> i32 {
+    let n: *core::Node = { token as *core::Node };
+    if n == (0 as *core::Node) { return 0 as i32; }
+    let p: *props::ListProps = list_props(n);
+    if p == (0 as *props::ListProps) { return 0 as i32; }
+    return { (*p).count as i32 };
+}
+
+fn row_tapped(token: i64, position: i32) {
+    let n: *core::Node = { token as *core::Node };
+    if n == (0 as *core::Node) { return; }
+    let p: *props::ListProps = list_props(n);
+    if p == (0 as *props::ListProps) { return; }
+    { (*p).selected_index = { position as i64 } };
+    let t: fn(*u8, *u8) = { (*p).on_item_tapped };
+    if t != props::no_handler { t(core::view_of(n), { (*p).on_item_tapped_ctx }); }
+    let s: fn(*u8, *u8) = { (*p).on_item_selected };
+    if s != props::no_handler { s(core::view_of(n), { (*p).on_item_selected_ctx }); }
+    return;
+}
+
+// The DEFAULT is a real function, not a null pointer — `props::no_bind` — so
+// "has a bind" is a comparison against that sentinel. Testing for null would
+// answer true for every list and send a rebuild down the recycling path.
+fn has_bind(p: *props::ListProps) -> bool {
+    return { (*p).bind } != props::no_bind;
+}
+
+fn cell_node(env: rt::Env, cell: jni::jobject) -> *core::Node {
+    var view: w::View = w::View::from_global(env, env.new_global_ref(cell));
+    let t: jni::jobject = view.get_tag_i(CELL_NODE_TAG);
+    let _k: *u8 = view.into_raw();
+    if t == (0 as jni::jobject) { return 0 as *core::Node; }
+    // The tag holds a Long, because a jobject cannot be a raw pointer.
+    let cls: jni::jclass = env.class_cached(#str_ptr("java/lang/Long\0"));
+    let mid: jni::jmethodID = env.method_id(cls, #str_ptr("longValue\0"), #str_ptr("()J\0"));
+    let bits: i64 = { (*(*env.raw())).CallLongMethodA(env.raw(), t, mid, 0 as *jni::JValue) };
+    env.delete_local_ref(t);
+    return { bits as *core::Node };
+}
+
+fn set_cell_node(env: rt::Env, cell: jni::jobject, n: *core::Node) {
+    let cls: jni::jclass = env.class_cached(#str_ptr("java/lang/Long\0"));
+    let mid: jni::jmethodID = env.method_id_static(cls, #str_ptr("valueOf\0"),
+                                                   #str_ptr("(J)Ljava/lang/Long;\0"));
+    var args: [jni::JValue; 1] = [jni::arg_long({ #addr(n) as i64 })];
+    let boxed: jni::jobject = {
+        (*(*env.raw())).CallStaticObjectMethodA(env.raw(), cls, mid, #addr_of(args[0]))
+    };
+    var view: w::View = w::View::from_global(env, env.new_global_ref(cell));
+    view.set_tag_i_object(CELL_NODE_TAG, boxed);
+    let _k: *u8 = view.into_raw();
+    env.delete_local_ref(boxed);
+    return;
+}
+
+// The row ListView asked for, in a cell it may have handed back.
+fn row_view(token: i64, position: i32, convert: jni::jobject, parent: jni::jobject) -> jni::jobject {
+    let n: *core::Node = { token as *core::Node };
+    if n == (0 as *core::Node) { return 0 as jni::jobject; }
+    let p: *props::ListProps = list_props(n);
+    if p == (0 as *props::ListProps) { return 0 as jni::jobject; }
+    let env: rt::Env = e::env();
+    let row: usize = { position as usize };
+
+    // The width a row gets is the LIST'S, which is the frame flex gave the
+    // list node — not the parent's measured width, which is zero before the
+    // first layout.
+    let lf: flex::Frame = core::frame_of(n);
+    var width: f64 = lf.width;
+    if width <= 0.0f64 { width = scheduler::width(); }
+
+    if convert != (0 as jni::jobject) {
+        let existing: *core::Node = cell_node(env, convert);
+        if existing != (0 as *core::Node) && has_bind(p) {
+            bind_into(p, row, existing);
+            // A bind WRITES PROPS, which marks nodes dirty and touches nothing
+            // native. A realised row is outside the window walk, so nothing
+            // would carry those writes across — `sync_from` is that walk,
+            // rooted here, applied immediately because the row is about to be
+            // shown.
+            mount::sync_from(existing);
+            place_row(env, convert, existing, width, fixed_height(p));
+            return convert;
+        }
+        // No bind, or an empty cell: tear the old row down before reusing it.
+        if existing != (0 as *core::Node) { mount::unrealise(existing); }
+    }
+
+    let cell: jni::jobject = new_cell(env, convert);
+    var node: core::Node = build_row(p, row);
+    match box::new::[core::Node](node) {
+        option::Option[box::Box[core::Node]]::Some(b) => {
+            let np: *core::Node = { b.into_raw() as *core::Node };
+            // THE CELL IS THE HOST. A row's root is usually a bare container —
+            // nothing keys it, nothing gives it gestures — so it is not backed
+            // and its children pass straight into the cell, exactly as a
+            // layout-only column does inside a scroll.
+            let _rv: *u8 = mount::realise(np, cell);
+            // Bound immediately, INCLUDING on the first use, so the builder is
+            // responsible for shape only and a row can never show the data of
+            // whichever row happened to build its cell.
+            if has_bind(p) { bind_into(p, row, np); }
+            mount::sync_from(np);
+            place_row(env, cell, np, width, fixed_height(p));
+            set_cell_node(env, cell, np);
+        }
+        option::Option[box::Box[core::Node]]::None => { }
+    }
+    return cell;
+}
+
+fn new_cell(env: rt::Env, convert: jni::jobject) -> jni::jobject {
+    if convert != (0 as jni::jobject) {
+        // Reuse the host itself; only its contents were torn down.
+        empty_cell(env, convert);
+        return convert;
+    }
+    return dex::new_host(env, e::context());
+}
+
+fn empty_cell(env: rt::Env, cell: jni::jobject) {
+    var g: w::ViewGroup = w::ViewGroup::from_global(env, env.new_global_ref(cell));
+    g.remove_all_views();
+    let _k: *u8 = g.into_raw();
+    return;
+}
+
+// A stated `row_height`, or 0 for "ask the content".
+fn fixed_height(p: *props::ListProps) -> f64 {
+    let h: i64 = { (*p).row_height };
+    if h <= (0 as i64) { return 0.0f64; }
+    return { h as f64 };
+}
+
+fn build_row(p: *props::ListProps, row: usize) -> core::Node {
+    let f: fn(usize, *u8) -> flex::Node = { (*p).row };
+    if f == (0 as fn(usize, *u8) -> flex::Node) { return core::column(core::Builder::new()); }
+    return f(row, { (*p).row_ctx });
+}
+
+// `bind` carries no ctx of its own: it shares `row_ctx` with the builder, which
+// is right — the two are halves of one thing and an app that needed different
+// context for them would be describing two lists.
+fn bind_into(p: *props::ListProps, row: usize, n: *core::Node) {
+    let f: fn(usize, *flex::Node, *u8) = { (*p).bind };
+    if f == props::no_bind { return; }
+    f(row, n, { (*p).row_ctx });
+    return;
+}
+
+// Lay the row out at the list's width and push the frames into the cell.
+//
+// The cell's own height is what ListView asks for, and `FacetHost.setWanted` is
+// how it answers — an adapter's view is measured with a LOOSE height spec, and
+// `MeasureSpec.getSize` of UNSPECIFIED is zero.
+fn place_row(env: rt::Env, cell: jni::jobject, n: *core::Node, width: f64, row_h: f64) {
+    // WIDTH ONLY, as a named argument — the height is left to the content.
+    // Passing an explicit "undefined" height instead produced a row of ZERO,
+    // and a ListView full of hairlines is what that looks like.
+    { (*n).calculate_layout(width: width) };
+    // A STATED row_height wins, but only if the content fits inside it: a
+    // builder that ignores the wrap should not be clipped to a row it overflows.
+    // The same rule facet_appkit's `place_row` applies, for the same reason.
+    if row_h >= 1.0f64 {
+        let natural: f64 = { (*n).frame().height };
+        if natural + 0.5f64 >= row_h {
+            { (*n).calculate_layout(width: width, height: row_h) };
+        } else {
+            { (*n).calculate_layout(width: width, height: row_h) };
+        }
+    }
+    let f: flex::Frame = core::frame_of(n);
+    var ht: f64 = f.height;
+    if ht <= 0.0f64 { ht = 1.0f64; }
+    dex::host_set_wanted(env, cell, { width as i32 }, { ht as i32 });
+    geometry::place(cell, 0.0f64, 0.0f64, width, ht);
+    geometry::reposition_children(n, core::frame_of(n));
+    return;
+}

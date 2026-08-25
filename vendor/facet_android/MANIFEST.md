@@ -72,10 +72,12 @@ through liblog (`adb logcat -s facet`) and render an empty container.
   so the tree shape is right and only the arming is missing.
 - **`observe_size`.** Android's answer is `addOnLayoutChangeListener`, which
   needs a fifth DEX adapter. Returns 0 (no handle) today.
-- **The recycler.** `RecyclerView.Adapter` is an abstract class, so it cannot be
-  implemented from native code — the DEX must carry a `CplusAdapter` calling
-  back into a bind hook, the same trick as `FacetClick` but much larger. See
-  plan.android.md rung 5.
+- **`tree`, `table` and `collection`.** The recycler is BUILT — `list` runs on
+  `ListView` + a `FacetRows` adapter in the dex — and these three ride the same
+  machinery with a different model on top. `RecyclerView` was not used: it is
+  AndroidX, an .aar with its own dex, and this project ships no Gradle;
+  `ListView` recycles through `convertView`, which is the whole mechanism, and
+  facet owns layout so RecyclerView's LayoutManagers would go unused.
 - **`theme::set_theme_changed_fn`.** `is_dark` is filled; the repaint-on-flip
   hook is not.
 - **Prop parity, measured.** `vendor/facet_gtk/tools/parity.py` scores every
@@ -143,6 +145,20 @@ What an app still writes is the `Java_cplus_facet_FacetActivity_nativeCreateView
 export, five lines calling `entry::start`. It lives in the APP because cpc emits
 one object per package: a package that names a symbol obligates everything that
 links it.
+
+### An undefined extent is not zero
+
+`flex`'s `undefined()` is NaN, and `NaN as i32` is 0 — so `measure_node`
+translated "no constraint on this axis" into `AT_MOST(0)` and every child
+measured to nothing. It never showed while the root had a definite height,
+because then every extent handed down is a real number. It appeared the moment
+something was laid out UNBOUNDED, which is exactly what a recycled row is:
+`calculate_layout` with a width and no height, so the row can be as tall as its
+content.
+
+Two hundred rows of nothing, and the measure looked like it was working because
+the WIDTHS were right. `is_number` is the guard, and a NaN is the only value not
+equal to itself.
 
 ### A radio group has no widget
 

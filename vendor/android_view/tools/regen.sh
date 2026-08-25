@@ -11,6 +11,12 @@
 # absent: a backend that positions children itself never calls them, and binding
 # them would multiply this file for nothing.
 #
+# ListView and its chain are here for the RECYCLER, and they are the exception
+# that proves the rule about containers: facet owns the layout of facet's tree,
+# and a recycled row is a subtree the PLATFORM owns — created, pooled and
+# destroyed on its schedule, not ours. `mount::realise` / `unrealise` /
+# `sync_from` exist precisely because a row is not in the window walk.
+#
 # FrameLayout and LinearLayout ARE here, and the distinction is worth stating:
 # facet owns the layout of facet's TREE, not of a control's INTERNALS. ScrollView
 # extends FrameLayout and cannot be reached without it, and a stepper is three
@@ -42,6 +48,9 @@ BINDGEN="${BINDGEN:-../../target/release/cpc-bindgen}"
     android.widget.ScrollView \
     android.widget.HorizontalScrollView \
     android.widget.ImageButton \
+    android.widget.AdapterView \
+    android.widget.AbsListView \
+    android.widget.ListView \
     android.graphics.Bitmap \
     android.graphics.BitmapFactory \
     android.graphics.drawable.Drawable \

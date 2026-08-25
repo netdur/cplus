@@ -19,6 +19,7 @@ import "./views" as views;
 import "./scheduler" as scheduler;
 import "./controls" as controls;
 import "./window" as window;
+import "./recycler" as recycler;
 import "./env" as e;
 
 fn renderer() -> mount::Renderer {
@@ -115,6 +116,25 @@ export extern fn facet_android_text(envp: *jni::JNIEnv, cls: jni::jobject, token
 export extern fn facet_android_step(envp: *jni::JNIEnv, cls: jni::jobject, token: i64, delta: i32) {
     e::set_env(rt::from_native(envp));
     controls::fire_step(token, delta);
+    return;
+}
+
+export extern fn facet_android_row_count(envp: *jni::JNIEnv, cls: jni::jobject, token: i64) -> i32 {
+    e::set_env(rt::from_native(envp));
+    return recycler::row_count(token);
+}
+
+export extern fn facet_android_row_view(envp: *jni::JNIEnv, cls: jni::jobject, token: i64,
+                                        position: i32, convert: jni::jobject,
+                                        parent: jni::jobject) -> jni::jobject {
+    e::set_env(rt::from_native(envp));
+    return recycler::row_view(token, position, convert, parent);
+}
+
+export extern fn facet_android_row_tapped(envp: *jni::JNIEnv, cls: jni::jobject, token: i64,
+                                          position: i32) {
+    e::set_env(rt::from_native(envp));
+    recycler::row_tapped(token, position);
     return;
 }
 

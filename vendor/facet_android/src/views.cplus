@@ -16,6 +16,7 @@ import "facet/vocabulary" as vocab;
 import "./env" as e;
 import "./paint" as paint;
 import "./controls" as controls;
+import "./recycler" as recycler;
 import "./geometry" as geometry;
 import "./dex" as dex;
 import "./log" as log;
@@ -97,6 +98,7 @@ fn create_for_kind(kind: u32, n: *core::Node) -> *u8 {
     if kind == props::K_ICON_BUTTON { return controls::create_icon_button(n); }
     if kind == props::K_SCROLL { return controls::create_scroll(n); }
     if kind == props::K_STEPPER { return controls::create_stepper(n); }
+    if kind == props::K_LIST { return recycler::create_list(n); }
     // Not built yet. A backend that silently substituted a blank container for
     // a control it does not have would be indistinguishable from a finished
     // one, so MANIFEST.md §2 names every kind that lands here and each warns
@@ -141,6 +143,7 @@ fn apply_for_kind(kind: u32, v: *u8, n: *core::Node, dirty: u64) {
     if kind == props::K_ICON_BUTTON { controls::apply_icon_button(v, n, dirty); return; }
     if kind == props::K_SCROLL { controls::apply_scroll(v, n, dirty); return; }
     if kind == props::K_STEPPER { controls::apply_stepper(v, n, dirty); return; }
+    if kind == props::K_LIST { recycler::apply_list(v, n, dirty); return; }
     return;
 }
 

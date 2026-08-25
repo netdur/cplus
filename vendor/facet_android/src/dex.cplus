@@ -21,7 +21,7 @@ import "jni/jni" as jni;
 import "android_view/runtime" as rt;
 
 // Kept in step by tools/build_dex.sh; do not hand-edit.
-const DEX_LEN: usize = 5648;
+const DEX_LEN: usize = 6896;
 
 static LOADER: usize = 0;
 static C_HOST: usize = 0;
@@ -32,6 +32,8 @@ static C_CHECKED: usize = 0;
 static C_SEEK: usize = 0;
 static C_TEXT: usize = 0;
 static C_STEP: usize = 0;
+static C_ROWS: usize = 0;
+static C_ROWTAP: usize = 0;
 
 // jni.h's JNINativeMethod with the fn slot concretely typed per shape.
 #[repr(C)]
@@ -72,6 +74,20 @@ struct Native2LO {
 }
 
 #[repr(C)]
+struct NativeL_I {
+    opaque name: *u8,
+    opaque signature: *u8,
+    fn_ptr: fn(*jni::JNIEnv, jni::jobject, i64) -> i32,
+}
+
+#[repr(C)]
+struct NativeLIOO_O {
+    opaque name: *u8,
+    opaque signature: *u8,
+    fn_ptr: fn(*jni::JNIEnv, jni::jobject, i64, i32, jni::jobject, jni::jobject) -> jni::jobject,
+}
+
+#[repr(C)]
 struct Native2I {
     opaque name: *u8,
     opaque signature: *u8,
@@ -88,6 +104,10 @@ extern fn facet_android_seek_start(envp: *jni::JNIEnv, cls: jni::jobject, token:
 extern fn facet_android_seek_stop(envp: *jni::JNIEnv, cls: jni::jobject, token: i64);
 extern fn facet_android_text(envp: *jni::JNIEnv, cls: jni::jobject, token: i64, s: jni::jobject);
 extern fn facet_android_step(envp: *jni::JNIEnv, cls: jni::jobject, token: i64, delta: i32);
+extern fn facet_android_row_count(envp: *jni::JNIEnv, cls: jni::jobject, token: i64) -> i32;
+extern fn facet_android_row_view(envp: *jni::JNIEnv, cls: jni::jobject, token: i64, position: i32,
+                                 convert: jni::jobject, parent: jni::jobject) -> jni::jobject;
+extern fn facet_android_row_tapped(envp: *jni::JNIEnv, cls: jni::jobject, token: i64, position: i32);
 
 fn host_class() -> jni::jclass { return { C_HOST as *u8 }; }
 fn tick_class() -> jni::jclass { return { C_TICK as *u8 }; }
@@ -97,6 +117,8 @@ fn checked_class() -> jni::jclass { return { C_CHECKED as *u8 }; }
 fn seek_class() -> jni::jclass { return { C_SEEK as *u8 }; }
 fn text_class() -> jni::jclass { return { C_TEXT as *u8 }; }
 fn step_class() -> jni::jclass { return { C_STEP as *u8 }; }
+fn rows_class() -> jni::jclass { return { C_ROWS as *u8 }; }
+fn rowtap_class() -> jni::jclass { return { C_ROWTAP as *u8 }; }
 fn loaded() -> bool { return LOADER != 0; }
 
 // Load the dex and bind every native. Idempotent; `any_view` is only needed to
@@ -113,7 +135,7 @@ fn ensure_loaded(env: rt::Env, any_view: jni::jobject) {
     // Activity would hold a FacetHost of one class while this code registered
     // natives on the other, and `nativeSizeChanged` would never arrive.
     if load_merged(env) { return; }
-    let dex: *[u8; 5648] = #include_bytes("../facet_android.dex");
+    let dex: *[u8; 6896] = #include_bytes("../facet_android.dex");
     let buffer: jni::jobject = {
         (*(*env.raw())).NewDirectByteBuffer(env.raw(), { dex as *u8 }, DEX_LEN as i64)
     };
@@ -141,6 +163,8 @@ fn ensure_loaded(env: rt::Env, any_view: jni::jobject) {
     C_SEEK = { #addr(load_class(env, loader, #str_ptr("cplus.facet.FacetSeek\0"))) };
     C_TEXT = { #addr(load_class(env, loader, #str_ptr("cplus.facet.FacetText\0"))) };
     C_STEP = { #addr(load_class(env, loader, #str_ptr("cplus.facet.FacetStep\0"))) };
+    C_ROWS = { #addr(load_class(env, loader, #str_ptr("cplus.facet.FacetRows\0"))) };
+    C_ROWTAP = { #addr(load_class(env, loader, #str_ptr("cplus.facet.FacetRowTap\0"))) };
 
     bind_natives(env);
 
@@ -167,6 +191,8 @@ fn load_merged(env: rt::Env) -> bool {
     C_SEEK = { #addr(find_global(env, #str_ptr("cplus/facet/FacetSeek\0"))) };
     C_TEXT = { #addr(find_global(env, #str_ptr("cplus/facet/FacetText\0"))) };
     C_STEP = { #addr(find_global(env, #str_ptr("cplus/facet/FacetStep\0"))) };
+    C_ROWS = { #addr(find_global(env, #str_ptr("cplus/facet/FacetRows\0"))) };
+    C_ROWTAP = { #addr(find_global(env, #str_ptr("cplus/facet/FacetRowTap\0"))) };
     // A sentinel rather than a loader object: `loaded()` asks whether the
     // classes are here, and by this path there is no loader to keep.
     LOADER = 1 as usize;
@@ -254,6 +280,28 @@ fn bind_natives(env: rt::Env) {
     let _r7: i32 = { (*(*env.raw())).RegisterNatives(env.raw(), { C_TEXT as *u8 },
                                                      #addr_of(text_rec) as *u8, 1) };
 
+    var rows_recs: [NativeL_I; 1] = [NativeL_I {
+        name: #str_ptr("nativeRowCount\0"),
+        signature: #str_ptr("(J)I\0"),
+        fn_ptr: facet_android_row_count,
+    }];
+    let _r9: i32 = { (*(*env.raw())).RegisterNatives(env.raw(), { C_ROWS as *u8 },
+                                                     #addr_of(rows_recs[0]) as *u8, 1) };
+    var rowview_rec: NativeLIOO_O = NativeLIOO_O {
+        name: #str_ptr("nativeRowView\0"),
+        signature: #str_ptr("(JILandroid/view/View;Landroid/view/ViewGroup;)Landroid/view/View;\0"),
+        fn_ptr: facet_android_row_view,
+    };
+    let _r10: i32 = { (*(*env.raw())).RegisterNatives(env.raw(), { C_ROWS as *u8 },
+                                                      #addr_of(rowview_rec) as *u8, 1) };
+    var rowtap_rec: Native2LI = Native2LI {
+        name: #str_ptr("nativeRowTapped\0"),
+        signature: #str_ptr("(JI)V\0"),
+        fn_ptr: facet_android_row_tapped,
+    };
+    let _r11: i32 = { (*(*env.raw())).RegisterNatives(env.raw(), { C_ROWTAP as *u8 },
+                                                      #addr_of(rowtap_rec) as *u8, 1) };
+
     var step_rec: Native2LI = Native2LI {
         name: #str_ptr("nativeStep\0"),
         signature: #str_ptr("(JI)V\0"),
@@ -294,6 +342,16 @@ fn new_with_token_i(env: rt::Env, cls: jni::jclass, token: i64, arg: i32) -> jni
 fn new_no_args(env: rt::Env, cls: jni::jclass) -> jni::jobject {
     let ctor: jni::jmethodID = env.method_id(cls, #str_ptr("<init>\0"), #str_ptr("()V\0"));
     return { (*(*env.raw())).NewObjectA(env.raw(), cls, ctor, 0 as *jni::JValue) };
+}
+
+// `adapter.changed()` — the model moved, so ListView re-asks.
+fn rows_changed(env: rt::Env, adapter: jni::jobject) {
+    if C_ROWS == 0 { return; }
+    let mid: jni::jmethodID = env.method_id({ C_ROWS as *u8 }, #str_ptr("changed\0"),
+                                            #str_ptr("()V\0"));
+    if mid == (0 as jni::jmethodID) { return; }
+    { (*(*env.raw())).CallVoidMethodA(env.raw(), adapter, mid, 0 as *jni::JValue) };
+    return;
 }
 
 // Tell a FacetHost the size facet gave it, so its `onMeasure` can answer when

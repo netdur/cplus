@@ -13189,6 +13189,1838 @@ impl ImageButton {
 
 }
 
+// android.widget.AdapterView
+struct AdapterView {
+    _env: rt::Env,
+    _obj: jni::jobject,
+}
+
+impl AdapterView {
+    fn drop(ref this) {
+        // `into_raw` nulls `_obj`; DeleteGlobalRef does not admit NULL.
+        if this._obj != { 0 as jni::jobject } { this._env.delete_global_ref(this._obj); }
+        return;
+    }
+
+    fn from_global(env: rt::Env, obj: jni::jobject) -> AdapterView { return AdapterView { _env: env, _obj: obj }; }
+
+    fn from_local(env: rt::Env, obj: jni::jobject) -> AdapterView { return AdapterView { _env: env, _obj: env.retain_local_as_global(obj) }; }
+
+    fn as_obj(this) -> jni::jobject { return this._obj; }
+
+    fn into_raw(ref this) -> jni::jobject {
+        let p: jni::jobject = this._obj;
+        this._obj = { 0 as jni::jobject };
+        return p;
+    }
+
+    fn add_view_view(this, arg0: jni::jobject) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AdapterView\0"), #str_ptr("addView\0"), #str_ptr("(Landroid/view/View;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn add_view_view_view_group_layout_params(this, arg0: jni::jobject, arg1: jni::jobject) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AdapterView\0"), #str_ptr("addView\0"), #str_ptr("(Landroid/view/View;Landroid/view/ViewGroup$LayoutParams;)V\0"));
+        var args: [jni::JValue; 2] = [jni::arg_object(arg0), jni::arg_object(arg1)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn add_view_view_i(this, arg0: jni::jobject, arg1: i32) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AdapterView\0"), #str_ptr("addView\0"), #str_ptr("(Landroid/view/View;I)V\0"));
+        var args: [jni::JValue; 2] = [jni::arg_object(arg0), jni::arg_int(arg1)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn add_view_view_i_view_group_layout_params(this, arg0: jni::jobject, arg1: i32, arg2: jni::jobject) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AdapterView\0"), #str_ptr("addView\0"), #str_ptr("(Landroid/view/View;ILandroid/view/ViewGroup$LayoutParams;)V\0"));
+        var args: [jni::JValue; 3] = [jni::arg_object(arg0), jni::arg_int(arg1), jni::arg_object(arg2)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn can_animate(this) -> bool {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AdapterView\0"), #str_ptr("canAnimate\0"), #str_ptr("()Z\0"));
+        let r: jni::jboolean = { (*(*this._env.raw())).CallBooleanMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r as i8 != 0;
+    }
+
+    fn dispatch_restore_instance_state(this, arg0: jni::jobject) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AdapterView\0"), #str_ptr("dispatchRestoreInstanceState\0"), #str_ptr("(Landroid/util/SparseArray;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn dispatch_save_instance_state(this, arg0: jni::jobject) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AdapterView\0"), #str_ptr("dispatchSaveInstanceState\0"), #str_ptr("(Landroid/util/SparseArray;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn get_accessibility_class_name(this) -> *u8 {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AdapterView\0"), #str_ptr("getAccessibilityClassName\0"), #str_ptr("()Ljava/lang/CharSequence;\0"));
+        let r: *u8 = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_adapter(this) -> jni::jobject {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AdapterView\0"), #str_ptr("getAdapter\0"), #str_ptr("()Landroid/widget/Adapter;\0"));
+        let r: jni::jobject = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_count(this) -> i32 {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AdapterView\0"), #str_ptr("getCount\0"), #str_ptr("()I\0"));
+        let r: i32 = { (*(*this._env.raw())).CallIntMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_empty_view(this) -> jni::jobject {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AdapterView\0"), #str_ptr("getEmptyView\0"), #str_ptr("()Landroid/view/View;\0"));
+        let r: jni::jobject = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_first_visible_position(this) -> i32 {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AdapterView\0"), #str_ptr("getFirstVisiblePosition\0"), #str_ptr("()I\0"));
+        let r: i32 = { (*(*this._env.raw())).CallIntMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_item_at_position(this, arg0: i32) -> jni::jobject {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AdapterView\0"), #str_ptr("getItemAtPosition\0"), #str_ptr("(I)Ljava/lang/Object;\0"));
+        var args: [jni::JValue; 1] = [jni::arg_int(arg0)];
+        let r: jni::jobject = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])) };
+        return r;
+    }
+
+    fn get_item_id_at_position(this, arg0: i32) -> i64 {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AdapterView\0"), #str_ptr("getItemIdAtPosition\0"), #str_ptr("(I)J\0"));
+        var args: [jni::JValue; 1] = [jni::arg_int(arg0)];
+        let r: i64 = { (*(*this._env.raw())).CallLongMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])) };
+        return r;
+    }
+
+    fn get_last_visible_position(this) -> i32 {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AdapterView\0"), #str_ptr("getLastVisiblePosition\0"), #str_ptr("()I\0"));
+        let r: i32 = { (*(*this._env.raw())).CallIntMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_on_item_click_listener(this) -> jni::jobject {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AdapterView\0"), #str_ptr("getOnItemClickListener\0"), #str_ptr("()Landroid/widget/AdapterView$OnItemClickListener;\0"));
+        let r: jni::jobject = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_on_item_long_click_listener(this) -> jni::jobject {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AdapterView\0"), #str_ptr("getOnItemLongClickListener\0"), #str_ptr("()Landroid/widget/AdapterView$OnItemLongClickListener;\0"));
+        let r: jni::jobject = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_on_item_selected_listener(this) -> jni::jobject {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AdapterView\0"), #str_ptr("getOnItemSelectedListener\0"), #str_ptr("()Landroid/widget/AdapterView$OnItemSelectedListener;\0"));
+        let r: jni::jobject = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_position_for_view(this, arg0: jni::jobject) -> i32 {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AdapterView\0"), #str_ptr("getPositionForView\0"), #str_ptr("(Landroid/view/View;)I\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        let r: i32 = { (*(*this._env.raw())).CallIntMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])) };
+        return r;
+    }
+
+    fn get_selected_item(this) -> jni::jobject {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AdapterView\0"), #str_ptr("getSelectedItem\0"), #str_ptr("()Ljava/lang/Object;\0"));
+        let r: jni::jobject = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_selected_item_id(this) -> i64 {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AdapterView\0"), #str_ptr("getSelectedItemId\0"), #str_ptr("()J\0"));
+        let r: i64 = { (*(*this._env.raw())).CallLongMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_selected_item_position(this) -> i32 {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AdapterView\0"), #str_ptr("getSelectedItemPosition\0"), #str_ptr("()I\0"));
+        let r: i32 = { (*(*this._env.raw())).CallIntMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_selected_view(this) -> jni::jobject {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AdapterView\0"), #str_ptr("getSelectedView\0"), #str_ptr("()Landroid/view/View;\0"));
+        let r: jni::jobject = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn invalid_position(env: rt::Env) -> i32 {
+        let cls: jni::jclass = env.class_cached(#str_ptr("android/widget/AdapterView\0"));
+        let fid: jni::jfieldID = env.static_field_id(cls, #str_ptr("INVALID_POSITION\0"), #str_ptr("I\0"));
+        let r: i32 = { (*(*env.raw())).GetStaticIntField(env.raw(), cls, fid) };
+        return r;
+    }
+
+    fn invalid_row_id(env: rt::Env) -> i64 {
+        let cls: jni::jclass = env.class_cached(#str_ptr("android/widget/AdapterView\0"));
+        let fid: jni::jfieldID = env.static_field_id(cls, #str_ptr("INVALID_ROW_ID\0"), #str_ptr("J\0"));
+        let r: i64 = { (*(*env.raw())).GetStaticLongField(env.raw(), cls, fid) };
+        return r;
+    }
+
+    fn item_view_type_header_or_footer(env: rt::Env) -> i32 {
+        let cls: jni::jclass = env.class_cached(#str_ptr("android/widget/AdapterView\0"));
+        let fid: jni::jfieldID = env.static_field_id(cls, #str_ptr("ITEM_VIEW_TYPE_HEADER_OR_FOOTER\0"), #str_ptr("I\0"));
+        let r: i32 = { (*(*env.raw())).GetStaticIntField(env.raw(), cls, fid) };
+        return r;
+    }
+
+    fn item_view_type_ignore(env: rt::Env) -> i32 {
+        let cls: jni::jclass = env.class_cached(#str_ptr("android/widget/AdapterView\0"));
+        let fid: jni::jfieldID = env.static_field_id(cls, #str_ptr("ITEM_VIEW_TYPE_IGNORE\0"), #str_ptr("I\0"));
+        let r: i32 = { (*(*env.raw())).GetStaticIntField(env.raw(), cls, fid) };
+        return r;
+    }
+
+    fn new_context(env: rt::Env, arg0: jni::jobject) -> AdapterView {
+        let mid: jni::jmethodID = env.method(#str_ptr("android/widget/AdapterView\0"), #str_ptr("<init>\0"), #str_ptr("(Landroid/content/Context;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        let cls: jni::jclass = env.class_cached(#str_ptr("android/widget/AdapterView\0"));
+        let obj: jni::jobject = { (*(*env.raw())).NewObjectA(env.raw(), cls, mid, #addr_of(args[0])) };
+        return AdapterView { _env: env, _obj: env.retain_local_as_global(obj) };
+    }
+
+    fn new_context_attribute_set(env: rt::Env, arg0: jni::jobject, arg1: jni::jobject) -> AdapterView {
+        let mid: jni::jmethodID = env.method(#str_ptr("android/widget/AdapterView\0"), #str_ptr("<init>\0"), #str_ptr("(Landroid/content/Context;Landroid/util/AttributeSet;)V\0"));
+        var args: [jni::JValue; 2] = [jni::arg_object(arg0), jni::arg_object(arg1)];
+        let cls: jni::jclass = env.class_cached(#str_ptr("android/widget/AdapterView\0"));
+        let obj: jni::jobject = { (*(*env.raw())).NewObjectA(env.raw(), cls, mid, #addr_of(args[0])) };
+        return AdapterView { _env: env, _obj: env.retain_local_as_global(obj) };
+    }
+
+    fn new_context_attribute_set_i(env: rt::Env, arg0: jni::jobject, arg1: jni::jobject, arg2: i32) -> AdapterView {
+        let mid: jni::jmethodID = env.method(#str_ptr("android/widget/AdapterView\0"), #str_ptr("<init>\0"), #str_ptr("(Landroid/content/Context;Landroid/util/AttributeSet;I)V\0"));
+        var args: [jni::JValue; 3] = [jni::arg_object(arg0), jni::arg_object(arg1), jni::arg_int(arg2)];
+        let cls: jni::jclass = env.class_cached(#str_ptr("android/widget/AdapterView\0"));
+        let obj: jni::jobject = { (*(*env.raw())).NewObjectA(env.raw(), cls, mid, #addr_of(args[0])) };
+        return AdapterView { _env: env, _obj: env.retain_local_as_global(obj) };
+    }
+
+    fn new_context_attribute_set_i_i(env: rt::Env, arg0: jni::jobject, arg1: jni::jobject, arg2: i32, arg3: i32) -> AdapterView {
+        let mid: jni::jmethodID = env.method(#str_ptr("android/widget/AdapterView\0"), #str_ptr("<init>\0"), #str_ptr("(Landroid/content/Context;Landroid/util/AttributeSet;II)V\0"));
+        var args: [jni::JValue; 4] = [jni::arg_object(arg0), jni::arg_object(arg1), jni::arg_int(arg2), jni::arg_int(arg3)];
+        let cls: jni::jclass = env.class_cached(#str_ptr("android/widget/AdapterView\0"));
+        let obj: jni::jobject = { (*(*env.raw())).NewObjectA(env.raw(), cls, mid, #addr_of(args[0])) };
+        return AdapterView { _env: env, _obj: env.retain_local_as_global(obj) };
+    }
+
+    fn on_detached_from_window(this) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AdapterView\0"), #str_ptr("onDetachedFromWindow\0"), #str_ptr("()V\0"));
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue); };
+        return;
+    }
+
+    fn on_layout(this, arg0: bool, arg1: i32, arg2: i32, arg3: i32, arg4: i32) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AdapterView\0"), #str_ptr("onLayout\0"), #str_ptr("(ZIIII)V\0"));
+        var args: [jni::JValue; 5] = [rt::arg_bool(arg0), jni::arg_int(arg1), jni::arg_int(arg2), jni::arg_int(arg3), jni::arg_int(arg4)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn on_provide_autofill_structure(this, arg0: jni::jobject, arg1: i32) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AdapterView\0"), #str_ptr("onProvideAutofillStructure\0"), #str_ptr("(Landroid/view/ViewStructure;I)V\0"));
+        var args: [jni::JValue; 2] = [jni::arg_object(arg0), jni::arg_int(arg1)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn perform_item_click(this, arg0: jni::jobject, arg1: i32, arg2: i64) -> bool {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AdapterView\0"), #str_ptr("performItemClick\0"), #str_ptr("(Landroid/view/View;IJ)Z\0"));
+        var args: [jni::JValue; 3] = [jni::arg_object(arg0), jni::arg_int(arg1), jni::arg_long(arg2)];
+        let r: jni::jboolean = { (*(*this._env.raw())).CallBooleanMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])) };
+        return r as i8 != 0;
+    }
+
+    fn remove_all_views(this) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AdapterView\0"), #str_ptr("removeAllViews\0"), #str_ptr("()V\0"));
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue); };
+        return;
+    }
+
+    fn remove_view(this, arg0: jni::jobject) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AdapterView\0"), #str_ptr("removeView\0"), #str_ptr("(Landroid/view/View;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn remove_view_at(this, arg0: i32) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AdapterView\0"), #str_ptr("removeViewAt\0"), #str_ptr("(I)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_int(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_adapter(this, arg0: jni::jobject) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AdapterView\0"), #str_ptr("setAdapter\0"), #str_ptr("(Landroid/widget/Adapter;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_empty_view(this, arg0: jni::jobject) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AdapterView\0"), #str_ptr("setEmptyView\0"), #str_ptr("(Landroid/view/View;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_focusable(this, arg0: i32) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AdapterView\0"), #str_ptr("setFocusable\0"), #str_ptr("(I)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_int(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_focusable_in_touch_mode(this, arg0: bool) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AdapterView\0"), #str_ptr("setFocusableInTouchMode\0"), #str_ptr("(Z)V\0"));
+        var args: [jni::JValue; 1] = [rt::arg_bool(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_on_click_listener(this, arg0: jni::jobject) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AdapterView\0"), #str_ptr("setOnClickListener\0"), #str_ptr("(Landroid/view/View$OnClickListener;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_on_item_click_listener(this, arg0: jni::jobject) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AdapterView\0"), #str_ptr("setOnItemClickListener\0"), #str_ptr("(Landroid/widget/AdapterView$OnItemClickListener;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_on_item_long_click_listener(this, arg0: jni::jobject) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AdapterView\0"), #str_ptr("setOnItemLongClickListener\0"), #str_ptr("(Landroid/widget/AdapterView$OnItemLongClickListener;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_on_item_selected_listener(this, arg0: jni::jobject) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AdapterView\0"), #str_ptr("setOnItemSelectedListener\0"), #str_ptr("(Landroid/widget/AdapterView$OnItemSelectedListener;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_selection(this, arg0: i32) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AdapterView\0"), #str_ptr("setSelection\0"), #str_ptr("(I)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_int(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+}
+
+// android.widget.AbsListView
+struct AbsListView {
+    _env: rt::Env,
+    _obj: jni::jobject,
+}
+
+impl AbsListView {
+    fn drop(ref this) {
+        // `into_raw` nulls `_obj`; DeleteGlobalRef does not admit NULL.
+        if this._obj != { 0 as jni::jobject } { this._env.delete_global_ref(this._obj); }
+        return;
+    }
+
+    fn from_global(env: rt::Env, obj: jni::jobject) -> AbsListView { return AbsListView { _env: env, _obj: obj }; }
+
+    fn from_local(env: rt::Env, obj: jni::jobject) -> AbsListView { return AbsListView { _env: env, _obj: env.retain_local_as_global(obj) }; }
+
+    fn as_obj(this) -> jni::jobject { return this._obj; }
+
+    fn into_raw(ref this) -> jni::jobject {
+        let p: jni::jobject = this._obj;
+        this._obj = { 0 as jni::jobject };
+        return p;
+    }
+
+    // javap lists DECLARED members only; the inherited surface is here.
+    //
+    // Takes a FRESH global ref rather than sharing this one. Both
+    // wrappers own what they hold and both drops run, so handing the
+    // same ref over would DeleteGlobalRef it twice.
+    fn as_adapter_view(this) -> AdapterView { return AdapterView::from_global(this._env, this._env.new_global_ref(this._obj)); }
+
+    fn add_touchables(this, arg0: jni::jobject) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("addTouchables\0"), #str_ptr("(Ljava/util/ArrayList;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn after_text_changed(this, arg0: jni::jobject) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("afterTextChanged\0"), #str_ptr("(Landroid/text/Editable;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn before_text_changed(this, arg0: *u8, arg1: i32, arg2: i32, arg3: i32) {
+        let arg0_s: jni::jstring = this._env.new_string_utf(arg0);
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("beforeTextChanged\0"), #str_ptr("(Ljava/lang/CharSequence;III)V\0"));
+        var args: [jni::JValue; 4] = [jni::arg_object(arg0_s), jni::arg_int(arg1), jni::arg_int(arg2), jni::arg_int(arg3)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        this._env.delete_local_ref(arg0_s);
+        return;
+    }
+
+    fn can_scroll_list(this, arg0: i32) -> bool {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("canScrollList\0"), #str_ptr("(I)Z\0"));
+        var args: [jni::JValue; 1] = [jni::arg_int(arg0)];
+        let r: jni::jboolean = { (*(*this._env.raw())).CallBooleanMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])) };
+        return r as i8 != 0;
+    }
+
+    fn check_input_connection_proxy(this, arg0: jni::jobject) -> bool {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("checkInputConnectionProxy\0"), #str_ptr("(Landroid/view/View;)Z\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        let r: jni::jboolean = { (*(*this._env.raw())).CallBooleanMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])) };
+        return r as i8 != 0;
+    }
+
+    fn check_layout_params(this, arg0: jni::jobject) -> bool {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("checkLayoutParams\0"), #str_ptr("(Landroid/view/ViewGroup$LayoutParams;)Z\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        let r: jni::jboolean = { (*(*this._env.raw())).CallBooleanMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])) };
+        return r as i8 != 0;
+    }
+
+    fn choice_mode_multiple(env: rt::Env) -> i32 {
+        let cls: jni::jclass = env.class_cached(#str_ptr("android/widget/AbsListView\0"));
+        let fid: jni::jfieldID = env.static_field_id(cls, #str_ptr("CHOICE_MODE_MULTIPLE\0"), #str_ptr("I\0"));
+        let r: i32 = { (*(*env.raw())).GetStaticIntField(env.raw(), cls, fid) };
+        return r;
+    }
+
+    fn choice_mode_multiple_modal(env: rt::Env) -> i32 {
+        let cls: jni::jclass = env.class_cached(#str_ptr("android/widget/AbsListView\0"));
+        let fid: jni::jfieldID = env.static_field_id(cls, #str_ptr("CHOICE_MODE_MULTIPLE_MODAL\0"), #str_ptr("I\0"));
+        let r: i32 = { (*(*env.raw())).GetStaticIntField(env.raw(), cls, fid) };
+        return r;
+    }
+
+    fn choice_mode_none(env: rt::Env) -> i32 {
+        let cls: jni::jclass = env.class_cached(#str_ptr("android/widget/AbsListView\0"));
+        let fid: jni::jfieldID = env.static_field_id(cls, #str_ptr("CHOICE_MODE_NONE\0"), #str_ptr("I\0"));
+        let r: i32 = { (*(*env.raw())).GetStaticIntField(env.raw(), cls, fid) };
+        return r;
+    }
+
+    fn choice_mode_single(env: rt::Env) -> i32 {
+        let cls: jni::jclass = env.class_cached(#str_ptr("android/widget/AbsListView\0"));
+        let fid: jni::jfieldID = env.static_field_id(cls, #str_ptr("CHOICE_MODE_SINGLE\0"), #str_ptr("I\0"));
+        let r: i32 = { (*(*env.raw())).GetStaticIntField(env.raw(), cls, fid) };
+        return r;
+    }
+
+    fn clear_choices(this) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("clearChoices\0"), #str_ptr("()V\0"));
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue); };
+        return;
+    }
+
+    fn clear_text_filter(this) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("clearTextFilter\0"), #str_ptr("()V\0"));
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue); };
+        return;
+    }
+
+    fn compute_vertical_scroll_extent(this) -> i32 {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("computeVerticalScrollExtent\0"), #str_ptr("()I\0"));
+        let r: i32 = { (*(*this._env.raw())).CallIntMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn compute_vertical_scroll_offset(this) -> i32 {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("computeVerticalScrollOffset\0"), #str_ptr("()I\0"));
+        let r: i32 = { (*(*this._env.raw())).CallIntMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn compute_vertical_scroll_range(this) -> i32 {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("computeVerticalScrollRange\0"), #str_ptr("()I\0"));
+        let r: i32 = { (*(*this._env.raw())).CallIntMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn defer_notify_data_set_changed(this) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("deferNotifyDataSetChanged\0"), #str_ptr("()V\0"));
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue); };
+        return;
+    }
+
+    fn dispatch_draw(this, arg0: jni::jobject) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("dispatchDraw\0"), #str_ptr("(Landroid/graphics/Canvas;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn dispatch_drawable_hotspot_changed(this, arg0: f32, arg1: f32) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("dispatchDrawableHotspotChanged\0"), #str_ptr("(FF)V\0"));
+        var args: [jni::JValue; 2] = [jni::arg_float(arg0), jni::arg_float(arg1)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn dispatch_set_pressed(this, arg0: bool) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("dispatchSetPressed\0"), #str_ptr("(Z)V\0"));
+        var args: [jni::JValue; 1] = [rt::arg_bool(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn draw(this, arg0: jni::jobject) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("draw\0"), #str_ptr("(Landroid/graphics/Canvas;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn drawable_state_changed(this) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("drawableStateChanged\0"), #str_ptr("()V\0"));
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue); };
+        return;
+    }
+
+    fn fling(this, arg0: i32) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("fling\0"), #str_ptr("(I)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_int(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn generate_default_layout_params(this) -> jni::jobject {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("generateDefaultLayoutParams\0"), #str_ptr("()Landroid/view/ViewGroup$LayoutParams;\0"));
+        let r: jni::jobject = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn generate_layout_params_attribute_set(this, arg0: jni::jobject) -> jni::jobject {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("generateLayoutParams\0"), #str_ptr("(Landroid/util/AttributeSet;)Landroid/widget/AbsListView$LayoutParams;\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        let r: jni::jobject = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])) };
+        return r;
+    }
+
+    fn generate_layout_params_view_group_layout_params(this, arg0: jni::jobject) -> jni::jobject {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("generateLayoutParams\0"), #str_ptr("(Landroid/view/ViewGroup$LayoutParams;)Landroid/view/ViewGroup$LayoutParams;\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        let r: jni::jobject = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])) };
+        return r;
+    }
+
+    fn generate_layout_params_attribute_set_field(this, arg0: jni::jobject) -> jni::jobject {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("generateLayoutParams\0"), #str_ptr("(Landroid/util/AttributeSet;)Landroid/view/ViewGroup$LayoutParams;\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        let r: jni::jobject = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])) };
+        return r;
+    }
+
+    fn get_accessibility_class_name(this) -> *u8 {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("getAccessibilityClassName\0"), #str_ptr("()Ljava/lang/CharSequence;\0"));
+        let r: *u8 = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_bottom_edge_effect_color(this) -> i32 {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("getBottomEdgeEffectColor\0"), #str_ptr("()I\0"));
+        let r: i32 = { (*(*this._env.raw())).CallIntMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_bottom_fading_edge_strength(this) -> f32 {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("getBottomFadingEdgeStrength\0"), #str_ptr("()F\0"));
+        let r: f32 = { (*(*this._env.raw())).CallFloatMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_bottom_padding_offset(this) -> i32 {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("getBottomPaddingOffset\0"), #str_ptr("()I\0"));
+        let r: i32 = { (*(*this._env.raw())).CallIntMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_cache_color_hint(this) -> i32 {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("getCacheColorHint\0"), #str_ptr("()I\0"));
+        let r: i32 = { (*(*this._env.raw())).CallIntMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_checked_item_count(this) -> i32 {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("getCheckedItemCount\0"), #str_ptr("()I\0"));
+        let r: i32 = { (*(*this._env.raw())).CallIntMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_checked_item_ids(this) -> jni::jarray {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("getCheckedItemIds\0"), #str_ptr("()[J\0"));
+        let r: jni::jarray = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_checked_item_position(this) -> i32 {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("getCheckedItemPosition\0"), #str_ptr("()I\0"));
+        let r: i32 = { (*(*this._env.raw())).CallIntMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_checked_item_positions(this) -> jni::jobject {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("getCheckedItemPositions\0"), #str_ptr("()Landroid/util/SparseBooleanArray;\0"));
+        let r: jni::jobject = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_choice_mode(this) -> i32 {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("getChoiceMode\0"), #str_ptr("()I\0"));
+        let r: i32 = { (*(*this._env.raw())).CallIntMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_context_menu_info(this) -> jni::jobject {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("getContextMenuInfo\0"), #str_ptr("()Landroid/view/ContextMenu$ContextMenuInfo;\0"));
+        let r: jni::jobject = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_focused_rect(this, arg0: jni::jobject) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("getFocusedRect\0"), #str_ptr("(Landroid/graphics/Rect;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn get_left_padding_offset(this) -> i32 {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("getLeftPaddingOffset\0"), #str_ptr("()I\0"));
+        let r: i32 = { (*(*this._env.raw())).CallIntMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_list_padding_bottom(this) -> i32 {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("getListPaddingBottom\0"), #str_ptr("()I\0"));
+        let r: i32 = { (*(*this._env.raw())).CallIntMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_list_padding_left(this) -> i32 {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("getListPaddingLeft\0"), #str_ptr("()I\0"));
+        let r: i32 = { (*(*this._env.raw())).CallIntMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_list_padding_right(this) -> i32 {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("getListPaddingRight\0"), #str_ptr("()I\0"));
+        let r: i32 = { (*(*this._env.raw())).CallIntMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_list_padding_top(this) -> i32 {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("getListPaddingTop\0"), #str_ptr("()I\0"));
+        let r: i32 = { (*(*this._env.raw())).CallIntMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_right_padding_offset(this) -> i32 {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("getRightPaddingOffset\0"), #str_ptr("()I\0"));
+        let r: i32 = { (*(*this._env.raw())).CallIntMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_selected_view(this) -> jni::jobject {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("getSelectedView\0"), #str_ptr("()Landroid/view/View;\0"));
+        let r: jni::jobject = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_selector(this) -> jni::jobject {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("getSelector\0"), #str_ptr("()Landroid/graphics/drawable/Drawable;\0"));
+        let r: jni::jobject = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_solid_color(this) -> i32 {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("getSolidColor\0"), #str_ptr("()I\0"));
+        let r: i32 = { (*(*this._env.raw())).CallIntMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_text_filter(this) -> *u8 {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("getTextFilter\0"), #str_ptr("()Ljava/lang/CharSequence;\0"));
+        let r: *u8 = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_top_edge_effect_color(this) -> i32 {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("getTopEdgeEffectColor\0"), #str_ptr("()I\0"));
+        let r: i32 = { (*(*this._env.raw())).CallIntMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_top_fading_edge_strength(this) -> f32 {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("getTopFadingEdgeStrength\0"), #str_ptr("()F\0"));
+        let r: f32 = { (*(*this._env.raw())).CallFloatMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_top_padding_offset(this) -> i32 {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("getTopPaddingOffset\0"), #str_ptr("()I\0"));
+        let r: i32 = { (*(*this._env.raw())).CallIntMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_transcript_mode(this) -> i32 {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("getTranscriptMode\0"), #str_ptr("()I\0"));
+        let r: i32 = { (*(*this._env.raw())).CallIntMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_vertical_scrollbar_width(this) -> i32 {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("getVerticalScrollbarWidth\0"), #str_ptr("()I\0"));
+        let r: i32 = { (*(*this._env.raw())).CallIntMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn handle_data_changed(this) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("handleDataChanged\0"), #str_ptr("()V\0"));
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue); };
+        return;
+    }
+
+    fn has_text_filter(this) -> bool {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("hasTextFilter\0"), #str_ptr("()Z\0"));
+        let r: jni::jboolean = { (*(*this._env.raw())).CallBooleanMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r as i8 != 0;
+    }
+
+    fn invalidate_views(this) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("invalidateViews\0"), #str_ptr("()V\0"));
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue); };
+        return;
+    }
+
+    fn is_draw_selector_on_top(this) -> bool {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("isDrawSelectorOnTop\0"), #str_ptr("()Z\0"));
+        let r: jni::jboolean = { (*(*this._env.raw())).CallBooleanMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r as i8 != 0;
+    }
+
+    fn is_fast_scroll_always_visible(this) -> bool {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("isFastScrollAlwaysVisible\0"), #str_ptr("()Z\0"));
+        let r: jni::jboolean = { (*(*this._env.raw())).CallBooleanMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r as i8 != 0;
+    }
+
+    fn is_fast_scroll_enabled(this) -> bool {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("isFastScrollEnabled\0"), #str_ptr("()Z\0"));
+        let r: jni::jboolean = { (*(*this._env.raw())).CallBooleanMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r as i8 != 0;
+    }
+
+    fn is_in_filter_mode(this) -> bool {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("isInFilterMode\0"), #str_ptr("()Z\0"));
+        let r: jni::jboolean = { (*(*this._env.raw())).CallBooleanMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r as i8 != 0;
+    }
+
+    fn is_item_checked(this, arg0: i32) -> bool {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("isItemChecked\0"), #str_ptr("(I)Z\0"));
+        var args: [jni::JValue; 1] = [jni::arg_int(arg0)];
+        let r: jni::jboolean = { (*(*this._env.raw())).CallBooleanMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])) };
+        return r as i8 != 0;
+    }
+
+    fn is_padding_offset_required(this) -> bool {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("isPaddingOffsetRequired\0"), #str_ptr("()Z\0"));
+        let r: jni::jboolean = { (*(*this._env.raw())).CallBooleanMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r as i8 != 0;
+    }
+
+    fn is_scrolling_cache_enabled(this) -> bool {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("isScrollingCacheEnabled\0"), #str_ptr("()Z\0"));
+        let r: jni::jboolean = { (*(*this._env.raw())).CallBooleanMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r as i8 != 0;
+    }
+
+    fn is_selected_child_view_enabled(this) -> bool {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("isSelectedChildViewEnabled\0"), #str_ptr("()Z\0"));
+        let r: jni::jboolean = { (*(*this._env.raw())).CallBooleanMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r as i8 != 0;
+    }
+
+    fn is_smooth_scrollbar_enabled(this) -> bool {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("isSmoothScrollbarEnabled\0"), #str_ptr("()Z\0"));
+        let r: jni::jboolean = { (*(*this._env.raw())).CallBooleanMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r as i8 != 0;
+    }
+
+    fn is_stack_from_bottom(this) -> bool {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("isStackFromBottom\0"), #str_ptr("()Z\0"));
+        let r: jni::jboolean = { (*(*this._env.raw())).CallBooleanMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r as i8 != 0;
+    }
+
+    fn is_text_filter_enabled(this) -> bool {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("isTextFilterEnabled\0"), #str_ptr("()Z\0"));
+        let r: jni::jboolean = { (*(*this._env.raw())).CallBooleanMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r as i8 != 0;
+    }
+
+    fn jump_drawables_to_current_state(this) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("jumpDrawablesToCurrentState\0"), #str_ptr("()V\0"));
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue); };
+        return;
+    }
+
+    fn layout_children(this) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("layoutChildren\0"), #str_ptr("()V\0"));
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue); };
+        return;
+    }
+
+    fn new_context(env: rt::Env, arg0: jni::jobject) -> AbsListView {
+        let mid: jni::jmethodID = env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("<init>\0"), #str_ptr("(Landroid/content/Context;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        let cls: jni::jclass = env.class_cached(#str_ptr("android/widget/AbsListView\0"));
+        let obj: jni::jobject = { (*(*env.raw())).NewObjectA(env.raw(), cls, mid, #addr_of(args[0])) };
+        return AbsListView { _env: env, _obj: env.retain_local_as_global(obj) };
+    }
+
+    fn new_context_attribute_set(env: rt::Env, arg0: jni::jobject, arg1: jni::jobject) -> AbsListView {
+        let mid: jni::jmethodID = env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("<init>\0"), #str_ptr("(Landroid/content/Context;Landroid/util/AttributeSet;)V\0"));
+        var args: [jni::JValue; 2] = [jni::arg_object(arg0), jni::arg_object(arg1)];
+        let cls: jni::jclass = env.class_cached(#str_ptr("android/widget/AbsListView\0"));
+        let obj: jni::jobject = { (*(*env.raw())).NewObjectA(env.raw(), cls, mid, #addr_of(args[0])) };
+        return AbsListView { _env: env, _obj: env.retain_local_as_global(obj) };
+    }
+
+    fn new_context_attribute_set_i(env: rt::Env, arg0: jni::jobject, arg1: jni::jobject, arg2: i32) -> AbsListView {
+        let mid: jni::jmethodID = env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("<init>\0"), #str_ptr("(Landroid/content/Context;Landroid/util/AttributeSet;I)V\0"));
+        var args: [jni::JValue; 3] = [jni::arg_object(arg0), jni::arg_object(arg1), jni::arg_int(arg2)];
+        let cls: jni::jclass = env.class_cached(#str_ptr("android/widget/AbsListView\0"));
+        let obj: jni::jobject = { (*(*env.raw())).NewObjectA(env.raw(), cls, mid, #addr_of(args[0])) };
+        return AbsListView { _env: env, _obj: env.retain_local_as_global(obj) };
+    }
+
+    fn new_context_attribute_set_i_i(env: rt::Env, arg0: jni::jobject, arg1: jni::jobject, arg2: i32, arg3: i32) -> AbsListView {
+        let mid: jni::jmethodID = env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("<init>\0"), #str_ptr("(Landroid/content/Context;Landroid/util/AttributeSet;II)V\0"));
+        var args: [jni::JValue; 4] = [jni::arg_object(arg0), jni::arg_object(arg1), jni::arg_int(arg2), jni::arg_int(arg3)];
+        let cls: jni::jclass = env.class_cached(#str_ptr("android/widget/AbsListView\0"));
+        let obj: jni::jobject = { (*(*env.raw())).NewObjectA(env.raw(), cls, mid, #addr_of(args[0])) };
+        return AbsListView { _env: env, _obj: env.retain_local_as_global(obj) };
+    }
+
+    fn on_attached_to_window(this) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("onAttachedToWindow\0"), #str_ptr("()V\0"));
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue); };
+        return;
+    }
+
+    fn on_cancel_pending_input_events(this) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("onCancelPendingInputEvents\0"), #str_ptr("()V\0"));
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue); };
+        return;
+    }
+
+    fn on_create_input_connection(this, arg0: jni::jobject) -> jni::jobject {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("onCreateInputConnection\0"), #str_ptr("(Landroid/view/inputmethod/EditorInfo;)Landroid/view/inputmethod/InputConnection;\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        let r: jni::jobject = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])) };
+        return r;
+    }
+
+    fn on_detached_from_window(this) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("onDetachedFromWindow\0"), #str_ptr("()V\0"));
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue); };
+        return;
+    }
+
+    fn on_display_hint(this, arg0: i32) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("onDisplayHint\0"), #str_ptr("(I)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_int(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn on_filter_complete(this, arg0: i32) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("onFilterComplete\0"), #str_ptr("(I)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_int(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn on_focus_changed(this, arg0: bool, arg1: i32, arg2: jni::jobject) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("onFocusChanged\0"), #str_ptr("(ZILandroid/graphics/Rect;)V\0"));
+        var args: [jni::JValue; 3] = [rt::arg_bool(arg0), jni::arg_int(arg1), jni::arg_object(arg2)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn on_generic_motion_event(this, arg0: jni::jobject) -> bool {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("onGenericMotionEvent\0"), #str_ptr("(Landroid/view/MotionEvent;)Z\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        let r: jni::jboolean = { (*(*this._env.raw())).CallBooleanMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])) };
+        return r as i8 != 0;
+    }
+
+    fn on_global_layout(this) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("onGlobalLayout\0"), #str_ptr("()V\0"));
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue); };
+        return;
+    }
+
+    fn on_initialize_accessibility_node_info_for_item(this, arg0: jni::jobject, arg1: i32, arg2: jni::jobject) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("onInitializeAccessibilityNodeInfoForItem\0"), #str_ptr("(Landroid/view/View;ILandroid/view/accessibility/AccessibilityNodeInfo;)V\0"));
+        var args: [jni::JValue; 3] = [jni::arg_object(arg0), jni::arg_int(arg1), jni::arg_object(arg2)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn on_intercept_hover_event(this, arg0: jni::jobject) -> bool {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("onInterceptHoverEvent\0"), #str_ptr("(Landroid/view/MotionEvent;)Z\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        let r: jni::jboolean = { (*(*this._env.raw())).CallBooleanMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])) };
+        return r as i8 != 0;
+    }
+
+    fn on_intercept_touch_event(this, arg0: jni::jobject) -> bool {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("onInterceptTouchEvent\0"), #str_ptr("(Landroid/view/MotionEvent;)Z\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        let r: jni::jboolean = { (*(*this._env.raw())).CallBooleanMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])) };
+        return r as i8 != 0;
+    }
+
+    fn on_key_down(this, arg0: i32, arg1: jni::jobject) -> bool {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("onKeyDown\0"), #str_ptr("(ILandroid/view/KeyEvent;)Z\0"));
+        var args: [jni::JValue; 2] = [jni::arg_int(arg0), jni::arg_object(arg1)];
+        let r: jni::jboolean = { (*(*this._env.raw())).CallBooleanMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])) };
+        return r as i8 != 0;
+    }
+
+    fn on_key_up(this, arg0: i32, arg1: jni::jobject) -> bool {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("onKeyUp\0"), #str_ptr("(ILandroid/view/KeyEvent;)Z\0"));
+        var args: [jni::JValue; 2] = [jni::arg_int(arg0), jni::arg_object(arg1)];
+        let r: jni::jboolean = { (*(*this._env.raw())).CallBooleanMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])) };
+        return r as i8 != 0;
+    }
+
+    fn on_layout(this, arg0: bool, arg1: i32, arg2: i32, arg3: i32, arg4: i32) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("onLayout\0"), #str_ptr("(ZIIII)V\0"));
+        var args: [jni::JValue; 5] = [rt::arg_bool(arg0), jni::arg_int(arg1), jni::arg_int(arg2), jni::arg_int(arg3), jni::arg_int(arg4)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn on_measure(this, arg0: i32, arg1: i32) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("onMeasure\0"), #str_ptr("(II)V\0"));
+        var args: [jni::JValue; 2] = [jni::arg_int(arg0), jni::arg_int(arg1)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn on_nested_fling(this, arg0: jni::jobject, arg1: f32, arg2: f32, arg3: bool) -> bool {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("onNestedFling\0"), #str_ptr("(Landroid/view/View;FFZ)Z\0"));
+        var args: [jni::JValue; 4] = [jni::arg_object(arg0), jni::arg_float(arg1), jni::arg_float(arg2), rt::arg_bool(arg3)];
+        let r: jni::jboolean = { (*(*this._env.raw())).CallBooleanMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])) };
+        return r as i8 != 0;
+    }
+
+    fn on_nested_scroll(this, arg0: jni::jobject, arg1: i32, arg2: i32, arg3: i32, arg4: i32) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("onNestedScroll\0"), #str_ptr("(Landroid/view/View;IIII)V\0"));
+        var args: [jni::JValue; 5] = [jni::arg_object(arg0), jni::arg_int(arg1), jni::arg_int(arg2), jni::arg_int(arg3), jni::arg_int(arg4)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn on_nested_scroll_accepted(this, arg0: jni::jobject, arg1: jni::jobject, arg2: i32) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("onNestedScrollAccepted\0"), #str_ptr("(Landroid/view/View;Landroid/view/View;I)V\0"));
+        var args: [jni::JValue; 3] = [jni::arg_object(arg0), jni::arg_object(arg1), jni::arg_int(arg2)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn on_over_scrolled(this, arg0: i32, arg1: i32, arg2: bool, arg3: bool) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("onOverScrolled\0"), #str_ptr("(IIZZ)V\0"));
+        var args: [jni::JValue; 4] = [jni::arg_int(arg0), jni::arg_int(arg1), rt::arg_bool(arg2), rt::arg_bool(arg3)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn on_provide_content_capture_structure(this, arg0: jni::jobject, arg1: i32) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("onProvideContentCaptureStructure\0"), #str_ptr("(Landroid/view/ViewStructure;I)V\0"));
+        var args: [jni::JValue; 2] = [jni::arg_object(arg0), jni::arg_int(arg1)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn on_remote_adapter_connected(this) -> bool {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("onRemoteAdapterConnected\0"), #str_ptr("()Z\0"));
+        let r: jni::jboolean = { (*(*this._env.raw())).CallBooleanMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r as i8 != 0;
+    }
+
+    fn on_remote_adapter_disconnected(this) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("onRemoteAdapterDisconnected\0"), #str_ptr("()V\0"));
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue); };
+        return;
+    }
+
+    fn on_resolve_pointer_icon(this, arg0: jni::jobject, arg1: i32) -> jni::jobject {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("onResolvePointerIcon\0"), #str_ptr("(Landroid/view/MotionEvent;I)Landroid/view/PointerIcon;\0"));
+        var args: [jni::JValue; 2] = [jni::arg_object(arg0), jni::arg_int(arg1)];
+        let r: jni::jobject = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])) };
+        return r;
+    }
+
+    fn on_restore_instance_state(this, arg0: jni::jobject) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("onRestoreInstanceState\0"), #str_ptr("(Landroid/os/Parcelable;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn on_rtl_properties_changed(this, arg0: i32) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("onRtlPropertiesChanged\0"), #str_ptr("(I)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_int(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn on_save_instance_state(this) -> jni::jobject {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("onSaveInstanceState\0"), #str_ptr("()Landroid/os/Parcelable;\0"));
+        let r: jni::jobject = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn on_size_changed(this, arg0: i32, arg1: i32, arg2: i32, arg3: i32) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("onSizeChanged\0"), #str_ptr("(IIII)V\0"));
+        var args: [jni::JValue; 4] = [jni::arg_int(arg0), jni::arg_int(arg1), jni::arg_int(arg2), jni::arg_int(arg3)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn on_start_nested_scroll(this, arg0: jni::jobject, arg1: jni::jobject, arg2: i32) -> bool {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("onStartNestedScroll\0"), #str_ptr("(Landroid/view/View;Landroid/view/View;I)Z\0"));
+        var args: [jni::JValue; 3] = [jni::arg_object(arg0), jni::arg_object(arg1), jni::arg_int(arg2)];
+        let r: jni::jboolean = { (*(*this._env.raw())).CallBooleanMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])) };
+        return r as i8 != 0;
+    }
+
+    fn on_text_changed(this, arg0: *u8, arg1: i32, arg2: i32, arg3: i32) {
+        let arg0_s: jni::jstring = this._env.new_string_utf(arg0);
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("onTextChanged\0"), #str_ptr("(Ljava/lang/CharSequence;III)V\0"));
+        var args: [jni::JValue; 4] = [jni::arg_object(arg0_s), jni::arg_int(arg1), jni::arg_int(arg2), jni::arg_int(arg3)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        this._env.delete_local_ref(arg0_s);
+        return;
+    }
+
+    fn on_touch_event(this, arg0: jni::jobject) -> bool {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("onTouchEvent\0"), #str_ptr("(Landroid/view/MotionEvent;)Z\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        let r: jni::jboolean = { (*(*this._env.raw())).CallBooleanMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])) };
+        return r as i8 != 0;
+    }
+
+    fn on_touch_mode_changed(this, arg0: bool) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("onTouchModeChanged\0"), #str_ptr("(Z)V\0"));
+        var args: [jni::JValue; 1] = [rt::arg_bool(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn on_window_focus_changed(this, arg0: bool) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("onWindowFocusChanged\0"), #str_ptr("(Z)V\0"));
+        var args: [jni::JValue; 1] = [rt::arg_bool(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn perform_item_click(this, arg0: jni::jobject, arg1: i32, arg2: i64) -> bool {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("performItemClick\0"), #str_ptr("(Landroid/view/View;IJ)Z\0"));
+        var args: [jni::JValue; 3] = [jni::arg_object(arg0), jni::arg_int(arg1), jni::arg_long(arg2)];
+        let r: jni::jboolean = { (*(*this._env.raw())).CallBooleanMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])) };
+        return r as i8 != 0;
+    }
+
+    fn point_to_position(this, arg0: i32, arg1: i32) -> i32 {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("pointToPosition\0"), #str_ptr("(II)I\0"));
+        var args: [jni::JValue; 2] = [jni::arg_int(arg0), jni::arg_int(arg1)];
+        let r: i32 = { (*(*this._env.raw())).CallIntMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])) };
+        return r;
+    }
+
+    fn point_to_row_id(this, arg0: i32, arg1: i32) -> i64 {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("pointToRowId\0"), #str_ptr("(II)J\0"));
+        var args: [jni::JValue; 2] = [jni::arg_int(arg0), jni::arg_int(arg1)];
+        let r: i64 = { (*(*this._env.raw())).CallLongMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])) };
+        return r;
+    }
+
+    fn reclaim_views(this, arg0: jni::jobject) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("reclaimViews\0"), #str_ptr("(Ljava/util/List;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn request_disallow_intercept_touch_event(this, arg0: bool) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("requestDisallowInterceptTouchEvent\0"), #str_ptr("(Z)V\0"));
+        var args: [jni::JValue; 1] = [rt::arg_bool(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn request_layout(this) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("requestLayout\0"), #str_ptr("()V\0"));
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue); };
+        return;
+    }
+
+    fn scroll_list_by(this, arg0: i32) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("scrollListBy\0"), #str_ptr("(I)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_int(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_adapter_list_adapter(this, arg0: jni::jobject) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("setAdapter\0"), #str_ptr("(Landroid/widget/ListAdapter;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_adapter_adapter(this, arg0: jni::jobject) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("setAdapter\0"), #str_ptr("(Landroid/widget/Adapter;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_bottom_edge_effect_color(this, arg0: i32) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("setBottomEdgeEffectColor\0"), #str_ptr("(I)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_int(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_cache_color_hint(this, arg0: i32) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("setCacheColorHint\0"), #str_ptr("(I)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_int(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_choice_mode(this, arg0: i32) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("setChoiceMode\0"), #str_ptr("(I)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_int(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_draw_selector_on_top(this, arg0: bool) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("setDrawSelectorOnTop\0"), #str_ptr("(Z)V\0"));
+        var args: [jni::JValue; 1] = [rt::arg_bool(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_edge_effect_color(this, arg0: i32) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("setEdgeEffectColor\0"), #str_ptr("(I)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_int(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_fast_scroll_always_visible(this, arg0: bool) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("setFastScrollAlwaysVisible\0"), #str_ptr("(Z)V\0"));
+        var args: [jni::JValue; 1] = [rt::arg_bool(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_fast_scroll_enabled(this, arg0: bool) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("setFastScrollEnabled\0"), #str_ptr("(Z)V\0"));
+        var args: [jni::JValue; 1] = [rt::arg_bool(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_fast_scroll_style(this, arg0: i32) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("setFastScrollStyle\0"), #str_ptr("(I)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_int(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_filter_text(this, arg0: *u8) {
+        let arg0_s: jni::jstring = this._env.new_string_utf(arg0);
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("setFilterText\0"), #str_ptr("(Ljava/lang/String;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0_s)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        this._env.delete_local_ref(arg0_s);
+        return;
+    }
+
+    fn set_friction(this, arg0: f32) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("setFriction\0"), #str_ptr("(F)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_float(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_item_checked(this, arg0: i32, arg1: bool) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("setItemChecked\0"), #str_ptr("(IZ)V\0"));
+        var args: [jni::JValue; 2] = [jni::arg_int(arg0), rt::arg_bool(arg1)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_multi_choice_mode_listener(this, arg0: jni::jobject) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("setMultiChoiceModeListener\0"), #str_ptr("(Landroid/widget/AbsListView$MultiChoiceModeListener;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_on_scroll_listener(this, arg0: jni::jobject) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("setOnScrollListener\0"), #str_ptr("(Landroid/widget/AbsListView$OnScrollListener;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_recycler_listener(this, arg0: jni::jobject) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("setRecyclerListener\0"), #str_ptr("(Landroid/widget/AbsListView$RecyclerListener;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_remote_views_adapter(this, arg0: jni::jobject) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("setRemoteViewsAdapter\0"), #str_ptr("(Landroid/content/Intent;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_scroll_bar_style(this, arg0: i32) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("setScrollBarStyle\0"), #str_ptr("(I)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_int(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_scroll_indicators(this, arg0: jni::jobject, arg1: jni::jobject) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("setScrollIndicators\0"), #str_ptr("(Landroid/view/View;Landroid/view/View;)V\0"));
+        var args: [jni::JValue; 2] = [jni::arg_object(arg0), jni::arg_object(arg1)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_scrolling_cache_enabled(this, arg0: bool) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("setScrollingCacheEnabled\0"), #str_ptr("(Z)V\0"));
+        var args: [jni::JValue; 1] = [rt::arg_bool(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_selected_child_view_enabled(this, arg0: bool) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("setSelectedChildViewEnabled\0"), #str_ptr("(Z)V\0"));
+        var args: [jni::JValue; 1] = [rt::arg_bool(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_selection_from_top(this, arg0: i32, arg1: i32) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("setSelectionFromTop\0"), #str_ptr("(II)V\0"));
+        var args: [jni::JValue; 2] = [jni::arg_int(arg0), jni::arg_int(arg1)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_selector_drawable(this, arg0: jni::jobject) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("setSelector\0"), #str_ptr("(Landroid/graphics/drawable/Drawable;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_selector_i(this, arg0: i32) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("setSelector\0"), #str_ptr("(I)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_int(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_smooth_scrollbar_enabled(this, arg0: bool) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("setSmoothScrollbarEnabled\0"), #str_ptr("(Z)V\0"));
+        var args: [jni::JValue; 1] = [rt::arg_bool(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_stack_from_bottom(this, arg0: bool) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("setStackFromBottom\0"), #str_ptr("(Z)V\0"));
+        var args: [jni::JValue; 1] = [rt::arg_bool(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_text_filter_enabled(this, arg0: bool) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("setTextFilterEnabled\0"), #str_ptr("(Z)V\0"));
+        var args: [jni::JValue; 1] = [rt::arg_bool(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_top_edge_effect_color(this, arg0: i32) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("setTopEdgeEffectColor\0"), #str_ptr("(I)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_int(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_transcript_mode(this, arg0: i32) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("setTranscriptMode\0"), #str_ptr("(I)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_int(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_velocity_scale(this, arg0: f32) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("setVelocityScale\0"), #str_ptr("(F)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_float(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_vertical_scrollbar_position(this, arg0: i32) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("setVerticalScrollbarPosition\0"), #str_ptr("(I)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_int(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn show_context_menu_void(this) -> bool {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("showContextMenu\0"), #str_ptr("()Z\0"));
+        let r: jni::jboolean = { (*(*this._env.raw())).CallBooleanMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r as i8 != 0;
+    }
+
+    fn show_context_menu_f_f(this, arg0: f32, arg1: f32) -> bool {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("showContextMenu\0"), #str_ptr("(FF)Z\0"));
+        var args: [jni::JValue; 2] = [jni::arg_float(arg0), jni::arg_float(arg1)];
+        let r: jni::jboolean = { (*(*this._env.raw())).CallBooleanMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])) };
+        return r as i8 != 0;
+    }
+
+    fn show_context_menu_for_child_view(this, arg0: jni::jobject) -> bool {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("showContextMenuForChild\0"), #str_ptr("(Landroid/view/View;)Z\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        let r: jni::jboolean = { (*(*this._env.raw())).CallBooleanMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])) };
+        return r as i8 != 0;
+    }
+
+    fn show_context_menu_for_child_view_f_f(this, arg0: jni::jobject, arg1: f32, arg2: f32) -> bool {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("showContextMenuForChild\0"), #str_ptr("(Landroid/view/View;FF)Z\0"));
+        var args: [jni::JValue; 3] = [jni::arg_object(arg0), jni::arg_float(arg1), jni::arg_float(arg2)];
+        let r: jni::jboolean = { (*(*this._env.raw())).CallBooleanMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])) };
+        return r as i8 != 0;
+    }
+
+    fn smooth_scroll_by(this, arg0: i32, arg1: i32) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("smoothScrollBy\0"), #str_ptr("(II)V\0"));
+        var args: [jni::JValue; 2] = [jni::arg_int(arg0), jni::arg_int(arg1)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn smooth_scroll_to_position_i(this, arg0: i32) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("smoothScrollToPosition\0"), #str_ptr("(I)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_int(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn smooth_scroll_to_position_i_i(this, arg0: i32, arg1: i32) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("smoothScrollToPosition\0"), #str_ptr("(II)V\0"));
+        var args: [jni::JValue; 2] = [jni::arg_int(arg0), jni::arg_int(arg1)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn smooth_scroll_to_position_from_top_i_i(this, arg0: i32, arg1: i32) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("smoothScrollToPositionFromTop\0"), #str_ptr("(II)V\0"));
+        var args: [jni::JValue; 2] = [jni::arg_int(arg0), jni::arg_int(arg1)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn smooth_scroll_to_position_from_top_i_i_i(this, arg0: i32, arg1: i32, arg2: i32) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("smoothScrollToPositionFromTop\0"), #str_ptr("(III)V\0"));
+        var args: [jni::JValue; 3] = [jni::arg_int(arg0), jni::arg_int(arg1), jni::arg_int(arg2)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn transcript_mode_always_scroll(env: rt::Env) -> i32 {
+        let cls: jni::jclass = env.class_cached(#str_ptr("android/widget/AbsListView\0"));
+        let fid: jni::jfieldID = env.static_field_id(cls, #str_ptr("TRANSCRIPT_MODE_ALWAYS_SCROLL\0"), #str_ptr("I\0"));
+        let r: i32 = { (*(*env.raw())).GetStaticIntField(env.raw(), cls, fid) };
+        return r;
+    }
+
+    fn transcript_mode_disabled(env: rt::Env) -> i32 {
+        let cls: jni::jclass = env.class_cached(#str_ptr("android/widget/AbsListView\0"));
+        let fid: jni::jfieldID = env.static_field_id(cls, #str_ptr("TRANSCRIPT_MODE_DISABLED\0"), #str_ptr("I\0"));
+        let r: i32 = { (*(*env.raw())).GetStaticIntField(env.raw(), cls, fid) };
+        return r;
+    }
+
+    fn transcript_mode_normal(env: rt::Env) -> i32 {
+        let cls: jni::jclass = env.class_cached(#str_ptr("android/widget/AbsListView\0"));
+        let fid: jni::jfieldID = env.static_field_id(cls, #str_ptr("TRANSCRIPT_MODE_NORMAL\0"), #str_ptr("I\0"));
+        let r: i32 = { (*(*env.raw())).GetStaticIntField(env.raw(), cls, fid) };
+        return r;
+    }
+
+    fn verify_drawable(this, arg0: jni::jobject) -> bool {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/AbsListView\0"), #str_ptr("verifyDrawable\0"), #str_ptr("(Landroid/graphics/drawable/Drawable;)Z\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        let r: jni::jboolean = { (*(*this._env.raw())).CallBooleanMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])) };
+        return r as i8 != 0;
+    }
+
+}
+
+// android.widget.ListView
+struct ListView {
+    _env: rt::Env,
+    _obj: jni::jobject,
+}
+
+impl ListView {
+    fn drop(ref this) {
+        // `into_raw` nulls `_obj`; DeleteGlobalRef does not admit NULL.
+        if this._obj != { 0 as jni::jobject } { this._env.delete_global_ref(this._obj); }
+        return;
+    }
+
+    fn from_global(env: rt::Env, obj: jni::jobject) -> ListView { return ListView { _env: env, _obj: obj }; }
+
+    fn from_local(env: rt::Env, obj: jni::jobject) -> ListView { return ListView { _env: env, _obj: env.retain_local_as_global(obj) }; }
+
+    fn as_obj(this) -> jni::jobject { return this._obj; }
+
+    fn into_raw(ref this) -> jni::jobject {
+        let p: jni::jobject = this._obj;
+        this._obj = { 0 as jni::jobject };
+        return p;
+    }
+
+    // javap lists DECLARED members only; the inherited surface is here.
+    //
+    // Takes a FRESH global ref rather than sharing this one. Both
+    // wrappers own what they hold and both drops run, so handing the
+    // same ref over would DeleteGlobalRef it twice.
+    fn as_abs_list_view(this) -> AbsListView { return AbsListView::from_global(this._env, this._env.new_global_ref(this._obj)); }
+
+    fn add_footer_view_view(this, arg0: jni::jobject) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/ListView\0"), #str_ptr("addFooterView\0"), #str_ptr("(Landroid/view/View;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn add_footer_view_view_object_z(this, arg0: jni::jobject, arg1: jni::jobject, arg2: bool) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/ListView\0"), #str_ptr("addFooterView\0"), #str_ptr("(Landroid/view/View;Ljava/lang/Object;Z)V\0"));
+        var args: [jni::JValue; 3] = [jni::arg_object(arg0), jni::arg_object(arg1), rt::arg_bool(arg2)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn add_header_view_view(this, arg0: jni::jobject) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/ListView\0"), #str_ptr("addHeaderView\0"), #str_ptr("(Landroid/view/View;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn add_header_view_view_object_z(this, arg0: jni::jobject, arg1: jni::jobject, arg2: bool) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/ListView\0"), #str_ptr("addHeaderView\0"), #str_ptr("(Landroid/view/View;Ljava/lang/Object;Z)V\0"));
+        var args: [jni::JValue; 3] = [jni::arg_object(arg0), jni::arg_object(arg1), rt::arg_bool(arg2)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn are_footer_dividers_enabled(this) -> bool {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/ListView\0"), #str_ptr("areFooterDividersEnabled\0"), #str_ptr("()Z\0"));
+        let r: jni::jboolean = { (*(*this._env.raw())).CallBooleanMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r as i8 != 0;
+    }
+
+    fn are_header_dividers_enabled(this) -> bool {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/ListView\0"), #str_ptr("areHeaderDividersEnabled\0"), #str_ptr("()Z\0"));
+        let r: jni::jboolean = { (*(*this._env.raw())).CallBooleanMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r as i8 != 0;
+    }
+
+    fn can_animate(this) -> bool {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/ListView\0"), #str_ptr("canAnimate\0"), #str_ptr("()Z\0"));
+        let r: jni::jboolean = { (*(*this._env.raw())).CallBooleanMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r as i8 != 0;
+    }
+
+    fn dispatch_draw(this, arg0: jni::jobject) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/ListView\0"), #str_ptr("dispatchDraw\0"), #str_ptr("(Landroid/graphics/Canvas;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn dispatch_key_event(this, arg0: jni::jobject) -> bool {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/ListView\0"), #str_ptr("dispatchKeyEvent\0"), #str_ptr("(Landroid/view/KeyEvent;)Z\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        let r: jni::jboolean = { (*(*this._env.raw())).CallBooleanMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])) };
+        return r as i8 != 0;
+    }
+
+    fn draw_child(this, arg0: jni::jobject, arg1: jni::jobject, arg2: i64) -> bool {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/ListView\0"), #str_ptr("drawChild\0"), #str_ptr("(Landroid/graphics/Canvas;Landroid/view/View;J)Z\0"));
+        var args: [jni::JValue; 3] = [jni::arg_object(arg0), jni::arg_object(arg1), jni::arg_long(arg2)];
+        let r: jni::jboolean = { (*(*this._env.raw())).CallBooleanMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])) };
+        return r as i8 != 0;
+    }
+
+    fn get_accessibility_class_name(this) -> *u8 {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/ListView\0"), #str_ptr("getAccessibilityClassName\0"), #str_ptr("()Ljava/lang/CharSequence;\0"));
+        let r: *u8 = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_adapter_void(this) -> jni::jobject {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/ListView\0"), #str_ptr("getAdapter\0"), #str_ptr("()Landroid/widget/ListAdapter;\0"));
+        let r: jni::jobject = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_adapter_void_field(this) -> jni::jobject {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/ListView\0"), #str_ptr("getAdapter\0"), #str_ptr("()Landroid/widget/Adapter;\0"));
+        let r: jni::jobject = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_check_item_ids(this) -> jni::jarray {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/ListView\0"), #str_ptr("getCheckItemIds\0"), #str_ptr("()[J\0"));
+        let r: jni::jarray = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_divider(this) -> jni::jobject {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/ListView\0"), #str_ptr("getDivider\0"), #str_ptr("()Landroid/graphics/drawable/Drawable;\0"));
+        let r: jni::jobject = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_divider_height(this) -> i32 {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/ListView\0"), #str_ptr("getDividerHeight\0"), #str_ptr("()I\0"));
+        let r: i32 = { (*(*this._env.raw())).CallIntMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_footer_views_count(this) -> i32 {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/ListView\0"), #str_ptr("getFooterViewsCount\0"), #str_ptr("()I\0"));
+        let r: i32 = { (*(*this._env.raw())).CallIntMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_header_views_count(this) -> i32 {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/ListView\0"), #str_ptr("getHeaderViewsCount\0"), #str_ptr("()I\0"));
+        let r: i32 = { (*(*this._env.raw())).CallIntMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_items_can_focus(this) -> bool {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/ListView\0"), #str_ptr("getItemsCanFocus\0"), #str_ptr("()Z\0"));
+        let r: jni::jboolean = { (*(*this._env.raw())).CallBooleanMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r as i8 != 0;
+    }
+
+    fn get_max_scroll_amount(this) -> i32 {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/ListView\0"), #str_ptr("getMaxScrollAmount\0"), #str_ptr("()I\0"));
+        let r: i32 = { (*(*this._env.raw())).CallIntMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_overscroll_footer(this) -> jni::jobject {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/ListView\0"), #str_ptr("getOverscrollFooter\0"), #str_ptr("()Landroid/graphics/drawable/Drawable;\0"));
+        let r: jni::jobject = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_overscroll_header(this) -> jni::jobject {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/ListView\0"), #str_ptr("getOverscrollHeader\0"), #str_ptr("()Landroid/graphics/drawable/Drawable;\0"));
+        let r: jni::jobject = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn is_opaque(this) -> bool {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/ListView\0"), #str_ptr("isOpaque\0"), #str_ptr("()Z\0"));
+        let r: jni::jboolean = { (*(*this._env.raw())).CallBooleanMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r as i8 != 0;
+    }
+
+    fn layout_children(this) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/ListView\0"), #str_ptr("layoutChildren\0"), #str_ptr("()V\0"));
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue); };
+        return;
+    }
+
+    fn new_context(env: rt::Env, arg0: jni::jobject) -> ListView {
+        let mid: jni::jmethodID = env.method(#str_ptr("android/widget/ListView\0"), #str_ptr("<init>\0"), #str_ptr("(Landroid/content/Context;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        let cls: jni::jclass = env.class_cached(#str_ptr("android/widget/ListView\0"));
+        let obj: jni::jobject = { (*(*env.raw())).NewObjectA(env.raw(), cls, mid, #addr_of(args[0])) };
+        return ListView { _env: env, _obj: env.retain_local_as_global(obj) };
+    }
+
+    fn new_context_attribute_set(env: rt::Env, arg0: jni::jobject, arg1: jni::jobject) -> ListView {
+        let mid: jni::jmethodID = env.method(#str_ptr("android/widget/ListView\0"), #str_ptr("<init>\0"), #str_ptr("(Landroid/content/Context;Landroid/util/AttributeSet;)V\0"));
+        var args: [jni::JValue; 2] = [jni::arg_object(arg0), jni::arg_object(arg1)];
+        let cls: jni::jclass = env.class_cached(#str_ptr("android/widget/ListView\0"));
+        let obj: jni::jobject = { (*(*env.raw())).NewObjectA(env.raw(), cls, mid, #addr_of(args[0])) };
+        return ListView { _env: env, _obj: env.retain_local_as_global(obj) };
+    }
+
+    fn new_context_attribute_set_i(env: rt::Env, arg0: jni::jobject, arg1: jni::jobject, arg2: i32) -> ListView {
+        let mid: jni::jmethodID = env.method(#str_ptr("android/widget/ListView\0"), #str_ptr("<init>\0"), #str_ptr("(Landroid/content/Context;Landroid/util/AttributeSet;I)V\0"));
+        var args: [jni::JValue; 3] = [jni::arg_object(arg0), jni::arg_object(arg1), jni::arg_int(arg2)];
+        let cls: jni::jclass = env.class_cached(#str_ptr("android/widget/ListView\0"));
+        let obj: jni::jobject = { (*(*env.raw())).NewObjectA(env.raw(), cls, mid, #addr_of(args[0])) };
+        return ListView { _env: env, _obj: env.retain_local_as_global(obj) };
+    }
+
+    fn new_context_attribute_set_i_i(env: rt::Env, arg0: jni::jobject, arg1: jni::jobject, arg2: i32, arg3: i32) -> ListView {
+        let mid: jni::jmethodID = env.method(#str_ptr("android/widget/ListView\0"), #str_ptr("<init>\0"), #str_ptr("(Landroid/content/Context;Landroid/util/AttributeSet;II)V\0"));
+        var args: [jni::JValue; 4] = [jni::arg_object(arg0), jni::arg_object(arg1), jni::arg_int(arg2), jni::arg_int(arg3)];
+        let cls: jni::jclass = env.class_cached(#str_ptr("android/widget/ListView\0"));
+        let obj: jni::jobject = { (*(*env.raw())).NewObjectA(env.raw(), cls, mid, #addr_of(args[0])) };
+        return ListView { _env: env, _obj: env.retain_local_as_global(obj) };
+    }
+
+    fn on_detached_from_window(this) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/ListView\0"), #str_ptr("onDetachedFromWindow\0"), #str_ptr("()V\0"));
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue); };
+        return;
+    }
+
+    fn on_finish_inflate(this) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/ListView\0"), #str_ptr("onFinishInflate\0"), #str_ptr("()V\0"));
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue); };
+        return;
+    }
+
+    fn on_focus_changed(this, arg0: bool, arg1: i32, arg2: jni::jobject) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/ListView\0"), #str_ptr("onFocusChanged\0"), #str_ptr("(ZILandroid/graphics/Rect;)V\0"));
+        var args: [jni::JValue; 3] = [rt::arg_bool(arg0), jni::arg_int(arg1), jni::arg_object(arg2)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn on_initialize_accessibility_node_info_for_item(this, arg0: jni::jobject, arg1: i32, arg2: jni::jobject) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/ListView\0"), #str_ptr("onInitializeAccessibilityNodeInfoForItem\0"), #str_ptr("(Landroid/view/View;ILandroid/view/accessibility/AccessibilityNodeInfo;)V\0"));
+        var args: [jni::JValue; 3] = [jni::arg_object(arg0), jni::arg_int(arg1), jni::arg_object(arg2)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn on_key_down(this, arg0: i32, arg1: jni::jobject) -> bool {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/ListView\0"), #str_ptr("onKeyDown\0"), #str_ptr("(ILandroid/view/KeyEvent;)Z\0"));
+        var args: [jni::JValue; 2] = [jni::arg_int(arg0), jni::arg_object(arg1)];
+        let r: jni::jboolean = { (*(*this._env.raw())).CallBooleanMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])) };
+        return r as i8 != 0;
+    }
+
+    fn on_key_multiple(this, arg0: i32, arg1: i32, arg2: jni::jobject) -> bool {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/ListView\0"), #str_ptr("onKeyMultiple\0"), #str_ptr("(IILandroid/view/KeyEvent;)Z\0"));
+        var args: [jni::JValue; 3] = [jni::arg_int(arg0), jni::arg_int(arg1), jni::arg_object(arg2)];
+        let r: jni::jboolean = { (*(*this._env.raw())).CallBooleanMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])) };
+        return r as i8 != 0;
+    }
+
+    fn on_key_up(this, arg0: i32, arg1: jni::jobject) -> bool {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/ListView\0"), #str_ptr("onKeyUp\0"), #str_ptr("(ILandroid/view/KeyEvent;)Z\0"));
+        var args: [jni::JValue; 2] = [jni::arg_int(arg0), jni::arg_object(arg1)];
+        let r: jni::jboolean = { (*(*this._env.raw())).CallBooleanMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])) };
+        return r as i8 != 0;
+    }
+
+    fn on_measure(this, arg0: i32, arg1: i32) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/ListView\0"), #str_ptr("onMeasure\0"), #str_ptr("(II)V\0"));
+        var args: [jni::JValue; 2] = [jni::arg_int(arg0), jni::arg_int(arg1)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn on_size_changed(this, arg0: i32, arg1: i32, arg2: i32, arg3: i32) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/ListView\0"), #str_ptr("onSizeChanged\0"), #str_ptr("(IIII)V\0"));
+        var args: [jni::JValue; 4] = [jni::arg_int(arg0), jni::arg_int(arg1), jni::arg_int(arg2), jni::arg_int(arg3)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn remove_footer_view(this, arg0: jni::jobject) -> bool {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/ListView\0"), #str_ptr("removeFooterView\0"), #str_ptr("(Landroid/view/View;)Z\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        let r: jni::jboolean = { (*(*this._env.raw())).CallBooleanMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])) };
+        return r as i8 != 0;
+    }
+
+    fn remove_header_view(this, arg0: jni::jobject) -> bool {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/ListView\0"), #str_ptr("removeHeaderView\0"), #str_ptr("(Landroid/view/View;)Z\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        let r: jni::jboolean = { (*(*this._env.raw())).CallBooleanMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])) };
+        return r as i8 != 0;
+    }
+
+    fn request_child_rectangle_on_screen(this, arg0: jni::jobject, arg1: jni::jobject, arg2: bool) -> bool {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/ListView\0"), #str_ptr("requestChildRectangleOnScreen\0"), #str_ptr("(Landroid/view/View;Landroid/graphics/Rect;Z)Z\0"));
+        var args: [jni::JValue; 3] = [jni::arg_object(arg0), jni::arg_object(arg1), rt::arg_bool(arg2)];
+        let r: jni::jboolean = { (*(*this._env.raw())).CallBooleanMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])) };
+        return r as i8 != 0;
+    }
+
+    fn set_adapter_list_adapter(this, arg0: jni::jobject) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/ListView\0"), #str_ptr("setAdapter\0"), #str_ptr("(Landroid/widget/ListAdapter;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_adapter_adapter(this, arg0: jni::jobject) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/ListView\0"), #str_ptr("setAdapter\0"), #str_ptr("(Landroid/widget/Adapter;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_cache_color_hint(this, arg0: i32) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/ListView\0"), #str_ptr("setCacheColorHint\0"), #str_ptr("(I)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_int(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_divider(this, arg0: jni::jobject) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/ListView\0"), #str_ptr("setDivider\0"), #str_ptr("(Landroid/graphics/drawable/Drawable;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_divider_height(this, arg0: i32) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/ListView\0"), #str_ptr("setDividerHeight\0"), #str_ptr("(I)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_int(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_footer_dividers_enabled(this, arg0: bool) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/ListView\0"), #str_ptr("setFooterDividersEnabled\0"), #str_ptr("(Z)V\0"));
+        var args: [jni::JValue; 1] = [rt::arg_bool(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_header_dividers_enabled(this, arg0: bool) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/ListView\0"), #str_ptr("setHeaderDividersEnabled\0"), #str_ptr("(Z)V\0"));
+        var args: [jni::JValue; 1] = [rt::arg_bool(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_items_can_focus(this, arg0: bool) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/ListView\0"), #str_ptr("setItemsCanFocus\0"), #str_ptr("(Z)V\0"));
+        var args: [jni::JValue; 1] = [rt::arg_bool(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_overscroll_footer(this, arg0: jni::jobject) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/ListView\0"), #str_ptr("setOverscrollFooter\0"), #str_ptr("(Landroid/graphics/drawable/Drawable;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_overscroll_header(this, arg0: jni::jobject) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/ListView\0"), #str_ptr("setOverscrollHeader\0"), #str_ptr("(Landroid/graphics/drawable/Drawable;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_remote_views_adapter(this, arg0: jni::jobject) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/ListView\0"), #str_ptr("setRemoteViewsAdapter\0"), #str_ptr("(Landroid/content/Intent;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_selection(this, arg0: i32) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/ListView\0"), #str_ptr("setSelection\0"), #str_ptr("(I)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_int(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_selection_after_header_view(this) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/ListView\0"), #str_ptr("setSelectionAfterHeaderView\0"), #str_ptr("()V\0"));
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue); };
+        return;
+    }
+
+    fn smooth_scroll_by_offset(this, arg0: i32) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/ListView\0"), #str_ptr("smoothScrollByOffset\0"), #str_ptr("(I)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_int(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn smooth_scroll_to_position(this, arg0: i32) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/ListView\0"), #str_ptr("smoothScrollToPosition\0"), #str_ptr("(I)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_int(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+}
+
 // android.graphics.Bitmap
 struct Bitmap {
     _env: rt::Env,
@@ -14879,4 +16711,4 @@ impl GradientDrawable {
 
 }
 
-// cpc-bindgen --java: 2109 items emitted, 61 SKIPPED.
+// cpc-bindgen --java: 2370 items emitted, 61 SKIPPED.

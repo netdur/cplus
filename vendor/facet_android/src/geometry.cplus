@@ -66,21 +66,42 @@ fn spec_at_most(size: i32) -> i32 { read_modes(); return size | MODE_AT_MOST; }
 // `Undefined` is unbounded — which for a View means "measure at your natural
 // size", spelled as an enormous AT_MOST rather than UNSPECIFIED, because a
 // TextView given UNSPECIFIED lays its text out on ONE line however long it is.
+// NaN is the only value that is not equal to itself, which is the whole test.
+fn is_number(v: f64) -> bool { return v == v; }
+
 fn measure_node(ctx: *u8, avail_w: f64, wm: flex::MeasureMode,
                 avail_h: f64, hm: flex::MeasureMode) -> flex::Size {
     if ctx == (0 as *u8) { return flex::Size { width: 0.0f64, height: 0.0f64 }; }
     let big: f64 = 1000000.0f64;
     var w_spec: i32 = spec_at_most({ big as i32 });
     var h_spec: i32 = spec_at_most({ big as i32 });
-    match wm {
-        flex::MeasureMode::Exactly => { w_spec = spec_exactly({ avail_w as i32 }); }
-        flex::MeasureMode::AtMost => { w_spec = spec_at_most({ avail_w as i32 }); }
-        flex::MeasureMode::Undefined => { }
+    // AN UNDEFINED AVAILABLE SIZE IS NOT ZERO, and conflating the two is a
+    // silent, total failure.
+    //
+    // flex's `undefined()` is NaN, and `NaN as i32` is 0 — so a mode of AtMost
+    // with an undefined extent turned into `AT_MOST(0)`, which asks a view to
+    // fit in nothing. Every child then measured to height 0. It never showed
+    // while the root had a definite height, because then every extent handed
+    // down is a real number; it appeared the moment something was laid out
+    // UNBOUNDED, which is exactly what a recycled row is — `calculate_layout`
+    // with a width and no height, so the row can be as tall as its content.
+    // Two hundred rows of nothing, and the measure looked like it was working
+    // because the WIDTHS were right.
+    //
+    // A NaN is the only value not equal to itself, which is the whole test.
+    if is_number(avail_w) {
+        match wm {
+            flex::MeasureMode::Exactly => { w_spec = spec_exactly({ avail_w as i32 }); }
+            flex::MeasureMode::AtMost => { w_spec = spec_at_most({ avail_w as i32 }); }
+            flex::MeasureMode::Undefined => { }
+        }
     }
-    match hm {
-        flex::MeasureMode::Exactly => { h_spec = spec_exactly({ avail_h as i32 }); }
-        flex::MeasureMode::AtMost => { h_spec = spec_at_most({ avail_h as i32 }); }
-        flex::MeasureMode::Undefined => { }
+    if is_number(avail_h) {
+        match hm {
+            flex::MeasureMode::Exactly => { h_spec = spec_exactly({ avail_h as i32 }); }
+            flex::MeasureMode::AtMost => { h_spec = spec_at_most({ avail_h as i32 }); }
+            flex::MeasureMode::Undefined => { }
+        }
     }
     var view: w::View = paint::wrap(ctx);
     view.measure(w_spec, h_spec);

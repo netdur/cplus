@@ -1,0 +1,99 @@
+// Lists — the recycler.
+//
+// A recycled row is a subtree the PLATFORM owns: ListView creates, pools and
+// destroys cells on its own schedule, so a row is not in the window walk.
+// facet's door for that is `mount::realise` / `sync_from`, and the split below
+// is the one that makes scrolling cheap:
+//
+//   row:      builds the SHAPE, once per cell the platform makes
+//   row_bind: writes the DATA into a cell that already exists
+//
+// A list with a bind costs a handful of property writes per row instead of a
+// subtree, a layout and a view per node.
+
+import "stdlib/option" as option;
+import "facet/facet" as core;
+import "facet/elements" as ui;
+import "facet/label" as label;
+import "facet/list" as list;
+import "facet/vocabulary" as vocab;
+import "../shell" as shell;
+
+const ROWS: usize = 200 as usize;
+
+fn note(s: str) {
+    match label::find("lists:echo") {
+        option::Option[label::Label]::Some(l) => { let _l: label::Label = l.set_text(s); }
+        option::Option[label::Label]::None => { }
+    }
+    return;
+}
+
+// SHAPE ONLY. Whatever text this puts in is overwritten by the bind before the
+// row is ever seen — deliberately, so a row can never show the data of
+// whichever row happened to build its cell.
+fn row(index: usize, ctx: *u8) -> core::Node {
+    var b: core::Builder = core::Builder::new();
+    b.add(ui::label("", key: "row:title", font_size: 17.0f64));
+    b.add(ui::label("", key: "row:sub", font_size: 13.0f64,
+                    text_color: vocab::Color::rgba(0.42f64, 0.42f64, 0.47f64)));
+    return core::column(b).gap(2.0f64).padding(14.0f64);
+}
+
+// DATA ONLY, written into the row the builder above made. `find` is scoped to
+// the row's own subtree — the keys repeat in every row, and that is the point.
+fn bind(index: usize, n: *core::Node, ctx: *u8) {
+    match label::find("row:title", n) {
+        option::Option[label::Label]::Some(l) => {
+            let _l: label::Label = l.set_text("Row ${index}");
+        }
+        option::Option[label::Label]::None => { }
+    }
+    match label::find("row:sub", n) {
+        option::Option[label::Label]::Some(l) => {
+            let _l: label::Label = l.set_text("recycled cell, bound on reuse");
+        }
+        option::Option[label::Label]::None => { }
+    }
+    return;
+}
+
+fn on_tap(sender: *u8, ctx: *u8) {
+    match list::find("lists:list") {
+        option::Option[list::List]::Some(l) => {
+            let i: i64 = l.selected_index();
+            note("tapped row ${i}");
+        }
+        option::Option[list::List]::None => { }
+    }
+    return;
+}
+
+fn build() -> core::Node {
+    var b: core::Builder = core::Builder::new();
+    b.add(shell::title("Lists"));
+    b.add(shell::body("200 rows through Android's ListView, which recycles through `convertView`. Scroll it: the cells are reused and re-bound, not rebuilt."));
+    b.add(ui::label("(no row tapped)", key: "lists:echo", font_size: 15.0f64,
+                    text_color: vocab::Color::rgba(0.35f64, 0.35f64, 0.40f64)));
+
+    var lst: core::Node = ui::list(key: "lists:list", on_item_tapped: on_tap);
+    match list::from(#addr_of(lst)) {
+        option::Option[list::List]::Some(l) => {
+            let _a: list::List = l.set_count(ROWS);
+            let _c: list::List = l.set_row(row);
+            let _d: list::List = l.set_row_bind(bind);
+        }
+        option::Option[list::List]::None => { }
+    }
+
+    // The list gets the rest of the screen. It is NOT inside the page's scroll:
+    // a scroll inside a scroll is two things fighting for the same flick, and
+    // the list does its own scrolling.
+    var page: core::Builder = core::Builder::new();
+    page.add(core::column(b).gap(shell::GAP).padding(shell::PAD));
+    // HEIGHT AND GROW, which is the idiom the desktop gallery uses too: a list
+    // has no intrinsic size — it is a viewport over rows it has not built — so
+    // `grow` alone leaves it at zero, with nothing for the platform to fill.
+    page.add(lst.height(320.0f64).grow(1.0f64));
+    return core::column(page, key: "demo:lists").grow(1.0f64);
+}

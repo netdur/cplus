@@ -1231,6 +1231,14 @@ fn put_f64(buf: *u8, at: usize, v: f64) -> usize {
 
 fn put_i64(buf: *u8, at: usize, v: i64) -> usize {
     if v == (0 as i64) { return put_byte(buf, at, 48 as u8); }
+    // NEGATIVES PRINT. Without this the loop below runs zero times and the
+    // number vanishes — which is how a MeasureSpec, whose AT_MOST mode is
+    // 0x80000000 and therefore negative, logged as an empty string and cost a
+    // round of debugging.
+    if v < (0 as i64) {
+        let i: usize = put_byte(buf, at, 45 as u8);
+        return put_i64(buf, i, (0 as i64) -% v);
+    }
     var digits: [u8; 24] = #zero::[[u8; 24]]();
     var n: usize = 0 as usize;
     var x: i64 = v;

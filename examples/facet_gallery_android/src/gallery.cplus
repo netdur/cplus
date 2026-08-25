@@ -19,6 +19,7 @@ import "./demos/text" as text;
 import "./demos/toggles" as toggles;
 import "./demos/values" as values;
 import "./demos/layout" as layout;
+import "./demos/lists" as lists;
 
 const HOME: str = "demo:home";
 
@@ -54,6 +55,7 @@ fn on_text(sender: *u8, ctx: *u8) { show("demo:text", "Text"); return; }
 fn on_toggles(sender: *u8, ctx: *u8) { show("demo:toggles", "Toggles"); return; }
 fn on_values(sender: *u8, ctx: *u8) { show("demo:values", "Values"); return; }
 fn on_layout(sender: *u8, ctx: *u8) { show("demo:layout", "Layout"); return; }
+fn on_lists(sender: *u8, ctx: *u8) { show("demo:lists", "Lists"); return; }
 
 fn home() -> core::Node {
     var b: core::Builder = core::Builder::new();
@@ -63,7 +65,8 @@ fn home() -> core::Node {
     b.add(ui::button("Toggles", key: "home:toggles", on_click: on_toggles));
     b.add(ui::button("Values", key: "home:values", on_click: on_values));
     b.add(ui::button("Layout", key: "home:layout", on_click: on_layout));
-    b.add(shell::body("Fifteen kinds have bodies. MANIFEST section 2 in vendor/facet_android names the rest — lists, trees, tables and collections wait on the recycler."));
+    b.add(ui::button("Lists", key: "home:lists", on_click: on_lists));
+    b.add(shell::body("Sixteen kinds have bodies. MANIFEST section 2 in vendor/facet_android names the rest — trees, tables and collections ride the same recycler the Lists screen uses."));
     return shell::page(b, HOME);
 }
 
@@ -83,6 +86,7 @@ fn build() -> core::Node {
     demos.add(toggles::build());
     demos.add(values::build());
     demos.add(layout::build());
+    demos.add(lists::build());
 
     var b: core::Builder = core::Builder::new();
     b.add(bar());
