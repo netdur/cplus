@@ -23,7 +23,8 @@ rm -rf out && mkdir -p out/lib/arm64-v8a
 
 # facet and facet_android are source-mode, so they are already inside the app's
 # archive; the prebuilt ones are named here.
-DEPS="$V/android_view/lib/$T/libandroid_view.a \
+DEPS="$V/facet_runtime/lib/$T/libfacet_runtime.a \
+      $V/android_view/lib/$T/libandroid_view.a \
       $V/jni/lib/$T/libjni.a \
       $V/flex_layout/lib/$T/libflex_layout.a \
       $V/events/lib/$T/libevents.a \

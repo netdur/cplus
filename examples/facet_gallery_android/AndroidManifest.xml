@@ -10,6 +10,10 @@
         <activity android:name="cplus.facet.FacetActivity" android:exported="true"
                   android:configChanges="orientation|screenSize|keyboardHidden">
             <meta-data android:name="cplus.facet.lib" android:value="gallery" />
+            <!-- The app's entry, found by name. facet_android's Activity dlsym's
+                 it, so an app needs no Android-shaped export of its own — which
+                 is what lets this source be the same source as iOS's. -->
+            <meta-data android:name="cplus.facet.main" android:value="facet_gallery_android_main" />
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />

@@ -1,33 +1,49 @@
 // Facet Gallery on Android.
 //
-// THERE IS NO JAVA IN THIS APP. The manifest names `cplus.facet.FacetActivity`,
-// which ships inside facet_android as a precompiled dex and is merged into this
-// APK's classes.dex by `build.sh`. What is left is the export below — five
-// lines of C+ — and everything above it is the same facet vocabulary the macOS
-// and iOS galleries use.
+// THERE IS NO JAVA IN THIS APP, and no Android-shaped code either. The entry
+// below is the same shape the iOS gallery's is: set a theme, call
+// `run_component`, return. `facet_android`'s Activity finds this function by
+// NAME — `cplus.facet.main` in AndroidManifest.xml — and the Android facade
+// stores the tree instead of entering a loop, because onCreate returns.
 //
-// The boxing, the leak-for-the-process and the re-attach on a recreated
-// Activity all live in `entry::start`, because every app needs them and getting
-// them wrong looks like a rotation bug rather than a lifetime one.
+// So the only Android-specific artifact in this app is its manifest, which an
+// Android app must write anyway.
 
-import "jni/jni" as jni;
 import "facet/facet" as core;
-import "facet_android/entry" as entry;
+import "facet/component" as component;
+import "facet/theme" as theme;
+import "facet/vocabulary" as vocab;
+import "facet_runtime/runtime" as runtime;
 import "./gallery" as gallery;
 
-fn build() -> core::Node {
-    let n: core::Node = gallery::build();
-    return n;
+struct Gallery { }
+
+impl Gallery {
+    fn new() -> Gallery { return Gallery { }; }
 }
 
-export extern fn Java_cplus_facet_FacetActivity_nativeCreateView(
-    envp: *jni::JNIEnv,
-    cls: jni::jobject,
-    activity: jni::jobject,
-) -> jni::jobject {
-    let host: jni::jobject = entry::start(envp, activity, build);
-    // The first screen cannot be chosen until the tree is mounted, and
-    // `entry::start` is what mounts it.
-    if !gallery::shown() { gallery::show_home(); }
-    return host;
+impl Gallery: component::Component {
+    fn build(ref this) -> core::Node { return gallery::build(); }
+}
+
+impl Gallery: component::Lifecycle {
+    // The first screen cannot be chosen until the tree is MOUNTED, and this is
+    // the hook that says it is. Doing it in `build` would call `switch_to`
+    // against a tree nothing has walked yet — the same trap facet_uikit records
+    // about its launch hook.
+    fn on_attach(ref this) { gallery::show_home(); return; }
+    fn on_detach(ref this) { return; }
+}
+
+export extern fn facet_gallery_android_main() -> i32 {
+    theme::set_theme(theme::Theme::new(
+        primary: vocab::Color::rgba(0.35f64, 0.42f64, 0.95f64, 1.0f64),
+        surface: vocab::Color::adaptive(
+            light: vocab::Color::rgba(1.0f64, 1.0f64, 1.0f64, 1.0f64),
+            dark: vocab::Color::rgba(0.11f64, 0.11f64, 0.13f64, 1.0f64),
+        ),
+    ));
+    runtime::run_component(Gallery::new(), title: "Facet Gallery",
+                           width: 390.0f64, height: 844.0f64);
+    return 0;
 }

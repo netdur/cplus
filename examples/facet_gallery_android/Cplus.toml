@@ -18,6 +18,7 @@ stdlib      = "*"
 facet       = "*"
 flex_layout = "*"
 events      = "*"
+facet_runtime = "*"
 
 [android.dependencies]
 facet_android = "*"

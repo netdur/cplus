@@ -57,3 +57,8 @@ objc        = "*"
 uikit       = "*"
 quartzcore  = "*"
 webkit      = "*"
+
+[android.dependencies]
+facet_android = "*"
+android_view  = "*"
+jni           = "*"
