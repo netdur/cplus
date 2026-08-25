@@ -751,6 +751,135 @@ fn a_non_text_control_is_left_alone_by_the_field_write_back() -> bool {
     return { (*tp).on };
 }
 
+// ---- what a checkbox reports -----------------------------------------------------
+// A CHECKBOX WAS LIVE ON SCREEN AND DEAD TO FACET. It is a UISwitch here
+// (MANIFEST §3 says why) and `create_checkbox` arms the value action, so the
+// event always arrived — but K_CHECKBOX was missing from BOTH halves of the
+// value path. `read_back` never wrote `on`, so `checkbox.on()` answered
+// whatever the application last set rather than what the user did, and
+// `fire_value_changed` never called `on_checked_changed`. The switch moved and
+// nothing else happened.
+//
+// Found by pointing facet_gtk's parity tool at this package. It had read 67/68
+// while these were dead, because a handler name read for ONE kind counted for
+// every kind that declares one — which is why the tests below name the KIND
+// and not just the handler.
+//
+// The drive is `read_back` + `fire_value_changed` in that order, not a real
+// move: `setOn:` is programmatic and UIKit sends no action for it. That is
+// UIKit's rule rather than a shortcut around the wiring, and the arming half
+// is what `a_checkbox_arms_the_value_action` covers.
+
+static CHECKED_HITS: i64 = 0 as i64;
+static CHECKED_SAW_ON: bool = false;
+
+fn note_checked_hit(sender: *u8, ctx: *u8) {
+    CHECKED_HITS = CHECKED_HITS + (1 as i64);
+    // What the handler is told when it asks. This is the ordering claim: it
+    // reads the props the same way an application would, mid-call.
+    let n: *core::Node = input::node_of(sender);
+    if n == (0 as *core::Node) { return; }
+    let cp: *props::CheckboxProps =
+        recycler::props_of(n, props::K_CHECKBOX) as *props::CheckboxProps;
+    if cp == (0 as *props::CheckboxProps) { return; }
+    CHECKED_SAW_ON = { (*cp).on };
+    return;
+}
+
+fn a_checkbox_arms_the_value_action() -> bool {
+    var n: core::Node = ui::checkbox(false, key: "cb:armed");
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    if v == (0 as *u8) { return false; }
+    let armed: bool = armed_action(v, input::event_value_changed(),
+                                   "facetValueChanged:");
+    views::view_release(v);
+    return armed;
+}
+
+fn a_checkboxs_change_reaches_the_props() -> bool {
+    var n: core::Node = ui::checkbox(false, key: "cb:props");
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    if v == (0 as *u8) { return false; }
+    // The control holds the truth — this is what a finger leaves behind.
+    uik::Switch::from_raw(v).set_on(true);
+    input::read_back(p, v);
+    let cp: *props::CheckboxProps =
+        recycler::props_of(p, props::K_CHECKBOX) as *props::CheckboxProps;
+    views::view_release(v);
+    if cp == (0 as *props::CheckboxProps) { return false; }
+    return { (*cp).on };
+}
+
+fn a_checkboxs_change_reaches_the_app() -> bool {
+    CHECKED_HITS = 0 as i64;
+    CHECKED_SAW_ON = false;
+    var n: core::Node = ui::checkbox(false, key: "cb:handler",
+                                     on_checked_changed: note_checked_hit);
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    if v == (0 as *u8) { return false; }
+    uik::Switch::from_raw(v).set_on(true);
+    // The order `imp_value_changed` uses, and it is load-bearing.
+    input::read_back(p, v);
+    input::fire_value_changed(p, v);
+    views::view_release(v);
+    return CHECKED_HITS == (1 as i64) && CHECKED_SAW_ON;
+}
+
+// NEGATIVE: a toggle is a UISwitch too, and it must still be read back as a
+// TOGGLE. The two branches sit next to each other in both halves and each
+// casts the props pointer to its own struct, so a kind test that matched too
+// widely would write one struct through the other's layout.
+fn a_toggle_is_not_read_back_as_a_checkbox() -> bool {
+    var n: core::Node = ui::toggle(false, key: "cb:nottoggle");
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    if v == (0 as *u8) { return false; }
+    uik::Switch::from_raw(v).set_on(true);
+    input::read_back(p, v);
+    let tp: *props::ToggleProps =
+        recycler::props_of(p, props::K_TOGGLE) as *props::ToggleProps;
+    let cp: *u8 = recycler::props_of(p, props::K_CHECKBOX);
+    views::view_release(v);
+    if tp == (0 as *props::ToggleProps) { return false; }
+    // Its own props moved, and it has no checkbox props to have moved.
+    return { (*tp).on } && cp == (0 as *u8);
+}
+
+// ---- where a collection is scrolled ----------------------------------------------
+// The comment in `imp_scrolled` says "a collection view arrives here too", and
+// it does — but the imp asked `list_props`, which is `props_of(n, K_LIST)` and
+// answers NULL for any other kind, so a collection reached the guard and
+// returned. A `collection(...)` that asked where it was scrolled got nothing.
+//
+// The two are not one declaration: a list carries `ListView.Scrolled` of its
+// own and a collection carries `ItemsView.Scrolled` on its embedded block.
+// Reading one and calling it done drops whichever the application used.
+
+static COLLECTION_SCROLLED_FIRED: bool = false;
+
+fn note_collection_scrolled(sender: *u8, ctx: *u8) {
+    COLLECTION_SCROLLED_FIRED = true;
+    return;
+}
+
+fn a_collections_scroll_reaches_the_app() -> bool {
+    COLLECTION_SCROLLED_FIRED = false;
+    var n: core::Node = ui::collection(key: "cl:probe",
+                                       observe_scrolled: note_collection_scrolled);
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    if v == (0 as *u8) { return false; }
+    // A real move through UIKit's own delivery, as the scroll-node check does:
+    // `setContentOffset:` is what `scrollViewDidScroll:` arrives for.
+    uik::ScrollView::from_raw(v).set_content_offset(rt::Point { x: 0.0f64, y: 40.0f64 });
+    let fired: bool = COLLECTION_SCROLLED_FIRED;
+    views::view_release(v);
+    return fired;
+}
+
 // ---- the agent surface -----------------------------------------------------------
 // The reader walks a live UIView tree into agent_core's identity registry. It
 // runs here rather than in agent_uikit's own suite for the reason everything
@@ -1569,6 +1698,15 @@ fn run_all() -> i32 {
           max_length_is_enforced_where_the_text_arrives());
     check("a non-text control is left alone by the field write-back",
           a_non_text_control_is_left_alone_by_the_field_write_back());
+    check("a checkbox arms the value action", a_checkbox_arms_the_value_action());
+    check("a checkbox's change reaches the props",
+          a_checkboxs_change_reaches_the_props());
+    check("a checkbox's change reaches the app",
+          a_checkboxs_change_reaches_the_app());
+    check("a toggle is not read back as a checkbox",
+          a_toggle_is_not_read_back_as_a_checkbox());
+    check("a collection's scroll reaches the app",
+          a_collections_scroll_reaches_the_app());
     check("a tree row carries the app's row_id",
           a_tree_row_carries_the_apps_row_id());
     check("a tree with no row_id leaves its cell unnamed",

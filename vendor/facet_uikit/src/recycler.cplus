@@ -419,6 +419,23 @@ fn imp_scrolled(self_obj: *u8, cmd: *u8, sv: *u8) {
     if n == (0 as *core::Node) { return; }
     let kind: u32 = core::kind_of(n);
     if kind == props::K_CAROUSEL { carousel_scrolled(sv, n); return; }
+    // A COLLECTION'S OBSERVER IS A DIFFERENT FIELD, and it was never read.
+    // The comment above says "a collection view arrives here too", and it does
+    // — but `list_props` is `props_of(n, K_LIST)`, which answers NULL for any
+    // other kind, so a collection reached the guard below and returned. A
+    // `collection(...)` that asked where it was scrolled got nothing on iOS.
+    //
+    // The two are not the same declaration: a list carries `ListView.Scrolled`
+    // of its own, a collection carries `ItemsView.Scrolled` on its embedded
+    // block. Reading one and calling it done drops whichever the app used.
+    if kind == props::K_COLLECTION {
+        let cp: *props::CollectionProps =
+            props_of(n, props::K_COLLECTION) as *props::CollectionProps;
+        if cp == (0 as *props::CollectionProps) { return; }
+        let ch: fn(*u8, *u8) = { (*cp).items_view.observe_scrolled };
+        if ch != props::no_handler { ch(sv, { (*cp).items_view.observe_scrolled_ctx }); }
+        return;
+    }
     let p: *props::ListProps = list_props(sv);
     if p == (0 as *props::ListProps) { return; }
     let h: fn(*u8, *u8) = { (*p).observe_scrolled };
@@ -734,8 +751,18 @@ fn invalidate_rows(v: *u8, lo: i64, hi: i64) {
     return;
 }
 
+// The table's half of the same trap — see `cv_item_count`.
+fn tv_row_count(v: *u8) -> i64 {
+    if { rt::msg_i64(v, rt::sel(#str_ptr("numberOfSections\0"))) } <= (0 as i64) {
+        return 0 as i64;
+    }
+    return { rt::msg_i64_i64(v, rt::sel(#str_ptr("numberOfRowsInSection:\0")),
+                             0 as i64) };
+}
+
 fn scroll_to(v: *u8, row: i64) {
     if row < (0 as i64) { return; }
+    if row >= tv_row_count(v) { return; }
     let ip: *u8 = index_path(row, 0 as i64);
     if ip == (0 as *u8) { return; }
     // Position 0 is None — scroll the least that brings the row into view.
@@ -1737,8 +1764,23 @@ fn apply_carousel(v: *u8, n: *core::Node, dirty: u64) {
     return;
 }
 
+// A TARGET PAST THE END IS A CRASH, NOT A NO-OP. UIKit validates the index
+// path and raises NSInternalInconsistencyException rather than clamping.
+// `scroll_to_index` defaults to 0 and a create applies every prop, so a
+// collection built BEFORE its items — the ordinary "data arrives later" shape
+// — asked to scroll to item 0 of nothing and took the app with it. The same
+// guard covers a stale target left behind by a collection that shrank.
+fn cv_item_count(v: *u8) -> i64 {
+    if { rt::msg_i64(v, rt::sel(#str_ptr("numberOfSections\0"))) } <= (0 as i64) {
+        return 0 as i64;
+    }
+    return { rt::msg_i64_i64(v, rt::sel(#str_ptr("numberOfItemsInSection:\0")),
+                             0 as i64) };
+}
+
 fn cv_scroll_to(v: *u8, index: i64) {
     if index < (0 as i64) { return; }
+    if index >= cv_item_count(v) { return; }
     let ip: *u8 = index_path(index, 0 as i64);
     if ip == (0 as *u8) { return; }
     { msg_void_id_i64_i8(v,

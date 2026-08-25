@@ -444,6 +444,15 @@ fn fire_value_changed(n: *core::Node, sender: *u8) {
         if h != (0 as fn(*u8, *u8)) { h(sender, { (*tp).on_toggled_ctx }); }
         return;
     }
+    // The other half of the checkbox — see `read_back` above. `read_back` runs
+    // first, so a handler asking `checkbox.on()` is told the state that caused
+    // the call rather than the one before it.
+    if kind == props::K_CHECKBOX {
+        let cp: *props::CheckboxProps = p as *props::CheckboxProps;
+        let h: fn(*u8, *u8) = { (*cp).on_checked_changed };
+        if h != (0 as fn(*u8, *u8)) { h(sender, { (*cp).on_checked_changed_ctx }); }
+        return;
+    }
     if kind == props::K_SLIDER {
         let sp: *props::SliderProps = p as *props::SliderProps;
         let h: fn(*u8, *u8) = { (*sp).on_value_changed };
@@ -520,6 +529,17 @@ fn read_back(n: *core::Node, sender: *u8) {
     if kind == props::K_TOGGLE {
         let tp: *props::ToggleProps = p as *props::ToggleProps;
         { (*tp).on = ui::Switch::from_raw(sender).is_on() };
+        return;
+    }
+    // A CHECKBOX IS A SWITCH HERE (MANIFEST §3 says why) and was missing from
+    // BOTH halves of this path — this one and `fire_value_changed`. So the
+    // switch moved, `checkbox.on()` still answered whatever the application
+    // last wrote, and `on_checked_changed` never fired: the control was live on
+    // screen and dead to facet. `create_checkbox` calls `arm_value`, so the
+    // event was always arriving and being dropped here.
+    if kind == props::K_CHECKBOX {
+        let cp: *props::CheckboxProps = p as *props::CheckboxProps;
+        { (*cp).on = ui::Switch::from_raw(sender).is_on() };
         return;
     }
     if kind == props::K_SLIDER {
