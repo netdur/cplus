@@ -62,7 +62,8 @@ fn band_bits() -> u64 {
     return props::C_OPACITY | props::C_BACKGROUND_COLOR | props::C_CORNER_RADIUS
          | props::C_IS_ENABLED | props::C_IS_VISIBLE | props::C_TOOLTIP
          | props::C_SHADOW | props::C_CLIP | props::C_FLOW_DIRECTION
-         | props::C_BACKGROUND;
+         | props::C_BACKGROUND | props::C_TRANSFORM | props::C_ANIMATE
+         | props::C_CANCEL_ANIMATIONS;
 }
 
 // Which side of an adaptive pair is live. Set by the window tier at install
@@ -553,6 +554,7 @@ fn band(v: *u8, n: *core::Node, d: u64) {
     if (d & props::C_FLOW_DIRECTION) != (0 as u64) {
         apply_flow_direction(w, n);
     }
+
     // The CSS document is NOT written here. It is one document per widget with
     // no per-declaration edit, so composing it is `views::configure`'s job —
     // reloading it from the band would drop whatever the kind had put in it.
@@ -733,4 +735,109 @@ fn cstr_equals_ignoring_case(c: *u8, s: str) -> bool {
 fn lower_ascii(b: u8) -> u8 {
     if b >= (65 as u8) && b <= (90 as u8) { return b +% (32 as u8); }
     return b;
+}
+
+// ---- the pure math the curves and the canvas share -----------------------------
+//
+// `drawing` had these and `paint` now needs them for the easings; `drawing`
+// imports `paint`, so they move DOWN rather than the dependency going up.
+fn cos_approx(x: f64) -> f64 {
+    return sin_approx(x + (3.14159265358979323846f64 / 2.0f64));
+}
+
+// sin and cos for the ONE place that needs them — a gradient's axis. The angle
+// is a brush's, so this is read once per fill and never in a loop.
+//
+// A TAYLOR SERIES ONLY WORKS NEAR ZERO, and the fold is what makes it usable
+// across a turn: seven terms at π give -0.075 for a value that is 0. So the
+// angle comes down to the first quadrant and the sign is carried separately —
+// which is what every fixed-point sine does and what the first version of this
+// claimed to do and did not.
+fn sin_approx(x: f64) -> f64 {
+    let pi: f64 = 3.14159265358979323846f64;
+    let two_pi: f64 = 6.28318530717958647692f64;
+    var t: f64 = x;
+    while t >= two_pi { t = t - two_pi; }
+    while t < (0.0 as f64) { t = t + two_pi; }
+    var sign: f64 = 1.0f64;
+    // Past half a turn the curve is its own negative, half a turn back.
+    if t > pi { t = t - pi; sign = (0.0 as f64) - 1.0f64; }
+    // And within a half turn it is symmetric about the quarter.
+    if t > (pi / 2.0f64) { t = pi - t; }
+    let t2: f64 = t * t;
+    let t3: f64 = t2 * t;
+    let t5: f64 = t3 * t2;
+    let t7: f64 = t5 * t2;
+    return sign * (t - (t3 / 6.0f64) + (t5 / 120.0f64) - (t7 / 5040.0f64));
+}
+
+// Four parabolic arcs, each shorter and lower than the last. The constants are
+// Penner's and are what every implementation of this curve uses.
+fn bounce_out(t: f64) -> f64 {
+    let n: f64 = 7.5625f64;
+    let d: f64 = 2.75f64;
+    if t < ((1.0 as f64) / d) { return n * t * t; }
+    if t < ((2.0 as f64) / d) {
+        let a: f64 = t - ((1.5 as f64) / d);
+        return (n * a * a) + (0.75 as f64);
+    }
+    if t < ((2.5 as f64) / d) {
+        let b: f64 = t - ((2.25 as f64) / d);
+        return (n * b * b) + (0.9375 as f64);
+    }
+    let c: f64 = t - ((2.625 as f64) / d);
+    return (n * c * c) + (0.984375 as f64);
+}
+
+// The standard "back out" spring: overshoots by about 10% and settles. A cubic
+// rather than a decaying sine, because a cubic lands EXACTLY on 1 at t=1 and a
+// decaying sine only approaches it.
+fn spring_out(t: f64) -> f64 {
+    let c: f64 = 1.70158f64;
+    let inv: f64 = t - (1.0 as f64);
+    return (1.0 as f64) + (((c + (1.0 as f64)) * inv * inv * inv) + (c * inv * inv));
+}
+
+// ---- the easing curves ---------------------------------------------------------
+//
+// Eleven presets, COMPUTED rather than tabulated. They live here rather than in
+// `anim` because two modules need them — `anim` for the progress tween and a
+// carousel's slide, `transform` for the shared band's `animate_*` — and
+// `transform` cannot import `anim` without closing a cycle through `drawing`.
+// `paint` is the leaf both reach.
+fn eased(t: f64, curve: vocab::Easing) -> f64 {
+    let x: f64 = t;
+    if x <= (0.0 as f64) { return 0.0f64; }
+    if x >= (1.0 as f64) { return 1.0f64; }
+    let half_pi: f64 = 1.5707963267948966f64;
+    return match curve {
+        vocab::Easing::Linear => x,
+        vocab::Easing::SinIn => (1.0 as f64) - cos_approx(x * half_pi),
+        vocab::Easing::SinOut => sin_approx(x * half_pi),
+        vocab::Easing::SinInOut =>
+            ((1.0 as f64) - cos_approx(x * (half_pi * (2.0 as f64)))) / (2.0 as f64),
+        vocab::Easing::CubicIn => x * x * x,
+        vocab::Easing::CubicOut => {
+            let inv: f64 = (1.0 as f64) - x;
+            (1.0 as f64) - (inv * inv * inv)
+        }
+        vocab::Easing::CubicInOut => {
+            if x < (0.5 as f64) { (4.0 as f64) * x * x * x }
+            else {
+                let inv: f64 = ((0.0 as f64) - ((2.0 as f64) * x)) + (2.0 as f64);
+                (1.0 as f64) - ((inv * inv * inv) / (2.0 as f64))
+            }
+        }
+        // A bounce is the OUT curve read backwards, which is how every toolkit
+        // defines the pair — writing two tables is how they come to disagree.
+        vocab::Easing::BounceIn => (1.0 as f64) - bounce_out((1.0 as f64) - x),
+        vocab::Easing::BounceOut => bounce_out(x),
+        // A spring OVERSHOOTS and settles. `SpringOut` is the familiar one (the
+        // thing arrives, goes past, comes back); `SpringIn` is its mirror, and
+        // it dips below zero on the way out — which for a progress fraction is
+        // clamped by the CALLER, not here, because clamping a curve is how a
+        // spring stops being one.
+        vocab::Easing::SpringIn => (1.0 as f64) - spring_out((1.0 as f64) - x),
+        vocab::Easing::SpringOut => spring_out(x),
+    };
 }

@@ -1,0 +1,516 @@
+// facet_gtk transform — the shared band's `transform` and `animate_*`.
+//
+// FOUR VERBS EVERY NODE HAS, and this backend answered none of them.
+// `paint::band` handled opacity, visibility, enabled and tooltip; `C_TRANSFORM`
+// and `C_ANIMATE` appeared NOWHERE in the package. So `set_scale`,
+// `set_rotation` and `set_translation` did nothing at all, and
+// `animate_opacity` / `animate_scale` / `animate_rotation` /
+// `animate_translation` armed a channel nobody read — while the END VALUE still
+// landed, because `C_OPACITY` was handled. An animation therefore SNAPPED,
+// which is worse than a no-op: it looks like the animation ran in zero time.
+//
+// `tools/parity.py` could not see it. It matches `P_[A-Z0-9_]+` — per-kind bits
+// — so the whole `C_*` shared band was outside the measurement, and the 353/360
+// and 68/68 numbers never covered any of it.
+//
+// ---- where a transform goes ----------------------------------------------------
+//
+// GTK 4 has no `transform` property on a widget. What it has is a transform
+// applied to a child AT ALLOCATION, and `gtk_fixed_set_child_transform` is the
+// public door to it — which lands exactly right here, because this package
+// already places every child into a GtkFixed. The seam the layout needed is the
+// seam the transform needs.
+//
+// A GskTransform is IMMUTABLE and each builder call CONSUMES its receiver and
+// returns a new one, so the chain below never leaks as long as the final one is
+// unref'd after `set_child_transform` takes its own reference. NULL is the
+// identity, which is also how a transform is removed.
+//
+// ---- the anchor ----------------------------------------------------------------
+//
+// facet's `anchor_x` / `anchor_y` are FRACTIONS of the node's own box, with
+// (0.5, 0.5) the centre — the same convention CALayer uses, and the reason
+// AppKit can hand them straight to `anchorPoint`. GSK has no anchor: a rotation
+// is about the origin. So the anchor is spelled out as the sandwich every
+// toolkit without one writes — translate to the anchor, transform, translate
+// back — and the node's FRAME is what turns the fractions into points.
+
+import "stdlib/option" as option;
+import "stdlib/vec" as vec;
+import "stdlib/status" as status;
+import "flex_layout/flex_layout" as flex;
+import "facet/facet" as core;
+import "facet/props" as props;
+import "facet/vocabulary" as vocab;
+import "gtk4/gtk4" as gtk;
+import "gobject/runtime" as g;
+import "gsk/gsk" as gsk;
+import "./paint" as paint;
+
+#[link_name = "gsk_transform_translate"]
+extern fn gsk_transform_translate(t: *u8, point: *Point) -> *u8;
+#[link_name = "gsk_transform_scale"]
+extern fn gsk_transform_scale(t: *u8, sx: f32, sy: f32) -> *u8;
+#[link_name = "gsk_transform_rotate"]
+extern fn gsk_transform_rotate(t: *u8, degrees: f32) -> *u8;
+#[link_name = "gsk_transform_rotate_3d"]
+extern fn gsk_transform_rotate_3d(t: *u8, degrees: f32, axis: *Vec3) -> *u8;
+#[link_name = "gsk_transform_unref"]
+extern fn gsk_transform_unref(t: *u8);
+
+// graphene_point_t is two floats; graphene_vec3_t is FOUR (it is a padded SIMD
+// vector, not three). Getting that length wrong writes past the argument.
+struct Point { x: f32, y: f32 }
+struct Vec3 { x: f32, y: f32, z: f32, w: f32 }
+
+// The numbers a transform is built from, kept together so the animation can
+// interpolate them as a unit — which is what `props::ANIM_TRANSFORM` means when
+// it says the nine cannot have nine channels of their own.
+struct Xform {
+    rotation: f64,
+    rotation_x: f64,
+    rotation_y: f64,
+    scale_x: f64,
+    scale_y: f64,
+    translation_x: f64,
+    translation_y: f64,
+    anchor_x: f64,
+    anchor_y: f64,
+}
+
+fn identity() -> Xform {
+    return Xform {
+        rotation: 0.0f64, rotation_x: 0.0f64, rotation_y: 0.0f64,
+        scale_x: 1.0f64, scale_y: 1.0f64,
+        translation_x: 0.0f64, translation_y: 0.0f64,
+        anchor_x: 0.5f64, anchor_y: 0.5f64,
+    };
+}
+
+// `scale` is the UNIFORM verb and `scale_x`/`scale_y` are the per-axis ones.
+// facet keeps all three; the uniform one multiplies, so `set_scale(2)` on a
+// node that also set `scale_x: 1.5` means three.
+fn of_node(n: *core::Node) -> Xform {
+    let s: f64 = core::scale(n);
+    return Xform {
+        rotation: core::rotation(n),
+        rotation_x: core::rotation_x(n),
+        rotation_y: core::rotation_y(n),
+        scale_x: core::scale_x(n) * s,
+        scale_y: core::scale_y(n) * s,
+        translation_x: core::translation_x(n),
+        translation_y: core::translation_y(n),
+        anchor_x: core::anchor_x(n),
+        anchor_y: core::anchor_y(n),
+    };
+}
+
+fn is_identity(x: Xform) -> bool {
+    if x.rotation != (0.0 as f64) { return false; }
+    if x.rotation_x != (0.0 as f64) { return false; }
+    if x.rotation_y != (0.0 as f64) { return false; }
+    if x.scale_x != (1.0 as f64) { return false; }
+    if x.scale_y != (1.0 as f64) { return false; }
+    if x.translation_x != (0.0 as f64) { return false; }
+    if x.translation_y != (0.0 as f64) { return false; }
+    // The ANCHOR alone is not a transform. A node that moved its anchor and
+    // nothing else looks exactly like one that did not, and building a matrix
+    // for it would put two translations on every node in the tree.
+    return true;
+}
+
+fn lerp(a: f64, b: f64, t: f64) -> f64 { return a + ((b - a) * t); }
+
+fn blend(from: Xform, to: Xform, t: f64) -> Xform {
+    return Xform {
+        rotation: lerp(from.rotation, to.rotation, t),
+        rotation_x: lerp(from.rotation_x, to.rotation_x, t),
+        rotation_y: lerp(from.rotation_y, to.rotation_y, t),
+        scale_x: lerp(from.scale_x, to.scale_x, t),
+        scale_y: lerp(from.scale_y, to.scale_y, t),
+        translation_x: lerp(from.translation_x, to.translation_x, t),
+        translation_y: lerp(from.translation_y, to.translation_y, t),
+        // The anchor is not interpolated: it is WHERE the transform happens,
+        // not part of what it does, and sliding it mid-animation would drag
+        // the node sideways for no reason the application asked for.
+        anchor_x: to.anchor_x,
+        anchor_y: to.anchor_y,
+    };
+}
+
+// ---- building the GskTransform -------------------------------------------------
+//
+// Order matters and reads INSIDE-OUT: the last thing appended is the first
+// thing applied to the widget's own coordinates. So the chain below reads, from
+// the widget outward: move the anchor to the origin, scale, rotate about Y,
+// about X, about Z, then put the anchor back and apply the translation.
+//
+// A NULL receiver is the identity, so the chain starts from one.
+fn build(x: Xform, frame: flex::Frame) -> *u8 {
+    let ax: f64 = frame.width * x.anchor_x;
+    let ay: f64 = frame.height * x.anchor_y;
+    var t: *u8 = 0 as *u8;
+    // The anchor, plus the translation the application asked for.
+    var back: Point = Point { x: (ax + x.translation_x) as f32,
+                              y: (ay + x.translation_y) as f32 };
+    t = { gsk_transform_translate(t, #addr_of(back)) };
+    if x.rotation != (0.0 as f64) {
+        t = { gsk_transform_rotate(t, x.rotation as f32) };
+    }
+    // 3D rotation needs an AXIS. graphene_vec3_t is four floats wide — it is a
+    // padded SIMD vector, not three — and passing a three-float struct writes
+    // one float short of what GSK reads.
+    if x.rotation_x != (0.0 as f64) {
+        var axis: Vec3 = Vec3 { x: 1.0f32, y: 0.0f32, z: 0.0f32, w: 0.0f32 };
+        t = { gsk_transform_rotate_3d(t, x.rotation_x as f32, #addr_of(axis)) };
+    }
+    if x.rotation_y != (0.0 as f64) {
+        var axis: Vec3 = Vec3 { x: 0.0f32, y: 1.0f32, z: 0.0f32, w: 0.0f32 };
+        t = { gsk_transform_rotate_3d(t, x.rotation_y as f32, #addr_of(axis)) };
+    }
+    if x.scale_x != (1.0 as f64) || x.scale_y != (1.0 as f64) {
+        t = { gsk_transform_scale(t, x.scale_x as f32, x.scale_y as f32) };
+    }
+    var to_origin: Point = Point { x: (0.0f64 - ax) as f32, y: (0.0f64 - ay) as f32 };
+    t = { gsk_transform_translate(t, #addr_of(to_origin)) };
+    return t;
+}
+
+// ---- applying it ---------------------------------------------------------------
+//
+// The transform belongs to the CHILD-IN-ITS-HOST, not to the widget, so the
+// host has to be found. Every backed node is placed into a GtkFixed by
+// `geometry::place`, and GTK's own parent pointer is the shortest way back to
+// it — walking facet's tree would mean finding the node's nearest backed
+// ancestor and then its document host, which is the same widget by a longer
+// road.
+#[link_name = "gtk_widget_get_parent"]
+extern fn gtk_widget_get_parent(w: *u8) -> *u8;
+
+fn host_fixed_of(v: *u8) -> *u8 {
+    if v == (0 as *u8) { return 0 as *u8; }
+    let p: *u8 = { gtk_widget_get_parent(v) };
+    if p == (0 as *u8) { return 0 as *u8; }
+    if !g::is_a(p, #str_ptr("GtkFixed\0")) { return 0 as *u8; }
+    return p;
+}
+
+// Has this widget ever been given a transform? A node that never transforms
+// must not pay for one, and `set_child_transform(NULL)` on every widget in the
+// tree would be a call per node per apply for nothing.
+fn marked_key() -> *u8 { return #str_ptr("facet-gtk-xform\0"); }
+
+fn apply_to(v: *u8, x: Xform, frame: flex::Frame) {
+    let host: *u8 = host_fixed_of(v);
+    if host == (0 as *u8) { return; }
+    let fixed: gtk::Fixed = gtk::Fixed::from_raw(host);
+    let w: gtk::Widget = gtk::Widget::from_raw(v);
+    if is_identity(x) {
+        // THE GUARD IS THE MARK, not the values. A node that HAD a transform
+        // and went back to identity still carries the old matrix, and skipping
+        // on "the values are identity" would leave it there — the same hole
+        // `facet_appkit/paint.cplus` records finding on the layer.
+        if g::get_data(v, marked_key()) == (0 as *u8) { return; }
+        fixed.set_child_transform(w, gsk::Transform::from_raw(0 as *u8));
+        g::set_data(v, marked_key(), 0 as *u8);
+        return;
+    }
+    let t: *u8 = build(x, frame);
+    fixed.set_child_transform(w, gsk::Transform::from_raw(t));
+    g::set_data(v, marked_key(), 1 as *u8);
+    // `set_child_transform` takes its OWN reference; this one is ours to drop.
+    if t != (0 as *u8) { { gsk_transform_unref(t) }; }
+    return;
+}
+
+// The band's entry point: read the node, apply what it says.
+fn apply(v: *u8, n: *core::Node) {
+    if v == (0 as *u8) { return; }
+    if n == (0 as *core::Node) { return; }
+    apply_to(v, of_node(n), { (*n).frame() });
+    return;
+}
+
+// ================================================================================
+// C_ANIMATE — interpolate, rather than snap
+// ================================================================================
+//
+// GTK 4 HAS NO PROPERTY ANIMATION. `anim.cplus` says the same thing at the top
+// and reaches the same answer for `animate_progress`: a GLib timeout and a
+// curve computed per step. This is that, for the shared band's two channels.
+//
+// ONE TIMEOUT FOR EVERY NODE, not one per node. A tree mid-transition can have
+// a dozen animating at once — an entrance staggers them on purpose — and a
+// timeout each is a source each. The table is walked per frame and the timeout
+// stops itself when the table empties.
+//
+// THE START IS WHAT THE VIEW SHOWS, which is the contract's own rule and the
+// reason `facet.cplus` warns about a `set_*` in the same tick. Opacity is read
+// off the widget; the transform is read from what this module last applied,
+// because a GskTransform cannot be decomposed back into facet's nine numbers
+// without ambiguity (a rotation of 180 and a scale of -1 are the same matrix).
+
+struct Anim {
+    view: usize,
+    node: usize,
+    channels: u32,
+    // Opacity, from and to.
+    from_opacity: f64,
+    to_opacity: f64,
+    from_x: Xform,
+    to_x: Xform,
+    frame: flex::Frame,
+    easing: vocab::Easing,
+    // Milliseconds elapsed and total. Integers, because the tick is a fixed
+    // interval and floating error would accumulate over a long transition.
+    elapsed: i64,
+    total: i64,
+    live: bool,
+}
+
+static ANIMS: vec::Vec[Anim] = #zero::[vec::Vec[Anim]]();
+static TICKING: bool = false;
+
+// The interval `anim.cplus` already settled on: 16ms is one frame at 60Hz, and
+// a tween that ticks slower reads as a stutter rather than a slower tween.
+fn tick_ms() -> u32 { return 16 as u32; }
+
+#[link_name = "g_timeout_add"]
+extern fn g_timeout_add(interval: u32, f: fn(*u8) -> i32, data: *u8) -> u32;
+#[link_name = "gtk_widget_get_opacity"]
+extern fn gtk_widget_get_opacity(w: *u8) -> f64;
+
+// What this module last applied to a widget, so an animation knows where it is
+// starting from. Kept per widget rather than on the node: the node's fields
+// already hold the END values by the time `C_ANIMATE` is seen.
+struct Applied { view: usize, x: Xform, live: bool }
+static APPLIED: vec::Vec[Applied] = #zero::[vec::Vec[Applied]]();
+
+fn remember(v: *u8, x: Xform) {
+    var i: usize = 0 as usize;
+    let n: usize = APPLIED.count();
+    var free: usize = n;
+    while i < n {
+        match APPLIED.at_ptr(i) {
+            option::Option[*Applied]::Some(a) => {
+                if { (*a).live } && { (*a).view } == { #addr(v) } { { (*a).x = x }; return; }
+                if !{ (*a).live } && free == n { free = i; }
+            }
+            option::Option[*Applied]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    let entry: Applied = Applied { view: { #addr(v) }, x: x, live: true };
+    if free < n {
+        match APPLIED.at_ptr(free) {
+            option::Option[*Applied]::Some(a) => { { (*a) = entry }; }
+            option::Option[*Applied]::None => { }
+        }
+        return;
+    }
+    let _e: status::Status = APPLIED.append(entry);
+    return;
+}
+
+fn last_applied(v: *u8) -> Xform {
+    var i: usize = 0 as usize;
+    let n: usize = APPLIED.count();
+    while i < n {
+        match APPLIED.at_ptr(i) {
+            option::Option[*Applied]::Some(a) => {
+                if { (*a).live } && { (*a).view } == { #addr(v) } { return { (*a).x }; }
+            }
+            option::Option[*Applied]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    // Never transformed, so it is showing the identity.
+    return identity();
+}
+
+fn forget(v: *u8) {
+    var i: usize = 0 as usize;
+    let n: usize = APPLIED.count();
+    while i < n {
+        match APPLIED.at_ptr(i) {
+            option::Option[*Applied]::Some(a) => {
+                if { (*a).view } == { #addr(v) } { { (*a).live = false }; }
+            }
+            option::Option[*Applied]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return;
+}
+
+// ---- arming ---------------------------------------------------------------------
+
+fn slot() -> usize {
+    var i: usize = 0 as usize;
+    let n: usize = ANIMS.count();
+    while i < n {
+        match ANIMS.at_ptr(i) {
+            option::Option[*Anim]::Some(a) => { if !{ (*a).live } { return i; } }
+            option::Option[*Anim]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    let _e: status::Status = ANIMS.append(#zero::[Anim]());
+    return n;
+}
+
+// A SECOND ANIMATION ON A CHANNEL REPLACES THE FIRST, which is what the verb
+// means: an application animating to 0.7 and then to 0.9 wants to end at 0.9,
+// not to queue. `anim.cplus` records the same rule for the progress tween and
+// `input::tween_adjustment` for a carousel's slide.
+//
+// It replaces only the CHANNELS NAMED. A transform animation in flight while
+// the opacity is re-animated keeps running.
+fn cancel_channels(v: *u8, channels: u32) {
+    var i: usize = 0 as usize;
+    let n: usize = ANIMS.count();
+    while i < n {
+        match ANIMS.at_ptr(i) {
+            option::Option[*Anim]::Some(a) => {
+                if { (*a).live } && { (*a).view } == { #addr(v) } {
+                    let left: u32 = { (*a).channels } & ~channels;
+                    { (*a).channels = left };
+                    if left == (0 as u32) { { (*a).live = false }; }
+                }
+            }
+            option::Option[*Anim]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return;
+}
+
+fn animate(v: *u8, n: *core::Node) {
+    if v == (0 as *u8) { return; }
+    if n == (0 as *core::Node) { return; }
+    let channels: u32 = core::animate_channels_of(n)
+        & (props::ANIM_OPACITY | props::ANIM_TRANSFORM);
+    // The snap bits ride the same word and are not ours to act on.
+    if channels == (0 as u32) { core::clear_animate_channels(n); return; }
+    let seconds: f64 = { core::animate_duration_of(n).seconds };
+    let target_x: Xform = of_node(n);
+    let frame: flex::Frame = { (*n).frame() };
+    cancel_channels(v, channels);
+    // A DURATION OF ZERO IS A SNAP, not an animation of no length — dividing by
+    // it would give a NaN progress and leave the node wherever it was.
+    if seconds <= (0.0 as f64) {
+        if (channels & props::ANIM_OPACITY) != (0 as u32) {
+            gtk::Widget::from_raw(v).set_opacity(core::opacity(n));
+        }
+        if (channels & props::ANIM_TRANSFORM) != (0 as u32) {
+            apply_to(v, target_x, frame);
+            remember(v, target_x);
+        }
+        core::clear_animate_channels(n);
+        return;
+    }
+    let at: usize = slot();
+    match ANIMS.at_ptr(at) {
+        option::Option[*Anim]::Some(a) => {
+            { (*a).view = { #addr(v) } };
+            { (*a).node = { #addr(n) } };
+            { (*a).channels = channels };
+            // FROM WHAT THE VIEW SHOWS. Opacity is on the widget; the
+            // transform is what this module last wrote, because a GskTransform
+            // does not decompose back into facet's numbers unambiguously.
+            { (*a).from_opacity = { gtk_widget_get_opacity(v) } };
+            { (*a).to_opacity = core::opacity(n) };
+            { (*a).from_x = last_applied(v) };
+            { (*a).to_x = target_x };
+            { (*a).frame = frame };
+            { (*a).easing = core::animate_easing_of(n) };
+            { (*a).elapsed = 0 as i64 };
+            { (*a).total = (seconds * (1000.0 as f64)) as i64 };
+            { (*a).live = true };
+        }
+        option::Option[*Anim]::None => { core::clear_animate_channels(n); return; }
+    }
+    core::clear_animate_channels(n);
+    start_ticking();
+    return;
+}
+
+fn start_ticking() {
+    if TICKING { return; }
+    TICKING = true;
+    let _t: u32 = { g_timeout_add(tick_ms(), step, 0 as *u8) };
+    return;
+}
+
+fn step(user: *u8) -> i32 {
+    var alive: bool = false;
+    var i: usize = 0 as usize;
+    let n: usize = ANIMS.count();
+    while i < n {
+        match ANIMS.at_ptr(i) {
+            option::Option[*Anim]::Some(a) => {
+                if { (*a).live } {
+                    if advance(a) { alive = true; }
+                }
+            }
+            option::Option[*Anim]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    if alive { return 1 as i32; }
+    // G_SOURCE_REMOVE, and the flag with it — an empty table costs nothing and
+    // a timeout that keeps firing over one does.
+    TICKING = false;
+    return 0 as i32;
+}
+
+// One frame of one animation. Answers whether it is still running.
+fn advance(a: *Anim) -> bool {
+    let v: *u8 = { (*a).view } as *u8;
+    { (*a).elapsed = { (*a).elapsed } +% (tick_ms() as i64) };
+    var t: f64 = 1.0f64;
+    let total: i64 = { (*a).total };
+    if total > (0 as i64) && { (*a).elapsed } < total {
+        t = ({ (*a).elapsed } as f64) / (total as f64);
+    }
+    let e: f64 = paint::eased(t, { (*a).easing });
+    if ({ (*a).channels } & props::ANIM_OPACITY) != (0 as u32) {
+        gtk::Widget::from_raw(v).set_opacity(
+            lerp({ (*a).from_opacity }, { (*a).to_opacity }, e));
+    }
+    if ({ (*a).channels } & props::ANIM_TRANSFORM) != (0 as u32) {
+        let now: Xform = blend({ (*a).from_x }, { (*a).to_x }, e);
+        apply_to(v, now, { (*a).frame });
+        remember(v, now);
+    }
+    if t >= (1.0 as f64) { { (*a).live = false }; return false; }
+    return true;
+}
+
+// `C_CANCEL_ANIMATIONS` — stop where the model says, not where the tween is.
+// That is what the verb means: it snaps presentation to the model rather than
+// freezing a half-played transition.
+fn cancel(v: *u8, n: *core::Node) {
+    if v == (0 as *u8) { return; }
+    cancel_channels(v, props::ANIM_OPACITY | props::ANIM_TRANSFORM);
+    if n == (0 as *core::Node) { return; }
+    gtk::Widget::from_raw(v).set_opacity(core::opacity(n));
+    let x: Xform = of_node(n);
+    apply_to(v, x, { (*n).frame() });
+    remember(v, x);
+    return;
+}
+
+// A view is going away: drop what is remembered about it, and stop anything
+// still running on it. A live animation writing to a released widget is a
+// use-after-free, and it is the reason this is called from `view_release`.
+fn released(v: *u8) {
+    cancel_channels(v, props::ANIM_OPACITY | props::ANIM_TRANSFORM);
+    forget(v);
+    return;
+}
+
+// For probes and the suite: what this module last wrote to a widget, which is
+// the only place the applied transform is legible — a GskTransform does not
+// decompose back into facet's numbers unambiguously.
+fn last_applied_scale_x(v: *u8) -> f64 { return last_applied(v).scale_x; }

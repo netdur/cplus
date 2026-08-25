@@ -31,6 +31,7 @@
 
 import "stdlib/option" as option;
 import "facet/vocabulary" as vocab;
+import "./paint" as paint;
 import "gtk4/gtk4" as gtk;
 import "gdk/gdk" as gdk;
 import "gdkpixbuf/gdkpixbuf" as pixbuf;
@@ -57,69 +58,11 @@ fn source_continue() -> i32 { return 1 as i32; }
 // near zero, so that one folds to the first quadrant with the sign carried.
 // Reusing it rather than writing a second is not tidiness — it is that the
 // second would be the one with the bug.
-fn eased(t: f64, curve: vocab::Easing) -> f64 {
-    let x: f64 = t;
-    if x <= (0.0 as f64) { return 0.0f64; }
-    if x >= (1.0 as f64) { return 1.0f64; }
-    let half_pi: f64 = 1.5707963267948966f64;
-    return match curve {
-        vocab::Easing::Linear => x,
-        vocab::Easing::SinIn => (1.0 as f64) - drawing::cos_approx(x * half_pi),
-        vocab::Easing::SinOut => drawing::sin_approx(x * half_pi),
-        vocab::Easing::SinInOut =>
-            ((1.0 as f64) - drawing::cos_approx(x * (half_pi * (2.0 as f64)))) / (2.0 as f64),
-        vocab::Easing::CubicIn => x * x * x,
-        vocab::Easing::CubicOut => {
-            let inv: f64 = (1.0 as f64) - x;
-            (1.0 as f64) - (inv * inv * inv)
-        }
-        vocab::Easing::CubicInOut => {
-            if x < (0.5 as f64) { (4.0 as f64) * x * x * x }
-            else {
-                let inv: f64 = ((0.0 as f64) - ((2.0 as f64) * x)) + (2.0 as f64);
-                (1.0 as f64) - ((inv * inv * inv) / (2.0 as f64))
-            }
-        }
-        // A bounce is the OUT curve read backwards, which is how every toolkit
-        // defines the pair — writing two tables is how they come to disagree.
-        vocab::Easing::BounceIn => (1.0 as f64) - bounce_out((1.0 as f64) - x),
-        vocab::Easing::BounceOut => bounce_out(x),
-        // A spring OVERSHOOTS and settles. `SpringOut` is the familiar one (the
-        // thing arrives, goes past, comes back); `SpringIn` is its mirror, and
-        // it dips below zero on the way out — which for a progress fraction is
-        // clamped by the CALLER, not here, because clamping a curve is how a
-        // spring stops being one.
-        vocab::Easing::SpringIn => (1.0 as f64) - spring_out((1.0 as f64) - x),
-        vocab::Easing::SpringOut => spring_out(x),
-    };
-}
+// The eleven curves live in `paint` now — `transform` needs them too, and it
+// cannot import this module without closing a cycle through `drawing`.
+fn eased(t: f64, curve: vocab::Easing) -> f64 { return paint::eased(t, curve); }
 
-// Four parabolic arcs, each shorter and lower than the last. The constants are
-// Penner's and are what every implementation of this curve uses.
-fn bounce_out(t: f64) -> f64 {
-    let n: f64 = 7.5625f64;
-    let d: f64 = 2.75f64;
-    if t < ((1.0 as f64) / d) { return n * t * t; }
-    if t < ((2.0 as f64) / d) {
-        let a: f64 = t - ((1.5 as f64) / d);
-        return (n * a * a) + (0.75 as f64);
-    }
-    if t < ((2.5 as f64) / d) {
-        let b: f64 = t - ((2.25 as f64) / d);
-        return (n * b * b) + (0.9375 as f64);
-    }
-    let c: f64 = t - ((2.625 as f64) / d);
-    return (n * c * c) + (0.984375 as f64);
-}
 
-// The standard "back out" spring: overshoots by about 10% and settles. A cubic
-// rather than a decaying sine, because a cubic lands EXACTLY on 1 at t=1 and a
-// decaying sine only approaches it.
-fn spring_out(t: f64) -> f64 {
-    let c: f64 = 1.70158f64;
-    let inv: f64 = t - (1.0 as f64);
-    return (1.0 as f64) + (((c + (1.0 as f64)) * inv * inv * inv) + (c * inv * inv));
-}
 
 // ================================================================================
 // progress.animate_progress

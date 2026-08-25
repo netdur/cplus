@@ -481,8 +481,8 @@ fn gradient_for(b: vocab::Brush, box: vocab::Rect, opacity: f64) -> *u8 {
     let cy: f64 = box.y + (box.height / (2.0 as f64));
     let rad: f64 = radians(b.angle);
     let half: f64 = ((box.width + box.height) / (4.0 as f64));
-    let dx: f64 = cos_approx(rad) * half;
-    let dy: f64 = sin_approx(rad) * half;
+    let dx: f64 = paint::cos_approx(rad) * half;
+    let dy: f64 = paint::sin_approx(rad) * half;
     let pat: *u8 = { cairo_pattern_create_linear(cx - dx, cy - dy, cx + dx, cy + dy) };
     if pat == (0 as *u8) { return 0 as *u8; }
     let s: vocab::Color = paint::resolved(b.start);
@@ -870,35 +870,7 @@ fn radians(degrees: f64) -> f64 {
     return degrees * (3.14159265358979323846f64 / 180.0f64);
 }
 
-// sin and cos for the ONE place that needs them — a gradient's axis. The angle
-// is a brush's, so this is read once per fill and never in a loop.
-//
-// A TAYLOR SERIES ONLY WORKS NEAR ZERO, and the fold is what makes it usable
-// across a turn: seven terms at π give -0.075 for a value that is 0. So the
-// angle comes down to the first quadrant and the sign is carried separately —
-// which is what every fixed-point sine does and what the first version of this
-// claimed to do and did not.
-fn sin_approx(x: f64) -> f64 {
-    let pi: f64 = 3.14159265358979323846f64;
-    let two_pi: f64 = 6.28318530717958647692f64;
-    var t: f64 = x;
-    while t >= two_pi { t = t - two_pi; }
-    while t < (0.0 as f64) { t = t + two_pi; }
-    var sign: f64 = 1.0f64;
-    // Past half a turn the curve is its own negative, half a turn back.
-    if t > pi { t = t - pi; sign = (0.0 as f64) - 1.0f64; }
-    // And within a half turn it is symmetric about the quarter.
-    if t > (pi / 2.0f64) { t = pi - t; }
-    let t2: f64 = t * t;
-    let t3: f64 = t2 * t;
-    let t5: f64 = t3 * t2;
-    let t7: f64 = t5 * t2;
-    return sign * (t - (t3 / 6.0f64) + (t5 / 120.0f64) - (t7 / 5040.0f64));
-}
 
-fn cos_approx(x: f64) -> f64 {
-    return sin_approx(x + (3.14159265358979323846f64 / 2.0f64));
-}
 
 // ---- the canvas image ----------------------------------------------------------
 //

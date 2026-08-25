@@ -72,6 +72,7 @@ import "./paint" as paint;
 import "./views" as views;
 import "./geometry" as geometry;
 import "./observers" as observers;
+import "./transform" as transform;
 import "./scheduler" as scheduler;
 import "./window" as window;
 import "./dialogs" as dialogs;
@@ -1272,6 +1273,117 @@ fn a_null_c_string_reads_as_empty_rather_than_dereferencing() {
 // because those are what is wrong silently, and a mirrored arc or a
 // transposed line cap looks like a drawing bug in the application.
 
+// ---- the shared transform and animation band -----------------------------------
+//
+// bugs/10. `C_ANIMATE` and `C_TRANSFORM` appeared NOWHERE in this package, and
+// `C_SHADOW` / `C_CLIP` only in a list of bits nothing acted on. So
+// `set_scale` did nothing, and `animate_opacity` armed a channel nobody read —
+// while the END VALUE still landed, because `C_OPACITY` was handled. An
+// animation therefore SNAPPED, which is worse than a no-op: it looks like the
+// animation ran in zero time.
+//
+// `tools/parity.py` matched `P_[A-Z0-9_]+` only, so the whole `C_*` band was
+// outside the measurement. That is widened now too.
+#[test]
+fn a_node_that_never_transformed_builds_no_matrix() {
+    // The identity is decided from the VALUES, so a tree that never asked for
+    // a transform pays for nothing.
+    assert transform::is_identity(transform::identity());
+    var n: core::Node = core::column(core::Builder::new());
+    assert transform::is_identity(transform::of_node(#addr_of(n)));
+    // An ANCHOR alone is not a transform — it is where a transform would
+    // happen, not one. Counting it would put two translations on every node.
+    n.set_anchor_x(0.0f64);
+    n.set_anchor_y(1.0f64);
+    assert transform::is_identity(transform::of_node(#addr_of(n)));
+}
+
+#[test]
+fn each_transform_verb_leaves_the_identity() {
+    var s: core::Node = core::column(core::Builder::new());
+    s.set_scale(2.0f64);
+    assert !transform::is_identity(transform::of_node(#addr_of(s)));
+    var r: core::Node = core::column(core::Builder::new());
+    r.set_rotation(90.0f64);
+    assert !transform::is_identity(transform::of_node(#addr_of(r)));
+    var t: core::Node = core::column(core::Builder::new());
+    t.set_translation_x(4.0f64);
+    assert !transform::is_identity(transform::of_node(#addr_of(t)));
+    var rx: core::Node = core::column(core::Builder::new());
+    rx.set_rotation_x(30.0f64);
+    assert !transform::is_identity(transform::of_node(#addr_of(rx)));
+}
+
+// `scale` is the UNIFORM verb and `scale_x`/`scale_y` are per-axis; facet keeps
+// all three, so they MULTIPLY. Picking one and ignoring the other would make a
+// node that set both silently take half its transform.
+#[test]
+fn the_uniform_scale_multiplies_the_per_axis_one() {
+    var n: core::Node = core::column(core::Builder::new());
+    n.set_scale(2.0f64);
+    n.set_scale_x(1.5f64);
+    let x: transform::Xform = transform::of_node(#addr_of(n));
+    assert x.scale_x == (3.0f64);
+    assert x.scale_y == (2.0f64);
+}
+
+// The blend is what an animation walks along. The ANCHOR is not interpolated:
+// it is where the transform happens, not part of what it does, and sliding it
+// mid-animation would drag the node sideways for no reason anyone asked for.
+#[test]
+fn a_blend_walks_every_number_but_the_anchor() {
+    var from: transform::Xform = transform::identity();
+    from.anchor_x = 0.0f64;
+    var to: transform::Xform = transform::identity();
+    to.scale_x = 3.0f64;
+    to.rotation = 90.0f64;
+    to.translation_y = 10.0f64;
+    to.anchor_x = 1.0f64;
+
+    let half: transform::Xform = transform::blend(from, to, 0.5f64);
+    assert half.scale_x == (2.0f64);
+    assert half.rotation == (45.0f64);
+    assert half.translation_y == (5.0f64);
+    // The anchor is the DESTINATION's from the first frame, not a walk.
+    assert half.anchor_x == (1.0f64);
+
+    // The ends are exact — a blend that overshot at t=1 would leave every
+    // animation a fraction short of what it was asked for.
+    assert transform::blend(from, to, 0.0f64).scale_x == (1.0f64);
+    assert transform::blend(from, to, 1.0f64).scale_x == (3.0f64);
+}
+
+// The easings moved from `anim` into `paint` so `transform` could reach them
+// without closing a cycle through `drawing`. They must still be the curves.
+#[test]
+fn the_easings_survived_the_move_into_paint() {
+    assert paint::eased(0.0f64, vocab::Easing::Linear) == (0.0f64);
+    assert paint::eased(1.0f64, vocab::Easing::Linear) == (1.0f64);
+    assert paint::eased(0.5f64, vocab::Easing::Linear) == (0.5f64);
+    // Every curve is pinned at both ends, whatever it does between them — an
+    // animation that did not finish where it was aimed is the one failure a
+    // curve must never have.
+    assert paint::eased(0.0f64, vocab::Easing::BounceOut) == (0.0f64);
+    assert paint::eased(1.0f64, vocab::Easing::BounceOut) == (1.0f64);
+    assert paint::eased(0.0f64, vocab::Easing::SpringIn) == (0.0f64);
+    assert paint::eased(1.0f64, vocab::Easing::SpringIn) == (1.0f64);
+    assert paint::eased(0.0f64, vocab::Easing::CubicInOut) == (0.0f64);
+    assert paint::eased(1.0f64, vocab::Easing::CubicInOut) == (1.0f64);
+    // ...and out-of-range input is clamped rather than extrapolated.
+    assert paint::eased(0.0f64 - 1.0f64, vocab::Easing::CubicIn) == (0.0f64);
+    assert paint::eased(2.0f64, vocab::Easing::CubicIn) == (1.0f64);
+}
+
+// The band claims these bits, so a caller asking "is any of this dirty?" gets
+// a true answer. Claiming a bit nothing acts on is what C_SHADOW and C_CLIP
+// were doing, and it is how the gap stayed invisible.
+#[test]
+fn the_band_claims_the_transform_verbs_it_now_answers() {
+    assert (paint::band_bits() & props::C_TRANSFORM) != (0 as u64);
+    assert (paint::band_bits() & props::C_ANIMATE) != (0 as u64);
+    assert (paint::band_bits() & props::C_CANCEL_ANIMATIONS) != (0 as u64);
+}
+
 // ---- a splice must not walk the reader -----------------------------------------
 //
 // bugs/09-scroll-jumps-on-selection.md. A tree parked at 592, expanding the
@@ -2240,14 +2352,14 @@ fn degrees_become_radians() {
 fn the_gradient_axis_needs_sine_and_cosine_and_gets_them() {
     // A brush's angle is read once per fill, so a series is affordable — but
     // it has to be RIGHT, or every gradient runs the wrong way.
-    assert near(drawing::sin_approx(0.0f64), 0.0f64);
-    assert near(drawing::sin_approx(drawing::radians(90.0f64)), 1.0f64);
-    assert near(drawing::sin_approx(drawing::radians(180.0f64)), 0.0f64);
-    assert near(drawing::cos_approx(0.0f64), 1.0f64);
-    assert near(drawing::cos_approx(drawing::radians(90.0f64)), 0.0f64);
+    assert near(paint::sin_approx(0.0f64), 0.0f64);
+    assert near(paint::sin_approx(drawing::radians(90.0f64)), 1.0f64);
+    assert near(paint::sin_approx(drawing::radians(180.0f64)), 0.0f64);
+    assert near(paint::cos_approx(0.0f64), 1.0f64);
+    assert near(paint::cos_approx(drawing::radians(90.0f64)), 0.0f64);
     // And the series is folded to one turn, so an angle nobody normalised is
     // still answered rather than diverging.
-    assert near(drawing::sin_approx(drawing::radians(450.0f64)), 1.0f64);
+    assert near(paint::sin_approx(drawing::radians(450.0f64)), 1.0f64);
     return;
 }
 

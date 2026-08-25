@@ -10,11 +10,22 @@ listed here is a gap, and the gap is a bug.
 ```
 360 declared prop bits     353 answered     98%   (appkit 338, uikit 335)
  68 declared handlers       68 fired       100%   (appkit  68, uikit  67)
+ 21 shared-band bits         14 named        66%   (appkit  20, uikit  18)
 ```
 
-Both axes are in `--check` now, with separate floors: the two surfaces fail
+All THREE axes are in `--check` now, with separate floors: they fail
 differently — a missing prop is a control that ignores you, a missing handler
-is a control that never answers.
+is a control that never answers, and a missing shared-band bit is a verb every
+node has and none of them honour.
+
+**THE THIRD NUMBER IS NEW, AND IT IS WHY THE FIRST TWO WERE FLATTERING.**
+`parity.py` matched `P_[A-Z0-9_]+` — per-kind bits — so facet's SHARED band was
+outside the measurement entirely. A backend could ignore all of it and still
+print 98%. It did: `C_ANIMATE` and `C_TRANSFORM` appeared NOWHERE in this
+package, so `set_scale` did nothing and `animate_opacity` armed a channel
+nobody read — while the end value still landed, because `C_OPACITY` was
+handled, so an animation SNAPPED rather than not happening. Both are answered
+now (`transform.cplus`); the seven still unnamed are in §2.
 
 **WHERE THE TOOL AND THIS FILE DISAGREE, THIS FILE IS RIGHT.** `parity.py`
 credits a prop when the backend names its bit OR touches its field, and a field
@@ -215,6 +226,19 @@ and unrecorded.
 
 Everything not listed as live above. The large ones, in the order they matter:
 
+- **SEVEN SHARED-BAND BITS ARE STILL UNNAMED**, and they only became visible
+  when `parity.py` learned to look at the `C_*` band at all: `C_FOCUS`,
+  `C_BLUR`, `C_FLUSH`, `C_HANDLERS`, `C_SAFE_AREA`, `C_SEMANTICS`, `C_AGENT`.
+  appkit names twenty of twenty-one. `C_FOCUS` / `C_BLUR` are the two that a
+  user would notice first — a node asking for focus and not getting it.
+- **`C_SHADOW` and `C_CLIP` are NAMED BUT NOT ANSWERED.** They appear in
+  `paint::band_bits()`, which is a claim that the band handles them, and
+  `paint::band` acts on neither. That is the exact shape of the thing this
+  file exists to prevent, and it is written here rather than quietly fixed in
+  the list. A drop shadow is CSS `box-shadow`, which GTK 4 implements; a
+  rounded clip is `border-radius` plus overflow; an ARBITRARY clip shape has no
+  CSS spelling and will need its own entry when someone tries.
+
 - **A tree's flat index is a full walk.** Answering "what is the Nth visible
   row" means walking the expanded model, so the walk runs once per change into a
   cached vector of (node, depth) rather than once per bind. That is
@@ -379,6 +403,31 @@ Everything not listed as live above. The large ones, in the order they matter:
   VIEW background rather than the canvas — uses zero as top-to-bottom, which is
   neither. Two of the three agree and the canvas is the one facet's own
   `DrawCommand` documents, so this package follows the canvas.
+- **A TRANSFORM IS A CHILD-IN-ITS-HOST, not a widget property.** GTK 4 has no
+  `transform` on a widget; what it has is a transform applied to a child at
+  ALLOCATION, and `gtk_fixed_set_child_transform` is the public door — which
+  lands exactly right, because this package already places every child into a
+  GtkFixed. The seam the layout needed is the seam the transform needed.
+  GSK has no ANCHOR (a rotation is about the origin), so facet's `anchor_x` /
+  `anchor_y` fractions are spelled out as the sandwich every toolkit without
+  one writes: translate to the anchor, transform, translate back, with the
+  node's frame turning the fractions into points. An anchor ALONE is not a
+  transform — counting it would put two translations on every node in the tree.
+- **AN ANIMATION IS A TIMEOUT, and ANIMATE RUNS BEFORE THE BAND.** GTK 4 has no
+  property animation — `anim.cplus` says so and reaches the same answer for
+  `animate_progress` — so the shared band's two channels are one GLib timeout
+  over a table, not a source per node: a staggered entrance has a dozen running
+  at once. The ORDER is the whole difference between a fade and a jump: an
+  animation starts from what the view SHOWS, and `paint::band` answers
+  `C_OPACITY` by writing the end value straight onto the widget. Measured with
+  the dispatch after the band, scale interpolated 100 → 106 → 122 → ... → 200
+  while opacity went 0 → 100 in one frame, because scale has no snap branch in
+  the band and opacity does. `facet_appkit` records the same order in one line.
+  The transform's start cannot be read back off the widget — a GskTransform
+  does not decompose into facet's nine numbers unambiguously (a rotation of 180
+  and a scale of -1 are one matrix) — so this module remembers what it last
+  applied, per widget, and `view_release` drops it before the unref: an
+  animation writing to a released widget is a use-after-free with a timer on it.
 - **RTL is TWO HALVES, and facet already does the harder one.**
   `core::set_flow_direction` hands flex its own direction, and flex mirrors
   row layout, justification and edge resolution from there. What this package

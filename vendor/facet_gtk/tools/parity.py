@@ -43,6 +43,10 @@ FLOOR = 353
 # differently: a missing prop is a control that ignores you, a missing handler
 # is a control that never answers.
 HANDLER_FLOOR = 68
+# The SHARED band, which had no floor at all — and that is how four verbs every
+# node has (`C_ANIMATE`, `C_TRANSFORM`, `C_SHADOW`, `C_CLIP`) sat unanswered
+# while the two numbers above read 98% and 100%. See `shared_band`.
+SHARED_FLOOR = 14
 
 # Handlers facet fires ITSELF, from `mount.cplus`'s post-walk notification
 # queue (M4). A backend neither can nor should wire them, so counting them
@@ -78,6 +82,44 @@ def referenced(directory):
         for name, prop in re.findall(r"\b(\w+)::(P_[A-Z0-9_]+)\b", text):
             hits.setdefault(alias.get(name, name), set()).add(prop)
     return hits
+
+
+def shared_band():
+    """The `C_*` bits every node has, and which backends name them.
+
+    THE BLIND SPOT THIS TOOL HAD. Everything above counts `P_*` — per-kind bits,
+    declared in facet's kind modules. But facet also declares a SHARED band on
+    `props.cplus`: opacity, background, corner radius, transform, shadow, clip,
+    the animation verbs. Those are `C_*`, they were never matched by any pattern
+    here, and a backend could ignore all of them and still print 98%.
+
+    Measured when this was added: gtk named 0 of C_ANIMATE and C_TRANSFORM, and
+    listed C_SHADOW and C_CLIP in a bit-set nothing acted on.
+
+    Bits that are pure BOOKKEEPING are excluded by name — a blanket word, a
+    sentinel, a mask — because they are not verbs a backend answers.
+    """
+    text = open(os.path.join(FACET, "props.cplus")).read()
+    declared = [c for c in re.findall(r"^const (C_[A-Z0-9_]+)\s*:", text, re.M)
+                if c not in NOT_A_VERB]
+    out = {}
+    for k, d in BACKENDS.items():
+        if not os.path.isdir(d):
+            continue
+        src = strip_comments("".join(
+            open(p).read() for p in glob.glob(os.path.join(d, "*.cplus"))
+            if not p.endswith("test_main.cplus")))
+        out[k] = sorted(c for c in declared if re.search(r"\bprops::" + c + r"\b", src))
+    return declared, out
+
+
+# Words, masks and sentinels rather than verbs: nothing "implements" them.
+NOT_A_VERB = {
+    "C_ALL_STATE",     # the blanket touch
+    "C_RESTYLE",       # C_ALL_STATE minus one bit
+    "C_COMMANDS",      # the verb group, as a mask
+    "C_LAYOUT",        # raised by geometry writes, answered by the layout pass
+}
 
 
 def handlers():
@@ -234,6 +276,21 @@ def main():
 
     fired = handler_parity()
 
+    declared_c, named = shared_band()
+    print(f"\n{len(declared_c)} bits declared on facet's SHARED band\n")
+    for k in ("appkit", "uikit", "gtk", "android"):
+        if k not in named:
+            continue
+        pct = len(named[k]) * 100 // len(declared_c) if declared_c else 0
+        mark = "  <-- this package" if k == "gtk" else ""
+        print(f"  {k:<8} {len(named[k]):>4} / {len(declared_c)}   {pct:>3}%{mark}")
+    missing = [c for c in declared_c if c not in named.get("gtk", [])]
+    if missing:
+        print("\n  gtk does not name:")
+        for c in missing:
+            print(f"    {c}")
+    shared = len(named.get("gtk", []))
+
     if "--check" in sys.argv:
         got = totals.get("gtk", 0)
         bad = False
@@ -245,9 +302,14 @@ def main():
             print(f"FAIL: gtk fires {fired} handlers, floor is {HANDLER_FLOOR}.",
                   file=sys.stderr)
             bad = True
+        if shared < SHARED_FLOOR:
+            print(f"FAIL: gtk names {shared} shared-band bits, floor is {SHARED_FLOOR}.",
+                  file=sys.stderr)
+            bad = True
         if bad:
             return 1
-        print(f"\nok: props {got} (floor {FLOOR}), handlers {fired} (floor {HANDLER_FLOOR})")
+        print(f"\nok: props {got} (floor {FLOOR}), handlers {fired} "
+              f"(floor {HANDLER_FLOOR}), shared {shared} (floor {SHARED_FLOOR})")
     return 0
 
 

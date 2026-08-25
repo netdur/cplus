@@ -39,6 +39,7 @@ import "./window" as window;
 import "./web" as web;
 import "./input" as input;
 import "./paint" as paint;
+import "./transform" as transform;
 import "./chrome" as chrome;
 import "./swipe" as swipe;
 import "./recycler" as recycler;
@@ -206,7 +207,31 @@ fn holds_a_toolbar_item(n: *core::Node) -> bool {
 // styling bits, which each kind declares in `controls::css_bits`.
 fn configure(v: *u8, n: *core::Node, d: u64) {
     let kind: u32 = core::kind_of(n);
+    // ANIMATE BEFORE THE BAND, and this ordering is the whole difference
+    // between a fade and a jump.
+    //
+    // `paint::band` answers `C_OPACITY` by writing the node's opacity straight
+    // onto the widget. An animation starts FROM WHAT THE VIEW SHOWS — that is
+    // the contract's rule and the reason `facet.cplus` warns about a `set_*` in
+    // the same tick — so if the band runs first the start it reads is already
+    // the end. MEASURED, with the dispatch after the band: scale interpolated
+    // 100 → 106 → 122 → ... → 200 while opacity went 0 → 100 in one frame,
+    // because scale has no snap branch in the band and opacity does.
+    //
+    // `facet_appkit/paint.cplus` records the same order in one line: "Animate
+    // before snap: C_ANIMATE alone carries the channels; set_* would have
+    // raised C_OPACITY / C_TRANSFORM and cleared those channels."
+    //
+    // Dispatched here rather than inside `paint::band` because `transform`
+    // needs `paint`'s easing curves and `paint` would then need `transform`
+    // back; `views` already owns the apply order.
+    if (d & props::C_CANCEL_ANIMATIONS) != (0 as u64) { transform::cancel(v, n); }
+    if (d & props::C_ANIMATE) != (0 as u64) { transform::animate(v, n); }
     paint::band(v, n, d);
+    // The transform SNAP goes after, for the same reason the band's opacity
+    // does: it is the end state, and an animation that just armed has already
+    // taken its start.
+    if (d & props::C_TRANSFORM) != (0 as u64) { transform::apply(v, n); }
     if (d & (paint::css_band_bits() | controls::css_bits(kind))) != (0 as u64) {
         let decls: text::Text = controls::css_decls(kind, n);
         let rules: text::Text = controls::css_rules(kind, n);
@@ -548,6 +573,11 @@ fn remove(ctx: *u8, host: *u8, child: *u8) {
 // The node let go of the widget: drop the reference `create` sank.
 fn view_release(v: *u8) {
     if v == (0 as *u8) { return; }
+    // BEFORE THE UNREF. An animation still running on this widget would write
+    // an opacity or a transform to it on its next frame, sixteen milliseconds
+    // after the last reference went — which is a use-after-free with a timer
+    // attached to it.
+    transform::released(v);
     g::object_unref(v);
     return;
 }
