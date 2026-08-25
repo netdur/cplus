@@ -1276,6 +1276,21 @@ fn a_null_c_string_reads_as_empty_rather_than_dereferencing() {
 // because those are what is wrong silently, and a mirrored arc or a
 // transposed line cap looks like a drawing bug in the application.
 
+// The agent pin is the LAST shared-band verb this package had to answer, and
+// the only one whose value a security boundary depends on. `app::agent_pin` is
+// platform-free — it dispatches through a hook `agent_gtk` fills when an app
+// actually serves — so answering it costs an app that never served a stored
+// enum and a null check.
+#[test]
+fn the_band_claims_the_agent_pin() {
+    assert (paint::band_bits() & props::C_AGENT) != (0 as u64);
+    // ITS OWN BIT, not folded into the semantics word: `props.cplus` says a
+    // backend that re-read it as a side effect of a label change would be one
+    // where the pin's timing is decided somewhere else.
+    assert props::C_AGENT != props::C_SEMANTICS;
+    assert (props::C_SEMANTICS & props::C_AGENT) == (0 as u64);
+}
+
 // ---- a position and a transform are ONE SLOT -----------------------------------
 //
 // `gtk_fixed_put(child, x, y)` IS a transform: GtkFixedLayoutChild has one

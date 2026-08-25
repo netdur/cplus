@@ -10,7 +10,7 @@ listed here is a gap, and the gap is a bug.
 ```
 360 declared prop bits     353 answered     98%   (appkit 338, uikit 335)
  68 declared handlers       68 fired       100%   (appkit  68, uikit  67)
- 21 shared-band bits         17 named        80%   (appkit  20, uikit  18)
+ 21 shared-band bits         18 named        85%   (appkit  20, uikit  18)
 ```
 
 All THREE axes are in `--check` now, with separate floors: they fail
@@ -38,6 +38,18 @@ like.
 
 `python3 tools/parity.py` prints it and `--check` fails if it drops. Run it
 before believing any adjective in this file.
+
+**EVERY DECLARED VERB IS NOW EITHER IMPLEMENTED OR RECORDED — on all three
+axes.** The three shared-band bits the tool counts as unanswered are `C_FLUSH`
+(nothing to do, and no backend names it), `C_HANDLERS` (free here, because
+handlers are read off the node at fire time) and `C_SAFE_AREA` (a GTK window
+under a compositor has no such inset). All three are in §1.
+
+**EVERY DECLARED PROP IS NOW EITHER IMPLEMENTED OR RECORDED.** The seven the
+tool counts as unanswered are the four `bordered` stroke verbs, the two
+`is_opaque` hints and `carousel.bounces` — all in §1, all because GTK offers
+nothing to write them to. That is the state INTENT's rule asks for: the number
+is 353 and the remaining seven are a list, not a gap.
 
 ## TWO NUMBERS, and the one above is only the first
 
@@ -222,6 +234,20 @@ and unrecorded.
   `bordered` that needed them would have to be drawn, which is the `canvas`
   kind's job and is listed as debt below rather than smuggled in here.
 
+- **`image.is_opaque` / `icon_button.is_opaque` — GTK 4 HAS NO SUCH HINT.**
+  The verb is a COMPOSITING promise, not an appearance one: AppKit writes it to
+  `CALayer.opaque` so the compositor may skip what is behind. A GtkWidget has no
+  `opaque` property at all — GSK derives opacity from the render node tree — and
+  the only thing named `opaque` in the whole stack is
+  `gdk_surface_set_opaque_region`, which is a WINDOW-level region and says
+  nothing about one widget. Approximating it with a background colour would
+  change what is drawn, which is the one thing a hint must not do.
+- **`carousel.bounces` — there is no bounce to switch off.** It is the
+  rubber-band overscroll a UIScrollView does at its ends. GtkScrolledWindow has
+  no bounce and no property for one; the header carries nothing named `bounce`,
+  `overshoot` or `rubber`. A carousel here simply stops at its ends, which is
+  what every GTK scroll does.
+
 - **`C_FLUSH` is nothing to do, and NO BACKEND NAMES IT** — not this one, not
   appkit, not uikit. It is raised when a `begin_updates` / `end_updates` batch
   closes, and by then every bit the batch raised is already on the node. The
@@ -245,12 +271,6 @@ and unrecorded.
 
 Everything not listed as live above. The large ones, in the order they matter:
 
-- **`C_AGENT` — the agent pin.** What an agent may do with a node's content,
-  pinned on the VIEW rather than held in facet, because the agent surface walks
-  the platform tree and never sees a facet node. `agent_gtk` is a separate
-  package and the pin has no home in this one yet; appkit routes it through
-  `app::agent_pin`. It is the only shared-band bit whose value a security
-  boundary depends on, so it is debt rather than an oversight.
 
 - **A tree's flat index is a full walk.** Answering "what is the Nth visible
   row" means walking the expanded model, so the walk runs once per change into a

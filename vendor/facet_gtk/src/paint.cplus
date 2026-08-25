@@ -33,6 +33,7 @@ import "facet/facet" as core;
 import "facet/props" as props;
 import "facet/vocabulary" as vocab;
 import "facet/theme" as theme;
+import "facet/application" as app;
 import "gtk4/gtk4" as gtk;
 import "gobject/runtime" as g;
 
@@ -65,7 +66,7 @@ fn band_bits() -> u64 {
          | props::C_SHADOW | props::C_CLIP | props::C_FLOW_DIRECTION
          | props::C_BACKGROUND | props::C_TRANSFORM | props::C_ANIMATE
          | props::C_CANCEL_ANIMATIONS | props::C_SEMANTICS
-         | props::C_FOCUS | props::C_BLUR;
+         | props::C_FOCUS | props::C_BLUR | props::C_AGENT;
 }
 
 // Which side of an adaptive pair is live. Set by the window tier at install
@@ -562,6 +563,22 @@ fn band(v: *u8, n: *core::Node, d: u64) {
     }
     if (d & props::C_SEMANTICS) != (0 as u64) {
         apply_semantics(v, n);
+    }
+    // WHAT AN AGENT MAY DO WITH THIS NODE'S CONTENT, pinned on the VIEW rather
+    // than left in facet — the agent surface walks the PLATFORM tree and never
+    // sees a facet node, and a pin survives a re-render that replaces a view's
+    // contents but not the view.
+    //
+    // `app::agent_pin` is platform-free: it dispatches through a hook that
+    // `agent_gtk` fills when an app actually serves, and is a null check
+    // otherwise. So the whole cost to an app that never served is a stored
+    // enum — which is why this belongs in the band and not behind a feature.
+    //
+    // ITS OWN BIT, and `props.cplus` says why: this is the only shared-band
+    // value a security boundary depends on, so re-reading it as a side effect
+    // of a label change would put the pin's timing somewhere else.
+    if (d & props::C_AGENT) != (0 as u64) {
+        app::agent_pin(v, core::agent(n));
     }
     // FOCUS AND BLUR ARE COMMANDS, not state: act on the bit, and the sync
     // walk clears it. Both were unanswered — a node asking for focus simply
