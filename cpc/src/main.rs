@@ -1394,7 +1394,29 @@ fn ensure_coro_end_probed() {
 /// Phase 2 Slice 2C: detect the host triple via `clang -print-target-triple`.
 /// Used by the dep walker to look up bundled binary paths in each vendor
 /// package's `lib/<triple>/`. Each build calls this once.
+///
+/// MEMOISED, because "once" was the intent and not the behaviour. The dep
+/// walkers that need it (`ensure_prebuilt_deps`, `collect_dep_link_args`) are
+/// RECURSIVE over the dependency graph, so the probe ran once per edge
+/// traversal: measured on `examples/facet_gallery`, whose GTK closure is
+/// seventeen packages, `clang -print-target-triple` was executed 1037 TIMES in
+/// one build — against a single `clang -cc1` that did the actual compiling.
+///
+/// Each of those spawns also searched `PATH` and missed nine times before
+/// finding the binary, which is why a warm build showed 9.2s of SYSTEM time
+/// and 15.6s of "unattributed" wall clock the timing table could not place.
+///
+/// The answer cannot change inside one process, so it is computed once.
 fn detect_host_triple() -> Result<String, ExitCode> {
+    static HOST_TRIPLE: OnceLock<Option<String>> = OnceLock::new();
+    match HOST_TRIPLE.get_or_init(detect_host_triple_uncached) {
+        Some(t) => Ok(t.clone()),
+        // The probe already printed why; the exit code is the caller's.
+        None => Err(ExitCode::FAILURE),
+    }
+}
+
+fn detect_host_triple_uncached() -> Option<String> {
     let output = match Command::new(clang_program())
         .arg("-print-target-triple")
         .output()
@@ -1402,7 +1424,7 @@ fn detect_host_triple() -> Result<String, ExitCode> {
         Ok(o) => o,
         Err(e) => {
             eprintln!("cpc: invoking `clang -print-target-triple`: {e}");
-            return Err(ExitCode::FAILURE);
+            return None;
         }
     };
     if !output.status.success() {
@@ -1410,14 +1432,14 @@ fn detect_host_triple() -> Result<String, ExitCode> {
             "cpc: `clang -print-target-triple` exited with {:?}",
             output.status.code()
         );
-        return Err(ExitCode::FAILURE);
+        return None;
     }
     let triple = String::from_utf8_lossy(&output.stdout).trim().to_string();
     if triple.is_empty() {
         eprintln!("cpc: `clang -print-target-triple` produced no output");
-        return Err(ExitCode::FAILURE);
+        return None;
     }
-    Ok(triple)
+    Some(triple)
 }
 
 /// v0.0.21 multi-backend slice 1: clang arguments pinning an explicit
