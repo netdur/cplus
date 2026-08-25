@@ -1530,6 +1530,12 @@ fn anchored_offset(n: *core::Node, v: *u8) -> f64 {
     // resolved after the splice rather than an offset read before it.
     if policy == anchor_last() { return (0.0 as f64) - (1.0f64); }
     if v == (0 as *u8) { return flex::undefined(); }
+    // A PENDING TARGET BEATS THE LIVE VALUE, for the same reason: it was read
+    // before anything spliced, and the live one may already have been moved by
+    // GTK's re-anchor since. Without this the synchronous half of
+    // `restore_anchor` writes the clobbered value straight back.
+    let armed: usize = { #addr(g::get_data(v, restore_to_key())) };
+    if armed != (0 as usize) { return (armed -% (1 as usize)) as f64; }
     return gtk::ScrolledWindow::from_raw(v).get_vadjustment().get_value();
 }
 
@@ -1615,12 +1621,32 @@ fn restore_pending_key() -> *u8 { return #str_ptr("facet-gtk-restore-pending\0")
 
 fn arm_offset_restore(v: *u8, keep: f64) {
     if keep < (0.0 as f64) { return; }
+    // THE FIRST TARGET WINS WHILE ONE IS STILL PENDING, and this is the whole
+    // of the alternating jump.
+    //
+    // A nav click lands TWO syncs: one for the selection, and one for the
+    // `set_content` its handler calls. Both splice, so both come through here
+    // — and the second reads its `keep` off an adjustment GTK has ALREADY
+    // knocked to the top, because its own re-anchor runs between them. The
+    // second arm then overwrote the first, correct target with zero, and the
+    // one idle that was queued restored the reader to the top.
+    //
+    // Which is exactly the shape reported: "select works, second select
+    // scrolls up, select again no scroll, second select scroll up — it is
+    // always the double". The parity is whether the idle had drained before
+    // the second sync arrived.
+    //
+    // So an armed target is the TRUTH until it is spent. It was read before
+    // anything spliced; a later read cannot be better and is very often worse.
+    if g::get_data(v, restore_pending_key()) != (0 as *u8) {
+        trace("arm: already pending, keeping the first target", v);
+        return;
+    }
     // +1 so a target of zero is not the same as "nothing armed" — the top of a
     // list is a real place to be, and it is the one a splice is most likely to
     // knock the reader away from.
     let px: usize = (keep as usize) +% (1 as usize);
     g::set_data(v, restore_to_key(), px as *u8);
-    if g::get_data(v, restore_pending_key()) != (0 as *u8) { return; }
     g::set_data(v, restore_pending_key(), 1 as *u8);
     let _t: u32 = { g_idle_add_recycler(settle_offset, v) };
     return;
