@@ -59,6 +59,11 @@ control stopped working.
 cd vendor/facet_gtk && ../../target/release/cpc test    # 212 tests, no display needed
 cd examples/facet_gtk_probe && ../../target/release/cpc run
 cd examples/facet_gallery   && ../../target/release/cpc run
+
+# ...and the gallery can walk ITSELF — every demo, one a tick:
+FACET_GALLERY_WALK=1 ./target/debug/facet_gallery     # 35 screens, warnings visible
+FACET_GTK_SCROLL=1   ./target/debug/facet_gallery     # every scroll move, and who made it
+FACET_GTK_FRAMES=1   ./target/debug/facet_gallery     # the computed frame tree
 ```
 
 The suite pins everything the backend DECIDES — the mappings, the CSS it

@@ -12,6 +12,8 @@ import "facet/vocabulary" as vocab;
 import "stdlib/vec" as vec;
 import "stdlib/option" as option;
 import "stdlib/status" as status;
+import "stdlib/io" as io;
+import "stdlib/env" as env;
 
 import "./demos/overview" as overview;
 import "./demos/buttons" as buttons;
@@ -471,6 +473,20 @@ impl Gallery: component::Lifecycle {
             option::Option[tree::Tree]::None => { }
         }
         this.show_demo(ID_OVERVIEW);
+        // FACET_GALLERY_WALK=1 — visit every demo, one a tick, then quit.
+        //
+        // The gallery is the CONFORMANCE TARGET, and until now the only way to
+        // exercise all thirty-five screens was thirty-five clicks. A build
+        // walks them instead, which is what makes "does any demo warn, or
+        // crash, or lay out to nothing" a question with an answer rather than
+        // an afternoon. An agent has no hands; this is the part of the probe
+        // problem that does not need any.
+        //
+        // Off unless the variable is set, so a person's run is untouched.
+        if env::has_var("FACET_GALLERY_WALK") {
+            WALK_SELF = #addr_of(this);
+            start_walk();
+        }
         return;
     }
     fn on_detach(ref this) { return; }
@@ -500,4 +516,37 @@ impl Gallery: screen::Screen {
 
 fn screen_box() -> screen::ScreenBox {
     return screen::screen_box(Gallery::new());
+}
+
+// ---- the self-drive -----------------------------------------------------------
+//
+// One demo per tick, in id order, then quit. Slow enough that each screen gets
+// a real layout pass and a paint — a walk that raced through would prove only
+// that `build` does not crash, which is the cheap half.
+static WALK_AT: i32 = 0;
+// The screen itself, so the walk can drive `show_demo` — which is the whole
+// point: building a demo is half the test, and MOUNTING it is the other half.
+static WALK_SELF: *Gallery = #zero::[*Gallery]();
+
+#[link_name = "g_timeout_add"]
+extern fn g_timeout_add(interval: u32, f: fn(*u8) -> i32, data: *u8) -> u32;
+
+fn start_walk() {
+    let _t: u32 = { g_timeout_add(220 as u32, walk_step, 0 as *u8) };
+    return;
+}
+
+fn walk_step(user: *u8) -> i32 {
+    if WALK_AT > ID_A11Y {
+        io::println("gallery walk: visited ${WALK_AT} demos, no crash");
+        // G_SOURCE_REMOVE, and the app is left running — a walk that quit
+        // would take the exit code with it and hide anything printed after.
+        return 0 as i32;
+    }
+    let at: i32 = WALK_AT;
+    WALK_AT = WALK_AT +% (1 as i32);
+    if WALK_SELF == (0 as *Gallery) { return 0 as i32; }
+    io::println("gallery walk: demo ${at}");
+    { (*WALK_SELF).show_demo(at) };
+    return 1 as i32;
 }

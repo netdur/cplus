@@ -1974,10 +1974,26 @@ fn adjustment_moved(a: *u8, user: *u8) {
     return;
 }
 
+// The BOUNDS as well as the value. A jump is often not a write at all — it is
+// `upper` collapsing under a value that then has nowhere to be, and GTK
+// clamping it. That shows up here and nowhere else.
+fn adjustment_bounds(a: *u8, user: *u8) {
+    if !tracing_scroll() { return; }
+    let adj: gtk::Adjustment = gtk::Adjustment::from_raw(a);
+    let value: i64 = { adj.get_value() } as i64;
+    let upper: i64 = { adj.get_upper() } as i64;
+    let page: i64 = { adj.get_page_size() } as i64;
+    let room: i64 = upper -% page;
+    let who: usize = { #addr(user) } & (0xFFFF as usize);
+    io::eprintln("[scroll ${who}]   .. bounds upper=${upper} page=${page} (max offset ${room}), value=${value}");
+    return;
+}
+
 fn arm_scroll_trace(sw: *u8) {
     if !tracing_scroll() { return; }
-    let _v: u64 = gtk::ScrolledWindow::from_raw(sw).get_vadjustment()
-        .connect_value_changed(adjustment_moved, sw);
+    let adj: gtk::Adjustment = gtk::ScrolledWindow::from_raw(sw).get_vadjustment();
+    let _v: u64 = adj.connect_value_changed(adjustment_moved, sw);
+    let _c: u64 = adj.connect_changed(adjustment_bounds, sw);
     return;
 }
 

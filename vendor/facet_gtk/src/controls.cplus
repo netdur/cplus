@@ -839,22 +839,61 @@ fn apply_label(v: *u8, n: *core::Node, dirty: u64) {
         // inside the frame facet gave the label.
         l.set_yalign(xalign_of({ (*p).vertical_align }));
     }
-    if (dirty & label::P_MAX_LINES) != (0 as u64) {
-        let m: i64 = { (*p).max_lines };
-        // ZERO IS UNLIMITED to facet and -1 is unlimited to GTK, and passing
-        // the one for the other is not a rounding error: `gtk_label_set_lines(0)`
-        // left GTK measuring a label whose natural width came back SMALLER than
-        // its own minimum, which it reports as a warning per label per frame —
-        // six lines of `Gtk-WARNING ... natural size must be >= min size` for
-        // every glyph in the gallery's catalog.
-        l.set_lines(gtk_lines_of(m));
-        // Lines only bite once the label is allowed to wrap.
-        l.set_wrap(m != (1 as i64));
-    }
-    if (dirty & label::P_LINE_BREAK) != (0 as u64) {
-        l.set_ellipsize(ellipsize_of({ (*p).line_break }));
+    // WRAPPING AND TRUNCATING ARE ONE DECISION, so they are made together —
+    // and `line_break` is what makes it, not `max_lines`.
+    //
+    // This set `wrap` from the line COUNT alone, so a `TailTruncation` label
+    // with no line limit — which is facet's DEFAULT — came out wrapping AND
+    // ellipsizing at once. GTK cannot reconcile "wrap for as many lines as it
+    // takes" with "cut it short", and says so:
+    //
+    //     GtkLabel reported min width 12 and natural width 7 in measure()
+    //     with for_size=14; natural size must be >= min size
+    //
+    // once per such label per measure. Found by walking all thirty-five
+    // gallery demos (`FACET_GALLERY_WALK=1`), which is what that mode is for.
+    //
+    // It was also WRONG BEFORE IT WARNED: a truncating label was wrapping.
+    // `ellipsize_of` already reads the wrap modes as "no ellipsis"; this is the
+    // other half of the same table, which was missing.
+    if (dirty & (label::P_MAX_LINES | label::P_LINE_BREAK)) != (0 as u64) {
+        apply_line_breaking(l, { (*p).line_break }, { (*p).max_lines });
     }
     return;
+}
+
+// The four facts GtkLabel needs, from facet's two.
+fn apply_line_breaking(l: gtk::Label, brk: vocab::LineBreak, max_lines: i64) {
+    let wraps: bool = line_break_wraps(brk);
+    // A single-line limit is a label that does not wrap, whatever the mode
+    // says — one line IS the no-wrap case.
+    l.set_wrap(wraps && max_lines != (1 as i64));
+    if wraps {
+        // PangoWrapMode: 0 WORD, 1 CHAR, 2 WORD_CHAR.
+        l.set_wrap_mode(match brk {
+            vocab::LineBreak::CharacterWrap => 1,
+            _other => 0,
+        });
+    }
+    // ZERO IS UNLIMITED to facet and -1 is unlimited to GTK, and passing the
+    // one for the other is not a rounding error: `set_lines(0)` is a limit of
+    // no lines at all. A label that does not wrap has no line count to limit.
+    l.set_lines(if wraps { gtk_lines_of(max_lines) } else { (0 as i32) -% (1 as i32) });
+    l.set_ellipsize(ellipsize_of(brk));
+    return;
+}
+
+// Does this mode WRAP? The truncations do not — that is what makes them
+// truncations — and `ellipsize_of` is this same table read the other way.
+fn line_break_wraps(b: vocab::LineBreak) -> bool {
+    return match b {
+        vocab::LineBreak::WordWrap => true,
+        vocab::LineBreak::CharacterWrap => true,
+        vocab::LineBreak::NoWrap => false,
+        vocab::LineBreak::HeadTruncation => false,
+        vocab::LineBreak::MiddleTruncation => false,
+        vocab::LineBreak::TailTruncation => false,
+    };
 }
 
 // facet's line limit -> GtkLabel's.

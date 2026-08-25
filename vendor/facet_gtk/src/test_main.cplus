@@ -1291,6 +1291,60 @@ fn the_band_claims_the_agent_pin() {
     assert (props::C_SEMANTICS & props::C_AGENT) == (0 as u64);
 }
 
+// ---- wrapping and truncating are ONE decision ----------------------------------
+//
+// `set_wrap` was driven by the line COUNT alone, so a `TailTruncation` label
+// with no line limit — facet's DEFAULT — came out wrapping AND ellipsizing at
+// once. GTK cannot reconcile "wrap for as many lines as it takes" with "cut it
+// short" and says so, once per label per measure:
+//
+//     GtkLabel reported min width 12 and natural width 7 in measure()
+//     with for_size=14; natural size must be >= min size
+//
+// It was WRONG BEFORE IT WARNED, which is the part a warning count would miss:
+// a truncating label was wrapping. `ellipsize_of` already read the wrap modes
+// as "no ellipsis"; this is the other half of that table, which was missing.
+#[test]
+fn only_the_wrap_modes_wrap() {
+    assert controls::line_break_wraps(vocab::LineBreak::WordWrap);
+    assert controls::line_break_wraps(vocab::LineBreak::CharacterWrap);
+    // A TRUNCATION does not wrap — that is what makes it a truncation.
+    assert !controls::line_break_wraps(vocab::LineBreak::TailTruncation);
+    assert !controls::line_break_wraps(vocab::LineBreak::HeadTruncation);
+    assert !controls::line_break_wraps(vocab::LineBreak::MiddleTruncation);
+    assert !controls::line_break_wraps(vocab::LineBreak::NoWrap);
+}
+
+// The two halves of the one table must never disagree: a mode that wraps
+// ellipsizes nothing, and a mode that ellipsizes does not wrap. Reading them
+// apart is exactly how they drifted.
+#[test]
+fn nothing_both_wraps_and_ellipsizes() {
+    let modes: [vocab::LineBreak; 6] = [
+        vocab::LineBreak::WordWrap, vocab::LineBreak::CharacterWrap,
+        vocab::LineBreak::NoWrap, vocab::LineBreak::HeadTruncation,
+        vocab::LineBreak::MiddleTruncation, vocab::LineBreak::TailTruncation,
+    ];
+    var i: usize = 0 as usize;
+    while i < (6 as usize) {
+        let b: vocab::LineBreak = modes[i];
+        // PangoEllipsizeMode 0 is NONE.
+        let ellipsizes: bool = controls::ellipsize_of(b) != (0 as i32);
+        assert !(ellipsizes && controls::line_break_wraps(b));
+        i = i +% (1 as usize);
+    }
+}
+
+// ZERO IS UNLIMITED to facet and -1 is unlimited to GTK. `set_lines(0)` is a
+// limit of no lines at all, and this package has shipped that bug once.
+#[test]
+fn an_unlimited_line_count_is_minus_one_not_zero() {
+    assert controls::gtk_lines_of(0 as i64) == ((0 as i32) -% (1 as i32));
+    assert controls::gtk_lines_of(0 as i64 -% (5 as i64)) == ((0 as i32) -% (1 as i32));
+    assert controls::gtk_lines_of(3 as i64) == (3 as i32);
+    assert controls::gtk_lines_of(1 as i64) == (1 as i32);
+}
+
 // ---- SF Symbol names --------------------------------------------------------
 //
 // bugs/03b. `icon_button(source)` and `image(source)` take "one string the
