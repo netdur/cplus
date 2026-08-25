@@ -270,7 +270,7 @@ fn open_window(root: *core::Node, take chrome: screen::Chrome,
     let fixed: gtk::Fixed = gtk::Fixed::new();
     fixed.upcast().set_vexpand(true);
     fixed.upcast().set_hexpand(true);
-    shell.append(fixed.upcast());
+    shell.append(content_clipper(fixed).upcast());
     win.set_child(shell.upcast());
 
     // Mount, then place. `mount::mount` opens the window on the APP's record
@@ -431,9 +431,18 @@ fn relayout_all() {
     var i: usize = 0 as usize;
     while i < MAX_WINDOWS {
         if ROOTS[i] != (0 as usize) {
-            // The FIXED's allocation, not the window's: a menu bar takes its
-            // height off the top and the tree must be laid into what is left.
-            let content: gtk::Widget = gtk::Widget::from_raw(FIXEDS[i] as *u8);
+            // THE VIEWPORT, not the Fixed. A menu bar takes its height off the
+            // top, so the window's own size is the wrong number — but the
+            // Fixed's is worse, because a GtkScrolledWindow allocates its child
+            // at max(viewport, child minimum) and the Fixed's minimum is the
+            // bounding box of the frames THIS FUNCTION just wrote. Laying out
+            // to that is a loop: overflow makes the Fixed bigger, a bigger
+            // Fixed makes the next layout wider, and round it goes. That is
+            // exactly bugs/08, which was the same read on a collection.
+            //
+            // The clipper's allocation is derived from the window and never
+            // from the content, which is what makes it safe to lay out to.
+            let content: gtk::Widget = viewport_of(FIXEDS[i] as *u8);
             var cw: f64 = { content.get_width() } as f64;
             var ch: f64 = { content.get_height() } as f64;
             // Before the first allocation the box has no size yet; the
@@ -1550,4 +1559,57 @@ fn watch_for_resize(slot: usize) {
     let _h: u64 = { sigc_notify(surface, #str_ptr("notify::height\0"), resized,
                                 token, 0 as *u8, 0 as i32) };
     return;
+}
+
+// ---- why the content Fixed is wrapped ------------------------------------------
+//
+// A SIZE REQUEST IS A MINIMUM, AND A GtkFixed PASSES ITS CHILDREN'S UP.
+// `geometry::place` writes each frame with `set_size_request`, so the content
+// host's minimum is the bounding box of the tree — and a GtkWindow cannot be
+// smaller than its child's minimum. Measured, with one 800x600 child:
+//
+//     bare Fixed      window minimum = 800 x 600
+//     GtkViewport     window minimum = 800 x 600
+//     sw AUTOMATIC    window minimum =  46 x  46
+//     sw NEVER        window minimum = 800 x 600
+//     sw EXTERNAL     window minimum =   0 x   0
+//
+// So the window could be ENLARGED and never shrunk: it was fighting its own
+// content, which is what "I can resize to enlarge but not smaller" is from a
+// chair. THE LAYOUT IS FACET'S, and GTK's measurement of it should be inert —
+// the window's real minimum is `Chrome.min_width` / `min_height`, which
+// `apply_chrome` already sets on the window itself.
+//
+// `EXTERNAL` is the only wrapper that reports nothing. It is GTK's "the
+// scrollbar is somewhere else", so it draws none — and there is nothing to
+// scroll either, because `relayout` lays the tree out at THIS widget's
+// allocation, so the content is exactly the viewport and both adjustments
+// have a page the size of their range. A tree that overflows anyway gets a
+// window that scrolls rather than one that clips, which is the better of the
+// two failures.
+//
+// NOT for a nested lane: §3 records that `may_hscroll` is
+// `hscrollbar_visible || policy == EXTERNAL`, so EXTERNAL inside another
+// scroll would claim sideways flicks meant for the outer one. At the window
+// root there is no outer one.
+// The clipper a content Fixed sits in, or the Fixed itself if it somehow has
+// no parent — `relayout_all` needs a size that the content cannot influence.
+fn viewport_of(fixed: *u8) -> gtk::Widget {
+    if fixed == (0 as *u8) { return gtk::Widget::from_raw(fixed); }
+    match gtk::Widget::from_raw(fixed).get_parent() {
+        option::Option[gtk::Widget]::Some(p) => { return p; }
+        option::Option[gtk::Widget]::None => { return gtk::Widget::from_raw(fixed); }
+    }
+}
+
+fn content_clipper(fixed: gtk::Fixed) -> gtk::ScrolledWindow {
+    let sw: gtk::ScrolledWindow = gtk::ScrolledWindow::new();
+    sw.set_propagate_natural_width(false);
+    sw.set_propagate_natural_height(false);
+    // GTK_POLICY_EXTERNAL on both axes.
+    sw.set_policy(3 as i32, 3 as i32);
+    sw.upcast().set_vexpand(true);
+    sw.upcast().set_hexpand(true);
+    sw.set_child(fixed.upcast());
+    return sw;
 }
