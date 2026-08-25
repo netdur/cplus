@@ -1365,6 +1365,46 @@ fn an_index_in_the_item_slot_tells_row_zero_from_nothing() {
     return;
 }
 
+// ---- the payload, named where the handler is ---------------------------------
+
+#[test]
+fn a_control_that_declares_command_parameter_names_its_payload_at_construction() {
+    // The ledger's `CommandParameter`, on the shared band beside `key`: key is
+    // the ADDRESS a node answers to, item is the PAYLOAD its handler receives.
+    //
+    // WHY IT HAS TO BE A CONSTRUCTOR PARAMETER and not only a setter: a handler
+    // is `fn(sender, ctx)` and a bound method fills ctx with its RECEIVER, the
+    // same pointer for every row, so the payload is the only thing that can say
+    // which one — and it has to be settable in the same expression that sets
+    // the handler, or a builder call breaks into three statements.
+    var record: i64 = 42 as i64;
+    var mi: facet::Node = menu_item::menu_item("Rename", key: "mi:1",
+                                                item: #addr_of(record) as *u8);
+    assert facet::item_of(#addr_of(mi)) == (#addr_of(record) as *u8);
+    assert { *(facet::item_of(#addr_of(mi)) as *i64) } == (42 as i64);
+
+    // An index is the other shape the same slot carries, and `+1` inside it is
+    // what lets row zero be told from "carries nothing".
+    var row: facet::Node = menu_item::menu_item("Row", key: "mi:2",
+                                                 item: (0 as usize +% (1 as usize)) as *u8);
+    assert match facet::item_index_of(#addr_of(row)) {
+        option::Option[usize]::Some(ix) => ix == (0 as usize),
+        option::Option[usize]::None => false,
+    };
+}
+
+#[test]
+fn a_node_built_with_no_payload_does_not_arrive_dirty_for_one() {
+    // `set_item` touches C_HANDLERS, so calling it unconditionally would mark
+    // every node built without a payload as needing its handlers re-read.
+    var plain: facet::Node = menu_item::menu_item("Plain", key: "mi:3");
+    assert facet::item_of(#addr_of(plain)) == (0 as *u8);
+    assert match facet::item_index_of(#addr_of(plain)) {
+        option::Option[usize]::Some(_ix) => false,
+        option::Option[usize]::None => true,
+    };
+}
+
 #[test]
 fn set_display_asks_for_the_layout_pass_that_flexs_own_setter_does_not() {
     var n: facet::Node = button::button("A", key: "a");

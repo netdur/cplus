@@ -48,6 +48,7 @@ fn icon_button(
     toggles: bool = false,
     on: bool = false,
     bordered: bool = true,
+    item: *u8 = 0 as *u8,
 ) -> core::Node {
     var p: props::IconButtonProps = props::IconButtonProps::new();
     p.fit = fit;
@@ -65,12 +66,14 @@ fn icon_button(
     p.toggles = toggles;
     p.on = on;
     p.bordered = bordered;
-    return match box::new::[props::IconButtonProps](p) {
+    var n: core::Node = match box::new::[props::IconButtonProps](p) {
         option::Option[box::Box[props::IconButtonProps]]::Some(b) =>
             core::node_with(key, props::K_ICON_BUTTON, b.into_raw(), props::release_icon_button_props),
         option::Option[box::Box[props::IconButtonProps]]::None =>
             core::node_with(key, props::K_ICON_BUTTON, 0 as *u8, props::release_icon_button_props),
     };
+    if item != (0 as *u8) { core::set_item(#addr_of(n), item); }
+    return n;
 }
 
 // ---- live --------------------------------------------------------------

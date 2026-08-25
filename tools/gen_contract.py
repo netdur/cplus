@@ -410,6 +410,53 @@ def control_rows():
     return out, by_type
 
 
+# ---- the payload parameter -------------------------------------------------
+# Which controls name `item` at construction: the ones whose ledger type
+# declares `CommandParameter`, own or inherited.
+#
+# `key` is the other shared-band word a constructor names, and the pair is the
+# point: key is the ADDRESS a node answers to, item is the PAYLOAD its handler
+# receives. Both live on the node rather than in a control's props, because a
+# node has one of each however many handlers it carries.
+#
+# WHY IT HAS TO BE NAMEABLE HERE rather than only through `core::set_item`. A
+# handler is `fn(sender, ctx)` and a bound method fills ctx with its RECEIVER
+# (E0824) — the same pointer for every row — so the payload is the only thing
+# that can say which one, and it has to be settable in the same expression that
+# sets the handler. Reached only through a setter, it forces a builder call to
+# be broken into three statements, which is why the one application that needed
+# it encoded the payload into the KEY instead and parsed it back out.
+#
+# Ordered LAST, and that is deliberate: C+ parameters are named and defaulted,
+# so appending cannot move anything a caller already passes positionally.
+PARAM_MEMBER = "CommandParameter"
+
+
+_PARAM_TYPES = None
+
+
+def param_types():
+    """Ledger types with a `CommandParameter` row, read from the spec directly.
+
+    Not from `control_rows`: that keeps ADOPT rows only, and this one is a DROP
+    — the map records where it went rather than emitting a props field for it.
+    """
+    global _PARAM_TYPES
+    if _PARAM_TYPES is None:
+        with open(ledger_map.SPEC) as f:
+            spec = json.load(f)
+        _PARAM_TYPES = {t for t, v in spec.items()
+                        if PARAM_MEMBER in (v.get("writes") or {})}
+    return _PARAM_TYPES
+
+
+def carries_param(row_type):
+    """Does this control's ledger type declare `CommandParameter`, own or inherited?"""
+    have = param_types()
+    return any(src in have
+               for src in [row_type] + EXTRA_BASES.get(row_type, []) + COMMON_BASES)
+
+
 # The content parameter: naming_guideline's "constructors take their content".
 # It leads the signature, then `key`, then everything else defaulted.
 PRIMARY = {
@@ -2870,6 +2917,11 @@ def ctor_params(row_type, writes, reads, events, owned=()):
     # door for filling one later.
     for field, ty, _m, _s, _p in owned:
         params.append(("take " + field, cplus_type(ty), default_of(ty, _s, _m)))
+    # The ledger's `CommandParameter`, on the shared band beside `key`. LAST in
+    # the list so appending it cannot move a parameter a caller already passes
+    # positionally — see PARAM_MEMBER above for why it is nameable here at all.
+    if carries_param(row_type):
+        params.append(("item", "*u8", "0 as *u8"))
     return params
 
 
@@ -2951,12 +3003,20 @@ def emit_control(row_type, merged):
         o.append("    p.selected_index = selected_index;\n")
         o.append("    p.on_tab_changed = on_tab_changed;\n")
         o.append("    p.on_tab_changed_ctx = on_tab_changed_ctx;\n")
-    o.append(f"    return match box::new::[props::{props}](p) {{\n")
+    keep = "    var n: core::Node = match" if carries_param(row_type) else "    return match"
+    o.append(f"{keep} box::new::[props::{props}](p) {{\n")
     o.append(f"        option::Option[box::Box[props::{props}]]::Some(b) =>\n")
     o.append(f"            core::node_with(key, props::K_{up}, b.into_raw(), props::release_{mod}_props),\n")
     o.append(f"        option::Option[box::Box[props::{props}]]::None =>\n")
     o.append(f"            core::node_with(key, props::K_{up}, 0 as *u8, props::release_{mod}_props),\n")
-    o.append("    };\n}\n\n")
+    o.append("    };\n")
+    if carries_param(row_type):
+        # Only when one was given: `set_item` touches C_HANDLERS, and a node
+        # built with no payload should not arrive dirty for one it does not
+        # have.
+        o.append("    if item != (0 as *u8) { core::set_item(#addr_of(n), item); }\n")
+        o.append("    return n;\n")
+    o.append("}\n\n")
 
     # ---- cursor
     o.append("// ---- live --------------------------------------------------------------\n")
@@ -4168,6 +4228,48 @@ def check_node_band():
     return problems
 
 
+_SPEC_METHODS = None
+
+
+def spec_methods():
+    """`type -> {method -> {params, returns}}` from the spec, loaded once."""
+    global _SPEC_METHODS
+    if _SPEC_METHODS is None:
+        with open(ledger_map.SPEC) as f:
+            spec = json.load(f)
+        _SPEC_METHODS = {t: (v.get("methods") or {}) for t, v in spec.items()}
+    return _SPEC_METHODS
+
+
+def param_names(raw):
+    """The parameter NAMES of a ledger signature string.
+
+    `string accept = "OK"` is one parameter called `accept`; the type is in
+    front and a default may follow. Splitting on top-level commas keeps a
+    generic like `IList<int>` in one piece.
+    """
+    out, depth, cur = [], 0, ""
+    for ch in raw:
+        if ch in "<[(":
+            depth += 1
+        elif ch in ">])":
+            depth -= 1
+        if ch == "," and depth == 0:
+            out.append(cur)
+            cur = ""
+        else:
+            cur += ch
+    if cur.strip():
+        out.append(cur)
+    names = []
+    for piece in out:
+        head = piece.split("=")[0].strip()
+        if not head:
+            continue
+        names.append(head.split()[-1].lstrip("@"))
+    return names
+
+
 def check(rows_by_control, by_type):
     """Fail the run, by name, on anything the emitters would drop in silence."""
     problems = []
@@ -4221,6 +4323,80 @@ def check(rows_by_control, by_type):
                   f"vocabulary facet has no answer for")
             for (ty, member), why in sorted(absent.items()):
                 print(f"    {ty}.{member} — {why}")
+
+    # 7. every type the ledger RENDERS is decided — not just every row.
+    #
+    # Guard 5 above closes the ROWS. The type list has its own closure in
+    # `ledger_spec.check_type_closure`, and it builds its work list from the
+    # rows a type declares, so a type whose surface is entirely inherited was
+    # never asked about. That is exactly what a marker type looks like:
+    # `MenuFlyoutSeparator` declares one member, its constructor, and passed
+    # through every guard in this pipeline while facet had no separator kind.
+    #
+    # The ledger's own definition of "renders" is the floor — a type MAUI puts
+    # on screen has an `I<Name>Handler`. Three of them were labelled ALIAS,
+    # which claims "already covered, nothing refused": `MenuFlyoutSubItem` to
+    # `MenuFlyout` (a submenu is not a flyout), `MenuBar` to `MenuBarItem` (the
+    # item is not the bar), `SwipeItemView` to `SwipeItem`. They are UNBUILT
+    # now, which is a fourth outcome those three words could not express.
+    manifests = [os.path.join(ROOT, "plans", "facet", "spec", f)
+                 for f in sorted(os.listdir(os.path.join(ROOT, "plans", "facet", "spec")))
+                 if f.endswith(".txt")]
+    try:
+        unbuilt = ledger_spec.check_handler_closure(manifests)
+    except SystemExit:
+        problems.append(
+            "guard 7: a type the ledger renders (it has an `I<Name>Handler`) is "
+            "in neither the extracted lists, ALIAS, a DROP family rule, nor "
+            "UNBUILT — see the names printed above.")
+        unbuilt = {}
+    if unbuilt:
+        print(f"NOT BUILT: {len(unbuilt)} types the ledger renders and facet does not")
+        for ty, why in sorted(unbuilt.items()):
+            print(f"    {ty} — {why}")
+
+    # 8. an implementation CLAIM accounts for the row's parameters.
+    #
+    # Guard 5b checks that a tier row has a disposition and `METHOD_DROPS`
+    # carries "facet says it as <verb>" for the rest — both at the METHOD level.
+    # Neither says anything about the row's PARAMETERS, and that is where the
+    # drift hides: `DisplayPromptAsync` was answered by `runtime::prompt` while
+    # `initialValue` was absent from it, so a rename sheet opened on nothing and
+    # every application that renames anything reached into the dialog to set the
+    # field itself.
+    #
+    # Three parameters is the threshold, because that is where one can hide. A
+    # one-argument verb either takes its argument or obviously does not.
+    unaccounted = []
+    for (ty, member), why in sorted(ledger_map.METHOD_DROPS.items()):
+        if "facet says it as" not in why:
+            continue
+        raw = ((spec_methods().get(ty) or {}).get(member) or {}).get("params", "")
+        names = param_names(raw)
+        if len(names) < 3:
+            continue
+        table = ledger_map.IMPLEMENTED_PARAMS.get((ty, member))
+        if table is None:
+            problems.append(
+                f"guard 8: {ty}.{member} claims an implementation and takes "
+                f"{len(names)} parameters, with no entry in IMPLEMENTED_PARAMS — "
+                f"say what each of {', '.join(names)} is carried as, or that it "
+                f"is absent and why.")
+            continue
+        for nm in names:
+            if nm not in table:
+                problems.append(
+                    f"guard 8: {ty}.{member}'s parameter `{nm}` is unaccounted "
+                    f"for — add it to IMPLEMENTED_PARAMS as `carried as X` or "
+                    f"`absent: why`.")
+        for nm, note in sorted(table.items()):
+            if note.startswith("absent"):
+                unaccounted.append((f"{ty}.{member}", nm, note[len("absent:"):].strip()))
+    if unaccounted and not problems:
+        print(f"NOT CARRIED: {len(unaccounted)} parameters of rows facet says it "
+              f"implements")
+        for row, nm, why in unaccounted:
+            print(f"    {row}({nm}) — {why}")
 
     # 1. every ADOPT row reaching a control is carried by something
     for row_type, merged in sorted(rows_by_control.items()):

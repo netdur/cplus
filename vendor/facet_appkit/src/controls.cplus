@@ -276,7 +276,10 @@ fn apply_button(v: *u8, n: *core::Node, dirty: u64) {
     // not a gesture (gestures see the pointer and nothing else).
     if (dirty & props::C_HANDLERS) != (0 as u64) || dirty == paint::all_bits() {
         let f: fn(*u8, *u8) = button_action;
-        akx::set_control_action_ctx(b.as_control(), f, n as *u8);
+        // A toggling button needs the action even with no handler: the state
+        // write-back is not conditional on anyone asking to be told.
+        arm_control(b.as_control(), { (*p).on_click } != props::no_handler || { (*p).toggles },
+                    f, n as *u8);
     }
     // The shared band owns enabled; a control reads it through its own setter
     // because NSControl's enabled is not the view's.
@@ -663,6 +666,39 @@ fn checkbox_action(sender: *u8, ctx: *u8) {
 // runs, for the same reason a checkbox does: `is_on()` reads the props, so the
 // props have to be true by the time anyone asks. AppKit owns the flip
 // (PushOnPushOff); this is what tells facet about it.
+// Arm a control's action, or take it away — the choice being the point.
+//
+// `set_control_action_ctx` used to run unconditionally on every button facet
+// built, so an NSButton whose handler slot is EMPTY still carried an action and
+// still claimed, to everything that can inspect it, that clicking it does
+// something. It does not. The dispatch (`button_action` and its siblings)
+// checks `h != no_handler` and returns quietly, so the claim was contradicted
+// one frame later by nothing at all.
+//
+// What that cost: iris shipped a `+ Column` button written as
+// `ui::button(...).gesture(on_click: h)` — a gesture band on an NSButton, which
+// never fires, because a control consumes its own mouse event through
+// target/action. Dead for weeks. The agent surface reported it `actionable`,
+// `clickable`, hit-testable and carrying an AppKit action; a 23-assertion sweep
+// passed against it, including the assertion about that very button. A person
+// clicking found it.
+//
+// So the rule is: an action is installed when there is something on the other
+// end of it. That makes the native state itself honest, which is stronger than
+// reporting the truth on one wire — lldb, Accessibility Inspector and the agent
+// surface all read the same fact, and none of them has to know about facet.
+//
+// It is also the un-apply path: a handler removed on a later update takes the
+// action with it, instead of the control keeping the last one it was given.
+fn arm_control(c: ak::Control, armed: bool, f: fn(*u8, *u8), ctx: *u8) {
+    if armed {
+        akx::set_control_action_ctx(c, f, ctx);
+        return;
+    }
+    akx::clear_control_action(c);
+    return;
+}
+
 fn button_action(sender: *u8, ctx: *u8) {
     let n: *core::Node = ctx as *core::Node;
     let p: *props::ButtonProps = props_of(n, props::K_BUTTON) as *props::ButtonProps;
@@ -1475,7 +1511,8 @@ fn apply_text_button(v: *u8, n: *core::Node, dirty: u64) {
     }
     if (dirty & props::C_HANDLERS) != (0 as u64) || dirty == paint::all_bits() {
         let f: fn(*u8, *u8) = text_button_action;
-        akx::set_control_action_ctx(b.as_control(), f, n as *u8);
+        arm_control(b.as_control(), { (*p).on_click } != props::no_handler || { (*p).toggles },
+                    f, n as *u8);
     }
     if (dirty & props::C_IS_ENABLED) != (0 as u64) || dirty == paint::all_bits() {
         b.as_control().set_enabled(core::is_enabled(n));
@@ -1528,7 +1565,8 @@ fn apply_icon_button(v: *u8, n: *core::Node, dirty: u64) {
     }
     if (dirty & props::C_HANDLERS) != (0 as u64) || dirty == paint::all_bits() {
         let f: fn(*u8, *u8) = icon_button_action;
-        akx::set_control_action_ctx(b.as_control(), f, n as *u8);
+        arm_control(b.as_control(), { (*p).on_clicked } != props::no_handler || { (*p).toggles },
+                    f, n as *u8);
     }
     if (dirty & props::C_IS_ENABLED) != (0 as u64) || dirty == paint::all_bits() {
         b.as_control().set_enabled(core::is_enabled(n));
@@ -3475,7 +3513,43 @@ fn add_menu_item(menu: ak::Menu, c: *core::Node) {
     }
     // is_destructive has no NSMenuItem equivalent — recorded in MANIFEST.md.
     item.set_enabled(core::is_enabled(c));
+    bind_menu_identity(item, c);
     menu.add_item(item);
+    return;
+}
+
+// Give a menu item the two things every other sender carries: its key and its
+// item pointer.
+//
+// A HANDLER IS `fn(sender, ctx)` AND `ctx` IS THE COMPONENT — the same pointer
+// for every row — so everything that distinguishes one invocation from another
+// is read off the sender. facet offers exactly two ways to do that,
+// `component::key_of` and `component::item_of`, and both are carried by the
+// backend copying them from the node onto the objc object when the view is
+// made. A menu item was the one control kind that got neither, because both
+// bindings live in `views::create` and `wants_view` answers false for menu
+// kinds. The node carried both; nothing transferred them.
+//
+// What that cost is exactly the case a context menu exists for: one `Rename`
+// handler, N rows, and the row IS the argument. Every row's item was the same
+// bound method with the same ctx and no identity, so the handler could not
+// recover which menu it came from — right menu, unattributable click. An app
+// hitting that falls back to the SELECTED row, which is the behaviour a
+// per-row menu was built to replace, and right-click does not move the
+// selection (`menuForEvent:` records `clickedRow` and leaves selection alone).
+//
+// Associated objects attach to any objc object and NSMenuItem answers
+// `accessibilityIdentifier`, so both reads hit on the FIRST hop and the
+// superview walk — which an NSMenuItem cannot answer — is never reached.
+// `swipe_item` goes through its own builder and gets the same two lines.
+fn bind_menu_identity(item: ak::MenuItem, c: *core::Node) {
+    let k: str = { (*c).key() };
+    if k != "" {
+        ak::Accessibility::from_raw(item.raw()).set_accessibility_identifier(k);
+    }
+    // ASSIGN, never retain — same contract as `input::bind_item`: the
+    // application owns the item and outlives the node.
+    synth::set_associated(item.raw(), input::item_key(), core::item_of(c));
     return;
 }
 
@@ -3733,6 +3807,7 @@ fn add_swipe_item(menu: ak::Menu, c: *core::Node) {
     item.set_target(akx::action_ctx_target(f, c as *u8));
     item.set_action(akx::action_ctx_sel());
     item.set_enabled(core::is_enabled(c));
+    bind_menu_identity(item, c);
     menu.add_item(item);
     return;
 }

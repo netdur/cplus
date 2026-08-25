@@ -517,6 +517,9 @@ fn mcp_describe(p: *u8, grant: auth::Grant) -> vec::Vec[mcpb::UiNode] {
                     description: text::new(),
                     actionable: { (*n).actionable },
                     clickable: { (*n).actionable },
+                    // This backend has not been taught the question; `None` says so
+                    // rather than guessing. See backend::UiNode.wired.
+                    wired: option::Option[bool]::None,
                     parent: { (*n).parent },
                 });
             }
@@ -575,6 +578,9 @@ fn mcp_describe_exposed(p: *u8, grant: auth::Grant) -> vec::Vec[mcpb::UiNode] {
                     actionable: { (*n).actionable },
                     // See the note in the full describe above.
                     clickable: { (*n).actionable },
+                    // This backend has not been taught the question; `None` says so
+                    // rather than guessing. See backend::UiNode.wired.
+                    wired: option::Option[bool]::None,
                     parent: { (*n).parent },
                 });
             }

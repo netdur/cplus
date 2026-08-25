@@ -11,209 +11,37 @@
 //!
 //! ## The graph is live
 //!
-//! An index built once and never refreshed is stale from the first save, and an
-//! editor's only recourse would be to respawn — which costs more than the
-//! one-shot CLI the resident server replaced. So the session owns three things
-//! a one-shot invocation cannot have:
-//!
-//! * **Overlays.** `did_change` hands over an unsaved buffer; every later answer
-//!   is about that text. The caret is always in a buffer that differs from disk,
-//!   so for completion this is not a refinement, it is the whole question.
-//! * **Rebuilds on a worker.** A rebuild is ~2 s on a large project and the
-//!   transport is one stdio pipe, so building inline would freeze every other
-//!   query for the duration. Builds run on a thread; reads answer instantly from
-//!   the newest finished graph. A caller who needs the *new* graph specifically
-//!   asks to wait for it.
-//! * **A last good graph.** A half-typed line does not parse. That is the normal
-//!   state during completion, not an exception, so a failed rebuild keeps the
-//!   previous graph answering and reports the error through `graph_status`
-//!   rather than going blind.
-
+//! The residency itself — overlays, the rebuild worker, the last good graph —
+//! lives in [`cplus_core::session`], because `cpc lsp` needs exactly the same
+//! thing and used to rebuild the whole project per request instead. This file
+//! is the MCP shape over it: tool names and descriptions written for the model,
+//! and the JSON each verb answers with.
 use cplus_core::graph::{self, CodeGraph};
 use cplus_core::resolver::LoadedProject;
+use cplus_core::session::{find_file, GraphSession};
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use std::io::{self, BufRead, Write};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::ExitCode;
-use std::sync::mpsc::{self, Receiver};
-use std::sync::Arc;
-use std::time::Instant;
 
 const PROTOCOL_VERSION: &str = "2024-11-05";
 
-/// What a worker hands back when it finishes. The generation it built is
-/// tracked on the session side instead, so a worker that dies without sending
-/// anything is still accounted for.
-struct BuildDone {
-    ms: u128,
-    outcome: Result<(LoadedProject, CodeGraph), String>,
+/// The status JSON every session verb answers with, as a mutable object the
+/// caller stamps its own `kind` (and extras) onto.
+fn status_json(session: &GraphSession) -> Value {
+    serde_json::to_value(session.status()).unwrap_or_else(|_| json!({}))
 }
 
-/// The resident state: the project, the graph built over it, the unsaved
-/// buffers that graph was built from, and whatever build is currently in
-/// flight.
-struct Session<L> {
-    /// Re-resolves the project from disk with the given overlays applied.
-    load: Arc<L>,
-    loaded: LoadedProject,
-    graph: CodeGraph,
-    /// Canonical path → unsaved buffer text, for the files an editor has dirty.
-    overlays: BTreeMap<PathBuf, String>,
-    /// Bumped whenever the overlays change or a reload is demanded. The graph
-    /// is current when `built_generation == generation`.
-    generation: u64,
-    built_generation: u64,
-    /// The generation a worker is currently building, and the channel it will
-    /// report on. The generation is kept here too so a worker that dies can
-    /// still be accounted for.
-    pending: Option<(u64, Receiver<BuildDone>)>,
-    /// Why the last rebuild failed, if it did. The previous graph stays in
-    /// `graph` and keeps answering.
-    stale: Option<String>,
-    last_build_ms: u128,
-}
-
-impl<L> Session<L>
-where
-    L: Fn(&BTreeMap<PathBuf, String>) -> Result<LoadedProject, String> + Send + Sync + 'static,
-{
-    /// Start a worker for the current overlays, unless one is already running
-    /// or the graph is already current.
-    fn kick(&mut self) {
-        if self.pending.is_some() || self.generation == self.built_generation {
-            return;
-        }
-        let generation = self.generation;
-        let load = Arc::clone(&self.load);
-        let overlays = self.overlays.clone();
-        let (tx, rx) = mpsc::channel();
-        std::thread::spawn(move || {
-            let t = Instant::now();
-            let outcome = (load)(&overlays).map(|loaded| {
-                let g = CodeGraph::build(&loaded);
-                (loaded, g)
-            });
-            let _ = tx.send(BuildDone {
-                ms: t.elapsed().as_millis(),
-                outcome,
-            });
-        });
-        self.pending = Some((generation, rx));
-    }
-
-    /// Take any finished build and start the next one if the buffers moved on.
-    ///
-    /// With `wait`, keep going until the graph reflects the current buffers —
-    /// that is what a caller who asked to wait is asking for, and it may mean
-    /// waiting through one build that was already in flight for an older
-    /// generation before the one they care about even starts.
-    fn absorb(&mut self, wait: bool) {
-        loop {
-            if let Some((generation, rx)) = &self.pending {
-                let generation = *generation;
-                let got = if wait {
-                    // A dead worker (`Err`) is a finished generation, not a
-                    // reason to keep waiting: without this the retry below
-                    // would spawn another worker to die the same way, forever.
-                    rx.recv().map_err(|_| ())
-                } else {
-                    match rx.try_recv() {
-                        Ok(d) => Ok(d),
-                        Err(mpsc::TryRecvError::Empty) => return,
-                        Err(mpsc::TryRecvError::Disconnected) => Err(()),
-                    }
-                };
-                self.pending = None;
-                self.built_generation = generation;
-                match got {
-                    Ok(done) => {
-                        self.last_build_ms = done.ms;
-                        match done.outcome {
-                            Ok((loaded, graph)) => {
-                                self.loaded = loaded;
-                                self.graph = graph;
-                                self.stale = None;
-                            }
-                            // A build that failed still counts as *attempted*
-                            // for its generation: retrying the same unparseable
-                            // buffer on every query would turn each one into a
-                            // 2 s no-op.
-                            Err(msg) => self.stale = Some(msg),
-                        }
-                    }
-                    Err(()) => {
-                        self.stale = Some(
-                            "the rebuild worker died; still answering from the last good graph"
-                                .to_string(),
-                        )
-                    }
-                }
-            }
-            self.kick();
-            if !wait || self.pending.is_none() {
-                return;
-            }
-        }
-    }
-
-    /// Record a new buffer. Returns whether it actually differed.
-    fn set_overlay(&mut self, path: PathBuf, text: &str) -> bool {
-        if self.overlays.get(&path).map(|t| t == text).unwrap_or(false) {
-            return false;
-        }
-        self.overlays.insert(path, text.to_string());
-        self.generation += 1;
-        true
-    }
-
-    fn clear_overlay(&mut self, path: &Path) -> bool {
-        if self.overlays.remove(path).is_none() {
-            return false;
-        }
-        self.generation += 1;
-        true
-    }
-
-    /// Resolve a client-supplied file string to the canonical path the resolver
-    /// keys overlays by. Accepts what the position tools accept — a path
-    /// relative to the project root, an absolute path, or a file id
-    /// (`src.services.cpc`) — and falls back to a root-relative path for a file
-    /// that is not on disk yet.
-    fn canonical_for(&self, file: &str) -> PathBuf {
-        if let Some((_, (path, _))) = find_file(&self.loaded, file) {
-            return path.clone();
-        }
-        let p = Path::new(file);
-        let joined = if p.is_absolute() {
-            p.to_path_buf()
-        } else {
-            std::env::current_dir().unwrap_or_default().join(p)
-        };
-        std::fs::canonicalize(&joined).unwrap_or(joined)
-    }
-
-    fn status_json(&self) -> Value {
-        let mut overlays: Vec<String> = self
-            .overlays
-            .keys()
-            .map(|p| p.display().to_string())
-            .collect();
-        overlays.sort();
-        json!({
-            "files": self.loaded.files.len(),
-            "nodes": self.graph.nodes.len(),
-            "edges": self.graph.edges.len(),
-            "overlays": overlays,
-            // A build is running right now.
-            "building": self.pending.is_some(),
-            // The graph does not yet reflect the buffers the client sent.
-            "pending_rebuild": self.generation != self.built_generation,
-            "stale": self.stale.is_some(),
-            "error": self.stale,
-            "last_build_ms": self.last_build_ms,
-        })
-    }
+/// The text a caret question should be classified against: the unsaved buffer
+/// if the client handed one over, else what is on disk. The overlay wins even
+/// while its rebuild is in flight — the user is looking at that text, and the
+/// classification half of completion is pure lexing over it, so it is correct
+/// before the semantic half catches up.
+fn source_for<'a>(session: &'a GraphSession, file: &str) -> Option<(String, &'a str)> {
+    let (fid, (path, disk)) = find_file(session.loaded(), file)?;
+    let text = session.overlay_text(path).unwrap_or(disk.as_str());
+    Some((fid.clone(), text))
 }
 
 /// Run the server loop until stdin closes. Takes ownership of the initial
@@ -224,19 +52,7 @@ pub fn serve<L>(loaded: LoadedProject, load_ms: u128, load: L) -> ExitCode
 where
     L: Fn(&BTreeMap<PathBuf, String>) -> Result<LoadedProject, String> + Send + Sync + 'static,
 {
-    let t = Instant::now();
-    let graph = CodeGraph::build(&loaded);
-    let mut session = Session {
-        load: Arc::new(load),
-        loaded,
-        graph,
-        overlays: BTreeMap::new(),
-        generation: 0,
-        built_generation: 0,
-        pending: None,
-        stale: None,
-        last_build_ms: load_ms + t.elapsed().as_millis(),
-    };
+    let mut session = GraphSession::new(loaded, load_ms, load);
     let stdin = io::stdin();
     let mut out = io::stdout().lock();
     for line in stdin.lock().lines() {
@@ -262,10 +78,7 @@ where
     ExitCode::SUCCESS
 }
 
-fn handle<L>(msg: &Value, session: &mut Session<L>) -> Option<String>
-where
-    L: Fn(&BTreeMap<PathBuf, String>) -> Result<LoadedProject, String> + Send + Sync + 'static,
-{
+fn handle(msg: &Value, session: &mut GraphSession) -> Option<String> {
     // A message with no `method` is a response we don't track; ignore it.
     let method = msg.get("method")?.as_str()?;
     let id = msg.get("id").cloned();
@@ -308,10 +121,7 @@ where
 
 /// Dispatch a tool call to a graph query. Returns the result text and whether
 /// it is an error (a missing argument or an unknown symbol).
-fn call_tool<L>(name: &str, args: &Value, session: &mut Session<L>) -> (String, bool)
-where
-    L: Fn(&BTreeMap<PathBuf, String>) -> Result<LoadedProject, String> + Send + Sync + 'static,
-{
+fn call_tool(name: &str, args: &Value, session: &mut GraphSession) -> (String, bool) {
     let arg = |k: &str| args.get(k).and_then(|v| v.as_str());
 
     // The session verbs mutate state and decide their own waiting; they do not
@@ -329,7 +139,7 @@ where
             // the call right before a question whose answer must reflect this
             // exact text.
             session.absorb(flag("wait").unwrap_or(false));
-            let mut st = session.status_json();
+            let mut st = status_json(session);
             st["kind"] = json!("did-change");
             st["file"] = json!(path.display().to_string());
             st["bytes"] = json!(text.len());
@@ -343,7 +153,7 @@ where
             let path = session.canonical_for(file);
             let dropped = session.clear_overlay(&path);
             session.absorb(flag("wait").unwrap_or(false));
-            let mut st = session.status_json();
+            let mut st = status_json(session);
             st["kind"] = json!("did-close");
             st["file"] = json!(path.display().to_string());
             st["dropped"] = json!(dropped);
@@ -354,11 +164,11 @@ where
             // "the files under you moved", which the server cannot see. It
             // waits by default — a caller asking for a reload wants the new
             // graph, not a promise of one.
-            session.generation += 1;
+            session.mark_dirty();
             session.absorb(flag("wait").unwrap_or(true));
-            let mut st = session.status_json();
+            let mut st = status_json(session);
             st["kind"] = json!("reload");
-            let failed = session.stale.is_some();
+            let failed = session.status().stale;
             return (
                 serde_json::to_string_pretty(&st).unwrap_or_default(),
                 failed,
@@ -369,7 +179,7 @@ where
             // already finished, so a client polling this sees the new graph the
             // moment it is ready.
             session.absorb(false);
-            let mut st = session.status_json();
+            let mut st = status_json(session);
             st["kind"] = json!("graph-status");
             return (serde_json::to_string_pretty(&st).unwrap_or_default(), false);
         }
@@ -380,8 +190,11 @@ where
     // up a worker's result the moment it lands. A client that needs a specific
     // buffer reflected asks `did_change` to wait.
     session.absorb(false);
-    let g = &session.graph;
-    let loaded = &session.loaded;
+    if name == "complete_at" {
+        return complete_at(args, session);
+    }
+    let g = session.graph();
+    let loaded = session.loaded();
     match name {
         "find_definition" => match arg("symbol") {
             Some(s) => (CodeGraph::nodes_to_json(&g.def(s)), false),
@@ -412,18 +225,6 @@ where
     }
 }
 
-/// Find the loaded file a client-supplied string names: a path suffix
-/// (`src/services/cpc.cplus`), a full path, or the graph's own file id
-/// (`src.services.cpc`).
-fn find_file<'a>(
-    loaded: &'a LoadedProject,
-    file: &str,
-) -> Option<(&'a String, &'a (std::path::PathBuf, String))> {
-    loaded.files.iter().find(|(fid, (p, _))| {
-        p.ends_with(file) || p.to_string_lossy() == file || fid.as_str() == file
-    })
-}
-
 /// Resolve `file` + 1-based `line`/`col` to a (file id, byte offset) pair.
 fn position(args: &Value, loaded: &LoadedProject) -> Result<(String, u32), (String, bool)> {
     let (Some(file), Some(line), Some(col)) = (
@@ -447,6 +248,40 @@ fn scope_at(args: &Value, g: &CodeGraph, loaded: &LoadedProject) -> (String, boo
         Ok((fid, byte)) => (g.scope_at_json(&fid, byte), false),
         Err(e) => e,
     }
+}
+
+/// `complete_at` — the composed answer at a caret.
+///
+/// Two halves with different freshness requirements, which is why this is a
+/// verb and not a client-side chain: the *classification* (is this a `.`, a
+/// `::`, or a bare word) reads the live buffer and is always exact, while the
+/// *candidates* come from the last finished graph. A client that wants both
+/// current sends `did_change` first; one that just wants the shape of the
+/// answer does not have to.
+fn complete_at(args: &Value, session: &GraphSession) -> (String, bool) {
+    let (Some(file), Some(line), Some(col)) = (
+        args.get("file").and_then(|v| v.as_str()),
+        args.get("line").and_then(|v| v.as_u64()),
+        args.get("col").and_then(|v| v.as_u64()),
+    ) else {
+        return missing("file/line/col");
+    };
+    let Some((fid, held)) = source_for(session, file) else {
+        return (format!("no source file matching `{file}`"), true);
+    };
+    // An explicit `text` is for the caller who has not sent `did_change` and
+    // wants one answer about a buffer the server has never seen.
+    let src = args
+        .get("text")
+        .and_then(|v| v.as_str())
+        .unwrap_or(held);
+    let Some(byte) = graph::byte_offset(src, line as u32, col as u32) else {
+        return (format!("position {line}:{col} is out of range"), true);
+    };
+    (
+        session.graph().complete_at_json(&fid, src, byte),
+        false,
+    )
 }
 
 fn type_at(args: &Value, g: &CodeGraph, loaded: &LoadedProject) -> (String, bool) {
@@ -556,6 +391,20 @@ fn tool_defs() -> Value {
             "name": "scope_at",
             "description": "Every name you can type at a position: the locals and parameters in scope (with their types where known), `this`, the file's import aliases and what module each resolves to, and the file's own module-level items. Shadowed names are already removed, and so are `#[test]` functions — nobody completes one. This is the \"what can I call here\" question — pair it with `find_members` after a `.` and `file_symbols` after an alias `::`.",
             "inputSchema": pos_schema(),
+        },
+        {
+            "name": "complete_at",
+            "description": "What to type at a caret, already composed: after a `.` the receiver's fields and methods, after a `::` the module's or type's qualified names, and otherwise everything in scope — filtered by the word already typed and ranked with the nearest bindings first. This is `scope_at` + `type_at` + `find_members` with the \"which question is this\" step done for you, and that step is the one a caller cannot do without re-deriving C+'s own rules. The classification always reads the current buffer, so it is right even mid-edit; the candidates come from the last finished graph, so pair it with `did_change` when the names themselves are what just changed. `receiver_type` absent on a member answer means the receiver's type is not locally known — an empty list, never a guess.",
+            "inputSchema": json!({
+                "type": "object",
+                "properties": {
+                    "file": { "type": "string", "description": "Source file path, or the file id (`src.services.cpc`)." },
+                    "line": { "type": "integer", "description": "1-based line of the caret." },
+                    "col": { "type": "integer", "description": "1-based column of the caret." },
+                    "text": { "type": "string", "description": "Optional: the buffer to classify against, for a caller who has not sent `did_change`. Defaults to the overlay for this file, else what is on disk. Note the caret is still resolved against the graph's copy, so if your edits have moved the lines *above* the caret, send `did_change` instead — that is the path that rebuilds." },
+                },
+                "required": ["file", "line", "col"],
+            }),
         },
         {
             "name": "did_change",

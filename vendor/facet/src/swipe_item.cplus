@@ -34,6 +34,7 @@ fn swipe_item(
     on_invoked_ctx: *u8 = 0 as *u8,
     on_clicked: fn(*u8, *u8) = props::no_handler,
     on_clicked_ctx: *u8 = 0 as *u8,
+    item: *u8 = 0 as *u8,
 ) -> core::Node {
     var p: props::SwipeItemProps = props::SwipeItemProps::new();
     p.menu_item.icon = text::from_str(icon);
@@ -43,12 +44,14 @@ fn swipe_item(
     p.on_invoked_ctx = on_invoked_ctx;
     p.menu_item.on_clicked = on_clicked;
     p.menu_item.on_clicked_ctx = on_clicked_ctx;
-    return match box::new::[props::SwipeItemProps](p) {
+    var n: core::Node = match box::new::[props::SwipeItemProps](p) {
         option::Option[box::Box[props::SwipeItemProps]]::Some(b) =>
             core::node_with(key, props::K_SWIPE_ITEM, b.into_raw(), props::release_swipe_item_props),
         option::Option[box::Box[props::SwipeItemProps]]::None =>
             core::node_with(key, props::K_SWIPE_ITEM, 0 as *u8, props::release_swipe_item_props),
     };
+    if item != (0 as *u8) { core::set_item(#addr_of(n), item); }
+    return n;
 }
 
 // ---- live --------------------------------------------------------------

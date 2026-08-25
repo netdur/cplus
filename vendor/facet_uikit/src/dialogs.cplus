@@ -85,12 +85,21 @@ fn first_field_text(alert: *u8) -> text::Text {
 
 // The placeholder a prompt's field carries, held for the configuration block —
 // which runs while the alert is being built, so this is live exactly then.
+static INITIAL: text::Text = #zero::[text::Text]();
 static PLACEHOLDER: text::Text = #zero::[text::Text]();
 
 fn configure_field(field: *u8, ctx: *u8) {
     if field == (0 as *u8) { return; }
     { rt::msg_void_id(field, rt::sel(#str_ptr("setPlaceholder:\0")),
                       bridge::nsstring({ PLACEHOLDER.view() })) };
+    // `initialValue` from the ledger row, which is NOT the placeholder: one is
+    // the hint shown while the field is empty, the other is what the field
+    // starts with and what a person then edits. A rename opens on the old name
+    // because of this line.
+    if { INITIAL.view() } != "" {
+        { rt::msg_void_id(field, rt::sel(#str_ptr("setText:\0")),
+                          bridge::nsstring({ INITIAL.view() })) };
+    }
     return;
 }
 
@@ -127,7 +136,8 @@ fn present(alert: *u8) -> bool {
 
 // The shared build. `titles` are the buttons in order; the first is the
 // preferred one, which is what `primary` means everywhere in facet's vocabulary.
-fn build(title: str, message: str, want_field: bool, placeholder: str) -> *u8 {
+fn build(title: str, message: str, want_field: bool, placeholder: str,
+         initial: str = "") -> *u8 {
     let c: ui::AlertController = ui::AlertController::alert_controller_with_title(
         title, message, ui::AlertControllerStyle::Alert);
     let raw: *u8 = c.raw();
@@ -135,6 +145,7 @@ fn build(title: str, message: str, want_field: bool, placeholder: str) -> *u8 {
     { rt::retain(raw) };
     if want_field {
         PLACEHOLDER = text::from_str(placeholder);
+        INITIAL = text::from_str(initial);
         c.add_text_field_with_configuration_handler(configure_field, 0 as *u8);
     }
     return raw;
@@ -191,8 +202,9 @@ fn choose(title: str, message: str, options: *vec::Vec[text::Text],
 
 fn prompt(title: str, message: str, placeholder: str, primary: str, secondary: str,
           on_typed: fn(str, *u8), on_typed_ctx: *u8,
-          on_answer: fn(i32, *u8), on_answer_ctx: *u8) {
-    let a: *u8 = build(title, message, true, placeholder);
+          on_answer: fn(i32, *u8), on_answer_ctx: *u8,
+          initial: str = "") {
+    let a: *u8 = build(title, message, true, placeholder, initial: initial);
     if a == (0 as *u8) { return; }
     ALERT = a;
     ANSWER_FN = on_answer;

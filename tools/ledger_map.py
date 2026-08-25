@@ -154,9 +154,37 @@ DROP_TYPES = {
     "IBindableLayout": LAYOUT,
 }
 
+# What `CommandParameter` became. Not a drop reason — a POINTER, so the map
+# stops contradicting the code.
+#
+# `Command` is `ICommand` and is MVVM by definition: the view-model IS the
+# command, so dropping it is right and the reason above says so. For a long time
+# `CommandParameter` was dropped by the SAME regex — `Command(Parameter)?$` —
+# and inherited that reason word for word. It is not the same thing. `Command`
+# is the handler; `CommandParameter` is the ARGUMENT the handler needs, and
+# facet's replacement for `Command` (a fn-pointer plus a ctx slot) does not
+# carry one, because a bound method consumes the ctx slot for its receiver
+# (E0824).
+#
+# So facet built it anyway, from first principles, and did not name it after
+# this row: `core::set_item` / `core::item_of`, whose own comment reads "an item
+# IS the payload half of a handler" — which is this row's definition. One
+# concept, decided absent in the map and present in the tree.
+#
+# It stays out of the props band, and that part of the old decision was right:
+# a `CommandParameter` is not per-control state, it is one payload per NODE, so
+# it belongs on the shared band beside `key` — key is the ADDRESS, item is the
+# PAYLOAD. `gen_contract.ctor_params` names it at construction for the controls
+# whose ledger type declares this row, which is what makes it reachable where
+# the handler is set instead of through a second statement afterwards.
+PARAM = ("the payload half of a handler — facet carries it on the shared band as "
+         "the node's `item`, named at construction and read with "
+         "`component::item_of(sender)`; see gen_contract.ctor_params")
+
 # ---- member-name rules, applied before the type rules -----------------------
 DROP_PATTERNS = [
-    (re.compile(r"Command(Parameter)?$"), MODEL),
+    (re.compile(r"CommandParameter$"), PARAM),
+    (re.compile(r"Command$"), MODEL),
     (re.compile(r"Template$"), MODEL),
     (re.compile(r"^(ItemsSource|SelectedItems|BindingContext|Style|StyleClass|"
                 r"Resources|Triggers|Behaviors|Effects|Navigation|Parent|"
@@ -174,6 +202,81 @@ DROP_PATTERNS = [
                 r"Handler|HandlerChanged|HandlerChanging|Visual|"
                 r"InternalChildren)$"), ENGINE),
 ]
+
+# ---- what an implementation claim COVERS ------------------------------------
+#
+# `METHOD_DROPS` says "facet says it as `runtime::prompt`", and until now that
+# claim was checked at the METHOD level only: the verb exists, so the row is
+# answered. It says nothing about the row's PARAMETERS, and that is where the
+# drift hides.
+#
+# It hid twice. `MenuItem.CommandParameter` was a property rather than a
+# parameter, but the same shape — a row claimed and a part of it missing. Then
+# `DisplayPromptAsync`'s `initialValue` was absent from `runtime::prompt`, so a
+# rename sheet opened on nothing and every application that renames anything
+# wrote three lines to reach into the dialog and set the field itself.
+#
+# So a claim on a row with three or more parameters has to account for each one.
+# `carried as X` or `absent: why` — either is fine, and neither can be silence.
+# Three is the threshold because that is where a parameter can hide: a one-arg
+# verb either takes its argument or obviously does not.
+#
+# `gen_contract`'s guard 8 fails the run on a covered row with no entry here, or
+# an entry that misses a parameter, and prints the `absent` ones on every regen
+# so a debt stays visible rather than becoming the shape of the API.
+IMPLEMENTED_PARAMS = {
+    ("Page", "DisplayAlert"): {
+        "title":   "carried as `title`",
+        "message": "carried as `message`",
+        "cancel":  "carried as `secondary` — facet names the two buttons "
+                   "`primary`/`secondary` rather than accept/cancel, because an "
+                   "alert with one button has a primary and no cancel",
+    },
+    ("Page", "DisplayAlertAsync"): {
+        "title":   "carried as `title`",
+        "message": "carried as `message`",
+        "cancel":  "carried as `secondary`",
+    },
+    ("Page", "DisplayActionSheet"): {
+        "title":       "carried as `title`",
+        "buttons":     "carried as `options`, a `vec::Vec[text::Text]` the node owns",
+        "cancel":      "absent: a choose sheet has no cancel button, so Escape has "
+                       "nothing to bind to either. NOT a decision — the row asks for "
+                       "one and facet does not have it. See the NOT CARRIED report.",
+        "destruction": "absent: no way to mark one option destructive, so the "
+                       "delete-shaped choice looks like every other. `menu_item` "
+                       "carries `destructive` one control over.",
+    },
+    ("Page", "DisplayActionSheetAsync"): {
+        "title":       "carried as `title`",
+        "buttons":     "carried as `options`",
+        "cancel":      "absent: as DisplayActionSheet",
+        "destruction": "absent: as DisplayActionSheet",
+    },
+    ("Page", "DisplayPromptAsync"): {
+        "title":        "carried as `title`",
+        "message":      "carried as `message`",
+        "accept":       "carried as `primary`",
+        "cancel":       "carried as `secondary`",
+        "placeholder":  "carried as `placeholder` — the hint shown while the field "
+                        "is EMPTY, which is not `initialValue` below",
+        "initialValue": "carried as `initial` — what the field STARTS with and what "
+                        "a person then edits. Added 2026-08-24; without it a rename "
+                        "opened on nothing.",
+        "maxLength":    "absent: facet's `text_field` has no length limit of its own, "
+                        "so the dialog has nowhere to put one. It belongs on the "
+                        "control before it belongs here.",
+        "keyboard":     "absent: a keyboard TYPE is a touch idiom — macOS has one "
+                        "keyboard. `text_field` would carry it for the iOS backend "
+                        "the same way `swipeable` is decided per platform.",
+    },
+    ("ScrollView", "ScrollToAsync"): {
+        "element":  "absent: facet scrolls to an OFFSET, not to a descendant — "
+                    "`ScrollX`/`ScrollY` are writes on the control",
+        "position": "absent: no scroll-to-element, so no position within it",
+        "animated": "absent: as above",
+    },
+}
 
 # ---- the methods band decides, it does not default -------------------------
 #

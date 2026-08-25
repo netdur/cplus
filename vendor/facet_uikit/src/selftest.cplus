@@ -49,6 +49,7 @@ import "facet/screen" as screen;
 import "facet/window_chrome" as chrome;
 import "./dialogs" as dialogs;
 import "./swipe" as swipe;
+import "./menus" as menus;
 import "facet/services" as services;
 import "facet/gestures" as gestures;
 import "objc/bridge" as bridge;
@@ -126,6 +127,99 @@ fn a_realised_viewless_root_still_has_backed_children() -> bool {
     // be empty however the gate above it was written.
     if views::wants_view(p) { return false; }
     return core::child_count_of(p) == (1 as usize);
+}
+
+// ---- the context menu -----------------------------------------------------------
+// A long press is what a right-click is here, and the whole family arrived at
+// once: the container has to get a view, the interaction has to be on it, the
+// menu has to be built from the nodes, and inside a table the TABLE has to
+// answer for its rows. On AppKit those were four independent silent failures
+// and each hid the next, so each has its own check.
+
+fn ctx_menu_node() -> core::Node {
+    var menu: core::Node = ui::context_menu(key: "sel:ctx");
+    let mp: *core::Node = #addr_of(menu);
+    let _r: bool = mount::add_child(mp, ui::context_menu_item("Rename", key: "sel:ctx:rename"));
+    let _s: bool = mount::add_child(mp, ui::context_menu_item(""));            // separator
+    let _d: bool = mount::add_child(mp, ui::context_menu_item("Delete", key: "sel:ctx:delete",
+                                                             destructive: true));
+    return menu;
+}
+
+fn a_container_with_a_context_menu_gets_a_view() -> bool {
+    // The first wall. The interaction hangs on the node's OWN view and UIKit
+    // lifts that view as the menu's preview, so without one there is not even
+    // a rectangle for the press to land on.
+    var bare: core::Node = ui::row(flex::Builder::new());
+    if views::wants_view(#addr_of(bare)) { return false; }
+
+    var b: flex::Builder = flex::Builder::new();
+    b.add(ctx_menu_node());
+    var withmenu: core::Node = ui::row(b);
+    return views::wants_view(#addr_of(withmenu));
+}
+
+fn a_context_menu_builds_a_uimenu_from_its_items() -> bool {
+    var menu: core::Node = ctx_menu_node();
+    let m: *u8 = menus::build_menu(#addr_of(menu));
+    if m == (0 as *u8) { return false; }
+    // Two runs either side of the separator, each an inline group — which is
+    // UIKit's answer to a divider, since it has no separator element.
+    let kids: *u8 = { rt::msg_id(m, rt::sel(#str_ptr("children\0"))) };
+    if kids == (0 as *u8) { return false; }
+    return { rt::msg_u64(kids, rt::sel(#str_ptr("count\0"))) } == (2 as u64);
+}
+
+fn a_menu_with_no_items_answers_nothing() -> bool {
+    // nil is UIKit's own "no menu here", so the press does nothing instead of
+    // opening an empty sheet.
+    var empty: core::Node = ui::context_menu(key: "sel:empty");
+    return menus::build_menu(#addr_of(empty)) == (0 as *u8);
+}
+
+fn a_menu_action_carries_its_key_as_its_identifier() -> bool {
+    // A UIAction IS the sender, and `UIAccessibilityIdentification` is not
+    // adopted by UIMenuElement — so `identifier` is the slot that means what
+    // `accessibilityIdentifier` means on a view, and `input::key_of` reads it.
+    var menu: core::Node = ctx_menu_node();
+    let m: *u8 = menus::build_menu(#addr_of(menu));
+    if m == (0 as *u8) { return false; }
+    let kids: *u8 = { rt::msg_id(m, rt::sel(#str_ptr("children\0"))) };
+    let g0: *u8 = { rt::msg_id_u64(kids, rt::sel(#str_ptr("objectAtIndex:\0")), 0 as u64) };
+    if g0 == (0 as *u8) { return false; }
+    let inner: *u8 = { rt::msg_id(g0, rt::sel(#str_ptr("children\0"))) };
+    let a0: *u8 = { rt::msg_id_u64(inner, rt::sel(#str_ptr("objectAtIndex:\0")), 0 as u64) };
+    if a0 == (0 as *u8) { return false; }
+    return { input::key_of(a0).view() } == "sel:ctx:rename";
+}
+
+fn reading_a_sender_that_is_not_a_view_answers_empty() -> bool {
+    // `key_of` and `item_of` walk `superview` when the first hop finds
+    // nothing, and a UIAction does not respond to it — so the one line every
+    // handler already writes raised an unrecognized selector from inside a
+    // menu choice.
+    let bare: *u8 = { rt::msg_id(rt::get_class(#str_ptr("UIAction\0")),
+                                 rt::sel(#str_ptr("new\0"))) };
+    if bare == (0 as *u8) { return false; }
+    if { input::key_of(bare).view() } != "" { return false; }
+    return input::item_of(bare) == (0 as *u8);
+}
+
+fn attaching_a_menu_puts_an_interaction_on_the_view() -> bool {
+    var b: flex::Builder = flex::Builder::new();
+    b.add(ctx_menu_node());
+    var withmenu: core::Node = ui::row(b, key: "sel:menuhost");
+    let p: *core::Node = #addr_of(withmenu);
+    let v: *u8 = views::create(0 as *u8, p);
+    if v == (0 as *u8) { return false; }
+    core::set_view(p, v, views::view_release);
+    // UIKit keeps them in `interactions`; before this there was none.
+    let list: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("interactions\0"))) };
+    if list == (0 as *u8) { return false; }
+    if { rt::msg_u64(list, rt::sel(#str_ptr("count\0"))) } == (0 as u64) { return false; }
+    // And the same view answers a configuration, which is what the table's
+    // delegate asks for on behalf of a row.
+    return menus::configuration_in_subtree(v) != (0 as *u8);
 }
 
 // ---- the tree bugs --------------------------------------------------------------
@@ -1436,6 +1530,17 @@ fn run_all() -> i32 {
     check("a plain view does not start clipping", a_plain_view_does_not_start_clipping());
     check("a radius clips whatever the view is", a_radius_clips_whatever_the_view_is());
     check("an unkeyed row has no view of its own", an_unkeyed_row_has_no_view_of_its_own());
+    check("a container with a context menu gets a view",
+          a_container_with_a_context_menu_gets_a_view());
+    check("a context menu builds a UIMenu from its items",
+          a_context_menu_builds_a_uimenu_from_its_items());
+    check("a menu with no items answers nothing", a_menu_with_no_items_answers_nothing());
+    check("a menu action carries its key as its identifier",
+          a_menu_action_carries_its_key_as_its_identifier());
+    check("reading a sender that is not a view answers empty",
+          reading_a_sender_that_is_not_a_view_answers_empty());
+    check("attaching a menu puts an interaction on the view",
+          attaching_a_menu_puts_an_interaction_on_the_view());
     check("a cleared cell gives back every view it took",
           a_cleared_cell_gives_back_every_view_it_took());
     check("the keyboard observer answers both hooks",

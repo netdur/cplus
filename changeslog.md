@@ -665,6 +665,254 @@ by its *shape*, not a method-name allowlist, through every form it can leak:
   it binds a name; raw-pointer assignment drops old value; noalias and
   TBAA fixes under -O2/+).
 
+### Completion — one composed answer, three front doors
+- **`complete FILE:LINE:COL`** — the caret question, answered whole. The
+  graph decides whether a caret follows a `.` (the receiver's fields and
+  methods), a `::` (a module's items or a type's methods and variants), or
+  neither (everything in scope), filters by the word already typed, and
+  ranks nearest-binding-first. `scope-at` / `type-at` / `members` remain the
+  primitives; deciding *which* of them a caret is asking is C+'s rules, so
+  it lives in the compiler rather than in each caller. Available as
+  `cpc query complete`, as the `complete_at` MCP tool, and as the LSP's
+  `textDocument/completion` — all three call one function in core.
+- **`cpc lsp` is resident.** It used to rebuild the whole project on *every*
+  request (~2 s each on a large one), which is why it had no completion.
+  The graph is now built once per project root and kept warm, with open
+  buffers overlaid and rebuilds on a worker — the same session type
+  `cpc mcp` uses, now shared from `cplus-core::session` rather than
+  duplicated. Measured on a 185-module project: 3.7 s for the first
+  answer, 3.7 ms for every one after it.
+- **`cpc lsp` resolves dependencies.** It loaded projects without their
+  declared `[dependencies]`, so every vendored import reported *E0401
+  imported file not found*, the graph never built, and the editor silently
+  fell back to single-file behaviour on any real project. It now resolves
+  the way `cpc build` does, and diagnostics for such a project are the
+  program's own instead of a fabricated missing import.
+- **The graph is indexed.** `CodeGraph` carries `by_id` / `by_name` (symbol
+  id and bare name to node indices), built once with it, so `def`,
+  `members`, `symbols`, `callable_ids` and the completion walks stop
+  scanning the whole node vector. Measured on a 43k-node project:
+  `find_members` 1.63 → 0.29 ms, 2.67 → 0.43 ms on a 107-member type,
+  `file_symbols` 0.12 → 0.07 ms. A symbol id can repeat (two `impl` blocks,
+  one method name), so both maps hold a list — and answers stay in
+  declaration order, so an indexed query answers identically to the scan it
+  replaced. `cpc lsp` also stopped canonicalizing every file in the project
+  on every request.
+
+### facet — Return in a prompt commits what you TYPED
+- The key equivalents landed and Return still "did not work", because the
+  sheet committed the value it OPENED with. An NSTextField does not hold the
+  text you are typing — the window's shared FIELD EDITOR does, and
+  `stringValue` is only refreshed from it when editing ENDS. Clicking a button
+  ends editing on the way, because the click moves first responder. **Return
+  does not**: it arrives through `performKeyEquivalent:`, which fires the
+  button before anything touches the responder chain. So a Rename kept the old
+  name and a New File got an empty one. `prompt_ok` now sends
+  `endEditingFor:` before reading, which is what every native dialog does.
+- **The routing itself is now tested rather than left to hands.** A real
+  `NSEvent` through `performKeyEquivalent:` is what a window does with a
+  key-down before the responder chain sees it, so driving it is the routing
+  and not a stand-in for it. Setting `keyEquivalent` and asserting the
+  property — which is all the previous change did — asserts nothing about
+  whether AppKit delivers the key.
+- Also pinned, and NOT facet's doing: a prompt opens with the caret in the
+  field and the old name selected. A `selectText:` call was added here on the
+  assumption that it did not, and removed again when measurement showed it
+  changed nothing — AppKit's initial-key-view behaviour already does both.
+  The test stays, because a future change to the tree could take it away.
+
+### agent — `wired` was false for a gesture, and `click` acted then denied it
+- A regression from `wired` itself. It read appkit_ext's agent-click SLOT for
+  every non-control — a slot facet never fills — so every gesture-bound
+  container reported `wired=false`. That is the one CORRECT way to make a
+  non-control clickable, and the very form the flag was added to tell apart
+  from a dead button.
+- A framework swaps in a class that receives input only for a node that HAS
+  input: facet leaves a plain container as a `FlexFlippedView`, which does not
+  answer `performClick:`, and arms it into a `FacetInput00`, which does. So
+  answering the selector IS the answer. The exception is appkit_ext's own two
+  classes, whose `performClick:` reads the slot and does nothing when it is
+  empty — for those, and only those, the slot is the question.
+- **`click` no longer acts and then reports `no_handler`.** The first version
+  sent the click anyway on the reasoning that a report is not a refusal. That
+  was worse than the bug it replaced: a verb that performs the action and says
+  it did not cannot be trusted in either direction, and an agent retrying does
+  the thing twice. It refuses without sending now, so a disagreement is inert.
+
+### facet_runtime — a screen is not freed while its jobs are running
+- `App::run` settles before dropping the primary screen. **Two of the three
+  paths that free a screen did not.** `pushed_closed` calls `on_detach`, removes
+  the entry and frees the box; `presented_closed` frees the tree — neither
+  waited. A worker still inside that memory keeps writing, the next screen is
+  allocated into it, and the fault surfaces in whatever was allocated next,
+  which is why this family of crash never looked like the screen that caused it.
+- Both settle now, and the wait lives at the FREE rather than at a caller:
+  `close_all_pushed` runs before `App::run`'s settle, so a wait at the caller
+  would still have been too late for pushed screens.
+- **The bailout says so.** `spins > 100000` turns "teardown would wedge" into
+  "teardown frees anyway", which is the same crash by another route. It is now
+  a line on stderr rather than a silent `break`.
+
+### facet — the dialogs answer the keyboard, and open on a value
+- **Return and Escape.** A native alert gives a window a default button and a
+  cancel button for free; a facet sheet is built out of facet controls — which
+  is what makes it keyed and agent-drivable — and the cost is that everything
+  the platform did for nothing has to be said. It was not said, so typing a
+  name into a prompt and pressing Return did nothing, and the only way out of
+  any sheet was the mouse. The primary button now carries `keyEquivalent
+  "\r"` and the secondary `"\x1b"`, which also draws the default accented.
+  Return fires while the text field has focus, because a window's default
+  button answers regardless of first responder.
+- **A `choose` sheet binds neither**, deliberately: its buttons are N options
+  and none is "the obvious one", so binding Return would act on the user's
+  behalf without being asked.
+- **`prompt` opens on a value.** `initial:` — the ledger's `initialValue`,
+  which is NOT the placeholder: one is the hint shown while the field is
+  empty, the other is what the field starts with and what a person then
+  edits. Only the hint had reached facet's signature, so Rename opened on
+  nothing with the old name greyed out behind the caret. Appended last, on
+  the neutral base and both facades.
+- **Guard 8: an implementation CLAIM accounts for the row's parameters.**
+  `METHOD_DROPS` says "facet says it as `runtime::prompt`" and that was
+  checked at the METHOD level only — the verb exists, so the row is answered.
+  A claim on a row with three or more parameters now has to say what each one
+  is carried as, or that it is absent and why. It found two more the moment it
+  ran: `DisplayActionSheet`'s `cancel` and `destruction` — a choose sheet has
+  no cancel button and no way to mark an option destructive, and neither
+  absence had been decided. Nine unaccounted parameters print on every regen.
+
+### facet_uikit — a context menu, as the platform's own long press
+- **`context_menu` is built on iOS**: `UIContextMenuInteraction` + `UIMenu` /
+  `UIAction`, in `menus.cplus`. A right-click and a touch-and-hold are one
+  affordance — Apple's own framing — so the ledger's `ContextFlyout` maps 1:1
+  and facet's contract never says "right click"; each backend picks the
+  gesture its platform has, the way `swipeable` is a menu on macOS and a pan
+  on iOS.
+- **The menu is built when it OPENS**, not when it is attached. A `UIMenu` is
+  immutable and arrives from a provider block, where AppKit mutates an NSMenu
+  built at attach time — so the provider re-reads the nodes each time and
+  `enabled` and the titles are current with no refresh path at all.
+- **A UIAction is the sender.** `UIActionHandler` is `void (^)(UIAction *)`,
+  so one block type serves every item. `UIAccessibilityIdentification` is not
+  adopted by `UIMenuElement`, so the key rides `UIAction.identifier` — the
+  slot that means the same thing — and the payload rides an associated
+  object. `component::key_of` / `item_of` answer off a menu action exactly as
+  off a row, and reading a sender that is not a view answers empty instead of
+  raising, the same guard AppKit needed.
+- **A separator is an inline group.** UIKit has no separator element; the runs
+  either side of a titleless item become `UIMenuOptionsDisplayInline`
+  sub-menus, which is what draws the divider.
+- **Inside a table the TABLE answers** — `tableView:contextMenuConfiguration
+  ForRowAtIndexPath:point:` — because UITableView intercepts the long press to
+  arbitrate it against scrolling. The same split that made a `context_menu` in
+  an NSOutlineView row unreachable on AppKit. Both paths end in one function.
+- The blocks are hand-built with a **static** descriptor rather than taken
+  from the generated binding: `Block_copy` keeps the descriptor POINTER, and a
+  UIAction is retained by UIKit for the life of the menu, so a descriptor on
+  the frame that built the action is read after that frame is gone.
+- Six checks in `selftest.cplus`, run on a real simulator by
+  `tools/run_ios_tests.sh` — 78 passed, 0 failed. Disabling the two lines in
+  `wants_view` / `create` turns two of them red, which is what makes them
+  checks rather than decoration.
+
+### facet — the payload half of a handler
+- **`item:` at construction**, on the eight controls whose ledger type
+  declares `CommandParameter` — button, checkbox, icon_button, refreshable,
+  menu_item, context_menu_item, swipe_item, toolbar_item. It sits on the
+  shared band beside `key`, and the pair is the point: **key is the ADDRESS a
+  node answers to, item is the PAYLOAD its handler receives.**
+- It had to be a *constructor parameter* rather than only `core::set_item`.
+  A handler is `fn(sender, ctx)` and a bound method fills `ctx` with its
+  RECEIVER (E0824) — the same pointer for every row — so the payload is the
+  only thing that can say which one, and it has to be settable in the same
+  expression that sets the handler. Reached only through a setter it forces a
+  builder call into three statements, which is why an application that needed
+  it encoded the payload into the KEY and parsed it back out instead.
+- Appended LAST in each signature, so nothing a caller already passes
+  positionally moves; every existing call site compiles unchanged.
+- **`CommandParameter` stopped being dropped as MVVM.** It shared one regex
+  and one reason string with `Command` — but `Command` is `ICommand`, which
+  IS the view-model and is rightly dropped, while `CommandParameter` is the
+  ARGUMENT the handler needs. facet had already rebuilt the concept from
+  first principles as `core::set_item` / `item_of`, whose own comment reads
+  "an item IS the payload half of a handler" — this row's definition. The map
+  now points at where it lives instead of contradicting the code.
+
+### facet — the contract closes over TYPES, not only rows
+- **Guard 7**: a type the ledger renders must be decided. A row could not
+  leave the ledger without a reason — an unmapped one fails the run — and a
+  TYPE could. The existing type closure builds its work list from the rows a
+  type declares, so a type whose surface is entirely INHERITED was never
+  asked about, which is exactly what a marker type looks like:
+  `MenuFlyoutSeparator` declares one member, its constructor.
+- The floor is the ledger's own definition of "this renders": every type it
+  puts on screen has an `I<Name>Handler`. Each must be extracted, aliased,
+  dropped by family, or **UNBUILT** — a fourth outcome the other three could
+  not express, because ALIAS claims "already covered, nothing refused".
+- Three were claiming exactly that and were wrong: `MenuFlyoutSubItem`
+  aliased to `MenuFlyout` (a submenu is not a flyout), `MenuBar` to
+  `MenuBarItem` (the item is not the bar), `SwipeItemView` to `SwipeItem`.
+  Six types now print each regen with the platform answer named:
+  MenuBar, MenuFlyoutSeparator, MenuFlyoutSubItem, ShapeView,
+  SwipeItemMenuItem, SwipeItemView.
+- The check runs from `gen_contract`, not from `ledger_spec`, because that is
+  where it RUNS: `ledger_spec.py` has not been able to regenerate the spec for
+  some time (`check_type_closure` fails on `Matrix`, `NavigationProxy`,
+  `Shape`, `TableModel` and the GIF decoder, none of which have a family
+  rule), so `ledger-spec.json` is a frozen artifact and a floor living only
+  there would never fire. Repairing that tool is its own job.
+
+### facet — six gaps found building iris
+- **A `context_menu` in a tree or list row can now open.** A table or
+  outline view handles right-click itself and asks its OWN `menu`, which
+  facet never set — so a menu nested in a row was built, attached to the
+  row's view, and unreachable. Both row hosts are facet subclasses now
+  (`FacetTableView` / `FacetOutlineView`) whose `menuForEvent:` answers with
+  the clicked row's menu, after calling super so `clickedRow` still draws
+  the ring. `swipeable`/`swipe_item` was unreachable the same way and is
+  reachable for the same reason.
+- **A `context_menu` under an unkeyed container is no longer dropped.** A
+  node carrying one asks for a view exactly as one with a gesture or a
+  background does — `wants_menu` joins `has_gestures` and `wants_painting`.
+  Direct children only, so the rule agrees with `attach_context_menu`.
+- **`run_job` answers whether it started, and refuses a second flight.**
+  Two workers inside one job's `run()` assign the same fields; where those
+  are `Text` or `Vec` the second frees what the first is writing. It shipped
+  as a SIGSEGV. A 64-slot table of job addresses, claimed before the worker
+  spawns and released when the apply is done. `job_in_flight` is the
+  question five services were each answering with a private flag.
+- **The agent surface tells a wired control from a dead one.** `describe_ui`
+  reports `wired` beside `actionable` and `clickable`, and `click` answers
+  `no_handler` — because an NSControl is driven by its target/action and
+  ONLY that, so a gesture band on a button never fires. Made honest at the
+  source: `controls::arm_control` installs an action when there is something
+  on the other end and clears it when there is not, so lldb and
+  Accessibility Inspector read the same fact.
+- **The neutral runtime facade compiles, and keeps the facade's surface.**
+  `runtime.cplus` promises app code type-checks on every target; it had
+  stopped compiling on all of them (`Appearance::System` never existed) and
+  was missing eight members the real facades carry. Build it with
+  `cpc build --target android-arm64` — a platform-shadowed file is unbuilt
+  by default on the platform you are standing on.
+- **A `context_menu_item` handler can tell which item fired it.** A handler
+  is `fn(sender, ctx)` and `ctx` is the component — the same pointer for
+  every row — so identity is read off the sender, and a menu item was the
+  one control kind carrying neither half, because both bindings live in
+  `views::create` and a menu kind never gets a view. `bind_menu_identity`
+  gives it the key as its `accessibilityIdentifier` and the item pointer as
+  an associated object, so `component::key_of` / `item_of` answer from a
+  menu action exactly as from a button. `swipe_item` gets it too.
+- **A sender that is not a view no longer raises.** `key_of` and `item_of`
+  walk `superview` when the first hop finds nothing, and an NSMenuItem does
+  not answer it — so the natural line sent an unrecognised selector from
+  inside a menu action. `input::superview_of` answers 0 for an object with
+  no superview, which is what the walk's termination condition already
+  means.
+- **`context_menu` on iOS is an audible debt.** Being a non-view kind was
+  answered first and stopped the question, so declaring one produced no
+  menu and no warning. It warns once now, like every other not-yet-built
+  kind. `facet_gtk`'s README carries the same decision in writing.
+
 ### Docs & process
 - Vendor tutorial / guide / ref layout across packages; facet and
   facet_appkit docs closed Stage 4 / audit.

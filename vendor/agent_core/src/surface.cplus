@@ -51,6 +51,16 @@ enum Outcome {
                     // REACHABLE state: there is a grant that opens it, so the
                     // right move for an agent is to ask the user for the
                     // permission and try again. This is the autofill flow.
+    NoHandler,      // the click was permitted and would have landed, and there
+                    // is nothing on the other end of it. Distinct from
+                    // `NotActionable`, which is a refusal: this one ACTIVATED
+                    // the control and the control did nothing, because its
+                    // handler slot is empty. Reported instead of `Allowed`
+                    // because `Allowed` on a dead control is what let a
+                    // 23-assertion sweep pass with a button nobody could
+                    // operate — an outcome that cannot distinguish "it worked"
+                    // from "it went nowhere" makes every click assertion in a
+                    // suite weaker than it reads.
     Forbidden,      // the node is Private and this grant lacks the bit. The
                     // bits exist, and an application is expected never to mint
                     // them — so from an agent's side this is final. Distinct
@@ -70,6 +80,7 @@ fn outcome_index(o: Outcome) -> i32 {
         Outcome::Stale => 5,
         Outcome::NeedsGrant => 6,
         Outcome::Forbidden => 7,
+        Outcome::NoHandler => 8,
     };
 }
 

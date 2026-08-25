@@ -181,6 +181,14 @@ fn initialize_responds_with_capabilities() {
         caps["textDocumentSync"].is_object(),
         "expected textDocumentSync, got: {init_resp}"
     );
+    // v0.0.27: completion is advertised, with the trigger characters that
+    // make `.` and `::` open the list without a keystroke after them.
+    let triggers = caps["completionProvider"]["triggerCharacters"]
+        .as_array()
+        .unwrap_or_else(|| panic!("expected completionProvider, got: {init_resp}"));
+    let triggers: Vec<&str> = triggers.iter().map(|t| t.as_str().unwrap()).collect();
+    assert!(triggers.contains(&"."), "got {triggers:?}");
+    assert!(triggers.contains(&":"), "got {triggers:?}");
     let shutdown_resp = run
         .messages
         .iter()
@@ -284,9 +292,10 @@ fn did_open_publishes_empty_diagnostics_on_clean_source() {
 }
 
 /// Unadvertised request methods reply with MethodNotFound instead of
-/// hanging the editor. `textDocument/completion` isn't served (no
-/// completion provider advertised), so it's a stable target for this
-/// assertion. (hover/references/documentSymbol ARE served as of v0.0.13.)
+/// hanging the editor. `textDocument/signatureHelp` isn't served, so it's a
+/// stable target for this assertion. (hover/references/documentSymbol are
+/// served as of v0.0.13; completion as of v0.0.27 — this test used to point
+/// at completion, which is why it moved.)
 #[test]
 fn unsupported_request_returns_method_not_found() {
     let run = drive(
@@ -294,7 +303,7 @@ fn unsupported_request_returns_method_not_found() {
             init_request(),
             initialized_notif(),
             serde_json::json!({
-                "jsonrpc": "2.0", "id": 99, "method": "textDocument/completion",
+                "jsonrpc": "2.0", "id": 99, "method": "textDocument/signatureHelp",
                 "params": {
                     "textDocument": { "uri": "file:///nope.cplus" },
                     "position": { "line": 0, "character": 0 }
@@ -310,7 +319,7 @@ fn unsupported_request_returns_method_not_found() {
         .messages
         .iter()
         .find(|m| m["id"] == 99)
-        .expect("completion response present");
+        .expect("signatureHelp response present");
     assert!(
         resp["error"].is_object(),
         "expected error response, got: {resp}"
@@ -597,7 +606,11 @@ fn definition_project_mode_jumps_across_files() {
     // math.cplus: `fn square(n: i32) -> i32 { return n * n; }`
     //                 ^^^^^^ name at col 3..9
     std::fs::write(&math, "fn square(n: i32) -> i32 { return n * n; }\n").unwrap();
-    let main_src = "import \"math.cplus\" as math;\nfn main() -> i32 { return math::square(7); }\n";
+    // `./math`, not `math.cplus`: in project mode (which is what the compiler
+    // itself runs) an import is a module path, and the extension-carrying
+    // legacy form only resolved because the server used to load projects
+    // without their dependency list.
+    let main_src = "import \"./math\" as math;\nfn main() -> i32 { return math::square(7); }\n";
     std::fs::write(&main_p, main_src).unwrap();
     let main_uri = file_uri(&main_p);
     let math_uri = file_uri(&math);
@@ -878,6 +891,295 @@ fn document_symbol_lists_top_level_items() {
 /// v0.0.3 Phase 2 (CWE-377 hardening): use `tempfile::TempDir` for secure
 /// random paths instead of the predictable PID-based shape. See the
 /// matching helper in `cpc/tests/e2e.rs` for the leak rationale.
+fn completion_request(id: i64, uri: &str, line: u32, character: u32) -> serde_json::Value {
+    serde_json::json!({
+        "jsonrpc": "2.0", "id": id, "method": "textDocument/completion",
+        "params": {
+            "textDocument": { "uri": uri },
+            "position": { "line": line, "character": character },
+        }
+    })
+}
+
+/// The names a completion response offers, in the order the client will show
+/// them — which is `sortText` order, not the order they arrive in.
+fn completion_labels(resp: &serde_json::Value) -> Vec<String> {
+    let mut items: Vec<&serde_json::Value> =
+        resp["result"].as_array().expect("completion array").iter().collect();
+    items.sort_by_key(|i| i["sortText"].as_str().unwrap_or("").to_string());
+    items
+        .iter()
+        .map(|i| i["label"].as_str().unwrap().to_string())
+        .collect()
+}
+
+/// `textDocument/completion` after a `.` offers the receiver's members — the
+/// same composed answer `cpc query complete` and the MCP `complete_at` verb
+/// give, because all three call one function in core.
+#[test]
+fn completion_after_a_dot_offers_the_receivers_members() {
+    let src = "struct Point { x: i32 }\n\
+               impl Point {\n\
+               fn area(this) -> i32 { return this.x; }\n\
+               }\n\
+               fn main(p: Point) -> i32 { return p.x; }\n";
+    let (_dir, _entry, uri) = mini_project(src);
+    // Line 4 is `fn main(p: Point) -> i32 { return p.x; }`; character 36 is
+    // just past the `.` (0-based).
+    let run = drive(
+        &[
+            init_request(),
+            initialized_notif(),
+            did_open_notif(&uri, src),
+            completion_request(70, &uri, 4, 36),
+            shutdown_request(2),
+            exit_notif(),
+        ],
+        Duration::from_secs(10),
+    );
+    assert_eq!(run.exit_code, 0, "non-zero exit; stderr:\n{}", run.stderr);
+    let resp = run
+        .messages
+        .iter()
+        .find(|m| m["id"] == 70)
+        .expect("completion response");
+    let labels = completion_labels(resp);
+    assert!(labels.contains(&"x".to_string()), "the field: {labels:?}");
+    assert!(labels.contains(&"area".to_string()), "the method: {labels:?}");
+    // A field carries its type as the detail, and a method its signature.
+    let items = resp["result"].as_array().unwrap();
+    let x = items.iter().find(|i| i["label"] == "x").unwrap();
+    assert_eq!(x["detail"], "i32");
+    assert_eq!(x["kind"], 5, "CompletionItemKind::FIELD");
+}
+
+/// Completion is answered about the **unsaved** buffer: a method that exists
+/// only in the editor is offered, and one deleted there is not.
+#[test]
+fn completion_reflects_the_buffer_not_the_file_on_disk() {
+    let on_disk = "struct Point { x: i32 }\n\
+                   impl Point {\n\
+                   fn area(this) -> i32 { return this.x; }\n\
+                   }\n\
+                   fn main(p: Point) -> i32 { return p.x; }\n";
+    let (_dir, _entry, uri) = mini_project(on_disk);
+    // Same layout, one method renamed — so the byte offsets above the caret
+    // are unchanged and only the name differs.
+    let edited = "struct Point { x: i32 }\n\
+                  impl Point {\n\
+                  fn arena(this) -> i32 { return this.x; }\n\
+                  }\n\
+                  fn main(p: Point) -> i32 { return p.x; }\n";
+    let run = drive(
+        &[
+            init_request(),
+            initialized_notif(),
+            did_open_notif(&uri, edited),
+            completion_request(71, &uri, 4, 36),
+            shutdown_request(2),
+            exit_notif(),
+        ],
+        Duration::from_secs(10),
+    );
+    assert_eq!(run.exit_code, 0, "non-zero exit; stderr:\n{}", run.stderr);
+    let resp = run
+        .messages
+        .iter()
+        .find(|m| m["id"] == 71)
+        .expect("completion response");
+    let labels = completion_labels(resp);
+    assert!(
+        labels.contains(&"arena".to_string()),
+        "the buffer's name: {labels:?}"
+    );
+    assert!(
+        !labels.contains(&"area".to_string()),
+        "the file's old name should be gone: {labels:?}"
+    );
+}
+
+/// Typing a word narrows the list, keeps the ranking, and the accepted item
+/// replaces the word rather than appending to it.
+#[test]
+fn completion_filters_by_the_word_typed_and_replaces_it() {
+    let src = "fn value() -> i32 { return 1; }\n\
+               fn main() -> i32 {\n\
+               let val: i32 = 1;\n\
+               return va;\n\
+               }\n";
+    let (_dir, _entry, uri) = mini_project(src);
+    // Line 3 is `return va;`; character 9 is just past `va`.
+    let run = drive(
+        &[
+            init_request(),
+            initialized_notif(),
+            did_open_notif(&uri, src),
+            completion_request(72, &uri, 3, 9),
+            shutdown_request(2),
+            exit_notif(),
+        ],
+        Duration::from_secs(10),
+    );
+    assert_eq!(run.exit_code, 0, "non-zero exit; stderr:\n{}", run.stderr);
+    let resp = run
+        .messages
+        .iter()
+        .find(|m| m["id"] == 72)
+        .expect("completion response");
+    assert_eq!(
+        completion_labels(resp),
+        vec!["val".to_string(), "value".to_string()],
+        "the local outranks the module item"
+    );
+    let edit = &resp["result"].as_array().unwrap()[0]["textEdit"];
+    assert_eq!(edit["range"]["start"]["character"], 7, "replaces `va`");
+    assert_eq!(edit["range"]["end"]["character"], 9);
+}
+
+/// The graph is resident: a run that asks four graph-backed questions builds
+/// the project once, not once per request. Measured rather than asserted about
+/// — the fourth answer arrives far sooner than a fourth build could.
+#[test]
+fn the_project_graph_is_built_once_not_per_request() {
+    let src = "struct Point { x: i32 }\n\
+               impl Point {\n\
+               fn area(this) -> i32 { return this.x; }\n\
+               }\n\
+               fn main(p: Point) -> i32 { return p.x; }\n";
+    let (_dir, _entry, uri) = mini_project(src);
+    let run = drive(
+        &[
+            init_request(),
+            initialized_notif(),
+            did_open_notif(&uri, src),
+            completion_request(80, &uri, 4, 36),
+            completion_request(81, &uri, 4, 36),
+            hover_request(82, &uri, 4, 8),
+            document_symbol_request(83, &uri),
+            shutdown_request(2),
+            exit_notif(),
+        ],
+        Duration::from_secs(15),
+    );
+    assert_eq!(run.exit_code, 0, "non-zero exit; stderr:\n{}", run.stderr);
+    for id in [80, 81, 82, 83] {
+        let resp = run
+            .messages
+            .iter()
+            .find(|m| m["id"] == id)
+            .unwrap_or_else(|| panic!("no response for {id}"));
+        assert!(
+            resp["error"].is_null(),
+            "request {id} errored: {resp}"
+        );
+        assert!(!resp["result"].is_null(), "request {id} answered null");
+    }
+    // Every later question is served from the same warm graph: the session is
+    // keyed by project root, so there is exactly one of them.
+    assert!(
+        !run.stderr.contains("project graph unavailable"),
+        "the graph should have loaded: {}",
+        run.stderr
+    );
+}
+
+/// A project with a vendored dependency resolves, and completion reaches into
+/// it. This is the load-bearing case: the server used to resolve projects
+/// without their declared dependencies, so every `stdlib/...` import reported
+/// E0401, the graph never built, and the editor silently fell back to
+/// single-file behaviour on every real project.
+#[test]
+fn a_vendored_dependency_resolves_instead_of_reporting_e0401() {
+    let dir = tempdir();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname=\"x\"\nversion=\"0.0.1\"\nedition=\"2026\"\n\n[dependencies]\ndep = \"*\"\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("vendor/dep/src")).unwrap();
+    std::fs::write(
+        dir.join("vendor/dep/src/dep.cplus"),
+        "fn helper() -> i32 { return 7; }\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    let src = "import \"dep/dep\" as dep;\n\
+               fn main() -> i32 { return dep::helper(); }\n";
+    let entry = dir.join("src/main.cplus");
+    std::fs::write(&entry, src).unwrap();
+    let uri = file_uri(&entry);
+
+    // Line 1 is `fn main() -> i32 { return dep::helper(); }`; character 31 is
+    // just past the `::`.
+    let run = drive(
+        &[
+            init_request(),
+            initialized_notif(),
+            did_open_notif(&uri, src),
+            completion_request(74, &uri, 1, 31),
+            shutdown_request(2),
+            exit_notif(),
+        ],
+        Duration::from_secs(20),
+    );
+    assert_eq!(run.exit_code, 0, "non-zero exit; stderr:\n{}", run.stderr);
+    let resp = run
+        .messages
+        .iter()
+        .find(|m| m["id"] == 74)
+        .expect("completion response");
+    let labels = completion_labels(resp);
+    assert!(
+        labels.contains(&"helper".to_string()),
+        "the dependency's item: {labels:?}; stderr:\n{}",
+        run.stderr
+    );
+
+    // And the import itself is not reported as missing.
+    let diags: Vec<&serde_json::Value> = run
+        .messages
+        .iter()
+        .filter(|m| m["method"] == "textDocument/publishDiagnostics")
+        .collect();
+    for d in diags {
+        let list = d["params"]["diagnostics"].as_array().unwrap();
+        assert!(
+            !list.iter().any(|x| x["code"] == "E0401"),
+            "a resolved dependency must not report E0401: {d}"
+        );
+    }
+}
+
+/// Completion in single-file mode (no manifest) answers null rather than
+/// failing — the graph needs a resolved project.
+#[test]
+fn completion_without_a_project_answers_null() {
+    let dir = tempdir();
+    let path = dir.join("loose.cplus");
+    let src = "fn main() -> i32 { return 0; }\n";
+    std::fs::write(&path, src).unwrap();
+    let uri = file_uri(&path);
+    let run = drive(
+        &[
+            init_request(),
+            initialized_notif(),
+            did_open_notif(&uri, src),
+            completion_request(73, &uri, 0, 20),
+            shutdown_request(2),
+            exit_notif(),
+        ],
+        Duration::from_secs(10),
+    );
+    assert_eq!(run.exit_code, 0, "non-zero exit; stderr:\n{}", run.stderr);
+    let resp = run
+        .messages
+        .iter()
+        .find(|m| m["id"] == 73)
+        .expect("completion response");
+    assert!(resp["result"].is_null(), "expected null, got {resp}");
+    assert!(resp["error"].is_null(), "not an error, just nothing");
+}
+
 fn tempdir() -> std::path::PathBuf {
     let dir = tempfile::Builder::new()
         .prefix("cpc-lsp-test-")

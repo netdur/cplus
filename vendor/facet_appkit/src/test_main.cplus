@@ -1243,6 +1243,49 @@ fn a_tab_pane_is_an_ordinary_subview_and_gains_a_tab_for_it() {
 // ---- the menu tier: a kind that is not a view --------------------------------
 
 #[test]
+fn an_unkeyed_container_with_a_context_menu_is_backed() {
+    // The menu hangs on its PARENT'S view (`NSView.menu`), so a container
+    // carrying one is asking for a view exactly as one with a gesture or a
+    // background colour is. Without this the menu was built, retained, and
+    // dropped: right-click did nothing, and nothing anywhere said why —
+    // `describe_ui` cannot show it either, because menu kinds are not views.
+    var bare: core::Node = core::hstack(core::Builder::new());
+    assert views::wants_view(#addr_of(bare)) == false;
+
+    var withmenu: core::Node = core::hstack(core::Builder::new());
+    let wp: *core::Node = #addr_of(withmenu);
+    var menu: core::Node = context_menu::context_menu(key: "row:menu");
+    assert mount::add_child(#addr_of(menu), context_menu_item::context_menu_item("Rename"));
+    assert mount::add_child(wp, menu);
+    // A container with a context menu gets a view.
+    assert views::wants_view(wp);
+
+    // The menu itself is still not a view — the rule promotes the PARENT, not
+    // the menu, which is what keeps the native tree the shape facet's fake
+    // renderer agrees on.
+    match core::child_of(wp, 0 as usize) {
+        option::Option[*core::Node]::Some(c) => {
+            assert views::wants_view(c) == false;
+        }
+        option::Option[*core::Node]::None => { assert false; }
+    }
+    return;
+}
+
+#[test]
+fn a_container_with_an_ordinary_child_is_still_unbacked() {
+    // The negative half: the rule is about menus, not about having children.
+    // A predicate that promoted any parent would give a view to every
+    // pure-layout container in the tree and quietly undo the pass-through
+    // that makes a column inside a scroll view cost nothing.
+    var bare: core::Node = core::hstack(core::Builder::new());
+    let bp: *core::Node = #addr_of(bare);
+    assert mount::add_child(bp, label::label("hello"));
+    assert views::wants_view(bp) == false;
+    return;
+}
+
+#[test]
 fn a_context_menu_is_not_a_view_and_hangs_on_its_parent() {
     // An NSMenu is not an NSView. Both menu kinds answer wants_view false, so
     // the mount walk creates nothing for them and they take no place in the
@@ -1493,6 +1536,172 @@ fn a_tree_item_is_the_tree_node_itself() {
 // the label measuring itself — which it can only do once it has a native view.
 fn intrinsic_tree_row(n: *tree::TreeNode, ctx: *u8) -> core::Node {
     return label::label({ (*n).label.view() });
+}
+
+// ---- a menu item's own identity ----------------------------------------------
+
+#[test]
+fn a_menu_item_carries_its_key_and_its_item_like_every_other_sender() {
+    backend::install();
+    // A handler is `fn(sender, ctx)` and `ctx` is the component — the SAME
+    // pointer for every row — so everything telling one invocation from another
+    // is read off the sender. A menu item was the one control kind that carried
+    // neither half, because both bindings live in `views::create` and a menu
+    // kind never gets a view. One `Rename` handler, N rows, and no way to know
+    // which row: right menu, unattributable click.
+    var menu_node: core::Node = context_menu::context_menu(key: "cm:ident");
+    let mp: *core::Node = #addr_of(menu_node);
+    // The payload named where the handler would be — the ledger's
+    // `CommandParameter`, on the shared band beside `key`.
+    var ren: core::Node = context_menu_item::context_menu_item("Rename", key: "ctx:rename:/a/b",
+                                                               item: (7 as usize +% (1 as usize)) as *u8);
+    assert mount::add_child(mp, ren);
+    assert mount::add_child(mp, context_menu_item::context_menu_item("Delete", key: "ctx:delete:/a/b"));
+
+    let built: *u8 = controls::build_context_menu(mp);
+    assert built != (0 as *u8);
+    let m: ak::Menu = ak::Menu::from_raw(built);
+    assert m.number_of_items() == (2 as i64);
+
+    match m.item_at_index(0 as i64) {
+        option::Option[ak::MenuItem]::Some(mi) => {
+            // The key IS the accessibilityIdentifier here exactly as it is on a
+            // view, so `component::key_of(sender)` — the one line every button
+            // and row handler already writes — answers from a menu action too.
+            assert ak::Accessibility::from_raw(mi.raw()).accessibility_identifier().view()
+                   == "ctx:rename:/a/b";
+            assert input::key_of(mi.raw()).view() == "ctx:rename:/a/b";
+            // And the payload half: `item:` at construction reads back as 7
+            // through `component::item_index_of(sender)` — builder to handler,
+            // across a control kind that never gets a view.
+            match component::item_index_of(mi.raw()) {
+                option::Option[usize]::Some(ix) => { assert ix == (7 as usize); }
+                option::Option[usize]::None => { assert false; }
+            }
+        }
+        option::Option[ak::MenuItem]::None => { assert false; }
+    }
+    // Two items, two identities — which is the whole point: they differ.
+    match m.item_at_index(1 as i64) {
+        option::Option[ak::MenuItem]::Some(mi) => {
+            assert input::key_of(mi.raw()).view() == "ctx:delete:/a/b";
+            // No index was set on this one, and `None` means "carries none"
+            // rather than row zero.
+            match component::item_index_of(mi.raw()) {
+                option::Option[usize]::Some(_ix) => { assert false; }
+                option::Option[usize]::None => { }
+            }
+        }
+        option::Option[ak::MenuItem]::None => { assert false; }
+    }
+    return;
+}
+
+#[test]
+fn reading_a_sender_that_is_not_a_view_answers_empty_rather_than_raising() {
+    backend::install();
+    // `key_of` and `item_of` walk `superview` when the first hop finds nothing,
+    // and an NSMenuItem does not answer `superview` at all — so the natural
+    // line raised an unrecognized selector from inside a menu action. An object
+    // with no superview has reached the top of its chain, which is what the
+    // walk's own termination condition already means.
+    let bare: ak::MenuItem = ak::MenuItem::new("Untagged", 0 as *u8, "");
+    assert input::key_of(bare.raw()).view() == "";
+    assert input::item_of(bare.raw()) == (0 as *u8);
+    // A separator is the other unkeyed shape a real menu contains.
+    let sep: ak::MenuItem = ak::MenuItem::separator_item();
+    assert input::key_of(sep.raw()).view() == "";
+    return;
+}
+
+// ---- right-click inside a row ------------------------------------------------
+
+// A tree row carrying a context menu. The container is deliberately UNKEYED:
+// the two failures this pair covers were found together and the keyed spelling
+// hides the first one.
+fn tree_row_with_menu(n: *tree::TreeNode, ctx: *u8) -> core::Node {
+    var b: core::Builder = core::Builder::new();
+    b.add(label::label({ (*n).label.view() }));
+    var menu: core::Node = context_menu::context_menu();
+    assert mount::add_child(#addr_of(menu), context_menu_item::context_menu_item("Rename"));
+    b.add(menu);
+    return core::hstack(b);
+}
+
+#[test]
+fn a_tree_row_menu_reaches_the_view_appkit_actually_asks() {
+    backend::install();
+    // The whole chain, in the order it failed: the row's container has to get
+    // a view (wants_view), the menu has to be attached to it
+    // (attach_context_menu), and the OUTLINE VIEW has to be able to find it —
+    // because AppKit asks the outline view and nothing else. Two of those three
+    // were broken and each hid the other.
+    var root: tree::TreeNode = tree::TreeNode::new("root", id: "root");
+    let _a: status::Status = root.add_child(tree::TreeNode::new("alpha", id: "alpha"));
+    var t: core::Node = tree::tree(root, key: "tm1", row: tree_row_with_menu);
+    let tp: *core::Node = #addr_of(t);
+    let v: *u8 = views::create(0 as *u8, tp);
+    core::set_view(tp, v, views::view_release);
+    views::apply(0 as *u8, tp);
+    assert recycler::tree_row_count_of(v) == (1 as i64);
+
+    let cell: *u8 = recycler::tree_view_for_row(v, 0 as i64);
+    assert cell != (0 as *u8);
+    // The menu is somewhere in the row's subtree — which view exactly is the
+    // backend's business, and is precisely why the lookup searches rather than
+    // assuming.
+    let menu: *u8 = recycler::menu_in_subtree(cell);
+    assert menu != (0 as *u8);
+    assert { rt::msg_u64(menu, rt::sel(#str_ptr("numberOfItems\0"))) } == (1 as u64);
+    return;
+}
+
+#[test]
+fn the_row_hosts_are_the_subclasses_that_answer_menu_for_event() {
+    backend::install();
+    // AppKit asks the table, not the row. A plain NSOutlineView answers
+    // `[self menu]`, which facet never sets — so the override is the only thing
+    // standing between a built menu and a right-click that does nothing.
+    var root: tree::TreeNode = tree::TreeNode::new("root", id: "root");
+    var t: core::Node = tree::tree(root, key: "tm2");
+    let tp: *core::Node = #addr_of(t);
+    let v: *u8 = views::create(0 as *u8, tp);
+    core::set_view(tp, v, views::view_release);
+    let ov: *u8 = recycler::table_of(v);
+    assert ov != (0 as *u8);
+    assert synth::object_class(ov) == rt::get_class(#str_ptr("FacetOutlineView\0"));
+    assert synth::class_responds(synth::object_class(ov),
+                                 rt::sel(#str_ptr("menuForEvent:\0"))) != (0 as i8);
+
+    var l: core::Node = list::list(key: "lm2");
+    let lp: *core::Node = #addr_of(l);
+    let lv: *u8 = views::create(0 as *u8, lp);
+    core::set_view(lp, lv, views::view_release);
+    let tv: *u8 = recycler::table_of(lv);
+    assert tv != (0 as *u8);
+    assert synth::object_class(tv) == rt::get_class(#str_ptr("FacetTableView\0"));
+    assert synth::class_responds(synth::object_class(tv),
+                                 rt::sel(#str_ptr("menuForEvent:\0"))) != (0 as i8);
+    return;
+}
+
+#[test]
+fn a_row_with_no_menu_answers_nothing_rather_than_the_nearest_one() {
+    backend::install();
+    // The search must not walk UP out of the row: a menu belonging to some
+    // ancestor is not this row's menu, and returning it would make every row
+    // answer with the last one that had one.
+    var root: tree::TreeNode = tree::TreeNode::new("root", id: "root");
+    let _a: status::Status = root.add_child(tree::TreeNode::new("plain", id: "plain"));
+    var t: core::Node = tree::tree(root, key: "tm3");
+    let tp: *core::Node = #addr_of(t);
+    let v: *u8 = views::create(0 as *u8, tp);
+    core::set_view(tp, v, views::view_release);
+    views::apply(0 as *u8, tp);
+    let cell: *u8 = recycler::tree_view_for_row(v, 0 as i64);
+    assert cell != (0 as *u8);
+    assert recycler::menu_in_subtree(cell) == (0 as *u8);
+    return;
 }
 
 // A tree renders rows you can SEE.
@@ -5211,6 +5420,432 @@ fn an_alert_is_a_facet_tree_the_agent_can_address() {
     click_key("alert:primary");
     assert AL_ANSWER == 0;
     assert app::window_count() == before;
+    return;
+}
+
+// ---- Return, Escape, and the value a prompt opens on -------------------------
+
+fn key_equivalent_of(key: str) -> text::Text {
+    match mount::find(key) {
+        option::Option[*core::Node]::Some(n) => {
+            let v: *u8 = core::view_of(n);
+            if v == (0 as *u8) { return text::new(); }
+            let ns: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("keyEquivalent\0"))) };
+            if ns == (0 as *u8) { return text::new(); }
+            return bridge::to_text(ns);
+        }
+        option::Option[*core::Node]::None => { return text::new(); }
+    }
+}
+
+#[test]
+fn a_sheet_answers_return_and_escape() {
+    backend::install();
+    // A NATIVE ALERT GIVES THESE AWAY FREE and a facet sheet has to supply
+    // them: the sheet is built out of facet controls, which is what makes it
+    // keyed and agent-drivable, and the cost is that everything the platform
+    // alert did for nothing has to be said. It was not said, so typing a name
+    // into a prompt and pressing Return did nothing — immediately after typing,
+    // which is the most common keyboard reflex there is.
+    AL_ANSWER = -1;
+    dialogs::prompt_sheet("Rename", "", "name", "Rename", "Cancel",
+                          on_answer: al_answered, on_answer_ctx: 0 as *u8);
+    assert key_equivalent_of("prompt:ok").view() == "\r";
+    assert key_equivalent_of("prompt:cancel").view() == "\x1b";
+    click_key("prompt:cancel");
+
+    // The same on an alert, which is the other sheet with a primary and a
+    // secondary.
+    dialogs::alert_sheet("Discard?", "", "Discard", "Keep",
+                         on_answer: al_answered, on_answer_ctx: 0 as *u8);
+    assert key_equivalent_of("alert:primary").view() == "\r";
+    assert key_equivalent_of("alert:secondary").view() == "\x1b";
+    click_key("alert:primary");
+    return;
+}
+
+// `+[NSEvent keyEventWithType:...]` — a real key-down, so the routing below is
+// AppKit's own rather than a stand-in for it.
+#[link_name = "objc_msgSend"]
+extern fn msg_key_event(recv: *u8, sel: *u8, ty: u64, loc: rt::Point, flags: u64,
+                        ts: f64, wnum: i64, ctx: *u8, chars: *u8, unmod: *u8,
+                        repeat: i8, code: u16) -> *u8;
+
+fn return_key_event(window: *u8) -> *u8 {
+    let wnum: i64 = { rt::msg_i64(window, rt::sel(#str_ptr("windowNumber\0"))) };
+    return { msg_key_event(rt::get_class(#str_ptr("NSEvent\0")),
+        rt::sel(#str_ptr("keyEventWithType:location:modifierFlags:timestamp:windowNumber:context:characters:charactersIgnoringModifiers:isARepeat:keyCode:\0")),
+        10 as u64,                                  // NSEventTypeKeyDown
+        rt::Point { x: 0.0f64, y: 0.0f64 },
+        0 as u64, 0.0f64, wnum, 0 as *u8,
+        bridge::nsstring("\r"), bridge::nsstring("\r"),
+        0 as i8, 36 as u16) };                      // kVK_Return
+}
+
+fn window_of_key(key: str) -> *u8 {
+    match button::find(key) {
+        option::Option[button::Button]::Some(b) => {
+            let v: *u8 = core::view_of(b.node());
+            if v == (0 as *u8) { return 0 as *u8; }
+            return { rt::msg_id(v, rt::sel(#str_ptr("window\0"))) };
+        }
+        option::Option[button::Button]::None => { return 0 as *u8; }
+    }
+}
+
+#[test]
+fn return_actually_reaches_the_default_button() {
+    backend::install();
+    // THE HALF THE LAST FIX DID NOT CHECK. `keyEquivalent` was set and asserted
+    // — and asserting a property is not asserting that AppKit routes the key to
+    // it. A person pressed Return and nothing happened.
+    //
+    // `performKeyEquivalent:` is what a window does with a key-down BEFORE the
+    // responder chain sees it, so driving it with a real NSEvent is the routing
+    // itself rather than a stand-in for it.
+    AL_ANSWER = -1;
+    dialogs::prompt_sheet("Rename", "", "name", "Rename", "Cancel",
+                          on_answer: al_answered, on_answer_ctx: 0 as *u8,
+                          initial: "old.cplus");
+    let w: *u8 = window_of_key("prompt:ok");
+    assert w != (0 as *u8);
+    let ev: *u8 = return_key_event(w);
+    assert ev != (0 as *u8);
+    let handled: i8 = { rt::msg_i8_id(w, rt::sel(#str_ptr("performKeyEquivalent:\0")), ev) };
+    assert handled != (0 as i8);
+    // 0 is the primary — the sheet is gone and the answer arrived.
+    assert AL_ANSWER == 0;
+    return;
+}
+
+#[test]
+fn the_prompt_field_has_the_caret_when_the_sheet_opens() {
+    backend::install();
+    // A naming sheet must open with the caret IN the field and the old name
+    // SELECTED — otherwise you click before you can type, and a rename means
+    // retyping. Both hold, and neither is this file's doing: AppKit makes the
+    // first valid key view the initial first responder when a window becomes
+    // key, and selects a text field's contents when it does.
+    AL_ANSWER = -1;
+    dialogs::prompt_sheet("Rename", "", "name", "Rename", "Cancel",
+                          on_answer: al_answered, on_answer_ctx: 0 as *u8,
+                          initial: "old.cplus");
+    let w: *u8 = window_of_key("prompt:ok");
+    assert w != (0 as *u8);
+    let fr: *u8 = { rt::msg_id(w, rt::sel(#str_ptr("firstResponder\0"))) };
+    assert fr != (0 as *u8);
+    match text_field::find("prompt:value") {
+        option::Option[text_field::TextField]::Some(f) => {
+            let fv: *u8 = core::view_of(f.node());
+            assert fv != (0 as *u8);
+            // An NSTextField hands editing to the window's shared FIELD EDITOR,
+            // so the first responder after `selectText:` is that editor and the
+            // field is its delegate. Asking "is this field being edited" is the
+            // honest question; comparing against the field itself would fail on
+            // a focused field, which is the wrong way round.
+            var focused: bool = fr == fv;
+            if !focused {
+                if synth::class_responds(synth::object_class(fr),
+                                         rt::sel(#str_ptr("delegate\0"))) != (0 as i8) {
+                    focused = { rt::msg_id(fr, rt::sel(#str_ptr("delegate\0"))) } == fv;
+                }
+            }
+            assert focused;
+            // ...and its contents are SELECTED, so the first keystroke
+            // replaces the old name instead of appending to it. Both come from
+            // AppKit's own initial-key-view behaviour, not from anything this
+            // file does — measured, after a `selectText:` call was added here
+            // on the assumption that they did not and removed again when it
+            // changed nothing. Pinned because a future change to the tree could
+            // take it away silently, and a naming sheet without it is one you
+            // must click before you can type.
+            let ed: *u8 = { rt::msg_id(fv, rt::sel(#str_ptr("currentEditor\0"))) };
+            assert ed != (0 as *u8);
+            let r: rt::Range = { rt::msg_range(ed, rt::sel(#str_ptr("selectedRange\0"))) };
+            assert r.length == (9 as u64);   // "old.cplus"
+        }
+        option::Option[text_field::TextField]::None => { assert false; }
+    }
+    click_key("prompt:cancel");
+    return;
+}
+
+static AL_TYPED: text::Text = #zero::[text::Text]();
+fn al_typed(v: str, ctx: *u8) { AL_TYPED = text::from_str(v); return; }
+
+#[test]
+fn return_commits_what_was_typed_not_what_was_there_before() {
+    backend::install();
+    // THE TRAP UNDER THE TRAP. `prompt_ok` reads `[field stringValue]`, and
+    // AppKit does NOT update that from the FIELD EDITOR while editing is in
+    // progress — the editor holds the text and the field is only refreshed when
+    // editing ends. Return arrives through `performKeyEquivalent:`, which fires
+    // the button BEFORE anything ends editing, so the handler read the value
+    // the sheet OPENED with and the typing was thrown away.
+    //
+    // That is "Enter does not work" from a person's side: the sheet closes and
+    // the file is named whatever it was already called.
+    AL_ANSWER = -1;
+    AL_TYPED = text::from_str("");
+    dialogs::prompt_sheet("Rename", "", "name", "Rename", "Cancel",
+                          on_typed: al_typed, on_typed_ctx: 0 as *u8,
+                          on_answer: al_answered, on_answer_ctx: 0 as *u8,
+                          initial: "old.cplus");
+    // Type, the way a person does: into the field EDITOR, which is what has
+    // focus after `selectText:`.
+    match text_field::find("prompt:value") {
+        option::Option[text_field::TextField]::Some(f) => {
+            let fv: *u8 = core::view_of(f.node());
+            let ed: *u8 = { rt::msg_id(fv, rt::sel(#str_ptr("currentEditor\0"))) };
+            assert ed != (0 as *u8);
+            { rt::msg_void_id(ed, rt::sel(#str_ptr("setString:\0")),
+                              bridge::nsstring("new.cplus")) };
+        }
+        option::Option[text_field::TextField]::None => { assert false; }
+    }
+    let w: *u8 = window_of_key("prompt:ok");
+    let ev: *u8 = return_key_event(w);
+    let _h: i8 = { rt::msg_i8_id(w, rt::sel(#str_ptr("performKeyEquivalent:\0")), ev) };
+    assert AL_ANSWER == 0;
+    assert AL_TYPED.view() == "new.cplus";
+    return;
+}
+
+// RETURN AS THE FIELD EDITOR RECEIVES IT, which is the only way a person ever
+// sends it to a prompt. `send_key` below calls `performKeyEquivalent:` itself;
+// that path is never taken while a field is being edited, so every test built
+// on it passed while the app ignored Enter. Driving `insertNewline:` on the
+// editor is what a real Return becomes once the editor has focus.
+#[test]
+fn return_in_the_field_answers_the_prompt_because_the_key_equivalent_never_will() {
+    backend::install();
+    AL_ANSWER = -1;
+    AL_TYPED = text::from_str("");
+    dialogs::prompt_sheet("Rename", "", "name", "Rename", "Cancel",
+                          on_typed: al_typed, on_typed_ctx: 0 as *u8,
+                          on_answer: al_answered, on_answer_ctx: 0 as *u8,
+                          initial: "old.cplus");
+    match text_field::find("prompt:value") {
+        option::Option[text_field::TextField]::Some(f) => {
+            let fv: *u8 = core::view_of(f.node());
+            let ed: *u8 = { rt::msg_id(fv, rt::sel(#str_ptr("currentEditor\0"))) };
+            assert ed != (0 as *u8);
+            { rt::msg_void_id(ed, rt::sel(#str_ptr("setString:\0")),
+                              bridge::nsstring("new.cplus")) };
+            { rt::msg_void_id(ed, rt::sel(#str_ptr("insertNewline:\0")), 0 as *u8) };
+        }
+        option::Option[text_field::TextField]::None => { assert false; }
+    }
+    // Read, clean up, then assert: a sheet left standing is a modal window
+    // every later test finds by key instead of its own.
+    let answered: i32 = AL_ANSWER;
+    let typed: text::Text = AL_TYPED.clone();
+    if answered != (0 as i32) {
+        let w: *u8 = window_of_key("prompt:ok");
+        if w != (0 as *u8) { let _bye: bool = send_key(w, "\x1b", 53 as u16); }
+    }
+    assert answered == 0;
+    assert typed.view() == "new.cplus";
+    return;
+}
+
+// ESCAPE AS THE FIELD EDITOR RECEIVES IT. Same question as Return, and it has
+// to be asked separately: the editor takes the key first either way, and
+// whether it passes this one along is AppKit's business, not a thing to assume.
+#[test]
+fn escape_in_the_field_cancels_the_prompt() {
+    backend::install();
+    AL_ANSWER = -1;
+    dialogs::prompt_sheet("Rename", "", "name", "Rename", "Cancel",
+                          on_typed: al_typed, on_typed_ctx: 0 as *u8,
+                          on_answer: al_answered, on_answer_ctx: 0 as *u8,
+                          initial: "old.cplus");
+    match text_field::find("prompt:value") {
+        option::Option[text_field::TextField]::Some(f) => {
+            let fv: *u8 = core::view_of(f.node());
+            let ed: *u8 = { rt::msg_id(fv, rt::sel(#str_ptr("currentEditor\0"))) };
+            assert ed != (0 as *u8);
+            // `doCommandBySelector:`, not a direct send: NSTextView does not
+            // IMPLEMENT `cancelOperation:` (sending it raises), it RECEIVES it
+            // as a command from `interpretKeyEvents:` and decides where it goes.
+            { rt::msg_void_id(ed, rt::sel(#str_ptr("doCommandBySelector:\0")),
+                               rt::sel(#str_ptr("cancelOperation:\0"))) };
+        }
+        option::Option[text_field::TextField]::None => { assert false; }
+    }
+    let answered: i32 = AL_ANSWER;
+    if answered != (1 as i32) {
+        let w: *u8 = window_of_key("prompt:ok");
+        if w != (0 as *u8) { let _bye: bool = send_key(w, "\x1b", 53 as u16); }
+    }
+    assert answered == 1;
+    return;
+}
+
+fn key_event(window: *u8, chars: str, code: u16) -> *u8 {
+    let wnum: i64 = { rt::msg_i64(window, rt::sel(#str_ptr("windowNumber\0"))) };
+    return { msg_key_event(rt::get_class(#str_ptr("NSEvent\0")),
+        rt::sel(#str_ptr("keyEventWithType:location:modifierFlags:timestamp:windowNumber:context:characters:charactersIgnoringModifiers:isARepeat:keyCode:\0")),
+        10 as u64, rt::Point { x: 0.0f64, y: 0.0f64 }, 0 as u64, 0.0f64, wnum,
+        0 as *u8, bridge::nsstring(chars), bridge::nsstring(chars),
+        0 as i8, code) };
+}
+
+// Drive a key the way the WINDOW does: key equivalents first, then the
+// responder chain. That is `NSWindow.sendEvent:`'s own order, and the two
+// halves answer different keys — which is the whole reason to drive both
+// rather than assume one covers the other.
+fn send_key(window: *u8, chars: str, code: u16) -> bool {
+    let ev: *u8 = key_event(window, chars, code);
+    if ev == (0 as *u8) { return false; }
+    if { rt::msg_i8_id(window, rt::sel(#str_ptr("performKeyEquivalent:\0")), ev) } != (0 as i8) {
+        return true;
+    }
+    { rt::msg_void_id(window, rt::sel(#str_ptr("sendEvent:\0")), ev) };
+    return false;
+}
+
+#[test]
+fn an_alert_answers_return_and_escape_for_real() {
+    backend::install();
+    // ROUTING, not properties. The previous pass set `keyEquivalent` on these
+    // buttons, asserted the property, and called the rest "needs hands" — and
+    // a property is not evidence that AppKit delivers the key to it.
+    AL_ANSWER = -1;
+    dialogs::alert_sheet("Discard?", "Three edits will be lost.", "Discard", "Keep",
+                         on_answer: al_answered, on_answer_ctx: 0 as *u8);
+    let w: *u8 = window_of_key("alert:primary");
+    assert w != (0 as *u8);
+    let _r: bool = send_key(w, "\r", 36 as u16);          // kVK_Return
+    assert AL_ANSWER == 0;
+
+    // ESCAPE, which is a different path: `\x1b` with keyCode 53.
+    AL_ANSWER = -1;
+    dialogs::alert_sheet("Discard?", "", "Discard", "Keep",
+                         on_answer: al_answered, on_answer_ctx: 0 as *u8);
+    let w2: *u8 = window_of_key("alert:primary");
+    assert w2 != (0 as *u8);
+    let _e: bool = send_key(w2, "\x1b", 53 as u16);       // kVK_Escape
+    assert AL_ANSWER == 1;
+    return;
+}
+
+#[test]
+fn escape_on_a_one_button_alert_does_nothing_rather_than_guessing() {
+    backend::install();
+    // `alert_sheet(..., secondary: "")` builds ONE button, so there is nothing
+    // for Escape to bind to. It must leave the sheet up rather than fire the
+    // primary: an alert with a single button is an acknowledgement, and
+    // dismissing it on Escape would ACKNOWLEDGE on the user's behalf.
+    AL_ANSWER = -1;
+    let before: usize = app::window_count();
+    dialogs::alert_sheet("Saved", "", "OK", "", on_answer: al_answered, on_answer_ctx: 0 as *u8);
+    let w: *u8 = window_of_key("alert:primary");
+    assert w != (0 as *u8);
+    let _e: bool = send_key(w, "\x1b", 53 as u16);
+    assert AL_ANSWER == (-1 as i32);
+    assert app::window_count() == (before + (1 as usize));
+    click_key("alert:primary");
+    assert AL_ANSWER == 0;
+    assert app::window_count() == before;
+    return;
+}
+
+#[test]
+fn escape_cancels_a_prompt_for_real() {
+    backend::install();
+    AL_ANSWER = -1;
+    AL_TYPED = text::from_str("");
+    dialogs::prompt_sheet("Rename", "", "name", "Rename", "Cancel",
+                          on_typed: al_typed, on_typed_ctx: 0 as *u8,
+                          on_answer: al_answered, on_answer_ctx: 0 as *u8,
+                          initial: "old.cplus");
+    let w: *u8 = window_of_key("prompt:cancel");
+    assert w != (0 as *u8);
+    let _e: bool = send_key(w, "\x1b", 53 as u16);
+    // 1 is the secondary, and CANCEL MUST NOT TYPE: backing out of a rename
+    // that reports the name anyway would rename the file.
+    assert AL_ANSWER == 1;
+    assert AL_TYPED.view() == "";
+    return;
+}
+
+#[test]
+fn a_disabled_default_button_does_not_fire_on_return() {
+    backend::install();
+    // WHAT ENTER ACTUALLY DOES, at the one branch worth knowing. The window
+    // walks its view tree asking each view to claim the key; NSButton claims it
+    // only when the equivalent matches AND the button is ENABLED. A disabled
+    // primary claims nothing, so `performKeyEquivalent:` answers NO and the key
+    // falls through to the responder chain — which is the right answer for an
+    // OK that is waiting for a valid name: Return does nothing rather than
+    // committing something the button itself refuses.
+    AL_ANSWER = -1;
+    dialogs::alert_sheet("Q", "", "Yes", "No", on_answer: al_answered, on_answer_ctx: 0 as *u8);
+    match button::find("alert:primary") {
+        option::Option[button::Button]::Some(b) => {
+            let v: *u8 = core::view_of(b.node());
+            { rt::msg_void_i8(v, rt::sel(#str_ptr("setEnabled:\0")), 0 as i8) };
+        }
+        option::Option[button::Button]::None => { assert false; }
+    }
+    let w: *u8 = window_of_key("alert:secondary");
+    assert w != (0 as *u8);
+    let ev: *u8 = key_event(w, "\r", 36 as u16);
+    assert { rt::msg_i8_id(w, rt::sel(#str_ptr("performKeyEquivalent:\0")), ev) } == (0 as i8);
+    assert AL_ANSWER == (-1 as i32);
+    // Escape still works — the two buttons are independent.
+    let _e: bool = send_key(w, "\x1b", 53 as u16);
+    assert AL_ANSWER == 1;
+    return;
+}
+
+#[test]
+fn a_choose_sheet_binds_neither_key() {
+    backend::install();
+    // NOT AN OVERSIGHT. A choose sheet's buttons are N options and none of them
+    // is "the obvious one", so binding Return would act on the user's behalf
+    // without being asked — and there is no cancel button for Escape to take,
+    // because the options ARE the answer.
+    var opts: vec::Vec[text::Text] = vec::new::[text::Text]();
+    let _a: status::Status = opts.append(text::from_str("Red"));
+    let _b: status::Status = opts.append(text::from_str("Blue"));
+    dialogs::choose_sheet("Pick", "", opts, on_answer: al_answered, on_answer_ctx: 0 as *u8);
+    assert key_equivalent_of("choose:opt:0").view() == "";
+    assert key_equivalent_of("choose:opt:1").view() == "";
+    click_key("choose:opt:0");
+    return;
+}
+
+#[test]
+fn a_prompt_opens_on_the_value_it_is_given() {
+    backend::install();
+    // The ledger's `initialValue`, which is NOT the placeholder: one is the hint
+    // shown while the field is EMPTY, the other is what the field starts with
+    // and what a person then edits. Only the hint had reached facet's
+    // signature, so a Rename opened on nothing and the old name sat greyed out
+    // behind the caret — every rename meant typing the whole name again.
+    AL_ANSWER = -1;
+    dialogs::prompt_sheet("Rename", "", "name", "Rename", "Cancel",
+                          on_answer: al_answered, on_answer_ctx: 0 as *u8,
+                          initial: "files_tree.cplus");
+    match text_field::find("prompt:value") {
+        option::Option[text_field::TextField]::Some(f) => {
+            assert f.text() == "files_tree.cplus";
+        }
+        option::Option[text_field::TextField]::None => { assert false; }
+    }
+    click_key("prompt:cancel");
+
+    // And with none given it still opens empty, so the placeholder does its own
+    // job — the two are different rows and stay different.
+    dialogs::prompt_sheet("New File", "", "name.cplus", "Create", "Cancel",
+                          on_answer: al_answered, on_answer_ctx: 0 as *u8);
+    match text_field::find("prompt:value") {
+        option::Option[text_field::TextField]::Some(f) => { assert f.text() == ""; }
+        option::Option[text_field::TextField]::None => { assert false; }
+    }
+    click_key("prompt:cancel");
     return;
 }
 

@@ -261,9 +261,37 @@ Window and app readers: `display_density`, `observe_display_density`,
 `observe_resumed`, `observe_stopped`, `set_app_appearance`, `app_appearance`,
 `window_frame`, `set_window_frame`.
 
-Dialogs: `alert(...)` is non-blocking and reports through `on_answer`;
-`alert_blocking` returns the chosen index. `choose_directory` and
-`choose_file` are the file pickers.
+Dialogs. `alert(title, message, primary, secondary:, on_answer:)` is
+non-blocking and reports the chosen index through `on_answer` — 0 for the
+primary, 1 for the secondary. `prompt(title, message, placeholder:, primary:,
+secondary:, initial:, on_typed:, on_answer:)` adds a text field and reports
+what was typed through `on_typed`. `choose(title, message, options,
+on_answer:)` reports which option by index.
+
+`initial` is what the field STARTS with and `placeholder` is the hint shown
+while it is empty — a rename passes the old name as `initial`, and the caret
+lands in the field with it selected, so the first keystroke replaces it.
+
+**The keyboard answers them.** Return fires the primary, Escape the secondary,
+in both `alert` and `prompt`. A `choose` binds neither: its buttons are N
+options and none is the obvious one, and it carries no cancel. A one-button
+alert ignores Escape, because a single button is an acknowledgement.
+
+In a `prompt` that runs through the FIELD rather than through a default button:
+a platform does not offer a default button the key while a field is being
+edited, and in a prompt the caret is always in the field. So the same thing is
+true of a text field YOU build — a Return in it reaches nothing unless you wire
+`on_submit`. Giving a form an OK button does not give it Enter.
+
+`alert_blocking` returns the chosen index instead, for a decision that must be
+made before the process can go on with no window to attach to. An agent cannot
+reach it, which is why it is not the default.
+
+`choose_directory` and `choose_file` are the file pickers. They are the
+platform's own panel, which an agent cannot drive and which cannot be
+reimplemented — the panel is the sandbox door. **They also BLOCK**, so an app
+that must stay answerable while one is open should not use them; an application
+that needs an agent to choose a file has to offer a path some other way.
 
 ## facet/nav
 

@@ -729,9 +729,43 @@ fn sender_view(sender: *u8) -> *u8 {
     return sender;
 }
 
+// One step up the view chain, or 0 for something that is not in one.
+//
+// THE GUARD IS THE POINT. A sender is not always a view: a UIAction is the
+// sender of a context-menu choice and answers no `superview` at all, so the
+// bare send raised an unrecognized selector from inside the handler — and the
+// handler in question is the one line every button and row in an app already
+// writes. An object with no superview has reached the top of its chain, which
+// is exactly what the walk's own termination condition means.
+fn superview_of(v: *u8) -> *u8 {
+    if v == (0 as *u8) { return 0 as *u8; }
+    if synth::class_responds(synth::object_class(v),
+                             rt::sel(#str_ptr("superview\0"))) == (0 as i8) {
+        return 0 as *u8;
+    }
+    return { rt::msg_id(v, rt::sel(#str_ptr("superview\0"))) };
+}
+
 // The key IS the accessibilityIdentifier (one token, three jobs), and the walk
 // goes UP: a tap on an untagged icon inside a tagged row answers the row.
+//
+// A MENU ELEMENT SPELLS IT `identifier`. `UIAccessibilityIdentification` is
+// adopted by UIView, UIBarItem and UIImage — not by UIMenuElement — so a
+// UIAction answers no `accessibilityIdentifier`, and `UIAction.identifier` is
+// the slot that means the same thing: a stable name the element carries. It is
+// asked FIRST because a menu element is never in a view chain, so there is
+// nothing to fall through to.
 fn key_of(sender: *u8) -> text::Text {
+    if sender != (0 as *u8) {
+        if synth::class_responds(synth::object_class(sender),
+                                 rt::sel(#str_ptr("identifier\0"))) != (0 as i8) {
+            if synth::class_responds(synth::object_class(sender),
+                                     rt::sel(#str_ptr("superview\0"))) == (0 as i8) {
+                let id: *u8 = { rt::msg_id(sender, rt::sel(#str_ptr("identifier\0"))) };
+                if id != (0 as *u8) { return bridge::to_text(id); }
+            }
+        }
+    }
     var v: *u8 = sender_view(sender);
     while v != (0 as *u8) {
         let ns: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("accessibilityIdentifier\0"))) };
@@ -740,7 +774,7 @@ fn key_of(sender: *u8) -> text::Text {
                                              bridge::ns_utf8()) };
             if len > (0 as u64) { return bridge::to_text(ns); }
         }
-        v = { rt::msg_id(v, rt::sel(#str_ptr("superview\0"))) };
+        v = superview_of(v);
     }
     return text::new();
 }
@@ -754,7 +788,7 @@ fn item_of(sender: *u8) -> *u8 {
     while v != (0 as *u8) {
         let it: *u8 = { synth::get_associated(v, item_key()) };
         if it != (0 as *u8) { return it; }
-        v = { rt::msg_id(v, rt::sel(#str_ptr("superview\0"))) };
+        v = superview_of(v);
     }
     return 0 as *u8;
 }

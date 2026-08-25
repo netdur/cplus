@@ -42,6 +42,7 @@ import "objc/bridge" as bridge;
 import "objc/synthesis" as synth;
 import "uikit/uikit" as ui;
 import "./input" as input;
+import "./menus" as menus;
 import "./paint" as paint;
 import "./geometry" as geometry;
 
@@ -389,6 +390,26 @@ fn cell_holds_row(p: *props::ListProps, cell: *u8, index_path: *u8) -> bool {
     return (held -% (1 as usize)) == flat_index(p, index_path);
 }
 
+#[link_name = "class_addMethod"]
+extern fn add_method_id_2id_point(cls: *u8, sel: *u8,
+                                  imp: fn(*u8, *u8, *u8, *u8, rt::Point) -> *u8,
+                                  types: *u8) -> i8;
+
+// The context menu for a row, asked of the TABLE because that is who UIKit
+// asks. The row's own view already carries the menu node — `views::create` hung
+// it there when the row was realised — so this finds the cell and hands the
+// question straight to `menus`, which keeps one answer for both paths.
+fn imp_row_context_menu(self_obj: *u8, cmd: *u8, table: *u8, index_path: *u8,
+                        _p: rt::Point) -> *u8 {
+    if table == (0 as *u8) { return 0 as *u8; }
+    if index_path == (0 as *u8) { return 0 as *u8; }
+    let cell: *u8 = { rt::msg_id_id(table, rt::sel(#str_ptr("cellForRowAtIndexPath:\0")),
+                                    index_path) };
+    if cell == (0 as *u8) { return 0 as *u8; }
+    return menus::configuration_in_subtree(cell);
+}
+
+
 fn imp_scrolled(self_obj: *u8, cmd: *u8, sv: *u8) {
     // A COLLECTION VIEW ARRIVES HERE TOO. Both sources point their scroll
     // delegate at this one imp, so the kind decides which question to ask:
@@ -500,6 +521,16 @@ fn data_source() -> *u8 {
             let _g: i8 = synth::add_method_v_1id(cls,
                 rt::sel(#str_ptr("scrollViewDidScroll:\0")),
                 imp_scrolled, #str_ptr("v@:@\0"));
+            // A TABLE ANSWERS FOR ITS OWN ROWS. UIKit asks the table's delegate
+            // for a row's context menu, not the row's view — the same shape
+            // that made a `context_menu` in an NSOutlineView row unreachable
+            // until `menuForEvent:` was overridden. Without this the
+            // interaction hung on the row's content view never opens, because
+            // UITableView intercepts the long press to arbitrate it against
+            // scrolling and reordering.
+            let _h: i8 = add_method_id_2id_point(cls,
+                rt::sel(#str_ptr("tableView:contextMenuConfigurationForRowAtIndexPath:point:\0")),
+                imp_row_context_menu, #str_ptr("@@:@@{CGPoint=dd}\0"));
             { synth::register_class_pair(cls) };
             DS_CLASS = cls;
         }

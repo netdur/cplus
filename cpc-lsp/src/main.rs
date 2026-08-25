@@ -10,6 +10,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use cplus_core::ast::ItemKind;
+use cplus_core::session::GraphSession;
 use cplus_core::{
     attrs, borrowck, fmt as cpfmt, graph, lexer, lower, manifest, parser, resolver, sema,
 };
@@ -17,7 +18,9 @@ use lsp_server::{Connection, Message, Notification, Request, Response};
 use lsp_types::notification::Notification as _;
 use lsp_types::{
     CodeAction, CodeActionKind, CodeActionOrCommand, CodeActionParams,
-    CodeActionProviderCapability, CodeActionResponse, Diagnostic, DiagnosticSeverity,
+    CodeActionProviderCapability, CodeActionResponse, CompletionItem, CompletionItemKind,
+    CompletionOptions, CompletionParams, CompletionResponse, CompletionTextEdit, Diagnostic,
+    DiagnosticSeverity,
     DidChangeTextDocumentParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams,
     DidSaveTextDocumentParams, DocumentFormattingParams, DocumentSymbol, DocumentSymbolParams,
     DocumentSymbolResponse, GotoDefinitionParams, GotoDefinitionResponse, Hover, HoverContents,
@@ -80,6 +83,15 @@ fn main() -> Result<(), Box<dyn std::error::Error + Sync + Send>> {
         // already-published diagnostics.
         document_formatting_provider: Some(OneOf::Left(true)),
         code_action_provider: Some(CodeActionProviderCapability::Simple(true)),
+        // v0.0.27 — completion, composed in core (`CodeGraph::complete_at`) so
+        // the editor, the CLI and the agent surface answer a caret the same
+        // way. `.` and `:` trigger it; the second `:` of a `::` is what the
+        // path arm keys on.
+        completion_provider: Some(CompletionOptions {
+            trigger_characters: Some(vec![".".to_string(), ":".to_string()]),
+            resolve_provider: Some(false),
+            ..Default::default()
+        }),
         // Diagnostics — slice 4E.1's load-bearing feature. We push on
         // didOpen / didSave; pull diagnostics (LSP 3.17) not yet advertised.
         ..Default::default()
@@ -121,6 +133,14 @@ struct ServerState {
     /// the originals here so the code-action handler can lift their
     /// `(span, replacement)` pairs into editor quick-fixes.
     last_diagnostics: BTreeMap<Url, Vec<cplus_core::diagnostics::Diagnostic>>,
+    /// One resident code graph per project root, keyed by the manifest's root.
+    ///
+    /// Before v0.0.27 every graph-backed request rebuilt the whole project —
+    /// ~2 s on a large one, per goto-definition, per hover, and completion was
+    /// unthinkable at that price. The graph is now built once per project and
+    /// kept warm, with open buffers overlaid onto it; a keystroke schedules a
+    /// rebuild on a worker instead of blocking the next question.
+    sessions: BTreeMap<PathBuf, GraphSession>,
 }
 
 #[derive(Debug, Clone)]
@@ -195,6 +215,13 @@ fn handle_request(conn: &Connection, state: &mut ServerState, req: Request) {
         "textDocument/hover" => {
             let resp = match serde_json::from_value::<HoverParams>(req.params) {
                 Ok(p) => handle_hover(state, &p),
+                Err(e) => bad_params(id.clone(), &method, &e.to_string()),
+            };
+            let _ = conn.sender.send(Message::Response(resp_with_id(id, resp)));
+        }
+        "textDocument/completion" => {
+            let resp = match serde_json::from_value::<CompletionParams>(req.params) {
+                Ok(p) => handle_completion(state, &p),
                 Err(e) => bad_params(id.clone(), &method, &e.to_string()),
             };
             let _ = conn.sender.send(Message::Response(resp_with_id(id, resp)));
@@ -401,10 +428,10 @@ fn source_span_to_range(span: &cplus_core::diagnostics::SourceSpan) -> Range {
 
 // ---------------- goto-definition (slice 4E.3) ----------------
 
-fn handle_definition(state: &ServerState, params: &GotoDefinitionParams) -> HandlerResult {
+fn handle_definition(state: &mut ServerState, params: &GotoDefinitionParams) -> HandlerResult {
     let uri = &params.text_document_position_params.text_document.uri;
     let pos = params.text_document_position_params.position;
-    let Some(snap) = state.docs.get(uri) else {
+    let Some(text) = state.docs.get(uri).map(|s| s.text.clone()) else {
         return HandlerResult::Ok(serde_json::Value::Null);
     };
     let Ok(open_path) = uri.to_file_path() else {
@@ -413,21 +440,22 @@ fn handle_definition(state: &ServerState, params: &GotoDefinitionParams) -> Hand
     // Re-lex the buffer at the cursor to find the identifier under it.
     // Per the design note (§7): we look up just the bare identifier,
     // accepting that clicking on `prefix` of `prefix::Item` won't jump.
-    let Some(ident_name) = identifier_at_position(&snap.text, pos) else {
+    let Some(ident_name) = identifier_at_position(&text, pos) else {
         return HandlerResult::Ok(serde_json::Value::Null);
     };
 
     // v0.0.13 (graph fold-in): in project mode, resolve via the code graph —
     // the same resolved index `cpc query` uses. Definition nodes carry a
     // precise `file:line:col`. Single-file mode keeps the name-based fallback.
-    let locations = match build_project_graph(state, &open_path) {
-        Some((g, _loaded)) => g
+    let locations = match session_for(state, &open_path) {
+        Some(session) => session
+            .graph()
             .def(&ident_name)
             .iter()
             .filter_map(|n| n.location.as_ref().map(|loc| (loc, n.name.as_str())))
             .filter_map(|(loc, name)| graph_loc_to_lsp(loc, name.chars().count() as u32))
             .collect(),
-        None => find_decls_in_single_file(&ident_name, &open_path, &snap.text),
+        None => find_decls_in_single_file(&ident_name, &open_path, &text),
     };
 
     let resp = if locations.is_empty() {
@@ -448,22 +476,23 @@ fn handle_definition(state: &ServerState, params: &GotoDefinitionParams) -> Hand
 /// cursor, from the code graph's reference index. Honors
 /// `context.include_declaration`. Project mode only (the graph needs a
 /// resolved project); single-file returns no results.
-fn handle_references(state: &ServerState, params: &ReferenceParams) -> HandlerResult {
+fn handle_references(state: &mut ServerState, params: &ReferenceParams) -> HandlerResult {
     let uri = &params.text_document_position.text_document.uri;
     let pos = params.text_document_position.position;
     let null = || HandlerResult::Ok(serde_json::Value::Null);
-    let Some(snap) = state.docs.get(uri) else {
+    let Some(text) = state.docs.get(uri).map(|s| s.text.clone()) else {
         return null();
     };
     let Ok(open_path) = uri.to_file_path() else {
         return null();
     };
-    let Some(ident) = identifier_at_position(&snap.text, pos) else {
+    let Some(ident) = identifier_at_position(&text, pos) else {
         return null();
     };
-    let Some((g, _loaded)) = build_project_graph(state, &open_path) else {
+    let Some(session) = session_for(state, &open_path) else {
         return null();
     };
+    let g = session.graph();
 
     let mut locs: Vec<Location> = Vec::new();
     if params.context.include_declaration {
@@ -487,7 +516,7 @@ fn handle_references(state: &ServerState, params: &ReferenceParams) -> HandlerRe
 /// `textDocument/hover`: the locally-known type at the cursor, from the
 /// graph's `type-at` index (parameters, fields, typed locals, and their
 /// identifier uses). Project mode only.
-fn handle_hover(state: &ServerState, params: &HoverParams) -> HandlerResult {
+fn handle_hover(state: &mut ServerState, params: &HoverParams) -> HandlerResult {
     let uri = &params.text_document_position_params.text_document.uri;
     let pos = params.text_document_position_params.position;
     let null = || HandlerResult::Ok(serde_json::Value::Null);
@@ -497,10 +526,11 @@ fn handle_hover(state: &ServerState, params: &HoverParams) -> HandlerResult {
     let Ok(open_path) = uri.to_file_path() else {
         return null();
     };
-    let Some((g, loaded)) = build_project_graph(state, &open_path) else {
+    let Some(session) = session_for(state, &open_path) else {
         return null();
     };
-    let Some(fid) = fid_for_path(&loaded, &open_path) else {
+    let (g, loaded) = (session.graph(), session.loaded());
+    let Some(fid) = fid_for_path(loaded, &open_path) else {
         return null();
     };
     let Some((_, src)) = loaded.files.get(&fid) else {
@@ -539,16 +569,17 @@ fn handle_hover(state: &ServerState, params: &HoverParams) -> HandlerResult {
 
 /// `textDocument/documentSymbol`: the file's outline from the graph's
 /// `symbols` query (top-level items defined in this file). Project mode only.
-fn handle_document_symbol(state: &ServerState, params: &DocumentSymbolParams) -> HandlerResult {
+fn handle_document_symbol(state: &mut ServerState, params: &DocumentSymbolParams) -> HandlerResult {
     let uri = &params.text_document.uri;
     let null = || HandlerResult::Ok(serde_json::Value::Null);
     let Ok(open_path) = uri.to_file_path() else {
         return null();
     };
-    let Some((g, loaded)) = build_project_graph(state, &open_path) else {
+    let Some(session) = session_for(state, &open_path) else {
         return null();
     };
-    let Some(fid) = fid_for_path(&loaded, &open_path) else {
+    let (g, loaded) = (session.graph(), session.loaded());
+    let Some(fid) = fid_for_path(loaded, &open_path) else {
         return null();
     };
 
@@ -586,46 +617,210 @@ fn handle_document_symbol(state: &ServerState, params: &DocumentSymbolParams) ->
     )
 }
 
-/// Load + resolve the enclosing project and build the code graph. `None` in
-/// single-file mode (no reachable `Cplus.toml` with a real bin entry) or when
-/// the project fails to resolve. v0.0.14: open editor buffers are overlaid onto
-/// their on-disk files (keyed by canonical path), so hover/type-at/value-refs/
-/// goto-def reflect unsaved edits.
-fn build_project_graph(
-    state: &ServerState,
-    open_path: &Path,
-) -> Option<(graph::CodeGraph, resolver::LoadedProject)> {
-    let overlays: BTreeMap<PathBuf, String> = state
-        .docs
-        .iter()
+/// The resident code graph for the project the open document belongs to,
+/// built on first use and kept warm. `None` in single-file mode (no reachable
+/// `Cplus.toml` with a real entry) or when the project fails to resolve.
+///
+/// Open editor buffers are overlaid onto their on-disk files (keyed by
+/// canonical path), so every answer reflects unsaved edits. The first call for
+/// a project pays the full resolve; after that a caller gets whatever the last
+/// finished build produced and never blocks — a rebuild kicked by a keystroke
+/// runs on a worker, and if the half-typed buffer does not parse, the previous
+/// graph keeps answering.
+fn session_for<'a>(state: &'a mut ServerState, open_path: &Path) -> Option<&'a mut GraphSession> {
+    let (root, entry, is_lib, deps) = match find_manifest(open_path) {
+        ManifestProbe::Loaded {
+            manifest,
+            entry,
+            is_lib,
+            ..
+        } if entry.is_file() => {
+            let deps = manifest::active_dep_names(&manifest);
+            (manifest.root.clone(), entry, is_lib, deps)
+        }
+        _ => return None,
+    };
+    if !state.sessions.contains_key(&root) {
+        let overlays = overlays_from(&state.docs);
+        let (e, r) = (entry.clone(), root.clone());
+        // With the dependency names — without them the resolver runs in
+        // single-file mode and every `stdlib/...` import reports E0401, which
+        // silently cost the editor its whole graph on any real project.
+        let load = move |ov: &BTreeMap<PathBuf, String>| {
+            resolver::load_project_full(&e, &r, is_lib, Some(&deps), ov.clone())
+                .map_err(|err| err.to_diagnostic().render_short())
+        };
+        let t = std::time::Instant::now();
+        let loaded = match load(&overlays) {
+            Ok(l) => l,
+            Err(e) => {
+                // Not a diagnostic: the buffer's own errors are published by
+                // the diagnostics path. This is "no graph yet", and the caller
+                // degrades to single-file behaviour.
+                eprintln!("cpc-lsp: project graph unavailable: {e}");
+                return None;
+            }
+        };
+        let mut session = GraphSession::new(loaded, t.elapsed().as_millis(), load);
+        // The load above already applied these, so register them without
+        // scheduling a rebuild for a graph that is already current.
+        session.seed_overlays(overlays);
+        state.sessions.insert(root.clone(), session);
+    }
+    let session = state.sessions.get_mut(&root)?;
+    // Collect a finished worker if there is one; never wait for one.
+    session.absorb(false);
+    Some(session)
+}
+
+/// Every open buffer as an overlay map, keyed by canonical path.
+fn overlays_from(docs: &BTreeMap<Url, DocSnapshot>) -> BTreeMap<PathBuf, String> {
+    docs.iter()
         .filter_map(|(uri, snap)| {
             let p = uri.to_file_path().ok()?;
             let canon = std::fs::canonicalize(&p).unwrap_or(p);
             Some((canon, snap.text.clone()))
         })
+        .collect()
+}
+
+/// Push a document's current text into every resident session and start the
+/// rebuild. Called on `didOpen` / `didChange`, so the graph is already catching
+/// up by the time the next question arrives rather than starting then.
+fn push_overlay(state: &mut ServerState, uri: &Url) {
+    let Some(text) = state.docs.get(uri).map(|s| s.text.clone()) else {
+        return;
+    };
+    let Ok(p) = uri.to_file_path() else {
+        return;
+    };
+    let canon = std::fs::canonicalize(&p).unwrap_or(p);
+    for session in state.sessions.values_mut() {
+        session.set_overlay(canon.clone(), &text);
+        session.absorb(false);
+    }
+}
+
+/// Drop a closed document's overlay, so answers go back to what is on disk.
+fn drop_overlay(state: &mut ServerState, uri: &Url) {
+    let Ok(p) = uri.to_file_path() else {
+        return;
+    };
+    let canon = std::fs::canonicalize(&p).unwrap_or(p);
+    for session in state.sessions.values_mut() {
+        session.clear_overlay(&canon);
+        session.absorb(false);
+    }
+}
+
+// ---------------- completion (v0.0.27) ----------------
+
+/// `textDocument/completion`: the composed answer from
+/// `CodeGraph::complete_at` — members after a `.`, qualified names after a
+/// `::`, everything in scope otherwise.
+///
+/// The classification reads the **live buffer**, which is why this is usable
+/// mid-keystroke: the caret is always in text that differs from what was last
+/// indexed, and deciding which question is being asked is pure lexing over the
+/// text in front of the user. Only the candidates come from the graph.
+fn handle_completion(state: &mut ServerState, params: &CompletionParams) -> HandlerResult {
+    let uri = &params.text_document_position.text_document.uri;
+    let pos = params.text_document_position.position;
+    let none = || HandlerResult::Ok(serde_json::Value::Null);
+    let Some(text) = state.docs.get(uri).map(|s| s.text.clone()) else {
+        return none();
+    };
+    let Ok(open_path) = uri.to_file_path() else {
+        return none();
+    };
+    let Some(session) = session_for(state, &open_path) else {
+        return none();
+    };
+    let Some(fid) = fid_for_path(session.loaded(), &open_path) else {
+        return none();
+    };
+    let Some(byte) = graph::byte_offset(&text, pos.line + 1, pos.character + 1) else {
+        return none();
+    };
+    let answer = session.graph().complete_at(&fid, &text, byte);
+
+    // Replace the word already typed, not just insert at the caret — otherwise
+    // accepting `area` after typing `ar` leaves `ararea`.
+    let prefix_len = answer.prefix.chars().count() as u32;
+    let range = Range {
+        start: Position {
+            line: pos.line,
+            character: pos.character.saturating_sub(prefix_len),
+        },
+        end: pos,
+    };
+    let items: Vec<CompletionItem> = answer
+        .items
+        .iter()
+        .enumerate()
+        .map(|(i, e)| CompletionItem {
+            label: e.name.clone(),
+            kind: Some(completion_item_kind(
+                e.node_kind.as_deref().unwrap_or(&e.kind),
+            )),
+            detail: e
+                .signature
+                .clone()
+                .or_else(|| e.ty.clone())
+                .or_else(|| e.module.clone()),
+            // The graph already ranked these (nearest binding first). A client
+            // re-sorts by `sort_text`, so the ranking has to be carried in it
+            // or it is lost to alphabetical order.
+            sort_text: Some(format!("{i:05}")),
+            filter_text: Some(e.name.clone()),
+            text_edit: Some(CompletionTextEdit::Edit(TextEdit {
+                range,
+                new_text: e.name.clone(),
+            })),
+            ..Default::default()
+        })
         .collect();
-    match find_manifest(open_path) {
-        ManifestProbe::Loaded { manifest, entry, .. } if entry.is_file() => {
-            let loaded = resolver::load_project_with_overlays(
-                &entry,
-                &manifest.root,
-                overlays,
-            )
-            .ok()?;
-            let g = graph::CodeGraph::build(&loaded);
-            Some((g, loaded))
-        }
-        _ => None,
+    HandlerResult::Ok(
+        serde_json::to_value(CompletionResponse::Array(items))
+            .expect("CompletionResponse serializes"),
+    )
+}
+
+/// A graph kind as the icon an editor draws.
+fn completion_item_kind(kind: &str) -> CompletionItemKind {
+    match kind {
+        "local" | "parameter" | "match binding" | "loop variable" => CompletionItemKind::VARIABLE,
+        "self" => CompletionItemKind::KEYWORD,
+        "field" => CompletionItemKind::FIELD,
+        "method" => CompletionItemKind::METHOD,
+        "function" | "extern_fn" => CompletionItemKind::FUNCTION,
+        "struct" => CompletionItemKind::STRUCT,
+        "enum" => CompletionItemKind::ENUM,
+        "variant" => CompletionItemKind::ENUM_MEMBER,
+        "const" | "static" => CompletionItemKind::CONSTANT,
+        "type_alias" => CompletionItemKind::CLASS,
+        "interface" => CompletionItemKind::INTERFACE,
+        "alias" | "module" => CompletionItemKind::MODULE,
+        _ => CompletionItemKind::TEXT,
     }
 }
 
 /// Find the resolver file id whose path is the open document.
 fn fid_for_path(loaded: &resolver::LoadedProject, open_path: &Path) -> Option<String> {
     let target = std::fs::canonicalize(open_path).ok();
+    let target = target.as_deref().unwrap_or(open_path);
+    // Compare the stored path first and only canonicalize on a miss. The
+    // resolver already stores canonical paths, so the direct compare hits — and
+    // the old form called `canonicalize` on *every* file in the project on
+    // *every* request: 211 syscalls per keystroke on a real project, which is
+    // most of what a completion round trip used to cost.
     loaded
         .files
         .iter()
-        .find(|(_, (p, _))| std::fs::canonicalize(p).ok() == target)
+        .find(|(_, (p, _))| {
+            p.as_path() == target
+                || std::fs::canonicalize(p).map(|c| c == target).unwrap_or(false)
+        })
         .map(|(fid, _)| fid.clone())
 }
 
@@ -794,6 +989,7 @@ fn handle_notification(conn: &Connection, state: &mut ServerState, not: Notifica
                     text: params.text_document.text.clone(),
                 },
             );
+            push_overlay(state, &uri);
             publish_diagnostics_for(conn, state, &uri);
         }
         m if m == lsp_types::notification::DidChangeTextDocument::METHOD => {
@@ -814,7 +1010,11 @@ fn handle_notification(conn: &Connection, state: &mut ServerState, not: Notifica
                 snap.text = change.text;
             }
             // No diagnostic recompute on per-keystroke changes — see
-            // design note §5.1 (push on save only in 4E.1).
+            // design note §5.1 (push on save only in 4E.1). The graph is a
+            // different matter: hand the buffer over now so its rebuild is
+            // already running when the next question arrives.
+            let uri = params.text_document.uri.clone();
+            push_overlay(state, &uri);
         }
         m if m == lsp_types::notification::DidSaveTextDocument::METHOD => {
             let params: DidSaveTextDocumentParams = match cast_notif(&not) {
@@ -836,6 +1036,7 @@ fn handle_notification(conn: &Connection, state: &mut ServerState, not: Notifica
             };
             let uri = params.text_document.uri;
             state.docs.remove(&uri);
+            drop_overlay(state, &uri);
             // Clear diagnostics for the file the editor just closed.
             publish_empty_diagnostics(conn, &uri);
         }
@@ -939,14 +1140,28 @@ fn compute_diagnostics(
             by_file.entry(open_path.to_path_buf()).or_default();
             return by_file;
         }
-        ManifestProbe::Loaded { manifest, entry, .. } => {
+        ManifestProbe::Loaded {
+            manifest,
+            entry,
+            is_lib,
+            ..
+        } => {
             if !entry.is_file() {
                 // E0407 — manifest's app entry doesn't exist on disk.
                 push_into(&mut by_file, manifest_entry_missing_diagnostic(&entry));
                 by_file.entry(open_path.to_path_buf()).or_default();
                 return by_file;
             }
-            match resolver::load_project(&entry, &manifest.root) {
+            // Same as the graph path: a project resolved without its declared
+            // dependencies reports E0401 for every vendored import.
+            let deps = manifest::active_dep_names(&manifest);
+            match resolver::load_project_full(
+                &entry,
+                &manifest.root,
+                is_lib,
+                Some(&deps),
+                BTreeMap::new(),
+            ) {
                 Ok(mut loaded) => {
                     // Phase 5 slice 5ATTR.1: attribute validation runs first.
                     let attr_diags = attrs::check_multi(
@@ -1065,6 +1280,9 @@ enum ManifestProbe {
         /// E0407 diagnostic can name it), else the manifest's source-entry
         /// ladder (`[library]`, `src/test_main.cplus`, `src/<pkg>.cplus`).
         entry: PathBuf,
+        /// Whether that entry is a library target: its top-level items keep
+        /// unqualified names, which changes every symbol id in the graph.
+        is_lib: bool,
         // Boxed to keep `ManifestProbe` small: `Manifest` dwarfs the other
         // variants, so an unboxed field bloats every probe result.
         manifest: Box<manifest::Manifest>,
@@ -1086,11 +1304,13 @@ fn find_manifest(open_path: &Path) -> ManifestProbe {
                     // source-entry ladder finds the widest existing tree.
                     let entry = m
                         .entry_for(platform)
-                        .or_else(|| m.resolve_source_entry(platform).map(|(p, _)| p));
+                        .map(|p| (p, false))
+                        .or_else(|| m.resolve_source_entry(platform));
                     match entry {
-                        Some(entry) => ManifestProbe::Loaded {
+                        Some((entry, is_lib)) => ManifestProbe::Loaded {
                             manifest_path: candidate,
                             entry,
+                            is_lib,
                             manifest: Box::new(m),
                         },
                         // No entry at all: behave as single-file.

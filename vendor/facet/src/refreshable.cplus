@@ -32,6 +32,7 @@ fn refreshable(
     refresh_color: vocab::Color = vocab::Color::clear(),
     on_refreshing: fn(*u8, *u8) = props::no_handler,
     on_refreshing_ctx: *u8 = 0 as *u8,
+    item: *u8 = 0 as *u8,
 ) -> core::Node {
     var p: props::RefreshableProps = props::RefreshableProps::new();
     p.is_refreshable = refreshable;
@@ -39,12 +40,14 @@ fn refreshable(
     p.refresh_color = refresh_color;
     p.on_refreshing = on_refreshing;
     p.on_refreshing_ctx = on_refreshing_ctx;
-    return match box::new::[props::RefreshableProps](p) {
+    var n: core::Node = match box::new::[props::RefreshableProps](p) {
         option::Option[box::Box[props::RefreshableProps]]::Some(b) =>
             core::node_with(key, props::K_REFRESHABLE, b.into_raw(), props::release_refreshable_props),
         option::Option[box::Box[props::RefreshableProps]]::None =>
             core::node_with(key, props::K_REFRESHABLE, 0 as *u8, props::release_refreshable_props),
     };
+    if item != (0 as *u8) { core::set_item(#addr_of(n), item); }
+    return n;
 }
 
 // ---- live --------------------------------------------------------------

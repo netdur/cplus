@@ -1221,6 +1221,23 @@ fn sender_view(sender: *u8) -> *u8 {
     return sender;
 }
 
+// One step up the view chain, or 0 for something that is not in one.
+//
+// THE GUARD IS THE POINT. A sender is not always a view: an NSMenuItem is the
+// sender of a menu action and answers no `superview` at all, so the bare send
+// raised an unrecognized selector from inside the handler — and the handler in
+// question is the one line every button, row and icon in an app already writes.
+// An object with no superview has reached the top of its chain, which is
+// exactly what the walk's own termination condition means, so answering 0 is
+// not a special case grafted on; it is the same answer.
+fn superview_of(v: *u8) -> *u8 {
+    if v == (0 as *u8) { return 0 as *u8; }
+    if synth::class_responds(synth::object_class(v), rt::sel(#str_ptr("superview\0"))) == (0 as i8) {
+        return 0 as *u8;
+    }
+    return { rt::msg_id(v, rt::sel(#str_ptr("superview\0"))) };
+}
+
 // The key IS the accessibilityIdentifier (one token, three jobs), and the walk
 // goes UP: a click on an untagged icon inside a tagged row answers the row.
 fn key_of(sender: *u8) -> text::Text {
@@ -1232,7 +1249,7 @@ fn key_of(sender: *u8) -> text::Text {
                                              bridge::ns_utf8()) };
             if len > (0 as u64) { return bridge::to_text(ns); }
         }
-        v = { rt::msg_id(v, rt::sel(#str_ptr("superview\0"))) };
+        v = superview_of(v);
     }
     return text::new();
 }
@@ -1244,7 +1261,7 @@ fn item_of(sender: *u8) -> *u8 {
     while v != (0 as *u8) {
         let it: *u8 = { synth::get_associated(v, item_key()) };
         if it != (0 as *u8) { return it; }
-        v = { rt::msg_id(v, rt::sel(#str_ptr("superview\0"))) };
+        v = superview_of(v);
     }
     return 0 as *u8;
 }

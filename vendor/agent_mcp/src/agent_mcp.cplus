@@ -139,6 +139,14 @@ fn outcome_to_str(o: surface::Outcome) -> str {
     // abandons work one approval would have unblocked.
     if surface::outcome_eq(o, surface::Outcome::NeedsGrant) { return "needs_grant"; }
     if surface::outcome_eq(o, surface::Outcome::Forbidden) { return "forbidden"; }
+    // `no_handler` says the click WAS delivered and nothing was on the other
+    // end — a report, not a refusal, and the one outcome an agent should treat
+    // as "this control is dead, stop pressing it". Folding it into
+    // `version_conflict` (which the fall-through below does for anything
+    // unnamed) would tell an agent to re-read and try again, forever. Adding an
+    // outcome without adding an arm here is exactly the mistake this line
+    // warned about, and it was made once already while writing it.
+    if surface::outcome_eq(o, surface::Outcome::NoHandler) { return "no_handler"; }
     return "version_conflict";
 }
 
@@ -245,6 +253,15 @@ fn node_to_json(p: *backend::UiNode, with_geometry: bool, parent_index: i64) -> 
     // press that does not exist.
     m.append(member("actionable", jbool({ (*p).actionable })));
     m.append(member("clickable", jbool({ (*p).clickable })));
+    // DELIVERY, and absent when the backend cannot answer. Omitted rather than
+    // sent as `false`, because "not answered" and "answered no" are different
+    // facts and a model told the wrong one either skips a working control or
+    // keeps pressing a dead one. `hit_test` reports `supported` for the same
+    // reason.
+    match { (*p).wired } {
+        option::Option[bool]::Some(w) => { m.append(member("wired", jbool(w))); }
+        option::Option[bool]::None => { }
+    }
     m.append(member("parent", parent_val));
     return json::Value::Object(m);
 }
@@ -540,7 +557,7 @@ fn core_tools() -> vec::Vec[json::Value] {
     p_describe.append(prop("prefix", "string",
         "Answer only with nodes whose id starts with this, e.g. \"board:detail:\". Absent means the whole view. Use it: a whole-tree answer runs to tens of thousands of characters, and the id path is a path, so the question you are asking almost always has a prefix."));
     out.append(tool("describe_ui",
-        "The live UI of THE APPLICATION SERVING THIS ENDPOINT, as a flat list of nodes: id, role, text, hidden, actionable, clickable, parent. If that application launched another one, the launched app has its own endpoint and does NOT appear here. Read this FIRST — a node's id is its address for every other verb, and the id path is the schema. Pass \"prefix\" to ask about one part of it.",
+        "The live UI of THE APPLICATION SERVING THIS ENDPOINT, as a flat list of nodes: id, role, text, hidden, actionable, clickable, wired, parent. The three flags are different questions and you need all three: `actionable` is whether you are ALLOWED to act, `clickable` is whether a click would LAND, and `wired` is whether it would reach a handler — a control can pass the first two and still do nothing. `wired` absent means this backend cannot answer it, which is not the same as false. If that application launched another one, the launched app has its own endpoint and does NOT appear here. Read this FIRST — a node's id is its address for every other verb, and the id path is the schema. Pass \"prefix\" to ask about one part of it.",
         p_describe, no_required()));
 
     var p_click: vec::Vec[json::Member] = no_props();
@@ -1437,6 +1454,7 @@ fn fake_node(id: str) -> backend::UiNode {
         readable: true,
         actionable: true,
         clickable: true,
+        wired: option::Option[bool]::Some(true),
         parent: option::Option[usize]::None,
     };
 }
@@ -1458,6 +1476,7 @@ fn fake_secret_node(id: str, grant: auth::Grant) -> backend::UiNode {
         readable: may_read,
         actionable: grant.has(auth::cap_act() | auth::cap_act_protected()),
         clickable: false,
+        wired: option::Option[bool]::Some(false),
         parent: option::Option[usize]::None,
     };
 }
@@ -1479,6 +1498,7 @@ fn fake_blank_node(id: str, readable: bool) -> backend::UiNode {
         readable: readable,
         actionable: false,
         clickable: false,
+        wired: option::Option[bool]::Some(false),
         parent: option::Option[usize]::None,
     };
 }
@@ -2283,6 +2303,25 @@ fn ask_and_stop_are_different_words_on_the_wire() {
     assert runs.contains("needs_grant");
     return;
 }
+#[test]
+fn every_outcome_has_its_own_word_on_the_wire() {
+    // The fall-through in `outcome_to_str` reports anything unnamed as
+    // `version_conflict`, which tells an agent to re-read and try again. That
+    // is a loop, not an answer — so every outcome must be named, and this test
+    // is what makes "must" enforceable. It caught `no_handler` being reported
+    // as a version conflict the first time it was added.
+    assert outcome_to_str(surface::Outcome::Allowed) == "allowed";
+    assert outcome_to_str(surface::Outcome::NotFound) == "not_found";
+    assert outcome_to_str(surface::Outcome::NotExposed) == "not_exposed";
+    assert outcome_to_str(surface::Outcome::NotActionable) == "not_actionable";
+    assert outcome_to_str(surface::Outcome::Stale) == "stale";
+    assert outcome_to_str(surface::Outcome::NeedsGrant) == "needs_grant";
+    assert outcome_to_str(surface::Outcome::Forbidden) == "forbidden";
+    assert outcome_to_str(surface::Outcome::NoHandler) == "no_handler";
+    assert outcome_to_str(surface::Outcome::VersionConflict) == "version_conflict";
+    return;
+}
+
 
 #[test]
 fn the_full_view_is_not_a_way_around_a_tier() {

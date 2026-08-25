@@ -816,11 +816,144 @@ running.
 must be made before the process can go on, with no window to attach to. An
 agent cannot reach it, which is exactly why it is not the default.
 
+### What a KEYBOARD does with a sheet, which is the half this section forgot
+
+Everything above describes the agent path completely and said nothing about the
+person at the keyboard — and that omission is the shape of the bug it hid.
+A native alert gives a window a default button and a cancel button for free.
+Building the sheet out of facet controls is what makes it keyed and drivable,
+and the price is that **everything the platform gave for nothing has to be
+supplied here**. It was not, for as long as this section existed.
+
+    alert     Return -> primary     Escape -> secondary
+    prompt    Return -> ok          Escape -> cancel
+    choose    neither
+
+`keyEquivalent` is `"\r"` on the primary and `"\x1b"` on the secondary, set
+after the mount because the buttons need their views. A default button also
+draws accented, so this is appearance as well as behaviour.
+
+**A `choose` binds neither, deliberately.** Its buttons are N options and none
+of them is "the obvious one", so binding Return would act on the user's behalf
+without being asked — and there is no cancel button for Escape to take, because
+the options ARE the answer. (The ledger disagrees: `ActionSheetArguments`
+declares `Cancel` and `Destruction` and facet has neither. That is unbuilt, not
+decided — `gen_contract`'s guard 8 prints it on every regen.)
+
+**Escape on a one-button alert does nothing**, and that is not an oversight
+either: a single-button alert is an ACKNOWLEDGEMENT, and dismissing it on
+Escape would acknowledge on the user's behalf.
+
+### What pressing Return actually does, step by step
+
+Worth spelling out, because every bug in this section came from a wrong belief
+about one of these steps — including the belief this section used to state.
+
+**A key equivalent is not consulted while a field is being edited.** The field
+editor is first responder and it takes the key. Measured on a live sheet, one
+variable changed between the two runs and nothing else:
+
+    firstResponder = NSTextView   ->  NSApp sendEvent Return  ->  nothing
+    firstResponder = NSWindow     ->  NSApp sendEvent Return  ->  the button fires
+
+Which means a prompt is always in the case that does not work: the caret is in
+the field, because that is where a person is typing the name.
+
+So Return reaches a prompt through the FIELD, not around it:
+
+    1. The field editor gets the key and turns it into the control's ACTION
+       — `Entry.Completed`, which `text_input.cplus` delivers as `on_submit`
+       for a field (an editor submits on focus loss instead, because Return
+       inserts a newline there).
+    2. `prompt_tree` wires that action to `prompt_ok`, the same handler the
+       OK button's `on_click` carries.
+    3. `prompt_ok` reads the field and answers, exactly as a click would.
+
+Editing has ENDED by the time the action fires, so `stringValue` is already
+committed — the field editor cannot hand back stale text on this path.
+
+An `alert` or a `choose` has no text field, so nothing is editing and the key
+equivalent IS the live path for them:
+
+    1. NSWindow runs `performKeyEquivalent:`, walking the view tree.
+    2. NSButton claims the key when characters and modifiers match its
+       `keyEquivalent` AND the button is ENABLED.
+    3. The claiming button calls `performClick:` ON ITSELF.
+    4. That sends its action through the `action_ctx_target` trampoline.
+    5. `alert_primary` / `alert_secondary` runs, as a mouse click would.
+
+**Return, a mouse click and an agent's `click` all converge on `performClick:`.**
+The agent surface sends the same selector, so there is one path through the
+handler and no simulated second one — an agent answering a sheet and a person
+answering it cannot drift.
+
+**A disabled default button claims nothing** (step 2), so the key falls through
+rather than committing something the button itself refuses.
+
+**ESCAPE IS NOT THE SAME QUESTION and had to be asked separately.** NSTextView
+does not implement `cancelOperation:` — sending it directly raises — it
+RECEIVES it as a command from `interpretKeyEvents:` and passes it up, so the
+cancel button's key equivalent is reached even while the field has focus. That
+is measured, not assumed: `escape_in_the_field_cancels_the_prompt` drives
+`doCommandBySelector:` the way AppKit does.
+
+### ASSERTING A PROPERTY IS NOT ASSERTING A BEHAVIOUR — twice
+
+The first attempt set `keyEquivalent`, asserted it read back, and called the
+rest "needs hands".
+
+The second attempt drove an `NSEvent` — but by calling `performKeyEquivalent:`
+ITSELF and commenting that this was "the window's own order". That asserts the
+button ANSWERS when asked. It does not assert that anything ASKS, and while a
+field is being edited nothing does. Every keyboard test passed and the app
+ignored Enter, because the tests took the one path a real keystroke never takes.
+
+What closed it was prints in the live app: `prompt_ok` never fired at all. Not
+a wrong value, not a stale read — the handler was never reached, which ruled
+out the whole field-editor theory the previous pass had built.
+
+The checks now drive the mechanism a keystroke actually becomes:
+`insertNewline:` on the field editor for Return, `doCommandBySelector:` for
+Escape. `return_in_the_field_answers_the_prompt_because_the_key_equivalent_never_will`
+fails if the `on_submit` wire is removed — it was run both ways.
+
+**A headless test cannot answer this one.** There is no key window and the app
+is not active, so `NSApp sendEvent:` does nothing for a reason that has nothing
+to do with the bug. A test built on it fails green. That is why the live app,
+with prints, is the instrument here.
+
+### `prompt` opens on a value
+
+`initial:` is the ledger's `initialValue` and is NOT `placeholder`: one is the
+hint shown while the field is EMPTY, the other is what the field STARTS with
+and what a person then edits. Only the hint reached facet's signature at first,
+so a Rename opened on nothing with the old name greyed out behind the caret.
+
+The caret lands in the field and the old name is selected, so the first
+keystroke replaces it. **Neither is this package's doing** — AppKit makes the
+first valid key view the initial first responder when a window becomes key, and
+selects a text field's contents when it does. A `selectText:` call was added
+here on the assumption that they did not happen, and removed again when
+measuring showed it changed nothing. The check stays, because a change to the
+tree could take it away silently.
+
+`maxLength` and `keyboard` are the two rows of `DisplayPromptAsync` facet does
+not carry: a length limit belongs on `text_field` before it belongs on the
+dialog, and a keyboard TYPE is a touch idiom that macOS has no answer for.
+
 **The file pickers stay native, and that is a hole.** `choose_file` and
 `choose_directory` are NSOpenPanel, which an agent cannot drive and which
 cannot be reimplemented — the panel IS the sandbox door, and a facet-drawn
 imitation would grant nothing. An application that needs an agent to choose a
 file has to offer a path some other way.
+
+The argument above is about REIMPLEMENTING the panel and it holds. It does not
+cover the other half: `choose_file` and `choose_directory` still call
+`run_modal`, which is application-modal, so the whole app stops — including the
+agent channel, whose own request is what would have to return. Presenting the
+same NSOpenPanel with `beginSheetModalForWindow:completionHandler:` would keep
+the sandbox door and drop the block, at the cost of the verbs answering through
+a handler like every other dialog here. Unbuilt.
 
 ### The window tier: what a native window is asked
 

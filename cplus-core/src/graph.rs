@@ -172,6 +172,22 @@ pub struct CodeGraph {
     /// its name is in scope, backing the `scope-at` query. Internal.
     #[serde(skip)]
     pub scope_bindings: Vec<ScopeBinding>,
+    /// `symbol id → the nodes carrying it`, and `bare name → the nodes with
+    /// that name`, as indices into `nodes`. Built once at the end of `build`.
+    ///
+    /// Every lookup query used to scan the whole node vector — 43k nodes on a
+    /// real project, once per question, and `members` did a `contains` per node
+    /// on top of that. That was fine while a question was asked by a human; it
+    /// is not while one is asked on a keystroke behind `complete-at`. A symbol
+    /// id can repeat (the same method name in two `impl` blocks), so both map
+    /// to a *list* — dropping the duplicate would silently lose a definition.
+    ///
+    /// Derived from `nodes`: anything that mutates `nodes` after `build` has to
+    /// call `reindex`.
+    #[serde(skip)]
+    by_id: BTreeMap<String, Vec<u32>>,
+    #[serde(skip)]
+    by_name: BTreeMap<String, Vec<u32>>,
     /// v0.0.26 completion: `file_id → the import aliases that file bound`,
     /// carried over from the resolver so `scope-at` can answer what `text::`
     /// means here without the caller parsing an import line. Internal.
@@ -596,7 +612,45 @@ impl CodeGraph {
             g.collect_scope_bindings(&lowered, proj, &linemaps);
         }
         g.import_aliases = proj.import_aliases.clone();
+        g.reindex();
         g
+    }
+
+    /// Rebuild the id/name indices from `nodes`. Called once at the end of
+    /// `build`; any later mutation of `nodes` must call it again.
+    fn reindex(&mut self) {
+        self.by_id.clear();
+        self.by_name.clear();
+        for (i, n) in self.nodes.iter().enumerate() {
+            self.by_id.entry(n.id.clone()).or_default().push(i as u32);
+            self.by_name.entry(n.name.clone()).or_default().push(i as u32);
+        }
+    }
+
+    /// The nodes a query names, by id or by bare name, in node order.
+    fn lookup(&self, query: &str) -> Vec<&Node> {
+        let mut idx: Vec<u32> = Vec::new();
+        if let Some(v) = self.by_id.get(query) {
+            idx.extend(v);
+        }
+        if let Some(v) = self.by_name.get(query) {
+            idx.extend(v);
+        }
+        self.at(idx)
+    }
+
+    /// Node references for a list of indices, deduplicated and in node order —
+    /// the order a full scan would have produced, so an indexed query answers
+    /// identically to the scan it replaced.
+    fn at(&self, mut idx: Vec<u32>) -> Vec<&Node> {
+        idx.sort_unstable();
+        idx.dedup();
+        idx.iter().map(|i| &self.nodes[*i as usize]).collect()
+    }
+
+    /// The node indices an edge's target names.
+    fn target_idx(&self, id: &str) -> impl Iterator<Item = u32> + '_ {
+        self.by_id.get(id).into_iter().flatten().copied()
     }
 
     /// v0.0.14 graph value-depth: build per-binding value-flow for every
@@ -984,6 +1038,19 @@ impl CodeGraph {
     /// module-level functions the resolver treats like any other, but nobody
     /// types one.
     pub fn scope_at_json(&self, fid: &str, byte: u32) -> String {
+        let (context, bindings) = self.scope_entries(fid, byte);
+        let res = ScopeAtResult {
+            kind: "scope-at".to_string(),
+            context,
+            bindings,
+        };
+        serde_json::to_string_pretty(&res).unwrap_or_else(|_| "{}".to_string())
+    }
+
+    /// The flat "what can I type here" list, shared by `scope-at` and the
+    /// unqualified arm of `complete-at`. Returns the enclosing item's symbol id
+    /// (where the cursor is inside one) and the visible names.
+    fn scope_entries(&self, fid: &str, byte: u32) -> (Option<String>, Vec<ScopeEntry>) {
         let locals = self.scope_at(fid, byte);
         let mut out: Vec<ScopeEntry> = Vec::new();
         let context = locals.first().map(|b| b.context.clone()).or_else(|| {
@@ -1004,6 +1071,7 @@ impl CodeGraph {
                 id: None,
                 module: None,
                 signature: None,
+                node_kind: None,
                 location: Some(b.location.clone()),
             });
         }
@@ -1020,7 +1088,7 @@ impl CodeGraph {
             .iter()
             .filter(|e| e.from == fid && e.kind == EdgeKind::Defines)
         {
-            let Some(n) = self.nodes.iter().find(|n| n.id == e.to) else {
+            let Some(n) = self.target_idx(&e.to).next().map(|i| &self.nodes[i as usize]) else {
                 continue;
             };
             if n.is_test {
@@ -1036,6 +1104,7 @@ impl CodeGraph {
                 id: Some(n.id.clone()),
                 module: None,
                 signature: n.signature.clone(),
+                node_kind: Some(node_kind_str(n.kind).to_string()),
                 location: n.location.clone(),
             });
         }
@@ -1048,15 +1117,11 @@ impl CodeGraph {
                 id: None,
                 module: Some(a.module.clone()),
                 signature: None,
+                node_kind: None,
                 location: None,
             });
         }
-        let res = ScopeAtResult {
-            kind: "scope-at".to_string(),
-            context,
-            bindings: out,
-        };
-        serde_json::to_string_pretty(&res).unwrap_or_else(|_| "{}".to_string())
+        (context, out)
     }
 
     /// Serialize the whole graph as pretty JSON (`cpc graph`).
@@ -1077,58 +1142,56 @@ impl CodeGraph {
     /// any node whose name (last segment) equals the query — so both
     /// `src.math::area` and a bare `area` resolve.
     pub fn def(&self, symbol: &str) -> Vec<&Node> {
-        self.nodes
-            .iter()
-            .filter(|n| n.id == symbol || n.name == symbol)
-            .collect()
+        self.lookup(symbol)
     }
 
     /// Fields + methods of a struct/enum (by id or bare name). Returns the
     /// member nodes reachable via `has_field` / `has_method` / `has_variant`.
     pub fn members(&self, ty: &str) -> Vec<&Node> {
-        let owners: Vec<&str> = self
-            .nodes
-            .iter()
-            .filter(|n| {
-                matches!(n.kind, NodeKind::Struct | NodeKind::Enum) && (n.id == ty || n.name == ty)
-            })
+        let owners: BTreeSet<&str> = self
+            .lookup(ty)
+            .into_iter()
+            .filter(|n| matches!(n.kind, NodeKind::Struct | NodeKind::Enum))
             .map(|n| n.id.as_str())
             .collect();
-        let member_ids: Vec<&str> = self
+        if owners.is_empty() {
+            return Vec::new();
+        }
+        // One pass over the edges, then a map lookup per member — rather than a
+        // second pass over every node asking whether it is one.
+        let idx: Vec<u32> = self
             .edges
             .iter()
             .filter(|e| {
-                owners.contains(&e.from.as_str())
-                    && matches!(
-                        e.kind,
-                        EdgeKind::HasField | EdgeKind::HasMethod | EdgeKind::HasVariant
-                    )
+                matches!(
+                    e.kind,
+                    EdgeKind::HasField | EdgeKind::HasMethod | EdgeKind::HasVariant
+                ) && owners.contains(e.from.as_str())
             })
-            .map(|e| e.to.as_str())
+            .flat_map(|e| self.target_idx(&e.to))
             .collect();
-        self.nodes
-            .iter()
-            .filter(|n| member_ids.contains(&n.id.as_str()))
-            .collect()
+        self.at(idx)
     }
 
     /// Outline of one file (by file id) or the whole project. Returns the
     /// non-module nodes, optionally restricted to those defined in `file`.
     pub fn symbols(&self, file: Option<&str>) -> Vec<&Node> {
-        let in_file: Option<Vec<&str>> = file.map(|f| {
-            self.edges
+        let Some(f) = file else {
+            return self
+                .nodes
                 .iter()
-                .filter(|e| e.kind == EdgeKind::Defines && e.from == f)
-                .map(|e| e.to.as_str())
-                .collect()
-        });
-        self.nodes
+                .filter(|n| n.kind != NodeKind::Module)
+                .collect();
+        };
+        let idx: Vec<u32> = self
+            .edges
             .iter()
+            .filter(|e| e.kind == EdgeKind::Defines && e.from == f)
+            .flat_map(|e| self.target_idx(&e.to))
+            .collect();
+        self.at(idx)
+            .into_iter()
             .filter(|n| n.kind != NodeKind::Module)
-            .filter(|n| match &in_file {
-                None => true,
-                Some(ids) => ids.contains(&n.id.as_str()),
-            })
             .collect()
     }
 
@@ -1137,13 +1200,13 @@ impl CodeGraph {
     /// Symbol ids of the function/method nodes matching a query (by id or bare
     /// name). The anchor for `callers` / `callees` / `call-hierarchy`.
     fn callable_ids(&self, name: &str) -> Vec<String> {
-        self.nodes
-            .iter()
+        self.lookup(name)
+            .into_iter()
             .filter(|n| {
                 matches!(
                     n.kind,
                     NodeKind::Function | NodeKind::ExternFn | NodeKind::Method
-                ) && (n.id == name || n.name == name)
+                )
             })
             .map(|n| n.id.clone())
             .collect()
@@ -1367,6 +1430,210 @@ impl CodeGraph {
         let vf = self.value_refs(fid, byte)?;
         Some(serde_json::to_string_pretty(vf).unwrap_or_else(|_| "{}".to_string()))
     }
+
+    // ---- v0.0.27 completion: complete-at (the composed answer) ----
+
+    /// `cpc query complete` / the `complete_at` MCP tool / the LSP's
+    /// `textDocument/completion` — **the whole answer at a caret**, not the
+    /// pieces to assemble one from.
+    ///
+    /// `scope-at`, `type-at` and `members` are the three primitives a caller
+    /// used to chain by hand, and every caller that chained them had to
+    /// re-derive the same thing first: *which* of the three questions this
+    /// caret is even asking. That classification is a property of the text and
+    /// the language, not of the front end asking, so it belongs here — one
+    /// implementation, shared by the CLI, the agent surface, and the editor,
+    /// instead of one per front door drifting apart.
+    ///
+    /// Three contexts, decided by what sits before the caret's word:
+    ///
+    /// * **`member`** — a `.`, so the fields and methods of the receiver's
+    ///   type. Enum variants are dropped: they are reached through `::`.
+    /// * **`path`** — a `::`, so the items of the module an import alias binds,
+    ///   or a type's associated methods and variants.
+    /// * **`scope`** — anything else, so `scope-at`'s flat list of locals,
+    ///   parameters, `this`, module items and aliases.
+    ///
+    /// `src` is the caller's **live** buffer and `byte` an offset into it; the
+    /// classification is therefore always about the text as typed, even when
+    /// the graph behind the semantic half was built a beat earlier. That split
+    /// is deliberate: the caret is always in a buffer that differs from what
+    /// was last indexed, and half-typed text is the normal case here, not the
+    /// exception.
+    ///
+    /// Candidates are filtered by the word already typed (case-insensitively,
+    /// so `vec` reaches `Vec`) and ranked: a case-sensitive prefix match first,
+    /// then locals before members before items before aliases, then
+    /// alphabetically. Privacy is name-based, as everywhere else in C+ — a
+    /// `_`-prefixed name is offered only inside the file that defines it — and
+    /// `#[test]` functions are never offered.
+    pub fn complete_at_json(&self, fid: &str, src: &str, byte: u32) -> String {
+        serde_json::to_string_pretty(&self.complete_at(fid, src, byte))
+            .unwrap_or_else(|_| "{}".to_string())
+    }
+
+    /// `complete_at_json`'s answer before it is rendered — for a caller that
+    /// maps it onto its own protocol (the LSP) rather than printing it.
+    pub fn complete_at(&self, fid: &str, src: &str, byte: u32) -> Completion {
+        let mut caret = (byte as usize).min(src.len());
+        while caret > 0 && !src.is_char_boundary(caret) {
+            caret -= 1;
+        }
+        let prefix_start = ident_start(src, caret);
+        let prefix = src[prefix_start..caret].to_string();
+        // Whitespace between the word and the `.` / `::` is skipped so a
+        // multi-line method chain classifies as a member access, which is the
+        // shape it is actually written in.
+        let before = trim_ws_back(src, prefix_start);
+        let bytes = src.as_bytes();
+
+        let mut context = "scope";
+        let mut receiver_type = None;
+        let mut qualifier = None;
+        let mut module = None;
+        let in_context;
+        let mut items: Vec<ScopeEntry> = Vec::new();
+
+        if before >= 2 && &src[before - 2..before] == "::" {
+            context = "path";
+            let q_end = trim_ws_back(src, before - 2);
+            let q = src[ident_start(src, q_end)..q_end].to_string();
+            let (found, from_module) = self.path_items(fid, &q);
+            items = found;
+            module = from_module;
+            qualifier = Some(q);
+            in_context = self.enclosing_context(fid, byte);
+        } else if before >= 1 && bytes[before - 1] == b'.' {
+            context = "member";
+            let recv_end = trim_ws_back(src, before - 1) as u32;
+            // A receiver's type is the spot that *ends* where the dot begins —
+            // which is what makes `a.b().c.` work: the outermost expression
+            // ending there is the one being dotted, not the identifier inside
+            // it. Falling back to the innermost spot covering the last byte
+            // keeps a plain `foo.` answering when no expression spot was
+            // recorded for it.
+            if let Some(spot) = self.type_ending_at(fid, recv_end) {
+                let ty = type_head_name(&spot.ty).to_string();
+                items = self.member_items(fid, &ty);
+                receiver_type = Some(ty);
+            }
+            in_context = self.enclosing_context(fid, byte);
+        } else {
+            let (ctx, entries) = self.scope_entries(fid, byte);
+            in_context = ctx;
+            items = entries;
+        }
+
+        if !prefix.is_empty() {
+            let lower = prefix.to_lowercase();
+            items.retain(|e| e.name.to_lowercase().starts_with(&lower));
+        }
+        items.sort_by(|a, b| {
+            rank(a, &prefix)
+                .cmp(&rank(b, &prefix))
+                .then_with(|| a.name.cmp(&b.name))
+        });
+
+        Completion {
+            kind: "complete-at".to_string(),
+            context: context.to_string(),
+            prefix,
+            receiver_type,
+            qualifier,
+            module,
+            in_context,
+            items,
+        }
+    }
+
+    /// The enclosing function/method's symbol id at a position, for the arms
+    /// that do not already walk the scope index.
+    fn enclosing_context(&self, fid: &str, byte: u32) -> Option<String> {
+        self.scope_bindings
+            .iter()
+            .filter(|b| b.fid == fid && byte >= b.visible.start && byte < b.visible.end)
+            .min_by_key(|b| b.visible.end.saturating_sub(b.visible.start))
+            .map(|b| b.context.clone())
+    }
+
+    /// The type of the expression ending at `end` — the receiver of a `.`
+    /// sitting there.
+    fn type_ending_at(&self, fid: &str, end: u32) -> Option<&TypeSpot> {
+        self.type_spots
+            .iter()
+            .filter(|s| s.fid == fid && s.span.end == end)
+            .max_by_key(|s| s.span.end.saturating_sub(s.span.start))
+            .or_else(|| {
+                if end == 0 {
+                    None
+                } else {
+                    self.type_at(fid, end - 1)
+                }
+            })
+    }
+
+    /// Fields and methods reachable through a `.` on a value of type `ty`.
+    fn member_items(&self, fid: &str, ty: &str) -> Vec<ScopeEntry> {
+        let own = format!("{fid}::");
+        self.members(ty)
+            .into_iter()
+            .filter(|n| n.kind != NodeKind::Variant)
+            .filter(|n| n.is_pub || n.id.starts_with(&own))
+            .map(entry_for)
+            .collect()
+    }
+
+    /// Names reachable through `qualifier::`. A module first — an import alias
+    /// this file bound, else a module the graph knows by id or by its last
+    /// segment — and a type second, whose associated methods and variants are
+    /// what `::` reaches. Returns the candidates and the module id they came
+    /// from, so the caller can report what the alias resolved to.
+    fn path_items(&self, fid: &str, qualifier: &str) -> (Vec<ScopeEntry>, Option<String>) {
+        let module = self
+            .import_aliases
+            .get(fid)
+            .into_iter()
+            .flatten()
+            .find(|a| a.alias == qualifier)
+            .map(|a| a.module.clone())
+            .or_else(|| {
+                self.nodes
+                    .iter()
+                    .find(|n| {
+                        n.kind == NodeKind::Module
+                            && (n.id == qualifier || n.id.rsplit('.').next() == Some(qualifier))
+                    })
+                    .map(|n| n.id.clone())
+            });
+        if let Some(m) = module {
+            let items = self.module_items(&m);
+            return (items, Some(m));
+        }
+        let own = format!("{fid}::");
+        let items = self
+            .members(qualifier)
+            .into_iter()
+            .filter(|n| matches!(n.kind, NodeKind::Method | NodeKind::Variant))
+            .filter(|n| n.is_pub || n.id.starts_with(&own))
+            .map(entry_for)
+            .collect();
+        (items, None)
+    }
+
+    /// The public, non-test items a module declares.
+    fn module_items(&self, module: &str) -> Vec<ScopeEntry> {
+        let idx: Vec<u32> = self
+            .edges
+            .iter()
+            .filter(|e| e.kind == EdgeKind::Defines && e.from == module)
+            .flat_map(|e| self.target_idx(&e.to))
+            .collect();
+        self.at(idx)
+            .into_iter()
+            .filter(|n| n.is_pub && !n.is_test)
+            .map(entry_for)
+            .collect()
+    }
 }
 
 /// Byte offset of a 1-based `(line, col)` position in `src`, counted in chars
@@ -1457,20 +1724,163 @@ struct ContextResult {
 /// name sources it came from; the optional fields are the ones that only apply
 /// to some of them (`type` to a binding, `module` to an alias, `id` and
 /// `signature` to a module item).
-#[derive(Serialize)]
-struct ScopeEntry {
-    name: String,
-    kind: String,
+/// One name a caller can type at a position — the entry `scope-at` lists and
+/// `complete-at` ranks.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct ScopeEntry {
+    pub name: String,
+    /// `local` | `parameter` | `self` | `match binding` | `loop variable` |
+    /// `item` | `alias` for a scope answer; the node's kind (`method`,
+    /// `field`, `function`, …) for a member or path answer.
+    pub kind: String,
     #[serde(rename = "type", skip_serializing_if = "Option::is_none")]
-    ty: Option<String>,
+    pub ty: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    id: Option<String>,
+    pub id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    module: Option<String>,
+    pub module: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    signature: Option<String>,
+    pub signature: Option<String>,
+    /// For a module item, whose `kind` is the flat `"item"`: the graph node's
+    /// own kind (`function`, `struct`, `const`, …). Additive — `kind` keeps
+    /// saying `item`, because callers filter on it.
     #[serde(skip_serializing_if = "Option::is_none")]
-    location: Option<Location>,
+    pub node_kind: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub location: Option<Location>,
+}
+
+/// JSON shape for `complete-at`: what kind of completion this caret is, the
+/// word already typed, what the qualifier resolved to, and the ranked
+/// candidates.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct Completion {
+    kind: String,
+    /// `member` | `path` | `scope`.
+    pub context: String,
+    /// The word already typed, which the client replaces. Empty right after a
+    /// `.` or `::`.
+    pub prefix: String,
+    /// Member context: the receiver's type, once resolved. Absent when the
+    /// receiver's type is not locally known — honest, not a guess.
+    #[serde(rename = "receiver_type", skip_serializing_if = "Option::is_none")]
+    pub receiver_type: Option<String>,
+    /// Path context: the name before the `::`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub qualifier: Option<String>,
+    /// Path context: the module id that qualifier resolved to, if it was a
+    /// module rather than a type.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub module: Option<String>,
+    /// The enclosing function or method, where the caret is inside one.
+    #[serde(rename = "in", skip_serializing_if = "Option::is_none")]
+    pub in_context: Option<String>,
+    /// The candidates, already filtered by `prefix` and ranked.
+    pub items: Vec<ScopeEntry>,
+}
+
+/// Sort key for a candidate: a case-sensitive prefix match beats a
+/// case-insensitive one, then nearer bindings beat farther ones.
+fn rank(e: &ScopeEntry, prefix: &str) -> (u8, u8) {
+    let exact = u8::from(!(prefix.is_empty() || e.name.starts_with(prefix)));
+    (exact, kind_rank(&e.kind))
+}
+
+/// How near a kind of name is to the caret. A local is what you most likely
+/// meant; an alias is a namespace you are about to open, so it goes last.
+fn kind_rank(kind: &str) -> u8 {
+    match kind {
+        "local" | "parameter" | "self" | "match binding" | "loop variable" => 0,
+        "field" | "method" | "variant" => 1,
+        "item" | "function" | "struct" | "enum" | "const" | "static" | "type_alias"
+        | "interface" | "extern_fn" => 2,
+        "alias" | "module" => 3,
+        _ => 4,
+    }
+}
+
+/// A graph node as a completion candidate. A field's declared type lands in
+/// `type` as well as `signature`, because that is what a client shows next to
+/// the name.
+fn entry_for(n: &Node) -> ScopeEntry {
+    ScopeEntry {
+        name: n.name.clone(),
+        kind: node_kind_str(n.kind).to_string(),
+        ty: match n.kind {
+            NodeKind::Field | NodeKind::Const | NodeKind::Static => n.signature.clone(),
+            _ => None,
+        },
+        id: Some(n.id.clone()),
+        module: None,
+        signature: n.signature.clone(),
+        // `kind` already carries the node kind here.
+        node_kind: None,
+        location: n.location.clone(),
+    }
+}
+
+fn node_kind_str(k: NodeKind) -> &'static str {
+    match k {
+        NodeKind::Module => "module",
+        NodeKind::Function => "function",
+        NodeKind::ExternFn => "extern_fn",
+        NodeKind::Method => "method",
+        NodeKind::Struct => "struct",
+        NodeKind::Enum => "enum",
+        NodeKind::Variant => "variant",
+        NodeKind::Field => "field",
+        NodeKind::Const => "const",
+        NodeKind::Static => "static",
+        NodeKind::TypeAlias => "type_alias",
+        NodeKind::Interface => "interface",
+    }
+}
+
+fn is_ident_byte(b: u8) -> bool {
+    b == b'_' || b.is_ascii_alphanumeric()
+}
+
+/// Start of the identifier the caret sits at the end of (`caret` itself when
+/// the caret does not follow one).
+fn ident_start(src: &str, caret: usize) -> usize {
+    let b = src.as_bytes();
+    let mut i = caret;
+    while i > 0 && is_ident_byte(b[i - 1]) {
+        i -= 1;
+    }
+    i
+}
+
+/// Walk back over whitespace from `i`, returning the exclusive end of the last
+/// non-whitespace byte before it.
+fn trim_ws_back(src: &str, mut i: usize) -> usize {
+    let b = src.as_bytes();
+    while i > 0 && b[i - 1].is_ascii_whitespace() {
+        i -= 1;
+    }
+    i
+}
+
+/// The nameable head of a rendered type: `*Vec[i32]` and `ref Vec[i32]` are
+/// both `Vec`, which is the name the type index is keyed by. (Distinct from
+/// `base_type_name` below, which reduces an AST `Type`; this one reduces the
+/// already-rendered string a `TypeSpot` carries.)
+fn type_head_name(t: &str) -> &str {
+    let mut s = t.trim();
+    loop {
+        let before = s;
+        s = s.trim_start_matches('*').trim_start();
+        for kw in ["ref ", "take ", "const "] {
+            if let Some(rest) = s.strip_prefix(kw) {
+                s = rest.trim_start();
+            }
+        }
+        if s == before {
+            break;
+        }
+    }
+    let cut = s.find('[').unwrap_or(s.len());
+    s[..cut].trim_end()
 }
 
 #[derive(Serialize)]
@@ -3919,6 +4329,241 @@ mod tests {
             .expect("the alias is reported");
         assert_eq!(alias["name"], "text");
         assert_eq!(alias["module"], "stdlib.src.text");
+    }
+
+    // ---- v0.0.27: the id/name index behind the lookup queries ----
+
+    #[test]
+    fn a_repeated_symbol_id_keeps_both_definitions() {
+        // Two `impl` blocks for the same type, each with a method of the same
+        // name, produce two nodes carrying one id. An index that mapped an id
+        // to a single node would silently drop one of them.
+        let src = "struct P { x: i32 }\n\
+                   impl P { fn go(this) -> i32 { return this.x; } }\n\
+                   impl P { fn go(this) -> i32 { return 0; } }";
+        let g = CodeGraph::build(&project(src));
+        assert_eq!(g.def("src::P::go").len(), 2, "both definitions survive");
+        assert_eq!(g.def("go").len(), 2, "and the bare name finds both");
+        let members: Vec<&str> = g.members("P").iter().map(|n| n.name.as_str()).collect();
+        assert_eq!(members, vec!["x", "go", "go"]);
+    }
+
+    #[test]
+    fn an_indexed_lookup_answers_in_node_order() {
+        // The index replaced a full scan; a scan yields nodes in declaration
+        // order, so the index has to as well or every answer's shape changes.
+        let src = "struct P { b: i32, a: i32 }\n\
+                   impl P { fn z(this) -> i32 { return this.a; } }";
+        let g = CodeGraph::build(&project(src));
+        let names: Vec<&str> = g.members("P").iter().map(|n| n.name.as_str()).collect();
+        assert_eq!(names, vec!["b", "a", "z"], "declaration order, not sorted");
+        let file: Vec<&str> = g
+            .symbols(Some("src"))
+            .iter()
+            .map(|n| n.name.as_str())
+            .collect();
+        assert_eq!(file[0], "P");
+    }
+
+    #[test]
+    fn a_name_that_is_not_in_the_graph_is_empty_not_a_panic() {
+        let g = CodeGraph::build(&project("fn a() -> i32 { return 1; }"));
+        assert!(g.def("nope").is_empty());
+        assert!(g.members("Nope").is_empty());
+        assert!(g.symbols(Some("no.such.file")).is_empty());
+    }
+
+    // ---- v0.0.27 completion: complete-at ----
+
+    /// The candidate names `complete-at` offers, in the order it ranked them.
+    fn completions(g: &CodeGraph, src: &str, at: u32) -> (serde_json::Value, Vec<String>) {
+        let j: serde_json::Value = serde_json::from_str(&g.complete_at_json("src", src, at)).unwrap();
+        let names = j["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|e| e["name"].as_str().unwrap().to_string())
+            .collect();
+        (j, names)
+    }
+
+    #[test]
+    fn complete_after_a_dot_offers_the_receivers_fields_and_methods() {
+        let src = "struct Point { x: i32 }\n\
+                   impl Point {\n\
+                     fn area(this) -> i32 { return this.x; }\n\
+                   }\n\
+                   fn run(p: Point) -> i32 {\n\
+                     return p.x;\n\
+                   }";
+        let g = CodeGraph::build(&project(src));
+        let (j, names) = completions(&g, src, after(src, "return p."));
+        assert_eq!(j["context"], "member");
+        assert_eq!(j["receiver_type"], "Point");
+        assert_eq!(j["prefix"], "");
+        assert!(names.contains(&"x".to_string()), "the field, got {names:?}");
+        assert!(names.contains(&"area".to_string()), "the method, got {names:?}");
+    }
+
+    #[test]
+    fn complete_after_a_dot_reads_the_whole_receiver_not_its_last_word() {
+        // `mk().` dots the *call result*, so the receiver is the expression
+        // ending at the dot, not the identifier `mk` inside it.
+        let src = "struct Point { x: i32 }\n\
+                   fn mk() -> Point { return Point { x: 1 }; }\n\
+                   fn run() -> i32 { return mk().x; }";
+        let g = CodeGraph::build(&project(src));
+        let (j, names) = completions(&g, src, after(src, "return mk()."));
+        assert_eq!(j["context"], "member");
+        assert_eq!(j["receiver_type"], "Point");
+        assert!(names.contains(&"x".to_string()), "got {names:?}");
+    }
+
+    #[test]
+    fn complete_after_a_dot_reaches_across_a_line_break() {
+        // A method chain is written one call per line; the newline between the
+        // receiver and the `.` must not turn a member access into a scope
+        // lookup.
+        let src = "struct Point { x: i32 }\n\
+                   impl Point {\n\
+                     fn area(this) -> i32 { return this.x; }\n\
+                   }\n\
+                   fn run(p: Point) -> i32 {\n\
+                     return p\n\
+                       .area();\n\
+                   }";
+        let g = CodeGraph::build(&project(src));
+        let (j, names) = completions(&g, src, after(src, ".a"));
+        assert_eq!(j["context"], "member");
+        assert_eq!(j["prefix"], "a");
+        assert_eq!(names, vec!["area".to_string()]);
+    }
+
+    #[test]
+    fn complete_filters_by_the_word_typed_and_case_does_not_hide_a_type() {
+        let src = "struct Point { x: i32 }\n\
+                   fn run() -> i32 {\n\
+                     let total: i32 = 1;\n\
+                     return poi;\n\
+                   }";
+        let g = CodeGraph::build(&project(src));
+        let (j, names) = completions(&g, src, after(src, "return poi"));
+        assert_eq!(j["context"], "scope");
+        assert_eq!(j["prefix"], "poi");
+        assert_eq!(names, vec!["Point".to_string()], "lowercase reaches `Point`");
+        assert!(
+            !names.contains(&"total".to_string()),
+            "a name the prefix rules out is gone"
+        );
+    }
+
+    #[test]
+    fn complete_ranks_a_local_above_a_module_item() {
+        let src = "fn value() -> i32 { return 1; }\n\
+                   fn run() -> i32 {\n\
+                     let val: i32 = 1;\n\
+                     return va;\n\
+                   }";
+        let g = CodeGraph::build(&project(src));
+        let (_, names) = completions(&g, src, after(src, "return va"));
+        assert_eq!(names, vec!["val".to_string(), "value".to_string()]);
+    }
+
+    #[test]
+    fn complete_after_a_colon_colon_on_an_enum_offers_its_variants() {
+        let src = "enum Color { Red, Green }\n\
+                   fn run() -> i32 {\n\
+                     let c: Color = Color::Red;\n\
+                     return 0;\n\
+                   }";
+        let g = CodeGraph::build(&project(src));
+        let (j, names) = completions(&g, src, after(src, "= Color::"));
+        assert_eq!(j["context"], "path");
+        assert_eq!(j["qualifier"], "Color");
+        assert_eq!(names, vec!["Green".to_string(), "Red".to_string()]);
+    }
+
+    #[test]
+    fn complete_after_an_alias_colon_colon_offers_the_modules_public_api() {
+        // The alias binds a module id; the answer is that module's exported
+        // surface — never its private names, and never its tests.
+        let src = "fn open() -> i32 { return 1; }\n\
+                   fn _secret() -> i32 { return 2; }\n\
+                   #[test] fn t_open() { return; }\n\
+                   fn run() -> i32 { return 0; }";
+        let mut proj = project(src);
+        proj.import_aliases.insert(
+            "src".to_string(),
+            vec![crate::resolver::ImportAlias {
+                alias: "me".to_string(),
+                module: "src".to_string(),
+                span: Span { start: 0, end: 2, file: 0 },
+            }],
+        );
+        let g = CodeGraph::build(&proj);
+        // The caret is written into a copy of the buffer: `me::` is the text an
+        // editor would have at the moment it asks.
+        let typed = format!("{src}\nfn probe() -> i32 {{ return me::; }}");
+        let at = after(&typed, "return me::");
+        let j: serde_json::Value =
+            serde_json::from_str(&g.complete_at_json("src", &typed, at)).unwrap();
+        assert_eq!(j["context"], "path");
+        assert_eq!(j["module"], "src");
+        let names: Vec<&str> = j["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|e| e["name"].as_str().unwrap())
+            .collect();
+        assert!(names.contains(&"open"), "the public fn, got {names:?}");
+        assert!(!names.contains(&"_secret"), "a private name, got {names:?}");
+        assert!(!names.contains(&"t_open"), "a test fn, got {names:?}");
+    }
+
+    #[test]
+    fn complete_on_an_unknown_receiver_says_member_with_nothing_to_offer() {
+        // No guess: an unresolvable receiver reports the context and an empty
+        // list rather than falling back to every name in scope, which would
+        // read as "these are the members".
+        let src = "fn run() -> i32 { return 0; }";
+        let typed = format!("{src}\nfn probe() {{ mystery(). }}");
+        let g = CodeGraph::build(&project(src));
+        let at = after(&typed, "mystery().");
+        let j: serde_json::Value =
+            serde_json::from_str(&g.complete_at_json("src", &typed, at)).unwrap();
+        assert_eq!(j["context"], "member");
+        assert!(j["receiver_type"].is_null(), "no type, so no claim of one");
+        assert!(j["items"].as_array().unwrap().is_empty());
+    }
+
+    #[test]
+    fn complete_in_an_unknown_file_is_empty_not_a_panic() {
+        let src = "fn run(x: i32) -> i32 { return x; }";
+        let g = CodeGraph::build(&project(src));
+        let j: serde_json::Value =
+            serde_json::from_str(&g.complete_at_json("src.nope", src, 10)).unwrap();
+        assert_eq!(j["context"], "scope");
+        assert!(j["items"].as_array().unwrap().is_empty());
+    }
+
+    #[test]
+    fn complete_at_the_start_of_a_buffer_does_not_walk_off_the_front() {
+        let src = "fn run() -> i32 { return 0; }";
+        let g = CodeGraph::build(&project(src));
+        for at in [0u32, 1, src.len() as u32, src.len() as u32 + 99] {
+            let j: serde_json::Value =
+                serde_json::from_str(&g.complete_at_json("src", src, at)).unwrap();
+            assert_eq!(j["kind"], "complete-at");
+        }
+    }
+
+    #[test]
+    fn a_types_head_is_what_the_index_is_keyed_by() {
+        assert_eq!(type_head_name("Point"), "Point");
+        assert_eq!(type_head_name("*Point"), "Point");
+        assert_eq!(type_head_name("ref Vec[i32]"), "Vec");
+        assert_eq!(type_head_name("take Text"), "Text");
+        assert_eq!(type_head_name("i32[]"), "i32");
     }
 
     #[test]

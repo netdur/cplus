@@ -31,5 +31,6 @@ pub mod parser;
 pub mod prune;
 pub mod resolver;
 pub mod sema;
+pub mod session;
 pub mod target;
 pub mod wasm_emit;

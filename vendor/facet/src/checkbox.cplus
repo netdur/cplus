@@ -30,18 +30,21 @@ fn checkbox(
     color: vocab::Color = vocab::Color::clear(),
     on_checked_changed: fn(*u8, *u8) = props::no_handler,
     on_checked_changed_ctx: *u8 = 0 as *u8,
+    item: *u8 = 0 as *u8,
 ) -> core::Node {
     var p: props::CheckboxProps = props::CheckboxProps::new();
     p.color = color;
     p.on = on;
     p.on_checked_changed = on_checked_changed;
     p.on_checked_changed_ctx = on_checked_changed_ctx;
-    return match box::new::[props::CheckboxProps](p) {
+    var n: core::Node = match box::new::[props::CheckboxProps](p) {
         option::Option[box::Box[props::CheckboxProps]]::Some(b) =>
             core::node_with(key, props::K_CHECKBOX, b.into_raw(), props::release_checkbox_props),
         option::Option[box::Box[props::CheckboxProps]]::None =>
             core::node_with(key, props::K_CHECKBOX, 0 as *u8, props::release_checkbox_props),
     };
+    if item != (0 as *u8) { core::set_item(#addr_of(n), item); }
+    return n;
 }
 
 // ---- live --------------------------------------------------------------

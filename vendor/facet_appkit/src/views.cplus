@@ -77,7 +77,35 @@ fn wants_view(n: *core::Node) -> bool {
     // And a bare container that asks for PIXELS. Same claim, other tier:
     // drawing arrives on a view exactly as input does.
     if wants_painting(n) { return true; }
+    // And a bare container carrying a CONTEXT MENU. Same claim, third tier:
+    // `attach_context_menu` hangs the NSMenu on the node's OWN view, through
+    // `NSView.menu`, so a container with no view builds the menu, retains it,
+    // and drops it — accepted, real, laid out, discarded in silence, which is
+    // word for word the failure `wants_painting` above exists to prevent.
+    if wants_menu(n) { return true; }
     return { (*n).key() } != "";
+}
+
+// Does this node carry a context menu that needs somewhere to hang?
+//
+// Direct children only, and deliberately so: it has to agree exactly with
+// `controls::attach_context_menu`, which scans direct children and hangs the
+// first menu it finds. A predicate that looked deeper than the attacher would
+// promise a view to a node the attacher then ignores — the same silent
+// mismatch, one layer along.
+fn wants_menu(n: *core::Node) -> bool {
+    var i: usize = 0 as usize;
+    let count: usize = core::child_count_of(n);
+    while i < count {
+        match core::child_of(n, i) {
+            option::Option[*core::Node]::Some(c) => {
+                if core::kind_of(c) == props::K_CONTEXT_MENU { return true; }
+            }
+            option::Option[*core::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return false;
 }
 
 // Is this node asking for something only a view can express?

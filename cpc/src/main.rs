@@ -282,11 +282,16 @@ cpc query <kind> [args...]
 Answer one code-graph query as JSON. Kinds: `def SYMBOL`, `members TYPE`,
 `symbols [FILE]`, `refs SYMBOL`, `callers FN`, `callees FN`,
 `call-hierarchy FN [--depth N]`, `context FN`, `type-at FILE:LINE:COL`,
-`value-refs FILE:LINE:COL`, `scope-at FILE:LINE:COL`.
+`value-refs FILE:LINE:COL`, `scope-at FILE:LINE:COL`,
+`complete FILE:LINE:COL`.
 Reads ./Cplus.toml; exit code signals found / not-found.
 
-`scope-at` is the completion query and omits `#[test]` functions. Every
-other kind still finds them; in `symbols` they carry `is_test: true`.
+`complete` is the composed one: it decides whether the caret is after a
+`.`, a `::`, or neither, and answers with the ranked candidates for that
+question. `scope-at` is its unqualified half on its own.
+
+Both omit `#[test]` functions. Every other kind still finds them; in
+`symbols` they carry `is_test: true`.
 
 Every kind pays the whole-project graph build (~2s). An editor asking on a
 keystroke wants `cpc mcp`, which builds once and answers from memory.
@@ -1523,18 +1528,10 @@ fn manifest_diag(
 /// filtered-out deps into `target::set_platform_gated_deps` so an import of
 /// an off-platform package gets the targeted E0866 instead of E0852.
 fn active_dep_names(m: &manifest::Manifest) -> Vec<String> {
-    let platform = target::active_platform();
-    let mut names: Vec<String> = Vec::with_capacity(m.dependencies.len());
-    let mut gated: std::collections::BTreeMap<String, String> = Default::default();
-    for dep in &m.dependencies {
-        if dep.active_on(platform) {
-            names.push(dep.name.clone());
-        } else {
-            gated.insert(dep.name.clone(), dep.platforms.join(", "));
-        }
-    }
-    target::set_platform_gated_deps(gated);
-    names
+    // Lives in core now: `cpc lsp` resolves projects too, and resolving one
+    // without its dependency names is what made every vendored import in an
+    // editor report E0401.
+    manifest::active_dep_names(m)
 }
 
 fn collect_dep_link_args(
@@ -4562,6 +4559,42 @@ fn run_mcp(diag_mode: DiagMode) -> ExitCode {
     })
 }
 
+/// `FILE:LINE:COL` → the file id, that file's source, and the byte offset.
+///
+/// Split from the right so the path may itself contain colons, and resolved
+/// through the same `find_file` the resident server uses, so a file id
+/// (`src.services.cpc`) works here too. Prints its own diagnosis and hands back
+/// the exit code, because every caller does the same thing with a bad position.
+fn parse_position<'a>(
+    kind: &str,
+    pos: Option<&str>,
+    loaded: &'a resolver::LoadedProject,
+) -> Result<(String, &'a str, u32), ExitCode> {
+    let Some(pos) = pos else {
+        eprintln!("cpc query {kind}: expected FILE:LINE:COL");
+        return Err(ExitCode::FAILURE);
+    };
+    let parts: Vec<&str> = pos.rsplitn(3, ':').collect(); // [col, line, file]
+    if parts.len() != 3 {
+        eprintln!("cpc query {kind}: expected FILE:LINE:COL (got `{pos}`)");
+        return Err(ExitCode::FAILURE);
+    }
+    let (Ok(col), Ok(line)) = (parts[0].parse::<u32>(), parts[1].parse::<u32>()) else {
+        eprintln!("cpc query {kind}: LINE and COL must be numbers");
+        return Err(ExitCode::FAILURE);
+    };
+    let file = parts[2];
+    let Some((fid, (_, src))) = cplus_core::session::find_file(loaded, file) else {
+        eprintln!("cpc query {kind}: no source file matching `{file}`");
+        return Err(ExitCode::FAILURE);
+    };
+    let Some(byte) = cplus_core::graph::byte_offset(src, line, col) else {
+        eprintln!("cpc query {kind}: position {line}:{col} is out of range");
+        return Err(ExitCode::FAILURE);
+    };
+    Ok((fid.clone(), src.as_str(), byte))
+}
+
 /// `cpc query <kind> [args...]` — answer one graph query as JSON on stdout.
 /// Exit code signals found (0) vs not-found (1), per plan.graph.md §6. This
 /// build ships the Phase 1 index: `def`, `members`, `symbols`. Call /
@@ -4570,7 +4603,7 @@ fn run_query(kind: Option<String>, args: Vec<String>, diag_mode: DiagMode) -> Ex
     let Some(kind) = kind else {
         eprintln!(
             "cpc query: expected a query kind (def | members | symbols | refs | callers | \
-             callees | call-hierarchy | context | type-at | value-refs | scope-at)"
+             callees | call-hierarchy | context | type-at | value-refs | scope-at | complete)"
         );
         return ExitCode::FAILURE;
     };
@@ -4678,125 +4711,72 @@ fn run_query(kind: Option<String>, args: Vec<String>, diag_mode: DiagMode) -> Ex
             };
         }
         "type-at" => {
-            let Some(pos) = arg0 else {
-                eprintln!("cpc query type-at: expected FILE:LINE:COL");
-                return ExitCode::FAILURE;
+            let (fid, _src, byte) = match parse_position("type-at", arg0, &loaded) {
+                Ok(p) => p,
+                Err(code) => return code,
             };
-            // FILE:LINE:COL — split COL and LINE off the right so the path may
-            // contain no colons (the common case on unix).
-            let parts: Vec<&str> = pos.rsplitn(3, ':').collect(); // [col, line, file]
-            if parts.len() != 3 {
-                eprintln!("cpc query type-at: expected FILE:LINE:COL (got `{pos}`)");
-                return ExitCode::FAILURE;
-            }
-            let (Ok(col), Ok(line)) = (parts[0].parse::<u32>(), parts[1].parse::<u32>()) else {
-                eprintln!("cpc query type-at: LINE and COL must be numbers");
-                return ExitCode::FAILURE;
-            };
-            let file = parts[2];
-            let Some((fid, (_, src))) = loaded
-                .files
-                .iter()
-                .find(|(_, (path, _))| path.ends_with(file) || path.to_string_lossy() == *file)
-            else {
-                eprintln!("cpc query type-at: no source file matching `{file}`");
-                return ExitCode::FAILURE;
-            };
-            let Some(byte) = cplus_core::graph::byte_offset(src, line, col) else {
-                eprintln!("cpc query type-at: position {line}:{col} is out of range");
-                return ExitCode::FAILURE;
-            };
-            return match g.type_at_json(fid, byte) {
+            return match g.type_at_json(&fid, byte) {
                 Some(j) => {
                     println!("{j}");
                     ExitCode::SUCCESS
                 }
                 None => {
                     eprintln!(
-                        "cpc query type-at: no typed node at {file}:{line}:{col} \
+                        "cpc query type-at: no typed node at {} \
                          (type-at resolves params, fields, locals, `self`, and inferred \
-                         expressions — call results, field/index reads, match/if values)"
+                         expressions — call results, field/index reads, match/if values)",
+                        arg0.unwrap_or("")
                     );
                     ExitCode::FAILURE
                 }
             };
         }
         "value-refs" => {
-            let Some(pos) = arg0 else {
-                eprintln!("cpc query value-refs: expected FILE:LINE:COL");
-                return ExitCode::FAILURE;
+            let (fid, _src, byte) = match parse_position("value-refs", arg0, &loaded) {
+                Ok(p) => p,
+                Err(code) => return code,
             };
-            let parts: Vec<&str> = pos.rsplitn(3, ':').collect(); // [col, line, file]
-            if parts.len() != 3 {
-                eprintln!("cpc query value-refs: expected FILE:LINE:COL (got `{pos}`)");
-                return ExitCode::FAILURE;
-            }
-            let (Ok(col), Ok(line)) = (parts[0].parse::<u32>(), parts[1].parse::<u32>()) else {
-                eprintln!("cpc query value-refs: LINE and COL must be numbers");
-                return ExitCode::FAILURE;
-            };
-            let file = parts[2];
-            let Some((fid, (_, src))) = loaded
-                .files
-                .iter()
-                .find(|(_, (path, _))| path.ends_with(file) || path.to_string_lossy() == *file)
-            else {
-                eprintln!("cpc query value-refs: no source file matching `{file}`");
-                return ExitCode::FAILURE;
-            };
-            let Some(byte) = cplus_core::graph::byte_offset(src, line, col) else {
-                eprintln!("cpc query value-refs: position {line}:{col} is out of range");
-                return ExitCode::FAILURE;
-            };
-            return match g.value_refs_json(fid, byte) {
+            return match g.value_refs_json(&fid, byte) {
                 Some(j) => {
                     println!("{j}");
                     ExitCode::SUCCESS
                 }
                 None => {
                     eprintln!(
-                        "cpc query value-refs: no local binding at {file}:{line}:{col} \
-                         (value-refs resolves a parameter or `let`, then its classified uses)"
+                        "cpc query value-refs: no local binding at {} \
+                         (value-refs resolves a parameter or `let`, then its classified uses)",
+                        arg0.unwrap_or("")
                     );
                     ExitCode::FAILURE
                 }
             };
         }
         "scope-at" => {
-            let Some(pos) = arg0 else {
-                eprintln!("cpc query scope-at: expected FILE:LINE:COL");
-                return ExitCode::FAILURE;
+            let (fid, _src, byte) = match parse_position("scope-at", arg0, &loaded) {
+                Ok(p) => p,
+                Err(code) => return code,
             };
-            let parts: Vec<&str> = pos.rsplitn(3, ':').collect(); // [col, line, file]
-            if parts.len() != 3 {
-                eprintln!("cpc query scope-at: expected FILE:LINE:COL (got `{pos}`)");
-                return ExitCode::FAILURE;
-            }
-            let (Ok(col), Ok(line)) = (parts[0].parse::<u32>(), parts[1].parse::<u32>()) else {
-                eprintln!("cpc query scope-at: LINE and COL must be numbers");
-                return ExitCode::FAILURE;
+            println!("{}", g.scope_at_json(&fid, byte));
+            return ExitCode::SUCCESS;
+        }
+        "complete" => {
+            // The composed verb: one question, one answer. `scope-at`,
+            // `type-at` and `members` stay as the primitives underneath, but a
+            // caller completing at a caret should not have to decide which of
+            // the three this caret is asking — that decision is C+'s rules, not
+            // the caller's policy.
+            let (fid, src, byte) = match parse_position("complete", arg0, &loaded) {
+                Ok(p) => p,
+                Err(code) => return code,
             };
-            let file = parts[2];
-            let Some((fid, (_, src))) = loaded
-                .files
-                .iter()
-                .find(|(_, (path, _))| path.ends_with(file) || path.to_string_lossy() == *file)
-            else {
-                eprintln!("cpc query scope-at: no source file matching `{file}`");
-                return ExitCode::FAILURE;
-            };
-            let Some(byte) = cplus_core::graph::byte_offset(src, line, col) else {
-                eprintln!("cpc query scope-at: position {line}:{col} is out of range");
-                return ExitCode::FAILURE;
-            };
-            println!("{}", g.scope_at_json(fid, byte));
+            println!("{}", g.complete_at_json(&fid, src, byte));
             return ExitCode::SUCCESS;
         }
         other => {
             eprintln!(
                 "cpc query: unknown query kind `{other}` (expected: def | members | symbols | \
                  refs | callers | callees | call-hierarchy | context | type-at | value-refs | \
-                 scope-at)"
+                 scope-at | complete)"
             );
             return ExitCode::FAILURE;
         }
@@ -7186,6 +7166,7 @@ fn run_init(args: &[OsString]) -> ExitCode {
          cpc query callers <symbol>        who calls it\n\
          cpc query symbols <file>          the outline of a file\n\
          cpc query scope-at <file:line:col> what you can type right there\n\
+         cpc query complete <file:line:col> ...and what fits after a `.` or `::`\n\
          ```\n\n\
          The same graph is available as MCP tools — see `.mcp.json`, which points\n\
          at `cpc mcp`. Prefer either over reading files to find things. Each\n\
