@@ -66,6 +66,10 @@ FACET_GTK_SCROLL=1   ./target/debug/facet_gallery     # every scroll move, and w
 FACET_GTK_SELECT=1   ./target/debug/facet_gallery     # a nav select, bracketed: at click, after
                                                       # the handler, and again 500ms later
 FACET_GTK_FRAMES=1   ./target/debug/facet_gallery     # the computed frame tree
+FACET_GTK_SYNC=1     ./target/debug/facet_gallery     # what a frame costs, in its four parts —
+                                                      # mount, solve, place, menu. A debt row is a
+                                                      # guess until it is a number; MANIFEST §2's
+                                                      # `relayout_all` row was retired by this one
 ```
 
 The suite pins everything the backend DECIDES — the mappings, the CSS it

@@ -285,12 +285,14 @@ still in this list is worth re-reading with that in mind.
 Everything not listed as live above. The large ones, in the order they matter:
 
 
-- **A tree's flat index is a full walk.** Answering "what is the Nth visible
-  row" means walking the expanded model, so the walk runs once per change into a
-  cached vector of (node, depth) rather than once per bind. That is
-  NSOutlineView's row cache and it is what the materialiser did anyway on its
-  way to building widgets — what recycling removed is the BUILDING. A model that
-  changes every frame pays for the walk every frame; nothing does that yet.
+- **A tree's flat index is rebuilt whole on every structural change.** NOT a
+  per-bind walk — this row used to read as if it were, and the cache it
+  describes has been in `recycler.cplus` all along (`reindex_tree` into a boxed
+  vector of (node, depth), which is NSOutlineView's row cache). What remains is
+  narrower: the rebuild is O(visible) and runs for any structural bit, so
+  expanding one branch re-walks the whole expanded model rather than splicing.
+  A model that changes every frame would pay for the walk every frame; nothing
+  does that yet.
 - **A recycling list keeps more cells than it needs.** MEASURED, on a 5000-row
   list in a 160pt viewport that holds seven rows: GtkListView creates 205 cells
   in the one `items-changed` that fills the model, and never tears them down.
@@ -308,9 +310,35 @@ Everything not listed as live above. The large ones, in the order they matter:
 - **`scroll` has no kinetic tuning and no `edge_reached`.** GTK offers both;
   facet declares neither, so nothing is missing from the contract — noted only
   so the next reader does not go looking.
-- **`relayout_all` re-lays every window on every sync**, at the window's
-  current size. AppKit prunes on `layout_changed()`, and its `geometry.cplus`
-  names two callers where that prune is WRONG — read that before copying it.
+- ~~**`relayout_all` re-lays every window on every sync**~~ — **MEASURED
+  2026-08-25, and the row was aimed at the wrong half. Do not implement the fix
+  it suggested.**
+
+  It said to prune on `layout_changed()` the way AppKit does. Here is what a
+  sync actually costs, from `FACET_GTK_SYNC=1` over a gallery walk:
+
+  | | typical | page switch |
+  |---|---|---|
+  | `mount::sync` | 2–90us | 190us |
+  | `calculate_layout` | 565–1200us | 4000–9000us |
+  | `reposition_children` | 15–40us | 76us |
+  | `refresh_menu_state` | 2–5us | 23us |
+
+  `layout_changed()` gates the REPOSITION WALK, which is 15–40us — three to
+  five percent of the relayout, and under half a percent of a page switch.
+  Pruning it buys nothing and costs the two correctness traps
+  `facet_appkit/src/geometry.cplus` documents (new views at birth size; a
+  two-pass `place_row`).
+
+  The cost is the SOLVE, and flex_layout already prunes that itself: every
+  sync where `layout_changed()` comes back false measured 16–24us total,
+  against 565us+ when something really moved. An unchanged window — including
+  every window a multi-window app is not touching — is already ~20us, so "re-lays
+  every window" was never the shape of the problem either.
+
+  What is left is the solve on a window that DID change, and that is flex's
+  number rather than this package's. Nothing to do here; the row stays so the
+  next reader does not re-derive it.
 - **A gesture band is never REMOVED once armed.** Handlers are read off the
   node at fire time, so a detached set makes every one of them `no_gesture` and
   the controller fires nothing — dead weight, not wrong behaviour.

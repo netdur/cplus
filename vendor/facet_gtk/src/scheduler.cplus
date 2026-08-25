@@ -11,6 +11,8 @@
 // layout and one frame walk.
 
 import "stdlib/option" as option;
+import "stdlib/io" as io;
+import "stdlib/env" as env;
 import "stdlib/vec" as vec;
 import "stdlib/status" as status;
 import "flex_layout/flex_layout" as flex;
@@ -35,18 +37,43 @@ extern fn g_source_remove(tag: u32) -> i32;
 // One pending sync at a time — see the header.
 static PENDING: bool = false;
 
+// `FACET_GTK_SYNC=1` — WHAT A FRAME COSTS, in the three parts it has. The
+// MANIFEST's §2 debt rows are guesses until they are numbers: "relayout_all
+// re-lays every window on every sync" is a worry, and "the relayout is 0.2ms of
+// a 3ms sync" is a decision. Off by default and read once.
+static SYNC_TRACE_READ: bool = false;
+static SYNC_TRACE_ON: bool = false;
+
+fn tracing_sync() -> bool {
+    if !SYNC_TRACE_READ {
+        SYNC_TRACE_READ = true;
+        SYNC_TRACE_ON = env::has_var("FACET_GTK_SYNC");
+    }
+    return SYNC_TRACE_ON;
+}
+
+#[link_name = "g_get_monotonic_time"]
+extern fn g_get_monotonic_time() -> i64;
+
 fn drain(user: *u8) -> i32 {
     PENDING = false;
+    let t0: i64 = if tracing_sync() { { g_get_monotonic_time() } } else { 0 as i64 };
     mount::sync();
     // Layout is facet's, but PLACING the results is ours, and it has to happen
     // in the same turn as the sync or the frame the user sees is one write
     // behind.
+    let t1: i64 = if tracing_sync() { { g_get_monotonic_time() } } else { 0 as i64 };
     window::relayout_all();
+    let t2: i64 = if tracing_sync() { { g_get_monotonic_time() } } else { 0 as i64 };
     // The app menu's `is_enabled` and `title_of` are answered "when the menu
     // opens" in the ledger, and a GtkPopoverMenuBar gives no such moment — so
     // they are answered once per sync instead, which is more often than a menu
     // opens and costs one call per item.
     window::refresh_menu_state();
+    if tracing_sync() {
+        let t3: i64 = { g_get_monotonic_time() };
+        io::eprintln("[sync] mount=${t1 -% t0}us relayout=${t2 -% t1}us menu=${t3 -% t2}us total=${t3 -% t0}us");
+    }
     return 0 as i32;   // G_SOURCE_REMOVE
 }
 

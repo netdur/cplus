@@ -42,6 +42,8 @@ import "gio/gio" as gio;
 import "gdk/gdk" as gdk;
 import "glib/glib" as glib;
 import "gobject/runtime" as g;
+import "stdlib/env" as env;
+import "stdlib/io" as io;
 import "gobject/signal" as sig;
 import "gobject/bridge" as bridge;
 import "./observers" as observers;
@@ -402,10 +404,21 @@ fn host_for(slot: usize) -> *u8 {
 }
 
 // One layout pass and one frame walk for a window.
+static WT_READ: bool = false;
+static WT_ON: bool = false;
+
+fn timing() -> bool {
+    if !WT_READ { WT_READ = true; WT_ON = env::has_var("FACET_GTK_SYNC"); }
+    return WT_ON;
+}
+
 fn relayout(slot: usize, width: f64, height: f64) {
     let root: *core::Node = ROOTS[slot] as *core::Node;
     if root == (0 as *core::Node) { return; }
+    let c0: i64 = if timing() { { g_get_monotonic_time() } } else { 0 as i64 };
     { (*root).calculate_layout(width: width, height: height) };
+    let c1: i64 = if timing() { { g_get_monotonic_time() } } else { 0 as i64 };
+    let moved: bool = { (*root).layout_changed() };
     let rf: flex::Frame = { (*root).frame() };
     let rv: *u8 = core::view_of(root);
     if rv != (0 as *u8) {
@@ -422,8 +435,15 @@ fn relayout(slot: usize, width: f64, height: f64) {
     // that for every scroll it descends into, and the root is the one node it
     // is never called for.
     if rv != (0 as *u8) { geometry::size_scroll_content(root, rv, rf); }
+    if timing() {
+        let c2: i64 = { g_get_monotonic_time() };
+        io::eprintln("  [relayout] calc=${c1 -% c0}us place=${c2 -% c1}us moved=${moved}");
+    }
     return;
 }
+
+#[link_name = "g_get_monotonic_time"]
+extern fn g_get_monotonic_time() -> i64;
 
 // Re-lay every open window at its current size. The sync path calls this after
 // applying dirty bits — a write that changes a measured control changes the
