@@ -97,6 +97,9 @@ extern fn gtk_widget_grab_focus(widget: *u8) -> i32;
 extern fn g_object_set_data(obj: *u8, key: *u8, data: *u8);
 #[link_name = "g_object_get_data"]
 extern fn g_object_get_data(obj: *u8, key: *u8) -> *u8;
+// Scroll a VIRTUALISED list to a model index. See `row_slot_above`.
+#[link_name = "gtk_list_view_scroll_to"]
+extern fn gtk_list_view_scroll_to(view: *u8, pos: u32, flags: u32, scroll: *u8);
 // Declarative tag channel (facet set_identity): gtk_widget_set_name copies
 // the id onto the widget; we read it back as a transfer-none C string.
 #[link_name = "gtk_widget_get_name"]
@@ -1412,6 +1415,61 @@ fn nudge_axis(adj: *u8, pos: f64, extent: f64) {
     return;
 }
 
+// ---- the model index, which is stamped and was being ignored ----------------
+//
+// A virtualised row's own geometry cannot answer "where is it": see
+// `scroll_into_view`. The rest of the way is `gtk_list_view_scroll_to`, which
+// is addressed by MODEL INDEX — and the note here used to say the index was
+// what this layer did not have, because a cell carries no public accessor for
+// its own slot.
+//
+// It does not need one. `facet_gtk`'s recycler already stamps the slot on the
+// row host at every bind, under a stable GObject data key, because its own
+// drag-reorder band needs to know which row moved. Reading that key is the
+// same channel this file already uses for the declared affordance and the
+// agent tier — a backend writes, the walk reads — and it degrades to nothing
+// on a plain GTK app, where the key is simply absent.
+//
+// +1 BIASED, so that an absent key and slot 0 are distinguishable. That is the
+// writer's convention and this reader must match it.
+fn row_slot_key() -> *u8 { return #str_ptr("facet-gtk-rowslot\0"); }
+
+struct RowSlot {
+    // GTK owns the widget; this is a borrow for the length of one call.
+    opaque view: *u8,
+    at: u32,
+    found: bool,
+}
+
+// Walk up for the nearest stamped row slot, then on up for the GtkListView it
+// belongs to. Both halves must be found: a slot with no list above it is a
+// stamp on a widget that has been reparented out, and scrolling nothing is
+// better than scrolling the wrong thing.
+//
+// GtkGridView is not handled because nothing writes the key on one — facet's
+// collection is rows-of-slots inside a GtkListView, not a GtkGridView.
+fn row_slot_above(w: *u8) -> RowSlot {
+    let miss: RowSlot = RowSlot { view: null(), at: 0 as u32, found: false };
+    if is_null(w) { return miss; }
+    var cur: *u8 = w;
+    var at: u32 = 0 as u32;
+    var have: bool = false;
+    while !is_null(cur) {
+        if !have {
+            let raw: usize = { #addr({ g_object_get_data(cur, row_slot_key()) }) };
+            if raw != (0 as usize) {
+                at = (raw -% (1 as usize)) as u32;
+                have = true;
+            }
+        }
+        if have && is_a(cur, #str_ptr("GtkListView\0")) {
+            return RowSlot { view: cur, at: at, found: true };
+        }
+        cur = { gtk_widget_get_parent(cur) };
+    }
+    return miss;
+}
+
 // A VIRTUALISED ROW CANNOT BE FOUND THIS WAY, and the measurement says so:
 // an off-screen cell in a GtkListView EXISTS as a widget — the walk lists it,
 // an agent can name it — but GtkListView never ALLOCATES one, so
@@ -1420,11 +1478,27 @@ fn nudge_axis(adj: *u8, pos: f64, extent: f64) {
 //     [agent] scroll_into_view pos=0 h=0 page=572 value=0
 //
 // So geometry brings a node into view inside an ordinary scroll and does
-// nothing for a row below the fold in a list. The rest of the way is
-// `gtk_list_view_scroll_to`, which is addressed by MODEL INDEX rather than by
-// position — and the index is what this layer does not have, because the
-// registry keys on the developer id and the cell carries no public accessor
-// for its own slot. Written down rather than half-built.
+// nothing for a row below the fold in a list. `row_slot_above` is the rest of
+// the way, and the ORDER between the two is the whole design:
+//
+// GEOMETRY FIRST, and the index only when geometry found no allocation. A row
+// that is already on screen must not move — a `navigate` that nudged a visible
+// node would make every describe/act cycle jitter under an agent, which is the
+// invariant `nudge_axis` bends over backwards to keep. `gtk_list_view_scroll_to`
+// re-anchors the view around the position it is given and does not promise to
+// leave an already-visible row where it sits, so it is asked only once the
+// zero-sized bounds have PROVEN the row is unallocated, which for a
+// GtkListView cell means off screen.
+//
+// `GTK_LIST_SCROLL_NONE` (0) rather than FOCUS or SELECT: bringing a row into
+// view must not select it. An agent that had to change the selection to look
+// at something would be acting, not reading, and `navigate` is not an action
+// verb.
+//
+// WHAT THIS STILL DOES NOT REACH: a row so far outside the viewport that
+// GtkListView never realised a widget for it has no entry in the walk at all,
+// so an agent cannot name it, let alone scroll to it. That is a describe-side
+// limit, not a scroll-side one, and it is not fixed here.
 fn scroll_into_view(w: *u8) {
     if is_null(w) { return; }
     let sw: *u8 = scrollable_above(w);
@@ -1432,10 +1506,16 @@ fn scroll_into_view(w: *u8) {
     var b: GrapheneRect = GrapheneRect { x: 0.0 as f32, y: 0.0 as f32,
                                          w: 0.0 as f32, h: 0.0 as f32 };
     // AGAINST THE SCROLLED WINDOW — see `nudge_axis` for why not the content.
-    if { gtk_widget_compute_bounds(w, sw, { #addr_of(b) as *u8 }) } == (0 as i32) {
+    let measured: bool =
+        { gtk_widget_compute_bounds(w, sw, { #addr_of(b) as *u8 }) } != (0 as i32);
+    if measured && (b.w != (0.0 as f32) || b.h != (0.0 as f32)) {
+        nudge_axis({ gtk_sw_get_vadjustment(sw) }, b.y as f64, b.h as f64);
+        nudge_axis({ gtk_sw_get_hadjustment(sw) }, b.x as f64, b.w as f64);
         return;
     }
-    nudge_axis({ gtk_sw_get_vadjustment(sw) }, b.y as f64, b.h as f64);
-    nudge_axis({ gtk_sw_get_hadjustment(sw) }, b.x as f64, b.w as f64);
+    // Unallocated: a virtualised row below the fold. Ask the list by index.
+    let slot: RowSlot = row_slot_above(w);
+    if !slot.found { return; }
+    { gtk_list_view_scroll_to(slot.view, slot.at, 0 as u32, null()) };
     return;
 }

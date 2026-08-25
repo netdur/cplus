@@ -642,3 +642,64 @@ fn an_open_nodes_text_still_reaches_an_operator() {
 
 #[link_name = "gtk_entry_set_visibility"]
 extern fn gtk_entry_set_visibility(e: *u8, v: i32);
+
+// ---- the model index behind `navigate` --------------------------------------
+//
+// A virtualised row below the fold has NO ALLOCATION, so the geometry path
+// measures 0x0 and moves nothing — that is the bug this reader closes. The
+// index comes off the row host as a GObject data key `facet_gtk`'s recycler
+// already writes, and the three things that can go wrong with reading someone
+// else's key are all here: the bias, the missing key, and the stamp with no
+// list above it.
+
+#[link_name = "gtk_list_view_new"]
+extern fn gtk_list_view_new(model: *u8, factory: *u8) -> *u8;
+#[link_name = "gtk_box_new"]
+extern fn gtk_box_new_t(orientation: i32, spacing: i32) -> *u8;
+#[link_name = "g_object_set_data"]
+extern fn g_object_set_data_t(obj: *u8, key: *u8, data: *u8);
+
+#[test]
+fn a_stamped_slot_is_read_back_with_the_writers_plus_one_bias() {
+    if !has_display() { return; }
+    // The +1 is not decoration: GObject data has no "absent" distinct from
+    // NULL, so slot 0 stored raw would be indistinguishable from an unstamped
+    // widget — and slot 0 is the FIRST ROW, the one a `navigate` to the top of
+    // a list asks for.
+    let lv: *u8 = { gtk_list_view_new(0 as *u8, 0 as *u8) };
+    assert lv != (0 as *u8);
+    { g_object_set_data_t(lv, #str_ptr("facet-gtk-rowslot\0"), 1 as *u8) };
+    let first: agent::RowSlot = agent::row_slot_above(lv);
+    assert first.found;
+    assert first.at == (0 as u32);
+
+    { g_object_set_data_t(lv, #str_ptr("facet-gtk-rowslot\0"), 8 as *u8) };
+    let eighth: agent::RowSlot = agent::row_slot_above(lv);
+    assert eighth.found;
+    assert eighth.at == (7 as u32);
+    return;
+}
+
+#[test]
+fn an_unstamped_widget_names_no_slot() {
+    if !has_display() { return; }
+    // A plain GTK app writes this key nowhere, and the reader must degrade to
+    // "I have no index" rather than to slot 0 — scrolling a list to its top
+    // because a key was missing is worse than not scrolling.
+    let lv: *u8 = { gtk_list_view_new(0 as *u8, 0 as *u8) };
+    assert !agent::row_slot_above(lv).found;
+    return;
+}
+
+#[test]
+fn a_stamp_with_no_list_above_it_is_not_a_scroll_target() {
+    if !has_display() { return; }
+    // BOTH HALVES OR NEITHER. A row host that has been reparented out of its
+    // list keeps its stamp — the key is stale, not absent — and an index
+    // handed to whatever GtkListView happened to be found elsewhere would
+    // scroll the wrong widget to an unrelated row.
+    let orphan: *u8 = { gtk_box_new_t(0 as i32, 0 as i32) };
+    { g_object_set_data_t(orphan, #str_ptr("facet-gtk-rowslot\0"), 4 as *u8) };
+    assert !agent::row_slot_above(orphan).found;
+    return;
+}
