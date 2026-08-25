@@ -205,6 +205,12 @@ struct GtkNode {
     is_hidden: bool,
     text: text::Text,
     actionable: bool,
+    // SENSITIVITY, in two fields because they answer two questions. `tier` is
+    // what the APPLICATION declared and is the same for every agent;
+    // `readable` is what THIS grant may do with it, and when it is false the
+    // text is left empty rather than trimmed at the wire.
+    tier: u32,
+    readable: bool,
     parent: option::Option[usize],
 }
 
@@ -335,6 +341,11 @@ fn walk(ref reg: identity::Registry, ref refs: vec::Vec[WidgetRef], widget: *u8,
         reg.add_child(parent_reg, option::Option[str]::Some(convert::cstr_to_str_unsafe(pinned)), role)
     };
     reg.set_enabled(reg_node, live_enabled(widget));
+    // SENSITIVITY. Without this the walk marked every node `tier_open` and
+    // `readable: true`, so a node the application put behind `agent: Private`
+    // was served wide — and facet_gtk now pins that tier on every C_AGENT
+    // node, so the pin had nowhere to land.
+    reg.set_policy(reg_node, effective_policy(widget));
     refs.append(WidgetRef { p: widget });
 
     var child: *u8 = { gtk_widget_get_first_child(widget) };
@@ -411,14 +422,23 @@ impl Surface {
                 }
                 option::Option[usize]::None => option::Option[usize]::None,
             };
+            // THE GATE IS HERE, not at the wire. A node whose tier this grant
+            // cannot reach must never have its text READ, because a describe
+            // that reads and then trims has already put the secret in memory
+            // the caller can see — and `mode: full` is an agent-reachable
+            // parameter, so a gate that only held in the curated view would
+            // hold until the model tried the other one.
+            let may_read: bool = this.reg.can_read_value_walked(grant, node);
             out.append(GtkNode {
                 id: text::from_str(this.reg.resolved_id(node)),
                 role: role,
                 class_name: class_name_text(widget),
                 frame: frame_of(widget),
                 is_hidden: live_hidden(widget),
-                text: node_text(widget, role),
+                text: if may_read { node_text(widget, role) } else { text::new() },
                 actionable: this.reg.is_exposed(node) && this.reg.is_agent_actionable(node),
+                tier: this.reg.tier_of(node),
+                readable: may_read,
                 parent: parent,
             });
             node = node +% (1 as usize);
@@ -635,15 +655,15 @@ fn mcp_describe(p: *u8, grant: auth::Grant) -> vec::Vec[mcpb::UiNode] {
                     },
                     is_hidden: { (*n).is_hidden },
                     text: ctext((*n).text.view()),
-                    // SENSITIVITY: this backend's WALK never asks. `tier_open`
-                    // here is "never asked", not "this content is safe" —
-                    // GTK's `gtk_entry_get_visibility` / Win32's ES_PASSWORD
-                    // are the signals a real implementation reads, and until
-                    // it does, an app serving an agent from this backend has
-                    // only `exclude` for its secrets. AppKit is the supported
-                    // backend; see plans/agent-sensitivity.md.
-                    tier: identity::tier_open(),
-                    readable: true,
+                    // SENSITIVITY, asked for real now. This said `tier_open`
+                    // and meant "never asked" — and an app serving an agent
+                    // from this backend had only `exclude` for its secrets.
+                    // The walk pins `effective_policy` on every node, so the
+                    // registry answers both of these the same way AppKit's
+                    // does: the declared tier, and what THIS grant may do with
+                    // it.
+                    tier: { (*n).tier },
+                    readable: { (*n).readable },
                     // This backend has not split the permission from the
                     // capability (see backend::UiNode.clickable) and does not
                     // carry the accessibility label into its own node. Both
@@ -1068,4 +1088,60 @@ fn widget_wired(w: *u8) -> bool {
         return listens(g_, #str_ptr("GtkGestureClick\0"), #str_ptr("pressed\0"));
     }
     return false;
+}
+
+// ---- what an agent may do with this node's content -------------------------------
+//
+// `facet_gtk`'s shared band calls `app::agent_pin` for every node carrying a
+// non-default `agent` prop, and that dispatches here through the hook
+// `facet_agent` installs. Before this existed the pin had nowhere to land:
+// the walk marked EVERY node `tier_open` / `readable: true`, so a card number
+// declared `agent: Private` was served to whatever connected.
+//
+// The tier rides on the widget rather than in facet, for the same reason
+// AppKit's rides on the view: the agent surface walks the PLATFORM tree and
+// never sees a facet node, and a pin survives a re-render that replaces a
+// widget's contents but not the widget.
+
+fn policy_key() -> *u8 { return #str_ptr("facet-agent-policy\0"); }
+
+fn set_agent_policy(widget: *u8, policy: u32) {
+    if is_null(widget) { return; }
+    // Packed as a pointer-sized integer, which is what `set_data` stores; +1
+    // so `policy_none` (0) is distinguishable from "never pinned".
+    { g_object_set_data(widget, policy_key(), ((policy +% (1 as u32)) as usize) as *u8); }
+    return;
+}
+
+fn get_agent_policy(widget: *u8) -> u32 {
+    if is_null(widget) { return identity::policy_none(); }
+    let raw: usize = { #addr(g_object_get_data(widget, policy_key())) };
+    if raw == (0 as usize) { return identity::policy_none(); }
+    return (raw -% (1 as usize)) as u32;
+}
+
+// THE ONE THE DEVELOPER SHOULD NOT HAVE TO ASK FOR.
+//
+// A GtkEntry with `visibility = false` is a password field — a control whose
+// whole reason to exist is that its contents must not be seen. Reading its
+// text and handing it to a language model is the same defect as printing it to
+// the log. AppKit's side records finding exactly that: a card number arriving
+// in the curated describe as the node's NAME.
+//
+// So an unpinned password field is PRIVATE by default. An explicit pin still
+// wins, because an application that deliberately marked one open has said so.
+#[link_name = "gtk_entry_get_visibility"]
+extern fn gtk_entry_get_visibility(e: *u8) -> i32;
+
+fn is_secure_by_class(widget: *u8) -> bool {
+    if !is_a(widget, #str_ptr("GtkEntry\0")) { return false; }
+    return { gtk_entry_get_visibility(widget) } == (0 as i32);
+}
+
+fn effective_policy(widget: *u8) -> u32 {
+    if is_null(widget) { return identity::policy_none(); }
+    let raw: usize = { #addr(g_object_get_data(widget, policy_key())) };
+    if raw != (0 as usize) { return (raw -% (1 as usize)) as u32; }
+    if is_secure_by_class(widget) { return identity::policy_private(); }
+    return identity::policy_none();
 }

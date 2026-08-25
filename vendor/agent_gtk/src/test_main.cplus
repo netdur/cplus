@@ -540,3 +540,105 @@ fn describe_reports_wired_for_a_live_and_a_dead_control() {
 
 #[link_name = "gtk_switch_new"]
 extern fn gtk_switch_new() -> *u8;
+
+// ---- sensitivity ----------------------------------------------------------------
+//
+// The walk marked EVERY node `tier_open` / `readable: true`, so a node the
+// application put behind `agent: Private` was served to whatever connected —
+// and facet_gtk pins that tier on every C_AGENT node, so the pin had nowhere
+// to land. This is the half that has to be right.
+
+#[test]
+fn a_pinned_tier_survives_and_reads_back() {
+    if !has_display() { return; }
+    let e: *u8 = { gtk_entry_new() };
+    assert agent::get_agent_policy(e) == identity::policy_none();
+    agent::set_agent_policy(e, identity::policy_private());
+    assert agent::get_agent_policy(e) == identity::policy_private();
+    // `policy_none` is a REAL value and not "never pinned" — an application
+    // that deliberately marked a node open has said something.
+    agent::set_agent_policy(e, identity::policy_none());
+    assert agent::get_agent_policy(e) == identity::policy_none();
+}
+
+// THE ONE THE DEVELOPER SHOULD NOT HAVE TO ASK FOR. A GtkEntry with
+// `visibility = false` is a password field — reading its text and handing it
+// to a language model is the same defect as printing it to the log.
+#[test]
+fn a_password_entry_is_private_without_being_asked() {
+    if !has_display() { return; }
+    let secret: *u8 = { gtk_entry_new() };
+    { gtk_entry_set_visibility(secret, 0 as i32) };
+    assert agent::effective_policy(secret) == identity::policy_private();
+    // An ordinary entry is not.
+    let plain: *u8 = { gtk_entry_new() };
+    assert agent::effective_policy(plain) == identity::policy_none();
+    // ...and an EXPLICIT pin still wins, because an application that
+    // deliberately opened one has said so.
+    agent::set_agent_policy(secret, identity::policy_none());
+    assert agent::effective_policy(secret) == identity::policy_none();
+}
+
+// END TO END, which is the assertion that matters: a private node's text must
+// not reach a grant that cannot read it. Not trimmed at the wire — never read.
+#[test]
+fn a_private_nodes_text_never_reaches_an_ordinary_operator() {
+    if !has_display() { return; }
+    let secret: *u8 = { gtk_entry_new() };
+    { gtk_editable_set_text(secret, #str_ptr("4111111111111111\0")) };
+    agent::set_agent_policy(secret, identity::policy_private());
+    let win: *u8 = fixture(secret, #str_ptr("card:number\0"));
+    var s: agent::Surface = agent::open(win);
+
+    let nodes: vec::Vec[agent::GtkNode] = s.describe(auth::operator());
+    var seen: bool = false;
+    var i: usize = 0 as usize;
+    let n: usize = nodes.count();
+    while i < n {
+        match nodes.at_ptr(i) {
+            option::Option[*agent::GtkNode]::Some(g) => {
+                if { (*g).id.view() } == "card:number" {
+                    seen = true;
+                    assert !{ (*g).readable };
+                    // THE CARD NUMBER IS NOT THERE.
+                    assert { (*g).text.view() } == "";
+                    assert { (*g).tier } != identity::tier_open();
+                }
+            }
+            option::Option[*agent::GtkNode]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    assert seen;
+}
+
+// ...and an OPEN node still reads, or the gate would be a blanket.
+#[test]
+fn an_open_nodes_text_still_reaches_an_operator() {
+    if !has_display() { return; }
+    let e: *u8 = { gtk_entry_new() };
+    { gtk_editable_set_text(e, #str_ptr("visible\0")) };
+    let win: *u8 = fixture(e, #str_ptr("plain:field\0"));
+    var s: agent::Surface = agent::open(win);
+    let nodes: vec::Vec[agent::GtkNode] = s.describe(auth::operator());
+    var found: bool = false;
+    var i: usize = 0 as usize;
+    let n: usize = nodes.count();
+    while i < n {
+        match nodes.at_ptr(i) {
+            option::Option[*agent::GtkNode]::Some(g) => {
+                if { (*g).id.view() } == "plain:field" {
+                    found = true;
+                    assert { (*g).readable };
+                    assert { (*g).text.view() } == "visible";
+                }
+            }
+            option::Option[*agent::GtkNode]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    assert found;
+}
+
+#[link_name = "gtk_entry_set_visibility"]
+extern fn gtk_entry_set_visibility(e: *u8, v: i32);

@@ -10,11 +10,24 @@ edition = "2026"
 stdlib      = "*"
 facet       = "*"
 facet_runtime = "*"
+# The agent surface, so the gallery can be driven over MCP. Optional at RUNTIME
+# (see FACET_GALLERY_AGENT in main.cplus) but a build-time dependency: the tier
+# is what drags the agent stack in, and that is the boundary facet_agent exists
+# to make explicit.
+facet_agent   = "*"
 flex_layout = "*"
 events      = "*"
+# The agent stack, restated: the resolver validates every import in a build
+# against ONE flat set taken from the CONSUMING manifest, so a tier's own
+# dependencies are not enough.
+agent_core  = "*"
+agent_mcp   = "*"
+agent_inapp = "*"
+json        = "*"
 
 [linux.dependencies]
 facet_gtk   = "*"
+agent_gtk   = "*"
 gtk4        = "*"
 gobject     = "*"
 gobject_gir = "*"

@@ -32,6 +32,25 @@ objc         = "*"
 appkit       = "*"
 quartzcore   = "*"
 
+[linux.dependencies]
+# The GTK reader, and the stack it walks. `agent_gtk` is the sibling of
+# `agent_appkit`: same vtable, a GtkWindow instead of an NSWindow.
+agent_gtk   = "*"
+gtk4        = "*"
+gobject     = "*"
+gobject_gir = "*"
+gio         = "*"
+glib        = "*"
+cairo       = "*"
+gdk         = "*"
+gdkpixbuf   = "*"
+graphene    = "*"
+gsk         = "*"
+harfbuzz    = "*"
+pango       = "*"
+pangocairo  = "*"
+gmodule     = "*"
+
 [ios.dependencies]
 agent_uikit = "*"
 objc        = "*"

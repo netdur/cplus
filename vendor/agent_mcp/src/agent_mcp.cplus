@@ -1078,7 +1078,30 @@ fn bind_uds(path: str) -> i32 {
         return - 4 as i32;
     }
     var addr: [u8; 110] = [0 as u8; 110];
-    addr[1] = 1 as u8; // sun_family = AF_UNIX
+    // `sockaddr_un` IS NOT THE SAME STRUCT ON BOTH PLATFORMS, and writing the
+    // BSD one on Linux is how this never worked here.
+    //
+    //   BSD / macOS:  u_char sun_len;  u_char sun_family;  char sun_path[104];
+    //   Linux:        sa_family_t sun_family;              char sun_path[108];
+    //
+    // `sa_family_t` is a 2-byte little-endian field at offset 0, so writing the
+    // family into byte 1 — where BSD keeps it, after the length — gives the
+    // kernel 0x0100 = 256. Traced on a live app:
+    //
+    //     bind(20, {sa_family=0x100 /* AF_??? */, sa_data="/tmp/…sock"}, 26)
+    //         = -1 EINVAL (Invalid argument)
+    //
+    // The PATH offset is 2 on both, which is why only the family byte moves and
+    // why the rest of this function is already portable.
+    //
+    // `sun_len` is left zero on BSD: the kernel derives the length from the
+    // `addrlen` argument and every libc that fills it in is doing so for the
+    // benefit of callers that pass the wrong one.
+    if #platform() == "linux" {
+        addr[0] = 1 as u8;              // sun_family = AF_UNIX, low byte
+    } else {
+        addr[1] = 1 as u8;              // sun_len at [0], sun_family at [1]
+    }
     let pbytes: *u8 = #str_ptr(path);
     var i: usize = 0 as usize;
     while i < plen {
@@ -1334,13 +1357,32 @@ fn bind_tcp(port: u16) -> i32 {
     let fd: i32 = { socket(2 as i32, 1 as i32, 0 as i32) };
     if fd < (0 as i32) { return - 1 as i32; }
     // SO_REUSEADDR, so a restart does not wait out TIME_WAIT on the same port.
-    // SOL_SOCKET = 0xffff, SO_REUSEADDR = 4 on Darwin.
+    //
+    // THE CONSTANTS ARE DARWIN'S AND LINUX DISAGREES: SOL_SOCKET is 0xffff on
+    // Darwin and 1 on Linux; SO_REUSEADDR is 4 there and 2 here. Passing the
+    // Darwin pair on Linux sets nothing — `setsockopt` fails and the option
+    // simply never applied.
     var one: i32 = 1 as i32;
-    let _o: i32 = { setsockopt(fd, 65535 as i32, 4 as i32,
+    let sol: i32 = if #platform() == "linux" { 1 as i32 } else { 65535 as i32 };
+    let reuse: i32 = if #platform() == "linux" { 2 as i32 } else { 4 as i32 };
+    let _o: i32 = { setsockopt(fd, sol, reuse,
                                { #addr_of(one) as *u8 }, 4 as u32) };
     var addr: [u8; 16] = [0 as u8; 16];
-    addr[0] = 16 as u8;          // sin_len
-    addr[1] = 2 as u8;           // sin_family = AF_INET
+    // `sockaddr_in` SPLITS THE SAME WAY `sockaddr_un` DOES, and for the same
+    // reason — see `bind_uds`:
+    //
+    //   BSD / macOS:  u_char sin_len;  u_char sin_family;  u_short sin_port;
+    //   Linux:        sa_family_t sin_family;              u_short sin_port;
+    //
+    // So the BSD spelling gives Linux a family of 0x0210 = 528 and `bind`
+    // refuses it. The PORT is at offset 2 either way, which is why only these
+    // two bytes move.
+    if #platform() == "linux" {
+        addr[0] = 2 as u8;       // sin_family = AF_INET, low byte
+    } else {
+        addr[0] = 16 as u8;      // sin_len
+        addr[1] = 2 as u8;       // sin_family = AF_INET
+    }
     put_be16(addr, 2 as usize, port);
     // 127.0.0.1, in network order — which is the same byte order written out.
     addr[4] = 127 as u8;

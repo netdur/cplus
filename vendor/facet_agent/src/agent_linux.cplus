@@ -1,0 +1,261 @@
+// facet agent facade for LINUX/GTK. `import "facet_agent/agent"` resolves HERE
+// on a linux target, through the same filename override that picks
+// `agent_ios.cplus` on iOS and `runtime_linux.cplus` in the runtime tier.
+//
+// WHY IT EXISTS: `agent.cplus` is written against `agent_appkit`, so on Linux
+// the module named a package that is not in the build and the whole tier
+// failed to compile — `E0866: import agent_appkit/agent_appkit is not
+// available on platform linux`. A facet app on GTK therefore could not serve
+// an agent at all, whatever it wrote. `facet_runtime/runtime_linux.cplus`
+// already calls `app::agent_serve_once(sock)` when `app.agent_mcp(path)` was
+// given; the seam was there and nothing filled it.
+//
+// The transport is a Unix socket, the same as macOS and unlike iOS — a Linux
+// desktop has a shared filesystem and no sandbox in the way, so there is
+// nothing for the TCP story `agent_ios.cplus` tells to solve here.
+//
+// Everything below the backend — agent_core, agent_mcp, agent_inapp — is
+// portable and is the same code on every platform. What differs is the READER,
+// and `agent_gtk` is the sibling of `agent_appkit` that reads a GtkWindow.
+//
+// `policy_for` is shared rather than merely similar: it is facet's vocabulary
+// translated into agent_core's, identical to the AppKit module's on purpose. A
+// second translation table would be the thing that drifts.
+
+import "facet/application" as app;
+import "agent_gtk/agent_gtk" as agent_gtk;
+import "agent_core/events" as events;
+import "agent_core/auth" as auth;
+import "agent_core/identity" as identity;
+import "facet/vocabulary" as vocab;
+import "agent_inapp/agent_inapp" as inapp;
+import "agent_mcp/agent_mcp" as mcp;
+import "stdlib/text" as text;
+import "stdlib/io" as io;
+import "stdlib/thread" as thread;
+
+static AGENT_SURFACE: agent_gtk::Surface = #zero::[agent_gtk::Surface]();
+static AGENT_SERVING: bool = false;
+
+// Register the serving hooks with the runtime. Call once, before `app.run`.
+//
+// ONE install struct, filled here — the same shape every other backend seam
+// uses. Stage 3 replaced the old `set_agent_attach_fn` / `set_agent_serve_fn`
+// pair with `app::install_agent`, and a hook family outside the install
+// structs is drift by definition.
+fn enable() {
+    app::install_agent(app::AgentHooks {
+        attach_window: attach_window,
+        serve_once: serve_once,
+        pin_policy: pin_policy,
+    });
+    return;
+}
+
+// Back to the portable no-op: an app that stops serving has no surface, and
+// the runtime's hooks answer nothing rather than reaching a dead one.
+fn disable() {
+    app::install_agent(app::AgentHooks {
+        attach_window: 0 as fn(*u8),
+        serve_once: 0 as fn(str),
+        pin_policy: 0 as fn(*u8, vocab::Agent),
+    });
+    return;
+}
+
+// Open the already-attached Facet surface for an assistant embedded in this
+// process. No socket and no MCP loopback: it drives the same backend vtable as
+// the external bridge, with the same grant model.
+//
+// Call `enable()` before App::run so each mounted window is attached. The
+// returned session borrows process-lifetime AGENT_SURFACE; it remains valid as
+// navigation retargets that surface in place.
+//
+// The default is `operator()`: the embedded assistant reads and drives the app
+// and gets nothing from a node behind a tier. That is not distrust of code
+// compiled into this binary — see agent_inapp's header. It is the developer
+// bounding what MODEL OUTPUT can reach, in-process, on purpose.
+fn in_app() -> inapp::Session {
+    let surf: *u8 = #addr_of(AGENT_SURFACE) as *u8;
+    return inapp::open(surf, agent_gtk::mcp_backend());
+}
+
+// The wider session an app opens once the user has approved something — the
+// autofill grant, or a look-but-do-not-touch one for a background summary.
+//
+// A NEW session rather than a widened one: a permission the user approved for
+// one task should not outlive the task, and the shortest way to guarantee that
+// is for the authority to live in a value the app drops.
+fn in_app_with_grant(grant: auth::Grant) -> inapp::Session {
+    let surf: *u8 = #addr_of(AGENT_SURFACE) as *u8;
+    return inapp::open_with_grant(surf, agent_gtk::mcp_backend(), grant);
+}
+
+// THE ONE PLACE the two vocabularies meet. facet's `vocab::Agent` is what a
+// developer writes; agent_core's `policy_*` is what a backend pins and reads.
+// They are separate on purpose — facet must not import the agent stack — so
+// this function is the translation, and it is in the module that already
+// depends on both.
+//
+// `Hidden` maps to EXCLUDE rather than to a tier: it takes the subtree out of
+// the agent's world instead of gating its content, which is a different
+// mechanism for a different job (the assistant's own panel is not the
+// application's content, while a card number is).
+fn policy_for(a: vocab::Agent) -> u32 {
+    return match a {
+        vocab::Agent::Open => identity::policy_none(),
+        vocab::Agent::Protected => identity::policy_protected(),
+        vocab::Agent::Private => identity::policy_private(),
+        vocab::Agent::Hidden => identity::policy_exclude(),
+    };
+}
+
+// Pin a mounted node's declared tier onto its platform view. Called by paint
+// for every node whose C_AGENT bit is up.
+fn pin_policy(view: *u8, a: vocab::Agent) {
+    agent_gtk::set_agent_policy(view, policy_for(a));
+    return;
+}
+
+// Walk `win`'s live view tree into the surface, replacing the previous
+// screen's (its retained views are released by the drop).
+fn attach_window(win: *u8) {
+    AGENT_SURFACE = agent_gtk::open(win);
+    return;
+}
+
+// The default channel policy: the developer opted in by giving a socket path,
+// so both channels are admitted — as ORDINARY OPERATORS. Read the app, drive
+// the app, and nothing from a node the application put behind a tier.
+//
+// `operator()` and not something wider is the whole of the default's opinion.
+// A grant that reached protected content would make `app.agent_mcp(path)` — one
+// line, written to get an agent talking at all — silently the line that hands
+// a card number to whatever connects. Widening is an app supplying its own
+// policy, which is a place a reader can find it.
+fn admit(req: auth::Request) -> auth::Grant {
+    return auth::operator();
+}
+
+// THE APP'S OWN POLICY, if it has one.
+//
+// `admit` above is a DEFAULT, and its comment argues carefully for why that
+// default is `operator()` and not something wider. What it could not do is let
+// an app be narrower — there was no way to supply a policy at all, so every
+// facet app that called `app.agent_mcp(path)` served every connection the same
+// grant with no way to say otherwise. An app that wants to ask its user first,
+// or to check a token, or to refuse outright, had nowhere to put that.
+//
+// A function pointer and not a closure, matching `auth::AuthGate`: C+ has no
+// closures, and per-caller behaviour comes from the `Request` rather than from
+// captured state.
+//
+// SET IT BEFORE `enable()`. The serve thread reads it once when it starts; a
+// policy installed afterwards would leave a window in which the default served.
+static AGENT_POLICY: fn(auth::Request) -> auth::Grant =
+    #zero::[fn(auth::Request) -> auth::Grant]();
+
+fn set_policy(f: fn(auth::Request) -> auth::Grant) {
+    AGENT_POLICY = f;
+    return;
+}
+
+fn effective_policy() -> fn(auth::Request) -> auth::Grant {
+    if AGENT_POLICY == (0 as fn(auth::Request) -> auth::Grant) { return admit; }
+    return AGENT_POLICY;
+}
+
+struct AgentServe {
+    path: text::Text,
+}
+
+fn serve_main(take job: AgentServe) -> i32 {
+    var sub: events::Subscriber = events::subscriber(events::everything(), 64 as usize);
+    let surf: *u8 = #addr_of(AGENT_SURFACE) as *u8;
+    return mcp::serve_uds(surf, agent_gtk::mcp_backend(), sub, effective_policy(), job.path.view());
+}
+
+// Start the serve worker exactly once per process. The accept loop lives for
+// the app's life; a stale socket file at `path` is unlinked on entry.
+fn serve_once(path: str) {
+    if AGENT_SERVING { return; }
+    AGENT_SERVING = true;
+    let _t: thread::JoinHandle[i32] = thread::spawn_with::[AgentServe, i32](
+        AgentServe { path: text::from_str(path) },
+        serve_main,
+    );
+    return;
+}
+
+// ---- tests ------------------------------------------------------------------
+
+#[test]
+fn enable_fills_the_install_struct_and_disable_empties_it() {
+    // The seam's own rule: zero fields keep the portable no-op, so a runtime
+    // with no agent enabled must reach nothing rather than reach a null.
+    disable();
+    app::agent_attach(0 as *u8);      // inert, not a trap
+    app::agent_serve_once("/tmp/never");
+    enable();
+    // `attach_window` with a null window is what the runtime does before any
+    // window exists; the surface opens empty rather than refusing.
+    app::agent_attach(0 as *u8);
+    disable();
+    return;
+}
+
+#[test]
+fn every_facet_tier_maps_to_the_policy_the_core_reads() {
+    // THE TRANSLATION, which is the one thing in this file a wrong answer
+    // would make dangerous rather than merely broken. A `Private` that mapped
+    // to `policy_none` is a CVC readable by every agent that connects, and
+    // nothing downstream would notice — agent_core would be enforcing exactly
+    // what it was told.
+    assert policy_for(vocab::Agent::Open) == identity::policy_none();
+    assert policy_for(vocab::Agent::Protected) == identity::policy_protected();
+    assert policy_for(vocab::Agent::Private) == identity::policy_private();
+    // Hidden is EXCLUSION, not a tier: it takes the subtree out of the agent's
+    // world rather than gating its content. Mapping it to a tier would leave
+    // the assistant's own Send button in the tree, visible and named.
+    assert policy_for(vocab::Agent::Hidden) == identity::policy_exclude();
+    // And the four are distinct: a pair that collided would silently merge two
+    // decisions a developer made separately.
+    assert identity::policy_none() != identity::policy_protected();
+    assert identity::policy_protected() != identity::policy_private();
+    assert identity::policy_private() != identity::policy_exclude();
+    return;
+}
+
+#[test]
+fn the_pinned_tier_is_what_the_agent_surface_reads_back() {
+    // The round trip across the package boundary, on a real widget: facet's
+    // enum in, agent_core's policy out, through the same call `paint` makes at
+    // mount. Both halves are tested on their own; this is the join.
+    //
+    // A GtkLabel needs GTK up, and this suite must run without a display —
+    // `gtk_init_check` answers that, and the test says so when it skips rather
+    // than passing quietly over nothing.
+    if { gtk_init_check() } == (0 as i32) {
+        io::eprintln("facet_agent: no display — the pin round trip is skipped.");
+        return;
+    }
+    let probe: *u8 = { gtk_label_new(#str_ptr("probe\0")) };
+    assert probe != (0 as *u8);
+    pin_policy(probe, vocab::Agent::Private);
+    assert agent_gtk::get_agent_policy(probe) == identity::policy_private();
+    pin_policy(probe, vocab::Agent::Protected);
+    assert agent_gtk::get_agent_policy(probe) == identity::policy_protected();
+    // Clearing is a write too, not an absence.
+    pin_policy(probe, vocab::Agent::Open);
+    assert agent_gtk::get_agent_policy(probe) == identity::policy_none();
+    // ...and `Hidden` takes the subtree out of the agent's world rather than
+    // gating its content, which is a different mechanism for a different job.
+    pin_policy(probe, vocab::Agent::Hidden);
+    assert agent_gtk::get_agent_policy(probe) == identity::policy_exclude();
+    return;
+}
+
+#[link_name = "gtk_init_check"]
+extern fn gtk_init_check() -> i32;
+#[link_name = "gtk_label_new"]
+extern fn gtk_label_new(t: *u8) -> *u8;

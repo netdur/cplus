@@ -4,6 +4,8 @@ import "facet/theme" as theme;
 import "facet/vocabulary" as vocab;
 import "facet_runtime/runtime" as runtime;
 import "stdlib/status" as status;
+import "stdlib/env" as env;
+import "facet_agent/agent" as agent;
 
 import "./gallery" as gallery;
 
@@ -18,6 +20,17 @@ fn main() -> i32 {
 
     var app: runtime::App = runtime::App::new("Facet Gallery");
     app.screen("gallery", gallery::screen_box);
+
+    // FACET_GALLERY_AGENT=1 — serve the agent surface on a Unix socket.
+    //
+    // Two lines is the whole opt-in, which is the point of the tier: an app
+    // that does not call these links none of the agent stack. It is behind a
+    // variable here because the gallery is a REFERENCE, and a reference that
+    // opens a socket by default would teach the wrong default.
+    if env::has_var("FACET_GALLERY_AGENT") {
+        agent::enable();
+        app.agent_mcp("/tmp/facet-gallery.sock");
+    }
 
     match app.run("gallery") {
         status::Status::Ok => { return 0; }
