@@ -53,7 +53,8 @@ fn css_band_bits() -> u64 {
     // both the brush and the background image — `props.cplus` says the image
     // deliberately takes no bit of its own.
     return props::C_BACKGROUND_COLOR | props::C_CORNER_RADIUS
-         | props::C_FLOW_DIRECTION | props::C_BACKGROUND;
+         | props::C_FLOW_DIRECTION | props::C_BACKGROUND
+         | props::C_SHADOW | props::C_CLIP;
 }
 
 // The band's own bits, so a caller can ask "is any of this dirty?" without
@@ -63,7 +64,8 @@ fn band_bits() -> u64 {
          | props::C_IS_ENABLED | props::C_IS_VISIBLE | props::C_TOOLTIP
          | props::C_SHADOW | props::C_CLIP | props::C_FLOW_DIRECTION
          | props::C_BACKGROUND | props::C_TRANSFORM | props::C_ANIMATE
-         | props::C_CANCEL_ANIMATIONS;
+         | props::C_CANCEL_ANIMATIONS | props::C_SEMANTICS
+         | props::C_FOCUS | props::C_BLUR;
 }
 
 // Which side of an adaptive pair is live. Set by the window tier at install
@@ -461,6 +463,12 @@ fn band_css(n: *core::Node) -> text::Text {
         body = body.appending("background-color: ${rgba};");
     }
     body = body.appending(background_decls(n).view());
+    body = body.appending(shadow_decl(core::shadow(n)).view());
+    // THE CLIP'S SHAPE, before the corner radius, because both write
+    // `border-radius` and the LATER one wins — and a node that named both
+    // meant the corner radius, which is the more specific verb about the box
+    // rather than about what is clipped to it.
+    body = body.appending(clip_decl(core::clip(n), is_rtl(n)).view());
     let cr: vocab::Corners = core::corner_radius(n);
     if cr.top_leading > (0.0 as f64) || cr.top_trailing > (0.0 as f64)
         || cr.bottom_leading > (0.0 as f64) || cr.bottom_trailing > (0.0 as f64) {
@@ -470,12 +478,7 @@ fn band_css(n: *core::Node) -> text::Text {
         // the pairs swap. CSS has logical corner properties
         // (`border-start-start-radius`) and GTK's CSS engine does not
         // implement them, so the mirroring is done here.
-        let rtl: bool = is_rtl(n);
-        let tl: i32 = if rtl { cr.top_trailing as i32 } else { cr.top_leading as i32 };
-        let tr: i32 = if rtl { cr.top_leading as i32 } else { cr.top_trailing as i32 };
-        let br: i32 = if rtl { cr.bottom_leading as i32 } else { cr.bottom_trailing as i32 };
-        let bl: i32 = if rtl { cr.bottom_trailing as i32 } else { cr.bottom_leading as i32 };
-        body = body.appending("border-radius: ${tl}px ${tr}px ${br}px ${bl}px;");
+        body = body.appending(corners_decl(cr, is_rtl(n)).view());
     }
     return body;
 }
@@ -553,6 +556,22 @@ fn band(v: *u8, n: *core::Node, d: u64) {
     }
     if (d & props::C_FLOW_DIRECTION) != (0 as u64) {
         apply_flow_direction(w, n);
+    }
+    if (d & props::C_CLIP) != (0 as u64) {
+        apply_clip(w, core::clip(n));
+    }
+    if (d & props::C_SEMANTICS) != (0 as u64) {
+        apply_semantics(v, n);
+    }
+    // FOCUS AND BLUR ARE COMMANDS, not state: act on the bit, and the sync
+    // walk clears it. Both were unanswered — a node asking for focus simply
+    // did not get it, which is the one gap in this band a person notices
+    // immediately.
+    if (d & props::C_FOCUS) != (0 as u64) {
+        let _ok: bool = w.grab_focus();
+    }
+    if (d & props::C_BLUR) != (0 as u64) {
+        blur(w);
     }
 
     // The CSS document is NOT written here. It is one document per widget with
@@ -840,4 +859,183 @@ fn eased(t: f64, curve: vocab::Easing) -> f64 {
         vocab::Easing::SpringIn => (1.0 as f64) - spring_out((1.0 as f64) - x),
         vocab::Easing::SpringOut => spring_out(x),
     };
+}
+
+// ---- focus, and the absence of it ----------------------------------------------
+//
+// "Nothing is focused" is a WINDOW-level statement in GTK, the same as it is in
+// AppKit: there is no `ungrab_focus` on a widget, and asking the widget to
+// resign would only move the focus somewhere else within the window. So the
+// blur goes to the root — `gtk_root_set_focus(root, NULL)` — which is the one
+// call that means "no widget".
+//
+// `facet_appkit` reaches the same shape from the other side and says so:
+// resigning to the WINDOW, because passing nil to `makeFirstResponder:` makes
+// the window refuse the change rather than clear it.
+#[link_name = "gtk_root_set_focus"]
+extern fn gtk_root_set_focus(root: *u8, focus: *u8);
+
+fn blur(w: gtk::Widget) {
+    match w.get_root() {
+        option::Option[gtk::Root]::Some(r) => { { gtk_root_set_focus(r.raw(), 0 as *u8) }; }
+        option::Option[gtk::Root]::None => { }
+    }
+    return;
+}
+
+// ---- the clip ------------------------------------------------------------------
+//
+// GTK 4 DOES NOT CLIP A WIDGET TO ITS ALLOCATION by default — a child drawing
+// past its box is drawn past its box — and the switch is
+// `gtk_widget_set_overflow`, not CSS. So a clip is TWO writes: the overflow
+// flag here, and the SHAPE as a `border-radius` in the CSS document, because
+// GTK clips an overflow-hidden widget to its rounded border box.
+//
+// That is also the limit, and it is the whole of it: the clip shape can be a
+// rectangle, a rounded rectangle or an ellipse (`border-radius: 50%`), and
+// nothing else. An ARBITRARY path has no spelling in CSS and no widget-level
+// door in GTK; a node that wants one wants a `canvas`, which clips properly
+// because cairo does.
+fn apply_clip(w: gtk::Widget, s: vocab::Shape) {
+    // GtkOverflow: VISIBLE 0, HIDDEN 1.
+    if s.kind == (0 as i64) { w.set_overflow(0 as i32); return; }
+    w.set_overflow(1 as i32);
+    return;
+}
+
+// Facet's corners are LOGICAL (leading/trailing) and CSS's are PHYSICAL
+// (left/right), and CSS's four are in TL TR BR BL order. In a left-to-right
+// flow they coincide; in a right-to-left one leading IS the right side, so the
+// pairs swap. CSS has logical corner properties and GTK's engine does not
+// implement them, so the mirroring is done here.
+fn corners_decl(cr: vocab::Corners, rtl: bool) -> text::Text {
+    let tl: i32 = if rtl { cr.top_trailing as i32 } else { cr.top_leading as i32 };
+    let tr: i32 = if rtl { cr.top_leading as i32 } else { cr.top_trailing as i32 };
+    let br: i32 = if rtl { cr.bottom_leading as i32 } else { cr.bottom_trailing as i32 };
+    let bl: i32 = if rtl { cr.bottom_trailing as i32 } else { cr.bottom_leading as i32 };
+    return text::from_str("border-radius: ${tl}px ${tr}px ${br}px ${bl}px;");
+}
+
+// ---- the drop shadow -----------------------------------------------------------
+//
+// `C_SHADOW` was NAMED in `band_bits()` and answered by nothing — a claim that
+// the band handles it, next to a body that did not. GTK 4's CSS implements
+// `box-shadow`, so this is one declaration.
+//
+// facet's `radius` is the visual reach, which is what CSS's blur radius means
+// too, so they pass straight through. The OPACITY is folded into the colour's
+// alpha rather than emitted separately, because CSS has nowhere else to put it
+// — the same fold `drawing::cast_shadow` does for the canvas.
+//
+// NO SPREAD. facet's Shadow has no such field, and CSS's third length would
+// have to be invented; a zero spread is the shadow the vocabulary describes.
+fn shadow_decl(sh: vocab::Shadow) -> text::Text {
+    let a: f64 = resolved(sh.color).a * sh.opacity;
+    if a <= (0.0 as f64) { return text::from_str(""); }
+    if sh.radius <= (0.0 as f64)
+        && sh.offset.x == (0.0 as f64) && sh.offset.y == (0.0 as f64) {
+        // A shadow with no reach and no offset is exactly underneath the node
+        // and invisible. Emitting it would cost a shadow pass per frame to
+        // draw nothing.
+        return text::from_str("");
+    }
+    var faded: vocab::Color = resolved(sh.color);
+    faded.a = a;
+    let rgba: text::Text = css_rgba(faded);
+    let dx: i32 = sh.offset.x as i32;
+    let dy: i32 = sh.offset.y as i32;
+    let blur: i32 = sh.radius as i32;
+    return text::from_str("box-shadow: ${dx}px ${dy}px ${blur}px ${rgba};");
+}
+
+// The clip's SHAPE. `Shape.kind`: 0 none, 1 rect, 2 rounded, 3 ellipse — the
+// same four `controls::shape_decl` reads for a `bordered`, and the same
+// reading: an ellipse IS a border radius of half the box on every corner,
+// which is what `50%` means.
+//
+// A RECTANGLE NEEDS NO RADIUS. `overflow: hidden` already clips to the box; a
+// `border-radius: 0` here would fight a `corner_radius` the node also set, and
+// the corner radius is the more specific verb.
+fn clip_decl(s: vocab::Shape, rtl: bool) -> text::Text {
+    if s.kind == (3 as i64) { return text::from_str("border-radius: 50%;"); }
+    if s.kind == (2 as i64) { return corners_decl(s.corners, rtl); }
+    return text::from_str("");
+}
+
+// ---- what a screen reader is told ----------------------------------------------
+//
+// `C_SEMANTICS` carries three rows at once — the label, the hint, and a
+// heading level — because a screen-reader description changes rarely and
+// `props.cplus` says the backend re-reads all three.
+//
+// GTK 4's accessibility is ARIA-shaped: properties on the widget's
+// GtkAccessible interface, not a parallel object tree the way AT-SPI used to
+// be in GTK 3. `gtk_accessible_update_property` is VARIADIC and therefore not
+// callable from here; `gtk_accessible_update_property_value` is the same thing
+// with an explicit count and arrays, which is why it exists and why this uses
+// it.
+//
+// THE HEADING LEVEL IS A ROLE, AND A ROLE IS CREATE-TIME IN GTK 4 — it is set
+// on the widget CLASS, not the instance, so a node that becomes a heading
+// after its widget exists cannot be told so. What CAN be said is the LEVEL,
+// which is an ordinary property, and it is what a reader announces after the
+// role. Recorded in MANIFEST.md §3 rather than left looking complete.
+
+#[link_name = "gtk_accessible_update_property_value"]
+extern fn gtk_accessible_update_property_value(a: *u8, n: i32,
+                                               properties: *i32, values: *u8);
+#[link_name = "g_value_init"]
+extern fn g_value_init(v: *u8, gtype: usize) -> *u8;
+#[link_name = "g_value_set_string"]
+extern fn g_value_set_string(v: *u8, s: *u8);
+#[link_name = "g_value_set_int"]
+extern fn g_value_set_int(v: *u8, i: i32);
+#[link_name = "g_value_unset"]
+extern fn g_value_unset(v: *u8);
+
+// GValue is an opaque 24 bytes — a GType and two 8-byte union slots — and it
+// MUST START ZEROED, which is what `g_value_init` requires and the one way to
+// get this wrong quietly.
+struct GValue { gtype: usize, a: u64, b: u64 }
+
+fn g_type_string() -> usize { return 64 as usize; }   // G_TYPE_STRING
+fn g_type_int() -> usize { return 24 as usize; }      // G_TYPE_INT
+
+// GtkAccessibleProperty ordinals, from gtkenums.h: DESCRIPTION is 1, LABEL 4,
+// LEVEL 5.
+fn a11y_description() -> i32 { return 1 as i32; }
+fn a11y_label() -> i32 { return 4 as i32; }
+fn a11y_level() -> i32 { return 5 as i32; }
+
+fn set_string_property(v: *u8, property: i32, value: str) {
+    if value == "" { return; }
+    var val: GValue = GValue { gtype: 0 as usize, a: 0 as u64, b: 0 as u64 };
+    let _i: *u8 = { g_value_init(#addr_of(val) as *u8, g_type_string()) };
+    match text::from_str(value).c_str() {
+        option::Option[text::CString]::Some(cs) => {
+            { g_value_set_string(#addr_of(val) as *u8, cs.as_ptr()) };
+            var prop: i32 = property;
+            { gtk_accessible_update_property_value(v, 1 as i32, #addr_of(prop),
+                                                   #addr_of(val) as *u8) };
+        }
+        option::Option[text::CString]::None => { }
+    }
+    { g_value_unset(#addr_of(val) as *u8) };
+    return;
+}
+
+fn apply_semantics(v: *u8, n: *core::Node) {
+    if v == (0 as *u8) { return; }
+    set_string_property(v, a11y_label(), core::accessibility_label(n));
+    set_string_property(v, a11y_description(), core::accessibility_hint(n));
+    let level: i64 = core::heading_level(n);
+    if level <= (0 as i64) { return; }
+    var val: GValue = GValue { gtype: 0 as usize, a: 0 as u64, b: 0 as u64 };
+    let _i: *u8 = { g_value_init(#addr_of(val) as *u8, g_type_int()) };
+    { g_value_set_int(#addr_of(val) as *u8, level as i32) };
+    var prop: i32 = a11y_level();
+    { gtk_accessible_update_property_value(v, 1 as i32, #addr_of(prop),
+                                           #addr_of(val) as *u8) };
+    { g_value_unset(#addr_of(val) as *u8) };
+    return;
 }

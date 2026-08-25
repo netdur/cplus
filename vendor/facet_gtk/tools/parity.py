@@ -46,7 +46,7 @@ HANDLER_FLOOR = 68
 # The SHARED band, which had no floor at all — and that is how four verbs every
 # node has (`C_ANIMATE`, `C_TRANSFORM`, `C_SHADOW`, `C_CLIP`) sat unanswered
 # while the two numbers above read 98% and 100%. See `shared_band`.
-SHARED_FLOOR = 14
+SHARED_FLOOR = 17
 
 # Handlers facet fires ITSELF, from `mount.cplus`'s post-walk notification
 # queue (M4). A backend neither can nor should wire them, so counting them

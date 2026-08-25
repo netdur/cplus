@@ -10,7 +10,7 @@ listed here is a gap, and the gap is a bug.
 ```
 360 declared prop bits     353 answered     98%   (appkit 338, uikit 335)
  68 declared handlers       68 fired       100%   (appkit  68, uikit  67)
- 21 shared-band bits         14 named        66%   (appkit  20, uikit  18)
+ 21 shared-band bits         17 named        80%   (appkit  20, uikit  18)
 ```
 
 All THREE axes are in `--check` now, with separate floors: they fail
@@ -222,22 +222,35 @@ and unrecorded.
   `bordered` that needed them would have to be drawn, which is the `canvas`
   kind's job and is listed as debt below rather than smuggled in here.
 
+- **`C_FLUSH` is nothing to do, and NO BACKEND NAMES IT** — not this one, not
+  appkit, not uikit. It is raised when a `begin_updates` / `end_updates` batch
+  closes, and by then every bit the batch raised is already on the node. The
+  sync walk applies those. A backend acting on the flush as well would re-apply
+  the same node twice for one edit.
+- **`C_HANDLERS` is free HERE, and that is a property of this backend rather
+  than of GTK.** The bit says a shared-band handler pair was swapped live. This
+  package reads handlers OFF THE NODE AT FIRE TIME — §2's "a gesture band is
+  never removed once armed" is the same fact from the other side — so a swap is
+  picked up by the next event with nothing re-bound. AppKit names the bit
+  because its controls hold a target/action pair that has to be re-set.
+- **`C_SAFE_AREA` has nothing to answer.** A safe area is the part of a window
+  the system furniture does not cover — a notch, a home indicator, a rounded
+  display corner. A GTK window under a desktop compositor has no such inset:
+  the window IS its content area, and the frame is outside it. uikit names the
+  bit because a phone has one and appkit because a MacBook display can; there
+  is no number here to report, and reporting zero would be indistinguishable
+  from a backend that forgot.
+
 ## 2. Not built yet — the debt
 
 Everything not listed as live above. The large ones, in the order they matter:
 
-- **SEVEN SHARED-BAND BITS ARE STILL UNNAMED**, and they only became visible
-  when `parity.py` learned to look at the `C_*` band at all: `C_FOCUS`,
-  `C_BLUR`, `C_FLUSH`, `C_HANDLERS`, `C_SAFE_AREA`, `C_SEMANTICS`, `C_AGENT`.
-  appkit names twenty of twenty-one. `C_FOCUS` / `C_BLUR` are the two that a
-  user would notice first — a node asking for focus and not getting it.
-- **`C_SHADOW` and `C_CLIP` are NAMED BUT NOT ANSWERED.** They appear in
-  `paint::band_bits()`, which is a claim that the band handles them, and
-  `paint::band` acts on neither. That is the exact shape of the thing this
-  file exists to prevent, and it is written here rather than quietly fixed in
-  the list. A drop shadow is CSS `box-shadow`, which GTK 4 implements; a
-  rounded clip is `border-radius` plus overflow; an ARBITRARY clip shape has no
-  CSS spelling and will need its own entry when someone tries.
+- **`C_AGENT` — the agent pin.** What an agent may do with a node's content,
+  pinned on the VIEW rather than held in facet, because the agent surface walks
+  the platform tree and never sees a facet node. `agent_gtk` is a separate
+  package and the pin has no home in this one yet; appkit routes it through
+  `app::agent_pin`. It is the only shared-band bit whose value a security
+  boundary depends on, so it is debt rather than an oversight.
 
 - **A tree's flat index is a full walk.** Answering "what is the Nth visible
   row" means walking the expanded model, so the walk runs once per change into a
@@ -403,6 +416,27 @@ Everything not listed as live above. The large ones, in the order they matter:
   VIEW background rather than the canvas — uses zero as top-to-bottom, which is
   neither. Two of the three agree and the canvas is the one facet's own
   `DrawCommand` documents, so this package follows the canvas.
+- **A CLIP IS `gtk_widget_set_overflow`, NOT CSS.** GTK 4 does not clip a
+  widget to its allocation by default — a child drawing past its box is drawn
+  past its box — so a clip is TWO writes: the overflow flag, and the SHAPE as a
+  `border-radius` in the CSS document, because GTK clips an overflow-hidden
+  widget to its rounded border box. That is also the whole limit: rectangle,
+  rounded rectangle, or ellipse (`border-radius: 50%`). An ARBITRARY path has
+  no spelling in CSS and no widget-level door in GTK — a node that wants one
+  wants a `canvas`, which clips properly because cairo does. A RECTANGULAR clip
+  writes no radius at all, deliberately: `overflow: hidden` already clips to the
+  box, and a `border-radius: 0` would fight a `corner_radius` the node also set.
+- **A HEADING'S LEVEL IS SAID; ITS ROLE IS NOT.** GTK 4's accessibility is
+  ARIA-shaped, and a ROLE is set on the widget CLASS at create time — so a node
+  that becomes a heading after its widget exists cannot be told so. The LEVEL is
+  an ordinary property and is written. `gtk_accessible_update_property` is
+  variadic and unreachable from here; `..._property_value` is the same call with
+  an explicit count and arrays, which is why it exists and what this uses.
+- **A BLUR IS A WINDOW-LEVEL STATEMENT.** There is no `ungrab_focus` on a
+  widget, and asking one to resign would only move focus elsewhere inside the
+  window — so "nothing is focused" goes to the root, `gtk_root_set_focus(root,
+  NULL)`. `facet_appkit` reaches the same shape from the other side and for the
+  same reason.
 - **A TRANSFORM IS A CHILD-IN-ITS-HOST, not a widget property.** GTK 4 has no
   `transform` on a widget; what it has is a transform applied to a child at
   ALLOCATION, and `gtk_fixed_set_child_transform` is the public door — which

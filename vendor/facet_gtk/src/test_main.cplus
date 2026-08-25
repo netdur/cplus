@@ -141,14 +141,17 @@ fn the_css_band_bits_are_only_the_ones_that_feed_the_document() {
     // The band's OTHER verbs are widget properties, and listing them here
     // would rebuild the document on a tooltip change.
     //
-    // FOUR, not two. The flow direction joined them because a corner radius is
-    // logical and CSS's is physical, so flipping the flow changes the document
-    // with no radius having moved; C_BACKGROUND joined them because the brush
-    // and the background image are both declarations now, and `props.cplus`
-    // says the image deliberately takes no bit of its own.
+    // SIX now, and every addition was a verb that had been going unanswered.
+    // The flow direction, because a corner radius is logical and CSS's is
+    // physical, so flipping the flow changes the document with no radius having
+    // moved. C_BACKGROUND, because the brush and the background image are both
+    // declarations now (`props.cplus` says the image deliberately takes no bit
+    // of its own). C_SHADOW and C_CLIP, which were CLAIMED in `band_bits()` and
+    // answered by nothing at all.
     assert paint::css_band_bits()
         == (props::C_BACKGROUND_COLOR | props::C_CORNER_RADIUS
-            | props::C_FLOW_DIRECTION | props::C_BACKGROUND);
+            | props::C_FLOW_DIRECTION | props::C_BACKGROUND
+            | props::C_SHADOW | props::C_CLIP);
     assert (paint::css_band_bits() & props::C_TOOLTIP) == (0 as u64);
     return;
 }
@@ -1272,6 +1275,114 @@ fn a_null_c_string_reads_as_empty_rather_than_dereferencing() {
 // angle conversion, the two trigonometric functions the gradient axis needs —
 // because those are what is wrong silently, and a mirrored arc or a
 // transposed line cap looks like a drawing bug in the application.
+
+// ---- the drop shadow and the clip ----------------------------------------------
+//
+// Both were NAMED in `paint::band_bits()` and answered by nothing — a claim
+// that the band handles them, next to a body that did not. That is the exact
+// shape MANIFEST.md exists to prevent, and the shape `parity.py` could not see
+// until it learned to count the `C_*` band.
+#[test]
+fn a_shadow_becomes_a_css_box_shadow() {
+    paint::set_dark(false);
+    let sh: vocab::Shadow = vocab::Shadow {
+        color: vocab::Color::rgba(0.0f64, 0.0f64, 0.0f64, 0.5f64),
+        offset: vocab::Point::of(2.0f64, 4.0f64),
+        radius: 8.0f64,
+        opacity: 1.0f64,
+    };
+    assert paint::shadow_decl(sh).view() == "box-shadow: 2px 4px 8px rgba(0,0,0,0.500);";
+}
+
+// The OPACITY folds into the colour's alpha, because CSS has nowhere else to
+// put it — the same fold `drawing::cast_shadow` does for the canvas. Applying
+// it twice, or dropping it, are the two ways to get a shadow the wrong depth.
+#[test]
+fn a_shadows_opacity_folds_into_its_alpha() {
+    paint::set_dark(false);
+    let half: vocab::Shadow = vocab::Shadow {
+        color: vocab::Color::rgba(0.0f64, 0.0f64, 0.0f64, 1.0f64),
+        offset: vocab::Point::of(0.0f64, 2.0f64),
+        radius: 4.0f64,
+        opacity: 0.25f64,
+    };
+    assert paint::shadow_decl(half).view().contains("rgba(0,0,0,0.250)");
+}
+
+// NEGATIVE: a shadow nobody can see writes nothing. A transparent colour, a
+// zero opacity, and one with no reach AND no offset are all exactly underneath
+// the node — emitting them would cost a shadow pass per frame to draw nothing.
+#[test]
+fn an_invisible_shadow_writes_no_declaration() {
+    assert paint::shadow_decl(vocab::Shadow::none()).view() == "";
+    assert paint::shadow_decl(vocab::Shadow {
+        color: vocab::Color::rgba(0.0f64, 0.0f64, 0.0f64, 1.0f64),
+        offset: vocab::Point::of(4.0f64, 4.0f64), radius: 4.0f64,
+        opacity: 0.0f64,
+    }).view() == "";
+    // No reach and no offset: directly under the node.
+    assert paint::shadow_decl(vocab::Shadow {
+        color: vocab::Color::rgba(0.0f64, 0.0f64, 0.0f64, 1.0f64),
+        offset: vocab::Point::of(0.0f64, 0.0f64), radius: 0.0f64,
+        opacity: 1.0f64,
+    }).view() == "";
+    // ...but an OFFSET with no blur is a hard shadow, which is a real one.
+    assert paint::shadow_decl(vocab::Shadow {
+        color: vocab::Color::rgba(0.0f64, 0.0f64, 0.0f64, 1.0f64),
+        offset: vocab::Point::of(3.0f64, 0.0f64), radius: 0.0f64,
+        opacity: 1.0f64,
+    }).view() != "";
+}
+
+// `Shape.kind`: 0 none, 1 rect, 2 rounded, 3 ellipse — the same four
+// `controls::shape_decl` reads for a `bordered`.
+#[test]
+fn a_clip_shape_becomes_a_border_radius() {
+    assert paint::clip_decl(vocab::Shape { kind: 3 as i64,
+        corners: vocab::Corners::none() }, false).view() == "border-radius: 50%;";
+    assert paint::clip_decl(vocab::Shape { kind: 2 as i64,
+        corners: vocab::Corners::all(6.0f64) }, false)
+        .view() == "border-radius: 6px 6px 6px 6px;";
+}
+
+// NEGATIVE, and it is the interesting one: a RECTANGLE clip writes NO radius.
+// `overflow: hidden` already clips to the box, and a `border-radius: 0` here
+// would fight a `corner_radius` the node also set — which is the more specific
+// verb, and the one an application means when it names both.
+#[test]
+fn a_rectangular_clip_does_not_fight_the_corner_radius() {
+    assert paint::clip_decl(vocab::Shape { kind: 1 as i64,
+        corners: vocab::Corners::none() }, false).view() == "";
+    assert paint::clip_decl(vocab::Shape::none(), false).view() == "";
+
+    var n: core::Node = core::column(core::Builder::new());
+    n.set_corner_radius(vocab::Corners::all(10.0f64));
+    n.set_clip(vocab::Shape { kind: 1 as i64, corners: vocab::Corners::none() });
+    let css: text::Text = paint::band_css(#addr_of(n));
+    assert css.contains("border-radius: 10px 10px 10px 10px;");
+    assert !css.contains("border-radius: 0");
+}
+
+// The clip mirrors in RTL for the same reason the corner radius does: both are
+// facet's logical corners landing on CSS's physical ones.
+#[test]
+fn a_rounded_clip_mirrors_in_a_right_to_left_flow() {
+    let c: vocab::Corners = vocab::Corners {
+        top_leading: 1.0f64, top_trailing: 2.0f64,
+        bottom_leading: 3.0f64, bottom_trailing: 4.0f64,
+    };
+    let shape: vocab::Shape = vocab::Shape { kind: 2 as i64, corners: c };
+    assert paint::clip_decl(shape, false).view() == "border-radius: 1px 2px 4px 3px;";
+    assert paint::clip_decl(shape, true).view() == "border-radius: 2px 1px 3px 4px;";
+}
+
+// The band now CLAIMS these and answers them, which is the pair that has to
+// stay true together.
+#[test]
+fn the_css_band_bits_carry_the_shadow_and_the_clip() {
+    assert (paint::css_band_bits() & props::C_SHADOW) != (0 as u64);
+    assert (paint::css_band_bits() & props::C_CLIP) != (0 as u64);
+}
 
 // ---- the shared transform and animation band -----------------------------------
 //
