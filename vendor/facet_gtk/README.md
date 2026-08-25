@@ -63,6 +63,8 @@ cd examples/facet_gallery   && ../../target/release/cpc run
 # ...and the gallery can walk ITSELF — every demo, one a tick:
 FACET_GALLERY_WALK=1 ./target/debug/facet_gallery     # 35 screens, warnings visible
 FACET_GTK_SCROLL=1   ./target/debug/facet_gallery     # every scroll move, and who made it
+FACET_GTK_SELECT=1   ./target/debug/facet_gallery     # a nav select, bracketed: at click, after
+                                                      # the handler, and again 500ms later
 FACET_GTK_FRAMES=1   ./target/debug/facet_gallery     # the computed frame tree
 ```
 

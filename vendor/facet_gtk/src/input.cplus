@@ -67,6 +67,8 @@ import "facet/text_button" as text_button;
 import "facet/scroll" as scroll;
 import "facet/split" as split;
 import "facet/tree" as tree;
+import "stdlib/io" as io;
+import "stdlib/env" as env;
 import "facet/list" as list;
 import "facet/collection" as collection;
 import "facet/popup" as popup;
@@ -1994,10 +1996,75 @@ fn tree_row_click(sender: *u8, ctx: *u8) -> bool {
             option::Option[tree::Tree]::None => { }
         }
     }
+    // FACET_GTK_SELECT=1 — bracket the WHOLE interaction.
+    //
+    // Every instrument before this one sampled INSIDE the sync and kept
+    // missing the reported jump. This brackets it instead: the offset as the
+    // click lands, the row that was chosen, the offset once the sync has run,
+    // and the offset again half a second later — which is the one that catches
+    // a jump that happens after everything has settled.
+    //
+    // The `FACET_GTK_SCROLL=1` trace fills in what moved BETWEEN these lines;
+    // this says whether the reader ended up somewhere else at all.
+    select_trace(owner, id, "at click");
     let h: fn(*tree::TreeNode, *u8) = { (*p).on_select };
     if h != tree::no_select { h(tn, { (*p).on_select_ctx }); }
+    select_trace(owner, id, "after handler");
+    arm_select_recheck(owner);
     return true;
 }
+
+// ---- the select bracket ---------------------------------------------------------
+
+static SELECT_READ: bool = false;
+static SELECT_ON: bool = false;
+
+fn tracing_select() -> bool {
+    if !SELECT_READ {
+        SELECT_READ = true;
+        SELECT_ON = env::has_var("FACET_GTK_SELECT");
+    }
+    return SELECT_ON;
+}
+
+fn select_offset_of(owner: *core::Node) -> i64 {
+    let v: *u8 = core::view_of(owner);
+    if v == (0 as *u8) { return 0 as i64; }
+    return { gtk::ScrolledWindow::from_raw(v).get_vadjustment().get_value() } as i64;
+}
+
+fn select_trace(owner: *core::Node, id: str, when: str) {
+    if !tracing_select() { return; }
+    let at: i64 = select_offset_of(owner);
+    io::eprintln("[select] ${when}: row=${id} scroll=${at}");
+    return;
+}
+
+// The LATE reading, which is the one the earlier probes had no way to take.
+// A jump that happens after the sync — GtkListView re-anchoring on its own
+// schedule, a deferred restore losing a race — is invisible to anything
+// sampling during the click.
+static SELECT_LATE: usize = 0;
+
+fn select_recheck(user: *u8) -> i32 {
+    if !tracing_select() { return 0 as i32; }
+    let owner: *core::Node = SELECT_LATE as *core::Node;
+    if owner != (0 as *core::Node) {
+        let at: i64 = select_offset_of(owner);
+        io::eprintln("[select] after 500ms: scroll=${at}");
+    }
+    return 0 as i32;
+}
+
+fn arm_select_recheck(owner: *core::Node) {
+    if !tracing_select() { return; }
+    SELECT_LATE = { #addr(owner as *u8) };
+    let _t: u32 = { g_timeout_add_select(500 as u32, select_recheck, 0 as *u8) };
+    return;
+}
+
+#[link_name = "g_timeout_add"]
+extern fn g_timeout_add_select(ms: u32, f: fn(*u8) -> i32, data: *u8) -> u32;
 
 // ---- the split's divider -----------------------------------------------------
 //
