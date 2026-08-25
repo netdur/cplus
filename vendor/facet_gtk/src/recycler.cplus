@@ -140,6 +140,19 @@ struct Sequence {
     remaining_threshold: i64,
     on_threshold: fn(*u8, *u8),
     opaque on_threshold_ctx: *u8,
+    // `ItemsView.Scrolled` — a list and a collection each declare it, and this
+    // package fired it only for the `scroll` KIND. A `list(...)` that asked to
+    // be told where it is got nothing, silently, which is the shape of gap the
+    // parity report was rewritten to catch.
+    on_scrolled: fn(*u8, *u8),
+    opaque on_scrolled_ctx: *u8,
+    // A LIST DECLARES IT TWICE, and they are not the same field: `ItemsView
+    // .Scrolled` on the embedded block above, and `ListView.Scrolled` of its
+    // own. An app can set either, so both are carried and both are fired — the
+    // reference backend reads both, and picking one would drop whichever the
+    // app happened to use.
+    on_scrolled_own: fn(*u8, *u8),
+    opaque on_scrolled_own_ctx: *u8,
     can_reorder: bool,
     can_mix_groups: bool,
 }
@@ -163,6 +176,8 @@ fn empty_sequence() -> Sequence {
         scroll_anchor: vocab::ScrollAnchor::KeepItemsInView,
         remaining_threshold: 0 as i64,
         on_threshold: props::no_handler, on_threshold_ctx: 0 as *u8,
+        on_scrolled: props::no_handler, on_scrolled_ctx: 0 as *u8,
+        on_scrolled_own: props::no_handler, on_scrolled_own_ctx: 0 as *u8,
         can_reorder: false, can_mix_groups: false,
     };
 }
@@ -222,6 +237,8 @@ fn sequence_of_collection(p: *props::CollectionProps) -> Sequence {
     s.remaining_threshold = { (*p).items_view.remaining_threshold };
     s.on_threshold = { (*p).items_view.on_remaining_items_threshold_reached };
     s.on_threshold_ctx = { (*p).items_view.on_remaining_items_threshold_reached_ctx };
+    s.on_scrolled = { (*p).items_view.observe_scrolled };
+    s.on_scrolled_ctx = { (*p).items_view.observe_scrolled_ctx };
     s.can_reorder = { (*p).reorderable_items_view.can_reorder_items };
     s.can_mix_groups = { (*p).reorderable_items_view.can_mix_groups };
     return s;
@@ -232,7 +249,10 @@ fn sequence_of(n: *core::Node) -> Sequence {
     if kind == props::K_LIST {
         let p: *props::ListProps = controls::props_of(n, props::K_LIST) as *props::ListProps;
         if p == (0 as *props::ListProps) { return empty_sequence(); }
-        return sequence_of_list(p);
+        var s: Sequence = sequence_of_list(p);
+        s.on_scrolled_own = { (*p).observe_scrolled };
+        s.on_scrolled_own_ctx = { (*p).observe_scrolled_ctx };
+        return s;
     }
     if kind == props::K_COLLECTION {
         let p: *props::CollectionProps =
@@ -713,6 +733,11 @@ fn create_sequence(n: *core::Node) -> *u8 {
     }
     // The viewport's own width, watched — see `viewport_changed`.
     let _w: u64 = sw.get_hadjustment().connect_changed(viewport_changed, n as *u8);
+    // ...and the POSITION, which is a different signal on a different
+    // adjustment: `changed` is the viewport or the content resizing, and
+    // `value-changed` is the user moving. `observe_scrolled` wants the second.
+    let _v: u64 = sw.get_vadjustment().connect_value_changed(sequence_scrolled, n as *u8);
+    let _h: u64 = sw.get_hadjustment().connect_value_changed(sequence_scrolled, n as *u8);
     arm_scroll_trace(sw.raw());
     return sw.upcast().raw();
 }
@@ -1323,6 +1348,21 @@ fn row_width(n: *core::Node) -> f64 {
 // The live cells are walked and laid out again, which keeps the SCROLL
 // POSITION; forcing a rebind through the model would send the user back to the
 // top on every window resize.
+// BOTH AXES land here, because facet declares ONE `observe_scrolled` — the
+// same reading `input::scroll_moved` records for the `scroll` kind, and the
+// reason a diagonal move is one call rather than two.
+fn sequence_scrolled(adjustment: *u8, user: *u8) {
+    let n: *core::Node = user as *core::Node;
+    if n == (0 as *core::Node) { return; }
+    let s: Sequence = sequence_of(n);
+    let v: *u8 = core::view_of(n);
+    let f: fn(*u8, *u8) = s.on_scrolled;
+    if f != props::no_handler { f(v, s.on_scrolled_ctx); }
+    let g: fn(*u8, *u8) = s.on_scrolled_own;
+    if g != props::no_handler { g(v, s.on_scrolled_own_ctx); }
+    return;
+}
+
 fn viewport_changed(adjustment: *u8, user: *u8) {
     let n: *core::Node = user as *core::Node;
     if n == (0 as *core::Node) { return; }

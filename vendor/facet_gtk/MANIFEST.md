@@ -151,11 +151,13 @@ ONE IS A STRUCK-THROUGH MISTAKE, kept rather than deleted. This list is what
 the next reader trusts instead of re-deriving, so a row that was wrong is worth
 more standing with its correction than gone — see `C_HANDLERS` below.
 
-AND ONE ROW LEFT BY BEING BUILT (2026-08-25). `bordered`'s cap, join, miter
+AND TWO ROWS LEFT BY BEING BUILT (2026-08-25). `bordered`'s cap, join, miter
 limit and dash offset were here on the grounds that "a GtkFixed is not a
-canvas". It is not, but it can HOLD one — the row had stopped at the first
-mechanism, which is the same shape of mistake `C_HANDLERS` records. Anything
-still in this list is worth re-reading with that in mind.
+canvas". It is not, but it can HOLD one. `popup`'s open/close pair was here
+because a GtkDropDown has no such signal — its POPOVER does, and this file
+already knew how to reach it. Both rows stopped at the first mechanism, which
+is the same shape of mistake `C_HANDLERS` records. Anything still in this list
+is worth re-reading with that in mind.
 
 - **`text_field.return_key` / `search_field.return_key`** — NARROWED, not
   absent, and this row was rewritten on 2026-08-24 when the answerable half was
@@ -188,12 +190,19 @@ still in this list is worth re-reading with that in mind.
   window closing is the same moment and `App::run` already reaches `on_quit`
   there, so the observer answers an INERT handle rather than a filter that
   never fires.
-- **`popup.is_open`, and its `on_opened` / `on_closed` pair.** A GtkDropDown
-  owns its popover and exposes neither a way to open it nor a signal when it
-  opens: there is no property, no method, and the popover is a private child.
-  It is reachable by walking to `get_last_child` and hoping, which is reaching
-  into an implementation detail rather than answering the verb — so this is a
-  row rather than a trick that breaks on a GTK point release.
+- ~~**`popup.is_open`, and its `on_opened` / `on_closed` pair**~~ — **BUILT
+  2026-08-25. The row asked the wrong object.**
+
+  It said a GtkDropDown "exposes neither a way to open it nor a signal when it
+  opens: there is no property, no method, and the popover is a private child."
+  All three halves are false, and this file already contradicted two of them —
+  §3 records `controls::popover_of` walking the drop-down's children for the
+  GtkPopover, and `apply_popup` has been driving its `popup()` / `popdown()` for
+  `is_open` all along. The third is `GtkPopover::closed` plus `GtkWidget::show`.
+
+  The mistake is the one §2's header names: it asked whether the DROP-DOWN has
+  the verb, found it does not, and stopped one tier above the answer — on a
+  child the same file already knew how to reach.
 - **`carousel.bounces`.** Rubber-band overscroll is a per-scroll-view property
   on AppKit (`elasticity`) and not a property at all in GTK: a GtkScrolledWindow
   draws an overshoot at the end of a kinetic scroll and offers no switch for it.

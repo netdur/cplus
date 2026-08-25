@@ -3010,6 +3010,10 @@ fn apply_popup(v: *u8, n: *core::Node, dirty: u64) {
     if (dirty & popup::P_VERTICAL_ALIGN) != (0 as u64) {
         gtk::Widget::from_raw(v).set_valign(valign_of({ (*p).vertical_align }));
     }
+    // Idempotent, and here as well as at create: a GtkDropDown builds its
+    // popover itself, and this is the cheapest place to be sure the open/close
+    // signals were reached even if it built it late.
+    input::arm_popup_visibility(v, n);
     if (dirty & popup::P_IS_OPEN) != (0 as u64) {
         let pop: *u8 = popover_of(v);
         if pop != (0 as *u8) {

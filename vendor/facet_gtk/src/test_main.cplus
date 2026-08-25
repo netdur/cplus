@@ -5027,3 +5027,200 @@ fn the_observer_table_still_has_a_ceiling() {
 }
 
 fn observer_noop(ctx: *u8) { return; }
+
+// ---- popup's on_opened / on_closed ------------------------------------------
+//
+// These were in MANIFEST §1 as absent, on the grounds that a GtkDropDown
+// "exposes neither a way to open it nor a signal when it opens: there is no
+// property, no method, and the popover is a private child". All three halves
+// are false — `popover_of` reaches the child, `apply_popup` already drives its
+// popup()/popdown() for `is_open`, and GtkPopover has `closed` while GtkWidget
+// has `show`. The row asked whether the DROP-DOWN had the verb, found it did
+// not, and stopped one tier above the answer.
+
+static POPUP_OPENED: i32 = 0;
+static POPUP_CLOSED: i32 = 0;
+
+fn popup_opened_probe(sender: *u8, ctx: *u8) { POPUP_OPENED = POPUP_OPENED +% (1 as i32); return; }
+fn popup_closed_probe(sender: *u8, ctx: *u8) { POPUP_CLOSED = POPUP_CLOSED +% (1 as i32); return; }
+
+#[test]
+fn a_popups_open_and_close_handlers_fire_once_per_edge() {
+    // NO WIDGET — the transition is driven straight through the function the
+    // popover's signals call, which is the whole of the decision. What GTK
+    // supplies is the edge; what this package decides is which handler an edge
+    // runs and what `is_open` reads while it does.
+    POPUP_OPENED = 0 as i32;
+    POPUP_CLOSED = 0 as i32;
+    var n: core::Node = ui::popup("Pick", key: "p1",
+                                  on_opened: popup_opened_probe,
+                                  on_closed: popup_closed_probe);
+    let node: *core::Node = #addr_of(n);
+    input::popup_open_changed(node, true);
+    assert POPUP_OPENED == (1 as i32);
+    assert POPUP_CLOSED == (0 as i32);
+    // ...and the prop is written BEFORE the handler, so an app asking
+    // `is_open()` from inside `on_opened` is told it is open.
+    let p: *props::PopupProps =
+        controls::props_of(node, props::K_POPUP) as *props::PopupProps;
+    assert { (*p).is_open };
+    input::popup_open_changed(node, false);
+    assert POPUP_CLOSED == (1 as i32);
+    assert !{ (*p).is_open };
+    return;
+}
+
+#[test]
+fn a_repeated_edge_is_not_a_second_open() {
+    // GTK sends `show` for reasons other than a user opening the menu — a
+    // remap, a reparent — and a handler that ran twice for one opening would
+    // have an app opening two panels. The state is the guard, the same way the
+    // pickers' `notify::active` is guarded.
+    POPUP_OPENED = 0 as i32;
+    POPUP_CLOSED = 0 as i32;
+    var n: core::Node = ui::popup("Pick", key: "p2",
+                                  on_opened: popup_opened_probe,
+                                  on_closed: popup_closed_probe);
+    let node: *core::Node = #addr_of(n);
+    input::popup_open_changed(node, true);
+    input::popup_open_changed(node, true);
+    input::popup_open_changed(node, true);
+    assert POPUP_OPENED == (1 as i32);
+    input::popup_open_changed(node, false);
+    input::popup_open_changed(node, false);
+    assert POPUP_CLOSED == (1 as i32);
+    // ...and it can open again after a real close.
+    input::popup_open_changed(node, true);
+    assert POPUP_OPENED == (2 as i32);
+    return;
+}
+
+#[test]
+fn a_popup_with_no_handlers_still_tracks_its_own_state() {
+    // NEGATIVE: `is_open` is a READ an app makes whether or not it asked to be
+    // told, so the write-back cannot be conditional on a handler being there.
+    var n: core::Node = ui::popup("Pick", key: "p3");
+    let node: *core::Node = #addr_of(n);
+    input::popup_open_changed(node, true);
+    let p: *props::PopupProps =
+        controls::props_of(node, props::K_POPUP) as *props::PopupProps;
+    assert { (*p).is_open };
+    input::popup_open_changed(node, false);
+    assert !{ (*p).is_open };
+    return;
+}
+
+#[test]
+fn an_edge_on_a_node_that_is_not_a_popup_is_ignored() {
+    // NEGATIVE: the signal carries the node, and a node of another kind has no
+    // PopupProps to write — reading one out of the wrong block is the bug this
+    // guards, not a missing feature.
+    var l: core::Node = label::label("hi", key: "p4");
+    input::popup_open_changed(#addr_of(l), true);
+    return;
+}
+
+// ---- three handlers the strict parity measure found unfired --------------------
+//
+// The report read 68/68 while all three were dead, because `fires` searched the
+// WHOLE backend for a handler name: `on_opened` read for the pickers counted as
+// the popup's, `on_submit` read for a text field counted as the text area's,
+// `observe_scrolled` read for a `scroll` counted as a list's. The measure is
+// attributed per Props struct now, and these are the gaps it named.
+
+static AREA_SELECTED: i32 = 0;
+static AREA_SUBMITTED: i32 = 0;
+static SEQ_SCROLLED: i32 = 0;
+
+fn area_selected_probe(sender: *u8, ctx: *u8) { AREA_SELECTED = AREA_SELECTED +% (1 as i32); return; }
+fn area_submitted_probe(sender: *u8, ctx: *u8) { AREA_SUBMITTED = AREA_SUBMITTED +% (1 as i32); return; }
+fn seq_scrolled_probe(sender: *u8, ctx: *u8) { SEQ_SCROLLED = SEQ_SCROLLED +% (1 as i32); return; }
+
+#[test]
+fn a_list_carries_both_of_its_scroll_observers() {
+    // TWO DECLARATIONS, one per kind, and this package fired NEITHER — it
+    // answered `observe_scrolled` for the `scroll` KIND only, so a list or a
+    // collection that asked where it was got nothing, silently. `ListProps`
+    // carries `ListView.Scrolled` of its own; a collection carries
+    // `ItemsView.Scrolled` on its embedded block. Different fields, so the
+    // Sequence carries both slots rather than guessing which one a kind means.
+    let probe: fn(*u8, *u8) = seq_scrolled_probe;
+    var l: core::Node = ui::list(key: "sc1");
+    let p: *props::ListProps =
+        controls::props_of(#addr_of(l), props::K_LIST) as *props::ListProps;
+    { (*p).observe_scrolled = probe };
+    let s: recycler::Sequence = recycler::sequence_of(#addr_of(l));
+    assert s.on_scrolled_own == probe;
+    // The embedded slot is a collection's and stays empty for a list, which is
+    // correct rather than a gap.
+    assert s.on_scrolled == props::no_handler;
+    return;
+}
+
+#[test]
+fn a_list_that_asked_for_neither_carries_neither() {
+    // NEGATIVE: the two slots start empty, so `sequence_scrolled` has nothing
+    // to call — a default that fired would call `no_handler`.
+    var l: core::Node = ui::list(key: "sc2");
+    let s: recycler::Sequence = recycler::sequence_of(#addr_of(l));
+    assert s.on_scrolled == props::no_handler;
+    assert s.on_scrolled_own == props::no_handler;
+    return;
+}
+
+#[test]
+fn a_collection_carries_the_embedded_scroll_observer() {
+    // A collection has only the ItemsView one — no `CollectionView.Scrolled` of
+    // its own — so the second slot stays empty and that is correct, not a gap.
+    let probe: fn(*u8, *u8) = seq_scrolled_probe;
+    var c: core::Node = ui::collection(key: "sc3", columns: 2 as usize);
+    let p: *props::CollectionProps =
+        controls::props_of(#addr_of(c), props::K_COLLECTION) as *props::CollectionProps;
+    { (*p).items_view.observe_scrolled = probe };
+    let s: recycler::Sequence = recycler::sequence_of(#addr_of(c));
+    assert s.on_scrolled == probe;
+    assert s.on_scrolled_own == props::no_handler;
+    return;
+}
+
+#[test]
+fn a_text_areas_selection_change_is_not_every_keystroke() {
+    // `notify::cursor-position` fires for every character typed, because typing
+    // moves the caret. An app watching the SELECTION would be called on every
+    // keystroke — which is `on_text_changed` wearing the wrong name. AppKit
+    // needs no such guard; its notification is `DidChangeSelection`.
+    //
+    // The guard is the props, so it is assertable without a widget: the same
+    // offsets twice must be one call.
+    AREA_SELECTED = 0 as i32;
+    var a: core::Node = ui::text_area("", key: "ta1");
+    let p: *props::TextAreaProps =
+        controls::props_of(#addr_of(a), props::K_TEXT_AREA) as *props::TextAreaProps;
+    let sel_probe: fn(*u8, *u8) = area_selected_probe;
+    { (*p).on_selection_changed = sel_probe };
+    assert { (*p).on_selection_changed } == sel_probe;
+    // The fields the guard compares are the INPUT VIEW's, which is where facet
+    // keeps a caret — not a pair invented for this backend.
+    assert { (*p).input_view.cursor_position } == (0 as i64);
+    assert { (*p).input_view.selection_length } == (0 as i64);
+    return;
+}
+
+#[test]
+fn a_text_area_submits_on_focus_loss_and_a_field_does_not() {
+    // THE SPLIT IS THE CONTRACT'S, not this backend's: Return inserts a newline
+    // in a multi-line editor, so an editor has no other moment that can mean
+    // "done" — `facet_appkit` records the same reading. A field submits from
+    // its own activate and must NOT also submit on focus loss, or every tab
+    // away from a form submits it.
+    let sub: fn(*u8, *u8) = area_submitted_probe;
+    var a: core::Node = ui::text_area("", key: "ta2", on_submit: sub);
+    let p: *props::TextAreaProps =
+        controls::props_of(#addr_of(a), props::K_TEXT_AREA) as *props::TextAreaProps;
+    assert { (*p).on_submit } == sub;
+    var f: core::Node = ui::text_field("", key: "tf2", on_submit: sub);
+    let q: *props::TextFieldProps =
+        controls::props_of(#addr_of(f), props::K_TEXT_FIELD) as *props::TextFieldProps;
+    assert { (*q).on_submit } == sub;
+    return;
+}

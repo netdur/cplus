@@ -1421,6 +1421,13 @@ fn popup_row_bind(factory: *u8, item: *u8, user: *u8) {
 
 // `notify::selected` — a GtkDropDown's selection is a PROPERTY, so the change
 // is a notify rather than a signal of its own.
+// A signal whose handler takes only the instance and the user data — `show`
+// and `closed` on a GtkPopover. `sigc_notify` above carries a GParamSpec and is
+// the wrong shape for these.
+#[link_name = "g_signal_connect_data"]
+extern fn sigc_plain(instance: *u8, signal: *u8, handler: fn(*u8, *u8),
+                     data: *u8, destroy_data: *u8, connect_flags: i32) -> u64;
+
 #[link_name = "g_signal_connect_data"]
 extern fn sigc_notify(instance: *u8, detailed_signal: *u8,
                       handler: fn(*u8, *u8, *u8),
@@ -1467,6 +1474,81 @@ fn popup_item_enabled(p: *props::PopupProps, at: usize) -> bool {
 fn arm_popup(v: *u8, n: *core::Node) {
     let _s: u64 = { sigc_notify(v, #str_ptr("notify::selected\0"), popup_selected,
                                 n as *u8, 0 as *u8, 0 as i32) };
+    arm_popup_visibility(v, n);
+    return;
+}
+
+// `popup`'s `on_opened` / `on_closed`, and the row in MANIFEST §1 they used to
+// be listed under.
+//
+// That row said a GtkDropDown "exposes neither a way to open it nor a signal
+// when it opens: there is no property, no method, and the popover is a private
+// child." All three halves are false, and the code already disproved the first
+// two — `controls::popover_of` walks the drop-down's children for the
+// GtkPopover and `apply_popup` drives its `popup()` / `popdown()` for
+// `is_open`. What was left was the SIGNAL, and GtkPopover has `closed`, while
+// GtkWidget has `show` for the other direction.
+//
+// The row's mistake is the one §2's header now names: it asked whether a
+// GtkDropDown has the verb, found it does not, and stopped — when the answer
+// was one tier down, on a child the same file already knew how to reach.
+//
+// ARMED LAZILY, because the popover is built by the drop-down and may not exist
+// when the node is first configured. `armed` keeps this idempotent, so the sync
+// that finds it is the one that wires it and every later sync is a null read.
+fn popup_open_key() -> *u8 { return #str_ptr("facet-gtk-arm-popupopen\0"); }
+
+fn arm_popup_visibility(v: *u8, n: *core::Node) {
+    if armed(v, popup_open_key()) { return; }
+    let pop: *u8 = popover_under(v);
+    if pop == (0 as *u8) { return; }
+    let _o: u64 = { sigc_plain(pop, #str_ptr("show\0"), popup_shown,
+                               n as *u8, 0 as *u8, 0 as i32) };
+    let _c: u64 = { sigc_plain(pop, #str_ptr("closed\0"), popup_closed,
+                               n as *u8, 0 as *u8, 0 as i32) };
+    mark(v, popup_open_key());
+    return;
+}
+
+// THE PROP IS WRITTEN BACK BEFORE THE HANDLER, as everywhere else: an app
+// asking `popup.is_open()` from inside `on_opened` must be told it is open.
+fn popup_open_changed(n: *core::Node, open: bool) {
+    let p: *props::PopupProps = props_of(n, props::K_POPUP) as *props::PopupProps;
+    if p == (0 as *props::PopupProps) { return; }
+    if { (*p).is_open } == open { return; }
+    { (*p).is_open = open };
+    let h: fn(*u8, *u8) = if open { { (*p).on_opened } } else { { (*p).on_closed } };
+    let c: *u8 = if open { { (*p).on_opened_ctx } } else { { (*p).on_closed_ctx } };
+    if h != props::no_handler { h(core::view_of(n), c); }
+    return;
+}
+
+// `controls::popover_of` inlined: `controls` imports THIS file, so the arrow
+// cannot go back the other way. Eight lines against moving a third helper into
+// the shared leaf — the same trade `drawing::bordered_of` makes.
+fn popover_under(v: *u8) -> *u8 {
+    var child: *u8 = child_or_null(gtk::Widget::from_raw(v).get_first_child());
+    while child != (0 as *u8) {
+        if g::is_a(child, #str_ptr("GtkPopover\0")) { return child; }
+        child = child_or_null(gtk::Widget::from_raw(child).get_next_sibling());
+    }
+    return 0 as *u8;
+}
+
+fn child_or_null(o: option::Option[gtk::Widget]) -> *u8 {
+    return match o {
+        option::Option[gtk::Widget]::Some(w) => w.raw(),
+        option::Option[gtk::Widget]::None => 0 as *u8,
+    };
+}
+
+fn popup_shown(instance: *u8, user: *u8) {
+    popup_open_changed(user as *core::Node, true);
+    return;
+}
+
+fn popup_closed(instance: *u8, user: *u8) {
+    popup_open_changed(user as *core::Node, false);
     return;
 }
 
@@ -2296,8 +2378,104 @@ fn arm_search_field(v: *u8, n: *core::Node) {
 fn arm_text_area(v: *u8, n: *core::Node) {
     let b: gtk::TextBuffer = gtk::TextView::from_raw(v).get_buffer();
     let _c: u64 = b.connect_changed(area_changed, n as *u8);
+    // THE SELECTION MOVED. A GtkTextBuffer reports the insertion point as a
+    // PROPERTY, so the caret moving and a selection growing are one
+    // `notify::cursor-position` — which is also why the handler asks the buffer
+    // rather than being told what changed.
+    let _s: u64 = { sigc_notify(b.raw(), #str_ptr("notify::cursor-position\0"),
+                                area_selection_moved, n as *u8, 0 as *u8, 0 as i32) };
+    // ...and `has-selection`, because dragging a selection out from a caret
+    // that does not move — shift-click at the same offset, select-all from a
+    // caret already at the end — changes the selection without changing the
+    // position. Both edges land on the same guard below.
+    let _h: u64 = { sigc_notify(b.raw(), #str_ptr("notify::has-selection\0"),
+                                area_selection_moved, n as *u8, 0 as *u8, 0 as i32) };
+    // AN EDITOR SUBMITS ON FOCUS LOSS, which is `facet_appkit`'s reading and
+    // the only one available: Return inserts a newline in a multi-line editor,
+    // so there is no other moment that can mean "done". A field submits from
+    // its own activate and must not also submit here, which is why this is
+    // armed for the AREA alone.
+    let f: gtk::EventControllerFocus = gtk::EventControllerFocus::new();
+    let _l: u64 = f.connect_leave(area_focus_left, n as *u8);
+    add_controller(v, f.upcast(), phase_bubble());
     return;
 }
+
+// `notify::cursor-position` fires for every keystroke as well, because typing
+// moves the caret — so the OFFSETS ARE COMPARED and an unchanged pair is not a
+// selection change. Without that an app watching the selection is called on
+// every character typed, which is a different event it already has.
+fn area_selection_moved(buffer: *u8, pspec: *u8, user: *u8) {
+    let n: *core::Node = user as *core::Node;
+    let p: *props::TextAreaProps = props_of(n, props::K_TEXT_AREA) as *props::TextAreaProps;
+    if p == (0 as *props::TextAreaProps) { return; }
+    let start: i32 = insert_offset(buffer);
+    let bound: i32 = selection_bound_offset(buffer);
+    let length: i32 = if bound >= start { bound -% start } else { start -% bound };
+    let from: i32 = if bound >= start { start } else { bound };
+    // UNCHANGED IS NOT AN EVENT. `notify::cursor-position` also fires for every
+    // keystroke, because typing moves the caret — and an app watching the
+    // selection would be called on every character, which is `on_text_changed`
+    // wearing the wrong name. AppKit needs no such guard: its notification is
+    // `DidChangeSelection` and only fires when it did.
+    if { (*p).input_view.cursor_position } == (from as i64)
+        && { (*p).input_view.selection_length } == (length as i64) { return; }
+    // The READ is written back first, as everywhere else in this file: a
+    // handler asking `cursor_position()` must be told the selection that
+    // caused the call. `cursor_position` is the LOW end and `selection_length`
+    // is unsigned, because a selection dragged backwards is the same selection.
+    { (*p).input_view.cursor_position = from as i64 };
+    { (*p).input_view.selection_length = length as i64 };
+    let h: fn(*u8, *u8) = { (*p).on_selection_changed };
+    if h != props::no_handler { h(core::view_of(n), { (*p).on_selection_changed_ctx }); }
+    return;
+}
+
+fn area_focus_left(controller: *u8, user: *u8) {
+    let n: *core::Node = user as *core::Node;
+    let p: *props::TextAreaProps = props_of(n, props::K_TEXT_AREA) as *props::TextAreaProps;
+    if p == (0 as *props::TextAreaProps) { return; }
+    let h: fn(*u8, *u8) = { (*p).on_submit };
+    if h == props::no_handler { return; }
+    let w: *u8 = core::view_of(n);
+    // The text is written back BEFORE the handler for the same reason
+    // `field_activated` does it: a submit handler reads what was typed.
+    if w != (0 as *u8) {
+        { (*p).input_view.text = buffer_text(gtk::TextView::from_raw(w).get_buffer().raw()) };
+    }
+    h(w, { (*p).on_submit_ctx });
+    return;
+}
+
+// The other end of the selection. GtkTextBuffer exposes the insert mark as a
+// property and the bound as a MARK, so the second offset comes back through an
+// iterator rather than through `g_object_get`.
+fn selection_bound_offset(buffer: *u8) -> i32 {
+    return mark_offset(buffer, { gtk_text_buffer_get_selection_bound(buffer) });
+}
+
+fn insert_offset(buffer: *u8) -> i32 {
+    return mark_offset(buffer, { gtk_text_buffer_get_insert(buffer) });
+}
+
+// A GtkTextIter is 80 bytes across every GTK 4 build — the same figure and the
+// same reason `buffer_text` states it: the struct is caller-allocated and the
+// GIR presents it as an out-parameter cpc-bindgen skips.
+fn mark_offset(buffer: *u8, mark: *u8) -> i32 {
+    if buffer == (0 as *u8) || mark == (0 as *u8) { return 0 as i32; }
+    var iter: [u8; 80] = [0 as u8; 80];
+    { gtk_text_buffer_get_iter_at_mark(buffer, { #addr_of(iter) as *u8 }, mark) };
+    return { gtk_text_iter_get_offset({ #addr_of(iter) as *u8 }) };
+}
+
+#[link_name = "gtk_text_buffer_get_selection_bound"]
+extern fn gtk_text_buffer_get_selection_bound(buffer: *u8) -> *u8;
+#[link_name = "gtk_text_buffer_get_insert"]
+extern fn gtk_text_buffer_get_insert(buffer: *u8) -> *u8;
+#[link_name = "gtk_text_buffer_get_iter_at_mark"]
+extern fn gtk_text_buffer_get_iter_at_mark(buffer: *u8, iter: *u8, mark: *u8);
+#[link_name = "gtk_text_iter_get_offset"]
+extern fn gtk_text_iter_get_offset(iter: *u8) -> i32;
 
 fn arm_toggle(v: *u8, n: *core::Node) {
     let _i: u64 = gtk::Switch::from_raw(v).connect_state_set(toggle_state_set, n as *u8);

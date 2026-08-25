@@ -180,8 +180,53 @@ def handlers():
     return out
 
 
-def fires(source, handler):
-    """Does this backend deliver `handler`?
+def reads_by_struct(source, declared):
+    """Which Props struct each `.on_*` read actually belongs to.
+
+    THE BLIND SPOT THIS REPLACES, and it hid a real gap for as long as it
+    existed. This used to search the WHOLE backend for `.on_opened` and answer
+    yes for every struct that declares one. facet_gtk fired `on_opened` /
+    `on_closed` for `date_picker` and `time_picker` and NOT for `popup` — and
+    the report read 68/68, because the pickers' reads counted as the popup's.
+    The verb was missing behind a number that said complete.
+
+    Attribution is BY FUNCTION, not by the nearest annotation. Three shapes had
+    to be handled and each of them produced a false gap when it was not:
+
+      * the plain read — `let p: *props::PopupProps` then `{ (*p).on_opened }`;
+      * an EMBEDDED block, read through the outer pointer as
+        `{ (*p).selectable_items_view.on_selection_changed }`, where the field
+        name is the answer and the annotation is not;
+      * TWO annotations in one body — `swipe.cplus`'s `action_clicked` types a
+        `SwipeItemProps` and then a `MenuItemProps`, and a nearest-annotation
+        rule gives the swipe item's `on_invoked` to the menu item.
+
+    So every Props type annotated anywhere in a function is in scope for every
+    read in it, and a read is attributed to whichever of those actually
+    DECLARES that handler — which is the same disambiguation a reader does.
+
+    A proxy, like everything else here. It cannot invent a read that is not
+    there, which is the direction that matters.
+    """
+    out = {}
+    bodies = re.split(r"\n(?=fn |impl )", source)
+    for body in bodies:
+        in_scope = set(re.findall(r"\*\w+::(\w+Props)\b", body))
+        for m in re.finditer(r"\.(?:(\w+)\.)?(on_\w+|observe_\w+)\b", body):
+            field, handler = m.group(1), m.group(2)
+            if field:
+                # `selectable_items_view` -> `SelectableItemsViewProps`
+                embedded = "".join(x.title() for x in field.split("_")) + "Props"
+                out.setdefault(embedded, set()).add(handler)
+                continue
+            for cand in in_scope:
+                if handler in declared.get(cand, ()):
+                    out.setdefault(cand, set()).add(handler)
+    return out
+
+
+def fires(source, handler, struct=None, scoped=None):
+    """Does this backend deliver `handler` FOR `struct`?
 
     TWO SHAPES COUNT, and the second is the one a naive proxy misses. A backend
     usually reads the field off the props block (`{ (*p).on_click }`), but for
@@ -189,8 +234,14 @@ def fires(source, handler):
     `core::fire_focus_handler` for `on_focus`. Counting only the field access
     marks a correct implementation as missing, which pushes whoever is chasing
     the number toward touching the struct directly just to be counted.
+
+    The blessed-API shape stays GLOBAL because facet owns that delivery for
+    every kind at once; only the field read is attributed. See `reads_by_struct`.
     """
-    if re.search(r"\." + handler + r"\b", source):
+    if struct is not None and scoped is not None:
+        if handler in scoped.get(struct, ()):
+            return True
+    elif re.search(r"\." + handler + r"\b", source):
         return True
     stem = handler[3:] if handler.startswith("on_") else handler
     return re.search(r"fire_" + stem + r"_handler\b", source) is not None
@@ -206,8 +257,9 @@ def handler_parity():
             if not p.endswith("test_main.cplus")))
     H = handlers()
     declared = sum(len(v) for v in H.values())
-    totals = {k: sum(len([h for h in hs if fires(src[k], h)])
-                     for hs in H.values()) for k in src}
+    scoped = {k: reads_by_struct(src[k], H) for k in src}
+    totals = {k: sum(len([h for h in hs if fires(src[k], h, s_, scoped[k])])
+                     for s_, hs in H.items()) for k in src}
     print(f"\n{declared} handlers declared across facet's Props structs\n")
     for k in ("appkit", "uikit", "gtk", "android"):
         if k not in totals:
@@ -215,7 +267,7 @@ def handler_parity():
         pct = totals[k] * 100 // declared if declared else 0
         mark = "  <-- this package" if k == "gtk" else ""
         print(f"  {k:<8} {totals[k]:>4} / {declared}   {pct:>3}%{mark}")
-    gaps = [(s, [h for h in hs if not fires(src["gtk"], h)])
+    gaps = [(s, [h for h in hs if not fires(src["gtk"], h, s, scoped["gtk"])])
             for s, hs in sorted(H.items())]
     gaps = [(s, m) for s, m in gaps if m]
     if gaps:
