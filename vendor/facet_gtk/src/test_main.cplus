@@ -3749,8 +3749,13 @@ fn an_invalidated_span_is_clamped_to_the_model_it_lands_in() {
 fn only_a_flat_sequence_can_be_spliced_by_row() {
     // A slot is a row only when there is nothing between the rows and nothing
     // beside them: a grouped list has headers and a grid has `columns` rows per
-    // slot, so a DATA range is not a slot range in either. Both fall back to
-    // the replacement, which is what they had.
+    // slot, so a DATA range is not a slot range in either.
+    //
+    // THIS IS NO LONGER THE GATE, only one of two paths. A grid reflows through
+    // `grid_splice_plan` — the data range becomes a slot range by division, and
+    // the slots after the insertion point are re-asked. What still falls back
+    // is the GROUPED case, whose slot count moves per group and whose headers
+    // move with it.
     var flat: core::Node = ui::list(key: "fg1");
     fill_list(#addr_of(flat), 4 as usize);
     assert recycler::addresses_rows_directly(seq_of(#addr_of(flat)));
@@ -5322,4 +5327,107 @@ fn group_size_probe(group: usize, ctx: *u8) -> usize { return 2 as usize; }
 
 fn group_header_probe(group: usize, ctx: *u8) -> core::Node {
     return label::label("head", key: "h");
+}
+
+// ---- the grid splice plan ----------------------------------------------------
+//
+// The whole reason this is a pure function: the failure mode is an off-by-one
+// that GTK reports as a range error, or — worse — silently binds the wrong
+// rows, which looks like an application bug and is not.
+
+fn plan(cols: usize, have: usize, want: usize, at: usize) -> recycler::GridSplice {
+    return recycler::grid_splice_plan(cols, have, want, at);
+}
+
+#[test]
+fn an_insert_grows_the_grid_at_the_end_and_reflows_from_the_insert() {
+    // Three columns, 6 items (2 slots) -> 7 items (3 slots), inserted at data 3.
+    // The new slot goes on the END, because slots are packed however far up the
+    // data moved — and slot 1 onward is re-asked, because it holds different
+    // items now even though its indices did not move.
+    let p: recycler::GridSplice = plan(3 as usize, 2 as usize, 3 as usize, 3 as usize);
+    assert p.ok;
+    assert p.tail_at == (2 as usize);
+    assert p.tail_additions == (1 as usize);
+    assert p.tail_removals == (0 as usize);
+    assert p.dirty_from == (1 as usize);
+    // Up to the OLD end: the slot being added binds itself, so re-asking it
+    // would be redundant work GTK already does for a fresh item.
+    assert p.dirty_span == (1 as usize);
+    return;
+}
+
+#[test]
+fn a_removal_shrinks_at_the_end_and_reflows_over_what_is_left() {
+    // 7 items (3 slots) -> 6 (2 slots), removed at data 3. The tail comes off
+    // at the NEW length, and the reflow runs over the model as it will be —
+    // invalidating a slot that is about to be removed is a range error.
+    let p: recycler::GridSplice = plan(3 as usize, 3 as usize, 2 as usize, 3 as usize);
+    assert p.tail_at == (2 as usize);
+    assert p.tail_removals == (1 as usize);
+    assert p.tail_additions == (0 as usize);
+    assert p.dirty_from == (1 as usize);
+    assert p.dirty_span == (1 as usize);
+    return;
+}
+
+#[test]
+fn a_whole_line_inserted_still_reflows_nothing_before_it() {
+    // Inserting exactly `columns` items moves nothing across a boundary, but
+    // everything from the insertion point still SHIFTS by a whole slot — so the
+    // reflow is still from that slot, not from nowhere.
+    let p: recycler::GridSplice = plan(3 as usize, 4 as usize, 5 as usize, 3 as usize);
+    assert p.tail_additions == (1 as usize);
+    assert p.dirty_from == (1 as usize);
+    return;
+}
+
+#[test]
+fn an_append_reflows_nothing() {
+    // THE COMMON CASE, and the one that must not do needless work: appending at
+    // the end of the data leaves every existing slot meaning exactly what it
+    // meant. 6 items -> 9, inserted at data 6.
+    let p: recycler::GridSplice = plan(3 as usize, 2 as usize, 3 as usize, 6 as usize);
+    assert p.tail_additions == (1 as usize);
+    assert p.dirty_from == (2 as usize);
+    // ...from the old end, so nothing: the only slot at or past 2 is the new one.
+    assert p.dirty_span == (0 as usize);
+    return;
+}
+
+#[test]
+fn a_reflow_never_runs_past_the_model_it_will_have() {
+    // NEGATIVE, and the one that would be a GTK range error rather than a wrong
+    // row: a removal at the very end leaves `dirty_from` past the new length.
+    let p: recycler::GridSplice = plan(3 as usize, 3 as usize, 1 as usize, 6 as usize);
+    assert p.tail_removals == (2 as usize);
+    assert p.dirty_from == (2 as usize);
+    assert p.dirty_span == (0 as usize);
+    // ...and emptying it entirely.
+    let q: recycler::GridSplice = plan(3 as usize, 2 as usize, 0 as usize, 0 as usize);
+    assert q.tail_at == (0 as usize);
+    assert q.tail_removals == (2 as usize);
+    assert q.dirty_span == (0 as usize);
+    return;
+}
+
+#[test]
+fn a_grid_with_no_columns_has_no_plan() {
+    // NEGATIVE: `columns_of` never answers 0, but a division by it would be a
+    // crash rather than a wrong answer, so the guard is explicit.
+    assert !plan(0 as usize, 2 as usize, 3 as usize, 0 as usize).ok;
+    return;
+}
+
+#[test]
+fn a_plan_that_changes_no_slot_count_still_reflows() {
+    // Insert one and remove one in the same turn: the slot count is unchanged
+    // and the contents from the insertion point are not. A plan that keyed off
+    // the count alone would do nothing at all here.
+    let p: recycler::GridSplice = plan(3 as usize, 3 as usize, 3 as usize, 0 as usize);
+    assert p.tail_additions == (0 as usize);
+    assert p.tail_removals == (0 as usize);
+    assert p.dirty_from == (0 as usize);
+    assert p.dirty_span == (3 as usize);
+    return;
 }

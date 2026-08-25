@@ -397,6 +397,19 @@ shape and was the same mistake.
   replacement discards GtkListView's scroll anchor. That is the same
   user-visible jump `bugs/09` was — a splice into a long grid scrolls it to the
   top.
+
+  SO THE GRID WAS BUILT (2026-08-25). `grid_splice_plan` is pure and takes
+  columns, the old and new slot counts, and the data index: it answers the tail
+  to add or remove and the range to re-ask, and `apply_fine_grained` performs
+  them in that order. Pure because the failure mode is an off-by-one GTK reports
+  as a range error or, worse, binds silently as the wrong rows — seven tests,
+  including the append that must reflow nothing and the two that would run past
+  the end. An invalidate on a grid became a slot range the same way, by
+  division.
+
+  WHAT STILL FALLS BACK is the GROUPED case, and now for its own reason rather
+  than a borrowed one: its slot count moves per group and its headers move with
+  it, so the plan is a different one and is not written.
 - **A menu accelerator is ⌘ = SUPER, and a desktop may have taken it first.**
   The mapping is the key band's and the context menus', so an application does
   not learn two answers to one question — but GNOME binds a good many Super

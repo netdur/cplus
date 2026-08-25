@@ -1804,6 +1804,69 @@ fn addresses_rows_directly(s: Sequence) -> bool {
     return columns_of(s) == (1 as usize);
 }
 
+// ---- and the grid, which reflows rather than refusing --------------------------
+//
+// An ungrouped grid CAN be spliced finely, once the operation is described as
+// what it actually is. Three facts do it:
+//
+//   * the slot a data index lives in is `data / columns` — no walk;
+//   * a splice changes the slot COUNT only at the end, because slots are packed;
+//   * every slot from the insertion point on holds different items afterwards,
+//     even though its data indices did not move.
+//
+// So: add or remove the difference in slot count AT THE END, then re-ask every
+// slot from `data_at / columns` onward. That is a `items-changed(lo, n, n)`,
+// which is the same verb `invalidate` already uses — and unlike the full
+// replacement it leaves the model's identity alone, so GtkListView keeps its
+// scroll anchor. Losing that anchor is bugs/09, seen from the splice side.
+//
+// PURE, so the whole plan is assertable without a widget — which is the only
+// way this could be got right, since the failure mode is an off-by-one that
+// GTK reports as a range error or, worse, silently binds the wrong rows.
+struct GridSplice {
+    ok: bool,
+    tail_at: usize,
+    tail_removals: usize,
+    tail_additions: usize,
+    dirty_from: usize,
+    dirty_span: usize,
+}
+
+fn no_grid_splice() -> GridSplice {
+    return GridSplice { ok: false, tail_at: 0 as usize, tail_removals: 0 as usize,
+                        tail_additions: 0 as usize, dirty_from: 0 as usize,
+                        dirty_span: 0 as usize };
+}
+
+fn grid_splice_plan(cols: usize, have: usize, want: usize, data_at: usize) -> GridSplice {
+    if cols == (0 as usize) { return no_grid_splice(); }
+    var p: GridSplice = no_grid_splice();
+    p.ok = true;
+    // THE TAIL. Slots are packed, so a change in their number is always at the
+    // end however far up the data moved.
+    if want > have {
+        p.tail_at = have;
+        p.tail_additions = want -% have;
+    } else {
+        if have > want {
+            p.tail_at = want;
+            p.tail_removals = have -% want;
+        }
+    }
+    // THE REFLOW, over the model as it will be AFTER the tail — invalidating a
+    // slot that is about to be removed is a range error, and one that is about
+    // to be added is redundant work GTK already does for a fresh item.
+    p.dirty_from = data_at / cols;
+    if p.dirty_from >= want { p.dirty_span = 0 as usize; return p; }
+    var end: usize = want;
+    // A slot that is being ADDED binds itself; the reflow only has to re-ask
+    // the ones that already existed and now mean something else.
+    if p.tail_additions > (0 as usize) { end = have; }
+    if p.dirty_from >= end { p.dirty_span = 0 as usize; return p; }
+    p.dirty_span = end -% p.dirty_from;
+    return p;
+}
+
 // Did the dirty word ask for ANYTHING ELSE that a rebuild answers? A splice
 // arriving beside a row-builder change is a rebuild — the fine-grained verb is
 // only sound while everything else about the sequence is unchanged.
@@ -1835,12 +1898,38 @@ fn apply_fine_grained(n: *core::Node, v: *u8, s: Sequence, dirty: u64,
     { (*count) = 0 as i64 };
 
     if !recycles(v) { return false; }
-    if !addresses_rows_directly(s) { return false; }
     if !only_fine_grained(dirty) { return false; }
+    // A GRID REFLOWS RATHER THAN REFUSING — see `grid_splice_plan`. A grouped
+    // sequence still falls back: its slot count moves per GROUP and its headers
+    // move with it, which is a second plan and not this one.
+    let grid: bool = !s.is_grouped && columns_of(s) > (1 as usize);
+    if !addresses_rows_directly(s) && !grid { return false; }
     // Nothing has been filled yet — the model is still waiting for a width (see
     // `sync_model`), so there is no range in it to change.
     let have: usize = model_length(v);
     if have == (0 as usize) { return false; }
+
+    if want_splice && splice_count != (0 as i64) && grid {
+        if splice_at < (0 as i64) { return false; }
+        let cols: usize = columns_of(s);
+        let want: usize = slots_of(n, v);
+        let plan: GridSplice = grid_splice_plan(cols, have, want, splice_at as usize);
+        if !plan.ok { return false; }
+        // THE TAIL FIRST, so the reflow below runs against the model it will
+        // actually have — the plan is written expecting exactly this order.
+        if plan.tail_additions > (0 as usize) {
+            splice_model(v, plan.tail_at, 0 as usize, plan.tail_additions);
+        }
+        if plan.tail_removals > (0 as usize) {
+            splice_model(v, plan.tail_at, plan.tail_removals, 0 as usize);
+        }
+        g::set_data(v, model_len_key(), want as *u8);
+        if plan.dirty_span > (0 as usize) {
+            splice_model(v, plan.dirty_from, plan.dirty_span, plan.dirty_span);
+        }
+        g::set_data(v, want_key(), want as *u8);
+        return true;
+    }
 
     if want_splice && splice_count != (0 as i64) {
         if splice_at < (0 as i64) { return false; }
@@ -1858,6 +1947,19 @@ fn apply_fine_grained(n: *core::Node, v: *u8, s: Sequence, dirty: u64,
         // The length the description now means, so a later coarse write does
         // not think it is out of step.
         g::set_data(v, want_key(), slots_of(n, v) as *u8);
+        return true;
+    }
+
+    if want_invalidate && first >= (0 as i64) && grid {
+        // A DATA range invalidated on a grid is a SLOT range: the first and
+        // last data rows name the first and last lines they sit on, and every
+        // line between them is touched.
+        let cols: usize = columns_of(s);
+        let lo: i64 = first / (cols as i64);
+        let hi: i64 = last / (cols as i64);
+        let span: usize = invalidated_span(lo, hi, have);
+        if span == (0 as usize) { return false; }
+        splice_model(v, lo as usize, span, span);
         return true;
     }
 
