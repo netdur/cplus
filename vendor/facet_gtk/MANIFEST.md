@@ -662,11 +662,18 @@ shape and was the same mistake.
   minimum or maximum, so an out-of-range day is put straight back and the
   application never sees the refused pick — where AppKit hands NSDatePicker the
   range and lets it refuse.
-- **`is_open` is answerable for the PICKERS and not for `popup`**, and the
-  difference is only which widget GTK chose to expose: a GtkMenuButton's popover
-  is a property, so opening and closing are one `notify::active`; a
-  GtkDropDown's is a private child. Same three verbs, two controls, opposite
-  answers.
+- **`is_open` is answered for the PICKERS and for `popup`, at two DEPTHS.** The
+  difference is only which widget GTK chose to expose. A GtkMenuButton's popover
+  is a PROPERTY, so opening and closing are one `notify::active` — three verbs
+  from one signal. A GtkDropDown's is a child it builds itself, so the same
+  three are answered one tier lower: `controls::popover_of` walks to the
+  GtkPopover, `apply_popup` drives its `popup()` / `popdown()`, and
+  `input::arm_popup_visibility` connects its `closed` and `show`.
+
+  This row used to end "opposite answers", and §1 carried `popup.is_open` as
+  absent on the strength of it — both written while looking at the DROP-DOWN,
+  which does not have the verb, rather than at the popover, which does. Fixed
+  2026-08-25; §1's row is struck through with the same note.
 - **A popup is a DROPDOWN WITH TWO FACTORIES**, not a combo box. facet's
   `label` is "what the button reads whatever is selected" and `item_enabled`
   asks whether a row may be picked at all; a GtkComboBoxText is one call and can
