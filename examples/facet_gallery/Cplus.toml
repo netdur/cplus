@@ -45,6 +45,9 @@ gmodule     = "*"
 
 [macos.dependencies]
 facet_appkit = "*"
+# The AppKit reader behind facet_agent, restated here for the same reason as
+# the block above: a consumer names the whole closure, not just its tier.
+agent_appkit = "*"
 objc         = "*"
 appkit       = "*"
 quartzcore   = "*"
