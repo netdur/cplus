@@ -28,6 +28,8 @@
 // thread-safe), the same constraint any GTK code lives under.
 
 import "stdlib/vec" as vec;
+import "stdlib/io" as io;
+import "stdlib/atomic" as atomic;
 import "stdlib/option" as option;
 import "stdlib/text" as text;
 import "gobject/bridge" as convert;
@@ -616,7 +618,17 @@ impl Surface {
                 if !surface::outcome_eq(oc, surface::Outcome::Allowed) {
                     return oc;
                 }
-                { gtk_widget_grab_focus(this.widget_of(node)); }
+                let w: *u8 = this.widget_of(node);
+                if is_null(w) { return surface::Outcome::Stale; }
+                // FOCUS IS NOT ENOUGH, and `scroll_to` is this verb. A GtkFixed
+                // — which is what every facet row and container is — refuses
+                // `grab_focus`, so a node inside a list was never brought into
+                // view: the call answered `Allowed` and nothing moved.
+                //
+                // So the scroll is done explicitly, and the focus is still
+                // attempted because a control that CAN take it should.
+                let _g: i32 = { gtk_widget_grab_focus(w) };
+                scroll_into_view(w);
                 return surface::Outcome::Allowed;
             }
             option::Option[usize]::None => {}
@@ -636,6 +648,7 @@ fn ctext(s: str) -> text::Text {
 }
 
 fn mcp_describe(p: *u8, grant: auth::Grant) -> vec::Vec[mcpb::UiNode] {
+    refresh_surface(p);
     let s: *Surface = { p as *Surface };
     let local: vec::Vec[GtkNode] = (*s).describe(grant);
     var out: vec::Vec[mcpb::UiNode] = vec::new::[mcpb::UiNode]();
@@ -688,19 +701,24 @@ fn mcp_describe(p: *u8, grant: auth::Grant) -> vec::Vec[mcpb::UiNode] {
 }
 
 fn mcp_click(p: *u8, grant: auth::Grant, id: str) -> surface::Outcome {
-    let s: *Surface = { p as *Surface };
-    return (*s).click(grant, id);
+    refresh_surface(p);
+    // ON THE MAIN THREAD. Emitting a GTK signal from the serve thread killed
+    // the process on the first nav click — see `run_on_main`.
+    return run_on_main(act_click(), p, grant, id, "", 0 as u64, 0 as u64, 0 as u64);
 }
+
 
 fn mcp_set_text(p: *u8, grant: auth::Grant, id: str, value: str, base: u64) -> surface::Outcome {
-    let s: *Surface = { p as *Surface };
-    return (*s).set_text(grant, id, value, base);
+    refresh_surface(p);
+    return run_on_main(act_set_text(), p, grant, id, value, 0 as u64, 0 as u64, base);
 }
 
+
 fn mcp_navigate(p: *u8, grant: auth::Grant, id: str) -> surface::Outcome {
-    let s: *Surface = { p as *Surface };
-    return (*s).focus(grant, id);
+    refresh_surface(p);
+    return run_on_main(act_navigate(), p, grant, id, "", 0 as u64, 0 as u64, 0 as u64);
 }
+
 
 
 // The curated describe: identity::Registry.describe() over the wire — only
@@ -710,6 +728,7 @@ fn mcp_navigate(p: *u8, grant: auth::Grant, id: str) -> surface::Outcome {
 // context stays small. describe_ui's DEFAULT view ("full" opts into
 // mcp_describe above).
 fn mcp_describe_exposed(p: *u8, grant: auth::Grant) -> vec::Vec[mcpb::UiNode] {
+    refresh_surface(p);
     let s: *Surface = { p as *Surface };
     let views: vec::Vec[identity::NodeView] = { (*s).reg.describe(grant) };
     var out: vec::Vec[mcpb::UiNode] = vec::new::[mcpb::UiNode]();
@@ -752,6 +771,7 @@ fn mcp_describe_exposed(p: *u8, grant: auth::Grant) -> vec::Vec[mcpb::UiNode] {
 // honest refusal — a caller trusting a fabricated "reachable" would conclude
 // the human path is verified when nothing verified it.
 fn mcp_hit_test(p: *u8, grant: auth::Grant, id: str) -> surface::HitTest {
+    refresh_surface(p);
     let s: *Surface = { p as *Surface };
     return (*s).hit_test(grant, id);
 }
@@ -763,11 +783,13 @@ fn mcp_hit_test(p: *u8, grant: auth::Grant, id: str) -> surface::HitTest {
 // to a verb. AppKit is where the agent surface is built first (backend
 // priority: AppKit -> uikit -> android -> gtk4 -> win32).
 fn mcp_set_caret(p: *u8, grant: auth::Grant, id: str, at: u64, length: u64) -> surface::Outcome {
-    let s: *Surface = { p as *Surface };
-    return (*s).set_caret(grant, id, at, length);
+    refresh_surface(p);
+    return run_on_main(act_set_caret(), p, grant, id, "", at, length, 0 as u64);
 }
 
+
 fn mcp_read_runs(p: *u8, grant: auth::Grant, id: str) -> surface::Runs {
+    refresh_surface(p);
     return surface::runs_refused(surface::Outcome::Allowed, false);
 }
 
@@ -1144,4 +1166,276 @@ fn effective_policy(widget: *u8) -> u32 {
     if raw != (0 as usize) { return (raw -% (1 as usize)) as u32; }
     if is_secure_by_class(widget) { return identity::policy_private(); }
     return identity::policy_none();
+}
+
+// ---- the snapshot has to be TAKEN AGAIN, and on the right thread ---------------
+//
+// TWO BUGS IN ONE PLACE, and the first hides the second.
+//
+// The surface was walked once, at `attach_window`, and every later
+// `describe_ui` served that. A GtkListView has NO CELLS at attach — they are
+// built when it is first allocated — so a list's rows were simply absent from
+// the wire, forever. Driving a facet nav tree over MCP was therefore
+// impossible: the rows an agent needs to click are the ones that were missing.
+//
+// And the walk RUNS ON THE SERVE THREAD. `serve_once` spawns a worker for the
+// accept loop, and everything below reads live widgets — `frame_of`,
+// `live_hidden`, `node_text` are all `gtk_*` calls. GTK 4 is not thread-safe
+// and has no lock to take: the supported way to touch a widget from another
+// thread is to not, and to hand the work to the main context instead.
+//
+// So the refresh is scheduled with `g_main_context_invoke` and the caller
+// WAITS. `agent_appkit` reaches the same shape through `performSelectorOnMainThread`
+// and for the same reason; this is that, spelled in GLib.
+//
+// The wait is a spin with a yield rather than a condition variable: the main
+// loop is running by construction (an agent is talking to a live app), the work
+// is one tree walk, and a mutex/condvar pair across the C boundary is more
+// machinery than the wait is worth.
+
+#[link_name = "sched_yield"]
+extern fn sched_yield() -> i32;
+#[link_name = "g_main_context_invoke"]
+extern fn g_main_context_invoke(ctx: *u8, f: fn(*u8) -> i32, data: *u8);
+
+// The surface being refreshed, and the handshake. One at a time: the serve
+// loop is single-threaded and a second refresh would be a second answer to a
+// question nobody asked twice.
+static REFRESH_TARGET: usize = 0;
+static REFRESH_DONE: i32 = 0;
+
+// The re-walk itself. `#[keeps(nothing)]` is the honest declaration: `open`
+// builds a whole new Surface from the window and the old one is dropped in
+// place — nothing of the argument is borrowed onward, the bytes are replaced.
+#[keeps(nothing)]
+fn replace_surface(s: *Surface, win: *u8) {
+    { (*s) = open(win) };
+    return;
+}
+
+fn refresh_on_main(user: *u8) -> i32 {
+    let p: usize = REFRESH_TARGET;
+    if p != (0 as usize) {
+        let s: *Surface = p as *Surface;
+        // The window is NodeId 1 — NodeId 0 is the synthetic app root.
+        let win: *u8 = (*s).widget_of(1 as usize);
+        if !is_null(win) { replace_surface(s, win); }
+    }
+    atomic::store_i32(#addr_of(REFRESH_DONE), 1 as i32, atomic::Ordering::Release);
+    // G_SOURCE_REMOVE.
+    return 0 as i32;
+}
+
+fn refresh_surface(p: *u8) {
+    if is_null(p) { return; }
+    REFRESH_TARGET = { #addr(p) };
+    atomic::store_i32(#addr_of(REFRESH_DONE), 0 as i32, atomic::Ordering::Release);
+    { g_main_context_invoke(0 as *u8, refresh_on_main, 0 as *u8) };
+    // BOUNDED. A main loop that never turns — an app mid-teardown, or one
+    // blocked in a modal the agent cannot see — must not hang the serve
+    // thread; a stale snapshot is a worse answer than a late one but a hung
+    // connection is worse than both.
+    var spins: i64 = 0 as i64;
+    while spins < (200000 as i64) {
+        if atomic::load_i32(#addr_of(REFRESH_DONE), atomic::Ordering::Acquire) != (0 as i32) {
+            return;
+        }
+        // `sched_yield` rather than a spin: the main thread is what has to run
+        // for this to finish, and burning the scheduler slice keeps it waiting.
+        let _y: i32 = { sched_yield() };
+        spins = spins +% (1 as i64);
+    }
+    return;
+}
+
+// ---- an ACTION runs on the main thread too --------------------------------------
+//
+// `refresh_surface` marshals the WALK and that was only half the problem. The
+// verbs themselves — click, set_text, navigate, set_caret — ran on the serve
+// thread and emitted GTK signals from there. GTK 4 is not thread-safe and has
+// no lock to take, so this is not a race that is merely unlikely: driving the
+// gallery's nav over MCP KILLED THE PROCESS on the first click.
+//
+// The same handshake as the refresh, with a request and an answer beside it.
+// Statics rather than a heap message because the serve loop is
+// single-threaded — one request is outstanding at a time, by construction —
+// and a queue would be machinery for a case that cannot arise.
+
+fn act_click() -> i32 { return 1 as i32; }
+fn act_set_text() -> i32 { return 2 as i32; }
+fn act_navigate() -> i32 { return 3 as i32; }
+fn act_set_caret() -> i32 { return 4 as i32; }
+
+static ACT_KIND: i32 = 0;
+static ACT_SURFACE: usize = 0;
+static ACT_ID: text::Text = #zero::[text::Text]();
+static ACT_TEXT: text::Text = #zero::[text::Text]();
+static ACT_GRANT: auth::Grant = #zero::[auth::Grant]();
+static ACT_AT: u64 = 0;
+static ACT_LEN: u64 = 0;
+static ACT_BASE: u64 = 0;
+static ACT_OUT: i32 = 0;
+static ACT_DONE: i32 = 0;
+
+// `outcome_index`'s inverse. agent_core exports the encoder because the wire
+// needs one; the decoder lives here because only this handshake needs it — an
+// enum cannot cross the static that carries the answer back.
+fn outcome_from_index(i: i32) -> surface::Outcome {
+    if i == (0 as i32) { return surface::Outcome::Allowed; }
+    if i == (2 as i32) { return surface::Outcome::NotExposed; }
+    if i == (3 as i32) { return surface::Outcome::NotActionable; }
+    if i == (4 as i32) { return surface::Outcome::VersionConflict; }
+    if i == (5 as i32) { return surface::Outcome::Stale; }
+    if i == (6 as i32) { return surface::Outcome::NeedsGrant; }
+    if i == (7 as i32) { return surface::Outcome::Forbidden; }
+    if i == (8 as i32) { return surface::Outcome::NoHandler; }
+    return surface::Outcome::NotFound;
+}
+
+fn perform_on_main(user: *u8) -> i32 {
+    let p: usize = ACT_SURFACE;
+    if p != (0 as usize) {
+        let s: *Surface = p as *Surface;
+        let id: str = ACT_ID.view();
+        var oc: surface::Outcome = surface::Outcome::NotFound;
+        if ACT_KIND == act_click() { oc = (*s).click(ACT_GRANT, id); }
+        if ACT_KIND == act_navigate() { oc = (*s).focus(ACT_GRANT, id); }
+        if ACT_KIND == act_set_text() {
+            oc = (*s).set_text(ACT_GRANT, id, ACT_TEXT.view(), ACT_BASE);
+        }
+        if ACT_KIND == act_set_caret() {
+            oc = (*s).set_caret(ACT_GRANT, id, ACT_AT, ACT_LEN);
+        }
+        ACT_OUT = surface::outcome_index(oc);
+    }
+    atomic::store_i32(#addr_of(ACT_DONE), 1 as i32, atomic::Ordering::Release);
+    return 0 as i32;
+}
+
+fn run_on_main(kind: i32, p: *u8, grant: auth::Grant, id: str,
+               value: str, at: u64, length: u64, base: u64) -> surface::Outcome {
+    if is_null(p) { return surface::Outcome::NotFound; }
+    ACT_KIND = kind;
+    ACT_SURFACE = { #addr(p) };
+    ACT_ID = text::from_str(id);
+    ACT_TEXT = text::from_str(value);
+    ACT_GRANT = grant;
+    ACT_AT = at;
+    ACT_LEN = length;
+    ACT_BASE = base;
+    ACT_OUT = surface::outcome_index(surface::Outcome::NotFound);
+    atomic::store_i32(#addr_of(ACT_DONE), 0 as i32, atomic::Ordering::Release);
+    { g_main_context_invoke(0 as *u8, perform_on_main, 0 as *u8) };
+    var spins: i64 = 0 as i64;
+    while spins < (200000 as i64) {
+        if atomic::load_i32(#addr_of(ACT_DONE), atomic::Ordering::Acquire) != (0 as i32) {
+            return outcome_from_index(ACT_OUT);
+        }
+        let _y: i32 = { sched_yield() };
+        spins = spins +% (1 as i64);
+    }
+    // A main loop that never turned. `Stale` is the honest answer: the surface
+    // this action was aimed at is not being serviced.
+    return surface::Outcome::Stale;
+}
+
+// ---- bringing a node into view --------------------------------------------------
+//
+// `scroll_to` over the wire is `navigate`, and an agent asking for it means
+// "put this where a person could see it". `gtk_widget_grab_focus` is the
+// idiomatic way to ask GTK to do that, and it only works on something
+// FOCUSABLE — which a GtkFixed is not, and every facet row and container is a
+// GtkFixed. So the verb answered `Allowed` over a list that never moved.
+//
+// The explicit path: find the scrollable ancestor, measure where the node sits
+// inside its content, and set the adjustment so the node is on screen. Centred
+// rather than flush to the top, because a row pinned to the very edge reads as
+// cut off and an agent asking to see something wants context around it.
+#[link_name = "gtk_adjustment_get_value"]
+extern fn gtk_adj_get_value(a: *u8) -> f64;
+#[link_name = "gtk_adjustment_set_value"]
+extern fn gtk_adj_set_value(a: *u8, v: f64);
+#[link_name = "gtk_adjustment_get_upper"]
+extern fn gtk_adj_get_upper(a: *u8) -> f64;
+#[link_name = "gtk_adjustment_get_page_size"]
+extern fn gtk_adj_get_page_size(a: *u8) -> f64;
+#[link_name = "gtk_scrolled_window_get_vadjustment"]
+extern fn gtk_sw_get_vadjustment(sw: *u8) -> *u8;
+#[link_name = "gtk_scrolled_window_get_hadjustment"]
+extern fn gtk_sw_get_hadjustment(sw: *u8) -> *u8;
+
+fn scrollable_above(w: *u8) -> *u8 {
+    var cur: *u8 = { gtk_widget_get_parent(w) };
+    while !is_null(cur) {
+        if is_a(cur, #str_ptr("GtkScrolledWindow\0")) { return cur; }
+        cur = { gtk_widget_get_parent(cur) };
+    }
+    return null();
+}
+
+// Move one axis by the DELTA that brings `pos`..`pos+extent` on screen, where
+// `pos` is measured against the VIEWPORT and not the content.
+//
+// Content coordinates are the obvious spelling and they are wrong here: a
+// GtkListView is itself a GtkScrollable and VIRTUALISES, so a row's bounds
+// relative to the list are where it sits ON SCREEN, not where it sits in the
+// model. Measured against the content of a 1312-tall list, every visible row
+// answered a small number and the adjustment never moved.
+//
+// A delta needs no such assumption. Whatever the child does internally, "this
+// node is 300 points below the bottom edge" means "scroll 300 further on".
+fn nudge_axis(adj: *u8, pos: f64, extent: f64) {
+    if is_null(adj) { return; }
+    let page: f64 = { gtk_adj_get_page_size(adj) };
+    if page <= (0.0 as f64) { return; }
+    let value: f64 = { gtk_adj_get_value(adj) };
+    let upper: f64 = { gtk_adj_get_upper(adj) };
+    var delta: f64 = 0.0f64;
+    if pos < (0.0 as f64) {
+        // Above the top edge: bring it down, with a little context above it.
+        delta = pos - (extent / (2.0 as f64));
+    } else {
+        if (pos + extent) > page {
+            delta = (pos + extent) - page + (extent / (2.0 as f64));
+        }
+    }
+    // ALREADY VISIBLE is the common case and must not move: a `scroll_to` that
+    // nudged a node already on screen would make every describe/act cycle
+    // jitter under an agent.
+    if delta == (0.0 as f64) { return; }
+    var want: f64 = value + delta;
+    let top: f64 = upper - page;
+    if want > top { want = top; }
+    if want < (0.0 as f64) { want = 0.0f64; }
+    if want == value { return; }
+    { gtk_adj_set_value(adj, want) };
+    return;
+}
+
+// A VIRTUALISED ROW CANNOT BE FOUND THIS WAY, and the measurement says so:
+// an off-screen cell in a GtkListView EXISTS as a widget — the walk lists it,
+// an agent can name it — but GtkListView never ALLOCATES one, so
+// `gtk_widget_compute_bounds` answers 0x0 at the origin:
+//
+//     [agent] scroll_into_view pos=0 h=0 page=572 value=0
+//
+// So geometry brings a node into view inside an ordinary scroll and does
+// nothing for a row below the fold in a list. The rest of the way is
+// `gtk_list_view_scroll_to`, which is addressed by MODEL INDEX rather than by
+// position — and the index is what this layer does not have, because the
+// registry keys on the developer id and the cell carries no public accessor
+// for its own slot. Written down rather than half-built.
+fn scroll_into_view(w: *u8) {
+    if is_null(w) { return; }
+    let sw: *u8 = scrollable_above(w);
+    if is_null(sw) { return; }
+    var b: GrapheneRect = GrapheneRect { x: 0.0 as f32, y: 0.0 as f32,
+                                         w: 0.0 as f32, h: 0.0 as f32 };
+    // AGAINST THE SCROLLED WINDOW — see `nudge_axis` for why not the content.
+    if { gtk_widget_compute_bounds(w, sw, { #addr_of(b) as *u8 }) } == (0 as i32) {
+        return;
+    }
+    nudge_axis({ gtk_sw_get_vadjustment(sw) }, b.y as f64, b.h as f64);
+    nudge_axis({ gtk_sw_get_hadjustment(sw) }, b.x as f64, b.w as f64);
+    return;
 }
