@@ -1,0 +1,65 @@
+// The compound buttons. CheckBox, Switch and RadioButton are all
+// `CompoundButton` on Android, so ONE adapter class carries every change and
+// the kind decides which props struct holds the bit.
+
+import "stdlib/option" as option;
+import "facet/facet" as core;
+import "facet/elements" as ui;
+import "facet/label" as label;
+import "facet/checkbox" as checkbox;
+import "facet/toggle" as toggle;
+import "facet/vocabulary" as vocab;
+import "../shell" as shell;
+
+fn note(s: str) {
+    match label::find("toggles:echo") {
+        option::Option[label::Label]::Some(l) => { let _l: label::Label = l.set_text(s); }
+        option::Option[label::Label]::None => { }
+    }
+    return;
+}
+
+fn on_check(sender: *u8, ctx: *u8) {
+    match checkbox::find("toggles:check") {
+        option::Option[checkbox::Checkbox]::Some(c) => {
+            if c.on() { note("checkbox on"); } else { note("checkbox off"); }
+        }
+        option::Option[checkbox::Checkbox]::None => { }
+    }
+    return;
+}
+
+fn on_switch(sender: *u8, ctx: *u8) {
+    match toggle::find("toggles:switch") {
+        option::Option[toggle::Toggle]::Some(t) => {
+            if t.on() { note("switch on"); } else { note("switch off"); }
+        }
+        option::Option[toggle::Toggle]::None => { }
+    }
+    return;
+}
+
+fn on_red(sender: *u8, ctx: *u8) { note("radio: red"); return; }
+fn on_green(sender: *u8, ctx: *u8) { note("radio: green"); return; }
+
+fn build() -> core::Node {
+    var b: core::Builder = core::Builder::new();
+    b.add(shell::title("Toggles"));
+    b.add(shell::body("A checkbox and a switch look left- and right-aligned here because flex stretches both across the row and Android draws their glyphs at opposite ends."));
+
+    b.add(shell::heading("checkbox"));
+    b.add(ui::checkbox(false, key: "toggles:check", on_checked_changed: on_check));
+
+    b.add(shell::heading("toggle"));
+    b.add(ui::toggle(false, key: "toggles:switch", on_toggled: on_switch));
+
+    b.add(shell::heading("radio"));
+    b.add(ui::radio(true, key: "toggles:red", text: "Red", group: "colour",
+                    on_checked_changed: on_red));
+    b.add(ui::radio(false, key: "toggles:green", text: "Green", group: "colour",
+                    on_checked_changed: on_green));
+
+    b.add(ui::label("(nothing changed yet)", key: "toggles:echo", font_size: 15.0f64,
+                    text_color: vocab::Color::rgba(0.35f64, 0.35f64, 0.40f64)));
+    return shell::page(b, "demo:toggles");
+}

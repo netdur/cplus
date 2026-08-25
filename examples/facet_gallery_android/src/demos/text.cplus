@@ -1,0 +1,76 @@
+// Text — the label, and the three input kinds that share facet's `input_view`
+// block. One TextWatcher serves all three on Android; the KIND is what keeps
+// their props structs apart.
+
+import "stdlib/option" as option;
+import "facet/facet" as core;
+import "facet/elements" as ui;
+import "facet/label" as label;
+import "facet/text_field" as text_field;
+import "facet/text_area" as text_area;
+import "facet/search_field" as search_field;
+import "facet/vocabulary" as vocab;
+import "../shell" as shell;
+
+fn note(s: str) {
+    match label::find("text:echo") {
+        option::Option[label::Label]::Some(l) => { let _l: label::Label = l.set_text(s); }
+        option::Option[label::Label]::None => { }
+    }
+    return;
+}
+
+fn on_field(sender: *u8, ctx: *u8) {
+    match text_field::find("text:field") {
+        option::Option[text_field::TextField]::Some(f) => { note("field: ${f.text()}"); }
+        option::Option[text_field::TextField]::None => { }
+    }
+    return;
+}
+
+fn on_area(sender: *u8, ctx: *u8) {
+    match text_area::find("text:area") {
+        option::Option[text_area::TextArea]::Some(a) => { note("area: ${a.text()}"); }
+        option::Option[text_area::TextArea]::None => { }
+    }
+    return;
+}
+
+fn on_search(sender: *u8, ctx: *u8) {
+    match search_field::find("text:search") {
+        option::Option[search_field::SearchField]::Some(f) => { note("search: ${f.text()}"); }
+        option::Option[search_field::SearchField]::None => { }
+    }
+    return;
+}
+
+fn build() -> core::Node {
+    var b: core::Builder = core::Builder::new();
+    b.add(shell::title("Text"));
+
+    b.add(shell::heading("label"));
+    b.add(ui::label("Twelve point", key: "", font_size: 12.0f64));
+    b.add(ui::label("Seventeen point", key: "", font_size: 17.0f64));
+    b.add(ui::label("Twenty-four, semibold", key: "", font_size: 24.0f64,
+                    font_weight: vocab::FontWeight::Semibold));
+    b.add(ui::label("Coloured", key: "", font_size: 17.0f64,
+                    text_color: vocab::Color::rgba(0.0f64, 0.45f64, 0.42f64)));
+
+    b.add(shell::heading("text_field"));
+    b.add(ui::text_field("", key: "text:field", placeholder: "one line",
+                         on_text_changed: on_field));
+
+    b.add(shell::heading("text_area"));
+    b.add(shell::body("Multi-line, and top-aligned: an EditText centres its text vertically until something says otherwise."));
+    b.add(ui::text_area("", key: "text:area", placeholder: "several lines",
+                        on_text_changed: on_area));
+
+    b.add(shell::heading("search_field"));
+    b.add(shell::body("Android has no search WIDGET. The search-ness is the keyboard's action key, set to IME_ACTION_SEARCH."));
+    b.add(ui::search_field("", key: "text:search", placeholder: "search",
+                           on_text_changed: on_search));
+
+    b.add(ui::label("(nothing typed yet)", key: "text:echo", font_size: 15.0f64,
+                    text_color: vocab::Color::rgba(0.35f64, 0.35f64, 0.40f64)));
+    return shell::page(b, "demo:text");
+}

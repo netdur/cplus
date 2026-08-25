@@ -1,0 +1,37 @@
+// Shared vocabulary for the demo screens, so a change of taste is one edit.
+//
+// Deliberately thin: the demos are meant to read as facet, not as a private
+// framework built on top of it.
+
+import "facet/facet" as core;
+import "facet/elements" as ui;
+import "facet/vocabulary" as vocab;
+
+const GAP: f64 = 12.0f64;
+const PAD: f64 = 20.0f64;
+
+fn title(text: str) -> core::Node {
+    return ui::label(text, key: "", font_size: 24.0f64,
+                     font_weight: vocab::FontWeight::Semibold);
+}
+
+fn heading(text: str) -> core::Node {
+    return ui::label(text, key: "", font_size: 17.0f64,
+                     font_weight: vocab::FontWeight::Semibold);
+}
+
+fn body(text: str) -> core::Node {
+    return ui::label(text, key: "", font_size: 15.0f64);
+}
+
+// Every demo is a scrolling page: a phone is short and a demo that runs off the
+// bottom is a demo whose last half nobody sees.
+fn page(take b: core::Builder, key: str) -> core::Node {
+    var inner: core::Builder = core::Builder::new();
+    inner.add(core::column(b).gap(GAP).padding(PAD));
+    var sc: core::Node = ui::scroll(key: "", axis: vocab::ScrollAxis::Vertical);
+    sc.add_child(core::column(inner));
+    var outer: core::Builder = core::Builder::new();
+    outer.add(sc);
+    return core::column(outer, key: key).grow(1.0f64);
+}

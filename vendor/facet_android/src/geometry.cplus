@@ -214,6 +214,15 @@ fn reposition_children(node: *core::Node, host_abs: flex::Frame) {
                 let cf: flex::Frame = core::frame_of(c);
                 let v: *u8 = core::view_of(c);
                 if v != (0 as *u8) {
+                    // A PARKED PANE HAS TO BE TOLD, every pass. `Display::None`
+                    // gives it a zero frame and a FacetHost does not clip, so
+                    // its subtree draws on at the rects it last had — see
+                    // paint::visibility_of. This is the frame walk's business
+                    // rather than apply's because nothing marks a node dirty
+                    // when its DISPLAY changes.
+                    var vw: w::View = paint::wrap(v);
+                    vw.set_visibility(paint::visibility_of(c));
+                    paint::unwrap_keep(vw);
                     // Host-relative: flex frames are absolute in the root's
                     // space, so subtract the host's origin.
                     place(v, cf.left - host_abs.left, cf.top - host_abs.top, cf.width, cf.height);

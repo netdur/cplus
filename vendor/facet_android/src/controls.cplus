@@ -494,11 +494,10 @@ fn apply_spinner(v: *u8, n: *core::Node, dirty: u64) {
     var pb: w::ProgressBar = w::ProgressBar::from_global(env, v);
     if (dirty & spinner::P_IS_RUNNING) != (0 as u64) {
         // Android has no stop/start — a spinner that is not running is hidden.
-        // GONE (8), not INVISIBLE: facet lays this tree out itself and a hidden
-        // spinner should take no space.
+        // Through `paint::visibility_of`, which is the one rule: the frame walk
+        // rewrites visibility every pass and would otherwise undo this.
         var view: w::View = pb.as_view();
-        if { (*p).is_running } { view.set_visibility(0 as i32); }
-        if !{ (*p).is_running } { view.set_visibility(8 as i32); }
+        view.set_visibility(paint::visibility_of(n));
     }
     let _keep: *u8 = pb.into_raw();
     return;

@@ -48,3 +48,7 @@ playground
 # writes these beside any script you run in-tree.
 __pycache__/
 *.pyc
+
+# The Android build's staging directory: unpacked APK, dex, .so, signed output.
+# `build.sh` recreates it from scratch on every run.
+/examples/*/out/

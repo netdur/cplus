@@ -1,0 +1,25 @@
+[package]
+name    = "facet_gallery_android"
+version = "0.0.1"
+edition = "2026"
+
+# Facet Gallery, Android. The same catalog idea as `facet_gallery` and
+# `facet_gallery_ios`: one screen per group of widgets, described in facet's
+# vocabulary and laid out by flex, with nothing platform-shaped above the entry
+# point.
+#
+# It is DELIBERATELY SMALLER than the other two. facet_android has bodies for
+# fifteen kinds (MANIFEST §2 names the rest), and a gallery that showed a demo
+# whose controls do not exist would be a screen of empty boxes. Each group here
+# is one that works end to end; the list grows as the backend does.
+
+[dependencies]
+stdlib      = "*"
+facet       = "*"
+flex_layout = "*"
+events      = "*"
+
+[android.dependencies]
+facet_android = "*"
+android_view  = "*"
+jni           = "*"

@@ -84,8 +84,7 @@ fn configure(v: *u8, n: *core::Node, dirty: u64) {
         // INVISIBLE (4), never GONE (8): facet's `is_visible` is the hide that
         // KEEPS the node's space — flex's `display: none` is the other one, and
         // conflating them silently reflows the tree.
-        if core::is_visible(n) { view.set_visibility(0 as i32); }
-        else { view.set_visibility(4 as i32); }
+        view.set_visibility(visibility_of(n));
     }
     if (dirty & props::C_IS_ENABLED) != (0 as u64) {
         view.set_enabled(core::is_enabled(n));
@@ -109,6 +108,42 @@ fn configure(v: *u8, n: *core::Node, dirty: u64) {
 
     unwrap_keep(view);
     return;
+}
+
+// What a node's view should be showing, from BOTH rules that can hide it — and
+// stated once, because two writers with two rules would fight.
+//
+// `is_visible` is the application's own IsVisible prop. `is_hidden` is flex's
+// `Display::None`, which `mount::switch_to` sets on every parked pane: flex
+// takes the node out of layout and gives it a zero frame, but a FacetHost does
+// not clip its children — `setClipChildren(false)` — so the subtree goes on
+// drawing at the frames it last had. Collapsed space, visible content: the
+// parked screen sat on top of the one that replaced it.
+//
+// GONE rather than INVISIBLE for the display case: the node is out of layout,
+// and INVISIBLE would leave Android reserving the space facet already gave
+// away. The same distinction facet_appkit makes with `set_hidden`.
+fn visibility_of(n: *core::Node) -> i32 {
+    if core::is_hidden(n) { return 8 as i32; }
+    // A STOPPED SPINNER IS GONE, and the rule lives HERE rather than in
+    // `apply_spinner` because the frame walk rewrites visibility on every pass.
+    // Two writers with two rules is not a style question: the walk ran after
+    // the apply and put the stopped spinner straight back on screen.
+    if core::kind_of(n) == props::K_SPINNER {
+        let p: *props::SpinnerProps = spinner_props(n);
+        if p != (0 as *props::SpinnerProps) {
+            if !{ (*p).is_running } { return 8 as i32; }
+        }
+    }
+    if !core::is_visible(n) { return 4 as i32; }
+    return 0 as i32;
+}
+
+fn spinner_props(n: *core::Node) -> *props::SpinnerProps {
+    let d: *core::Data = core::node_data(n);
+    if d == (0 as *core::Data) { return 0 as *props::SpinnerProps; }
+    if { (*d).kind } != props::K_SPINNER { return 0 as *props::SpinnerProps; }
+    return { (*d).props } as *props::SpinnerProps;
 }
 
 // ---- C string helpers --------------------------------------------------------

@@ -1,0 +1,46 @@
+// Facet Gallery on Android.
+//
+// The only Android-shaped lines in this app are below: an Activity calls in and
+// gets a View back. Everything above is the same facet vocabulary the macOS and
+// iOS galleries use.
+
+import "stdlib/box" as box;
+import "stdlib/option" as option;
+import "jni/jni" as jni;
+import "android_view/runtime" as rt;
+import "facet/facet" as core;
+import "facet_android/facet_android" as backend;
+import "facet_android/window" as window;
+import "./gallery" as gallery;
+
+// THE ROOT HAS TO OUTLIVE THIS CALL. macOS `run` and iOS `run_component` keep
+// the tree on the stack of a function that never returns; Android's onCreate
+// calls in, takes a View back, and RETURNS. So the tree is boxed and leaked —
+// it lives for the process, which is exactly as long as the Activity can be
+// recreated against it.
+static ROOT: usize = 0;
+
+fn root_node() -> *core::Node { return { ROOT as *core::Node }; }
+
+export extern fn Java_cplus_gallery_MainActivity_nativeCreateView(
+    envp: *jni::JNIEnv,
+    cls: jni::jobject,
+    activity: jni::jobject,
+) -> jni::jobject {
+    let env: rt::Env = rt::from_native(envp);
+    backend::install();
+
+    let first: bool = ROOT == 0;
+    if first {
+        var n: core::Node = gallery::build();
+        match box::new::[core::Node](n) {
+            option::Option[box::Box[core::Node]]::Some(bx) => { ROOT = { #addr(bx.into_raw()) }; }
+            option::Option[box::Box[core::Node]]::None => { return 0 as jni::jobject; }
+        }
+    }
+    let host: jni::jobject = window::attach_root(env, activity, root_node());
+    // AFTER the mount: `switch_to` parks by walking a mounted tree, and on a
+    // recreated Activity the same call re-asserts the screen the person was on.
+    if first { gallery::show_home(); }
+    return host;
+}

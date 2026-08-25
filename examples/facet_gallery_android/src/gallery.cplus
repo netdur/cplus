@@ -1,0 +1,95 @@
+// The shell: a bar, a home screen, and one OUTLET holding every demo.
+//
+// `mount::switch_to` shows one child and parks the rest under Display::None —
+// built once, never rebuilt, with their views, scroll positions and cursors
+// intact. So a demo you come back to is the demo you left, which is the
+// behaviour a catalog wants and the reason this is not a rebuild-on-navigate
+// design.
+
+import "stdlib/option" as option;
+import "flex_layout/flex_layout" as flex;
+import "facet/facet" as core;
+import "facet/elements" as ui;
+import "facet/label" as label;
+import "facet/mount" as mount;
+import "facet/vocabulary" as vocab;
+import "./shell" as shell;
+import "./demos/buttons" as buttons;
+import "./demos/text" as text;
+import "./demos/toggles" as toggles;
+import "./demos/values" as values;
+import "./demos/layout" as layout;
+
+const HOME: str = "demo:home";
+
+fn show(key: str, name: str) {
+    match mount::find("gallery:outlet") {
+        option::Option[*core::Node]::Some(o) => {
+            let _ok: bool = mount::switch_to(o, key);
+        }
+        option::Option[*core::Node]::None => { }
+    }
+    match label::find("gallery:title") {
+        option::Option[label::Label]::Some(l) => { let _l: label::Label = l.set_text(name); }
+        option::Option[label::Label]::None => { }
+    }
+    // The back button is only meaningful off the home screen. `Display::None`
+    // rather than `set_visible(false)`: an invisible button still holds its
+    // width and pushed the title along with it. Not removed either — removing
+    // it would take its view, and the next `show` would rebuild one.
+    match mount::find("gallery:back") {
+        option::Option[*core::Node]::Some(bk) => {
+            if key == HOME { { (*bk).set_display(flex::Display::None) }; }
+            else { { (*bk).set_display(flex::Display::Flex) }; }
+        }
+        option::Option[*core::Node]::None => { }
+    }
+    return;
+}
+
+fn on_back(sender: *u8, ctx: *u8) { show(HOME, "Facet Gallery"); return; }
+
+fn on_buttons(sender: *u8, ctx: *u8) { show("demo:buttons", "Buttons"); return; }
+fn on_text(sender: *u8, ctx: *u8) { show("demo:text", "Text"); return; }
+fn on_toggles(sender: *u8, ctx: *u8) { show("demo:toggles", "Toggles"); return; }
+fn on_values(sender: *u8, ctx: *u8) { show("demo:values", "Values"); return; }
+fn on_layout(sender: *u8, ctx: *u8) { show("demo:layout", "Layout"); return; }
+
+fn home() -> core::Node {
+    var b: core::Builder = core::Builder::new();
+    b.add(shell::body("facet's Android backend, one screen per group of controls. Every screen drives real Android widgets: no custom drawing, no Gradle, and thirteen lines of Java in the whole app."));
+    b.add(ui::button("Buttons", key: "home:buttons", on_click: on_buttons));
+    b.add(ui::button("Text", key: "home:text", on_click: on_text));
+    b.add(ui::button("Toggles", key: "home:toggles", on_click: on_toggles));
+    b.add(ui::button("Values", key: "home:values", on_click: on_values));
+    b.add(ui::button("Layout", key: "home:layout", on_click: on_layout));
+    b.add(shell::body("Fifteen kinds have bodies. MANIFEST section 2 in vendor/facet_android names the rest — lists, trees, tables and collections wait on the recycler."));
+    return shell::page(b, HOME);
+}
+
+fn bar() -> core::Node {
+    var b: core::Builder = core::Builder::new();
+    b.add(ui::text_button("< Back", key: "gallery:back", on_click: on_back));
+    b.add(ui::label("Facet Gallery", key: "gallery:title", font_size: 20.0f64,
+                    font_weight: vocab::FontWeight::Semibold));
+    return core::row(b, key: "gallery:bar").gap(12.0f64).padding(12.0f64);
+}
+
+fn build() -> core::Node {
+    var demos: core::Builder = core::Builder::new();
+    demos.add(home());
+    demos.add(buttons::build());
+    demos.add(text::build());
+    demos.add(toggles::build());
+    demos.add(values::build());
+    demos.add(layout::build());
+
+    var b: core::Builder = core::Builder::new();
+    b.add(bar());
+    b.add(core::column(demos, key: "gallery:outlet").grow(1.0f64));
+    return core::column(b, key: "gallery:root");
+}
+
+// The first `switch_to` cannot run until the tree is mounted, so it happens
+// once from the entry point rather than here.
+fn show_home() { show(HOME, "Facet Gallery"); return; }

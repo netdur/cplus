@@ -117,6 +117,33 @@ axis, so both views are the FULL row width — and Android draws a CheckBox's bo
 at the leading edge and a Switch's track at the trailing one, with the (absent)
 label filling the gap. An app that wants either hugged gives it a width.
 
+### Two writers, one visibility
+
+`paint::visibility_of` is the ONLY function that decides whether a view shows,
+and it has to be, because the frame walk rewrites visibility on every layout
+pass. Three rules feed it: flex's `Display::None` (which `mount::switch_to`
+sets on every parked pane), a spinner that is not running, and the
+application's own `is_visible`. Each was written in its own place first and
+each was undone by the walk within a pass — a parked screen sat on top of the
+one that replaced it, and a stopped spinner came straight back.
+
+GONE, not INVISIBLE, for the first two: the node is out of layout and facet has
+already given its space away.
+
+### A FacetHost answers a loose measure with what facet told it
+
+Android asks rather than tells in one place: a ScrollView measures its child
+with an UNSPECIFIED height so the child may be taller than the viewport, and
+`MeasureSpec.getSize` of UNSPECIFIED is ZERO. `FacetHost.setWanted` is how the
+document answers; EXACTLY still wins when Android pins a size.
+
+### Only the root host reports the window size
+
+Every box and every scroll document is a FacetHost, and facet resizes them
+itself. A host that reported its own size would hand it back as THE WINDOW'S:
+a document sized to its content told facet the window was that tall, the
+viewport grew to match, and the scroll had nothing left to scroll.
+
 ### stderr goes nowhere
 
 An app's stdout and stderr are discarded unless someone sets

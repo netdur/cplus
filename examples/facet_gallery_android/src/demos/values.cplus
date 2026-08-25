@@ -1,0 +1,102 @@
+// The value controls: a slider, a stepper, a progress bar and a spinner.
+//
+// Two Android facts are on display here. A SeekBar counts in whole steps from
+// zero while facet's slider is an f64 range, so the range maps onto a fixed
+// number of steps and converts at the boundary. And a ProgressBar is
+// determinate or not by CONSTRUCTOR — which is why `progress` and `spinner` are
+// the same Android widget and cannot share a create.
+
+import "stdlib/option" as option;
+import "facet/facet" as core;
+import "facet/elements" as ui;
+import "facet/label" as label;
+import "facet/slider" as slider;
+import "facet/stepper" as stepper;
+import "facet/progress" as progress;
+import "facet/spinner" as spinner;
+import "facet/toggle" as toggle;
+import "facet/vocabulary" as vocab;
+import "../shell" as shell;
+
+fn note(s: str) {
+    match label::find("values:echo") {
+        option::Option[label::Label]::Some(l) => { let _l: label::Label = l.set_text(s); }
+        option::Option[label::Label]::None => { }
+    }
+    return;
+}
+
+fn on_slide(sender: *u8, ctx: *u8) {
+    match slider::find("values:slider") {
+        option::Option[slider::Slider]::Some(s) => {
+            let v: i32 = { s.value() as i32 };
+            note("slider ${v}");
+            // The progress bar FOLLOWS the slider, which is the useful half of
+            // this screen: it shows a prop write landing on a second control in
+            // the same pass as the event that caused it.
+            match progress::find("values:progress") {
+                option::Option[progress::Progress]::Some(p) => {
+                    let _p: progress::Progress = p.set_progress({ s.value() } / 100.0f64);
+                }
+                option::Option[progress::Progress]::None => { }
+            }
+        }
+        option::Option[slider::Slider]::None => { }
+    }
+    return;
+}
+
+fn on_step(sender: *u8, ctx: *u8) {
+    match stepper::find("values:stepper") {
+        option::Option[stepper::Stepper]::Some(s) => {
+            let v: i32 = { s.value() as i32 };
+            note("stepper ${v}");
+        }
+        option::Option[stepper::Stepper]::None => { }
+    }
+    return;
+}
+
+fn on_spin(sender: *u8, ctx: *u8) {
+    match toggle::find("values:running") {
+        option::Option[toggle::Toggle]::Some(t) => {
+            let on: bool = t.on();
+            match spinner::find("values:spinner") {
+                option::Option[spinner::Spinner]::Some(s) => {
+                    let _s: spinner::Spinner = s.set_running(on);
+                }
+                option::Option[spinner::Spinner]::None => { }
+            }
+            if on { note("spinner running"); } else { note("spinner stopped"); }
+        }
+        option::Option[toggle::Toggle]::None => { }
+    }
+    return;
+}
+
+fn build() -> core::Node {
+    var b: core::Builder = core::Builder::new();
+    b.add(shell::title("Values"));
+
+    b.add(shell::heading("slider"));
+    b.add(ui::slider(25.0f64, key: "values:slider", minimum: 0.0f64, maximum: 100.0f64,
+                     on_value_changed: on_slide));
+
+    b.add(shell::heading("progress"));
+    b.add(shell::body("Driven by the slider above."));
+    b.add(ui::progress(0.25f64, key: "values:progress"));
+
+    b.add(shell::heading("stepper"));
+    b.add(shell::body("The one COMPOSITE control: minus, value and plus are three Android views inside one facet node, arranged by a LinearLayout. facet owns the layout of facet's tree, and these three are not in it."));
+    b.add(ui::stepper(3.0f64, key: "values:stepper", minimum: 0.0f64, maximum: 10.0f64,
+                      increment: 1.0f64, on_value_changed: on_step));
+
+    b.add(shell::heading("spinner"));
+    b.add(shell::body("Android has no stop, so a spinner that is not running is GONE — not invisible, because facet lays this tree out itself and a stopped spinner should take no space."));
+    b.add(ui::toggle(true, key: "values:running", on_toggled: on_spin));
+    b.add(ui::spinner(vocab::Color::clear(), key: "values:spinner", running: true));
+
+    b.add(ui::label("(nothing moved yet)", key: "values:echo", font_size: 15.0f64,
+                    text_color: vocab::Color::rgba(0.35f64, 0.35f64, 0.40f64)));
+    return shell::page(b, "demo:values");
+}
