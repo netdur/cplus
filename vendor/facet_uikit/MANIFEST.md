@@ -122,22 +122,6 @@ field that opens a calendar on tap, `Inline` is that calendar already open).
 with a picker as its input view — which facet has no verb for, and which would
 be a new kind rather than this one.
 
-### A `popup`'s `on_opened` / `on_closed`
-
-`popup`'s `is_open` WRITES — the button's menu is opened through
-`performPrimaryAction` — but nothing reads the other direction. A UIButton
-showing its menu as its primary action reports the menu appearing and
-disappearing through `UIContextMenuInteractionDelegate`
-(`contextMenuInteraction:willDisplayMenuForConfiguration:animator:` and
-`...willEndForConfiguration:`), which is a delegate class this package does not
-yet synthesize for the button.
-
-UNBUILT rather than unanswerable — reachable, public, and simply not done — so
-it belongs in section 2 the way `on_web_resource_requested` does. Recorded here
-because it was found from the outside, by `facet_gtk/tools/parity.py` once that
-tool started attributing handler reads per Props struct: the pickers' reads of
-`on_opened` had been counting as the popup's.
-
 ### A split divider's `on_move`
 
 Covered by "dragging a split divider" above: nothing moves it, so nothing can

@@ -419,23 +419,6 @@ fn imp_scrolled(self_obj: *u8, cmd: *u8, sv: *u8) {
     if n == (0 as *core::Node) { return; }
     let kind: u32 = core::kind_of(n);
     if kind == props::K_CAROUSEL { carousel_scrolled(sv, n); return; }
-    // A COLLECTION'S OBSERVER IS A DIFFERENT FIELD, and it was never read.
-    // The comment above says "a collection view arrives here too", and it does
-    // — but `list_props` is `props_of(n, K_LIST)`, which answers NULL for any
-    // other kind, so a collection reached the guard below and returned. A
-    // `collection(...)` that asked where it was scrolled got nothing on iOS.
-    //
-    // The two are not the same declaration: a list carries `ListView.Scrolled`
-    // of its own, a collection carries `ItemsView.Scrolled` on its embedded
-    // block. Reading one and calling it done drops whichever the app used.
-    if kind == props::K_COLLECTION {
-        let cp: *props::CollectionProps =
-            props_of(n, props::K_COLLECTION) as *props::CollectionProps;
-        if cp == (0 as *props::CollectionProps) { return; }
-        let ch: fn(*u8, *u8) = { (*cp).items_view.observe_scrolled };
-        if ch != props::no_handler { ch(sv, { (*cp).items_view.observe_scrolled_ctx }); }
-        return;
-    }
     let p: *props::ListProps = list_props(sv);
     if p == (0 as *props::ListProps) { return; }
     let h: fn(*u8, *u8) = { (*p).observe_scrolled };
