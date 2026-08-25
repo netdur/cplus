@@ -1,0 +1,29 @@
+[package]
+name    = "agent_android"
+version = "0.0.1"
+edition = "2026"
+
+# The agent surface for facet's Android backend — the sibling of agent_appkit,
+# agent_uikit and agent_gtk, and the one that walks a different tree.
+#
+# The other three walk the NATIVE view hierarchy and read an id back off an
+# associated object, because they were written for a world where the surface
+# might serve an app facet did not build. On Android every app on this backend
+# IS a facet app, and Android has no accessibilityIdentifier — facet_android
+# stashes the node's key in a keyed View tag, which is a lossy round trip out of
+# a tree we already hold. So this walks FACET'S node tree, where the key, the
+# kind, the frame and the handlers all are.
+#
+# Recorded in MANIFEST.md §1 rather than left as a surprise: the contract with
+# agent_core is identical either way, and it is the walk that differs.
+
+[dependencies]
+stdlib      = "*"
+flex_layout = "*"
+facet       = "*"
+agent_core  = "*"
+
+[android.dependencies]
+facet_android = "*"
+android_view  = "*"
+jni           = "*"

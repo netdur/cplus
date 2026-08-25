@@ -1,0 +1,190 @@
+// facet agent facade for iOS. `import "facet_agent/agent"` resolves HERE on an iOS
+// target, through the same filename override that picks `runtime_ios.cplus` —
+// and for the same reason: the module names a platform package, and on this
+// platform that package does not exist.
+//
+// `agent.cplus` is written against `agent_appkit`, which walks an NSWindow's
+// live view tree into a surface an MCP worker serves. `agent_android` is the
+// sibling that does the same for a UIWindow, and this file is the same facade
+// over it — nothing here refuses. (It USED to: this module was written while
+// `agent_android` did not exist, and kept the surface compiling by answering no.
+// The header said so for a while after it stopped being true.)
+//
+// The whole stack below the backend — agent_core, agent_mcp, agent_inapp — is
+// portable and is the same code on both platforms. What differs is the reader
+// and the transport, and the transport is the interesting half; see below.
+//
+// `policy_for` is shared rather than merely similar: it is facet's vocabulary
+// translated into agent_core's, identical to the AppKit module's on purpose. A
+// second translation table would be the thing that drifts.
+
+import "facet/application" as app;
+import "facet/vocabulary" as vocab;
+import "agent_core/auth" as auth;
+import "agent_core/identity" as identity;
+import "stdlib/text" as text;
+import "stdlib/io" as io;
+import "stdlib/thread" as thread;
+import "agent_core/events" as events;
+import "agent_inapp/agent_inapp" as inapp;
+import "agent_mcp/agent_mcp" as mcp;
+import "agent_android/agent_android" as agent_android;
+
+static AGENT_SURFACE: agent_android::Surface = #zero::[agent_android::Surface]();
+static AGENT_SERVING: bool = false;
+
+// THE TRANSPORT IS A PORT, not a path, and Android's reason is the same shape as
+// iOS's with a different plumbing.
+//
+// An app's files live under /data/data/<pkg>, which is not readable from the
+// development machine without root — so a Unix socket is as unreachable here as
+// it is inside an iOS sandbox. A port is reachable: `adb forward tcp:8787
+// tcp:8787` is the counterpart of usbmuxd, and the same MCP client talks to
+// both without knowing which it reached.
+//
+// (Below is the iOS note this was ported from, kept because the reasoning is
+// the same one.)
+//
+// ORIGINAL:
+//
+// A Unix socket lives in the app's sandbox, where nothing on the development
+// machine can reach it — and to a DEVICE there is no shared filesystem at all.
+// A port is reachable, forwarded over USB by usbmuxd, which is how Flutter's
+// Dart VM Service and Chrome's remote debugging are reached. So the path an
+// application passes is read as a PORT NUMBER, and a path that is not one gets
+// the default.
+//
+// Bound to loopback by `serve_tcp`, never to every interface: this surface can
+// read a UI and press its buttons.
+const DEFAULT_PORT: u16 = 8787u16;
+
+fn port_of(path: str) -> u16 {
+    var n: u32 = 0 as u32;
+    var any: bool = false;
+    let bytes: *u8 = #str_ptr(path);
+    let len: usize = #str_len(path);
+    var i: usize = 0 as usize;
+    while i < len {
+        let c: u8 = { *(bytes + i) };
+        if c < ('0' as u8) || c > ('9' as u8) { return DEFAULT_PORT; }
+        n = n * (10 as u32) + ((c -% ('0' as u8)) as u32);
+        if n > (65535 as u32) { return DEFAULT_PORT; }
+        any = true;
+        i = i +% (1 as usize);
+    }
+    if !any { return DEFAULT_PORT; }
+    return n as u16;
+}
+
+fn enable() {
+    app::install_agent(app::AgentHooks {
+        attach_window: attach_window,
+        serve_once: serve_once,
+        pin_policy: pin_policy,
+    });
+    return;
+}
+
+fn disable() {
+    app::install_agent(app::AgentHooks {
+        attach_window: 0 as fn(*u8),
+        serve_once: 0 as fn(str),
+        pin_policy: 0 as fn(*u8, vocab::Agent),
+    });
+    return;
+}
+
+// The in-process assistant, which needs no socket at all: it drives the same
+// backend vtable as the external bridge, with the same grant model.
+fn in_app() -> inapp::Session {
+    let surf: *u8 = #addr_of(AGENT_SURFACE) as *u8;
+    return inapp::open(surf, agent_android::mcp_backend());
+}
+
+fn in_app_with_grant(g: auth::Grant) -> inapp::Session {
+    let surf: *u8 = #addr_of(AGENT_SURFACE) as *u8;
+    return inapp::open_with_grant(surf, agent_android::mcp_backend(), g);
+}
+
+// (WAS ABSENT, and the reason is worth keeping.)
+// `in_app` and `in_app_with_grant` were DELIBERATELY ABSENT rather than stubbed.
+//
+// Every other entry here can refuse at runtime because refusing costs nothing:
+// `enable` installs no hooks, `serve_once` starts no worker. A session cannot.
+// It is a value the caller then CALLS — `describe_ui`, `click`, `set_text` —
+// through a backend vtable, and a stub would have to hand back a session with a
+// null vtable whose first use is a jump through a null function pointer.
+//
+// So an app that opens an in-process assistant fails to COMPILE for iOS, at the
+// call site, with the name of the thing that is missing. That is the loudest and
+// earliest signal available, and it is the same rule the rest of facet follows:
+// no side door that looks portable.
+
+// THE ONE PLACE the two vocabularies meet, and it is portable: facet's
+// `vocab::Agent` is what a developer writes, agent_core's `policy_*` is what a
+// backend pins and reads. Identical to the AppKit module's, deliberately — a
+// second translation table would be the thing that drifts.
+fn policy_for(a: vocab::Agent) -> u32 {
+    return match a {
+        vocab::Agent::Open => identity::policy_none(),
+        vocab::Agent::Protected => identity::policy_protected(),
+        vocab::Agent::Private => identity::policy_private(),
+        vocab::Agent::Hidden => identity::policy_exclude(),
+    };
+}
+
+fn pin_policy(view: *u8, a: vocab::Agent) {
+    agent_android::set_agent_policy(view, policy_for(a));
+    return;
+}
+
+// Walk the tree into the surface, replacing the previous screen's.
+//
+// `win` is a facet NODE on this backend, not a native view: agent_android walks
+// facet's own tree, where the key, the kind and the handlers are. See its
+// Cplus.toml for why the other three do it the other way.
+fn attach_window(win: *u8) {
+    AGENT_SURFACE = agent_android::open(win);
+    return;
+}
+
+// The default channel policy: the developer opted in by asking for a port, so
+// the channel is admitted — as an ORDINARY OPERATOR. Read the app, drive the
+// app, and nothing from a node the application put behind a tier. Widening is
+// an app supplying its own policy, which is a place a reader can find it.
+fn admit(req: auth::Request) -> auth::Grant { return auth::operator(); }
+
+struct AgentServe { port: u16 }
+
+fn serve_main(take job: AgentServe) -> i32 {
+    var sub: events::Subscriber = events::subscriber(events::everything(), 64 as usize);
+    let surf: *u8 = #addr_of(AGENT_SURFACE) as *u8;
+    return mcp::serve_tcp(surf, agent_android::mcp_backend(), sub, admit, job.port);
+}
+
+// Start the serve worker exactly once per process. The accept loop lives for
+// the app's life.
+fn serve_once(path: str) {
+    if AGENT_SERVING { return; }
+    AGENT_SERVING = true;
+    let _t: thread::JoinHandle[i32] = thread::spawn_with::[AgentServe, i32](
+        AgentServe { port: port_of(path) },
+        serve_main,
+    );
+    return;
+}
+
+// ---- tests ------------------------------------------------------------------
+
+// The half that is real here. The tier translation is agent_core's vocabulary
+// and does not touch a platform, so it is asserted on iOS exactly as the AppKit
+// module asserts it — and a divergence between the two tables is what this
+// catches.
+#[test]
+fn every_facet_tier_maps_to_the_policy_the_core_reads() {
+    assert policy_for(vocab::Agent::Open) == identity::policy_none();
+    assert policy_for(vocab::Agent::Protected) == identity::policy_protected();
+    assert policy_for(vocab::Agent::Private) == identity::policy_private();
+    assert policy_for(vocab::Agent::Hidden) == identity::policy_exclude();
+    return;
+}

@@ -1267,3 +1267,50 @@ fn put_str_at(buf: *u8, at: usize, s: *u8) -> usize {
     }
     return i;
 }
+
+// ---- the agent's door --------------------------------------------------------
+//
+// An agent's click IS the control's own event path — the same function the
+// Java listener adapter calls, one layer below the adapter. Nothing here
+// synthesizes a touch, and nothing here can drag, pinch or swipe: an agent has
+// no hands, and that is a property of the surface rather than a gap in it.
+
+fn agent_click(n: *core::Node) -> bool {
+    let d: *core::Data = core::node_data(n);
+    if d == (0 as *core::Data) { return false; }
+    let kind: u32 = { (*d).kind };
+    if kind == props::K_BUTTON { fire_click({ #addr(n) as i64 }); return true; }
+    if kind == text_button::K_TEXT_BUTTON { fire_click({ #addr(n) as i64 }); return true; }
+    if kind == props::K_ICON_BUTTON { fire_click({ #addr(n) as i64 }); return true; }
+    // A compound button TOGGLES: clicking one is asking for the other state,
+    // which is what a finger does to it and what the props then have to say.
+    if kind == props::K_CHECKBOX {
+        let p: *props::CheckboxProps = { (*d).props } as *props::CheckboxProps;
+        fire_checked({ #addr(n) as i64 }, !{ (*p).on });
+        return true;
+    }
+    if kind == props::K_TOGGLE {
+        let p: *props::ToggleProps = { (*d).props } as *props::ToggleProps;
+        fire_checked({ #addr(n) as i64 }, !{ (*p).on });
+        return true;
+    }
+    // A RADIO IS NOT A TOGGLE. Clicking one asks for it to be ON; clicking the
+    // selected one is not a request to clear the group, and `radio_changed`
+    // already knows that.
+    if kind == props::K_RADIO { fire_checked({ #addr(n) as i64 }, true); return true; }
+    return false;
+}
+
+// Writing into a field WITHOUT the platform in the loop: the props are written
+// and the handler told, then the control is brought into step by an ordinary
+// dirty bit. Going through the widget instead would fire the TextWatcher and
+// arrive back here as if a finger had typed it.
+fn agent_set_text(n: *core::Node, value: str) -> bool {
+    let iv: *props::InputViewProps = input_view_of(n);
+    if iv == (0 as *props::InputViewProps) { return false; }
+    { (*iv).text = text::from_str(value) };
+    core::touch(n, text_field::P_TEXT);
+    let h: fn(*u8, *u8) = { (*iv).on_text_changed };
+    if h != props::no_handler { h(core::view_of(n), { (*iv).on_text_changed_ctx }); }
+    return true;
+}

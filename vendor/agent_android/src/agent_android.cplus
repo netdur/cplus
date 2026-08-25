@@ -1,0 +1,390 @@
+// The agent surface over facet's own tree.
+//
+// agent_core owns everything hard: the identity registry, auto-ids, the grant
+// model, curation, and the exposed reduction. A backend's job is two halves —
+// WALK a tree into the registry, and answer LIVE reads and actions against it.
+// This file is those two halves and nothing else.
+
+import "stdlib/option" as option;
+import "stdlib/text" as text;
+import "stdlib/vec" as vec;
+import "flex_layout/flex_layout" as flex;
+import "facet/facet" as core;
+import "facet/props" as props;
+import "facet/vocabulary" as vocab;
+import "facet/mount" as mount;
+import "facet/label" as label;
+import "facet/button" as button;
+import "facet/text_button" as text_button;
+import "facet/text_field" as text_field;
+import "agent_core/auth" as auth;
+import "agent_core/identity" as identity;
+import "agent_core/surface" as surface;
+import "agent_core/backend" as mcpb;
+import "facet_android/controls" as controls;
+
+// A registry index and the facet node behind it, in step by construction: the
+// walk appends to both together.
+struct Surface {
+    reg: identity::Registry,
+    versions: surface::TextVersions,
+    nodes: vec::Vec[usize],
+}
+
+fn node_of(s: *Surface, index: usize) -> *core::Node {
+    match { (*s).nodes.at_ptr(index) } {
+        option::Option[*usize]::Some(p) => { return { (*p) as *core::Node }; }
+        option::Option[*usize]::None => { return 0 as *core::Node; }
+    }
+}
+
+// ---- the vocabulary a role is read from -------------------------------------
+//
+// One place, because a role that disagrees with the text read is a node the
+// agent describes as a button and reads as a label.
+
+fn role_of(kind: u32) -> identity::Role {
+    if kind == props::K_BUTTON { return identity::Role::Button; }
+    if kind == text_button::K_TEXT_BUTTON { return identity::Role::Button; }
+    if kind == props::K_ICON_BUTTON { return identity::Role::Button; }
+    if kind == props::K_CHECKBOX { return identity::Role::Button; }
+    if kind == props::K_TOGGLE { return identity::Role::Button; }
+    if kind == props::K_RADIO { return identity::Role::Button; }
+    if kind == props::K_STEPPER { return identity::Role::Button; }
+    if kind == props::K_LABEL { return identity::Role::Text; }
+    if kind == props::K_SPAN { return identity::Role::Text; }
+    if kind == props::K_TEXT_FIELD { return identity::Role::Input; }
+    if kind == props::K_TEXT_AREA { return identity::Role::Input; }
+    if kind == props::K_SEARCH_FIELD { return identity::Role::Input; }
+    if kind == props::K_SLIDER { return identity::Role::Input; }
+    if kind == props::K_LIST { return identity::Role::List; }
+    if kind == props::K_COLLECTION { return identity::Role::List; }
+    if kind == props::K_TABLE { return identity::Role::List; }
+    return identity::Role::Group;
+}
+
+// What the node SAYS. A glyph is not a name, so a control with a title reports
+// its title and one without reports "" rather than a class name dressed up as
+// content.
+fn text_of(n: *core::Node) -> text::Text {
+    let d: *core::Data = core::node_data(n);
+    if d == (0 as *core::Data) { return text::new(); }
+    let kind: u32 = { (*d).kind };
+    let raw: *u8 = { (*d).props };
+    if raw == (0 as *u8) { return text::new(); }
+
+    if kind == props::K_LABEL {
+        let p: *props::LabelProps = raw as *props::LabelProps;
+        return { (*p).text.clone() };
+    }
+    if kind == props::K_BUTTON {
+        let p: *props::ButtonProps = raw as *props::ButtonProps;
+        return { (*p).title.clone() };
+    }
+    if kind == text_button::K_TEXT_BUTTON {
+        let p: *text_button::TextButtonProps = raw as *text_button::TextButtonProps;
+        return { (*p).title.clone() };
+    }
+    if kind == props::K_RADIO {
+        let p: *props::RadioProps = raw as *props::RadioProps;
+        return { (*p).text.clone() };
+    }
+    let iv: *props::InputViewProps = controls::input_view_of(n);
+    if iv != (0 as *props::InputViewProps) { return { (*iv).text.clone() }; }
+    return text::new();
+}
+
+// Can an agent do anything to this node? The affordance CEILING, not whether a
+// particular grant may act — agent_core resolves that.
+fn is_actionable(n: *core::Node) -> bool {
+    let d: *core::Data = core::node_data(n);
+    if d == (0 as *core::Data) { return false; }
+    let kind: u32 = { (*d).kind };
+    let raw: *u8 = { (*d).props };
+    if raw == (0 as *u8) { return false; }
+    if kind == props::K_BUTTON {
+        let p: *props::ButtonProps = raw as *props::ButtonProps;
+        return { (*p).on_click } != props::no_handler;
+    }
+    if kind == text_button::K_TEXT_BUTTON {
+        let p: *text_button::TextButtonProps = raw as *text_button::TextButtonProps;
+        return { (*p).on_click } != props::no_handler;
+    }
+    if kind == props::K_ICON_BUTTON {
+        let p: *props::IconButtonProps = raw as *props::IconButtonProps;
+        return { (*p).on_clicked } != props::no_handler;
+    }
+    if kind == props::K_CHECKBOX { return true; }
+    if kind == props::K_TOGGLE { return true; }
+    if kind == props::K_RADIO { return true; }
+    if controls::input_view_of(n) != (0 as *props::InputViewProps) { return true; }
+    return false;
+}
+
+// ---- the walk ----------------------------------------------------------------
+
+// The registry and the node table have to grow TOGETHER, so the walk above
+// records nodes through this rather than appending in two places.
+fn register(ref reg: identity::Registry, ref nodes: vec::Vec[usize],
+            parent: usize, key: str, role: identity::Role, n: *core::Node) -> usize {
+    let idx: usize = reg.add_child(parent, option::Option[str]::Some(key), role);
+    while { nodes.count() } <= idx { let _e: i32 = { nodes.append(0 as usize) } as i32; }
+    nodes.set({ #addr(n) }, idx);
+    return idx;
+}
+
+fn open(root: *u8) -> Surface {
+    var reg: identity::Registry = identity::new();
+    var nodes: vec::Vec[usize] = vec::new::[usize]();
+    // Index 0 is the synthetic app root and has no node behind it.
+    let _e: i32 = { nodes.append(0 as usize) } as i32;
+    let n: *core::Node = { root as *core::Node };
+    if n != (0 as *core::Node) {
+        let root_index: usize = reg.root();
+        walk_rooted(reg, nodes, n, root_index);
+    }
+    return Surface { reg: reg, versions: surface::new_text_versions(), nodes: nodes };
+}
+
+fn walk_rooted(ref reg: identity::Registry, ref nodes: vec::Vec[usize],
+               n: *core::Node, parent: usize) {
+    let key: str = { (*n).key() };
+    var me: usize = parent;
+    if key != "" {
+        me = register(reg, nodes, parent, key, role_of(core::kind_of(n)), n);
+        let t: text::Text = text_of(n);
+        if { t.view() } != "" { reg.set_content_name(me, { t.view() }); }
+        if !is_actionable(n) { reg.set_observe_only(me); }
+    }
+    var i: usize = 0 as usize;
+    let count: usize = core::child_count_of(n);
+    while i < count {
+        match core::child_of(n, i) {
+            option::Option[*core::Node]::Some(c) => { walk_rooted(reg, nodes, c, me); }
+            option::Option[*core::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return;
+}
+
+// ---- the live reads ----------------------------------------------------------
+//
+// The registry is a SNAPSHOT of the shape; text, frames and hidden-ness are read
+// off the tree each time, because they change without the shape changing. The
+// same split the other three backends make.
+
+fn frame_of(n: *core::Node) -> mcpb::Rect {
+    let f: flex::Frame = core::frame_of(n);
+    return mcpb::Rect { x: f.left, y: f.top, w: f.width, h: f.height };
+}
+
+// The ROLE's name, not an invented class name. On Apple and GTK this is the
+// widget's own class — `UIButton`, `GtkLabel` — which is a real fact about a
+// real object. Android's answer would be the same fact one layer down
+// (`android.widget.Button`), and reading it means a JNI round trip per node to
+// re-learn what the kind already said. So this reports the role and says so,
+// rather than asserting a class it did not look at.
+fn class_name_of(n: *core::Node) -> text::Text {
+    return text::from_str(identity::role_tag(role_of(core::kind_of(n))));
+}
+
+fn live_node(s: *Surface, index: usize, view: identity::NodeView) -> mcpb::UiNode {
+    let n: *core::Node = node_of(s, index);
+    if n == (0 as *core::Node) {
+        return mcpb::UiNode {
+            id: { view.id.clone() }, role: view.role, class_name: text::new(),
+            frame: mcpb::Rect { x: 0.0f64, y: 0.0f64, w: 0.0f64, h: 0.0f64 },
+            is_hidden: false, text: text::new(), name: { view.name.clone() },
+            description: { view.description.clone() },
+            actionable: view.actionable, clickable: false,
+            wired: option::Option[bool]::None,
+            tier: view.tier, readable: view.readable, parent: view.parent,
+        };
+    }
+    return mcpb::UiNode {
+        id: { view.id.clone() },
+        role: view.role,
+        class_name: class_name_of(n),
+        frame: frame_of(n),
+        is_hidden: core::is_hidden(n),
+        // READABLE gates the text, not the shape. A node whose tier outranks
+        // the grant is described — an agent that cannot see a field should
+        // still know a field is there — and its content is left empty.
+        text: read_text(view, n),
+        name: { view.name.clone() },
+        description: { view.description.clone() },
+        actionable: view.actionable,
+        // CLICKABLE is what the CONTROL offers, `actionable` is what this grant
+        // may do with it. iris's components.txt records gtk and win32 filling
+        // one with the other; keeping them apart is the whole point of the pair.
+        clickable: is_actionable(n),
+        // WIRED: does the control actually have a handler behind it? None means
+        // "this backend did not look", and here it always looked.
+        wired: option::Option[bool]::Some(is_actionable(n)),
+        tier: view.tier,
+        readable: view.readable,
+        parent: view.parent,
+    };
+}
+
+fn read_text(view: identity::NodeView, n: *core::Node) -> text::Text {
+    if !view.readable { return text::new(); }
+    return text_of(n);
+}
+
+impl Surface {
+    fn describe(this, grant: auth::Grant) -> vec::Vec[mcpb::UiNode] {
+        var out: vec::Vec[mcpb::UiNode] = vec::new::[mcpb::UiNode]();
+        let views: vec::Vec[identity::NodeView] = { this.reg.describe(grant) };
+        var i: usize = 0 as usize;
+        while i < { views.count() } {
+            match { views.at_ptr(i) } {
+                option::Option[*identity::NodeView]::Some(v) => {
+                    let _e: i32 = { out.append(live_node(#addr_of(this) as *Surface, i, { (*v) })) } as i32;
+                }
+                option::Option[*identity::NodeView]::None => { }
+            }
+            i = i +% (1 as usize);
+        }
+        return out;
+    }
+
+    // A CLICK IS THE CONTROL'S OWN EVENT PATH, not a synthesized touch. The
+    // backend already has one function per kind that reads the handler out of
+    // the node's props and calls it — the same one Android's listener adapters
+    // call — so an agent's click and a finger's click are the same code below
+    // the adapter. Nothing here can drag, pinch or swipe, and that is a
+    // property of the surface rather than an omission.
+    fn click(ref this, grant: auth::Grant, id: str) -> surface::Outcome {
+        match { this.reg.lookup(id) } {
+            option::Option[usize]::Some(node) => {
+                let oc: surface::Outcome = surface::authorize_action(this.reg, grant, node);
+                if !surface::outcome_eq(oc, surface::Outcome::Allowed) { return oc; }
+                let n: *core::Node = node_of(#addr_of(this) as *Surface, node);
+                if n == (0 as *core::Node) { return surface::Outcome::NotFound; }
+                if controls::agent_click(n) { return surface::Outcome::Allowed; }
+                return surface::Outcome::NotFound;
+            }
+            option::Option[usize]::None => { return surface::Outcome::NotFound; }
+        }
+    }
+
+    fn set_text(ref this, grant: auth::Grant, id: str, value: str,
+                base: u64) -> surface::Outcome {
+        match { this.reg.lookup(id) } {
+            option::Option[usize]::Some(node) => {
+                let oc: surface::Outcome =
+                    surface::authorize_text_write(this.reg, grant, this.versions, node, base);
+                if !surface::outcome_eq(oc, surface::Outcome::Allowed) { return oc; }
+                let n: *core::Node = node_of(#addr_of(this) as *Surface, node);
+                if n == (0 as *core::Node) { return surface::Outcome::NotFound; }
+                if controls::agent_set_text(n, value) { return surface::Outcome::Allowed; }
+                return surface::Outcome::NotFound;
+            }
+            option::Option[usize]::None => { return surface::Outcome::NotFound; }
+        }
+    }
+}
+
+// ---- the vtable ---------------------------------------------------------------
+
+fn mcp_describe(p: *u8, grant: auth::Grant) -> vec::Vec[mcpb::UiNode] {
+    if p == (0 as *u8) { return vec::new::[mcpb::UiNode](); }
+    return { (*(p as *Surface)).describe(grant) };
+}
+
+fn mcp_describe_exposed(p: *u8, grant: auth::Grant) -> vec::Vec[mcpb::UiNode] {
+    // agent_core's own reduction decides what "exposed" means, so the backends
+    // cannot disagree about it. The full view is already curation-aware here.
+    return mcp_describe(p, grant);
+}
+
+fn mcp_click(p: *u8, grant: auth::Grant, id: str) -> surface::Outcome {
+    if p == (0 as *u8) { return surface::Outcome::NotFound; }
+    return { (*(p as *Surface)).click(grant, id) };
+}
+
+fn mcp_set_text(p: *u8, grant: auth::Grant, id: str, value: str, base: u64) -> surface::Outcome {
+    if p == (0 as *u8) { return surface::Outcome::NotFound; }
+    return { (*(p as *Surface)).set_text(grant, id, value, base) };
+}
+
+// NOT BUILT, and reported as such rather than answered plausibly. Each is a
+// line in facet_android/MANIFEST.md §2.
+fn mcp_navigate(p: *u8, grant: auth::Grant, id: str) -> surface::Outcome {
+    return surface::Outcome::NotFound;
+}
+
+fn mcp_hit_test(p: *u8, grant: auth::Grant, id: str) -> surface::HitTest {
+    // A backend that cannot hit-test says `supported: false` rather than
+    // guessing — the contract is explicit about this being the difference
+    // between an omission and a false assertion.
+    return surface::hit_test_refused(surface::Outcome::NotFound, false);
+}
+
+fn mcp_set_caret(p: *u8, grant: auth::Grant, id: str, at: u64, base: u64) -> surface::Outcome {
+    return surface::Outcome::NotFound;
+}
+
+fn mcp_read_runs(p: *u8, grant: auth::Grant, id: str) -> surface::Runs {
+    return surface::runs_refused(surface::Outcome::NotFound, false);
+}
+
+fn mcp_invoke_menu(p: *u8, grant: auth::Grant, id: str) -> surface::Outcome {
+    return surface::Outcome::NotFound;
+}
+
+fn mcp_backend() -> mcpb::Backend {
+    return mcpb::Backend {
+        describe: mcp_describe,
+        describe_exposed: mcp_describe_exposed,
+        click: mcp_click,
+        set_text: mcp_set_text,
+        navigate: mcp_navigate,
+        hit_test: mcp_hit_test,
+        set_caret: mcp_set_caret,
+        read_runs: mcp_read_runs,
+        invoke_menu: mcp_invoke_menu,
+    };
+}
+
+// ---- policy ------------------------------------------------------------------
+//
+// The other backends pin a policy onto the VIEW, because the view is what their
+// walk will meet again. Here the walk meets the NODE — and facet already
+// carries an agent band on every node, which is where a policy belongs. The
+// overlay hands this a `*u8` that IS the node, so the two ends agree without a
+// side table to keep in step across a re-mount.
+//
+// `vocab::Agent` and agent_core's tier numbers are two spellings of one idea;
+// the overlay does the translation (`policy_for`) and this stores what it is
+// given, so a mapping does not exist in two places.
+fn set_agent_policy(view: *u8, policy: u32) {
+    let n: *core::Node = { view as *core::Node };
+    if n == (0 as *core::Node) { return; }
+    core::set_agent(n, agent_of_policy(policy));
+    return;
+}
+
+fn get_agent_policy(view: *u8) -> u32 {
+    let n: *core::Node = { view as *core::Node };
+    if n == (0 as *core::Node) { return identity::policy_none(); }
+    return policy_of_agent(core::agent(n));
+}
+
+fn agent_of_policy(policy: u32) -> vocab::Agent {
+    if policy == identity::policy_exclude() { return vocab::Agent::Hidden; }
+    if policy == identity::policy_private() { return vocab::Agent::Private; }
+    if policy == identity::policy_protected() { return vocab::Agent::Protected; }
+    return vocab::Agent::Open;
+}
+
+fn policy_of_agent(a: vocab::Agent) -> u32 {
+    return match a {
+        vocab::Agent::Hidden => identity::policy_exclude(),
+        vocab::Agent::Private => identity::policy_private(),
+        vocab::Agent::Protected => identity::policy_protected(),
+        vocab::Agent::Open => identity::policy_none(),
+    };
+}

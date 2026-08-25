@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="cplus.iosgallery">
+    <!-- The agent surface binds a loopback port; reach it with
+         `adb forward tcp:8787 tcp:8787`. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <application android:label="Facet Gallery (shared source)"
+                 android:theme="@android:style/Theme.Material.Light.DarkActionBar">
+        <!-- THE SAME SOURCE AS iOS. The only Android-specific artifacts in this
+             app are this file and build_android.sh: facet_android's own
+             Activity is named here, and `cplus.facet.main` points it at the
+             very function Xcode's main.m calls. -->
+        <activity android:name="cplus.facet.FacetActivity" android:exported="true"
+                  android:configChanges="orientation|screenSize|keyboardHidden">
+            <meta-data android:name="cplus.facet.lib"  android:value="iosgallery" />
+            <meta-data android:name="cplus.facet.main" android:value="facet_gallery_ios_main" />
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>

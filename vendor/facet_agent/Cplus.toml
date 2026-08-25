@@ -56,3 +56,11 @@ agent_uikit = "*"
 objc        = "*"
 uikit       = "*"
 quartzcore  = "*"
+
+# The Android overlay. agent_android walks facet's own node tree rather than a
+# native view hierarchy — see its manifest.
+[android.dependencies]
+agent_android = "*"
+facet_android = "*"
+android_view  = "*"
+jni           = "*"
