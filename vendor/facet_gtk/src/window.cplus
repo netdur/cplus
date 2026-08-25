@@ -303,6 +303,9 @@ fn open_window(root: *core::Node, take chrome: screen::Chrome,
     // AFTER `present`, because a window has no GdkSurface until it is
     // realised, and the surface is the only thing that reports a resize.
     watch_for_resize(slot);
+    // ...and anything the app asked to observe BEFORE it had a window. Same
+    // moment and the same reason: the surface exists from here on.
+    arm_pending_observers(win.raw());
     return win.raw();
 }
 
@@ -668,12 +671,38 @@ static OBS_HANDLER: [usize; MAX_OBSERVERS] = [0; MAX_OBSERVERS];
 static OBS_FN: [usize; MAX_OBSERVERS] = [0; MAX_OBSERVERS];
 static OBS_CTX: [usize; MAX_OBSERVERS] = [0; MAX_OBSERVERS];
 
+// ---- AN OBSERVER REGISTERED BEFORE THERE IS A WINDOW ---------------------------
+//
+// `observe_window_property` answered 0 — an inert handle — when no window was
+// up, and called that "the honest reading of there is nothing to observe yet".
+// It is honest and it is still a trap: BEFORE THE WINDOW OPENS IS WHERE AN APP
+// NATURALLY REGISTERS. `app.observe_active(...)` written in setup, which is
+// where every other service is wired, got a token that would never fire, and
+// nothing said so — on AppKit the same line works, because NSNotificationCenter
+// is process-wide and does not care whether a window exists.
+//
+// So a registration with no window is now PENDING rather than refused: the slot
+// is claimed, the token is real, and `arm_pending_observers` connects it the
+// moment a window is there. Cancelling a pending slot is the same call and
+// simply never connects it.
+//
+// The signal name is a `#str_ptr` literal with static lifetime — every caller
+// below passes one — so holding the pointer is safe. TARGET says which object
+// the name belongs to, because a resize is reported by the SURFACE and
+// everything else by the window; resolving that at arm time is the whole reason
+// the kind is stored rather than the object.
+const OBS_TARGET_NONE: usize = 0;
+const OBS_TARGET_WINDOW: usize = 1;
+const OBS_TARGET_SURFACE: usize = 2;
+static OBS_PENDING: [usize; MAX_OBSERVERS] = [0; MAX_OBSERVERS];
+static OBS_SIGNAL: [usize; MAX_OBSERVERS] = [0; MAX_OBSERVERS];
+
 // Tokens are 1-BASED: `Cancellable` reads 0 as "nothing pending", so slot 0
 // would be a live registration that could never be cancelled.
 fn observer_slot() -> usize {
     var i: usize = 0 as usize;
     while i < MAX_OBSERVERS {
-        if OBS_INSTANCE[i] == (0 as usize) { return i; }
+        if observer_slot_is_free(i) { return i; }
         i = i +% (1 as usize);
     }
     return MAX_OBSERVERS;
@@ -690,13 +719,33 @@ fn observer_fired(instance: *u8, pspec: *u8, user: *u8) {
 fn cancel_observe(token: u64) {
     let i: usize = (token as usize) -% (1 as usize);
     if i >= MAX_OBSERVERS { return; }
+    // A PENDING slot is cancellable too, and this is the only place that can
+    // free it: it holds no connection, so there is nothing to disconnect and
+    // everything to forget. Without this the slot leaks and, worse, arms itself
+    // on the next window the app opens after the caller let it go.
+    if OBS_PENDING[i] != OBS_TARGET_NONE {
+        release_observer(i);
+        return;
+    }
     if OBS_INSTANCE[i] == (0 as usize) { return; }
     sig::disconnect(OBS_INSTANCE[i] as *u8, OBS_HANDLER[i] as u64);
+    release_observer(i);
+    return;
+}
+
+fn release_observer(i: usize) {
     OBS_INSTANCE[i] = 0 as usize;
     OBS_HANDLER[i] = 0 as usize;
     OBS_FN[i] = 0 as usize;
     OBS_CTX[i] = 0 as usize;
+    OBS_PENDING[i] = OBS_TARGET_NONE;
+    OBS_SIGNAL[i] = 0 as usize;
     return;
+}
+
+// A slot is FREE when it holds neither a connection nor a pending registration.
+fn observer_slot_is_free(i: usize) -> bool {
+    return OBS_INSTANCE[i] == (0 as usize) && OBS_PENDING[i] == OBS_TARGET_NONE;
 }
 
 // `notify::<property>` — GObject's own "this changed" signal, detailed by the
@@ -712,8 +761,53 @@ extern fn sigc_notify(instance: *u8, detailed_signal: *u8,
 // observe yet".
 fn observe_window_property(detailed: *u8, cb: fn(*u8), ctx: *u8) -> u64 {
     let w: *u8 = any_window();
-    if w == (0 as *u8) { return 0 as u64; }
+    if w == (0 as *u8) { return defer_observer(OBS_TARGET_WINDOW, detailed, cb, ctx); }
     return observe_property_on(w, detailed, cb, ctx);
+}
+
+// Claim a slot with no connection in it. The token is REAL — that is the point:
+// the caller gets a handle it can cancel, and a registration that arms later
+// instead of one that was silently dropped.
+fn defer_observer(target: usize, detailed: *u8, cb: fn(*u8), ctx: *u8) -> u64 {
+    let slot: usize = observer_slot();
+    if slot >= MAX_OBSERVERS { return 0 as u64; }
+    OBS_PENDING[slot] = target;
+    OBS_SIGNAL[slot] = { #addr(detailed) };
+    OBS_FN[slot] = { #addr(cb as *u8) };
+    OBS_CTX[slot] = { #addr(ctx) };
+    return (slot +% (1 as usize)) as u64;
+}
+
+// Connect everything that was waiting for a window. Called once per window
+// open, AFTER `present` — a GdkSurface does not exist before realise, and a
+// resize observer has nothing to connect to without one.
+//
+// EVERY PENDING SLOT, not the ones belonging to this window: a pending observer
+// has no window yet by definition, so the first one to open is the one it meant.
+fn arm_pending_observers(win: *u8) {
+    if win == (0 as *u8) { return; }
+    var i: usize = 0 as usize;
+    while i < MAX_OBSERVERS {
+        let target: usize = OBS_PENDING[i];
+        if target != OBS_TARGET_NONE {
+            var obj: *u8 = win;
+            if target == OBS_TARGET_SURFACE { obj = surface_of(win); }
+            if obj != (0 as *u8) {
+                let id: u64 = { sigc_notify(obj, OBS_SIGNAL[i] as *u8, observer_fired,
+                                            (i +% (1 as usize)) as *u8,
+                                            0 as *u8, 0 as i32) };
+                if id != (0 as u64) {
+                    OBS_INSTANCE[i] = { #addr(obj) };
+                    OBS_HANDLER[i] = id as usize;
+                    // ARMED, so it is no longer pending — leaving the flag up
+                    // would connect it a second time on the next window.
+                    OBS_PENDING[i] = OBS_TARGET_NONE;
+                }
+            }
+        }
+        i = i +% (1 as usize);
+    }
+    return;
 }
 
 // The same registration against ANY instance, because a window resize is
@@ -750,9 +844,13 @@ fn observe_active(cb: fn(*u8), ctx: *u8) -> u64 {
 // working around; the surface is the thing that actually knows.
 fn observe_size_changed(cb: fn(*u8), ctx: *u8) -> u64 {
     let w: *u8 = any_window();
-    if w == (0 as *u8) { return 0 as u64; }
     let surface: *u8 = surface_of(w);
-    if surface == (0 as *u8) { return 0 as u64; }
+    // NO WINDOW **OR** NO SURFACE both defer. A window that exists but is not
+    // yet realised has no GdkSurface, and refusing there would lose the same
+    // registration for the same reason one line later.
+    if surface == (0 as *u8) {
+        return defer_observer(OBS_TARGET_SURFACE, #str_ptr("notify::height\0"), cb, ctx);
+    }
     return observe_property_on(surface, #str_ptr("notify::height\0"), cb, ctx);
 }
 

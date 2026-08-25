@@ -4941,3 +4941,89 @@ fn the_four_verbs_reach_the_apply_at_all() {
     assert (bits & bordered::P_STROKE_SHAPE) != (0 as u64);
     return;
 }
+
+// ---- an observer registered before there is a window --------------------------
+//
+// THIS SUITE MAKES NO WINDOW, which is exactly the state the bug lived in: the
+// registration answered 0 and the app got a token that could never fire. That
+// made it invisible here too — a test asserting "no window, no observation"
+// would have passed on the broken behaviour and on the fixed one.
+
+#[test]
+fn an_observer_registered_before_a_window_gets_a_live_token() {
+    // A REAL TOKEN, not 0. `Cancellable` reads 0 as "nothing pending", so
+    // answering 0 told the caller its registration had been dropped — which was
+    // true, and is the trap: BEFORE THE WINDOW OPENS IS WHERE AN APP NATURALLY
+    // REGISTERS, beside every other service it wires in setup. The same line
+    // works on AppKit, where the notification centre is process-wide.
+    let t: u64 = window::observe_active(observer_noop, 0 as *u8);
+    assert t != (0 as u64);
+    window::cancel_observe(t);
+    return;
+}
+
+#[test]
+fn a_size_observer_defers_on_a_window_with_no_surface_too() {
+    // Two ways to have nothing to connect to, one line apart: no window at all,
+    // and a window that exists but is not realised, which has no GdkSurface.
+    // Refusing the second would lose the same registration for the same reason.
+    let t: u64 = window::observe_size_changed(observer_noop, 0 as *u8);
+    assert t != (0 as u64);
+    window::cancel_observe(t);
+    return;
+}
+
+#[test]
+fn a_cancelled_pending_observer_frees_its_slot() {
+    // THE LEAK, and the worse half of it. A pending slot holds no connection,
+    // so the disconnect path returned early and left it claimed — and a slot
+    // still marked pending arms itself on the next window the app opens, long
+    // after the caller let it go. The slot table is finite, so the leak also
+    // ends in registrations being refused.
+    var first: u64 = 0 as u64;
+    var i: usize = 0 as usize;
+    while i < (200 as usize) {
+        let t: u64 = window::observe_active(observer_noop, 0 as *u8);
+        assert t != (0 as u64);        // never exhausted, because each is freed
+        if i == (0 as usize) { first = t; }
+        window::cancel_observe(t);
+        i = i +% (1 as usize);
+    }
+    // ...and the same slot comes back, which is what "freed" means.
+    let again: u64 = window::observe_active(observer_noop, 0 as *u8);
+    assert again == first;
+    window::cancel_observe(again);
+    return;
+}
+
+#[test]
+fn the_observer_table_still_has_a_ceiling() {
+    // NEGATIVE: pending slots are real slots. Filling the table must answer 0
+    // — the one place 0 is still the honest answer — rather than overrun it.
+    var held: vec::Vec[u64] = vec::new::[u64]();
+    var i: usize = 0 as usize;
+    while i < (64 as usize) {
+        let t: u64 = window::observe_active(observer_noop, 0 as *u8);
+        if t == (0 as u64) { break; }
+        let _s: status::Status = held.append(t);
+        i = i +% (1 as usize);
+    }
+    // The table is 32; asking for 64 must have been refused somewhere.
+    assert held.count() <= (32 as usize);
+    assert window::observe_active(observer_noop, 0 as *u8) == (0 as u64);
+    var j: usize = 0 as usize;
+    while j < held.count() {
+        match held.at(j) {
+            option::Option[u64]::Some(t) => { window::cancel_observe(t); }
+            option::Option[u64]::None => { }
+        }
+        j = j +% (1 as usize);
+    }
+    // ...and once they are given back, the next one is served again.
+    let after: u64 = window::observe_active(observer_noop, 0 as *u8);
+    assert after != (0 as u64);
+    window::cancel_observe(after);
+    return;
+}
+
+fn observer_noop(ctx: *u8) { return; }

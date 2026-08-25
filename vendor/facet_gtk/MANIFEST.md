@@ -305,8 +305,20 @@ Everything not listed as live above. The large ones, in the order they matter:
   reader, not another guess.
 - **An observation is per-WINDOW.** Every lifecycle observer is a `notify::` on
   the window that was up when it was registered, so it does not follow a later
-  one — where AppKit's notification centre is process-wide. An app that
-  observes before opening a window gets an inert handle, which the suite pins.
+  one — where AppKit's notification centre is process-wide.
+
+  THE SECOND HALF OF THIS ROW WAS A BUG, fixed 2026-08-25. It used to end "an
+  app that observes before opening a window gets an inert handle, which the
+  suite pins" — and calling that pinned behaviour was the mistake, because
+  BEFORE THE WINDOW OPENS IS WHERE AN APP NATURALLY REGISTERS, beside every
+  other service it wires in setup. The same line works on AppKit. So a
+  registration with no window is PENDING now rather than refused: the slot is
+  claimed, the token is real and cancellable, and `arm_pending_observers`
+  connects it when the first window opens — after `present`, since a resize
+  observer needs a GdkSurface that does not exist before realise.
+
+  What remains is the genuine half: an observer follows the window it was armed
+  on and not a later one.
 - **`scroll` has no kinetic tuning and no `edge_reached`.** GTK offers both;
   facet declares neither, so nothing is missing from the contract — noted only
   so the next reader does not go looking.
