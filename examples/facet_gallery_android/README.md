@@ -43,8 +43,29 @@ image can only come from the filesystem, not from inside the APK.
 A gallery screen whose controls do not exist would be a screen of empty boxes,
 so this app grows as the backend does rather than showing the gaps.
 
-## The whole JVM side
+## The JVM side: none of it is this app's
 
-`java/cplus/gallery/MainActivity.java`, thirteen lines. facet_android ships its
-own Java — the layout host, the Choreographer tick, and one listener adapter per
-event shape — inside the package as a DEX.
+**There is no `.java` file in this directory.** The manifest names
+`cplus.facet.FacetActivity`, which lives in facet_android and ships as a
+precompiled DEX; `build.sh` feeds that DEX to `d8` alongside nothing else, so it
+lands in this APK's `classes.dex`. The meta-data line tells the generic Activity
+which `.so` to load, the way `NativeActivity` takes `android.app.lib_name`.
+
+What this app writes instead is five lines of C+:
+
+```cplus
+export extern fn Java_cplus_facet_FacetActivity_nativeCreateView(
+    envp: *jni::JNIEnv, cls: jni::jobject, activity: jni::jobject,
+) -> jni::jobject {
+    return entry::start(envp, activity, build);
+}
+```
+
+The export lives in the app rather than in the package on purpose: cpc emits one
+object per package, so a package that names a symbol obligates everything that
+links it — see plan.android.md finding 3.
+
+facet_android still has plenty of Java of its OWN — the layout host, the
+Choreographer tick, the Activity, and one listener adapter per event shape,
+eight files in `vendor/facet_android/java/`. The point is not that the Java is
+gone. It is that a person writing an Android app in C+ never opens one.

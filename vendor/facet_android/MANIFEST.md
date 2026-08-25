@@ -117,6 +117,33 @@ axis, so both views are the FULL row width — and Android draws a CheckBox's bo
 at the leading edge and a Switch's track at the trailing one, with the (absent)
 label filling the gap. An app that wants either hugged gives it a width.
 
+### An app writes no Java, and the dex has two ways in
+
+`FacetActivity` ships in this package's dex. The system instantiates the launch
+Activity before any C+ runs, so that one class cannot come from the in-memory
+loader like the rest — it is merged into the app's own `classes.dex` at build
+time (`d8` takes a `.dex` as an input, so the merge IS the build step that would
+otherwise compile the app's Activity). The manifest names it and a `meta-data`
+line says which `.so` to load, the way `NativeActivity` takes
+`android.app.lib_name`.
+
+So `dex::ensure_loaded` tries `FindClass` FIRST and only falls back to
+`InMemoryDexClassLoader`. Loading the in-memory copy when the classes are
+already merged would give the process TWO sets: the Activity would hold a
+FacetHost of one class while this code registered natives on the other, and
+`nativeSizeChanged` would never arrive. A missing class on that first attempt is
+the ordinary case, not an error — the pending NoClassDefFoundError is cleared
+rather than left for the next JNI call to trip over.
+
+Both paths stay live and both are exercised: `examples/facet_gallery_android`
+merges and has no `.java` at all; `playground/facet_android_demo` supplies its
+own Activity and loads the dex at runtime.
+
+What an app still writes is the `Java_cplus_facet_FacetActivity_nativeCreateView`
+export, five lines calling `entry::start`. It lives in the APP because cpc emits
+one object per package: a package that names a symbol obligates everything that
+links it.
+
 ### A radio group has no widget
 
 `RadioButton` is a `CompoundButton` like a checkbox: a tap TOGGLES it, and

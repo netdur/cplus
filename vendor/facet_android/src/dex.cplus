@@ -21,7 +21,7 @@ import "jni/jni" as jni;
 import "android_view/runtime" as rt;
 
 // Kept in step by tools/build_dex.sh; do not hand-edit.
-const DEX_LEN: usize = 4560;
+const DEX_LEN: usize = 5648;
 
 static LOADER: usize = 0;
 static C_HOST: usize = 0;
@@ -104,7 +104,16 @@ fn loaded() -> bool { return LOADER != 0; }
 // must be parented to it or the app's own classes become invisible to it.
 fn ensure_loaded(env: rt::Env, any_view: jni::jobject) {
     if LOADER != 0 { return; }
-    let dex: *[u8; 4560] = #include_bytes("../facet_android.dex");
+    // MERGED FIRST. An app whose build fed this package's `facet_android.dex`
+    // to `d8` alongside its own classes already HAS these classes in its own
+    // classes.dex — and its loader is the one that supplied `FacetActivity`,
+    // the launch Activity an in-memory loader cannot provide.
+    //
+    // Loading the in-memory copy anyway would give the process TWO sets: the
+    // Activity would hold a FacetHost of one class while this code registered
+    // natives on the other, and `nativeSizeChanged` would never arrive.
+    if load_merged(env) { return; }
+    let dex: *[u8; 5648] = #include_bytes("../facet_android.dex");
     let buffer: jni::jobject = {
         (*(*env.raw())).NewDirectByteBuffer(env.raw(), { dex as *u8 }, DEX_LEN as i64)
     };
@@ -133,6 +142,49 @@ fn ensure_loaded(env: rt::Env, any_view: jni::jobject) {
     C_TEXT = { #addr(load_class(env, loader, #str_ptr("cplus.facet.FacetText\0"))) };
     C_STEP = { #addr(load_class(env, loader, #str_ptr("cplus.facet.FacetStep\0"))) };
 
+    bind_natives(env);
+
+    env.delete_local_ref(loader);
+    env.delete_local_ref(imdcl);
+    env.delete_local_ref(app_loader);
+    env.delete_local_ref(ctx);
+    env.delete_local_ref(buffer);
+    return;
+}
+
+// The classes as the APP's own loader sees them. False when the app did not
+// merge the dex, which is the ordinary case and not an error — so the pending
+// NoClassDefFoundError is cleared rather than left for the next JNI call to
+// trip over.
+fn load_merged(env: rt::Env) -> bool {
+    let host: jni::jclass = env.find_class(#str_ptr("cplus/facet/FacetHost\0"));
+    if host == (0 as jni::jclass) { env.clear_exception(); return false; }
+    C_HOST = { #addr(env.retain_local_as_global(host)) };
+    C_TICK = { #addr(find_global(env, #str_ptr("cplus/facet/FacetTick\0"))) };
+    C_CLICK = { #addr(find_global(env, #str_ptr("cplus/facet/FacetClick\0"))) };
+    C_POST = { #addr(find_global(env, #str_ptr("cplus/facet/FacetPost\0"))) };
+    C_CHECKED = { #addr(find_global(env, #str_ptr("cplus/facet/FacetChecked\0"))) };
+    C_SEEK = { #addr(find_global(env, #str_ptr("cplus/facet/FacetSeek\0"))) };
+    C_TEXT = { #addr(find_global(env, #str_ptr("cplus/facet/FacetText\0"))) };
+    C_STEP = { #addr(find_global(env, #str_ptr("cplus/facet/FacetStep\0"))) };
+    // A sentinel rather than a loader object: `loaded()` asks whether the
+    // classes are here, and by this path there is no loader to keep.
+    LOADER = 1 as usize;
+    bind_natives(env);
+    return true;
+}
+
+fn find_global(env: rt::Env, name: *u8) -> jni::jobject {
+    let c: jni::jclass = env.find_class(name);
+    if c == (0 as jni::jclass) { env.clear_exception(); return 0 as jni::jobject; }
+    return env.retain_local_as_global(c);
+}
+
+// Bind every native. Both paths need it: a class from the app's loader resolves
+// a native by symbol, but only for a name JNI can mangle — and every adapter
+// here is a nested class whose methods are private, so all of them are bound
+// explicitly either way.
+fn bind_natives(env: rt::Env) {
     var tick_rec: Native0 = Native0 {
         name: #str_ptr("nativeTick\0"),
         signature: #str_ptr("()V\0"),
@@ -210,11 +262,6 @@ fn ensure_loaded(env: rt::Env, any_view: jni::jobject) {
     let _r8: i32 = { (*(*env.raw())).RegisterNatives(env.raw(), { C_STEP as *u8 },
                                                      #addr_of(step_rec) as *u8, 1) };
 
-    env.delete_local_ref(loader);
-    env.delete_local_ref(imdcl);
-    env.delete_local_ref(app_loader);
-    env.delete_local_ref(ctx);
-    env.delete_local_ref(buffer);
     return;
 }
 

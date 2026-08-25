@@ -57,7 +57,7 @@ fn on_layout(sender: *u8, ctx: *u8) { show("demo:layout", "Layout"); return; }
 
 fn home() -> core::Node {
     var b: core::Builder = core::Builder::new();
-    b.add(shell::body("facet's Android backend, one screen per group of controls. Every screen drives real Android widgets: no custom drawing, no Gradle, and thirteen lines of Java in the whole app."));
+    b.add(shell::body("facet's Android backend, one screen per group of controls. Every screen drives real Android widgets: no custom drawing, no Gradle, and NO JAVA in this app at all — the Activity ships inside facet_android."));
     b.add(ui::button("Buttons", key: "home:buttons", on_click: on_buttons));
     b.add(ui::button("Text", key: "home:text", on_click: on_text));
     b.add(ui::button("Toggles", key: "home:toggles", on_click: on_toggles));
@@ -91,5 +91,11 @@ fn build() -> core::Node {
 }
 
 // The first `switch_to` cannot run until the tree is mounted, so it happens
-// once from the entry point rather than here.
-fn show_home() { show(HOME, "Facet Gallery"); return; }
+// once from the entry point rather than here. `shown` is what keeps a recreated
+// Activity from being sent back to the home screen: the tree survives the
+// recreation and so should the screen the person was on.
+static SHOWN: bool = false;
+
+fn shown() -> bool { return SHOWN; }
+
+fn show_home() { SHOWN = true; show(HOME, "Facet Gallery"); return; }

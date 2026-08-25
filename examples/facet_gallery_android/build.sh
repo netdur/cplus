@@ -17,7 +17,7 @@ CPC="../../target/release/cpc"
 V="../../vendor"
 T="aarch64-linux-android"
 
-rm -rf out && mkdir -p out/lib/arm64-v8a out/classes
+rm -rf out && mkdir -p out/lib/arm64-v8a
 
 "$CPC" build --target android-arm64
 
@@ -44,8 +44,10 @@ DEPS="$V/android_view/lib/$T/libandroid_view.a \
     -Wl,--no-undefined \
     -o out/lib/arm64-v8a/libgallery.so
 
-javac -source 8 -target 8 -classpath "$AJ" -d out/classes java/cplus/gallery/*.java 2>/dev/null
-"$BT/d8" --release --lib "$AJ" --output out out/classes/cplus/gallery/*.class
+# NO JAVA IN THIS APP. facet_android's own dex carries the Activity the manifest
+# names, and `d8` takes a .dex as an input — so the merge IS the build step that
+# would otherwise compile the app's MainActivity.
+"$BT/d8" --release --lib "$AJ" --output out $V/facet_android/facet_android.dex
 
 "$BT/aapt2" link -o out/base.apk --manifest AndroidManifest.xml -I "$AJ" \
     --min-sdk-version 26 --target-sdk-version 34
@@ -56,4 +58,4 @@ javac -source 8 -target 8 -classpath "$AJ" -d out/classes java/cplus/gallery/*.j
     --out out/app.apk out/aligned.apk
 
 "$SDK/platform-tools/adb" install -r -t out/app.apk
-"$SDK/platform-tools/adb" shell am start -n cplus.gallery/.MainActivity
+"$SDK/platform-tools/adb" shell am start -n cplus.gallery/cplus.facet.FacetActivity

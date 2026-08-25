@@ -2,8 +2,14 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="cplus.gallery">
     <application android:label="Facet Gallery" android:theme="@android:style/Theme.Material.Light.DarkActionBar">
-        <activity android:name=".MainActivity" android:exported="true"
+        <!-- THE ACTIVITY IS FACET'S, not this app's. It ships inside
+             facet_android as a precompiled dex and is merged into classes.dex
+             by build.sh, so this app contains no Java of its own. The meta-data
+             line is how a generic Activity learns which .so to load, the same
+             way NativeActivity takes android.app.lib_name. -->
+        <activity android:name="cplus.facet.FacetActivity" android:exported="true"
                   android:configChanges="orientation|screenSize|keyboardHidden">
+            <meta-data android:name="cplus.facet.lib" android:value="gallery" />
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
