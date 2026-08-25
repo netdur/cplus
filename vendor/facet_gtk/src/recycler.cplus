@@ -570,23 +570,24 @@ fn build_tree_slot(n: *core::Node, v: *u8, at: usize) -> core::Node {
     return controls::build_tree_row(row.node as *tree::TreeNode, p, row.depth);
 }
 
-// A tree row's POOL SHAPE is its depth and whether it is selected.
+// A tree row's POOL SHAPE IS ITS DEPTH, and no longer whether it is selected.
 //
-// Both are written by `build_tree_row` and neither is data a `bind` can reach —
-// the indent is padding on the row and the highlight is its background — so a
-// pooled cell may only be reused where both match. Getting this wrong is a row
-// that scrolls in at the wrong indent, which reads as the tree having reordered
-// itself.
+// The indent is padding on the row, so a pooled cell reused at the wrong depth
+// scrolls in wrong and reads as the tree having reordered itself. That is a
+// real shape.
+//
+// SELECTION IS NOT. It is one prop — a background colour — and facet is not
+// reactive: a component builds once and the live tree is then MANIPULATED.
+// Counting selection here made a selection change the row's shape, which made
+// every pooled cell unreusable, which made `sync_model` replace the whole
+// model, which made GtkListView throw away its scroll anchor. A rebuild is
+// the bug, not the mechanism — see `restyle_selection`.
 fn tree_shape(n: *core::Node, v: *u8, at: usize) -> i64 {
     let p: *tree::TreeProps = tree_props(n);
     if p == (0 as *tree::TreeProps) { return (0 as i64) -% (1 as i64); }
     let row: VisibleRow = visible_at(v, at);
     if row.node == (0 as usize) { return (0 as i64) -% (1 as i64); }
-    var shape: i64 = row.depth *% (2 as i64);
-    if controls::is_selected(p, row.node as *tree::TreeNode) {
-        shape = shape +% (1 as i64);
-    }
-    return shape;
+    return row.depth;
 }
 
 // ================================================================================
@@ -1473,11 +1474,63 @@ fn apply_tree(v: *u8, n: *core::Node, dirty: u64) {
     // re-walk the model exactly as a root change does. That is affordable
     // because the walk is over POINTERS — what used to be expensive was the
     // building it led to.
-    if (dirty & (tree::P_ROOT | tree::P_ROW | tree::P_EXPANDED | tree::P_SELECTED
+    // STRUCTURE re-walks the model: these change WHICH rows exist.
+    if (dirty & (tree::P_ROOT | tree::P_ROW | tree::P_EXPANDED
                  | tree::P_ROW_HEIGHT | tree::P_ROW_ID)) != (0 as u64) {
         reindex_tree(n, v);
         refresh_length(n, v);
+        return;
     }
+    // SELECTION DOES NOT. It changes how two rows LOOK, and facet is not
+    // reactive — a component builds once and the live tree is manipulated
+    // afterwards. Re-walking the model for it replaced every item, rebuilt
+    // every visible row's widgets, and cost the reader their scroll position;
+    // the rebuild was the bug.
+    if (dirty & tree::P_SELECTED) != (0 as u64) {
+        restyle_selection(n, v);
+    }
+    return;
+}
+
+// Write the selection onto the rows that are UP, as a prop.
+//
+// One background colour per row, set or cleared on the node that is already
+// there, and `mount::sync_from` carries it to the widget — the same door
+// `item_bind` uses after a rebind. Nothing is torn down, no `items-changed` is
+// emitted, and the list therefore keeps its anchor and its pool.
+//
+// Rows not currently realised need nothing: `controls::build_tree_row` reads
+// the selection when it builds one, so a row scrolling in arrives correct.
+fn restyle_selection(n: *core::Node, v: *u8) {
+    let p: *tree::TreeProps = tree_props(n);
+    if p == (0 as *tree::TreeProps) { return; }
+    let lv: *u8 = list_view_of(v);
+    if lv == (0 as *u8) { return; }
+    var cell: *u8 = first_child_raw(lv);
+    while cell != (0 as *u8) {
+        restyle_selected_cell(p, first_child_raw(cell));
+        cell = next_sibling_raw(cell);
+    }
+    return;
+}
+
+fn restyle_selected_cell(p: *tree::TreeProps, host: *u8) {
+    if host == (0 as *u8) { return; }
+    let raw: *u8 = g::get_data(host, row_node_key());
+    if raw == (0 as *u8) { return; }
+    let row: *core::Node = raw as *core::Node;
+    // The model node the row stands for, put there by `build_tree_row`.
+    let item: *u8 = core::item_of(row);
+    if item == (0 as *u8) { return; }
+    if controls::is_selected(p, item as *tree::TreeNode) {
+        { (*row).set_background_color(vocab::Color::selected_content_background()) };
+    } else {
+        // CLEARED, not set to a background: `clear()` is the unset colour, and
+        // painting the surface colour here would put an opaque patch over
+        // whatever the row actually sits on.
+        { (*row).set_background_color(vocab::Color::clear()) };
+    }
+    mount::sync_from(row);
     return;
 }
 
@@ -1649,32 +1702,8 @@ fn arm_offset_restore(v: *u8, keep: f64) {
     g::set_data(v, restore_to_key(), px as *u8);
     g::set_data(v, restore_pending_key(), 1 as *u8);
     let _t: u32 = { g_idle_add_recycler(settle_offset, v) };
-    // AND AGAIN AFTER GTK HAS HAD ITS TURN.
-    //
-    // The idle above is not late enough. Traced on a real click with the
-    // reader parked at 740, the offset survives the splice, the restore and
-    // the idle — and THEN the list moves it to zero on its own, with `upper`
-    // unchanged, so it is not a clamp. GtkListView re-anchors on a model
-    // replacement and does it after the frame this runs in.
-    //
-    // The reporter saw this as "always the double": GTK zeroes it EVERY time,
-    // and something happened to put it back on some clicks and not others —
-    // one behaviour plus an intermittent rescue, not two behaviours.
-    //
-    // So the target is re-asserted once more on a timeout. `settle_offset`
-    // itself is idempotent and clamps, and it declines when the reader has
-    // since moved — see `keep_or_yield` — so a second firing cannot fight a
-    // person who scrolled in the meantime.
-    let _l: u32 = { g_timeout_add_recycler(restore_delay_ms(), settle_offset, v) };
     return;
 }
-
-// Two frames at 60Hz. Long enough to land after the list's own re-anchor,
-// short enough that a jump-and-return is not something a reader can see.
-fn restore_delay_ms() -> u32 { return 32 as u32; }
-
-#[link_name = "g_timeout_add"]
-extern fn g_timeout_add_recycler(ms: u32, f: fn(*u8) -> i32, data: *u8) -> u32;
 
 fn settle_offset(user: *u8) -> i32 {
     let v: *u8 = user;
@@ -1682,10 +1711,7 @@ fn settle_offset(user: *u8) -> i32 {
     g::set_data(v, restore_pending_key(), 0 as *u8);
     let px: usize = { #addr(g::get_data(v, restore_to_key())) };
     if px == (0 as usize) { return 0 as i32; }
-    // NOT CLEARED HERE any more: this fires twice, once from the idle and once
-    // from the timeout that outlasts GtkListView's own re-anchor. The target is
-    // dropped by the LATE firing — see below — so the early one leaves it for
-    // its successor.
+    g::set_data(v, restore_to_key(), 0 as *u8);
     trace("settle_offset: idle ran", v);
     let want: f64 = (px -% (1 as usize)) as f64;
     let adj: gtk::Adjustment = gtk::ScrolledWindow::from_raw(v).get_vadjustment();
@@ -1697,13 +1723,6 @@ fn settle_offset(user: *u8) -> i32 {
     if target > top { target = top; }
     if target < (0.0 as f64) { target = 0.0f64; }
     if { adj.get_value() } != target { adj.set_value(target); }
-    // The LATE firing retires the target. Deciding by the pending flag rather
-    // than by a counter keeps the two firings from having to know about each
-    // other: the idle clears `pending`, so whoever runs with it already clear
-    // is the second one.
-    if g::get_data(v, restore_pending_key()) == (0 as *u8) {
-        g::set_data(v, restore_to_key(), 0 as *u8);
-    }
     // G_SOURCE_REMOVE.
     return 0 as i32;
 }
