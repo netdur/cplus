@@ -1980,3 +1980,66 @@ fn arm_scroll_trace(sw: *u8) {
         .connect_value_changed(adjustment_moved, sw);
     return;
 }
+
+// ---- a theme flip has to reach the ROWS ----------------------------------------
+//
+// `facet_gtk::repaint_walk` marks every node under every window root with the
+// restyle bits, and a RECYCLED ROW IS NOT ONE OF THEM. A row's subtree is
+// realised into a pooled cell and its root is kept on the GtkListItem — it is
+// not a facet child of the list, so the walk cannot see it and never did.
+//
+// So a light/dark flip repainted the whole window EXCEPT the contents of every
+// list, tree and collection, which kept the side of their adaptive colours they
+// were mounted with until something rebound them. Reported as "some backgrounds
+// do not switch and I need to restart the app".
+//
+// The walk is the one `relayout_rows` already uses — the cells are the list
+// view's own children and the node rides on the host — and `mount::sync_from`
+// is the door for a subtree that is not in a window, which is exactly what a
+// realised row is.
+fn restyle_rows(n: *core::Node, bits: u64) {
+    let v: *u8 = core::view_of(n);
+    if v == (0 as *u8) { return; }
+    let lv: *u8 = list_view_of(v);
+    if lv == (0 as *u8) { return; }
+    var cur: *u8 = first_child_raw(lv);
+    while cur != (0 as *u8) {
+        restyle_cell(cur, bits);
+        cur = next_sibling_raw(cur);
+    }
+    return;
+}
+
+fn restyle_cell(cell: *u8, bits: u64) {
+    let host: *u8 = first_child_raw(cell);
+    if host == (0 as *u8) { return; }
+    let raw: *u8 = g::get_data(host, row_node_key());
+    if raw == (0 as *u8) { return; }
+    let node: *core::Node = raw as *core::Node;
+    touch_subtree(node, bits);
+    // A realised row is not in a window, so `sync` will never carry these
+    // across. Same reason `item_bind` calls it after a rebind.
+    mount::sync_from(node);
+    return;
+}
+
+fn touch_subtree(n: *core::Node, bits: u64) {
+    if n == (0 as *core::Node) { return; }
+    core::touch(n, bits);
+    var i: usize = 0 as usize;
+    let count: usize = core::child_count_of(n);
+    while i < count {
+        match core::child_of(n, i) {
+            option::Option[*core::Node]::Some(c) => { touch_subtree(c, bits); }
+            option::Option[*core::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return;
+}
+
+// Does this node hold recycled rows at all? `facet_gtk::repaint_walk` asks
+// before reaching in, so a tree of boxes and labels costs one kind compare.
+fn holds_rows(n: *core::Node) -> bool {
+    return kind_recycles(core::kind_of(n));
+}

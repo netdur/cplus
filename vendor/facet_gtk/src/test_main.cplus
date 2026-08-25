@@ -1291,6 +1291,114 @@ fn the_band_claims_the_agent_pin() {
     assert (props::C_SEMANTICS & props::C_AGENT) == (0 as u64);
 }
 
+// ---- SF Symbol names --------------------------------------------------------
+//
+// bugs/03b. `icon_button(source)` and `image(source)` take "one string the
+// backend resolves", and an application written against facet_appkit fills it
+// with SF Symbol names. Those exist on Apple platforms and nowhere else, so
+// every one drew GTK's missing-image triangle — the gallery's Icons screen was
+// four triangles in a row.
+#[test]
+fn sf_symbol_names_translate_to_freedesktop_ones() {
+    assert controls::freedesktop_name_for("gearshape") == "emblem-system-symbolic";
+    assert controls::freedesktop_name_for("trash") == "user-trash-symbolic";
+    assert controls::freedesktop_name_for("plus") == "list-add-symbolic";
+    assert controls::freedesktop_name_for("magnifyingglass") == "system-search-symbolic";
+}
+
+// THE FILL AXIS IS NOT FREEDESKTOP'S. It has one glyph per concept, so `.fill`
+// usually lands on the same icon — except where it genuinely has both, and
+// then the distinction is kept rather than flattened.
+#[test]
+fn a_fill_variant_keeps_a_distinction_only_where_one_exists() {
+    assert controls::freedesktop_name_for("folder") ==
+           controls::freedesktop_name_for("folder.fill");
+    // starred / non-starred is a real pair, so it survives.
+    assert controls::freedesktop_name_for("star") == "non-starred-symbolic";
+    assert controls::freedesktop_name_for("star.fill") == "starred-symbolic";
+    assert controls::freedesktop_name_for("trash") != controls::freedesktop_name_for("trash.fill");
+}
+
+// NEGATIVE, and it is what keeps the table from eating real paths: an unknown
+// name answers EMPTY and falls through to the desktop's own naming — which is
+// the right answer for an application written against GTK in the first place.
+#[test]
+fn an_unknown_name_falls_through_untranslated() {
+    assert controls::freedesktop_name_for("folder-symbolic") == "";
+    assert controls::freedesktop_name_for("assets/hat.png") == "";
+    assert controls::freedesktop_name_for("") == "";
+    assert controls::freedesktop_name_for("no-such-icon") == "";
+}
+
+// THE ORDER IS THE POINT. `star.fill` has a dot, so the path heuristic claims
+// it — the table has to be asked first, and no real path collides with a name
+// in it. This is the assertion that pins the ordering, not just the table.
+#[test]
+fn a_dotted_sf_name_is_a_symbol_and_not_a_path() {
+    assert paint::looks_like_path("star.fill");
+    assert controls::freedesktop_name_for("star.fill") != "";
+    // ...while a real path is untranslated and stays a path.
+    assert paint::looks_like_path("assets/hat.png");
+    assert controls::freedesktop_name_for("assets/hat.png") == "";
+}
+
+// ---- a theme flip has to be heard, and has to reach the rows -------------------
+//
+// bugs/02. Two separate faults, and either alone leaves half a window stale.
+//
+// FIRST: nothing was connected to hear a desktop flip at all. `install`
+// registered what to DO on an appearance change — `theme_changed`, which marks
+// every node with the restyle bits — and no GTK signal was ever wired to say
+// one had happened. From a chair that reads as a HALF flip, because GTK
+// restyles its own widgets from its own CSS while every colour facet resolved
+// keeps the side it was mounted with. Measured end to end through
+// `playground/theme_probe`: the appearance callback fires, and an adaptive
+// pair goes rgba(0,0,0) -> rgba(255,255,255) -> rgba(0,0,0) as the desktop
+// theme name moves.
+//
+// SECOND: a recycled row is NOT a facet child of its list, so the repaint walk
+// could not reach one. Its subtree is realised into a pooled cell and its root
+// is kept on the GtkListItem — see `recycler::restyle_rows`.
+#[test]
+fn a_restyle_reaches_the_kinds_that_hold_recycled_rows() {
+    // The three that materialise rows into cells, and therefore the three the
+    // repaint walk cannot reach through `child_of`.
+    var l: core::Node = ui::list(key: "rs:l");
+    assert recycler::holds_rows(#addr_of(l));
+    var c: core::Node = ui::collection(key: "rs:c", columns: 2 as usize);
+    assert recycler::holds_rows(#addr_of(c));
+    var t: core::Node = ui::tree(tree::TreeNode::new("", id: "root", is_branch: true),
+                                 key: "rs:t");
+    assert recycler::holds_rows(#addr_of(t));
+}
+
+// NEGATIVE: a kind whose children ARE facet children must not be reached this
+// way. A `table`'s rows are its own children, so the ordinary walk already has
+// them, and reaching in again would touch every node twice.
+#[test]
+fn a_kind_whose_rows_are_children_is_not_reached_through_the_cells() {
+    var tb: core::Node = ui::table(key: "rs:tb");
+    assert !recycler::holds_rows(#addr_of(tb));
+    var col: core::Node = core::column(core::Builder::new());
+    assert !recycler::holds_rows(#addr_of(col));
+    var sc: core::Node = ui::scroll(key: "rs:s");
+    assert !recycler::holds_rows(#addr_of(sc));
+}
+
+// The restyle word is NOT the create sentinel, and that is load-bearing here:
+// `all_bits()` doubles as "this is the create pass", so a flip passing it would
+// make every appearance change look like a create. facet_appkit shipped that
+// bug; this is the guard against inheriting it.
+#[test]
+fn the_restyle_word_is_not_the_create_sentinel() {
+    assert paint::restyle_bits() != paint::all_bits();
+    // ...and it still raises the per-kind colour bits, which is the whole point
+    // of a blanket word — a label carrying an adaptive pair as its TEXT colour
+    // would otherwise keep the side it was mounted with.
+    assert (paint::restyle_bits() & label::P_TEXT_COLOR) != (0 as u64);
+    assert (paint::restyle_bits() & props::C_BACKGROUND_COLOR) != (0 as u64);
+}
+
 // ---- a position and a transform are ONE SLOT -----------------------------------
 //
 // `gtk_fixed_put(child, x, y)` IS a transform: GtkFixedLayoutChild has one

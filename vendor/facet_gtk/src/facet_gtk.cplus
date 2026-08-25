@@ -40,6 +40,7 @@ import "facet/theme" as theme;
 import "facet/application" as app;
 import "gtk4/gtk4" as gtk;
 import "./controls" as controls;
+import "./recycler" as recycler;
 import "./input" as input;
 import "./views" as views;
 import "./paint" as paint;
@@ -82,6 +83,11 @@ fn install() {
     theme::set_is_dark_fn(window::is_dark);
     theme::set_theme_changed_fn(theme_changed);
     window::sync_appearance();
+    // AND LISTEN FOR THE NEXT ONE. Reading the appearance once at startup is
+    // what this did; nothing was connected to hear a desktop-wide flip, so the
+    // repaint hook registered above was never called by anything but the app
+    // itself.
+    window::watch_theme();
     return;
 }
 
@@ -129,6 +135,11 @@ fn repaint_walk(n: *core::Node) {
     // AppKit backend shipped exactly that bug; it is written down there and
     // copied here on purpose.
     core::touch(n, paint::restyle_bits());
+    // A LIST'S ROWS ARE NOT ITS CHILDREN. They are realised into pooled cells
+    // and their roots live on the GtkListItem, so this walk cannot reach them
+    // — and a flip repainted every window EXCEPT the inside of every list,
+    // tree and collection. `recycler::restyle_rows` follows the cells.
+    if recycler::holds_rows(n) { recycler::restyle_rows(n, paint::restyle_bits()); }
     var i: usize = 0 as usize;
     let count: usize = core::child_count_of(n);
     while i < count {

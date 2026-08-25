@@ -29,6 +29,7 @@ import "stdlib/status" as status;
 import "flex_layout/flex_layout" as flex;
 import "facet/facet" as core;
 import "facet/application" as app;
+import "facet/theme" as theme;
 import "facet/mount" as mount;
 import "facet/screen" as screen;
 import "facet/menu" as menu;
@@ -1612,4 +1613,43 @@ fn content_clipper(fixed: gtk::Fixed) -> gtk::ScrolledWindow {
     sw.upcast().set_hexpand(true);
     sw.set_child(fixed.upcast());
     return sw;
+}
+
+// ---- an OS theme flip has to be HEARD ------------------------------------------
+//
+// `facet_gtk::install` calls `theme::set_theme_changed_fn(theme_changed)`,
+// which registers what to DO when the appearance changes — and nothing was
+// ever connected to say that it had. So a desktop-wide light/dark flip was
+// never observed at all.
+//
+// From a chair that looks like a HALF flip, which is exactly how it was
+// reported: GTK restyles its own widgets from its own CSS, so a button or an
+// entry follows the desktop immediately, while every colour facet resolved —
+// an adaptive pair, a theme role, a derived ink — keeps the side it was
+// mounted with until the app is restarted.
+//
+// TWO SETTINGS, because `is_dark` reads both: the application's prefer-dark
+// flag, and the theme NAME (a desktop that ships `Yaru-magenta-dark` sets no
+// flag at all — measured, `prefer-dark` was 0 on a dark desktop).
+//
+// `notify_appearance_changed` is the door rather than `theme_changed` directly:
+// it repaints AND tells the application, which is a verb an app can observe and
+// would otherwise never fire.
+static THEME_WATCHED: bool = false;
+
+fn settings_changed(instance: *u8, pspec: *u8, user: *u8) {
+    theme::notify_appearance_changed();
+    return;
+}
+
+fn watch_theme() {
+    if THEME_WATCHED { return; }
+    let s: *u8 = { gtk_settings_get_default() };
+    if s == (0 as *u8) { return; }
+    THEME_WATCHED = true;
+    let _d: u64 = { sigc_notify(s, #str_ptr("notify::gtk-application-prefer-dark-theme\0"),
+                                settings_changed, 0 as *u8, 0 as *u8, 0 as i32) };
+    let _n: u64 = { sigc_notify(s, #str_ptr("notify::gtk-theme-name\0"),
+                                settings_changed, 0 as *u8, 0 as *u8, 0 as i32) };
+    return;
 }

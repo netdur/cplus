@@ -942,9 +942,88 @@ fn build_button_content(v: *u8) {
 
 fn set_image_source(img: gtk::Image, source: str) {
     if source == "" { img.clear(); return; }
+    // THE SF TABLE IS ASKED FIRST, and the order is the point.
+    //
+    // `star.fill` has a dot in it, so "a path has a separator or an extension"
+    // reads it as a FILE NAME and looks for a file called `star.fill`. An SF
+    // Symbol name is not distinguishable from a path by inspection — so the
+    // one thing that CAN tell them apart is a table of names we know, and it
+    // has to run before the heuristic. No real path collides with one.
+    let mapped: str = freedesktop_name_for(source);
+    if mapped != "" { img.set_from_icon_name(mapped); return; }
     if paint::looks_like_path(source) { img.set_from_file(source); return; }
     img.set_from_icon_name(source);
     return;
+}
+
+// ---- SF Symbol names, translated -----------------------------------------------
+//
+// `icon_button(source)` and `image(source)` take "one string the backend
+// resolves", and an application written against facet_appkit fills it with SF
+// SYMBOL NAMES — `gearshape`, `trash`, `star`. Those exist on Apple platforms
+// and nowhere else, so every one of them drew GTK's missing-image triangle
+// here. The gallery's own Icons screen was four triangles in a row.
+//
+// A NAME IS NOT AN ICON SET. The freedesktop icon naming spec is its own
+// vocabulary with its own words, so this is a translation and not a lookup —
+// which is why it is a table written out rather than a rule. It covers the
+// symbols an application actually reaches for; a name that is not here falls
+// through to the desktop's own naming, which is the right answer for an app
+// written against GTK in the first place.
+//
+// `.fill` and `.circle` variants map to the same icon: freedesktop has one
+// glyph per concept and no fill axis. Where it has both (starred /
+// non-starred) the distinction is kept.
+fn freedesktop_name_for(sf: str) -> str {
+    if sf == "gear" { return "emblem-system-symbolic"; }
+    if sf == "gearshape" { return "emblem-system-symbolic"; }
+    if sf == "gearshape.fill" { return "emblem-system-symbolic"; }
+    if sf == "trash" { return "user-trash-symbolic"; }
+    if sf == "trash.fill" { return "user-trash-full-symbolic"; }
+    if sf == "plus" { return "list-add-symbolic"; }
+    if sf == "minus" { return "list-remove-symbolic"; }
+    if sf == "star" { return "non-starred-symbolic"; }
+    if sf == "star.fill" { return "starred-symbolic"; }
+    if sf == "magnifyingglass" { return "system-search-symbolic"; }
+    if sf == "xmark" { return "window-close-symbolic"; }
+    if sf == "xmark.circle" { return "window-close-symbolic"; }
+    if sf == "checkmark" { return "object-select-symbolic"; }
+    if sf == "pencil" { return "document-edit-symbolic"; }
+    if sf == "square.and.pencil" { return "document-new-symbolic"; }
+    if sf == "doc" { return "text-x-generic-symbolic"; }
+    if sf == "doc.text" { return "text-x-generic-symbolic"; }
+    if sf == "folder" { return "folder-symbolic"; }
+    if sf == "folder.fill" { return "folder-symbolic"; }
+    if sf == "house" { return "go-home-symbolic"; }
+    if sf == "house.fill" { return "go-home-symbolic"; }
+    if sf == "person" { return "avatar-default-symbolic"; }
+    if sf == "person.fill" { return "avatar-default-symbolic"; }
+    if sf == "bell" { return "preferences-system-notifications-symbolic"; }
+    if sf == "arrow.clockwise" { return "view-refresh-symbolic"; }
+    if sf == "arrow.left" { return "go-previous-symbolic"; }
+    if sf == "arrow.right" { return "go-next-symbolic"; }
+    if sf == "arrow.up" { return "go-up-symbolic"; }
+    if sf == "arrow.down" { return "go-down-symbolic"; }
+    if sf == "chevron.left" { return "pan-start-symbolic"; }
+    if sf == "chevron.right" { return "pan-end-symbolic"; }
+    if sf == "chevron.up" { return "pan-up-symbolic"; }
+    if sf == "chevron.down" { return "pan-down-symbolic"; }
+    if sf == "square.and.arrow.up" { return "document-send-symbolic"; }
+    if sf == "paperplane" { return "mail-send-symbolic"; }
+    if sf == "paperplane.fill" { return "mail-send-symbolic"; }
+    if sf == "photo" { return "image-x-generic-symbolic"; }
+    if sf == "info.circle" { return "dialog-information-symbolic"; }
+    if sf == "exclamationmark.triangle" { return "dialog-warning-symbolic"; }
+    if sf == "ellipsis" { return "view-more-symbolic"; }
+    if sf == "ellipsis.circle" { return "view-more-symbolic"; }
+    if sf == "line.3.horizontal" { return "open-menu-symbolic"; }
+    if sf == "sidebar.left" { return "sidebar-show-symbolic"; }
+    if sf == "play.fill" { return "media-playback-start-symbolic"; }
+    if sf == "pause.fill" { return "media-playback-pause-symbolic"; }
+    if sf == "stop.fill" { return "media-playback-stop-symbolic"; }
+    if sf == "lock" { return "changes-prevent-symbolic"; }
+    if sf == "lock.open" { return "changes-allow-symbolic"; }
+    return "";
 }
 
 // ALWAYS a GtkToggleButton — see `input::settle_toggle` for why the class
@@ -1990,7 +2069,14 @@ fn apply_symbol(v: *u8, n: *core::Node, dirty: u64) {
     if symbol_is_system(n) {
         let img: gtk::Image = gtk::Image::from_raw(v);
         if (dirty & symbol::P_NAME) != (0 as u64) {
-            img.set_from_icon_name({ (*p).name.view() });
+            // THROUGH THE SAME TABLE. `symbol(named:)` is the other door an SF
+            // name arrives by, and an application that ports from AppKit uses
+            // both — answering one and not the other would be a fix that half
+            // works for the same string.
+            let raw: str = { (*p).name.view() };
+            let mapped: str = freedesktop_name_for(raw);
+            if mapped != "" { img.set_from_icon_name(mapped); }
+            else { img.set_from_icon_name(raw); }
         }
         if (dirty & symbol::P_SIZE) != (0 as u64) {
             // A themed icon is sized in PIXELS, not in font points — there is
