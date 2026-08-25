@@ -21,6 +21,7 @@ import "android_view/runtime" as rt;
 import "android_view/widgets" as w;
 import "flex_layout/flex_layout" as flex;
 import "facet/facet" as core;
+import "facet/application" as app;
 import "facet/mount" as mount;
 import "./env" as e;
 import "./paint" as paint;
@@ -60,6 +61,16 @@ fn attach_root(env: rt::Env, activity: jni::jobject, root: *core::Node) -> jni::
     // The root's own view is inserted nowhere by the walk (mount.cplus says so:
     // the caller puts it into a window), so it goes in here.
     add_root_views(env, host, root);
+
+    // POINT THE AGENT SURFACE AT THE TREE. Inert for every app that never
+    // called `agent::enable()`, which is the same posture facet_uikit's window
+    // takes on the line after it adds its root.
+    //
+    // The handle is the ROOT NODE, not a view: agent_android walks facet's own
+    // tree (see its MANIFEST §1), so what the two ends agree on is a
+    // `*core::Node`. Without this line the surface answers, correctly and
+    // uselessly, with zero nodes.
+    app::agent_attach({ #addr(root) as *u8 });
     return host;
 }
 

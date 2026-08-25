@@ -63,3 +63,21 @@ fn os_version_raw() -> text::Text {
     free(buf);
     return out;
 }
+
+// ---- the ABI family ----------------------------------------------------------
+//
+// "Is this the Linux ABI?" — which is NOT the same question as
+// `#platform() == "linux"`, and the difference is a whole class of bug.
+//
+// `#platform()` answers "android" on Android, so every site that compared it to
+// "linux" silently took the DARWIN branch on a kernel that is Linux: the agent's
+// `bind` was handed a BSD `sockaddr_in` and refused it, and the thread
+// cancellation signal was 16 (SIGSTKFLT there) instead of 23. Neither failed
+// loudly; the socket just never listened.
+//
+// The answer rides the resolver's platform override, which the compiler already
+// teaches about Android (`resolver::override_suffixes_for`: an `android` target
+// falls back to `_linux`). So this file — the Darwin base — says false, its
+// `_linux` shadow says true, and a target that IS Linux gets the right answer
+// without anyone remembering to add it to a list.
+fn is_linux_abi() -> bool { return false; }

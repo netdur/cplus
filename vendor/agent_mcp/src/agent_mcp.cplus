@@ -46,6 +46,7 @@
 // beside the handler and the namespace answers for itself.
 
 import "stdlib/vec" as vec;
+import "stdlib/platform_sys" as platform_sys;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
 import "stdlib/result" as result;
@@ -1097,7 +1098,7 @@ fn bind_uds(path: str) -> i32 {
     // `sun_len` is left zero on BSD: the kernel derives the length from the
     // `addrlen` argument and every libc that fills it in is doing so for the
     // benefit of callers that pass the wrong one.
-    if #platform() == "linux" {
+    if platform_sys::is_linux_abi() {
         addr[0] = 1 as u8;              // sun_family = AF_UNIX, low byte
     } else {
         addr[1] = 1 as u8;              // sun_len at [0], sun_family at [1]
@@ -1358,13 +1359,20 @@ fn bind_tcp(port: u16) -> i32 {
     if fd < (0 as i32) { return - 1 as i32; }
     // SO_REUSEADDR, so a restart does not wait out TIME_WAIT on the same port.
     //
+    // NOT `#platform() == "linux"`, which answers FALSE ON ANDROID — whose
+    // kernel is Linux. Every branch here took the Darwin side there, so `bind`
+    // was handed a BSD sockaddr_in whose first two bytes read as family 528 and
+    // refused it. The accept loop returned instantly and nothing listened; the
+    // agent surface simply was not there, with no error anywhere. See
+    // `platform_sys::is_linux_abi`.
+    //
     // THE CONSTANTS ARE DARWIN'S AND LINUX DISAGREES: SOL_SOCKET is 0xffff on
     // Darwin and 1 on Linux; SO_REUSEADDR is 4 there and 2 here. Passing the
     // Darwin pair on Linux sets nothing — `setsockopt` fails and the option
     // simply never applied.
     var one: i32 = 1 as i32;
-    let sol: i32 = if #platform() == "linux" { 1 as i32 } else { 65535 as i32 };
-    let reuse: i32 = if #platform() == "linux" { 2 as i32 } else { 4 as i32 };
+    let sol: i32 = if platform_sys::is_linux_abi() { 1 as i32 } else { 65535 as i32 };
+    let reuse: i32 = if platform_sys::is_linux_abi() { 2 as i32 } else { 4 as i32 };
     let _o: i32 = { setsockopt(fd, sol, reuse,
                                { #addr_of(one) as *u8 }, 4 as u32) };
     var addr: [u8; 16] = [0 as u8; 16];
@@ -1377,7 +1385,7 @@ fn bind_tcp(port: u16) -> i32 {
     // So the BSD spelling gives Linux a family of 0x0210 = 528 and `bind`
     // refuses it. The PORT is at offset 2 either way, which is why only these
     // two bytes move.
-    if #platform() == "linux" {
+    if platform_sys::is_linux_abi() {
         addr[0] = 2 as u8;       // sin_family = AF_INET, low byte
     } else {
         addr[0] = 16 as u8;      // sin_len

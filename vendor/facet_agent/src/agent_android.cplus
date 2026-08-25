@@ -29,6 +29,7 @@ import "agent_core/events" as events;
 import "agent_inapp/agent_inapp" as inapp;
 import "agent_mcp/agent_mcp" as mcp;
 import "agent_android/agent_android" as agent_android;
+import "facet_android/log" as alog;
 
 static AGENT_SURFACE: agent_android::Surface = #zero::[agent_android::Surface]();
 static AGENT_SERVING: bool = false;
@@ -159,7 +160,14 @@ struct AgentServe { port: u16 }
 fn serve_main(take job: AgentServe) -> i32 {
     var sub: events::Subscriber = events::subscriber(events::everything(), 64 as usize);
     let surf: *u8 = #addr_of(AGENT_SURFACE) as *u8;
-    return mcp::serve_tcp(surf, agent_android::mcp_backend(), sub, admit, job.port);
+    let rc: i32 = mcp::serve_tcp(surf, agent_android::mcp_backend(), sub, admit, job.port);
+    // KEPT, because the silence was the bug. `serve_tcp` returning at all means
+    // the accept loop is over — a failed bind returns instantly and looks
+    // exactly like an agent nobody connected to. That is how the socket
+    // constants being Darwin's on Android went unnoticed: nothing listened, and
+    // nothing said so.
+    alog::warn(#str_ptr("agent: the accept loop ended - the surface is no longer served\0"));
+    return rc;
 }
 
 // Start the serve worker exactly once per process. The accept loop lives for

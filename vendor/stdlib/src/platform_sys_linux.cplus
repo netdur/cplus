@@ -64,3 +64,8 @@ fn os_version_raw() -> text::Text {
     free(buf);
     return out;
 }
+
+// The Linux ABI — and on Android too, which reaches this file through the
+// resolver's `_linux` fallback. See the base file for what asking
+// `#platform() == "linux"` instead costs.
+fn is_linux_abi() -> bool { return true; }

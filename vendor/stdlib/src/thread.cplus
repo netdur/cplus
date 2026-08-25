@@ -75,6 +75,7 @@ import "./vec" as vec;
 import "./option" as option;
 import "./status" as status;
 import "./netsys" as netsys;
+import "./platform_sys" as platform_sys;
 
 extern fn pthread_create(tid: *u64, attr: *u8, start: fn(*u8) -> *u8, arg: *u8) -> i32;
 extern fn pthread_join(tid: u64, retval: *u8) -> i32;
@@ -251,7 +252,10 @@ fn _c_off_verb_mutex() -> usize { return 32 as usize; }
 // job. stdlib OWNS it — a program that installs its own SIGURG handler
 // forfeits syscall-park cancellation.
 fn _cancel_signal() -> i32 {
-    if #platform() == "linux" { return 23; }
+    // NOT `#platform() == "linux"`. That answers false on Android, whose kernel
+    // is Linux — and 16 is SIGSTKFLT there, not SIGURG. See
+    // `platform_sys::is_linux_abi`.
+    if platform_sys::is_linux_abi() { return 23; }
     return 16;                                  // Darwin
 }
 
