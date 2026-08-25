@@ -42,3 +42,9 @@ playground
 # self-symlink was deleted, and hiding the path meant a recreated one never
 # showed in `git status`. If it reappears, something recreates it: find out.
 
+
+# Python bytecode from tools/ scripts (gen_contract.py, parity.py, ...). A
+# .pyc was committed on the facet_gtk branch (2026-08-25); the interpreter
+# writes these beside any script you run in-tree.
+__pycache__/
+*.pyc
