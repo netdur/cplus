@@ -84,6 +84,9 @@ BINDGEN="${BINDGEN:-../../target/release/cpc-bindgen}"
     android.view.animation.AnticipateInterpolator \
     android.content.res.ColorStateList \
     android.graphics.drawable.ColorDrawable \
+    android.widget.Spinner \
+    android.webkit.WebView \
+    android.webkit.WebSettings \
     > src/widgets.cplus
 
 wc -l src/widgets.cplus

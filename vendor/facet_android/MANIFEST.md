@@ -88,8 +88,8 @@ count as answering it. Three surfaces, because they fail differently:
 
 | | android | gtk | appkit | uikit |
 |---|---|---|---|---|
-| props | 230/360 · 63% | 356 · 98% | 334 · 92% | 321 · 89% |
-| handlers | 42/68 · 61% | 68 · 100% | 68 · 100% | 65 · 95% |
+| props | 256/360 · 71% | 356 · 98% | 334 · 92% | 321 · 89% |
+| handlers | 51/68 · 75% | 68 · 100% | 68 · 100% | 65 · 95% |
 | shared band | 18/21 · 85% | 19 · 90% | 20 · 95% | 18 · 85% |
 
 The gap between the first two rows is the shape of the work left: this backend
@@ -111,16 +111,28 @@ already drawn.
   then a CANCEL every time. Claimed only at row zero, and released the moment
   the drag turns upward, which is a scroll and the page's.
 
-- **The controls still without a body.** `popup`, `tabs`, `collection`,
-  `table`, `web`, `bordered`, `carousel`, `refreshable`, `time_picker`, the menu
-  tier. `views.cplus` dispatches on kind; each needs a `create_` / `apply_` pair
-  in `controls.cplus`.
+- **The controls still without a body.** `tabs`, `collection`, `table`,
+  `carousel`, `refreshable`, the menu tier. `views.cplus` dispatches on kind;
+  each needs a `create_` / `apply_` pair in `controls.cplus`.
+
+- **A `popup`'s TYPOGRAPHY is the adapter's, not the control's.** The Spinner
+  is built, its items and selection round-trip, and `title` is its prompt — but
+  the font verbs, the two alignments and the two colours land on a row VIEW an
+  `ArrayAdapter` inflates from a platform layout, so styling them means a custom
+  adapter view rather than a call. `label` has no slot at all: a Spinner's field
+  IS the selected item, which is what facet's `label` names.
+
+- **A `bordered`'s CAP, JOIN and MITER LIMIT have nowhere to land.** Those are
+  Paint properties and a drawable's stroke is not a Paint: `setStroke` takes a
+  width, a colour and a dash pair, and nothing else. A dash longer than one
+  on/off pair is read from its first two runs for the same reason.
 
   Built: `label`, `button`, `box` and the plain container, plus `checkbox`,
   `toggle`, `radio`, `slider`, `progress`, `spinner`, `text_field`,
   `text_button`, `text_area`, `search_field`, `image`, `icon_button`, `scroll`,
   `stepper`, `list`, `tree`, `split`, `canvas`, `swipeable`, `page_dots`,
-  `date_picker` and `symbol` — each with BOTH
+  `date_picker`, `symbol`, `time_picker`, `bordered`, `popup` and `web` — each
+  with BOTH
   halves, the props write and the event read. Half a control is worse than none:
   it looks finished and reports nothing, which is the shape of the bug
   facet_uikit carried in its checkbox until 2026-08-25.

@@ -22277,4 +22277,2337 @@ impl ColorDrawable {
 
 }
 
-// cpc-bindgen --java: 3046 items emitted, 28 SKIPPED.
+// android.widget.Spinner
+struct Spinner {
+    _env: rt::Env,
+    _obj: jni::jobject,
+}
+
+impl Spinner {
+    fn drop(ref this) {
+        // `into_raw` nulls `_obj`; DeleteGlobalRef does not admit NULL.
+        if this._obj != { 0 as jni::jobject } { this._env.delete_global_ref(this._obj); }
+        return;
+    }
+
+    fn from_global(env: rt::Env, obj: jni::jobject) -> Spinner { return Spinner { _env: env, _obj: obj }; }
+
+    fn from_local(env: rt::Env, obj: jni::jobject) -> Spinner { return Spinner { _env: env, _obj: env.retain_local_as_global(obj) }; }
+
+    fn as_obj(this) -> jni::jobject { return this._obj; }
+
+    fn into_raw(ref this) -> jni::jobject {
+        let p: jni::jobject = this._obj;
+        this._obj = { 0 as jni::jobject };
+        return p;
+    }
+
+    fn get_accessibility_class_name(this) -> *u8 {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/Spinner\0"), #str_ptr("getAccessibilityClassName\0"), #str_ptr("()Ljava/lang/CharSequence;\0"));
+        let r: *u8 = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_baseline(this) -> i32 {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/Spinner\0"), #str_ptr("getBaseline\0"), #str_ptr("()I\0"));
+        let r: i32 = { (*(*this._env.raw())).CallIntMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_drop_down_horizontal_offset(this) -> i32 {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/Spinner\0"), #str_ptr("getDropDownHorizontalOffset\0"), #str_ptr("()I\0"));
+        let r: i32 = { (*(*this._env.raw())).CallIntMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_drop_down_vertical_offset(this) -> i32 {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/Spinner\0"), #str_ptr("getDropDownVerticalOffset\0"), #str_ptr("()I\0"));
+        let r: i32 = { (*(*this._env.raw())).CallIntMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_drop_down_width(this) -> i32 {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/Spinner\0"), #str_ptr("getDropDownWidth\0"), #str_ptr("()I\0"));
+        let r: i32 = { (*(*this._env.raw())).CallIntMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_gravity(this) -> i32 {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/Spinner\0"), #str_ptr("getGravity\0"), #str_ptr("()I\0"));
+        let r: i32 = { (*(*this._env.raw())).CallIntMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_popup_background(this) -> jni::jobject {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/Spinner\0"), #str_ptr("getPopupBackground\0"), #str_ptr("()Landroid/graphics/drawable/Drawable;\0"));
+        let r: jni::jobject = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_popup_context(this) -> jni::jobject {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/Spinner\0"), #str_ptr("getPopupContext\0"), #str_ptr("()Landroid/content/Context;\0"));
+        let r: jni::jobject = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_prompt(this) -> *u8 {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/Spinner\0"), #str_ptr("getPrompt\0"), #str_ptr("()Ljava/lang/CharSequence;\0"));
+        let r: *u8 = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn mode_dialog(env: rt::Env) -> i32 {
+        let cls: jni::jclass = env.class_cached(#str_ptr("android/widget/Spinner\0"));
+        let fid: jni::jfieldID = env.static_field_id(cls, #str_ptr("MODE_DIALOG\0"), #str_ptr("I\0"));
+        let r: i32 = { (*(*env.raw())).GetStaticIntField(env.raw(), cls, fid) };
+        return r;
+    }
+
+    fn mode_dropdown(env: rt::Env) -> i32 {
+        let cls: jni::jclass = env.class_cached(#str_ptr("android/widget/Spinner\0"));
+        let fid: jni::jfieldID = env.static_field_id(cls, #str_ptr("MODE_DROPDOWN\0"), #str_ptr("I\0"));
+        let r: i32 = { (*(*env.raw())).GetStaticIntField(env.raw(), cls, fid) };
+        return r;
+    }
+
+    fn new_context(env: rt::Env, arg0: jni::jobject) -> Spinner {
+        let mid: jni::jmethodID = env.method(#str_ptr("android/widget/Spinner\0"), #str_ptr("<init>\0"), #str_ptr("(Landroid/content/Context;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        let cls: jni::jclass = env.class_cached(#str_ptr("android/widget/Spinner\0"));
+        let obj: jni::jobject = { (*(*env.raw())).NewObjectA(env.raw(), cls, mid, #addr_of(args[0])) };
+        return Spinner { _env: env, _obj: env.retain_local_as_global(obj) };
+    }
+
+    fn new_context_attribute_set(env: rt::Env, arg0: jni::jobject, arg1: jni::jobject) -> Spinner {
+        let mid: jni::jmethodID = env.method(#str_ptr("android/widget/Spinner\0"), #str_ptr("<init>\0"), #str_ptr("(Landroid/content/Context;Landroid/util/AttributeSet;)V\0"));
+        var args: [jni::JValue; 2] = [jni::arg_object(arg0), jni::arg_object(arg1)];
+        let cls: jni::jclass = env.class_cached(#str_ptr("android/widget/Spinner\0"));
+        let obj: jni::jobject = { (*(*env.raw())).NewObjectA(env.raw(), cls, mid, #addr_of(args[0])) };
+        return Spinner { _env: env, _obj: env.retain_local_as_global(obj) };
+    }
+
+    fn new_context_attribute_set_i(env: rt::Env, arg0: jni::jobject, arg1: jni::jobject, arg2: i32) -> Spinner {
+        let mid: jni::jmethodID = env.method(#str_ptr("android/widget/Spinner\0"), #str_ptr("<init>\0"), #str_ptr("(Landroid/content/Context;Landroid/util/AttributeSet;I)V\0"));
+        var args: [jni::JValue; 3] = [jni::arg_object(arg0), jni::arg_object(arg1), jni::arg_int(arg2)];
+        let cls: jni::jclass = env.class_cached(#str_ptr("android/widget/Spinner\0"));
+        let obj: jni::jobject = { (*(*env.raw())).NewObjectA(env.raw(), cls, mid, #addr_of(args[0])) };
+        return Spinner { _env: env, _obj: env.retain_local_as_global(obj) };
+    }
+
+    fn new_context_attribute_set_i_i(env: rt::Env, arg0: jni::jobject, arg1: jni::jobject, arg2: i32, arg3: i32) -> Spinner {
+        let mid: jni::jmethodID = env.method(#str_ptr("android/widget/Spinner\0"), #str_ptr("<init>\0"), #str_ptr("(Landroid/content/Context;Landroid/util/AttributeSet;II)V\0"));
+        var args: [jni::JValue; 4] = [jni::arg_object(arg0), jni::arg_object(arg1), jni::arg_int(arg2), jni::arg_int(arg3)];
+        let cls: jni::jclass = env.class_cached(#str_ptr("android/widget/Spinner\0"));
+        let obj: jni::jobject = { (*(*env.raw())).NewObjectA(env.raw(), cls, mid, #addr_of(args[0])) };
+        return Spinner { _env: env, _obj: env.retain_local_as_global(obj) };
+    }
+
+    fn new_context_attribute_set_i_i_i(env: rt::Env, arg0: jni::jobject, arg1: jni::jobject, arg2: i32, arg3: i32, arg4: i32) -> Spinner {
+        let mid: jni::jmethodID = env.method(#str_ptr("android/widget/Spinner\0"), #str_ptr("<init>\0"), #str_ptr("(Landroid/content/Context;Landroid/util/AttributeSet;III)V\0"));
+        var args: [jni::JValue; 5] = [jni::arg_object(arg0), jni::arg_object(arg1), jni::arg_int(arg2), jni::arg_int(arg3), jni::arg_int(arg4)];
+        let cls: jni::jclass = env.class_cached(#str_ptr("android/widget/Spinner\0"));
+        let obj: jni::jobject = { (*(*env.raw())).NewObjectA(env.raw(), cls, mid, #addr_of(args[0])) };
+        return Spinner { _env: env, _obj: env.retain_local_as_global(obj) };
+    }
+
+    fn new_context_attribute_set_i_i_i_resources_theme(env: rt::Env, arg0: jni::jobject, arg1: jni::jobject, arg2: i32, arg3: i32, arg4: i32, arg5: jni::jobject) -> Spinner {
+        let mid: jni::jmethodID = env.method(#str_ptr("android/widget/Spinner\0"), #str_ptr("<init>\0"), #str_ptr("(Landroid/content/Context;Landroid/util/AttributeSet;IIILandroid/content/res/Resources$Theme;)V\0"));
+        var args: [jni::JValue; 6] = [jni::arg_object(arg0), jni::arg_object(arg1), jni::arg_int(arg2), jni::arg_int(arg3), jni::arg_int(arg4), jni::arg_object(arg5)];
+        let cls: jni::jclass = env.class_cached(#str_ptr("android/widget/Spinner\0"));
+        let obj: jni::jobject = { (*(*env.raw())).NewObjectA(env.raw(), cls, mid, #addr_of(args[0])) };
+        return Spinner { _env: env, _obj: env.retain_local_as_global(obj) };
+    }
+
+    fn new_context_i(env: rt::Env, arg0: jni::jobject, arg1: i32) -> Spinner {
+        let mid: jni::jmethodID = env.method(#str_ptr("android/widget/Spinner\0"), #str_ptr("<init>\0"), #str_ptr("(Landroid/content/Context;I)V\0"));
+        var args: [jni::JValue; 2] = [jni::arg_object(arg0), jni::arg_int(arg1)];
+        let cls: jni::jclass = env.class_cached(#str_ptr("android/widget/Spinner\0"));
+        let obj: jni::jobject = { (*(*env.raw())).NewObjectA(env.raw(), cls, mid, #addr_of(args[0])) };
+        return Spinner { _env: env, _obj: env.retain_local_as_global(obj) };
+    }
+
+    fn on_click(this, arg0: jni::jobject, arg1: i32) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/Spinner\0"), #str_ptr("onClick\0"), #str_ptr("(Landroid/content/DialogInterface;I)V\0"));
+        var args: [jni::JValue; 2] = [jni::arg_object(arg0), jni::arg_int(arg1)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn on_detached_from_window(this) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/Spinner\0"), #str_ptr("onDetachedFromWindow\0"), #str_ptr("()V\0"));
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue); };
+        return;
+    }
+
+    fn on_layout(this, arg0: bool, arg1: i32, arg2: i32, arg3: i32, arg4: i32) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/Spinner\0"), #str_ptr("onLayout\0"), #str_ptr("(ZIIII)V\0"));
+        var args: [jni::JValue; 5] = [rt::arg_bool(arg0), jni::arg_int(arg1), jni::arg_int(arg2), jni::arg_int(arg3), jni::arg_int(arg4)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn on_measure(this, arg0: i32, arg1: i32) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/Spinner\0"), #str_ptr("onMeasure\0"), #str_ptr("(II)V\0"));
+        var args: [jni::JValue; 2] = [jni::arg_int(arg0), jni::arg_int(arg1)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn on_resolve_pointer_icon(this, arg0: jni::jobject, arg1: i32) -> jni::jobject {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/Spinner\0"), #str_ptr("onResolvePointerIcon\0"), #str_ptr("(Landroid/view/MotionEvent;I)Landroid/view/PointerIcon;\0"));
+        var args: [jni::JValue; 2] = [jni::arg_object(arg0), jni::arg_int(arg1)];
+        let r: jni::jobject = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])) };
+        return r;
+    }
+
+    fn on_restore_instance_state(this, arg0: jni::jobject) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/Spinner\0"), #str_ptr("onRestoreInstanceState\0"), #str_ptr("(Landroid/os/Parcelable;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn on_save_instance_state(this) -> jni::jobject {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/Spinner\0"), #str_ptr("onSaveInstanceState\0"), #str_ptr("()Landroid/os/Parcelable;\0"));
+        let r: jni::jobject = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn on_touch_event(this, arg0: jni::jobject) -> bool {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/Spinner\0"), #str_ptr("onTouchEvent\0"), #str_ptr("(Landroid/view/MotionEvent;)Z\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        let r: jni::jboolean = { (*(*this._env.raw())).CallBooleanMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])) };
+        return r as i8 != 0;
+    }
+
+    fn perform_click(this) -> bool {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/Spinner\0"), #str_ptr("performClick\0"), #str_ptr("()Z\0"));
+        let r: jni::jboolean = { (*(*this._env.raw())).CallBooleanMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r as i8 != 0;
+    }
+
+    fn set_adapter_spinner_adapter(this, arg0: jni::jobject) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/Spinner\0"), #str_ptr("setAdapter\0"), #str_ptr("(Landroid/widget/SpinnerAdapter;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_adapter_adapter(this, arg0: jni::jobject) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/Spinner\0"), #str_ptr("setAdapter\0"), #str_ptr("(Landroid/widget/Adapter;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_drop_down_horizontal_offset(this, arg0: i32) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/Spinner\0"), #str_ptr("setDropDownHorizontalOffset\0"), #str_ptr("(I)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_int(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_drop_down_vertical_offset(this, arg0: i32) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/Spinner\0"), #str_ptr("setDropDownVerticalOffset\0"), #str_ptr("(I)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_int(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_drop_down_width(this, arg0: i32) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/Spinner\0"), #str_ptr("setDropDownWidth\0"), #str_ptr("(I)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_int(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_enabled(this, arg0: bool) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/Spinner\0"), #str_ptr("setEnabled\0"), #str_ptr("(Z)V\0"));
+        var args: [jni::JValue; 1] = [rt::arg_bool(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_gravity(this, arg0: i32) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/Spinner\0"), #str_ptr("setGravity\0"), #str_ptr("(I)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_int(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_on_item_click_listener(this, arg0: jni::jobject) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/Spinner\0"), #str_ptr("setOnItemClickListener\0"), #str_ptr("(Landroid/widget/AdapterView$OnItemClickListener;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_popup_background_drawable(this, arg0: jni::jobject) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/Spinner\0"), #str_ptr("setPopupBackgroundDrawable\0"), #str_ptr("(Landroid/graphics/drawable/Drawable;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_popup_background_resource(this, arg0: i32) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/Spinner\0"), #str_ptr("setPopupBackgroundResource\0"), #str_ptr("(I)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_int(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_prompt(this, arg0: *u8) {
+        let arg0_s: jni::jstring = this._env.new_string_utf(arg0);
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/Spinner\0"), #str_ptr("setPrompt\0"), #str_ptr("(Ljava/lang/CharSequence;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0_s)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        this._env.delete_local_ref(arg0_s);
+        return;
+    }
+
+    fn set_prompt_id(this, arg0: i32) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/Spinner\0"), #str_ptr("setPromptId\0"), #str_ptr("(I)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_int(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+}
+
+// android.webkit.WebView
+struct WebView {
+    _env: rt::Env,
+    _obj: jni::jobject,
+}
+
+impl WebView {
+    fn drop(ref this) {
+        // `into_raw` nulls `_obj`; DeleteGlobalRef does not admit NULL.
+        if this._obj != { 0 as jni::jobject } { this._env.delete_global_ref(this._obj); }
+        return;
+    }
+
+    fn from_global(env: rt::Env, obj: jni::jobject) -> WebView { return WebView { _env: env, _obj: obj }; }
+
+    fn from_local(env: rt::Env, obj: jni::jobject) -> WebView { return WebView { _env: env, _obj: env.retain_local_as_global(obj) }; }
+
+    fn as_obj(this) -> jni::jobject { return this._obj; }
+
+    fn into_raw(ref this) -> jni::jobject {
+        let p: jni::jobject = this._obj;
+        this._obj = { 0 as jni::jobject };
+        return p;
+    }
+
+    fn add_javascript_interface(this, arg0: jni::jobject, arg1: *u8) {
+        let arg1_s: jni::jstring = this._env.new_string_utf(arg1);
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("addJavascriptInterface\0"), #str_ptr("(Ljava/lang/Object;Ljava/lang/String;)V\0"));
+        var args: [jni::JValue; 2] = [jni::arg_object(arg0), jni::arg_object(arg1_s)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        this._env.delete_local_ref(arg1_s);
+        return;
+    }
+
+    fn autofill(this, arg0: jni::jobject) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("autofill\0"), #str_ptr("(Landroid/util/SparseArray;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn can_go_back(this) -> bool {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("canGoBack\0"), #str_ptr("()Z\0"));
+        let r: jni::jboolean = { (*(*this._env.raw())).CallBooleanMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r as i8 != 0;
+    }
+
+    fn can_go_back_or_forward(this, arg0: i32) -> bool {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("canGoBackOrForward\0"), #str_ptr("(I)Z\0"));
+        var args: [jni::JValue; 1] = [jni::arg_int(arg0)];
+        let r: jni::jboolean = { (*(*this._env.raw())).CallBooleanMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])) };
+        return r as i8 != 0;
+    }
+
+    fn can_go_forward(this) -> bool {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("canGoForward\0"), #str_ptr("()Z\0"));
+        let r: jni::jboolean = { (*(*this._env.raw())).CallBooleanMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r as i8 != 0;
+    }
+
+    fn can_zoom_in(this) -> bool {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("canZoomIn\0"), #str_ptr("()Z\0"));
+        let r: jni::jboolean = { (*(*this._env.raw())).CallBooleanMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r as i8 != 0;
+    }
+
+    fn can_zoom_out(this) -> bool {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("canZoomOut\0"), #str_ptr("()Z\0"));
+        let r: jni::jboolean = { (*(*this._env.raw())).CallBooleanMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r as i8 != 0;
+    }
+
+    fn capture_picture(this) -> jni::jobject {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("capturePicture\0"), #str_ptr("()Landroid/graphics/Picture;\0"));
+        let r: jni::jobject = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn clear_cache(this, arg0: bool) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("clearCache\0"), #str_ptr("(Z)V\0"));
+        var args: [jni::JValue; 1] = [rt::arg_bool(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn clear_client_cert_preferences(env: rt::Env, arg0: jni::jobject) {
+        let mid: jni::jmethodID = env.method_static(#str_ptr("android/webkit/WebView\0"), #str_ptr("clearClientCertPreferences\0"), #str_ptr("(Ljava/lang/Runnable;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        let cls: jni::jclass = env.class_cached(#str_ptr("android/webkit/WebView\0"));
+        { (*(*env.raw())).CallStaticVoidMethodA(env.raw(), cls, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn clear_form_data(this) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("clearFormData\0"), #str_ptr("()V\0"));
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue); };
+        return;
+    }
+
+    fn clear_history(this) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("clearHistory\0"), #str_ptr("()V\0"));
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue); };
+        return;
+    }
+
+    fn clear_matches(this) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("clearMatches\0"), #str_ptr("()V\0"));
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue); };
+        return;
+    }
+
+    fn clear_ssl_preferences(this) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("clearSslPreferences\0"), #str_ptr("()V\0"));
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue); };
+        return;
+    }
+
+    fn clear_view(this) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("clearView\0"), #str_ptr("()V\0"));
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue); };
+        return;
+    }
+
+    fn compute_horizontal_scroll_offset(this) -> i32 {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("computeHorizontalScrollOffset\0"), #str_ptr("()I\0"));
+        let r: i32 = { (*(*this._env.raw())).CallIntMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn compute_horizontal_scroll_range(this) -> i32 {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("computeHorizontalScrollRange\0"), #str_ptr("()I\0"));
+        let r: i32 = { (*(*this._env.raw())).CallIntMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn compute_scroll(this) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("computeScroll\0"), #str_ptr("()V\0"));
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue); };
+        return;
+    }
+
+    fn compute_vertical_scroll_extent(this) -> i32 {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("computeVerticalScrollExtent\0"), #str_ptr("()I\0"));
+        let r: i32 = { (*(*this._env.raw())).CallIntMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn compute_vertical_scroll_offset(this) -> i32 {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("computeVerticalScrollOffset\0"), #str_ptr("()I\0"));
+        let r: i32 = { (*(*this._env.raw())).CallIntMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn compute_vertical_scroll_range(this) -> i32 {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("computeVerticalScrollRange\0"), #str_ptr("()I\0"));
+        let r: i32 = { (*(*this._env.raw())).CallIntMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn copy_back_forward_list(this) -> jni::jobject {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("copyBackForwardList\0"), #str_ptr("()Landroid/webkit/WebBackForwardList;\0"));
+        let r: jni::jobject = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn create_print_document_adapter_void(this) -> jni::jobject {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("createPrintDocumentAdapter\0"), #str_ptr("()Landroid/print/PrintDocumentAdapter;\0"));
+        let r: jni::jobject = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn create_print_document_adapter_str(this, arg0: *u8) -> jni::jobject {
+        let arg0_s: jni::jstring = this._env.new_string_utf(arg0);
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("createPrintDocumentAdapter\0"), #str_ptr("(Ljava/lang/String;)Landroid/print/PrintDocumentAdapter;\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0_s)];
+        let r: jni::jobject = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])) };
+        this._env.delete_local_ref(arg0_s);
+        return r;
+    }
+
+    fn create_web_message_channel(this) -> jni::jarray {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("createWebMessageChannel\0"), #str_ptr("()[Landroid/webkit/WebMessagePort;\0"));
+        let r: jni::jarray = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn destroy(this) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("destroy\0"), #str_ptr("()V\0"));
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue); };
+        return;
+    }
+
+    fn disable_web_view(env: rt::Env) {
+        let mid: jni::jmethodID = env.method_static(#str_ptr("android/webkit/WebView\0"), #str_ptr("disableWebView\0"), #str_ptr("()V\0"));
+        let cls: jni::jclass = env.class_cached(#str_ptr("android/webkit/WebView\0"));
+        { (*(*env.raw())).CallStaticVoidMethodA(env.raw(), cls, mid, 0 as *jni::JValue); };
+        return;
+    }
+
+    fn dispatch_create_view_translation_request(this, arg0: jni::jobject, arg1: jni::jarray, arg2: jni::jobject, arg3: jni::jobject) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("dispatchCreateViewTranslationRequest\0"), #str_ptr("(Ljava/util/Map;[ILandroid/view/translation/TranslationCapability;Ljava/util/List;)V\0"));
+        var args: [jni::JValue; 4] = [jni::arg_object(arg0), jni::arg_object(arg1), jni::arg_object(arg2), jni::arg_object(arg3)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn dispatch_draw(this, arg0: jni::jobject) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("dispatchDraw\0"), #str_ptr("(Landroid/graphics/Canvas;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn dispatch_key_event(this, arg0: jni::jobject) -> bool {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("dispatchKeyEvent\0"), #str_ptr("(Landroid/view/KeyEvent;)Z\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        let r: jni::jboolean = { (*(*this._env.raw())).CallBooleanMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])) };
+        return r as i8 != 0;
+    }
+
+    fn document_has_images(this, arg0: jni::jobject) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("documentHasImages\0"), #str_ptr("(Landroid/os/Message;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn enable_slow_whole_document_draw(env: rt::Env) {
+        let mid: jni::jmethodID = env.method_static(#str_ptr("android/webkit/WebView\0"), #str_ptr("enableSlowWholeDocumentDraw\0"), #str_ptr("()V\0"));
+        let cls: jni::jclass = env.class_cached(#str_ptr("android/webkit/WebView\0"));
+        { (*(*env.raw())).CallStaticVoidMethodA(env.raw(), cls, mid, 0 as *jni::JValue); };
+        return;
+    }
+
+    fn evaluate_javascript(this, arg0: *u8, arg1: jni::jobject) {
+        let arg0_s: jni::jstring = this._env.new_string_utf(arg0);
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("evaluateJavascript\0"), #str_ptr("(Ljava/lang/String;Landroid/webkit/ValueCallback;)V\0"));
+        var args: [jni::JValue; 2] = [jni::arg_object(arg0_s), jni::arg_object(arg1)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        this._env.delete_local_ref(arg0_s);
+        return;
+    }
+
+    fn find_address(env: rt::Env, arg0: *u8) -> *u8 {
+        let arg0_s: jni::jstring = env.new_string_utf(arg0);
+        let mid: jni::jmethodID = env.method_static(#str_ptr("android/webkit/WebView\0"), #str_ptr("findAddress\0"), #str_ptr("(Ljava/lang/String;)Ljava/lang/String;\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0_s)];
+        let cls: jni::jclass = env.class_cached(#str_ptr("android/webkit/WebView\0"));
+        let r: *u8 = { (*(*env.raw())).CallStaticObjectMethodA(env.raw(), cls, mid, #addr_of(args[0])) };
+        env.delete_local_ref(arg0_s);
+        return r;
+    }
+
+    fn find_all(this, arg0: *u8) -> i32 {
+        let arg0_s: jni::jstring = this._env.new_string_utf(arg0);
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("findAll\0"), #str_ptr("(Ljava/lang/String;)I\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0_s)];
+        let r: i32 = { (*(*this._env.raw())).CallIntMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])) };
+        this._env.delete_local_ref(arg0_s);
+        return r;
+    }
+
+    fn find_all_async(this, arg0: *u8) {
+        let arg0_s: jni::jstring = this._env.new_string_utf(arg0);
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("findAllAsync\0"), #str_ptr("(Ljava/lang/String;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0_s)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        this._env.delete_local_ref(arg0_s);
+        return;
+    }
+
+    fn find_focus(this) -> jni::jobject {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("findFocus\0"), #str_ptr("()Landroid/view/View;\0"));
+        let r: jni::jobject = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn find_next(this, arg0: bool) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("findNext\0"), #str_ptr("(Z)V\0"));
+        var args: [jni::JValue; 1] = [rt::arg_bool(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn fling_scroll(this, arg0: i32, arg1: i32) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("flingScroll\0"), #str_ptr("(II)V\0"));
+        var args: [jni::JValue; 2] = [jni::arg_int(arg0), jni::arg_int(arg1)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn free_memory(this) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("freeMemory\0"), #str_ptr("()V\0"));
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue); };
+        return;
+    }
+
+    fn get_accessibility_class_name(this) -> *u8 {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("getAccessibilityClassName\0"), #str_ptr("()Ljava/lang/CharSequence;\0"));
+        let r: *u8 = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_accessibility_node_provider(this) -> jni::jobject {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("getAccessibilityNodeProvider\0"), #str_ptr("()Landroid/view/accessibility/AccessibilityNodeProvider;\0"));
+        let r: jni::jobject = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_certificate(this) -> jni::jobject {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("getCertificate\0"), #str_ptr("()Landroid/net/http/SslCertificate;\0"));
+        let r: jni::jobject = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_content_height(this) -> i32 {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("getContentHeight\0"), #str_ptr("()I\0"));
+        let r: i32 = { (*(*this._env.raw())).CallIntMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_current_web_view_package(env: rt::Env) -> jni::jobject {
+        let mid: jni::jmethodID = env.method_static(#str_ptr("android/webkit/WebView\0"), #str_ptr("getCurrentWebViewPackage\0"), #str_ptr("()Landroid/content/pm/PackageInfo;\0"));
+        let cls: jni::jclass = env.class_cached(#str_ptr("android/webkit/WebView\0"));
+        let r: jni::jobject = { (*(*env.raw())).CallStaticObjectMethodA(env.raw(), cls, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_favicon(this) -> jni::jobject {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("getFavicon\0"), #str_ptr("()Landroid/graphics/Bitmap;\0"));
+        let r: jni::jobject = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_handler(this) -> jni::jobject {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("getHandler\0"), #str_ptr("()Landroid/os/Handler;\0"));
+        let r: jni::jobject = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_hit_test_result(this) -> jni::jobject {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("getHitTestResult\0"), #str_ptr("()Landroid/webkit/WebView$HitTestResult;\0"));
+        let r: jni::jobject = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_http_auth_username_password(this, arg0: *u8, arg1: *u8) -> jni::jarray {
+        let arg0_s: jni::jstring = this._env.new_string_utf(arg0);
+        let arg1_s: jni::jstring = this._env.new_string_utf(arg1);
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("getHttpAuthUsernamePassword\0"), #str_ptr("(Ljava/lang/String;Ljava/lang/String;)[Ljava/lang/String;\0"));
+        var args: [jni::JValue; 2] = [jni::arg_object(arg0_s), jni::arg_object(arg1_s)];
+        let r: jni::jarray = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])) };
+        this._env.delete_local_ref(arg0_s);
+        this._env.delete_local_ref(arg1_s);
+        return r;
+    }
+
+    fn get_original_url(this) -> *u8 {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("getOriginalUrl\0"), #str_ptr("()Ljava/lang/String;\0"));
+        let r: *u8 = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_progress(this) -> i32 {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("getProgress\0"), #str_ptr("()I\0"));
+        let r: i32 = { (*(*this._env.raw())).CallIntMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_renderer_priority_waived_when_not_visible(this) -> bool {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("getRendererPriorityWaivedWhenNotVisible\0"), #str_ptr("()Z\0"));
+        let r: jni::jboolean = { (*(*this._env.raw())).CallBooleanMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r as i8 != 0;
+    }
+
+    fn get_renderer_requested_priority(this) -> i32 {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("getRendererRequestedPriority\0"), #str_ptr("()I\0"));
+        let r: i32 = { (*(*this._env.raw())).CallIntMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_safe_browsing_privacy_policy_url(env: rt::Env) -> jni::jobject {
+        let mid: jni::jmethodID = env.method_static(#str_ptr("android/webkit/WebView\0"), #str_ptr("getSafeBrowsingPrivacyPolicyUrl\0"), #str_ptr("()Landroid/net/Uri;\0"));
+        let cls: jni::jclass = env.class_cached(#str_ptr("android/webkit/WebView\0"));
+        let r: jni::jobject = { (*(*env.raw())).CallStaticObjectMethodA(env.raw(), cls, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_scale(this) -> f32 {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("getScale\0"), #str_ptr("()F\0"));
+        let r: f32 = { (*(*this._env.raw())).CallFloatMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_settings(this) -> jni::jobject {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("getSettings\0"), #str_ptr("()Landroid/webkit/WebSettings;\0"));
+        let r: jni::jobject = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_text_classifier(this) -> jni::jobject {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("getTextClassifier\0"), #str_ptr("()Landroid/view/textclassifier/TextClassifier;\0"));
+        let r: jni::jobject = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_title(this) -> *u8 {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("getTitle\0"), #str_ptr("()Ljava/lang/String;\0"));
+        let r: *u8 = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_url(this) -> *u8 {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("getUrl\0"), #str_ptr("()Ljava/lang/String;\0"));
+        let r: *u8 = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_web_chrome_client(this) -> jni::jobject {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("getWebChromeClient\0"), #str_ptr("()Landroid/webkit/WebChromeClient;\0"));
+        let r: jni::jobject = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_web_view_class_loader(env: rt::Env) -> jni::jobject {
+        let mid: jni::jmethodID = env.method_static(#str_ptr("android/webkit/WebView\0"), #str_ptr("getWebViewClassLoader\0"), #str_ptr("()Ljava/lang/ClassLoader;\0"));
+        let cls: jni::jclass = env.class_cached(#str_ptr("android/webkit/WebView\0"));
+        let r: jni::jobject = { (*(*env.raw())).CallStaticObjectMethodA(env.raw(), cls, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_web_view_client(this) -> jni::jobject {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("getWebViewClient\0"), #str_ptr("()Landroid/webkit/WebViewClient;\0"));
+        let r: jni::jobject = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_web_view_looper(this) -> jni::jobject {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("getWebViewLooper\0"), #str_ptr("()Landroid/os/Looper;\0"));
+        let r: jni::jobject = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_web_view_render_process(this) -> jni::jobject {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("getWebViewRenderProcess\0"), #str_ptr("()Landroid/webkit/WebViewRenderProcess;\0"));
+        let r: jni::jobject = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_web_view_render_process_client(this) -> jni::jobject {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("getWebViewRenderProcessClient\0"), #str_ptr("()Landroid/webkit/WebViewRenderProcessClient;\0"));
+        let r: jni::jobject = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn go_back(this) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("goBack\0"), #str_ptr("()V\0"));
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue); };
+        return;
+    }
+
+    fn go_back_or_forward(this, arg0: i32) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("goBackOrForward\0"), #str_ptr("(I)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_int(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn go_forward(this) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("goForward\0"), #str_ptr("()V\0"));
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue); };
+        return;
+    }
+
+    fn invoke_zoom_picker(this) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("invokeZoomPicker\0"), #str_ptr("()V\0"));
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue); };
+        return;
+    }
+
+    fn is_private_browsing_enabled(this) -> bool {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("isPrivateBrowsingEnabled\0"), #str_ptr("()Z\0"));
+        let r: jni::jboolean = { (*(*this._env.raw())).CallBooleanMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r as i8 != 0;
+    }
+
+    fn is_visible_to_user_for_autofill(this, arg0: i32) -> bool {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("isVisibleToUserForAutofill\0"), #str_ptr("(I)Z\0"));
+        var args: [jni::JValue; 1] = [jni::arg_int(arg0)];
+        let r: jni::jboolean = { (*(*this._env.raw())).CallBooleanMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])) };
+        return r as i8 != 0;
+    }
+
+    fn load_data(this, arg0: *u8, arg1: *u8, arg2: *u8) {
+        let arg0_s: jni::jstring = this._env.new_string_utf(arg0);
+        let arg1_s: jni::jstring = this._env.new_string_utf(arg1);
+        let arg2_s: jni::jstring = this._env.new_string_utf(arg2);
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("loadData\0"), #str_ptr("(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V\0"));
+        var args: [jni::JValue; 3] = [jni::arg_object(arg0_s), jni::arg_object(arg1_s), jni::arg_object(arg2_s)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        this._env.delete_local_ref(arg0_s);
+        this._env.delete_local_ref(arg1_s);
+        this._env.delete_local_ref(arg2_s);
+        return;
+    }
+
+    fn load_data_with_base_url(this, arg0: *u8, arg1: *u8, arg2: *u8, arg3: *u8, arg4: *u8) {
+        let arg0_s: jni::jstring = this._env.new_string_utf(arg0);
+        let arg1_s: jni::jstring = this._env.new_string_utf(arg1);
+        let arg2_s: jni::jstring = this._env.new_string_utf(arg2);
+        let arg3_s: jni::jstring = this._env.new_string_utf(arg3);
+        let arg4_s: jni::jstring = this._env.new_string_utf(arg4);
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("loadDataWithBaseURL\0"), #str_ptr("(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V\0"));
+        var args: [jni::JValue; 5] = [jni::arg_object(arg0_s), jni::arg_object(arg1_s), jni::arg_object(arg2_s), jni::arg_object(arg3_s), jni::arg_object(arg4_s)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        this._env.delete_local_ref(arg0_s);
+        this._env.delete_local_ref(arg1_s);
+        this._env.delete_local_ref(arg2_s);
+        this._env.delete_local_ref(arg3_s);
+        this._env.delete_local_ref(arg4_s);
+        return;
+    }
+
+    fn load_url_str(this, arg0: *u8) {
+        let arg0_s: jni::jstring = this._env.new_string_utf(arg0);
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("loadUrl\0"), #str_ptr("(Ljava/lang/String;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0_s)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        this._env.delete_local_ref(arg0_s);
+        return;
+    }
+
+    fn load_url_str_map(this, arg0: *u8, arg1: jni::jobject) {
+        let arg0_s: jni::jstring = this._env.new_string_utf(arg0);
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("loadUrl\0"), #str_ptr("(Ljava/lang/String;Ljava/util/Map;)V\0"));
+        var args: [jni::JValue; 2] = [jni::arg_object(arg0_s), jni::arg_object(arg1)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        this._env.delete_local_ref(arg0_s);
+        return;
+    }
+
+    fn new_context(env: rt::Env, arg0: jni::jobject) -> WebView {
+        let mid: jni::jmethodID = env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("<init>\0"), #str_ptr("(Landroid/content/Context;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        let cls: jni::jclass = env.class_cached(#str_ptr("android/webkit/WebView\0"));
+        let obj: jni::jobject = { (*(*env.raw())).NewObjectA(env.raw(), cls, mid, #addr_of(args[0])) };
+        return WebView { _env: env, _obj: env.retain_local_as_global(obj) };
+    }
+
+    fn new_context_attribute_set(env: rt::Env, arg0: jni::jobject, arg1: jni::jobject) -> WebView {
+        let mid: jni::jmethodID = env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("<init>\0"), #str_ptr("(Landroid/content/Context;Landroid/util/AttributeSet;)V\0"));
+        var args: [jni::JValue; 2] = [jni::arg_object(arg0), jni::arg_object(arg1)];
+        let cls: jni::jclass = env.class_cached(#str_ptr("android/webkit/WebView\0"));
+        let obj: jni::jobject = { (*(*env.raw())).NewObjectA(env.raw(), cls, mid, #addr_of(args[0])) };
+        return WebView { _env: env, _obj: env.retain_local_as_global(obj) };
+    }
+
+    fn new_context_attribute_set_i(env: rt::Env, arg0: jni::jobject, arg1: jni::jobject, arg2: i32) -> WebView {
+        let mid: jni::jmethodID = env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("<init>\0"), #str_ptr("(Landroid/content/Context;Landroid/util/AttributeSet;I)V\0"));
+        var args: [jni::JValue; 3] = [jni::arg_object(arg0), jni::arg_object(arg1), jni::arg_int(arg2)];
+        let cls: jni::jclass = env.class_cached(#str_ptr("android/webkit/WebView\0"));
+        let obj: jni::jobject = { (*(*env.raw())).NewObjectA(env.raw(), cls, mid, #addr_of(args[0])) };
+        return WebView { _env: env, _obj: env.retain_local_as_global(obj) };
+    }
+
+    fn new_context_attribute_set_i_z(env: rt::Env, arg0: jni::jobject, arg1: jni::jobject, arg2: i32, arg3: bool) -> WebView {
+        let mid: jni::jmethodID = env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("<init>\0"), #str_ptr("(Landroid/content/Context;Landroid/util/AttributeSet;IZ)V\0"));
+        var args: [jni::JValue; 4] = [jni::arg_object(arg0), jni::arg_object(arg1), jni::arg_int(arg2), rt::arg_bool(arg3)];
+        let cls: jni::jclass = env.class_cached(#str_ptr("android/webkit/WebView\0"));
+        let obj: jni::jobject = { (*(*env.raw())).NewObjectA(env.raw(), cls, mid, #addr_of(args[0])) };
+        return WebView { _env: env, _obj: env.retain_local_as_global(obj) };
+    }
+
+    fn new_context_attribute_set_i_i(env: rt::Env, arg0: jni::jobject, arg1: jni::jobject, arg2: i32, arg3: i32) -> WebView {
+        let mid: jni::jmethodID = env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("<init>\0"), #str_ptr("(Landroid/content/Context;Landroid/util/AttributeSet;II)V\0"));
+        var args: [jni::JValue; 4] = [jni::arg_object(arg0), jni::arg_object(arg1), jni::arg_int(arg2), jni::arg_int(arg3)];
+        let cls: jni::jclass = env.class_cached(#str_ptr("android/webkit/WebView\0"));
+        let obj: jni::jobject = { (*(*env.raw())).NewObjectA(env.raw(), cls, mid, #addr_of(args[0])) };
+        return WebView { _env: env, _obj: env.retain_local_as_global(obj) };
+    }
+
+    fn on_apply_window_insets(this, arg0: jni::jobject) -> jni::jobject {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("onApplyWindowInsets\0"), #str_ptr("(Landroid/view/WindowInsets;)Landroid/view/WindowInsets;\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        let r: jni::jobject = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])) };
+        return r;
+    }
+
+    fn on_attached_to_window(this) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("onAttachedToWindow\0"), #str_ptr("()V\0"));
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue); };
+        return;
+    }
+
+    fn on_check_is_text_editor(this) -> bool {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("onCheckIsTextEditor\0"), #str_ptr("()Z\0"));
+        let r: jni::jboolean = { (*(*this._env.raw())).CallBooleanMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r as i8 != 0;
+    }
+
+    fn on_child_view_added(this, arg0: jni::jobject, arg1: jni::jobject) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("onChildViewAdded\0"), #str_ptr("(Landroid/view/View;Landroid/view/View;)V\0"));
+        var args: [jni::JValue; 2] = [jni::arg_object(arg0), jni::arg_object(arg1)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn on_child_view_removed(this, arg0: jni::jobject, arg1: jni::jobject) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("onChildViewRemoved\0"), #str_ptr("(Landroid/view/View;Landroid/view/View;)V\0"));
+        var args: [jni::JValue; 2] = [jni::arg_object(arg0), jni::arg_object(arg1)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn on_configuration_changed(this, arg0: jni::jobject) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("onConfigurationChanged\0"), #str_ptr("(Landroid/content/res/Configuration;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn on_create_input_connection(this, arg0: jni::jobject) -> jni::jobject {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("onCreateInputConnection\0"), #str_ptr("(Landroid/view/inputmethod/EditorInfo;)Landroid/view/inputmethod/InputConnection;\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        let r: jni::jobject = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])) };
+        return r;
+    }
+
+    fn on_create_virtual_view_translation_requests(this, arg0: jni::jarray, arg1: jni::jarray, arg2: jni::jobject) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("onCreateVirtualViewTranslationRequests\0"), #str_ptr("([J[ILjava/util/function/Consumer;)V\0"));
+        var args: [jni::JValue; 3] = [jni::arg_object(arg0), jni::arg_object(arg1), jni::arg_object(arg2)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn on_drag_event(this, arg0: jni::jobject) -> bool {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("onDragEvent\0"), #str_ptr("(Landroid/view/DragEvent;)Z\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        let r: jni::jboolean = { (*(*this._env.raw())).CallBooleanMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])) };
+        return r as i8 != 0;
+    }
+
+    fn on_draw(this, arg0: jni::jobject) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("onDraw\0"), #str_ptr("(Landroid/graphics/Canvas;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn on_finish_temporary_detach(this) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("onFinishTemporaryDetach\0"), #str_ptr("()V\0"));
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue); };
+        return;
+    }
+
+    fn on_focus_changed(this, arg0: bool, arg1: i32, arg2: jni::jobject) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("onFocusChanged\0"), #str_ptr("(ZILandroid/graphics/Rect;)V\0"));
+        var args: [jni::JValue; 3] = [rt::arg_bool(arg0), jni::arg_int(arg1), jni::arg_object(arg2)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn on_generic_motion_event(this, arg0: jni::jobject) -> bool {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("onGenericMotionEvent\0"), #str_ptr("(Landroid/view/MotionEvent;)Z\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        let r: jni::jboolean = { (*(*this._env.raw())).CallBooleanMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])) };
+        return r as i8 != 0;
+    }
+
+    fn on_global_focus_changed(this, arg0: jni::jobject, arg1: jni::jobject) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("onGlobalFocusChanged\0"), #str_ptr("(Landroid/view/View;Landroid/view/View;)V\0"));
+        var args: [jni::JValue; 2] = [jni::arg_object(arg0), jni::arg_object(arg1)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn on_hover_event(this, arg0: jni::jobject) -> bool {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("onHoverEvent\0"), #str_ptr("(Landroid/view/MotionEvent;)Z\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        let r: jni::jboolean = { (*(*this._env.raw())).CallBooleanMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])) };
+        return r as i8 != 0;
+    }
+
+    fn on_key_down(this, arg0: i32, arg1: jni::jobject) -> bool {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("onKeyDown\0"), #str_ptr("(ILandroid/view/KeyEvent;)Z\0"));
+        var args: [jni::JValue; 2] = [jni::arg_int(arg0), jni::arg_object(arg1)];
+        let r: jni::jboolean = { (*(*this._env.raw())).CallBooleanMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])) };
+        return r as i8 != 0;
+    }
+
+    fn on_key_multiple(this, arg0: i32, arg1: i32, arg2: jni::jobject) -> bool {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("onKeyMultiple\0"), #str_ptr("(IILandroid/view/KeyEvent;)Z\0"));
+        var args: [jni::JValue; 3] = [jni::arg_int(arg0), jni::arg_int(arg1), jni::arg_object(arg2)];
+        let r: jni::jboolean = { (*(*this._env.raw())).CallBooleanMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])) };
+        return r as i8 != 0;
+    }
+
+    fn on_key_up(this, arg0: i32, arg1: jni::jobject) -> bool {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("onKeyUp\0"), #str_ptr("(ILandroid/view/KeyEvent;)Z\0"));
+        var args: [jni::JValue; 2] = [jni::arg_int(arg0), jni::arg_object(arg1)];
+        let r: jni::jboolean = { (*(*this._env.raw())).CallBooleanMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])) };
+        return r as i8 != 0;
+    }
+
+    fn on_measure(this, arg0: i32, arg1: i32) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("onMeasure\0"), #str_ptr("(II)V\0"));
+        var args: [jni::JValue; 2] = [jni::arg_int(arg0), jni::arg_int(arg1)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn on_over_scrolled(this, arg0: i32, arg1: i32, arg2: bool, arg3: bool) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("onOverScrolled\0"), #str_ptr("(IIZZ)V\0"));
+        var args: [jni::JValue; 4] = [jni::arg_int(arg0), jni::arg_int(arg1), rt::arg_bool(arg2), rt::arg_bool(arg3)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn on_pause(this) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("onPause\0"), #str_ptr("()V\0"));
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue); };
+        return;
+    }
+
+    fn on_provide_autofill_virtual_structure(this, arg0: jni::jobject, arg1: i32) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("onProvideAutofillVirtualStructure\0"), #str_ptr("(Landroid/view/ViewStructure;I)V\0"));
+        var args: [jni::JValue; 2] = [jni::arg_object(arg0), jni::arg_int(arg1)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn on_provide_content_capture_structure(this, arg0: jni::jobject, arg1: i32) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("onProvideContentCaptureStructure\0"), #str_ptr("(Landroid/view/ViewStructure;I)V\0"));
+        var args: [jni::JValue; 2] = [jni::arg_object(arg0), jni::arg_int(arg1)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn on_provide_virtual_structure(this, arg0: jni::jobject) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("onProvideVirtualStructure\0"), #str_ptr("(Landroid/view/ViewStructure;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn on_resolve_pointer_icon(this, arg0: jni::jobject, arg1: i32) -> jni::jobject {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("onResolvePointerIcon\0"), #str_ptr("(Landroid/view/MotionEvent;I)Landroid/view/PointerIcon;\0"));
+        var args: [jni::JValue; 2] = [jni::arg_object(arg0), jni::arg_int(arg1)];
+        let r: jni::jobject = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])) };
+        return r;
+    }
+
+    fn on_resume(this) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("onResume\0"), #str_ptr("()V\0"));
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue); };
+        return;
+    }
+
+    fn on_scroll_changed(this, arg0: i32, arg1: i32, arg2: i32, arg3: i32) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("onScrollChanged\0"), #str_ptr("(IIII)V\0"));
+        var args: [jni::JValue; 4] = [jni::arg_int(arg0), jni::arg_int(arg1), jni::arg_int(arg2), jni::arg_int(arg3)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn on_size_changed(this, arg0: i32, arg1: i32, arg2: i32, arg3: i32) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("onSizeChanged\0"), #str_ptr("(IIII)V\0"));
+        var args: [jni::JValue; 4] = [jni::arg_int(arg0), jni::arg_int(arg1), jni::arg_int(arg2), jni::arg_int(arg3)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn on_start_temporary_detach(this) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("onStartTemporaryDetach\0"), #str_ptr("()V\0"));
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue); };
+        return;
+    }
+
+    fn on_touch_event(this, arg0: jni::jobject) -> bool {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("onTouchEvent\0"), #str_ptr("(Landroid/view/MotionEvent;)Z\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        let r: jni::jboolean = { (*(*this._env.raw())).CallBooleanMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])) };
+        return r as i8 != 0;
+    }
+
+    fn on_trackball_event(this, arg0: jni::jobject) -> bool {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("onTrackballEvent\0"), #str_ptr("(Landroid/view/MotionEvent;)Z\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        let r: jni::jboolean = { (*(*this._env.raw())).CallBooleanMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])) };
+        return r as i8 != 0;
+    }
+
+    fn on_virtual_view_translation_responses(this, arg0: jni::jobject) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("onVirtualViewTranslationResponses\0"), #str_ptr("(Landroid/util/LongSparseArray;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn on_visibility_changed(this, arg0: jni::jobject, arg1: i32) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("onVisibilityChanged\0"), #str_ptr("(Landroid/view/View;I)V\0"));
+        var args: [jni::JValue; 2] = [jni::arg_object(arg0), jni::arg_int(arg1)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn on_window_focus_changed(this, arg0: bool) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("onWindowFocusChanged\0"), #str_ptr("(Z)V\0"));
+        var args: [jni::JValue; 1] = [rt::arg_bool(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn on_window_visibility_changed(this, arg0: i32) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("onWindowVisibilityChanged\0"), #str_ptr("(I)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_int(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn overlay_horizontal_scrollbar(this) -> bool {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("overlayHorizontalScrollbar\0"), #str_ptr("()Z\0"));
+        let r: jni::jboolean = { (*(*this._env.raw())).CallBooleanMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r as i8 != 0;
+    }
+
+    fn overlay_vertical_scrollbar(this) -> bool {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("overlayVerticalScrollbar\0"), #str_ptr("()Z\0"));
+        let r: jni::jboolean = { (*(*this._env.raw())).CallBooleanMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r as i8 != 0;
+    }
+
+    fn page_down(this, arg0: bool) -> bool {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("pageDown\0"), #str_ptr("(Z)Z\0"));
+        var args: [jni::JValue; 1] = [rt::arg_bool(arg0)];
+        let r: jni::jboolean = { (*(*this._env.raw())).CallBooleanMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])) };
+        return r as i8 != 0;
+    }
+
+    fn page_up(this, arg0: bool) -> bool {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("pageUp\0"), #str_ptr("(Z)Z\0"));
+        var args: [jni::JValue; 1] = [rt::arg_bool(arg0)];
+        let r: jni::jboolean = { (*(*this._env.raw())).CallBooleanMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])) };
+        return r as i8 != 0;
+    }
+
+    fn pause_timers(this) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("pauseTimers\0"), #str_ptr("()V\0"));
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue); };
+        return;
+    }
+
+    fn perform_long_click(this) -> bool {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("performLongClick\0"), #str_ptr("()Z\0"));
+        let r: jni::jboolean = { (*(*this._env.raw())).CallBooleanMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r as i8 != 0;
+    }
+
+    fn post_url(this, arg0: *u8, arg1: jni::jarray) {
+        let arg0_s: jni::jstring = this._env.new_string_utf(arg0);
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("postUrl\0"), #str_ptr("(Ljava/lang/String;[B)V\0"));
+        var args: [jni::JValue; 2] = [jni::arg_object(arg0_s), jni::arg_object(arg1)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        this._env.delete_local_ref(arg0_s);
+        return;
+    }
+
+    fn post_visual_state_callback(this, arg0: i64, arg1: jni::jobject) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("postVisualStateCallback\0"), #str_ptr("(JLandroid/webkit/WebView$VisualStateCallback;)V\0"));
+        var args: [jni::JValue; 2] = [jni::arg_long(arg0), jni::arg_object(arg1)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn post_web_message(this, arg0: jni::jobject, arg1: jni::jobject) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("postWebMessage\0"), #str_ptr("(Landroid/webkit/WebMessage;Landroid/net/Uri;)V\0"));
+        var args: [jni::JValue; 2] = [jni::arg_object(arg0), jni::arg_object(arg1)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn reload(this) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("reload\0"), #str_ptr("()V\0"));
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue); };
+        return;
+    }
+
+    fn remove_javascript_interface(this, arg0: *u8) {
+        let arg0_s: jni::jstring = this._env.new_string_utf(arg0);
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("removeJavascriptInterface\0"), #str_ptr("(Ljava/lang/String;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0_s)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        this._env.delete_local_ref(arg0_s);
+        return;
+    }
+
+    fn renderer_priority_bound(env: rt::Env) -> i32 {
+        let cls: jni::jclass = env.class_cached(#str_ptr("android/webkit/WebView\0"));
+        let fid: jni::jfieldID = env.static_field_id(cls, #str_ptr("RENDERER_PRIORITY_BOUND\0"), #str_ptr("I\0"));
+        let r: i32 = { (*(*env.raw())).GetStaticIntField(env.raw(), cls, fid) };
+        return r;
+    }
+
+    fn renderer_priority_important(env: rt::Env) -> i32 {
+        let cls: jni::jclass = env.class_cached(#str_ptr("android/webkit/WebView\0"));
+        let fid: jni::jfieldID = env.static_field_id(cls, #str_ptr("RENDERER_PRIORITY_IMPORTANT\0"), #str_ptr("I\0"));
+        let r: i32 = { (*(*env.raw())).GetStaticIntField(env.raw(), cls, fid) };
+        return r;
+    }
+
+    fn renderer_priority_waived(env: rt::Env) -> i32 {
+        let cls: jni::jclass = env.class_cached(#str_ptr("android/webkit/WebView\0"));
+        let fid: jni::jfieldID = env.static_field_id(cls, #str_ptr("RENDERER_PRIORITY_WAIVED\0"), #str_ptr("I\0"));
+        let r: i32 = { (*(*env.raw())).GetStaticIntField(env.raw(), cls, fid) };
+        return r;
+    }
+
+    fn request_child_rectangle_on_screen(this, arg0: jni::jobject, arg1: jni::jobject, arg2: bool) -> bool {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("requestChildRectangleOnScreen\0"), #str_ptr("(Landroid/view/View;Landroid/graphics/Rect;Z)Z\0"));
+        var args: [jni::JValue; 3] = [jni::arg_object(arg0), jni::arg_object(arg1), rt::arg_bool(arg2)];
+        let r: jni::jboolean = { (*(*this._env.raw())).CallBooleanMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])) };
+        return r as i8 != 0;
+    }
+
+    fn request_focus(this, arg0: i32, arg1: jni::jobject) -> bool {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("requestFocus\0"), #str_ptr("(ILandroid/graphics/Rect;)Z\0"));
+        var args: [jni::JValue; 2] = [jni::arg_int(arg0), jni::arg_object(arg1)];
+        let r: jni::jboolean = { (*(*this._env.raw())).CallBooleanMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])) };
+        return r as i8 != 0;
+    }
+
+    fn request_focus_node_href(this, arg0: jni::jobject) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("requestFocusNodeHref\0"), #str_ptr("(Landroid/os/Message;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn request_image_ref(this, arg0: jni::jobject) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("requestImageRef\0"), #str_ptr("(Landroid/os/Message;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn restore_state(this, arg0: jni::jobject) -> jni::jobject {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("restoreState\0"), #str_ptr("(Landroid/os/Bundle;)Landroid/webkit/WebBackForwardList;\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        let r: jni::jobject = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])) };
+        return r;
+    }
+
+    fn resume_timers(this) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("resumeTimers\0"), #str_ptr("()V\0"));
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue); };
+        return;
+    }
+
+    fn save_password(this, arg0: *u8, arg1: *u8, arg2: *u8) {
+        let arg0_s: jni::jstring = this._env.new_string_utf(arg0);
+        let arg1_s: jni::jstring = this._env.new_string_utf(arg1);
+        let arg2_s: jni::jstring = this._env.new_string_utf(arg2);
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("savePassword\0"), #str_ptr("(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V\0"));
+        var args: [jni::JValue; 3] = [jni::arg_object(arg0_s), jni::arg_object(arg1_s), jni::arg_object(arg2_s)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        this._env.delete_local_ref(arg0_s);
+        this._env.delete_local_ref(arg1_s);
+        this._env.delete_local_ref(arg2_s);
+        return;
+    }
+
+    fn save_state(this, arg0: jni::jobject) -> jni::jobject {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("saveState\0"), #str_ptr("(Landroid/os/Bundle;)Landroid/webkit/WebBackForwardList;\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        let r: jni::jobject = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])) };
+        return r;
+    }
+
+    fn save_web_archive_str(this, arg0: *u8) {
+        let arg0_s: jni::jstring = this._env.new_string_utf(arg0);
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("saveWebArchive\0"), #str_ptr("(Ljava/lang/String;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0_s)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        this._env.delete_local_ref(arg0_s);
+        return;
+    }
+
+    fn save_web_archive_str_z_value_callback(this, arg0: *u8, arg1: bool, arg2: jni::jobject) {
+        let arg0_s: jni::jstring = this._env.new_string_utf(arg0);
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("saveWebArchive\0"), #str_ptr("(Ljava/lang/String;ZLandroid/webkit/ValueCallback;)V\0"));
+        var args: [jni::JValue; 3] = [jni::arg_object(arg0_s), rt::arg_bool(arg1), jni::arg_object(arg2)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        this._env.delete_local_ref(arg0_s);
+        return;
+    }
+
+    // SKIPPED field `SCHEME_GEO`: String fields need a decode; call the accessor instead
+    // SKIPPED field `SCHEME_MAILTO`: String fields need a decode; call the accessor instead
+    // SKIPPED field `SCHEME_TEL`: String fields need a decode; call the accessor instead
+    fn set_background_color(this, arg0: i32) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("setBackgroundColor\0"), #str_ptr("(I)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_int(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_certificate(this, arg0: jni::jobject) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("setCertificate\0"), #str_ptr("(Landroid/net/http/SslCertificate;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_data_directory_suffix(env: rt::Env, arg0: *u8) {
+        let arg0_s: jni::jstring = env.new_string_utf(arg0);
+        let mid: jni::jmethodID = env.method_static(#str_ptr("android/webkit/WebView\0"), #str_ptr("setDataDirectorySuffix\0"), #str_ptr("(Ljava/lang/String;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0_s)];
+        let cls: jni::jclass = env.class_cached(#str_ptr("android/webkit/WebView\0"));
+        { (*(*env.raw())).CallStaticVoidMethodA(env.raw(), cls, mid, #addr_of(args[0])); };
+        env.delete_local_ref(arg0_s);
+        return;
+    }
+
+    fn set_download_listener(this, arg0: jni::jobject) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("setDownloadListener\0"), #str_ptr("(Landroid/webkit/DownloadListener;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_find_listener(this, arg0: jni::jobject) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("setFindListener\0"), #str_ptr("(Landroid/webkit/WebView$FindListener;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_horizontal_scrollbar_overlay(this, arg0: bool) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("setHorizontalScrollbarOverlay\0"), #str_ptr("(Z)V\0"));
+        var args: [jni::JValue; 1] = [rt::arg_bool(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_http_auth_username_password(this, arg0: *u8, arg1: *u8, arg2: *u8, arg3: *u8) {
+        let arg0_s: jni::jstring = this._env.new_string_utf(arg0);
+        let arg1_s: jni::jstring = this._env.new_string_utf(arg1);
+        let arg2_s: jni::jstring = this._env.new_string_utf(arg2);
+        let arg3_s: jni::jstring = this._env.new_string_utf(arg3);
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("setHttpAuthUsernamePassword\0"), #str_ptr("(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V\0"));
+        var args: [jni::JValue; 4] = [jni::arg_object(arg0_s), jni::arg_object(arg1_s), jni::arg_object(arg2_s), jni::arg_object(arg3_s)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        this._env.delete_local_ref(arg0_s);
+        this._env.delete_local_ref(arg1_s);
+        this._env.delete_local_ref(arg2_s);
+        this._env.delete_local_ref(arg3_s);
+        return;
+    }
+
+    fn set_initial_scale(this, arg0: i32) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("setInitialScale\0"), #str_ptr("(I)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_int(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_layer_type(this, arg0: i32, arg1: jni::jobject) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("setLayerType\0"), #str_ptr("(ILandroid/graphics/Paint;)V\0"));
+        var args: [jni::JValue; 2] = [jni::arg_int(arg0), jni::arg_object(arg1)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_layout_params(this, arg0: jni::jobject) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("setLayoutParams\0"), #str_ptr("(Landroid/view/ViewGroup$LayoutParams;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_map_trackball_to_arrow_keys(this, arg0: bool) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("setMapTrackballToArrowKeys\0"), #str_ptr("(Z)V\0"));
+        var args: [jni::JValue; 1] = [rt::arg_bool(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_network_available(this, arg0: bool) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("setNetworkAvailable\0"), #str_ptr("(Z)V\0"));
+        var args: [jni::JValue; 1] = [rt::arg_bool(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_over_scroll_mode(this, arg0: i32) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("setOverScrollMode\0"), #str_ptr("(I)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_int(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_picture_listener(this, arg0: jni::jobject) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("setPictureListener\0"), #str_ptr("(Landroid/webkit/WebView$PictureListener;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_renderer_priority_policy(this, arg0: i32, arg1: bool) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("setRendererPriorityPolicy\0"), #str_ptr("(IZ)V\0"));
+        var args: [jni::JValue; 2] = [jni::arg_int(arg0), rt::arg_bool(arg1)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_safe_browsing_whitelist(env: rt::Env, arg0: jni::jobject, arg1: jni::jobject) {
+        let mid: jni::jmethodID = env.method_static(#str_ptr("android/webkit/WebView\0"), #str_ptr("setSafeBrowsingWhitelist\0"), #str_ptr("(Ljava/util/List;Landroid/webkit/ValueCallback;)V\0"));
+        var args: [jni::JValue; 2] = [jni::arg_object(arg0), jni::arg_object(arg1)];
+        let cls: jni::jclass = env.class_cached(#str_ptr("android/webkit/WebView\0"));
+        { (*(*env.raw())).CallStaticVoidMethodA(env.raw(), cls, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_scroll_bar_style(this, arg0: i32) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("setScrollBarStyle\0"), #str_ptr("(I)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_int(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_text_classifier(this, arg0: jni::jobject) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("setTextClassifier\0"), #str_ptr("(Landroid/view/textclassifier/TextClassifier;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_vertical_scrollbar_overlay(this, arg0: bool) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("setVerticalScrollbarOverlay\0"), #str_ptr("(Z)V\0"));
+        var args: [jni::JValue; 1] = [rt::arg_bool(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_web_chrome_client(this, arg0: jni::jobject) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("setWebChromeClient\0"), #str_ptr("(Landroid/webkit/WebChromeClient;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_web_contents_debugging_enabled(env: rt::Env, arg0: bool) {
+        let mid: jni::jmethodID = env.method_static(#str_ptr("android/webkit/WebView\0"), #str_ptr("setWebContentsDebuggingEnabled\0"), #str_ptr("(Z)V\0"));
+        var args: [jni::JValue; 1] = [rt::arg_bool(arg0)];
+        let cls: jni::jclass = env.class_cached(#str_ptr("android/webkit/WebView\0"));
+        { (*(*env.raw())).CallStaticVoidMethodA(env.raw(), cls, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_web_view_client(this, arg0: jni::jobject) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("setWebViewClient\0"), #str_ptr("(Landroid/webkit/WebViewClient;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_web_view_render_process_client_web_view_render_process_client(this, arg0: jni::jobject) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("setWebViewRenderProcessClient\0"), #str_ptr("(Landroid/webkit/WebViewRenderProcessClient;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_web_view_render_process_client_executor_web_view_render_process_client(this, arg0: jni::jobject, arg1: jni::jobject) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("setWebViewRenderProcessClient\0"), #str_ptr("(Ljava/util/concurrent/Executor;Landroid/webkit/WebViewRenderProcessClient;)V\0"));
+        var args: [jni::JValue; 2] = [jni::arg_object(arg0), jni::arg_object(arg1)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn should_delay_child_pressed_state(this) -> bool {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("shouldDelayChildPressedState\0"), #str_ptr("()Z\0"));
+        let r: jni::jboolean = { (*(*this._env.raw())).CallBooleanMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r as i8 != 0;
+    }
+
+    fn show_find_dialog(this, arg0: *u8, arg1: bool) -> bool {
+        let arg0_s: jni::jstring = this._env.new_string_utf(arg0);
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("showFindDialog\0"), #str_ptr("(Ljava/lang/String;Z)Z\0"));
+        var args: [jni::JValue; 2] = [jni::arg_object(arg0_s), rt::arg_bool(arg1)];
+        let r: jni::jboolean = { (*(*this._env.raw())).CallBooleanMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])) };
+        this._env.delete_local_ref(arg0_s);
+        return r as i8 != 0;
+    }
+
+    fn start_safe_browsing(env: rt::Env, arg0: jni::jobject, arg1: jni::jobject) {
+        let mid: jni::jmethodID = env.method_static(#str_ptr("android/webkit/WebView\0"), #str_ptr("startSafeBrowsing\0"), #str_ptr("(Landroid/content/Context;Landroid/webkit/ValueCallback;)V\0"));
+        var args: [jni::JValue; 2] = [jni::arg_object(arg0), jni::arg_object(arg1)];
+        let cls: jni::jclass = env.class_cached(#str_ptr("android/webkit/WebView\0"));
+        { (*(*env.raw())).CallStaticVoidMethodA(env.raw(), cls, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn stop_loading(this) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("stopLoading\0"), #str_ptr("()V\0"));
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue); };
+        return;
+    }
+
+    fn zoom_by(this, arg0: f32) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("zoomBy\0"), #str_ptr("(F)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_float(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn zoom_in(this) -> bool {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("zoomIn\0"), #str_ptr("()Z\0"));
+        let r: jni::jboolean = { (*(*this._env.raw())).CallBooleanMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r as i8 != 0;
+    }
+
+    fn zoom_out(this) -> bool {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebView\0"), #str_ptr("zoomOut\0"), #str_ptr("()Z\0"));
+        let r: jni::jboolean = { (*(*this._env.raw())).CallBooleanMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r as i8 != 0;
+    }
+
+}
+
+// android.webkit.WebSettings
+struct WebSettings {
+    _env: rt::Env,
+    _obj: jni::jobject,
+}
+
+impl WebSettings {
+    fn drop(ref this) {
+        // `into_raw` nulls `_obj`; DeleteGlobalRef does not admit NULL.
+        if this._obj != { 0 as jni::jobject } { this._env.delete_global_ref(this._obj); }
+        return;
+    }
+
+    fn from_global(env: rt::Env, obj: jni::jobject) -> WebSettings { return WebSettings { _env: env, _obj: obj }; }
+
+    fn from_local(env: rt::Env, obj: jni::jobject) -> WebSettings { return WebSettings { _env: env, _obj: env.retain_local_as_global(obj) }; }
+
+    fn as_obj(this) -> jni::jobject { return this._obj; }
+
+    fn into_raw(ref this) -> jni::jobject {
+        let p: jni::jobject = this._obj;
+        this._obj = { 0 as jni::jobject };
+        return p;
+    }
+
+    fn enable_smooth_transition(this) -> bool {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebSettings\0"), #str_ptr("enableSmoothTransition\0"), #str_ptr("()Z\0"));
+        let r: jni::jboolean = { (*(*this._env.raw())).CallBooleanMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r as i8 != 0;
+    }
+
+    fn force_dark_auto(env: rt::Env) -> i32 {
+        let cls: jni::jclass = env.class_cached(#str_ptr("android/webkit/WebSettings\0"));
+        let fid: jni::jfieldID = env.static_field_id(cls, #str_ptr("FORCE_DARK_AUTO\0"), #str_ptr("I\0"));
+        let r: i32 = { (*(*env.raw())).GetStaticIntField(env.raw(), cls, fid) };
+        return r;
+    }
+
+    fn force_dark_off(env: rt::Env) -> i32 {
+        let cls: jni::jclass = env.class_cached(#str_ptr("android/webkit/WebSettings\0"));
+        let fid: jni::jfieldID = env.static_field_id(cls, #str_ptr("FORCE_DARK_OFF\0"), #str_ptr("I\0"));
+        let r: i32 = { (*(*env.raw())).GetStaticIntField(env.raw(), cls, fid) };
+        return r;
+    }
+
+    fn force_dark_on(env: rt::Env) -> i32 {
+        let cls: jni::jclass = env.class_cached(#str_ptr("android/webkit/WebSettings\0"));
+        let fid: jni::jfieldID = env.static_field_id(cls, #str_ptr("FORCE_DARK_ON\0"), #str_ptr("I\0"));
+        let r: i32 = { (*(*env.raw())).GetStaticIntField(env.raw(), cls, fid) };
+        return r;
+    }
+
+    fn get_allow_content_access(this) -> bool {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebSettings\0"), #str_ptr("getAllowContentAccess\0"), #str_ptr("()Z\0"));
+        let r: jni::jboolean = { (*(*this._env.raw())).CallBooleanMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r as i8 != 0;
+    }
+
+    fn get_allow_file_access(this) -> bool {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebSettings\0"), #str_ptr("getAllowFileAccess\0"), #str_ptr("()Z\0"));
+        let r: jni::jboolean = { (*(*this._env.raw())).CallBooleanMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r as i8 != 0;
+    }
+
+    fn get_allow_file_access_from_file_ur_ls(this) -> bool {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebSettings\0"), #str_ptr("getAllowFileAccessFromFileURLs\0"), #str_ptr("()Z\0"));
+        let r: jni::jboolean = { (*(*this._env.raw())).CallBooleanMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r as i8 != 0;
+    }
+
+    fn get_allow_universal_access_from_file_ur_ls(this) -> bool {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebSettings\0"), #str_ptr("getAllowUniversalAccessFromFileURLs\0"), #str_ptr("()Z\0"));
+        let r: jni::jboolean = { (*(*this._env.raw())).CallBooleanMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r as i8 != 0;
+    }
+
+    fn get_block_network_image(this) -> bool {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebSettings\0"), #str_ptr("getBlockNetworkImage\0"), #str_ptr("()Z\0"));
+        let r: jni::jboolean = { (*(*this._env.raw())).CallBooleanMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r as i8 != 0;
+    }
+
+    fn get_block_network_loads(this) -> bool {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebSettings\0"), #str_ptr("getBlockNetworkLoads\0"), #str_ptr("()Z\0"));
+        let r: jni::jboolean = { (*(*this._env.raw())).CallBooleanMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r as i8 != 0;
+    }
+
+    fn get_built_in_zoom_controls(this) -> bool {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebSettings\0"), #str_ptr("getBuiltInZoomControls\0"), #str_ptr("()Z\0"));
+        let r: jni::jboolean = { (*(*this._env.raw())).CallBooleanMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r as i8 != 0;
+    }
+
+    fn get_cache_mode(this) -> i32 {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebSettings\0"), #str_ptr("getCacheMode\0"), #str_ptr("()I\0"));
+        let r: i32 = { (*(*this._env.raw())).CallIntMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_cursive_font_family(this) -> *u8 {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebSettings\0"), #str_ptr("getCursiveFontFamily\0"), #str_ptr("()Ljava/lang/String;\0"));
+        let r: *u8 = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_database_enabled(this) -> bool {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebSettings\0"), #str_ptr("getDatabaseEnabled\0"), #str_ptr("()Z\0"));
+        let r: jni::jboolean = { (*(*this._env.raw())).CallBooleanMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r as i8 != 0;
+    }
+
+    fn get_database_path(this) -> *u8 {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebSettings\0"), #str_ptr("getDatabasePath\0"), #str_ptr("()Ljava/lang/String;\0"));
+        let r: *u8 = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_default_fixed_font_size(this) -> i32 {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebSettings\0"), #str_ptr("getDefaultFixedFontSize\0"), #str_ptr("()I\0"));
+        let r: i32 = { (*(*this._env.raw())).CallIntMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_default_font_size(this) -> i32 {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebSettings\0"), #str_ptr("getDefaultFontSize\0"), #str_ptr("()I\0"));
+        let r: i32 = { (*(*this._env.raw())).CallIntMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_default_text_encoding_name(this) -> *u8 {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebSettings\0"), #str_ptr("getDefaultTextEncodingName\0"), #str_ptr("()Ljava/lang/String;\0"));
+        let r: *u8 = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_default_user_agent(env: rt::Env, arg0: jni::jobject) -> *u8 {
+        let mid: jni::jmethodID = env.method_static(#str_ptr("android/webkit/WebSettings\0"), #str_ptr("getDefaultUserAgent\0"), #str_ptr("(Landroid/content/Context;)Ljava/lang/String;\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        let cls: jni::jclass = env.class_cached(#str_ptr("android/webkit/WebSettings\0"));
+        let r: *u8 = { (*(*env.raw())).CallStaticObjectMethodA(env.raw(), cls, mid, #addr_of(args[0])) };
+        return r;
+    }
+
+    fn get_default_zoom(this) -> jni::jobject {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebSettings\0"), #str_ptr("getDefaultZoom\0"), #str_ptr("()Landroid/webkit/WebSettings$ZoomDensity;\0"));
+        let r: jni::jobject = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_disabled_action_mode_menu_items(this) -> i32 {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebSettings\0"), #str_ptr("getDisabledActionModeMenuItems\0"), #str_ptr("()I\0"));
+        let r: i32 = { (*(*this._env.raw())).CallIntMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_display_zoom_controls(this) -> bool {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebSettings\0"), #str_ptr("getDisplayZoomControls\0"), #str_ptr("()Z\0"));
+        let r: jni::jboolean = { (*(*this._env.raw())).CallBooleanMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r as i8 != 0;
+    }
+
+    fn get_dom_storage_enabled(this) -> bool {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebSettings\0"), #str_ptr("getDomStorageEnabled\0"), #str_ptr("()Z\0"));
+        let r: jni::jboolean = { (*(*this._env.raw())).CallBooleanMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r as i8 != 0;
+    }
+
+    fn get_fantasy_font_family(this) -> *u8 {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebSettings\0"), #str_ptr("getFantasyFontFamily\0"), #str_ptr("()Ljava/lang/String;\0"));
+        let r: *u8 = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_fixed_font_family(this) -> *u8 {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebSettings\0"), #str_ptr("getFixedFontFamily\0"), #str_ptr("()Ljava/lang/String;\0"));
+        let r: *u8 = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_force_dark(this) -> i32 {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebSettings\0"), #str_ptr("getForceDark\0"), #str_ptr("()I\0"));
+        let r: i32 = { (*(*this._env.raw())).CallIntMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_java_script_can_open_windows_automatically(this) -> bool {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebSettings\0"), #str_ptr("getJavaScriptCanOpenWindowsAutomatically\0"), #str_ptr("()Z\0"));
+        let r: jni::jboolean = { (*(*this._env.raw())).CallBooleanMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r as i8 != 0;
+    }
+
+    fn get_java_script_enabled(this) -> bool {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebSettings\0"), #str_ptr("getJavaScriptEnabled\0"), #str_ptr("()Z\0"));
+        let r: jni::jboolean = { (*(*this._env.raw())).CallBooleanMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r as i8 != 0;
+    }
+
+    fn get_layout_algorithm(this) -> jni::jobject {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebSettings\0"), #str_ptr("getLayoutAlgorithm\0"), #str_ptr("()Landroid/webkit/WebSettings$LayoutAlgorithm;\0"));
+        let r: jni::jobject = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_light_touch_enabled(this) -> bool {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebSettings\0"), #str_ptr("getLightTouchEnabled\0"), #str_ptr("()Z\0"));
+        let r: jni::jboolean = { (*(*this._env.raw())).CallBooleanMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r as i8 != 0;
+    }
+
+    fn get_load_with_overview_mode(this) -> bool {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebSettings\0"), #str_ptr("getLoadWithOverviewMode\0"), #str_ptr("()Z\0"));
+        let r: jni::jboolean = { (*(*this._env.raw())).CallBooleanMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r as i8 != 0;
+    }
+
+    fn get_loads_images_automatically(this) -> bool {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebSettings\0"), #str_ptr("getLoadsImagesAutomatically\0"), #str_ptr("()Z\0"));
+        let r: jni::jboolean = { (*(*this._env.raw())).CallBooleanMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r as i8 != 0;
+    }
+
+    fn get_media_playback_requires_user_gesture(this) -> bool {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebSettings\0"), #str_ptr("getMediaPlaybackRequiresUserGesture\0"), #str_ptr("()Z\0"));
+        let r: jni::jboolean = { (*(*this._env.raw())).CallBooleanMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r as i8 != 0;
+    }
+
+    fn get_minimum_font_size(this) -> i32 {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebSettings\0"), #str_ptr("getMinimumFontSize\0"), #str_ptr("()I\0"));
+        let r: i32 = { (*(*this._env.raw())).CallIntMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_minimum_logical_font_size(this) -> i32 {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebSettings\0"), #str_ptr("getMinimumLogicalFontSize\0"), #str_ptr("()I\0"));
+        let r: i32 = { (*(*this._env.raw())).CallIntMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_mixed_content_mode(this) -> i32 {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebSettings\0"), #str_ptr("getMixedContentMode\0"), #str_ptr("()I\0"));
+        let r: i32 = { (*(*this._env.raw())).CallIntMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_offscreen_pre_raster(this) -> bool {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebSettings\0"), #str_ptr("getOffscreenPreRaster\0"), #str_ptr("()Z\0"));
+        let r: jni::jboolean = { (*(*this._env.raw())).CallBooleanMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r as i8 != 0;
+    }
+
+    fn get_plugin_state(this) -> jni::jobject {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebSettings\0"), #str_ptr("getPluginState\0"), #str_ptr("()Landroid/webkit/WebSettings$PluginState;\0"));
+        let r: jni::jobject = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_safe_browsing_enabled(this) -> bool {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebSettings\0"), #str_ptr("getSafeBrowsingEnabled\0"), #str_ptr("()Z\0"));
+        let r: jni::jboolean = { (*(*this._env.raw())).CallBooleanMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r as i8 != 0;
+    }
+
+    fn get_sans_serif_font_family(this) -> *u8 {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebSettings\0"), #str_ptr("getSansSerifFontFamily\0"), #str_ptr("()Ljava/lang/String;\0"));
+        let r: *u8 = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_save_form_data(this) -> bool {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebSettings\0"), #str_ptr("getSaveFormData\0"), #str_ptr("()Z\0"));
+        let r: jni::jboolean = { (*(*this._env.raw())).CallBooleanMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r as i8 != 0;
+    }
+
+    fn get_save_password(this) -> bool {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebSettings\0"), #str_ptr("getSavePassword\0"), #str_ptr("()Z\0"));
+        let r: jni::jboolean = { (*(*this._env.raw())).CallBooleanMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r as i8 != 0;
+    }
+
+    fn get_serif_font_family(this) -> *u8 {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebSettings\0"), #str_ptr("getSerifFontFamily\0"), #str_ptr("()Ljava/lang/String;\0"));
+        let r: *u8 = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_standard_font_family(this) -> *u8 {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebSettings\0"), #str_ptr("getStandardFontFamily\0"), #str_ptr("()Ljava/lang/String;\0"));
+        let r: *u8 = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_text_size(this) -> jni::jobject {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebSettings\0"), #str_ptr("getTextSize\0"), #str_ptr("()Landroid/webkit/WebSettings$TextSize;\0"));
+        let r: jni::jobject = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_text_zoom(this) -> i32 {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebSettings\0"), #str_ptr("getTextZoom\0"), #str_ptr("()I\0"));
+        let r: i32 = { (*(*this._env.raw())).CallIntMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_use_wide_view_port(this) -> bool {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebSettings\0"), #str_ptr("getUseWideViewPort\0"), #str_ptr("()Z\0"));
+        let r: jni::jboolean = { (*(*this._env.raw())).CallBooleanMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r as i8 != 0;
+    }
+
+    fn get_user_agent_string(this) -> *u8 {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebSettings\0"), #str_ptr("getUserAgentString\0"), #str_ptr("()Ljava/lang/String;\0"));
+        let r: *u8 = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn is_algorithmic_darkening_allowed(this) -> bool {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebSettings\0"), #str_ptr("isAlgorithmicDarkeningAllowed\0"), #str_ptr("()Z\0"));
+        let r: jni::jboolean = { (*(*this._env.raw())).CallBooleanMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r as i8 != 0;
+    }
+
+    fn load_cache_else_network(env: rt::Env) -> i32 {
+        let cls: jni::jclass = env.class_cached(#str_ptr("android/webkit/WebSettings\0"));
+        let fid: jni::jfieldID = env.static_field_id(cls, #str_ptr("LOAD_CACHE_ELSE_NETWORK\0"), #str_ptr("I\0"));
+        let r: i32 = { (*(*env.raw())).GetStaticIntField(env.raw(), cls, fid) };
+        return r;
+    }
+
+    fn load_cache_only(env: rt::Env) -> i32 {
+        let cls: jni::jclass = env.class_cached(#str_ptr("android/webkit/WebSettings\0"));
+        let fid: jni::jfieldID = env.static_field_id(cls, #str_ptr("LOAD_CACHE_ONLY\0"), #str_ptr("I\0"));
+        let r: i32 = { (*(*env.raw())).GetStaticIntField(env.raw(), cls, fid) };
+        return r;
+    }
+
+    fn load_default(env: rt::Env) -> i32 {
+        let cls: jni::jclass = env.class_cached(#str_ptr("android/webkit/WebSettings\0"));
+        let fid: jni::jfieldID = env.static_field_id(cls, #str_ptr("LOAD_DEFAULT\0"), #str_ptr("I\0"));
+        let r: i32 = { (*(*env.raw())).GetStaticIntField(env.raw(), cls, fid) };
+        return r;
+    }
+
+    fn load_no_cache(env: rt::Env) -> i32 {
+        let cls: jni::jclass = env.class_cached(#str_ptr("android/webkit/WebSettings\0"));
+        let fid: jni::jfieldID = env.static_field_id(cls, #str_ptr("LOAD_NO_CACHE\0"), #str_ptr("I\0"));
+        let r: i32 = { (*(*env.raw())).GetStaticIntField(env.raw(), cls, fid) };
+        return r;
+    }
+
+    fn load_normal(env: rt::Env) -> i32 {
+        let cls: jni::jclass = env.class_cached(#str_ptr("android/webkit/WebSettings\0"));
+        let fid: jni::jfieldID = env.static_field_id(cls, #str_ptr("LOAD_NORMAL\0"), #str_ptr("I\0"));
+        let r: i32 = { (*(*env.raw())).GetStaticIntField(env.raw(), cls, fid) };
+        return r;
+    }
+
+    fn menu_item_none(env: rt::Env) -> i32 {
+        let cls: jni::jclass = env.class_cached(#str_ptr("android/webkit/WebSettings\0"));
+        let fid: jni::jfieldID = env.static_field_id(cls, #str_ptr("MENU_ITEM_NONE\0"), #str_ptr("I\0"));
+        let r: i32 = { (*(*env.raw())).GetStaticIntField(env.raw(), cls, fid) };
+        return r;
+    }
+
+    fn menu_item_process_text(env: rt::Env) -> i32 {
+        let cls: jni::jclass = env.class_cached(#str_ptr("android/webkit/WebSettings\0"));
+        let fid: jni::jfieldID = env.static_field_id(cls, #str_ptr("MENU_ITEM_PROCESS_TEXT\0"), #str_ptr("I\0"));
+        let r: i32 = { (*(*env.raw())).GetStaticIntField(env.raw(), cls, fid) };
+        return r;
+    }
+
+    fn menu_item_share(env: rt::Env) -> i32 {
+        let cls: jni::jclass = env.class_cached(#str_ptr("android/webkit/WebSettings\0"));
+        let fid: jni::jfieldID = env.static_field_id(cls, #str_ptr("MENU_ITEM_SHARE\0"), #str_ptr("I\0"));
+        let r: i32 = { (*(*env.raw())).GetStaticIntField(env.raw(), cls, fid) };
+        return r;
+    }
+
+    fn menu_item_web_search(env: rt::Env) -> i32 {
+        let cls: jni::jclass = env.class_cached(#str_ptr("android/webkit/WebSettings\0"));
+        let fid: jni::jfieldID = env.static_field_id(cls, #str_ptr("MENU_ITEM_WEB_SEARCH\0"), #str_ptr("I\0"));
+        let r: i32 = { (*(*env.raw())).GetStaticIntField(env.raw(), cls, fid) };
+        return r;
+    }
+
+    fn mixed_content_always_allow(env: rt::Env) -> i32 {
+        let cls: jni::jclass = env.class_cached(#str_ptr("android/webkit/WebSettings\0"));
+        let fid: jni::jfieldID = env.static_field_id(cls, #str_ptr("MIXED_CONTENT_ALWAYS_ALLOW\0"), #str_ptr("I\0"));
+        let r: i32 = { (*(*env.raw())).GetStaticIntField(env.raw(), cls, fid) };
+        return r;
+    }
+
+    fn mixed_content_compatibility_mode(env: rt::Env) -> i32 {
+        let cls: jni::jclass = env.class_cached(#str_ptr("android/webkit/WebSettings\0"));
+        let fid: jni::jfieldID = env.static_field_id(cls, #str_ptr("MIXED_CONTENT_COMPATIBILITY_MODE\0"), #str_ptr("I\0"));
+        let r: i32 = { (*(*env.raw())).GetStaticIntField(env.raw(), cls, fid) };
+        return r;
+    }
+
+    fn mixed_content_never_allow(env: rt::Env) -> i32 {
+        let cls: jni::jclass = env.class_cached(#str_ptr("android/webkit/WebSettings\0"));
+        let fid: jni::jfieldID = env.static_field_id(cls, #str_ptr("MIXED_CONTENT_NEVER_ALLOW\0"), #str_ptr("I\0"));
+        let r: i32 = { (*(*env.raw())).GetStaticIntField(env.raw(), cls, fid) };
+        return r;
+    }
+
+    fn new(env: rt::Env) -> WebSettings {
+        let mid: jni::jmethodID = env.method(#str_ptr("android/webkit/WebSettings\0"), #str_ptr("<init>\0"), #str_ptr("()V\0"));
+        let cls: jni::jclass = env.class_cached(#str_ptr("android/webkit/WebSettings\0"));
+        let obj: jni::jobject = { (*(*env.raw())).NewObjectA(env.raw(), cls, mid, 0 as *jni::JValue) };
+        return WebSettings { _env: env, _obj: env.retain_local_as_global(obj) };
+    }
+
+    fn set_algorithmic_darkening_allowed(this, arg0: bool) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebSettings\0"), #str_ptr("setAlgorithmicDarkeningAllowed\0"), #str_ptr("(Z)V\0"));
+        var args: [jni::JValue; 1] = [rt::arg_bool(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_allow_content_access(this, arg0: bool) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebSettings\0"), #str_ptr("setAllowContentAccess\0"), #str_ptr("(Z)V\0"));
+        var args: [jni::JValue; 1] = [rt::arg_bool(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_allow_file_access(this, arg0: bool) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebSettings\0"), #str_ptr("setAllowFileAccess\0"), #str_ptr("(Z)V\0"));
+        var args: [jni::JValue; 1] = [rt::arg_bool(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_allow_file_access_from_file_ur_ls(this, arg0: bool) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebSettings\0"), #str_ptr("setAllowFileAccessFromFileURLs\0"), #str_ptr("(Z)V\0"));
+        var args: [jni::JValue; 1] = [rt::arg_bool(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_allow_universal_access_from_file_ur_ls(this, arg0: bool) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebSettings\0"), #str_ptr("setAllowUniversalAccessFromFileURLs\0"), #str_ptr("(Z)V\0"));
+        var args: [jni::JValue; 1] = [rt::arg_bool(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_block_network_image(this, arg0: bool) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebSettings\0"), #str_ptr("setBlockNetworkImage\0"), #str_ptr("(Z)V\0"));
+        var args: [jni::JValue; 1] = [rt::arg_bool(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_block_network_loads(this, arg0: bool) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebSettings\0"), #str_ptr("setBlockNetworkLoads\0"), #str_ptr("(Z)V\0"));
+        var args: [jni::JValue; 1] = [rt::arg_bool(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_built_in_zoom_controls(this, arg0: bool) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebSettings\0"), #str_ptr("setBuiltInZoomControls\0"), #str_ptr("(Z)V\0"));
+        var args: [jni::JValue; 1] = [rt::arg_bool(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_cache_mode(this, arg0: i32) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebSettings\0"), #str_ptr("setCacheMode\0"), #str_ptr("(I)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_int(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_cursive_font_family(this, arg0: *u8) {
+        let arg0_s: jni::jstring = this._env.new_string_utf(arg0);
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebSettings\0"), #str_ptr("setCursiveFontFamily\0"), #str_ptr("(Ljava/lang/String;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0_s)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        this._env.delete_local_ref(arg0_s);
+        return;
+    }
+
+    fn set_database_enabled(this, arg0: bool) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebSettings\0"), #str_ptr("setDatabaseEnabled\0"), #str_ptr("(Z)V\0"));
+        var args: [jni::JValue; 1] = [rt::arg_bool(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_database_path(this, arg0: *u8) {
+        let arg0_s: jni::jstring = this._env.new_string_utf(arg0);
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebSettings\0"), #str_ptr("setDatabasePath\0"), #str_ptr("(Ljava/lang/String;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0_s)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        this._env.delete_local_ref(arg0_s);
+        return;
+    }
+
+    fn set_default_fixed_font_size(this, arg0: i32) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebSettings\0"), #str_ptr("setDefaultFixedFontSize\0"), #str_ptr("(I)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_int(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_default_font_size(this, arg0: i32) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebSettings\0"), #str_ptr("setDefaultFontSize\0"), #str_ptr("(I)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_int(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_default_text_encoding_name(this, arg0: *u8) {
+        let arg0_s: jni::jstring = this._env.new_string_utf(arg0);
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebSettings\0"), #str_ptr("setDefaultTextEncodingName\0"), #str_ptr("(Ljava/lang/String;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0_s)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        this._env.delete_local_ref(arg0_s);
+        return;
+    }
+
+    fn set_default_zoom(this, arg0: jni::jobject) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebSettings\0"), #str_ptr("setDefaultZoom\0"), #str_ptr("(Landroid/webkit/WebSettings$ZoomDensity;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_disabled_action_mode_menu_items(this, arg0: i32) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebSettings\0"), #str_ptr("setDisabledActionModeMenuItems\0"), #str_ptr("(I)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_int(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_display_zoom_controls(this, arg0: bool) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebSettings\0"), #str_ptr("setDisplayZoomControls\0"), #str_ptr("(Z)V\0"));
+        var args: [jni::JValue; 1] = [rt::arg_bool(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_dom_storage_enabled(this, arg0: bool) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebSettings\0"), #str_ptr("setDomStorageEnabled\0"), #str_ptr("(Z)V\0"));
+        var args: [jni::JValue; 1] = [rt::arg_bool(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_enable_smooth_transition(this, arg0: bool) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebSettings\0"), #str_ptr("setEnableSmoothTransition\0"), #str_ptr("(Z)V\0"));
+        var args: [jni::JValue; 1] = [rt::arg_bool(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_fantasy_font_family(this, arg0: *u8) {
+        let arg0_s: jni::jstring = this._env.new_string_utf(arg0);
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebSettings\0"), #str_ptr("setFantasyFontFamily\0"), #str_ptr("(Ljava/lang/String;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0_s)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        this._env.delete_local_ref(arg0_s);
+        return;
+    }
+
+    fn set_fixed_font_family(this, arg0: *u8) {
+        let arg0_s: jni::jstring = this._env.new_string_utf(arg0);
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebSettings\0"), #str_ptr("setFixedFontFamily\0"), #str_ptr("(Ljava/lang/String;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0_s)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        this._env.delete_local_ref(arg0_s);
+        return;
+    }
+
+    fn set_force_dark(this, arg0: i32) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebSettings\0"), #str_ptr("setForceDark\0"), #str_ptr("(I)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_int(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_geolocation_database_path(this, arg0: *u8) {
+        let arg0_s: jni::jstring = this._env.new_string_utf(arg0);
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebSettings\0"), #str_ptr("setGeolocationDatabasePath\0"), #str_ptr("(Ljava/lang/String;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0_s)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        this._env.delete_local_ref(arg0_s);
+        return;
+    }
+
+    fn set_geolocation_enabled(this, arg0: bool) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebSettings\0"), #str_ptr("setGeolocationEnabled\0"), #str_ptr("(Z)V\0"));
+        var args: [jni::JValue; 1] = [rt::arg_bool(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_java_script_can_open_windows_automatically(this, arg0: bool) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebSettings\0"), #str_ptr("setJavaScriptCanOpenWindowsAutomatically\0"), #str_ptr("(Z)V\0"));
+        var args: [jni::JValue; 1] = [rt::arg_bool(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_java_script_enabled(this, arg0: bool) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebSettings\0"), #str_ptr("setJavaScriptEnabled\0"), #str_ptr("(Z)V\0"));
+        var args: [jni::JValue; 1] = [rt::arg_bool(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_layout_algorithm(this, arg0: jni::jobject) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebSettings\0"), #str_ptr("setLayoutAlgorithm\0"), #str_ptr("(Landroid/webkit/WebSettings$LayoutAlgorithm;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_light_touch_enabled(this, arg0: bool) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebSettings\0"), #str_ptr("setLightTouchEnabled\0"), #str_ptr("(Z)V\0"));
+        var args: [jni::JValue; 1] = [rt::arg_bool(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_load_with_overview_mode(this, arg0: bool) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebSettings\0"), #str_ptr("setLoadWithOverviewMode\0"), #str_ptr("(Z)V\0"));
+        var args: [jni::JValue; 1] = [rt::arg_bool(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_loads_images_automatically(this, arg0: bool) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebSettings\0"), #str_ptr("setLoadsImagesAutomatically\0"), #str_ptr("(Z)V\0"));
+        var args: [jni::JValue; 1] = [rt::arg_bool(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_media_playback_requires_user_gesture(this, arg0: bool) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebSettings\0"), #str_ptr("setMediaPlaybackRequiresUserGesture\0"), #str_ptr("(Z)V\0"));
+        var args: [jni::JValue; 1] = [rt::arg_bool(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_minimum_font_size(this, arg0: i32) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebSettings\0"), #str_ptr("setMinimumFontSize\0"), #str_ptr("(I)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_int(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_minimum_logical_font_size(this, arg0: i32) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebSettings\0"), #str_ptr("setMinimumLogicalFontSize\0"), #str_ptr("(I)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_int(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_mixed_content_mode(this, arg0: i32) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebSettings\0"), #str_ptr("setMixedContentMode\0"), #str_ptr("(I)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_int(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_need_initial_focus(this, arg0: bool) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebSettings\0"), #str_ptr("setNeedInitialFocus\0"), #str_ptr("(Z)V\0"));
+        var args: [jni::JValue; 1] = [rt::arg_bool(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_offscreen_pre_raster(this, arg0: bool) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebSettings\0"), #str_ptr("setOffscreenPreRaster\0"), #str_ptr("(Z)V\0"));
+        var args: [jni::JValue; 1] = [rt::arg_bool(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_plugin_state(this, arg0: jni::jobject) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebSettings\0"), #str_ptr("setPluginState\0"), #str_ptr("(Landroid/webkit/WebSettings$PluginState;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_render_priority(this, arg0: jni::jobject) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebSettings\0"), #str_ptr("setRenderPriority\0"), #str_ptr("(Landroid/webkit/WebSettings$RenderPriority;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_safe_browsing_enabled(this, arg0: bool) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebSettings\0"), #str_ptr("setSafeBrowsingEnabled\0"), #str_ptr("(Z)V\0"));
+        var args: [jni::JValue; 1] = [rt::arg_bool(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_sans_serif_font_family(this, arg0: *u8) {
+        let arg0_s: jni::jstring = this._env.new_string_utf(arg0);
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebSettings\0"), #str_ptr("setSansSerifFontFamily\0"), #str_ptr("(Ljava/lang/String;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0_s)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        this._env.delete_local_ref(arg0_s);
+        return;
+    }
+
+    fn set_save_form_data(this, arg0: bool) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebSettings\0"), #str_ptr("setSaveFormData\0"), #str_ptr("(Z)V\0"));
+        var args: [jni::JValue; 1] = [rt::arg_bool(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_save_password(this, arg0: bool) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebSettings\0"), #str_ptr("setSavePassword\0"), #str_ptr("(Z)V\0"));
+        var args: [jni::JValue; 1] = [rt::arg_bool(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_serif_font_family(this, arg0: *u8) {
+        let arg0_s: jni::jstring = this._env.new_string_utf(arg0);
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebSettings\0"), #str_ptr("setSerifFontFamily\0"), #str_ptr("(Ljava/lang/String;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0_s)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        this._env.delete_local_ref(arg0_s);
+        return;
+    }
+
+    fn set_standard_font_family(this, arg0: *u8) {
+        let arg0_s: jni::jstring = this._env.new_string_utf(arg0);
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebSettings\0"), #str_ptr("setStandardFontFamily\0"), #str_ptr("(Ljava/lang/String;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0_s)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        this._env.delete_local_ref(arg0_s);
+        return;
+    }
+
+    fn set_support_multiple_windows(this, arg0: bool) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebSettings\0"), #str_ptr("setSupportMultipleWindows\0"), #str_ptr("(Z)V\0"));
+        var args: [jni::JValue; 1] = [rt::arg_bool(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_support_zoom(this, arg0: bool) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebSettings\0"), #str_ptr("setSupportZoom\0"), #str_ptr("(Z)V\0"));
+        var args: [jni::JValue; 1] = [rt::arg_bool(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_text_size(this, arg0: jni::jobject) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebSettings\0"), #str_ptr("setTextSize\0"), #str_ptr("(Landroid/webkit/WebSettings$TextSize;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_text_zoom(this, arg0: i32) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebSettings\0"), #str_ptr("setTextZoom\0"), #str_ptr("(I)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_int(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_use_wide_view_port(this, arg0: bool) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebSettings\0"), #str_ptr("setUseWideViewPort\0"), #str_ptr("(Z)V\0"));
+        var args: [jni::JValue; 1] = [rt::arg_bool(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_user_agent_string(this, arg0: *u8) {
+        let arg0_s: jni::jstring = this._env.new_string_utf(arg0);
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebSettings\0"), #str_ptr("setUserAgentString\0"), #str_ptr("(Ljava/lang/String;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0_s)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        this._env.delete_local_ref(arg0_s);
+        return;
+    }
+
+    fn support_multiple_windows(this) -> bool {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebSettings\0"), #str_ptr("supportMultipleWindows\0"), #str_ptr("()Z\0"));
+        let r: jni::jboolean = { (*(*this._env.raw())).CallBooleanMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r as i8 != 0;
+    }
+
+    fn support_zoom(this) -> bool {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/webkit/WebSettings\0"), #str_ptr("supportZoom\0"), #str_ptr("()Z\0"));
+        let r: jni::jboolean = { (*(*this._env.raw())).CallBooleanMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r as i8 != 0;
+    }
+
+}
+
+// cpc-bindgen --java: 3370 items emitted, 31 SKIPPED.

@@ -168,6 +168,53 @@ export extern fn facet_android_focus(envp: *jni::JNIEnv, cls: jni::jobject, toke
     return;
 }
 
+export extern fn facet_android_navigating(envp: *jni::JNIEnv, cls: jni::jobject,
+                                          token: i64) {
+    e::set_env(rt::from_native(envp));
+    controls::fire_web_edge(token, 0 as i32, false, false);
+    return;
+}
+
+export extern fn facet_android_navigated(envp: *jni::JNIEnv, cls: jni::jobject, token: i64,
+                                         back: u8, forward: u8) {
+    e::set_env(rt::from_native(envp));
+    controls::fire_web_edge(token, 1 as i32, back != (0 as u8), forward != (0 as u8));
+    return;
+}
+
+export extern fn facet_android_terminated(envp: *jni::JNIEnv, cls: jni::jobject, token: i64) {
+    e::set_env(rt::from_native(envp));
+    controls::fire_web_edge(token, 2 as i32, false, false);
+    return;
+}
+
+export extern fn facet_android_picked(envp: *jni::JNIEnv, cls: jni::jobject, token: i64,
+                                      index: i32) {
+    e::set_env(rt::from_native(envp));
+    controls::fire_picked(token, index);
+    return;
+}
+
+export extern fn facet_android_time_set(envp: *jni::JNIEnv, cls: jni::jobject, token: i64,
+                                        hour: i32, minute: i32) {
+    e::set_env(rt::from_native(envp));
+    controls::fire_time_set(token, hour, minute);
+    return;
+}
+
+export extern fn facet_android_time_opened(envp: *jni::JNIEnv, cls: jni::jobject, token: i64) {
+    e::set_env(rt::from_native(envp));
+    controls::fire_time_edge(token, true);
+    return;
+}
+
+export extern fn facet_android_time_dismissed(envp: *jni::JNIEnv, cls: jni::jobject,
+                                              token: i64) {
+    e::set_env(rt::from_native(envp));
+    controls::fire_time_edge(token, false);
+    return;
+}
+
 export extern fn facet_android_date_set(envp: *jni::JNIEnv, cls: jni::jobject, token: i64,
                                         y: i32, m: i32, d: i32) {
     e::set_env(rt::from_native(envp));

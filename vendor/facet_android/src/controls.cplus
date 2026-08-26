@@ -36,6 +36,10 @@ import "facet/canvas" as canvas;
 import "facet/page_dots" as page_dots;
 import "facet/date_picker" as date_picker;
 import "facet/symbol" as symbol;
+import "facet/time_picker" as time_picker;
+import "facet/bordered" as bordered;
+import "facet/popup" as popup;
+import "facet/web" as web;
 import "facet/vocabulary" as vocab;
 import "./env" as e;
 import "./paint" as paint;
@@ -256,6 +260,7 @@ fn fire_click(token: i64) {
     // node — so the swipe path is asked before any props struct is read.
     if swipe::fire_action(n) { return; }
     if fire_date_picker_click(n) { return; }
+    if fire_time_picker_click(n) { return; }
     if fire_text_button_click(n) { return; }
     if fire_icon_button_click(n) { return; }
     let p: *props::ButtonProps = props_of(n, props::K_BUTTON) as *props::ButtonProps;
@@ -2672,6 +2677,455 @@ fn fire_date_edge(token: i64, opened: bool) {
     var ctx: *u8 = { (*p).on_closed_ctx };
     if opened { h = { (*p).on_opened }; ctx = { (*p).on_opened_ctx }; }
     if h != props::no_handler { h(core::view_of(n), ctx); }
+    return;
+}
+
+// ---- time picker ---------------------------------------------------------------
+// The date picker one field over, and the same posture for the same reason:
+// Android's embedded `TimePicker` is a clock face or a pair of spinners, and
+// what an app asking for a 44-point picker means is a chip that opens one.
+//
+// `time` is a DURATION — seconds since midnight — which is facet's way of
+// saying a wall-clock time without a date attached. Hours and minutes come out
+// of it here, once, at the boundary.
+
+fn time_props(n: *core::Node) -> *props::TimePickerProps {
+    return props_of(n, props::K_TIME_PICKER) as *props::TimePickerProps;
+}
+
+fn hour_of(p: *props::TimePickerProps) -> i32 {
+    let secs: f64 = { (*p).time.seconds };
+    if secs <= 0.0f64 { return 0 as i32; }
+    return { (secs / 3600.0f64) as i32 } % (24 as i32);
+}
+
+fn minute_of(p: *props::TimePickerProps) -> i32 {
+    let secs: f64 = { (*p).time.seconds };
+    if secs <= 0.0f64 { return 0 as i32; }
+    return { ((secs / 60.0f64) as i32) } % (60 as i32);
+}
+
+fn create_time_picker(n: *core::Node) -> *u8 {
+    let env: rt::Env = e::env();
+    var b: w::Button = w::Button::new_context_attribute_set_i(
+        env, e::context(), 0 as jni::jobject, borderless_style(env));
+    let raw: *u8 = b.into_raw();
+    let listener: jni::jobject =
+        dex::new_with_token(env, dex::click_class(), { #addr(n) as i64 });
+    var view: w::View = w::View::from_global(env, raw);
+    view.set_on_click_listener(listener);
+    view.set_padding(0 as i32, 0 as i32, 0 as i32, 0 as i32);
+    paint::unwrap_keep(view);
+    var tv: w::TextView = w::TextView::from_global(env, raw);
+    tv.set_gravity(17 as i32);   // CENTER
+    let _k: *u8 = tv.into_raw();
+    env.delete_local_ref(listener);
+    dex::tap_feedback(env, raw, 0.0f64);
+    return raw;
+}
+
+fn apply_time_picker(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *props::TimePickerProps = time_props(n);
+    if p == (0 as *props::TimePickerProps) { return; }
+    let env: rt::Env = e::env();
+    if (dirty & (time_picker::P_TIME | time_picker::P_FORMAT)) != (0 as u64)
+       || dirty == paint::all_bits() {
+        write_time_title(env, v, p);
+    }
+    var tv: w::TextView = w::TextView::from_global(env, v);
+    if (dirty & (time_picker::P_FONT_SIZE | time_picker::P_FONT_SCALES)) != (0 as u64) {
+        apply_text_size(tv, { (*p).font_size }, { (*p).font_scales });
+    }
+    if (dirty & time_picker::P_TEXT_COLOR) != (0 as u64) {
+        let c: vocab::Color = { (*p).text_color };
+        if c.is_set() { tv.set_text_color_i(paint::argb_of(c)); }
+    }
+    let typography: u64 = time_picker::P_FONT_FAMILY | time_picker::P_FONT_WEIGHT
+                        | time_picker::P_IS_ITALIC | time_picker::P_CHARACTER_SPACING
+                        | time_picker::P_FONT_SIZE;
+    if (dirty & typography) != (0 as u64) || dirty == paint::all_bits() {
+        var st: TextStyle = TextStyle::none();
+        st.family = { (*p).font_family.view() };
+        st.weight = { (*p).font_weight };
+        st.is_italic = { (*p).is_italic };
+        st.size = { (*p).font_size };
+        st.scales = { (*p).font_scales };
+        st.align = vocab::TextAlign::Center;
+        st.vertical_align = vocab::TextAlign::Center;
+        st.character_spacing = { (*p).character_spacing };
+        apply_text_style(env, tv, st);
+    }
+    let _k: *u8 = tv.into_raw();
+    if (dirty & time_picker::P_IS_OPEN) != (0 as u64) {
+        if { (*p).is_open } { open_time_dialog(env, n, p); }
+    }
+    return;
+}
+
+fn write_time_title(env: rt::Env, v: *u8, p: *props::TimePickerProps) {
+    var pat: [u8; 128] = #zero::[[u8; 128]]();
+    let pat_base: *u8 = { #addr_of(pat[0]) };
+    if !paint::cstr({ (*p).format.view() }, pat_base, 128 as usize) {
+        { (*pat_base) = 0 as u8 };
+    }
+    let js: jni::jobject = dex::time_format(env, pat_base, hour_of(p), minute_of(p));
+    if js == (0 as jni::jobject) { return; }
+    var buf: [u8; 128] = #zero::[[u8; 128]]();
+    let base: *u8 = { #addr_of(buf[0]) };
+    if env.string_utf_into(js, base, 128 as usize) {
+        var tv: w::TextView = w::TextView::from_global(env, v);
+        tv.set_text_str(base);
+        let _k: *u8 = tv.into_raw();
+    }
+    env.delete_local_ref(js);
+    return;
+}
+
+fn open_time_dialog(env: rt::Env, n: *core::Node, p: *props::TimePickerProps) {
+    dex::time_show(env, e::context(), { #addr(n) as i64 }, hour_of(p), minute_of(p));
+    return;
+}
+
+fn fire_time_picker_click(n: *core::Node) -> bool {
+    let p: *props::TimePickerProps = time_props(n);
+    if p == (0 as *props::TimePickerProps) { return false; }
+    if !e::have_env() { return true; }
+    open_time_dialog(e::env(), n, p);
+    return true;
+}
+
+// A time was chosen. WRITTEN BACK FIRST, so a handler asking `picker.time()` is
+// told what was picked — the same order every other read here takes.
+fn fire_time_set(token: i64, hour: i32, minute: i32) {
+    let n: *core::Node = { token as *core::Node };
+    if n == (0 as *core::Node) { return; }
+    let p: *props::TimePickerProps = time_props(n);
+    if p == (0 as *props::TimePickerProps) { return; }
+    let secs: f64 = ({ hour as f64 } * 3600.0f64) + ({ minute as f64 } * 60.0f64);
+    { (*p).time = vocab::Duration::of_seconds(secs) };
+    core::touch(n, time_picker::P_TIME);
+    let h: fn(*u8, *u8) = { (*p).on_time_selected };
+    if h != props::no_handler { h(core::view_of(n), { (*p).on_time_selected_ctx }); }
+    return;
+}
+
+fn fire_time_edge(token: i64, opened: bool) {
+    let n: *core::Node = { token as *core::Node };
+    if n == (0 as *core::Node) { return; }
+    let p: *props::TimePickerProps = time_props(n);
+    if p == (0 as *props::TimePickerProps) { return; }
+    { (*p).is_open = opened };
+    var h: fn(*u8, *u8) = { (*p).on_closed };
+    var ctx: *u8 = { (*p).on_closed_ctx };
+    if opened { h = { (*p).on_opened }; ctx = { (*p).on_opened_ctx }; }
+    if h != props::no_handler { h(core::view_of(n), ctx); }
+    return;
+}
+
+// ---- bordered --------------------------------------------------------------------
+// A STROKE AROUND WHAT IT HOLDS. facet's `bordered` is a container whose whole
+// job is an outline, and on Android an outline is the same GradientDrawable
+// every other border here is — a shape, a corner radius and a stroke.
+//
+// WHAT A DRAWABLE CANNOT SAY: a cap, a join and a miter limit are PAINT
+// properties, and a drawable's stroke has none of them — `setStroke` takes a
+// width, a colour and a dash pair and nothing else. Those three are MANIFEST §2
+// rather than read and dropped.
+
+fn create_bordered(n: *core::Node) -> *u8 {
+    return global_of(dex::new_host(e::env(), e::context()));
+}
+
+fn apply_bordered(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *props::BorderedProps = props_of(n, props::K_BORDERED) as *props::BorderedProps;
+    if p == (0 as *props::BorderedProps) { return; }
+    let watched: u64 = bordered::P_STROKE | bordered::P_STROKE_WIDTH
+                     | bordered::P_STROKE_DASH | bordered::P_STROKE_DASH_OFFSET
+                     | bordered::P_STROKE_SHAPE | props::C_BACKGROUND_COLOR;
+    if (dirty & watched) == (0 as u64) && dirty != paint::all_bits() { return; }
+    let env: rt::Env = e::env();
+    var d: w::GradientDrawable = w::GradientDrawable::new_void(env);
+
+    // The node's own background, if it declared one — the border is drawn
+    // AROUND something, and that something is the shared band's.
+    let fill: vocab::Color = core::background_color(n);
+    if fill.is_set() { d.set_color_i(paint::argb_of(fill)); }
+    else { d.set_color_i(0 as i32); }
+
+    // THE SHAPE: `Shape.kind` is 0 none, 1 rect, 2 rounded, 3 ellipse — facet's
+    // own numbering, and the three that draw map to Android's two plus a radius.
+    let shape: vocab::Shape = { (*p).stroke_shape };
+    if { shape.kind } == (3 as i64) { d.set_shape(oval_shape(env)); }
+    else if { shape.kind } == (2 as i64) {
+        d.set_corner_radius({ e::px({ shape.corners.top_leading }) as f32 });
+    }
+
+    let width: f64 = { (*p).stroke_width };
+    var stroke: vocab::Color = { (*p).stroke.start };
+    if !stroke.is_set() { stroke = vocab::Color::separator(); }
+    if width > 0.0f64 {
+        var dash: vocab::Dashes = { (*p).stroke_dash };
+        if dash.is_solid() {
+            d.set_stroke_i_i({ e::px(width) as i32 }, paint::argb_of(stroke));
+        } else {
+            // A DASH IS TWO NUMBERS HERE — on and off — where facet carries up
+            // to eight. Android's drawable stroke takes exactly one pair, so a
+            // longer pattern is read from its first two runs and MANIFEST §2
+            // says so rather than silently drawing a different pattern.
+            d.set_stroke_i_i_f_f({ e::px(width) as i32 }, paint::argb_of(stroke),
+                                 { e::px(dash.run(0 as usize)) as f32 },
+                                 { e::px(dash.run(1 as usize)) as f32 });
+        }
+    }
+    var drawable: w::Drawable = d.as_drawable();
+    var view: w::View = w::View::from_global(env, v);
+    view.set_background(drawable.into_raw());
+    view.set_clip_to_outline({ shape.kind } != (0 as i64));
+    paint::unwrap_keep(view);
+    let _k: *u8 = d.into_raw();
+    return;
+}
+
+// ---- popup -----------------------------------------------------------------------
+// A `Spinner`, which is Android's picker: a field showing the selection that
+// opens a list of the rest. facet's `label` is what the field reads and `title`
+// is the list's prompt, which is exactly the split Android draws.
+//
+// THE LISTENER IS MUTED while the backend writes. `setSelection` fires it, so
+// an apply pass would report facet's own write back as if a finger had chosen
+// it — the guard `FacetText` carries for a keystroke, one control over.
+
+const POPUP_LISTENER_TAG: i32 = 2131886092 as i32;   // 0x7F0F000C — see SCROLL_DOC_TAG
+
+fn popup_props(n: *core::Node) -> *props::PopupProps {
+    return props_of(n, props::K_POPUP) as *props::PopupProps;
+}
+
+fn create_popup(n: *core::Node) -> *u8 {
+    let env: rt::Env = e::env();
+    var sp: w::Spinner = w::Spinner::new_context(env, e::context());
+    let raw: *u8 = sp.into_raw();
+    let token: i64 = { #addr(n) as i64 };
+    let listener: jni::jobject = dex::new_with_token(env, dex::popup_class(), token);
+    if listener != (0 as jni::jobject) {
+        var av: w::AdapterView = w::AdapterView::from_global(env, env.new_global_ref(raw));
+        av.set_on_item_selected_listener(listener);
+        let _k: *u8 = av.into_raw();
+        // KEPT, because `mute` is called on this exact object every time the
+        // backend writes a selection — and a local ref does not survive the
+        // call that made it.
+        var sv: w::View = w::View::from_global(env, raw);
+        sv.set_tag_i_object(POPUP_LISTENER_TAG, env.new_global_ref(listener));
+        paint::unwrap_keep(sv);
+        env.delete_local_ref(listener);
+    }
+    return raw;
+}
+
+fn popup_listener_of(env: rt::Env, v: *u8) -> jni::jobject {
+    var view: w::View = w::View::from_global(env, v);
+    let t: jni::jobject = view.get_tag_i(POPUP_LISTENER_TAG);
+    paint::unwrap_keep(view);
+    return t;
+}
+
+fn apply_popup(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *props::PopupProps = popup_props(n);
+    if p == (0 as *props::PopupProps) { return; }
+    let env: rt::Env = e::env();
+    // THE ITEMS AND THE SELECTION ARE ONE WRITE: committing an adapter resets
+    // the selection, so a list rebuilt without re-asserting it would silently
+    // jump to row zero.
+    let rebuilt: u64 = popup::P_ITEMS | popup::P_ITEM_ENABLED | popup::P_SELECTED_INDEX;
+    if (dirty & rebuilt) != (0 as u64) || dirty == paint::all_bits() {
+        rebuild_popup_items(env, v, n, p);
+    }
+    if (dirty & popup::P_TITLE) != (0 as u64) {
+        var buf: [u8; 256] = #zero::[[u8; 256]]();
+        let base: *u8 = { #addr_of(buf[0]) };
+        if paint::cstr({ (*p).title.view() }, base, 256 as usize) {
+            var sp: w::Spinner = w::Spinner::from_global(env, env.new_global_ref(v));
+            sp.set_prompt(base);
+            let _k: *u8 = sp.into_raw();
+        }
+    }
+    // `open` is a COMMAND: a spinner opens by being clicked, which is what
+    // `performClick` is — and it is acted on when the bit says so rather than
+    // re-asserted, because a list opened twice is two lists.
+    if (dirty & popup::P_IS_OPEN) != (0 as u64) {
+        if { (*p).is_open } {
+            var sp: w::Spinner = w::Spinner::from_global(env, env.new_global_ref(v));
+            let _o: bool = sp.perform_click();
+            let _k: *u8 = sp.into_raw();
+            let h: fn(*u8, *u8) = { (*p).on_opened };
+            if h != props::no_handler { h(v, { (*p).on_opened_ctx }); }
+        } else {
+            let h: fn(*u8, *u8) = { (*p).on_closed };
+            if h != props::no_handler { h(v, { (*p).on_closed_ctx }); }
+        }
+    }
+    return;
+}
+
+fn rebuild_popup_items(env: rt::Env, v: *u8, n: *core::Node, p: *props::PopupProps) {
+    let token: i64 = { #addr(n) as i64 };
+    dex::popup_begin(env, token);
+    var i: usize = 0 as usize;
+    let count: usize = { (*p).items.count() };
+    var buf: [u8; 256] = #zero::[[u8; 256]]();
+    let base: *u8 = { #addr_of(buf[0]) };
+    while i < count {
+        if !paint::cstr({ (*p).items.at(i) }, base, 256 as usize) { { (*base) = 0 as u8 }; }
+        // `item_enabled` is a CALLBACK, and a header answers false — which is
+        // what makes a header a header rather than a pickable row.
+        var enabled: bool = true;
+        let f: fn(usize, *u8) -> bool = { (*p).item_enabled };
+        if f != props::every_item_enabled { enabled = f(i, { (*p).item_enabled_ctx }); }
+        dex::popup_add(env, token, base, enabled);
+        i = i +% (1 as usize);
+    }
+    // THE COMMIT SETS THE SELECTION, and that fires the listener — but not
+    // synchronously: a Spinner POSTS `onItemSelected`, so a mute held across
+    // this call is already released by the time the callback lands. Measured,
+    // not assumed — the log read `muted=false` every time.
+    //
+    // `fire_picked` is what suppresses the echo, by returning early when the
+    // index it is handed is the one the props already hold.
+    dex::popup_commit(env, v, token, { { (*p).selected_index } as i32 });
+    return;
+}
+
+// A row was picked. WRITTEN BACK FIRST, so a handler asking `popup.selected_
+// index()` is told what was chosen rather than what was there before it.
+fn fire_picked(token: i64, index: i32) {
+    let n: *core::Node = { token as *core::Node };
+    if n == (0 as *core::Node) { return; }
+    let p: *props::PopupProps = popup_props(n);
+    if p == (0 as *props::PopupProps) { return; }
+    if { (*p).selected_index } == { index as i64 } { return; }
+    { (*p).selected_index = { index as i64 } };
+    let h: fn(*u8, *u8) = { (*p).on_selected_index_changed };
+    if h != props::no_handler { h(core::view_of(n), { (*p).on_selected_index_changed_ctx }); }
+    return;
+}
+
+// ---- web -------------------------------------------------------------------------
+// A `WebView`, which android.jar has and which is the one control here that
+// brings a whole engine with it.
+//
+// THE NAVIGATION EDGES COME FROM A SUBCLASS, because `WebViewClient` is a class
+// and cannot be implemented from native code — the same wall `BaseAdapter` is.
+// FacetWeb is the smallest one that reports what facet asks for, and it is also
+// where `can_go_back` and `can_go_forward` are read from: they are answers the
+// view gives at the moment a page finishes, not properties an app sets.
+
+fn web_props(n: *core::Node) -> *props::WebProps {
+    return props_of(n, props::K_WEB) as *props::WebProps;
+}
+
+fn create_web(n: *core::Node) -> *u8 {
+    let env: rt::Env = e::env();
+    var wv: w::WebView = w::WebView::new_context(env, e::context());
+    let raw: *u8 = wv.into_raw();
+    let client: jni::jobject =
+        dex::new_with_token(env, dex::web_class(), { #addr(n) as i64 });
+    if client != (0 as jni::jobject) {
+        var v2: w::WebView = w::WebView::from_global(env, env.new_global_ref(raw));
+        v2.set_web_view_client(client);
+        let _k: *u8 = v2.into_raw();
+        env.delete_local_ref(client);
+    }
+    // JAVASCRIPT IS OFF BY DEFAULT on a WebView, and `eval` is one of the six
+    // verbs the kind declares — a web view that cannot run a script answers
+    // half its contract. An application that does not want it does not call
+    // `eval`; the switch is the platform's default being wrong for this control
+    // rather than a policy this backend gets to hold.
+    let settings: jni::jobject = env.call_object_0(
+        raw, #str_ptr("android/webkit/WebView\0"), #str_ptr("getSettings\0"),
+        #str_ptr("()Landroid/webkit/WebSettings;\0"));
+    if settings != (0 as jni::jobject) {
+        env.call_void_1(settings, #str_ptr("android/webkit/WebSettings\0"),
+                        #str_ptr("setJavaScriptEnabled\0"), #str_ptr("(Z)V\0"),
+                        rt::arg_bool(true));
+        env.delete_local_ref(settings);
+    }
+    return raw;
+}
+
+fn apply_web(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *props::WebProps = web_props(n);
+    if p == (0 as *props::WebProps) { return; }
+    let env: rt::Env = e::env();
+    var wv: w::WebView = w::WebView::from_global(env, env.new_global_ref(v));
+    if (dirty & web::P_SOURCE) != (0 as u64) {
+        var buf: [u8; 1024] = #zero::[[u8; 1024]]();
+        let base: *u8 = { #addr_of(buf[0]) };
+        if paint::cstr({ (*p).source.view() }, base, 1024 as usize) {
+            wv.load_url_str(base);
+        }
+    }
+    if (dirty & web::P_USER_AGENT) != (0 as u64) {
+        var buf: [u8; 512] = #zero::[[u8; 512]]();
+        let base: *u8 = { #addr_of(buf[0]) };
+        if paint::cstr({ (*p).user_agent.view() }, base, 512 as usize) {
+            let settings: jni::jobject = env.call_object_0(
+                v, #str_ptr("android/webkit/WebView\0"), #str_ptr("getSettings\0"),
+                #str_ptr("()Landroid/webkit/WebSettings;\0"));
+            if settings != (0 as jni::jobject) {
+                let js: jni::jstring = env.new_string_utf(base);
+                env.call_void_1(settings, #str_ptr("android/webkit/WebSettings\0"),
+                                #str_ptr("setUserAgentString\0"),
+                                #str_ptr("(Ljava/lang/String;)V\0"), rt::arg_object(js));
+                env.delete_local_ref(js);
+                env.delete_local_ref(settings);
+            }
+        }
+    }
+    // THE THREE COMMANDS. Acted on when the bit says they were asked for and
+    // never re-asserted: a `reload` re-run on an unrelated pass would throw
+    // away a page the person is reading.
+    if (dirty & web::P_GO_BACK) != (0 as u64) { wv.go_back(); }
+    if (dirty & web::P_GO_FORWARD) != (0 as u64) { wv.go_forward(); }
+    if (dirty & web::P_RELOAD) != (0 as u64) { wv.reload(); }
+    if (dirty & web::P_EVAL) != (0 as u64) {
+        var buf: [u8; 2048] = #zero::[[u8; 2048]]();
+        let base: *u8 = { #addr_of(buf[0]) };
+        if paint::cstr({ (*p).eval_script.view() }, base, 2048 as usize) {
+            // A null callback: facet's `eval` is fire-and-forget — the verb
+            // takes a script and answers nothing, so a ValueCallback would
+            // have nowhere to deliver.
+            wv.evaluate_javascript(base, 0 as jni::jobject);
+        }
+    }
+    let _k: *u8 = wv.into_raw();
+    return;
+}
+
+// A page started, finished, or the renderer died. `can_go_back` and
+// `can_go_forward` are WRITTEN BACK on the finish, because they are answers the
+// view gives rather than state an application holds — and a direct field write,
+// with no `core::touch`: marking them dirty would send them back out as
+// commands, and `go_back` is a command.
+fn fire_web_edge(token: i64, edge: i32, back: bool, forward: bool) {
+    let n: *core::Node = { token as *core::Node };
+    if n == (0 as *core::Node) { return; }
+    let p: *props::WebProps = web_props(n);
+    if p == (0 as *props::WebProps) { return; }
+    let v: *u8 = core::view_of(n);
+    if edge == (0 as i32) {
+        let h: fn(*u8, *u8) = { (*p).on_navigating };
+        if h != props::no_handler { h(v, { (*p).on_navigating_ctx }); }
+        return;
+    }
+    if edge == (1 as i32) {
+        { (*p).can_go_back = back };
+        { (*p).can_go_forward = forward };
+        let h: fn(*u8, *u8) = { (*p).on_navigated };
+        if h != props::no_handler { h(v, { (*p).on_navigated_ctx }); }
+        return;
+    }
+    let h: fn(*u8, *u8) = { (*p).on_process_terminated };
+    if h != props::no_handler { h(v, { (*p).on_process_terminated_ctx }); }
     return;
 }
 

@@ -21,7 +21,7 @@ import "jni/jni" as jni;
 import "android_view/runtime" as rt;
 
 // Kept in step by tools/build_dex.sh; do not hand-edit.
-const DEX_LEN: usize = 21864;
+const DEX_LEN: usize = 26080;
 
 static LOADER: usize = 0;
 static C_HOST: usize = 0;
@@ -42,6 +42,9 @@ static C_DATE: usize = 0;
 static C_EDIT: usize = 0;
 static C_SCROLL: usize = 0;
 static C_TOUCH: usize = 0;
+static C_TIME: usize = 0;
+static C_POPUP: usize = 0;
+static C_WEB: usize = 0;
 static C_ZOOM: usize = 0;
 
 // jni.h's JNINativeMethod with the fn slot concretely typed per shape.
@@ -94,6 +97,20 @@ struct NativeLIOO_O {
     opaque name: *u8,
     opaque signature: *u8,
     fn_ptr: fn(*jni::JNIEnv, jni::jobject, i64, i32, jni::jobject, jni::jobject) -> jni::jobject,
+}
+
+#[repr(C)]
+struct Native3LZZ {
+    opaque name: *u8,
+    opaque signature: *u8,
+    fn_ptr: fn(*jni::JNIEnv, jni::jobject, i64, u8, u8),
+}
+
+#[repr(C)]
+struct Native3LII_B {
+    opaque name: *u8,
+    opaque signature: *u8,
+    fn_ptr: fn(*jni::JNIEnv, jni::jobject, i64, i32, i32),
 }
 
 #[repr(C)]
@@ -156,6 +173,16 @@ extern fn facet_android_rows_visible(envp: *jni::JNIEnv, cls: jni::jobject, toke
                                      first: i32, visible: i32, total: i32);
 extern fn facet_android_submit(envp: *jni::JNIEnv, cls: jni::jobject, token: i64);
 extern fn facet_android_focus(envp: *jni::JNIEnv, cls: jni::jobject, token: i64, on: u8);
+extern fn facet_android_navigating(envp: *jni::JNIEnv, cls: jni::jobject, token: i64);
+extern fn facet_android_navigated(envp: *jni::JNIEnv, cls: jni::jobject, token: i64,
+                                  back: u8, forward: u8);
+extern fn facet_android_terminated(envp: *jni::JNIEnv, cls: jni::jobject, token: i64);
+extern fn facet_android_picked(envp: *jni::JNIEnv, cls: jni::jobject, token: i64,
+                               index: i32);
+extern fn facet_android_time_set(envp: *jni::JNIEnv, cls: jni::jobject, token: i64,
+                                 hour: i32, minute: i32);
+extern fn facet_android_time_opened(envp: *jni::JNIEnv, cls: jni::jobject, token: i64);
+extern fn facet_android_time_dismissed(envp: *jni::JNIEnv, cls: jni::jobject, token: i64);
 extern fn facet_android_date_set(envp: *jni::JNIEnv, cls: jni::jobject, token: i64,
                                  y: i32, m: i32, d: i32);
 extern fn facet_android_date_opened(envp: *jni::JNIEnv, cls: jni::jobject, token: i64);
@@ -182,6 +209,9 @@ fn date_class() -> jni::jclass { return { C_DATE as *u8 }; }
 fn edit_class() -> jni::jclass { return { C_EDIT as *u8 }; }
 fn scroll_class() -> jni::jclass { return { C_SCROLL as *u8 }; }
 fn touch_class() -> jni::jclass { return { C_TOUCH as *u8 }; }
+fn time_class() -> jni::jclass { return { C_TIME as *u8 }; }
+fn popup_class() -> jni::jclass { return { C_POPUP as *u8 }; }
+fn web_class() -> jni::jclass { return { C_WEB as *u8 }; }
 fn zoom_class() -> jni::jclass { return { C_ZOOM as *u8 }; }
 fn loaded() -> bool { return LOADER != 0; }
 
@@ -199,7 +229,7 @@ fn ensure_loaded(env: rt::Env, any_view: jni::jobject) {
     // Activity would hold a FacetHost of one class while this code registered
     // natives on the other, and `nativeSizeChanged` would never arrive.
     if load_merged(env) { return; }
-    let dex: *[u8; 21864] = #include_bytes("../facet_android.dex");
+    let dex: *[u8; 26080] = #include_bytes("../facet_android.dex");
     let buffer: jni::jobject = {
         (*(*env.raw())).NewDirectByteBuffer(env.raw(), { dex as *u8 }, DEX_LEN as i64)
     };
@@ -237,6 +267,9 @@ fn ensure_loaded(env: rt::Env, any_view: jni::jobject) {
     C_EDIT = { #addr(load_class(env, loader, #str_ptr("cplus.facet.FacetEdit\0"))) };
     C_SCROLL = { #addr(load_class(env, loader, #str_ptr("cplus.facet.FacetScroll\0"))) };
     C_TOUCH = { #addr(load_class(env, loader, #str_ptr("cplus.facet.FacetTouch\0"))) };
+    C_TIME = { #addr(load_class(env, loader, #str_ptr("cplus.facet.FacetTime\0"))) };
+    C_POPUP = { #addr(load_class(env, loader, #str_ptr("cplus.facet.FacetPopup\0"))) };
+    C_WEB = { #addr(load_class(env, loader, #str_ptr("cplus.facet.FacetWeb\0"))) };
     C_ZOOM = { #addr(load_class(env, loader, #str_ptr("cplus.facet.FacetZoomHost\0"))) };
 
     bind_natives(env);
@@ -274,6 +307,9 @@ fn load_merged(env: rt::Env) -> bool {
     C_EDIT = { #addr(find_global(env, #str_ptr("cplus/facet/FacetEdit\0"))) };
     C_SCROLL = { #addr(find_global(env, #str_ptr("cplus/facet/FacetScroll\0"))) };
     C_TOUCH = { #addr(find_global(env, #str_ptr("cplus/facet/FacetTouch\0"))) };
+    C_TIME = { #addr(find_global(env, #str_ptr("cplus/facet/FacetTime\0"))) };
+    C_POPUP = { #addr(find_global(env, #str_ptr("cplus/facet/FacetPopup\0"))) };
+    C_WEB = { #addr(find_global(env, #str_ptr("cplus/facet/FacetWeb\0"))) };
     C_ZOOM = { #addr(find_global(env, #str_ptr("cplus/facet/FacetZoomHost\0"))) };
     // A sentinel rather than a loader object: `loaded()` asks whether the
     // classes are here, and by this path there is no loader to keep.
@@ -402,6 +438,55 @@ fn bind_natives(env: rt::Env) {
     };
     let _re1: i32 = { (*(*env.raw())).RegisterNatives(env.raw(), { C_EDIT as *u8 },
                                                       #addr_of(focus_rec) as *u8, 1) };
+    var web_edges: [Native1L; 2] = [
+        Native1L {
+            name: #str_ptr("nativeNavigating\0"),
+            signature: #str_ptr("(J)V\0"),
+            fn_ptr: facet_android_navigating,
+        },
+        Native1L {
+            name: #str_ptr("nativeTerminated\0"),
+            signature: #str_ptr("(J)V\0"),
+            fn_ptr: facet_android_terminated,
+        },
+    ];
+    let _rw0: i32 = { (*(*env.raw())).RegisterNatives(env.raw(), { C_WEB as *u8 },
+                                                      #addr_of(web_edges[0]) as *u8, 2) };
+    var navigated_rec: Native3LZZ = Native3LZZ {
+        name: #str_ptr("nativeNavigated\0"),
+        signature: #str_ptr("(JZZ)V\0"),
+        fn_ptr: facet_android_navigated,
+    };
+    let _rw1: i32 = { (*(*env.raw())).RegisterNatives(env.raw(), { C_WEB as *u8 },
+                                                      #addr_of(navigated_rec) as *u8, 1) };
+    var picked_rec: Native2LI = Native2LI {
+        name: #str_ptr("nativePicked\0"),
+        signature: #str_ptr("(JI)V\0"),
+        fn_ptr: facet_android_picked,
+    };
+    let _rp: i32 = { (*(*env.raw())).RegisterNatives(env.raw(), { C_POPUP as *u8 },
+                                                     #addr_of(picked_rec) as *u8, 1) };
+    var time_set_rec: Native3LII = Native3LII {
+        name: #str_ptr("nativeTimeSet\0"),
+        signature: #str_ptr("(JII)V\0"),
+        fn_ptr: facet_android_time_set,
+    };
+    let _rti0: i32 = { (*(*env.raw())).RegisterNatives(env.raw(), { C_TIME as *u8 },
+                                                       #addr_of(time_set_rec) as *u8, 1) };
+    var time_edge_recs: [Native1L; 2] = [
+        Native1L {
+            name: #str_ptr("nativeOpened\0"),
+            signature: #str_ptr("(J)V\0"),
+            fn_ptr: facet_android_time_opened,
+        },
+        Native1L {
+            name: #str_ptr("nativeTimeDismissed\0"),
+            signature: #str_ptr("(J)V\0"),
+            fn_ptr: facet_android_time_dismissed,
+        },
+    ];
+    let _rti1: i32 = { (*(*env.raw())).RegisterNatives(env.raw(), { C_TIME as *u8 },
+                                                       #addr_of(time_edge_recs[0]) as *u8, 2) };
     var date_set_rec: Native4LIII = Native4LIII {
         name: #str_ptr("nativeDateSet\0"),
         signature: #str_ptr("(JIII)V\0"),
@@ -582,6 +667,74 @@ fn date_show(env: rt::Env, ctx: jni::jobject, token: i64, y: i32, m: i32, d: i32
 }
 
 // A formatted date, as a LOCAL jstring the caller reads and releases.
+// ---- FacetPopup ----------------------------------------------------------------
+// The items arrive ONE AT A TIME: an ArrayAdapter takes a List and there is no
+// array door from C+, so the list is accumulated on the Java side between
+// `begin` and `commit`.
+
+fn popup_begin(env: rt::Env, token: i64) {
+    if C_POPUP == 0 { return; }
+    let mid: jni::jmethodID = env.method_id_static({ C_POPUP as *u8 }, #str_ptr("begin\0"),
+                                                   #str_ptr("(J)V\0"));
+    if mid == (0 as jni::jmethodID) { return; }
+    var args: [jni::JValue; 1] = [jni::arg_long(token)];
+    { (*(*env.raw())).CallStaticVoidMethodA(env.raw(), { C_POPUP as *u8 }, mid,
+                                            #addr_of(args[0])) };
+    return;
+}
+
+fn popup_add(env: rt::Env, token: i64, label: *u8, enabled: bool) {
+    if C_POPUP == 0 { return; }
+    let mid: jni::jmethodID = env.method_id_static({ C_POPUP as *u8 }, #str_ptr("add\0"),
+        #str_ptr("(JLjava/lang/String;Z)V\0"));
+    if mid == (0 as jni::jmethodID) { return; }
+    let js: jni::jstring = env.new_string_utf(label);
+    var args: [jni::JValue; 3] = [jni::arg_long(token), jni::arg_object(js),
+                                  rt::arg_bool(enabled)];
+    { (*(*env.raw())).CallStaticVoidMethodA(env.raw(), { C_POPUP as *u8 }, mid,
+                                            #addr_of(args[0])) };
+    env.delete_local_ref(js);
+    return;
+}
+
+fn popup_commit(env: rt::Env, spinner: jni::jobject, token: i64, selected: i32) {
+    if C_POPUP == 0 { return; }
+    let mid: jni::jmethodID = env.method_id_static({ C_POPUP as *u8 }, #str_ptr("commit\0"),
+        #str_ptr("(Landroid/widget/Spinner;JI)V\0"));
+    if mid == (0 as jni::jmethodID) { return; }
+    var args: [jni::JValue; 3] = [jni::arg_object(spinner), jni::arg_long(token),
+                                  jni::arg_int(selected)];
+    { (*(*env.raw())).CallStaticVoidMethodA(env.raw(), { C_POPUP as *u8 }, mid,
+                                            #addr_of(args[0])) };
+    return;
+}
+
+fn time_show(env: rt::Env, ctx: jni::jobject, token: i64, hour: i32, minute: i32) {
+    if C_TIME == 0 { return; }
+    let mid: jni::jmethodID = env.method_id_static({ C_TIME as *u8 }, #str_ptr("show\0"),
+        #str_ptr("(Landroid/content/Context;JII)V\0"));
+    if mid == (0 as jni::jmethodID) { return; }
+    var args: [jni::JValue; 4] = [jni::arg_object(ctx), jni::arg_long(token),
+                                  jni::arg_int(hour), jni::arg_int(minute)];
+    { (*(*env.raw())).CallStaticVoidMethodA(env.raw(), { C_TIME as *u8 }, mid,
+                                            #addr_of(args[0])) };
+    return;
+}
+
+fn time_format(env: rt::Env, pattern: *u8, hour: i32, minute: i32) -> jni::jobject {
+    if C_TIME == 0 { return 0 as jni::jobject; }
+    let mid: jni::jmethodID = env.method_id_static({ C_TIME as *u8 }, #str_ptr("format\0"),
+        #str_ptr("(Ljava/lang/String;II)Ljava/lang/String;\0"));
+    if mid == (0 as jni::jmethodID) { return 0 as jni::jobject; }
+    let js: jni::jstring = env.new_string_utf(pattern);
+    var args: [jni::JValue; 3] = [jni::arg_object(js), jni::arg_int(hour),
+                                  jni::arg_int(minute)];
+    let r: jni::jobject = { (*(*env.raw())).CallStaticObjectMethodA(env.raw(),
+                                { C_TIME as *u8 }, mid, #addr_of(args[0])) };
+    env.delete_local_ref(js);
+    return r;
+}
+
 fn date_format(env: rt::Env, pattern: *u8, y: i32, m: i32, d: i32) -> jni::jobject {
     if C_DATE == 0 { return 0 as jni::jobject; }
     let mid: jni::jmethodID = env.method_id_static({ C_DATE as *u8 }, #str_ptr("format\0"),
