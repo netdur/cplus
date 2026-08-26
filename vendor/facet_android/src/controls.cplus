@@ -112,14 +112,37 @@ fn apply_label(v: *u8, n: *core::Node, dirty: u64) {
             tv.set_text_str(base);
         }
     }
-    if (dirty & label::P_FONT_SIZE) != (0 as u64) {
-        let s: f64 = { (*p).font_size };
-        // 0 means "the platform's own", which is what a TextView already has.
-        if s > 0.0f64 { tv.set_text_size_f({ s as f32 }); }
+    // A SIZE AND WHETHER IT SCALES ARE ONE CALL, so the two bits are one branch.
+    // 0 means "the platform's own", which is what a TextView already has.
+    if (dirty & (label::P_FONT_SIZE | label::P_FONT_SCALES)) != (0 as u64) {
+        apply_text_size(tv, { (*p).font_size }, { (*p).font_scales });
     }
     if (dirty & label::P_TEXT_COLOR) != (0 as u64) {
         let c: vocab::Color = { (*p).text_color };
         if c.is_set() { tv.set_text_color_i(paint::argb_of(c)); }
+    }
+    let typography: u64 = label::P_FONT_FAMILY | label::P_FONT_WEIGHT | label::P_IS_ITALIC
+                        | label::P_TEXT_ALIGN | label::P_VERTICAL_ALIGN
+                        | label::P_LINE_BREAK | label::P_MAX_LINES
+                        | label::P_TEXT_DECORATION | label::P_TEXT_TRANSFORM
+                        | label::P_CHARACTER_SPACING | label::P_LINE_HEIGHT
+                        | label::P_FONT_SIZE;
+    if (dirty & typography) != (0 as u64) || dirty == paint::all_bits() {
+        var st: TextStyle = TextStyle::none();
+        st.family = { (*p).font_family.view() };
+        st.weight = { (*p).font_weight };
+        st.is_italic = { (*p).is_italic };
+        st.size = { (*p).font_size };
+        st.scales = { (*p).font_scales };
+        st.align = { (*p).text_align };
+        st.vertical_align = { (*p).vertical_align };
+        st.line_break = { (*p).line_break };
+        st.max_lines = { (*p).max_lines };
+        st.decoration = { (*p).text_decoration };
+        st.transform = { (*p).text_transform };
+        st.character_spacing = { (*p).character_spacing };
+        st.line_height = { (*p).line_height };
+        apply_text_style(env, tv, st);
     }
 
     var borrowed: w::View = w::View::from_global(env, tv.into_raw());
@@ -160,13 +183,33 @@ fn apply_button(v: *u8, n: *core::Node, dirty: u64) {
             tv.set_text_str(base);
         }
     }
-    if (dirty & button::P_FONT_SIZE) != (0 as u64) {
-        let s: f64 = { (*p).font_size };
-        if s > 0.0f64 { tv.set_text_size_f({ s as f32 }); }
+    if (dirty & (button::P_FONT_SIZE | button::P_FONT_SCALES)) != (0 as u64) {
+        apply_text_size(tv, { (*p).font_size }, { (*p).font_scales });
     }
     if (dirty & button::P_TEXT_COLOR) != (0 as u64) {
         let c: vocab::Color = { (*p).text_color };
         if c.is_set() { tv.set_text_color_i(paint::argb_of(c)); }
+    }
+    let typography: u64 = button::P_FONT_FAMILY | button::P_FONT_WEIGHT
+                        | button::P_IS_ITALIC | button::P_LINE_BREAK
+                        | button::P_TEXT_TRANSFORM | button::P_CHARACTER_SPACING
+                        | button::P_FONT_SIZE;
+    if (dirty & typography) != (0 as u64) || dirty == paint::all_bits() {
+        var st: TextStyle = TextStyle::none();
+        st.family = { (*p).font_family.view() };
+        st.weight = { (*p).font_weight };
+        st.is_italic = { (*p).is_italic };
+        st.size = { (*p).font_size };
+        st.scales = { (*p).font_scales };
+        // A BUTTON'S TITLE IS CENTRED, and facet gives a button no alignment
+        // verb — so the platform's own posture is kept rather than reset to a
+        // label's `Start`.
+        st.align = vocab::TextAlign::Center;
+        st.vertical_align = vocab::TextAlign::Center;
+        st.line_break = { (*p).line_break };
+        st.transform = { (*p).text_transform };
+        st.character_spacing = { (*p).character_spacing };
+        apply_text_style(env, tv, st);
     }
 
     // `tv` owns a ref of its own (the upcast made one) — let it drop. `b`
@@ -312,12 +355,29 @@ fn apply_radio(v: *u8, n: *core::Node, dirty: u64) {
             tv.set_text_color_i(paint::argb_of(col));
         }
     }
-    if (dirty & radio::P_FONT_SIZE) != (0 as u64) {
-        let sz: f64 = { (*p).font_size };
-        if sz > 0.0f64 {
-            var tv: w::TextView = r.as_compound_button().as_button().as_text_view();
-            tv.set_text_size_f({ sz as f32 });
-        }
+    if (dirty & (radio::P_FONT_SIZE | radio::P_FONT_SCALES)) != (0 as u64) {
+        var tv: w::TextView = r.as_compound_button().as_button().as_text_view();
+        apply_text_size(tv, { (*p).font_size }, { (*p).font_scales });
+    }
+    let typography: u64 = radio::P_FONT_FAMILY | radio::P_FONT_WEIGHT
+                        | radio::P_IS_ITALIC | radio::P_TEXT_TRANSFORM
+                        | radio::P_CHARACTER_SPACING | radio::P_FONT_SIZE;
+    if (dirty & typography) != (0 as u64) || dirty == paint::all_bits() {
+        var st: TextStyle = TextStyle::none();
+        st.family = { (*p).font_family.view() };
+        st.weight = { (*p).font_weight };
+        st.is_italic = { (*p).is_italic };
+        st.size = { (*p).font_size };
+        st.scales = { (*p).font_scales };
+        // The LABEL of a compound button sits beside its circle, and facet
+        // gives a radio no alignment verb — so the platform's own posture
+        // stays rather than being reset to a label's.
+        st.align = vocab::TextAlign::Start;
+        st.vertical_align = vocab::TextAlign::Center;
+        st.transform = { (*p).text_transform };
+        st.character_spacing = { (*p).character_spacing };
+        var tv: w::TextView = r.as_compound_button().as_button().as_text_view();
+        apply_text_style(env, tv, st);
     }
     let _keep: *u8 = r.into_raw();
     return;
@@ -642,9 +702,25 @@ fn apply_text_field(v: *u8, n: *core::Node, dirty: u64) {
         let c: vocab::Color = { (*p).input_view.text_color };
         if c.is_set() { tv.set_text_color_i(paint::argb_of(c)); }
     }
-    if (dirty & text_field::P_FONT_SIZE) != (0 as u64) {
-        let s: f64 = { (*p).input_view.font_size };
-        if s > 0.0f64 { tv.set_text_size_f({ s as f32 }); }
+    if (dirty & (text_field::P_FONT_SIZE | text_field::P_FONT_SCALES)) != (0 as u64) {
+        apply_text_size(tv, { (*p).input_view.font_size }, { (*p).input_view.font_scales });
+    }
+    let typography: u64 = text_field::P_FONT_FAMILY | text_field::P_FONT_WEIGHT
+                        | text_field::P_IS_ITALIC | text_field::P_TEXT_TRANSFORM
+                        | text_field::P_CHARACTER_SPACING | text_field::P_TEXT_ALIGN
+                        | text_field::P_VERTICAL_ALIGN | text_field::P_FONT_SIZE;
+    if (dirty & typography) != (0 as u64) || dirty == paint::all_bits() {
+        var st: TextStyle = TextStyle::none();
+        st.family = { (*p).input_view.font_family.view() };
+        st.weight = { (*p).input_view.font_weight };
+        st.is_italic = { (*p).input_view.is_italic };
+        st.size = { (*p).input_view.font_size };
+        st.scales = { (*p).input_view.font_scales };
+        st.align = { (*p).text_align };
+        st.vertical_align = { (*p).vertical_align };
+        st.transform = { (*p).input_view.text_transform };
+        st.character_spacing = { (*p).input_view.character_spacing };
+        apply_text_style(env, tv, st);
     }
     if (dirty & text_field::P_IS_SECURE) != (0 as u64) {
         // TYPE_CLASS_TEXT | TYPE_TEXT_VARIATION_PASSWORD = 0x81, and plain text
@@ -736,9 +812,28 @@ fn apply_text_button(v: *u8, n: *core::Node, dirty: u64) {
         let c: vocab::Color = { (*p).text_color };
         if c.is_set() { tv.set_text_color_i(paint::argb_of(c)); }
     }
-    if (dirty & text_button::P_FONT_SIZE) != (0 as u64) {
-        let s: f64 = { (*p).font_size };
-        if s > 0.0f64 { tv.set_text_size_f({ s as f32 }); }
+    if (dirty & (text_button::P_FONT_SIZE | text_button::P_FONT_SCALES)) != (0 as u64) {
+        apply_text_size(tv, { (*p).font_size }, { (*p).font_scales });
+    }
+    let typography: u64 = text_button::P_FONT_FAMILY | text_button::P_FONT_WEIGHT
+                        | text_button::P_IS_ITALIC | text_button::P_LINE_BREAK
+                        | text_button::P_TEXT_TRANSFORM | text_button::P_TEXT_DECORATION
+                        | text_button::P_CHARACTER_SPACING | text_button::P_TEXT_ALIGN
+                        | text_button::P_FONT_SIZE;
+    if (dirty & typography) != (0 as u64) || dirty == paint::all_bits() {
+        var st: TextStyle = TextStyle::none();
+        st.family = { (*p).font_family.view() };
+        st.weight = { (*p).font_weight };
+        st.is_italic = { (*p).is_italic };
+        st.size = { (*p).font_size };
+        st.scales = { (*p).font_scales };
+        st.align = { (*p).text_align };
+        st.vertical_align = vocab::TextAlign::Center;
+        st.line_break = { (*p).line_break };
+        st.decoration = { (*p).text_decoration };
+        st.transform = { (*p).text_transform };
+        st.character_spacing = { (*p).character_spacing };
+        apply_text_style(env, tv, st);
     }
     var bv: w::View = w::View::from_global(env, b.into_raw());
     paint::unwrap_keep(bv);
@@ -799,7 +894,9 @@ fn create_search_field(n: *core::Node) -> *u8 {
 // differ per kind, and they happen to sit at the same offsets because
 // gen_contract.py emits the block once.
 fn apply_input_common(v: *u8, iv: *props::InputViewProps, text_bit: bool,
-                      placeholder_bit: bool, color_bit: bool, size_bit: bool) {
+                      placeholder_bit: bool, color_bit: bool, size_bit: bool,
+                      type_bit: bool, align: vocab::TextAlign,
+                      vertical: vocab::TextAlign) {
     let env: rt::Env = e::env();
     var et: w::EditText = w::EditText::from_global(env, v);
     var tv: w::TextView = et.as_text_view();
@@ -828,8 +925,24 @@ fn apply_input_common(v: *u8, iv: *props::InputViewProps, text_bit: bool,
         if c.is_set() { tv.set_text_color_i(paint::argb_of(c)); }
     }
     if size_bit {
-        let s: f64 = { (*iv).font_size };
-        if s > 0.0f64 { tv.set_text_size_f({ s as f32 }); }
+        apply_text_size(tv, { (*iv).font_size }, { (*iv).font_scales });
+    }
+    if type_bit {
+        var st: TextStyle = TextStyle::none();
+        st.family = { (*iv).font_family.view() };
+        st.weight = { (*iv).font_weight };
+        st.is_italic = { (*iv).is_italic };
+        st.size = { (*iv).font_size };
+        st.scales = { (*iv).font_scales };
+        st.align = align;
+        st.vertical_align = vertical;
+        // A FIELD WRAPS OR IT DOES NOT, and that is the kind's shape rather
+        // than a prop: an area is multi-line and the other two are one line.
+        // `line_break` is not on an input view's vocabulary at all.
+        st.line_break = vocab::LineBreak::WordWrap;
+        st.transform = { (*iv).text_transform };
+        st.character_spacing = { (*iv).character_spacing };
+        apply_text_style(env, tv, st);
     }
     let _keep: *u8 = et.into_raw();
     return;
@@ -838,22 +951,34 @@ fn apply_input_common(v: *u8, iv: *props::InputViewProps, text_bit: bool,
 fn apply_text_area(v: *u8, n: *core::Node, dirty: u64) {
     let p: *props::TextAreaProps = props_of(n, props::K_TEXT_AREA) as *props::TextAreaProps;
     if p == (0 as *props::TextAreaProps) { return; }
+    let typography: u64 = text_area::P_FONT_FAMILY | text_area::P_FONT_WEIGHT
+                        | text_area::P_IS_ITALIC | text_area::P_TEXT_TRANSFORM
+                        | text_area::P_CHARACTER_SPACING | text_area::P_TEXT_ALIGN
+                        | text_area::P_VERTICAL_ALIGN | text_area::P_FONT_SIZE;
     apply_input_common(v, { #addr_of((*p).input_view) },
                        (dirty & text_area::P_TEXT) != (0 as u64),
                        (dirty & text_area::P_PLACEHOLDER) != (0 as u64),
                        (dirty & text_area::P_TEXT_COLOR) != (0 as u64),
-                       (dirty & text_area::P_FONT_SIZE) != (0 as u64));
+                       (dirty & (text_area::P_FONT_SIZE | text_area::P_FONT_SCALES)) != (0 as u64),
+                       (dirty & typography) != (0 as u64) || dirty == paint::all_bits(),
+                       { (*p).text_align }, { (*p).vertical_align });
     return;
 }
 
 fn apply_search_field(v: *u8, n: *core::Node, dirty: u64) {
     let p: *props::SearchFieldProps = props_of(n, props::K_SEARCH_FIELD) as *props::SearchFieldProps;
     if p == (0 as *props::SearchFieldProps) { return; }
+    let typography: u64 = search_field::P_FONT_FAMILY | search_field::P_FONT_WEIGHT
+                        | search_field::P_IS_ITALIC | search_field::P_TEXT_TRANSFORM
+                        | search_field::P_CHARACTER_SPACING | search_field::P_TEXT_ALIGN
+                        | search_field::P_VERTICAL_ALIGN | search_field::P_FONT_SIZE;
     apply_input_common(v, { #addr_of((*p).input_view) },
                        (dirty & search_field::P_TEXT) != (0 as u64),
                        (dirty & search_field::P_PLACEHOLDER) != (0 as u64),
                        (dirty & search_field::P_TEXT_COLOR) != (0 as u64),
-                       (dirty & search_field::P_FONT_SIZE) != (0 as u64));
+                       (dirty & (search_field::P_FONT_SIZE | search_field::P_FONT_SCALES)) != (0 as u64),
+                       (dirty & typography) != (0 as u64) || dirty == paint::all_bits(),
+                       { (*p).text_align }, { (*p).vertical_align });
     return;
 }
 
@@ -1368,6 +1493,196 @@ fn put_str_at(buf: *u8, at: usize, s: *u8) -> usize {
         }
     }
     return i;
+}
+
+// ---- the text band -----------------------------------------------------------
+// EVERY CONTROL WITH A TITLE HAS THE SAME TYPOGRAPHY, and it is spelled once
+// here rather than seven times in seven bodies. A label, a button, a text
+// button, a radio and the three input views are all TextViews underneath, and
+// facet gives each of them the same vocabulary: a family, a weight, an italic
+// bit, an alignment, a line break, a decoration, a transform, a letter spacing
+// and a line height.
+//
+// The props structs are NOT layout-compatible, so each kind reads its own and
+// hands the values over. The dirty bits are each kind's too — same numbers,
+// different modules — so each caller tests its own and calls this with what it
+// found.
+
+struct TextStyle {
+    family: str,
+    weight: vocab::FontWeight,
+    is_italic: bool,
+    size: f64,
+    scales: bool,
+    align: vocab::TextAlign,
+    vertical_align: vocab::TextAlign,
+    line_break: vocab::LineBreak,
+    max_lines: i64,
+    decoration: vocab::TextDecoration,
+    transform: vocab::TextTransform,
+    character_spacing: f64,
+    line_height: f64,
+}
+
+impl TextStyle {
+    fn none() -> TextStyle {
+        return TextStyle {
+            family: "",
+            weight: vocab::FontWeight::Default,
+            is_italic: false,
+            size: 0.0f64,
+            scales: true,
+            align: vocab::TextAlign::Start,
+            vertical_align: vocab::TextAlign::Start,
+            line_break: vocab::LineBreak::WordWrap,
+            max_lines: 0 as i64,
+            decoration: vocab::TextDecoration::None,
+            transform: vocab::TextTransform::Default,
+            character_spacing: 0.0f64,
+            line_height: 0.0f64,
+        };
+    }
+}
+
+// A SIZE AND WHETHER IT SCALES ARE ONE CALL. `setTextSize(float)` is SP, which
+// is Android's dynamic-type unit: it grows with the reader's font setting. That
+// is right for `font_scales: true` and WRONG for false, and the two were the
+// same call — so every label in this backend scaled whether it asked to or not.
+// COMPLEX_UNIT_DIP is the same number of points without the reader's multiplier.
+fn apply_text_size(tv: w::TextView, size: f64, scales: bool) {
+    if size <= 0.0f64 { return; }
+    var unit: i32 = 1 as i32;   // COMPLEX_UNIT_DIP
+    if scales { unit = 2 as i32; }   // COMPLEX_UNIT_SP
+    tv.set_text_size_i_f(unit, { size as f32 });
+    return;
+}
+
+fn apply_text_style(env: rt::Env, tv: w::TextView, st: TextStyle) {
+    let tf: jni::jobject = typeface_of(env, st.family, st.weight, st.is_italic);
+    if tf != (0 as jni::jobject) {
+        tv.set_typeface_typeface(tf);
+        env.delete_local_ref(tf);
+    }
+    tv.set_gravity(gravity_of(st.align, st.vertical_align));
+    // JUSTIFY IS ITS OWN MODE on Android rather than a gravity — and it is API
+    // 26, which is this backend's floor exactly. INTER_WORD is 1, NONE is 0.
+    tv.set_justification_mode(match st.align {
+        vocab::TextAlign::Justify => 1 as i32,
+        _ => 0 as i32,
+    });
+    apply_line_break(env, tv, st.line_break);
+    // `max_lines` zero is UNBOUNDED, which is the reading every numeric zero
+    // gets in facet's contract — and Android's own unbounded is a very large
+    // number rather than a zero, which means nothing.
+    if st.max_lines > (0 as i64) { tv.set_max_lines({ st.max_lines as i32 }); }
+    else { tv.set_max_lines(2147483647 as i32); }
+    apply_decoration_flags(tv, st.decoration);
+    // TRANSFORM: only the uppercase half exists. `setAllCaps` is Android's, and
+    // there is no `setAllLower` — a lowercase transform would have to rewrite
+    // the string, which would then disagree with the props the app reads back.
+    // MANIFEST §2.
+    tv.set_all_caps(match st.transform {
+        vocab::TextTransform::Uppercase => true,
+        _ => false,
+    });
+    // LETTER SPACING IS IN EMS on Android and in POINTS in facet, so the
+    // conversion needs the font size — which is why this runs after it is
+    // known rather than beside the other one-liners.
+    var em: f64 = 0.0f64;
+    if st.character_spacing != 0.0f64 && st.size > 0.0f64 {
+        em = st.character_spacing / st.size;
+    }
+    tv.set_letter_spacing({ em as f32 });
+    // LINE HEIGHT is a TOTAL in facet and an EXTRA in `setLineSpacing`, so the
+    // font's own line goes out of the difference. `setLineHeight` says it
+    // directly and is API 28; this backend's floor is 26.
+    var extra: f64 = 0.0f64;
+    if st.line_height > 0.0f64 && st.size > 0.0f64 && st.line_height > st.size {
+        extra = e::px(st.line_height - st.size);
+    }
+    tv.set_line_spacing({ extra as f32 }, 1.0f64 as f32);
+    return;
+}
+
+fn typeface_of(env: rt::Env, family: str, weight: vocab::FontWeight, italic: bool) -> jni::jobject {
+    var style: i32 = 0 as i32;
+    if is_bold_weight(weight) { style = 1 as i32; }
+    if italic { style = style | (2 as i32); }
+    var buf: [u8; 128] = #zero::[[u8; 128]]();
+    let base: *u8 = { #addr_of(buf[0]) };
+    var name: *u8 = #str_ptr("sans-serif\0");
+    if family != "" {
+        if paint::cstr(family, base, 128 as usize) { name = base; }
+    }
+    return w::Typeface::create_str_i(env, name, style);
+}
+
+// Gravity, both axes at once. START and END rather than LEFT and RIGHT: facet's
+// `Start` is the writing direction's start, and 8388611/8388613 are what
+// Android calls the same idea.
+fn gravity_of(align: vocab::TextAlign, vertical: vocab::TextAlign) -> i32 {
+    var g: i32 = match align {
+        vocab::TextAlign::Center => 1 as i32,             // CENTER_HORIZONTAL
+        vocab::TextAlign::End => 8388613 as i32,          // END
+        // Justify is a MODE, set below; the gravity under it is START.
+        vocab::TextAlign::Justify => 8388611 as i32,
+        vocab::TextAlign::Start => 8388611 as i32,        // START
+    };
+    let v: i32 = match vertical {
+        vocab::TextAlign::Center => 16 as i32,            // CENTER_VERTICAL
+        vocab::TextAlign::End => 80 as i32,               // BOTTOM
+        _ => 48 as i32,                                    // TOP
+    };
+    return g | v;
+}
+
+// TRUNCATION, which is an ellipsize on Android and a line-break mode in facet.
+// The three truncations map exactly; the two WRAPS are Android's default (no
+// ellipsize at all) and `NoWrap` is a single line with no ellipsis.
+fn apply_line_break(env: rt::Env, tv: w::TextView, lb: vocab::LineBreak) {
+    let name: *u8 = match lb {
+        vocab::LineBreak::HeadTruncation => #str_ptr("START\0"),
+        vocab::LineBreak::MiddleTruncation => #str_ptr("MIDDLE\0"),
+        vocab::LineBreak::TailTruncation => #str_ptr("END\0"),
+        _ => 0 as *u8,
+    };
+    tv.set_single_line_z(match lb {
+        vocab::LineBreak::NoWrap => true,
+        _ => false,
+    });
+    if name == (0 as *u8) {
+        tv.set_ellipsize(0 as jni::jobject);
+        return;
+    }
+    let cls: jni::jclass = env.class_cached(#str_ptr("android/text/TextUtils$TruncateAt\0"));
+    let fid: jni::jfieldID = env.static_field_id(
+        cls, name, #str_ptr("Landroid/text/TextUtils$TruncateAt;\0"));
+    if fid == (0 as jni::jfieldID) { return; }
+    let at: jni::jobject = { (*(*env.raw())).GetStaticObjectField(env.raw(), cls, fid) };
+    tv.set_ellipsize(at);
+    env.delete_local_ref(at);
+    return;
+}
+
+// UNDERLINE AND STRIKETHROUGH ARE PAINT FLAGS, and the two bits have to be
+// cleared as well as set — a label that loses its underline loses it, which is
+// the same idempotence rule the background follows.
+fn apply_decoration_flags(tv: w::TextView, d: vocab::TextDecoration) {
+    let underline: i32 = 8 as i32;      // Paint.UNDERLINE_TEXT_FLAG
+    let strike: i32 = 16 as i32;        // Paint.STRIKE_THRU_TEXT_FLAG
+    // ~(underline | strike), built arithmetically — `~x` is `-x - 1`, and an
+    // integer literal in this language wraps through i32 before a cast, so a
+    // mask is safer derived than typed.
+    let keep: i32 = (0 as i32) -% (underline | strike) -% (1 as i32);
+    var flags: i32 = tv.get_paint_flags();
+    flags = flags & keep;
+    match d {
+        vocab::TextDecoration::Underline => { flags = flags | underline; }
+        vocab::TextDecoration::Strikethrough => { flags = flags | strike; }
+        vocab::TextDecoration::None => { }
+    }
+    tv.set_paint_flags(flags);
+    return;
 }
 
 // ---- date picker -------------------------------------------------------------

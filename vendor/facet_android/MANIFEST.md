@@ -142,6 +142,18 @@ through liblog (`adb logcat -s facet`) and render an empty container.
   in this repo can drive a two-finger gesture — the arithmetic is pinned by
   reading, and the rest is a person's hands on a device.
 
+- **A TEXT TRANSFORM only goes UP.** `setAllCaps` is Android's and there is no
+  lowercase twin — and rewriting the string instead would leave the control
+  disagreeing with the props an application reads back. `Uppercase` works,
+  `Lowercase` does nothing, and the other two are the identity.
+
+- **A font WEIGHT rounds to bold or not.** `Typeface.create(String, int)` has
+  four styles — plain, bold, italic, bold-italic — and the variable-weight door
+  (`Typeface.create(Typeface, int weight, boolean italic)`) is API 28 against a
+  floor of 26. So Semibold, Bold, Heavy and Black are all bold, and the six
+  lighter weights are all plain. Same rounding in the canvas replay, for the
+  same reason.
+
 - **The gesture band.** `gestures::install_key_reader` and
   `component::install_sender_readers` are not filled, so only a button's
   `on_click` fires. `wants_view` already answers true for a node with gestures,
