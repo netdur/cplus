@@ -40,6 +40,9 @@ fn attach_root(env: rt::Env, activity: jni::jobject, root: *core::Node) -> jni::
     // The VM, kept from the one thread that is certain to have an env. Every
     // other thread gets its own through it — see mainthread::attach.
     mainthread::remember_vm(env);
+    // Cached before the first paint: a colour resolves per node and the read is
+    // three JNI calls.
+    e::set_is_dark(read_is_dark());
 
     // A view is needed before the dex loader can reach a Context, and the dex
     // is needed before a FacetHost can be made. Break the cycle with one plain
@@ -156,7 +159,9 @@ fn size_changed(wd: i32, ht: i32) {
 }
 
 // The system appearance. `Configuration.uiMode & UI_MODE_NIGHT_MASK`.
-fn is_dark() -> bool {
+fn is_dark() -> bool { return read_is_dark(); }
+
+fn read_is_dark() -> bool {
     if !e::have_env() { return false; }
     let env: rt::Env = e::env();
     let res: jni::jobject = env.call_object_0(

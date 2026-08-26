@@ -4,8 +4,12 @@
     <!-- The agent surface binds a loopback port; reach it with
          `adb forward tcp:8787 tcp:8787`. -->
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- DAYNIGHT, not a pinned Light theme. facet resolves its colour tokens
+         from the system's night setting, so an Activity pinned to Light gives
+         dark text on the dark surface facet painted — each half right on its
+         own and wrong together. -->
     <application android:label="Facet Gallery (shared source)"
-                 android:theme="@android:style/Theme.Material.Light.DarkActionBar">
+                 android:theme="@android:style/Theme.DeviceDefault.DayNight">
         <!-- THE SAME SOURCE AS iOS. The only Android-specific artifacts in this
              app are this file and build_android.sh: facet_android's own
              Activity is named here, and `cplus.facet.main` points it at the

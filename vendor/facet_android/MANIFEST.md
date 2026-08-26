@@ -155,6 +155,34 @@ export, five lines calling `entry::start`. It lives in the APP because cpc emits
 one object per package: a package that names a symbol obligates everything that
 links it.
 
+### A COLOUR IS A TOKEN, not three numbers
+
+`vocab::Color` carries a `token`, and only 255 means "the rgba fields are the
+answer". Reading `r`/`g`/`b` off any other kind gives 0,0,0,0 — transparent
+black — which is why every themed surface on this backend painted NOTHING while
+literal colours looked perfect. Four kinds resolve first:
+
+| token | is | resolved by |
+|---|---|---|
+| 100..117 | a theme ROLE | the application's palette, then facet's fallback |
+| 200..217 | a derived INK | the contrast of the role it reads against |
+| 254 | an adaptive PAIR | the side for this appearance |
+| 1..24 | a PLATFORM colour | a table, light and dark |
+
+Two reductions, both deliberate:
+
+**A derived ink is the CONTRAST of its base, not the base.** AppKit reads the
+effective appearance; Android has nothing equivalent, so the base's Rec. 601
+luma decides — light base, dark ink. Resolving it to the base instead paints
+text the colour of the thing behind it, which is a whole screen of invisible
+words with every individual value correct.
+
+**Platform tokens are a table, not a Resources read.** Android's system colours
+are attributes on a theme, and reading them means a round trip per colour per
+paint; the table holds what those attributes resolve to on a stock theme, in
+both appearances. An UNKNOWN token paints the label colour rather than nothing:
+visible and obviously wrong beats invisible and silent.
+
 ### A background, a radius and a border are ONE drawable
 
 facet declares them as separate bits; Android expresses them as a single
