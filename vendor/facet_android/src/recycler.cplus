@@ -78,6 +78,18 @@ fn create_list_view(n: *core::Node) -> *u8 {
     paint::unwrap_keep(view);
     env.delete_local_ref(adapter);
     env.delete_local_ref(tap);
+    // THE VISIBLE WINDOW, reported back: `observe_scrolled`, the two appearance
+    // events and the remaining-items threshold are all one callback — Android
+    // hands over the first visible row, how many are visible and how many there
+    // are, which is exactly what those four are computed from.
+    let watcher: jni::jobject =
+        dex::new_with_token(env, dex::scroll_class(), { #addr(n) as i64 });
+    if watcher != (0 as jni::jobject) {
+        var av: w::AbsListView = w::AbsListView::from_global(env, raw);
+        av.set_on_scroll_listener(watcher);
+        let _k: *u8 = av.into_raw();
+        env.delete_local_ref(watcher);
+    }
     return raw;
 }
 
@@ -104,6 +116,33 @@ fn apply_list(v: *u8, n: *core::Node, dirty: u64) {
             dex::rows_changed(env, a);
             env.delete_local_ref(a);
         }
+    }
+    // THE SEPARATOR, which is a ListView's DIVIDER — a drawable and a height,
+    // and `None` is a divider of nothing rather than a null one, because a null
+    // divider still leaves the default height behind it.
+    if (dirty & (list::P_SEPARATOR | list::P_SEPARATOR_COLOR)) != (0 as u64)
+       || dirty == paint::all_bits() {
+        apply_separator(env, v, p);
+    }
+    if (dirty & (list::P_VERTICAL_SCROLL_BARS
+                 | list::P_HORIZONTAL_SCROLL_BARS)) != (0 as u64) {
+        var sv: w::View = w::View::from_global(env, v);
+        sv.set_vertical_scroll_bar_enabled(
+            controls::bars_shown({ (*p).vertical_scroll_bars }));
+        sv.set_horizontal_scroll_bar_enabled(
+            controls::bars_shown({ (*p).horizontal_scroll_bars }));
+        paint::unwrap_keep(sv);
+    }
+    // WHICH ROWS CAN BE PICKED. Android's choice mode is the same three
+    // answers, and it is what makes a tap STICK rather than just fire.
+    if (dirty & list::P_SELECTION_MODE) != (0 as u64) {
+        var av: w::AbsListView = w::AbsListView::from_global(env, env.new_global_ref(v));
+        av.set_choice_mode(match { (*p).selection_mode } {
+            vocab::SelectionMode::Single => 1 as i32,     // CHOICE_MODE_SINGLE
+            vocab::SelectionMode::Multiple => 2 as i32,   // CHOICE_MODE_MULTIPLE
+            vocab::SelectionMode::None => 0 as i32,       // CHOICE_MODE_NONE
+        });
+        let _k: *u8 = av.into_raw();
     }
     if (dirty & list::P_SELECTED_INDEX) != (0 as u64) {
         let idx: i64 = { (*p).selected_index };
@@ -705,5 +744,136 @@ fn row_identity(n: *core::Node, position: i32) -> text::Text {
 // A row's tap, by the same door a finger uses.
 fn tap_row(n: *core::Node, position: i32) {
     row_tapped({ #addr(n) as i64 }, position);
+    return;
+}
+
+// ---- what is on screen ---------------------------------------------------------
+// One callback carries four of facet's verbs, and they are computed here rather
+// than asked for separately because Android reports them together.
+//
+// THE PREVIOUS WINDOW HAS TO BE REMEMBERED to turn a range into EVENTS: a row
+// appeared if it is visible now and was not, and disappeared the other way
+// round. There is no field on ListProps for it, so it lives in a small table
+// keyed by node — eight slots, because a screen with nine live lists on it is
+// not a shape this backend has met, and the ninth costs a duplicate appearing
+// event rather than anything worse.
+
+const WINDOWS: usize = 8 as usize;
+static WIN_NODE: [usize; 8] = [0 as usize; 8];
+static WIN_FIRST: [i32; 8] = [0 as i32; 8];
+// -2 as a literal is not spellable in a static initializer, and -1 would be a
+// legitimate "empty window" — so an EMPTY window is `first > last`, which
+// zero-and-minus-one already is. Both start zeroed and `WIN_LAST` is set to -1
+// on first use, below.
+static WIN_LAST: [i32; 8] = [0 as i32; 8];
+static WIN_SEEN: [bool; 8] = [false; 8];
+
+fn window_slot(n: *core::Node) -> usize {
+    let key: usize = { #addr(n) };
+    var i: usize = 0 as usize;
+    while i < WINDOWS {
+        if WIN_NODE[i] == key { return i; }
+        i = i +% (1 as usize);
+    }
+    i = 0 as usize;
+    while i < WINDOWS {
+        if WIN_NODE[i] == (0 as usize) {
+            WIN_NODE[i] = key;
+            WIN_SEEN[i] = false;
+            return i;
+        }
+        i = i +% (1 as usize);
+    }
+    // Full: the oldest slot is taken. A duplicate `on_item_appearing` is the
+    // whole cost.
+    WIN_NODE[0 as usize] = key;
+    WIN_SEEN[0 as usize] = false;
+    return 0 as usize;
+}
+
+fn rows_visible(token: i64, first: i32, visible: i32, total: i32) {
+    let n: *core::Node = { token as *core::Node };
+    if n == (0 as *core::Node) { return; }
+    let p: *props::ListProps = list_props(n);
+    if p == (0 as *props::ListProps) { return; }
+    let v: *u8 = core::view_of(n);
+
+    let h: fn(*u8, *u8) = { (*p).observe_scrolled };
+    if h != props::no_handler { h(v, { (*p).observe_scrolled_ctx }); }
+
+    // APPEARED AND DISAPPEARED, from the two windows. Android reports a RANGE,
+    // so the events are its edges — and a list scrolled a whole screen in one
+    // frame fires for every row that crossed, which is what the verbs mean.
+    let last: i32 = first +% visible -% (1 as i32);
+    let slot: usize = window_slot(n);
+    // THE FIRST REPORT HAS NO PREVIOUS WINDOW, and an empty one is what makes
+    // every visible row "appear" — which is right: they did.
+    var was_first: i32 = WIN_FIRST[slot];
+    var was_last: i32 = WIN_LAST[slot];
+    if !WIN_SEEN[slot] {
+        was_first = 0 as i32;
+        was_last = (0 as i32) -% (1 as i32);
+        WIN_SEEN[slot] = true;
+    }
+    WIN_FIRST[slot] = first;
+    WIN_LAST[slot] = last;
+    if visible > (0 as i32) {
+        fire_range(p, v, first, last, was_first, was_last, true);
+        fire_range(p, v, was_first, was_last, first, last, false);
+    }
+
+    // WHAT IS NOT HERE: `on_remaining_items_threshold_reached`, which is
+    // ItemsViewProps' — a `collection`'s and a `table`'s, not a list's. facet's
+    // ListProps declares no threshold, so there is nothing to compare `total`
+    // against and the tail event belongs to the kinds that carry it.
+    return;
+}
+
+// Every index in [lo, hi] that is NOT in [other_lo, other_hi], fired as one of
+// the two appearance handlers.
+fn fire_range(p: *props::ListProps, v: *u8, lo: i32, hi: i32,
+              other_lo: i32, other_hi: i32, appearing: bool) {
+    if hi < lo { return; }
+    var h: fn(*u8, *u8) = { (*p).on_item_disappearing };
+    var ctx: *u8 = { (*p).on_item_disappearing_ctx };
+    if appearing {
+        h = { (*p).on_item_appearing };
+        ctx = { (*p).on_item_appearing_ctx };
+    }
+    if h == props::no_handler { return; }
+    var i: i32 = lo;
+    while i <= hi {
+        if i < other_lo || i > other_hi { h(v, ctx); }
+        i = i +% (1 as i32);
+    }
+    return;
+}
+
+// A LIST'S SEPARATOR: a divider drawable and its height. `Separator::None` is
+// height ZERO with a transparent divider — a null drawable alone leaves the
+// theme's height behind it, which is a gap where the line used to be.
+fn apply_separator(env: rt::Env, v: *u8, p: *props::ListProps) {
+    var lv: w::ListView = w::ListView::from_global(env, env.new_global_ref(v));
+    let shown: bool = match { (*p).separator } {
+        vocab::Separator::None => false,
+        vocab::Separator::Default => true,
+    };
+    if !shown {
+        lv.set_divider(0 as jni::jobject);
+        lv.set_divider_height(0 as i32);
+        let _k0: *u8 = lv.into_raw();
+        return;
+    }
+    let c: vocab::Color = { (*p).separator_color };
+    if c.is_set() {
+        var d: w::ColorDrawable = w::ColorDrawable::new_i(env, paint::argb_of(c));
+        var drawable: w::Drawable = d.as_drawable();
+        lv.set_divider(drawable.into_raw());
+        let _kd: *u8 = d.into_raw();
+    }
+    // ONE PIXEL, not one facet unit: a hairline is a device pixel everywhere
+    // else in this backend and a divider is a hairline.
+    lv.set_divider_height(1 as i32);
+    let _k: *u8 = lv.into_raw();
     return;
 }

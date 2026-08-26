@@ -88,8 +88,8 @@ count as answering it. Three surfaces, because they fail differently:
 
 | | android | gtk | appkit | uikit |
 |---|---|---|---|---|
-| props | 202/360 · 56% | 356 · 98% | 334 · 92% | 321 · 89% |
-| handlers | 29/68 · 43% | 68 · 100% | 68 · 100% | 65 · 95% |
+| props | 207/360 · 57% | 356 · 98% | 334 · 92% | 321 · 89% |
+| handlers | 41/68 · 60% | 68 · 100% | 68 · 100% | 65 · 95% |
 | shared band | 18/21 · 85% | 19 · 90% | 20 · 95% | 18 · 85% |
 
 The gap between the first two rows is the shape of the work left: this backend

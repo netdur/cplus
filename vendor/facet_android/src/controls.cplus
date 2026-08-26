@@ -164,6 +164,8 @@ fn create_button(n: *core::Node) -> *u8 {
     view.set_on_click_listener(listener);
     paint::unwrap_keep(view);
     env.delete_local_ref(listener);
+    // The PRESS and the RELEASE, which a click does not carry.
+    arm_touch(env, raw, n);
     return raw;
 }
 
@@ -1571,6 +1573,7 @@ fn create_icon_button(n: *core::Node) -> *u8 {
     // theme's own borderless ripple IS that circle, rather than one this
     // package draws from a mask that would be an ellipse in a wide box.
     dex::tap_feedback_borderless(env, raw);
+    arm_touch(env, raw, n);
     return raw;
 }
 
@@ -1658,6 +1661,18 @@ fn create_scroll(n: *core::Node) -> *u8 {
     gv.set_tag_i_object(SCROLL_DOC_TAG, doc);
     paint::unwrap_keep(gv);
     env.delete_local_ref(doc);
+    // WHERE THE SCROLL IS, reported back. Without this `observe_scrolled` never
+    // fired and `scroll_x()` / `scroll_y()` answered the last value WRITTEN
+    // rather than where the finger left it — the same omission facet_uikit
+    // found in its own scroll and fixed in scrolling.cplus.
+    let listener: jni::jobject =
+        dex::new_with_token(env, dex::scroll_class(), { #addr(n) as i64 });
+    if listener != (0 as jni::jobject) {
+        var sv: w::View = w::View::from_global(env, raw);
+        sv.set_on_scroll_change_listener(listener);
+        paint::unwrap_keep(sv);
+        env.delete_local_ref(listener);
+    }
     return raw;
 }
 
@@ -1689,6 +1704,25 @@ fn bars_shown(b: vocab::ScrollBars) -> bool {
         vocab::ScrollBars::Always => true,
         vocab::ScrollBars::Never => false,
     };
+}
+
+// A SCROLL MOVED. The offset is written into the props DIRECTLY, with no
+// `core::touch` — marking it dirty would send the value straight back out
+// through the next apply's `scrollTo`, the view telling the model telling the
+// view, and a scroll that fights the finger is worse than one that cannot be
+// read. facet_uikit's scrolling.cplus carries the same rule for the same
+// reason.
+fn fire_scrolled(token: i64, x: i32, y: i32) {
+    let n: *core::Node = { token as *core::Node };
+    if n == (0 as *core::Node) { return; }
+    let p: *props::ScrollProps = props_of(n, props::K_SCROLL) as *props::ScrollProps;
+    if p == (0 as *props::ScrollProps) { return; }
+    // PIXELS ON THE WAY IN, facet's units on the way out.
+    { (*p).scroll_x = e::dp({ x as f64 }) };
+    { (*p).scroll_y = e::dp({ y as f64 }) };
+    let h: fn(*u8, *u8) = { (*p).observe_scrolled };
+    if h != props::no_handler { h(core::view_of(n), { (*p).observe_scrolled_ctx }); }
+    return;
 }
 
 // The view a node's children go into: its own, except for a scroll, where it is
@@ -2685,8 +2719,11 @@ fn oval_shape(env: rt::Env) -> i32 {
 
 fn create_canvas(n: *core::Node) -> *u8 {
     let env: rt::Env = e::env();
-    return global_of(dex::new_view_with_token(env, dex::canvas_class(), e::context(),
-                                              { #addr(n) as i64 }));
+    let raw: *u8 = global_of(dex::new_view_with_token(env, dex::canvas_class(),
+                                                      e::context(), { #addr(n) as i64 }));
+    // THE INTERACTION BAND, which is what a canvas is for beyond drawing.
+    arm_touch(env, raw, n);
+    return raw;
 }
 
 fn apply_canvas(v: *u8, n: *core::Node, dirty: u64) {
@@ -2893,6 +2930,81 @@ fn is_points(l: flex::StyleLength, v: f64) -> bool {
         flex::Unit::Point => val == v,
         _ => false,
     };
+}
+
+// ---- the raw touch ------------------------------------------------------------
+// TWO KINDS WANT THE EDGES OF A TOUCH rather than the click it becomes: a
+// button, which declares `on_pressed` and `on_released`, and a canvas, whose
+// interaction band is five verbs about a finger.
+//
+// One adapter serves both and the KIND decides what the edges mean — the same
+// shape `fire_click` takes, and for the same reason: one hook, one token, no
+// side table.
+//
+// WHAT IS NOT HERE is the HOVER half of the canvas band. `on_hover`,
+// `on_unhover` and `observe_move_hover_interaction` need a pointer that is not
+// touching, and a finger is never that. MANIFEST §1, the same reading
+// facet_uikit records.
+
+fn arm_touch(env: rt::Env, raw: *u8, n: *core::Node) {
+    let listener: jni::jobject =
+        dex::new_with_token(env, dex::touch_class(), { #addr(n) as i64 });
+    if listener == (0 as jni::jobject) { return; }
+    var view: w::View = w::View::from_global(env, raw);
+    view.set_on_touch_listener(listener);
+    paint::unwrap_keep(view);
+    env.delete_local_ref(listener);
+    return;
+}
+
+fn fire_touch_event(token: i64, action: i32, x: f32, y: f32) {
+    let n: *core::Node = { token as *core::Node };
+    if n == (0 as *core::Node) { return; }
+    let d: *core::Data = core::node_data(n);
+    if d == (0 as *core::Data) { return; }
+    let raw: *u8 = { (*d).props };
+    if raw == (0 as *u8) { return; }
+    let kind: u32 = { (*d).kind };
+    let v: *u8 = core::view_of(n);
+    // MotionEvent: DOWN 0, UP 1, MOVE 2, CANCEL 3.
+    let down: bool = action == (0 as i32);
+    let up: bool = action == (1 as i32);
+    let moved: bool = action == (2 as i32);
+    let cancelled: bool = action == (3 as i32);
+
+    if kind == props::K_BUTTON {
+        let p: *props::ButtonProps = raw as *props::ButtonProps;
+        if down { fire_one(v, { (*p).on_pressed }, { (*p).on_pressed_ctx }); }
+        // A CANCEL IS A RELEASE for a button: the finger left without a click,
+        // and a control that reported the press and never the release would
+        // leave an application holding a pressed state forever.
+        if up || cancelled { fire_one(v, { (*p).on_released }, { (*p).on_released_ctx }); }
+        return;
+    }
+    if kind == props::K_ICON_BUTTON {
+        let p: *props::IconButtonProps = raw as *props::IconButtonProps;
+        if down { fire_one(v, { (*p).on_pressed }, { (*p).on_pressed_ctx }); }
+        if up || cancelled { fire_one(v, { (*p).on_released }, { (*p).on_released_ctx }); }
+        return;
+    }
+    if kind == props::K_CANVAS {
+        let p: *props::CanvasProps = raw as *props::CanvasProps;
+        if down { fire_one(v, { (*p).on_press }, { (*p).on_press_ctx }); }
+        if moved {
+            fire_one(v, { (*p).observe_drag_interaction },
+                     { (*p).observe_drag_interaction_ctx });
+        }
+        if up { fire_one(v, { (*p).on_release }, { (*p).on_release_ctx }); }
+        if cancelled { fire_one(v, { (*p).on_cancel }, { (*p).on_cancel_ctx }); }
+        return;
+    }
+    return;
+}
+
+fn fire_one(sender: *u8, h: fn(*u8, *u8), ctx: *u8) {
+    if h == props::no_handler { return; }
+    h(sender, ctx);
+    return;
 }
 
 // ---- the agent's door --------------------------------------------------------

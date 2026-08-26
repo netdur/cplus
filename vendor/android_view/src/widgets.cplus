@@ -22098,4 +22098,183 @@ impl ColorStateList {
 
 }
 
-// cpc-bindgen --java: 3023 items emitted, 28 SKIPPED.
+// android.graphics.drawable.ColorDrawable
+struct ColorDrawable {
+    _env: rt::Env,
+    _obj: jni::jobject,
+}
+
+impl ColorDrawable {
+    fn drop(ref this) {
+        // `into_raw` nulls `_obj`; DeleteGlobalRef does not admit NULL.
+        if this._obj != { 0 as jni::jobject } { this._env.delete_global_ref(this._obj); }
+        return;
+    }
+
+    fn from_global(env: rt::Env, obj: jni::jobject) -> ColorDrawable { return ColorDrawable { _env: env, _obj: obj }; }
+
+    fn from_local(env: rt::Env, obj: jni::jobject) -> ColorDrawable { return ColorDrawable { _env: env, _obj: env.retain_local_as_global(obj) }; }
+
+    fn as_obj(this) -> jni::jobject { return this._obj; }
+
+    fn into_raw(ref this) -> jni::jobject {
+        let p: jni::jobject = this._obj;
+        this._obj = { 0 as jni::jobject };
+        return p;
+    }
+
+    // javap lists DECLARED members only; the inherited surface is here.
+    //
+    // Takes a FRESH global ref rather than sharing this one. Both
+    // wrappers own what they hold and both drops run, so handing the
+    // same ref over would DeleteGlobalRef it twice.
+    fn as_drawable(this) -> Drawable { return Drawable::from_global(this._env, this._env.new_global_ref(this._obj)); }
+
+    fn apply_theme(this, arg0: jni::jobject) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/graphics/drawable/ColorDrawable\0"), #str_ptr("applyTheme\0"), #str_ptr("(Landroid/content/res/Resources$Theme;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn can_apply_theme(this) -> bool {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/graphics/drawable/ColorDrawable\0"), #str_ptr("canApplyTheme\0"), #str_ptr("()Z\0"));
+        let r: jni::jboolean = { (*(*this._env.raw())).CallBooleanMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r as i8 != 0;
+    }
+
+    fn draw(this, arg0: jni::jobject) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/graphics/drawable/ColorDrawable\0"), #str_ptr("draw\0"), #str_ptr("(Landroid/graphics/Canvas;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn get_alpha(this) -> i32 {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/graphics/drawable/ColorDrawable\0"), #str_ptr("getAlpha\0"), #str_ptr("()I\0"));
+        let r: i32 = { (*(*this._env.raw())).CallIntMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_changing_configurations(this) -> i32 {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/graphics/drawable/ColorDrawable\0"), #str_ptr("getChangingConfigurations\0"), #str_ptr("()I\0"));
+        let r: i32 = { (*(*this._env.raw())).CallIntMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_color(this) -> i32 {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/graphics/drawable/ColorDrawable\0"), #str_ptr("getColor\0"), #str_ptr("()I\0"));
+        let r: i32 = { (*(*this._env.raw())).CallIntMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_color_filter(this) -> jni::jobject {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/graphics/drawable/ColorDrawable\0"), #str_ptr("getColorFilter\0"), #str_ptr("()Landroid/graphics/ColorFilter;\0"));
+        let r: jni::jobject = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_constant_state(this) -> jni::jobject {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/graphics/drawable/ColorDrawable\0"), #str_ptr("getConstantState\0"), #str_ptr("()Landroid/graphics/drawable/Drawable$ConstantState;\0"));
+        let r: jni::jobject = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_opacity(this) -> i32 {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/graphics/drawable/ColorDrawable\0"), #str_ptr("getOpacity\0"), #str_ptr("()I\0"));
+        let r: i32 = { (*(*this._env.raw())).CallIntMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_outline(this, arg0: jni::jobject) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/graphics/drawable/ColorDrawable\0"), #str_ptr("getOutline\0"), #str_ptr("(Landroid/graphics/Outline;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn has_focus_state_specified(this) -> bool {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/graphics/drawable/ColorDrawable\0"), #str_ptr("hasFocusStateSpecified\0"), #str_ptr("()Z\0"));
+        let r: jni::jboolean = { (*(*this._env.raw())).CallBooleanMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r as i8 != 0;
+    }
+
+    fn inflate(this, arg0: jni::jobject, arg1: jni::jobject, arg2: jni::jobject, arg3: jni::jobject) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/graphics/drawable/ColorDrawable\0"), #str_ptr("inflate\0"), #str_ptr("(Landroid/content/res/Resources;Lorg/xmlpull/v1/XmlPullParser;Landroid/util/AttributeSet;Landroid/content/res/Resources$Theme;)V\0"));
+        var args: [jni::JValue; 4] = [jni::arg_object(arg0), jni::arg_object(arg1), jni::arg_object(arg2), jni::arg_object(arg3)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn is_stateful(this) -> bool {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/graphics/drawable/ColorDrawable\0"), #str_ptr("isStateful\0"), #str_ptr("()Z\0"));
+        let r: jni::jboolean = { (*(*this._env.raw())).CallBooleanMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r as i8 != 0;
+    }
+
+    fn mutate(this) -> jni::jobject {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/graphics/drawable/ColorDrawable\0"), #str_ptr("mutate\0"), #str_ptr("()Landroid/graphics/drawable/Drawable;\0"));
+        let r: jni::jobject = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn new_void(env: rt::Env) -> ColorDrawable {
+        let mid: jni::jmethodID = env.method(#str_ptr("android/graphics/drawable/ColorDrawable\0"), #str_ptr("<init>\0"), #str_ptr("()V\0"));
+        let cls: jni::jclass = env.class_cached(#str_ptr("android/graphics/drawable/ColorDrawable\0"));
+        let obj: jni::jobject = { (*(*env.raw())).NewObjectA(env.raw(), cls, mid, 0 as *jni::JValue) };
+        return ColorDrawable { _env: env, _obj: env.retain_local_as_global(obj) };
+    }
+
+    fn new_i(env: rt::Env, arg0: i32) -> ColorDrawable {
+        let mid: jni::jmethodID = env.method(#str_ptr("android/graphics/drawable/ColorDrawable\0"), #str_ptr("<init>\0"), #str_ptr("(I)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_int(arg0)];
+        let cls: jni::jclass = env.class_cached(#str_ptr("android/graphics/drawable/ColorDrawable\0"));
+        let obj: jni::jobject = { (*(*env.raw())).NewObjectA(env.raw(), cls, mid, #addr_of(args[0])) };
+        return ColorDrawable { _env: env, _obj: env.retain_local_as_global(obj) };
+    }
+
+    fn on_state_change(this, arg0: jni::jarray) -> bool {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/graphics/drawable/ColorDrawable\0"), #str_ptr("onStateChange\0"), #str_ptr("([I)Z\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        let r: jni::jboolean = { (*(*this._env.raw())).CallBooleanMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])) };
+        return r as i8 != 0;
+    }
+
+    fn set_alpha(this, arg0: i32) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/graphics/drawable/ColorDrawable\0"), #str_ptr("setAlpha\0"), #str_ptr("(I)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_int(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_color(this, arg0: i32) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/graphics/drawable/ColorDrawable\0"), #str_ptr("setColor\0"), #str_ptr("(I)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_int(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_color_filter(this, arg0: jni::jobject) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/graphics/drawable/ColorDrawable\0"), #str_ptr("setColorFilter\0"), #str_ptr("(Landroid/graphics/ColorFilter;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_tint_blend_mode(this, arg0: jni::jobject) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/graphics/drawable/ColorDrawable\0"), #str_ptr("setTintBlendMode\0"), #str_ptr("(Landroid/graphics/BlendMode;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_tint_list(this, arg0: jni::jobject) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/graphics/drawable/ColorDrawable\0"), #str_ptr("setTintList\0"), #str_ptr("(Landroid/content/res/ColorStateList;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+}
+
+// cpc-bindgen --java: 3046 items emitted, 28 SKIPPED.

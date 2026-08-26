@@ -129,6 +129,27 @@ export extern fn facet_android_draw(envp: *jni::JNIEnv, cls: jni::jobject, token
     return;
 }
 
+export extern fn facet_android_touch_event(envp: *jni::JNIEnv, cls: jni::jobject,
+                                          token: i64, action: i32, x: f32, y: f32) {
+    e::set_env(rt::from_native(envp));
+    controls::fire_touch_event(token, action, x, y);
+    return;
+}
+
+export extern fn facet_android_scrolled(envp: *jni::JNIEnv, cls: jni::jobject, token: i64,
+                                        x: i32, y: i32) {
+    e::set_env(rt::from_native(envp));
+    controls::fire_scrolled(token, x, y);
+    return;
+}
+
+export extern fn facet_android_rows_visible(envp: *jni::JNIEnv, cls: jni::jobject, token: i64,
+                                            first: i32, visible: i32, total: i32) {
+    e::set_env(rt::from_native(envp));
+    recycler::rows_visible(token, first, visible, total);
+    return;
+}
+
 export extern fn facet_android_submit(envp: *jni::JNIEnv, cls: jni::jobject, token: i64) {
     e::set_env(rt::from_native(envp));
     controls::fire_submit(token);

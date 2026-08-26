@@ -21,7 +21,7 @@ import "jni/jni" as jni;
 import "android_view/runtime" as rt;
 
 // Kept in step by tools/build_dex.sh; do not hand-edit.
-const DEX_LEN: usize = 20828;
+const DEX_LEN: usize = 21864;
 
 static LOADER: usize = 0;
 static C_HOST: usize = 0;
@@ -40,6 +40,8 @@ static C_DRAW: usize = 0;
 static C_SWIPE: usize = 0;
 static C_DATE: usize = 0;
 static C_EDIT: usize = 0;
+static C_SCROLL: usize = 0;
+static C_TOUCH: usize = 0;
 static C_ZOOM: usize = 0;
 
 // jni.h's JNINativeMethod with the fn slot concretely typed per shape.
@@ -95,10 +97,24 @@ struct NativeLIOO_O {
 }
 
 #[repr(C)]
+struct Native3LII {
+    opaque name: *u8,
+    opaque signature: *u8,
+    fn_ptr: fn(*jni::JNIEnv, jni::jobject, i64, i32, i32),
+}
+
+#[repr(C)]
 struct Native4LIII {
     opaque name: *u8,
     opaque signature: *u8,
     fn_ptr: fn(*jni::JNIEnv, jni::jobject, i64, i32, i32, i32),
+}
+
+#[repr(C)]
+struct NativeLIFF {
+    opaque name: *u8,
+    opaque signature: *u8,
+    fn_ptr: fn(*jni::JNIEnv, jni::jobject, i64, i32, f32, f32),
 }
 
 #[repr(C)]
@@ -132,6 +148,12 @@ extern fn facet_android_row_tapped(envp: *jni::JNIEnv, cls: jni::jobject, token:
 extern fn facet_android_job(envp: *jni::JNIEnv, cls: jni::jobject);
 extern fn facet_android_draw(envp: *jni::JNIEnv, cls: jni::jobject, token: i64,
                              canvas: jni::jobject);
+extern fn facet_android_touch_event(envp: *jni::JNIEnv, cls: jni::jobject, token: i64,
+                                    action: i32, x: f32, y: f32);
+extern fn facet_android_scrolled(envp: *jni::JNIEnv, cls: jni::jobject, token: i64,
+                                 x: i32, y: i32);
+extern fn facet_android_rows_visible(envp: *jni::JNIEnv, cls: jni::jobject, token: i64,
+                                     first: i32, visible: i32, total: i32);
 extern fn facet_android_submit(envp: *jni::JNIEnv, cls: jni::jobject, token: i64);
 extern fn facet_android_focus(envp: *jni::JNIEnv, cls: jni::jobject, token: i64, on: u8);
 extern fn facet_android_date_set(envp: *jni::JNIEnv, cls: jni::jobject, token: i64,
@@ -158,6 +180,8 @@ fn canvas_class() -> jni::jclass { return { C_CANVAS as *u8 }; }
 fn swipe_class() -> jni::jclass { return { C_SWIPE as *u8 }; }
 fn date_class() -> jni::jclass { return { C_DATE as *u8 }; }
 fn edit_class() -> jni::jclass { return { C_EDIT as *u8 }; }
+fn scroll_class() -> jni::jclass { return { C_SCROLL as *u8 }; }
+fn touch_class() -> jni::jclass { return { C_TOUCH as *u8 }; }
 fn zoom_class() -> jni::jclass { return { C_ZOOM as *u8 }; }
 fn loaded() -> bool { return LOADER != 0; }
 
@@ -175,7 +199,7 @@ fn ensure_loaded(env: rt::Env, any_view: jni::jobject) {
     // Activity would hold a FacetHost of one class while this code registered
     // natives on the other, and `nativeSizeChanged` would never arrive.
     if load_merged(env) { return; }
-    let dex: *[u8; 20828] = #include_bytes("../facet_android.dex");
+    let dex: *[u8; 21864] = #include_bytes("../facet_android.dex");
     let buffer: jni::jobject = {
         (*(*env.raw())).NewDirectByteBuffer(env.raw(), { dex as *u8 }, DEX_LEN as i64)
     };
@@ -211,6 +235,8 @@ fn ensure_loaded(env: rt::Env, any_view: jni::jobject) {
     C_SWIPE = { #addr(load_class(env, loader, #str_ptr("cplus.facet.FacetSwipeHost\0"))) };
     C_DATE = { #addr(load_class(env, loader, #str_ptr("cplus.facet.FacetDate\0"))) };
     C_EDIT = { #addr(load_class(env, loader, #str_ptr("cplus.facet.FacetEdit\0"))) };
+    C_SCROLL = { #addr(load_class(env, loader, #str_ptr("cplus.facet.FacetScroll\0"))) };
+    C_TOUCH = { #addr(load_class(env, loader, #str_ptr("cplus.facet.FacetTouch\0"))) };
     C_ZOOM = { #addr(load_class(env, loader, #str_ptr("cplus.facet.FacetZoomHost\0"))) };
 
     bind_natives(env);
@@ -246,6 +272,8 @@ fn load_merged(env: rt::Env) -> bool {
     C_SWIPE = { #addr(find_global(env, #str_ptr("cplus/facet/FacetSwipeHost\0"))) };
     C_DATE = { #addr(find_global(env, #str_ptr("cplus/facet/FacetDate\0"))) };
     C_EDIT = { #addr(find_global(env, #str_ptr("cplus/facet/FacetEdit\0"))) };
+    C_SCROLL = { #addr(find_global(env, #str_ptr("cplus/facet/FacetScroll\0"))) };
+    C_TOUCH = { #addr(find_global(env, #str_ptr("cplus/facet/FacetTouch\0"))) };
     C_ZOOM = { #addr(find_global(env, #str_ptr("cplus/facet/FacetZoomHost\0"))) };
     // A sentinel rather than a loader object: `loaded()` asks whether the
     // classes are here, and by this path there is no loader to keep.
@@ -339,6 +367,27 @@ fn bind_natives(env: rt::Env) {
         signature: #str_ptr("()V\0"),
         fn_ptr: facet_android_job,
     };
+    var touch_rec: NativeLIFF = NativeLIFF {
+        name: #str_ptr("nativeTouchEvent\0"),
+        signature: #str_ptr("(JIFF)V\0"),
+        fn_ptr: facet_android_touch_event,
+    };
+    let _rt: i32 = { (*(*env.raw())).RegisterNatives(env.raw(), { C_TOUCH as *u8 },
+                                                     #addr_of(touch_rec) as *u8, 1) };
+    var scrolled_rec: Native3LII = Native3LII {
+        name: #str_ptr("nativeScrolled\0"),
+        signature: #str_ptr("(JII)V\0"),
+        fn_ptr: facet_android_scrolled,
+    };
+    let _rs0: i32 = { (*(*env.raw())).RegisterNatives(env.raw(), { C_SCROLL as *u8 },
+                                                      #addr_of(scrolled_rec) as *u8, 1) };
+    var rows_rec: Native4LIII = Native4LIII {
+        name: #str_ptr("nativeRows\0"),
+        signature: #str_ptr("(JIII)V\0"),
+        fn_ptr: facet_android_rows_visible,
+    };
+    let _rs1: i32 = { (*(*env.raw())).RegisterNatives(env.raw(), { C_SCROLL as *u8 },
+                                                      #addr_of(rows_rec) as *u8, 1) };
     var submit_rec: Native1L = Native1L {
         name: #str_ptr("nativeSubmit\0"),
         signature: #str_ptr("(J)V\0"),
