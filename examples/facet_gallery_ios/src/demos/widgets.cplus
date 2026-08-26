@@ -38,6 +38,16 @@ impl Buttons {
     }
 }
 
+// THE SYSTEM ICON TIER IS PER-PLATFORM BY DESIGN. facet's `symbol.cplus` says
+// so outright: the system set is "SF Symbols on macOS, the freedesktop theme on
+// Linux, Segoe Fluent on Windows" — and `android.R.drawable` on Android. The
+// names differ, so naming one is platform-specific code, which is exactly what
+// `#platform()` is for and what this file already does for the backend's name.
+fn share_glyph() -> str {
+    if #platform() == "android" { return "ic_menu_share"; }
+    return "square.and.arrow.up";
+}
+
 impl Buttons: component::Component {
     fn build(ref this) -> core::Node {
         var body: flex::Builder = flex::Builder::new();
@@ -55,7 +65,7 @@ impl Buttons: component::Component {
                               corner_radius: vocab::Corners::all(10.0f64))
                    .height(44.0f64));
         styles.add(ui::text_button("A text button", key: "c:b3").height(44.0f64));
-        styles.add(ui::icon_button("square.and.arrow.up", key: "c:b4").height(44.0f64));
+        styles.add(ui::icon_button(share_glyph(), key: "c:b4").height(44.0f64));
         styles.add(shell::caption("Three postures of one idea: a filled button, the link posture (`text_button`, a decorated title), and a glyph-only `icon_button`."));
         body.add(shell::card("POSTURES", styles));
 

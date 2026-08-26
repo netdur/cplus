@@ -37,12 +37,21 @@ binding a second, contradictory answer to the same question.
 This is why `vendor/android_view`'s generated class list is a curated list
 rather than all of `android.widget`.
 
-### A SYMBOL NAME
+### AN SF SYMBOL NAME
 
 `image("square.and.arrow.up")` and `icon_button("checkmark.circle")` name SF
-Symbols, and Android ships no such glyph set. An `image` source resolves through
-three doors here — a FILE on disk, an APK ASSET, then a DRAWABLE RESOURCE by
-name — and a symbol name is none of them, so it warns once and draws nothing.
+Symbols, and Android ships no such glyph set. A source resolves through four
+doors here — a FILE on disk, an APK ASSET, a DRAWABLE RESOURCE in the app, then
+one in the `android` package — and an SF Symbol name is none of them, so it
+warns once and draws nothing.
+
+That fourth door IS the system tier `symbol.cplus` describes: "the platform's
+own set. macOS reads SF Symbols, Linux the freedesktop theme, Windows Segoe
+Fluent." Android's own set is `android.R.drawable`, reached by name, and asking
+for it is what an app writing `icon_button("ic_menu_share")` gets. The names
+differ per platform BY DESIGN — the contract calls naming one "a deliberate,
+visible choice to write platform-specific code" — so a shared source picks the
+name with `#platform()`, which is what examples/facet_gallery_ios does.
 
 An `icon_button` in that state is an EMPTY BORDERLESS button, not a slab: the
 kind's posture is glyph-only, so it takes `borderlessButtonStyle` the way

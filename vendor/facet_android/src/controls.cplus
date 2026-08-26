@@ -1134,17 +1134,40 @@ fn decode_asset(env: rt::Env, name: *u8) -> jni::jobject {
     return bmp;
 }
 
-// `res/drawable/<name>`, by name. `getIdentifier` answers 0 for a name that is
-// not a resource, which includes every name with a dot in it — so an SF Symbol
-// falls through here without a special case.
+// `res/drawable/<name>`, by name — the APP's first, then ANDROID'S OWN.
+//
+// The second package is the system tier `symbol.cplus` describes: "the
+// platform's own set. macOS reads SF Symbols, Linux the freedesktop theme,
+// Windows Segoe Fluent." Android's is `android.R.drawable`, and asking for it
+// by name is how a caller reaches it without this backend carrying a table of
+// translations from somebody else's vocabulary.
+//
+// `getIdentifier` answers 0 for a name that is not a resource, which includes
+// every name with a dot in it — so an SF Symbol name falls through both
+// packages without a special case.
 fn drawable_id(env: rt::Env, name: *u8) -> i32 {
+    let own: i32 = drawable_id_in(env, name, 0 as jni::jobject);
+    if own != (0 as i32) { return own; }
+    let android_pkg: jni::jstring = env.new_string_utf(#str_ptr("android\0"));
+    let sys: i32 = drawable_id_in(env, name, android_pkg);
+    env.delete_local_ref(android_pkg);
+    return sys;
+}
+
+// `package` null means the app's own, which is what `getPackageName` answers.
+fn drawable_id_in(env: rt::Env, name: *u8, package: jni::jobject) -> i32 {
     let res: jni::jobject = env.call_object_0(
         e::context(), #str_ptr("android/content/Context\0"), #str_ptr("getResources\0"),
         #str_ptr("()Landroid/content/res/Resources;\0"));
     if res == (0 as jni::jobject) { env.clear_exception(); return 0 as i32; }
-    let pkg: jni::jobject = env.call_object_0(
-        e::context(), #str_ptr("android/content/Context\0"), #str_ptr("getPackageName\0"),
-        #str_ptr("()Ljava/lang/String;\0"));
+    var pkg: jni::jobject = package;
+    var own_pkg: bool = false;
+    if pkg == (0 as jni::jobject) {
+        pkg = env.call_object_0(
+            e::context(), #str_ptr("android/content/Context\0"), #str_ptr("getPackageName\0"),
+            #str_ptr("()Ljava/lang/String;\0"));
+        own_pkg = true;
+    }
     let js: jni::jstring = env.new_string_utf(name);
     let kind: jni::jstring = env.new_string_utf(#str_ptr("drawable\0"));
     let cls: jni::jclass = env.class_cached(#str_ptr("android/content/res/Resources\0"));
@@ -1159,7 +1182,8 @@ fn drawable_id(env: rt::Env, name: *u8) -> i32 {
     env.clear_exception();
     env.delete_local_ref(kind);
     env.delete_local_ref(js);
-    env.delete_local_ref(pkg);
+    // Only the one this frame MADE — the caller's package string is theirs.
+    if own_pkg { env.delete_local_ref(pkg); }
     env.delete_local_ref(res);
     return id;
 }
