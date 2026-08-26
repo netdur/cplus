@@ -76,6 +76,28 @@ one, and all three doors are open to it.
 Everything here is a debt, not a decision. Kinds with no body **warn once**
 through liblog (`adb logcat -s facet`) and render an empty container.
 
+**The debt is a NUMBER, and it is measured rather than estimated:**
+
+    python3 vendor/facet_android/tools/parity.py            # from the repo root
+    python3 vendor/facet_android/tools/parity.py --check    # non-zero on a regression
+
+facet_gtk's script, with this package's floors. It walks facet's contract for
+every `P_*` bit and asks which ones this backend NAMES in code — comments
+stripped first, so a manifest entry explaining why a verb is absent does not
+count as answering it. Three surfaces, because they fail differently:
+
+| | android | gtk | appkit | uikit |
+|---|---|---|---|---|
+| props | 165/360 · 45% | 356 · 98% | 334 · 92% | 321 · 89% |
+| handlers | 24/68 · 35% | 68 · 100% | 68 · 100% | 65 · 95% |
+| shared band | 12/21 · 57% | 19 · 90% | 20 · 95% | 18 · 85% |
+
+The gap between the first two rows is the shape of the work left: this backend
+can be TOLD a good deal more than it can SAY. Twenty of the handlers it never
+fires are a scroll position, a selection, a submit and a lifecycle edge — reads
+an application needs before it can do anything with the controls that are
+already drawn.
+
 - **The controls still without a body.** `popup`, `tabs`, `collection`,
   `table`, `web`, `bordered`, `carousel`, `refreshable`, `time_picker`, the menu
   tier. `views.cplus` dispatches on kind; each needs a `create_` / `apply_` pair
