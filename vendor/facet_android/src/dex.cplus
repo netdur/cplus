@@ -21,7 +21,7 @@ import "jni/jni" as jni;
 import "android_view/runtime" as rt;
 
 // Kept in step by tools/build_dex.sh; do not hand-edit.
-const DEX_LEN: usize = 28288;
+const DEX_LEN: usize = 29972;
 
 static LOADER: usize = 0;
 static C_HOST: usize = 0;
@@ -47,6 +47,7 @@ static C_POPUP: usize = 0;
 static C_WEB: usize = 0;
 static C_ZOOM: usize = 0;
 static C_CAROUSEL: usize = 0;
+static C_BRIDGE: usize = 0;
 
 // jni.h's JNINativeMethod with the fn slot concretely typed per shape.
 #[repr(C)]
@@ -161,6 +162,10 @@ extern fn facet_android_text(envp: *jni::JNIEnv, cls: jni::jobject, token: i64, 
 extern fn facet_android_step(envp: *jni::JNIEnv, cls: jni::jobject, token: i64, delta: i32);
 extern fn facet_android_carousel_page(envp: *jni::JNIEnv, cls: jni::jobject, token: i64,
                                       index: i32);
+extern fn facet_android_raw_message(envp: *jni::JNIEnv, cls: jni::jobject, token: i64,
+                                    body: jni::jobject);
+extern fn facet_android_resource(envp: *jni::JNIEnv, cls: jni::jobject, token: i64,
+                                 url: jni::jobject);
 extern fn facet_android_row_count(envp: *jni::JNIEnv, cls: jni::jobject, token: i64) -> i32;
 extern fn facet_android_row_view(envp: *jni::JNIEnv, cls: jni::jobject, token: i64, position: i32,
                                  convert: jni::jobject, parent: jni::jobject) -> jni::jobject;
@@ -217,6 +222,7 @@ fn popup_class() -> jni::jclass { return { C_POPUP as *u8 }; }
 fn web_class() -> jni::jclass { return { C_WEB as *u8 }; }
 fn zoom_class() -> jni::jclass { return { C_ZOOM as *u8 }; }
 fn carousel_class() -> jni::jclass { return { C_CAROUSEL as *u8 }; }
+fn bridge_class() -> jni::jclass { return { C_BRIDGE as *u8 }; }
 fn loaded() -> bool { return LOADER != 0; }
 
 // Load the dex and bind every native. Idempotent; `any_view` is only needed to
@@ -233,7 +239,7 @@ fn ensure_loaded(env: rt::Env, any_view: jni::jobject) {
     // Activity would hold a FacetHost of one class while this code registered
     // natives on the other, and `nativeSizeChanged` would never arrive.
     if load_merged(env) { return; }
-    let dex: *[u8; 28288] = #include_bytes("../facet_android.dex");
+    let dex: *[u8; 29972] = #include_bytes("../facet_android.dex");
     let buffer: jni::jobject = {
         (*(*env.raw())).NewDirectByteBuffer(env.raw(), { dex as *u8 }, DEX_LEN as i64)
     };
@@ -276,6 +282,7 @@ fn ensure_loaded(env: rt::Env, any_view: jni::jobject) {
     C_WEB = { #addr(load_class(env, loader, #str_ptr("cplus.facet.FacetWeb\0"))) };
     C_ZOOM = { #addr(load_class(env, loader, #str_ptr("cplus.facet.FacetZoomHost\0"))) };
     C_CAROUSEL = { #addr(load_class(env, loader, #str_ptr("cplus.facet.FacetCarousel\0"))) };
+    C_BRIDGE = { #addr(load_class(env, loader, #str_ptr("cplus.facet.FacetBridge\0"))) };
 
     bind_natives(env);
 
@@ -317,6 +324,7 @@ fn load_merged(env: rt::Env) -> bool {
     C_WEB = { #addr(find_global(env, #str_ptr("cplus/facet/FacetWeb\0"))) };
     C_ZOOM = { #addr(find_global(env, #str_ptr("cplus/facet/FacetZoomHost\0"))) };
     C_CAROUSEL = { #addr(find_global(env, #str_ptr("cplus/facet/FacetCarousel\0"))) };
+    C_BRIDGE = { #addr(find_global(env, #str_ptr("cplus/facet/FacetBridge\0"))) };
     // A sentinel rather than a loader object: `loaded()` asks whether the
     // classes are here, and by this path there is no loader to keep.
     LOADER = 1 as usize;
@@ -570,6 +578,21 @@ fn bind_natives(env: rt::Env) {
     let _r12: i32 = { (*(*env.raw())).RegisterNatives(env.raw(), { C_CAROUSEL as *u8 },
                                                       #addr_of(page_rec) as *u8, 1) };
 
+    var bridge_rec: Native2LO = Native2LO {
+        name: #str_ptr("nativeRawMessage\0"),
+        signature: #str_ptr("(JLjava/lang/String;)V\0"),
+        fn_ptr: facet_android_raw_message,
+    };
+    let _r13: i32 = { (*(*env.raw())).RegisterNatives(env.raw(), { C_BRIDGE as *u8 },
+                                                      #addr_of(bridge_rec) as *u8, 1) };
+    var resource_rec: Native2LO = Native2LO {
+        name: #str_ptr("nativeResourceRequested\0"),
+        signature: #str_ptr("(JLjava/lang/String;)V\0"),
+        fn_ptr: facet_android_resource,
+    };
+    let _r14: i32 = { (*(*env.raw())).RegisterNatives(env.raw(), { C_WEB as *u8 },
+                                                      #addr_of(resource_rec) as *u8, 1) };
+
     var step_rec: Native2LI = Native2LI {
         name: #str_ptr("nativeStep\0"),
         signature: #str_ptr("(JI)V\0"),
@@ -660,6 +683,17 @@ fn draw_input_transparent(env: rt::Env, view: jni::jobject, through: bool) {
     { (*(*env.raw())).CallStaticVoidMethodA(env.raw(), { C_DRAW as *u8 }, mid,
                                             #addr_of(args[0])) };
     return;
+}
+
+// `new FacetBridge(token, host)` — the object a page posts to.
+fn new_bridge(env: rt::Env, token: i64, host: jni::jobject) -> jni::jobject {
+    if C_BRIDGE == 0 { return 0 as jni::jobject; }
+    let ctor: jni::jmethodID = env.method_id({ C_BRIDGE as *u8 }, #str_ptr("<init>\0"),
+                                             #str_ptr("(JLandroid/view/View;)V\0"));
+    if ctor == (0 as jni::jmethodID) { return 0 as jni::jobject; }
+    var args: [jni::JValue; 2] = [jni::arg_long(token), jni::arg_object(host)];
+    return { (*(*env.raw())).NewObjectA(env.raw(), { C_BRIDGE as *u8 }, ctor,
+                                        #addr_of(args[0])) };
 }
 
 // ---- FacetCarousel -------------------------------------------------------------

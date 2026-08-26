@@ -65,6 +65,7 @@ DEPS="$V/facet_runtime/lib/$T/libfacet_runtime.a \
 # no symbols can drop this and the backend warns once instead of drawing blanks.
 mkdir -p out/assets
 cp "$V/facet/assets/MaterialSymbolsOutlined.ttf" out/assets/
+cp -R assets/web out/assets/ 2>/dev/null || true
 
 "$BT/aapt2" link -o out/base.apk --manifest AndroidManifest.xml -I "$AJ" \
     -A out/assets \

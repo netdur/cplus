@@ -88,15 +88,14 @@ count as answering it. Three surfaces, because they fail differently:
 
 | | android | gtk | appkit | uikit |
 |---|---|---|---|---|
-| props | 289/360 · 80% | 356 · 98% | 334 · 92% | 321 · 89% |
-| handlers | 57/68 · 84% | 68 · 100% | 68 · 100% | 65 · 95% |
+| props | 292/360 · 81% | 356 · 98% | 334 · 92% | 321 · 89% |
+| handlers | 65/68 · 95% | 68 · 100% | 68 · 100% | 65 · 95% |
 | shared band | 18/21 · 85% | 19 · 90% | 20 · 95% | 18 · 85% |
 
-The gap between the first two rows is the shape of the work left: this backend
-can be TOLD a good deal more than it can SAY. Eleven of the handlers it never
-fires are a hover, a reorder, a divider drag and a text selection — reads an
-application needs before it can do anything with the controls that are already
-drawn.
+The three handlers still unfired are a reorder that no kind here performs, a
+`tabs` change on a kind with no body, and a text area's selection. The gap
+between the two rows has closed: what is left is mostly PROPS on controls that
+already work.
 
 - **PULL-TO-REFRESH IS HAND-ROLLED**, because `SwipeRefreshLayout` is AndroidX
   — an `.aar` with its own dex and dependency graph — and this project ships no
@@ -111,12 +110,41 @@ drawn.
   then a CANCEL every time. Claimed only at row zero, and released the moment
   the drag turns upward, which is a scroll and the page's.
 
-- **The controls still without a body.** `tabs`, `carousel`, the menu tier.
+- **The controls still without a body.** `tabs` and the menu tier.
 
   `tabs` is blocked on something else entirely: what its SEGMENTS are is not
   settled. facet_uikit makes a UISegmentedControl and never populates it, so
   there is no implementation to read the intent from, and guessing would be
   inventing a control facet has not described.
+
+- **A `hybrid_web`'s page is an ASSET, and its channel is built in JavaScript.**
+  `hybrid_root` and `default_file` become `file:///android_asset/<root>/<file>`
+  — the APK's assets are the bundle folder the contract describes, the same
+  standing the icon font has here — and `setAllowFileAccess` is what makes the
+  page's own relative `<link>` and `<script>` resolve. Without it the page loads
+  and everything it references fails, which reads as a page that renders
+  unstyled and does nothing.
+
+  The channel is `window.facet.postMessage` up and `window.facet.receive` down,
+  the names facet_uikit's page sees. Up is an `addJavascriptInterface` object,
+  but injected under a PRIVATE name: an injected object is a Java object and a
+  page cannot add properties to one, so binding it as `window.facet` makes the
+  page's own `window.facet.receive = ...` fail silently and kills the down
+  channel for the sake of the up one. The name a page uses is defined over a
+  plain object by a script run on every finished load — every load, because a
+  new document starts with nothing.
+
+  `on_raw_message_received` and `on_web_resource_requested` hand the BODY and
+  the URL over as the sender: facet's handler shape is `(sender, ctx)` and its
+  props carry no field for either, so there is nowhere else to put them.
+  facet_uikit hands over an NSString in the same slot; this backend hands over a
+  NUL-terminated UTF-8 pointer, valid for the length of the call. The two are
+  different pointers because the CONTRACT has no place for the value — that is
+  a facet gap, not a backend choice.
+
+  `on_web_resource_requested` reports and does not intercept. It also never
+  fires for the page's own files: Android does not route `file://` through
+  `shouldInterceptRequest`. Verified against a network request, which does.
 
 - **A `carousel` does not WRAP, and its pages are as wide as one column.**
   `wraps` defaults to true in the contract and there is no looping here: a
@@ -172,7 +200,8 @@ drawn.
   `text_button`, `text_area`, `search_field`, `image`, `icon_button`, `scroll`,
   `stepper`, `list`, `tree`, `split`, `canvas`, `swipeable`, `page_dots`,
   `date_picker`, `symbol`, `time_picker`, `bordered`, `popup`, `web`,
-  `refreshable`, `table`, `collection` and `carousel` — each with BOTH
+  `refreshable`, `table`, `collection`, `carousel` and `hybrid_web` — each with
+  BOTH
   halves, the props write and the event read. Half a control is worse than none:
   it looks finished and reports nothing, which is the shape of the bug
   facet_uikit carried in its checkbox until 2026-08-25.

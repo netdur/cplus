@@ -41,6 +41,7 @@ import "facet/time_picker" as time_picker;
 import "facet/bordered" as bordered;
 import "facet/popup" as popup;
 import "facet/web" as web;
+import "facet/hybrid_web" as hybrid_web;
 import "facet/table" as table;
 import "facet/vocabulary" as vocab;
 import "./env" as e;
@@ -3276,6 +3277,13 @@ fn apply_web(v: *u8, n: *core::Node, dirty: u64) {
 fn fire_web_edge(token: i64, edge: i32, back: bool, forward: bool) {
     let n: *core::Node = { token as *core::Node };
     if n == (0 as *core::Node) { return; }
+    // A HYBRID VIEW IS A WEB VIEW WITH ANOTHER RECORD, and the navigation edges
+    // are the plain kind's. What a hybrid does extra on a finished load is put
+    // its channel back: a new document wipes whatever the last one had.
+    if core::kind_of(n) == props::K_HYBRID_WEB {
+        if edge == (1 as i32) { install_channel(core::view_of(n)); }
+        return;
+    }
     let p: *props::WebProps = web_props(n);
     if p == (0 as *props::WebProps) { return; }
     let v: *u8 = core::view_of(n);
@@ -3504,6 +3512,17 @@ fn apply_canvas(v: *u8, n: *core::Node, dirty: u64) {
 
 const SPLIT_DIVIDER_TAG: i32 = 2131886086 as i32;   // 0x7F0F0006 — see SCROLL_DOC_TAG
 
+// WHERE ON THE DIVIDER THE FINGER LANDED, kept for the length of one drag. A
+// single static rather than a per-node one because a drag is a single pointer
+// on a single divider: two at once is two fingers on two splits, which no
+// backend here answers and none of the three platforms offer.
+static SPLIT_GRAB: f64 = 0.0f64;
+
+// MotionEvent's hover actions.
+const HOVER_MOVE: i32 = 7 as i32;
+const HOVER_ENTER: i32 = 9 as i32;
+const HOVER_EXIT: i32 = 10 as i32;
+
 fn create_split(n: *core::Node) -> *u8 {
     let env: rt::Env = e::env();
     let raw: *u8 = global_of(dex::new_host(env, e::context()));
@@ -3516,7 +3535,35 @@ fn create_split(n: *core::Node) -> *u8 {
     var hv: w::View = w::View::from_global(env, raw);
     hv.set_tag_i_object(SPLIT_DIVIDER_TAG, bar_raw);
     paint::unwrap_keep(hv);
+    // THE DRAG. CLICKABLE FIRST, and it is not decoration: a View that does not
+    // handle touches returns false from `onTouchEvent` and is sent the DOWN and
+    // nothing after it — no MOVE, no UP. The observer listener returns false
+    // too, so the View's own handling is what keeps the stream coming; without
+    // the flag the divider would report the press of a drag and never the drag.
+    var bv: w::View = w::View::from_global(env, bar_raw);
+    bv.set_clickable(true);
+    paint::unwrap_keep(bv);
+    arm_touch(env, bar_raw, n);
     return raw;
+}
+
+// WHERE THE FINGER IS, IN THE SPLIT'S OWN SPACE. The touch arrives in the
+// DIVIDER'S coordinates, and the divider is the thing being moved — so a
+// running total of local deltas double-counts whenever the layout that answers
+// the last one has not landed yet. Adding the divider's own offset converts to
+// a space that does not move, and the arithmetic is then the same whether the
+// relayout was synchronous or a frame late.
+fn divider_origin(v: *u8, vertical: bool) -> f64 {
+    if !e::have_env() { return 0.0f64; }
+    let env: rt::Env = e::env();
+    let bar: jni::jobject = divider_of(v);
+    if bar == (0 as jni::jobject) { return 0.0f64; }
+    var bv: w::View = w::View::from_global(env, env.new_global_ref({ bar as *u8 }));
+    var at: i32 = bv.get_top();
+    if vertical { at = bv.get_left(); }
+    let _k: *u8 = bv.into_raw();
+    env.delete_local_ref(bar);
+    return e::dp({ at as f64 });
 }
 
 // The divider view, as a LOCAL ref — the caller's for the length of the call.
@@ -3733,6 +3780,10 @@ fn arm_touch(env: rt::Env, raw: *u8, n: *core::Node) {
     if listener == (0 as jni::jobject) { return; }
     var view: w::View = w::View::from_global(env, raw);
     view.set_on_touch_listener(listener);
+    // THE SAME OBJECT ON BOTH STREAMS. Hover is dispatched separately from
+    // touch and reaches a mouse or a stylus only, so a canvas asking for
+    // `on_hover` gets nothing from the touch listener however it is written.
+    view.set_on_hover_listener(listener);
     paint::unwrap_keep(view);
     env.delete_local_ref(listener);
     return;
@@ -3747,7 +3798,9 @@ fn fire_touch_event(token: i64, action: i32, x: f32, y: f32) {
     if raw == (0 as *u8) { return; }
     let kind: u32 = { (*d).kind };
     let v: *u8 = core::view_of(n);
-    // MotionEvent: DOWN 0, UP 1, MOVE 2, CANCEL 3.
+    // MotionEvent: DOWN 0, UP 1, MOVE 2, CANCEL 3 — and the hover stream's own
+    // three, which arrive through the same listener and mean the pointer moved
+    // WITHOUT touching anything.
     let down: bool = action == (0 as i32);
     let up: bool = action == (1 as i32);
     let moved: bool = action == (2 as i32);
@@ -3772,6 +3825,44 @@ fn fire_touch_event(token: i64, action: i32, x: f32, y: f32) {
     // than from here: `recycler` already imports this module for the touch
     // adapter and the layout params, so calling back into it would close a
     // cycle. facet_android.cplus imports both and is the place that can.
+    // A DIVIDER DRAG. `position` is written and marked dirty, which is what
+    // makes the settle walk re-divide the panes; `on_move` is the report, and
+    // it fires on the MOVE rather than the release because a split that only
+    // tells you where it landed cannot drive anything live.
+    if kind == split::K_SPLIT {
+        let p: *split::SplitProps = raw as *split::SplitProps;
+        var vertical: bool = true;
+        match { (*p).axis } {
+            split::SplitAxis::Rows => { vertical = false; }
+            split::SplitAxis::Columns => { }
+        }
+        var along: f64 = e::dp({ y as f64 });
+        if vertical { along = e::dp({ x as f64 }); }
+        let here: f64 = divider_origin(v, vertical) + along;
+        if down { SPLIT_GRAB = here - { (*p).position }; return; }
+        if !moved { return; }
+        // CLAMPED BEFORE IT IS STORED, not just before it is laid out. The
+        // settle walk clamps what it DRAWS and leaves the prop alone, which is
+        // right for an application writing a position — but a drag reads the
+        // prop back to find its grab offset, so an unclamped value that the
+        // layout ignored puts the divider and the number in different places
+        // and the drag cannot come back. Measured: a pull past the end left
+        // `position` at 269 in a 120-tall split, and dragging up did nothing.
+        let f: flex::Frame = core::frame_of(n);
+        var extent: f64 = { f.height };
+        if vertical { extent = { f.width }; }
+        var want: f64 = here - SPLIT_GRAB;
+        var floor: f64 = { (*p).min_leading };
+        var ceiling: f64 = extent - { (*p).min_trailing };
+        if ceiling < floor { ceiling = floor; }
+        if want < floor { want = floor; }
+        if extent > 0.0f64 && want > ceiling { want = ceiling; }
+        { (*p).position = want };
+        core::touch(n, split::P_POSITION);
+        let h: fn(*u8, *u8) = { (*p).on_move };
+        if h != split::no_move { h(v, { (*p).ctx }); }
+        return;
+    }
     if kind == props::K_CANVAS {
         let p: *props::CanvasProps = raw as *props::CanvasProps;
         if down { fire_one(v, { (*p).on_press }, { (*p).on_press_ctx }); }
@@ -3781,6 +3872,18 @@ fn fire_touch_event(token: i64, action: i32, x: f32, y: f32) {
         }
         if up { fire_one(v, { (*p).on_release }, { (*p).on_release_ctx }); }
         if cancelled { fire_one(v, { (*p).on_cancel }, { (*p).on_cancel_ctx }); }
+        // THE POINTER, WHICH IS NOT THE FINGER. Hover is a real Android stream
+        // and an empty one on a phone held in a hand: it is delivered to a
+        // mouse, a stylus and a trackpad. A canvas that asks for it on a
+        // desktop-class Android device gets it, and on a touchscreen it is
+        // simply never sent — which is the honest answer to a verb about a
+        // pointer that is not there.
+        if action == HOVER_ENTER { fire_one(v, { (*p).on_hover }, { (*p).on_hover_ctx }); }
+        if action == HOVER_EXIT { fire_one(v, { (*p).on_unhover }, { (*p).on_unhover_ctx }); }
+        if action == HOVER_MOVE {
+            fire_one(v, { (*p).observe_move_hover_interaction },
+                     { (*p).observe_move_hover_interaction_ctx });
+        }
         return;
     }
     return;
@@ -3993,5 +4096,216 @@ fn fire_carousel_page(token: i64, index: i32) {
     if ph != props::no_handler { ph(v, { (*p).on_position_changed_ctx }); }
     let ih: fn(*u8, *u8) = { (*p).on_current_item_changed };
     if ih != props::no_handler { ih(v, { (*p).on_current_item_changed_ctx }); }
+    return;
+}
+
+// ---- hybrid_web ----------------------------------------------------------------
+//
+// A WEB VIEW THAT SERVES A LOCAL APP AND TALKS TO IT. The kind is `web` plus
+// three things: the page comes from the APK's assets rather than a URL, the
+// page can post messages up, and the application can send them down.
+//
+// `file:///android_asset/` is Android's bundle folder — the same standing the
+// icon font already has here — and it is why `hybrid_root` maps onto a path
+// rather than a scheme handler: a page loaded from there resolves its own
+// relative scripts and styles, which is the whole reason facet's contract names
+// a ROOT and a FILE separately.
+
+fn hybrid_props(n: *core::Node) -> *props::HybridWebProps {
+    return props_of(n, props::K_HYBRID_WEB) as *props::HybridWebProps;
+}
+
+fn create_hybrid_web(n: *core::Node) -> *u8 {
+    let v: *u8 = create_web(n);
+    if v == (0 as *u8) { return v; }
+    let env: rt::Env = e::env();
+    let p: *props::HybridWebProps = hybrid_props(n);
+    if p == (0 as *props::HybridWebProps) { return v; }
+    // `on_web_view_initializing` is the application's one chance to touch the
+    // view before a page can see it, and `on_web_view_initialized` says the
+    // channel is up. Both are edges of CONSTRUCTION, which is why they are
+    // here and not in an apply — facet_uikit reads them the same way.
+    let a: fn(*u8, *u8) = { (*p).on_web_view_initializing };
+    if a != props::no_handler { a(v, { (*p).on_web_view_initializing_ctx }); }
+    // The page's channel up. Named `facet` on both backends, so a page written
+    // for one posts on the other unchanged.
+    // INJECTED UNDER A PRIVATE NAME, and that is not tidiness. An
+    // `addJavascriptInterface` object is a Java object, and a page cannot add
+    // properties to one — so injecting it as `window.facet` makes the page's own
+    // `window.facet.receive = ...` fail silently, and the DOWN channel is dead
+    // for the sake of the up one. The name a page uses is built in JavaScript
+    // instead, by `install_channel`, over a plain object.
+    let bridge: jni::jobject = dex::new_bridge(env, { #addr(n) as i64 }, { v as jni::jobject });
+    if bridge != (0 as jni::jobject) {
+        // The NAME is a C string here: a `_str`-shaped binding takes `*u8` and
+        // makes the Java string itself. Handing it one already made runs
+        // `NewStringUTF` over a Java object POINTER, and CheckJNI quotes the
+        // pointer's own bytes back at you as invalid modified UTF-8. Three
+        // calls in this file had it wrong; the binding's signature is the
+        // authority, not the shape of the Java method it wraps.
+        var wv: w::WebView = w::WebView::from_global(env, env.new_global_ref(v));
+        wv.add_javascript_interface(bridge, #str_ptr("__facet_host\0"));
+        let _k: *u8 = wv.into_raw();
+        env.delete_local_ref(bridge);
+    }
+    // A LOCAL PAGE NEEDS FILE ACCESS, and a WebView does not grant it: without
+    // this the asset URL loads and every relative <script> and <link> in it
+    // fails, which looks like a page that renders unstyled and does nothing.
+    let settings: jni::jobject = env.call_object_0(
+        v, #str_ptr("android/webkit/WebView\0"), #str_ptr("getSettings\0"),
+        #str_ptr("()Landroid/webkit/WebSettings;\0"));
+    if settings != (0 as jni::jobject) {
+        env.call_void_1(settings, #str_ptr("android/webkit/WebSettings\0"),
+                        #str_ptr("setAllowFileAccess\0"), #str_ptr("(Z)V\0"),
+                        rt::arg_bool(true));
+        env.delete_local_ref(settings);
+    }
+    let b: fn(*u8, *u8) = { (*p).on_web_view_initialized };
+    if b != props::no_handler { b(v, { (*p).on_web_view_initialized_ctx }); }
+    return v;
+}
+
+// THE PAGE'S SIDE OF THE CHANNEL, defined in JavaScript over a plain object so
+// the page can hang its own `receive` on the same name. Re-run on every finished
+// load, because a new document starts with nothing.
+//
+// `postMessage` up and `receive` down are the names facet_uikit's page sees, so
+// a page written against one backend runs on the other.
+fn install_channel(v: *u8) {
+    if v == (0 as *u8) { return; }
+    if !e::have_env() { return; }
+    let env: rt::Env = e::env();
+    // A C STRING, NOT A jstring. The binding takes `*u8` and makes the Java
+    // string itself — handing it one already made runs `NewStringUTF` over a
+    // Java object POINTER, which CheckJNI reports as invalid modified UTF-8
+    // with the pointer's own bytes quoted back at you.
+    var wv: w::WebView = w::WebView::from_global(env, env.new_global_ref(v));
+    wv.evaluate_javascript(#str_ptr(
+        "window.facet = window.facet || {}; window.facet.postMessage = function (m) { __facet_host.postMessage(String(m)); };\0"),
+        0 as jni::jobject);
+    let _k: *u8 = wv.into_raw();
+    return;
+}
+
+fn apply_hybrid_web(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *props::HybridWebProps = hybrid_props(n);
+    if p == (0 as *props::HybridWebProps) { return; }
+    let env: rt::Env = e::env();
+    if (dirty & (hybrid_web::P_HYBRID_ROOT | hybrid_web::P_DEFAULT_FILE)) != (0 as u64) {
+        // BUILT IN A BUFFER, and every view used INSIDE the statement that
+        // reads it. `let s: str = { (*p).some_text.view() }` looks like the
+        // obvious way to name a prop's text and it is a dangling one: the
+        // braces read a Text VALUE out of the pointer, the view borrows that
+        // temporary, and the temporary is dropped at the end of the statement —
+        // taking the buffer with it. It comes back as a poisoned pointer inside
+        // whatever reads the str next, which here was `NewStringUTF` quoting
+        // 0xdead10ad at us. The rest of this file passes such views straight
+        // into a call for exactly this reason.
+        var buf: [u8; 1024] = #zero::[[u8; 1024]]();
+        let base: *u8 = { #addr_of(buf[0]) };
+        let _pre: bool = paint::cstr("file:///android_asset/", base, 1024 as usize);
+        let root_at: usize = paint::cstr_len(base);
+        append_cstr(base, 1024 as usize, { (*p).hybrid_root.view() });
+        if paint::cstr_len(base) > root_at { append_cstr(base, 1024 as usize, "/"); }
+        append_cstr(base, 1024 as usize, { (*p).default_file.view() });
+        var wv: w::WebView = w::WebView::from_global(env, env.new_global_ref(v));
+        wv.load_url_str(base);
+        let _k: *u8 = wv.into_raw();
+    }
+    // THE APPLICATION CALLING INTO THE PAGE. The message is arbitrary text
+    // spliced into source, so it is quoted first — an unescaped quote in a
+    // message is an injection into the page's own script.
+    if (dirty & hybrid_web::P_SEND_MESSAGE) != (0 as u64) {
+        var mbuf: [u8; 1024] = #zero::[[u8; 1024]]();
+        let mbase: *u8 = { #addr_of(mbuf[0]) };
+        let _m: bool = paint::cstr({ (*p).outgoing_message.view() }, mbase, 1024 as usize);
+        let m_len: usize = paint::cstr_len(mbase);
+        if m_len > (0 as usize) {
+            var js: [u8; 2048] = #zero::[[u8; 2048]]();
+            let jbase: *u8 = { #addr_of(js[0]) };
+            let _j: bool = paint::cstr(
+                "window.facet && window.facet.receive && window.facet.receive(",
+                jbase, 2048 as usize);
+            var quoted: text::Text = js_quoted({ #str_from_raw_parts(mbase, m_len) });
+            append_cstr(jbase, 2048 as usize, quoted.view());
+            append_cstr(jbase, 2048 as usize, ")");
+            var wv: w::WebView = w::WebView::from_global(env, env.new_global_ref(v));
+            wv.evaluate_javascript(jbase, 0 as jni::jobject);
+            let _k: *u8 = wv.into_raw();
+        }
+    }
+    return;
+}
+
+// APPEND ONE str TO A C STRING already in `base`, at its NUL.
+fn append_cstr(base: *u8, cap: usize, s: str) {
+    let at: usize = paint::cstr_len(base);
+    if at +% (1 as usize) >= cap { return; }
+    let _ok: bool = paint::cstr(s, { base + at }, cap -% at);
+    return;
+}
+
+// A JSON string literal. Quote, backslash and the control range are the only
+// things that can end a literal early or leave it unparseable; everything else
+// is passed through, including UTF-8, which JSON takes as-is.
+fn js_quoted(s: str) -> text::Text {
+    var out: text::Text = text::from_str("\"");
+    var i: usize = 0 as usize;
+    while i < s.count() {
+        let b: u8 = match s.byte_at(i) {
+            option::Option[u8]::Some(x) => x,
+            option::Option[u8]::None => 0 as u8,
+        };
+        if b == (34 as u8) { out.append("\\\""); }
+        else if b == (92 as u8) { out.append("\\\\"); }
+        else if b == (10 as u8) { out.append("\\n"); }
+        else if b == (13 as u8) { out.append("\\r"); }
+        else if b == (9 as u8) { out.append("\\t"); }
+        else if b < (32 as u8) { }
+        else {
+            match s.slice(i, i +% (1 as usize)) {
+                option::Option[str]::Some(one) => { out.append(one); }
+                option::Option[str]::None => { }
+            }
+        }
+        i = i +% (1 as usize);
+    }
+    out.append("\"");
+    return out;
+}
+
+// THE PAGE POSTED. facet's handler shape is (sender, ctx) and its props carry
+// no field for an incoming message, so the BODY is what arrives as the sender —
+// a NUL-terminated UTF-8 pointer, valid for the length of the call. facet_uikit
+// hands over an NSString in the same slot for the same reason. See MANIFEST §2:
+// the contract has no place to put this, and until it does the two backends
+// deliver it as two different pointers.
+fn fire_raw_message(token: i64, body: jni::jstring) {
+    let n: *core::Node = { token as *core::Node };
+    if n == (0 as *core::Node) { return; }
+    let p: *props::HybridWebProps = hybrid_props(n);
+    if p == (0 as *props::HybridWebProps) { return; }
+    let h: fn(*u8, *u8) = { (*p).on_raw_message_received };
+    if h == props::no_handler { return; }
+    var buf: [u8; 2048] = #zero::[[u8; 2048]]();
+    let base: *u8 = { #addr_of(buf[0]) };
+    if !e::env().string_utf_into(body, base, 2048 as usize) { return; }
+    h(base, { (*p).on_raw_message_received_ctx });
+    return;
+}
+
+// THE PAGE ASKED FOR SOMETHING. A report, not an interception — the URL arrives
+// in the sender slot for the same reason a message does.
+fn fire_resource_requested(token: i64, url: jni::jstring) {
+    let n: *core::Node = { token as *core::Node };
+    if n == (0 as *core::Node) { return; }
+    let p: *props::HybridWebProps = hybrid_props(n);
+    if p == (0 as *props::HybridWebProps) { return; }
+    let h: fn(*u8, *u8) = { (*p).on_web_resource_requested };
+    if h == props::no_handler { return; }
+    var buf: [u8; 1024] = #zero::[[u8; 1024]]();
+    let base: *u8 = { #addr_of(buf[0]) };
+    if !e::env().string_utf_into(url, base, 1024 as usize) { return; }
+    h(base, { (*p).on_web_resource_requested_ctx });
     return;
 }

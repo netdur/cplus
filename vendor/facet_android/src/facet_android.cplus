@@ -195,6 +195,20 @@ export extern fn facet_android_carousel_page(envp: *jni::JNIEnv, cls: jni::jobje
     return;
 }
 
+export extern fn facet_android_raw_message(envp: *jni::JNIEnv, cls: jni::jobject,
+                                           token: i64, body: jni::jobject) {
+    e::set_env(rt::from_native(envp));
+    controls::fire_raw_message(token, { body as jni::jstring });
+    return;
+}
+
+export extern fn facet_android_resource(envp: *jni::JNIEnv, cls: jni::jobject,
+                                        token: i64, url: jni::jobject) {
+    e::set_env(rt::from_native(envp));
+    controls::fire_resource_requested(token, { url as jni::jstring });
+    return;
+}
+
 export extern fn facet_android_picked(envp: *jni::JNIEnv, cls: jni::jobject, token: i64,
                                       index: i32) {
     e::set_env(rt::from_native(envp));

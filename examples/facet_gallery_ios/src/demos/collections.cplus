@@ -12,6 +12,7 @@ import "facet/vocabulary" as vocab;
 import "facet/list" as list;
 import "facet/collection" as collection;
 import "facet/carousel" as carousel;
+import "facet/hybrid_web" as hybrid_web;
 import "facet/label" as label;
 import "facet/services" as services;
 import "flex_layout/flex_layout" as flex;
@@ -90,6 +91,63 @@ fn page(title: str, tint: vocab::Color) -> core::Node {
         ui::column(b).padding(20.0f64).gap(6.0f64)
             .align(flex::Align::Center).justify(flex::Justify::Center),
         tint, 10.0f64);
+}
+
+static RESOURCES: i64 = 0 as i64;
+
+// Every request the page makes for something — the page itself, then whatever
+// it references. A REPORT: this backend does not answer resources on the
+// application's behalf, it says what was asked for.
+fn page_asked(url: *u8, ctx: *u8) {
+    RESOURCES = RESOURCES + (1 as i64);
+    match label::find("g:res") {
+        option::Option[label::Label]::Some(l) => {
+            let _t: label::Label = l.set_text("${RESOURCES} resource(s) requested");
+        }
+        option::Option[label::Label]::None => { }
+    }
+    return;
+}
+
+// The two edges of construction: before the page can see the view, and once
+// the channel is up.
+fn web_starting(v: *u8, ctx: *u8) { return; }
+
+fn web_ready(v: *u8, ctx: *u8) {
+    match label::find("g:ready") {
+        option::Option[label::Label]::Some(l) => {
+            let _t: label::Label = l.set_text("web view initialized");
+        }
+        option::Option[label::Label]::None => { }
+    }
+    return;
+}
+
+fn from_page(body: *u8, ctx: *u8) {
+    let n: usize = cstr_len(body);
+    match label::find("g:said") {
+        option::Option[label::Label]::Some(l) => {
+            let _t: label::Label = l.set_text("page said: ${#str_from_raw_parts(body, n)}");
+        }
+        option::Option[label::Label]::None => { }
+    }
+    return;
+}
+
+fn cstr_len(p: *u8) -> usize {
+    var i: usize = 0 as usize;
+    while { *{ p + i } } != (0 as u8) { i = i +% (1 as usize); }
+    return i;
+}
+
+fn to_page(v: *u8, ctx: *u8) {
+    match hybrid_web::find("g:hy") {
+        option::Option[hybrid_web::HybridWeb]::Some(h) => {
+            let _s: hybrid_web::HybridWeb = h.send_message("hello from C+");
+        }
+        option::Option[hybrid_web::HybridWeb]::None => { }
+    }
+    return;
 }
 
 // A cell was chosen. The collection reports it as `on_selection_changed` — the
@@ -267,6 +325,32 @@ impl ListDemo: component::Component {
         car.add(ui::row(line).align(flex::Align::Center).gap(8.0f64));
         car.add(shell::caption("Four pages, one per screen. The pages are the node's CHILDREN — built once, not asked for — which is what separates a carousel from the list above it."));
         body.add(shell::card("A CAROUSEL", car));
+
+        // ANDROID ONLY, and the reason is packaging rather than the control:
+        // the page it shows is a file shipped INSIDE the app, and the iOS build
+        // is an Xcode project whose resource list this source cannot add to.
+        // facet_uikit builds the kind; the gallery has nowhere to put its page.
+        if #platform() == "android" {
+            var hy: flex::Builder = flex::Builder::new();
+            hy.add(shell::painted(
+                ui::hybrid_web(key: "g:hy", hybrid_root: "web",
+                               default_file: "index.html",
+                               on_raw_message_received: from_page,
+                               on_web_resource_requested: page_asked,
+                               on_web_view_initializing: web_starting,
+                               on_web_view_initialized: web_ready).height(200.0f64),
+                vocab::Color::fill(), 10.0f64));
+            hy.add(ui::button("send down", key: "g:send", on_click: to_page));
+            hy.add(ui::label("page said: (nothing yet)", key: "g:said",
+                             font_size: 13.0f64, text_color: vocab::Color::ink(0.7f64)));
+            hy.add(ui::label("(not initialized)", key: "g:ready", font_size: 13.0f64,
+                             text_color: vocab::Color::ink(0.55f64)));
+            hy.add(ui::label("0 resource(s) requested", key: "g:res", font_size: 13.0f64,
+                             text_color: vocab::Color::ink(0.55f64)));
+            hy.add(shell::caption("A local page from the APK's own assets — three files, so the relative `<link>` and `<script>` have to resolve — and a channel in both directions: the page calls `window.facet.postMessage`, the app calls `send_message` and the page's `window.facet.receive` runs."));
+            hy.add(shell::caption("The request count stays at zero on purpose. `on_web_resource_requested` is wired and fires for the network — verified against one — but Android does not route `file://` through that callback, so a page served entirely from assets reports none of itself."));
+            body.add(shell::card("HYBRID WEB", hy));
+        }
 
         var kin: flex::Builder = flex::Builder::new();
         kin.add(shell::caption("`table` is the same view with three verbs of its own — its style, its row height, and whether the rows size themselves. `tree` is the same table over the flattened OPEN rows, re-flattened whenever the model or the expansion changes. `collection` and `carousel` are UICollectionView with a flow layout."));

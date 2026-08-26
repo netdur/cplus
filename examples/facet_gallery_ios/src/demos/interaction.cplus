@@ -187,6 +187,39 @@ impl Radio: component::Lifecycle {
 
 // ---- split -------------------------------------------------------------------
 
+// THE ONE VERB THAT DIFFERS BY PLATFORM, and it differs because the INPUT does.
+// UIKit has no pointer to grab a hairline with, so a split there is a pane pair
+// an application positions. A finger holds a 2pt divider well enough, so the
+// Android backend drags it and reports every step.
+fn drag_title() -> str {
+    if #platform() == "android" { return "AND THE DRAG"; }
+    return "MINUS THE DRAG";
+}
+
+fn drag_note() -> str {
+    if #platform() == "android" {
+        return "Drag the hairline. The divider is a native View this backend owns rather than a facet node — clickable, so Android keeps sending the move after the press — and each step writes `position` and fires `on_move`. The clamps are still flex's: both minimums hold.";
+    }
+    return "What is absent is DRAGGING it. UISplitViewController is a navigation container whose sidebar appears and disappears by size class, not a resizable pane pair, and there is no pointer to grab a hairline with — so `on_move` never fires and the position is the application's to set.";
+}
+
+// Every step of the drag, which is what `on_move` is for.
+fn divider_moved(v: *u8, ctx: *u8) {
+    match m_split::find("t:split") {
+        option::Option[m_split::Split]::Some(sp) => {
+            let at: i64 = { sp.position() as i64 };
+            match label::find("t:pos") {
+                option::Option[label::Label]::Some(l) => {
+                    let _t: label::Label = l.set_text("position ${at}");
+                }
+                option::Option[label::Label]::None => { }
+            }
+        }
+        option::Option[m_split::Split]::None => { }
+    }
+    return;
+}
+
 struct Split { _unused: i32 }
 impl Split { fn new() -> Split { return Split { _unused: 0 }; } }
 
@@ -201,14 +234,16 @@ impl Split: component::Component {
                                  vocab::Color::system_indigo(), 8.0f64));
         sp.add(ui::split(panes, key: "t:split", axis: m_split::SplitAxis::Rows,
                          position: 44.0f64, min_leading: 20.0f64,
-                         min_trailing: 20.0f64,
+                         min_trailing: 20.0f64, on_move: divider_moved,
                          divider_thickness: 2.0f64).height(120.0f64));
         sp.add(shell::caption("The divider sits at `position` (44), clamped by both minimums, with the hairline drawn in the gap between the panes. The leading pane takes a fixed main-axis size and the trailing one takes the remainder from a zero basis — all of it flex, none of it UIKit."));
         body.add(shell::card("TWO PANES", sp));
 
         var no: flex::Builder = flex::Builder::new();
-        no.add(shell::caption("What is absent is DRAGGING it. UISplitViewController is a navigation container whose sidebar appears and disappears by size class, not a resizable pane pair, and there is no pointer to grab a hairline with — so `on_move` never fires and the position is the application's to set. That one fact used to stand in for the whole kind here."));
-        body.add(shell::card("MINUS THE DRAG", no));
+        no.add(ui::label("position 44", key: "t:pos", font_size: 13.0f64,
+                         text_color: vocab::Color::ink(0.7f64)));
+        no.add(shell::caption(drag_note()));
+        body.add(shell::card(drag_title(), no));
 
         return shell::page("Split",
             "Every verb a split has except one. The axis, the position, both minimums, the collapse and the divider are geometry — and geometry is flex's.",
