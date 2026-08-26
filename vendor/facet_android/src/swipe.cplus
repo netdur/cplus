@@ -37,7 +37,14 @@ import "./dex" as dex;
 import "./log" as log;
 
 const SWIPE_STRIP_TAG: i32 = 2131886087 as i32;   // 0x7F0F0007 — see controls::SCROLL_DOC_TAG
-const SWIPE_ITEM_TAG: i32 = 2131886088 as i32;    // 0x7F0F0008
+
+// A TAG SLOT IS AN OBJECT SLOT. The item's node address was stored in a second
+// tag here on the reasoning that a tag is a word and an address is a word; a
+// tag is a REFERENCE, and CheckJNI aborts the process the moment one is used.
+// (It also had no reader: `fire_action` finds the swipeable through facet's own
+// tree, which is the tree that knows.) The dot strip made the same mistake the
+// same afternoon — `controls::dot_count_of` carries the other half of the
+// lesson: ask the view, do not pack a word into a reference.
 
 // How wide one action is, in facet's units. The same 88 the uikit backend
 // uses, because it is the same finger.
@@ -166,9 +173,6 @@ fn add_action(env: rt::Env, strip: jni::jobject, item: *core::Node) {
     let listener: jni::jobject =
         dex::new_with_token(env, dex::click_class(), { #addr(item) as i64 });
     bv.set_on_click_listener(listener);
-    // The ITEM's node, on the button: `fire_action` closes the swipeable the
-    // button belongs to, and the button is the only thing the click hands back.
-    bv.set_tag_i_object(SWIPE_ITEM_TAG, { #addr(item) as *u8 });
     let _k2: *u8 = bv.into_raw();
     env.delete_local_ref(listener);
 

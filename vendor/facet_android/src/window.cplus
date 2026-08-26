@@ -113,11 +113,13 @@ fn content_view(env: rt::Env, activity: jni::jobject, host: jni::jobject) -> jni
     let wrapper: jni::jobject = dex::new_zoom_host(env, activity, ZOOM_MIN, ZOOM_MAX);
     if wrapper == (0 as jni::jobject) { return host; }
     controls::attach_layout_params(host);
+    // `from_local` PROMOTES: it takes a global ref and deletes the local one
+    // it was given. Deleting `wrapper` afterwards was a second delete of a
+    // reference already popped — invisible in an ordinary run and an immediate
+    // abort under `adb shell setprop debug.checkjni 1`, which is what found it.
     var g: w::ViewGroup = w::ViewGroup::from_local(env, wrapper);
     g.add_view_view(host);
-    let raw: jni::jobject = g.into_raw();
-    env.delete_local_ref(wrapper);
-    return raw;
+    return g.into_raw();
 }
 
 // The root's view — or, when the root is a KEYLESS PASS-THROUGH, its topmost

@@ -34,8 +34,21 @@ computes every frame and this backend pushes it with `View.layout()` onto a
 `FacetHost` whose `onLayout` is empty. Binding Android's layout system would be
 binding a second, contradictory answer to the same question.
 
-This is why `vendor/android_view`'s generated class list is seven leaf widgets
+This is why `vendor/android_view`'s generated class list is a curated list
 rather than all of `android.widget`.
+
+### A SYMBOL NAME
+
+`image("square.and.arrow.up")` and `icon_button("checkmark.circle")` name SF
+Symbols, and Android ships no such glyph set. An `image` source resolves through
+three doors here — a FILE on disk, an APK ASSET, then a DRAWABLE RESOURCE by
+name — and a symbol name is none of them, so it warns once and draws nothing.
+
+Mapping the common names onto `android.R.drawable` was considered and rejected:
+the legacy set is a different vocabulary drawn in a different decade, and
+picking `ic_menu_share` for `square.and.arrow.up` would put a picture on the
+screen the application never asked for. An Android app that wants an icon ships
+one, and all three doors are open to it.
 
 ---
 
@@ -109,10 +122,11 @@ through liblog (`adb logcat -s facet`) and render an empty container.
   iOS one cannot: a Button is a TextView, so the twelve font verbs facet_uikit
   records as unreachable all reach it.
 
-- **An image can only come from the FILESYSTEM.** `BitmapFactory.decodeFile`
-  reads a path; an image packed into the APK lives in `assets/` and needs an
-  AssetManager. A source that does not decode leaves the view empty and warns
-  once — a placeholder would read as a layout bug.
+- **An image is resolved but never CACHED.** All three doors are open — a file,
+  an APK asset through the AssetManager, a drawable resource by name — and each
+  decode happens on the apply that asked for it. A list of thumbnails would
+  decode the same bitmap once per row; a cache keyed by source is the answer and
+  is not written.
 
 - **`ScrollAxis::Both` scrolls vertically only.** ScrollView and
   HorizontalScrollView are separate widgets and neither becomes the other;
