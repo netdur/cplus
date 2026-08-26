@@ -60,9 +60,14 @@ public final class FacetPopup implements android.widget.AdapterView.OnItemSelect
         if (selected >= 0 && selected < labels.size()) s.setSelection(selected, false);
     }
 
+    // NO MUTE. A Spinner POSTS its selection callback rather than making it, so
+    // a flag raised around `setSelection` is already lowered by the time the
+    // callback runs — measured, and it read `muted=false` every time. What
+    // stops the loop is the equality guard on the native side: a pick that
+    // matches the prop is not a change and is not reported.
     @Override public void onItemSelected(android.widget.AdapterView<?> parent,
                                          android.view.View v, int position, long id) {
-        if (!muted) nativePicked(token, position);
+        nativePicked(token, position);
     }
 
     @Override public void onNothingSelected(android.widget.AdapterView<?> parent) { }

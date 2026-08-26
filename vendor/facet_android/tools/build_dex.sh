@@ -12,7 +12,12 @@ AJ="$SDK/platforms/android-36/android.jar"
 BT="$SDK/build-tools/36.0.0"
 
 rm -rf classes && mkdir -p classes
-javac -source 8 -target 8 -classpath "$AJ" -d classes java/cplus/facet/*.java 2>/dev/null
+# NOT `2>/dev/null`. It was, and a compile error then looked like nothing at all:
+# `set -e` stopped the script with no output, the COMMITTED dex stayed in place,
+# and the backend went on calling a method the running dex did not have — which
+# surfaces as a NoSuchMethodError abort at runtime, one build later, in whatever
+# code happened to call it next. Warnings are the only thing worth hiding here.
+javac -source 8 -target 8 -nowarn -classpath "$AJ" -d classes java/cplus/facet/*.java
 "$BT/d8" --release --lib "$AJ" --output . classes/cplus/facet/*.class
 mv classes.dex facet_android.dex
 rm -rf classes

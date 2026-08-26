@@ -27,6 +27,7 @@ import "facet/facet" as core;
 import "facet/props" as props;
 import "facet/mount" as mount;
 import "facet/list" as list;
+import "facet/collection" as collection;
 import "facet/refreshable" as refreshable;
 import "facet/tree" as tree;
 import "facet/elements" as ui;
@@ -384,7 +385,7 @@ fn row_view(token: i64, position: i32, convert: jni::jobject, parent: jni::jobje
             // rooted here, applied immediately because the row is about to be
             // shown.
             mount::sync_from(existing);
-            place_row(env, convert, existing, width, m.height);
+            place_row(env, convert, existing, width, row_height(env, n, m, row));
             return convert;
         }
         // No bind, or an empty cell: tear the old row down before reusing it.
@@ -406,7 +407,7 @@ fn row_view(token: i64, position: i32, convert: jni::jobject, parent: jni::jobje
             // whichever row happened to build its cell.
             if m.has_bind() { bind_into(m, row, np); }
             mount::sync_from(np);
-            place_row(env, cell, np, width, m.height);
+            place_row(env, cell, np, width, row_height(env, n, m, row));
             set_cell_node(env, cell, np);
         }
         option::Option[box::Box[core::Node]]::None => { }
@@ -458,6 +459,40 @@ fn cell_width(env: rt::Env, n: *core::Node, v: *u8) -> f64 {
     var usable: f64 = width - spacing;
     if usable < 1.0f64 { usable = width; }
     return usable / { cols as f64 };
+}
+
+// HOW TALL ONE CELL IS ALLOWED TO BE, which is the one thing `item_sizing`
+// decides that a GridView leaves open.
+//
+// `MeasureAllItems` is what the widget does unasked: every cell measures itself
+// and a row is as tall as its tallest. `MeasureFirstItem` says they are all the
+// FIRST one's size — so the height is taken from the cell already on screen at
+// index 0, which the grid built before any of these and measured for us.
+fn row_height(env: rt::Env, n: *core::Node, m: RowModel, row: usize) -> f64 {
+    if core::kind_of(n) != props::K_COLLECTION { return m.height; }
+    if row == (0 as usize) { return m.height; }
+    let p: *props::CollectionProps = collection_props(n);
+    if p == (0 as *props::CollectionProps) { return m.height; }
+    match { (*p).structured_items_view.item_sizing } {
+        vocab::ItemSizing::MeasureAllItems => { return m.height; }
+        vocab::ItemSizing::MeasureFirstItem => { }
+    }
+    let v: *u8 = core::view_of(n);
+    if v == (0 as *u8) { return m.height; }
+    var g: w::ViewGroup = w::ViewGroup::from_global(env, env.new_global_ref(v));
+    var h: f64 = 0.0f64;
+    if g.get_child_count() > (0 as i32) {
+        let first: jni::jobject = g.get_child_at(0 as i32);
+        if first != (0 as jni::jobject) {
+            var fv: w::View = w::View::from_global(env, env.new_global_ref({ first as *u8 }));
+            h = e::dp({ fv.get_measured_height() as f64 });
+            let _kf: *u8 = fv.into_raw();
+            env.delete_local_ref(first);
+        }
+    }
+    let _k: *u8 = g.into_raw();
+    if h < 1.0f64 { return m.height; }
+    return h;
 }
 
 fn build_row(m: RowModel, row: usize) -> core::Node {
@@ -941,6 +976,10 @@ fn window_slot(n: *core::Node) -> usize {
 fn rows_visible(token: i64, first: i32, visible: i32, total: i32) {
     let n: *core::Node = { token as *core::Node };
     if n == (0 as *core::Node) { return; }
+    if core::kind_of(n) == props::K_COLLECTION {
+        collection_rows_visible(n, first, visible, total);
+        return;
+    }
     let p: *props::ListProps = list_props(n);
     if p == (0 as *props::ListProps) { return; }
     let v: *u8 = core::view_of(n);
@@ -1241,3 +1280,129 @@ fn refreshable_touch(n: *core::Node, action: i32, y: f32) {
     return;
 }
 
+
+// ---- collection ------------------------------------------------------------------
+// A GRID, which on Android is a `GridView` — an `AbsListView`, so it takes the
+// SAME adapter, tap listener and scroll listener a list does. That sharing is
+// what `RowModel` exists for.
+
+fn create_collection(n: *core::Node) -> *u8 {
+    let env: rt::Env = e::env();
+    var gv: w::GridView = w::GridView::new_context(env, e::context());
+    let raw: *u8 = gv.into_raw();
+    let token: i64 = { #addr(n) as i64 };
+    let adapter: jni::jobject = dex::new_with_token(env, dex::rows_class(), token);
+    var av: w::AdapterView = w::AdapterView::from_global(env, env.new_global_ref(raw));
+    av.set_adapter(adapter);
+    let tap: jni::jobject = dex::new_with_token(env, dex::rowtap_class(), token);
+    av.set_on_item_click_listener(tap);
+    let _keep: *u8 = av.into_raw();
+    var view: w::View = w::View::from_global(env, raw);
+    view.set_tag_i_object(LIST_ADAPTER_TAG, adapter);
+    paint::unwrap_keep(view);
+    env.delete_local_ref(adapter);
+    env.delete_local_ref(tap);
+    let watcher: jni::jobject = dex::new_with_token(env, dex::scroll_class(), token);
+    if watcher != (0 as jni::jobject) {
+        var alv: w::AbsListView = w::AbsListView::from_global(env, raw);
+        alv.set_on_scroll_listener(watcher);
+        let _k: *u8 = alv.into_raw();
+        env.delete_local_ref(watcher);
+    }
+    return raw;
+}
+
+fn apply_collection(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *props::CollectionProps = collection_props(n);
+    if p == (0 as *props::CollectionProps) { return; }
+    let env: rt::Env = e::env();
+    let moved: u64 = collection::P_COUNT | collection::P_ROW | collection::P_INVALIDATE_ROW
+                   | collection::P_SPLICE_ROWS | collection::P_GROUP
+                   | collection::P_GROUP_COUNT;
+    if (dirty & moved) != (0 as u64) {
+        let a: jni::jobject = adapter_of(env, v);
+        if a != (0 as jni::jobject) {
+            dex::rows_changed(env, a);
+            env.delete_local_ref(a);
+        }
+    }
+    if (dirty & collection::P_COLUMNS) != (0 as u64) || dirty == paint::all_bits() {
+        var gv: w::GridView = w::GridView::from_global(env, env.new_global_ref(v));
+        // THE COLUMN WIDTH IS THE WHOLE CONTROL. A GridView does not divide its
+        // width by its column count — it divides by a column WIDTH you give it,
+        // and STRETCH_COLUMN_WIDTH hands the remainder back. Leave that mode off
+        // and `mColumnWidth` stays at the requested ZERO, every cell is measured
+        // `EXACTLY 0`, and the grid draws one visible cell and eight invisible
+        // ones. That is exactly what it did.
+        //
+        // With the mode on, requesting zero is the RIGHT request for a stated
+        // count: the whole width is remainder, and each column's share of it is
+        // the width divided by the count.
+        gv.set_stretch_mode(2 as i32);                        // STRETCH_COLUMN_WIDTH
+        gv.set_column_width(0 as i32);
+        // `columns: 0` IS ONE COLUMN, not a grid that picks its own count —
+        // facet_uikit clamps the divisor to one and facet_gtk says the same in
+        // as many words. AUTO_FIT would have been this backend inventing a
+        // meaning the other two do not give it.
+        var cols: usize = { (*p).structured_items_view.columns };
+        if cols < (1 as usize) { cols = 1 as usize; }
+        gv.set_num_columns({ cols as i32 });
+        let _k: *u8 = gv.into_raw();
+    }
+    if (dirty & collection::P_SELECTION_MODE) != (0 as u64) {
+        var alv: w::AbsListView = w::AbsListView::from_global(env, env.new_global_ref(v));
+        alv.set_choice_mode(match { (*p).selectable_items_view.selection_mode } {
+            vocab::SelectionMode::Single => 1 as i32,
+            vocab::SelectionMode::Multiple => 2 as i32,
+            vocab::SelectionMode::None => 0 as i32,
+        });
+        let _k: *u8 = alv.into_raw();
+    }
+    if (dirty & collection::P_SELECTED_INDEX) != (0 as u64) {
+        let idx: i64 = { (*p).selected_index };
+        if idx >= (0 as i64) {
+            var av: w::AdapterView = w::AdapterView::from_global(env, env.new_global_ref(v));
+            av.set_selection({ idx as i32 });
+            let _k: *u8 = av.into_raw();
+        }
+    }
+    if (dirty & collection::P_SCROLL_TO) != (0 as u64) {
+        let idx: i64 = { (*p).items_view.scroll_to_index };
+        if idx >= (0 as i64) && idx < { (*p).count } {
+            var alv: w::AbsListView = w::AbsListView::from_global(env, env.new_global_ref(v));
+            alv.smooth_scroll_to_position_i({ idx as i32 });
+            let _k: *u8 = alv.into_raw();
+        }
+    }
+    if (dirty & (collection::P_VERTICAL_SCROLL_BARS
+                 | collection::P_HORIZONTAL_SCROLL_BARS)) != (0 as u64) {
+        var sv: w::View = w::View::from_global(env, v);
+        sv.set_vertical_scroll_bar_enabled(
+            controls::bars_shown({ (*p).items_view.vertical_scroll_bars }));
+        sv.set_horizontal_scroll_bar_enabled(
+            controls::bars_shown({ (*p).items_view.horizontal_scroll_bars }));
+        paint::unwrap_keep(sv);
+    }
+    return;
+}
+
+// The collection's own visible-window read: `observe_scrolled` and the tail
+// threshold are on the ITEMS VIEW block, which a list does not have.
+fn collection_rows_visible(n: *core::Node, first: i32, visible: i32, total: i32) {
+    let p: *props::CollectionProps = collection_props(n);
+    if p == (0 as *props::CollectionProps) { return; }
+    let v: *u8 = core::view_of(n);
+    let h: fn(*u8, *u8) = { (*p).items_view.observe_scrolled };
+    if h != props::no_handler { h(v, { (*p).items_view.observe_scrolled_ctx }); }
+    let threshold: i64 = { (*p).items_view.remaining_threshold };
+    if threshold <= (0 as i64) { return; }
+    if total <= (0 as i32) { return; }
+    let last: i32 = first +% visible -% (1 as i32);
+    let remaining: i64 = { (total -% (last +% (1 as i32))) as i64 };
+    if remaining > threshold { return; }
+    let th: fn(*u8, *u8) = { (*p).items_view.on_remaining_items_threshold_reached };
+    if th != props::no_handler {
+        th(v, { (*p).items_view.on_remaining_items_threshold_reached_ctx });
+    }
+    return;
+}

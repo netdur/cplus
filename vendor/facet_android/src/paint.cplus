@@ -506,10 +506,14 @@ fn configure(v: *u8, n: *core::Node, dirty: u64) {
     // intercept — gets it instead. That is Android's whole mechanism for this;
     // there is no `userInteractionEnabled` bit to clear.
     if (dirty & props::C_INPUT_TRANSPARENT) != (0 as u64) {
-        let through: bool = core::input_transparent(n);
-        view.set_clickable(!through);
-        view.set_focusable_z(!through);
-        view.set_long_clickable(!through);
+        // THE BITS COME BACK AS THEY WERE, which is not the same as coming back
+        // TRUE. Writing all three true here made every label focusable, and an
+        // AdapterView will not deliver an item click to a row that has a
+        // focusable child — so a real tap on a list row or a grid cell did
+        // nothing at all, on every screen, while the agent's synthetic click
+        // kept working and hid it. FacetDraw.inputTransparent remembers.
+        dex::draw_input_transparent(env, { v as jni::jobject },
+                                    core::input_transparent(n));
     }
     // WHICH WAY THE WRITING RUNS. `MatchParent` is Android's INHERIT, which is
     // the same idea under a different name and the default for every view.

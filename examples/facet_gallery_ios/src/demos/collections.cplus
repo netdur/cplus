@@ -10,6 +10,7 @@ import "facet/elements" as ui;
 import "facet/component" as component;
 import "facet/vocabulary" as vocab;
 import "facet/list" as list;
+import "facet/collection" as collection;
 import "facet/label" as label;
 import "facet/services" as services;
 import "flex_layout/flex_layout" as flex;
@@ -25,6 +26,36 @@ fn gap_row(i: usize, ctx: *u8) -> core::Node {
     b.add(ui::label("recycled", font_size: 13.0f64,
                     text_color: vocab::Color::ink(0.45f64)));
     return ui::row(b).padding(12.0f64).gap(8.0f64).align(flex::Align::Center);
+}
+
+// A GRID cell. Same shape of callback as a row — the collection differs in the
+// LAYOUT, not in how the content is asked for.
+fn tile(i: usize, ctx: *u8) -> core::Node {
+    var b: flex::Builder = flex::Builder::new();
+    b.add(ui::label("${i}", font_size: 22.0f64));
+    b.add(ui::label("cell", font_size: 11.0f64,
+                    text_color: vocab::Color::ink(0.5f64)));
+    return ui::column(b).padding(14.0f64).gap(2.0f64)
+        .align(flex::Align::Center).justify(flex::Justify::Center);
+}
+
+// A cell was chosen. The collection reports it as `on_selection_changed` — the
+// same tap a list calls `on_item_tapped`, under the word the grid's vocabulary
+// uses.
+fn cell_picked(v: *u8, ctx: *u8) {
+    match collection::find("g:grid") {
+        option::Option[collection::Collection]::Some(c) => {
+            let i: i64 = c.selected_index();
+            match label::find("g:pick") {
+                option::Option[label::Label]::Some(l) => {
+                    let _t: label::Label = l.set_text("cell ${i} is selected");
+                }
+                option::Option[label::Label]::None => { }
+            }
+        }
+        option::Option[collection::Collection]::None => { }
+    }
+    return;
 }
 
 // ---- pull to refresh ---------------------------------------------------------
@@ -147,6 +178,24 @@ impl ListDemo: component::Component {
         rec.add(shell::painted(host, vocab::Color::fill(), 10.0f64));
         rec.add(shell::caption("Two hundred rows over a real UITableView with a real data source. Two hundred nodes were never built — the callback runs for the dozen on screen, and the cells come back as you scroll."));
         body.add(shell::card("200 ROWS, ~12 CELLS", rec));
+
+        var grid: flex::Builder = flex::Builder::new();
+        var g: core::Node = ui::collection(key: "g:grid", columns: 3 as usize,
+                                           selection_mode: vocab::SelectionMode::Single,
+                                           on_selection_changed: cell_picked)
+            .height(220.0f64);
+        match collection::find("g:grid", within: #addr_of(g)) {
+            option::Option[collection::Collection]::Some(c) => {
+                let _c: collection::Collection = c.set_count(9 as usize);
+                let _r: collection::Collection = c.set_row(tile);
+            }
+            option::Option[collection::Collection]::None => { }
+        }
+        grid.add(shell::painted(g, vocab::Color::fill(), 10.0f64));
+        grid.add(ui::label("tap a cell", key: "g:pick", font_size: 13.0f64,
+                            text_color: vocab::Color::ink(0.7f64)));
+        grid.add(shell::caption("The same count-and-callback the list takes, laid out in three columns instead of one. The cells recycle the same way."));
+        body.add(shell::card("A GRID", grid));
 
         var kin: flex::Builder = flex::Builder::new();
         kin.add(shell::caption("`table` is the same view with three verbs of its own — its style, its row height, and whether the rows size themselves. `tree` is the same table over the flattened OPEN rows, re-flattened whenever the model or the expansion changes. `collection` and `carousel` are UICollectionView with a flow layout."));

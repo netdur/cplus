@@ -52,3 +52,6 @@ __pycache__/
 # The Android build's staging directory: unpacked APK, dex, .so, signed output.
 # `build.sh` recreates it from scratch on every run.
 /examples/*/out/
+
+# javac scratch for tools/build_dex.sh; the DEX is the artifact, not these.
+vendor/facet_android/classes/

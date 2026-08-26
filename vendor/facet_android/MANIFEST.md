@@ -88,12 +88,12 @@ count as answering it. Three surfaces, because they fail differently:
 
 | | android | gtk | appkit | uikit |
 |---|---|---|---|---|
-| props | 269/360 · 74% | 356 · 98% | 334 · 92% | 321 · 89% |
-| handlers | 53/68 · 77% | 68 · 100% | 68 · 100% | 65 · 95% |
+| props | 281/360 · 78% | 356 · 98% | 334 · 92% | 321 · 89% |
+| handlers | 55/68 · 80% | 68 · 100% | 68 · 100% | 65 · 95% |
 | shared band | 18/21 · 85% | 19 · 90% | 20 · 95% | 18 · 85% |
 
 The gap between the first two rows is the shape of the work left: this backend
-can be TOLD a good deal more than it can SAY. Twenty of the handlers it never
+can be TOLD a good deal more than it can SAY. Thirteen of the handlers it never
 fires are a scroll position, a selection, a submit and a lifecycle edge — reads
 an application needs before it can do anything with the controls that are
 already drawn.
@@ -111,21 +111,24 @@ already drawn.
   then a CANCEL every time. Claimed only at row zero, and released the moment
   the drag turns upward, which is a scroll and the page's.
 
-- **The controls still without a body.** `tabs`, `collection`, `carousel`, the
-  menu tier.
-
-  `collection` is no longer blocked on the recycler: the row MODEL landed, so
-  the adapter reads a count and four function pointers per KIND rather than
-  through `*ListProps`. What it is blocked on now is a placement handshake with
-  `AbsListView` — the cells measure correctly at the column width and then
-  refuse to take their positions, in both the laid-out and the measure-only
-  variant. Everything measured is written down in
-  `bugs/facet_android-collection-cell-placement.md`, including where to start.
+- **The controls still without a body.** `tabs`, `carousel`, the menu tier.
 
   `tabs` is blocked on something else entirely: what its SEGMENTS are is not
   settled. facet_uikit makes a UISegmentedControl and never populates it, so
   there is no implementation to read the intent from, and guessing would be
   inventing a control facet has not described.
+
+- **A `collection`'s COLUMN WIDTH is the whole control, and `item_sizing` is
+  half of one.** A GridView does not divide its width by its column count — it
+  divides by a column WIDTH you give it, and hands the remainder back only if
+  `STRETCH_COLUMN_WIDTH` is set. Without that mode the width stays at the
+  requested zero, every cell is measured `EXACTLY 0`, and the grid draws one
+  visible cell and eight invisible ones. `columns: 0` is ONE column here, which
+  is what facet_uikit clamps to and what facet_gtk says in as many words —
+  AUTO_FIT would have been this backend inventing a meaning the other two do not
+  give the prop. `item_sizing` is honoured as a HEIGHT: `MeasureFirstItem` pins
+  every cell to the measured height of the one at index 0, and `MeasureAllItems`
+  is what the widget does unasked. There is no per-item WIDTH on a GridView.
 
 - **A `refreshable` cannot tell a pull from a scroll.** The kind is built — the
   same gesture, indicator and threshold the list's pull uses — but a container
@@ -151,7 +154,7 @@ already drawn.
   `text_button`, `text_area`, `search_field`, `image`, `icon_button`, `scroll`,
   `stepper`, `list`, `tree`, `split`, `canvas`, `swipeable`, `page_dots`,
   `date_picker`, `symbol`, `time_picker`, `bordered`, `popup`, `web`,
-  `refreshable` and `table` — each with BOTH
+  `refreshable`, `table` and `collection` — each with BOTH
   halves, the props write and the event read. Half a control is worse than none:
   it looks finished and reports nothing, which is the shape of the bug
   facet_uikit carried in its checkbox until 2026-08-25.
@@ -266,20 +269,23 @@ already drawn.
   so the tree shape is right and only the arming is missing.
 - **`observe_size`.** Android's answer is `addOnLayoutChangeListener`, which
   needs a fifth DEX adapter. Returns 0 (no handle) today.
-- **`table` and `collection`.** `tree` is BUILT, on the same adapter as `list`
-  with a flattened visible-row index in place of a count. The recycler is — `list` runs on
-  `ListView` + a `FacetRows` adapter in the dex — and these three ride the same
-  machinery with a different model on top. `RecyclerView` was not used: it is
-  AndroidX, an .aar with its own dex, and this project ships no Gradle;
-  `ListView` recycles through `convertView`, which is the whole mechanism, and
-  facet owns layout so RecyclerView's LayoutManagers would go unused.
+- **`carousel`.** The recycler underneath it is built and shared: `list` runs
+  on a `ListView` with a `FacetRows` adapter from the dex, `tree` is the same
+  adapter over a flattened visible-row index, and `collection` is a `GridView`,
+  which is an `AbsListView` and takes that adapter unchanged. A carousel is the
+  same model laid out along one row, and it has not been written.
+  `RecyclerView` was not used anywhere here: it is AndroidX, an .aar with its
+  own dex, and this project ships no Gradle; `ListView` recycles through
+  `convertView`, which is the whole mechanism, and facet owns layout so
+  RecyclerView's LayoutManagers would go unused.
 - **`theme::set_theme_changed_fn`.** `is_dark` is filled; the repaint-on-flip
   hook is not.
-- **Prop parity, measured.** `vendor/facet_gtk/tools/parity.py` scores every
-  backend: android reads **47/360 props (13%) and 11/68 handlers (16%)**, against
-  gtk 98%/100%, appkit 92%/100%, uikit 89%/95%. Both numbers are quoted because
-  either alone misleads — a control can honour every prop bit and still call
-  nothing on tap, which is exactly what the tool was taught to catch.
+- **Prop parity, measured.** The numbers live at the top of this section and
+  are produced by `vendor/facet_android/tools/parity.py`, which is
+  `vendor/facet_gtk/tools/parity.py` with this package's floors. Both props and
+  handlers are quoted because either alone misleads — a control can honour every
+  prop bit and still call nothing on tap, which is exactly what the tool was
+  taught to catch.
 
 ---
 

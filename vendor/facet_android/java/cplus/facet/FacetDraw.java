@@ -161,6 +161,46 @@ public final class FacetDraw {
 
     // THE SOFT KEYBOARD, which is what `focus` means to a text field. A view
     // that has focus and no keyboard is focused in name only on a phone.
+    // WHETHER A VIEW TAKES A TOUCH, and why remembering is the whole job.
+    //
+    // facet's `input_transparent` is a two-state prop and Android has no single
+    // bit behind it: a view is passed over when it is neither clickable nor
+    // focusable, and CLEARING those is easy. Setting them back is the hard half
+    // — the answer is not "clickable and focusable", it is whatever THIS widget
+    // was born with. A Button is clickable; a TextView is not; a ListView is
+    // both. Writing the same three trues onto all of them made every label in
+    // the tree focusable, and a row with a focusable child is a row an
+    // AdapterView refuses to click: `hasFocusable()` is checked before the item
+    // click is delivered, so every list and every grid stopped reporting taps.
+    //
+    // Same shape as the remembered background one file over, and for the same
+    // reason: "facet declares nothing" has to restore the PLATFORM'S value.
+    private static final int INPUT_TAG = 0x7F0F000B;
+
+    public static void rememberInput(android.view.View v) {
+        if (v.getTag(INPUT_TAG) != null) return;
+        int bits = (v.isClickable() ? 1 : 0)
+                 | (v.isFocusable() ? 2 : 0)
+                 | (v.isLongClickable() ? 4 : 0);
+        v.setTag(INPUT_TAG, Integer.valueOf(bits));
+    }
+
+    public static void inputTransparent(android.view.View v, boolean through) {
+        if (through) {
+            rememberInput(v);
+            v.setClickable(false);
+            v.setFocusable(false);
+            v.setLongClickable(false);
+            return;
+        }
+        Object t = v.getTag(INPUT_TAG);
+        if (!(t instanceof Integer)) return;      // never made transparent; leave it alone
+        int bits = (Integer) t;
+        v.setClickable((bits & 1) != 0);
+        v.setFocusable((bits & 2) != 0);
+        v.setLongClickable((bits & 4) != 0);
+    }
+
     public static void showKeyboard(android.view.View v) {
         v.requestFocus();
         android.view.inputmethod.InputMethodManager m =
