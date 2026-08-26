@@ -159,6 +159,7 @@ fn create_for_kind(kind: u32, n: *core::Node) -> *u8 {
     if kind == props::K_POPUP { return controls::create_popup(n); }
     if kind == props::K_WEB { return controls::create_web(n); }
     if kind == props::K_REFRESHABLE { return recycler::create_refreshable(n); }
+    if kind == props::K_TABLE { return controls::create_table(n); }
     if kind == symbol::K_SYMBOL { return controls::create_symbol(n); }
     if kind == props::K_SWIPEABLE { return swipe::create(n); }
     // Not built yet. A backend that silently substituted a blank container for
@@ -216,6 +217,7 @@ fn apply_for_kind(kind: u32, v: *u8, n: *core::Node, dirty: u64) {
     if kind == props::K_POPUP { controls::apply_popup(v, n, dirty); return; }
     if kind == props::K_WEB { controls::apply_web(v, n, dirty); return; }
     if kind == props::K_REFRESHABLE { recycler::apply_refreshable(v, n, dirty); return; }
+    if kind == props::K_TABLE { controls::apply_table(v, n, dirty); return; }
     if kind == symbol::K_SYMBOL { controls::apply_symbol(v, n, dirty); return; }
     if kind == props::K_SWIPEABLE { swipe::apply(v, n, dirty); return; }
     return;

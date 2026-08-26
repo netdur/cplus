@@ -129,6 +129,17 @@ fn measure_intrinsic(v: *u8, max_w: f64, max_h: f64) -> flex::Size {
 fn px(v: f64) -> f64 { return e::px(v); }
 fn dp(v: f64) -> f64 { return e::dp(v); }
 
+// MEASURED, NOT PLACED. A cell in a GridView is positioned by the GRID — one
+// column across — and laying it out ourselves at the origin stacks every cell
+// on top of the first. The measure still has to happen, because a View that was
+// never measured has no internal layout.
+fn measure_only(v: *u8, wd: f64, ht: f64) {
+    var view: w::View = paint::wrap(v);
+    view.measure(spec_exactly({ px(wd) as i32 }), spec_exactly({ px(ht) as i32 }));
+    paint::unwrap_keep(view);
+    return;
+}
+
 fn place(v: *u8, x: f64, y: f64, wd: f64, ht: f64) {
     var view: w::View = paint::wrap(v);
     let iw: i32 = { px(wd) as i32 };

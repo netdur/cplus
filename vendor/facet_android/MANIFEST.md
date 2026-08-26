@@ -88,8 +88,8 @@ count as answering it. Three surfaces, because they fail differently:
 
 | | android | gtk | appkit | uikit |
 |---|---|---|---|---|
-| props | 266/360 · 73% | 356 · 98% | 334 · 92% | 321 · 89% |
-| handlers | 52/68 · 76% | 68 · 100% | 68 · 100% | 65 · 95% |
+| props | 269/360 · 74% | 356 · 98% | 334 · 92% | 321 · 89% |
+| handlers | 53/68 · 77% | 68 · 100% | 68 · 100% | 65 · 95% |
 | shared band | 18/21 · 85% | 19 · 90% | 20 · 95% | 18 · 85% |
 
 The gap between the first two rows is the shape of the work left: this backend
@@ -111,16 +111,16 @@ already drawn.
   then a CANCEL every time. Claimed only at row zero, and released the moment
   the drag turns upward, which is a scroll and the page's.
 
-- **The controls still without a body.** `tabs`, `collection`, `table`,
-  `carousel`, the menu tier.
+- **The controls still without a body.** `tabs`, `collection`, `carousel`, the
+  menu tier.
 
-  `collection` and `table` are blocked on one thing and it is worth naming: the
-  recycler's row machinery reads `ListProps` DIRECTLY, and a collection's
-  identical field names sit at different offsets inside its own struct. They
-  need a row MODEL — the count and the four function pointers, read per kind and
-  passed in — rather than a second copy of the recycler. That refactor is the
-  work, not the widgets: a `GridView` is an `AbsListView` and takes the same
-  adapter, tap listener and scroll listener a list already has.
+  `collection` is no longer blocked on the recycler: the row MODEL landed, so
+  the adapter reads a count and four function pointers per KIND rather than
+  through `*ListProps`. What it is blocked on now is a placement handshake with
+  `AbsListView` — the cells measure correctly at the column width and then
+  refuse to take their positions, in both the laid-out and the measure-only
+  variant. Everything measured is written down in
+  `bugs/facet_android-collection-cell-placement.md`, including where to start.
 
   `tabs` is blocked on something else entirely: what its SEGMENTS are is not
   settled. facet_uikit makes a UISegmentedControl and never populates it, so
@@ -150,8 +150,8 @@ already drawn.
   `toggle`, `radio`, `slider`, `progress`, `spinner`, `text_field`,
   `text_button`, `text_area`, `search_field`, `image`, `icon_button`, `scroll`,
   `stepper`, `list`, `tree`, `split`, `canvas`, `swipeable`, `page_dots`,
-  `date_picker`, `symbol`, `time_picker`, `bordered`, `popup`, `web` and
-  `refreshable` — each with BOTH
+  `date_picker`, `symbol`, `time_picker`, `bordered`, `popup`, `web`,
+  `refreshable` and `table` — each with BOTH
   halves, the props write and the event read. Half a control is worse than none:
   it looks finished and reports nothing, which is the shape of the bug
   facet_uikit carried in its checkbox until 2026-08-25.

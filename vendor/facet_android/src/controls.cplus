@@ -40,6 +40,7 @@ import "facet/time_picker" as time_picker;
 import "facet/bordered" as bordered;
 import "facet/popup" as popup;
 import "facet/web" as web;
+import "facet/table" as table;
 import "facet/vocabulary" as vocab;
 import "./env" as e;
 import "./paint" as paint;
@@ -2971,6 +2972,71 @@ fn apply_bordered(v: *u8, n: *core::Node, dirty: u64) {
     view.set_clip_to_outline({ shape.kind } != (0 as i64));
     paint::unwrap_keep(view);
     let _k: *u8 = d.into_raw();
+    return;
+}
+
+// ---- table -----------------------------------------------------------------------
+// NOT A DATA SOURCE. facet's `table` carries no rows and no builder — three
+// props and its CHILDREN are its content, which is why it is here beside the
+// containers rather than in the recycler with `list` and `collection`.
+//
+// The three say how the rows it holds are drawn: whether they may differ in
+// height, what the table is FOR, and how tall a row is when they do not.
+
+fn table_props(n: *core::Node) -> *props::TableProps {
+    return props_of(n, props::K_TABLE) as *props::TableProps;
+}
+
+fn create_table(n: *core::Node) -> *u8 {
+    return global_of(dex::new_host(e::env(), e::context()));
+}
+
+fn apply_table(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *props::TableProps = table_props(n);
+    if p == (0 as *props::TableProps) { return; }
+    let watched: u64 = table::P_STYLE | table::P_ROW_HEIGHT | table::P_HAS_UNEVEN_ROWS;
+    if (dirty & watched) == (0 as u64) && dirty != paint::all_bits() { return; }
+    let env: rt::Env = e::env();
+
+    // A ROW HEIGHT the table STATES is written onto its children, because a
+    // table's rows are its children and nothing else would carry the number to
+    // them — unless the rows may differ, which is exactly what
+    // `has_uneven_rows` says. The two are one decision.
+    let uneven: bool = { (*p).has_uneven_rows };
+    let h: i64 = { (*p).row_height };
+    if !uneven && h > (0 as i64) {
+        var i: usize = 0 as usize;
+        let count: usize = core::child_count_of(n);
+        while i < count {
+            match core::child_of(n, i) {
+                option::Option[*core::Node]::Some(c) => { core::set_height(c, { h as f64 }); }
+                option::Option[*core::Node]::None => { }
+            }
+            i = i +% (1 as usize);
+        }
+    }
+
+    // WHAT THE TABLE IS FOR, which Android has no widget for and every platform
+    // draws differently. `Menu` and `Settings` are the grouped, inset postures —
+    // a card with the theme's own surface behind the rows — and `Data` and
+    // `Form` are plain. That is the one distinction the four make that a
+    // container can honour without inventing a look.
+    let grouped: bool = match { (*p).style } {
+        vocab::TableStyle::Menu => true,
+        vocab::TableStyle::Settings => true,
+        _ => false,
+    };
+    var view: w::View = w::View::from_global(env, v);
+    if grouped {
+        var d: w::GradientDrawable = w::GradientDrawable::new_void(env);
+        d.set_color_i(paint::argb_of(vocab::Color::surface()));
+        d.set_corner_radius({ e::px(12.0f64) as f32 });
+        var drawable: w::Drawable = d.as_drawable();
+        view.set_background(drawable.into_raw());
+        view.set_clip_to_outline(true);
+        let _k: *u8 = d.into_raw();
+    }
+    paint::unwrap_keep(view);
     return;
 }
 

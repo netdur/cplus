@@ -53,6 +53,10 @@ fn list_props(n: *core::Node) -> *props::ListProps {
     return controls::props_of(n, props::K_LIST) as *props::ListProps;
 }
 
+fn collection_props(n: *core::Node) -> *props::CollectionProps {
+    return controls::props_of(n, props::K_COLLECTION) as *props::CollectionProps;
+}
+
 fn create_list(n: *core::Node) -> *u8 { return create_list_view(n); }
 
 // The ListView, its adapter and its tap listener. Shared by `list` and `tree`,
@@ -223,15 +227,28 @@ fn row_count(token: i64) -> i32 {
     let n: *core::Node = { token as *core::Node };
     if n == (0 as *core::Node) { return 0 as i32; }
     if core::kind_of(n) == tree::K_TREE { return tree_row_count(n); }
-    let p: *props::ListProps = list_props(n);
-    if p == (0 as *props::ListProps) { return 0 as i32; }
-    return { (*p).count as i32 };
+    return { model_of(n).count as i32 };
 }
 
 fn row_tapped(token: i64, position: i32) {
     let n: *core::Node = { token as *core::Node };
     if n == (0 as *core::Node) { return; }
-    if core::kind_of(n) == tree::K_TREE { tree_row_tapped(n, position); return; }
+    let kind: u32 = core::kind_of(n);
+    if kind == tree::K_TREE { tree_row_tapped(n, position); return; }
+    // THE HANDLERS ARE THE KIND'S, even though the row model is shared: a list
+    // declares `on_item_tapped` and `on_item_selected`, a collection declares
+    // `on_selection_changed` on its selectable block. Same tap, different
+    // words, and the words are the contract.
+    if kind == props::K_COLLECTION {
+        let p: *props::CollectionProps = collection_props(n);
+        if p == (0 as *props::CollectionProps) { return; }
+        { (*p).selected_index = { position as i64 } };
+        let h: fn(*u8, *u8) = { (*p).selectable_items_view.on_selection_changed };
+        if h != props::no_handler {
+            h(core::view_of(n), { (*p).selectable_items_view.on_selection_changed_ctx });
+        }
+        return;
+    }
     let p: *props::ListProps = list_props(n);
     if p == (0 as *props::ListProps) { return; }
     { (*p).selected_index = { position as i64 } };
@@ -242,11 +259,65 @@ fn row_tapped(token: i64, position: i32) {
     return;
 }
 
-// The DEFAULT is a real function, not a null pointer — `props::no_bind` — so
-// "has a bind" is a comparison against that sentinel. Testing for null would
-// answer true for every list and send a rebuild down the recycling path.
-fn has_bind(p: *props::ListProps) -> bool {
-    return { (*p).bind } != props::no_bind;
+// ---- the row model -------------------------------------------------------------
+// WHAT AN ADAPTER NEEDS, and nothing else: how many rows there are, how to
+// build one, how to bind one into a cell that already exists, and how tall a
+// row is when the application states it.
+//
+// This exists because `list` and `collection` declare the SAME FIELD NAMES at
+// different offsets: a collection's `count` and `row` sit behind four embedded
+// prop blocks, so a `*ListProps` read of one is a read of the wrong words. The
+// adapter used to read `*ListProps` directly, which is why a grid could not
+// share it.
+//
+// Read per kind, passed by value. A model whose `row` is null is a node the
+// adapter has nothing to say about.
+
+struct RowModel {
+    count: i64,
+    row: fn(usize, *u8) -> flex::Node,
+    opaque row_ctx: *u8,
+    bind: fn(usize, *flex::Node, *u8),
+    // A STATED height, or 0 for "ask the content". A collection has none —
+    // its cells are sized by the column count — so it answers zero.
+    height: f64,
+}
+
+impl RowModel {
+    fn none() -> RowModel {
+        return RowModel {
+            count: 0 as i64,
+            row: 0 as fn(usize, *u8) -> flex::Node,
+            row_ctx: 0 as *u8,
+            bind: props::no_bind,
+            height: 0.0f64,
+        };
+    }
+    fn is_none(this) -> bool { return this.row == (0 as fn(usize, *u8) -> flex::Node); }
+    // The DEFAULT is a real function, not a null pointer — `props::no_bind` —
+    // so "has a bind" is a comparison against that sentinel. Testing for null
+    // would answer true for every list and send a rebuild down the recycling
+    // path.
+    fn has_bind(this) -> bool { return this.bind != props::no_bind; }
+}
+
+fn model_of(n: *core::Node) -> RowModel {
+    let kind: u32 = core::kind_of(n);
+    if kind == props::K_LIST {
+        let p: *props::ListProps = list_props(n);
+        if p == (0 as *props::ListProps) { return RowModel::none(); }
+        var h: f64 = 0.0f64;
+        if { (*p).row_height } > (0 as i64) { h = { { (*p).row_height } as f64 }; }
+        return RowModel { count: { (*p).count }, row: { (*p).row },
+                          row_ctx: { (*p).row_ctx }, bind: { (*p).bind }, height: h };
+    }
+    if kind == props::K_COLLECTION {
+        let p: *props::CollectionProps = collection_props(n);
+        if p == (0 as *props::CollectionProps) { return RowModel::none(); }
+        return RowModel { count: { (*p).count }, row: { (*p).row },
+                          row_ctx: { (*p).row_ctx }, bind: { (*p).bind }, height: 0.0f64 };
+    }
+    return RowModel::none();
 }
 
 // A POINTER IN A TAG. A keyed tag holds an Object, so a raw pointer travels as
@@ -293,29 +364,27 @@ fn row_view(token: i64, position: i32, convert: jni::jobject, parent: jni::jobje
     let n: *core::Node = { token as *core::Node };
     if n == (0 as *core::Node) { return 0 as jni::jobject; }
     if core::kind_of(n) == tree::K_TREE { return tree_row_view(n, position, convert); }
-    let p: *props::ListProps = list_props(n);
-    if p == (0 as *props::ListProps) { return 0 as jni::jobject; }
+    let m: RowModel = model_of(n);
+    if m.is_none() { return 0 as jni::jobject; }
     let env: rt::Env = e::env();
     let row: usize = { position as usize };
 
     // The width a row gets is the LIST'S, which is the frame flex gave the
     // list node — not the parent's measured width, which is zero before the
     // first layout.
-    let lf: flex::Frame = core::frame_of(n);
-    var width: f64 = lf.width;
-    if width <= 0.0f64 { width = scheduler::width(); }
+    let width: f64 = cell_width(env, n, core::view_of(n));
 
     if convert != (0 as jni::jobject) {
         let existing: *core::Node = cell_node(env, convert);
-        if existing != (0 as *core::Node) && has_bind(p) {
-            bind_into(p, row, existing);
+        if existing != (0 as *core::Node) && m.has_bind() {
+            bind_into(m, row, existing);
             // A bind WRITES PROPS, which marks nodes dirty and touches nothing
             // native. A realised row is outside the window walk, so nothing
             // would carry those writes across — `sync_from` is that walk,
             // rooted here, applied immediately because the row is about to be
             // shown.
             mount::sync_from(existing);
-            place_row(env, convert, existing, width, fixed_height(p));
+            place_row(env, convert, existing, width, m.height);
             return convert;
         }
         // No bind, or an empty cell: tear the old row down before reusing it.
@@ -323,7 +392,7 @@ fn row_view(token: i64, position: i32, convert: jni::jobject, parent: jni::jobje
     }
 
     let cell: jni::jobject = new_cell(env, convert);
-    var node: core::Node = build_row(p, row);
+    var node: core::Node = build_row(m, row);
     match box::new::[core::Node](node) {
         option::Option[box::Box[core::Node]]::Some(b) => {
             let np: *core::Node = { b.into_raw() as *core::Node };
@@ -335,9 +404,9 @@ fn row_view(token: i64, position: i32, convert: jni::jobject, parent: jni::jobje
             // Bound immediately, INCLUDING on the first use, so the builder is
             // responsible for shape only and a row can never show the data of
             // whichever row happened to build its cell.
-            if has_bind(p) { bind_into(p, row, np); }
+            if m.has_bind() { bind_into(m, row, np); }
             mount::sync_from(np);
-            place_row(env, cell, np, width, fixed_height(p));
+            place_row(env, cell, np, width, m.height);
             set_cell_node(env, cell, np);
         }
         option::Option[box::Box[core::Node]]::None => { }
@@ -361,26 +430,49 @@ fn empty_cell(env: rt::Env, cell: jni::jobject) {
     return;
 }
 
-// A stated `row_height`, or 0 for "ask the content".
-fn fixed_height(p: *props::ListProps) -> f64 {
-    let h: i64 = { (*p).row_height };
-    if h <= (0 as i64) { return 0.0f64; }
-    return { h as f64 };
+// HOW WIDE ONE CELL IS, which is where a grid and a list part company.
+//
+// A list's row is the control's whole width. A COLLECTION'S is one COLUMN of
+// it — and laying a grid cell out at the full width is not a small error: every
+// cell then measures as wide as the grid, GridView fits one per row, and a
+// three-column collection renders as a one-column list. That is exactly what it
+// did.
+//
+// The column count is asked of the WIDGET rather than read from the props,
+// because `columns: 0` means AUTO_FIT and only the laid-out GridView knows what
+// that came to.
+fn cell_width(env: rt::Env, n: *core::Node, v: *u8) -> f64 {
+    let lf: flex::Frame = core::frame_of(n);
+    var width: f64 = lf.width;
+    if width <= 0.0f64 { width = scheduler::width(); }
+    if core::kind_of(n) != props::K_COLLECTION { return width; }
+    if v == (0 as *u8) { return width; }
+    var gv: w::GridView = w::GridView::from_global(env, env.new_global_ref(v));
+    let cols: i32 = gv.get_num_columns();
+    let gap: i32 = gv.get_horizontal_spacing();
+    let _k: *u8 = gv.into_raw();
+    if cols <= (1 as i32) { return width; }
+    // The gaps come out before the division: N columns have N-1 of them, and a
+    // cell measured over its share of them overflows the column it is in.
+    let spacing: f64 = e::dp({ (gap * (cols -% (1 as i32))) as f64 });
+    var usable: f64 = width - spacing;
+    if usable < 1.0f64 { usable = width; }
+    return usable / { cols as f64 };
 }
 
-fn build_row(p: *props::ListProps, row: usize) -> core::Node {
-    let f: fn(usize, *u8) -> flex::Node = { (*p).row };
-    if f == (0 as fn(usize, *u8) -> flex::Node) { return core::column(core::Builder::new()); }
-    return f(row, { (*p).row_ctx });
+fn build_row(m: RowModel, row: usize) -> core::Node {
+    if m.is_none() { return core::column(core::Builder::new()); }
+    let f: fn(usize, *u8) -> flex::Node = m.row;
+    return f(row, m.row_ctx);
 }
 
 // `bind` carries no ctx of its own: it shares `row_ctx` with the builder, which
 // is right — the two are halves of one thing and an app that needed different
 // context for them would be describing two lists.
-fn bind_into(p: *props::ListProps, row: usize, n: *core::Node) {
-    let f: fn(usize, *flex::Node, *u8) = { (*p).bind };
-    if f == props::no_bind { return; }
-    f(row, n, { (*p).row_ctx });
+fn bind_into(m: RowModel, row: usize, n: *core::Node) {
+    if !m.has_bind() { return; }
+    let f: fn(usize, *flex::Node, *u8) = m.bind;
+    f(row, n, m.row_ctx);
     return;
 }
 
@@ -389,7 +481,8 @@ fn bind_into(p: *props::ListProps, row: usize, n: *core::Node) {
 // The cell's own height is what ListView asks for, and `FacetHost.setWanted` is
 // how it answers — an adapter's view is measured with a LOOSE height spec, and
 // `MeasureSpec.getSize` of UNSPECIFIED is zero.
-fn place_row(env: rt::Env, cell: jni::jobject, n: *core::Node, width: f64, row_h: f64) {
+fn place_row(env: rt::Env, cell: jni::jobject, n: *core::Node, width: f64, row_h: f64,
+             owns_position: bool = true) {
     // WIDTH ONLY, as a named argument — the height is left to the content.
     // Passing an explicit "undefined" height instead produced a row of ZERO,
     // and a ListView full of hairlines is what that looks like.
@@ -409,7 +502,13 @@ fn place_row(env: rt::Env, cell: jni::jobject, n: *core::Node, width: f64, row_h
     var ht: f64 = f.height;
     if ht <= 0.0f64 { ht = 1.0f64; }
     dex::host_set_wanted(env, cell, { geometry::px(width) as i32 }, { geometry::px(ht) as i32 });
-    geometry::place(cell, 0.0f64, 0.0f64, width, ht);
+    // A LIST'S ROW IS PLACED HERE; A GRID'S CELL IS NOT. A ListView puts every
+    // row at x=0, so laying the cell out at the origin agrees with it — and a
+    // GridView puts each cell one COLUMN across, so the same call stacked all
+    // nine on top of the first. Measured either way, because a View that was
+    // never measured has no internal layout.
+    if owns_position { geometry::place(cell, 0.0f64, 0.0f64, width, ht); }
+    else { geometry::measure_only(cell, width, ht); }
     geometry::reposition_children(n, core::frame_of(n));
     return;
 }
@@ -1141,3 +1240,4 @@ fn refreshable_touch(n: *core::Node, action: i32, y: f32) {
     if h != props::no_handler { h(v, { (*p).on_refreshing_ctx }); }
     return;
 }
+

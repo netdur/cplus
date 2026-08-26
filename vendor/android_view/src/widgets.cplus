@@ -22574,6 +22574,330 @@ impl Spinner {
 
 }
 
+// android.widget.GridView
+struct GridView {
+    _env: rt::Env,
+    _obj: jni::jobject,
+}
+
+impl GridView {
+    fn drop(ref this) {
+        // `into_raw` nulls `_obj`; DeleteGlobalRef does not admit NULL.
+        if this._obj != { 0 as jni::jobject } { this._env.delete_global_ref(this._obj); }
+        return;
+    }
+
+    fn from_global(env: rt::Env, obj: jni::jobject) -> GridView { return GridView { _env: env, _obj: obj }; }
+
+    fn from_local(env: rt::Env, obj: jni::jobject) -> GridView { return GridView { _env: env, _obj: env.retain_local_as_global(obj) }; }
+
+    fn as_obj(this) -> jni::jobject { return this._obj; }
+
+    fn into_raw(ref this) -> jni::jobject {
+        let p: jni::jobject = this._obj;
+        this._obj = { 0 as jni::jobject };
+        return p;
+    }
+
+    // javap lists DECLARED members only; the inherited surface is here.
+    //
+    // Takes a FRESH global ref rather than sharing this one. Both
+    // wrappers own what they hold and both drops run, so handing the
+    // same ref over would DeleteGlobalRef it twice.
+    fn as_abs_list_view(this) -> AbsListView { return AbsListView::from_global(this._env, this._env.new_global_ref(this._obj)); }
+
+    fn attach_layout_animation_parameters(this, arg0: jni::jobject, arg1: jni::jobject, arg2: i32, arg3: i32) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/GridView\0"), #str_ptr("attachLayoutAnimationParameters\0"), #str_ptr("(Landroid/view/View;Landroid/view/ViewGroup$LayoutParams;II)V\0"));
+        var args: [jni::JValue; 4] = [jni::arg_object(arg0), jni::arg_object(arg1), jni::arg_int(arg2), jni::arg_int(arg3)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn auto_fit(env: rt::Env) -> i32 {
+        let cls: jni::jclass = env.class_cached(#str_ptr("android/widget/GridView\0"));
+        let fid: jni::jfieldID = env.static_field_id(cls, #str_ptr("AUTO_FIT\0"), #str_ptr("I\0"));
+        let r: i32 = { (*(*env.raw())).GetStaticIntField(env.raw(), cls, fid) };
+        return r;
+    }
+
+    fn compute_vertical_scroll_extent(this) -> i32 {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/GridView\0"), #str_ptr("computeVerticalScrollExtent\0"), #str_ptr("()I\0"));
+        let r: i32 = { (*(*this._env.raw())).CallIntMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn compute_vertical_scroll_offset(this) -> i32 {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/GridView\0"), #str_ptr("computeVerticalScrollOffset\0"), #str_ptr("()I\0"));
+        let r: i32 = { (*(*this._env.raw())).CallIntMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn compute_vertical_scroll_range(this) -> i32 {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/GridView\0"), #str_ptr("computeVerticalScrollRange\0"), #str_ptr("()I\0"));
+        let r: i32 = { (*(*this._env.raw())).CallIntMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_accessibility_class_name(this) -> *u8 {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/GridView\0"), #str_ptr("getAccessibilityClassName\0"), #str_ptr("()Ljava/lang/CharSequence;\0"));
+        let r: *u8 = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_adapter_void(this) -> jni::jobject {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/GridView\0"), #str_ptr("getAdapter\0"), #str_ptr("()Landroid/widget/ListAdapter;\0"));
+        let r: jni::jobject = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_adapter_void_field(this) -> jni::jobject {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/GridView\0"), #str_ptr("getAdapter\0"), #str_ptr("()Landroid/widget/Adapter;\0"));
+        let r: jni::jobject = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_column_width(this) -> i32 {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/GridView\0"), #str_ptr("getColumnWidth\0"), #str_ptr("()I\0"));
+        let r: i32 = { (*(*this._env.raw())).CallIntMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_gravity(this) -> i32 {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/GridView\0"), #str_ptr("getGravity\0"), #str_ptr("()I\0"));
+        let r: i32 = { (*(*this._env.raw())).CallIntMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_horizontal_spacing(this) -> i32 {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/GridView\0"), #str_ptr("getHorizontalSpacing\0"), #str_ptr("()I\0"));
+        let r: i32 = { (*(*this._env.raw())).CallIntMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_num_columns(this) -> i32 {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/GridView\0"), #str_ptr("getNumColumns\0"), #str_ptr("()I\0"));
+        let r: i32 = { (*(*this._env.raw())).CallIntMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_requested_column_width(this) -> i32 {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/GridView\0"), #str_ptr("getRequestedColumnWidth\0"), #str_ptr("()I\0"));
+        let r: i32 = { (*(*this._env.raw())).CallIntMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_requested_horizontal_spacing(this) -> i32 {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/GridView\0"), #str_ptr("getRequestedHorizontalSpacing\0"), #str_ptr("()I\0"));
+        let r: i32 = { (*(*this._env.raw())).CallIntMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_stretch_mode(this) -> i32 {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/GridView\0"), #str_ptr("getStretchMode\0"), #str_ptr("()I\0"));
+        let r: i32 = { (*(*this._env.raw())).CallIntMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_vertical_spacing(this) -> i32 {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/GridView\0"), #str_ptr("getVerticalSpacing\0"), #str_ptr("()I\0"));
+        let r: i32 = { (*(*this._env.raw())).CallIntMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn layout_children(this) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/GridView\0"), #str_ptr("layoutChildren\0"), #str_ptr("()V\0"));
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue); };
+        return;
+    }
+
+    fn new_context(env: rt::Env, arg0: jni::jobject) -> GridView {
+        let mid: jni::jmethodID = env.method(#str_ptr("android/widget/GridView\0"), #str_ptr("<init>\0"), #str_ptr("(Landroid/content/Context;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        let cls: jni::jclass = env.class_cached(#str_ptr("android/widget/GridView\0"));
+        let obj: jni::jobject = { (*(*env.raw())).NewObjectA(env.raw(), cls, mid, #addr_of(args[0])) };
+        return GridView { _env: env, _obj: env.retain_local_as_global(obj) };
+    }
+
+    fn new_context_attribute_set(env: rt::Env, arg0: jni::jobject, arg1: jni::jobject) -> GridView {
+        let mid: jni::jmethodID = env.method(#str_ptr("android/widget/GridView\0"), #str_ptr("<init>\0"), #str_ptr("(Landroid/content/Context;Landroid/util/AttributeSet;)V\0"));
+        var args: [jni::JValue; 2] = [jni::arg_object(arg0), jni::arg_object(arg1)];
+        let cls: jni::jclass = env.class_cached(#str_ptr("android/widget/GridView\0"));
+        let obj: jni::jobject = { (*(*env.raw())).NewObjectA(env.raw(), cls, mid, #addr_of(args[0])) };
+        return GridView { _env: env, _obj: env.retain_local_as_global(obj) };
+    }
+
+    fn new_context_attribute_set_i(env: rt::Env, arg0: jni::jobject, arg1: jni::jobject, arg2: i32) -> GridView {
+        let mid: jni::jmethodID = env.method(#str_ptr("android/widget/GridView\0"), #str_ptr("<init>\0"), #str_ptr("(Landroid/content/Context;Landroid/util/AttributeSet;I)V\0"));
+        var args: [jni::JValue; 3] = [jni::arg_object(arg0), jni::arg_object(arg1), jni::arg_int(arg2)];
+        let cls: jni::jclass = env.class_cached(#str_ptr("android/widget/GridView\0"));
+        let obj: jni::jobject = { (*(*env.raw())).NewObjectA(env.raw(), cls, mid, #addr_of(args[0])) };
+        return GridView { _env: env, _obj: env.retain_local_as_global(obj) };
+    }
+
+    fn new_context_attribute_set_i_i(env: rt::Env, arg0: jni::jobject, arg1: jni::jobject, arg2: i32, arg3: i32) -> GridView {
+        let mid: jni::jmethodID = env.method(#str_ptr("android/widget/GridView\0"), #str_ptr("<init>\0"), #str_ptr("(Landroid/content/Context;Landroid/util/AttributeSet;II)V\0"));
+        var args: [jni::JValue; 4] = [jni::arg_object(arg0), jni::arg_object(arg1), jni::arg_int(arg2), jni::arg_int(arg3)];
+        let cls: jni::jclass = env.class_cached(#str_ptr("android/widget/GridView\0"));
+        let obj: jni::jobject = { (*(*env.raw())).NewObjectA(env.raw(), cls, mid, #addr_of(args[0])) };
+        return GridView { _env: env, _obj: env.retain_local_as_global(obj) };
+    }
+
+    fn no_stretch(env: rt::Env) -> i32 {
+        let cls: jni::jclass = env.class_cached(#str_ptr("android/widget/GridView\0"));
+        let fid: jni::jfieldID = env.static_field_id(cls, #str_ptr("NO_STRETCH\0"), #str_ptr("I\0"));
+        let r: i32 = { (*(*env.raw())).GetStaticIntField(env.raw(), cls, fid) };
+        return r;
+    }
+
+    fn on_focus_changed(this, arg0: bool, arg1: i32, arg2: jni::jobject) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/GridView\0"), #str_ptr("onFocusChanged\0"), #str_ptr("(ZILandroid/graphics/Rect;)V\0"));
+        var args: [jni::JValue; 3] = [rt::arg_bool(arg0), jni::arg_int(arg1), jni::arg_object(arg2)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn on_initialize_accessibility_node_info_for_item(this, arg0: jni::jobject, arg1: i32, arg2: jni::jobject) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/GridView\0"), #str_ptr("onInitializeAccessibilityNodeInfoForItem\0"), #str_ptr("(Landroid/view/View;ILandroid/view/accessibility/AccessibilityNodeInfo;)V\0"));
+        var args: [jni::JValue; 3] = [jni::arg_object(arg0), jni::arg_int(arg1), jni::arg_object(arg2)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn on_key_down(this, arg0: i32, arg1: jni::jobject) -> bool {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/GridView\0"), #str_ptr("onKeyDown\0"), #str_ptr("(ILandroid/view/KeyEvent;)Z\0"));
+        var args: [jni::JValue; 2] = [jni::arg_int(arg0), jni::arg_object(arg1)];
+        let r: jni::jboolean = { (*(*this._env.raw())).CallBooleanMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])) };
+        return r as i8 != 0;
+    }
+
+    fn on_key_multiple(this, arg0: i32, arg1: i32, arg2: jni::jobject) -> bool {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/GridView\0"), #str_ptr("onKeyMultiple\0"), #str_ptr("(IILandroid/view/KeyEvent;)Z\0"));
+        var args: [jni::JValue; 3] = [jni::arg_int(arg0), jni::arg_int(arg1), jni::arg_object(arg2)];
+        let r: jni::jboolean = { (*(*this._env.raw())).CallBooleanMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])) };
+        return r as i8 != 0;
+    }
+
+    fn on_key_up(this, arg0: i32, arg1: jni::jobject) -> bool {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/GridView\0"), #str_ptr("onKeyUp\0"), #str_ptr("(ILandroid/view/KeyEvent;)Z\0"));
+        var args: [jni::JValue; 2] = [jni::arg_int(arg0), jni::arg_object(arg1)];
+        let r: jni::jboolean = { (*(*this._env.raw())).CallBooleanMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])) };
+        return r as i8 != 0;
+    }
+
+    fn on_measure(this, arg0: i32, arg1: i32) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/GridView\0"), #str_ptr("onMeasure\0"), #str_ptr("(II)V\0"));
+        var args: [jni::JValue; 2] = [jni::arg_int(arg0), jni::arg_int(arg1)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_adapter_list_adapter(this, arg0: jni::jobject) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/GridView\0"), #str_ptr("setAdapter\0"), #str_ptr("(Landroid/widget/ListAdapter;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_adapter_adapter(this, arg0: jni::jobject) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/GridView\0"), #str_ptr("setAdapter\0"), #str_ptr("(Landroid/widget/Adapter;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_column_width(this, arg0: i32) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/GridView\0"), #str_ptr("setColumnWidth\0"), #str_ptr("(I)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_int(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_gravity(this, arg0: i32) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/GridView\0"), #str_ptr("setGravity\0"), #str_ptr("(I)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_int(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_horizontal_spacing(this, arg0: i32) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/GridView\0"), #str_ptr("setHorizontalSpacing\0"), #str_ptr("(I)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_int(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_num_columns(this, arg0: i32) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/GridView\0"), #str_ptr("setNumColumns\0"), #str_ptr("(I)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_int(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_remote_views_adapter(this, arg0: jni::jobject) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/GridView\0"), #str_ptr("setRemoteViewsAdapter\0"), #str_ptr("(Landroid/content/Intent;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_selection(this, arg0: i32) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/GridView\0"), #str_ptr("setSelection\0"), #str_ptr("(I)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_int(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_stretch_mode(this, arg0: i32) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/GridView\0"), #str_ptr("setStretchMode\0"), #str_ptr("(I)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_int(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn set_vertical_spacing(this, arg0: i32) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/GridView\0"), #str_ptr("setVerticalSpacing\0"), #str_ptr("(I)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_int(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn smooth_scroll_by_offset(this, arg0: i32) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/GridView\0"), #str_ptr("smoothScrollByOffset\0"), #str_ptr("(I)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_int(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn smooth_scroll_to_position(this, arg0: i32) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/widget/GridView\0"), #str_ptr("smoothScrollToPosition\0"), #str_ptr("(I)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_int(arg0)];
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])); };
+        return;
+    }
+
+    fn stretch_column_width(env: rt::Env) -> i32 {
+        let cls: jni::jclass = env.class_cached(#str_ptr("android/widget/GridView\0"));
+        let fid: jni::jfieldID = env.static_field_id(cls, #str_ptr("STRETCH_COLUMN_WIDTH\0"), #str_ptr("I\0"));
+        let r: i32 = { (*(*env.raw())).GetStaticIntField(env.raw(), cls, fid) };
+        return r;
+    }
+
+    fn stretch_spacing(env: rt::Env) -> i32 {
+        let cls: jni::jclass = env.class_cached(#str_ptr("android/widget/GridView\0"));
+        let fid: jni::jfieldID = env.static_field_id(cls, #str_ptr("STRETCH_SPACING\0"), #str_ptr("I\0"));
+        let r: i32 = { (*(*env.raw())).GetStaticIntField(env.raw(), cls, fid) };
+        return r;
+    }
+
+    fn stretch_spacing_uniform(env: rt::Env) -> i32 {
+        let cls: jni::jclass = env.class_cached(#str_ptr("android/widget/GridView\0"));
+        let fid: jni::jfieldID = env.static_field_id(cls, #str_ptr("STRETCH_SPACING_UNIFORM\0"), #str_ptr("I\0"));
+        let r: i32 = { (*(*env.raw())).GetStaticIntField(env.raw(), cls, fid) };
+        return r;
+    }
+
+}
+
 // android.webkit.WebView
 struct WebView {
     _env: rt::Env,
@@ -24610,4 +24934,4 @@ impl WebSettings {
 
 }
 
-// cpc-bindgen --java: 3370 items emitted, 31 SKIPPED.
+// cpc-bindgen --java: 3414 items emitted, 31 SKIPPED.
