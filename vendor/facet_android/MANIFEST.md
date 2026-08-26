@@ -88,8 +88,8 @@ count as answering it. Three surfaces, because they fail differently:
 
 | | android | gtk | appkit | uikit |
 |---|---|---|---|---|
-| props | 256/360 · 71% | 356 · 98% | 334 · 92% | 321 · 89% |
-| handlers | 51/68 · 75% | 68 · 100% | 68 · 100% | 65 · 95% |
+| props | 266/360 · 73% | 356 · 98% | 334 · 92% | 321 · 89% |
+| handlers | 52/68 · 76% | 68 · 100% | 68 · 100% | 65 · 95% |
 | shared band | 18/21 · 85% | 19 · 90% | 20 · 95% | 18 · 85% |
 
 The gap between the first two rows is the shape of the work left: this backend
@@ -112,7 +112,26 @@ already drawn.
   the drag turns upward, which is a scroll and the page's.
 
 - **The controls still without a body.** `tabs`, `collection`, `table`,
-  `carousel`, `refreshable`, the menu tier. `views.cplus` dispatches on kind;
+  `carousel`, the menu tier.
+
+  `collection` and `table` are blocked on one thing and it is worth naming: the
+  recycler's row machinery reads `ListProps` DIRECTLY, and a collection's
+  identical field names sit at different offsets inside its own struct. They
+  need a row MODEL — the count and the four function pointers, read per kind and
+  passed in — rather than a second copy of the recycler. That refactor is the
+  work, not the widgets: a `GridView` is an `AbsListView` and takes the same
+  adapter, tap listener and scroll listener a list already has.
+
+  `tabs` is blocked on something else entirely: what its SEGMENTS are is not
+  settled. facet_uikit makes a UISegmentedControl and never populates it, so
+  there is no implementation to read the intent from, and guessing would be
+  inventing a control facet has not described.
+
+- **A `refreshable` cannot tell a pull from a scroll.** The kind is built — the
+  same gesture, indicator and threshold the list's pull uses — but a container
+  has no first visible ROW to ask about, and a refreshable wrapping a scroll
+  cannot see that the scroll is at its top, because the position belongs to the
+  child. Every downward drag in it is a pull. `views.cplus` dispatches on kind;
   each needs a `create_` / `apply_` pair in `controls.cplus`.
 
 - **A `popup`'s TYPOGRAPHY is the adapter's, not the control's.** The Spinner
@@ -131,8 +150,8 @@ already drawn.
   `toggle`, `radio`, `slider`, `progress`, `spinner`, `text_field`,
   `text_button`, `text_area`, `search_field`, `image`, `icon_button`, `scroll`,
   `stepper`, `list`, `tree`, `split`, `canvas`, `swipeable`, `page_dots`,
-  `date_picker`, `symbol`, `time_picker`, `bordered`, `popup` and `web` — each
-  with BOTH
+  `date_picker`, `symbol`, `time_picker`, `bordered`, `popup`, `web` and
+  `refreshable` — each with BOTH
   halves, the props write and the event read. Half a control is worse than none:
   it looks finished and reports nothing, which is the shape of the bug
   facet_uikit carried in its checkbox until 2026-08-25.

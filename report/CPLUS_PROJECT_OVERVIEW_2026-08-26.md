@@ -1,35 +1,41 @@
-# C+ Project Overview, Technical Position, and Current Status
+# C+, Packages, and Facet: Project Overview and Current Status
 
 **Prepared:** 26 August 2026  
 **Audience:** Technical evaluators, potential collaborators, and prospective investors  
 **Basis:** The repository at commit `26fc10b` on 26 August 2026  
-**Project:** C+ programming language and toolchain  
+**Project:** C+ programming language, package platform, and Facet application framework
 **License:** MIT
 
 ## Executive summary
 
-C+ is an experimental, safety-oriented systems programming language and a growing native-software platform. Its central proposition is straightforward: retain the low-level control, predictable output, small runtime footprint, and C ABI reach expected from a systems language, while adding compile-time ownership, borrow checking, modern types, deterministic cleanup, strong tooling, and a package architecture designed to keep the compiler itself small.
+C+ is a feature-complete, deliberately compact native programming language at the foundation of a larger software platform. The language is no longer in a phase of active feature invention. Its intended surface is frozen, with current language work limited to bug fixes, implementation hardening, diagnostics, and small corrective improvements.
 
-The project is no longer only a parser or compiler prototype. The repository contains a complete native compilation pipeline, a command-line build tool, a language server, a multi-front-end binding generator, a package manager, a browser-hosted compiler front end, a standard library, platform bindings, a cross-platform native UI system called Facet, and an authorization-aware interface through which software agents can inspect and operate live applications.
+The name expresses the architecture: **C + packages**.
 
-The most important design decision is that high-level capabilities are packages rather than privileged compiler features. The compiler supplies a deliberately constrained language, ownership and type rules, LLVM IR generation, C-compatible interoperability, target support, and a small builder-block mechanism. Libraries supply collections, networking, async execution, cryptography, SIMD math, GPU access, platform APIs, layout, UI controls, inspection, and agent integration. This is both a language-design position and an engineering discipline: a feature is considered proven when it can be implemented through the same package system available to users.
+The compiler provides the foundations that packages cannot provide for themselves: syntax and semantics, ownership and borrow checking, deterministic cleanup, native code generation, C-compatible interoperability, target modelling, and compiler-grade source knowledge. Nearly everything above that foundation—including the standard library, networking, cryptography, databases, platform APIs, layout, UI, inspection, and agent integration—is supplied as a package.
 
-As of this assessment, the latest tagged version is **v0.0.27**, released on 14 August 2026. The main branch is already **217 commits beyond that tag**, with substantial work on iOS, Linux/GTK, Android, package distribution, code intelligence, and agent surfaces. This pace demonstrates unusual implementation depth, but it also means that the formal release number and several planning documents lag the actual code.
+This separation is the project’s strategy for reaching language stability without stopping the platform from advancing. A defect in `stdlib` is resolved through a package update rather than a language update. A new platform capability belongs in its platform or framework package. Packages can evolve at the pace of their domains while the language remains small, learnable, auditable, and stable.
 
-The project is technically substantial and internally well tested, but it remains pre-1.0 and should be evaluated as an advanced development platform rather than a production-standardized language. Its strongest assets are the breadth of working systems, the coherence of its architectural thesis, extensive automated testing, direct native/platform integration, and the emerging combination of cross-platform UI with agent-operable applications. Its main risks are ecosystem size, concentration around one implementation, cross-platform validation gaps, documentation drift, incomplete backend parity, and the absence—within this repository—of external adoption, revenue, independent security review, or current third-party benchmark evidence.
+Facet is a principal part of the project, not merely a demonstration package. It is a cross-platform application framework comparable in ambition to .NET MAUI, but with a different technical proposition: the application language is native and the UI is native. C+ compiles to native code without a managed virtual machine or garbage collector, while Facet renders through AppKit, UIKit, GTK, and Android’s native view system rather than replacing the host platform with a single custom-drawn UI engine.
+
+The project has also deliberately built the surface a new language needs in order to be judged as usable: a complete compiler pipeline, build and test tooling, a language server, compiler-resolved code intelligence, package management, bindings to existing SDKs, a standard library, native UI, inspection, agent interfaces, and multi-platform examples. This is a conscious response to the ecosystem cold-start problem. Depending on an early community to create all essential tools and libraries would be unrealistic; C+ is bootstrapping that foundation directly.
+
+As of this assessment, the latest tagged version is **v0.0.27**, released on 14 August 2026. The main branch is **217 commits beyond that tag**, with substantial package, platform, tooling, and Facet work. The pre-1.0 version signals that public compatibility, distribution, and ecosystem commitments are still being formalized. It should not be interpreted as evidence that the language lacks its intended features.
+
+The project’s strongest assets are its frozen language core, disciplined package boundary, breadth of implemented systems, extensive automated testing, direct native interoperability, and Facet’s native-language/native-UI model. Its principal remaining risks are cross-platform release consistency, package compatibility policy, documentation drift, incomplete backend parity, key-person concentration, independent safety validation, and external adoption.
 
 ## At a glance
 
 | Area | Current repository evidence |
 |---|---|
-| Language stage | Experimental, pre-1.0; latest tag v0.0.27 |
+| Language stage | Feature-complete and feature-frozen; latest tag v0.0.27 |
 | Compiler implementation | Rust workspace; direct textual LLVM IR generation, then clang assembly/linking |
 | Workspace components | `cplus-core`, `cpc`, `cpc-lsp`, `cpc-bindgen`, `cpc-wasm`, `cplus-pm` |
 | Core safety model | Ownership, moves, flow-sensitive borrow checking, deterministic drop, no `null` in safe code, accountable raw pointers |
 | Primary native ABI | C ABI in both directions; C header emission and binding generation |
 | Explicit targets | Host, iOS device/simulator, Android arm64, ESP32 Xtensa, ESP32-C3 RISC-V; internal browser Wasm target |
 | Package ecosystem in tree | 63 vendored packages, including generated and hand-written packages |
-| Cross-platform UI | Facet with AppKit, UIKit, GTK, and actively developed Android backends |
+| Cross-platform application framework | Facet with native AppKit, UIKit, GTK, and Android backends |
 | Agent capabilities | Compiler code graph/MCP plus permissioned live-application agent surfaces |
 | Repository scale | 1,003 tracked files; about 175,000 Rust LOC and 688,000 C+ LOC in `vendor/` and `examples/` |
 | Test evidence on 26 Aug 2026 | 3,076 Rust workspace tests passed; five principal C+ package suites also passed |
@@ -56,6 +62,8 @@ The language provides the constructs needed to write native software without a g
 
 The language intentionally resembles familiar C and Rust concepts, but it is not a dialect of either. Its design favours explicit ownership at function boundaries, limited ambiguity, no implicit numeric conversions, no general exception mechanism, and a smaller semantic surface than Rust, Swift, or C++.
 
+The language is feature-complete for its intended design. The project declared a language feature freeze in v0.0.22: new capability belongs in packages and tooling, while the language itself receives bug fixes and corrective hardening. A small number of later changes were explicitly treated as bounded exceptions or final corrections, not as a return to continuous language expansion.
+
 ### 1.2 A native compiler and build toolchain
 
 The compiler front end is implemented in Rust. The principal pipeline is:
@@ -77,9 +85,11 @@ C+ does not embed LLVM as a library. It emits LLVM IR text and invokes clang for
 
 The `cpc` command is more than a single-file compiler. It provides project creation, checking, building, testing, formatting, documentation generation, header emission, package commands, target selection, sanitizer modes, real-time reports, code graph queries, an LSP entry point, and an MCP server for compiler-backed source navigation.
 
-### 1.3 A package and interoperability platform
+### 1.3 The package platform—the “+” in C+
 
 C+ deliberately puts its standard library and most domain capability outside the compiler. Projects declare dependencies in `Cplus.toml`; the build system resolves source packages and target-specific prebuilt archives, validates their declared link metadata, and passes required frameworks, libraries, and objects to clang.
+
+This boundary decouples platform growth from language releases. A standard-library defect is a `stdlib` package issue; a new control or corrected behaviour is a Facet package issue; and an SDK change can be handled by regenerating or updating its binding package. The language can therefore remain fixed while its practical capabilities continue to expand.
 
 The in-tree package manager, exposed through `cpc pm`, installs exact-version packages into either a project-local vendor directory or a per-user store. Its design is intentionally simple: exact pins rather than version ranges, the manifest as the lock, and no dependency solver. Toolchain packages such as `stdlib` are version-coupled to the compiler.
 
@@ -91,11 +101,13 @@ Interop is a first-order capability rather than an afterthought. C+ can call C t
 - GObject Introspection data for the Linux/GNOME stack;
 - Java class metadata for Android/JNI bindings.
 
-This breadth matters strategically. A new language normally faces an ecosystem cold start. C+ is attempting to shorten that cold start by making existing operating-system and SDK surfaces mechanically reachable, while preserving explicit ownership and typed wrappers on the C+ side.
+This breadth matters strategically. A new language normally faces an ecosystem cold start. C+ shortens that cold start by making existing operating-system and SDK surfaces mechanically reachable, while preserving explicit ownership and typed wrappers on the C+ side. The first-party package surface is deliberately broad because relying on a future community to supply every essential capability would leave the language looking incomplete regardless of the quality of its core.
 
-### 1.4 A native application framework
+### 1.4 Facet: a principal cross-platform product
 
-Facet is the repository's cross-platform UI layer. It defines a shared control vocabulary and state/update contract, uses a pure-C+ Flexbox/Grid engine for geometry, and delegates native widget creation and behaviour to platform renderers.
+Facet is the project’s cross-platform native application framework and a principal product alongside C+ itself. Its role is comparable in ambition to .NET MAUI: one shared application and UI model spanning desktop and mobile platforms. The difference is fundamental to its positioning—C+ is a native language, and Facet renders native UI.
+
+Facet defines a shared control vocabulary and state/update contract, uses a pure-C+ Flexbox/Grid engine for geometry, and delegates native widget creation and behaviour to platform renderers.
 
 Current backends include:
 
@@ -104,9 +116,9 @@ Current backends include:
 - GTK 4/libadwaita on Linux;
 - Android views through JNI, currently under rapid development.
 
-Facet is not a custom raster engine in the Flutter sense. The intent is to use native platform controls while sharing application structure, layout vocabulary, theme rules, update semantics, and agent identity across platforms. Platform differences are documented as explicit capabilities or gaps rather than hidden behind inaccurate equivalence.
+Facet is not a custom raster engine in the Flutter sense. Applications compile to native machine code without a managed VM or garbage collector, and the controls remain AppKit, UIKit, GTK, or Android controls. Facet shares application structure, layout vocabulary, theme rules, update semantics, and agent identity while documenting platform differences as explicit capabilities or gaps rather than hiding them behind inaccurate equivalence.
 
-Facet also acts as a demanding integration test for the language. It exercises generics, ownership, generated SDK bindings, callbacks without closures, cross-package interfaces, layout, async services, native lifetimes, target-specific files, and package prebuilding. In that sense, Facet is both a potential product layer and a proof that the core language can support a complex application ecosystem without expanding the compiler for every UI concern.
+Facet also acts as a demanding integration proof for the language. It exercises generics, ownership, generated SDK bindings, callbacks without closures, cross-package interfaces, layout, async services, native lifetimes, target-specific files, and package prebuilding. Its existence demonstrates the central architectural claim: a large cross-platform application system can be built as packages without continually expanding the compiler.
 
 ### 1.5 An agent-native software stack
 
@@ -126,13 +138,13 @@ The repository reveals five connected objectives.
 
 C remains the universal systems ABI, but it leaves ownership, lifetime, aliasing, and cleanup largely to convention. Languages such as Swift and Dart provide strong safety and productivity but bring larger runtimes and different deployment assumptions. Rust provides powerful compile-time guarantees but has a large language and ecosystem surface.
 
-C+ is seeking a narrower point in that design space: C-compatible native artifacts, direct memory and hardware access, deterministic cleanup, and no language VM or garbage collector, combined with enough compile-time checking to prevent common ownership and borrowing mistakes in safe code.
+C+ occupies a narrower point in that design space: C-compatible native artifacts, direct memory and hardware access, deterministic cleanup, and no language VM or garbage collector, combined with compile-time checking designed to prevent common ownership and borrowing mistakes in safe code.
 
 The goal is not to make unsafe systems programming disappear. Raw pointers, FFI, inline assembly, and platform calls remain necessary. The goal is to make their boundaries visible and keep ordinary application and library code inside a more strongly checked model.
 
-### 2.2 Prove that a small compiler can support a large capability surface
+### 2.2 Keep the language stable while packages grow
 
-Many languages accumulate special syntax, compiler intrinsics, and built-in frameworks as they grow. C+ is testing the opposite approach: add only the primitive that packages cannot express, then force real features to live at library level.
+Many languages accumulate special syntax, compiler intrinsics, and built-in frameworks as they grow. C+ takes the opposite approach: the language supplies only primitives that packages cannot express, and practical capabilities live at package level.
 
 Examples already present include:
 
@@ -143,7 +155,7 @@ Examples already present include:
 - UI construction through package-supplied builder types;
 - agent protocols and authorization as libraries rather than compiler concepts.
 
-If this model continues to hold, the compiler can remain understandable and fast-moving while the ecosystem grows independently.
+This model allows the compiler and language contract to remain understandable and stable while the package ecosystem grows independently. It is already exercised by the standard library, SDK bindings, Facet, layout, platform services, inspection, and agent packages.
 
 ### 2.3 Reduce the cost of reaching native platforms
 
@@ -191,7 +203,7 @@ The current compiler implements a broad language surface, including:
 - sanitizers and debug information for native builds;
 - compiler-checked `#[no_alloc]`, `#[no_block]`, and real-time profiles.
 
-The safety story is meaningful but not absolute. Unsafe FFI and raw-pointer code can still violate invariants, and the borrow checker is much younger than those of established systems languages. “Safety-oriented” is the correct current description; “proven memory-safe” would overstate the evidence.
+The safety story is meaningful but not absolute. Unsafe FFI and raw-pointer code can still violate invariants, and the implementation has not received the decades of production exposure or independent scrutiny available to established systems languages. “Ownership-checked and safety-oriented” is supported by the repository; “formally proven memory-safe” would overstate the available evidence.
 
 ### 3.2 Developer tools
 
@@ -228,13 +240,13 @@ Some packages are generated raw bindings, some are ergonomic hand-written wrappe
 
 Facet's platform work has become the dominant recent development thread.
 
-AppKit is currently the most mature native backend in the locally verified set. GTK now reports 98% of declared Facet properties and 100% of declared handlers, with every remaining gap documented. UIKit reports 89% property coverage and 95% handler coverage. Android is younger but moving quickly; against the current working tree its parity tool reports:
+AppKit is currently the most mature native backend in the locally verified set. GTK reports 98% of declared Facet properties and 100% of declared handlers, with every remaining gap documented. UIKit reports 89% property coverage and 95% handler coverage. Android is the newest backend and its package is developing quickly; against the assessed commit its parity tool reports:
 
 - 230 of 360 declared per-control property bits named: **63%**;
 - 42 of 68 declared handlers fired: **61%**;
 - 18 of 21 shared property groups handled: **85%**.
 
-The Android backend already includes common text and value controls, scrolling, list recycling, tree views, split views, canvas replay, swipe actions, symbols, images, date selection, animation, theme colour resolution, and an agent surface. It uses native Android widgets behind JNI, and a gallery application can be packaged without app-authored Java. Still-missing areas include several collection, popup, web, tab, time-picker, refresh, selection, reorder, and lifecycle behaviours.
+The Android backend already includes common text and value controls, scrolling, list recycling, tree views, split views, canvas replay, swipe actions, symbols, images, date selection, animation, theme colour resolution, pull-to-refresh, and an agent surface. It uses native Android widgets behind JNI, and a gallery application can be packaged without app-authored Java. Remaining work includes several collection, popup, web, tab, time-picker, selection, reorder, and lifecycle behaviours.
 
 ### 3.5 Distribution
 
@@ -288,7 +300,7 @@ Rust's advantages remain decisive in maturity, formal and practical scrutiny, to
 
 C+ can build native platform integrations without a language VM or garbage collector and can use native controls through Facet. It also spans systems and embedded use cases that these application languages do not primarily target.
 
-Conversely, Swift, Kotlin, Dart/Flutter, React Native, and established native SDKs have far larger developer ecosystems, mature debugging and deployment tools, production libraries, and proven application distribution paths. Facet is promising but not yet a full competitor to those ecosystems.
+Conversely, Swift, Kotlin, Dart/Flutter, React Native, and established native SDKs have far larger developer ecosystems, mature debugging and deployment tools, production libraries, and proven application distribution paths. Facet already implements its core architectural proposition across four native UI families, but it has not yet matched the full breadth, external adoption, or production history of those established ecosystems.
 
 ### 5.4 The potentially distinctive combination
 
@@ -302,13 +314,15 @@ No single feature is sufficient to justify a new language. The more compelling p
 - permissioned live-application agent control;
 - desktop, mobile, embedded, and browser-tooling targets.
 
-If productized successfully, this could make C+ valuable not simply as another syntax for native code, but as a coherent environment for building software that is both low-level and agent-operable.
+Together, these systems make C+ more than another syntax for native code: they form a coherent environment for building software that is both low-level and agent-operable.
 
 ## 6. Current project status
 
 ### 6.1 Release and development state
 
 The latest tagged release is **v0.0.27**, dated 14 August 2026. It covers major language and memory-model hardening, Facet growth, GObject/GTK and SQLite bindings, tooling, inspection, and generated framework work.
+
+The language itself is feature-complete and frozen. Current development activity is principally compiler correctness and hardening, packages, native bindings, developer tooling, target support, and Facet backend work. The volume of post-release commits should therefore not be read as ongoing language-design churn.
 
 At the time of this report, `main` points to commit `26fc10b` and matches `origin/main`. It is 217 commits beyond v0.0.27, spanning 605 changed files in the tag-to-head comparison. The crate versions still report 0.0.27, so the development head should be treated as unreleased post-v0.0.27 work rather than a published version. The latest commit adds Android pull-to-refresh, button-image support, and additional list behaviour; there are no uncommitted project-source modifications in the assessed tree.
 
@@ -386,7 +400,7 @@ There are also broader maturity issues visible outside the bug directory:
 
 These are manageable engineering problems, but they are important signals for anyone assessing production readiness. The code is advancing faster than release governance and narrative documentation.
 
-## 7. What is proven, what is promising, and what is not yet proven
+## 7. What is implemented, what is still being productized, and what is not yet established
 
 ### Proven within the repository
 
@@ -399,20 +413,20 @@ These are manageable engineering problems, but they are important signals for an
 - Source-level and live-application agent interfaces exist with explicit authorization concepts.
 - Cross-compilation paths exist for mobile and embedded targets.
 
-### Promising but still developing
+### Implemented but still being productized
 
-- A single native UI vocabulary across macOS, iOS, Linux, and Android.
-- Generated packages as a practical answer to ecosystem bootstrapping.
-- A combined source-code graph and live-app semantic surface for agents.
-- C+ as a practical language for real-time or constrained systems beyond demonstrations.
-- The package store and exact-pin distribution model as a public ecosystem.
+- Facet’s shared native UI vocabulary exists across macOS, iOS, Linux, and Android, while backend parity and release validation continue.
+- Generated packages already bootstrap major native SDK surfaces, while provenance, publishing, and compatibility processes continue to mature.
+- The compiler code graph and live-application semantic agent surface are implemented, while their public security and developer experience are still being productized.
+- Real-time and constrained-system compiler support is implemented, while broader hardware validation and external production evidence remain limited.
+- The package store and exact-pin installation model exist, while the public ecosystem around them still needs distribution policy and independent users.
 
 ### Not established by this repository alone
 
 - Production adoption, paying customers, user growth, or download volume.
 - A repeatable commercial go-to-market strategy.
 - Independent security review or formal verification of the compiler's safety guarantees.
-- Long-term backwards compatibility or a stable language specification.
+- A demonstrated long-term compatibility record across multiple public compiler and package releases.
 - Competitive whole-application performance across representative workloads and targets.
 - A broad contributor base or low key-person dependency.
 - Complete accessibility, localization, device, and app-store validation for Facet applications.
@@ -440,17 +454,17 @@ A credible gate would include:
 
 Linux and Windows CI should move from manual-only back to an enforced cadence once its cost or instability is addressed. Android needs an automated emulator path, particularly because platform overrides, JNI tables, archive closure, and Activity recreation have already produced subtle bugs.
 
-### 8.3 Stabilize the language and package compatibility contract
+### 8.3 Protect the language freeze and define package compatibility
 
-The compiler already has a normative specification and diagnostic catalogue. The next step is to identify which syntax, ABI, manifest fields, package rules, and generated binding conventions are stable enough to promise through a defined compatibility window.
+The language is already feature-frozen and has a normative specification and diagnostic catalogue. The next step is to turn that freeze into a clear public promise, separating compiler bug fixes from package releases and documenting compatibility between compiler versions, foundation packages, independently versioned domain packages, manifest fields, and generated bindings.
 
-For external users, predictability is more valuable than another burst of surface area.
+For external users, the important promise is that new capability will normally arrive through packages without destabilizing the language.
 
-### 8.4 Finish one compelling end-to-end application story
+### 8.4 Productize Facet as a first-class framework
 
-Facet is broad, but adoption will depend on a focused result that can be built, run, inspected, and demonstrated across platforms. A suitable milestone would use the same application modules on macOS, iOS, Linux, and Android; exercise persistent state, networking, lists, input, accessibility, theming, and agent operations; and publish the platform-specific gaps honestly.
+Facet should have its own clear positioning, application architecture documentation, backend compatibility tables, and reproducible cross-platform release evidence. Its central message is straightforward: shared C+ application code, native machine-code output, and native platform controls.
 
-This would transform many separate technical achievements into one understandable product demonstration.
+A suitable release milestone would exercise the same application modules on macOS, iOS, Linux, and Android; cover state, networking, lists, input, accessibility, theming, and agent operations; and publish platform-specific differences honestly. This would make Facet’s existing technical depth easy for external developers to evaluate.
 
 ### 8.5 Productize the agent-native differentiation
 
@@ -479,7 +493,7 @@ Before presenting C+ as suitable for high-assurance or safety-sensitive producti
 
 The package manager is technically present, but a public ecosystem also needs discoverability, publishing policy, provenance, compatibility expectations, documentation standards, and governance around generated versus curated packages.
 
-The initial ecosystem should remain small and high quality. A trusted set of packages for files, HTTP, JSON, SQLite, cryptography, UI, logging, testing, and selected SDKs is more useful than a large unreviewed index.
+The initial ecosystem should remain focused and high quality. The project already supplies the foundational packages required to demonstrate a credible platform. Community contribution should be treated as an outcome of a usable, documented surface—not as the mechanism expected to create that surface in the first place.
 
 ## 9. How additional investment could be used
 
@@ -497,11 +511,15 @@ Investment should be milestone-based. Useful milestones are objective: a defined
 
 ## 10. Overall assessment
 
-C+ is an unusually ambitious and already substantial experimental language project. It combines compiler construction, native interoperability, package management, UI systems, binding generation, embedded targets, and agent integration in one coherent repository. The implementation evidence is real: the toolchain is broad, the test inventory is large, the package ecosystem exercises the language seriously, and recent platform work is moving quickly.
+C+ is best understood as a feature-complete native language core, an independently evolving package platform, and a first-class cross-platform application framework. The architecture is captured by the name: **C + packages**. Language stability and platform growth are not opposing goals because the package boundary is designed to separate them.
 
-Its most credible long-term thesis is not simply “a smaller Rust” or “a safer C.” It is a compact native language and package platform in which existing SDKs are mechanically reachable, cross-platform applications use native widgets, and both source code and running interfaces are designed for semantic interaction with software agents.
+The implementation evidence is substantial. The compiler and tools pass a large regression suite; the standard library and complex native integrations live outside the language; the binding generator reaches several different SDK ecosystems; and Facet maps a shared application model onto AppKit, UIKit, GTK, and Android native controls. This is not a compiler prototype waiting for others to construct its usable surface.
 
-That thesis is differentiated enough to merit attention. It is not yet de-risked enough to merit production assumptions. The next phase should emphasize stabilization, cross-platform release evidence, documentation coherence, external validation, and a compelling end-to-end demonstration. If those steps succeed, the project could move from a technically impressive private ecosystem to a credible platform that other developers—and eventually commercial users—can trust.
+Facet is central to the project’s value. Its proposition is cross-platform application development with a native language, native binaries, and native UI. That makes C+ more than a systems-language design and gives the package architecture a concrete, demanding product purpose.
+
+The project still carries meaningful execution risk. Public package compatibility, synchronized releases, multi-platform CI, Android parity, documentation coherence, independent safety review, third-party onboarding, and adoption all require further work. These are the risks of productizing and scaling an already broad platform, not evidence that the language itself is unfinished.
+
+For technical readers, the important question is whether the frozen language and package boundary remain robust as the platform expands. For investors, the important question is whether the existing C+ and Facet foundation can be converted into repeatable releases, independent developer success, and commercial adoption. The repository provides credible evidence for the technology; the next phase is about public reliability, distribution, and use.
 
 ## Appendix A: Repository map
 

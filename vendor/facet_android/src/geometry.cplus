@@ -262,12 +262,22 @@ fn settle_splits(node: *core::Node) -> bool {
 // already in.
 fn place_refresh_spinner(n: *core::Node, v: *u8, frame: flex::Frame,
                          host: flex::Frame) {
-    if core::kind_of(n) != props::K_LIST { return; }
+    let kind: u32 = core::kind_of(n);
+    // BOTH KINDS THAT PULL. A refreshable's indicator is its OWN child — a
+    // FacetHost takes `addView` where an AdapterView refuses it — so its
+    // coordinates are the host's own rather than the parent's, which is what
+    // the zeroed frame below says.
+    if kind != props::K_LIST && kind != props::K_REFRESHABLE { return; }
     if !e::have_env() { return; }
     let env: rt::Env = e::env();
     let sp: jni::jobject = controls::refresh_spinner_of(env, v);
     if sp == (0 as jni::jobject) { return; }
     let h: f64 = controls::refresh_height();
+    if kind == props::K_REFRESHABLE {
+        place(sp, (frame.width - h) / 2.0f64, 0.0f64, h, h);
+        env.delete_local_ref(sp);
+        return;
+    }
     // HOST-RELATIVE, like every other placement in this walk: flex frames are
     // absolute in the root's space and the spinner's parent is the list's, so
     // the host's origin comes off. Placed absolutely it landed halfway down the

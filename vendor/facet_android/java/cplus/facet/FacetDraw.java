@@ -210,6 +210,17 @@ public final class FacetDraw {
             new android.text.InputFilter.LengthFilter(max) });
     }
 
+    // HTML, which is what `text_format: Html` asks for. `Html.fromHtml` is
+    // Android's own parser and the FROM_HTML_MODE_LEGACY flag is the one that
+    // matches every other platform's block handling.
+    public static CharSequence html(String source) {
+        return android.text.Html.fromHtml(source, android.text.Html.FROM_HTML_MODE_LEGACY);
+    }
+
+    public static void setHtml(android.widget.TextView v, String source) {
+        v.setText(html(source));
+    }
+
     // The theme's own press colour. Asked for rather than picked: a highlight
     // that does not come from the theme is wrong in one of the two modes.
     //

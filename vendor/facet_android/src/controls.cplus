@@ -110,11 +110,18 @@ fn apply_label(v: *u8, n: *core::Node, dirty: u64) {
     let env: rt::Env = e::env();
     var tv: w::TextView = w::TextView::from_global(env, v);
 
-    if (dirty & label::P_TEXT) != (0 as u64) {
+    if (dirty & (label::P_TEXT | label::P_TEXT_FORMAT)) != (0 as u64) {
         var buf: [u8; 1024] = #zero::[[u8; 1024]]();
         let base: *u8 = { #addr_of(buf[0]) };
         if paint::cstr({ (*p).text.view() }, base, 1024 as usize) {
-            tv.set_text_str(base);
+            // HTML OR PLAIN, which is the same string through a different
+            // door: `Html.fromHtml` is Android's own parser, so a label that
+            // asks for markup gets the platform's reading of it rather than
+            // one invented here.
+            match { (*p).text_format } {
+                vocab::TextFormat::Html => { dex::set_html(env, v, base); }
+                vocab::TextFormat::Text => { tv.set_text_str(base); }
+            }
         }
     }
     // A SIZE AND WHETHER IT SCALES ARE ONE CALL, so the two bits are one branch.
@@ -1144,6 +1151,46 @@ fn apply_clear_button(env: rt::Env, tv: w::TextView, mode: vocab::ClearButton) {
     return;
 }
 
+// A MAGNIFIER AND A CANCEL, as compound drawables. Tinted per glyph, which
+// needs two drawables rather than a tint on the view: `setCompoundDrawableTint`
+// colours BOTH and facet names them separately.
+//
+// WHAT IS ABSENT is the cancel's TOUCH — a compound drawable is decoration, and
+// making it clear the field needs a touch listener that reads the x against the
+// field's padding. MANIFEST §2, the same line the text field's clear button
+// carries.
+fn apply_search_glyphs(env: rt::Env, v: *u8, search: vocab::Color, cancel: vocab::Color) {
+    let mag: jni::jobject = tinted_drawable(env, #str_ptr("ic_menu_search\0"), search);
+    let clear: jni::jobject =
+        tinted_drawable(env, #str_ptr("ic_menu_close_clear_cancel\0"), cancel);
+    var tv: w::TextView = w::TextView::from_global(env, v);
+    tv.set_compound_drawables_relative_with_intrinsic_bounds_drawable_drawable_drawable_drawable(
+        mag, 0 as jni::jobject, clear, 0 as jni::jobject);
+    let _k: *u8 = tv.into_raw();
+    if mag != (0 as jni::jobject) { env.delete_local_ref(mag); }
+    if clear != (0 as jni::jobject) { env.delete_local_ref(clear); }
+    return;
+}
+
+// One of Android's own drawables, tinted if facet named a colour. A LOCAL ref
+// or null.
+fn tinted_drawable(env: rt::Env, name: *u8, c: vocab::Color) -> jni::jobject {
+    let id: i32 = drawable_id(env, name);
+    if id == (0 as i32) { return 0 as jni::jobject; }
+    let d: jni::jobject = env.call_object_1(
+        e::context(), #str_ptr("android/content/Context\0"), #str_ptr("getDrawable\0"),
+        #str_ptr("(I)Landroid/graphics/drawable/Drawable;\0"), jni::arg_int(id));
+    env.clear_exception();
+    if d == (0 as jni::jobject) { return 0 as jni::jobject; }
+    if c.is_set() {
+        env.call_void_1(d, #str_ptr("android/graphics/drawable/Drawable\0"),
+                        #str_ptr("setTint\0"), #str_ptr("(I)V\0"),
+                        jni::arg_int(paint::argb_of(c)));
+        env.clear_exception();
+    }
+    return d;
+}
+
 // THE ACTION KEY's label, which is an IME option. `Default` is UNSPECIFIED —
 // the keyboard picks, which is what "default" means — and the five named ones
 // are Android's own five.
@@ -1305,6 +1352,18 @@ fn apply_text_area(v: *u8, n: *core::Node, dirty: u64) {
                         | text_area::P_IS_ITALIC | text_area::P_TEXT_TRANSFORM
                         | text_area::P_CHARACTER_SPACING | text_area::P_TEXT_ALIGN
                         | text_area::P_VERTICAL_ALIGN | text_area::P_FONT_SIZE;
+    // AUTO SIZE, which Android grew in API 26 — this backend's floor exactly.
+    // `TextChanges` is the platform's own default axis and granularity; the
+    // other answer is the fixed size the style already set.
+    if (dirty & text_area::P_AUTO_SIZE) != (0 as u64) || dirty == paint::all_bits() {
+        let env2: rt::Env = e::env();
+        var tv2: w::TextView = w::TextView::from_global(env2, v);
+        tv2.set_auto_size_text_type_with_defaults(match { (*p).auto_size } {
+            vocab::AutoSize::TextChanges => 1 as i32,   // AUTO_SIZE_TEXT_TYPE_UNIFORM
+            vocab::AutoSize::Disabled => 0 as i32,      // AUTO_SIZE_TEXT_TYPE_NONE
+        });
+        let _k2: *u8 = tv2.into_raw();
+    }
     let flags: u64 = text_area::P_KEYBOARD | text_area::P_CHECKS_SPELLING
                    | text_area::P_PREDICTS_TEXT | text_area::P_IS_READ_ONLY
                    | text_area::P_MAX_LENGTH;
@@ -1353,6 +1412,16 @@ fn apply_search_field(v: *u8, n: *core::Node, dirty: u64) {
     // take from their own verb.
     if (dirty & search_field::P_RETURN_KEY) != (0 as u64) {
         set_return_key(e::env(), v, { (*p).return_key });
+    }
+    // THE TWO GLYPHS a search field has: a magnifier at the start and a cancel
+    // at the end. Android has no search WIDGET — the search-ness is the IME
+    // action plus these two — so they are the platform's own drawables, tinted
+    // by the colours facet names for them.
+    if (dirty & (search_field::P_SEARCH_ICON_COLOR
+                 | search_field::P_CANCEL_BUTTON_COLOR)) != (0 as u64)
+       || dirty == paint::all_bits() {
+        apply_search_glyphs(e::env(), v, { (*p).search_icon_color },
+                            { (*p).cancel_button_color });
     }
     return;
 }
@@ -1752,6 +1821,13 @@ fn apply_scroll(v: *u8, n: *core::Node, dirty: u64) {
     if (dirty & scroll::P_VERTICAL_SCROLL_BARS) != (0 as u64) {
         var view: w::View = w::View::from_global(env, v);
         view.set_vertical_scroll_bar_enabled(bars_shown({ (*p).vertical_scroll_bars }));
+        paint::unwrap_keep(view);
+    }
+    // `cascades_input` — whether a gesture this scroll does not use passes to an
+    // ancestor that can. Android's word for exactly that is NESTED SCROLLING.
+    if (dirty & scroll::P_CASCADES_INPUT) != (0 as u64) {
+        var view: w::View = w::View::from_global(env, v);
+        view.set_nested_scrolling_enabled({ (*p).cascades_input });
         paint::unwrap_keep(view);
     }
     if (dirty & scroll::P_HORIZONTAL_SCROLL_BARS) != (0 as u64) {
@@ -2555,18 +2631,30 @@ fn apply_date_picker(v: *u8, n: *core::Node, dirty: u64) {
         write_date_title(env, v, p);
     }
     var tv: w::TextView = w::TextView::from_global(env, v);
-    if (dirty & date_picker::P_FONT_SIZE) != (0 as u64) {
-        let s: f64 = { (*p).font_size };
-        if s > 0.0f64 { tv.set_text_size_f({ s as f32 }); }
+    if (dirty & (date_picker::P_FONT_SIZE | date_picker::P_FONT_SCALES)) != (0 as u64) {
+        apply_text_size(tv, { (*p).font_size }, { (*p).font_scales });
     }
     if (dirty & date_picker::P_TEXT_COLOR) != (0 as u64) {
         let c: vocab::Color = { (*p).text_color };
         if c.is_set() { tv.set_text_color_i(paint::argb_of(c)); }
     }
-    if (dirty & (date_picker::P_FONT_FAMILY | date_picker::P_FONT_WEIGHT
-                 | date_picker::P_IS_ITALIC)) != (0 as u64) || dirty == paint::all_bits() {
-        apply_typeface(env, tv, { (*p).font_family.view() }, { (*p).font_weight },
-                       { (*p).is_italic });
+    // THROUGH THE TEXT BAND, like every other titled control — which is what
+    // brings the letter spacing and the scaling bit with it. `apply_typeface`
+    // alone answered three of the five verbs a picker's font has.
+    let typography: u64 = date_picker::P_FONT_FAMILY | date_picker::P_FONT_WEIGHT
+                        | date_picker::P_IS_ITALIC | date_picker::P_CHARACTER_SPACING
+                        | date_picker::P_FONT_SCALES | date_picker::P_FONT_SIZE;
+    if (dirty & typography) != (0 as u64) || dirty == paint::all_bits() {
+        var st: TextStyle = TextStyle::none();
+        st.family = { (*p).font_family.view() };
+        st.weight = { (*p).font_weight };
+        st.is_italic = { (*p).is_italic };
+        st.size = { (*p).font_size };
+        st.scales = { (*p).font_scales };
+        st.align = vocab::TextAlign::Center;
+        st.vertical_align = vocab::TextAlign::Center;
+        st.character_spacing = { (*p).character_spacing };
+        apply_text_style(env, tv, st);
     }
     let _k: *u8 = tv.into_raw();
     // `open` — a COMMAND expressed as a prop, so it is acted on when the bit

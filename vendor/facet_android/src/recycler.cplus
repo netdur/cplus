@@ -27,6 +27,7 @@ import "facet/facet" as core;
 import "facet/props" as props;
 import "facet/mount" as mount;
 import "facet/list" as list;
+import "facet/refreshable" as refreshable;
 import "facet/tree" as tree;
 import "facet/elements" as ui;
 import "facet/vocabulary" as vocab;
@@ -1009,7 +1010,9 @@ static PULL_FROM: f64 = 0.0f64;
 fn pull_touch_token(token: i64, action: i32, y: f32) {
     let n: *core::Node = { token as *core::Node };
     if n == (0 as *core::Node) { return; }
-    if core::kind_of(n) != props::K_LIST { return; }
+    let kind: u32 = core::kind_of(n);
+    if kind == props::K_REFRESHABLE { refreshable_touch(n, action, y); return; }
+    if kind != props::K_LIST { return; }
     pull_touch(n, action, y);
     return;
 }
@@ -1056,4 +1059,85 @@ fn first_visible_row(n: *core::Node) -> i32 {
     let slot: usize = window_slot(n);
     if !WIN_SEEN[slot] { return 0 as i32; }
     return WIN_FIRST[slot];
+}
+
+// ---- refreshable -----------------------------------------------------------------
+// THE LIST'S PULL, on a container. `refreshable` is the same gesture and the
+// same indicator around arbitrary content rather than rows — so it is the same
+// code, with the one difference that a container has no first visible ROW to
+// ask about.
+//
+// WHICH IS THE GAP, and it is named rather than papered over: a refreshable
+// wrapping a scroll cannot tell "the content is at the top" from "the content
+// is scrolled", because the scroll is a CHILD and its position is its own. A
+// pull anywhere in the container is a pull. MANIFEST §2.
+
+fn refreshable_props(n: *core::Node) -> *props::RefreshableProps {
+    return controls::props_of(n, props::K_REFRESHABLE) as *props::RefreshableProps;
+}
+
+fn create_refreshable(n: *core::Node) -> *u8 {
+    let env: rt::Env = e::env();
+    let raw: *u8 = controls::global_of(dex::new_host(env, e::context()));
+    controls::arm_touch(env, raw, n);
+    return raw;
+}
+
+fn apply_refreshable(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *props::RefreshableProps = refreshable_props(n);
+    if p == (0 as *props::RefreshableProps) { return; }
+    let env: rt::Env = e::env();
+    if (dirty & refreshable::P_IS_REFRESHING) != (0 as u64) {
+        show_spinner(env, v, { (*p).is_refreshing });
+    }
+    if (dirty & refreshable::P_IS_REFRESHABLE) != (0 as u64) || dirty == paint::all_bits() {
+        if { (*p).is_refreshable } {
+            let sp: jni::jobject = ensure_spinner(env, v);
+            if sp != (0 as jni::jobject) { env.delete_local_ref(sp); }
+        }
+    }
+    if (dirty & refreshable::P_REFRESH_COLOR) != (0 as u64) {
+        let c: vocab::Color = { (*p).refresh_color };
+        if c.is_set() {
+            let sp: jni::jobject = ensure_spinner(env, v);
+            if sp != (0 as jni::jobject) {
+                var pb: w::ProgressBar = w::ProgressBar::from_global(env, sp);
+                let t: jni::jobject = w::ColorStateList::value_of(env, paint::argb_of(c));
+                pb.set_indeterminate_tint_list(t);
+                env.delete_local_ref(t);
+                let _k: *u8 = pb.into_raw();
+            }
+        }
+    }
+    return;
+}
+
+// The same three edges the list's pull reads, with no row to check.
+fn refreshable_touch(n: *core::Node, action: i32, y: f32) {
+    let p: *props::RefreshableProps = refreshable_props(n);
+    if p == (0 as *props::RefreshableProps) { return; }
+    if !{ (*p).is_refreshable } { return; }
+    let uy: f64 = e::dp({ y as f64 });
+    let v: *u8 = core::view_of(n);
+    if action == (0 as i32) {
+        PULL_NODE = { #addr(n) };
+        PULL_FROM = uy;
+        if e::have_env() { controls::hold_parent(e::env(), v, true); }
+        return;
+    }
+    if action != (2 as i32) {
+        PULL_NODE = 0;
+        if e::have_env() { controls::hold_parent(e::env(), v, false); }
+        return;
+    }
+    if PULL_NODE != { #addr(n) } { return; }
+    if { (*p).is_refreshing } { return; }
+    if uy < PULL_FROM && e::have_env() { controls::hold_parent(e::env(), v, false); }
+    if uy - PULL_FROM < refresh_threshold() { return; }
+    PULL_NODE = 0;
+    { (*p).is_refreshing = true };
+    if e::have_env() { show_spinner(e::env(), v, true); }
+    let h: fn(*u8, *u8) = { (*p).on_refreshing };
+    if h != props::no_handler { h(v, { (*p).on_refreshing_ctx }); }
+    return;
 }
