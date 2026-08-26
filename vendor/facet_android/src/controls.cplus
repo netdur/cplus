@@ -190,6 +190,16 @@ fn apply_button(v: *u8, n: *core::Node, dirty: u64) {
         let c: vocab::Color = { (*p).text_color };
         if c.is_set() { tv.set_text_color_i(paint::argb_of(c)); }
     }
+    // The CHROME, watched on the band's decoration bits as well as its own:
+    // `configure` runs before this body and restores the platform's background
+    // whenever the band declares nothing, so the two have to move together.
+    let chrome: u64 = button::P_BORDERED | button::P_BORDER_COLOR
+                    | button::P_BORDER_WIDTH | button::P_CORNER_RADIUS
+                    | props::C_BACKGROUND_COLOR | props::C_CORNER_RADIUS;
+    if (dirty & chrome) != (0 as u64) || dirty == paint::all_bits() {
+        apply_control_chrome(env, v, n, { (*p).bordered }, { (*p).border_color },
+                             { (*p).border_width }, { (*p).corner_radius });
+    }
     let typography: u64 = button::P_FONT_FAMILY | button::P_FONT_WEIGHT
                         | button::P_IS_ITALIC | button::P_LINE_BREAK
                         | button::P_TEXT_TRANSFORM | button::P_CHARACTER_SPACING
@@ -358,6 +368,15 @@ fn apply_radio(v: *u8, n: *core::Node, dirty: u64) {
     if (dirty & (radio::P_FONT_SIZE | radio::P_FONT_SCALES)) != (0 as u64) {
         var tv: w::TextView = r.as_compound_button().as_button().as_text_view();
         apply_text_size(tv, { (*p).font_size }, { (*p).font_scales });
+    }
+    let chrome: u64 = radio::P_BORDER_COLOR | radio::P_BORDER_WIDTH
+                    | radio::P_CORNER_RADIUS | props::C_BACKGROUND_COLOR
+                    | props::C_CORNER_RADIUS;
+    if (dirty & chrome) != (0 as u64) || dirty == paint::all_bits() {
+        // A radio declares no `bordered` — its three are a border it draws
+        // around the whole control, which is what the iOS backend reads too.
+        apply_control_chrome(env, v, n, false, { (*p).border_color },
+                             { (*p).border_width }, { (*p).corner_radius });
     }
     let typography: u64 = radio::P_FONT_FAMILY | radio::P_FONT_WEIGHT
                         | radio::P_IS_ITALIC | radio::P_TEXT_TRANSFORM
@@ -815,6 +834,13 @@ fn apply_text_button(v: *u8, n: *core::Node, dirty: u64) {
     if (dirty & (text_button::P_FONT_SIZE | text_button::P_FONT_SCALES)) != (0 as u64) {
         apply_text_size(tv, { (*p).font_size }, { (*p).font_scales });
     }
+    let chrome: u64 = text_button::P_BORDERED | text_button::P_BORDER_COLOR
+                    | text_button::P_BORDER_WIDTH | text_button::P_CORNER_RADIUS
+                    | props::C_BACKGROUND_COLOR | props::C_CORNER_RADIUS;
+    if (dirty & chrome) != (0 as u64) || dirty == paint::all_bits() {
+        apply_control_chrome(env, v, n, { (*p).bordered }, { (*p).border_color },
+                             { (*p).border_width }, { (*p).corner_radius });
+    }
     let typography: u64 = text_button::P_FONT_FAMILY | text_button::P_FONT_WEIGHT
                         | text_button::P_IS_ITALIC | text_button::P_LINE_BREAK
                         | text_button::P_TEXT_TRANSFORM | text_button::P_TEXT_DECORATION
@@ -1171,6 +1197,7 @@ fn create_icon_button(n: *core::Node) -> *u8 {
     view.set_on_click_listener(listener);
     paint::unwrap_keep(view);
     env.delete_local_ref(listener);
+    dex::tap_feedback(env, raw, 0.0f64);
     return raw;
 }
 
@@ -1495,6 +1522,59 @@ fn put_str_at(buf: *u8, at: usize, s: *u8) -> usize {
     return i;
 }
 
+// ---- a control's OWN chrome --------------------------------------------------
+// `bordered`, `border_color`, `border_width` and `corner_radius` are the
+// BUTTON's props, not the shared band's — a button, a text button and a radio
+// each declare their own four, and they mean the control's outline rather than
+// the node's background.
+//
+// One GradientDrawable again, for the same reason the band builds one: a
+// colour, a radius and a stroke are three calls on one drawable and there is no
+// way to add a stroke to a background that is already there. A control that
+// declares NONE of the four keeps what the platform gave it — which is what
+// makes an ordinary `button` a filled Material button rather than a hole with a
+// title in it.
+fn apply_control_chrome(env: rt::Env, v: *u8, n: *core::Node, bordered: bool,
+                        border_color: vocab::Color, border_width: f64,
+                        corners: vocab::Corners) {
+    // THE RADIUS THE RIPPLE IS CLIPPED TO, which is the control's own when it
+    // declared one and the band's otherwise — a rounded card holding a square
+    // ripple is the tell that these two were read separately.
+    var radius: f64 = corners.top_leading;
+    if radius <= 0.0f64 { radius = core::corner_radius(n).top_leading; }
+    if !bordered && border_width <= 0.0f64 && !border_color.is_set()
+       && corners.top_leading <= 0.0f64 {
+        // NO CHROME OF ITS OWN, so the platform's background stands — but the
+        // tap still has to show, and this theme's button background has no
+        // pressed layer of its own.
+        dex::tap_feedback(env, v, e::px(radius));
+        return;
+    }
+    // The FILL is the shared band's, if the node declared one — the two are
+    // different verbs and both land on the same drawable.
+    let fill: vocab::Color = core::background_color(n);
+    // `bordered: true` with no width and no colour is still a border — the
+    // hairline the platform would draw — so the two get a default here rather
+    // than resolving to an invisible zero-width stroke.
+    var width: f64 = border_width;
+    if bordered && width <= 0.0f64 { width = 1.0f64; }
+    var stroke: vocab::Color = border_color;
+    if bordered && !stroke.is_set() { stroke = vocab::Color::separator(); }
+    var stroke_px: i32 = 0 as i32;
+    if width > 0.0f64 && stroke.is_set() { stroke_px = { e::px(width) as i32 }; }
+    // THROUGH FacetDraw, because a control's background is a background AND a
+    // TOUCH: replacing the platform's drawable takes the pressed state with it,
+    // and a button that does not answer a finger reads as broken however right
+    // it looks. The ripple is built there, around this shape.
+    dex::control_background(env, v, paint::argb_of(fill), fill.is_set(),
+                            paint::argb_of(stroke), stroke_px, e::px(radius));
+    dex::tap_feedback(env, v, e::px(radius));
+    var view: w::View = w::View::from_global(env, v);
+    view.set_clip_to_outline(radius > 0.0f64);
+    paint::unwrap_keep(view);
+    return;
+}
+
 // ---- the text band -----------------------------------------------------------
 // EVERY CONTROL WITH A TITLE HAS THE SAME TYPOGRAPHY, and it is spelled once
 // here rather than seven times in seven bodies. A label, a button, a text
@@ -1720,6 +1800,7 @@ fn create_date_picker(n: *core::Node) -> *u8 {
     tv.set_gravity(17 as i32);   // CENTER
     let _k: *u8 = tv.into_raw();
     env.delete_local_ref(listener);
+    dex::tap_feedback(env, raw, 0.0f64);
     return raw;
 }
 

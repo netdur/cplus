@@ -210,6 +210,184 @@ fn unwrap_keep(take b: w::View) {
     return;
 }
 
+
+// ---- the animate band --------------------------------------------------------
+// TWO CHANNELS, opacity and the transform as a unit, and `ViewPropertyAnimator`
+// is Android's answer to both: it drives the VIEW's own properties, which are
+// the same ones the snap path writes, so an animation and a set are the same
+// numbers reaching the same place at different speeds.
+//
+// Deliberately NOT an ObjectAnimator per property: seven of them for one
+// transform would be seven animators to keep in step, and a
+// ViewPropertyAnimator is one object that batches every property named on it
+// into a single frame callback. It also cancels its own previous run when a
+// property is retargeted, which is exactly what a second `animate_*` on a live
+// animation should do.
+
+fn apply_transform(view: w::View, n: *core::Node) {
+    // SCALE and ROTATION are about the view's CENTRE by default on Android,
+    // which is what facet means by them. Translation is in facet's units.
+    view.set_rotation({ core::rotation(n) as f32 });
+    view.set_rotation_x({ core::rotation_x(n) as f32 });
+    view.set_rotation_y({ core::rotation_y(n) as f32 });
+    let sc: f64 = core::scale(n);
+    view.set_scale_x({ (core::scale_x(n) * sc) as f32 });
+    view.set_scale_y({ (core::scale_y(n) * sc) as f32 });
+    view.set_translation_x({ e::px(core::translation_x(n)) as f32 });
+    view.set_translation_y({ e::px(core::translation_y(n)) as f32 });
+    return;
+}
+
+fn cancel_animations(view: w::View) {
+    let a: jni::jobject = view.animate();
+    if a == (0 as jni::jobject) { return; }
+    if !e::have_env() { return; }
+    let env: rt::Env = e::env();
+    var anim: w::ViewPropertyAnimator = w::ViewPropertyAnimator::from_local(env, a);
+    anim.cancel();
+    let raw: jni::jobject = anim.into_raw();
+    env.delete_global_ref(raw);
+    return;
+}
+
+fn apply_animate(env: rt::Env, view: w::View, n: *core::Node) {
+    // Masked to the CHANNELS: the same word's high bits are the pending-snap
+    // record the model warns from, and interpolate nothing.
+    let channels: u32 = core::animate_channels_of(n)
+        & (props::ANIM_OPACITY | props::ANIM_TRANSFORM);
+    if channels == (0u32) { return; }
+    let secs: f64 = core::animate_duration_of(n).seconds;
+    if secs <= 0.0f64 {
+        // A ZERO DURATION IS A SET, which is what it means everywhere else in
+        // this band — not an animation that finishes immediately.
+        if (channels & props::ANIM_OPACITY) != (0u32) {
+            view.set_alpha({ core::opacity(n) as f32 });
+        }
+        if (channels & props::ANIM_TRANSFORM) != (0u32) { apply_transform(view, n); }
+        core::clear_animate_channels(n);
+        return;
+    }
+    let handle: jni::jobject = view.animate();
+    if handle == (0 as jni::jobject) { core::clear_animate_channels(n); return; }
+    var a: w::ViewPropertyAnimator = w::ViewPropertyAnimator::from_local(env, handle);
+    let _d: jni::jobject = a.set_duration({ (secs * 1000.0f64) as i64 });
+    // A GLOBAL, because every wrapper's `into_raw` hands one back — so it is
+    // released as one once the animator has taken it.
+    let interp: jni::jobject = interpolator_of(env, core::animate_easing_of(n));
+    if interp != (0 as jni::jobject) {
+        let _i: jni::jobject = a.set_interpolator(interp);
+        env.delete_global_ref(interp);
+    }
+    if (channels & props::ANIM_OPACITY) != (0u32) {
+        let _o: jni::jobject = a.alpha({ core::opacity(n) as f32 });
+    }
+    if (channels & props::ANIM_TRANSFORM) != (0u32) {
+        // THE ANCHOR IS A FRACTION in facet and PIXELS on Android, and it has
+        // to be written before the animation runs — a pivot changed mid-flight
+        // would move the geometry the interpolation is against.
+        set_pivot(view, core::anchor_x(n), core::anchor_y(n));
+        let sc: f64 = core::scale(n);
+        let _sx: jni::jobject = a.scale_x({ (core::scale_x(n) * sc) as f32 });
+        let _sy: jni::jobject = a.scale_y({ (core::scale_y(n) * sc) as f32 });
+        let _r: jni::jobject = a.rotation({ core::rotation(n) as f32 });
+        let _rx: jni::jobject = a.rotation_x({ core::rotation_x(n) as f32 });
+        let _ry: jni::jobject = a.rotation_y({ core::rotation_y(n) as f32 });
+        let _tx: jni::jobject = a.translation_x({ e::px(core::translation_x(n)) as f32 });
+        let _ty: jni::jobject = a.translation_y({ e::px(core::translation_y(n)) as f32 });
+    }
+    a.start();
+    let raw: jni::jobject = a.into_raw();
+    env.delete_global_ref(raw);
+    core::clear_animate_channels(n);
+    return;
+}
+
+fn set_pivot(view: w::View, ax: f64, ay: f64) {
+    let w_px: f64 = { view.get_width() as f64 };
+    let h_px: f64 = { view.get_height() as f64 };
+    view.set_pivot_x({ (ax * w_px) as f32 });
+    view.set_pivot_y({ (ay * h_px) as f32 });
+    return;
+}
+
+// EASING, mapped to Android's interpolators — and where Android has no named
+// twin, to the CUBIC BEZIER the curve actually is. `PathInterpolator(x1, y1,
+// x2, y2)` is the same four numbers a CSS `cubic-bezier` takes, so a sine or a
+// cubic curve is stated exactly rather than approximated by a nearby
+// Accelerate/Decelerate.
+//
+// The three that ARE named: a bounce, and the two springs — Android's
+// Anticipate (a backswing before the move) and Overshoot (past the end and
+// back) are what facet's SpringIn and SpringOut describe.
+fn interpolator_of(env: rt::Env, easing: vocab::Easing) -> jni::jobject {
+    // Android's bounce is an OUT bounce and there is no IN twin — MANIFEST §2
+    // names that rather than a curve invented to fill the slot.
+    match easing {
+        vocab::Easing::SinIn => { return bezier(env, 0.12f64, 0.0f64, 0.39f64, 0.0f64); }
+        vocab::Easing::SinOut => { return bezier(env, 0.61f64, 1.0f64, 0.88f64, 1.0f64); }
+        vocab::Easing::SinInOut => { return bezier(env, 0.37f64, 0.0f64, 0.63f64, 1.0f64); }
+        vocab::Easing::CubicIn => { return bezier(env, 0.32f64, 0.0f64, 0.67f64, 0.0f64); }
+        vocab::Easing::CubicOut => { return bezier(env, 0.33f64, 1.0f64, 0.68f64, 1.0f64); }
+        vocab::Easing::CubicInOut => { return bezier(env, 0.65f64, 0.0f64, 0.35f64, 1.0f64); }
+        vocab::Easing::BounceIn => {
+            var b: w::BounceInterpolator = w::BounceInterpolator::new_void(env);
+            return b.into_raw();
+        }
+        vocab::Easing::BounceOut => {
+            var b: w::BounceInterpolator = w::BounceInterpolator::new_void(env);
+            return b.into_raw();
+        }
+        vocab::Easing::SpringIn => {
+            var a: w::AnticipateInterpolator = w::AnticipateInterpolator::new_void(env);
+            return a.into_raw();
+        }
+        vocab::Easing::SpringOut => {
+            var o: w::OvershootInterpolator = w::OvershootInterpolator::new_void(env);
+            return o.into_raw();
+        }
+        vocab::Easing::Linear => {
+            var l: w::LinearInterpolator = w::LinearInterpolator::new_void(env);
+            return l.into_raw();
+        }
+    }
+}
+
+fn bezier(env: rt::Env, x1: f64, y1: f64, x2: f64, y2: f64) -> jni::jobject {
+    var p: w::PathInterpolator = w::PathInterpolator::new_f_f_f_f(
+        env, { x1 as f32 }, { y1 as f32 }, { x2 as f32 }, { y2 as f32 });
+    return p.into_raw();
+}
+
+// ---- the platform's own background -------------------------------------------
+// Remembered once, before facet writes anything, and handed back whenever facet
+// declares no decoration of its own. A widget that came with a background keeps
+// it; a bare host still gets null.
+
+const NATIVE_BACKGROUND_TAG: i32 = 2131886090 as i32;   // 0x7F0F000A
+
+fn remember_native_background(v: *u8) {
+    if v == (0 as *u8) { return; }
+    if !e::have_env() { return; }
+    let env: rt::Env = e::env();
+    var view: w::View = wrap(v);
+    let bg: jni::jobject = view.get_background();
+    if bg != (0 as jni::jobject) {
+        // setTag holds a strong reference of its own, so the local can go.
+        view.set_tag_i_object(NATIVE_BACKGROUND_TAG, bg);
+        env.delete_local_ref(bg);
+    }
+    unwrap_keep(view);
+    return;
+}
+
+// A LOCAL ref or null, the caller's for the length of the call.
+fn native_background_of(env: rt::Env, v: *u8) -> jni::jobject {
+    var view: w::View = wrap(v);
+    let t: jni::jobject = view.get_tag_i(NATIVE_BACKGROUND_TAG);
+    unwrap_keep(view);
+    return t;
+}
+
 // Apply the shared band to any view.
 fn configure(v: *u8, n: *core::Node, dirty: u64) {
     let env: rt::Env = e::env();
@@ -234,18 +412,19 @@ fn configure(v: *u8, n: *core::Node, dirty: u64) {
         view.set_elevation({ e::px(sh.radius) as f32 });
     }
 
-    if (dirty & props::C_TRANSFORM) != (0 as u64) {
-        // SCALE and ROTATION are about the view's CENTRE by default on Android,
-        // which is what facet means by them. Translation is in facet's units.
-        view.set_rotation({ core::rotation(n) as f32 });
-        view.set_rotation_x({ core::rotation_x(n) as f32 });
-        view.set_rotation_y({ core::rotation_y(n) as f32 });
-        let sc: f64 = core::scale(n);
-        view.set_scale_x({ (core::scale_x(n) * sc) as f32 });
-        view.set_scale_y({ (core::scale_y(n) * sc) as f32 });
-        view.set_translation_x({ e::px(core::translation_x(n)) as f32 });
-        view.set_translation_y({ e::px(core::translation_y(n)) as f32 });
+    // CANCEL FIRST, then ANIMATE, then the snaps — which is the order the
+    // other two backends apply for the same reason: `C_ANIMATE` alone carries
+    // the channels, and a `set_*` would have raised C_OPACITY / C_TRANSFORM
+    // and cleared them.
+    if (dirty & props::C_CANCEL_ANIMATIONS) != (0 as u64) {
+        cancel_animations(view);
+        view.set_alpha({ core::opacity(n) as f32 });
+        apply_transform(view, n);
+        core::clear_animate_channels(n);
     }
+    if (dirty & props::C_ANIMATE) != (0 as u64) { apply_animate(env, view, n); }
+
+    if (dirty & props::C_TRANSFORM) != (0 as u64) { apply_transform(view, n); }
     if (dirty & props::C_OPACITY) != (0 as u64) {
         view.set_alpha({ core::opacity(n) as f32 });
     }
@@ -330,9 +509,17 @@ fn apply_decoration(env: rt::Env, v: *u8, n: *core::Node) {
 
     var view: w::View = wrap(v);
     if !brush.is_gradient && !flat.is_set() && !brush.start.is_set() && !has_radius {
-        // NOTHING DECLARED. Clearing rather than leaving the last drawable is
-        // what makes this idempotent — a node that loses its colour loses it.
-        view.set_background(0 as jni::jobject);
+        // NOTHING DECLARED, so the node goes back to what the PLATFORM gave it
+        // — not to nothing.
+        //
+        // Clearing to null was the same idempotence rule the other backends
+        // follow, and it is wrong on the one platform where a widget arrives
+        // WITH a background: a Material Button's fill IS its background
+        // drawable, so every button in this backend was stripped to bare
+        // centred text on the create that configured it. `native_background`
+        // is remembered before the first configure and restored here; for a
+        // FacetHost, which has none, this is the null it always was.
+        view.set_background(native_background_of(env, v));
         view.set_clip_to_outline(false);
         unwrap_keep(view);
         return;

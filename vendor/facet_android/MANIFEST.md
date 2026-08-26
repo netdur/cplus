@@ -142,6 +142,15 @@ through liblog (`adb logcat -s facet`) and render an empty container.
   in this repo can drive a two-finger gesture — the arithmetic is pinned by
   reading, and the rest is a person's hands on a device.
 
+- **A BOUNCE only bounces OUT.** The animate band is built —
+  `ViewPropertyAnimator` drives both channels, and every easing maps to an
+  interpolator: the sine and cubic curves to `PathInterpolator`, which takes the
+  same four numbers a CSS `cubic-bezier` does, and the two springs to
+  Anticipate and Overshoot, which are what a backswing and an overshoot are.
+  What Android has no twin for is `BounceIn`: `BounceInterpolator` is an OUT
+  bounce, and an in-bounce would have to be invented. It uses the out one and
+  this line is why.
+
 - **A TEXT TRANSFORM only goes UP.** `setAllCaps` is Android's and there is no
   lowercase twin — and rewriting the string instead would leave the control
   disagreeing with the props an application reads back. `Uppercase` works,

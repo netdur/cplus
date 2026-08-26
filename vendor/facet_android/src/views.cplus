@@ -107,6 +107,10 @@ fn create(ctx: *u8, n: *core::Node) -> *u8 {
     // BEFORE anything is written to it — `setText` dereferences LayoutParams.
     // See controls::attach_layout_params.
     controls::attach_layout_params(v);
+    // BEFORE the band writes anything: a widget that arrives WITH a background
+    // — every Material button does — needs that drawable remembered, because
+    // "facet declares no colour" means "the platform's", not "none".
+    paint::remember_native_background(v);
     // INTRINSIC SIZE. flex sizes a node from its style, its children, or — for
     // a leaf that knows its own content — a measure callback. A label and a
     // button have no children and no explicit height, so without this they lay

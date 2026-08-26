@@ -75,6 +75,83 @@ public final class FacetDraw {
         }
     }
 
+    // A CONTROL'S BACKGROUND, which is a background AND a touch.
+    //
+    // The shape is C+'s — a fill, a corner radius and a stroke, the same three
+    // the band builds — but a control that replaces its platform background
+    // loses the platform's PRESSED STATE with it, and a button that does not
+    // answer a finger reads as broken however right it looks. So the shape goes
+    // inside a RippleDrawable, and the ripple colour is the theme's own
+    // `colorControlHighlight` rather than a number invented here.
+    //
+    // The mask is a second shape with the same radius: without one the ripple
+    // is unbounded and paints square corners over a rounded button.
+    public static void controlBackground(android.view.View v, int fill, boolean hasFill,
+                                         int stroke, int strokeWidth, float radius) {
+        android.graphics.drawable.GradientDrawable content =
+            new android.graphics.drawable.GradientDrawable();
+        content.setColor(hasFill ? fill : 0);
+        if (radius > 0f) content.setCornerRadius(radius);
+        if (strokeWidth > 0) content.setStroke(strokeWidth, stroke);
+
+        android.graphics.drawable.GradientDrawable mask =
+            new android.graphics.drawable.GradientDrawable();
+        mask.setColor(0xFFFFFFFF);
+        if (radius > 0f) mask.setCornerRadius(radius);
+
+        v.setBackground(new android.graphics.drawable.RippleDrawable(
+            android.content.res.ColorStateList.valueOf(highlight(v)), content, mask));
+        // A view only shows a pressed state if it can be pressed.
+        v.setClickable(true);
+    }
+
+    // A TAP HAS TO SHOW. This is the FOREGROUND — a ripple with no content of
+    // its own — so it composes with whatever the background already is: the
+    // platform's own drawable, one facet built, or nothing at all.
+    //
+    // It is not optional decoration. A plain `Button` under this theme has a
+    // background with no pressed layer, so a finger on it changed not one
+    // pixel: the control worked and looked broken, which is the worst pair.
+    public static void tapFeedback(android.view.View v, float radius) {
+        android.graphics.drawable.GradientDrawable mask =
+            new android.graphics.drawable.GradientDrawable();
+        mask.setColor(0xFFFFFFFF);
+        if (radius > 0f) mask.setCornerRadius(radius);
+        v.setForeground(new android.graphics.drawable.RippleDrawable(
+            android.content.res.ColorStateList.valueOf(highlight(v)), null, mask));
+    }
+
+    // The theme's own press colour. Asked for rather than picked: a highlight
+    // that does not come from the theme is wrong in one of the two modes.
+    // The theme's own press colour. Asked for rather than picked: a highlight
+    // that does not come from the theme is wrong in one of the two modes.
+    //
+    // Through `obtainStyledAttributes`, NOT `resolveAttribute`. The first shape
+    // of this read `TypedValue.data` after resolving the attribute, and
+    // `colorControlHighlight` resolves to a COLOR STATE LIST here — so `data`
+    // was a resource id read as a colour, which came out invisible. Every press
+    // in the app changed exactly nothing, and the mechanism looked broken when
+    // the number was.
+    private static int highlight(android.view.View v) {
+        android.content.res.TypedArray a = v.getContext().obtainStyledAttributes(
+            new int[] { android.R.attr.colorControlHighlight });
+        int c = a.getColor(0, 0);
+        a.recycle();
+        // A theme that answers nothing still has to give a finger something to
+        // see: white at 20% over dark, black at 20% over light.
+        if (android.graphics.Color.alpha(c) == 0) {
+            int bg = 0;
+            android.content.res.TypedArray b = v.getContext().obtainStyledAttributes(
+                new int[] { android.R.attr.colorBackground });
+            bg = b.getColor(0, 0xFF000000);
+            b.recycle();
+            boolean dark = (android.graphics.Color.red(bg) + android.graphics.Color.green(bg)
+                            + android.graphics.Color.blue(bg)) < 384;
+            c = dark ? 0x33FFFFFF : 0x33000000;
+        }
+        return c;
+    }
+
     // A block of text in a box: wrapped, aligned both ways, and clipped or not.
     // `align` 0 start / 1 center / 2 end, `valign` 0 top / 1 middle / 2 bottom.
     public static void textBlock(android.graphics.Canvas canvas, android.graphics.Paint p,

@@ -21401,4 +21401,569 @@ impl Xfermode {
 
 }
 
-// cpc-bindgen --java: 2951 items emitted, 27 SKIPPED.
+// android.view.ViewPropertyAnimator
+struct ViewPropertyAnimator {
+    _env: rt::Env,
+    _obj: jni::jobject,
+}
+
+impl ViewPropertyAnimator {
+    fn drop(ref this) {
+        // `into_raw` nulls `_obj`; DeleteGlobalRef does not admit NULL.
+        if this._obj != { 0 as jni::jobject } { this._env.delete_global_ref(this._obj); }
+        return;
+    }
+
+    fn from_global(env: rt::Env, obj: jni::jobject) -> ViewPropertyAnimator { return ViewPropertyAnimator { _env: env, _obj: obj }; }
+
+    fn from_local(env: rt::Env, obj: jni::jobject) -> ViewPropertyAnimator { return ViewPropertyAnimator { _env: env, _obj: env.retain_local_as_global(obj) }; }
+
+    fn as_obj(this) -> jni::jobject { return this._obj; }
+
+    fn into_raw(ref this) -> jni::jobject {
+        let p: jni::jobject = this._obj;
+        this._obj = { 0 as jni::jobject };
+        return p;
+    }
+
+    fn alpha(this, arg0: f32) -> jni::jobject {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/view/ViewPropertyAnimator\0"), #str_ptr("alpha\0"), #str_ptr("(F)Landroid/view/ViewPropertyAnimator;\0"));
+        var args: [jni::JValue; 1] = [jni::arg_float(arg0)];
+        let r: jni::jobject = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])) };
+        return r;
+    }
+
+    fn alpha_by(this, arg0: f32) -> jni::jobject {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/view/ViewPropertyAnimator\0"), #str_ptr("alphaBy\0"), #str_ptr("(F)Landroid/view/ViewPropertyAnimator;\0"));
+        var args: [jni::JValue; 1] = [jni::arg_float(arg0)];
+        let r: jni::jobject = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])) };
+        return r;
+    }
+
+    fn cancel(this) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/view/ViewPropertyAnimator\0"), #str_ptr("cancel\0"), #str_ptr("()V\0"));
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue); };
+        return;
+    }
+
+    fn get_duration(this) -> i64 {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/view/ViewPropertyAnimator\0"), #str_ptr("getDuration\0"), #str_ptr("()J\0"));
+        let r: i64 = { (*(*this._env.raw())).CallLongMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_interpolator(this) -> jni::jobject {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/view/ViewPropertyAnimator\0"), #str_ptr("getInterpolator\0"), #str_ptr("()Landroid/animation/TimeInterpolator;\0"));
+        let r: jni::jobject = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn get_start_delay(this) -> i64 {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/view/ViewPropertyAnimator\0"), #str_ptr("getStartDelay\0"), #str_ptr("()J\0"));
+        let r: i64 = { (*(*this._env.raw())).CallLongMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn new(env: rt::Env) -> ViewPropertyAnimator {
+        let mid: jni::jmethodID = env.method(#str_ptr("android/view/ViewPropertyAnimator\0"), #str_ptr("<init>\0"), #str_ptr("()V\0"));
+        let cls: jni::jclass = env.class_cached(#str_ptr("android/view/ViewPropertyAnimator\0"));
+        let obj: jni::jobject = { (*(*env.raw())).NewObjectA(env.raw(), cls, mid, 0 as *jni::JValue) };
+        return ViewPropertyAnimator { _env: env, _obj: env.retain_local_as_global(obj) };
+    }
+
+    fn rotation(this, arg0: f32) -> jni::jobject {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/view/ViewPropertyAnimator\0"), #str_ptr("rotation\0"), #str_ptr("(F)Landroid/view/ViewPropertyAnimator;\0"));
+        var args: [jni::JValue; 1] = [jni::arg_float(arg0)];
+        let r: jni::jobject = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])) };
+        return r;
+    }
+
+    fn rotation_by(this, arg0: f32) -> jni::jobject {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/view/ViewPropertyAnimator\0"), #str_ptr("rotationBy\0"), #str_ptr("(F)Landroid/view/ViewPropertyAnimator;\0"));
+        var args: [jni::JValue; 1] = [jni::arg_float(arg0)];
+        let r: jni::jobject = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])) };
+        return r;
+    }
+
+    fn rotation_x(this, arg0: f32) -> jni::jobject {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/view/ViewPropertyAnimator\0"), #str_ptr("rotationX\0"), #str_ptr("(F)Landroid/view/ViewPropertyAnimator;\0"));
+        var args: [jni::JValue; 1] = [jni::arg_float(arg0)];
+        let r: jni::jobject = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])) };
+        return r;
+    }
+
+    fn rotation_x_by(this, arg0: f32) -> jni::jobject {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/view/ViewPropertyAnimator\0"), #str_ptr("rotationXBy\0"), #str_ptr("(F)Landroid/view/ViewPropertyAnimator;\0"));
+        var args: [jni::JValue; 1] = [jni::arg_float(arg0)];
+        let r: jni::jobject = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])) };
+        return r;
+    }
+
+    fn rotation_y(this, arg0: f32) -> jni::jobject {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/view/ViewPropertyAnimator\0"), #str_ptr("rotationY\0"), #str_ptr("(F)Landroid/view/ViewPropertyAnimator;\0"));
+        var args: [jni::JValue; 1] = [jni::arg_float(arg0)];
+        let r: jni::jobject = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])) };
+        return r;
+    }
+
+    fn rotation_y_by(this, arg0: f32) -> jni::jobject {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/view/ViewPropertyAnimator\0"), #str_ptr("rotationYBy\0"), #str_ptr("(F)Landroid/view/ViewPropertyAnimator;\0"));
+        var args: [jni::JValue; 1] = [jni::arg_float(arg0)];
+        let r: jni::jobject = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])) };
+        return r;
+    }
+
+    fn scale_x(this, arg0: f32) -> jni::jobject {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/view/ViewPropertyAnimator\0"), #str_ptr("scaleX\0"), #str_ptr("(F)Landroid/view/ViewPropertyAnimator;\0"));
+        var args: [jni::JValue; 1] = [jni::arg_float(arg0)];
+        let r: jni::jobject = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])) };
+        return r;
+    }
+
+    fn scale_x_by(this, arg0: f32) -> jni::jobject {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/view/ViewPropertyAnimator\0"), #str_ptr("scaleXBy\0"), #str_ptr("(F)Landroid/view/ViewPropertyAnimator;\0"));
+        var args: [jni::JValue; 1] = [jni::arg_float(arg0)];
+        let r: jni::jobject = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])) };
+        return r;
+    }
+
+    fn scale_y(this, arg0: f32) -> jni::jobject {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/view/ViewPropertyAnimator\0"), #str_ptr("scaleY\0"), #str_ptr("(F)Landroid/view/ViewPropertyAnimator;\0"));
+        var args: [jni::JValue; 1] = [jni::arg_float(arg0)];
+        let r: jni::jobject = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])) };
+        return r;
+    }
+
+    fn scale_y_by(this, arg0: f32) -> jni::jobject {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/view/ViewPropertyAnimator\0"), #str_ptr("scaleYBy\0"), #str_ptr("(F)Landroid/view/ViewPropertyAnimator;\0"));
+        var args: [jni::JValue; 1] = [jni::arg_float(arg0)];
+        let r: jni::jobject = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])) };
+        return r;
+    }
+
+    fn set_duration(this, arg0: i64) -> jni::jobject {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/view/ViewPropertyAnimator\0"), #str_ptr("setDuration\0"), #str_ptr("(J)Landroid/view/ViewPropertyAnimator;\0"));
+        var args: [jni::JValue; 1] = [jni::arg_long(arg0)];
+        let r: jni::jobject = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])) };
+        return r;
+    }
+
+    fn set_interpolator(this, arg0: jni::jobject) -> jni::jobject {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/view/ViewPropertyAnimator\0"), #str_ptr("setInterpolator\0"), #str_ptr("(Landroid/animation/TimeInterpolator;)Landroid/view/ViewPropertyAnimator;\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        let r: jni::jobject = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])) };
+        return r;
+    }
+
+    fn set_listener(this, arg0: jni::jobject) -> jni::jobject {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/view/ViewPropertyAnimator\0"), #str_ptr("setListener\0"), #str_ptr("(Landroid/animation/Animator$AnimatorListener;)Landroid/view/ViewPropertyAnimator;\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        let r: jni::jobject = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])) };
+        return r;
+    }
+
+    fn set_start_delay(this, arg0: i64) -> jni::jobject {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/view/ViewPropertyAnimator\0"), #str_ptr("setStartDelay\0"), #str_ptr("(J)Landroid/view/ViewPropertyAnimator;\0"));
+        var args: [jni::JValue; 1] = [jni::arg_long(arg0)];
+        let r: jni::jobject = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])) };
+        return r;
+    }
+
+    fn set_update_listener(this, arg0: jni::jobject) -> jni::jobject {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/view/ViewPropertyAnimator\0"), #str_ptr("setUpdateListener\0"), #str_ptr("(Landroid/animation/ValueAnimator$AnimatorUpdateListener;)Landroid/view/ViewPropertyAnimator;\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        let r: jni::jobject = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])) };
+        return r;
+    }
+
+    fn start(this) {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/view/ViewPropertyAnimator\0"), #str_ptr("start\0"), #str_ptr("()V\0"));
+        { (*(*this._env.raw())).CallVoidMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue); };
+        return;
+    }
+
+    fn translation_x(this, arg0: f32) -> jni::jobject {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/view/ViewPropertyAnimator\0"), #str_ptr("translationX\0"), #str_ptr("(F)Landroid/view/ViewPropertyAnimator;\0"));
+        var args: [jni::JValue; 1] = [jni::arg_float(arg0)];
+        let r: jni::jobject = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])) };
+        return r;
+    }
+
+    fn translation_x_by(this, arg0: f32) -> jni::jobject {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/view/ViewPropertyAnimator\0"), #str_ptr("translationXBy\0"), #str_ptr("(F)Landroid/view/ViewPropertyAnimator;\0"));
+        var args: [jni::JValue; 1] = [jni::arg_float(arg0)];
+        let r: jni::jobject = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])) };
+        return r;
+    }
+
+    fn translation_y(this, arg0: f32) -> jni::jobject {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/view/ViewPropertyAnimator\0"), #str_ptr("translationY\0"), #str_ptr("(F)Landroid/view/ViewPropertyAnimator;\0"));
+        var args: [jni::JValue; 1] = [jni::arg_float(arg0)];
+        let r: jni::jobject = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])) };
+        return r;
+    }
+
+    fn translation_y_by(this, arg0: f32) -> jni::jobject {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/view/ViewPropertyAnimator\0"), #str_ptr("translationYBy\0"), #str_ptr("(F)Landroid/view/ViewPropertyAnimator;\0"));
+        var args: [jni::JValue; 1] = [jni::arg_float(arg0)];
+        let r: jni::jobject = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])) };
+        return r;
+    }
+
+    fn translation_z(this, arg0: f32) -> jni::jobject {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/view/ViewPropertyAnimator\0"), #str_ptr("translationZ\0"), #str_ptr("(F)Landroid/view/ViewPropertyAnimator;\0"));
+        var args: [jni::JValue; 1] = [jni::arg_float(arg0)];
+        let r: jni::jobject = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])) };
+        return r;
+    }
+
+    fn translation_z_by(this, arg0: f32) -> jni::jobject {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/view/ViewPropertyAnimator\0"), #str_ptr("translationZBy\0"), #str_ptr("(F)Landroid/view/ViewPropertyAnimator;\0"));
+        var args: [jni::JValue; 1] = [jni::arg_float(arg0)];
+        let r: jni::jobject = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])) };
+        return r;
+    }
+
+    fn with_end_action(this, arg0: jni::jobject) -> jni::jobject {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/view/ViewPropertyAnimator\0"), #str_ptr("withEndAction\0"), #str_ptr("(Ljava/lang/Runnable;)Landroid/view/ViewPropertyAnimator;\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        let r: jni::jobject = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])) };
+        return r;
+    }
+
+    fn with_layer(this) -> jni::jobject {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/view/ViewPropertyAnimator\0"), #str_ptr("withLayer\0"), #str_ptr("()Landroid/view/ViewPropertyAnimator;\0"));
+        let r: jni::jobject = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, 0 as *jni::JValue) };
+        return r;
+    }
+
+    fn with_start_action(this, arg0: jni::jobject) -> jni::jobject {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/view/ViewPropertyAnimator\0"), #str_ptr("withStartAction\0"), #str_ptr("(Ljava/lang/Runnable;)Landroid/view/ViewPropertyAnimator;\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        let r: jni::jobject = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])) };
+        return r;
+    }
+
+    fn x(this, arg0: f32) -> jni::jobject {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/view/ViewPropertyAnimator\0"), #str_ptr("x\0"), #str_ptr("(F)Landroid/view/ViewPropertyAnimator;\0"));
+        var args: [jni::JValue; 1] = [jni::arg_float(arg0)];
+        let r: jni::jobject = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])) };
+        return r;
+    }
+
+    fn x_by(this, arg0: f32) -> jni::jobject {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/view/ViewPropertyAnimator\0"), #str_ptr("xBy\0"), #str_ptr("(F)Landroid/view/ViewPropertyAnimator;\0"));
+        var args: [jni::JValue; 1] = [jni::arg_float(arg0)];
+        let r: jni::jobject = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])) };
+        return r;
+    }
+
+    fn y(this, arg0: f32) -> jni::jobject {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/view/ViewPropertyAnimator\0"), #str_ptr("y\0"), #str_ptr("(F)Landroid/view/ViewPropertyAnimator;\0"));
+        var args: [jni::JValue; 1] = [jni::arg_float(arg0)];
+        let r: jni::jobject = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])) };
+        return r;
+    }
+
+    fn y_by(this, arg0: f32) -> jni::jobject {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/view/ViewPropertyAnimator\0"), #str_ptr("yBy\0"), #str_ptr("(F)Landroid/view/ViewPropertyAnimator;\0"));
+        var args: [jni::JValue; 1] = [jni::arg_float(arg0)];
+        let r: jni::jobject = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])) };
+        return r;
+    }
+
+    fn z(this, arg0: f32) -> jni::jobject {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/view/ViewPropertyAnimator\0"), #str_ptr("z\0"), #str_ptr("(F)Landroid/view/ViewPropertyAnimator;\0"));
+        var args: [jni::JValue; 1] = [jni::arg_float(arg0)];
+        let r: jni::jobject = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])) };
+        return r;
+    }
+
+    fn z_by(this, arg0: f32) -> jni::jobject {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/view/ViewPropertyAnimator\0"), #str_ptr("zBy\0"), #str_ptr("(F)Landroid/view/ViewPropertyAnimator;\0"));
+        var args: [jni::JValue; 1] = [jni::arg_float(arg0)];
+        let r: jni::jobject = { (*(*this._env.raw())).CallObjectMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])) };
+        return r;
+    }
+
+}
+
+// android.view.animation.LinearInterpolator
+struct LinearInterpolator {
+    _env: rt::Env,
+    _obj: jni::jobject,
+}
+
+impl LinearInterpolator {
+    fn drop(ref this) {
+        // `into_raw` nulls `_obj`; DeleteGlobalRef does not admit NULL.
+        if this._obj != { 0 as jni::jobject } { this._env.delete_global_ref(this._obj); }
+        return;
+    }
+
+    fn from_global(env: rt::Env, obj: jni::jobject) -> LinearInterpolator { return LinearInterpolator { _env: env, _obj: obj }; }
+
+    fn from_local(env: rt::Env, obj: jni::jobject) -> LinearInterpolator { return LinearInterpolator { _env: env, _obj: env.retain_local_as_global(obj) }; }
+
+    fn as_obj(this) -> jni::jobject { return this._obj; }
+
+    fn into_raw(ref this) -> jni::jobject {
+        let p: jni::jobject = this._obj;
+        this._obj = { 0 as jni::jobject };
+        return p;
+    }
+
+    fn get_interpolation(this, arg0: f32) -> f32 {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/view/animation/LinearInterpolator\0"), #str_ptr("getInterpolation\0"), #str_ptr("(F)F\0"));
+        var args: [jni::JValue; 1] = [jni::arg_float(arg0)];
+        let r: f32 = { (*(*this._env.raw())).CallFloatMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])) };
+        return r;
+    }
+
+    fn new_void(env: rt::Env) -> LinearInterpolator {
+        let mid: jni::jmethodID = env.method(#str_ptr("android/view/animation/LinearInterpolator\0"), #str_ptr("<init>\0"), #str_ptr("()V\0"));
+        let cls: jni::jclass = env.class_cached(#str_ptr("android/view/animation/LinearInterpolator\0"));
+        let obj: jni::jobject = { (*(*env.raw())).NewObjectA(env.raw(), cls, mid, 0 as *jni::JValue) };
+        return LinearInterpolator { _env: env, _obj: env.retain_local_as_global(obj) };
+    }
+
+    fn new_context_attribute_set(env: rt::Env, arg0: jni::jobject, arg1: jni::jobject) -> LinearInterpolator {
+        let mid: jni::jmethodID = env.method(#str_ptr("android/view/animation/LinearInterpolator\0"), #str_ptr("<init>\0"), #str_ptr("(Landroid/content/Context;Landroid/util/AttributeSet;)V\0"));
+        var args: [jni::JValue; 2] = [jni::arg_object(arg0), jni::arg_object(arg1)];
+        let cls: jni::jclass = env.class_cached(#str_ptr("android/view/animation/LinearInterpolator\0"));
+        let obj: jni::jobject = { (*(*env.raw())).NewObjectA(env.raw(), cls, mid, #addr_of(args[0])) };
+        return LinearInterpolator { _env: env, _obj: env.retain_local_as_global(obj) };
+    }
+
+}
+
+// android.view.animation.PathInterpolator
+struct PathInterpolator {
+    _env: rt::Env,
+    _obj: jni::jobject,
+}
+
+impl PathInterpolator {
+    fn drop(ref this) {
+        // `into_raw` nulls `_obj`; DeleteGlobalRef does not admit NULL.
+        if this._obj != { 0 as jni::jobject } { this._env.delete_global_ref(this._obj); }
+        return;
+    }
+
+    fn from_global(env: rt::Env, obj: jni::jobject) -> PathInterpolator { return PathInterpolator { _env: env, _obj: obj }; }
+
+    fn from_local(env: rt::Env, obj: jni::jobject) -> PathInterpolator { return PathInterpolator { _env: env, _obj: env.retain_local_as_global(obj) }; }
+
+    fn as_obj(this) -> jni::jobject { return this._obj; }
+
+    fn into_raw(ref this) -> jni::jobject {
+        let p: jni::jobject = this._obj;
+        this._obj = { 0 as jni::jobject };
+        return p;
+    }
+
+    fn get_interpolation(this, arg0: f32) -> f32 {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/view/animation/PathInterpolator\0"), #str_ptr("getInterpolation\0"), #str_ptr("(F)F\0"));
+        var args: [jni::JValue; 1] = [jni::arg_float(arg0)];
+        let r: f32 = { (*(*this._env.raw())).CallFloatMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])) };
+        return r;
+    }
+
+    fn new_context_attribute_set(env: rt::Env, arg0: jni::jobject, arg1: jni::jobject) -> PathInterpolator {
+        let mid: jni::jmethodID = env.method(#str_ptr("android/view/animation/PathInterpolator\0"), #str_ptr("<init>\0"), #str_ptr("(Landroid/content/Context;Landroid/util/AttributeSet;)V\0"));
+        var args: [jni::JValue; 2] = [jni::arg_object(arg0), jni::arg_object(arg1)];
+        let cls: jni::jclass = env.class_cached(#str_ptr("android/view/animation/PathInterpolator\0"));
+        let obj: jni::jobject = { (*(*env.raw())).NewObjectA(env.raw(), cls, mid, #addr_of(args[0])) };
+        return PathInterpolator { _env: env, _obj: env.retain_local_as_global(obj) };
+    }
+
+    fn new_path(env: rt::Env, arg0: jni::jobject) -> PathInterpolator {
+        let mid: jni::jmethodID = env.method(#str_ptr("android/view/animation/PathInterpolator\0"), #str_ptr("<init>\0"), #str_ptr("(Landroid/graphics/Path;)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_object(arg0)];
+        let cls: jni::jclass = env.class_cached(#str_ptr("android/view/animation/PathInterpolator\0"));
+        let obj: jni::jobject = { (*(*env.raw())).NewObjectA(env.raw(), cls, mid, #addr_of(args[0])) };
+        return PathInterpolator { _env: env, _obj: env.retain_local_as_global(obj) };
+    }
+
+    fn new_f_f(env: rt::Env, arg0: f32, arg1: f32) -> PathInterpolator {
+        let mid: jni::jmethodID = env.method(#str_ptr("android/view/animation/PathInterpolator\0"), #str_ptr("<init>\0"), #str_ptr("(FF)V\0"));
+        var args: [jni::JValue; 2] = [jni::arg_float(arg0), jni::arg_float(arg1)];
+        let cls: jni::jclass = env.class_cached(#str_ptr("android/view/animation/PathInterpolator\0"));
+        let obj: jni::jobject = { (*(*env.raw())).NewObjectA(env.raw(), cls, mid, #addr_of(args[0])) };
+        return PathInterpolator { _env: env, _obj: env.retain_local_as_global(obj) };
+    }
+
+    fn new_f_f_f_f(env: rt::Env, arg0: f32, arg1: f32, arg2: f32, arg3: f32) -> PathInterpolator {
+        let mid: jni::jmethodID = env.method(#str_ptr("android/view/animation/PathInterpolator\0"), #str_ptr("<init>\0"), #str_ptr("(FFFF)V\0"));
+        var args: [jni::JValue; 4] = [jni::arg_float(arg0), jni::arg_float(arg1), jni::arg_float(arg2), jni::arg_float(arg3)];
+        let cls: jni::jclass = env.class_cached(#str_ptr("android/view/animation/PathInterpolator\0"));
+        let obj: jni::jobject = { (*(*env.raw())).NewObjectA(env.raw(), cls, mid, #addr_of(args[0])) };
+        return PathInterpolator { _env: env, _obj: env.retain_local_as_global(obj) };
+    }
+
+}
+
+// android.view.animation.BounceInterpolator
+struct BounceInterpolator {
+    _env: rt::Env,
+    _obj: jni::jobject,
+}
+
+impl BounceInterpolator {
+    fn drop(ref this) {
+        // `into_raw` nulls `_obj`; DeleteGlobalRef does not admit NULL.
+        if this._obj != { 0 as jni::jobject } { this._env.delete_global_ref(this._obj); }
+        return;
+    }
+
+    fn from_global(env: rt::Env, obj: jni::jobject) -> BounceInterpolator { return BounceInterpolator { _env: env, _obj: obj }; }
+
+    fn from_local(env: rt::Env, obj: jni::jobject) -> BounceInterpolator { return BounceInterpolator { _env: env, _obj: env.retain_local_as_global(obj) }; }
+
+    fn as_obj(this) -> jni::jobject { return this._obj; }
+
+    fn into_raw(ref this) -> jni::jobject {
+        let p: jni::jobject = this._obj;
+        this._obj = { 0 as jni::jobject };
+        return p;
+    }
+
+    fn get_interpolation(this, arg0: f32) -> f32 {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/view/animation/BounceInterpolator\0"), #str_ptr("getInterpolation\0"), #str_ptr("(F)F\0"));
+        var args: [jni::JValue; 1] = [jni::arg_float(arg0)];
+        let r: f32 = { (*(*this._env.raw())).CallFloatMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])) };
+        return r;
+    }
+
+    fn new_void(env: rt::Env) -> BounceInterpolator {
+        let mid: jni::jmethodID = env.method(#str_ptr("android/view/animation/BounceInterpolator\0"), #str_ptr("<init>\0"), #str_ptr("()V\0"));
+        let cls: jni::jclass = env.class_cached(#str_ptr("android/view/animation/BounceInterpolator\0"));
+        let obj: jni::jobject = { (*(*env.raw())).NewObjectA(env.raw(), cls, mid, 0 as *jni::JValue) };
+        return BounceInterpolator { _env: env, _obj: env.retain_local_as_global(obj) };
+    }
+
+    fn new_context_attribute_set(env: rt::Env, arg0: jni::jobject, arg1: jni::jobject) -> BounceInterpolator {
+        let mid: jni::jmethodID = env.method(#str_ptr("android/view/animation/BounceInterpolator\0"), #str_ptr("<init>\0"), #str_ptr("(Landroid/content/Context;Landroid/util/AttributeSet;)V\0"));
+        var args: [jni::JValue; 2] = [jni::arg_object(arg0), jni::arg_object(arg1)];
+        let cls: jni::jclass = env.class_cached(#str_ptr("android/view/animation/BounceInterpolator\0"));
+        let obj: jni::jobject = { (*(*env.raw())).NewObjectA(env.raw(), cls, mid, #addr_of(args[0])) };
+        return BounceInterpolator { _env: env, _obj: env.retain_local_as_global(obj) };
+    }
+
+}
+
+// android.view.animation.OvershootInterpolator
+struct OvershootInterpolator {
+    _env: rt::Env,
+    _obj: jni::jobject,
+}
+
+impl OvershootInterpolator {
+    fn drop(ref this) {
+        // `into_raw` nulls `_obj`; DeleteGlobalRef does not admit NULL.
+        if this._obj != { 0 as jni::jobject } { this._env.delete_global_ref(this._obj); }
+        return;
+    }
+
+    fn from_global(env: rt::Env, obj: jni::jobject) -> OvershootInterpolator { return OvershootInterpolator { _env: env, _obj: obj }; }
+
+    fn from_local(env: rt::Env, obj: jni::jobject) -> OvershootInterpolator { return OvershootInterpolator { _env: env, _obj: env.retain_local_as_global(obj) }; }
+
+    fn as_obj(this) -> jni::jobject { return this._obj; }
+
+    fn into_raw(ref this) -> jni::jobject {
+        let p: jni::jobject = this._obj;
+        this._obj = { 0 as jni::jobject };
+        return p;
+    }
+
+    fn get_interpolation(this, arg0: f32) -> f32 {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/view/animation/OvershootInterpolator\0"), #str_ptr("getInterpolation\0"), #str_ptr("(F)F\0"));
+        var args: [jni::JValue; 1] = [jni::arg_float(arg0)];
+        let r: f32 = { (*(*this._env.raw())).CallFloatMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])) };
+        return r;
+    }
+
+    fn new_void(env: rt::Env) -> OvershootInterpolator {
+        let mid: jni::jmethodID = env.method(#str_ptr("android/view/animation/OvershootInterpolator\0"), #str_ptr("<init>\0"), #str_ptr("()V\0"));
+        let cls: jni::jclass = env.class_cached(#str_ptr("android/view/animation/OvershootInterpolator\0"));
+        let obj: jni::jobject = { (*(*env.raw())).NewObjectA(env.raw(), cls, mid, 0 as *jni::JValue) };
+        return OvershootInterpolator { _env: env, _obj: env.retain_local_as_global(obj) };
+    }
+
+    fn new_context_attribute_set(env: rt::Env, arg0: jni::jobject, arg1: jni::jobject) -> OvershootInterpolator {
+        let mid: jni::jmethodID = env.method(#str_ptr("android/view/animation/OvershootInterpolator\0"), #str_ptr("<init>\0"), #str_ptr("(Landroid/content/Context;Landroid/util/AttributeSet;)V\0"));
+        var args: [jni::JValue; 2] = [jni::arg_object(arg0), jni::arg_object(arg1)];
+        let cls: jni::jclass = env.class_cached(#str_ptr("android/view/animation/OvershootInterpolator\0"));
+        let obj: jni::jobject = { (*(*env.raw())).NewObjectA(env.raw(), cls, mid, #addr_of(args[0])) };
+        return OvershootInterpolator { _env: env, _obj: env.retain_local_as_global(obj) };
+    }
+
+    fn new_f(env: rt::Env, arg0: f32) -> OvershootInterpolator {
+        let mid: jni::jmethodID = env.method(#str_ptr("android/view/animation/OvershootInterpolator\0"), #str_ptr("<init>\0"), #str_ptr("(F)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_float(arg0)];
+        let cls: jni::jclass = env.class_cached(#str_ptr("android/view/animation/OvershootInterpolator\0"));
+        let obj: jni::jobject = { (*(*env.raw())).NewObjectA(env.raw(), cls, mid, #addr_of(args[0])) };
+        return OvershootInterpolator { _env: env, _obj: env.retain_local_as_global(obj) };
+    }
+
+}
+
+// android.view.animation.AnticipateInterpolator
+struct AnticipateInterpolator {
+    _env: rt::Env,
+    _obj: jni::jobject,
+}
+
+impl AnticipateInterpolator {
+    fn drop(ref this) {
+        // `into_raw` nulls `_obj`; DeleteGlobalRef does not admit NULL.
+        if this._obj != { 0 as jni::jobject } { this._env.delete_global_ref(this._obj); }
+        return;
+    }
+
+    fn from_global(env: rt::Env, obj: jni::jobject) -> AnticipateInterpolator { return AnticipateInterpolator { _env: env, _obj: obj }; }
+
+    fn from_local(env: rt::Env, obj: jni::jobject) -> AnticipateInterpolator { return AnticipateInterpolator { _env: env, _obj: env.retain_local_as_global(obj) }; }
+
+    fn as_obj(this) -> jni::jobject { return this._obj; }
+
+    fn into_raw(ref this) -> jni::jobject {
+        let p: jni::jobject = this._obj;
+        this._obj = { 0 as jni::jobject };
+        return p;
+    }
+
+    fn get_interpolation(this, arg0: f32) -> f32 {
+        let mid: jni::jmethodID = this._env.method(#str_ptr("android/view/animation/AnticipateInterpolator\0"), #str_ptr("getInterpolation\0"), #str_ptr("(F)F\0"));
+        var args: [jni::JValue; 1] = [jni::arg_float(arg0)];
+        let r: f32 = { (*(*this._env.raw())).CallFloatMethodA(this._env.raw(), this._obj, mid, #addr_of(args[0])) };
+        return r;
+    }
+
+    fn new_void(env: rt::Env) -> AnticipateInterpolator {
+        let mid: jni::jmethodID = env.method(#str_ptr("android/view/animation/AnticipateInterpolator\0"), #str_ptr("<init>\0"), #str_ptr("()V\0"));
+        let cls: jni::jclass = env.class_cached(#str_ptr("android/view/animation/AnticipateInterpolator\0"));
+        let obj: jni::jobject = { (*(*env.raw())).NewObjectA(env.raw(), cls, mid, 0 as *jni::JValue) };
+        return AnticipateInterpolator { _env: env, _obj: env.retain_local_as_global(obj) };
+    }
+
+    fn new_context_attribute_set(env: rt::Env, arg0: jni::jobject, arg1: jni::jobject) -> AnticipateInterpolator {
+        let mid: jni::jmethodID = env.method(#str_ptr("android/view/animation/AnticipateInterpolator\0"), #str_ptr("<init>\0"), #str_ptr("(Landroid/content/Context;Landroid/util/AttributeSet;)V\0"));
+        var args: [jni::JValue; 2] = [jni::arg_object(arg0), jni::arg_object(arg1)];
+        let cls: jni::jclass = env.class_cached(#str_ptr("android/view/animation/AnticipateInterpolator\0"));
+        let obj: jni::jobject = { (*(*env.raw())).NewObjectA(env.raw(), cls, mid, #addr_of(args[0])) };
+        return AnticipateInterpolator { _env: env, _obj: env.retain_local_as_global(obj) };
+    }
+
+    fn new_f(env: rt::Env, arg0: f32) -> AnticipateInterpolator {
+        let mid: jni::jmethodID = env.method(#str_ptr("android/view/animation/AnticipateInterpolator\0"), #str_ptr("<init>\0"), #str_ptr("(F)V\0"));
+        var args: [jni::JValue; 1] = [jni::arg_float(arg0)];
+        let cls: jni::jclass = env.class_cached(#str_ptr("android/view/animation/AnticipateInterpolator\0"));
+        let obj: jni::jobject = { (*(*env.raw())).NewObjectA(env.raw(), cls, mid, #addr_of(args[0])) };
+        return AnticipateInterpolator { _env: env, _obj: env.retain_local_as_global(obj) };
+    }
+
+}
+
+// cpc-bindgen --java: 3008 items emitted, 27 SKIPPED.

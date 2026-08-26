@@ -76,6 +76,12 @@ BINDGEN="${BINDGEN:-../../target/release/cpc-bindgen}"
     'android.graphics.PorterDuff$Mode' \
     android.graphics.PorterDuffXfermode \
     android.graphics.Xfermode \
+    android.view.ViewPropertyAnimator \
+    android.view.animation.LinearInterpolator \
+    android.view.animation.PathInterpolator \
+    android.view.animation.BounceInterpolator \
+    android.view.animation.OvershootInterpolator \
+    android.view.animation.AnticipateInterpolator \
     > src/widgets.cplus
 
 wc -l src/widgets.cplus
