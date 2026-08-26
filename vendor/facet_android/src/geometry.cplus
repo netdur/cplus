@@ -122,30 +122,10 @@ fn measure_intrinsic(v: *u8, max_w: f64, max_h: f64) -> flex::Size {
     return flex::Size { width: { mw as f64 }, height: { mh as f64 } };
 }
 
-// ---- the density boundary ------------------------------------------------------
-//
-// FACET'S UNITS ARE DENSITY-INDEPENDENT, and Android's View geometry is in
-// PHYSICAL PIXELS. Every other backend gets this for free: a point is a point on
-// AppKit and UIKit, and GTK scales the whole surface. Android does not, so this
-// file is where the two meet — frames in, pixels out.
-//
-// It went unnoticed for as long as everything on screen was MEASURED: a
-// TextView's default text is in `sp`, so a label asked for its natural size
-// answers in already-scaled pixels and the layout looked right. It breaks the
-// moment an application STATES a number. The iOS gallery's tree asks for
-// `row_height: 44`, which is 44 points — and 44 raw pixels on a 3x phone is a
-// third of a row, so every row showed the top eighth of its text.
-//
-// The rule: everything above this line is in facet's units, everything below is
-// pixels, and `px` / `dp` are the only crossings.
-fn density() -> f64 {
-    let d: f64 = e::density();
-    if d <= 0.0f64 { return 1.0f64; }
-    return d;
-}
-
-fn px(v: f64) -> f64 { return v * density(); }
-fn dp(v: f64) -> f64 { return v / density(); }
+// The density boundary lives in `env` — see `env::px`. Re-exported here because
+// this file is where most of the crossings are.
+fn px(v: f64) -> f64 { return e::px(v); }
+fn dp(v: f64) -> f64 { return e::dp(v); }
 
 fn place(v: *u8, x: f64, y: f64, wd: f64, ht: f64) {
     var view: w::View = paint::wrap(v);

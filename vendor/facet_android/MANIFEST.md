@@ -57,6 +57,14 @@ through liblog (`adb logcat -s facet`) and render an empty container.
   which is the shape of the bug facet_uikit carried in its checkbox until
   2026-08-25.
 
+- **A gradient `background`.** Solid colours, corner radii and clipping are
+  built; a two-stop brush is not. It needs two things that do not exist yet:
+  `GradientDrawable.setColors` takes an `int[]` and `vendor/jni` types no array
+  slots (the same "define only what we call" gap rung 0 closed for methods and
+  fields), and GradientDrawable takes an Orientation ENUM where facet's Brush
+  carries degrees — a mapping that would be a guess. The brush's START colour is
+  used meanwhile, which is at least its own first stop.
+
 - **An image can only come from the FILESYSTEM.** `BitmapFactory.decodeFile`
   reads a path; an image packed into the APK lives in `assets/` and needs an
   AssetManager. A source that does not decode leaves the view empty and warns
@@ -146,6 +154,22 @@ What an app still writes is the `Java_cplus_facet_FacetActivity_nativeCreateView
 export, five lines calling `entry::start`. It lives in the APP because cpc emits
 one object per package: a package that names a symbol obligates everything that
 links it.
+
+### A background, a radius and a border are ONE drawable
+
+facet declares them as separate bits; Android expresses them as a single
+`GradientDrawable` set as the view's background. `setBackgroundColor` can say
+only the first of them, and calling it after building a drawable throws the
+drawable away — so any of the four rebuilds the background whole, which is the
+only version that cannot half-apply. A radius also turns on `clipToOutline`, or
+a rounded background is a rounded rectangle with square content sitting on it.
+
+### A shadow is an ELEVATION
+
+Android's shadow is derived from a view's height above the surface, not authored
+as an offset, a radius and a colour. facet's four fields collapse to one number
+and the colour is the theme's. Recorded here rather than approximated with a
+drawn shadow, which would be a different thing that looked similar.
 
 ### facet's units are density-independent; Android's are pixels
 

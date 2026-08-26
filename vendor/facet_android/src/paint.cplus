@@ -73,9 +73,36 @@ fn configure(v: *u8, n: *core::Node, dirty: u64) {
     let env: rt::Env = e::env();
     var view: w::View = wrap(v);
 
-    if (dirty & props::C_BACKGROUND_COLOR) != (0 as u64) {
-        let c: vocab::Color = core::background_color(n);
-        if c.is_set() { view.set_background_color(argb_of(c)); }
+    // ONE DRAWABLE FOR FOUR PROPS. A colour, a gradient, a corner radius and a
+    // border are separate bits in facet and ONE `GradientDrawable` on Android —
+    // `setBackgroundColor` can express only the first of them, and calling it
+    // after building a drawable throws the drawable away. So any of the four
+    // rebuilds the background whole.
+    let deco: u64 = props::C_BACKGROUND_COLOR | props::C_BACKGROUND
+                  | props::C_CORNER_RADIUS | props::C_CLIP;
+    if (dirty & deco) != (0 as u64) { apply_decoration(env, v, n); }
+
+    if (dirty & props::C_SHADOW) != (0 as u64) {
+        // ELEVATION, which is Android's whole shadow model: a Material shadow
+        // is derived from a view's height above the surface, not authored as an
+        // offset, a radius and a colour. So facet's four fields collapse to one
+        // number and MANIFEST §1 records what is lost — the colour above all,
+        // which Android draws from the theme.
+        let sh: vocab::Shadow = core::shadow(n);
+        view.set_elevation({ e::px(sh.radius) as f32 });
+    }
+
+    if (dirty & props::C_TRANSFORM) != (0 as u64) {
+        // SCALE and ROTATION are about the view's CENTRE by default on Android,
+        // which is what facet means by them. Translation is in facet's units.
+        view.set_rotation({ core::rotation(n) as f32 });
+        view.set_rotation_x({ core::rotation_x(n) as f32 });
+        view.set_rotation_y({ core::rotation_y(n) as f32 });
+        let sc: f64 = core::scale(n);
+        view.set_scale_x({ (core::scale_x(n) * sc) as f32 });
+        view.set_scale_y({ (core::scale_y(n) * sc) as f32 });
+        view.set_translation_x({ e::px(core::translation_x(n)) as f32 });
+        view.set_translation_y({ e::px(core::translation_y(n)) as f32 });
     }
     if (dirty & props::C_OPACITY) != (0 as u64) {
         view.set_alpha({ core::opacity(n) as f32 });
@@ -144,6 +171,51 @@ fn spinner_props(n: *core::Node) -> *props::SpinnerProps {
     if d == (0 as *core::Data) { return 0 as *props::SpinnerProps; }
     if { (*d).kind } != props::K_SPINNER { return 0 as *props::SpinnerProps; }
     return { (*d).props } as *props::SpinnerProps;
+}
+
+// The background, corner radius, border and clip as ONE drawable.
+//
+// A solid colour could be `setBackgroundColor`, and that is what this did — but
+// then a corner radius had nowhere to go, and setting the colour afterwards
+// silently discards a drawable built for the radius. One builder for all of it
+// is the only version that cannot half-apply.
+fn apply_decoration(env: rt::Env, v: *u8, n: *core::Node) {
+    let brush: vocab::Brush = core::background(n);
+    let flat: vocab::Color = core::background_color(n);
+    let corners: vocab::Corners = core::corner_radius(n);
+    let radius: f64 = corners.top_leading;
+    let has_radius: bool = radius > 0.0f64;
+
+    var view: w::View = wrap(v);
+    if !brush.is_gradient && !flat.is_set() && !brush.start.is_set() && !has_radius {
+        // NOTHING DECLARED. Clearing rather than leaving the last drawable is
+        // what makes this idempotent — a node that loses its colour loses it.
+        view.set_background(0 as jni::jobject);
+        view.set_clip_to_outline(false);
+        unwrap_keep(view);
+        return;
+    }
+
+    var d: w::GradientDrawable = w::GradientDrawable::new_void(env);
+    // A GRADIENT IS NOT BUILT — see MANIFEST §2. It needs two things this does
+    // not have: `setColors` takes an `int[]`, and vendor/jni types no array
+    // slots yet; and GradientDrawable takes an Orientation ENUM where facet's
+    // Brush carries degrees, so the mapping would be a guess. The start colour
+    // is used, which is at least the gradient's own first stop rather than an
+    // invented average.
+    var c: vocab::Color = flat;
+    if !c.is_set() { c = brush.start; }
+    if c.is_set() { d.set_color_i(argb_of(c)); }
+    if has_radius { d.set_corner_radius({ e::px(radius) as f32 }); }
+
+    var drawable: w::Drawable = d.as_drawable();
+    view.set_background(drawable.into_raw());
+    // CLIP TO THE OUTLINE, so a rounded background actually clips its children
+    // rather than being a rounded rectangle with square content on top of it.
+    view.set_clip_to_outline(has_radius);
+    unwrap_keep(view);
+    let _keep: *u8 = d.into_raw();
+    return;
 }
 
 // ---- C string helpers --------------------------------------------------------
