@@ -48,7 +48,32 @@ fn wants_view(n: *core::Node) -> bool {
 // on a card sheet rendered as bare floating words.
 fn wants_painting(n: *core::Node) -> bool {
     if core::background_color(n).is_set() { return true; }
+    // A BRUSH IS A BACKGROUND TOO. Checking only `background_color` is exactly
+    // the incomplete rule the comment above warns about, and it cost the same
+    // thing here it cost facet_appkit: the decoration demo's four rounded
+    // swatches had a brush and a radius, no `background_color`, and so no view
+    // at all — a gap where four coloured rectangles should be, with nothing in
+    // the log.
+    let b: vocab::Brush = core::background(n);
+    if b.start.is_set() { return true; }
+    if b.end.is_set() { return true; }
+    let r: vocab::Corners = core::corner_radius(n);
+    if r.top_leading != 0.0f64 { return true; }
+    if r.top_trailing != 0.0f64 { return true; }
+    if r.bottom_leading != 0.0f64 { return true; }
+    if r.bottom_trailing != 0.0f64 { return true; }
+    if core::clip(n).kind != (0 as i64) { return true; }
+    // A shadow needs BOTH a colour and an opacity to draw anything, which is
+    // what `Shadow::none()` is — asking for either alone is not a request for a
+    // rectangle.
+    let sh: vocab::Shadow = core::shadow(n);
+    if sh.color.is_set() && sh.opacity != 0.0f64 { return true; }
     if core::opacity(n) != 1.0f64 { return true; }
+    // A TRANSFORM needs something to transform.
+    if core::rotation(n) != 0.0f64 { return true; }
+    if core::scale(n) != 1.0f64 { return true; }
+    if core::translation_x(n) != 0.0f64 { return true; }
+    if core::translation_y(n) != 0.0f64 { return true; }
     if !core::is_visible(n) { return true; }
     return false;
 }
