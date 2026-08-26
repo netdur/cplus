@@ -44,18 +44,28 @@ rather than all of `android.widget`.
 Everything here is a debt, not a decision. Kinds with no body **warn once**
 through liblog (`adb logcat -s facet`) and render an empty container.
 
-- **The controls still without a body.** `popup`, `tabs`, `list`, `collection`,
-  `table`, `tree`, `canvas`, `web`, `span`, `bordered`, `page_dots`, `carousel`,
-  `refreshable`, `swipeable`, `split`, the pickers, the menu tier. `views.cplus`
-  dispatches on kind; each needs a `create_` / `apply_` pair in `controls.cplus`.
+- **The controls still without a body.** `popup`, `tabs`, `collection`,
+  `table`, `canvas`, `web`, `span`, `bordered`, `page_dots`, `carousel`,
+  `refreshable`, `swipeable`, `zoomable`, the pickers, the menu tier.
+  `views.cplus` dispatches on kind; each needs a `create_` / `apply_` pair in
+  `controls.cplus`.
 
   Built: `label`, `button`, `box` and the plain container, plus `checkbox`,
   `toggle`, `radio`, `slider`, `progress`, `spinner`, `text_field`,
-  `text_button`, `text_area`, `search_field`, `image`, `icon_button`, `scroll`
-  and `stepper` — each with BOTH halves, the props write and the event read.
-  Half a control is worse than none: it looks finished and reports nothing,
-  which is the shape of the bug facet_uikit carried in its checkbox until
-  2026-08-25.
+  `text_button`, `text_area`, `search_field`, `image`, `icon_button`, `scroll`,
+  `stepper`, `list`, `tree` and `split` — each with BOTH halves, the props write
+  and the event read. Half a control is worse than none: it looks finished and
+  reports nothing, which is the shape of the bug facet_uikit carried in its
+  checkbox until 2026-08-25.
+
+- **A `split` does not DRAG.** The kind is built and every verb it has works —
+  the axis, the position, both minimums, the collapse and the drawn divider are
+  all geometry, and geometry is flex's, so the division is written into facet's
+  own layout exactly as facet_uikit writes it. What is absent is the grab: there
+  is no touch gesture that means "take hold of this hairline", so `on_move`
+  never fires and the position is the application's to set. The divider is one
+  extra `View` this package owns, tagged onto the split's host and placed by the
+  frame walk — facet's children keep their own indices.
 
 - **A gradient `background`.** Solid colours, corner radii and clipping are
   built; a two-stop brush is not. It needs two things that do not exist yet:

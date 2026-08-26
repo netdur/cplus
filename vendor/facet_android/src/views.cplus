@@ -12,6 +12,7 @@ import "facet/facet" as core;
 import "facet/props" as props;
 import "facet/text_button" as text_button;
 import "facet/tree" as tree;
+import "facet/split" as split;
 import "facet/gestures" as gestures;
 import "facet/vocabulary" as vocab;
 import "./env" as e;
@@ -126,6 +127,7 @@ fn create_for_kind(kind: u32, n: *core::Node) -> *u8 {
     if kind == props::K_STEPPER { return controls::create_stepper(n); }
     if kind == props::K_LIST { return recycler::create_list(n); }
     if kind == tree::K_TREE { return recycler::create_tree(n); }
+    if kind == split::K_SPLIT { return controls::create_split(n); }
     // Not built yet. A backend that silently substituted a blank container for
     // a control it does not have would be indistinguishable from a finished
     // one, so MANIFEST.md §2 names every kind that lands here and each warns
@@ -172,6 +174,7 @@ fn apply_for_kind(kind: u32, v: *u8, n: *core::Node, dirty: u64) {
     if kind == props::K_STEPPER { controls::apply_stepper(v, n, dirty); return; }
     if kind == props::K_LIST { recycler::apply_list(v, n, dirty); return; }
     if kind == tree::K_TREE { recycler::apply_tree(v, n, dirty); return; }
+    if kind == split::K_SPLIT { controls::apply_split(v, n, dirty); return; }
     return;
 }
 

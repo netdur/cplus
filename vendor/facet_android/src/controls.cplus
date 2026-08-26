@@ -10,6 +10,7 @@ import "stdlib/text" as text;
 import "stdlib/option" as option;
 import "jni/jni" as jni;
 import "android_view/runtime" as rt;
+import "flex_layout/flex_layout" as flex;
 import "android_view/widgets" as w;
 import "facet/facet" as core;
 import "facet/props" as props;
@@ -30,6 +31,7 @@ import "facet/image" as image;
 import "facet/icon_button" as icon_button;
 import "facet/scroll" as scroll;
 import "facet/stepper" as stepper;
+import "facet/split" as split;
 import "facet/vocabulary" as vocab;
 import "./env" as e;
 import "./paint" as paint;
@@ -1274,6 +1276,197 @@ fn put_str_at(buf: *u8, at: usize, s: *u8) -> usize {
         }
     }
     return i;
+}
+
+// ---- split -------------------------------------------------------------------
+// Android has no split widget, and — as on iOS — one FACT is what is missing
+// rather than the whole kind: there is no touch gesture that means "grab this
+// hairline", so the divider does not drag. Everything else a split is (an axis,
+// a position, two pane minimums, a collapse, a drawn divider) is geometry, and
+// geometry is flex's.
+//
+// So the split is a plain host, the division is written into facet's own
+// layout — leading pane fixed, trailing pane growing from a zero basis, the
+// divider a GAP between them — and the divider itself is one extra View this
+// package owns. MANIFEST.md §2 says "no drag", not "no split".
+//
+// The divider is a NATIVE child and not a facet node, exactly as GTK's is. It
+// is added at create, so facet's own inserts (always at a slot inside the pane
+// range) push it to the end and it draws last, on top. `geometry` places it —
+// nothing else in the frame walk knows it exists.
+
+const SPLIT_DIVIDER_TAG: i32 = 2131886086 as i32;   // 0x7F0F0006 — see SCROLL_DOC_TAG
+
+fn create_split(n: *core::Node) -> *u8 {
+    let env: rt::Env = e::env();
+    let raw: *u8 = global_of(dex::new_host(env, e::context()));
+    var bar: w::View = w::View::new_context(env, e::context());
+    let bar_raw: *u8 = bar.into_raw();
+    attach_layout_params(bar_raw);
+    var host: w::ViewGroup = w::ViewGroup::from_global(env, raw);
+    host.add_view_view(bar_raw);
+    let _k: *u8 = host.into_raw();
+    var hv: w::View = w::View::from_global(env, raw);
+    hv.set_tag_i_object(SPLIT_DIVIDER_TAG, bar_raw);
+    paint::unwrap_keep(hv);
+    return raw;
+}
+
+// The divider view, as a LOCAL ref — the caller's for the length of the call.
+fn divider_of(v: *u8) -> jni::jobject {
+    if v == (0 as *u8) { return 0 as jni::jobject; }
+    if !e::have_env() { return 0 as jni::jobject; }
+    var view: w::View = w::View::from_global(e::env(), v);
+    let t: jni::jobject = view.get_tag_i(SPLIT_DIVIDER_TAG);
+    paint::unwrap_keep(view);
+    return t;
+}
+
+fn split_props(n: *core::Node) -> *split::SplitProps {
+    return props_of(n, split::K_SPLIT) as *split::SplitProps;
+}
+
+fn apply_split(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *split::SplitProps = split_props(n);
+    if p == (0 as *split::SplitProps) { return; }
+    if (dirty & split::P_AXIS) != (0 as u64) || dirty == paint::all_bits() {
+        var flow: flex::FlexDirection = flex::FlexDirection::Row;
+        match { (*p).axis } {
+            split::SplitAxis::Rows => { flow = flex::FlexDirection::Column; }
+            split::SplitAxis::Columns => { }
+        }
+        core::set_flow(n, flow);
+    }
+    let watched: u64 = split::P_POSITION | split::P_COLLAPSED | split::P_MIN_LEADING
+                       | split::P_MIN_TRAILING | split::P_DIVIDER | split::P_AXIS;
+    if (dirty & watched) != (0 as u64) || dirty == paint::all_bits() {
+        let _changed: bool = settle_split(n, p);
+    }
+    if (dirty & split::P_DIVIDER) != (0 as u64) || dirty == paint::all_bits() {
+        paint_divider(v, p);
+    }
+    return;
+}
+
+// The divider's own paint. A View with a background colour and nothing else —
+// a thickness of zero is a split that asked for no line, and GONE is how a
+// View says that without a rect anywhere in the walk.
+fn paint_divider(v: *u8, p: *split::SplitProps) {
+    let env: rt::Env = e::env();
+    let bar: jni::jobject = divider_of(v);
+    if bar == (0 as jni::jobject) { return; }
+    var bv: w::View = w::View::from_global(env, bar);
+    let c: vocab::Color = { (*p).divider_color };
+    if c.is_set() { bv.set_background_color(paint::argb_of(c)); }
+    var vis: i32 = 0 as i32;                       // VISIBLE
+    if { (*p).divider_thickness } <= 0.0f64 { vis = 8 as i32; }   // GONE
+    bv.set_visibility(vis);
+    let local: *u8 = bv.into_raw();
+    env.delete_local_ref(local);
+    return;
+}
+
+// THE DIVISION, written into flex — the whole of what a split is on this
+// backend. Ported from facet_uikit, which ported the arithmetic from AppKit;
+// every comment there is about flex and not about the platform, which is why
+// it moves unchanged. Answers whether it wrote anything, so the layout pass
+// knows to compute again.
+fn settle_split(n: *core::Node, p: *split::SplitProps) -> bool {
+    var wrote: bool = false;
+    var vertical: bool = true;
+    match { (*p).axis } {
+        split::SplitAxis::Rows => { vertical = false; }
+        split::SplitAxis::Columns => { }
+    }
+    let f: flex::Frame = core::frame_of(n);
+    var extent: f64 = { f.height };
+    if vertical { extent = { f.width }; }
+
+    // THE SPLIT'S SIZE IS ITS PARENT'S BUSINESS, NEVER ITS PANES'. The leading
+    // pane is given a fixed main-axis size below, and a fixed size is content
+    // the container has to fit — so without a zero basis the split's own base
+    // size grows with the position, the bigger split reports a bigger extent,
+    // and the extent moves the clamp that moves the pane. Measured elsewhere at
+    // 456 -> 547 -> 580 on a probe; the arithmetic is flex's, not a platform's.
+    if { (*n).style.flex_grow } > 0.0f64 && !is_points({ (*n).style.flex_basis }, 0.0f64) {
+        core::set_basis(n, 0.0f64);
+        wrote = true;
+    }
+
+    // The divider occupies real points between the panes, and flex knows
+    // nothing about it — so it is a GAP. Without this the two panes divide the
+    // whole extent between them and every frame is the divider's width out.
+    let gap: f64 = { (*p).divider_thickness };
+    if !is_points({ (*n).style.gap_row }, gap) || !is_points({ (*n).style.gap_column }, gap) {
+        core::set_gap(n, gap);
+        wrote = true;
+    }
+
+    var want: f64 = { (*p).position };
+    if { (*p).collapsed_leading } { want = 0.0f64; }
+    else if { (*p).collapsed_trailing } { want = extent; }
+    if extent > 0.0f64 {
+        // A position past the end IS a collapse — `1e6` is how an application
+        // asks for one — so clamp before it becomes a pane size.
+        if want > extent { want = extent; }
+        if !{ (*p).collapsed_leading } && !{ (*p).collapsed_trailing } {
+            let ceiling: f64 = extent - { (*p).min_trailing };
+            if ceiling > 0.0f64 && want > ceiling { want = ceiling; }
+            let floor: f64 = { (*p).min_leading };
+            if floor < extent && want < floor { want = floor; }
+        }
+    }
+    if want < 0.0f64 { want = 0.0f64; }
+
+    match core::child_of(n, 0 as usize) {
+        option::Option[*core::Node]::Some(lead) => {
+            if vertical {
+                if !is_points({ (*lead).style.width }, want) {
+                    core::set_width(lead, want);
+                    wrote = true;
+                }
+            } else {
+                if !is_points({ (*lead).style.height }, want) {
+                    core::set_height(lead, want);
+                    wrote = true;
+                }
+            }
+            if { (*lead).style.flex_grow } != 0.0f64 { core::set_grow(lead, 0.0f64); wrote = true; }
+            // SHRINKABLE, and load-bearing: a fixed main-axis size the pane
+            // cannot give back becomes the split's min-content, and flex shrink
+            // defaults to 0 — so a split asked for more than its parent offers
+            // grows PAST the parent instead of being squeezed back, and the
+            // inflated frame is what the next settle reads as `extent`.
+            if { (*lead).style.flex_shrink } != 1.0f64 {
+                core::set_shrink(lead, 1.0f64);
+                wrote = true;
+            }
+        }
+        option::Option[*core::Node]::None => { return wrote; }
+    }
+    // The trailing pane takes the rest, from a base of ZERO — which is what
+    // makes "the rest" true. A flex item's base size is its CONTENT, so a
+    // trailing pane holding 115pt of content would otherwise force the leading
+    // pane to give up points the divider had just been put at.
+    match core::child_of(n, 1 as usize) {
+        option::Option[*core::Node]::Some(trail) => {
+            if { (*trail).style.flex_grow } != 1.0f64 { core::set_grow(trail, 1.0f64); wrote = true; }
+            if !is_points({ (*trail).style.flex_basis }, 0.0f64) {
+                core::set_basis(trail, 0.0f64);
+                wrote = true;
+            }
+        }
+        option::Option[*core::Node]::None => { }
+    }
+    return wrote;
+}
+
+fn is_points(l: flex::StyleLength, v: f64) -> bool {
+    let val: f64 = { l.value };
+    return match { l.unit } {
+        flex::Unit::Point => val == v,
+        _ => false,
+    };
 }
 
 // ---- the agent's door --------------------------------------------------------

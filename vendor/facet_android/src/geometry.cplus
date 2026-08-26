@@ -27,6 +27,7 @@ import "./paint" as paint;
 import "./controls" as controls;
 import "./dex" as dex;
 import "facet/props" as props;
+import "facet/split" as split;
 
 type Node = flex::Node;
 
@@ -207,7 +208,83 @@ fn relayout_root(root: *core::Node, width: f64, height: f64) {
     { (*root).set_width(flex::StyleLength::points(width)) };
     { (*root).set_height(flex::StyleLength::points(height)) };
     { (*root).calculate_layout(width, height) };
+    // THE SPLITS, WHICH READ THEIR OWN EXTENT. A split's clamps are against the
+    // box its parent gave it, so the division cannot be written until there has
+    // been a layout — and writing it changes styles, so there has to be another.
+    // Twice is enough in practice and bounded on principle: the second pass
+    // only re-clamps against an extent the first pass fixed.
+    var pass: i32 = 0 as i32;
+    while pass < (2 as i32) {
+        if !settle_splits(root) { pass = 2 as i32; }
+        else {
+            { (*root).calculate_layout(width, height) };
+            pass = pass +% (1 as i32);
+        }
+    }
     reposition(root);
+    return;
+}
+
+// Every split in the tree, settled against the extent it was just given.
+// Answers whether any style was written, which is what makes the loop above
+// terminate on the pass that changed nothing.
+fn settle_splits(node: *core::Node) -> bool {
+    if node == (0 as *core::Node) { return false; }
+    var wrote: bool = false;
+    if core::kind_of(node) == split::K_SPLIT {
+        let p: *split::SplitProps = controls::split_props(node);
+        if p != (0 as *split::SplitProps) {
+            if controls::settle_split(node, p) { wrote = true; }
+        }
+    }
+    var i: usize = 0 as usize;
+    let count: usize = core::child_count_of(node);
+    while i < count {
+        match core::child_of(node, i) {
+            option::Option[*core::Node]::Some(c) => {
+                if settle_splits(c) { wrote = true; }
+            }
+            option::Option[*core::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return wrote;
+}
+
+// A split's divider sits ON the seam where the leading pane ends — this
+// package's own view rather than one of facet's children, so nothing else in
+// the frame walk places it. Drawn on the seam and not between the panes:
+// `position` is the distance from the leading edge to the divider, and taking
+// a thickness out of a pane would make the panes disagree with the number the
+// application set and reads back.
+fn place_split_divider(n: *core::Node, v: *u8, frame: flex::Frame) {
+    if core::kind_of(n) != split::K_SPLIT { return; }
+    let p: *split::SplitProps = controls::split_props(n);
+    if p == (0 as *split::SplitProps) { return; }
+    let thick: f64 = { (*p).divider_thickness };
+    if thick <= 0.0f64 { return; }
+    let bar: jni::jobject = controls::divider_of(v);
+    if bar == (0 as jni::jobject) { return; }
+    // Where the LEADING PANE ENDS, read from the pane rather than from the
+    // props: the position the application asked for is not the one that landed
+    // when a minimum or the split's own extent clamped it, and the line has to
+    // be where the panes actually parted.
+    var at: f64 = 0.0f64;
+    match core::child_of(n, 0 as usize) {
+        option::Option[*core::Node]::Some(lead) => {
+            let lf: flex::Frame = core::frame_of(lead);
+            match { (*p).axis } {
+                split::SplitAxis::Columns => { at = (lf.left - frame.left) + lf.width; }
+                split::SplitAxis::Rows => { at = (lf.top - frame.top) + lf.height; }
+            }
+        }
+        option::Option[*core::Node]::None => { }
+    }
+    match { (*p).axis } {
+        split::SplitAxis::Columns => { place(bar, at, 0.0f64, thick, frame.height); }
+        split::SplitAxis::Rows => { place(bar, 0.0f64, at, frame.width, thick); }
+    }
+    if e::have_env() { e::env().delete_local_ref(bar); }
     return;
 }
 
@@ -229,6 +306,7 @@ fn reposition(root: *core::Node) {
     if rv != (0 as *u8) { place(rv, f.left, f.top, f.width, f.height); }
     // And its document, for the same reason one layer down.
     size_document(root, rv, f);
+    if rv != (0 as *u8) { place_split_divider(root, rv, f); }
     reposition_children(root, f);
     return;
 }
@@ -255,6 +333,7 @@ fn reposition_children(node: *core::Node, host_abs: flex::Frame) {
                     // space, so subtract the host's origin.
                     place(v, cf.left - host_abs.left, cf.top - host_abs.top, cf.width, cf.height);
                     size_document(c, v, cf);
+                    place_split_divider(c, v, cf);
                     reposition_children(c, cf);
                 } else {
                     // Viewless: pass the SAME host down, so a keyless container
