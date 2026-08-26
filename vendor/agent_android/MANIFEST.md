@@ -32,29 +32,23 @@ The contract with agent_core is identical either way. What changes is where the
 - **`hit_test`.** Answering it means asking Android which view a point reaches,
   which is a native walk this package deliberately does not do. It needs a
   design, not just an implementation.
-- **THE UI-THREAD HOP, and it is the one that blocks the rest.** The surface
-  answers on the serve worker's thread, and two things there are not this
-  thread's to touch: a JNIEnv belongs to ONE thread, and facet's tree is the UI
-  thread's (mount.cplus M6 asserts it on every write).
+- ~~The UI-thread hop.~~ **BUILT.** Every verb packs its arguments into a job,
+  hands it to `mainthread::run_on_ui` and waits; the work happens on the UI
+  thread, where facet's tree and this backend's JNIEnv both live. On the UI
+  thread already — the in-app assistant's path — it is a direct call with no
+  queue and no wait, which is what makes it affordable on every verb rather than
+  only the ones that obviously need it.
 
-  Reads of the NODE TREE are what works today — `describe` walks facet's own
-  data and never calls JNI, which is why it answers at all. Anything that
-  touches a VIEW cannot: `recycler::realised_rows` reads the live View
-  hierarchy, so it returns empty off the UI thread rather than making a call
-  that is undefined and that CheckJNI aborts on. `click` and `set_text` write
-  the tree from the worker and get away with it only because nothing has
-  contended yet.
+  The serve worker attaches itself through `AttachCurrentThreadAsDaemon`, so it
+  has an env of its own for the one call it makes: posting the job. As a DAEMON
+  deliberately — a non-daemon attachment keeps the VM alive, and the accept loop
+  lives for the life of the app.
 
-  Two pieces are needed and neither is written: attach the worker with
-  `AttachCurrentThread` so it has a JNIEnv of its own (the JavaVM slots ARE
-  typed in vendor/jni), and marshal every verb onto the UI thread and wait —
-  `FacetPost` is the mechanism, `scheduler::run_on_main` is the seam, and today
-  that seam is the identity because every other caller already IS the UI thread.
+  ONE JOB SLOT, because there is one serve worker and it waits for its own job
+  before posting another. A second poster is refused rather than raced; the
+  answer to two would be a queue.
 
-  UNTIL THEN THE ROW WALK IS INERT. It is written and it is correct — see below
-  — and it answers nothing over the socket.
-
-- **Rows, once the hop exists.** A realised row is not a child of the list node,
+- ~~Rows.~~ **BUILT, and live.** A realised row is not a child of the list node,
   so `walk_rows` reaches across into the recycler for the rows currently ON
   SCREEN (an agent cannot click a row that has no view, and reporting one would
   be reporting something it cannot act on). A tree names its rows through

@@ -21,7 +21,7 @@ import "jni/jni" as jni;
 import "android_view/runtime" as rt;
 
 // Kept in step by tools/build_dex.sh; do not hand-edit.
-const DEX_LEN: usize = 6896;
+const DEX_LEN: usize = 7092;
 
 static LOADER: usize = 0;
 static C_HOST: usize = 0;
@@ -34,6 +34,7 @@ static C_TEXT: usize = 0;
 static C_STEP: usize = 0;
 static C_ROWS: usize = 0;
 static C_ROWTAP: usize = 0;
+static C_JOB: usize = 0;
 
 // jni.h's JNINativeMethod with the fn slot concretely typed per shape.
 #[repr(C)]
@@ -108,6 +109,7 @@ extern fn facet_android_row_count(envp: *jni::JNIEnv, cls: jni::jobject, token: 
 extern fn facet_android_row_view(envp: *jni::JNIEnv, cls: jni::jobject, token: i64, position: i32,
                                  convert: jni::jobject, parent: jni::jobject) -> jni::jobject;
 extern fn facet_android_row_tapped(envp: *jni::JNIEnv, cls: jni::jobject, token: i64, position: i32);
+extern fn facet_android_job(envp: *jni::JNIEnv, cls: jni::jobject);
 
 fn host_class() -> jni::jclass { return { C_HOST as *u8 }; }
 fn tick_class() -> jni::jclass { return { C_TICK as *u8 }; }
@@ -119,6 +121,7 @@ fn text_class() -> jni::jclass { return { C_TEXT as *u8 }; }
 fn step_class() -> jni::jclass { return { C_STEP as *u8 }; }
 fn rows_class() -> jni::jclass { return { C_ROWS as *u8 }; }
 fn rowtap_class() -> jni::jclass { return { C_ROWTAP as *u8 }; }
+fn job_class() -> jni::jclass { return { C_JOB as *u8 }; }
 fn loaded() -> bool { return LOADER != 0; }
 
 // Load the dex and bind every native. Idempotent; `any_view` is only needed to
@@ -135,7 +138,7 @@ fn ensure_loaded(env: rt::Env, any_view: jni::jobject) {
     // Activity would hold a FacetHost of one class while this code registered
     // natives on the other, and `nativeSizeChanged` would never arrive.
     if load_merged(env) { return; }
-    let dex: *[u8; 6896] = #include_bytes("../facet_android.dex");
+    let dex: *[u8; 7092] = #include_bytes("../facet_android.dex");
     let buffer: jni::jobject = {
         (*(*env.raw())).NewDirectByteBuffer(env.raw(), { dex as *u8 }, DEX_LEN as i64)
     };
@@ -165,6 +168,7 @@ fn ensure_loaded(env: rt::Env, any_view: jni::jobject) {
     C_STEP = { #addr(load_class(env, loader, #str_ptr("cplus.facet.FacetStep\0"))) };
     C_ROWS = { #addr(load_class(env, loader, #str_ptr("cplus.facet.FacetRows\0"))) };
     C_ROWTAP = { #addr(load_class(env, loader, #str_ptr("cplus.facet.FacetRowTap\0"))) };
+    C_JOB = { #addr(load_class(env, loader, #str_ptr("cplus.facet.FacetJob\0"))) };
 
     bind_natives(env);
 
@@ -193,6 +197,7 @@ fn load_merged(env: rt::Env) -> bool {
     C_STEP = { #addr(find_global(env, #str_ptr("cplus/facet/FacetStep\0"))) };
     C_ROWS = { #addr(find_global(env, #str_ptr("cplus/facet/FacetRows\0"))) };
     C_ROWTAP = { #addr(find_global(env, #str_ptr("cplus/facet/FacetRowTap\0"))) };
+    C_JOB = { #addr(find_global(env, #str_ptr("cplus/facet/FacetJob\0"))) };
     // A sentinel rather than a loader object: `loaded()` asks whether the
     // classes are here, and by this path there is no loader to keep.
     LOADER = 1 as usize;
@@ -279,6 +284,14 @@ fn bind_natives(env: rt::Env) {
     };
     let _r7: i32 = { (*(*env.raw())).RegisterNatives(env.raw(), { C_TEXT as *u8 },
                                                      #addr_of(text_rec) as *u8, 1) };
+
+    var job_rec: Native0 = Native0 {
+        name: #str_ptr("nativeJob\0"),
+        signature: #str_ptr("()V\0"),
+        fn_ptr: facet_android_job,
+    };
+    let _rj: i32 = { (*(*env.raw())).RegisterNatives(env.raw(), { C_JOB as *u8 },
+                                                     #addr_of(job_rec) as *u8, 1) };
 
     var rows_recs: [NativeL_I; 1] = [NativeL_I {
         name: #str_ptr("nativeRowCount\0"),

@@ -26,6 +26,7 @@ import "facet/mount" as mount;
 import "./env" as e;
 import "./paint" as paint;
 import "./dex" as dex;
+import "./mainthread" as mainthread;
 import "./scheduler" as scheduler;
 import "./log" as log;
 
@@ -36,6 +37,9 @@ import "./log" as log;
 fn attach_root(env: rt::Env, activity: jni::jobject, root: *core::Node) -> jni::jobject {
     e::set_env(env);
     e::set_activity(env.new_global_ref(activity));
+    // The VM, kept from the one thread that is certain to have an env. Every
+    // other thread gets its own through it — see mainthread::attach.
+    mainthread::remember_vm(env);
 
     // A view is needed before the dex loader can reach a Context, and the dex
     // is needed before a FacetHost can be made. Break the cycle with one plain

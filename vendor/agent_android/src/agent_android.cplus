@@ -23,6 +23,7 @@ import "agent_core/surface" as surface;
 import "agent_core/backend" as mcpb;
 import "facet_android/controls" as controls;
 import "facet_android/recycler" as recycler;
+import "facet_android/mainthread" as mainthread;
 import "facet/tree" as tree;
 
 // A registry index and the facet node behind it, in step by construction: the
@@ -422,6 +423,54 @@ fn click_row(s: *Surface, node: usize) -> bool {
 }
 
 // ---- the vtable ---------------------------------------------------------------
+//
+// EVERY VERB RUNS ON THE UI THREAD. The serve worker's own thread may not touch
+// facet's tree (mount.cplus M6 asserts it on every write) and may not use this
+// backend's JNIEnv, which belongs to the UI thread — so each verb packs its
+// arguments into a job, hands it to `mainthread::run_on_ui`, and waits.
+//
+// On the UI thread itself — the in-app assistant's path — `run_on_ui` is a
+// direct call with no queue and no wait, which is what makes this affordable to
+// put on every verb rather than only the ones that obviously need it.
+
+struct DescribeJob {
+    surf: usize,
+    grant: auth::Grant,
+    out: usize,
+    exposed: bool,
+}
+
+fn describe_job(ctx: *u8) {
+    let j: *DescribeJob = ctx as *DescribeJob;
+    let s: *Surface = { { (*j).surf } as *Surface };
+    { (*s).refresh() };
+    let out: *vec::Vec[mcpb::UiNode] = { { (*j).out } as *vec::Vec[mcpb::UiNode] };
+    { (*out) = { (*s).describe({ (*j).grant }) } };
+    return;
+}
+
+struct ActJob {
+    surf: usize,
+    grant: auth::Grant,
+    id: str,
+    value: str,
+    base: u64,
+    kind: i32,          // 0 = click, 1 = set_text
+    out: usize,
+}
+
+fn act_job(ctx: *u8) {
+    let j: *ActJob = ctx as *ActJob;
+    let s: *Surface = { { (*j).surf } as *Surface };
+    { (*s).refresh() };
+    let out: *surface::Outcome = { { (*j).out } as *surface::Outcome };
+    if { (*j).kind } == (0 as i32) {
+        { (*out) = { (*s).click({ (*j).grant }, { (*j).id }) } };
+        return;
+    }
+    { (*out) = { (*s).set_text({ (*j).grant }, { (*j).id }, { (*j).value }, { (*j).base }) } };
+    return;
+}
 
 // RE-WALKED, not just re-read.
 //
@@ -436,8 +485,12 @@ fn click_row(s: *Surface, node: usize) -> bool {
 // reason; this refreshes from the root it was opened with.
 fn mcp_describe(p: *u8, grant: auth::Grant) -> vec::Vec[mcpb::UiNode] {
     if p == (0 as *u8) { return vec::new::[mcpb::UiNode](); }
-    { (*(p as *Surface)).refresh() };
-    return { (*(p as *Surface)).describe(grant) };
+    var out: vec::Vec[mcpb::UiNode] = vec::new::[mcpb::UiNode]();
+    var job: DescribeJob = DescribeJob {
+        surf: { #addr(p) }, grant: grant, out: { #addr(#addr_of(out)) }, exposed: false,
+    };
+    let _ok: bool = mainthread::run_on_ui(describe_job, { #addr_of(job) as *u8 });
+    return out;
 }
 
 fn mcp_describe_exposed(p: *u8, grant: auth::Grant) -> vec::Vec[mcpb::UiNode] {
@@ -448,16 +501,24 @@ fn mcp_describe_exposed(p: *u8, grant: auth::Grant) -> vec::Vec[mcpb::UiNode] {
 
 fn mcp_click(p: *u8, grant: auth::Grant, id: str) -> surface::Outcome {
     if p == (0 as *u8) { return surface::Outcome::NotFound; }
-    // Refreshed FIRST, or an agent can only click what was on screen when the
-    // window attached — and a row it just read about would not be there.
-    { (*(p as *Surface)).refresh() };
-    return { (*(p as *Surface)).click(grant, id) };
+    var out: surface::Outcome = surface::Outcome::NotFound;
+    var job: ActJob = ActJob {
+        surf: { #addr(p) }, grant: grant, id: id, value: "", base: 0 as u64,
+        kind: 0 as i32, out: { #addr(#addr_of(out)) },
+    };
+    let _ok: bool = mainthread::run_on_ui(act_job, { #addr_of(job) as *u8 });
+    return out;
 }
 
 fn mcp_set_text(p: *u8, grant: auth::Grant, id: str, value: str, base: u64) -> surface::Outcome {
     if p == (0 as *u8) { return surface::Outcome::NotFound; }
-    { (*(p as *Surface)).refresh() };
-    return { (*(p as *Surface)).set_text(grant, id, value, base) };
+    var out: surface::Outcome = surface::Outcome::NotFound;
+    var job: ActJob = ActJob {
+        surf: { #addr(p) }, grant: grant, id: id, value: value, base: base,
+        kind: 1 as i32, out: { #addr(#addr_of(out)) },
+    };
+    let _ok: bool = mainthread::run_on_ui(act_job, { #addr_of(job) as *u8 });
+    return out;
 }
 
 // NOT BUILT, and reported as such rather than answered plausibly. Each is a

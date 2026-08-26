@@ -1,0 +1,131 @@
+// Running work ON THE UI THREAD from somewhere else.
+//
+// Everything the backend does normally arrives from a JVM callback on the UI
+// thread, so `services::run_on_main` is the identity and honestly so. The agent
+// surface is the exception: it answers on a socket worker, and two things there
+// are not that thread's to touch.
+//
+//   A JNIEnv BELONGS TO ONE THREAD. Using the env this backend holds — the UI
+//   thread's — from another is undefined, and CheckJNI calls it an error. A
+//   thread the JVM never called into gets its own through
+//   `AttachCurrentThread`, which hangs off the JavaVM rather than off an env.
+//
+//   FACET'S TREE IS THE UI THREAD'S. mount.cplus M6 asserts it on every write,
+//   and a read racing a layout pass is no better for being a read.
+//
+// So a worker posts the work and waits for it. `View.post` is the queue — the
+// same one every Android app uses — and `FacetJob` is the Runnable, because a
+// Java interface cannot be implemented from native code.
+
+import "stdlib/atomic" as atomic;
+import "jni/jni" as jni;
+import "android_view/runtime" as rt;
+import "android_view/widgets" as w;
+import "./env" as e;
+import "./dex" as dex;
+
+// The VM, read once from the UI thread's env. It is process-wide and outlives
+// every thread, which is exactly why it is the thing to keep rather than an env.
+static VM: usize = 0;
+
+fn remember_vm(env: rt::Env) {
+    if VM != 0 { return; }
+    // `*JavaVM` is what every invoke-interface function takes — C's `JavaVM*`,
+    // which is a pointer to the pointer to the interface. Keeping the inner one
+    // would type-check and then pass the wrong thing.
+    var vm: *jni::JavaVM = 0 as *jni::JavaVM;
+    let rc: i32 = { (*(*env.raw())).GetJavaVM(env.raw(), { #addr_of(vm) as *u8 }) };
+    if rc == (0 as i32) { VM = { #addr(vm) }; }
+    return;
+}
+
+// This thread's own env, attaching if the JVM has never called into it.
+//
+// AS A DAEMON, deliberately: an attached thread that is not a daemon keeps the
+// VM alive, and the agent's accept loop lives for the life of the app. A serve
+// worker should never be the reason a process cannot exit.
+fn attach() -> rt::Env {
+    if VM == 0 { return e::env(); }
+    let vm: *jni::JavaVM = { VM as *jni::JavaVM };
+    var envp: *jni::JNIEnv = 0 as *jni::JNIEnv;
+    // JNI_VERSION_1_6 = 0x00010006.
+    let got: i32 = { (*(*vm)).GetEnv(vm, { #addr_of(envp) as *u8 }, 65542 as i32) };
+    if got == (0 as i32) { return rt::from_native(envp); }
+    let rc: i32 = { (*(*vm)).AttachCurrentThreadAsDaemon(vm, { #addr_of(envp) as *u8 },
+                                                         0 as *u8) };
+    if rc != (0 as i32) { return e::env(); }
+    return rt::from_native(envp);
+}
+
+// ---- the job slot ---------------------------------------------------------------
+//
+// ONE SLOT, because there is one serve worker and it waits for its own job
+// before posting another. A second poster would need a queue; this asserts the
+// assumption instead of pretending to handle it.
+
+static JOB_FN: usize = 0;
+static JOB_CTX: usize = 0;
+static JOB_DONE: i32 = 0;
+static JOB_BUSY: i32 = 0;
+
+// Called by FacetJob.run, on the UI thread.
+fn run_pending() {
+    let raw: usize = JOB_FN;
+    if raw == 0 { return; }
+    let f: fn(*u8) = { raw as fn(*u8) };
+    f({ JOB_CTX as *u8 });
+    JOB_FN = 0;
+    // RELEASED LAST, and with a release store: the waiter reads this and then
+    // reads whatever the job wrote, so the write must not be reordered after it.
+    atomic::store_i32(#addr_of(JOB_DONE), 1 as i32, atomic::Ordering::Release);
+    return;
+}
+
+// Run `f(ctx)` on the UI thread and return when it has finished.
+//
+// ALREADY THERE is the common case — every backend caller is on the UI thread —
+// and then this is a direct call with no queue and no wait.
+fn run_on_ui(f: fn(*u8), ctx: *u8) -> bool {
+    if e::on_ui_thread() { f(ctx); return true; }
+    if !e::have_host() { return false; }
+    // One at a time. A second caller would overwrite the slot the first is
+    // waiting on, and the answer to that is a queue, not a race.
+    if atomic::swap_i32(#addr_of(JOB_BUSY), 1 as i32, atomic::Ordering::AcqRel) != (0 as i32) {
+        return false;
+    }
+    let env: rt::Env = attach();
+    JOB_FN = { f as usize };
+    JOB_CTX = { #addr(ctx) };
+    atomic::store_i32(#addr_of(JOB_DONE), 0 as i32, atomic::Ordering::Release);
+
+    var ok: bool = false;
+    let runnable: jni::jobject = dex::new_no_args(env, dex::job_class());
+    if runnable != (0 as jni::jobject) {
+        var host: w::View = w::View::from_global(env, env.new_global_ref(e::host()));
+        ok = host.post(runnable);
+        let _k: *u8 = host.into_raw();
+        env.delete_local_ref(runnable);
+    }
+    if ok { wait_for_job(); }
+    JOB_FN = 0;
+    atomic::store_i32(#addr_of(JOB_BUSY), 0 as i32, atomic::Ordering::Release);
+    return ok;
+}
+
+// A SLEEP, not a spin. The UI thread has a frame to draw and the waiter has
+// nothing to do; burning a core makes the thing being waited for slower.
+#[link_name = "usleep"]
+extern fn usleep(us: u32) -> i32;
+
+fn wait_for_job() {
+    var spins: i64 = 0 as i64;
+    while atomic::load_i32(#addr_of(JOB_DONE), atomic::Ordering::Acquire) == (0 as i32) {
+        let _s: i32 = { usleep(200 as u32) };
+        spins = spins +% (1 as i64);
+        // A CEILING, so a wedged UI thread costs one refused request rather
+        // than a serve worker that never answers again. Five seconds is far
+        // longer than any layout and far shorter than a person's patience.
+        if spins > (25000 as i64) { return; }
+    }
+    return;
+}

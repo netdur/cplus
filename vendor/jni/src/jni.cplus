@@ -387,7 +387,15 @@ struct JNINativeInterface {
     opaque reserved_unregister_natives: *u8,
     opaque reserved_monitor_enter: *u8,
     opaque reserved_monitor_exit: *u8,
-    opaque reserved_get_java_vm: *u8,
+    // 219: the JavaVM behind this env. The ONLY way a thread that the JVM did
+    // not call into can get a JNIEnv of its own — `AttachCurrentThread` hangs
+    // off the VM, not off an env, and an env belongs to exactly one thread.
+    // Typed when the agent surface needed to answer from its serve worker.
+    // The out-parameter is `*u8` for the same reason `AttachCurrentThread`'s
+    // env slot is: C's `JavaVM**` is three levels deep once `JavaVM` is itself
+    // a pointer to the interface, and spelling that in the signature buys
+    // nothing a cast at the call site does not.
+    GetJavaVM: fn(*JNIEnv, *u8) -> jint,
     opaque reserved_get_string_region: *u8,
     opaque reserved_get_string_utf_region: *u8,
     opaque reserved_get_prim_critical: *u8,
@@ -455,6 +463,9 @@ fn table_fields_sit_at_their_jni_h_indices() {
     // these move, the fill went in at the wrong place.
     assert { (*t).GetVersion as usize } == (4 as usize);
     assert { (*t).GetMethodID as usize } == (33 as usize);
+    // 219, and it matters more than most: naming a reserved slot is exactly
+    // the edit that shifts every later field if it goes in the wrong place.
+    assert { (*t).GetJavaVM as usize } == (219 as usize);
     assert { (*t).CallVoidMethodA as usize } == (63 as usize);
     assert { (*t).NewStringUTF as usize } == (167 as usize);
     assert { (*t).RegisterNatives as usize } == (215 as usize);
