@@ -72,7 +72,8 @@ through liblog (`adb logcat -s facet`) and render an empty container.
   so the tree shape is right and only the arming is missing.
 - **`observe_size`.** Android's answer is `addOnLayoutChangeListener`, which
   needs a fifth DEX adapter. Returns 0 (no handle) today.
-- **`tree`, `table` and `collection`.** The recycler is BUILT — `list` runs on
+- **`table` and `collection`.** `tree` is BUILT, on the same adapter as `list`
+  with a flattened visible-row index in place of a count. The recycler is — `list` runs on
   `ListView` + a `FacetRows` adapter in the dex — and these three ride the same
   machinery with a different model on top. `RecyclerView` was not used: it is
   AndroidX, an .aar with its own dex, and this project ships no Gradle;
@@ -145,6 +146,24 @@ What an app still writes is the `Java_cplus_facet_FacetActivity_nativeCreateView
 export, five lines calling `entry::start`. It lives in the APP because cpc emits
 one object per package: a package that names a symbol obligates everything that
 links it.
+
+### facet's units are density-independent; Android's are pixels
+
+Every other backend gets this free — a point is a point on AppKit and UIKit, and
+GTK scales the surface — so `geometry`'s `px` / `dp` are the only crossing here,
+and everything above them is in facet's units.
+
+IT HID FOR AS LONG AS EVERYTHING WAS MEASURED. A TextView's default text is in
+`sp`, so a label asked for its natural size answers in already-scaled pixels and
+the layout looks right; the probe that started this backend used no density
+constant at all and was correct to. It breaks the moment an application STATES a
+number. The iOS gallery's catalog asks for `row_height: 44` — 44 points, and 44
+raw pixels on a 3x phone is a third of a row, so every row showed the top eighth
+of its text.
+
+`density` is cached in `env` (not `window`) because `px` runs for every frame in
+every layout pass and the read is three JNI calls — and because
+window -> scheduler -> geometry is already a chain.
 
 ### An undefined extent is not zero
 

@@ -27,6 +27,12 @@ import "facet/facet" as core;
 import "facet/props" as props;
 import "facet/mount" as mount;
 import "facet/list" as list;
+import "facet/tree" as tree;
+import "facet/elements" as ui;
+import "facet/vocabulary" as vocab;
+import "stdlib/vec" as vec;
+import "stdlib/status" as status;
+import "stdlib/text" as text;
 import "./env" as e;
 import "./paint" as paint;
 import "./dex" as dex;
@@ -46,7 +52,11 @@ fn list_props(n: *core::Node) -> *props::ListProps {
     return controls::props_of(n, props::K_LIST) as *props::ListProps;
 }
 
-fn create_list(n: *core::Node) -> *u8 {
+fn create_list(n: *core::Node) -> *u8 { return create_list_view(n); }
+
+// The ListView, its adapter and its tap listener. Shared by `list` and `tree`,
+// which differ only in the MODEL the adapter is answered from.
+fn create_list_view(n: *core::Node) -> *u8 {
     let env: rt::Env = e::env();
     var lv: w::ListView = w::ListView::new_context(env, e::context());
     let raw: *u8 = lv.into_raw();
@@ -120,9 +130,12 @@ fn apply_list(v: *u8, n: *core::Node, dirty: u64) {
 
 // ---- the adapter's two questions ---------------------------------------------
 
+// ONE ADAPTER, TWO MODELS. The token is the node, and the node's kind says
+// whether the count comes from a `count` prop or from the visible-row index.
 fn row_count(token: i64) -> i32 {
     let n: *core::Node = { token as *core::Node };
     if n == (0 as *core::Node) { return 0 as i32; }
+    if core::kind_of(n) == tree::K_TREE { return tree_row_count(n); }
     let p: *props::ListProps = list_props(n);
     if p == (0 as *props::ListProps) { return 0 as i32; }
     return { (*p).count as i32 };
@@ -131,6 +144,7 @@ fn row_count(token: i64) -> i32 {
 fn row_tapped(token: i64, position: i32) {
     let n: *core::Node = { token as *core::Node };
     if n == (0 as *core::Node) { return; }
+    if core::kind_of(n) == tree::K_TREE { tree_row_tapped(n, position); return; }
     let p: *props::ListProps = list_props(n);
     if p == (0 as *props::ListProps) { return; }
     { (*p).selected_index = { position as i64 } };
@@ -148,31 +162,42 @@ fn has_bind(p: *props::ListProps) -> bool {
     return { (*p).bind } != props::no_bind;
 }
 
-fn cell_node(env: rt::Env, cell: jni::jobject) -> *core::Node {
-    var view: w::View = w::View::from_global(env, env.new_global_ref(cell));
-    let t: jni::jobject = view.get_tag_i(CELL_NODE_TAG);
+// A POINTER IN A TAG. A keyed tag holds an Object, so a raw pointer travels as
+// a boxed java.lang.Long — which is also why these two are a pair: the box is
+// made on one side and unwrapped on the other, and nothing else should know.
+fn long_tag(env: rt::Env, v: *u8, key: i32) -> i64 {
+    var view: w::View = w::View::from_global(env, env.new_global_ref(v));
+    let t: jni::jobject = view.get_tag_i(key);
     let _k: *u8 = view.into_raw();
-    if t == (0 as jni::jobject) { return 0 as *core::Node; }
-    // The tag holds a Long, because a jobject cannot be a raw pointer.
+    if t == (0 as jni::jobject) { return 0 as i64; }
     let cls: jni::jclass = env.class_cached(#str_ptr("java/lang/Long\0"));
     let mid: jni::jmethodID = env.method_id(cls, #str_ptr("longValue\0"), #str_ptr("()J\0"));
     let bits: i64 = { (*(*env.raw())).CallLongMethodA(env.raw(), t, mid, 0 as *jni::JValue) };
     env.delete_local_ref(t);
-    return { bits as *core::Node };
+    return bits;
 }
 
-fn set_cell_node(env: rt::Env, cell: jni::jobject, n: *core::Node) {
+fn set_long_tag(env: rt::Env, v: *u8, key: i32, bits: i64) {
     let cls: jni::jclass = env.class_cached(#str_ptr("java/lang/Long\0"));
     let mid: jni::jmethodID = env.method_id_static(cls, #str_ptr("valueOf\0"),
                                                    #str_ptr("(J)Ljava/lang/Long;\0"));
-    var args: [jni::JValue; 1] = [jni::arg_long({ #addr(n) as i64 })];
+    var args: [jni::JValue; 1] = [jni::arg_long(bits)];
     let boxed: jni::jobject = {
         (*(*env.raw())).CallStaticObjectMethodA(env.raw(), cls, mid, #addr_of(args[0]))
     };
-    var view: w::View = w::View::from_global(env, env.new_global_ref(cell));
-    view.set_tag_i_object(CELL_NODE_TAG, boxed);
+    var view: w::View = w::View::from_global(env, env.new_global_ref(v));
+    view.set_tag_i_object(key, boxed);
     let _k: *u8 = view.into_raw();
     env.delete_local_ref(boxed);
+    return;
+}
+
+fn cell_node(env: rt::Env, cell: jni::jobject) -> *core::Node {
+    return { long_tag(env, { #addr(cell) as *u8 }, CELL_NODE_TAG) as *core::Node };
+}
+
+fn set_cell_node(env: rt::Env, cell: jni::jobject, n: *core::Node) {
+    set_long_tag(env, { #addr(cell) as *u8 }, CELL_NODE_TAG, { #addr(n) as i64 });
     return;
 }
 
@@ -180,6 +205,7 @@ fn set_cell_node(env: rt::Env, cell: jni::jobject, n: *core::Node) {
 fn row_view(token: i64, position: i32, convert: jni::jobject, parent: jni::jobject) -> jni::jobject {
     let n: *core::Node = { token as *core::Node };
     if n == (0 as *core::Node) { return 0 as jni::jobject; }
+    if core::kind_of(n) == tree::K_TREE { return tree_row_view(n, position, convert); }
     let p: *props::ListProps = list_props(n);
     if p == (0 as *props::ListProps) { return 0 as jni::jobject; }
     let env: rt::Env = e::env();
@@ -295,8 +321,298 @@ fn place_row(env: rt::Env, cell: jni::jobject, n: *core::Node, width: f64, row_h
     let f: flex::Frame = core::frame_of(n);
     var ht: f64 = f.height;
     if ht <= 0.0f64 { ht = 1.0f64; }
-    dex::host_set_wanted(env, cell, { width as i32 }, { ht as i32 });
+    dex::host_set_wanted(env, cell, { geometry::px(width) as i32 }, { geometry::px(ht) as i32 });
     geometry::place(cell, 0.0f64, 0.0f64, width, ht);
     geometry::reposition_children(n, core::frame_of(n));
+    return;
+}
+
+// ---- tree ---------------------------------------------------------------------
+//
+// The SAME ListView and the SAME adapter as a list. What differs is the model:
+// a tree is a hierarchy, and a ListView takes a flat one — so the backend keeps
+// an INDEX of the rows that are currently visible, in display order, and every
+// adapter question is answered against that.
+//
+// The flatten is a port of facet_gtk's `walk_visible`, including the two things
+// it gets right: the ROOT IS THE CONTAINER and not a row (a tree shows its
+// children), and a closed branch is not descended into at all — so a
+// hundred-thousand-node model with everything shut costs two rows.
+
+struct VisibleRow {
+    node: usize,
+    depth: i64,
+}
+
+// Boxed and hung off the ListView, because it must survive between adapter
+// calls and be dropped when it is replaced.
+const TREE_INDEX_TAG: i32 = 2131886085 as i32;   // 0x7F0F0005
+
+fn tree_props(n: *core::Node) -> *tree::TreeProps {
+    return controls::props_of(n, tree::K_TREE) as *tree::TreeProps;
+}
+
+fn is_expanded(p: *tree::TreeProps, node: *tree::TreeNode) -> bool {
+    let id: str = { (*node).id_of() };
+    if id == "" { return false; }
+    let ex: *vocab::TextList = { #addr_of((*p).expanded) };
+    var i: usize = 0 as usize;
+    let n: usize = { (*ex).count() };
+    while i < n {
+        if { (*ex).at(i) } == id { return true; }
+        i = i +% (1 as usize);
+    }
+    return false;
+}
+
+fn walk_visible(node: *tree::TreeNode, p: *tree::TreeProps, depth: i64,
+                is_root: bool, out: *vec::Vec[VisibleRow]) {
+    if !is_root {
+        let _a: status::Status = { (*out).append(
+            VisibleRow { node: { #addr(node) }, depth: depth }) };
+        if !is_expanded(p, node) { return; }
+    }
+    var i: usize = 0 as usize;
+    let count: usize = { (*node).child_count() };
+    while i < count {
+        match { (*node).child_ptr(i) } {
+            option::Option[*tree::TreeNode]::Some(c) => {
+                var next: i64 = depth;
+                if !is_root { next = depth +% (1 as i64); }
+                walk_visible(c, p, next, false, out);
+            }
+            option::Option[*tree::TreeNode]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return;
+}
+
+fn visible_rows(n: *core::Node) -> vec::Vec[VisibleRow] {
+    var rows: vec::Vec[VisibleRow] = vec::new::[VisibleRow]();
+    let p: *tree::TreeProps = tree_props(n);
+    if p == (0 as *tree::TreeProps) { return rows; }
+    walk_visible(#addr_of((*p).root), p, 0 as i64, true, #addr_of(rows));
+    return rows;
+}
+
+fn create_tree(n: *core::Node) -> *u8 {
+    let raw: *u8 = create_list_view(n);
+    reindex_tree(n, raw);
+    return raw;
+}
+
+fn apply_tree(v: *u8, n: *core::Node, dirty: u64) {
+    let env: rt::Env = e::env();
+    // THE INDEX IS THE MODEL as far as the adapter is concerned, so anything
+    // that changes which rows are visible rebuilds it before telling ListView.
+    let moved: u64 = tree::P_ROOT | tree::P_EXPANDED | tree::P_ROW;
+    if (dirty & moved) != (0 as u64) {
+        reindex_tree(n, v);
+        let a: jni::jobject = adapter_of(env, v);
+        if a != (0 as jni::jobject) {
+            dex::rows_changed(env, a);
+            env.delete_local_ref(a);
+        }
+    }
+    return;
+}
+
+fn reindex_tree(n: *core::Node, v: *u8) {
+    if v == (0 as *u8) { return; }
+    forget_index(v);
+    if tree_props(n) == (0 as *tree::TreeProps) { return; }
+    var rows: vec::Vec[VisibleRow] = visible_rows(n);
+    match box::new::[vec::Vec[VisibleRow]](rows) {
+        option::Option[box::Box[vec::Vec[VisibleRow]]]::Some(b) => {
+            set_long_tag(e::env(), v, TREE_INDEX_TAG, { #addr(b.into_raw()) as i64 });
+        }
+        option::Option[box::Box[vec::Vec[VisibleRow]]]::None => { }
+    }
+    return;
+}
+
+fn forget_index(v: *u8) {
+    let bits: i64 = long_tag(e::env(), v, TREE_INDEX_TAG);
+    if bits == (0 as i64) { return; }
+    let _dropped: box::Box[vec::Vec[VisibleRow]] =
+        box::from_raw::[vec::Vec[VisibleRow]]({ bits as *u8 });
+    set_long_tag(e::env(), v, TREE_INDEX_TAG, 0 as i64);
+    return;
+}
+
+fn index_of(n: *core::Node) -> *vec::Vec[VisibleRow] {
+    let v: *u8 = core::view_of(n);
+    if v == (0 as *u8) { return 0 as *vec::Vec[VisibleRow]; }
+    let bits: i64 = long_tag(e::env(), v, TREE_INDEX_TAG);
+    return { bits as *vec::Vec[VisibleRow] };
+}
+
+fn row_at(n: *core::Node, position: i32) -> option::Option[VisibleRow] {
+    let idx: *vec::Vec[VisibleRow] = index_of(n);
+    if idx == (0 as *vec::Vec[VisibleRow]) { return option::Option[VisibleRow]::None; }
+    return match { (*idx).at_ptr({ position as usize }) } {
+        option::Option[*VisibleRow]::Some(r) => option::Option[VisibleRow]::Some({ (*r) }),
+        option::Option[*VisibleRow]::None => option::Option[VisibleRow]::None,
+    };
+}
+
+fn tree_row_count(n: *core::Node) -> i32 {
+    let idx: *vec::Vec[VisibleRow] = index_of(n);
+    if idx == (0 as *vec::Vec[VisibleRow]) { return 0 as i32; }
+    return { { (*idx).count() } as i32 };
+}
+
+// A tap on a tree row means one of two things, and which is not a preference:
+// a row with children TOGGLES, a leaf SELECTS. Android has no disclosure
+// triangle of its own here — the row is ours — so the whole row is the control.
+fn tree_row_tapped(n: *core::Node, position: i32) {
+    let p: *tree::TreeProps = tree_props(n);
+    if p == (0 as *tree::TreeProps) { return; }
+    match row_at(n, position) {
+        option::Option[VisibleRow]::Some(r) => {
+            let node: *tree::TreeNode = { r.node as *tree::TreeNode };
+            if { (*node).child_count() } > (0 as usize) {
+                toggle(p, n, node);
+                return;
+            }
+            { (*p).selected = text::from_str({ (*node).id_of() }) };
+            core::touch(n, tree::P_SELECTED);
+            let f: fn(*tree::TreeNode, *u8) = { (*p).on_select };
+            if f != tree::no_select { f(node, select_ctx(p)); }
+        }
+        option::Option[VisibleRow]::None => { }
+    }
+    return;
+}
+
+// The handler's own context, falling back to the set-wide one — the same
+// fallback facet's own accessors make, so a `tree(ctx:)` call site keeps working.
+fn select_ctx(p: *tree::TreeProps) -> *u8 {
+    let c: *u8 = { (*p).on_select_ctx };
+    if c != (0 as *u8) { return c; }
+    return { (*p).ctx };
+}
+
+fn toggle(p: *tree::TreeProps, n: *core::Node, node: *tree::TreeNode) {
+    let id: str = { (*node).id_of() };
+    if id == "" { return; }
+    if is_expanded(p, node) {
+        // Rebuilt without the id: `TextList` has no remove, and a list this
+        // short is cheaper to rebuild than to grow one.
+        var kept: vocab::TextList = vocab::TextList::new();
+        var i: usize = 0 as usize;
+        let cnt: usize = { (*p).expanded.count() };
+        while i < cnt {
+            let e_id: str = { (*p).expanded.at(i) };
+            if e_id != id { let _a: status::Status = kept.add(e_id); }
+            i = i +% (1 as usize);
+        }
+        { (*p).expanded = kept };
+    } else {
+        let _a: status::Status = { (*p).expanded.add(id) };
+    }
+    // TOUCHED, so the apply above rebuilds the index and tells the adapter —
+    // one path for an expansion whether it came from a tap or from the app.
+    core::touch(n, tree::P_EXPANDED);
+    return;
+}
+
+// A tree's row, through the same cell cycle as a list's: realise once, bind on
+// reuse. The item stands where a list's index stands, which is the only
+// difference the contract makes between them.
+fn tree_row_view(n: *core::Node, position: i32, convert: jni::jobject) -> jni::jobject {
+    let p: *tree::TreeProps = tree_props(n);
+    if p == (0 as *tree::TreeProps) { return 0 as jni::jobject; }
+    let env: rt::Env = e::env();
+    let lf: flex::Frame = core::frame_of(n);
+    var width: f64 = lf.width;
+    if width <= 0.0f64 { width = scheduler::width(); }
+
+    var item: *tree::TreeNode = 0 as *tree::TreeNode;
+    var depth: i64 = 0 as i64;
+    match row_at(n, position) {
+        option::Option[VisibleRow]::Some(r) => {
+            item = { r.node as *tree::TreeNode };
+            depth = r.depth;
+        }
+        option::Option[VisibleRow]::None => { return 0 as jni::jobject; }
+    }
+
+    if convert != (0 as jni::jobject) {
+        let existing: *core::Node = cell_node(env, convert);
+        if existing != (0 as *core::Node) && has_tree_bind(p) {
+            bind_tree_row(p, item, existing);
+            mount::sync_from(existing);
+            indent(existing, depth);
+            place_row(env, convert, existing, width, tree_fixed_height(p));
+            return convert;
+        }
+        if existing != (0 as *core::Node) { mount::unrealise(existing); }
+    }
+
+    let cell: jni::jobject = new_cell(env, convert);
+    var node: core::Node = build_tree_row(p, item);
+    match box::new::[core::Node](node) {
+        option::Option[box::Box[core::Node]]::Some(b) => {
+            let np: *core::Node = { b.into_raw() as *core::Node };
+            let _rv: *u8 = mount::realise(np, cell);
+            if has_tree_bind(p) { bind_tree_row(p, item, np); }
+            mount::sync_from(np);
+            indent(np, depth);
+            place_row(env, cell, np, width, tree_fixed_height(p));
+            set_cell_node(env, cell, np);
+        }
+        option::Option[box::Box[core::Node]]::None => { }
+    }
+    return cell;
+}
+
+// DEPTH IS THE BACKEND'S, not the builder's. A row builder describes one item
+// and knows nothing about where it sits, so the indent is applied to the row's
+// root here — which also means a recycled cell has to have it REWRITTEN, since
+// the cell it came from was at some other depth.
+fn indent(row: *core::Node, depth: i64) {
+    { (*row).set_padding_edge(flex::Edge::Start,
+                              { depth as f64 } * indent_step()) };
+    return;
+}
+
+fn indent_step() -> f64 { return 16.0f64; }
+
+// AGAINST THE SENTINEL, not against null — `tree::no_bind` and `tree::no_row`
+// are real functions, exactly as `props::no_bind` is for a list. Testing for a
+// null pointer answers "yes, there is a builder" for every tree, and
+// `no_row` returns an EMPTY node: thirty-five rows of the right height with
+// nothing in them.
+fn has_tree_bind(p: *tree::TreeProps) -> bool {
+    return { (*p).bind } != tree::no_bind;
+}
+
+fn tree_fixed_height(p: *tree::TreeProps) -> f64 {
+    let h: f64 = { (*p).row_height };
+    if h <= 0.0f64 { return 0.0f64; }
+    return h;
+}
+
+fn build_tree_row(p: *tree::TreeProps, item: *tree::TreeNode) -> core::Node {
+    let f: fn(*tree::TreeNode, *u8) -> flex::Node = { (*p).row };
+    if f == tree::no_row {
+        // NO BUILDER: show the label, which is what `TreeNode.label` is for.
+        var b: core::Builder = core::Builder::new();
+        b.add(ui::label({ (*item).label_of() }, key: "", font_size: 16.0f64));
+        return core::column(b).padding(10.0f64);
+    }
+    var ctx: *u8 = { (*p).row_ctx };
+    if ctx == (0 as *u8) { ctx = { (*p).ctx }; }
+    return f(item, ctx);
+}
+
+fn bind_tree_row(p: *tree::TreeProps, item: *tree::TreeNode, row: *core::Node) {
+    let f: fn(*tree::TreeNode, *u8, *flex::Node) = { (*p).bind };
+    if f == tree::no_bind { return; }
+    var ctx: *u8 = { (*p).bind_ctx };
+    if ctx == (0 as *u8) { ctx = { (*p).ctx }; }
+    f(item, ctx, row);
     return;
 }

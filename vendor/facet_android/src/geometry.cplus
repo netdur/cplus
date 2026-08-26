@@ -89,17 +89,18 @@ fn measure_node(ctx: *u8, avail_w: f64, wm: flex::MeasureMode,
     // because the WIDTHS were right.
     //
     // A NaN is the only value not equal to itself, which is the whole test.
+    // The extents arrive in facet's units and a MeasureSpec is in pixels.
     if is_number(avail_w) {
         match wm {
-            flex::MeasureMode::Exactly => { w_spec = spec_exactly({ avail_w as i32 }); }
-            flex::MeasureMode::AtMost => { w_spec = spec_at_most({ avail_w as i32 }); }
+            flex::MeasureMode::Exactly => { w_spec = spec_exactly({ px(avail_w) as i32 }); }
+            flex::MeasureMode::AtMost => { w_spec = spec_at_most({ px(avail_w) as i32 }); }
             flex::MeasureMode::Undefined => { }
         }
     }
     if is_number(avail_h) {
         match hm {
-            flex::MeasureMode::Exactly => { h_spec = spec_exactly({ avail_h as i32 }); }
-            flex::MeasureMode::AtMost => { h_spec = spec_at_most({ avail_h as i32 }); }
+            flex::MeasureMode::Exactly => { h_spec = spec_exactly({ px(avail_h) as i32 }); }
+            flex::MeasureMode::AtMost => { h_spec = spec_at_most({ px(avail_h) as i32 }); }
             flex::MeasureMode::Undefined => { }
         }
     }
@@ -108,7 +109,8 @@ fn measure_node(ctx: *u8, avail_w: f64, wm: flex::MeasureMode,
     let mw: i32 = view.get_measured_width();
     let mh: i32 = view.get_measured_height();
     paint::unwrap_keep(view);
-    return flex::Size { width: { mw as f64 }, height: { mh as f64 } };
+    // And the answer comes back in pixels, which flex must not see.
+    return flex::Size { width: dp({ mw as f64 }), height: dp({ mh as f64 }) };
 }
 
 fn measure_intrinsic(v: *u8, max_w: f64, max_h: f64) -> flex::Size {
@@ -120,12 +122,37 @@ fn measure_intrinsic(v: *u8, max_w: f64, max_h: f64) -> flex::Size {
     return flex::Size { width: { mw as f64 }, height: { mh as f64 } };
 }
 
+// ---- the density boundary ------------------------------------------------------
+//
+// FACET'S UNITS ARE DENSITY-INDEPENDENT, and Android's View geometry is in
+// PHYSICAL PIXELS. Every other backend gets this for free: a point is a point on
+// AppKit and UIKit, and GTK scales the whole surface. Android does not, so this
+// file is where the two meet — frames in, pixels out.
+//
+// It went unnoticed for as long as everything on screen was MEASURED: a
+// TextView's default text is in `sp`, so a label asked for its natural size
+// answers in already-scaled pixels and the layout looked right. It breaks the
+// moment an application STATES a number. The iOS gallery's tree asks for
+// `row_height: 44`, which is 44 points — and 44 raw pixels on a 3x phone is a
+// third of a row, so every row showed the top eighth of its text.
+//
+// The rule: everything above this line is in facet's units, everything below is
+// pixels, and `px` / `dp` are the only crossings.
+fn density() -> f64 {
+    let d: f64 = e::density();
+    if d <= 0.0f64 { return 1.0f64; }
+    return d;
+}
+
+fn px(v: f64) -> f64 { return v * density(); }
+fn dp(v: f64) -> f64 { return v / density(); }
+
 fn place(v: *u8, x: f64, y: f64, wd: f64, ht: f64) {
     var view: w::View = paint::wrap(v);
-    let iw: i32 = { wd as i32 };
-    let ih: i32 = { ht as i32 };
-    let ix: i32 = { x as i32 };
-    let iy: i32 = { y as i32 };
+    let iw: i32 = { px(wd) as i32 };
+    let ih: i32 = { px(ht) as i32 };
+    let ix: i32 = { px(x) as i32 };
+    let iy: i32 = { px(y) as i32 };
     // MEASURE THEN LAYOUT, always. A View that was never measured has no
     // internal layout — a TextView builds its text Layout in onMeasure — and
     // draws nothing at whatever rect it is given.
@@ -155,7 +182,7 @@ fn size_document(n: *core::Node, v: *u8, frame: flex::Frame) {
     // UNSPECIFIED height, and take THAT as the scroll range. The host has to be
     // able to answer that question on its own.
     if e::have_env() {
-        dex::host_set_wanted(e::env(), doc, { e_size.width as i32 }, { e_size.height as i32 });
+        dex::host_set_wanted(e::env(), doc, { px(e_size.width) as i32 }, { px(e_size.height) as i32 });
     }
     place(doc, 0.0f64, 0.0f64, e_size.width, e_size.height);
     if !e::have_env() { return; }
