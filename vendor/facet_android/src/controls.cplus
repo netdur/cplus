@@ -132,6 +132,12 @@ fn apply_label(v: *u8, n: *core::Node, dirty: u64) {
     if (dirty & (label::P_FONT_SIZE | label::P_FONT_SCALES)) != (0 as u64) {
         apply_text_size(tv, { (*p).font_size }, { (*p).font_scales });
     }
+    // THE RUN LIST WINS OVER THE PLAIN TEXT when there is one, and it is
+    // applied after it: `text` and `formatted_text` are two ways to say what a
+    // label reads, and the second is the specific one.
+    if (dirty & (label::P_FORMATTED_TEXT | label::P_TEXT)) != (0 as u64) {
+        apply_formatted_text(env, v, { #addr_of((*p).formatted_text) });
+    }
     if (dirty & label::P_TEXT_COLOR) != (0 as u64) {
         let c: vocab::Color = { (*p).text_color };
         if c.is_set() { tv.set_text_color_i(paint::argb_of(c)); }
@@ -1385,6 +1391,30 @@ fn apply_text_area(v: *u8, n: *core::Node, dirty: u64) {
                        // AN AREA IS THE MULTI-LINE ONE — the kind carries that,
                        // not a prop, so it is passed rather than read.
                        true);
+    // AFTER THE TEXT IS WRITTEN, and that ordering is not a preference.
+    //
+    // The runs style what is already in the control, so the spannable is built
+    // from the VIEW'S text — and `setText` on an EditText runs the TextWatcher,
+    // which writes what it sees back into the props. Restyling first therefore
+    // committed the view's OLD text (empty, at create), the watcher copied that
+    // emptiness into `text`, and the real text was gone before anything could
+    // write it. The editor showed its placeholder.
+    //
+    // An empty run list is nothing to do at all rather than "no styling applied
+    // over the top": calling in with it would rebuild the spannable on every
+    // keystroke for no change.
+    let restyle: u64 = text_area::P_STYLE_RUNS | text_area::P_TEXT;
+    if (dirty & restyle) != (0 as u64) {
+        let runs: *vocab::StyleRuns = { #addr_of((*p).style_runs) };
+        if !{ (*runs).is_empty() } {
+            var cur: [u8; 4096] = #zero::[[u8; 4096]]();
+            let cbase: *u8 = { #addr_of(cur[0]) };
+            let _c: bool = paint::cstr({ (*p).input_view.text.view() }, cbase,
+                                       4096 as usize);
+            let clen: usize = paint::cstr_len(cbase);
+            apply_style_runs(e::env(), v, runs, { #str_from_raw_parts(cbase, clen) });
+        }
+    }
     return;
 }
 
@@ -4341,5 +4371,128 @@ fn fire_resource_requested(token: i64, url: jni::jstring) {
     let base: *u8 = { #addr_of(buf[0]) };
     if !e::env().string_utf_into(url, base, 1024 as usize) { return; }
     h(base, { (*p).on_web_resource_requested_ctx });
+    return;
+}
+
+// ---- rich text -------------------------------------------------------------------
+//
+// TWO VERBS, ONE MECHANISM. A label's `formatted_text` is a formatted STRING:
+// each run carries its own text and writing it replaces the content. A text
+// area's `style_runs` styles text that is ALREADY THERE and must not touch it —
+// re-setting an editor's text moves the caret and breaks the undo stack. Both
+// end up as spans on a SpannableStringBuilder; they differ only in where the
+// string comes from and how a run's range is stated.
+
+// HOW MANY UTF-16 UNITS the first `upto` bytes of `s` come to.
+//
+// facet counts offsets in BYTES, the way `str` does, and says so: "a backend
+// that indexes in UTF-16 (AppKit) or code points converts on the way in, once,
+// where it knows the encoding". Java is that kind of backend. A leading byte is
+// one unit unless it starts a four-byte sequence, which is a surrogate PAIR;
+// continuation bytes count for nothing.
+fn utf16_len(s: str, upto: usize) -> i32 {
+    var units: i32 = 0 as i32;
+    var i: usize = 0 as usize;
+    var n: usize = s.count();
+    if upto < n { n = upto; }
+    while i < n {
+        let b: u8 = match s.byte_at(i) {
+            option::Option[u8]::Some(x) => x,
+            option::Option[u8]::None => 0 as u8,
+        };
+        if (b & (192 as u8)) != (128 as u8) {
+            if b >= (240 as u8) { units = units +% (2 as i32); }
+            else { units = units +% (1 as i32); }
+        }
+        i = i +% (1 as usize);
+    }
+    return units;
+}
+
+fn span_decoration(d: vocab::TextDecoration) -> i32 {
+    return match d {
+        vocab::TextDecoration::None => 0 as i32,
+        vocab::TextDecoration::Strikethrough => 1 as i32,
+        vocab::TextDecoration::Underline => 2 as i32,
+    };
+}
+
+// A LABEL'S FORMATTED TEXT. The runs are concatenated into the string the view
+// gets, and each run's range is where its own text landed in it.
+fn apply_formatted_text(env: rt::Env, v: *u8, f: *vocab::Spans) {
+    let count: usize = { (*f).count() };
+    if count == (0 as usize) { return; }
+    // THE WHOLE STRING FIRST, because a span cannot be set on text that is not
+    // there yet. Built in one buffer, run by run.
+    var whole: [u8; 4096] = #zero::[[u8; 4096]]();
+    let base: *u8 = { #addr_of(whole[0]) };
+    var i: usize = 0 as usize;
+    while i < count {
+        let r: *vocab::TextSpan = { (*f).at(i) };
+        if r != (0 as *vocab::TextSpan) {
+            append_cstr(base, 4096 as usize, { (*r).text.view() });
+        }
+        i = i +% (1 as usize);
+    }
+    dex::spans_begin(env, { v as jni::jobject }, base);
+    var at: i32 = 0 as i32;
+    var links: bool = false;
+    i = 0 as usize;
+    while i < count {
+        let r: *vocab::TextSpan = { (*f).at(i) };
+        if r == (0 as *vocab::TextSpan) { i = i +% (1 as usize); continue; }
+        var tbuf: [u8; 1024] = #zero::[[u8; 1024]]();
+        let tbase: *u8 = { #addr_of(tbuf[0]) };
+        let _t: bool = paint::cstr({ (*r).text.view() }, tbase, 1024 as usize);
+        let tlen: usize = paint::cstr_len(tbase);
+        let units: i32 = utf16_len({ #str_from_raw_parts(tbase, tlen) }, tlen);
+        var lbuf: [u8; 512] = #zero::[[u8; 512]]();
+        let lbase: *u8 = { #addr_of(lbuf[0]) };
+        let _l: bool = paint::cstr({ (*r).link.view() }, lbase, 512 as usize);
+        let has_link: bool = paint::cstr_len(lbase) > (0 as usize);
+        if has_link { links = true; }
+        let fg: vocab::Color = { (*r).color };
+        let bg: vocab::Color = { (*r).background_color };
+        var size_px: i32 = 0 as i32;
+        if { (*r).font_size } > 0.0f64 { size_px = { e::px({ (*r).font_size }) as i32 }; }
+        dex::spans_add(env, { v as jni::jobject }, at, units,
+                       paint::argb_of(fg), fg.is_set(),
+                       paint::argb_of(bg), bg.is_set(),
+                       is_bold_weight({ (*r).font_weight }), { (*r).is_italic },
+                       span_decoration({ (*r).decoration }), size_px, lbase);
+        at = at +% units;
+        i = i +% (1 as usize);
+    }
+    dex::spans_commit(env, { v as jni::jobject }, links);
+    return;
+}
+
+// A TEXT AREA'S STYLE RUNS, over the text the user has. The offsets arrive in
+// BYTES and the view indexes in UTF-16, so each one is converted against the
+// control's own text — which is why the text is read here rather than the runs
+// being trusted to be ASCII.
+fn apply_style_runs(env: rt::Env, v: *u8, runs: *vocab::StyleRuns, current: str) {
+    dex::spans_begin_from_view(env, { v as jni::jobject });
+    let count: usize = { (*runs).count() };
+    var i: usize = 0 as usize;
+    while i < count {
+        let r: *vocab::StyleRun = { (*runs).at(i) };
+        if r == (0 as *vocab::StyleRun) { i = i +% (1 as usize); continue; }
+        let start_b: usize = { (*r).start };
+        let len_b: usize = { (*r).length };
+        let start16: i32 = utf16_len(current, start_b);
+        let end16: i32 = utf16_len(current, start_b +% len_b);
+        let fg: vocab::Color = { (*r).color };
+        let bg: vocab::Color = { (*r).background_color };
+        dex::spans_add(env, { v as jni::jobject }, start16, end16 -% start16,
+                       paint::argb_of(fg), fg.is_set(),
+                       paint::argb_of(bg), bg.is_set(),
+                       is_bold_weight({ (*r).font_weight }), { (*r).is_italic },
+                       span_decoration({ (*r).decoration }), 0 as i32, 0 as *u8);
+        i = i +% (1 as usize);
+    }
+    // NO LINKS on an editor: a URLSpan in an EditText makes the text clickable
+    // and the caret unreachable, and `StyleRun` carries no destination anyway.
+    dex::spans_commit(env, { v as jni::jobject }, false);
     return;
 }

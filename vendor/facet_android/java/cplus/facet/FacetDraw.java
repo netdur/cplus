@@ -207,6 +207,73 @@ public final class FacetDraw {
         v.setLongClickable((bits & 4) != 0);
     }
 
+    // RICH TEXT, BUILT ONE RUN AT A TIME.
+    //
+    // Two facet verbs land here and they differ in ONE thing: a label's
+    // `formatted_text` carries the text INSIDE each run, so writing it replaces
+    // the content; a text area's `style_runs` styles text that is already there
+    // and must not touch it — re-setting an editor's text moves the caret and
+    // breaks the undo stack. `spansBegin` takes the whole string for the first
+    // and the view's current text for the second, and everything after is the
+    // same.
+    //
+    // The builder is parked on the view rather than passed back across, because
+    // a SpannableStringBuilder is a Java object with no C+ shape: the calls
+    // between begin and commit name the view and nothing else.
+    private static final int SPAN_TAG = 0x7F0F000E;
+
+    public static void spansBegin(android.widget.TextView v, String text) {
+        v.setTag(SPAN_TAG, new android.text.SpannableStringBuilder(text));
+    }
+
+    public static void spansBeginFromView(android.widget.TextView v) {
+        spansBegin(v, v.getText().toString());
+    }
+
+    // One run. `start` and `length` are in UTF-16 code units, which is what a
+    // Java string is indexed in — the C+ side converts from bytes.
+    //
+    // Every attribute is optional and says so with its own flag rather than a
+    // sentinel: a colour of zero is transparent black, which is a colour, and a
+    // weight of zero is not "unset".
+    public static void spansAdd(android.widget.TextView v, int start, int length,
+                                int color, boolean hasColor,
+                                int background, boolean hasBackground,
+                                boolean bold, boolean italic,
+                                int decoration, int sizePx, String link) {
+        Object t = v.getTag(SPAN_TAG);
+        if (!(t instanceof android.text.SpannableStringBuilder)) return;
+        android.text.SpannableStringBuilder b = (android.text.SpannableStringBuilder) t;
+        int end = start + length;
+        if (start < 0 || end > b.length() || length <= 0) return;
+        int flag = android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE;
+        if (hasColor) b.setSpan(new android.text.style.ForegroundColorSpan(color), start, end, flag);
+        if (hasBackground) b.setSpan(new android.text.style.BackgroundColorSpan(background), start, end, flag);
+        if (bold && italic) b.setSpan(new android.text.style.StyleSpan(android.graphics.Typeface.BOLD_ITALIC), start, end, flag);
+        else if (bold) b.setSpan(new android.text.style.StyleSpan(android.graphics.Typeface.BOLD), start, end, flag);
+        else if (italic) b.setSpan(new android.text.style.StyleSpan(android.graphics.Typeface.ITALIC), start, end, flag);
+        if (decoration == 1) b.setSpan(new android.text.style.StrikethroughSpan(), start, end, flag);
+        else if (decoration == 2) b.setSpan(new android.text.style.UnderlineSpan(), start, end, flag);
+        if (sizePx > 0) b.setSpan(new android.text.style.AbsoluteSizeSpan(sizePx), start, end, flag);
+        if (link != null && link.length() > 0) {
+            b.setSpan(new android.text.style.URLSpan(link), start, end, flag);
+        }
+    }
+
+    // A LINK NEEDS A MOVEMENT METHOD, or a URLSpan draws as a link and does
+    // nothing when tapped. Set only when there is one: it makes the view
+    // clickable, and a label that quietly took touches would be the input
+    // trap this backend already learned once.
+    public static void spansCommit(android.widget.TextView v, boolean hasLinks) {
+        Object t = v.getTag(SPAN_TAG);
+        if (!(t instanceof android.text.SpannableStringBuilder)) return;
+        v.setText((android.text.SpannableStringBuilder) t);
+        if (hasLinks) {
+            v.setMovementMethod(android.text.method.LinkMovementMethod.getInstance());
+        }
+        v.setTag(SPAN_TAG, null);
+    }
+
     public static void showKeyboard(android.view.View v) {
         v.requestFocus();
         android.view.inputmethod.InputMethodManager m =

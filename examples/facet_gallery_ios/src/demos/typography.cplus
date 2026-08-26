@@ -10,6 +10,8 @@ import "facet/elements" as ui;
 import "facet/component" as component;
 import "facet/label" as label;
 import "facet/text_field" as text_field;
+import "facet/text_area" as text_area;
+import "stdlib/status" as status;
 import "facet/vocabulary" as vocab;
 import "flex_layout/flex_layout" as flex;
 import "stdlib/option" as option;
@@ -48,6 +50,43 @@ impl Type: component::Component {
                             text_align: vocab::TextAlign::End));
         align.add(shell::caption("`Start` is NSTextAlignment.Natural, which mirrors under RTL. `End` is Right and does not — Foundation has no natural-trailing, on either platform."));
         body.add(shell::card("ALIGNMENT", align));
+
+        // ---- rich text ------------------------------------------------------
+        // ONE LABEL, MANY STYLES. `formatted_text` is a run list that carries
+        // its own text, so writing it replaces what the label reads — the
+        // second, more specific way to say the same thing `text` says.
+        var rich: flex::Builder = flex::Builder::new();
+        var runs: vocab::Spans = vocab::Spans::new();
+        let _r1: status::Status = runs.add(vocab::TextSpan::of("One label, ",
+                                                               font_size: 16.0f64));
+        let _r2: status::Status = runs.add(vocab::TextSpan::of("bold",
+            font_size: 16.0f64, font_weight: vocab::FontWeight::Bold));
+        let _r3: status::Status = runs.add(vocab::TextSpan::of(", ", font_size: 16.0f64));
+        let _r4: status::Status = runs.add(vocab::TextSpan::of("italic",
+            font_size: 16.0f64, italic: true));
+        let _r5: status::Status = runs.add(vocab::TextSpan::of(", ", font_size: 16.0f64));
+        let _r6: status::Status = runs.add(vocab::TextSpan::of("coloured",
+            font_size: 16.0f64, color: vocab::Color::system_teal()));
+        let _r7: status::Status = runs.add(vocab::TextSpan::of(", ", font_size: 16.0f64));
+        let _r8: status::Status = runs.add(vocab::TextSpan::of("underlined",
+            font_size: 16.0f64, decoration: vocab::TextDecoration::Underline));
+        let _r9: status::Status = runs.add(vocab::TextSpan::of(" and ",
+                                                               font_size: 16.0f64));
+        let _r10: status::Status = runs.add(vocab::TextSpan::of("bigger",
+            font_size: 22.0f64, font_weight: vocab::FontWeight::Semibold));
+        let _r11: status::Status = runs.add(vocab::TextSpan::of(".", font_size: 16.0f64));
+        var rich_label: core::Node = ui::label("", key: "t:rich", font_size: 16.0f64,
+                                               line_break: vocab::LineBreak::WordWrap,
+                                               max_lines: 4 as i64);
+        match label::find("t:rich", within: #addr_of(rich_label)) {
+            option::Option[label::Label]::Some(l) => {
+                let _f: label::Label = l.set_formatted_text(runs);
+            }
+            option::Option[label::Label]::None => { }
+        }
+        rich.add(rich_label);
+        rich.add(shell::caption("Each run carries its own text and its own styling — a size, a weight, a slant, two colours, an underline and a link. The label is one view; the runs are spans inside it."));
+        body.add(shell::card("ONE LABEL, MANY STYLES", rich));
 
         return shell::page("Type",
             "Sizes, weights and alignment. Turn on larger text in the simulator's accessibility settings and the body line moves; the rest do not, because only it asked to scale.",
@@ -110,8 +149,27 @@ impl Fields: component::Component {
         body.add(shell::card("TEXT FIELDS", fields));
 
         var area: flex::Builder = flex::Builder::new();
-        area.add(ui::text_area("", key: "t:area", placeholder: "A longer note…")
-                 .height(110.0f64));
+        var editor: core::Node = ui::text_area("let x = 42; // and a note",
+                                               key: "t:area",
+                                               placeholder: "A longer note…")
+            .height(110.0f64);
+        var styles: vocab::StyleRuns = vocab::StyleRuns::new();
+        // "let" bold, "42" teal, the comment grey — by BYTE offset, which is
+        // what facet counts in and what a lexer hands back.
+        let _s1: status::Status = styles.add(vocab::StyleRun::of(0 as usize, 3 as usize,
+            color: vocab::Color::system_indigo(), font_weight: vocab::FontWeight::Bold));
+        let _s2: status::Status = styles.add_color(8 as usize, 2 as usize,
+                                                   vocab::Color::system_teal());
+        let _s3: status::Status = styles.add_color(12 as usize, 13 as usize,
+                                                   vocab::Color::ink(0.45f64));
+        match text_area::find("t:area", within: #addr_of(editor)) {
+            option::Option[text_area::TextArea]::Some(t) => {
+                let _r: text_area::TextArea = t.set_style_runs(styles);
+            }
+            option::Option[text_area::TextArea]::None => { }
+        }
+        area.add(editor);
+        area.add(shell::caption("`style_runs` is the other half: it colours RANGES of text that is already there, by byte offset, without touching the text — which is what syntax highlighting is. The three words above are one run each."));
         area.add(shell::caption("A `text_area` is a UITextView, which is NOT a UIControl — it has no target/action at all, so its typing arrives through a synthesized UITextViewDelegate instead."));
         body.add(shell::card("EDITOR", area));
 

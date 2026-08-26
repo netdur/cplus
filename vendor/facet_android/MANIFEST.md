@@ -153,7 +153,7 @@ count as answering it. Three surfaces, because they fail differently:
 
 | | android | gtk | appkit | uikit |
 |---|---|---|---|---|
-| props | 298/360 · 82% | 356 · 98% | 334 · 92% | 321 · 89% |
+| props | 300/360 · 83% | 356 · 98% | 334 · 92% | 321 · 89% |
 | handlers | 65/68 · 95% | 68 · 100% | 68 · 100% | 65 · 95% |
 | shared band | 19/21 · 90% | 19 · 90% | 20 · 95% | 18 · 85% |
 
@@ -181,6 +181,24 @@ already work.
   settled. facet_uikit makes a UISegmentedControl and never populates it, so
   there is no implementation to read the intent from, and guessing would be
   inventing a control facet has not described.
+
+- **Rich text is SPANS, and the two verbs differ only in where the string comes
+  from.** A label's `formatted_text` carries the text inside each run, so
+  writing it replaces the content; a text area's `style_runs` styles text that
+  is already there and must not touch it — re-setting an editor's text moves the
+  caret and breaks the undo stack. Both become spans on a
+  `SpannableStringBuilder` parked on the view between a begin and a commit.
+
+  Offsets cross an encoding boundary. facet counts in BYTES and says so; a Java
+  string indexes in UTF-16, so each offset is converted against the control's
+  own text — one unit per leading byte, two for a four-byte sequence, which is a
+  surrogate pair.
+
+  A text area's restyle runs AFTER the text is written, and that ordering is not
+  a preference: `setText` runs the TextWatcher, which writes what it sees back
+  into the props. Restyling first committed the view's OLD text — empty, at
+  create — the watcher copied that emptiness into `text`, and the real text was
+  gone before anything could write it. The editor showed its placeholder.
 
 - **THE WINDOW IS EDGE-TO-EDGE, and the safe area is facet's.** Left alone,
   Android insets every app's window itself — which reads as a safe area that
