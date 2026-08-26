@@ -1188,9 +1188,18 @@ fn apply_image(v: *u8, n: *core::Node, dirty: u64) {
     return;
 }
 
+// A GLYPH ONLY, which is the posture the kind's name states — so it is a
+// BORDERLESS button, the same style `text_button` takes.
+//
+// The default `imageButtonStyle` carries an opaque slab of a background, and a
+// glyph button wearing it is a grey rectangle with an icon on it rather than an
+// icon. When the glyph does not resolve at all — an SF Symbol name, which
+// Android has no answer for (MANIFEST §1) — that slab was the whole control,
+// and it read as a broken button rather than as an empty one.
 fn create_icon_button(n: *core::Node) -> *u8 {
     let env: rt::Env = e::env();
-    var ib: w::ImageButton = w::ImageButton::new_context(env, e::context());
+    var ib: w::ImageButton = w::ImageButton::new_context_attribute_set_i(
+        env, e::context(), 0 as jni::jobject, borderless_style(env));
     let raw: *u8 = ib.into_raw();
     let listener: jni::jobject = dex::new_with_token(env, dex::click_class(), { #addr(n) as i64 });
     var view: w::View = w::View::from_global(env, raw);

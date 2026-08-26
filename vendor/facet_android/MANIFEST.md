@@ -44,6 +44,12 @@ Symbols, and Android ships no such glyph set. An `image` source resolves through
 three doors here — a FILE on disk, an APK ASSET, then a DRAWABLE RESOURCE by
 name — and a symbol name is none of them, so it warns once and draws nothing.
 
+An `icon_button` in that state is an EMPTY BORDERLESS button, not a slab: the
+kind's posture is glyph-only, so it takes `borderlessButtonStyle` the way
+`text_button` does. The default `imageButtonStyle` puts an opaque background
+under the glyph, and with no glyph to put there it WAS the control — which
+reads as a broken button rather than an empty one.
+
 Mapping the common names onto `android.R.drawable` was considered and rejected:
 the legacy set is a different vocabulary drawn in a different decade, and
 picking `ic_menu_share` for `square.and.arrow.up` would put a picture on the
