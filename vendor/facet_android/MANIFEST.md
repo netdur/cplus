@@ -80,8 +80,8 @@ through liblog (`adb logcat -s facet`) and render an empty container.
   Built: `label`, `button`, `box` and the plain container, plus `checkbox`,
   `toggle`, `radio`, `slider`, `progress`, `spinner`, `text_field`,
   `text_button`, `text_area`, `search_field`, `image`, `icon_button`, `scroll`,
-  `stepper`, `list`, `tree`, `split`, `canvas`, `swipeable`, `page_dots` and
-  `date_picker` — each with BOTH
+  `stepper`, `list`, `tree`, `split`, `canvas`, `swipeable`, `page_dots`,
+  `date_picker` and `symbol` — each with BOTH
   halves, the props write and the event read. Half a control is worse than none:
   it looks finished and reports nothing, which is the shape of the bug
   facet_uikit carried in its checkbox until 2026-08-25.
@@ -136,6 +136,18 @@ through liblog (`adb logcat -s facet`) and render an empty container.
   AND THE FONT WORKS, which is the one place this backend does something the
   iOS one cannot: a Button is a TextView, so the twelve font verbs facet_uikit
   records as unreachable all reach it.
+
+- **A `symbol` has BOTH tiers, and one of them needs an asset.** The portable
+  tier — `symbol(icons::home)`, a codepoint in facet's own
+  MaterialSymbolsOutlined — is a TextView carrying that font, loaded through
+  `Typeface.Builder` so the FILL axis can be asked for; the system tier is an
+  ImageView against `android.R.drawable`. A node whose SET changes after mount
+  keeps the view it was created with.
+
+  The font is an APK ASSET, which is the standing it has in a macOS app's
+  bundle: `build_android.sh` copies it out of `vendor/facet/assets` and
+  `aapt2 -A` ships it. An app that ships no symbols can drop that line — the
+  backend warns once and draws nothing rather than failing.
 
 - **An image is resolved but never CACHED.** All three doors are open — a file,
   an APK asset through the AssetManager, a drawable resource by name — and each

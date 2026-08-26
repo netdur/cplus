@@ -152,6 +152,38 @@ public final class FacetDraw {
         return c;
     }
 
+    // FACET'S OWN ICON FONT, from the APK's assets.
+    //
+    // `Typeface.createFromAsset` is the only door that takes an AssetManager,
+    // and the FILL axis needs `Typeface.Builder` — which takes an
+    // AssetManager too, and is API 26, this backend's floor exactly. So the
+    // font is loaded once per fill value and kept: a Typeface is immutable and
+    // an icon strip would otherwise rebuild it per glyph.
+    //
+    // MaterialSymbolsOutlined is a VARIABLE font with the FILL axis kept (0
+    // outline .. 1 filled). `setFontVariationSettings` is how that axis is
+    // asked for, and it is why this cannot be `createFromAsset`.
+    private static final java.util.HashMap<String, android.graphics.Typeface> FONTS =
+        new java.util.HashMap<>();
+
+    public static android.graphics.Typeface iconFont(android.content.Context c,
+                                                     String path, int fill) {
+        String key = path + "#" + fill;
+        android.graphics.Typeface t = FONTS.get(key);
+        if (t != null) return t;
+        try {
+            android.graphics.Typeface.Builder b =
+                new android.graphics.Typeface.Builder(c.getAssets(), path);
+            if (fill > 0) b.setFontVariationSettings("'FILL' 1");
+            t = b.build();
+        } catch (Exception e) {
+            t = null;
+        }
+        if (t == null) return null;
+        FONTS.put(key, t);
+        return t;
+    }
+
     // A block of text in a box: wrapped, aligned both ways, and clipped or not.
     // `align` 0 start / 1 center / 2 end, `valign` 0 top / 1 middle / 2 bottom.
     public static void textBlock(android.graphics.Canvas canvas, android.graphics.Paint p,

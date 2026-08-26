@@ -59,7 +59,15 @@ DEPS="$V/facet_runtime/lib/$T/libfacet_runtime.a \
 # would otherwise compile the app's MainActivity.
 "$BT/d8" --release --lib "$AJ" --output out $V/facet_android/facet_android.dex
 
+# FACET'S ICON FONT, shipped as an APK ASSET — the same standing it has in a
+# macOS app's bundle, where facet_appkit registers it from. `symbol(icons::home)`
+# is the PORTABLE icon tier and this is what makes it resolve; an app that ships
+# no symbols can drop this and the backend warns once instead of drawing blanks.
+mkdir -p out/assets
+cp "$V/facet/assets/MaterialSymbolsOutlined.ttf" out/assets/
+
 "$BT/aapt2" link -o out/base.apk --manifest AndroidManifest.xml -I "$AJ" \
+    -A out/assets \
     --min-sdk-version 26 --target-sdk-version 34
 (cd out && zip -q base.apk classes.dex lib/arm64-v8a/libiosgallery.so)
 "$BT/zipalign" -f -p 4 out/base.apk out/aligned.apk

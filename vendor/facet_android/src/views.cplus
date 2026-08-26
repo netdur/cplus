@@ -13,6 +13,7 @@ import "facet/props" as props;
 import "facet/text_button" as text_button;
 import "facet/tree" as tree;
 import "facet/split" as split;
+import "facet/symbol" as symbol;
 import "facet/gestures" as gestures;
 import "facet/vocabulary" as vocab;
 import "./env" as e;
@@ -153,6 +154,7 @@ fn create_for_kind(kind: u32, n: *core::Node) -> *u8 {
     if kind == props::K_CANVAS { return controls::create_canvas(n); }
     if kind == props::K_PAGE_DOTS { return controls::create_page_dots(n); }
     if kind == props::K_DATE_PICKER { return controls::create_date_picker(n); }
+    if kind == symbol::K_SYMBOL { return controls::create_symbol(n); }
     if kind == props::K_SWIPEABLE { return swipe::create(n); }
     // Not built yet. A backend that silently substituted a blank container for
     // a control it does not have would be indistinguishable from a finished
@@ -204,6 +206,7 @@ fn apply_for_kind(kind: u32, v: *u8, n: *core::Node, dirty: u64) {
     if kind == props::K_CANVAS { controls::apply_canvas(v, n, dirty); return; }
     if kind == props::K_PAGE_DOTS { controls::apply_page_dots(v, n, dirty); return; }
     if kind == props::K_DATE_PICKER { controls::apply_date_picker(v, n, dirty); return; }
+    if kind == symbol::K_SYMBOL { controls::apply_symbol(v, n, dirty); return; }
     if kind == props::K_SWIPEABLE { swipe::apply(v, n, dirty); return; }
     return;
 }
@@ -234,6 +237,8 @@ fn has_intrinsic_size(kind: u32) -> bool {
     // measurement and not a style — the same standing a stepper has.
     if kind == props::K_PAGE_DOTS { return true; }
     if kind == props::K_DATE_PICKER { return true; }
+    // A symbol is as big as its glyph, which is a measurement.
+    if kind == symbol::K_SYMBOL { return true; }
     return false;
 }
 

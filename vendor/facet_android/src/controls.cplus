@@ -35,6 +35,7 @@ import "facet/split" as split;
 import "facet/canvas" as canvas;
 import "facet/page_dots" as page_dots;
 import "facet/date_picker" as date_picker;
+import "facet/symbol" as symbol;
 import "facet/vocabulary" as vocab;
 import "./env" as e;
 import "./paint" as paint;
@@ -1553,6 +1554,172 @@ fn put_str_at(buf: *u8, at: usize, s: *u8) -> usize {
         }
     }
     return i;
+}
+
+// ---- symbol ------------------------------------------------------------------
+// A GLYPH, and facet's one control that facet invented rather than adopted.
+//
+// Two tiers reach two different Android things, so they reach two different
+// VIEWS and the kind picks at create:
+//
+//   Bundled — facet's own MaterialSymbolsOutlined, a variable font shipped in
+//             the APK's assets. A TextView whose text is ONE CODEPOINT and
+//             whose typeface is that font. Portable, and the name was checked
+//             at compile time by `icons::`.
+//   System  — the platform's own set, which on Android is `android.R.drawable`
+//             by name (MANIFEST §1). An ImageView, resolved through the same
+//             four doors an `image` uses.
+//
+// A node whose SET changes after it is mounted keeps the view it was made with,
+// because a view is not re-created — and that is warned rather than left to
+// look like a font problem.
+
+fn symbol_props(n: *core::Node) -> *symbol::SymbolProps {
+    return props_of(n, symbol::K_SYMBOL) as *symbol::SymbolProps;
+}
+
+fn is_system_symbol(p: *symbol::SymbolProps) -> bool {
+    return match { (*p).set } {
+        symbol::IconSet::System => true,
+        symbol::IconSet::Bundled => false,
+    };
+}
+
+fn create_symbol(n: *core::Node) -> *u8 {
+    let env: rt::Env = e::env();
+    let p: *symbol::SymbolProps = symbol_props(n);
+    if p != (0 as *symbol::SymbolProps) && is_system_symbol(p) {
+        var iv: w::ImageView = w::ImageView::new_context(env, e::context());
+        return iv.into_raw();
+    }
+    var tv: w::TextView = w::TextView::new_context(env, e::context());
+    let raw: *u8 = tv.into_raw();
+    var t: w::TextView = w::TextView::from_global(env, raw);
+    t.set_gravity(17 as i32);   // CENTER
+    // A GLYPH IS NOT PROSE: it does not grow with the reader's text setting,
+    // because its size is a layout dimension the application chose.
+    t.set_include_font_padding(false);
+    let _k: *u8 = t.into_raw();
+    return raw;
+}
+
+fn apply_symbol(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *symbol::SymbolProps = symbol_props(n);
+    if p == (0 as *symbol::SymbolProps) { return; }
+    let env: rt::Env = e::env();
+    if is_system_symbol(p) {
+        if (dirty & symbol::P_NAME) != (0 as u64) || dirty == paint::all_bits() {
+            set_source(env, v, { (*p).name.view() });
+        }
+        if (dirty & symbol::P_COLOR) != (0 as u64) || dirty == paint::all_bits() {
+            let c: vocab::Color = { (*p).color };
+            if c.is_set() { tint_image(env, v, c); }
+        }
+        return;
+    }
+    var tv: w::TextView = w::TextView::from_global(env, v);
+    // THE GLYPH, ITS FONT AND ITS FILL ARE ONE WRITE: the fill is an axis of
+    // the font, so a new fill is a new Typeface and the glyph has to be put
+    // back into it.
+    let watched: u64 = symbol::P_ICON | symbol::P_FILL | symbol::P_FONT | symbol::P_SIZE;
+    if (dirty & watched) != (0 as u64) || dirty == paint::all_bits() {
+        var buf: [u8; 8] = #zero::[[u8; 8]]();
+        let base: *u8 = { #addr_of(buf[0]) };
+        put_codepoint(base, { (*p).icon });
+        tv.set_text_str(base);
+        let sz: f64 = { (*p).size };
+        if sz > 0.0f64 { tv.set_text_size_i_f(1 as i32, { sz as f32 }); }   // DIP
+        apply_icon_font(env, tv, { (*p).font.view() }, { (*p).fill });
+    }
+    if (dirty & symbol::P_COLOR) != (0 as u64) || dirty == paint::all_bits() {
+        let c: vocab::Color = { (*p).color };
+        if c.is_set() { tv.set_text_color_i(paint::argb_of(c)); }
+    }
+    let _k: *u8 = tv.into_raw();
+    return;
+}
+
+// facet's font unless the application named its own — and a named one is an
+// ASSET PATH, because that is how an Android app ships a font.
+fn apply_icon_font(env: rt::Env, tv: w::TextView, family: str, fill: f64) {
+    var buf: [u8; 256] = #zero::[[u8; 256]]();
+    let base: *u8 = { #addr_of(buf[0]) };
+    var path: *u8 = #str_ptr("MaterialSymbolsOutlined.ttf\0");
+    if family != "" {
+        if paint::cstr(family, base, 256 as usize) { path = base; }
+    }
+    // The axis has TWO ends and facet's `fill` is a number between them: the
+    // ends are two different glyphs in the font's own terms, so a value in
+    // between rounds to the nearer rather than interpolating.
+    var fill_axis: i32 = 0 as i32;
+    if fill >= 0.5f64 { fill_axis = 1 as i32; }
+    let tf: jni::jobject = dex::icon_font(env, e::context(), path, fill_axis);
+    if tf == (0 as jni::jobject) {
+        warn_no_icon_font();
+        return;
+    }
+    tv.set_typeface_typeface(tf);
+    env.delete_local_ref(tf);
+    return;
+}
+
+static ICON_FONT_WARNED: bool = false;
+
+fn warn_no_icon_font() {
+    if ICON_FONT_WARNED { return; }
+    ICON_FONT_WARNED = true;
+    log::warn(#str_ptr("symbol: no MaterialSymbolsOutlined.ttf in assets/ - the app's build must ship facet's icon font, see MANIFEST 3\0"));
+    return;
+}
+
+// ONE CODEPOINT, as the modified UTF-8 `NewStringUTF` reads.
+//
+// Not plain UTF-8: a codepoint above the BMP is written as its SURROGATE PAIR,
+// each surrogate encoded in three bytes — which is what the JVM's modified
+// UTF-8 means and what a four-byte sequence would NOT be. Material Symbols has
+// glyphs at U+FFF0E and above, so this is not theoretical.
+fn put_codepoint(buf: *u8, cp: u32) {
+    var i: usize = 0 as usize;
+    if cp < (65536u32) {
+        i = put_utf8_bmp(buf, i, cp);
+    } else {
+        let v: u32 = cp -% (65536u32);
+        let hi: u32 = (55296u32) +% (v >> (10u32));
+        let lo: u32 = (56320u32) +% (v & (1023u32));
+        i = put_utf8_bmp(buf, i, hi);
+        i = put_utf8_bmp(buf, i, lo);
+    }
+    let term: *u8 = { ({ #addr(buf) } +% i) as *u8 };
+    { (*term) = 0 as u8 };
+    return;
+}
+
+// A BMP code unit, in one, two or three bytes. Every icon codepoint is in the
+// private-use area, which is three — the shorter cases are here because a
+// caller's own font may not be.
+fn put_utf8_bmp(buf: *u8, at: usize, c: u32) -> usize {
+    var i: usize = at;
+    if c < (128u32) {
+        i = put_byte(buf, i, { c as u8 });
+        return i;
+    }
+    if c < (2048u32) {
+        i = put_byte(buf, i, { ((192u32) | (c >> (6u32))) as u8 });
+        i = put_byte(buf, i, { ((128u32) | (c & (63u32))) as u8 });
+        return i;
+    }
+    i = put_byte(buf, i, { ((224u32) | (c >> (12u32))) as u8 });
+    i = put_byte(buf, i, { ((128u32) | ((c >> (6u32)) & (63u32))) as u8 });
+    i = put_byte(buf, i, { ((128u32) | (c & (63u32))) as u8 });
+    return i;
+}
+
+// An ImageView's TINT, which is what a coloured system glyph is: the drawable
+// is a shape and the colour is applied over it.
+fn tint_image(env: rt::Env, v: *u8, c: vocab::Color) {
+    env.call_void_1(v, #str_ptr("android/widget/ImageView\0"), #str_ptr("setColorFilter\0"),
+                    #str_ptr("(I)V\0"), jni::arg_int(paint::argb_of(c)));
+    return;
 }
 
 // ---- a control's OWN chrome --------------------------------------------------

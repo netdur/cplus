@@ -21,7 +21,7 @@ import "jni/jni" as jni;
 import "android_view/runtime" as rt;
 
 // Kept in step by tools/build_dex.sh; do not hand-edit.
-const DEX_LEN: usize = 17332;
+const DEX_LEN: usize = 18276;
 
 static LOADER: usize = 0;
 static C_HOST: usize = 0;
@@ -171,7 +171,7 @@ fn ensure_loaded(env: rt::Env, any_view: jni::jobject) {
     // Activity would hold a FacetHost of one class while this code registered
     // natives on the other, and `nativeSizeChanged` would never arrive.
     if load_merged(env) { return; }
-    let dex: *[u8; 17332] = #include_bytes("../facet_android.dex");
+    let dex: *[u8; 18276] = #include_bytes("../facet_android.dex");
     let buffer: jni::jobject = {
         (*(*env.raw())).NewDirectByteBuffer(env.raw(), { dex as *u8 }, DEX_LEN as i64)
     };
@@ -554,6 +554,23 @@ fn control_background(env: rt::Env, v: jni::jobject, fill: i32, has_fill: bool,
     { (*(*env.raw())).CallStaticVoidMethodA(env.raw(), { C_DRAW as *u8 }, mid,
                                             #addr_of(args[0])) };
     return;
+}
+
+// The icon font, as a LOCAL ref or null. Cached on the Java side by path and
+// fill, so this is a HashMap lookup after the first call.
+fn icon_font(env: rt::Env, ctx: jni::jobject, path: *u8, fill: i32) -> jni::jobject {
+    if C_DRAW == 0 { return 0 as jni::jobject; }
+    let mid: jni::jmethodID = env.method_id_static({ C_DRAW as *u8 }, #str_ptr("iconFont\0"),
+        #str_ptr("(Landroid/content/Context;Ljava/lang/String;I)Landroid/graphics/Typeface;\0"));
+    if mid == (0 as jni::jmethodID) { return 0 as jni::jobject; }
+    let js: jni::jstring = env.new_string_utf(path);
+    var args: [jni::JValue; 3] = [jni::arg_object(ctx), jni::arg_object(js),
+                                  jni::arg_int(fill)];
+    let r: jni::jobject = { (*(*env.raw())).CallStaticObjectMethodA(env.raw(),
+                                { C_DRAW as *u8 }, mid, #addr_of(args[0])) };
+    env.delete_local_ref(js);
+    env.clear_exception();
+    return r;
 }
 
 fn tap_feedback(env: rt::Env, v: jni::jobject, radius: f64) {
