@@ -121,8 +121,44 @@ public final class FacetDraw {
             android.content.res.ColorStateList.valueOf(highlight(v)), null, mask));
     }
 
-    // The theme's own press colour. Asked for rather than picked: a highlight
-    // that does not come from the theme is wrong in one of the two modes.
+    // A GLYPH BUTTON'S PRESS IS A CIRCLE, and Android already has one:
+    // `selectableItemBackgroundBorderless` is the borderless ripple every icon
+    // button on the platform wears — unbounded, centred on the finger, round.
+    //
+    // Taken from the THEME rather than built here, because a circle built from
+    // a mask is an ELLIPSE the moment the view is wider than it is tall, which
+    // a glyph button stretched by a row always is.
+    public static void tapFeedbackBorderless(android.view.View v) {
+        android.content.res.TypedArray a = v.getContext().obtainStyledAttributes(
+            new int[] { android.R.attr.selectableItemBackgroundBorderless });
+        android.graphics.drawable.Drawable d = a.getDrawable(0);
+        a.recycle();
+        if (d == null) { tapFeedback(v, 0f); return; }
+        v.setForeground(d);
+        if (!(d instanceof android.graphics.drawable.RippleDrawable)) return;
+        final android.graphics.drawable.RippleDrawable r =
+            (android.graphics.drawable.RippleDrawable) d;
+        // AN UNBOUNDED RIPPLE TAKES ITS RADIUS FROM ITS HOTSPOT BOUNDS, and
+        // those default to the whole view — so a glyph button stretched across a
+        // row rippled in a circle the width of the row, spilling over the card
+        // it sat in. A centred SQUARE is what a glyph button's box actually is;
+        // the circle then fits the control instead of the layout.
+        //
+        // Re-set on every layout, because facet lays this view out itself and
+        // the size it gives can change between passes.
+        v.addOnLayoutChangeListener(new android.view.View.OnLayoutChangeListener() {
+            @Override public void onLayoutChange(android.view.View view, int l, int t,
+                                                 int rr, int b, int ol, int ot,
+                                                 int orr, int ob) {
+                int w = rr - l, h = b - t;
+                int side = Math.min(w, h);
+                if (side <= 0) return;
+                int cx = w / 2, cy = h / 2, half = side / 2;
+                r.setHotspotBounds(cx - half, cy - half, cx + half, cy + half);
+            }
+        });
+    }
+
     // The theme's own press colour. Asked for rather than picked: a highlight
     // that does not come from the theme is wrong in one of the two modes.
     //

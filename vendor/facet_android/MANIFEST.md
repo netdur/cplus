@@ -53,11 +53,15 @@ differ per platform BY DESIGN — the contract calls naming one "a deliberate,
 visible choice to write platform-specific code" — so a shared source picks the
 name with `#platform()`, which is what examples/facet_gallery_ios does.
 
-An `icon_button` in that state is an EMPTY BORDERLESS button, not a slab: the
-kind's posture is glyph-only, so it takes `borderlessButtonStyle` the way
-`text_button` does. The default `imageButtonStyle` puts an opaque background
-under the glyph, and with no glyph to put there it WAS the control — which
-reads as a broken button rather than an empty one.
+An `icon_button` is a GLYPH AND A CIRCLE and nothing else: no background at
+all, and the theme's own `selectableItemBackgroundBorderless` for the press,
+with its hotspot bounds pinned to a centred SQUARE so the ripple is a circle
+around the glyph rather than one the width of whatever box the layout gave it.
+That is what a glyph button wears everywhere else on the platform.
+
+The default `imageButtonStyle` puts an opaque background under the glyph, and
+with no glyph to put there it WAS the control — a slab that read as a broken
+button rather than an empty one.
 
 Mapping the common names onto `android.R.drawable` was considered and rejected:
 the legacy set is a different vocabulary drawn in a different decade, and

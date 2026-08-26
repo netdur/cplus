@@ -1231,7 +1231,22 @@ fn create_icon_button(n: *core::Node) -> *u8 {
     view.set_on_click_listener(listener);
     paint::unwrap_keep(view);
     env.delete_local_ref(listener);
-    dex::tap_feedback(env, raw, 0.0f64);
+    // NO CHROME AT ALL, which is what glyph-only means — and what leaves ONE
+    // press to see. The borderless style still carries a background ripple of
+    // its own, bounded to the whole box, so a wide glyph button lit up as a
+    // band with a circle inside it. The band is the part that is not the
+    // control.
+    //
+    // Cleared BEFORE `views::create` remembers the platform's background, so
+    // "facet declares nothing" restores nothing rather than putting the band
+    // back on the next apply.
+    var bare: w::View = w::View::from_global(env, raw);
+    bare.set_background(0 as jni::jobject);
+    paint::unwrap_keep(bare);
+    // ROUND, because a glyph button's press is round on this platform — and the
+    // theme's own borderless ripple IS that circle, rather than one this
+    // package draws from a mask that would be an ellipse in a wide box.
+    dex::tap_feedback_borderless(env, raw);
     return raw;
 }
 

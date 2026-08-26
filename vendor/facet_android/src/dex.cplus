@@ -21,7 +21,7 @@ import "jni/jni" as jni;
 import "android_view/runtime" as rt;
 
 // Kept in step by tools/build_dex.sh; do not hand-edit.
-const DEX_LEN: usize = 18276;
+const DEX_LEN: usize = 19032;
 
 static LOADER: usize = 0;
 static C_HOST: usize = 0;
@@ -171,7 +171,7 @@ fn ensure_loaded(env: rt::Env, any_view: jni::jobject) {
     // Activity would hold a FacetHost of one class while this code registered
     // natives on the other, and `nativeSizeChanged` would never arrive.
     if load_merged(env) { return; }
-    let dex: *[u8; 18276] = #include_bytes("../facet_android.dex");
+    let dex: *[u8; 19032] = #include_bytes("../facet_android.dex");
     let buffer: jni::jobject = {
         (*(*env.raw())).NewDirectByteBuffer(env.raw(), { dex as *u8 }, DEX_LEN as i64)
     };
@@ -571,6 +571,19 @@ fn icon_font(env: rt::Env, ctx: jni::jobject, path: *u8, fill: i32) -> jni::jobj
     env.delete_local_ref(js);
     env.clear_exception();
     return r;
+}
+
+// The theme's own BORDERLESS ripple — a circle, which is what a glyph button
+// wears everywhere else on the platform.
+fn tap_feedback_borderless(env: rt::Env, v: jni::jobject) {
+    if C_DRAW == 0 { return; }
+    let mid: jni::jmethodID = env.method_id_static({ C_DRAW as *u8 },
+        #str_ptr("tapFeedbackBorderless\0"), #str_ptr("(Landroid/view/View;)V\0"));
+    if mid == (0 as jni::jmethodID) { return; }
+    var args: [jni::JValue; 1] = [jni::arg_object(v)];
+    { (*(*env.raw())).CallStaticVoidMethodA(env.raw(), { C_DRAW as *u8 }, mid,
+                                            #addr_of(args[0])) };
+    return;
 }
 
 fn tap_feedback(env: rt::Env, v: jni::jobject, radius: f64) {
