@@ -25,6 +25,7 @@ import "facet/facet" as core;
 import "./env" as e;
 import "./paint" as paint;
 import "./controls" as controls;
+import "./swipe" as swipe;
 import "./dex" as dex;
 import "facet/props" as props;
 import "facet/split" as split;
@@ -306,7 +307,10 @@ fn reposition(root: *core::Node) {
     if rv != (0 as *u8) { place(rv, f.left, f.top, f.width, f.height); }
     // And its document, for the same reason one layer down.
     size_document(root, rv, f);
-    if rv != (0 as *u8) { place_split_divider(root, rv, f); }
+    if rv != (0 as *u8) {
+        place_split_divider(root, rv, f);
+        swipe::place_strip(root, rv, f, place);
+    }
     reposition_children(root, f);
     return;
 }
@@ -334,6 +338,7 @@ fn reposition_children(node: *core::Node, host_abs: flex::Frame) {
                     place(v, cf.left - host_abs.left, cf.top - host_abs.top, cf.width, cf.height);
                     size_document(c, v, cf);
                     place_split_divider(c, v, cf);
+                    swipe::place_strip(c, v, cf, place);
                     reposition_children(c, cf);
                 } else {
                     // Viewless: pass the SAME host down, so a keyless container

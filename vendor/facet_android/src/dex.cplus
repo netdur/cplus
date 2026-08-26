@@ -21,7 +21,7 @@ import "jni/jni" as jni;
 import "android_view/runtime" as rt;
 
 // Kept in step by tools/build_dex.sh; do not hand-edit.
-const DEX_LEN: usize = 9364;
+const DEX_LEN: usize = 9964;
 
 static LOADER: usize = 0;
 static C_HOST: usize = 0;
@@ -37,6 +37,7 @@ static C_ROWTAP: usize = 0;
 static C_JOB: usize = 0;
 static C_CANVAS: usize = 0;
 static C_DRAW: usize = 0;
+static C_SWIPE: usize = 0;
 
 // jni.h's JNINativeMethod with the fn slot concretely typed per shape.
 #[repr(C)]
@@ -91,6 +92,13 @@ struct NativeLIOO_O {
 }
 
 #[repr(C)]
+struct NativeLIFF_Z {
+    opaque name: *u8,
+    opaque signature: *u8,
+    fn_ptr: fn(*jni::JNIEnv, jni::jobject, i64, i32, f32, f32) -> u8,
+}
+
+#[repr(C)]
 struct Native2I {
     opaque name: *u8,
     opaque signature: *u8,
@@ -114,6 +122,10 @@ extern fn facet_android_row_tapped(envp: *jni::JNIEnv, cls: jni::jobject, token:
 extern fn facet_android_job(envp: *jni::JNIEnv, cls: jni::jobject);
 extern fn facet_android_draw(envp: *jni::JNIEnv, cls: jni::jobject, token: i64,
                              canvas: jni::jobject);
+extern fn facet_android_intercept(envp: *jni::JNIEnv, cls: jni::jobject, token: i64,
+                                  action: i32, x: f32, y: f32) -> u8;
+extern fn facet_android_touch(envp: *jni::JNIEnv, cls: jni::jobject, token: i64,
+                              action: i32, x: f32, y: f32) -> u8;
 
 fn host_class() -> jni::jclass { return { C_HOST as *u8 }; }
 fn tick_class() -> jni::jclass { return { C_TICK as *u8 }; }
@@ -127,6 +139,7 @@ fn rows_class() -> jni::jclass { return { C_ROWS as *u8 }; }
 fn rowtap_class() -> jni::jclass { return { C_ROWTAP as *u8 }; }
 fn job_class() -> jni::jclass { return { C_JOB as *u8 }; }
 fn canvas_class() -> jni::jclass { return { C_CANVAS as *u8 }; }
+fn swipe_class() -> jni::jclass { return { C_SWIPE as *u8 }; }
 fn loaded() -> bool { return LOADER != 0; }
 
 // Load the dex and bind every native. Idempotent; `any_view` is only needed to
@@ -143,7 +156,7 @@ fn ensure_loaded(env: rt::Env, any_view: jni::jobject) {
     // Activity would hold a FacetHost of one class while this code registered
     // natives on the other, and `nativeSizeChanged` would never arrive.
     if load_merged(env) { return; }
-    let dex: *[u8; 9364] = #include_bytes("../facet_android.dex");
+    let dex: *[u8; 9964] = #include_bytes("../facet_android.dex");
     let buffer: jni::jobject = {
         (*(*env.raw())).NewDirectByteBuffer(env.raw(), { dex as *u8 }, DEX_LEN as i64)
     };
@@ -176,6 +189,7 @@ fn ensure_loaded(env: rt::Env, any_view: jni::jobject) {
     C_JOB = { #addr(load_class(env, loader, #str_ptr("cplus.facet.FacetJob\0"))) };
     C_CANVAS = { #addr(load_class(env, loader, #str_ptr("cplus.facet.FacetCanvas\0"))) };
     C_DRAW = { #addr(load_class(env, loader, #str_ptr("cplus.facet.FacetDraw\0"))) };
+    C_SWIPE = { #addr(load_class(env, loader, #str_ptr("cplus.facet.FacetSwipeHost\0"))) };
 
     bind_natives(env);
 
@@ -207,6 +221,7 @@ fn load_merged(env: rt::Env) -> bool {
     C_JOB = { #addr(find_global(env, #str_ptr("cplus/facet/FacetJob\0"))) };
     C_CANVAS = { #addr(find_global(env, #str_ptr("cplus/facet/FacetCanvas\0"))) };
     C_DRAW = { #addr(find_global(env, #str_ptr("cplus/facet/FacetDraw\0"))) };
+    C_SWIPE = { #addr(find_global(env, #str_ptr("cplus/facet/FacetSwipeHost\0"))) };
     // A sentinel rather than a loader object: `loaded()` asks whether the
     // classes are here, and by this path there is no loader to keep.
     LOADER = 1 as usize;
@@ -299,6 +314,22 @@ fn bind_natives(env: rt::Env) {
         signature: #str_ptr("()V\0"),
         fn_ptr: facet_android_job,
     };
+    // TWO IN ONE CALL: an intercept and a touch are the same question asked at
+    // two moments, and RegisterNatives takes an array.
+    var swipe_recs: [NativeLIFF_Z; 2] = [
+        NativeLIFF_Z {
+            name: #str_ptr("nativeIntercept\0"),
+            signature: #str_ptr("(JIFF)Z\0"),
+            fn_ptr: facet_android_intercept,
+        },
+        NativeLIFF_Z {
+            name: #str_ptr("nativeTouch\0"),
+            signature: #str_ptr("(JIFF)Z\0"),
+            fn_ptr: facet_android_touch,
+        },
+    ];
+    let _rs: i32 = { (*(*env.raw())).RegisterNatives(env.raw(), { C_SWIPE as *u8 },
+                                                     #addr_of(swipe_recs[0]) as *u8, 2) };
     var draw_rec: Native2LO = Native2LO {
         name: #str_ptr("nativeDraw\0"),
         signature: #str_ptr("(JLandroid/graphics/Canvas;)V\0"),

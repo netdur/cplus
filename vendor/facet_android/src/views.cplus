@@ -19,6 +19,7 @@ import "./env" as e;
 import "./paint" as paint;
 import "./controls" as controls;
 import "./recycler" as recycler;
+import "./swipe" as swipe;
 import "./geometry" as geometry;
 import "./dex" as dex;
 import "./log" as log;
@@ -35,10 +36,27 @@ import "./log" as log;
 // of the native tree.
 fn wants_view(n: *core::Node) -> bool {
     let kind: u32 = core::kind_of(n);
+    if non_view_kind(kind) { return false; }
     if kind != core::K_NODE { return true; }
     if gestures::has_gestures(n) { return true; }
     if wants_painting(n) { return true; }
     return { (*n).key() } != "";
+}
+
+// The kinds that are DESCRIPTIONS, not rectangles. A `swipe_item` is a row the
+// way a `menu_item` is: it is read by the control that owns it and built into
+// something of that control's own. Giving one a view of its own is not a
+// missing feature, it is an empty box in the layout — which is what this
+// backend did to a swipeable's actions until the swipe was built.
+fn non_view_kind(kind: u32) -> bool {
+    if kind == props::K_SWIPE_ITEM { return true; }
+    if kind == props::K_SPAN { return true; }
+    if kind == props::K_MENU_ITEM { return true; }
+    if kind == props::K_CONTEXT_MENU { return true; }
+    if kind == props::K_CONTEXT_MENU_ITEM { return true; }
+    if kind == props::K_MENU { return true; }
+    if kind == props::K_TOOLBAR_ITEM { return true; }
+    return false;
 }
 
 // Is this node asking for something only a view can express?
@@ -129,6 +147,7 @@ fn create_for_kind(kind: u32, n: *core::Node) -> *u8 {
     if kind == tree::K_TREE { return recycler::create_tree(n); }
     if kind == split::K_SPLIT { return controls::create_split(n); }
     if kind == props::K_CANVAS { return controls::create_canvas(n); }
+    if kind == props::K_SWIPEABLE { return swipe::create(n); }
     // Not built yet. A backend that silently substituted a blank container for
     // a control it does not have would be indistinguishable from a finished
     // one, so MANIFEST.md §2 names every kind that lands here and each warns
@@ -177,6 +196,7 @@ fn apply_for_kind(kind: u32, v: *u8, n: *core::Node, dirty: u64) {
     if kind == tree::K_TREE { recycler::apply_tree(v, n, dirty); return; }
     if kind == split::K_SPLIT { controls::apply_split(v, n, dirty); return; }
     if kind == props::K_CANVAS { controls::apply_canvas(v, n, dirty); return; }
+    if kind == props::K_SWIPEABLE { swipe::apply(v, n, dirty); return; }
     return;
 }
 

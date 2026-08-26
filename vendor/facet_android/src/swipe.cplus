@@ -1,0 +1,500 @@
+// swipe-to-reveal, as a swipe.
+//
+// The kind facet_appkit has to answer sideways — macOS has no finger, so it
+// reads a swipeable's `swipe_item` children as a CONTEXT MENU and says so in
+// its manifest. Android has the finger, so the description is read the way it
+// was written, the same way facet_uikit reads it.
+//
+// THE STRIP IS BUILT FROM THE SAME CHILDREN. A `swipe_item` is not a view (it
+// is a row, the way a `menu_item` is), so the buttons a swipe reveals are this
+// module's, built from the items' text and their destructive marking — and
+// tapping one runs the item's `on_clicked` and its `on_invoked`, in that order,
+// which is the pair the menu path runs on the other backends.
+//
+// WHAT MOVES, AND WHY IT IS NOT Z-ORDER. facet_uikit puts the strip UNDER the
+// content and slides the content off it. That needs the strip to be subview
+// zero, and here the children's native indices are facet's — `insert` puts a
+// child at ITS slot, so a strip parked at index 0 would be pushed around by
+// every insert. So the strip sits OUTSIDE the box, just past the trailing edge,
+// and content and strip translate TOGETHER: the strip arrives from off-screen
+// as the content leaves. Nothing overlaps, so nothing depends on who draws
+// first, and `setClipChildren(true)` on the host is what keeps the parked strip
+// invisible.
+
+import "stdlib/option" as option;
+import "jni/jni" as jni;
+import "flex_layout/flex_layout" as flex;
+import "android_view/runtime" as rt;
+import "android_view/widgets" as w;
+import "facet/facet" as core;
+import "facet/props" as props;
+import "facet/mount" as mount;
+import "facet/vocabulary" as vocab;
+import "facet/swipeable" as swipeable;
+import "./env" as e;
+import "./paint" as paint;
+import "./dex" as dex;
+import "./log" as log;
+
+const SWIPE_STRIP_TAG: i32 = 2131886087 as i32;   // 0x7F0F0007 — see controls::SCROLL_DOC_TAG
+const SWIPE_ITEM_TAG: i32 = 2131886088 as i32;    // 0x7F0F0008
+
+// How wide one action is, in facet's units. The same 88 the uikit backend
+// uses, because it is the same finger.
+fn action_width() -> f64 { return 88.0f64; }
+
+// How far a finger travels before a touch is a SWIPE. Android's own
+// ViewConfiguration says 8dp and this is that number — stated here rather than
+// read back, because the read costs a Context lookup on every DOWN.
+fn slop() -> f64 { return 8.0f64; }
+
+// THE LIVE DRAG, and there is only ever one: a swipeable is dragged by a
+// finger, and a second finger on a second swipeable is not a gesture this
+// reveals. Per-swipeable state would be a table keyed by node with nothing to
+// clear it; the offset that DOES have to persist lives on the views themselves
+// as their translation.
+static DRAG_NODE: usize = 0;
+static DRAG_X: f64 = 0.0f64;
+static DRAG_Y: f64 = 0.0f64;
+static DRAG_BASE: f64 = 0.0f64;
+static DRAGGING: bool = false;
+
+// ---- the two verbs -------------------------------------------------------------
+
+fn create(n: *core::Node) -> *u8 {
+    let env: rt::Env = e::env();
+    let raw: *u8 = e::env().retain_local_as_global(
+        dex::new_view_with_token(env, dex::swipe_class(), e::context(), { #addr(n) as i64 }));
+    let strip: jni::jobject = dex::new_host(env, e::context());
+    controls_attach_params(strip);
+    var host: w::ViewGroup = w::ViewGroup::from_global(env, raw);
+    host.add_view_view(strip);
+    let _k: *u8 = host.into_raw();
+    var hv: w::View = w::View::from_global(env, raw);
+    hv.set_tag_i_object(SWIPE_STRIP_TAG, strip);
+    paint::unwrap_keep(hv);
+    return raw;
+}
+
+// THE STRIP IS REBUILT WHEN THE ITEMS CHANGE AND RE-LAID-OUT WHEN THE SIZE
+// DOES, and those are deliberately not one branch. facet_uikit had them keyed
+// on a band that included `C_LAYOUT`, so every layout pass — one per frame of a
+// drag — destroyed the buttons under the finger and built new ones. Rebuilding
+// is expensive AND unsafe here; re-placing is neither, and the frame walk does
+// the placing.
+fn apply(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *props::SwipeableProps = swipe_props(n);
+    if p == (0 as *props::SwipeableProps) { return; }
+    let items: u64 = props::C_HANDLERS | swipeable::P_REVEAL_THRESHOLD;
+    if (dirty & items) != (0 as u64) || dirty == paint::all_bits() {
+        rebuild_strip(v, n);
+    }
+    return;
+}
+
+fn swipe_props(n: *core::Node) -> *props::SwipeableProps {
+    let d: *core::Data = core::node_data(n);
+    if d == (0 as *core::Data) { return 0 as *props::SwipeableProps; }
+    if { (*d).kind } != props::K_SWIPEABLE { return 0 as *props::SwipeableProps; }
+    return { (*d).props } as *props::SwipeableProps;
+}
+
+fn item_props(n: *core::Node) -> *props::SwipeItemProps {
+    let d: *core::Data = core::node_data(n);
+    if d == (0 as *core::Data) { return 0 as *props::SwipeItemProps; }
+    if { (*d).kind } != props::K_SWIPE_ITEM { return 0 as *props::SwipeItemProps; }
+    return { (*d).props } as *props::SwipeItemProps;
+}
+
+// ---- the strip -----------------------------------------------------------------
+
+fn strip_of(v: *u8) -> jni::jobject {
+    if v == (0 as *u8) { return 0 as jni::jobject; }
+    if !e::have_env() { return 0 as jni::jobject; }
+    var view: w::View = w::View::from_global(e::env(), v);
+    let t: jni::jobject = view.get_tag_i(SWIPE_STRIP_TAG);
+    paint::unwrap_keep(view);
+    return t;
+}
+
+fn rebuild_strip(v: *u8, n: *core::Node) {
+    let env: rt::Env = e::env();
+    let strip: jni::jobject = strip_of(v);
+    if strip == (0 as jni::jobject) { return; }
+    var g: w::ViewGroup = w::ViewGroup::from_global(env, strip);
+    g.remove_all_views();
+    let _k: *u8 = g.into_raw();
+    var i: usize = 0 as usize;
+    let children: usize = core::child_count_of(n);
+    while i < children {
+        match core::child_of(n, i) {
+            option::Option[*core::Node]::Some(c) => {
+                if core::kind_of(c) == props::K_SWIPE_ITEM { add_action(env, strip, c); }
+            }
+            option::Option[*core::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    env.delete_local_ref(strip);
+    return;
+}
+
+// One action. A Button whose CLICK TOKEN is the item node — the same token
+// every other control in this backend hands its adapter, so the tap arrives
+// through `fire_click` and needs no table keyed by index. An index would be
+// wrong the moment the description changes.
+fn add_action(env: rt::Env, strip: jni::jobject, item: *core::Node) {
+    let p: *props::SwipeItemProps = item_props(item);
+    if p == (0 as *props::SwipeItemProps) { return; }
+    let mi: *props::MenuItemProps = { #addr_of((*p).menu_item) };
+    var b: w::Button = w::Button::new_context(env, e::context());
+    let raw: *u8 = b.into_raw();
+    controls_attach_params(raw);
+    var tv: w::TextView = w::TextView::from_global(env, raw);
+    var buf: [u8; 256] = #zero::[[u8; 256]]();
+    let base: *u8 = { #addr_of(buf[0]) };
+    if paint::cstr({ (*mi).text.view() }, base, 256 as usize) { tv.set_text_str(base); }
+    tv.set_text_color_i(paint::argb_of(vocab::Color::on_primary()));
+    let _k1: *u8 = tv.into_raw();
+
+    // Destructive is red and plain is the system fill — the same pair every
+    // platform draws for a row's own actions.
+    var back: vocab::Color = vocab::Color::fill();
+    if { (*mi).is_destructive } { back = vocab::Color::danger(); }
+    var bv: w::View = w::View::from_global(env, raw);
+    bv.set_background_color(paint::argb_of(back));
+    let listener: jni::jobject =
+        dex::new_with_token(env, dex::click_class(), { #addr(item) as i64 });
+    bv.set_on_click_listener(listener);
+    // The ITEM's node, on the button: `fire_action` closes the swipeable the
+    // button belongs to, and the button is the only thing the click hands back.
+    bv.set_tag_i_object(SWIPE_ITEM_TAG, { #addr(item) as *u8 });
+    let _k2: *u8 = bv.into_raw();
+    env.delete_local_ref(listener);
+
+    var g: w::ViewGroup = w::ViewGroup::from_global(env, strip);
+    g.add_view_view(raw);
+    let _k3: *u8 = g.into_raw();
+    return;
+}
+
+fn controls_attach_params(v: *u8) {
+    // A View written to before it has LayoutParams dereferences null inside
+    // Android. Same call every other create makes; see controls.cplus.
+    if !e::have_env() { return; }
+    let env: rt::Env = e::env();
+    let cls: jni::jclass = env.class_cached(#str_ptr("android/view/ViewGroup$LayoutParams\0"));
+    let ctor: jni::jmethodID = env.method_id(cls, #str_ptr("<init>\0"), #str_ptr("(II)V\0"));
+    var args: [jni::JValue; 2] = [jni::arg_int((0 as i32) -% (2 as i32)),
+                                  jni::arg_int((0 as i32) -% (2 as i32))];
+    let lp: jni::jobject = { (*(*env.raw())).NewObjectA(env.raw(), cls, ctor,
+                                                        #addr_of(args[0])) };
+    var view: w::View = w::View::from_global(env, v);
+    view.set_layout_params(lp);
+    paint::unwrap_keep(view);
+    env.delete_local_ref(lp);
+    return;
+}
+
+// How many actions there are, which is how far a swipe can go.
+fn action_count(v: *u8) -> usize {
+    let env: rt::Env = e::env();
+    let strip: jni::jobject = strip_of(v);
+    if strip == (0 as jni::jobject) { return 0 as usize; }
+    var g: w::ViewGroup = w::ViewGroup::from_global(env, strip);
+    let n: i32 = g.get_child_count();
+    let _k: *u8 = g.into_raw();
+    if n <= (0 as i32) { return 0 as usize; }
+    return { n as usize };
+}
+
+fn open_width(v: *u8) -> f64 { return action_width() * { action_count(v) as f64 }; }
+
+// ---- placing it ----------------------------------------------------------------
+// From the frame walk, because the actions are as tall as the swipeable and
+// nothing in facet's tree corresponds to them — the same standing the split's
+// divider has, and placed the same way.
+
+fn place_strip(n: *core::Node, v: *u8, frame: flex::Frame, place: fn(*u8, f64, f64, f64, f64)) {
+    if core::kind_of(n) != props::K_SWIPEABLE { return; }
+    let env: rt::Env = e::env();
+    let strip: jni::jobject = strip_of(v);
+    if strip == (0 as jni::jobject) { return; }
+    let count: usize = action_count(v);
+    if count == (0 as usize) { env.delete_local_ref(strip); return; }
+    let width: f64 = open_width(v);
+    // PAST THE TRAILING EDGE. Clipped by the host until the content moves.
+    place(strip, frame.width, 0.0f64, width, frame.height);
+    var g: w::ViewGroup = w::ViewGroup::from_global(env, strip);
+    var i: i32 = 0 as i32;
+    while i < { count as i32 } {
+        let child: jni::jobject = g.get_child_at(i);
+        if child != (0 as jni::jobject) {
+            place(child, action_width() * { i as f64 }, 0.0f64, action_width(), frame.height);
+            env.delete_local_ref(child);
+        }
+        i = i +% (1 as i32);
+    }
+    let _k: *u8 = g.into_raw();
+    // The content sits where the last swipe left it, and a resize does not
+    // close it — so the translation is re-asserted against the new geometry.
+    apply_offset(v, offset_of(v));
+    env.delete_local_ref(strip);
+    return;
+}
+
+// ---- the offset ----------------------------------------------------------------
+// Held as the views' own translation, which is where it has to end up anyway.
+// A side table would be a second copy of the same number with nothing to keep
+// them in step across an Activity recreation.
+
+fn offset_of(v: *u8) -> f64 {
+    let env: rt::Env = e::env();
+    let strip: jni::jobject = strip_of(v);
+    if strip == (0 as jni::jobject) { return 0.0f64; }
+    var sv: w::View = w::View::from_global(env, strip);
+    let t: f32 = sv.get_translation_x();
+    let _k: *u8 = sv.into_raw();
+    env.delete_local_ref(strip);
+    return e::dp({ t as f64 });
+}
+
+// Every child moves, INCLUDING the strip: the strip is parked off the trailing
+// edge, so the same translation that takes the content out brings the actions
+// in. That is the whole trick this backend's swipe rests on.
+fn apply_offset(v: *u8, x: f64) {
+    let env: rt::Env = e::env();
+    var g: w::ViewGroup = w::ViewGroup::from_global(env, v);
+    let n: i32 = g.get_child_count();
+    var i: i32 = 0 as i32;
+    let px: f32 = { e::px(x) as f32 };
+    while i < n {
+        let child: jni::jobject = g.get_child_at(i);
+        if child != (0 as jni::jobject) {
+            var cv: w::View = w::View::from_global(env, child);
+            cv.set_translation_x(px);
+            let _c: *u8 = cv.into_raw();
+            env.delete_local_ref(child);
+        }
+        i = i +% (1 as i32);
+    }
+    let _k: *u8 = g.into_raw();
+    return;
+}
+
+// ---- the gesture ---------------------------------------------------------------
+
+// Android's two moments. `onInterceptTouchEvent` runs BEFORE the children see
+// the event and answers "is this mine"; `onTouchEvent` runs when it is. Both
+// arrive here, because they are the same question: has this become a swipe.
+fn intercept(token: i64, action: i32, x: f32, y: f32) -> bool {
+    let n: *core::Node = { token as *core::Node };
+    if n == (0 as *core::Node) { return false; }
+    let v: *u8 = core::view_of(n);
+    if v == (0 as *u8) { return false; }
+    if open_width(v) <= 0.0f64 { return false; }
+    let ux: f64 = e::dp({ x as f64 });
+    let uy: f64 = e::dp({ y as f64 });
+    if action == (0 as i32) {                 // DOWN
+        begin(n, v, ux, uy);
+        return false;                          // the children get their chance
+    }
+    if action != (2 as i32) { return false; }  // only a MOVE can become a swipe
+    if DRAG_NODE != { #addr(n) } { return false; }
+    if DRAGGING { return true; }
+    return became_a_swipe(n, ux, uy);
+}
+
+fn touch(token: i64, action: i32, x: f32, y: f32) -> bool {
+    let n: *core::Node = { token as *core::Node };
+    if n == (0 as *core::Node) { return false; }
+    let p: *props::SwipeableProps = swipe_props(n);
+    if p == (0 as *props::SwipeableProps) { return false; }
+    let v: *u8 = core::view_of(n);
+    if v == (0 as *u8) { return false; }
+    let limit: f64 = open_width(v);
+    if limit <= 0.0f64 { return false; }
+    let ux: f64 = e::dp({ x as f64 });
+    let uy: f64 = e::dp({ y as f64 });
+
+    if action == (0 as i32) {                  // DOWN, and no child wanted it
+        begin(n, v, ux, uy);
+        return true;
+    }
+    if action == (2 as i32) {                  // MOVE
+        if DRAG_NODE != { #addr(n) } { return false; }
+        if !DRAGGING {
+            if !became_a_swipe(n, ux, uy) { return true; }
+        }
+        // Left only, and never past the strip: a swipeable opens toward its
+        // actions and there is nothing on the other side to reveal.
+        var off: f64 = DRAG_BASE + (ux - DRAG_X);
+        if off > 0.0f64 { off = 0.0f64; }
+        if off < (0.0f64 - limit) { off = 0.0f64 - limit; }
+        apply_offset(v, off);
+        fire(p, { (*p).observe_swipe_changing }, { (*p).observe_swipe_changing_ctx }, v);
+        return true;
+    }
+    if action == (1 as i32) || action == (3 as i32) {   // UP or CANCEL
+        if DRAG_NODE != { #addr(n) } { return false; }
+        let was: bool = DRAGGING;
+        hold(v, false);
+        DRAG_NODE = 0;
+        DRAGGING = false;
+        if !was { return false; }
+        // THE THRESHOLD, which is the whole reason this is a drag and not a
+        // list-row API. `reveal_threshold` is the distance past which letting
+        // go opens rather than closes; zero means halfway, which is what an
+        // application that never named one expects.
+        var bar: f64 = { (*p).reveal_threshold };
+        if bar <= 0.0f64 { bar = limit / 2.0f64; }
+        if bar > limit { bar = limit; }
+        var travelled: f64 = 0.0f64 - offset_of(v);
+        if travelled < 0.0f64 { travelled = 0.0f64; }
+        settle(v, p, travelled >= bar);
+        fire(p, { (*p).on_swipe_ended }, { (*p).on_swipe_ended_ctx }, v);
+        return true;
+    }
+    return false;
+}
+
+fn begin(n: *core::Node, v: *u8, x: f64, y: f64) {
+    DRAG_NODE = { #addr(n) };
+    DRAG_X = x;
+    DRAG_Y = y;
+    DRAG_BASE = offset_of(v);
+    DRAGGING = false;
+    return;
+}
+
+// A HORIZONTAL drag, and only a horizontal one. A swipeable inside a scroll
+// shares every touch with it: the vertical ones are the scroll's and the
+// horizontal ones are this — so the axis is compared before the swipe starts,
+// and the scroll is told to keep its hands off only once the answer is known.
+fn became_a_swipe(n: *core::Node, x: f64, y: f64) -> bool {
+    var dx: f64 = x - DRAG_X;
+    var dy: f64 = y - DRAG_Y;
+    if dx < 0.0f64 { dx = 0.0f64 - dx; }
+    if dy < 0.0f64 { dy = 0.0f64 - dy; }
+    if dx <= slop() { return false; }
+    if dx <= dy { return false; }
+    let v: *u8 = core::view_of(n);
+    if v == (0 as *u8) { return false; }
+    DRAGGING = true;
+    hold(v, true);
+    let p: *props::SwipeableProps = swipe_props(n);
+    if p != (0 as *props::SwipeableProps) {
+        fire(p, { (*p).on_swipe_started }, { (*p).on_swipe_started_ctx }, v);
+    }
+    return true;
+}
+
+// `requestDisallowInterceptTouchEvent` — the ancestor scroll's promise not to
+// take the rest of this gesture. Asked of the PARENT, which is the scroll's
+// own child chain, and released when the finger lifts.
+fn hold(v: *u8, on: bool) {
+    if !e::have_env() { return; }
+    let env: rt::Env = e::env();
+    var view: w::View = w::View::from_global(env, v);
+    let parent: jni::jobject = view.get_parent();
+    paint::unwrap_keep(view);
+    if parent == (0 as jni::jobject) { return; }
+    var g: w::ViewGroup = w::ViewGroup::from_global(env, parent);
+    g.request_disallow_intercept_touch_event(on);
+    let _k: *u8 = g.into_raw();
+    env.delete_local_ref(parent);
+    return;
+}
+
+// Open or closed, and the matching handler told. `open_requested` and
+// `close_requested` are the two names the contract gives this moment, and they
+// fire on the LANDING rather than on the gesture, because a swipe dragged back
+// to where it started requested nothing.
+fn settle(v: *u8, p: *props::SwipeableProps, open: bool) {
+    var x: f64 = 0.0f64;
+    if open { x = 0.0f64 - open_width(v); }
+    animate_to(v, x);
+    if open { fire(p, { (*p).on_open_requested }, { (*p).on_open_requested_ctx }, v); }
+    else { fire(p, { (*p).on_close_requested }, { (*p).on_close_requested_ctx }, v); }
+    return;
+}
+
+// The landing, animated. `animate().translationX()` is Android's own property
+// animator, which is what every other animation in this package would use if
+// it had one — and it composes with the layout pass, because a translation is
+// not a layout.
+fn animate_to(v: *u8, x: f64) {
+    let env: rt::Env = e::env();
+    var g: w::ViewGroup = w::ViewGroup::from_global(env, v);
+    let n: i32 = g.get_child_count();
+    var i: i32 = 0 as i32;
+    let px: f32 = { e::px(x) as f32 };
+    while i < n {
+        let child: jni::jobject = g.get_child_at(i);
+        if child != (0 as jni::jobject) {
+            animate_child(env, child, px);
+            env.delete_local_ref(child);
+        }
+        i = i +% (1 as i32);
+    }
+    let _k: *u8 = g.into_raw();
+    return;
+}
+
+fn animate_child(env: rt::Env, child: jni::jobject, to: f32) {
+    var cv: w::View = w::View::from_global(env, child);
+    let anim: jni::jobject = cv.animate();
+    let _c: *u8 = cv.into_raw();
+    if anim == (0 as jni::jobject) { return; }
+    let cls: jni::jclass = env.class_cached(#str_ptr("android/view/ViewPropertyAnimator\0"));
+    let dur: jni::jmethodID = env.method_id(cls, #str_ptr("setDuration\0"),
+        #str_ptr("(J)Landroid/view/ViewPropertyAnimator;\0"));
+    let tx: jni::jmethodID = env.method_id(cls, #str_ptr("translationX\0"),
+        #str_ptr("(F)Landroid/view/ViewPropertyAnimator;\0"));
+    if dur == (0 as jni::jmethodID) || tx == (0 as jni::jmethodID) { return; }
+    var d_args: [jni::JValue; 1] = [jni::arg_long(220 as i64)];
+    let a2: jni::jobject = { (*(*env.raw())).CallObjectMethodA(env.raw(), anim, dur,
+                                                               #addr_of(d_args[0])) };
+    var t_args: [jni::JValue; 1] = [jni::arg_float(to)];
+    let a3: jni::jobject = { (*(*env.raw())).CallObjectMethodA(env.raw(), a2, tx,
+                                                               #addr_of(t_args[0])) };
+    env.delete_local_ref(a3);
+    env.delete_local_ref(a2);
+    env.delete_local_ref(anim);
+    return;
+}
+
+fn fire(p: *props::SwipeableProps, h: fn(*u8, *u8), ctx: *u8, sender: *u8) {
+    if h == props::no_handler { return; }
+    h(sender, ctx);
+    return;
+}
+
+// An action button, tapped. Answers whether the token WAS a swipe item, so the
+// ordinary click path can go on asking the other kinds.
+//
+// Both handlers run — `on_clicked` is the menu item's and `on_invoked` is the
+// swipe item's, and the contract fires them together — and then the swipeable
+// closes, which is what tapping an action means.
+fn fire_action(item: *core::Node) -> bool {
+    let p: *props::SwipeItemProps = item_props(item);
+    if p == (0 as *props::SwipeItemProps) { return false; }
+    let mi: *props::MenuItemProps = { #addr_of((*p).menu_item) };
+    let click: fn(*u8, *u8) = { (*mi).on_clicked };
+    if click != props::no_handler { click(0 as *u8, { (*mi).on_clicked_ctx }); }
+    let inv: fn(*u8, *u8) = { (*p).on_invoked };
+    if inv != props::no_handler { inv(0 as *u8, { (*p).on_invoked_ctx }); }
+    // The swipeable is the item's PARENT in facet's tree — which is the tree
+    // that knows, because the button is in a strip that is not in it.
+    match mount::parent_of(item) {
+        option::Option[*core::Node]::Some(sw) => {
+            let sp: *props::SwipeableProps = swipe_props(sw);
+            let v: *u8 = core::view_of(sw);
+            if sp != (0 as *props::SwipeableProps) && v != (0 as *u8) {
+                settle(v, sp, false);
+            }
+        }
+        option::Option[*core::Node]::None => { }
+    }
+    return true;
+}

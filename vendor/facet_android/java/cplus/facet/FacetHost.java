@@ -9,7 +9,12 @@ package cplus.facet;
 //
 // Measured before this backend existed: it works, and it is what lets the whole
 // LinearLayout/RelativeLayout/ConstraintLayout family go unbound.
-public final class FacetHost extends android.view.ViewGroup {
+//
+// NOT final, and for exactly one reason: FacetSwipeHost is this host plus a
+// touch intercept. Every facet host measures and lays out the same way, so a
+// swipeable inheriting a second copy of that would be the drift this file's
+// whole comment is about.
+public class FacetHost extends android.view.ViewGroup {
     public FacetHost(android.content.Context c) {
         super(c);
         setClipChildren(false);

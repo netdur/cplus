@@ -45,18 +45,39 @@ Everything here is a debt, not a decision. Kinds with no body **warn once**
 through liblog (`adb logcat -s facet`) and render an empty container.
 
 - **The controls still without a body.** `popup`, `tabs`, `collection`,
-  `table`, `canvas`, `web`, `span`, `bordered`, `page_dots`, `carousel`,
-  `refreshable`, `swipeable`, `zoomable`, the pickers, the menu tier.
-  `views.cplus` dispatches on kind; each needs a `create_` / `apply_` pair in
-  `controls.cplus`.
+  `table`, `web`, `bordered`, `page_dots`, `carousel`, `refreshable`,
+  `zoomable`, the pickers, the menu tier. `views.cplus` dispatches on kind; each
+  needs a `create_` / `apply_` pair in `controls.cplus`.
 
   Built: `label`, `button`, `box` and the plain container, plus `checkbox`,
   `toggle`, `radio`, `slider`, `progress`, `spinner`, `text_field`,
   `text_button`, `text_area`, `search_field`, `image`, `icon_button`, `scroll`,
-  `stepper`, `list`, `tree` and `split` — each with BOTH halves, the props write
-  and the event read. Half a control is worse than none: it looks finished and
-  reports nothing, which is the shape of the bug facet_uikit carried in its
-  checkbox until 2026-08-25.
+  `stepper`, `list`, `tree`, `split`, `canvas` and `swipeable` — each with BOTH
+  halves, the props write and the event read. Half a control is worse than none:
+  it looks finished and reports nothing, which is the shape of the bug
+  facet_uikit carried in its checkbox until 2026-08-25.
+
+- **A `canvas` replays everything except FOUR blend modes and a wrapped span
+  list.** The display list is read whole — every state command, the state stack,
+  all four transforms, three clips, ten shapes, text, spans and images. What is
+  absent is named rather than approximated: `Hue`, `Saturation`, `Color` and
+  `Luminosity` are the non-separable blends, which arrived with `BlendMode` on
+  API 29 and this backend's floor is 26; and `draw_spans` puts its runs on ONE
+  baseline, because wrapping a run list means a SpannableString where a
+  `draw_text_block` already goes through StaticLayout for the case that asks for
+  a box. A font WEIGHT rounds to bold or not: `Typeface.create(String, int)` has
+  four styles, and the variable-weight door is API 28.
+
+- **A `swipeable` does not ANIMATE its reveal open under the finger** — it
+  animates the LANDING, which is the part that has a duration. Everything else
+  the kind names is here: the drag, the threshold, the two minimums of travel,
+  the actions, the destructive colouring and all five events.
+
+  The one structural difference from facet_uikit: there the strip sits UNDER the
+  content at subview zero, and here the children's native indices are facet's —
+  `insert` puts a child at ITS slot — so the strip is parked just past the
+  trailing edge and content and strip translate TOGETHER. Nothing overlaps, so
+  nothing depends on who draws first.
 
 - **A `split` does not DRAG.** The kind is built and every verb it has works —
   the axis, the position, both minimums, the collapse and the drawn divider are

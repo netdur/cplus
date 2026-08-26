@@ -37,6 +37,7 @@ import "facet/vocabulary" as vocab;
 import "./env" as e;
 import "./paint" as paint;
 import "./dex" as dex;
+import "./swipe" as swipe;
 import "./log" as log;
 
 fn props_of(n: *core::Node, kind: u32) -> *u8 {
@@ -181,6 +182,9 @@ fn fire_click(token: i64) {
     // A text_button is a different KIND with a different props struct, and it
     // shares this adapter. Asking it first costs one compare and stops a
     // TextButtonProps being read through ButtonProps' layout.
+    // A swipe ITEM's button is this backend's own, and its token is the item
+    // node — so the swipe path is asked before any props struct is read.
+    if swipe::fire_action(n) { return; }
     if fire_text_button_click(n) { return; }
     if fire_icon_button_click(n) { return; }
     let p: *props::ButtonProps = props_of(n, props::K_BUTTON) as *props::ButtonProps;

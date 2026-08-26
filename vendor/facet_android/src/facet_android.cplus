@@ -21,6 +21,7 @@ import "./controls" as controls;
 import "./window" as window;
 import "./recycler" as recycler;
 import "./drawing" as drawing;
+import "./swipe" as swipe;
 import "./mainthread" as mainthread;
 import "./env" as e;
 
@@ -126,6 +127,20 @@ export extern fn facet_android_draw(envp: *jni::JNIEnv, cls: jni::jobject, token
     e::set_env(rt::from_native(envp));
     drawing::draw(token, canvas);
     return;
+}
+
+export extern fn facet_android_intercept(envp: *jni::JNIEnv, cls: jni::jobject, token: i64,
+                                         action: i32, x: f32, y: f32) -> u8 {
+    e::set_env(rt::from_native(envp));
+    if swipe::intercept(token, action, x, y) { return 1 as u8; }
+    return 0 as u8;
+}
+
+export extern fn facet_android_touch(envp: *jni::JNIEnv, cls: jni::jobject, token: i64,
+                                     action: i32, x: f32, y: f32) -> u8 {
+    e::set_env(rt::from_native(envp));
+    if swipe::touch(token, action, x, y) { return 1 as u8; }
+    return 0 as u8;
 }
 
 export extern fn facet_android_job(envp: *jni::JNIEnv, cls: jni::jobject) {
