@@ -21,7 +21,7 @@ import "jni/jni" as jni;
 import "android_view/runtime" as rt;
 
 // Kept in step by tools/build_dex.sh; do not hand-edit.
-const DEX_LEN: usize = 26752;
+const DEX_LEN: usize = 28288;
 
 static LOADER: usize = 0;
 static C_HOST: usize = 0;
@@ -46,6 +46,7 @@ static C_TIME: usize = 0;
 static C_POPUP: usize = 0;
 static C_WEB: usize = 0;
 static C_ZOOM: usize = 0;
+static C_CAROUSEL: usize = 0;
 
 // jni.h's JNINativeMethod with the fn slot concretely typed per shape.
 #[repr(C)]
@@ -158,6 +159,8 @@ extern fn facet_android_seek_start(envp: *jni::JNIEnv, cls: jni::jobject, token:
 extern fn facet_android_seek_stop(envp: *jni::JNIEnv, cls: jni::jobject, token: i64);
 extern fn facet_android_text(envp: *jni::JNIEnv, cls: jni::jobject, token: i64, s: jni::jobject);
 extern fn facet_android_step(envp: *jni::JNIEnv, cls: jni::jobject, token: i64, delta: i32);
+extern fn facet_android_carousel_page(envp: *jni::JNIEnv, cls: jni::jobject, token: i64,
+                                      index: i32);
 extern fn facet_android_row_count(envp: *jni::JNIEnv, cls: jni::jobject, token: i64) -> i32;
 extern fn facet_android_row_view(envp: *jni::JNIEnv, cls: jni::jobject, token: i64, position: i32,
                                  convert: jni::jobject, parent: jni::jobject) -> jni::jobject;
@@ -213,6 +216,7 @@ fn time_class() -> jni::jclass { return { C_TIME as *u8 }; }
 fn popup_class() -> jni::jclass { return { C_POPUP as *u8 }; }
 fn web_class() -> jni::jclass { return { C_WEB as *u8 }; }
 fn zoom_class() -> jni::jclass { return { C_ZOOM as *u8 }; }
+fn carousel_class() -> jni::jclass { return { C_CAROUSEL as *u8 }; }
 fn loaded() -> bool { return LOADER != 0; }
 
 // Load the dex and bind every native. Idempotent; `any_view` is only needed to
@@ -229,7 +233,7 @@ fn ensure_loaded(env: rt::Env, any_view: jni::jobject) {
     // Activity would hold a FacetHost of one class while this code registered
     // natives on the other, and `nativeSizeChanged` would never arrive.
     if load_merged(env) { return; }
-    let dex: *[u8; 26752] = #include_bytes("../facet_android.dex");
+    let dex: *[u8; 28288] = #include_bytes("../facet_android.dex");
     let buffer: jni::jobject = {
         (*(*env.raw())).NewDirectByteBuffer(env.raw(), { dex as *u8 }, DEX_LEN as i64)
     };
@@ -271,6 +275,7 @@ fn ensure_loaded(env: rt::Env, any_view: jni::jobject) {
     C_POPUP = { #addr(load_class(env, loader, #str_ptr("cplus.facet.FacetPopup\0"))) };
     C_WEB = { #addr(load_class(env, loader, #str_ptr("cplus.facet.FacetWeb\0"))) };
     C_ZOOM = { #addr(load_class(env, loader, #str_ptr("cplus.facet.FacetZoomHost\0"))) };
+    C_CAROUSEL = { #addr(load_class(env, loader, #str_ptr("cplus.facet.FacetCarousel\0"))) };
 
     bind_natives(env);
 
@@ -311,6 +316,7 @@ fn load_merged(env: rt::Env) -> bool {
     C_POPUP = { #addr(find_global(env, #str_ptr("cplus/facet/FacetPopup\0"))) };
     C_WEB = { #addr(find_global(env, #str_ptr("cplus/facet/FacetWeb\0"))) };
     C_ZOOM = { #addr(find_global(env, #str_ptr("cplus/facet/FacetZoomHost\0"))) };
+    C_CAROUSEL = { #addr(find_global(env, #str_ptr("cplus/facet/FacetCarousel\0"))) };
     // A sentinel rather than a loader object: `loaded()` asks whether the
     // classes are here, and by this path there is no loader to keep.
     LOADER = 1 as usize;
@@ -556,6 +562,14 @@ fn bind_natives(env: rt::Env) {
     let _r11: i32 = { (*(*env.raw())).RegisterNatives(env.raw(), { C_ROWTAP as *u8 },
                                                       #addr_of(rowtap_rec) as *u8, 1) };
 
+    var page_rec: Native2LI = Native2LI {
+        name: #str_ptr("nativeCarouselPage\0"),
+        signature: #str_ptr("(JI)V\0"),
+        fn_ptr: facet_android_carousel_page,
+    };
+    let _r12: i32 = { (*(*env.raw())).RegisterNatives(env.raw(), { C_CAROUSEL as *u8 },
+                                                      #addr_of(page_rec) as *u8, 1) };
+
     var step_rec: Native2LI = Native2LI {
         name: #str_ptr("nativeStep\0"),
         signature: #str_ptr("(JI)V\0"),
@@ -645,6 +659,48 @@ fn draw_input_transparent(env: rt::Env, view: jni::jobject, through: bool) {
     var args: [jni::JValue; 2] = [jni::arg_object(view), jni::arg_bool(if through { 1 as u8 } else { 0 as u8 })];
     { (*(*env.raw())).CallStaticVoidMethodA(env.raw(), { C_DRAW as *u8 }, mid,
                                             #addr_of(args[0])) };
+    return;
+}
+
+// ---- FacetCarousel -------------------------------------------------------------
+
+fn new_carousel(env: rt::Env, ctx: jni::jobject, token: i64) -> jni::jobject {
+    if C_CAROUSEL == 0 { return 0 as jni::jobject; }
+    let ctor: jni::jmethodID = env.method_id({ C_CAROUSEL as *u8 }, #str_ptr("<init>\0"),
+                                             #str_ptr("(Landroid/content/Context;J)V\0"));
+    if ctor == (0 as jni::jmethodID) { return 0 as jni::jobject; }
+    var args: [jni::JValue; 2] = [jni::arg_object(ctx), jni::arg_long(token)];
+    return { (*(*env.raw())).NewObjectA(env.raw(), { C_CAROUSEL as *u8 }, ctor,
+                                        #addr_of(args[0])) };
+}
+
+fn carousel_set_page(env: rt::Env, v: jni::jobject, width: i32, count: i32) {
+    carousel_call_ii(env, v, #str_ptr("setPage\0"), #str_ptr("(II)V\0"), width, count);
+    return;
+}
+
+fn carousel_go_to(env: rt::Env, v: jni::jobject, index: i32) {
+    carousel_call_ii(env, v, #str_ptr("goTo\0"), #str_ptr("(IZ)V\0"), index, 0 as i32);
+    return;
+}
+
+fn carousel_set_flag(env: rt::Env, v: jni::jobject, name: *u8, on: bool) {
+    if C_CAROUSEL == 0 { return; }
+    let mid: jni::jmethodID = env.method_id({ C_CAROUSEL as *u8 }, name, #str_ptr("(Z)V\0"));
+    if mid == (0 as jni::jmethodID) { return; }
+    var args: [jni::JValue; 1] = [jni::arg_bool(if on { 1 as u8 } else { 0 as u8 })];
+    { (*(*env.raw())).CallVoidMethodA(env.raw(), v, mid, #addr_of(args[0])) };
+    return;
+}
+
+// `setPage(int,int)` and `goTo(int,boolean)` differ only in the second
+// argument's TYPE, and a jvalue is a union — so one call site serves both.
+fn carousel_call_ii(env: rt::Env, v: jni::jobject, name: *u8, sig: *u8, a: i32, b: i32) {
+    if C_CAROUSEL == 0 { return; }
+    let mid: jni::jmethodID = env.method_id({ C_CAROUSEL as *u8 }, name, sig);
+    if mid == (0 as jni::jmethodID) { return; }
+    var args: [jni::JValue; 2] = [jni::arg_int(a), jni::arg_int(b)];
+    { (*(*env.raw())).CallVoidMethodA(env.raw(), v, mid, #addr_of(args[0])) };
     return;
 }
 

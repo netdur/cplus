@@ -32,6 +32,7 @@ import "facet/icon_button" as icon_button;
 import "facet/scroll" as scroll;
 import "facet/stepper" as stepper;
 import "facet/split" as split;
+import "facet/carousel" as carousel;
 import "facet/canvas" as canvas;
 import "facet/page_dots" as page_dots;
 import "facet/date_picker" as date_picker;
@@ -1856,6 +1857,18 @@ fn bars_shown(b: vocab::ScrollBars) -> bool {
 fn fire_scrolled(token: i64, x: i32, y: i32) {
     let n: *core::Node = { token as *core::Node };
     if n == (0 as *core::Node) { return; }
+    // A CAROUSEL IS A SCROLL THAT PAGES, and `observe_scrolled` is the one verb
+    // it shares with one — its own record has no offset to write, so the
+    // handler is fired and nothing is stored.
+    if core::kind_of(n) == props::K_CAROUSEL {
+        let cp: *props::CarouselProps = carousel_props(n);
+        if cp == (0 as *props::CarouselProps) { return; }
+        let ch: fn(*u8, *u8) = { (*cp).items_view.observe_scrolled };
+        if ch != props::no_handler {
+            ch(core::view_of(n), { (*cp).items_view.observe_scrolled_ctx });
+        }
+        return;
+    }
     let p: *props::ScrollProps = props_of(n, props::K_SCROLL) as *props::ScrollProps;
     if p == (0 as *props::ScrollProps) { return; }
     // PIXELS ON THE WAY IN, facet's units on the way out.
@@ -3829,4 +3842,156 @@ fn agent_set_text(n: *core::Node, value: str) -> bool {
     let h: fn(*u8, *u8) = { (*iv).on_text_changed };
     if h != props::no_handler { h(core::view_of(n), { (*iv).on_text_changed_ctx }); }
     return true;
+}
+
+// ---- carousel ------------------------------------------------------------------
+//
+// A PAGING HorizontalScrollView. Not an adapter view: a carousel's pages are the
+// CHILDREN facet already built and mounted under the node, so there is nothing
+// for a `getView` to answer. The document host and its tag are the scroll's,
+// unchanged, which is what lets `document_host`, `size_document` and the mount
+// walk treat the two the same.
+
+fn carousel_props(n: *core::Node) -> *props::CarouselProps {
+    return props_of(n, props::K_CAROUSEL) as *props::CarouselProps;
+}
+
+fn create_carousel(n: *core::Node) -> *u8 {
+    let env: rt::Env = e::env();
+    { (*n).set_flex_shrink(1.0f64) };
+    let raw_local: jni::jobject = dex::new_carousel(env, e::context(), { #addr(n) as i64 });
+    if raw_local == (0 as jni::jobject) { return 0 as *u8; }
+    var hv: w::HorizontalScrollView = w::HorizontalScrollView::from_local(env, raw_local);
+    let raw: *u8 = hv.into_raw();
+    let doc: jni::jobject = dex::new_host(env, e::context());
+    var group: w::ViewGroup = w::ViewGroup::from_global(env, raw);
+    group.add_view_view(doc);
+    // A VIEWPORT CLIPS, and this one has to say so. Every FacetHost turns
+    // clipping OFF in its constructor — facet places children by frame and a
+    // shadow or an overshoot must not be cut — and the document is a FacetHost
+    // four pages wide. Without this the pages either side of the current one
+    // are drawn straight over whatever the carousel sits in.
+    group.set_clip_children(true);
+    group.set_clip_to_padding(true);
+    var gv: w::View = w::View::from_global(env, group.into_raw());
+    gv.set_tag_i_object(SCROLL_DOC_TAG, doc);
+    paint::unwrap_keep(gv);
+    env.delete_local_ref(doc);
+    let listener: jni::jobject =
+        dex::new_with_token(env, dex::scroll_class(), { #addr(n) as i64 });
+    if listener != (0 as jni::jobject) {
+        var sv: w::View = w::View::from_global(env, raw);
+        sv.set_on_scroll_change_listener(listener);
+        paint::unwrap_keep(sv);
+        env.delete_local_ref(listener);
+    }
+    return raw;
+}
+
+fn apply_carousel(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *props::CarouselProps = carousel_props(n);
+    if p == (0 as *props::CarouselProps) { return; }
+    let env: rt::Env = e::env();
+    if (dirty & carousel::P_IS_SWIPEABLE) != (0 as u64) {
+        dex::carousel_set_flag(env, { v as jni::jobject }, #str_ptr("setSwipeable\0"),
+                               { (*p).is_swipeable });
+    }
+    if (dirty & carousel::P_ANIMATES_SCROLL) != (0 as u64) {
+        dex::carousel_set_flag(env, { v as jni::jobject }, #str_ptr("setAnimated\0"),
+                               { (*p).animates_scroll });
+    }
+    // BOUNCES is the overscroll glow, which is the whole of Android's answer:
+    // a HorizontalScrollView has no rubber band to switch off, it has an edge
+    // effect, and NEVER is what "does not bounce" looks like here.
+    if (dirty & carousel::P_BOUNCES) != (0 as u64) {
+        var bv: w::View = w::View::from_global(env, v);
+        bv.set_over_scroll_mode(if { (*p).bounces } { 0 as i32 } else { 2 as i32 });
+        paint::unwrap_keep(bv);
+    }
+    if (dirty & (carousel::P_HORIZONTAL_SCROLL_BARS
+                 | carousel::P_VERTICAL_SCROLL_BARS)) != (0 as u64) {
+        var sv: w::View = w::View::from_global(env, v);
+        sv.set_horizontal_scroll_bar_enabled(
+            bars_shown({ (*p).items_view.horizontal_scroll_bars }));
+        sv.set_vertical_scroll_bar_enabled(
+            bars_shown({ (*p).items_view.vertical_scroll_bars }));
+        paint::unwrap_keep(sv);
+    }
+    // POSITION and SCROLL_TO are the same move under two names — one is where
+    // the carousel IS, the other is an application asking it to go somewhere —
+    // and both land on `goTo`, which does not report a page it was told to show.
+    if (dirty & carousel::P_POSITION) != (0 as u64) {
+        dex::carousel_go_to(env, { v as jni::jobject }, { { (*p).position } as i32 });
+    }
+    if (dirty & carousel::P_SCROLL_TO) != (0 as u64) {
+        let to: i64 = { (*p).items_view.scroll_to_index };
+        if to >= (0 as i64) { dex::carousel_go_to(env, { v as jni::jobject }, { to as i32 }); }
+    }
+    return;
+}
+
+// THE PAGE GEOMETRY, written into flex rather than onto the views.
+//
+// A carousel is a ROW of fixed-width pages that OVERFLOWS its own frame: that
+// overflow is the scroll range, and it is why the pages must not shrink. The
+// page width is the viewport less the peek insets, divided by `columns` — which
+// is what makes a carousel showing three at a time three columns wide and one
+// showing a sliver of the next narrower than its own frame.
+fn settle_carousel(n: *core::Node, p: *props::CarouselProps) -> bool {
+    var wrote: bool = false;
+    let f: flex::Frame = core::frame_of(n);
+    let insets: vocab::Insets = { (*p).peek_insets };
+    var page: f64 = { f.width } - { insets.leading } - { insets.trailing };
+    var cols: usize = { (*p).structured_items_view.columns };
+    if cols < (1 as usize) { cols = 1 as usize; }
+    page = page / { cols as f64 };
+    if page < 1.0f64 { return false; }
+    match { (*n).style.flex_direction } {
+        flex::FlexDirection::Row => { }
+        _ => { core::set_flow(n, flex::FlexDirection::Row); wrote = true; }
+    }
+    var i: usize = 0 as usize;
+    let count: usize = core::child_count_of(n);
+    while i < count {
+        match core::child_of(n, i) {
+            option::Option[*core::Node]::Some(c) => {
+                if !is_points({ (*c).style.width }, page) {
+                    { (*c).set_width(flex::StyleLength::points(page)) };
+                    wrote = true;
+                }
+                if { (*c).style.flex_shrink } != 0.0f64 {
+                    { (*c).set_flex_shrink(0.0f64) };
+                    wrote = true;
+                }
+            }
+            option::Option[*core::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    // The widget needs the same two numbers to snap with, in pixels.
+    if !e::have_env() { return wrote; }
+    let v: *u8 = core::view_of(n);
+    if v == (0 as *u8) { return wrote; }
+    dex::carousel_set_page(e::env(), { v as jni::jobject },
+                           { e::px(page) as i32 }, { count as i32 });
+    return wrote;
+}
+
+// A PAGE SETTLED UNDER THE FINGER. `position` is written back so a read of the
+// prop answers where the carousel actually is, and both handlers fire: facet
+// distinguishes the current ITEM from the POSITION, and a carousel whose pages
+// are its children has no item that is not its index.
+fn fire_carousel_page(token: i64, index: i32) {
+    let n: *core::Node = { token as *core::Node };
+    if n == (0 as *core::Node) { return; }
+    let p: *props::CarouselProps = carousel_props(n);
+    if p == (0 as *props::CarouselProps) { return; }
+    if { (*p).position } == { index as i64 } { return; }
+    { (*p).position = { index as i64 } };
+    let v: *u8 = core::view_of(n);
+    let ph: fn(*u8, *u8) = { (*p).on_position_changed };
+    if ph != props::no_handler { ph(v, { (*p).on_position_changed_ctx }); }
+    let ih: fn(*u8, *u8) = { (*p).on_current_item_changed };
+    if ih != props::no_handler { ih(v, { (*p).on_current_item_changed_ctx }); }
+    return;
 }

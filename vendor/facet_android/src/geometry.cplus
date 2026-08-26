@@ -166,7 +166,12 @@ fn place(v: *u8, x: f64, y: f64, wd: f64, ht: f64) {
 // Sized at the origin: the children are placed against the scroll's frame
 // already, and the document shares that origin.
 fn size_document(n: *core::Node, v: *u8, frame: flex::Frame) {
-    if core::kind_of(n) != props::K_SCROLL { return; }
+    let k: u32 = core::kind_of(n);
+    // A CAROUSEL HAS ONE TOO, and it is the same view under the same tag: the
+    // pages overflow the viewport by design, and the document is what carries
+    // that overflow. Without this the host stays zero by zero and the pages
+    // have nothing to sit in.
+    if k != props::K_SCROLL && k != props::K_CAROUSEL { return; }
     let doc: *u8 = controls::document_host(v);
     if doc == v { return; }
     let e_size: flex::Size = content_extent(n, frame);
@@ -247,6 +252,15 @@ fn settle_splits(node: *core::Node) -> bool {
         let p: *split::SplitProps = controls::split_props(node);
         if p != (0 as *split::SplitProps) {
             if controls::settle_split(node, p) { wrote = true; }
+        }
+    }
+    // A CAROUSEL SETTLES THE SAME WAY, and in the same walk: its pages are a
+    // row of fixed widths that flex has to be TOLD, because the width comes
+    // from the viewport and the viewport is not known until this pass.
+    if core::kind_of(node) == props::K_CAROUSEL {
+        let cp: *props::CarouselProps = controls::carousel_props(node);
+        if cp != (0 as *props::CarouselProps) {
+            if controls::settle_carousel(node, cp) { wrote = true; }
         }
     }
     var i: usize = 0 as usize;

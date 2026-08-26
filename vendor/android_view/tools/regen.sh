@@ -86,6 +86,7 @@ BINDGEN="${BINDGEN:-../../target/release/cpc-bindgen}"
     android.graphics.drawable.ColorDrawable \
     android.widget.Spinner \
     android.widget.GridView \
+    android.widget.Gallery \
     android.webkit.WebView \
     android.webkit.WebSettings \
     > src/widgets.cplus

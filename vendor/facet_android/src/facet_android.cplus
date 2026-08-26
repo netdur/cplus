@@ -188,6 +188,13 @@ export extern fn facet_android_terminated(envp: *jni::JNIEnv, cls: jni::jobject,
     return;
 }
 
+export extern fn facet_android_carousel_page(envp: *jni::JNIEnv, cls: jni::jobject,
+                                             token: i64, index: i32) {
+    e::set_env(rt::from_native(envp));
+    controls::fire_carousel_page(token, index);
+    return;
+}
+
 export extern fn facet_android_picked(envp: *jni::JNIEnv, cls: jni::jobject, token: i64,
                                       index: i32) {
     e::set_env(rt::from_native(envp));

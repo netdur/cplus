@@ -175,7 +175,13 @@ public final class FacetDraw {
     //
     // Same shape as the remembered background one file over, and for the same
     // reason: "facet declares nothing" has to restore the PLATFORM'S value.
-    private static final int INPUT_TAG = 0x7F0F000B;
+    // 0x7F0F000D. THE TAG IDS ARE ONE NUMBER SPACE across this backend and they
+    // live in whichever file needs them — controls.cplus holds most, and this
+    // was written as ...000B, which is the refreshable's spinner. A collision
+    // there is a ProgressBar read as an Integer, or worse the other way round.
+    // Taken, at the time of writing: 0001-0007 and 000A-000C in controls.cplus,
+    // paint.cplus and swipe.cplus. Grep 0x7F0F before taking one.
+    private static final int INPUT_TAG = 0x7F0F000D;
 
     public static void rememberInput(android.view.View v) {
         if (v.getTag(INPUT_TAG) != null) return;

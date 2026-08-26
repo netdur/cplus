@@ -88,15 +88,15 @@ count as answering it. Three surfaces, because they fail differently:
 
 | | android | gtk | appkit | uikit |
 |---|---|---|---|---|
-| props | 281/360 · 78% | 356 · 98% | 334 · 92% | 321 · 89% |
-| handlers | 55/68 · 80% | 68 · 100% | 68 · 100% | 65 · 95% |
+| props | 289/360 · 80% | 356 · 98% | 334 · 92% | 321 · 89% |
+| handlers | 57/68 · 84% | 68 · 100% | 68 · 100% | 65 · 95% |
 | shared band | 18/21 · 85% | 19 · 90% | 20 · 95% | 18 · 85% |
 
 The gap between the first two rows is the shape of the work left: this backend
-can be TOLD a good deal more than it can SAY. Thirteen of the handlers it never
-fires are a scroll position, a selection, a submit and a lifecycle edge — reads
-an application needs before it can do anything with the controls that are
-already drawn.
+can be TOLD a good deal more than it can SAY. Eleven of the handlers it never
+fires are a hover, a reorder, a divider drag and a text selection — reads an
+application needs before it can do anything with the controls that are already
+drawn.
 
 - **PULL-TO-REFRESH IS HAND-ROLLED**, because `SwipeRefreshLayout` is AndroidX
   — an `.aar` with its own dex and dependency graph — and this project ships no
@@ -117,6 +117,24 @@ already drawn.
   settled. facet_uikit makes a UISegmentedControl and never populates it, so
   there is no implementation to read the intent from, and guessing would be
   inventing a control facet has not described.
+
+- **A `carousel` does not WRAP, and its pages are as wide as one column.**
+  `wraps` defaults to true in the contract and there is no looping here: a
+  HorizontalScrollView has a first page and a last one, and a wrap would mean
+  reordering the children under the finger. The page width is the viewport less
+  the peek insets divided by `columns`, written into flex as a fixed width with
+  no shrink — the overflow that produces IS the scroll range. `bounces` is the
+  overscroll EDGE EFFECT, which is Android's whole answer: there is no rubber
+  band to switch off, so it is `OVER_SCROLL_NEVER` or the glow.
+
+  It clips itself, in `dispatchDraw`. `clipChildren` bounds each child to the
+  CHILD'S rectangle, not the parent's, so a document laid out four pages wide
+  inside a one-page window still draws in full — and what would cut it off is
+  the grandparent clipping the carousel, which every FacetHost deliberately
+  does not do. **The same hole is open for a `scroll` whose content is taller
+  than its viewport and whose parent is a plain host**: it has not been seen
+  because every scroll in the gallery fills its page, and it is the same fix
+  one class over when it is.
 
 - **A `collection`'s COLUMN WIDTH is the whole control, and `item_sizing` is
   half of one.** A GridView does not divide its width by its column count — it
@@ -154,7 +172,7 @@ already drawn.
   `text_button`, `text_area`, `search_field`, `image`, `icon_button`, `scroll`,
   `stepper`, `list`, `tree`, `split`, `canvas`, `swipeable`, `page_dots`,
   `date_picker`, `symbol`, `time_picker`, `bordered`, `popup`, `web`,
-  `refreshable`, `table` and `collection` — each with BOTH
+  `refreshable`, `table`, `collection` and `carousel` — each with BOTH
   halves, the props write and the event read. Half a control is worse than none:
   it looks finished and reports nothing, which is the shape of the bug
   facet_uikit carried in its checkbox until 2026-08-25.
@@ -269,11 +287,13 @@ already drawn.
   so the tree shape is right and only the arming is missing.
 - **`observe_size`.** Android's answer is `addOnLayoutChangeListener`, which
   needs a fifth DEX adapter. Returns 0 (no handle) today.
-- **`carousel`.** The recycler underneath it is built and shared: `list` runs
-  on a `ListView` with a `FacetRows` adapter from the dex, `tree` is the same
-  adapter over a flattened visible-row index, and `collection` is a `GridView`,
-  which is an `AbsListView` and takes that adapter unchanged. A carousel is the
-  same model laid out along one row, and it has not been written.
+- **The recycling tier, and what shares what.** `list` runs on a `ListView`
+  with a `FacetRows` adapter from the dex, `tree` is that same adapter over a
+  flattened visible-row index, and `collection` is a `GridView` — an
+  `AbsListView`, so it takes the adapter unchanged. `carousel` is NOT one of
+  them: its pages are the node's own children, already built and mounted, so
+  there is nothing for a `getView` to answer, and it is a paging
+  `HorizontalScrollView` beside the `scroll` it shares a document host with.
   `RecyclerView` was not used anywhere here: it is AndroidX, an .aar with its
   own dex, and this project ships no Gradle; `ListView` recycles through
   `convertView`, which is the whole mechanism, and facet owns layout so

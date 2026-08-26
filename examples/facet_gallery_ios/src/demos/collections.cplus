@@ -11,10 +11,12 @@ import "facet/component" as component;
 import "facet/vocabulary" as vocab;
 import "facet/list" as list;
 import "facet/collection" as collection;
+import "facet/carousel" as carousel;
 import "facet/label" as label;
 import "facet/services" as services;
 import "flex_layout/flex_layout" as flex;
 import "stdlib/option" as option;
+import "stdlib/status" as status;
 import "../shell" as shell;
 
 // The row builder the list calls. It is called for the rows on screen and for
@@ -37,6 +39,57 @@ fn tile(i: usize, ctx: *u8) -> core::Node {
                     text_color: vocab::Color::ink(0.5f64)));
     return ui::column(b).padding(14.0f64).gap(2.0f64)
         .align(flex::Align::Center).justify(flex::Justify::Center);
+}
+
+// A page settled. A carousel reports the position and the current item
+// separately; with pages that are children rather than data, they are the same
+// number under two names.
+fn page_changed(v: *u8, ctx: *u8) {
+    match carousel::find("g:pages") {
+        option::Option[carousel::Carousel]::Some(c) => {
+            let i: i64 = c.position();
+            match label::find("g:page") {
+                option::Option[label::Label]::Some(l) => {
+                    let _t: label::Label = l.set_text("page ${i} of 4");
+                }
+                option::Option[label::Label]::None => { }
+            }
+        }
+        option::Option[carousel::Carousel]::None => { }
+    }
+    return;
+}
+
+// THE WRITE PATH. `position` is a prop like any other: setting it moves the
+// carousel, and the move must not come back as a page change the application
+// did not make.
+fn next_page(v: *u8, ctx: *u8) {
+    match carousel::find("g:pages") {
+        option::Option[carousel::Carousel]::Some(c) => {
+            var i: i64 = c.position() + (1 as i64);
+            if i > (3 as i64) { i = 0 as i64; }
+            let _s: carousel::Carousel = c.set_position(i);
+            match label::find("g:page") {
+                option::Option[label::Label]::Some(l) => {
+                    let _t: label::Label = l.set_text("page ${i} of 4");
+                }
+                option::Option[label::Label]::None => { }
+            }
+        }
+        option::Option[carousel::Carousel]::None => { }
+    }
+    return;
+}
+
+fn page(title: str, tint: vocab::Color) -> core::Node {
+    var b: flex::Builder = flex::Builder::new();
+    b.add(ui::label(title, font_size: 20.0f64));
+    b.add(ui::label("swipe sideways", font_size: 12.0f64,
+                    text_color: vocab::Color::ink(0.55f64)));
+    return shell::painted(
+        ui::column(b).padding(20.0f64).gap(6.0f64)
+            .align(flex::Align::Center).justify(flex::Justify::Center),
+        tint, 10.0f64);
 }
 
 // A cell was chosen. The collection reports it as `on_selection_changed` — the
@@ -196,6 +249,24 @@ impl ListDemo: component::Component {
                             text_color: vocab::Color::ink(0.7f64)));
         grid.add(shell::caption("The same count-and-callback the list takes, laid out in three columns instead of one. The cells recycle the same way."));
         body.add(shell::card("A GRID", grid));
+
+        var car: flex::Builder = flex::Builder::new();
+        var deck: core::Node = ui::carousel(key: "g:pages",
+                                            on_position_changed: page_changed)
+            .height(160.0f64);
+        let _p1: status::Status = deck.add_child(page("One", vocab::Color::rgba(0.20f64, 0.28f64, 0.42f64)));
+        let _p2: status::Status = deck.add_child(page("Two", vocab::Color::rgba(0.32f64, 0.22f64, 0.40f64)));
+        let _p3: status::Status = deck.add_child(page("Three", vocab::Color::rgba(0.20f64, 0.38f64, 0.34f64)));
+        let _p4: status::Status = deck.add_child(page("Four", vocab::Color::rgba(0.42f64, 0.28f64, 0.20f64)));
+        car.add(deck);
+        var line: flex::Builder = flex::Builder::new();
+        line.add(ui::label("page 0 of 4", key: "g:page", font_size: 13.0f64,
+                           text_color: vocab::Color::ink(0.7f64)));
+        line.add(ui::column(flex::Builder::new()).grow(1.0f64));
+        line.add(ui::button("next ›", key: "g:next", on_click: next_page));
+        car.add(ui::row(line).align(flex::Align::Center).gap(8.0f64));
+        car.add(shell::caption("Four pages, one per screen. The pages are the node's CHILDREN — built once, not asked for — which is what separates a carousel from the list above it."));
+        body.add(shell::card("A CAROUSEL", car));
 
         var kin: flex::Builder = flex::Builder::new();
         kin.add(shell::caption("`table` is the same view with three verbs of its own — its style, its row height, and whether the rows size themselves. `tree` is the same table over the flattened OPEN rows, re-flattened whenever the model or the expansion changes. `collection` and `carousel` are UICollectionView with a flow layout."));
