@@ -36,10 +36,10 @@ import "stdlib/text" as text;
 import "./env" as e;
 import "./paint" as paint;
 import "./dex" as dex;
-import "./geometry" as geometry;
 import "./scheduler" as scheduler;
 import "./log" as log;
 import "./controls" as controls;
+import "./geometry" as geometry;
 
 // Keyed tags on the LIST's view, so a re-entry finds what it made. Resource-id
 // shaped, because `View.setTag(int, Object)` refuses anything whose top byte is
@@ -78,10 +78,12 @@ fn create_list_view(n: *core::Node) -> *u8 {
     paint::unwrap_keep(view);
     env.delete_local_ref(adapter);
     env.delete_local_ref(tap);
-    // THE VISIBLE WINDOW, reported back: `observe_scrolled`, the two appearance
-    // events and the remaining-items threshold are all one callback — Android
-    // hands over the first visible row, how many are visible and how many there
-    // are, which is exactly what those four are computed from.
+    // THE PULL, which is a drag at the top rather than a scroll.
+    controls::arm_touch(env, raw, n);
+    // THE VISIBLE WINDOW, reported back: `observe_scrolled` and the two
+    // appearance events are all one callback — Android hands over the first
+    // visible row, how many are visible and how many there are, which is
+    // exactly what those three are computed from.
     let watcher: jni::jobject =
         dex::new_with_token(env, dex::scroll_class(), { #addr(n) as i64 });
     if watcher != (0 as jni::jobject) {
@@ -111,6 +113,51 @@ fn apply_list(v: *u8, n: *core::Node, dirty: u64) {
     let moved: u64 = list::P_COUNT | list::P_ROW | list::P_INVALIDATE_ROW
                    | list::P_SPLICE_ROWS | list::P_GROUP | list::P_GROUP_COUNT;
     if (dirty & moved) != (0 as u64) {
+        let a: jni::jobject = adapter_of(env, v);
+        if a != (0 as jni::jobject) {
+            dex::rows_changed(env, a);
+            env.delete_local_ref(a);
+        }
+    }
+    // THE REFRESH BAND. `is_refreshable` and `can_refresh` are the two gates the
+    // gesture reads; `is_refreshing` and the two commands are the state.
+    if (dirty & list::P_IS_REFRESHING) != (0 as u64) {
+        set_refreshing(v, p, { (*p).is_refreshing });
+    }
+    if (dirty & list::P_BEGIN_REFRESH) != (0 as u64) { set_refreshing(v, p, true); }
+    if (dirty & list::P_END_REFRESH) != (0 as u64) { set_refreshing(v, p, false); }
+    if (dirty & (list::P_IS_REFRESHABLE | list::P_CAN_REFRESH)) != (0 as u64)
+       || dirty == paint::all_bits() {
+        // The spinner is MADE when the list says it can refresh, so a list that
+        // never can costs no view at all.
+        // NOT AT CREATE: the list has no PARENT yet — `insert` puts it in one
+        // after `create` returns — and the indicator is the parent's child. It
+        // is made on the first apply that finds one, which is any pass after
+        // the mount.
+        if { (*p).is_refreshable } {
+            let sp: jni::jobject = ensure_spinner(env, v);
+            if sp != (0 as jni::jobject) { env.delete_local_ref(sp); }
+        }
+    }
+    if (dirty & list::P_REFRESH_COLOR) != (0 as u64) {
+        let c: vocab::Color = { (*p).refresh_color };
+        if c.is_set() {
+            let sp: jni::jobject = ensure_spinner(env, v);
+            if sp != (0 as jni::jobject) {
+                var pb: w::ProgressBar = w::ProgressBar::from_global(env, sp);
+                let t: jni::jobject = w::ColorStateList::value_of(env, paint::argb_of(c));
+                pb.set_indeterminate_tint_list(t);
+                env.delete_local_ref(t);
+                let _k: *u8 = pb.into_raw();
+            }
+        }
+    }
+    // UNEVEN ROWS and GROUPING are the two the adapter answers, not the widget:
+    // a ListView asks its adapter for every row's view and never assumes a
+    // height, so `has_uneven_rows` is already true of it — and `is_grouped`
+    // routes through the group model the adapter reads. Both are named here so
+    // the dirty word is not silently dropped.
+    if (dirty & (list::P_HAS_UNEVEN_ROWS | list::P_IS_GROUPED)) != (0 as u64) {
         let a: jni::jobject = adapter_of(env, v);
         if a != (0 as jni::jobject) {
             dex::rows_changed(env, a);
@@ -876,4 +923,137 @@ fn apply_separator(env: rt::Env, v: *u8, p: *props::ListProps) {
     lv.set_divider_height(1 as i32);
     let _k: *u8 = lv.into_raw();
     return;
+}
+
+// ---- pull to refresh -----------------------------------------------------------
+// ANDROID HAS NO WIDGET FOR THIS. `SwipeRefreshLayout` is AndroidX — an .aar
+// with its own dex and dependency graph — and this project ships no Gradle, so
+// the gesture and the indicator are built here. facet_gtk hand-rolls the same
+// control for the same reason.
+//
+// THE SPINNER IS THE LIST'S PARENT'S CHILD, not the list's: an `AdapterView`
+// refuses `addView` outright, so the indicator cannot live inside the thing it
+// belongs to. It is placed by the frame walk — the third view in this backend
+// with that standing, after the split's divider and the swipe strip.
+
+
+// How far down the finger must travel, at the TOP of the list, before a drag is
+// a refresh. The same 64 points every platform's pull-to-refresh uses.
+fn refresh_threshold() -> f64 { return 64.0f64; }
+
+// Made once, into the list's PARENT, and remembered on the list itself.
+fn ensure_spinner(env: rt::Env, v: *u8) -> jni::jobject {
+    if v == (0 as *u8) { return 0 as jni::jobject; }
+    let existing: jni::jobject = controls::refresh_spinner_of(env, v);
+    if existing != (0 as jni::jobject) { return existing; }
+    var lv: w::View = w::View::from_global(env, v);
+    let parent: jni::jobject = lv.get_parent();
+    paint::unwrap_keep(lv);
+    if parent == (0 as jni::jobject) { return 0 as jni::jobject; }
+    var pb: w::ProgressBar = w::ProgressBar::new_context(env, e::context());
+    let raw: *u8 = pb.into_raw();
+    controls::attach_layout_params(raw);
+    var host: w::ViewGroup = w::ViewGroup::from_global(env, parent);
+    host.add_view_view(raw);
+    let _k: *u8 = host.into_raw();
+    var sv: w::View = w::View::from_global(env, raw);
+    sv.set_visibility(8 as i32);   // GONE until a pull asks for it
+    paint::unwrap_keep(sv);
+    var lv2: w::View = w::View::from_global(env, v);
+    lv2.set_tag_i_object(controls::refresh_spinner_tag(), raw);
+    paint::unwrap_keep(lv2);
+    // A LOCAL REF, ALWAYS — read back through the tag rather than handing out
+    // `raw`, which is the GLOBAL the ProgressBar wrapper owned. The two paths
+    // through this function returned two different KINDS of reference, and the
+    // caller deleted both as locals: silent in an ordinary run, and
+    // "expected reference of kind Local but found Global" under CheckJNI.
+    return controls::refresh_spinner_of(env, v);
+}
+
+
+fn show_spinner(env: rt::Env, v: *u8, on: bool) {
+    if v == (0 as *u8) { return; }
+    let sp: jni::jobject = ensure_spinner(env, v);
+    if sp == (0 as jni::jobject) { return; }
+    var sv: w::View = w::View::from_global(env, sp);
+    var vis: i32 = 8 as i32;              // GONE
+    if on { vis = 0 as i32; }             // VISIBLE
+    sv.set_visibility(vis);
+    paint::unwrap_keep(sv);
+    env.delete_local_ref(sp);
+    return;
+}
+
+// THE STATE, which is what `is_refreshing` and the two commands write. Held in
+// the props, so an application reading it back is told the truth.
+// THE VIEW IS PASSED, not looked up. `apply` runs inside `create` with an
+// all-ones dirty word, and at that moment the node's `data.view` is NOT YET
+// SET — `views::create` records it after the body returns. Reading it here got
+// a null and `getParent()` on null is a CheckJNI abort, which is how this was
+// found rather than by a blank indicator.
+fn set_refreshing(v: *u8, p: *props::ListProps, on: bool) {
+    if { (*p).is_refreshing } == on { return; }
+    { (*p).is_refreshing = on };
+    if !e::have_env() { return; }
+    show_spinner(e::env(), v, on);
+    return;
+}
+
+// A DRAG AT THE TOP. The touch observer reports every edge; this is the one
+// that means "pull". A list already scrolled away from row zero is being
+// scrolled, not pulled — which is the whole reason the first visible row is
+// asked for rather than assumed.
+static PULL_NODE: usize = 0;
+static PULL_FROM: f64 = 0.0f64;
+
+fn pull_touch_token(token: i64, action: i32, y: f32) {
+    let n: *core::Node = { token as *core::Node };
+    if n == (0 as *core::Node) { return; }
+    if core::kind_of(n) != props::K_LIST { return; }
+    pull_touch(n, action, y);
+    return;
+}
+
+fn pull_touch(n: *core::Node, action: i32, y: f32) {
+    let p: *props::ListProps = list_props(n);
+    if p == (0 as *props::ListProps) { return; }
+    if !{ (*p).is_refreshable } || !{ (*p).can_refresh } { return; }
+    let uy: f64 = e::dp({ y as f64 });
+    let v: *u8 = core::view_of(n);
+    if action == (0 as i32) {                       // DOWN
+        PULL_NODE = { #addr(n) };
+        PULL_FROM = uy;
+        // CLAIM THE GESTURE, but only at the top — which is the only place a
+        // pull can start. Without this the PAGE's scroll view steals the drag
+        // at the touch slop (8dp) and the pull threshold (64) is never reached:
+        // the list saw a DOWN and then a CANCEL, every time.
+        if first_visible_row(n) == (0 as i32) && e::have_env() {
+            controls::hold_parent(e::env(), v, true);
+        }
+        return;
+    }
+    if action != (2 as i32) {                       // UP or CANCEL
+        PULL_NODE = 0;
+        if e::have_env() { controls::hold_parent(e::env(), v, false); }
+        return;
+    }
+    if PULL_NODE != { #addr(n) } { return; }
+    if { (*p).is_refreshing } { return; }
+    // A DRAG THE OTHER WAY is a scroll, and the page is welcome to it again.
+    if uy < PULL_FROM && e::have_env() { controls::hold_parent(e::env(), v, false); }
+    if uy - PULL_FROM < refresh_threshold() { return; }
+    if first_visible_row(n) != (0 as i32) { return; }
+    PULL_NODE = 0;
+    set_refreshing(v, p, true);
+    let h: fn(*u8, *u8) = { (*p).on_refreshing };
+    if h != props::no_handler { h(core::view_of(n), { (*p).on_refreshing_ctx }); }
+    return;
+}
+
+// Which row is at the top, asked of the widget. The scroll listener records it
+// as a side effect of the window it already reports.
+fn first_visible_row(n: *core::Node) -> i32 {
+    let slot: usize = window_slot(n);
+    if !WIN_SEEN[slot] { return 0 as i32; }
+    return WIN_FIRST[slot];
 }

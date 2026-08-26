@@ -196,6 +196,18 @@ fn apply_button(v: *u8, n: *core::Node, dirty: u64) {
     // The CHROME, watched on the band's decoration bits as well as its own:
     // `configure` runs before this body and restores the platform's background
     // whenever the band declares nothing, so the two have to move together.
+    if (dirty & (button::P_TOGGLES | button::P_ON)) != (0 as u64) {
+        var sel: w::View = w::View::from_global(env, v);
+        if { (*p).toggles } { sel.set_selected({ (*p).on }); }
+        paint::unwrap_keep(sel);
+    }
+    // A BUTTON'S IMAGE is a COMPOUND DRAWABLE — a glyph beside the title, and
+    // `content_layout` is which of the four sides it sits on. Android says the
+    // same thing with the same four slots, which is why the two are one branch:
+    // the drawable and its side cannot be written apart.
+    if (dirty & (button::P_IMAGE | button::P_CONTENT_LAYOUT)) != (0 as u64) {
+        apply_button_image(env, tv, { (*p).image.view() }, { (*p).content_layout });
+    }
     let chrome: u64 = button::P_BORDERED | button::P_BORDER_COLOR
                     | button::P_BORDER_WIDTH | button::P_CORNER_RADIUS
                     | props::C_BACKGROUND_COLOR | props::C_CORNER_RADIUS;
@@ -947,6 +959,11 @@ fn apply_text_button(v: *u8, n: *core::Node, dirty: u64) {
     if (dirty & (text_button::P_FONT_SIZE | text_button::P_FONT_SCALES)) != (0 as u64) {
         apply_text_size(tv, { (*p).font_size }, { (*p).font_scales });
     }
+    if (dirty & (text_button::P_TOGGLES | text_button::P_ON)) != (0 as u64) {
+        var sel: w::View = w::View::from_global(env, v);
+        if { (*p).toggles } { sel.set_selected({ (*p).on }); }
+        paint::unwrap_keep(sel);
+    }
     let chrome: u64 = text_button::P_BORDERED | text_button::P_BORDER_COLOR
                     | text_button::P_BORDER_WIDTH | text_button::P_CORNER_RADIUS
                     | props::C_BACKGROUND_COLOR | props::C_CORNER_RADIUS;
@@ -1536,6 +1553,22 @@ fn apply_image(v: *u8, n: *core::Node, dirty: u64) {
     let env: rt::Env = e::env();
     if (dirty & image::P_SOURCE) != (0 as u64) { set_source(env, v, { (*p).source.view() }); }
     if (dirty & image::P_FIT) != (0 as u64) { set_fit(env, v, { (*p).fit }); }
+    // AN ANIMATED IMAGE is an AnimatedImageDrawable or an AnimationDrawable
+    // depending on where it came from — both answer `start` and `stop`, and
+    // both are reached through the one thing they have in common: the drawable
+    // the ImageView is holding.
+    if (dirty & image::P_IS_ANIMATION_PLAYING) != (0 as u64) {
+        play_image(env, v, { (*p).is_animation_playing });
+    }
+    // `is_opaque` — a promise that nothing behind shows through. Android reads
+    // that from the drawable rather than from a flag on the view, so what this
+    // can honour is the OPPOSITE claim: a view told it is not opaque must not
+    // be skipped. MANIFEST §2 carries the rest.
+    if (dirty & image::P_IS_OPAQUE) != (0 as u64) {
+        var iv2: w::View = w::View::from_global(env, v);
+        iv2.set_will_not_draw(false);
+        paint::unwrap_keep(iv2);
+    }
     return;
 }
 
@@ -1583,6 +1616,32 @@ fn apply_icon_button(v: *u8, n: *core::Node, dirty: u64) {
     let env: rt::Env = e::env();
     if (dirty & icon_button::P_SOURCE) != (0 as u64) { set_source(env, v, { (*p).source.view() }); }
     if (dirty & icon_button::P_FIT) != (0 as u64) { set_fit(env, v, { (*p).fit }); }
+    // ITS OWN CHROME, the same four a button has — and asking for any of them
+    // is asking for a background, which is what takes this kind OUT of the
+    // glyph-only posture it wears by default.
+    let chrome: u64 = icon_button::P_BORDERED | icon_button::P_BORDER_COLOR
+                    | icon_button::P_BORDER_WIDTH | icon_button::P_CORNER_RADIUS
+                    | props::C_BACKGROUND_COLOR | props::C_CORNER_RADIUS;
+    if (dirty & chrome) != (0 as u64) {
+        apply_control_chrome(env, v, n, { (*p).bordered }, { (*p).border_color },
+                             { (*p).border_width }, { (*p).corner_radius });
+    }
+    // A TOGGLING BUTTON keeps its state, and Android's word for that state is
+    // SELECTED — `setChecked` belongs to a CompoundButton, which an ImageButton
+    // is not. The selected state is what a background's state list draws from.
+    if (dirty & (icon_button::P_TOGGLES | icon_button::P_ON)) != (0 as u64) {
+        var view: w::View = w::View::from_global(env, v);
+        if { (*p).toggles } { view.set_selected({ (*p).on }); }
+        paint::unwrap_keep(view);
+    }
+    // `is_opaque` — a promise that nothing behind this view shows through, so
+    // the platform may skip drawing what is under it. Android's word is the
+    // same one facet uses, one layer down.
+    if (dirty & icon_button::P_IS_OPAQUE) != (0 as u64) {
+        var view: w::View = w::View::from_global(env, v);
+        view.set_will_not_draw(false);
+        paint::unwrap_keep(view);
+    }
     return;
 }
 
@@ -2133,6 +2192,70 @@ fn put_utf8_bmp(buf: *u8, at: usize, c: u32) -> usize {
 fn tint_image(env: rt::Env, v: *u8, c: vocab::Color) {
     env.call_void_1(v, #str_ptr("android/widget/ImageView\0"), #str_ptr("setColorFilter\0"),
                     #str_ptr("(I)V\0"), jni::arg_int(paint::argb_of(c)));
+    return;
+}
+
+// A BUTTON'S IMAGE, on one of four sides. The drawable comes through the same
+// four doors an `image` source does, and the SIDE is which of the compound
+// slots it lands in — Android's `setCompoundDrawablesRelativeWithIntrinsic
+// Bounds` takes start, top, end and bottom, which is facet's ImageLeft,
+// ImageTop, ImageRight and ImageBottom one word apart.
+// START OR STOP, asked of whatever drawable is there. `Animatable` is the
+// interface both animated drawables implement, and calling through it is what
+// keeps this one line rather than a type test per source kind.
+fn play_image(env: rt::Env, v: *u8, playing: bool) {
+    let d: jni::jobject = env.call_object_0(
+        v, #str_ptr("android/widget/ImageView\0"), #str_ptr("getDrawable\0"),
+        #str_ptr("()Landroid/graphics/drawable/Drawable;\0"));
+    if d == (0 as jni::jobject) { env.clear_exception(); return; }
+    var name: *u8 = #str_ptr("stop\0");
+    if playing { name = #str_ptr("start\0"); }
+    env.call_void_0(d, #str_ptr("android/graphics/drawable/Animatable\0"), name,
+                    #str_ptr("()V\0"));
+    // A still image is not Animatable, and asking it to start is a
+    // NoSuchMethodError rather than a crash — cleared here, where it is
+    // expected, rather than left for the next JNI call to trip over.
+    env.clear_exception();
+    env.delete_local_ref(d);
+    return;
+}
+
+fn apply_button_image(env: rt::Env, tv: w::TextView, src: str, side: vocab::ContentLayout) {
+    if src == "" {
+        tv.set_compound_drawables_relative_with_intrinsic_bounds_drawable_drawable_drawable_drawable(
+            0 as jni::jobject, 0 as jni::jobject, 0 as jni::jobject, 0 as jni::jobject);
+        return;
+    }
+    var buf: [u8; 512] = #zero::[[u8; 512]]();
+    let base: *u8 = { #addr_of(buf[0]) };
+    if !paint::cstr(src, base, 512 as usize) { return; }
+    let id: i32 = drawable_id(env, base);
+    if id == (0 as i32) { return; }
+    let d: jni::jobject = env.call_object_1(
+        e::context(), #str_ptr("android/content/Context\0"), #str_ptr("getDrawable\0"),
+        #str_ptr("(I)Landroid/graphics/drawable/Drawable;\0"), jni::arg_int(id));
+    env.clear_exception();
+    if d == (0 as jni::jobject) { return; }
+    let none: jni::jobject = 0 as jni::jobject;
+    match side {
+        vocab::ContentLayout::ImageLeft => {
+            tv.set_compound_drawables_relative_with_intrinsic_bounds_drawable_drawable_drawable_drawable(
+                d, none, none, none);
+        }
+        vocab::ContentLayout::ImageTop => {
+            tv.set_compound_drawables_relative_with_intrinsic_bounds_drawable_drawable_drawable_drawable(
+                none, d, none, none);
+        }
+        vocab::ContentLayout::ImageRight => {
+            tv.set_compound_drawables_relative_with_intrinsic_bounds_drawable_drawable_drawable_drawable(
+                none, none, d, none);
+        }
+        vocab::ContentLayout::ImageBottom => {
+            tv.set_compound_drawables_relative_with_intrinsic_bounds_drawable_drawable_drawable_drawable(
+                none, none, none, d);
+        }
+    }
+    env.delete_local_ref(d);
     return;
 }
 
@@ -2932,6 +3055,27 @@ fn is_points(l: flex::StyleLength, v: f64) -> bool {
     };
 }
 
+// ---- the refresh indicator's slot ---------------------------------------------
+// The TAG and its reader live here rather than in `recycler`, because the frame
+// walk needs them too — and `geometry` already imports this module while
+// `recycler` imports `geometry`. One more edge the other way would be a cycle.
+
+const REFRESH_SPINNER_TAG: i32 = 2131886091 as i32;   // 0x7F0F000B — see SCROLL_DOC_TAG
+
+fn refresh_spinner_tag() -> i32 { return REFRESH_SPINNER_TAG; }
+
+// A LOCAL ref or null.
+fn refresh_spinner_of(env: rt::Env, v: *u8) -> jni::jobject {
+    if v == (0 as *u8) { return 0 as jni::jobject; }
+    var view: w::View = w::View::from_global(env, v);
+    let t: jni::jobject = view.get_tag_i(REFRESH_SPINNER_TAG);
+    paint::unwrap_keep(view);
+    return t;
+}
+
+// How tall the indicator is, which the frame walk needs and the recycler sets.
+fn refresh_height() -> f64 { return 48.0f64; }
+
 // ---- the raw touch ------------------------------------------------------------
 // TWO KINDS WANT THE EDGES OF A TOUCH rather than the click it becomes: a
 // button, which declares `on_pressed` and `on_released`, and a canvas, whose
@@ -2945,6 +3089,22 @@ fn is_points(l: flex::StyleLength, v: f64) -> bool {
 // `on_unhover` and `observe_move_hover_interaction` need a pointer that is not
 // touching, and a finger is never that. MANIFEST §1, the same reading
 // facet_uikit records.
+
+// THE ANCESTOR SCROLL'S PROMISE not to take the rest of this gesture.
+// `requestDisallowInterceptTouchEvent` is asked of the PARENT, which is the
+// chain a ScrollView is somewhere up. Used by any control that owns a drag a
+// scrolling page would otherwise steal at the touch slop.
+fn hold_parent(env: rt::Env, v: *u8, on: bool) {
+    if v == (0 as *u8) { return; }
+    var view: w::View = w::View::from_global(env, v);
+    let parent: jni::jobject = view.get_parent();
+    paint::unwrap_keep(view);
+    if parent == (0 as jni::jobject) { return; }
+    var g: w::ViewGroup = w::ViewGroup::from_global(env, parent);
+    g.request_disallow_intercept_touch_event(on);
+    let _k: *u8 = g.into_raw();
+    return;
+}
 
 fn arm_touch(env: rt::Env, raw: *u8, n: *core::Node) {
     let listener: jni::jobject =
@@ -2987,6 +3147,10 @@ fn fire_touch_event(token: i64, action: i32, x: f32, y: f32) {
         if up || cancelled { fire_one(v, { (*p).on_released }, { (*p).on_released_ctx }); }
         return;
     }
+    // A LIST'S PULL is the recycler's, and it is dispatched by the NATIVE rather
+    // than from here: `recycler` already imports this module for the touch
+    // adapter and the layout params, so calling back into it would close a
+    // cycle. facet_android.cplus imports both and is the place that can.
     if kind == props::K_CANVAS {
         let p: *props::CanvasProps = raw as *props::CanvasProps;
         if down { fire_one(v, { (*p).on_press }, { (*p).on_press_ctx }); }

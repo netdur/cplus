@@ -133,6 +133,11 @@ export extern fn facet_android_touch_event(envp: *jni::JNIEnv, cls: jni::jobject
                                           token: i64, action: i32, x: f32, y: f32) {
     e::set_env(rt::from_native(envp));
     controls::fire_touch_event(token, action, x, y);
+    // AND THE RECYCLER, which reads the same edges for a different verb: a drag
+    // at the top of a list is a PULL. Both are called because the two modules
+    // cannot call each other — `recycler` imports `controls`, so the dispatch
+    // lives where both are already in scope.
+    recycler::pull_touch_token(token, action, y);
     return;
 }
 

@@ -252,6 +252,32 @@ fn settle_splits(node: *core::Node) -> bool {
     return wrote;
 }
 
+// A LIST'S REFRESH INDICATOR, centred above the list's own top edge — which is
+// where a pull reveals it. This package's own view, like the split's divider and
+// the swipe strip, so nothing else in the walk places it.
+//
+// It is the LIST'S PARENT'S child: an `AdapterView` refuses `addView` outright,
+// so the indicator cannot live inside the thing it belongs to. Which means it
+// is placed in the parent's space — the same space the list's own frame is
+// already in.
+fn place_refresh_spinner(n: *core::Node, v: *u8, frame: flex::Frame,
+                         host: flex::Frame) {
+    if core::kind_of(n) != props::K_LIST { return; }
+    if !e::have_env() { return; }
+    let env: rt::Env = e::env();
+    let sp: jni::jobject = controls::refresh_spinner_of(env, v);
+    if sp == (0 as jni::jobject) { return; }
+    let h: f64 = controls::refresh_height();
+    // HOST-RELATIVE, like every other placement in this walk: flex frames are
+    // absolute in the root's space and the spinner's parent is the list's, so
+    // the host's origin comes off. Placed absolutely it landed halfway down the
+    // page — which looked like a centred spinner and was an unsubtracted one.
+    place(sp, (frame.left - host.left) + ((frame.width - h) / 2.0f64),
+          frame.top - host.top, h, h);
+    env.delete_local_ref(sp);
+    return;
+}
+
 // A split's divider sits ON the seam where the leading pane ends — this
 // package's own view rather than one of facet's children, so nothing else in
 // the frame walk places it. Drawn on the seam and not between the panes:
@@ -310,6 +336,7 @@ fn reposition(root: *core::Node) {
     if rv != (0 as *u8) {
         place_split_divider(root, rv, f);
         swipe::place_strip(root, rv, f, place);
+        place_refresh_spinner(root, rv, f, f);
     }
     reposition_children(root, f);
     return;
@@ -339,6 +366,7 @@ fn reposition_children(node: *core::Node, host_abs: flex::Frame) {
                     size_document(c, v, cf);
                     place_split_divider(c, v, cf);
                     swipe::place_strip(c, v, cf, place);
+                    place_refresh_spinner(c, v, cf, host_abs);
                     reposition_children(c, cf);
                 } else {
                     // Viewless: pass the SAME host down, so a keyless container

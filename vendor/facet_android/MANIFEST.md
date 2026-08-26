@@ -88,8 +88,8 @@ count as answering it. Three surfaces, because they fail differently:
 
 | | android | gtk | appkit | uikit |
 |---|---|---|---|---|
-| props | 207/360 · 57% | 356 · 98% | 334 · 92% | 321 · 89% |
-| handlers | 41/68 · 60% | 68 · 100% | 68 · 100% | 65 · 95% |
+| props | 230/360 · 63% | 356 · 98% | 334 · 92% | 321 · 89% |
+| handlers | 42/68 · 61% | 68 · 100% | 68 · 100% | 65 · 95% |
 | shared band | 18/21 · 85% | 19 · 90% | 20 · 95% | 18 · 85% |
 
 The gap between the first two rows is the shape of the work left: this backend
@@ -97,6 +97,19 @@ can be TOLD a good deal more than it can SAY. Twenty of the handlers it never
 fires are a scroll position, a selection, a submit and a lifecycle edge — reads
 an application needs before it can do anything with the controls that are
 already drawn.
+
+- **PULL-TO-REFRESH IS HAND-ROLLED**, because `SwipeRefreshLayout` is AndroidX
+  — an `.aar` with its own dex and dependency graph — and this project ships no
+  Gradle. The gesture is a drag at the top of the list, and the indicator is a
+  ProgressBar in the list's PARENT: an `AdapterView` refuses `addView` outright,
+  so it cannot live inside the thing it belongs to. It is placed by the frame
+  walk, like the split's divider and the swipe strip.
+
+  The pull CLAIMS the gesture with `requestDisallowInterceptTouchEvent` — the
+  page's own scroll view steals a vertical drag at the touch slop (8dp), which
+  is well before the pull threshold (64), so without it the list saw a DOWN and
+  then a CANCEL every time. Claimed only at row zero, and released the moment
+  the drag turns upward, which is a scroll and the page's.
 
 - **The controls still without a body.** `popup`, `tabs`, `collection`,
   `table`, `web`, `bordered`, `carousel`, `refreshable`, `time_picker`, the menu
