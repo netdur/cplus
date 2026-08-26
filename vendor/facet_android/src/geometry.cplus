@@ -212,8 +212,50 @@ fn content_extent(node: *core::Node, frame: flex::Frame) -> flex::Size {
 }
 
 // Re-run the layout for a root at a given size, then push every frame.
+// THE SAFE AREA, read from the window and applied to the ROOT.
+//
+// The window is edge-to-edge — `FacetActivity` turns off the system's own
+// fitting, on purpose: left to itself Android insets every app whether it asked
+// or not, and `SafeArea::None` then has no answer at all. A full-bleed photo is
+// a real thing to ask for, so the insets become a value facet applies rather
+// than a frame the system imposes.
+//
+// `honours_safe_area` is facet's own reduction of the five-way enum to the one
+// question a backend can act on, so this and facet_uikit cannot disagree about
+// what `Container` means.
+struct Insets { left: f64, top: f64, right: f64, bottom: f64 }
+
+fn safe_insets(root: *core::Node) -> Insets {
+    var none: Insets = Insets { left: 0.0f64, top: 0.0f64, right: 0.0f64, bottom: 0.0f64 };
+    if !core::honours_safe_area(root) { return none; }
+    if !e::have_env() { return none; }
+    let host: *u8 = e::host();
+    if host == (0 as *u8) { return none; }
+    var packed: i64 = e::insets_cache();
+    if packed < (0 as i64) {
+        packed = dex::window_insets(e::env(), { host as jni::jobject });
+        e::set_insets_cache(packed);
+    }
+    if packed == (0 as i64) { return none; }
+    let mask: i64 = 65535 as i64;
+    return Insets {
+        left: dp({ ((packed >> (48 as i64)) & mask) as f64 }),
+        top: dp({ ((packed >> (32 as i64)) & mask) as f64 }),
+        right: dp({ ((packed >> (16 as i64)) & mask) as f64 }),
+        bottom: dp({ (packed & mask) as f64 }),
+    };
+}
+
+static INSET_LEFT: f64 = 0.0f64;
+static INSET_TOP: f64 = 0.0f64;
+
 fn relayout_root(root: *core::Node, width: f64, height: f64) {
     if root == (0 as *core::Node) { return; }
+    let ins: Insets = safe_insets(root);
+    INSET_LEFT = ins.left;
+    INSET_TOP = ins.top;
+    let width: f64 = width - ins.left - ins.right;
+    let height: f64 = height - ins.top - ins.bottom;
     // THE ROOT FILLS ITS WINDOW, stated as style rather than assumed.
     //
     // `calculate_layout` takes the AVAILABLE space, not the size — a root whose
@@ -365,15 +407,26 @@ fn reposition(root: *core::Node) {
     // the ordinary shape on a phone, the root HAS a view, nothing measures or
     // lays it out, and the screen is blank with nothing in the log.
     let rv: *u8 = core::view_of(root);
-    if rv != (0 as *u8) { place(rv, f.left, f.top, f.width, f.height); }
-    // And its document, for the same reason one layer down.
-    size_document(root, rv, f);
     if rv != (0 as *u8) {
+        // THE INSET IS APPLIED ONCE, HERE. The root's view moves into the safe
+        // box and everything under it comes along, because every frame below is
+        // relative to this one.
+        place(rv, f.left + INSET_LEFT, f.top + INSET_TOP, f.width, f.height);
+        size_document(root, rv, f);
         place_split_divider(root, rv, f);
         swipe::place_strip(root, rv, f, place);
         place_refresh_spinner(root, rv, f, f);
+        reposition_children(root, f);
+        return;
     }
-    reposition_children(root, f);
+    size_document(root, rv, f);
+    // A VIEWLESS ROOT HAS NO VIEW TO MOVE, so its backed descendants — which
+    // the facade added to the Activity's host directly — are placed against a
+    // host frame shifted the other way, which puts them in the same box.
+    var host: flex::Frame = f;
+    host.left = f.left - INSET_LEFT;
+    host.top = f.top - INSET_TOP;
+    reposition_children(root, host);
     return;
 }
 

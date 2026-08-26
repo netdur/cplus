@@ -194,6 +194,10 @@ fn size_changed(wd: i32, ht: i32) {
     let d: f64 = e::density();
     var scale: f64 = d;
     if scale <= 0.0f64 { scale = 1.0f64; }
+    // THE OTHER THING THAT MOVES THE INSETS. A rotation, a split-screen resize
+    // and the IME all arrive here as a new size, and all three change what the
+    // system bars cover.
+    e::invalidate_insets();
     scheduler::set_size({ wd as f64 } / scale, { ht as f64 } / scale);
     scheduler::relayout_current();
     return;

@@ -1349,6 +1349,43 @@ fn apply_collection(v: *u8, n: *core::Node, dirty: u64) {
         gv.set_num_columns({ cols as i32 });
         let _k: *u8 = gv.into_raw();
     }
+    // ITEM SIZING is a HEIGHT here (see `row_height`), and a change to it has
+    // to re-bind the cells that are already on screen — the new height is only
+    // applied as a row is built.
+    if (dirty & collection::P_ITEM_SIZING) != (0 as u64) {
+        let a: jni::jobject = adapter_of(env, v);
+        if a != (0 as jni::jobject) {
+            dex::rows_changed(env, a);
+            env.delete_local_ref(a);
+        }
+    }
+    // THE TAIL THRESHOLD is read live by the scroll callback, so a change needs
+    // no write — but a threshold LOWERED past where the view already sits has
+    // to fire now rather than at the next scroll, and asking the widget where
+    // it is is how.
+    if (dirty & collection::P_REMAINING_THRESHOLD) != (0 as u64) {
+        var av: w::AdapterView = w::AdapterView::from_global(env, env.new_global_ref(v));
+        let first: i32 = av.get_first_visible_position();
+        let total: i32 = av.get_count();
+        let _k: *u8 = av.into_raw();
+        var g: w::ViewGroup = w::ViewGroup::from_global(env, env.new_global_ref(v));
+        let n_vis: i32 = g.get_child_count();
+        let _kg: *u8 = g.into_raw();
+        collection_rows_visible(n, first, n_vis, total);
+    }
+    // WHERE A CHANGED MODEL LEAVES THE VIEW. `KeepLastItemInView` is Android's
+    // transcript mode — the list follows new rows to the bottom — and the other
+    // two are the ordinary behaviour, which is to leave the scroll where the
+    // user put it.
+    if (dirty & collection::P_SCROLL_ANCHOR) != (0 as u64) {
+        var alv: w::AbsListView = w::AbsListView::from_global(env, env.new_global_ref(v));
+        alv.set_transcript_mode(match { (*p).items_view.scroll_anchor } {
+            vocab::ScrollAnchor::KeepLastItemInView => 2 as i32,   // ALWAYS_SCROLL
+            vocab::ScrollAnchor::KeepItemsInView => 0 as i32,
+            vocab::ScrollAnchor::KeepScrollOffset => 0 as i32,
+        });
+        let _k: *u8 = alv.into_raw();
+    }
     if (dirty & collection::P_SELECTION_MODE) != (0 as u64) {
         var alv: w::AbsListView = w::AbsListView::from_global(env, env.new_global_ref(v));
         alv.set_choice_mode(match { (*p).selectable_items_view.selection_mode } {

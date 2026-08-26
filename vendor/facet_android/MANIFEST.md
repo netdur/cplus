@@ -71,6 +71,71 @@ one, and all three doors are open to it.
 
 ---
 
+### Sections in a `collection`, and dragging a row to reorder one
+
+`is_grouped`, `can_mix_groups`, `can_reorder_items` and `reorder` on a
+`collection`, and `reorder` on a `list`.
+
+A `GridView` has no sections: an `AbsListView` is one flat run of cells, and a
+group header would have to SPAN a row — which is the one thing a grid's fixed
+column width cannot do. `list` grouping is answered because a `ListView` can
+carry a header row like any other; a grid cannot, and faking it by padding a
+row with empty cells would be inventing a look facet has not described.
+
+Dragging a row to reorder is the platform's `ItemTouchHelper`, which is
+AndroidX — an `.aar` with its own dex and dependency graph, and this project
+ships no Gradle. That leaves hand-rolling a long-press drag over a recycler,
+which is a gesture tier rather than a prop, and the swipe strip is the only one
+of those this backend has taken on so far.
+
+### `wraps`, `scroll_anchor` and `item_sizing` on a `carousel`
+
+A carousel here is a paging `HorizontalScrollView` over the node's own
+children. It has a first page and a last one: `wraps` would mean reordering
+children under the finger, which is a different control rather than a flag.
+
+The other two are questions about a MODEL that is being updated while the view
+is scrolled, and a carousel has no model — its pages are built once, by the
+application, as children. `scroll_anchor` has nothing to anchor and
+`item_sizing` has nothing to measure: every page is one column wide by
+construction. Both are answered on `collection`, where there IS a model.
+
+### `stroke_cap`, `stroke_join` and `stroke_miter_limit` on a `bordered`
+
+A `bordered` is a `GradientDrawable` with a stroke, and that stroke has a width
+and a colour and nothing else — no cap, no join, no miter limit. The Paint
+those three belong to is reachable only by drawing the border ourselves, which
+is what `canvas` is for and what `bordered` deliberately is not: it is a
+container with a border, so its children draw normally over a background the
+platform paints.
+
+### A `popup`'s own `label`
+
+A `Spinner`'s field IS its selected item — there is no second line of text
+above or beside it. facet's `label` names exactly that second line, so there is
+no slot to put it in. `title` is answered, because a Spinner has a prompt.
+
+### `C_AGENT`
+
+The other two backends PIN the agent tier onto the platform view, because their
+agent surfaces walk views. `agent_android` walks facet's own tree — its
+MANIFEST §1 says so, and `attach` hands over a `*core::Node` rather than a
+view — so the tier is already where the surface reads it, on the node.
+
+Wiring `app::agent_pin` here anyway is not merely redundant, it CRASHES: the
+Android surface casts its first argument to a `*core::Node`, so passing a view
+segfaults on the first field read. Measured, on the way to writing this row.
+
+### `C_FLUSH`
+
+A command that means "commit whatever the platform is holding before the tree
+is read". It exists for AppKit's FIELD EDITOR — a single shared NSTextView that
+holds the text of whichever field has focus, so a read before the commit sees
+the previous value. Android has no such object: an `EditText` holds its own
+text and every keystroke has already been through `TextWatcher` by the time
+anything can ask.
+
+
 ## 2. Not yet built — Android has an answer, this pass did not write it
 
 Everything here is a debt, not a decision. Kinds with no body **warn once**
@@ -88,9 +153,9 @@ count as answering it. Three surfaces, because they fail differently:
 
 | | android | gtk | appkit | uikit |
 |---|---|---|---|---|
-| props | 292/360 · 81% | 356 · 98% | 334 · 92% | 321 · 89% |
+| props | 298/360 · 82% | 356 · 98% | 334 · 92% | 321 · 89% |
 | handlers | 65/68 · 95% | 68 · 100% | 68 · 100% | 65 · 95% |
-| shared band | 18/21 · 85% | 19 · 90% | 20 · 95% | 18 · 85% |
+| shared band | 19/21 · 90% | 19 · 90% | 20 · 95% | 18 · 85% |
 
 The three handlers still unfired are a reorder that no kind here performs, a
 `tabs` change on a kind with no body, and a text area's selection. The gap
@@ -116,6 +181,20 @@ already work.
   settled. facet_uikit makes a UISegmentedControl and never populates it, so
   there is no implementation to read the intent from, and guessing would be
   inventing a control facet has not described.
+
+- **THE WINDOW IS EDGE-TO-EDGE, and the safe area is facet's.** Left alone,
+  Android insets every app's window itself — which reads as a safe area that
+  works and is really the system deciding, and it makes `SafeArea::None`
+  unanswerable. A full-bleed photo is a real thing to ask for. So
+  `FacetActivity` turns the system's fitting OFF and the layout pass insets the
+  ROOT by `getRootWindowInsets` (system bars plus display cutout) when
+  `honours_safe_area` says so. Measured both ways on the emulator: `Default`
+  puts the root at 159..2920 of a 2992-tall window, `None` gives it all 2992.
+
+  The insets are CACHED, and `C_SAFE_AREA` is what drops the cache. Reading
+  them is a JNI round trip and the layout pass runs constantly; they move only
+  when the window does — a rotation, a split-screen resize, the IME — or when a
+  node changes its own answer.
 
 - **A `hybrid_web`'s page is an ASSET, and its channel is built in JavaScript.**
   `hybrid_root` and `default_file` become `file:///android_asset/<root>/<file>`

@@ -21,7 +21,36 @@ public class FacetActivity extends android.app.Activity {
     @Override protected void onCreate(android.os.Bundle state) {
         super.onCreate(state);
         System.loadLibrary(libraryName());
+        // EDGE TO EDGE, so facet decides where the safe area is.
+        //
+        // Left alone, the SYSTEM insets the window and every app is safe-area'd
+        // whether it asked or not — which makes `SafeArea::None` unanswerable,
+        // and a full-bleed photo is a real thing to ask for. Taking the whole
+        // window means the insets become a value facet can read and apply per
+        // node, the way the other two backends do.
+        getWindow().setDecorFitsSystemWindows(false);
         setContentView(nativeCreateView(this));
+    }
+
+    // The system bars and the display cutout, in pixels, packed into one long
+    // as left/top/right/bottom, 16 bits each.
+    //
+    // PACKED rather than an int[] because the array is the expensive half: four
+    // numbers that each fit in a screen's worth of pixels cross as one primitive
+    // return, and the JNI side needs no array handling at all.
+    //
+    // `getRootWindowInsets` answers null before the view is attached, and zero
+    // is the right answer then — the first layout pass runs before the window
+    // has insets to report, and the second one has them.
+    public static long windowInsets(android.view.View v) {
+        if (v == null) return 0L;
+        android.view.WindowInsets w = v.getRootWindowInsets();
+        if (w == null) return 0L;
+        android.graphics.Insets i = w.getInsets(
+            android.view.WindowInsets.Type.systemBars()
+                | android.view.WindowInsets.Type.displayCutout());
+        return ((long) (i.left & 0xffff) << 48) | ((long) (i.top & 0xffff) << 32)
+             | ((long) (i.right & 0xffff) << 16) | (long) (i.bottom & 0xffff);
     }
 
     private String libraryName() {

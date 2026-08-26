@@ -1864,6 +1864,7 @@ fn fire_scrolled(token: i64, x: i32, y: i32) {
     if core::kind_of(n) == props::K_CAROUSEL {
         let cp: *props::CarouselProps = carousel_props(n);
         if cp == (0 as *props::CarouselProps) { return; }
+        { (*cp).is_scrolling = true };
         let ch: fn(*u8, *u8) = { (*cp).items_view.observe_scrolled };
         if ch != props::no_handler {
             ch(core::view_of(n), { (*cp).items_view.observe_scrolled_ctx });
@@ -4023,6 +4024,16 @@ fn apply_carousel(v: *u8, n: *core::Node, dirty: u64) {
     // POSITION and SCROLL_TO are the same move under two names — one is where
     // the carousel IS, the other is an application asking it to go somewhere —
     // and both land on `goTo`, which does not report a page it was told to show.
+    // COLUMNS changes the PAGE WIDTH, which is flex's to know — the settle walk
+    // writes it every layout, and this is what makes that layout happen.
+    if (dirty & carousel::P_COLUMNS) != (0 as u64) {
+        let _changed: bool = settle_carousel(n, p);
+    }
+    // THE TAIL THRESHOLD, in pages. A carousel's pages are its children, so
+    // "remaining" is how many are still to the right of the one showing.
+    if (dirty & carousel::P_REMAINING_THRESHOLD) != (0 as u64) {
+        carousel_threshold(n, p);
+    }
     if (dirty & carousel::P_POSITION) != (0 as u64) {
         dex::carousel_go_to(env, { v as jni::jobject }, { { (*p).position } as i32 });
     }
@@ -4084,6 +4095,23 @@ fn settle_carousel(n: *core::Node, p: *props::CarouselProps) -> bool {
 // prop answers where the carousel actually is, and both handlers fire: facet
 // distinguishes the current ITEM from the POSITION, and a carousel whose pages
 // are its children has no item that is not its index.
+// HOW MANY PAGES ARE LEFT, against the threshold the application named. Fired
+// on every settle and whenever the threshold itself changes, because a
+// threshold raised past where the carousel already sits has to fire now.
+fn carousel_threshold(n: *core::Node, p: *props::CarouselProps) {
+    let threshold: i64 = { (*p).items_view.remaining_threshold };
+    if threshold <= (0 as i64) { return; }
+    let total: i64 = { core::child_count_of(n) as i64 };
+    if total <= (0 as i64) { return; }
+    let remaining: i64 = total - ({ (*p).position } + (1 as i64));
+    if remaining > threshold { return; }
+    let h: fn(*u8, *u8) = { (*p).items_view.on_remaining_items_threshold_reached };
+    if h != props::no_handler {
+        h(core::view_of(n), { (*p).items_view.on_remaining_items_threshold_reached_ctx });
+    }
+    return;
+}
+
 fn fire_carousel_page(token: i64, index: i32) {
     let n: *core::Node = { token as *core::Node };
     if n == (0 as *core::Node) { return; }
@@ -4091,6 +4119,12 @@ fn fire_carousel_page(token: i64, index: i32) {
     if p == (0 as *props::CarouselProps) { return; }
     if { (*p).position } == { index as i64 } { return; }
     { (*p).position = { index as i64 } };
+    // SETTLED, so it is no longer scrolling. `is_scrolling` is a prop an
+    // application READS — written here and in `fire_scrolled`, and never
+    // marked dirty: sending it back out through an apply would be the view
+    // telling the model telling the view.
+    { (*p).is_scrolling = false };
+    carousel_threshold(n, p);
     let v: *u8 = core::view_of(n);
     let ph: fn(*u8, *u8) = { (*p).on_position_changed };
     if ph != props::no_handler { ph(v, { (*p).on_position_changed_ctx }); }

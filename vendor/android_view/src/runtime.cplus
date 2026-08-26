@@ -83,14 +83,32 @@ impl Env {
         return { (*(*this._env)).FindClass(this._env, name) };
     }
 
+    // A LOOKUP THAT FAILS MUST NOT POISON THE THREAD.
+    //
+    // `GetMethodID` and its static twin THROW on a miss — NoSuchMethodError,
+    // left pending on the thread — and JNI's rule is that almost nothing may be
+    // called with an exception pending. So a caller that checks for a null id
+    // and returns cleanly still aborts the process, in whatever unrelated JNI
+    // call happens to come next: "FindClass called with pending exception" is
+    // what that looks like, and the stack it prints belongs to the innocent
+    // call. Measured twice, one signature change apart.
+    //
+    // Clearing here makes a miss what the caller already treats it as: a null
+    // id and nothing else.
     fn method_id(this, cls: jni::jclass, name: *u8, sig: *u8) -> jni::jmethodID {
-        return { (*(*this._env)).GetMethodID(this._env, cls, name, sig) };
+        let mid: jni::jmethodID = { (*(*this._env)).GetMethodID(this._env, cls, name, sig) };
+        if mid == (0 as jni::jmethodID) { this.clear_exception(); }
+        return mid;
     }
 
     // The static counterpart. Unreachable before the interface table's static
     // block was typed (plan.android.md rung 0).
     fn method_id_static(this, cls: jni::jclass, name: *u8, sig: *u8) -> jni::jmethodID {
-        return { (*(*this._env)).GetStaticMethodID(this._env, cls, name, sig) };
+        let mid: jni::jmethodID = {
+            (*(*this._env)).GetStaticMethodID(this._env, cls, name, sig)
+        };
+        if mid == (0 as jni::jmethodID) { this.clear_exception(); }
+        return mid;
     }
 
     fn field_id(this, cls: jni::jclass, name: *u8, sig: *u8) -> jni::jfieldID {

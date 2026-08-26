@@ -21,7 +21,7 @@ import "jni/jni" as jni;
 import "android_view/runtime" as rt;
 
 // Kept in step by tools/build_dex.sh; do not hand-edit.
-const DEX_LEN: usize = 29972;
+const DEX_LEN: usize = 30604;
 
 static LOADER: usize = 0;
 static C_HOST: usize = 0;
@@ -239,7 +239,7 @@ fn ensure_loaded(env: rt::Env, any_view: jni::jobject) {
     // Activity would hold a FacetHost of one class while this code registered
     // natives on the other, and `nativeSizeChanged` would never arrive.
     if load_merged(env) { return; }
-    let dex: *[u8; 29972] = #include_bytes("../facet_android.dex");
+    let dex: *[u8; 30604] = #include_bytes("../facet_android.dex");
     let buffer: jni::jobject = {
         (*(*env.raw())).NewDirectByteBuffer(env.raw(), { dex as *u8 }, DEX_LEN as i64)
     };
@@ -683,6 +683,22 @@ fn draw_input_transparent(env: rt::Env, view: jni::jobject, through: bool) {
     { (*(*env.raw())).CallStaticVoidMethodA(env.raw(), { C_DRAW as *u8 }, mid,
                                             #addr_of(args[0])) };
     return;
+}
+
+// THE WINDOW'S INSETS, in pixels, as {left, top, right, bottom}.
+//
+// `FacetActivity` is the one class NOT in this dex — the system instantiates
+// the launch Activity before any of our code runs, so it is merged into the
+// APK's own classes.dex — which is why this is looked up by name off the
+// activity's own class rather than through a cached handle.
+fn window_insets(env: rt::Env, host: jni::jobject) -> i64 {
+    let cls: jni::jclass = env.class_cached(#str_ptr("cplus/facet/FacetActivity\0"));
+    if cls == (0 as jni::jclass) { return 0 as i64; }
+    let mid: jni::jmethodID = env.method_id_static(cls, #str_ptr("windowInsets\0"),
+        #str_ptr("(Landroid/view/View;)J\0"));
+    if mid == (0 as jni::jmethodID) { return 0 as i64; }
+    var args: [jni::JValue; 1] = [jni::arg_object(host)];
+    return { (*(*env.raw())).CallStaticLongMethodA(env.raw(), cls, mid, #addr_of(args[0])) };
 }
 
 // `new FacetBridge(token, host)` — the object a page posts to.

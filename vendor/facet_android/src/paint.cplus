@@ -505,6 +505,14 @@ fn configure(v: *u8, n: *core::Node, dirty: u64) {
     // not consume a touch, and the parent — a FacetHost, which does not
     // intercept — gets it instead. That is Android's whole mechanism for this;
     // there is no `userInteractionEnabled` bit to clear.
+    // THE SAFE AREA IS APPLIED IN THE LAYOUT PASS, not written on a view:
+    // Android has no per-view `automaticallyAdjustsContentInsets`, the window is
+    // edge-to-edge, and the root is inset by `geometry::safe_insets`. What
+    // belongs HERE is dropping the cached insets — a node changing its answer is
+    // one of the two things that can make them stale, the other being the window
+    // itself — so the next pass reads them again instead of every pass paying a
+    // JNI round trip for a value that almost never moves.
+    if (dirty & props::C_SAFE_AREA) != (0 as u64) { e::invalidate_insets(); }
     if (dirty & props::C_INPUT_TRANSPARENT) != (0 as u64) {
         // THE BITS COME BACK AS THEY WERE, which is not the same as coming back
         // TRUE. Writing all three true here made every label focusable, and an
