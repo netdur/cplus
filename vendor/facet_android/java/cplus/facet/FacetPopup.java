@@ -16,6 +16,65 @@ public final class FacetPopup implements android.widget.AdapterView.OnItemSelect
     private static final java.util.HashMap<Long, java.util.ArrayList<Boolean>> ENABLED =
         new java.util.HashMap<>();
 
+    // THE TYPOGRAPHY, PER PICKER. A Spinner's rows are inflated by ArrayAdapter
+    // from a PLATFORM layout — `simple_spinner_item` — so nothing about them is
+    // ours to build. What is ours is what happens to the view afterwards: the
+    // adapter hands each row back through `getView`, and every one of facet's
+    // font verbs is a call on the TextView it returns.
+    //
+    // Kept per token rather than per adapter because the adapter is rebuilt
+    // whenever the items change, and the style outlives that.
+    private static final java.util.HashMap<Long, Style> STYLES = new java.util.HashMap<>();
+
+    private static final class Style {
+        float size; boolean scales;
+        boolean bold, italic;
+        String family;
+        int color; boolean hasColor;
+        int gravity;
+        float letterSpacing;
+    }
+
+    // `size` is in facet's units and `scales` decides which unit that becomes:
+    // SP follows the reader's font setting, DIP does not — the same pair every
+    // text control here uses. `letterSpacing` arrives already in EMs, because
+    // the conversion needs the font size and C+ has it.
+    public static void style(long token, float size, boolean scales,
+                             boolean bold, boolean italic, String family,
+                             int color, boolean hasColor, int gravity,
+                             float letterSpacing) {
+        Style st = new Style();
+        st.size = size; st.scales = scales;
+        st.bold = bold; st.italic = italic; st.family = family;
+        st.color = color; st.hasColor = hasColor;
+        st.gravity = gravity; st.letterSpacing = letterSpacing;
+        STYLES.put(token, st);
+    }
+
+    private static void dress(long token, android.view.View v) {
+        if (!(v instanceof android.widget.TextView)) return;
+        Style st = STYLES.get(token);
+        if (st == null) return;
+        android.widget.TextView t = (android.widget.TextView) v;
+        if (st.size > 0f) {
+            t.setTextSize(st.scales
+                ? android.util.TypedValue.COMPLEX_UNIT_SP
+                : android.util.TypedValue.COMPLEX_UNIT_DIP, st.size);
+        }
+        int face = android.graphics.Typeface.NORMAL;
+        if (st.bold && st.italic) face = android.graphics.Typeface.BOLD_ITALIC;
+        else if (st.bold) face = android.graphics.Typeface.BOLD;
+        else if (st.italic) face = android.graphics.Typeface.ITALIC;
+        if (st.family != null && st.family.length() > 0) {
+            t.setTypeface(android.graphics.Typeface.create(st.family, face));
+        } else {
+            t.setTypeface(t.getTypeface(), face);
+        }
+        if (st.hasColor) t.setTextColor(st.color);
+        if (st.gravity != 0) t.setGravity(st.gravity);
+        t.setLetterSpacing(st.letterSpacing);
+    }
+
     private final long token;
 
     public FacetPopup(long token) { this.token = token; }
@@ -46,6 +105,7 @@ public final class FacetPopup implements android.widget.AdapterView.OnItemSelect
         final java.util.ArrayList<String> labels = LABELS.get(token);
         final java.util.ArrayList<Boolean> enabled = ENABLED.get(token);
         if (labels == null) return;
+        final long tok = token;
         android.widget.ArrayAdapter<String> a =
             new android.widget.ArrayAdapter<String>(s.getContext(),
                     android.R.layout.simple_spinner_item, labels) {
@@ -54,6 +114,21 @@ public final class FacetPopup implements android.widget.AdapterView.OnItemSelect
                     return enabled.get(position).booleanValue();
                 }
                 @Override public boolean areAllItemsEnabled() { return false; }
+                // THE FIELD and THE LIST are two views of the same row, and
+                // both come through here. Styling only the first leaves a
+                // picker whose closed state and open state disagree.
+                @Override public android.view.View getView(int position,
+                        android.view.View convertView, android.view.ViewGroup parent) {
+                    android.view.View v = super.getView(position, convertView, parent);
+                    dress(tok, v);
+                    return v;
+                }
+                @Override public android.view.View getDropDownView(int position,
+                        android.view.View convertView, android.view.ViewGroup parent) {
+                    android.view.View v = super.getDropDownView(position, convertView, parent);
+                    dress(tok, v);
+                    return v;
+                }
             };
         a.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
         s.setAdapter(a);

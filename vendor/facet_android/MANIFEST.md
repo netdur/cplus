@@ -136,6 +136,13 @@ text and every keystroke has already been through `TextWatcher` by the time
 anything can ask.
 
 
+### A `popup`'s `title_color`
+
+A Spinner's `title` is its PROMPT, which is drawn by the platform's own dialog
+when the list opens — a view this backend neither builds nor reaches. The prompt
+text is answered; the colour of it is the dialog's.
+
+
 ## 2. Not yet built — Android has an answer, this pass did not write it
 
 Everything here is a debt, not a decision. Kinds with no body **warn once**
@@ -153,7 +160,7 @@ count as answering it. Three surfaces, because they fail differently:
 
 | | android | gtk | appkit | uikit |
 |---|---|---|---|---|
-| props | 300/360 · 83% | 356 · 98% | 334 · 92% | 321 · 89% |
+| props | 309/360 · 85% | 356 · 98% | 334 · 92% | 321 · 89% |
 | handlers | 65/68 · 95% | 68 · 100% | 68 · 100% | 65 · 95% |
 | shared band | 19/21 · 90% | 19 · 90% | 20 · 95% | 18 · 85% |
 
@@ -280,12 +287,20 @@ already work.
   child. Every downward drag in it is a pull. `views.cplus` dispatches on kind;
   each needs a `create_` / `apply_` pair in `controls.cplus`.
 
-- **A `popup`'s TYPOGRAPHY is the adapter's, not the control's.** The Spinner
-  is built, its items and selection round-trip, and `title` is its prompt — but
-  the font verbs, the two alignments and the two colours land on a row VIEW an
-  `ArrayAdapter` inflates from a platform layout, so styling them means a custom
-  adapter view rather than a call. `label` has no slot at all: a Spinner's field
-  IS the selected item, which is what facet's `label` names.
+- **A `popup`'s typography reaches the ROW, and its selection is UNVERIFIED.**
+  A Spinner's field and its drop-down are both views an `ArrayAdapter` inflates
+  from a platform layout, so the font verbs are applied as each row is handed
+  back — through `getView` AND `getDropDownView`, because styling only the first
+  leaves a picker whose closed state and open state disagree. Verified on the
+  emulator: the field and the open list both read at the stated size, weight and
+  colour.
+
+  What is NOT verified is choosing an item. Tapping a row dismisses the list
+  without reporting a selection, and so does the D-pad — but an injected tap and
+  an injected key are not a finger, and everything the application controls has
+  been checked and is correct. See
+  `bugs/facet_android-spinner-dropdown-never-selects.md` for what was ruled out
+  and how; it needs a human to settle it.
 
 - **A `bordered`'s CAP, JOIN and MITER LIMIT have nowhere to land.** Those are
   Paint properties and a drawable's stroke is not a Paint: `setStroke` takes a

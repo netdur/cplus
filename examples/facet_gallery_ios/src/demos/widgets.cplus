@@ -14,6 +14,8 @@ import "facet/slider" as slider;
 import "facet/stepper" as stepper;
 import "facet/progress" as progress;
 import "facet/toggle" as toggle;
+import "facet/popup" as popup;
+import "stdlib/status" as status;
 import "facet/vocabulary" as vocab;
 import "flex_layout/flex_layout" as flex;
 import "stdlib/option" as option;
@@ -191,6 +193,24 @@ impl Switches {
     }
 }
 
+fn on_pick(v: *u8, ctx: *u8) {
+    match popup::find("c:pick") {
+        option::Option[popup::Popup]::Some(p) => {
+            let i: i64 = p.selected_index();
+            match label::find("c:pick:read") {
+                option::Option[label::Label]::Some(l) => {
+                    let _t: label::Label = l.set_text(if i == (0 as i64) { "Sencha" }
+                                                      else if i == (1 as i64) { "Gyokuro" }
+                                                      else { "Hojicha" });
+                }
+                option::Option[label::Label]::None => { }
+            }
+        }
+        option::Option[popup::Popup]::None => { }
+    }
+    return;
+}
+
 impl Switches: component::Component {
     fn build(ref this) -> core::Node {
         var body: flex::Builder = flex::Builder::new();
@@ -203,6 +223,28 @@ impl Switches: component::Component {
         sw.add(shell::field("Checkbox", ui::checkbox(false, key: "c:check")));
         sw.add(shell::caption("`checkbox` is a UISwitch here: iOS has no checkbox, and the platform's answer is a table row with a checkmark, which cannot stand in a row of its own. `radio` is NOT a switch — see Interaction → Radio."));
         body.add(shell::card("TWO-STATE", sw));
+
+        // ---- picker ---------------------------------------------------------
+        // ONE OF SEVERAL, and the typography of the row it reads. facet gives a
+        // picker the same font verbs a label has; the platform gives it a list
+        // whose rows it inflates itself, so the styling lands on the row rather
+        // than on the control.
+        var pick: flex::Builder = flex::Builder::new();
+        var teas: vocab::TextList = vocab::TextList::new();
+        let _t1: status::Status = teas.add("Sencha");
+        let _t2: status::Status = teas.add("Gyokuro");
+        let _t3: status::Status = teas.add("Hojicha");
+        pick.add(shell::field("Picker",
+            ui::popup("Choose one", key: "c:pick", items: teas,
+                      selected_index: 0 as i64,
+                      font_size: 17.0f64,
+                      font_weight: vocab::FontWeight::Semibold,
+                      text_color: vocab::Color::system_teal(),
+                      on_selected_index_changed: on_pick)));
+        pick.add(shell::field("Reads",
+            ui::label("Sencha", key: "c:pick:read", font_size: 16.0f64)));
+        pick.add(shell::caption("The font verbs reach the ROW, not the control: a Spinner's field and its drop-down are both views an adapter inflates from a platform layout, so a size, a weight and a colour are applied as each row is handed back."));
+        body.add(shell::card("ONE OF SEVERAL", pick));
 
         return shell::page("Switches",
             "The two-state controls, and the one place this backend substitutes a control for another and says so.",

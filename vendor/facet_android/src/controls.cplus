@@ -3132,10 +3132,47 @@ fn apply_popup(v: *u8, n: *core::Node, dirty: u64) {
     let p: *props::PopupProps = popup_props(n);
     if p == (0 as *props::PopupProps) { return; }
     let env: rt::Env = e::env();
+    let rebuilt: u64 = popup::P_ITEMS | popup::P_ITEM_ENABLED | popup::P_SELECTED_INDEX;
+    // THE TYPOGRAPHY, which reaches the rows rather than the Spinner: the field
+    // and the drop-down list are both ArrayAdapter views, so the style is
+    // stored per picker and applied as each row is handed back. Written BEFORE
+    // the items when both change, so the first rows built already carry it.
+    let type_bits: u64 = popup::P_FONT_SIZE | popup::P_FONT_SCALES
+                       | popup::P_FONT_WEIGHT | popup::P_IS_ITALIC
+                       | popup::P_FONT_FAMILY | popup::P_TEXT_COLOR
+                       | popup::P_TEXT_ALIGN | popup::P_VERTICAL_ALIGN
+                       | popup::P_CHARACTER_SPACING;
+    if (dirty & type_bits) != (0 as u64) || dirty == paint::all_bits() {
+        var fam: [u8; 128] = #zero::[[u8; 128]]();
+        let fbase: *u8 = { #addr_of(fam[0]) };
+        let _f: bool = paint::cstr({ (*p).font_family.view() }, fbase, 128 as usize);
+        let size: f64 = { (*p).font_size };
+        // EMs, because `setLetterSpacing` is a multiple of the font size and
+        // facet states an absolute distance. The same conversion every text
+        // control here does, and it needs the size — which is why it happens on
+        // this side.
+        var em: f64 = 0.0f64;
+        if { (*p).character_spacing } != 0.0f64 && size > 0.0f64 {
+            em = { (*p).character_spacing } / size;
+        }
+        let c: vocab::Color = { (*p).text_color };
+        dex::popup_style(env, { #addr(n) as i64 }, size, { (*p).font_scales },
+                         is_bold_weight({ (*p).font_weight }), { (*p).is_italic },
+                         fbase, paint::argb_of(c), c.is_set(),
+                         gravity_of({ (*p).text_align }, { (*p).vertical_align }), em);
+        // A STYLE WRITTEN AFTER THE ROWS EXIST REACHES NOTHING: the adapter
+        // dresses each row as it hands it back, and a Spinner does not ask
+        // again for a field it already has. So the style is written FIRST — the
+        // block below builds the rows — and a pass that changes only the
+        // typography rebuilds them itself, because there is no other way to
+        // make the picker ask.
+        if (dirty & rebuilt) == (0 as u64) && dirty != paint::all_bits() {
+            rebuild_popup_items(env, v, n, p);
+        }
+    }
     // THE ITEMS AND THE SELECTION ARE ONE WRITE: committing an adapter resets
     // the selection, so a list rebuilt without re-asserting it would silently
     // jump to row zero.
-    let rebuilt: u64 = popup::P_ITEMS | popup::P_ITEM_ENABLED | popup::P_SELECTED_INDEX;
     if (dirty & rebuilt) != (0 as u64) || dirty == paint::all_bits() {
         rebuild_popup_items(env, v, n, p);
     }

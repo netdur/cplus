@@ -21,7 +21,7 @@ import "jni/jni" as jni;
 import "android_view/runtime" as rt;
 
 // Kept in step by tools/build_dex.sh; do not hand-edit.
-const DEX_LEN: usize = 32104;
+const DEX_LEN: usize = 33716;
 
 static LOADER: usize = 0;
 static C_HOST: usize = 0;
@@ -239,7 +239,7 @@ fn ensure_loaded(env: rt::Env, any_view: jni::jobject) {
     // Activity would hold a FacetHost of one class while this code registered
     // natives on the other, and `nativeSizeChanged` would never arrive.
     if load_merged(env) { return; }
-    let dex: *[u8; 32104] = #include_bytes("../facet_android.dex");
+    let dex: *[u8; 33716] = #include_bytes("../facet_android.dex");
     let buffer: jni::jobject = {
         (*(*env.raw())).NewDirectByteBuffer(env.raw(), { dex as *u8 }, DEX_LEN as i64)
     };
@@ -861,6 +861,25 @@ fn popup_begin(env: rt::Env, token: i64) {
     var args: [jni::JValue; 1] = [jni::arg_long(token)];
     { (*(*env.raw())).CallStaticVoidMethodA(env.raw(), { C_POPUP as *u8 }, mid,
                                             #addr_of(args[0])) };
+    return;
+}
+
+fn popup_style(env: rt::Env, token: i64, size: f64, scales: bool, bold: bool,
+               italic: bool, family: *u8, color: i32, has_color: bool,
+               gravity: i32, letter_spacing: f64) {
+    if C_POPUP == 0 { return; }
+    let mid: jni::jmethodID = env.method_id_static({ C_POPUP as *u8 }, #str_ptr("style\0"),
+        #str_ptr("(JFZZZLjava/lang/String;IZIF)V\0"));
+    if mid == (0 as jni::jmethodID) { return; }
+    let fam: jni::jstring = env.new_string_utf(family);
+    var args: [jni::JValue; 10] = [
+        jni::arg_long(token), jni::arg_float(size as f32), rt::arg_bool(scales),
+        rt::arg_bool(bold), rt::arg_bool(italic), jni::arg_object(fam),
+        jni::arg_int(color), rt::arg_bool(has_color), jni::arg_int(gravity),
+        jni::arg_float(letter_spacing as f32)];
+    { (*(*env.raw())).CallStaticVoidMethodA(env.raw(), { C_POPUP as *u8 }, mid,
+                                            #addr_of(args[0])) };
+    env.delete_local_ref(fam);
     return;
 }
 

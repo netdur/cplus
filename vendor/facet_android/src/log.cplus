@@ -22,3 +22,4 @@ fn info(text: *u8) {
     let _r: i32 = { android_log_write(prio_info(), #str_ptr("facet\0"), text) };
     return;
 }
+
