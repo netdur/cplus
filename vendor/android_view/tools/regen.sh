@@ -82,6 +82,7 @@ BINDGEN="${BINDGEN:-../../target/release/cpc-bindgen}"
     android.view.animation.BounceInterpolator \
     android.view.animation.OvershootInterpolator \
     android.view.animation.AnticipateInterpolator \
+    android.content.res.ColorStateList \
     > src/widgets.cplus
 
 wc -l src/widgets.cplus

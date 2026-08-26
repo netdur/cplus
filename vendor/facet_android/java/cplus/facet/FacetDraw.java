@@ -159,6 +159,57 @@ public final class FacetDraw {
         });
     }
 
+    // THE SOFT KEYBOARD, which is what `focus` means to a text field. A view
+    // that has focus and no keyboard is focused in name only on a phone.
+    public static void showKeyboard(android.view.View v) {
+        v.requestFocus();
+        android.view.inputmethod.InputMethodManager m =
+            (android.view.inputmethod.InputMethodManager)
+                v.getContext().getSystemService(android.content.Context.INPUT_METHOD_SERVICE);
+        if (m != null) m.showSoftInput(v, 0);
+    }
+
+    public static void hideKeyboard(android.view.View v) {
+        android.view.inputmethod.InputMethodManager m =
+            (android.view.inputmethod.InputMethodManager)
+                v.getContext().getSystemService(android.content.Context.INPUT_METHOD_SERVICE);
+        if (m != null) m.hideSoftInputFromWindow(v.getWindowToken(), 0);
+        v.clearFocus();
+    }
+
+    // A HEADING, which is an accessibility ROLE and not a description —
+    // `setAccessibilityHeading` is API 28 and this backend's floor is 26, so
+    // the version is asked rather than assumed. A reader on 26 hears the label
+    // and not the level, which is the honest degradation.
+    public static void setHeading(android.view.View v, boolean heading) {
+        if (android.os.Build.VERSION.SDK_INT >= 28) v.setAccessibilityHeading(heading);
+    }
+
+    // A TWO-STATE COLOUR, which is what a switch is: one colour when it is on
+    // and another when it is off. `ColorStateList.valueOf` gives one colour for
+    // every state, and the constructor that takes the pair takes an `int[][]` —
+    // no door from C+, so it is one here.
+    public static android.content.res.ColorStateList checkedCsl(int on, int off) {
+        int[][] states = new int[][] {
+            new int[] { android.R.attr.state_checked },
+            new int[] {},
+        };
+        return new android.content.res.ColorStateList(states, new int[] { on, off });
+    }
+
+    // A LENGTH CAP, which Android spells as an InputFilter ARRAY — no door from
+    // C+, so it is one here. Zero is no cap, which is the reading every numeric
+    // zero gets in facet's contract, and it clears the filters rather than
+    // setting a cap of nothing.
+    public static void maxLength(android.widget.TextView v, int max) {
+        if (max <= 0) {
+            v.setFilters(new android.text.InputFilter[0]);
+            return;
+        }
+        v.setFilters(new android.text.InputFilter[] {
+            new android.text.InputFilter.LengthFilter(max) });
+    }
+
     // The theme's own press colour. Asked for rather than picked: a highlight
     // that does not come from the theme is wrong in one of the two modes.
     //

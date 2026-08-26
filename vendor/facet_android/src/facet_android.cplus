@@ -129,6 +129,19 @@ export extern fn facet_android_draw(envp: *jni::JNIEnv, cls: jni::jobject, token
     return;
 }
 
+export extern fn facet_android_submit(envp: *jni::JNIEnv, cls: jni::jobject, token: i64) {
+    e::set_env(rt::from_native(envp));
+    controls::fire_submit(token);
+    return;
+}
+
+export extern fn facet_android_focus(envp: *jni::JNIEnv, cls: jni::jobject, token: i64,
+                                     on: u8) {
+    e::set_env(rt::from_native(envp));
+    controls::fire_focus(token, on != (0 as u8));
+    return;
+}
+
 export extern fn facet_android_date_set(envp: *jni::JNIEnv, cls: jni::jobject, token: i64,
                                         y: i32, m: i32, d: i32) {
     e::set_env(rt::from_native(envp));

@@ -330,6 +330,28 @@ fn apply_toggle(v: *u8, n: *core::Node, dirty: u64) {
         var cb: w::CompoundButton = s.as_compound_button();
         if cb.is_checked() != { (*p).on } { cb.set_checked({ (*p).on }); }
     }
+    // ON AND OFF ARE ONE COLOUR LIST, not two writes: Android asks for a colour
+    // per STATE, so the pair has to be built together or the second would erase
+    // the first.
+    if (dirty & (toggle::P_ON_COLOR | toggle::P_OFF_COLOR)) != (0 as u64) {
+        let on: vocab::Color = { (*p).on_color };
+        let off: vocab::Color = { (*p).off_color };
+        if on.is_set() || off.is_set() {
+            let t: jni::jobject = checked_tint(env, on, off);
+            if t != (0 as jni::jobject) {
+                s.set_track_tint_list(t);
+                env.delete_local_ref(t);
+            }
+        }
+    }
+    if (dirty & toggle::P_THUMB_COLOR) != (0 as u64) {
+        let c: vocab::Color = { (*p).thumb_color };
+        if c.is_set() {
+            let t: jni::jobject = tint(env, c);
+            s.set_thumb_tint_list(t);
+            env.delete_local_ref(t);
+        }
+    }
     let _keep: *u8 = s.into_raw();
     return;
 }
@@ -563,6 +585,40 @@ fn apply_slider(v: *u8, n: *core::Node, dirty: u64) {
             pb.set_progress_i(step);
         }
     }
+    // THE THREE COLOURS A SLIDER HAS. The minimum track is the filled half —
+    // Android's `progress` tint — and the maximum track is the rest, which is
+    // its BACKGROUND tint. Naming them that way round is the whole mapping.
+    if (dirty & slider::P_THUMB_COLOR) != (0 as u64) {
+        let c: vocab::Color = { (*p).thumb_color };
+        if c.is_set() {
+            var asb: w::AbsSeekBar = sb.as_abs_seek_bar();
+            let t: jni::jobject = tint(env, c);
+            asb.set_thumb_tint_list(t);
+            env.delete_local_ref(t);
+            let _k: *u8 = asb.into_raw();
+        }
+    }
+    if (dirty & slider::P_MINIMUM_TRACK_COLOR) != (0 as u64) {
+        let c: vocab::Color = { (*p).minimum_track_color };
+        if c.is_set() {
+            let t: jni::jobject = tint(env, c);
+            pb.set_progress_tint_list(t);
+            env.delete_local_ref(t);
+        }
+    }
+    if (dirty & slider::P_MAXIMUM_TRACK_COLOR) != (0 as u64) {
+        let c: vocab::Color = { (*p).maximum_track_color };
+        if c.is_set() {
+            let t: jni::jobject = tint(env, c);
+            pb.set_progress_background_tint_list(t);
+            env.delete_local_ref(t);
+        }
+    }
+    // A THUMB IMAGE goes through the same four doors an `image` source does.
+    if (dirty & slider::P_THUMB_IMAGE) != (0 as u64) {
+        let src: str = { (*p).thumb_image.view() };
+        if src != "" { set_thumb_image(env, v, src); }
+    }
     let _keep: *u8 = sb.into_raw();
     return;
 }
@@ -631,11 +687,26 @@ fn apply_progress(v: *u8, n: *core::Node, dirty: u64) {
     if p == (0 as *props::ProgressProps) { return; }
     let env: rt::Env = e::env();
     var pb: w::ProgressBar = w::ProgressBar::from_global(env, v);
-    if (dirty & progress::P_PROGRESS) != (0 as u64) {
+    if (dirty & (progress::P_PROGRESS | progress::P_ANIMATE_PROGRESS)) != (0 as u64) {
         var step: i32 = { ({ (*p).progress } * (PROGRESS_STEPS as f64)) as i32 };
         if step < (0 as i32) { step = 0 as i32; }
         if step > PROGRESS_STEPS { step = PROGRESS_STEPS; }
-        pb.set_progress_i(step);
+        // ANIMATED OR NOT IS THE SAME CALL with a second argument, and the BIT
+        // is the instruction: `animate_progress` raises P_ANIMATE_PROGRESS and
+        // a plain `set_progress` does not.
+        //
+        // What does NOT arrive is the duration and the easing the verb also
+        // carries — `setProgress(int, boolean)` animates on Android's own
+        // curve and its own clock, with no knob for either. MANIFEST §2.
+        pb.set_progress_i_z(step, (dirty & progress::P_ANIMATE_PROGRESS) != (0 as u64));
+    }
+    if (dirty & progress::P_PROGRESS_COLOR) != (0 as u64) {
+        let c: vocab::Color = { (*p).progress_color };
+        if c.is_set() {
+            let t: jni::jobject = tint(env, c);
+            pb.set_progress_tint_list(t);
+            env.delete_local_ref(t);
+        }
     }
     let _keep: *u8 = pb.into_raw();
     return;
@@ -663,6 +734,16 @@ fn apply_spinner(v: *u8, n: *core::Node, dirty: u64) {
         var view: w::View = pb.as_view();
         view.set_visibility(paint::visibility_of(n));
     }
+    if (dirty & spinner::P_COLOR) != (0 as u64) {
+        let c: vocab::Color = { (*p).color };
+        if c.is_set() {
+            // The INDETERMINATE tint: a spinner is a progress bar that never
+            // arrives, and its colour lives on the other tint slot.
+            let t: jni::jobject = tint(env, c);
+            pb.set_indeterminate_tint_list(t);
+            env.delete_local_ref(t);
+        }
+    }
     let _keep: *u8 = pb.into_raw();
     return;
 }
@@ -682,6 +763,7 @@ fn create_text_field(n: *core::Node) -> *u8 {
     // The watcher is kept alive by the TextView's own list; the local ref is
     // not what holds it.
     env.delete_local_ref(watcher);
+    arm_edit(env, raw, n);
     return raw;
 }
 
@@ -741,6 +823,34 @@ fn apply_text_field(v: *u8, n: *core::Node, dirty: u64) {
         st.transform = { (*p).input_view.text_transform };
         st.character_spacing = { (*p).input_view.character_spacing };
         apply_text_style(env, tv, st);
+    }
+    let flags: u64 = text_field::P_KEYBOARD | text_field::P_CHECKS_SPELLING
+                   | text_field::P_PREDICTS_TEXT | text_field::P_IS_READ_ONLY
+                   | text_field::P_MAX_LENGTH | text_field::P_IS_SECURE;
+    if (dirty & flags) != (0 as u64) || dirty == paint::all_bits() {
+        apply_input_flags(env, tv, { #addr_of((*p).input_view) }, { (*p).is_secure }, false);
+    }
+    if (dirty & text_field::P_PLACEHOLDER_COLOR) != (0 as u64) {
+        let pc: vocab::Color = { (*p).input_view.placeholder_color };
+        if pc.is_set() { tv.set_hint_text_color_i(paint::argb_of(pc)); }
+    }
+    if (dirty & (text_field::P_CURSOR_POSITION
+                 | text_field::P_SELECTION_LENGTH)) != (0 as u64) {
+        let at: i64 = { (*p).input_view.cursor_position };
+        let len: i64 = { (*p).input_view.selection_length };
+        if at >= (0 as i64) {
+            if len > (0 as i64) { et.set_selection_i_i({ at as i32 }, { (at +% len) as i32 }); }
+            else { et.set_selection_i({ at as i32 }); }
+        }
+    }
+    if (dirty & text_field::P_RETURN_KEY) != (0 as u64) {
+        set_return_key(env, v, { (*p).return_key });
+    }
+    // A CLEAR BUTTON is a drawable at the END of the field — Android has no
+    // property for it, so the platform's own cancel glyph is put there and the
+    // touch that clears it is the field's own. MANIFEST §2 carries the touch.
+    if (dirty & text_field::P_CLEAR_BUTTON) != (0 as u64) {
+        apply_clear_button(env, tv, { (*p).clear_button });
     }
     if (dirty & text_field::P_IS_SECURE) != (0 as u64) {
         // TYPE_CLASS_TEXT | TYPE_TEXT_VARIATION_PASSWORD = 0x81, and plain text
@@ -896,6 +1006,7 @@ fn create_multiline(n: *core::Node) -> *u8 {
     tv.set_gravity(8388659 as i32);
     let _keep: *u8 = t.into_raw();
     env.delete_local_ref(watcher);
+    arm_edit(env, raw, n);
     return raw;
 }
 
@@ -914,16 +1025,186 @@ fn create_search_field(n: *core::Node) -> *u8 {
     tv.set_ime_options(3 as i32);
     let _keep: *u8 = t.into_raw();
     env.delete_local_ref(watcher);
+    arm_edit(env, raw, n);
     return raw;
 }
 
 // The input_view block is shared, so the apply is too — only the dirty BITS
 // differ per kind, and they happen to sit at the same offsets because
 // gen_contract.py emits the block once.
+// THE INPUT TYPE, which on Android is ONE integer carrying five of facet's
+// verbs at once: the keyboard, the secure bit, the multi-line bit, the spell
+// checker and the prediction. They cannot be written separately — `setInputType`
+// replaces the word — so they are read together and written once.
+//
+// The constants are typed out rather than read from `InputType`, which is an
+// interface of static finals and not in the bound class list; each is named
+// beside its number.
+fn apply_input_flags(env: rt::Env, tv: w::TextView, iv: *props::InputViewProps,
+                     secure: bool, multiline: bool) {
+    let class_text: i32 = 1 as i32;              // TYPE_CLASS_TEXT
+    let class_number: i32 = 2 as i32;            // TYPE_CLASS_NUMBER
+    let class_phone: i32 = 3 as i32;             // TYPE_CLASS_PHONE
+    let var_email: i32 = 32 as i32;              // TYPE_TEXT_VARIATION_EMAIL_ADDRESS
+    let var_uri: i32 = 16 as i32;                // TYPE_TEXT_VARIATION_URI
+    let var_password: i32 = 128 as i32;          // TYPE_TEXT_VARIATION_PASSWORD
+    let var_no_suggest: i32 = 524288 as i32;     // TYPE_TEXT_FLAG_NO_SUGGESTIONS
+    let flag_multi: i32 = 131072 as i32;         // TYPE_TEXT_FLAG_MULTI_LINE
+    let flag_cap_sent: i32 = 16384 as i32;       // TYPE_TEXT_FLAG_CAP_SENTENCES
+
+    var t: i32 = match { (*iv).keyboard } {
+        vocab::Keyboard::Numeric => class_number,
+        vocab::Keyboard::Telephone => class_phone,
+        vocab::Keyboard::Email => class_text | var_email,
+        vocab::Keyboard::Url => class_text | var_uri,
+        // `Chat` is a sentence keyboard — capitals after a full stop, which is
+        // what a message field does everywhere.
+        vocab::Keyboard::Chat => class_text | flag_cap_sent,
+        // `Plain` is text with the helpers OFF, which is what plain means.
+        vocab::Keyboard::Plain => class_text | var_no_suggest,
+        _ => class_text,
+    };
+    if secure { t = class_text | var_password; }
+    if multiline { t = t | flag_multi; }
+    // SPELLING AND PREDICTION ARE THE SAME BIT on Android — `NO_SUGGESTIONS`
+    // turns off the underline and the strip together, so either one asking for
+    // off gets it. Two verbs, one switch, said here rather than pretending to
+    // honour them apart.
+    if !{ (*iv).checks_spelling } || !{ (*iv).predicts_text } { t = t | var_no_suggest; }
+    tv.set_input_type(t);
+
+    // READ-ONLY is not an Android property: a field that cannot be edited is
+    // one with no key listener and no focus in touch mode. `setEnabled(false)`
+    // would grey it out, which is a different claim — facet has `is_enabled`
+    // for that.
+    let ro: bool = { (*iv).is_read_only };
+    var view: w::View = w::View::from_global(env, tv.as_obj());
+    view.set_focusable_z(!ro);
+    view.set_focusable_in_touch_mode(!ro);
+    paint::unwrap_keep(view);
+    tv.set_cursor_visible(!ro);
+    // A LENGTH CAP is an InputFilter array, which lives in FacetDraw.
+    dex::max_length(env, tv.as_obj(), { { (*iv).max_length } as i32 });
+    return;
+}
+
+// A CLEAR BUTTON, which Android has no property for: the convention is a
+// drawable at the END of the field, and `ic_menu_close_clear_cancel` is the
+// platform's own glyph for it — the system tier again, by name, rather than one
+// drawn here.
+//
+// WHAT IS ABSENT is the TOUCH: a compound drawable is decoration, and making it
+// clear the field needs a touch listener that reads the x against the field's
+// padding. MANIFEST §2 carries that; the glyph appearing while editing is the
+// half that is honest on its own.
+fn apply_clear_button(env: rt::Env, tv: w::TextView, mode: vocab::ClearButton) {
+    let show: bool = match mode {
+        vocab::ClearButton::WhileEditing => true,
+        vocab::ClearButton::Never => false,
+    };
+    if !show {
+        tv.set_compound_drawables_relative_with_intrinsic_bounds_drawable_drawable_drawable_drawable(
+            0 as jni::jobject, 0 as jni::jobject, 0 as jni::jobject, 0 as jni::jobject);
+        return;
+    }
+    let id: i32 = drawable_id(env, #str_ptr("ic_menu_close_clear_cancel\0"));
+    if id == (0 as i32) { return; }
+    let d: jni::jobject = env.call_object_1(
+        e::context(), #str_ptr("android/content/Context\0"), #str_ptr("getDrawable\0"),
+        #str_ptr("(I)Landroid/graphics/drawable/Drawable;\0"), jni::arg_int(id));
+    env.clear_exception();
+    if d == (0 as jni::jobject) { return; }
+    tv.set_compound_drawables_relative_with_intrinsic_bounds_drawable_drawable_drawable_drawable(
+        0 as jni::jobject, 0 as jni::jobject, d, 0 as jni::jobject);
+    env.delete_local_ref(d);
+    return;
+}
+
+// THE ACTION KEY's label, which is an IME option. `Default` is UNSPECIFIED —
+// the keyboard picks, which is what "default" means — and the five named ones
+// are Android's own five.
+fn set_return_key(env: rt::Env, v: *u8, key: vocab::ReturnKey) {
+    let action: i32 = match key {
+        vocab::ReturnKey::Done => 6 as i32,      // IME_ACTION_DONE
+        vocab::ReturnKey::Go => 2 as i32,        // IME_ACTION_GO
+        vocab::ReturnKey::Next => 5 as i32,      // IME_ACTION_NEXT
+        vocab::ReturnKey::Search => 3 as i32,    // IME_ACTION_SEARCH
+        vocab::ReturnKey::Send => 4 as i32,      // IME_ACTION_SEND
+        vocab::ReturnKey::Default => 0 as i32,   // IME_ACTION_UNSPECIFIED
+    };
+    var tv: w::TextView = w::TextView::from_global(env, v);
+    tv.set_ime_options(action);
+    let _k: *u8 = tv.into_raw();
+    return;
+}
+
+// THE TWO READS BEYOND KEYSTROKES: the action key and focus. One adapter
+// carries both, because they arrive on the same view and the same token.
+//
+// FOCUS IS ON THE SHARED BAND, not on the input tier — `on_focus` and
+// `on_blur` are CommonProps, so every node could want them. They are armed
+// here because an EditText is the only kind that takes focus in a facet tree
+// today; the day a node with `on_focus` and no field appears, `wants_focus_
+// events` is the reader that says so.
+fn arm_edit(env: rt::Env, raw: *u8, n: *core::Node) {
+    let listener: jni::jobject =
+        dex::new_with_token(env, dex::edit_class(), { #addr(n) as i64 });
+    if listener == (0 as jni::jobject) { return; }
+    var tv: w::TextView = w::TextView::from_global(env, raw);
+    tv.set_on_editor_action_listener(listener);
+    let _k: *u8 = tv.into_raw();
+    var view: w::View = w::View::from_global(env, raw);
+    view.set_on_focus_change_listener(listener);
+    paint::unwrap_keep(view);
+    env.delete_local_ref(listener);
+    return;
+}
+
+// The action key was pressed on a field, an area or a search field. Which
+// handler that is belongs to the KIND, because the three declare their own.
+fn fire_submit(token: i64) {
+    let n: *core::Node = { token as *core::Node };
+    if n == (0 as *core::Node) { return; }
+    let d: *core::Data = core::node_data(n);
+    if d == (0 as *core::Data) { return; }
+    let raw: *u8 = { (*d).props };
+    if raw == (0 as *u8) { return; }
+    let kind: u32 = { (*d).kind };
+    var h: fn(*u8, *u8) = props::no_handler;
+    var ctx: *u8 = 0 as *u8;
+    if kind == props::K_TEXT_FIELD {
+        let p: *props::TextFieldProps = raw as *props::TextFieldProps;
+        h = { (*p).on_submit };
+        ctx = { (*p).on_submit_ctx };
+    } else if kind == props::K_TEXT_AREA {
+        let p: *props::TextAreaProps = raw as *props::TextAreaProps;
+        h = { (*p).on_submit };
+        ctx = { (*p).on_submit_ctx };
+    } else if kind == props::K_SEARCH_FIELD {
+        let p: *props::SearchFieldProps = raw as *props::SearchFieldProps;
+        h = { (*p).on_submit };
+        ctx = { (*p).on_submit_ctx };
+    }
+    if h != props::no_handler { h(core::view_of(n), ctx); }
+    return;
+}
+
+// Focus arrived or left. The handlers are the SHARED band's, so facet's own
+// readers fire them — a backend that reached into CommonProps itself would be
+// a second copy of the same two lines.
+fn fire_focus(token: i64, focused: bool) {
+    let n: *core::Node = { token as *core::Node };
+    if n == (0 as *core::Node) { return; }
+    if focused { core::fire_focus_handler(n); } else { core::fire_blur_handler(n); }
+    return;
+}
+
 fn apply_input_common(v: *u8, iv: *props::InputViewProps, text_bit: bool,
                       placeholder_bit: bool, color_bit: bool, size_bit: bool,
                       type_bit: bool, align: vocab::TextAlign,
-                      vertical: vocab::TextAlign) {
+                      vertical: vocab::TextAlign, flags_bit: bool = false,
+                      secure: bool = false, caret_bit: bool = false,
+                      multiline: bool = false) {
     let env: rt::Env = e::env();
     var et: w::EditText = w::EditText::from_global(env, v);
     var tv: w::TextView = et.as_text_view();
@@ -954,6 +1235,24 @@ fn apply_input_common(v: *u8, iv: *props::InputViewProps, text_bit: bool,
     if size_bit {
         apply_text_size(tv, { (*iv).font_size }, { (*iv).font_scales });
     }
+    if flags_bit { apply_input_flags(env, tv, iv, secure, multiline); }
+    if placeholder_bit {
+        let pc: vocab::Color = { (*iv).placeholder_color };
+        if pc.is_set() { tv.set_hint_text_color_i(paint::argb_of(pc)); }
+    }
+    // THE CARET, and a SELECTION when one is asked for. `selection_length` of
+    // zero is a caret, which is what `setSelection(int)` is; anything else is
+    // the two-argument call.
+    if caret_bit {
+        let at: i64 = { (*iv).cursor_position };
+        let len: i64 = { (*iv).selection_length };
+        if at >= (0 as i64) {
+            var et2: w::EditText = w::EditText::from_global(env, v);
+            if len > (0 as i64) { et2.set_selection_i_i({ at as i32 }, { (at +% len) as i32 }); }
+            else { et2.set_selection_i({ at as i32 }); }
+            let _k: *u8 = et2.into_raw();
+        }
+    }
     if type_bit {
         var st: TextStyle = TextStyle::none();
         st.family = { (*iv).font_family.view() };
@@ -982,13 +1281,24 @@ fn apply_text_area(v: *u8, n: *core::Node, dirty: u64) {
                         | text_area::P_IS_ITALIC | text_area::P_TEXT_TRANSFORM
                         | text_area::P_CHARACTER_SPACING | text_area::P_TEXT_ALIGN
                         | text_area::P_VERTICAL_ALIGN | text_area::P_FONT_SIZE;
+    let flags: u64 = text_area::P_KEYBOARD | text_area::P_CHECKS_SPELLING
+                   | text_area::P_PREDICTS_TEXT | text_area::P_IS_READ_ONLY
+                   | text_area::P_MAX_LENGTH;
     apply_input_common(v, { #addr_of((*p).input_view) },
                        (dirty & text_area::P_TEXT) != (0 as u64),
-                       (dirty & text_area::P_PLACEHOLDER) != (0 as u64),
+                       (dirty & (text_area::P_PLACEHOLDER
+                                 | text_area::P_PLACEHOLDER_COLOR)) != (0 as u64),
                        (dirty & text_area::P_TEXT_COLOR) != (0 as u64),
                        (dirty & (text_area::P_FONT_SIZE | text_area::P_FONT_SCALES)) != (0 as u64),
                        (dirty & typography) != (0 as u64) || dirty == paint::all_bits(),
-                       { (*p).text_align }, { (*p).vertical_align });
+                       { (*p).text_align }, { (*p).vertical_align },
+                       (dirty & flags) != (0 as u64) || dirty == paint::all_bits(),
+                       false,
+                       (dirty & (text_area::P_CURSOR_POSITION
+                                 | text_area::P_SELECTION_LENGTH)) != (0 as u64),
+                       // AN AREA IS THE MULTI-LINE ONE — the kind carries that,
+                       // not a prop, so it is passed rather than read.
+                       true);
     return;
 }
 
@@ -999,13 +1309,27 @@ fn apply_search_field(v: *u8, n: *core::Node, dirty: u64) {
                         | search_field::P_IS_ITALIC | search_field::P_TEXT_TRANSFORM
                         | search_field::P_CHARACTER_SPACING | search_field::P_TEXT_ALIGN
                         | search_field::P_VERTICAL_ALIGN | search_field::P_FONT_SIZE;
+    let flags: u64 = search_field::P_KEYBOARD | search_field::P_CHECKS_SPELLING
+                   | search_field::P_PREDICTS_TEXT | search_field::P_IS_READ_ONLY
+                   | search_field::P_MAX_LENGTH;
     apply_input_common(v, { #addr_of((*p).input_view) },
                        (dirty & search_field::P_TEXT) != (0 as u64),
-                       (dirty & search_field::P_PLACEHOLDER) != (0 as u64),
+                       (dirty & (search_field::P_PLACEHOLDER
+                                 | search_field::P_PLACEHOLDER_COLOR)) != (0 as u64),
                        (dirty & search_field::P_TEXT_COLOR) != (0 as u64),
                        (dirty & (search_field::P_FONT_SIZE | search_field::P_FONT_SCALES)) != (0 as u64),
                        (dirty & typography) != (0 as u64) || dirty == paint::all_bits(),
-                       { (*p).text_align }, { (*p).vertical_align });
+                       { (*p).text_align }, { (*p).vertical_align },
+                       (dirty & flags) != (0 as u64) || dirty == paint::all_bits(),
+                       false,
+                       (dirty & (search_field::P_CURSOR_POSITION
+                                 | search_field::P_SELECTION_LENGTH)) != (0 as u64),
+                       false);
+    // THE RETURN KEY, which a search field states outright and the other two
+    // take from their own verb.
+    if (dirty & search_field::P_RETURN_KEY) != (0 as u64) {
+        set_return_key(e::env(), v, { (*p).return_key });
+    }
     return;
 }
 
@@ -1569,6 +1893,47 @@ fn put_str_at(buf: *u8, at: usize, s: *u8) -> usize {
         }
     }
     return i;
+}
+
+// ---- tints -------------------------------------------------------------------
+// EVERY COLOUR VERB ON A PLATFORM WIDGET IS A TINT, and a tint is a
+// ColorStateList — a colour per state rather than a colour. `valueOf` makes the
+// one-colour kind, which is what facet's single-value verbs mean.
+
+// A SLIDER'S THUMB, from the same four doors an `image` source uses — a file,
+// an APK asset, a drawable in the app, then one in `android`. The first two
+// arrive as Bitmaps and need wrapping; the third is a drawable already.
+fn set_thumb_image(env: rt::Env, v: *u8, src: str) {
+    var buf: [u8; 512] = #zero::[[u8; 512]]();
+    let base: *u8 = { #addr_of(buf[0]) };
+    if !paint::cstr(src, base, 512 as usize) { return; }
+    // The upcast takes a ref of its own, so this one drops normally — the
+    // borrowed `v` is facet's and is never wrapped here.
+    var sb: w::SeekBar = w::SeekBar::from_global(env, v);
+    var asb: w::AbsSeekBar = sb.as_abs_seek_bar();
+    let _borrowed: *u8 = sb.into_raw();
+    let id: i32 = drawable_id(env, base);
+    if id != (0 as i32) {
+        let d: jni::jobject = env.call_object_1(
+            e::context(), #str_ptr("android/content/Context\0"), #str_ptr("getDrawable\0"),
+            #str_ptr("(I)Landroid/graphics/drawable/Drawable;\0"), jni::arg_int(id));
+        env.clear_exception();
+        if d != (0 as jni::jobject) {
+            asb.set_thumb(d);
+            env.delete_local_ref(d);
+        }
+    }
+    return;
+}
+
+fn tint(env: rt::Env, c: vocab::Color) -> jni::jobject {
+    return w::ColorStateList::value_of(env, paint::argb_of(c));
+}
+
+// A colour for CHECKED and another for unchecked, which is what a switch's two
+// verbs are. The pair needs an `int[][]` and lives in FacetDraw for that.
+fn checked_tint(env: rt::Env, on: vocab::Color, off: vocab::Color) -> jni::jobject {
+    return dex::checked_csl(env, paint::argb_of(on), paint::argb_of(off));
 }
 
 // ---- symbol ------------------------------------------------------------------

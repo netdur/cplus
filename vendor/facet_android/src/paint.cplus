@@ -211,6 +211,70 @@ fn unwrap_keep(take b: w::View) {
 }
 
 
+// THREE ROWS AT ONCE, because `props.cplus` says a backend re-reads all of them
+// on `C_SEMANTICS`: the label, the hint and a heading level.
+//
+// Android has one description slot and no hint, so the two strings are joined
+// with a full stop when both are set — which is what a reader would pause on
+// anyway, and is stated here rather than dropping one of the two silently.
+fn apply_semantics(env: rt::Env, view: w::View, n: *core::Node) {
+    let label: str = core::accessibility_label(n);
+    let hint: str = core::accessibility_hint(n);
+    var buf: [u8; 512] = #zero::[[u8; 512]]();
+    let base: *u8 = { #addr_of(buf[0]) };
+    if label == "" && hint == "" {
+        clear_string_property(env, view.as_obj(), #str_ptr("setContentDescription\0"));
+    } else if hint == "" {
+        if cstr(label, base, 512 as usize) { set_description(env, view, base); }
+    } else if label == "" {
+        if cstr(hint, base, 512 as usize) { set_description(env, view, base); }
+    } else {
+        var i: usize = 0 as usize;
+        i = put_str(base, i, label, 512 as usize);
+        i = put_str(base, i, ". ", 512 as usize);
+        i = put_str(base, i, hint, 512 as usize);
+        let term: *u8 = { ({ #addr(base) } +% i) as *u8 };
+        { (*term) = 0 as u8 };
+        set_description(env, view, base);
+    }
+    dex::set_heading(env, view.as_obj(), core::heading_level(n) > (0 as i64));
+    return;
+}
+
+fn set_description(env: rt::Env, view: w::View, utf8: *u8) {
+    view.set_content_description(utf8);
+    return;
+}
+
+// A CharSequence setter, called with NULL — which the generated binding cannot
+// express, because it makes a jstring out of whatever it is given and a null
+// `*u8` would be a crash rather than a null String. Clearing a description or a
+// tooltip is a real state ("this node says nothing"), distinct from saying the
+// empty string, so it gets the raw call.
+fn clear_string_property(env: rt::Env, v: *u8, name: *u8) {
+    env.call_void_1(v, #str_ptr("android/view/View\0"), name,
+                    #str_ptr("(Ljava/lang/CharSequence;)V\0"),
+                    rt::arg_object(0 as jni::jobject));
+    return;
+}
+
+// Append, bounded. The three pieces of a description are an application's
+// strings and a fixed buffer is what every other text path here uses.
+fn put_str(buf: *u8, at: usize, s: str, cap: usize) -> usize {
+    let n: usize = s.count();
+    let src: *u8 = { #str_ptr(s) };
+    var i: usize = at;
+    var j: usize = 0 as usize;
+    while j < n && (i +% (1 as usize)) < cap {
+        let d: *u8 = { ({ #addr(buf) } +% i) as *u8 };
+        let p: *u8 = { ({ #addr(src) } +% j) as *u8 };
+        { (*d) = (*p) };
+        i = i +% (1 as usize);
+        j = j +% (1 as usize);
+    }
+    return i;
+}
+
 // ---- the animate band --------------------------------------------------------
 // TWO CHANNELS, opacity and the transform as a unit, and `ViewPropertyAnimator`
 // is Android's answer to both: it drives the VIEW's own properties, which are
@@ -437,6 +501,49 @@ fn configure(v: *u8, n: *core::Node, dirty: u64) {
     if (dirty & props::C_IS_ENABLED) != (0 as u64) {
         view.set_enabled(core::is_enabled(n));
     }
+    // TOUCHES PASS THROUGH. A view that is neither clickable nor focusable does
+    // not consume a touch, and the parent — a FacetHost, which does not
+    // intercept — gets it instead. That is Android's whole mechanism for this;
+    // there is no `userInteractionEnabled` bit to clear.
+    if (dirty & props::C_INPUT_TRANSPARENT) != (0 as u64) {
+        let through: bool = core::input_transparent(n);
+        view.set_clickable(!through);
+        view.set_focusable_z(!through);
+        view.set_long_clickable(!through);
+    }
+    // WHICH WAY THE WRITING RUNS. `MatchParent` is Android's INHERIT, which is
+    // the same idea under a different name and the default for every view.
+    if (dirty & props::C_FLOW_DIRECTION) != (0 as u64) {
+        view.set_layout_direction(match core::flow_direction(n) {
+            vocab::FlowDirection::LeftToRight => 0 as i32,
+            vocab::FlowDirection::RightToLeft => 1 as i32,
+            vocab::FlowDirection::MatchParent => 2 as i32,   // INHERIT
+        });
+    }
+    // WHAT A SCREEN READER SAYS. `contentDescription` is the label, and it is
+    // the slot the KEY deliberately does not use (see MANIFEST §1): an address
+    // is not a description, and a reader would announce it.
+    if (dirty & props::C_SEMANTICS) != (0 as u64) {
+        apply_semantics(env, view, n);
+    }
+    // A TOOLTIP, which Android grew in API 26 — this backend's floor exactly.
+    // Shown on a long press and on a pointer hover, which is what a tooltip is
+    // for on a device that has one.
+    if (dirty & props::C_TOOLTIP) != (0 as u64) {
+        let t: str = core::tooltip(n);
+        if t == "" { clear_string_property(env, v, #str_ptr("setTooltipText\0")); }
+        else {
+            var buf: [u8; 256] = #zero::[[u8; 256]]();
+            let base: *u8 = { #addr_of(buf[0]) };
+            if cstr(t, base, 256 as usize) { view.set_tooltip_text(base); }
+        }
+    }
+    // FOCUS AND BLUR ARE COMMANDS, not state — they are acted on when the bit
+    // says they were asked for and never re-asserted on an unrelated pass. On a
+    // phone the keyboard IS the focus: a field with a caret and no keyboard is
+    // focused in name only.
+    if (dirty & props::C_FOCUS) != (0 as u64) { dex::show_keyboard(env, v); }
+    if (dirty & props::C_BLUR) != (0 as u64) { dex::hide_keyboard(env, v); }
 
     // THE KEY. On the other two backends it is also the platform's
     // accessibilityIdentifier — one token, three jobs. Android has no such
