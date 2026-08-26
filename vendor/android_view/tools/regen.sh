@@ -55,6 +55,27 @@ BINDGEN="${BINDGEN:-../../target/release/cpc-bindgen}"
     android.graphics.BitmapFactory \
     android.graphics.drawable.Drawable \
     android.graphics.drawable.GradientDrawable \
+    android.graphics.Canvas \
+    android.graphics.Paint \
+    'android.graphics.Paint$Style' \
+    'android.graphics.Paint$Cap' \
+    'android.graphics.Paint$Join' \
+    'android.graphics.Paint$Align' \
+    android.graphics.Path \
+    'android.graphics.Path$Direction' \
+    'android.graphics.Path$FillType' \
+    android.graphics.RectF \
+    android.graphics.Matrix \
+    android.graphics.Typeface \
+    android.graphics.PathEffect \
+    android.graphics.DashPathEffect \
+    android.graphics.Shader \
+    'android.graphics.Shader$TileMode' \
+    android.graphics.LinearGradient \
+    android.graphics.PorterDuff \
+    'android.graphics.PorterDuff$Mode' \
+    android.graphics.PorterDuffXfermode \
+    android.graphics.Xfermode \
     > src/widgets.cplus
 
 wc -l src/widgets.cplus

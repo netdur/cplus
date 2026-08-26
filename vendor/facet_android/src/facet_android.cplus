@@ -20,6 +20,7 @@ import "./scheduler" as scheduler;
 import "./controls" as controls;
 import "./window" as window;
 import "./recycler" as recycler;
+import "./drawing" as drawing;
 import "./mainthread" as mainthread;
 import "./env" as e;
 
@@ -117,6 +118,13 @@ export extern fn facet_android_text(envp: *jni::JNIEnv, cls: jni::jobject, token
 export extern fn facet_android_step(envp: *jni::JNIEnv, cls: jni::jobject, token: i64, delta: i32) {
     e::set_env(rt::from_native(envp));
     controls::fire_step(token, delta);
+    return;
+}
+
+export extern fn facet_android_draw(envp: *jni::JNIEnv, cls: jni::jobject, token: i64,
+                                    canvas: jni::jobject) {
+    e::set_env(rt::from_native(envp));
+    drawing::draw(token, canvas);
     return;
 }
 

@@ -21,7 +21,7 @@ import "jni/jni" as jni;
 import "android_view/runtime" as rt;
 
 // Kept in step by tools/build_dex.sh; do not hand-edit.
-const DEX_LEN: usize = 7092;
+const DEX_LEN: usize = 9364;
 
 static LOADER: usize = 0;
 static C_HOST: usize = 0;
@@ -35,6 +35,8 @@ static C_STEP: usize = 0;
 static C_ROWS: usize = 0;
 static C_ROWTAP: usize = 0;
 static C_JOB: usize = 0;
+static C_CANVAS: usize = 0;
+static C_DRAW: usize = 0;
 
 // jni.h's JNINativeMethod with the fn slot concretely typed per shape.
 #[repr(C)]
@@ -110,6 +112,8 @@ extern fn facet_android_row_view(envp: *jni::JNIEnv, cls: jni::jobject, token: i
                                  convert: jni::jobject, parent: jni::jobject) -> jni::jobject;
 extern fn facet_android_row_tapped(envp: *jni::JNIEnv, cls: jni::jobject, token: i64, position: i32);
 extern fn facet_android_job(envp: *jni::JNIEnv, cls: jni::jobject);
+extern fn facet_android_draw(envp: *jni::JNIEnv, cls: jni::jobject, token: i64,
+                             canvas: jni::jobject);
 
 fn host_class() -> jni::jclass { return { C_HOST as *u8 }; }
 fn tick_class() -> jni::jclass { return { C_TICK as *u8 }; }
@@ -122,6 +126,7 @@ fn step_class() -> jni::jclass { return { C_STEP as *u8 }; }
 fn rows_class() -> jni::jclass { return { C_ROWS as *u8 }; }
 fn rowtap_class() -> jni::jclass { return { C_ROWTAP as *u8 }; }
 fn job_class() -> jni::jclass { return { C_JOB as *u8 }; }
+fn canvas_class() -> jni::jclass { return { C_CANVAS as *u8 }; }
 fn loaded() -> bool { return LOADER != 0; }
 
 // Load the dex and bind every native. Idempotent; `any_view` is only needed to
@@ -138,7 +143,7 @@ fn ensure_loaded(env: rt::Env, any_view: jni::jobject) {
     // Activity would hold a FacetHost of one class while this code registered
     // natives on the other, and `nativeSizeChanged` would never arrive.
     if load_merged(env) { return; }
-    let dex: *[u8; 7092] = #include_bytes("../facet_android.dex");
+    let dex: *[u8; 9364] = #include_bytes("../facet_android.dex");
     let buffer: jni::jobject = {
         (*(*env.raw())).NewDirectByteBuffer(env.raw(), { dex as *u8 }, DEX_LEN as i64)
     };
@@ -169,6 +174,8 @@ fn ensure_loaded(env: rt::Env, any_view: jni::jobject) {
     C_ROWS = { #addr(load_class(env, loader, #str_ptr("cplus.facet.FacetRows\0"))) };
     C_ROWTAP = { #addr(load_class(env, loader, #str_ptr("cplus.facet.FacetRowTap\0"))) };
     C_JOB = { #addr(load_class(env, loader, #str_ptr("cplus.facet.FacetJob\0"))) };
+    C_CANVAS = { #addr(load_class(env, loader, #str_ptr("cplus.facet.FacetCanvas\0"))) };
+    C_DRAW = { #addr(load_class(env, loader, #str_ptr("cplus.facet.FacetDraw\0"))) };
 
     bind_natives(env);
 
@@ -198,6 +205,8 @@ fn load_merged(env: rt::Env) -> bool {
     C_ROWS = { #addr(find_global(env, #str_ptr("cplus/facet/FacetRows\0"))) };
     C_ROWTAP = { #addr(find_global(env, #str_ptr("cplus/facet/FacetRowTap\0"))) };
     C_JOB = { #addr(find_global(env, #str_ptr("cplus/facet/FacetJob\0"))) };
+    C_CANVAS = { #addr(find_global(env, #str_ptr("cplus/facet/FacetCanvas\0"))) };
+    C_DRAW = { #addr(find_global(env, #str_ptr("cplus/facet/FacetDraw\0"))) };
     // A sentinel rather than a loader object: `loaded()` asks whether the
     // classes are here, and by this path there is no loader to keep.
     LOADER = 1 as usize;
@@ -290,6 +299,13 @@ fn bind_natives(env: rt::Env) {
         signature: #str_ptr("()V\0"),
         fn_ptr: facet_android_job,
     };
+    var draw_rec: Native2LO = Native2LO {
+        name: #str_ptr("nativeDraw\0"),
+        signature: #str_ptr("(JLandroid/graphics/Canvas;)V\0"),
+        fn_ptr: facet_android_draw,
+    };
+    let _rc: i32 = { (*(*env.raw())).RegisterNatives(env.raw(), { C_CANVAS as *u8 },
+                                                     #addr_of(draw_rec) as *u8, 1) };
     let _rj: i32 = { (*(*env.raw())).RegisterNatives(env.raw(), { C_JOB as *u8 },
                                                      #addr_of(job_rec) as *u8, 1) };
 
@@ -350,6 +366,70 @@ fn new_with_token_i(env: rt::Env, cls: jni::jclass, token: i64, arg: i32) -> jni
     let ctor: jni::jmethodID = env.method_id(cls, #str_ptr("<init>\0"), #str_ptr("(JI)V\0"));
     var args: [jni::JValue; 2] = [jni::arg_long(token), jni::arg_int(arg)];
     return { (*(*env.raw())).NewObjectA(env.raw(), cls, ctor, #addr_of(args[0])) };
+}
+
+// `new FacetCanvas(context, token)` — the only adapter that is itself a VIEW,
+// so it needs the Context every View constructor takes.
+fn new_view_with_token(env: rt::Env, cls: jni::jclass, ctx: jni::jobject,
+                       token: i64) -> jni::jobject {
+    let ctor: jni::jmethodID = env.method_id(cls, #str_ptr("<init>\0"),
+                                             #str_ptr("(Landroid/content/Context;J)V\0"));
+    var args: [jni::JValue; 2] = [jni::arg_object(ctx), jni::arg_long(token)];
+    return { (*(*env.raw())).NewObjectA(env.raw(), cls, ctor, #addr_of(args[0])) };
+}
+
+// ---- FacetDraw -----------------------------------------------------------------
+// The three calls whose arguments C+ cannot build. See FacetDraw.java; the
+// reason each one is over there is written there and not repeated here.
+
+fn draw_concat(env: rt::Env, canvas: jni::jobject, a: f64, b: f64, c: f64, d: f64,
+               tx: f64, ty: f64) {
+    if C_DRAW == 0 { return; }
+    let mid: jni::jmethodID = env.method_id_static({ C_DRAW as *u8 }, #str_ptr("concat\0"),
+        #str_ptr("(Landroid/graphics/Canvas;FFFFFF)V\0"));
+    if mid == (0 as jni::jmethodID) { return; }
+    var args: [jni::JValue; 7] = [jni::arg_object(canvas),
+        jni::arg_float(a as f32), jni::arg_float(b as f32), jni::arg_float(c as f32),
+        jni::arg_float(d as f32), jni::arg_float(tx as f32), jni::arg_float(ty as f32)];
+    { (*(*env.raw())).CallStaticVoidMethodA(env.raw(), { C_DRAW as *u8 }, mid,
+                                            #addr_of(args[0])) };
+    return;
+}
+
+fn draw_dash(env: rt::Env, paint: jni::jobject, count: i32, phase: f64,
+             r0: f64, r1: f64, r2: f64, r3: f64, r4: f64, r5: f64, r6: f64, r7: f64) {
+    if C_DRAW == 0 { return; }
+    let mid: jni::jmethodID = env.method_id_static({ C_DRAW as *u8 }, #str_ptr("dash\0"),
+        #str_ptr("(Landroid/graphics/Paint;IFFFFFFFFF)V\0"));
+    if mid == (0 as jni::jmethodID) { return; }
+    var args: [jni::JValue; 11] = [jni::arg_object(paint), jni::arg_int(count),
+        jni::arg_float(phase as f32),
+        jni::arg_float(r0 as f32), jni::arg_float(r1 as f32), jni::arg_float(r2 as f32),
+        jni::arg_float(r3 as f32), jni::arg_float(r4 as f32), jni::arg_float(r5 as f32),
+        jni::arg_float(r6 as f32), jni::arg_float(r7 as f32)];
+    { (*(*env.raw())).CallStaticVoidMethodA(env.raw(), { C_DRAW as *u8 }, mid,
+                                            #addr_of(args[0])) };
+    return;
+}
+
+fn draw_text_block(env: rt::Env, canvas: jni::jobject, paint: jni::jobject, s: *u8,
+                   x: f64, y: f64, w: f64, h: f64, align: i32, valign: i32,
+                   clip: bool, line_spacing: f64) {
+    if C_DRAW == 0 { return; }
+    let mid: jni::jmethodID = env.method_id_static({ C_DRAW as *u8 }, #str_ptr("textBlock\0"),
+        #str_ptr("(Landroid/graphics/Canvas;Landroid/graphics/Paint;Ljava/lang/String;FFFFIIZF)V\0"));
+    if mid == (0 as jni::jmethodID) { return; }
+    let js: jni::jstring = env.new_string_utf(s);
+    var args: [jni::JValue; 11] = [jni::arg_object(canvas), jni::arg_object(paint),
+        jni::arg_object(js),
+        jni::arg_float(x as f32), jni::arg_float(y as f32),
+        jni::arg_float(w as f32), jni::arg_float(h as f32),
+        jni::arg_int(align), jni::arg_int(valign), rt::arg_bool(clip),
+        jni::arg_float(line_spacing as f32)];
+    { (*(*env.raw())).CallStaticVoidMethodA(env.raw(), { C_DRAW as *u8 }, mid,
+                                            #addr_of(args[0])) };
+    env.delete_local_ref(js);
+    return;
 }
 
 fn new_no_args(env: rt::Env, cls: jni::jclass) -> jni::jobject {

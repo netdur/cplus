@@ -32,6 +32,7 @@ import "facet/icon_button" as icon_button;
 import "facet/scroll" as scroll;
 import "facet/stepper" as stepper;
 import "facet/split" as split;
+import "facet/canvas" as canvas;
 import "facet/vocabulary" as vocab;
 import "./env" as e;
 import "./paint" as paint;
@@ -1276,6 +1277,32 @@ fn put_str_at(buf: *u8, at: usize, s: *u8) -> usize {
         }
     }
     return i;
+}
+
+// ---- canvas ------------------------------------------------------------------
+// The one control whose backing view has behaviour of its own, and so the one
+// with a class of its own: FacetCanvas exists to have an `onDraw`. Everything
+// about the drawing lives in drawing.cplus; this is the two verbs that reach it.
+
+fn create_canvas(n: *core::Node) -> *u8 {
+    let env: rt::Env = e::env();
+    return global_of(dex::new_view_with_token(env, dex::canvas_class(), e::context(),
+                                              { #addr(n) as i64 }));
+}
+
+fn apply_canvas(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *props::CanvasProps = props_of(n, props::K_CANVAS) as *props::CanvasProps;
+    if p == (0 as *props::CanvasProps) { return; }
+    // A new Drawable, an explicit `redraw()`, or a new box: the drawing is a
+    // function of the laid-out size, so a resize is a repaint.
+    let watched: u64 = canvas::P_DRAWABLE | canvas::P_REDRAW | props::C_LAYOUT;
+    if (dirty & watched) != (0 as u64) || dirty == paint::all_bits() {
+        let env: rt::Env = e::env();
+        var view: w::View = w::View::from_global(env, v);
+        view.invalidate_void();
+        paint::unwrap_keep(view);
+    }
+    return;
 }
 
 // ---- split -------------------------------------------------------------------

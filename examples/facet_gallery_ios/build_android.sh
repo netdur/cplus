@@ -37,7 +37,10 @@ DEPS="$V/facet_runtime/lib/$T/libfacet_runtime.a \
       $V/stdlib/lib/$T/libstdlib.a"
 
 # -llog: facet_android reports unbuilt kinds through liblog, because an app's
-# stderr goes to /dev/null on Android.
+# stderr goes to /dev/null on Android. -lm: the NDK does NOT fold libm into
+# libc, and a `canvas` gradient turns an angle into two endpoints — so `sin` and
+# `cos` are undefined symbols without it, which --no-undefined names at build
+# time rather than at dlopen.
 #
 # --no-undefined turns the DEFAULT failure mode inside out, and that is the
 # point. A shared library may legally leave symbols undefined, so a missing one
@@ -47,7 +50,7 @@ DEPS="$V/facet_runtime/lib/$T/libfacet_runtime.a \
 # then `CC_SHA256`) is what prompted it.
 "$CC" -target aarch64-linux-android24 -shared \
     -Wl,--whole-archive target/android-arm64/debug/libfacet_gallery_ios.a \
-    -Wl,--no-whole-archive $DEPS -llog \
+    -Wl,--no-whole-archive $DEPS -llog -lm \
     -Wl,--no-undefined \
     -o out/lib/arm64-v8a/libiosgallery.so
 

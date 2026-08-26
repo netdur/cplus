@@ -1,0 +1,736 @@
+// The canvas: facet's recorded display list, replayed onto android.graphics.
+//
+// A `canvas` is the one control whose backing view has behaviour of its own —
+// everything else in this backend is a widget Android already owns and drives.
+// The recording is portable by construction: an application appends commands to
+// a `vocab::Canvas` and names no platform, and this module is the reader that
+// turns those commands into Canvas and Paint calls. facet_uikit's replay reads
+// the same list against Core Graphics; facet_appkit's against the same again.
+//
+// TWO THINGS ARE DIFFERENT FROM A CORE GRAPHICS BACKEND, and both shape the code:
+//
+//   1. A Paint IS THE STATE. CG carries fill and stroke colours at once and
+//      picks by verb; Android's Paint carries ONE colour and one style. So the
+//      state lives here in `DrawState` and the Paint is armed per command —
+//      `arm_stroke` before a Draw*, `arm_fill` before a Fill*.
+//   2. The Canvas is in PIXELS. facet's units are density-independent, so the
+//      whole replay runs inside one `scale(density, density)` — which is also
+//      what makes a stroke width, a font size and a corner radius all mean the
+//      same thing they mean on the other two backends.
+
+import "stdlib/option" as option;
+import "stdlib/vec" as vec;
+import "stdlib/text" as text;
+import "stdlib/status" as status;
+import "jni/jni" as jni;
+import "android_view/runtime" as rt;
+import "android_view/widgets" as w;
+import "facet/facet" as core;
+import "facet/props" as props;
+import "facet/vocabulary" as vocab;
+import "./env" as e;
+import "./paint" as paint;
+import "./dex" as dex;
+
+// Everything a Paint cannot hold at once, plus everything facet's state
+// commands set that only matters at the moment of a draw.
+struct DrawState {
+    stroke: vocab::Color,
+    fill: vocab::Color,
+    text_color: vocab::Color,
+    brush: vocab::Brush,
+    has_brush: bool,
+    brush_rect: vocab::Rect,
+    stroke_width: f64,
+    miter_limit: f64,
+    cap: vocab::LineCap,
+    join: vocab::LineJoin,
+    dashes: vocab::Dashes,
+    dash_offset: f64,
+    font_family: i64,
+    font_size: f64,
+    weight: vocab::FontWeight,
+    is_italic: bool,
+    opacity: f64,
+    antialiased: bool,
+    blend: vocab::Blend,
+    shadow: vocab::Shadow,
+}
+
+impl DrawState {
+    fn initial() -> DrawState {
+        return DrawState {
+            stroke: vocab::Color::clear(),
+            fill: vocab::Color::clear(),
+            text_color: vocab::Color::clear(),
+            brush: vocab::Brush::none(),
+            has_brush: false,
+            brush_rect: vocab::Rect::zero(),
+            stroke_width: 1.0f64,
+            miter_limit: 10.0f64,
+            cap: vocab::LineCap::Flat,
+            join: vocab::LineJoin::Miter,
+            dashes: vocab::Dashes::none(),
+            dash_offset: 0.0f64,
+            font_family: (0 as i64) -% (1 as i64),
+            font_size: 0.0f64,
+            weight: vocab::FontWeight::Default,
+            is_italic: false,
+            opacity: 1.0f64,
+            antialiased: true,
+            blend: vocab::Blend::Normal,
+            shadow: vocab::Shadow::none(),
+        };
+    }
+}
+
+// ---- the entry ----------------------------------------------------------------
+
+// `FacetCanvas.onDraw` arrived. The token is the facet node, as everywhere else
+// in this package.
+fn draw(token: i64, canvas: jni::jobject) {
+    let n: *core::Node = { token as *core::Node };
+    if n == (0 as *core::Node) { return; }
+    if canvas == (0 as jni::jobject) { return; }
+    if !e::have_env() { return; }
+    let p: *props::CanvasProps = canvas_props(n);
+    if p == (0 as *props::CanvasProps) { return; }
+    let d: vocab::Drawable = { (*p).drawable };
+    if d.is_none() { return; }
+
+    let v: *u8 = core::view_of(n);
+    if v == (0 as *u8) { return; }
+    let env: rt::Env = e::env();
+    var vw: w::View = w::View::from_global(env, v);
+    let px_w: i32 = vw.get_width();
+    let px_h: i32 = vw.get_height();
+    paint::unwrap_keep(vw);
+
+    // The size the DRAWING is written in: facet's units, not the view's pixels.
+    let scale: f64 = e::density();
+    let wd: f64 = { px_w as f64 } / scale;
+    let ht: f64 = { px_h as f64 } / scale;
+    if wd <= 0.0f64 || ht <= 0.0f64 { return; }
+
+    var surface: vocab::Canvas = vocab::Canvas::of(vocab::Size::of(wd, ht), scale);
+    // The application draws. It appends commands and touches nothing else.
+    let f: fn(*vocab::Canvas, vocab::Rect, *u8) = d.draw;
+    f(#addr_of(surface), vocab::Rect::of(0.0f64, 0.0f64, wd, ht), d.ctx);
+
+    replay(env, canvas, #addr_of(surface), scale);
+    return;
+}
+
+fn canvas_props(n: *core::Node) -> *props::CanvasProps {
+    let dd: *core::Data = core::node_data(n);
+    if dd == (0 as *core::Data) { return 0 as *props::CanvasProps; }
+    if { (*dd).kind } != props::K_CANVAS { return 0 as *props::CanvasProps; }
+    return { (*dd).props } as *props::CanvasProps;
+}
+
+// ---- the replay ---------------------------------------------------------------
+
+fn replay(env: rt::Env, canvas: jni::jobject, c: *vocab::Canvas, scale: f64) {
+    if c == (0 as *vocab::Canvas) { return; }
+    var cv: w::Canvas = w::Canvas::from_global(env, canvas);
+    var pt: w::Paint = w::Paint::new_void(env);
+    pt.set_anti_alias(true);
+    // DENSITY, ONCE. Every number below is in facet's units from here down.
+    let depth: i32 = cv.save();
+    cv.scale_f_f({ scale as f32 }, { scale as f32 });
+    replay_commands(env, cv, pt, c);
+    cv.restore_to_count(depth);
+    // The Canvas ref is the JVM's — it came in as an argument and this frame
+    // does not own it. The Paint's IS ours and its drop deletes it.
+    let _keep: jni::jobject = cv.into_raw();
+    return;
+}
+
+fn replay_commands(env: rt::Env, cv: w::Canvas, pt: w::Paint, c: *vocab::Canvas) {
+    var st: DrawState = DrawState::initial();
+    var stack: vec::Vec[DrawState] = vec::new::[DrawState]();
+    var i: usize = 0 as usize;
+    let n: usize = { (*c).count() };
+    while i < n {
+        let cmd: vocab::DrawCommand = { (*c).at(i) };
+        let b: vocab::Rect = cmd.bounds;
+
+        // ---- state
+        if cmd.op == vocab::DrawOp::SetStroke {
+            st.stroke = cmd.color;
+        } else if cmd.op == vocab::DrawOp::SetFill {
+            st.fill = cmd.color;
+            st.has_brush = false;
+        } else if cmd.op == vocab::DrawOp::SetFillBrush {
+            if cmd.has_aux() {
+                st.brush = { (*c).brush(cmd.aux as usize) };
+                st.brush_rect = b;
+                st.has_brush = true;
+                // A solid brush is a fill colour and nothing more; only a
+                // gradient needs a Shader.
+                if !{ st.brush.is_gradient } {
+                    st.has_brush = false;
+                    st.fill = { st.brush.start };
+                }
+            }
+        } else if cmd.op == vocab::DrawOp::SetTextColor {
+            st.text_color = cmd.color;
+        } else if cmd.op == vocab::DrawOp::SetStrokeWidth {
+            st.stroke_width = cmd.stroke_width();
+        } else if cmd.op == vocab::DrawOp::SetMiterLimit {
+            st.miter_limit = cmd.miter_limit();
+        } else if cmd.op == vocab::DrawOp::SetStrokeCap {
+            st.cap = cmd.cap;
+        } else if cmd.op == vocab::DrawOp::SetStrokeJoin {
+            st.join = cmd.join;
+        } else if cmd.op == vocab::DrawOp::SetStrokeDash {
+            if cmd.has_aux() {
+                st.dashes = { (*c).dashes(cmd.aux as usize) };
+                st.dash_offset = cmd.dash_offset();
+            }
+        } else if cmd.op == vocab::DrawOp::SetFont {
+            st.font_family = cmd.aux;
+            st.font_size = cmd.font_size();
+            st.weight = cmd.weight;
+            st.is_italic = cmd.is_italic;
+        } else if cmd.op == vocab::DrawOp::SetOpacity {
+            st.opacity = cmd.opacity();
+        } else if cmd.op == vocab::DrawOp::SetAntialiased {
+            st.antialiased = cmd.is_on;
+        } else if cmd.op == vocab::DrawOp::SetBlend {
+            st.blend = cmd.blend;
+        } else if cmd.op == vocab::DrawOp::SetShadow {
+            st.shadow = cmd.shadow();
+
+        // ---- the state stack and the transform
+        } else if cmd.op == vocab::DrawOp::Save {
+            let _d: i32 = cv.save();
+            let _s: status::Status = stack.append(st);
+        } else if cmd.op == vocab::DrawOp::Restore {
+            cv.restore();
+            match stack.remove_last() {
+                option::Option[DrawState]::Some(prev) => { st = prev; }
+                option::Option[DrawState]::None => { }
+            }
+        } else if cmd.op == vocab::DrawOp::Reset {
+            st = DrawState::initial();
+        } else if cmd.op == vocab::DrawOp::Rotate {
+            let pv: vocab::Point = cmd.pivot();
+            cv.rotate_f_f_f({ cmd.degrees() as f32 }, { pv.x as f32 }, { pv.y as f32 });
+        } else if cmd.op == vocab::DrawOp::Scale {
+            cv.scale_f_f({ cmd.x() as f32 }, { cmd.y() as f32 });
+        } else if cmd.op == vocab::DrawOp::Translate {
+            cv.translate({ cmd.x() as f32 }, { cmd.y() as f32 });
+        } else if cmd.op == vocab::DrawOp::ConcatTransform {
+            let t: vocab::Transform = cmd.transform();
+            dex::draw_concat(env, cv.as_obj(), t.a, t.b, t.c, t.d, t.tx, t.ty);
+
+        // ---- clipping
+        } else if cmd.op == vocab::DrawOp::ClipRect {
+            let _r: bool = cv.clip_rect_f_f_f_f({ b.x as f32 }, { b.y as f32 },
+                                                { (b.x + b.width) as f32 },
+                                                { (b.y + b.height) as f32 });
+        } else if cmd.op == vocab::DrawOp::ClipPath {
+            if cmd.has_aux() {
+                var path: w::Path = build_path(env, { (*c).path(cmd.aux as usize) },
+                                               cmd.winding);
+                let _r: bool = cv.clip_path_path(path.as_obj());
+            }
+        } else if cmd.op == vocab::DrawOp::SubtractFromClip {
+            // Android says this outright — `clipOutRect`, API 26 — where Core
+            // Graphics has to spell it as an even-odd fill over {everything,
+            // the hole}.
+            let _r: bool = cv.clip_out_rect_f_f_f_f({ b.x as f32 }, { b.y as f32 },
+                                                    { (b.x + b.width) as f32 },
+                                                    { (b.y + b.height) as f32 });
+
+        // ---- shapes
+        } else if cmd.op == vocab::DrawOp::DrawLine {
+            arm_stroke(env, pt, st);
+            let f: vocab::Point = cmd.from();
+            let t: vocab::Point = cmd.to();
+            cv.draw_line({ f.x as f32 }, { f.y as f32 }, { t.x as f32 }, { t.y as f32 },
+                         pt.as_obj());
+        } else if cmd.op == vocab::DrawOp::DrawRect {
+            arm_stroke(env, pt, st);
+            cv.draw_rect_f_f_f_f_paint({ b.x as f32 }, { b.y as f32 },
+                                       { (b.x + b.width) as f32 },
+                                       { (b.y + b.height) as f32 }, pt.as_obj());
+        } else if cmd.op == vocab::DrawOp::FillRect {
+            arm_fill(env, pt, st, b);
+            cv.draw_rect_f_f_f_f_paint({ b.x as f32 }, { b.y as f32 },
+                                       { (b.x + b.width) as f32 },
+                                       { (b.y + b.height) as f32 }, pt.as_obj());
+        } else if cmd.op == vocab::DrawOp::DrawRoundedRect {
+            arm_stroke(env, pt, st);
+            draw_round(cv, pt, b, cmd.corner_radius());
+        } else if cmd.op == vocab::DrawOp::FillRoundedRect {
+            arm_fill(env, pt, st, b);
+            draw_round(cv, pt, b, cmd.corner_radius());
+        } else if cmd.op == vocab::DrawOp::DrawEllipse {
+            arm_stroke(env, pt, st);
+            cv.draw_oval_f_f_f_f_paint({ b.x as f32 }, { b.y as f32 },
+                                       { (b.x + b.width) as f32 },
+                                       { (b.y + b.height) as f32 }, pt.as_obj());
+        } else if cmd.op == vocab::DrawOp::FillEllipse {
+            arm_fill(env, pt, st, b);
+            cv.draw_oval_f_f_f_f_paint({ b.x as f32 }, { b.y as f32 },
+                                       { (b.x + b.width) as f32 },
+                                       { (b.y + b.height) as f32 }, pt.as_obj());
+        } else if cmd.op == vocab::DrawOp::DrawArc {
+            arm_stroke(env, pt, st);
+            draw_arc(cv, pt, cmd, b);
+        } else if cmd.op == vocab::DrawOp::FillArc {
+            arm_fill(env, pt, st, b);
+            draw_arc(cv, pt, cmd, b);
+        } else if cmd.op == vocab::DrawOp::DrawPath {
+            if cmd.has_aux() {
+                arm_stroke(env, pt, st);
+                var path: w::Path = build_path(env, { (*c).path(cmd.aux as usize) },
+                                               cmd.winding);
+                cv.draw_path(path.as_obj(), pt.as_obj());
+            }
+        } else if cmd.op == vocab::DrawOp::FillPath {
+            if cmd.has_aux() {
+                arm_fill(env, pt, st, b);
+                var path: w::Path = build_path(env, { (*c).path(cmd.aux as usize) },
+                                               cmd.winding);
+                cv.draw_path(path.as_obj(), pt.as_obj());
+            }
+
+        // ---- content
+        } else if cmd.op == vocab::DrawOp::DrawText {
+            if cmd.has_aux() {
+                arm_text(env, pt, st, c);
+                let at: vocab::Point = cmd.at();
+                // TOP-LEFT, like every other point facet records. A baseline is
+                // Android's convention, not facet's, so the ascent is added
+                // here — `ascent()` is negative above the baseline.
+                let base: f64 = at.y - { pt.ascent() as f64 };
+                cv.draw_text_str_f_f_paint(cstr({ (*c).text(cmd.aux as usize) }),
+                                           { at.x as f32 }, { base as f32 }, pt.as_obj());
+            }
+        } else if cmd.op == vocab::DrawOp::DrawTextBlock {
+            if cmd.has_aux() {
+                arm_text(env, pt, st, c);
+                dex::draw_text_block(env, cv.as_obj(), pt.as_obj(),
+                                     cstr({ (*c).text(cmd.aux as usize) }),
+                                     b.x, b.y, b.width, b.height,
+                                     align_code(cmd.align), valign_code(cmd.vertical_align),
+                                     cmd.flow == vocab::TextFlow::Clip,
+                                     cmd.line_spacing());
+            }
+        } else if cmd.op == vocab::DrawOp::DrawSpans {
+            if cmd.has_aux() { draw_spans(env, cv, pt, st, c, cmd); }
+        } else if cmd.op == vocab::DrawOp::DrawImage {
+            if cmd.has_aux() { draw_image(env, cv, pt, st, { (*c).text(cmd.aux as usize) }, b); }
+        }
+
+        i = i +% (1 as usize);
+    }
+    return;
+}
+
+// ---- arming the Paint ---------------------------------------------------------
+// One Paint for the whole replay, re-armed per command. The alternative — a
+// Paint per draw — is a JNI allocation per shape, and the state to copy into it
+// is the same state either way.
+
+fn arm_common(env: rt::Env, pt: w::Paint, st: DrawState) {
+    pt.set_anti_alias({ st.antialiased });
+    let _sh: jni::jobject = pt.set_shader(0 as jni::jobject);
+    apply_blend(env, pt, { st.blend });
+    apply_shadow(env, pt, st);
+    return;
+}
+
+fn arm_stroke(env: rt::Env, pt: w::Paint, st: DrawState) {
+    arm_common(env, pt, st);
+    pt.set_style(style_stroke(env));
+    pt.set_color_i(argb(env, { st.stroke }, { st.opacity }));
+    pt.set_stroke_width({ { st.stroke_width } as f32 });
+    pt.set_stroke_miter({ { st.miter_limit } as f32 });
+    pt.set_stroke_cap(cap_of(env, { st.cap }));
+    pt.set_stroke_join(join_of(env, { st.join }));
+    var d: vocab::Dashes = { st.dashes };
+    dex::draw_dash(env, pt.as_obj(), { d.count as i32 }, { st.dash_offset },
+                   d.run(0 as usize), d.run(1 as usize), d.run(2 as usize),
+                   d.run(3 as usize), d.run(4 as usize), d.run(5 as usize),
+                   d.run(6 as usize), d.run(7 as usize));
+    return;
+}
+
+fn arm_fill(env: rt::Env, pt: w::Paint, st: DrawState, bounds: vocab::Rect) {
+    arm_common(env, pt, st);
+    pt.set_style(style_fill(env));
+    // A GRADIENT IS A SHADER, and that is the whole difference from Core
+    // Graphics: CG paints a gradient through a clip, so a gradient-filled shape
+    // is the shape used as a clip. Android puts it on the Paint, so the shape
+    // is drawn once and the fill is the gradient.
+    if { st.has_brush } && { st.brush.is_gradient } {
+        var r: vocab::Rect = { st.brush_rect };
+        if r.width <= 0.0f64 || r.height <= 0.0f64 { r = bounds; }
+        let sh: jni::jobject = gradient(env, { st.brush }, r, { st.opacity });
+        if sh != (0 as jni::jobject) {
+            let _prev: jni::jobject = pt.set_shader(sh);
+            env.delete_local_ref(sh);
+            return;
+        }
+    }
+    pt.set_color_i(argb(env, { st.fill }, { st.opacity }));
+    return;
+}
+
+fn arm_text(env: rt::Env, pt: w::Paint, st: DrawState, c: *vocab::Canvas) {
+    arm_common(env, pt, st);
+    pt.set_style(style_fill(env));
+    pt.set_color_i(argb(env, { st.text_color }, { st.opacity }));
+    var size: f64 = { st.font_size };
+    if size <= 0.0f64 { size = 14.0f64; }
+    pt.set_text_size({ size as f32 });
+    var family: *u8 = 0 as *u8;
+    if { st.font_family } >= (0 as i64) {
+        family = cstr_family({ (*c).text({ st.font_family } as usize) });
+    }
+    let tf: jni::jobject = typeface(env, family, { st.weight }, { st.is_italic });
+    if tf != (0 as jni::jobject) {
+        let _prev: jni::jobject = pt.set_typeface(tf);
+        env.delete_local_ref(tf);
+    }
+    return;
+}
+
+// A weight and an italic bit are all Typeface.create takes: NORMAL 0, BOLD 1,
+// ITALIC 2, BOLD_ITALIC 3. Android's variable-weight door is
+// `Typeface.create(Typeface, int weight, boolean italic)` on API 28; the four
+// styles are what API 26 has, so a Semibold rounds to bold and MANIFEST §2
+// says so rather than pretending the ten weights survive.
+fn typeface(env: rt::Env, family: *u8, weight: vocab::FontWeight, italic: bool) -> jni::jobject {
+    var style: i32 = 0 as i32;
+    if is_bold(weight) { style = 1 as i32; }
+    if italic { style = style | (2 as i32); }
+    var name: *u8 = family;
+    if name == (0 as *u8) { name = #str_ptr("sans-serif\0"); }
+    return w::Typeface::create_str_i(env, name, style);
+}
+
+fn is_bold(weight: vocab::FontWeight) -> bool {
+    return match weight {
+        vocab::FontWeight::Semibold => true,
+        vocab::FontWeight::Bold => true,
+        vocab::FontWeight::Heavy => true,
+        vocab::FontWeight::Black => true,
+        _ => false,
+    };
+}
+
+// ---- the pieces ---------------------------------------------------------------
+
+fn draw_round(cv: w::Canvas, pt: w::Paint, b: vocab::Rect, radius: f64) {
+    cv.draw_round_rect_f_f_f_f_f_f_paint({ b.x as f32 }, { b.y as f32 },
+                                         { (b.x + b.width) as f32 },
+                                         { (b.y + b.height) as f32 },
+                                         { radius as f32 }, { radius as f32 },
+                                         pt.as_obj());
+    return;
+}
+
+// An arc, in the one convention facet records: degrees from the x axis, and a
+// direction. Android sweeps CLOCKWISE from `startAngle` by `sweepAngle`, with y
+// down — which is the same orientation facet's own frames have, so the only
+// work is turning two angles into a start and a sweep.
+fn draw_arc(cv: w::Canvas, pt: w::Paint, cmd: vocab::DrawCommand, b: vocab::Rect) {
+    let from: f64 = cmd.start_angle();
+    let to: f64 = cmd.end_angle();
+    var sweep: f64 = to - from;
+    if cmd.is_clockwise {
+        if sweep < 0.0f64 { sweep = sweep + 360.0f64; }
+    } else {
+        if sweep > 0.0f64 { sweep = sweep - 360.0f64; }
+    }
+    cv.draw_arc_f_f_f_f_f_f_z_paint({ b.x as f32 }, { b.y as f32 },
+                                    { (b.x + b.width) as f32 }, { (b.y + b.height) as f32 },
+                                    { from as f32 }, { sweep as f32 },
+                                    cmd.is_closed, pt.as_obj());
+    return;
+}
+
+fn build_path(env: rt::Env, src: *vocab::Path, winding: vocab::Winding) -> w::Path {
+    var p: w::Path = w::Path::new_void(env);
+    if winding == vocab::Winding::EvenOdd { p.set_fill_type(fill_type_even_odd(env)); }
+    if src == (0 as *vocab::Path) { return p; }
+    var i: usize = 0 as usize;
+    let n: usize = { (*src).count() };
+    while i < n {
+        let s: vocab::PathSegment = { (*src).at(i) };
+        let b: vocab::Rect = s.bounds;
+        if s.op == vocab::PathOp::Move {
+            p.move_to({ s.point.x as f32 }, { s.point.y as f32 });
+        } else if s.op == vocab::PathOp::Line {
+            p.line_to({ s.point.x as f32 }, { s.point.y as f32 });
+        } else if s.op == vocab::PathOp::Quad {
+            p.quad_to({ s.control1.x as f32 }, { s.control1.y as f32 },
+                      { s.point.x as f32 }, { s.point.y as f32 });
+        } else if s.op == vocab::PathOp::Curve {
+            p.cubic_to({ s.control1.x as f32 }, { s.control1.y as f32 },
+                       { s.control2.x as f32 }, { s.control2.y as f32 },
+                       { s.point.x as f32 }, { s.point.y as f32 });
+        } else if s.op == vocab::PathOp::Arc {
+            let from: f64 = s.start_angle();
+            var sweep: f64 = s.end_angle() - from;
+            if s.is_clockwise {
+                if sweep < 0.0f64 { sweep = sweep + 360.0f64; }
+            } else {
+                if sweep > 0.0f64 { sweep = sweep - 360.0f64; }
+            }
+            // `forceMoveTo` false: an arc appended to an open subpath is joined
+            // to it, which is what a path builder's arc means.
+            p.arc_to_f_f_f_f_f_f_z({ b.x as f32 }, { b.y as f32 },
+                                   { (b.x + b.width) as f32 }, { (b.y + b.height) as f32 },
+                                   { from as f32 }, { sweep as f32 }, false);
+        } else if s.op == vocab::PathOp::Rect {
+            p.add_rect_f_f_f_f_path_direction({ b.x as f32 }, { b.y as f32 },
+                                              { (b.x + b.width) as f32 },
+                                              { (b.y + b.height) as f32 },
+                                              direction_cw(env));
+        } else if s.op == vocab::PathOp::RoundedRect {
+            p.add_round_rect_f_f_f_f_f_f_path_direction(
+                { b.x as f32 }, { b.y as f32 },
+                { (b.x + b.width) as f32 }, { (b.y + b.height) as f32 },
+                { s.corner_radius() as f32 }, { s.corner_radius() as f32 },
+                direction_cw(env));
+        } else if s.op == vocab::PathOp::Ellipse {
+            p.add_oval_f_f_f_f_path_direction({ b.x as f32 }, { b.y as f32 },
+                                              { (b.x + b.width) as f32 },
+                                              { (b.y + b.height) as f32 },
+                                              direction_cw(env));
+        } else if s.op == vocab::PathOp::Close {
+            p.close();
+        }
+        i = i +% (1 as usize);
+    }
+    return p;
+}
+
+// A formatted string, run by run along ONE baseline. Each run carries its own
+// colour, size and weight, so each is armed and measured before the next
+// starts. What this does not do is WRAP — a run list is a line here, and
+// MANIFEST §2 says so; wrapping it would mean a SpannableString and Android's
+// text engine, which is the same door `textBlock` already goes through for the
+// case that asks for a box.
+fn draw_spans(env: rt::Env, cv: w::Canvas, pt: w::Paint, st: DrawState,
+              c: *vocab::Canvas, cmd: vocab::DrawCommand) {
+    let sp: *vocab::Spans = { (*c).spans(cmd.aux as usize) };
+    if sp == (0 as *vocab::Spans) { return; }
+    let at: vocab::Point = cmd.at();
+    var x: f64 = at.x;
+    var i: usize = 0 as usize;
+    let n: usize = { (*sp).count() };
+    while i < n {
+        let r: *vocab::TextSpan = { (*sp).at(i) };
+        if r != (0 as *vocab::TextSpan) {
+            var run: DrawState = st;
+            if { (*r).font_size } > 0.0f64 { run.font_size = { (*r).font_size }; }
+            run.weight = { (*r).font_weight };
+            run.is_italic = { (*r).is_italic };
+            if { (*r).color }.is_set() { run.text_color = { (*r).color }; }
+            arm_text(env, pt, run, c);
+            let s: *u8 = cstr({ (*r).text.view() });
+            let base: f64 = at.y - { pt.ascent() as f64 };
+            // A run's own background, painted under it before the glyphs.
+            if { (*r).background_color }.is_set() {
+                let width: f64 = { pt.measure_text_str(s) as f64 };
+                let top: f64 = at.y;
+                let bottom: f64 = base + { pt.descent() as f64 };
+                var bg: w::Paint = w::Paint::new_void(env);
+                bg.set_style(style_fill(env));
+                bg.set_color_i(argb(env, { (*r).background_color }, { st.opacity }));
+                cv.draw_rect_f_f_f_f_paint({ x as f32 }, { top as f32 },
+                                           { (x + width) as f32 }, { bottom as f32 },
+                                           bg.as_obj());
+            }
+            cv.draw_text_str_f_f_paint(s, { x as f32 }, { base as f32 }, pt.as_obj());
+            x = x + { pt.measure_text_str(s) as f64 };
+        }
+        i = i +% (1 as usize);
+    }
+    return;
+}
+
+// An image, from the filesystem — the same door and the same limit the `image`
+// control has, and for the same reason: an APK's own images live in `assets/`
+// and need an AssetManager, which MANIFEST §2 names.
+fn draw_image(env: rt::Env, cv: w::Canvas, pt: w::Paint, st: DrawState,
+              src: str, b: vocab::Rect) {
+    if src == "" { return; }
+    let bmp: jni::jobject = w::BitmapFactory::decode_file_str(env, cstr(src));
+    if bmp == (0 as jni::jobject) { env.clear_exception(); return; }
+    var dst: w::RectF = w::RectF::new_f_f_f_f(env, { b.x as f32 }, { b.y as f32 },
+                                              { (b.x + b.width) as f32 },
+                                              { (b.y + b.height) as f32 });
+    let _sh: jni::jobject = pt.set_shader(0 as jni::jobject);
+    pt.set_alpha(alpha_byte({ st.opacity }));
+    cv.draw_bitmap_bitmap_rect_rect_f_paint(bmp, 0 as jni::jobject, dst.as_obj(),
+                                            pt.as_obj());
+    pt.set_alpha(255 as i32);
+    env.delete_local_ref(bmp);
+    return;
+}
+
+// ---- the small mappings -------------------------------------------------------
+
+// The theme-resolved colour, with the canvas's own opacity folded into its
+// alpha. `argb_of` is the ONE colour resolver in this package — a token, a
+// theme role and a derived ink all mean here what they mean on a background.
+fn argb(env: rt::Env, c: vocab::Color, opacity: f64) -> i32 {
+    let base: i32 = paint::argb_of(c);
+    if opacity >= 1.0f64 { return base; }
+    var a: i32 = { (base >> (24 as i32)) & (255 as i32) };
+    a = { ({ a as f64 } * clamp01(opacity)) as i32 };
+    return (base & (16777215 as i32)) | (a << (24 as i32));
+}
+
+fn alpha_byte(opacity: f64) -> i32 { return { (clamp01(opacity) * 255.0f64) as i32 }; }
+
+fn clamp01(v: f64) -> f64 {
+    if v < 0.0f64 { return 0.0f64; }
+    if v > 1.0f64 { return 1.0f64; }
+    return v;
+}
+
+// A two-stop linear gradient across the brush's rect at the brush's angle.
+// Degrees, measured the way facet measures them: 0 runs left-to-right and the
+// angle turns clockwise, which is the same turn a positive rotation makes.
+fn gradient(env: rt::Env, br: vocab::Brush, r: vocab::Rect, opacity: f64) -> jni::jobject {
+    let cx: f64 = r.x + (r.width / 2.0f64);
+    let cy: f64 = r.y + (r.height / 2.0f64);
+    let rad: f64 = { br.angle } * 3.14159265358979323846f64 / 180.0f64;
+    let half: f64 = ((r.width * cos(rad)) + (r.height * sin(rad))) / 2.0f64;
+    let dx: f64 = cos(rad) * half;
+    let dy: f64 = sin(rad) * half;
+    var g: w::LinearGradient = w::LinearGradient::new_f_f_f_f_i_i_shader_tile_mode(
+        env, { (cx - dx) as f32 }, { (cy - dy) as f32 },
+        { (cx + dx) as f32 }, { (cy + dy) as f32 },
+        argb(env, { br.start }, opacity), argb(env, { br.end }, opacity),
+        tile_clamp(env));
+    return g.into_raw();
+}
+
+#[link_name = "cos"]
+extern fn cos(v: f64) -> f64;
+#[link_name = "sin"]
+extern fn sin(v: f64) -> f64;
+
+fn apply_blend(env: rt::Env, pt: w::Paint, blend: vocab::Blend) {
+    let m: jni::jobject = porter_duff(env, blend);
+    if m == (0 as jni::jobject) {
+        let _p: jni::jobject = pt.set_xfermode(0 as jni::jobject);
+        return;
+    }
+    var x: w::PorterDuffXfermode = w::PorterDuffXfermode::new(env, m);
+    let raw: jni::jobject = x.into_raw();
+    let _p: jni::jobject = pt.set_xfermode(raw);
+    env.delete_local_ref(raw);
+    env.delete_local_ref(m);
+    return;
+}
+
+// Normal is NO xfermode, which is not the same as SRC_OVER on a Paint: setting
+// one costs a saveLayer's worth of care and the default already is it.
+//
+// The separable modes Android has are here; the four NON-separable ones (hue,
+// saturation, colour, luminosity) arrived with BlendMode on API 29 and this
+// backend's floor is 26 — MANIFEST §2 names them rather than substituting a
+// near-miss, which is the one thing a blend mode must never do.
+fn porter_duff(env: rt::Env, blend: vocab::Blend) -> jni::jobject {
+    return match blend {
+        vocab::Blend::Normal => 0 as jni::jobject,
+        vocab::Blend::Multiply => w::PorterDuffMode::multiply(env),
+        vocab::Blend::Screen => w::PorterDuffMode::screen(env),
+        vocab::Blend::Overlay => w::PorterDuffMode::overlay(env),
+        vocab::Blend::Darken => w::PorterDuffMode::darken(env),
+        vocab::Blend::Lighten => w::PorterDuffMode::lighten(env),
+        vocab::Blend::Clear => w::PorterDuffMode::clear(env),
+        vocab::Blend::Copy => w::PorterDuffMode::src(env),
+        vocab::Blend::SourceIn => w::PorterDuffMode::src_in(env),
+        vocab::Blend::SourceOut => w::PorterDuffMode::src_out(env),
+        _ => 0 as jni::jobject,
+    };
+}
+
+// A shadow is a Paint LAYER on Android, not a context-wide state as it is in
+// Core Graphics — so it is armed with everything else and cleared the same way.
+fn apply_shadow(env: rt::Env, pt: w::Paint, st: DrawState) {
+    let sh: vocab::Shadow = { st.shadow };
+    if !sh.color.is_set() || sh.opacity == 0.0f64 {
+        pt.set_shadow_layer_f_f_f_i({ 0.0f64 as f32 }, { 0.0f64 as f32 },
+                                    { 0.0f64 as f32 }, 0 as i32);
+        return;
+    }
+    pt.set_shadow_layer_f_f_f_i({ sh.radius as f32 }, { sh.offset.x as f32 },
+                                { sh.offset.y as f32 },
+                                argb(env, sh.color, sh.opacity * { st.opacity }));
+    return;
+}
+
+fn align_code(a: vocab::TextAlign) -> i32 {
+    return match a {
+        vocab::TextAlign::Center => 1 as i32,
+        vocab::TextAlign::End => 2 as i32,
+        _ => 0 as i32,
+    };
+}
+
+fn valign_code(a: vocab::VerticalAlign) -> i32 {
+    return match a {
+        vocab::VerticalAlign::Center => 1 as i32,
+        vocab::VerticalAlign::Bottom => 2 as i32,
+        _ => 0 as i32,
+    };
+}
+
+// The enum constants, which are static object FIELDS — reachable since
+// cpc-bindgen bound those. Each is a LOCAL ref and each of these hands it
+// straight to a setter that does not keep it.
+fn style_fill(env: rt::Env) -> jni::jobject { return w::PaintStyle::fill(env); }
+fn style_stroke(env: rt::Env) -> jni::jobject { return w::PaintStyle::stroke(env); }
+fn direction_cw(env: rt::Env) -> jni::jobject { return w::PathDirection::cw(env); }
+fn fill_type_even_odd(env: rt::Env) -> jni::jobject { return w::PathFillType::even_odd(env); }
+fn tile_clamp(env: rt::Env) -> jni::jobject { return w::ShaderTileMode::clamp(env); }
+
+fn cap_of(env: rt::Env, c: vocab::LineCap) -> jni::jobject {
+    return match c {
+        vocab::LineCap::Round => w::PaintCap::round(env),
+        vocab::LineCap::Square => w::PaintCap::square(env),
+        _ => w::PaintCap::butt(env),
+    };
+}
+
+fn join_of(env: rt::Env, j: vocab::LineJoin) -> jni::jobject {
+    return match j {
+        vocab::LineJoin::Round => w::PaintJoin::round(env),
+        vocab::LineJoin::Bevel => w::PaintJoin::bevel(env),
+        _ => w::PaintJoin::miter(env),
+    };
+}
+
+// A `str` is not NUL-terminated and every JNI string door takes a C string.
+// A buffer per call site would be a stack frame per glyph run, so these are
+// static — and there are TWO of them because a font family and the text drawn
+// in it are both live at the same moment. One buffer would have the family name
+// overwrite the string about to be drawn, which is the kind of bug that shows
+// as the right text in the wrong font exactly once.
+static PAYLOAD: [u8; 2048] = [0 as u8; 2048];
+static FAMILY: [u8; 256] = [0 as u8; 256];
+
+fn cstr(s: str) -> *u8 {
+    let base: *u8 = { #addr_of(PAYLOAD[0 as usize]) };
+    if !paint::cstr(s, base, 2048 as usize) { { (*base) = 0 as u8 }; }
+    return base;
+}
+
+fn cstr_family(s: str) -> *u8 {
+    let base: *u8 = { #addr_of(FAMILY[0 as usize]) };
+    if !paint::cstr(s, base, 256 as usize) { { (*base) = 0 as u8 }; }
+    return base;
+}
