@@ -33,6 +33,8 @@ import "facet/scroll" as scroll;
 import "facet/stepper" as stepper;
 import "facet/split" as split;
 import "facet/canvas" as canvas;
+import "facet/page_dots" as page_dots;
+import "facet/date_picker" as date_picker;
 import "facet/vocabulary" as vocab;
 import "./env" as e;
 import "./paint" as paint;
@@ -185,6 +187,7 @@ fn fire_click(token: i64) {
     // A swipe ITEM's button is this backend's own, and its token is the item
     // node — so the swipe path is asked before any props struct is read.
     if swipe::fire_action(n) { return; }
+    if fire_date_picker_click(n) { return; }
     if fire_text_button_click(n) { return; }
     if fire_icon_button_click(n) { return; }
     let p: *props::ButtonProps = props_of(n, props::K_BUTTON) as *props::ButtonProps;
@@ -1283,6 +1286,338 @@ fn put_str_at(buf: *u8, at: usize, s: *u8) -> usize {
     return i;
 }
 
+// ---- date picker -------------------------------------------------------------
+// A FIELD THAT OPENS A PICKER, which is what a 44-point date picker means.
+//
+// Android's `DatePicker` widget is a full calendar — hundreds of points tall,
+// with a mode fixed by an XML attribute that has no setter. UIDatePicker's
+// compact posture is a chip that opens a wheel; here it is a Button that opens
+// a DatePickerDialog, and every verb the kind names lands somewhere real:
+// `date` is the title, `format` is the pattern, the two bounds are the dialog's
+// limits, `open` shows it and the three events are its edges.
+//
+// AND THE FONT WORKS, which is the one place this backend can do something the
+// iOS one cannot: a Button IS a TextView, so `font_size`, `font_family`,
+// `font_weight`, `is_italic` and `text_color` all reach it. facet_uikit's
+// manifest records twelve verbs with nowhere to land because UIDatePicker has
+// no font property of any kind.
+
+fn create_date_picker(n: *core::Node) -> *u8 {
+    let env: rt::Env = e::env();
+    var b: w::Button = w::Button::new_context_attribute_set_i(
+        env, e::context(), 0 as jni::jobject, borderless_style(env));
+    let raw: *u8 = b.into_raw();
+    let listener: jni::jobject =
+        dex::new_with_token(env, dex::click_class(), { #addr(n) as i64 });
+    var view: w::View = w::View::from_global(env, raw);
+    view.set_on_click_listener(listener);
+    // NO PADDING OF ITS OWN. facet owns the box — a picker asked for 44 points
+    // gets 44 — and a Button's default vertical padding is 8 more on each side,
+    // which a 28pt font then overflows. The control's internals may not spend
+    // the box facet handed it.
+    view.set_padding(0 as i32, 0 as i32, 0 as i32, 0 as i32);
+    paint::unwrap_keep(view);
+    var tv: w::TextView = w::TextView::from_global(env, raw);
+    tv.set_gravity(17 as i32);   // CENTER
+    let _k: *u8 = tv.into_raw();
+    env.delete_local_ref(listener);
+    return raw;
+}
+
+fn apply_date_picker(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *props::DatePickerProps = props_of(n, props::K_DATE_PICKER) as *props::DatePickerProps;
+    if p == (0 as *props::DatePickerProps) { return; }
+    let env: rt::Env = e::env();
+    if (dirty & (date_picker::P_DATE | date_picker::P_FORMAT)) != (0 as u64)
+       || dirty == paint::all_bits() {
+        write_date_title(env, v, p);
+    }
+    var tv: w::TextView = w::TextView::from_global(env, v);
+    if (dirty & date_picker::P_FONT_SIZE) != (0 as u64) {
+        let s: f64 = { (*p).font_size };
+        if s > 0.0f64 { tv.set_text_size_f({ s as f32 }); }
+    }
+    if (dirty & date_picker::P_TEXT_COLOR) != (0 as u64) {
+        let c: vocab::Color = { (*p).text_color };
+        if c.is_set() { tv.set_text_color_i(paint::argb_of(c)); }
+    }
+    if (dirty & (date_picker::P_FONT_FAMILY | date_picker::P_FONT_WEIGHT
+                 | date_picker::P_IS_ITALIC)) != (0 as u64) || dirty == paint::all_bits() {
+        apply_typeface(env, tv, { (*p).font_family.view() }, { (*p).font_weight },
+                       { (*p).is_italic });
+    }
+    let _k: *u8 = tv.into_raw();
+    // `open` — a COMMAND expressed as a prop, so it is acted on when the bit
+    // says it changed and never re-asserted on an unrelated pass. A dialog
+    // shown twice is two dialogs.
+    if (dirty & date_picker::P_IS_OPEN) != (0 as u64) {
+        if { (*p).is_open } { open_date_dialog(env, n, p); }
+    }
+    return;
+}
+
+fn write_date_title(env: rt::Env, v: *u8, p: *props::DatePickerProps) {
+    let d: vocab::Date = { (*p).date };
+    var pat: [u8; 128] = #zero::[[u8; 128]]();
+    let pat_base: *u8 = { #addr_of(pat[0]) };
+    if !paint::cstr({ (*p).format.view() }, pat_base, 128 as usize) {
+        { (*pat_base) = 0 as u8 };
+    }
+    let js: jni::jobject = dex::date_format(env, pat_base, { d.year as i32 },
+                                            { d.month as i32 }, { d.day as i32 });
+    if js == (0 as jni::jobject) { return; }
+    var buf: [u8; 256] = #zero::[[u8; 256]]();
+    let base: *u8 = { #addr_of(buf[0]) };
+    if env.string_utf_into(js, base, 256 as usize) {
+        var tv: w::TextView = w::TextView::from_global(env, v);
+        tv.set_text_str(base);
+        let _k: *u8 = tv.into_raw();
+    }
+    env.delete_local_ref(js);
+    return;
+}
+
+// A family, a weight and an italic bit, as the four Typeface styles Android
+// has. The same rounding `drawing` does, for the same reason: the
+// variable-weight door is API 28 and this backend's floor is 26.
+fn apply_typeface(env: rt::Env, tv: w::TextView, family: str, weight: vocab::FontWeight,
+                  italic: bool) {
+    var style: i32 = 0 as i32;
+    if is_bold_weight(weight) { style = 1 as i32; }
+    if italic { style = style | (2 as i32); }
+    var buf: [u8; 128] = #zero::[[u8; 128]]();
+    let base: *u8 = { #addr_of(buf[0]) };
+    var name: *u8 = #str_ptr("sans-serif\0");
+    if family != "" {
+        if paint::cstr(family, base, 128 as usize) { name = base; }
+    }
+    let tf: jni::jobject = w::Typeface::create_str_i(env, name, style);
+    if tf == (0 as jni::jobject) { return; }
+    tv.set_typeface_typeface(tf);
+    env.delete_local_ref(tf);
+    return;
+}
+
+fn is_bold_weight(weight: vocab::FontWeight) -> bool {
+    return match weight {
+        vocab::FontWeight::Semibold => true,
+        vocab::FontWeight::Bold => true,
+        vocab::FontWeight::Heavy => true,
+        vocab::FontWeight::Black => true,
+        _ => false,
+    };
+}
+
+fn open_date_dialog(env: rt::Env, n: *core::Node, p: *props::DatePickerProps) {
+    let d: vocab::Date = { (*p).date };
+    let lo: vocab::Date = { (*p).minimum_date };
+    let hi: vocab::Date = { (*p).maximum_date };
+    dex::date_show(env, e::context(), { #addr(n) as i64 },
+                   { d.year as i32 }, { d.month as i32 }, { d.day as i32 },
+                   { lo.year as i32 }, { lo.month as i32 }, { lo.day as i32 },
+                   { hi.year as i32 }, { hi.month as i32 }, { hi.day as i32 });
+    return;
+}
+
+// The button was tapped: OPEN, which is what a compact picker's field does.
+fn fire_date_picker_click(n: *core::Node) -> bool {
+    let p: *props::DatePickerProps = props_of(n, props::K_DATE_PICKER) as *props::DatePickerProps;
+    if p == (0 as *props::DatePickerProps) { return false; }
+    if !e::have_env() { return true; }
+    open_date_dialog(e::env(), n, p);
+    return true;
+}
+
+// A date was chosen. WRITTEN BACK FIRST, so a handler asking `picker.date()` is
+// told what was picked rather than what was there before it — the same order
+// `fire_text` uses, and the same reason.
+fn fire_date_set(token: i64, y: i32, m: i32, d: i32) {
+    let n: *core::Node = { token as *core::Node };
+    if n == (0 as *core::Node) { return; }
+    let p: *props::DatePickerProps = props_of(n, props::K_DATE_PICKER) as *props::DatePickerProps;
+    if p == (0 as *props::DatePickerProps) { return; }
+    { (*p).date = vocab::Date { year: { y as i64 }, month: { m as i64 }, day: { d as i64 } } };
+    core::touch(n, date_picker::P_DATE);
+    let h: fn(*u8, *u8) = { (*p).on_date_selected };
+    if h != props::no_handler { h(core::view_of(n), { (*p).on_date_selected_ctx }); }
+    return;
+}
+
+fn fire_date_edge(token: i64, opened: bool) {
+    let n: *core::Node = { token as *core::Node };
+    if n == (0 as *core::Node) { return; }
+    let p: *props::DatePickerProps = props_of(n, props::K_DATE_PICKER) as *props::DatePickerProps;
+    if p == (0 as *props::DatePickerProps) { return; }
+    // The props follow the dialog: an app reading `is_open` after a dismiss is
+    // told the truth, and the next `open: true` is a CHANGE again.
+    { (*p).is_open = opened };
+    var h: fn(*u8, *u8) = { (*p).on_closed };
+    var ctx: *u8 = { (*p).on_closed_ctx };
+    if opened { h = { (*p).on_opened }; ctx = { (*p).on_opened_ctx }; }
+    if h != props::no_handler { h(core::view_of(n), ctx); }
+    return;
+}
+
+// ---- page dots ---------------------------------------------------------------
+// Android has no page control — UIPageControl's opposite number is a ViewPager
+// INDICATOR from a support library this project does not ship, and the widget
+// itself is five circles. So it is five circles: a horizontal LinearLayout of
+// dot views, each an oval GradientDrawable, rebuilt when the count changes and
+// recoloured when the position does.
+//
+// Three views inside one facet node, which is the stepper's shape and the same
+// rule: facet owns the layout of facet's TREE, not of a control's INTERNALS.
+
+fn dot_gap() -> f64 { return 8.0f64; }
+fn default_dot_size() -> f64 { return 8.0f64; }
+
+fn create_page_dots(n: *core::Node) -> *u8 {
+    let env: rt::Env = e::env();
+    var row: w::LinearLayout = w::LinearLayout::new_context(env, e::context());
+    let raw: *u8 = row.into_raw();
+    var r: w::LinearLayout = w::LinearLayout::from_global(env, raw);
+    r.set_orientation(0 as i32);   // HORIZONTAL
+    r.set_gravity(16 as i32);      // CENTER_VERTICAL
+    let _k: *u8 = r.into_raw();
+    return raw;
+}
+
+fn apply_page_dots(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *props::PageDotsProps = props_of(n, props::K_PAGE_DOTS) as *props::PageDotsProps;
+    if p == (0 as *props::PageDotsProps) { return; }
+    let env: rt::Env = e::env();
+
+    // HOW MANY DOTS THERE ACTUALLY ARE. `max_dots` is a CAP: showing more dots
+    // than the application allowed is the one reading that is definitely wrong,
+    // and Android has no strip that condenses on its own to do anything
+    // cleverer with.
+    var shown: i64 = { (*p).count };
+    let max: i64 = { (*p).max_dots };
+    if max > (0 as i64) && shown > max { shown = max; }
+    if shown < (0 as i64) { shown = 0 as i64; }
+    // `hides_single` — one page is no pages worth showing.
+    if { (*p).hides_single } && shown <= (1 as i64) { shown = 0 as i64; }
+
+    let watched: u64 = page_dots::P_COUNT | page_dots::P_MAX_DOTS
+                     | page_dots::P_HIDES_SINGLE | page_dots::P_DOT_SIZE
+                     | page_dots::P_DOT_SHAPE;
+    let had: i64 = dot_count_of(env, v);
+    if (dirty & watched) != (0 as u64) || dirty == paint::all_bits() || had != shown {
+        rebuild_dots(env, v, p, shown);
+    }
+    // The colours are per-dot and cheap, so they are written on every pass that
+    // could have moved the selection.
+    let recolour: u64 = page_dots::P_POSITION | page_dots::P_DOT_COLOR
+                      | page_dots::P_SELECTED_DOT_COLOR | props::C_RESTYLE;
+    if (dirty & (recolour | watched)) != (0 as u64) || dirty == paint::all_bits() {
+        colour_dots(env, v, p, shown);
+    }
+    return;
+}
+
+// HOW MANY DOTS ARE THERE — asked of the row itself rather than remembered.
+//
+// The first shape of this stored the count in a keyed TAG as a packed integer,
+// on the reasoning that a tag slot is a word and an address is a word. A tag is
+// an OBJECT slot: the JVM took `5` for a reference and dereferenced it, and the
+// process died inside setTag with a null-page fault. The row already knows how
+// many children it has.
+fn dot_count_of(env: rt::Env, v: *u8) -> i64 {
+    var g: w::ViewGroup = w::ViewGroup::from_global(env, v);
+    let n: i32 = g.get_child_count();
+    let _k: *u8 = g.into_raw();
+    return { n as i64 };
+}
+
+fn rebuild_dots(env: rt::Env, v: *u8, p: *props::PageDotsProps, shown: i64) {
+    var g: w::ViewGroup = w::ViewGroup::from_global(env, v);
+    g.remove_all_views();
+    let _k: *u8 = g.into_raw();
+    var size: f64 = { (*p).dot_size };
+    if size <= 0.0f64 { size = default_dot_size(); }
+    var i: i64 = 0 as i64;
+    while i < shown {
+        add_dot(env, v, size, i > (0 as i64));
+        i = i +% (1 as i64);
+    }
+    return;
+}
+
+fn add_dot(env: rt::Env, host: *u8, size: f64, gap_before: bool) {
+    var dot: w::View = w::View::new_context(env, e::context());
+    let raw: *u8 = dot.into_raw();
+    // MARGIN-FREE and sized by LayoutParams: a dot is not in facet's tree, so
+    // flex never places it — its box is Android's to decide and this is where
+    // it is said.
+    let cls: jni::jclass = env.class_cached(#str_ptr("android/widget/LinearLayout$LayoutParams\0"));
+    let ctor: jni::jmethodID = env.method_id(cls, #str_ptr("<init>\0"), #str_ptr("(II)V\0"));
+    let px: i32 = { e::px(size) as i32 };
+    var args: [jni::JValue; 2] = [jni::arg_int(px), jni::arg_int(px)];
+    let lp: jni::jobject = { (*(*env.raw())).NewObjectA(env.raw(), cls, ctor,
+                                                        #addr_of(args[0])) };
+    if gap_before {
+        let fid: jni::jfieldID = env.field_id(cls, #str_ptr("leftMargin\0"), #str_ptr("I\0"));
+        { (*(*env.raw())).SetIntField(env.raw(), lp, fid, { e::px(dot_gap()) as i32 }) };
+    }
+    var dv: w::View = w::View::from_global(env, raw);
+    dv.set_layout_params(lp);
+    paint::unwrap_keep(dv);
+    env.delete_local_ref(lp);
+    var group: w::ViewGroup = w::ViewGroup::from_global(env, host);
+    group.add_view_view(raw);
+    let _k: *u8 = group.into_raw();
+    return;
+}
+
+fn colour_dots(env: rt::Env, v: *u8, p: *props::PageDotsProps, shown: i64) {
+    var plain: vocab::Color = { (*p).dot_color };
+    if !plain.is_set() { plain = vocab::Color::ink(0.3f64); }
+    var selected: vocab::Color = { (*p).selected_dot_color };
+    if !selected.is_set() { selected = vocab::Color::ink(0.9f64); }
+    var size: f64 = { (*p).dot_size };
+    if size <= 0.0f64 { size = default_dot_size(); }
+    let square: bool = match { (*p).dot_shape } {
+        vocab::DotShape::Square => true,
+        vocab::DotShape::Circle => false,
+    };
+    var g: w::ViewGroup = w::ViewGroup::from_global(env, v);
+    var i: i32 = 0 as i32;
+    while i < { shown as i32 } {
+        let child: jni::jobject = g.get_child_at(i);
+        if child != (0 as jni::jobject) {
+            var c: vocab::Color = plain;
+            if { i as i64 } == { (*p).position } { c = selected; }
+            paint_dot(env, child, c, size, square);
+            env.delete_local_ref(child);
+        }
+        i = i +% (1 as i32);
+    }
+    let _k: *u8 = g.into_raw();
+    return;
+}
+
+// One dot. A GradientDrawable is what every rounded rectangle in this package
+// is; the SHAPE call is the only thing that makes this one a circle — `1` is
+// GradientDrawable.OVAL, read from the class rather than typed in.
+fn paint_dot(env: rt::Env, dot: jni::jobject, c: vocab::Color, size: f64, square: bool) {
+    var d: w::GradientDrawable = w::GradientDrawable::new_void(env);
+    if square { d.set_corner_radius({ e::px(size / 4.0f64) as f32 }); }
+    else { d.set_shape(oval_shape(env)); }
+    d.set_color_i(paint::argb_of(c));
+    var drawable: w::Drawable = d.as_drawable();
+    var dv: w::View = w::View::from_global(env, dot);
+    dv.set_background(drawable.into_raw());
+    let _keep: *u8 = dv.into_raw();
+    let _k: *u8 = d.into_raw();
+    return;
+}
+
+fn oval_shape(env: rt::Env) -> i32 {
+    let cls: jni::jclass = env.class_cached(#str_ptr("android/graphics/drawable/GradientDrawable\0"));
+    let fid: jni::jfieldID = env.static_field_id(cls, #str_ptr("OVAL\0"), #str_ptr("I\0"));
+    return { (*(*env.raw())).GetStaticIntField(env.raw(), cls, fid) };
+}
+
 // ---- canvas ------------------------------------------------------------------
 // The one control whose backing view has behaviour of its own, and so the one
 // with a class of its own: FacetCanvas exists to have an `onDraw`. Everything
@@ -1530,6 +1865,11 @@ fn agent_click(n: *core::Node) -> bool {
     // selected one is not a request to clear the group, and `radio_changed`
     // already knows that.
     if kind == props::K_RADIO { fire_checked({ #addr(n) as i64 }, true); return true; }
+    // A DATE PICKER'S CLICK IS "OPEN", which is what its field does under a
+    // finger. The date itself is chosen in a dialog the agent cannot reach —
+    // an agent has no hands and a modal has no facet tree — so `set_text` is
+    // the door for choosing one, not this.
+    if kind == props::K_DATE_PICKER { return fire_date_picker_click(n); }
     return false;
 }
 

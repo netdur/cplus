@@ -57,6 +57,8 @@ fn role_of(kind: u32) -> identity::Role {
     if kind == props::K_TOGGLE { return identity::Role::Button; }
     if kind == props::K_RADIO { return identity::Role::Button; }
     if kind == props::K_STEPPER { return identity::Role::Button; }
+    // A date picker's field OPENS a picker, which is a button's affordance.
+    if kind == props::K_DATE_PICKER { return identity::Role::Button; }
     if kind == props::K_LABEL { return identity::Role::Text; }
     if kind == props::K_SPAN { return identity::Role::Text; }
     if kind == props::K_TEXT_FIELD { return identity::Role::Input; }
@@ -123,6 +125,7 @@ fn is_actionable(n: *core::Node) -> bool {
     if kind == props::K_CHECKBOX { return true; }
     if kind == props::K_TOGGLE { return true; }
     if kind == props::K_RADIO { return true; }
+    if kind == props::K_DATE_PICKER { return true; }
     if controls::input_view_of(n) != (0 as *props::InputViewProps) { return true; }
     return false;
 }

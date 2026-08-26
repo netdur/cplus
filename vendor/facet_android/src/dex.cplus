@@ -21,7 +21,7 @@ import "jni/jni" as jni;
 import "android_view/runtime" as rt;
 
 // Kept in step by tools/build_dex.sh; do not hand-edit.
-const DEX_LEN: usize = 9964;
+const DEX_LEN: usize = 12792;
 
 static LOADER: usize = 0;
 static C_HOST: usize = 0;
@@ -38,6 +38,7 @@ static C_JOB: usize = 0;
 static C_CANVAS: usize = 0;
 static C_DRAW: usize = 0;
 static C_SWIPE: usize = 0;
+static C_DATE: usize = 0;
 
 // jni.h's JNINativeMethod with the fn slot concretely typed per shape.
 #[repr(C)]
@@ -92,6 +93,13 @@ struct NativeLIOO_O {
 }
 
 #[repr(C)]
+struct Native4LIII {
+    opaque name: *u8,
+    opaque signature: *u8,
+    fn_ptr: fn(*jni::JNIEnv, jni::jobject, i64, i32, i32, i32),
+}
+
+#[repr(C)]
 struct NativeLIFF_Z {
     opaque name: *u8,
     opaque signature: *u8,
@@ -122,6 +130,10 @@ extern fn facet_android_row_tapped(envp: *jni::JNIEnv, cls: jni::jobject, token:
 extern fn facet_android_job(envp: *jni::JNIEnv, cls: jni::jobject);
 extern fn facet_android_draw(envp: *jni::JNIEnv, cls: jni::jobject, token: i64,
                              canvas: jni::jobject);
+extern fn facet_android_date_set(envp: *jni::JNIEnv, cls: jni::jobject, token: i64,
+                                 y: i32, m: i32, d: i32);
+extern fn facet_android_date_opened(envp: *jni::JNIEnv, cls: jni::jobject, token: i64);
+extern fn facet_android_date_dismissed(envp: *jni::JNIEnv, cls: jni::jobject, token: i64);
 extern fn facet_android_intercept(envp: *jni::JNIEnv, cls: jni::jobject, token: i64,
                                   action: i32, x: f32, y: f32) -> u8;
 extern fn facet_android_touch(envp: *jni::JNIEnv, cls: jni::jobject, token: i64,
@@ -140,6 +152,7 @@ fn rowtap_class() -> jni::jclass { return { C_ROWTAP as *u8 }; }
 fn job_class() -> jni::jclass { return { C_JOB as *u8 }; }
 fn canvas_class() -> jni::jclass { return { C_CANVAS as *u8 }; }
 fn swipe_class() -> jni::jclass { return { C_SWIPE as *u8 }; }
+fn date_class() -> jni::jclass { return { C_DATE as *u8 }; }
 fn loaded() -> bool { return LOADER != 0; }
 
 // Load the dex and bind every native. Idempotent; `any_view` is only needed to
@@ -156,7 +169,7 @@ fn ensure_loaded(env: rt::Env, any_view: jni::jobject) {
     // Activity would hold a FacetHost of one class while this code registered
     // natives on the other, and `nativeSizeChanged` would never arrive.
     if load_merged(env) { return; }
-    let dex: *[u8; 9964] = #include_bytes("../facet_android.dex");
+    let dex: *[u8; 12792] = #include_bytes("../facet_android.dex");
     let buffer: jni::jobject = {
         (*(*env.raw())).NewDirectByteBuffer(env.raw(), { dex as *u8 }, DEX_LEN as i64)
     };
@@ -190,6 +203,7 @@ fn ensure_loaded(env: rt::Env, any_view: jni::jobject) {
     C_CANVAS = { #addr(load_class(env, loader, #str_ptr("cplus.facet.FacetCanvas\0"))) };
     C_DRAW = { #addr(load_class(env, loader, #str_ptr("cplus.facet.FacetDraw\0"))) };
     C_SWIPE = { #addr(load_class(env, loader, #str_ptr("cplus.facet.FacetSwipeHost\0"))) };
+    C_DATE = { #addr(load_class(env, loader, #str_ptr("cplus.facet.FacetDate\0"))) };
 
     bind_natives(env);
 
@@ -222,6 +236,7 @@ fn load_merged(env: rt::Env) -> bool {
     C_CANVAS = { #addr(find_global(env, #str_ptr("cplus/facet/FacetCanvas\0"))) };
     C_DRAW = { #addr(find_global(env, #str_ptr("cplus/facet/FacetDraw\0"))) };
     C_SWIPE = { #addr(find_global(env, #str_ptr("cplus/facet/FacetSwipeHost\0"))) };
+    C_DATE = { #addr(find_global(env, #str_ptr("cplus/facet/FacetDate\0"))) };
     // A sentinel rather than a loader object: `loaded()` asks whether the
     // classes are here, and by this path there is no loader to keep.
     LOADER = 1 as usize;
@@ -314,6 +329,27 @@ fn bind_natives(env: rt::Env) {
         signature: #str_ptr("()V\0"),
         fn_ptr: facet_android_job,
     };
+    var date_set_rec: Native4LIII = Native4LIII {
+        name: #str_ptr("nativeDateSet\0"),
+        signature: #str_ptr("(JIII)V\0"),
+        fn_ptr: facet_android_date_set,
+    };
+    let _rd0: i32 = { (*(*env.raw())).RegisterNatives(env.raw(), { C_DATE as *u8 },
+                                                      #addr_of(date_set_rec) as *u8, 1) };
+    var date_edge_recs: [Native1L; 2] = [
+        Native1L {
+            name: #str_ptr("nativeOpened\0"),
+            signature: #str_ptr("(J)V\0"),
+            fn_ptr: facet_android_date_opened,
+        },
+        Native1L {
+            name: #str_ptr("nativeDismissed\0"),
+            signature: #str_ptr("(J)V\0"),
+            fn_ptr: facet_android_date_dismissed,
+        },
+    ];
+    let _rd1: i32 = { (*(*env.raw())).RegisterNatives(env.raw(), { C_DATE as *u8 },
+                                                      #addr_of(date_edge_recs[0]) as *u8, 2) };
     // TWO IN ONE CALL: an intercept and a touch are the same question asked at
     // two moments, and RegisterNatives takes an array.
     var swipe_recs: [NativeLIFF_Z; 2] = [
@@ -438,6 +474,52 @@ fn draw_dash(env: rt::Env, paint: jni::jobject, count: i32, phase: f64,
         jni::arg_float(r0 as f32), jni::arg_float(r1 as f32), jni::arg_float(r2 as f32),
         jni::arg_float(r3 as f32), jni::arg_float(r4 as f32), jni::arg_float(r5 as f32),
         jni::arg_float(r6 as f32), jni::arg_float(r7 as f32)];
+    { (*(*env.raw())).CallStaticVoidMethodA(env.raw(), { C_DRAW as *u8 }, mid,
+                                            #addr_of(args[0])) };
+    return;
+}
+
+// ---- FacetDate -----------------------------------------------------------------
+
+fn date_show(env: rt::Env, ctx: jni::jobject, token: i64, y: i32, m: i32, d: i32,
+             min_y: i32, min_m: i32, min_d: i32, max_y: i32, max_m: i32, max_d: i32) {
+    if C_DATE == 0 { return; }
+    let mid: jni::jmethodID = env.method_id_static({ C_DATE as *u8 }, #str_ptr("show\0"),
+        #str_ptr("(Landroid/content/Context;JIIIIIIIII)V\0"));
+    if mid == (0 as jni::jmethodID) { return; }
+    var args: [jni::JValue; 11] = [jni::arg_object(ctx), jni::arg_long(token),
+        jni::arg_int(y), jni::arg_int(m), jni::arg_int(d),
+        jni::arg_int(min_y), jni::arg_int(min_m), jni::arg_int(min_d),
+        jni::arg_int(max_y), jni::arg_int(max_m), jni::arg_int(max_d)];
+    { (*(*env.raw())).CallStaticVoidMethodA(env.raw(), { C_DATE as *u8 }, mid,
+                                            #addr_of(args[0])) };
+    return;
+}
+
+// A formatted date, as a LOCAL jstring the caller reads and releases.
+fn date_format(env: rt::Env, pattern: *u8, y: i32, m: i32, d: i32) -> jni::jobject {
+    if C_DATE == 0 { return 0 as jni::jobject; }
+    let mid: jni::jmethodID = env.method_id_static({ C_DATE as *u8 }, #str_ptr("format\0"),
+        #str_ptr("(Ljava/lang/String;III)Ljava/lang/String;\0"));
+    if mid == (0 as jni::jmethodID) { return 0 as jni::jobject; }
+    let js: jni::jstring = env.new_string_utf(pattern);
+    var args: [jni::JValue; 4] = [jni::arg_object(js), jni::arg_int(y), jni::arg_int(m),
+                                  jni::arg_int(d)];
+    let r: jni::jobject = { (*(*env.raw())).CallStaticObjectMethodA(env.raw(),
+                                { C_DATE as *u8 }, mid, #addr_of(args[0])) };
+    env.delete_local_ref(js);
+    return r;
+}
+
+fn draw_gradient_background(env: rt::Env, v: jni::jobject, start: i32, end: i32,
+                            angle: f64, radius: f64) {
+    if C_DRAW == 0 { return; }
+    let mid: jni::jmethodID = env.method_id_static({ C_DRAW as *u8 },
+        #str_ptr("gradientBackground\0"),
+        #str_ptr("(Landroid/view/View;IIFF)V\0"));
+    if mid == (0 as jni::jmethodID) { return; }
+    var args: [jni::JValue; 5] = [jni::arg_object(v), jni::arg_int(start), jni::arg_int(end),
+                                  jni::arg_float(angle as f32), jni::arg_float(radius as f32)];
     { (*(*env.raw())).CallStaticVoidMethodA(env.raw(), { C_DRAW as *u8 }, mid,
                                             #addr_of(args[0])) };
     return;

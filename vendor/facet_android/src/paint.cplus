@@ -11,6 +11,7 @@ import "facet/facet" as core;
 import "facet/props" as props;
 import "facet/vocabulary" as vocab;
 import "./env" as e;
+import "./dex" as dex;
 import "facet/theme" as theme;
 
 // Every bit set. `create` configures a view WHOLE by calling the same body with
@@ -337,13 +338,22 @@ fn apply_decoration(env: rt::Env, v: *u8, n: *core::Node) {
         return;
     }
 
+    // A GRADIENT, which is the one background this package cannot build from
+    // C+: `setColors` takes an int[] and vendor/jni types no array slots, and
+    // the ctor takes an Orientation whose type C+ can reach the constants of
+    // but not name. Both live in FacetDraw, one call. The direction SNAPS to
+    // the nearest 45 degrees, which is all Android's eight-value enum can say —
+    // named as an approximation in MANIFEST §2, where "the start colour only"
+    // used to be.
+    if brush.is_gradient && brush.start.is_set() && brush.end.is_set() {
+        dex::draw_gradient_background(env, v, argb_of(brush.start), argb_of(brush.end),
+                                      brush.angle, e::px(radius));
+        view.set_clip_to_outline(has_radius);
+        unwrap_keep(view);
+        return;
+    }
+
     var d: w::GradientDrawable = w::GradientDrawable::new_void(env);
-    // A GRADIENT IS NOT BUILT — see MANIFEST §2. It needs two things this does
-    // not have: `setColors` takes an `int[]`, and vendor/jni types no array
-    // slots yet; and GradientDrawable takes an Orientation ENUM where facet's
-    // Brush carries degrees, so the mapping would be a guess. The start colour
-    // is used, which is at least the gradient's own first stop rather than an
-    // invented average.
     var c: vocab::Color = flat;
     if !c.is_set() { c = brush.start; }
     if c.is_set() { d.set_color_i(argb_of(c)); }

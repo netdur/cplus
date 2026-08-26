@@ -45,14 +45,15 @@ Everything here is a debt, not a decision. Kinds with no body **warn once**
 through liblog (`adb logcat -s facet`) and render an empty container.
 
 - **The controls still without a body.** `popup`, `tabs`, `collection`,
-  `table`, `web`, `bordered`, `page_dots`, `carousel`, `refreshable`,
-  `zoomable`, the pickers, the menu tier. `views.cplus` dispatches on kind; each
-  needs a `create_` / `apply_` pair in `controls.cplus`.
+  `table`, `web`, `bordered`, `carousel`, `refreshable`, `time_picker`, the menu
+  tier. `views.cplus` dispatches on kind; each needs a `create_` / `apply_` pair
+  in `controls.cplus`.
 
   Built: `label`, `button`, `box` and the plain container, plus `checkbox`,
   `toggle`, `radio`, `slider`, `progress`, `spinner`, `text_field`,
   `text_button`, `text_area`, `search_field`, `image`, `icon_button`, `scroll`,
-  `stepper`, `list`, `tree`, `split`, `canvas` and `swipeable` — each with BOTH
+  `stepper`, `list`, `tree`, `split`, `canvas`, `swipeable`, `page_dots` and
+  `date_picker` — each with BOTH
   halves, the props write and the event read. Half a control is worse than none:
   it looks finished and reports nothing, which is the shape of the bug
   facet_uikit carried in its checkbox until 2026-08-25.
@@ -88,13 +89,25 @@ through liblog (`adb logcat -s facet`) and render an empty container.
   extra `View` this package owns, tagged onto the split's host and placed by the
   frame walk — facet's children keep their own indices.
 
-- **A gradient `background`.** Solid colours, corner radii and clipping are
-  built; a two-stop brush is not. It needs two things that do not exist yet:
-  `GradientDrawable.setColors` takes an `int[]` and `vendor/jni` types no array
-  slots (the same "define only what we call" gap rung 0 closed for methods and
-  fields), and GradientDrawable takes an Orientation ENUM where facet's Brush
-  carries degrees — a mapping that would be a guess. The brush's START colour is
-  used meanwhile, which is at least its own first stop.
+- **A gradient `background` SNAPS to eight directions.** Both stops are drawn
+  now — `FacetDraw.gradientBackground` builds the `int[]` and picks the
+  Orientation, because `vendor/jni` types no array slots and C+ cannot name the
+  ctor's enum parameter. What Android has is eight directions and nothing
+  between them, so facet's angle rounds to the nearest 45 degrees. A gradient on
+  a `canvas` does NOT round: a Shader takes two endpoints, so the angle is
+  honoured exactly there.
+
+- **A `date_picker` is a FIELD that opens a dialog**, and a `time_picker` is not
+  built at all. Android's `DatePicker` widget is a full calendar whose mode is
+  fixed by an XML attribute with no setter; UIDatePicker's compact posture — a
+  chip that opens a picker, which is what an app asking for a 44-point picker
+  means — is a Button and a `DatePickerDialog` here. Every verb the kind names
+  lands: the date, the format (`SimpleDateFormat` reads the same LDML patterns),
+  both bounds, `open`, and all three events.
+
+  AND THE FONT WORKS, which is the one place this backend does something the
+  iOS one cannot: a Button is a TextView, so the twelve font verbs facet_uikit
+  records as unreachable all reach it.
 
 - **An image can only come from the FILESYSTEM.** `BitmapFactory.decodeFile`
   reads a path; an image packed into the APK lives in `assets/` and needs an

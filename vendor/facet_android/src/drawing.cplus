@@ -599,15 +599,26 @@ fn clamp01(v: f64) -> f64 {
 }
 
 // A two-stop linear gradient across the brush's rect at the brush's angle.
-// Degrees, measured the way facet measures them: 0 runs left-to-right and the
-// angle turns clockwise, which is the same turn a positive rotation makes.
+//
+// Degrees CLOCKWISE FROM UP, which is facet's convention and not the one a
+// trig function has: at 0 the axis points up, at 90 it points right. In a
+// y-down space that direction is (sin, -cos), and the axis is the segment
+// through the centre in that direction.
 fn gradient(env: rt::Env, br: vocab::Brush, r: vocab::Rect, opacity: f64) -> jni::jobject {
     let cx: f64 = r.x + (r.width / 2.0f64);
     let cy: f64 = r.y + (r.height / 2.0f64);
     let rad: f64 = { br.angle } * 3.14159265358979323846f64 / 180.0f64;
-    let half: f64 = ((r.width * cos(rad)) + (r.height * sin(rad))) / 2.0f64;
-    let dx: f64 = cos(rad) * half;
-    let dy: f64 = sin(rad) * half;
+    let ux: f64 = sin(rad);
+    let uy: f64 = 0.0f64 - cos(rad);
+    // Half the box measured ALONG the axis, so the two stops land on the edges
+    // whichever way the axis runs.
+    var ax: f64 = ux;
+    if ax < 0.0f64 { ax = 0.0f64 - ax; }
+    var ay: f64 = uy;
+    if ay < 0.0f64 { ay = 0.0f64 - ay; }
+    let half: f64 = ((r.width * ax) + (r.height * ay)) / 2.0f64;
+    let dx: f64 = ux * half;
+    let dy: f64 = uy * half;
     var g: w::LinearGradient = w::LinearGradient::new_f_f_f_f_i_i_shader_tile_mode(
         env, { (cx - dx) as f32 }, { (cy - dy) as f32 },
         { (cx + dx) as f32 }, { (cy + dy) as f32 },

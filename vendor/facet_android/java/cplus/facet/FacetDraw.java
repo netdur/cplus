@@ -40,6 +40,41 @@ public final class FacetDraw {
         p.setPathEffect(new android.graphics.DashPathEffect(used, phase));
     }
 
+    // A two-stop gradient BACKGROUND. `GradientDrawable` takes its colours as
+    // an int[] and its direction as an eight-value enum, and neither has a door
+    // from C+ — the array for the reason above, the enum because C+ can reach
+    // the constants but not name the ctor's parameter type without one.
+    //
+    // facet's angle is degrees CLOCKWISE FROM UP, so 0 points up and 90 points
+    // right. Android has eight directions and nothing between them, so the
+    // angle SNAPS to the nearest 45 — an approximation, and named as one in
+    // MANIFEST section 2.
+    public static void gradientBackground(android.view.View v, int start, int end,
+                                          float angleDeg, float radius) {
+        android.graphics.drawable.GradientDrawable d =
+            new android.graphics.drawable.GradientDrawable(orientationOf(angleDeg),
+                                                           new int[] { start, end });
+        if (radius > 0f) d.setCornerRadius(radius);
+        v.setBackground(d);
+    }
+
+    private static android.graphics.drawable.GradientDrawable.Orientation
+    orientationOf(float angleDeg) {
+        float a = angleDeg % 360f;
+        if (a < 0f) a += 360f;
+        int step = Math.round(a / 45f) % 8;
+        switch (step) {
+            case 1: return android.graphics.drawable.GradientDrawable.Orientation.BL_TR;
+            case 2: return android.graphics.drawable.GradientDrawable.Orientation.LEFT_RIGHT;
+            case 3: return android.graphics.drawable.GradientDrawable.Orientation.TL_BR;
+            case 4: return android.graphics.drawable.GradientDrawable.Orientation.TOP_BOTTOM;
+            case 5: return android.graphics.drawable.GradientDrawable.Orientation.TR_BL;
+            case 6: return android.graphics.drawable.GradientDrawable.Orientation.RIGHT_LEFT;
+            case 7: return android.graphics.drawable.GradientDrawable.Orientation.BR_TL;
+            default: return android.graphics.drawable.GradientDrawable.Orientation.BOTTOM_TOP;
+        }
+    }
+
     // A block of text in a box: wrapped, aligned both ways, and clipped or not.
     // `align` 0 start / 1 center / 2 end, `valign` 0 top / 1 middle / 2 bottom.
     public static void textBlock(android.graphics.Canvas canvas, android.graphics.Paint p,
