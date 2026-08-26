@@ -616,3 +616,94 @@ fn bind_tree_row(p: *tree::TreeProps, item: *tree::TreeNode, row: *core::Node) {
     f(item, ctx, row);
     return;
 }
+
+// ---- what the agent surface can see -------------------------------------------
+//
+// A REALISED ROW IS NOT IN FACET'S TREE. It is a subtree the platform owns,
+// mounted into a cell ListView made — so a walk over `child_of` reaches the list
+// node and stops, and `describe_ui` answers a two-hundred-row list as ONE node
+// an agent can read and cannot drive.
+//
+// The other backends do not meet this: they walk the NATIVE view hierarchy,
+// where a cell is just another view. Walking facet's tree is what buys this
+// backend its accuracy everywhere else (see agent_android's manifest), and this
+// is the one place it has to reach across.
+//
+// Only the rows ON SCREEN exist. That is not a limitation to apologise for: an
+// agent cannot click what is not realised, and reporting a row that has no view
+// would be reporting something it cannot act on.
+
+struct RealisedRow {
+    node: usize,
+    position: i32,
+}
+
+fn realised_rows(n: *core::Node) -> vec::Vec[RealisedRow] {
+    var out: vec::Vec[RealisedRow] = vec::new::[RealisedRow]();
+    let v: *u8 = core::view_of(n);
+    if v == (0 as *u8) { return out; }
+    if !e::have_env() { return out; }
+    // THE UI THREAD OR NOTHING. This reads the live View hierarchy, and the
+    // agent surface — its only caller — answers on a socket worker whose JNIEnv
+    // is not the one this backend holds. An empty answer is the honest one
+    // until the surface can hop; a JNI call on the wrong thread is undefined
+    // and CheckJNI aborts on it. See agent_android's MANIFEST §2.
+    if !e::on_ui_thread() { return out; }
+    let kind: u32 = core::kind_of(n);
+    if kind != props::K_LIST && kind != tree::K_TREE { return out; }
+    let env: rt::Env = e::env();
+
+    // TWO WRAPPERS OVER ONE OBJECT: the scroll position is AdapterView's and the
+    // children are ViewGroup's, and the generated binding emits no upcast
+    // between them — `AdapterView<T>` is generic, and the generator only
+    // upcasts to a superclass it saw in the same run.
+    var lv: w::AdapterView = w::AdapterView::from_global(env, env.new_global_ref(v));
+    let first: i32 = lv.get_first_visible_position();
+    var group: w::ViewGroup = w::ViewGroup::from_global(env, env.new_global_ref(v));
+    let count: i32 = group.get_child_count();
+    var i: i32 = 0 as i32;
+    while i < count {
+        let cell: jni::jobject = group.get_child_at(i);
+        if cell != (0 as jni::jobject) {
+            let rn: *core::Node = cell_node(env, cell);
+            if rn != (0 as *core::Node) {
+                let _a: status::Status = out.append(
+                    RealisedRow { node: { #addr(rn) }, position: first +% i });
+            }
+            env.delete_local_ref(cell);
+        }
+        i = i +% (1 as i32);
+    }
+    let _k1: *u8 = group.into_raw();
+    let _k2: *u8 = lv.into_raw();
+    return out;
+}
+
+// A row's name on the agent surface.
+//
+// A TREE has one by construction: `row_id` exists because a row is content
+// mounted inside a cell the backend owns, so nothing the application writes
+// ever names the row itself. A LIST has none — its rows carry app-keyed
+// controls INSIDE them, which is the accident facet's own comment describes —
+// so a list row is unnamed here and agent_core gives it a positional auto-id.
+fn row_identity(n: *core::Node, position: i32) -> text::Text {
+    if core::kind_of(n) != tree::K_TREE { return text::new(); }
+    let p: *tree::TreeProps = tree_props(n);
+    if p == (0 as *tree::TreeProps) { return text::new(); }
+    let f: fn(*tree::TreeNode, *u8) -> text::Text = { (*p).row_id };
+    if f == tree::no_row_id { return text::new(); }
+    match row_at(n, position) {
+        option::Option[VisibleRow]::Some(r) => {
+            var ctx: *u8 = { (*p).row_id_ctx };
+            if ctx == (0 as *u8) { ctx = { (*p).ctx }; }
+            return f({ r.node as *tree::TreeNode }, ctx);
+        }
+        option::Option[VisibleRow]::None => { return text::new(); }
+    }
+}
+
+// A row's tap, by the same door a finger uses.
+fn tap_row(n: *core::Node, position: i32) {
+    row_tapped({ #addr(n) as i64 }, position);
+    return;
+}

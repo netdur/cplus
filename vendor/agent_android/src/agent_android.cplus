@@ -22,6 +22,8 @@ import "agent_core/identity" as identity;
 import "agent_core/surface" as surface;
 import "agent_core/backend" as mcpb;
 import "facet_android/controls" as controls;
+import "facet_android/recycler" as recycler;
+import "facet/tree" as tree;
 
 // A registry index and the facet node behind it, in step by construction: the
 // walk appends to both together.
@@ -29,6 +31,9 @@ struct Surface {
     reg: identity::Registry,
     versions: surface::TextVersions,
     nodes: vec::Vec[usize],
+    // The tree this surface is OF, kept so the walk can be re-run. See
+    // `refresh`.
+    root: usize,
 }
 
 fn node_of(s: *Surface, index: usize) -> *core::Node {
@@ -143,7 +148,8 @@ fn open(root: *u8) -> Surface {
         let root_index: usize = reg.root();
         walk_rooted(reg, nodes, n, root_index);
     }
-    return Surface { reg: reg, versions: surface::new_text_versions(), nodes: nodes };
+    return Surface { reg: reg, versions: surface::new_text_versions(), nodes: nodes,
+                     root: { #addr(n) } };
 }
 
 fn walk_rooted(ref reg: identity::Registry, ref nodes: vec::Vec[usize],
@@ -165,7 +171,73 @@ fn walk_rooted(ref reg: identity::Registry, ref nodes: vec::Vec[usize],
         }
         i = i +% (1 as usize);
     }
+    // A LIST'S ROWS ARE NOT ITS CHILDREN. A realised row is a subtree the
+    // platform owns, mounted into a cell ListView made, so the walk above
+    // reaches the list and stops — and a two-hundred-row list describes as ONE
+    // node an agent can read and cannot drive.
+    //
+    // Only the rows ON SCREEN are here, which is the honest set: an agent
+    // cannot click a row that has no view, and reporting one would be reporting
+    // something it cannot act on.
+    walk_rows(reg, nodes, n, me);
     return;
+}
+
+fn walk_rows(ref reg: identity::Registry, ref nodes: vec::Vec[usize],
+             n: *core::Node, parent: usize) {
+    let kind: u32 = core::kind_of(n);
+    if kind != props::K_LIST && kind != tree::K_TREE { return; }
+    var rows: vec::Vec[recycler::RealisedRow] = recycler::realised_rows(n);
+    var i: usize = 0 as usize;
+    while i < { rows.count() } {
+        match { rows.at_ptr(i) } {
+            option::Option[*recycler::RealisedRow]::Some(r) => {
+                let row_node: *core::Node = { { (*r).node } as *core::Node };
+                let id: text::Text = recycler::row_identity(n, { (*r).position });
+                // A TREE names its rows (`row_id` exists for exactly this) and a
+                // LIST does not — its rows carry app keys INSIDE them instead,
+                // which facet's own comment calls an accident. An unnamed row
+                // gets agent_core's positional auto-id rather than an invented
+                // one.
+                var me: usize = parent;
+                if { id.view() } != "" {
+                    me = reg.add_child(parent, option::Option[str]::Some({ id.view() }),
+                                       identity::Role::Button);
+                    while { nodes.count() } <= me {
+                        let _e: i32 = { nodes.append(0 as usize) } as i32;
+                    }
+                    nodes.set({ #addr(row_node) }, me);
+                    let t: text::Text = row_text(row_node);
+                    if { t.view() } != "" { reg.set_content_name(me, { t.view() }); }
+                }
+                walk_rooted(reg, nodes, row_node, me);
+            }
+            option::Option[*recycler::RealisedRow]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return;
+}
+
+// A row SAYS what its first piece of text says. The row's own node is a bare
+// container — it carries no text of its own — so the name comes from the
+// subtree, which is the only thing that distinguishes one row from another.
+fn row_text(n: *core::Node) -> text::Text {
+    let own: text::Text = text_of(n);
+    if { own.view() } != "" { return own; }
+    var i: usize = 0 as usize;
+    let count: usize = core::child_count_of(n);
+    while i < count {
+        match core::child_of(n, i) {
+            option::Option[*core::Node]::Some(c) => {
+                let t: text::Text = row_text(c);
+                if { t.view() } != "" { return t; }
+            }
+            option::Option[*core::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return text::new();
 }
 
 // ---- the live reads ----------------------------------------------------------
@@ -234,6 +306,30 @@ fn read_text(view: identity::NodeView, n: *core::Node) -> text::Text {
 }
 
 impl Surface {
+    // Rebuilt IN PLACE, and as a METHOD rather than a free function taking a
+    // pointer: writing the two tables through a `*Surface` is a view-flow the
+    // borrow checker cannot see the end of (E0516), while `ref this` is an
+    // ordinary field write.
+    //
+    // The text versions deliberately SURVIVE the rebuild: a version is what an
+    // agent's `set_text` was written against, and resetting it on every
+    // describe would make every optimistic write look stale.
+    fn refresh(ref this) {
+        let root: *core::Node = { this.root as *core::Node };
+        if root == (0 as *core::Node) { return; }
+        // WALKED STRAIGHT INTO THE FIELDS. Building into locals and assigning
+        // them across does not typecheck: the registry holds text taken from
+        // the tree, so the checker sees a local's views being stored into a
+        // `ref` target that outlives it (E0513). `this.reg` is already a
+        // writable place, which is the shorter road anyway.
+        this.reg = identity::new();
+        this.nodes = vec::new::[usize]();
+        let _e: i32 = { this.nodes.append(0 as usize) } as i32;
+        let root_index: usize = this.reg.root();
+        walk_rooted(this.reg, this.nodes, root, root_index);
+        return;
+    }
+
     fn describe(this, grant: auth::Grant) -> vec::Vec[mcpb::UiNode] {
         var out: vec::Vec[mcpb::UiNode] = vec::new::[mcpb::UiNode]();
         let views: vec::Vec[identity::NodeView] = { this.reg.describe(grant) };
@@ -264,6 +360,12 @@ impl Surface {
                 let n: *core::Node = node_of(#addr_of(this) as *Surface, node);
                 if n == (0 as *core::Node) { return surface::Outcome::NotFound; }
                 if controls::agent_click(n) { return surface::Outcome::Allowed; }
+                // A ROW IS CLICKED THROUGH ITS LIST, not through itself: the
+                // row's own node is a bare container with no handler, and the
+                // tap belongs to the control that owns the rows.
+                if click_row(#addr_of(this) as *Surface, node) {
+                    return surface::Outcome::Allowed;
+                }
                 return surface::Outcome::NotFound;
             }
             option::Option[usize]::None => { return surface::Outcome::NotFound; }
@@ -287,10 +389,54 @@ impl Surface {
     }
 }
 
+// Find the list or tree this registry node is a row of, and tap it at the row's
+// position. The registry knows the PARENT, which is the control — so this is a
+// lookup rather than a search.
+fn click_row(s: *Surface, node: usize) -> bool {
+    match { (*s).reg.parent_of(node) } {
+        option::Option[usize]::Some(p) => {
+            let owner: *core::Node = node_of(s, p);
+            if owner == (0 as *core::Node) { return false; }
+            let kind: u32 = core::kind_of(owner);
+            if kind != props::K_LIST && kind != tree::K_TREE { return false; }
+            let row: *core::Node = node_of(s, node);
+            if row == (0 as *core::Node) { return false; }
+            var rows: vec::Vec[recycler::RealisedRow] = recycler::realised_rows(owner);
+            var i: usize = 0 as usize;
+            while i < { rows.count() } {
+                match { rows.at_ptr(i) } {
+                    option::Option[*recycler::RealisedRow]::Some(r) => {
+                        if { { (*r).node } as *core::Node } == row {
+                            recycler::tap_row(owner, { (*r).position });
+                            return true;
+                        }
+                    }
+                    option::Option[*recycler::RealisedRow]::None => { }
+                }
+                i = i +% (1 as usize);
+            }
+            return false;
+        }
+        option::Option[usize]::None => { return false; }
+    }
+}
+
 // ---- the vtable ---------------------------------------------------------------
 
+// RE-WALKED, not just re-read.
+//
+// `open` is a SNAPSHOT of the shape, and the shape moves: a `switch_to` parks a
+// screen, an insert adds a row — and a recycled row does not even EXIST at
+// attach time, because the surface is built when the window attaches and rows
+// are realised after the first layout. The catalog described as one node for
+// exactly that reason: the walk was right and it ran too early.
+//
+// So the shape is rebuilt per request and only the live reads (text, frames,
+// hidden) stay per-node. agent_uikit refreshes from its window for the same
+// reason; this refreshes from the root it was opened with.
 fn mcp_describe(p: *u8, grant: auth::Grant) -> vec::Vec[mcpb::UiNode] {
     if p == (0 as *u8) { return vec::new::[mcpb::UiNode](); }
+    { (*(p as *Surface)).refresh() };
     return { (*(p as *Surface)).describe(grant) };
 }
 
@@ -302,11 +448,15 @@ fn mcp_describe_exposed(p: *u8, grant: auth::Grant) -> vec::Vec[mcpb::UiNode] {
 
 fn mcp_click(p: *u8, grant: auth::Grant, id: str) -> surface::Outcome {
     if p == (0 as *u8) { return surface::Outcome::NotFound; }
+    // Refreshed FIRST, or an agent can only click what was on screen when the
+    // window attached — and a row it just read about would not be there.
+    { (*(p as *Surface)).refresh() };
     return { (*(p as *Surface)).click(grant, id) };
 }
 
 fn mcp_set_text(p: *u8, grant: auth::Grant, id: str, value: str, base: u64) -> surface::Outcome {
     if p == (0 as *u8) { return surface::Outcome::NotFound; }
+    { (*(p as *Surface)).refresh() };
     return { (*(p as *Surface)).set_text(grant, id, value, base) };
 }
 
