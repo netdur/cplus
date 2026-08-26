@@ -29,6 +29,14 @@ impl Canvas { fn new() -> Canvas { return Canvas { _unused: 0 }; } }
 // The drawing. It RECORDS — it is handed a Canvas and appends to it, and
 // nothing in it knows what platform will replay it. That is why the same
 // function would draw the same picture in the desktop gallery.
+// WHAT IS REPLAYING THIS, drawn into the badge. The recording names no
+// platform — that is the whole demonstration — so the only line of it that
+// mentions one asks.
+fn drawn_by() -> str {
+    if #platform() == "android" { return "android.graphics"; }
+    return "Core Graphics";
+}
+
 fn draw_badge(into: *vocab::Canvas, dirty: vocab::Rect, ctx: *u8) {
     let w: f64 = { (*into).size().width };
     let h: f64 = { (*into).size().height };
@@ -59,7 +67,7 @@ fn draw_badge(into: *vocab::Canvas, dirty: vocab::Rect, ctx: *u8) {
     { (*into).set_text_color(vocab::Color::rgba(1.0f64, 1.0f64, 1.0f64, 1.0f64)) };
     let _f: status::Status = { (*into).set_font(size: 15.0f64,
                                                 weight: vocab::FontWeight::Medium) };
-    let _t: status::Status = { (*into).draw_text("Core Graphics",
+    let _t: status::Status = { (*into).draw_text(drawn_by(),
         at: vocab::Point::of(20.0f64, h - 26.0f64)) };
     return;
 }
@@ -70,7 +78,7 @@ impl Canvas: component::Component {
         var cv: flex::Builder = flex::Builder::new();
         cv.add(ui::canvas(key: "t:canvas", drawable: vocab::Drawable::of(draw_badge))
                    .height(120.0f64));
-        cv.add(shell::caption("Every shape above was RECORDED by a function that names no platform, then replayed against Core Graphics — the same framework, the same replay loop and the same arc convention the AppKit backend uses."));
+        cv.add(shell::caption("Every shape above was RECORDED by a function that names no platform, then replayed — against Core Graphics on iOS and against android.graphics on Android. The same list, the same replay loop and the same arc convention; the reader is the only part that differs."));
         body.add(shell::card("A RECORDED DRAWING", cv));
 
         var note: flex::Builder = flex::Builder::new();

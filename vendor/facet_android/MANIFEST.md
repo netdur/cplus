@@ -118,6 +118,16 @@ through liblog (`adb logcat -s facet`) and render an empty container.
   HorizontalScrollView are separate widgets and neither becomes the other;
   nesting one in the other is the usual trick and it fights the gesture
   arbiter. Vertical is the phone-shaped default.
+- **A pinch MAGNIFIES; nobody has felt it yet.** `Chrome.zoomable` is built —
+  the tree is wrapped in one `FacetZoomHost`, which is a ScaleGestureDetector, a
+  scale and a translation written onto the child, the same shape the iOS backend
+  gets from a UIScrollView's zoom. Scale only, never a relayout, and touches
+  belong to the content until there are two of them.
+
+  What is NOT verified is the FEEL. `adb shell input` has no pinch, so nothing
+  in this repo can drive a two-finger gesture — the arithmetic is pinned by
+  reading, and the rest is a person's hands on a device.
+
 - **The gesture band.** `gestures::install_key_reader` and
   `component::install_sender_readers` are not filled, so only a button's
   `on_click` fires. `wants_view` already answers true for a node with gestures,

@@ -178,7 +178,7 @@ impl Gallery {
         match label::find("g:title") {
             option::Option[label::Label]::Some(l) => {
                 if at_root {
-                    let _t: label::Label = l.set_text("facet_uikit");
+                    let _t: label::Label = l.set_text(backend_name());
                 } else {
                     let _t: label::Label = l.set_text("Gallery");
                 }
@@ -187,6 +187,14 @@ impl Gallery {
         }
         return;
     }
+}
+
+// WHICH BACKEND IS DRAWING THIS. The same source runs on UIKit and on Android,
+// so the name is asked for rather than written down — `#platform()` is a
+// value-level intrinsic, which is why this is a function and not a constant.
+fn backend_name() -> str {
+    if #platform() == "android" { return "facet_android"; }
+    return "facet_uikit";
 }
 
 fn show_node(key: str, on: bool) {
@@ -208,7 +216,7 @@ impl Gallery: component::Component {
         var bar: flex::Builder = flex::Builder::new();
         bar.add(ui::text_button("‹ Back", key: "g:back", on_click: this.on_back)
                 .width(80.0f64).height(44.0f64));
-        bar.add(ui::label("facet_uikit", key: "g:title", font_size: 17.0f64,
+        bar.add(ui::label(backend_name(), key: "g:title", font_size: 17.0f64,
                           font_weight: vocab::FontWeight::Semibold));
         bar.add(ui::column(flex::Builder::new()).grow(1.0f64));
         root.add(ui::row(bar).gap(8.0f64).padding(8.0f64)

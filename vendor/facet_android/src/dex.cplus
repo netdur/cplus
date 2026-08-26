@@ -21,7 +21,7 @@ import "jni/jni" as jni;
 import "android_view/runtime" as rt;
 
 // Kept in step by tools/build_dex.sh; do not hand-edit.
-const DEX_LEN: usize = 12792;
+const DEX_LEN: usize = 16140;
 
 static LOADER: usize = 0;
 static C_HOST: usize = 0;
@@ -39,6 +39,7 @@ static C_CANVAS: usize = 0;
 static C_DRAW: usize = 0;
 static C_SWIPE: usize = 0;
 static C_DATE: usize = 0;
+static C_ZOOM: usize = 0;
 
 // jni.h's JNINativeMethod with the fn slot concretely typed per shape.
 #[repr(C)]
@@ -153,6 +154,7 @@ fn job_class() -> jni::jclass { return { C_JOB as *u8 }; }
 fn canvas_class() -> jni::jclass { return { C_CANVAS as *u8 }; }
 fn swipe_class() -> jni::jclass { return { C_SWIPE as *u8 }; }
 fn date_class() -> jni::jclass { return { C_DATE as *u8 }; }
+fn zoom_class() -> jni::jclass { return { C_ZOOM as *u8 }; }
 fn loaded() -> bool { return LOADER != 0; }
 
 // Load the dex and bind every native. Idempotent; `any_view` is only needed to
@@ -169,7 +171,7 @@ fn ensure_loaded(env: rt::Env, any_view: jni::jobject) {
     // Activity would hold a FacetHost of one class while this code registered
     // natives on the other, and `nativeSizeChanged` would never arrive.
     if load_merged(env) { return; }
-    let dex: *[u8; 12792] = #include_bytes("../facet_android.dex");
+    let dex: *[u8; 16140] = #include_bytes("../facet_android.dex");
     let buffer: jni::jobject = {
         (*(*env.raw())).NewDirectByteBuffer(env.raw(), { dex as *u8 }, DEX_LEN as i64)
     };
@@ -204,6 +206,7 @@ fn ensure_loaded(env: rt::Env, any_view: jni::jobject) {
     C_DRAW = { #addr(load_class(env, loader, #str_ptr("cplus.facet.FacetDraw\0"))) };
     C_SWIPE = { #addr(load_class(env, loader, #str_ptr("cplus.facet.FacetSwipeHost\0"))) };
     C_DATE = { #addr(load_class(env, loader, #str_ptr("cplus.facet.FacetDate\0"))) };
+    C_ZOOM = { #addr(load_class(env, loader, #str_ptr("cplus.facet.FacetZoomHost\0"))) };
 
     bind_natives(env);
 
@@ -237,6 +240,7 @@ fn load_merged(env: rt::Env) -> bool {
     C_DRAW = { #addr(find_global(env, #str_ptr("cplus/facet/FacetDraw\0"))) };
     C_SWIPE = { #addr(find_global(env, #str_ptr("cplus/facet/FacetSwipeHost\0"))) };
     C_DATE = { #addr(find_global(env, #str_ptr("cplus/facet/FacetDate\0"))) };
+    C_ZOOM = { #addr(find_global(env, #str_ptr("cplus/facet/FacetZoomHost\0"))) };
     // A sentinel rather than a loader object: `loaded()` asks whether the
     // classes are here, and by this path there is no loader to keep.
     LOADER = 1 as usize;
@@ -477,6 +481,18 @@ fn draw_dash(env: rt::Env, paint: jni::jobject, count: i32, phase: f64,
     { (*(*env.raw())).CallStaticVoidMethodA(env.raw(), { C_DRAW as *u8 }, mid,
                                             #addr_of(args[0])) };
     return;
+}
+
+// `new FacetZoomHost(context, min, max)` — the magnifier the Chrome asks for.
+fn new_zoom_host(env: rt::Env, ctx: jni::jobject, min: f64, max: f64) -> jni::jobject {
+    if C_ZOOM == 0 { return 0 as jni::jobject; }
+    let ctor: jni::jmethodID = env.method_id({ C_ZOOM as *u8 }, #str_ptr("<init>\0"),
+                                             #str_ptr("(Landroid/content/Context;FF)V\0"));
+    if ctor == (0 as jni::jmethodID) { return 0 as jni::jobject; }
+    var args: [jni::JValue; 3] = [jni::arg_object(ctx), jni::arg_float(min as f32),
+                                  jni::arg_float(max as f32)];
+    return { (*(*env.raw())).NewObjectA(env.raw(), { C_ZOOM as *u8 }, ctor,
+                                        #addr_of(args[0])) };
 }
 
 // ---- FacetDate -----------------------------------------------------------------

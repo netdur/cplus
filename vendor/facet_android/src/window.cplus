@@ -26,6 +26,7 @@ import "facet/mount" as mount;
 import "./env" as e;
 import "./paint" as paint;
 import "./dex" as dex;
+import "./controls" as controls;
 import "./mainthread" as mainthread;
 import "./scheduler" as scheduler;
 import "./log" as log;
@@ -78,7 +79,45 @@ fn attach_root(env: rt::Env, activity: jni::jobject, root: *core::Node) -> jni::
     // `*core::Node`. Without this line the surface answers, correctly and
     // uselessly, with zero nodes.
     app::agent_attach({ #addr(root) as *u8 });
-    return host;
+    return content_view(env, activity, host);
+}
+
+// PINCH-TO-MAGNIFY, which is a Chrome property and not a control. The facade
+// reads it off the window description and leaves it here, because the wrapper
+// it turns into can only be built once there is an Activity — which is one call
+// later, in `attach_root` below.
+//
+// It lives in this file and not in `entry` for a duller reason: `entry` imports
+// the backend to install it, so a window that imported `entry` closed a cycle.
+static ZOOM_ON: bool = false;
+static ZOOM_MIN: f64 = 1.0f64;
+static ZOOM_MAX: f64 = 1.0f64;
+
+fn set_zoom(min: f64, max: f64) {
+    ZOOM_ON = true;
+    ZOOM_MIN = min;
+    ZOOM_MAX = max;
+    return;
+}
+
+// What the ACTIVITY is handed, which is the facet host itself unless the
+// window asked to magnify. A zoomable window gets one wrapper around it: the
+// facet host stays the thing facet places into and reports the size of, and
+// the wrapper only scales and translates what is already laid out.
+//
+// The wrapper is NOT the host: making it one would put the zoom transform
+// between flex's frames and the views they belong to, and every coordinate the
+// agent reports would be in a space that moves when a finger does.
+fn content_view(env: rt::Env, activity: jni::jobject, host: jni::jobject) -> jni::jobject {
+    if !ZOOM_ON { return host; }
+    let wrapper: jni::jobject = dex::new_zoom_host(env, activity, ZOOM_MIN, ZOOM_MAX);
+    if wrapper == (0 as jni::jobject) { return host; }
+    controls::attach_layout_params(host);
+    var g: w::ViewGroup = w::ViewGroup::from_local(env, wrapper);
+    g.add_view_view(host);
+    let raw: jni::jobject = g.into_raw();
+    env.delete_local_ref(wrapper);
+    return raw;
 }
 
 // The root's view — or, when the root is a KEYLESS PASS-THROUGH, its topmost

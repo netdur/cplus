@@ -125,6 +125,9 @@ fn run[W: Window](take window: W) {
     match box::new::[W](owned_window) {
         option::Option[box::Box[W]]::Some(bx) => {
             let held: *W = { bx.into_raw() as *W };
+            if { (*held).wants_pinch_zoom() } {
+                host::set_zoom({ (*held).min_zoom() }, { (*held).max_zoom() });
+            }
             var root: Node = { (*held).root() };
             entry::set_root(root);
         }
@@ -153,7 +156,12 @@ fn run_component[C: component::Component + component::Lifecycle](
     // An Activity has no menu bar. Recorded rather than dropped silently: an
     // app that passes one has said something this platform cannot honour.
     if { owned_menu.items.count() } > (0 as usize) { no_backend("an app menu"); }
-    if zoomable { no_backend("zoomable"); }
+    // PINCH-TO-MAGNIFY, which the Android backend does have: the tree is
+    // wrapped in one host that scales and translates it, exactly as the iOS
+    // backend hands it to a UIScrollView's zoom. Left with `entry` rather than
+    // acted on here, because the wrapper needs an Activity and there is not one
+    // until the Activity calls in.
+    if zoomable { host::set_zoom(min_zoom, max_zoom); }
     return hold_and_build::[C](component_v);
 }
 
@@ -212,8 +220,8 @@ fn run_screen[S: component::Component + component::Lifecycle + screen::Screen](
     var owned_menu: AppMenu = menu;
     if { owned_menu.items.count() } > (0 as usize) { no_backend("an app menu"); }
     // The Chrome's title, size and window buttons describe a desktop window.
-    // A phone has one screen and the system draws its own bar, so the whole
-    // Chrome is read and dropped — deliberately, and said once.
+    // A phone has one screen and the system draws its own bar, so the REST of
+    // the Chrome is read and dropped — deliberately, and said once.
     no_backend("screen chrome (title, size, window buttons)");
     return hold_and_build_screen::[S](screen_v);
 }
@@ -223,6 +231,10 @@ fn hold_and_build_screen[S: component::Component + component::Lifecycle + screen
     match box::new::[S](owned) {
         option::Option[box::Box[S]]::Some(bx) => {
             let held: *S = { bx.into_raw() as *S };
+            // The ONE part of the Chrome a phone can honour, read before the
+            // build so it is set by the time the Activity asks for a view.
+            let c: screen::Chrome = { (*held).chrome() };
+            if { c.zoomable } { host::set_zoom({ c.min_zoom }, { c.max_zoom }); }
             var root: Node = { (*held).build() };
             entry::set_root(root);
             entry::on_attached(attach_trampoline_screen::[S], { #addr(held) as *u8 });
