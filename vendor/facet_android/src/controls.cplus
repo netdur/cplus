@@ -1735,8 +1735,23 @@ fn apply_icon_button(v: *u8, n: *core::Node, dirty: u64) {
                     | icon_button::P_BORDER_WIDTH | icon_button::P_CORNER_RADIUS
                     | props::C_BACKGROUND_COLOR | props::C_CORNER_RADIUS;
     if (dirty & chrome) != (0 as u64) {
-        apply_control_chrome(env, v, n, { (*p).bordered }, { (*p).border_color },
-                             { (*p).border_width }, { (*p).corner_radius });
+        // GLYPH-ONLY IS A POSTURE, AND IT HAS TO BE RE-ASSERTED. The shared
+        // chrome path ends in a rectangular ripple — right for a button, wrong
+        // for this kind — and it runs on the first apply, immediately after
+        // `create` set the borderless circle. So a glyph button wore a
+        // full-width rounded box from the moment it was built, which is the
+        // opposite of the thing this kind is for.
+        //
+        // Asking whether ANY chrome was declared is what separates the two:
+        // stating a border or a background is what takes an icon button out of
+        // the posture, and stating nothing has to leave it in.
+        if declares_chrome(n, { (*p).bordered }, { (*p).border_color },
+                           { (*p).border_width }, { (*p).corner_radius }) {
+            apply_control_chrome(env, v, n, { (*p).bordered }, { (*p).border_color },
+                                 { (*p).border_width }, round_corners(n, { (*p).corner_radius }));
+        } else {
+            dex::tap_feedback_borderless(env, v);
+        }
     }
     // A TOGGLING BUTTON keeps its state, and Android's word for that state is
     // SELECTED — `setChecked` belongs to a CompoundButton, which an ImageButton
@@ -2403,6 +2418,61 @@ fn apply_button_image(env: rt::Env, tv: w::TextView, src: str, side: vocab::Cont
 // declares NONE of the four keeps what the platform gave it — which is what
 // makes an ordinary `button` a filled Material button rather than a hole with a
 // title in it.
+// THE SHAPE, ONCE THE SIZE IS KNOWN. Called from the frame walk, which is the
+// only place that has a laid-out frame — and guarded by a remembered side, so
+// the drawable is rebuilt when the size CHANGES and not once per pass.
+fn round_icon_button(n: *core::Node, v: *u8, frame: flex::Frame) {
+    if core::kind_of(n) != props::K_ICON_BUTTON { return; }
+    if !e::have_env() { return; }
+    let p: *props::IconButtonProps = props_of(n, props::K_ICON_BUTTON) as *props::IconButtonProps;
+    if p == (0 as *props::IconButtonProps) { return; }
+    if { (*p).corner_radius.top_leading } > 0.0f64 { return; }
+    if core::corner_radius(n).top_leading > 0.0f64 { return; }
+    var side: f64 = frame.height;
+    if frame.width < side { side = frame.width; }
+    if side <= 0.0f64 { return; }
+    let env: rt::Env = e::env();
+    if !dex::shape_changed(env, { v as jni::jobject }, { e::px(side) as i32 }) { return; }
+    if !declares_chrome(n, { (*p).bordered }, { (*p).border_color },
+                        { (*p).border_width }, { (*p).corner_radius }) { return; }
+    apply_control_chrome(env, v, n, { (*p).bordered }, { (*p).border_color },
+                         { (*p).border_width }, vocab::Corners::all(side / 2.0f64));
+    return;
+}
+
+// Whether a control asked for chrome of its own, which is the question that
+// decides whether the platform's own posture stands.
+fn declares_chrome(n: *core::Node, bordered: bool, border_color: vocab::Color,
+                   border_width: f64, corners: vocab::Corners) -> bool {
+    if bordered { return true; }
+    if border_width > 0.0f64 { return true; }
+    if border_color.is_set() { return true; }
+    if corners.top_leading > 0.0f64 { return true; }
+    if core::corner_radius(n).top_leading > 0.0f64 { return true; }
+    if core::background_color(n).is_set() { return true; }
+    return false;
+}
+
+// A GLYPH BUTTON IS ROUND unless it says otherwise. That is the platform idiom
+// — every bordered icon button on Android is a circle — and facet leaves the
+// shape to the backend when no radius is stated: a corner radius of zero on
+// this kind means "you decide", not "square". `bordered` DEFAULTS TO TRUE in
+// the contract, so the border itself is not the backend's choice; only its
+// shape is.
+//
+// Half the smaller side, so a stretched one is a capsule rather than an
+// ellipse. The frame is ZERO when the view is created — layout has not run —
+// which is why `round_icon_button` re-applies this from the frame walk.
+fn round_corners(n: *core::Node, stated: vocab::Corners) -> vocab::Corners {
+    if stated.top_leading > 0.0f64 { return stated; }
+    if core::corner_radius(n).top_leading > 0.0f64 { return stated; }
+    let f: flex::Frame = core::frame_of(n);
+    var side: f64 = f.height;
+    if f.width < side { side = f.width; }
+    if side <= 0.0f64 { return stated; }
+    return vocab::Corners::all(side / 2.0f64);
+}
+
 fn apply_control_chrome(env: rt::Env, v: *u8, n: *core::Node, bordered: bool,
                         border_color: vocab::Color, border_width: f64,
                         corners: vocab::Corners) {

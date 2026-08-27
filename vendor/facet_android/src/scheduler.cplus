@@ -60,8 +60,31 @@ fn post_tick() {
 fn tick() {
     PENDING = false;
     TICKS = TICKS +% (1 as u64);
+    // IN A PASS. Every write an apply makes — `setText` above all — raises a
+    // layout request on the way up to the host, and answering those would
+    // schedule the pass that is already running. Only requests from OUTSIDE
+    // matter: those are a widget reacting to input, and nothing else will
+    // notice them.
+    IN_PASS = true;
     mount::sync();
     relayout_current();
+    IN_PASS = false;
+    return;
+}
+
+static IN_PASS: bool = false;
+
+// A WIDGET ASKED ANDROID FOR A LAYOUT AND ANDROID CANNOT GIVE IT ONE: this
+// backend's hosts have an empty `onLayout` because facet owns every frame. So
+// the request becomes a facet pass, which places every view and lets the widget
+// lay itself out inside the frame it is given.
+//
+// Without this a control that changes its own internals is frozen until
+// something else moves — a Spinner reports its selection from inside its layout,
+// so picking an item did nothing until an unrelated toggle ran a pass.
+fn request_layout() {
+    if IN_PASS { return; }
+    schedule(0 as *u8);
     return;
 }
 

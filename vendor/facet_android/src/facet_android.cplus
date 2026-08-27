@@ -13,6 +13,7 @@ import "jni/jni" as jni;
 import "android_view/runtime" as rt;
 import "facet/facet" as core;
 import "facet/mount" as mount;
+import "facet/nav" as nav;
 import "facet/services" as services;
 import "facet/theme" as theme;
 import "./views" as views;
@@ -227,6 +228,24 @@ export extern fn facet_android_menu_item(envp: *jni::JNIEnv, cls: jni::jobject,
                                          token: i64, index: i32) {
     e::set_env(rt::from_native(envp));
     controls::fire_menu_item(token, index);
+    return;
+}
+
+// THE SYSTEM BACK, answered by facet's navigation tier. True means it was
+// handled and the Activity stays; false means nothing was pushed, and back from
+// the first screen leaving the app is what Android users expect.
+export extern fn facet_android_back(envp: *jni::JNIEnv, cls: jni::jobject) -> u8 {
+    e::set_env(rt::from_native(envp));
+    if nav::pop() { return 1 as u8; }
+    return 0 as u8;
+}
+
+// A WIDGET ASKED FOR A LAYOUT. facet places views only when its own geometry
+// changes, so this is the door a widget's internal change comes through — see
+// FacetHost.requestLayout.
+export extern fn facet_android_layout_requested(envp: *jni::JNIEnv, cls: jni::jobject) {
+    e::set_env(rt::from_native(envp));
+    scheduler::request_layout();
     return;
 }
 

@@ -21,7 +21,7 @@ import "jni/jni" as jni;
 import "android_view/runtime" as rt;
 
 // Kept in step by tools/build_dex.sh; do not hand-edit.
-const DEX_LEN: usize = 36644;
+const DEX_LEN: usize = 37024;
 
 static LOADER: usize = 0;
 static C_HOST: usize = 0;
@@ -52,6 +52,13 @@ static C_TABCLICK: usize = 0;
 static C_MENU: usize = 0;
 
 // jni.h's JNINativeMethod with the fn slot concretely typed per shape.
+#[repr(C)]
+struct Native0Z {
+    opaque name: *u8,
+    opaque signature: *u8,
+    fn_ptr: fn(*jni::JNIEnv, jni::jobject) -> u8,
+}
+
 #[repr(C)]
 struct Native0 {
     opaque name: *u8,
@@ -167,6 +174,8 @@ extern fn facet_android_selection(envp: *jni::JNIEnv, cls: jni::jobject, token: 
 extern fn facet_android_tab(envp: *jni::JNIEnv, cls: jni::jobject, token: i64, index: i32);
 extern fn facet_android_menu_item(envp: *jni::JNIEnv, cls: jni::jobject, token: i64,
                                   index: i32);
+extern fn facet_android_back(envp: *jni::JNIEnv, cls: jni::jobject) -> u8;
+extern fn facet_android_layout_requested(envp: *jni::JNIEnv, cls: jni::jobject);
 extern fn facet_android_carousel_page(envp: *jni::JNIEnv, cls: jni::jobject, token: i64,
                                       index: i32);
 extern fn facet_android_raw_message(envp: *jni::JNIEnv, cls: jni::jobject, token: i64,
@@ -248,7 +257,7 @@ fn ensure_loaded(env: rt::Env, any_view: jni::jobject) {
     // Activity would hold a FacetHost of one class while this code registered
     // natives on the other, and `nativeSizeChanged` would never arrive.
     if load_merged(env) { return; }
-    let dex: *[u8; 36644] = #include_bytes("../facet_android.dex");
+    let dex: *[u8; 37024] = #include_bytes("../facet_android.dex");
     let buffer: jni::jobject = {
         (*(*env.raw())).NewDirectByteBuffer(env.raw(), { dex as *u8 }, DEX_LEN as i64)
     };
@@ -384,6 +393,13 @@ fn bind_natives(env: rt::Env) {
     };
     let _r3: i32 = { (*(*env.raw())).RegisterNatives(env.raw(), { C_HOST as *u8 },
                                                      #addr_of(size_rec) as *u8, 1) };
+    var relayout_rec: Native0 = Native0 {
+        name: #str_ptr("nativeLayoutRequested\0"),
+        signature: #str_ptr("()V\0"),
+        fn_ptr: facet_android_layout_requested,
+    };
+    let _r18: i32 = { (*(*env.raw())).RegisterNatives(env.raw(), { C_HOST as *u8 },
+                                                      #addr_of(relayout_rec) as *u8, 1) };
 
     var checked_rec: Native2LZ = Native2LZ {
         name: #str_ptr("nativeChecked\0"),
@@ -629,6 +645,21 @@ fn bind_natives(env: rt::Env) {
     let _r16: i32 = { (*(*env.raw())).RegisterNatives(env.raw(), { C_MENU as *u8 },
                                                       #addr_of(menu_rec) as *u8, 1) };
 
+    // THE ACTIVITY'S OWN NATIVE. `FacetActivity` is the one class NOT in this
+    // dex — the system loads it from the APK before any of our code runs — so
+    // it is looked up by name rather than through a cached handle, and its
+    // native is registered here like every other.
+    let act: jni::jclass = env.class_cached(#str_ptr("cplus/facet/FacetActivity\0"));
+    if act != (0 as jni::jclass) {
+        var back_rec: Native0Z = Native0Z {
+            name: #str_ptr("nativeBack\0"),
+            signature: #str_ptr("()Z\0"),
+            fn_ptr: facet_android_back,
+        };
+        let _r17: i32 = { (*(*env.raw())).RegisterNatives(env.raw(), act,
+                                                          #addr_of(back_rec) as *u8, 1) };
+    }
+
     var step_rec: Native2LI = Native2LI {
         name: #str_ptr("nativeStep\0"),
         signature: #str_ptr("(JI)V\0"),
@@ -814,6 +845,18 @@ fn window_insets(env: rt::Env, host: jni::jobject) -> i64 {
     if mid == (0 as jni::jmethodID) { return 0 as i64; }
     var args: [jni::JValue; 1] = [jni::arg_object(host)];
     return { (*(*env.raw())).CallStaticLongMethodA(env.raw(), cls, mid, #addr_of(args[0])) };
+}
+
+// Whether this view's remembered shape differs from the one it now needs.
+fn shape_changed(env: rt::Env, view: jni::jobject, side: i32) -> bool {
+    if C_DRAW == 0 { return false; }
+    let mid: jni::jmethodID = env.method_id_static({ C_DRAW as *u8 },
+        #str_ptr("shapeChanged\0"), #str_ptr("(Landroid/view/View;I)Z\0"));
+    if mid == (0 as jni::jmethodID) { return false; }
+    var args: [jni::JValue; 2] = [jni::arg_object(view), jni::arg_int(side)];
+    let r: u8 = { (*(*env.raw())).CallStaticBooleanMethodA(env.raw(), { C_DRAW as *u8 },
+                                                           mid, #addr_of(args[0])) };
+    return r != (0 as u8);
 }
 
 // ---- FacetMenu -----------------------------------------------------------------

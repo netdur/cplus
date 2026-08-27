@@ -21,6 +21,7 @@ import "facet/facet" as core;
 import "facet/elements" as ui;
 import "facet/component" as component;
 import "facet/mount" as mount;
+import "facet/nav" as nav;
 import "facet/tree" as tree;
 import "facet/label" as label;
 import "facet/vocabulary" as vocab;
@@ -192,6 +193,26 @@ impl Gallery {
 // WHICH BACKEND IS DRAWING THIS. The same source runs on UIKit and on Android,
 // so the name is asked for rather than written down — `#platform()` is a
 // value-level intrinsic, which is why this is a function and not a constant.
+// THE RUNNING GALLERY, so the system's back gesture can reach it.
+//
+// `nav::set_pop_fn` takes a plain `fn() -> bool` with no context channel — the
+// navigation tier is app-scoped and assumes one app — so the component has to
+// be findable from a free function. Written at attach, which is the moment the
+// instance exists and is live.
+static GALLERY: *Gallery = 0 as *Gallery;
+
+// The system back, for a gallery that navigates by swapping an outlet rather
+// than pushing screens. FALSE at the catalog on purpose: back from the first
+// screen should leave the app.
+fn gallery_pop() -> bool {
+    let g: *Gallery = GALLERY;
+    if g == (0 as *Gallery) { return false; }
+    if { (*g).shown } == catalog::DEMO_NONE { return false; }
+    { (*g).shown = catalog::DEMO_NONE };
+    { (*g).show() };
+    return true;
+}
+
 fn backend_name() -> str {
     if #platform() == "android" { return "facet_android"; }
     return "facet_uikit";
@@ -262,6 +283,14 @@ impl Gallery: component::Lifecycle {
             option::Option[tree::Tree]::Some(t) => { catalog::expand_all(t); }
             option::Option[tree::Tree]::None => { }
         }
+        // WHAT BACK MEANS HERE. This gallery does not use facet's App tier — it
+        // swaps one outlet — but `nav::pop` is the door a platform's own back
+        // gesture knocks on, so the same swap is registered behind it. Answering
+        // FALSE at the catalog is deliberate: back from the first screen should
+        // leave the app, which is what an Android user expects and what the
+        // backend does when nothing is pushed.
+        GALLERY = #addr_of(this);
+        nav::set_pop_fn(gallery_pop);
         this.show();
         return;
     }

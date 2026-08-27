@@ -50,6 +50,32 @@ public class FacetHost extends android.view.ViewGroup {
         // Deliberately empty. See above.
     }
 
+    // A WIDGET ASKING FOR A LAYOUT HAS TO REACH FACET, or it never gets one.
+    //
+    // `onLayout` being empty is the design, and it has a consequence: a child
+    // that changes its own size or content calls `requestLayout()`, the request
+    // walks up to this host, and here it dies. Android would have re-laid the
+    // subtree out; facet places views only when its OWN geometry changes, and a
+    // widget's internal state is not facet's geometry.
+    //
+    // Measured, and it is not theoretical: a Spinner reports its new selection
+    // from `checkSelectionChanged`, which runs inside the Spinner's own LAYOUT.
+    // Picking an item therefore did nothing at all — no callback, no handler, no
+    // redraw — until some unrelated change made facet run a pass, at which point
+    // the pick arrived late. "I select 2, nothing happens; I toggle the switch
+    // and the picker suddenly changes."
+    //
+    // So the request is forwarded: facet schedules a pass, the pass places every
+    // view, the widget lays out, and whatever it wanted to report it reports.
+    // The native side ignores requests raised INSIDE a pass — every `setText` in
+    // an apply raises one — so this cannot feed itself.
+    @Override public void requestLayout() {
+        super.requestLayout();
+        nativeLayoutRequested();
+    }
+
+    private static native void nativeLayoutRequested();
+
     // ONLY THE ROOT REPORTS. Every box, and every scroll document, is a
     // FacetHost too — and each of them is resized by facet's own layout pass.
     // A host that reported its own size would hand that back as THE WINDOW

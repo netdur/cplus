@@ -487,6 +487,7 @@ fn reposition_children(node: *core::Node, host_abs: flex::Frame) {
                     size_document(c, v, cf);
                     place_split_divider(c, v, cf);
                     place_tab_strip(c, v, cf);
+                    controls::round_icon_button(c, v, cf);
                     swipe::place_strip(c, v, cf, place);
                     place_refresh_spinner(c, v, cf, host_abs);
                     reposition_children(c, cf);

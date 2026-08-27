@@ -53,6 +53,28 @@ public class FacetActivity extends android.app.Activity {
              | ((long) (i.right & 0xffff) << 16) | (long) (i.bottom & 0xffff);
     }
 
+    // THE SYSTEM BACK IS THE APP'S TO ANSWER, and closing was the wrong default.
+    //
+    // A back gesture that ends the process is what an app with no navigation
+    // gets for free, and this backend gave it to every app — a demo screen deep
+    // in the gallery, and back quit. facet has a navigation tier
+    // (`nav::push` / `nav::pop`) whose hooks the running app registers, so the
+    // press goes there first and only falls through to the platform when facet
+    // says there is nowhere to go back TO. That fallthrough is the right
+    // behaviour at the top level: on Android, back from the first screen leaves
+    // the app.
+    //
+    // `onBackPressed` rather than an OnBackInvokedCallback: the callback API is
+    // API 33 and opt-in per manifest, and the deprecated override still runs on
+    // every level this backend targets, including where the new dispatcher is
+    // on. One path, no version fork.
+    @Override public void onBackPressed() {
+        if (nativeBack()) return;
+        super.onBackPressed();
+    }
+
+    private static native boolean nativeBack();
+
     private String libraryName() {
         try {
             android.content.pm.ActivityInfo info = getPackageManager().getActivityInfo(

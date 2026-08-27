@@ -67,7 +67,10 @@ impl Buttons: component::Component {
                               corner_radius: vocab::Corners::all(10.0f64))
                    .height(44.0f64));
         styles.add(ui::text_button("A text button", key: "c:b3").height(44.0f64));
-        styles.add(ui::icon_button(share_glyph(), key: "c:b4").height(44.0f64));
+        // SQUARE, because a glyph button is a glyph and its box is the tap
+        // target around it — stretched across a card it stops reading as one.
+        styles.add(ui::icon_button(share_glyph(), key: "c:b4")
+                   .width(44.0f64).height(44.0f64));
         styles.add(shell::caption("Three postures of one idea: a filled button, the link posture (`text_button`, a decorated title), and a glyph-only `icon_button`."));
         body.add(shell::card("POSTURES", styles));
 

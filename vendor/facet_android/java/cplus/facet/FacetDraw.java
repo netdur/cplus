@@ -183,6 +183,19 @@ public final class FacetDraw {
     // paint.cplus and swipe.cplus. Grep 0x7F0F before taking one.
     private static final int INPUT_TAG = 0x7F0F000D;
 
+    // THE SHAPE A CONTROL WAS LAST GIVEN, so the frame walk can tell whether it
+    // still fits. A rounded background is built once from a size, and the size
+    // is facet's answer — which is not known when the view is CREATED and can
+    // change on any pass after that.
+    private static final int SHAPE_TAG = 0x7F0F0010;
+
+    public static boolean shapeChanged(android.view.View v, int side) {
+        Object t = v.getTag(SHAPE_TAG);
+        if (t instanceof Integer && ((Integer) t).intValue() == side) return false;
+        v.setTag(SHAPE_TAG, Integer.valueOf(side));
+        return true;
+    }
+
     public static void rememberInput(android.view.View v) {
         if (v.getTag(INPUT_TAG) != null) return;
         int bits = (v.isClickable() ? 1 : 0)

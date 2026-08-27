@@ -266,6 +266,45 @@ rows has closed: what is left is PROPS on controls that already work.
   because every scroll in the gallery fills its page, and it is the same fix
   one class over when it is.
 
+- **A WIDGET ASKING FOR A LAYOUT REACHES FACET, or it never gets one.** Every
+  host here has an empty `onLayout` because facet owns the frames, and that has
+  a consequence nobody wrote down until a device found it: a child that changes
+  its own size or content calls `requestLayout()`, the request walks up to the
+  host, and there it DIES. facet places views when its own geometry changes, and
+  a widget's internal state is not facet's geometry.
+
+  A `Spinner` reports its selection from `checkSelectionChanged`, which runs
+  inside the widget's own LAYOUT. So picking an item did nothing at all — no
+  callback, no handler, no redraw — until an unrelated change made facet run a
+  pass, at which point the pick arrived late. Reported exactly that way: "I
+  select 2, nothing happens; I toggle the switch and the picker suddenly
+  changes."
+
+  `FacetHost.requestLayout` forwards to `scheduler::request_layout`, which
+  schedules a pass unless one is already RUNNING — every `setText` in an apply
+  raises a request on its way up, so answering those would be a pass scheduling
+  itself. Idle CPU measured at 0.0% after the change.
+
+- **THE SYSTEM BACK IS THE APP'S, through `nav::pop`.** Closing the app was the
+  wrong default and it is what this backend did: a demo screen deep in the
+  gallery, and back quit. The press now goes to facet's navigation tier and only
+  falls through to the platform when facet says there is nowhere to go back to —
+  which at the top level is right, because back from the first screen leaving the
+  app IS the Android behaviour. `onBackPressed` rather than an
+  OnBackInvokedCallback: the callback API is API 33 and opt-in per manifest, and
+  the deprecated override still runs everywhere this backend targets.
+
+- **A glyph button is ROUND, and its shape is known only after layout.**
+  `bordered` DEFAULTS TO TRUE on `icon_button` in facet's contract, so the
+  border is not the backend's choice — only its shape is, and every bordered
+  icon button on this platform is a circle. The radius is half the smaller side,
+  so a stretched one is a capsule rather than an ellipse.
+
+  It is applied from the FRAME WALK because a node's frame is ZERO when its view
+  is created: computing the radius at create gave square corners, which is what
+  shipped until a device showed it. A remembered side keeps the drawable from
+  being rebuilt once a pass.
+
 - **A `context_menu` is a LONG PRESS and a `PopupMenu`.** The first non-view
   kind this backend answers: a `context_menu` node decorates the node it sits
   UNDER, so it has no place in the view tree and no frame, and neither have its
