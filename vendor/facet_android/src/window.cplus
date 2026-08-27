@@ -70,6 +70,17 @@ fn attach_root(env: rt::Env, activity: jni::jobject, root: *core::Node) -> jni::
     // the caller puts it into a window), so it goes in here.
     add_root_views(env, host, root);
 
+    // THE INSETS LISTENER, on the one view that speaks for the window. Without
+    // it an edge-to-edge window never hears the keyboard: the window does not
+    // resize, so nothing else in this backend would notice.
+    let insets: jni::jobject = dex::new_insets_listener(env);
+    if insets != (0 as jni::jobject) {
+        var hv: w::View = w::View::from_global(env, { host as *u8 });
+        hv.set_on_apply_window_insets_listener(insets);
+        paint::unwrap_keep(hv);
+        env.delete_local_ref(insets);
+    }
+
     // POINT THE AGENT SURFACE AT THE TREE. Inert for every app that never
     // called `agent::enable()`, which is the same posture facet_uikit's window
     // takes on the line after it adds its root.

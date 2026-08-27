@@ -889,14 +889,17 @@ fn apply_text_field(v: *u8, n: *core::Node, dirty: u64) {
     if (dirty & text_field::P_CLEAR_BUTTON) != (0 as u64) {
         apply_clear_button(env, tv, { (*p).clear_button });
     }
-    if (dirty & text_field::P_IS_SECURE) != (0 as u64) {
-        // TYPE_CLASS_TEXT | TYPE_TEXT_VARIATION_PASSWORD = 0x81, and plain text
-        // is TYPE_CLASS_TEXT. Constants rather than a platform read: these are
-        // in InputType, which is not in the bound class list.
-        var kind: i32 = 1 as i32;
-        if { (*p).is_secure } { kind = 129 as i32; }
-        tv.set_input_type(kind);
-    }
+    // `is_secure` IS NOT WRITTEN HERE. It rides `apply_input_flags` above, with
+    // the keyboard and the two suggestion verbs, because `setInputType` takes
+    // ONE value and every one of those props is part of it.
+    //
+    // This arm used to write `TYPE_CLASS_TEXT` on its own whenever the field was
+    // not secure — after the flags had been applied, on the same pass, with
+    // `all_bits` set at create. So every field on the platform came up as plain
+    // text: an email field, a phone field and a number field reported
+    // `inputType=0x1` to the IME, identically, and the keyboard verb looked like
+    // a prop the backend had never implemented. It was implemented and then
+    // overwritten, one arm later.
     let _keep: *u8 = et.into_raw();
     return;
 }

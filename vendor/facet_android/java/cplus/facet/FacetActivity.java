@@ -28,7 +28,13 @@ public class FacetActivity extends android.app.Activity {
         // and a full-bleed photo is a real thing to ask for. Taking the whole
         // window means the insets become a value facet can read and apply per
         // node, the way the other two backends do.
-        getWindow().setDecorFitsSystemWindows(false);
+        // API 30, and the fallback is not a lesser mode — it is the system
+        // doing the fitting, which is what every app got before this call
+        // existed. On those levels `windowInsets` answers zero and facet insets
+        // nothing, because the window it is given is already inside the bars.
+        if (android.os.Build.VERSION.SDK_INT >= 30) {
+            getWindow().setDecorFitsSystemWindows(false);
+        }
         setContentView(nativeCreateView(this));
     }
 
@@ -44,11 +50,18 @@ public class FacetActivity extends android.app.Activity {
     // has insets to report, and the second one has them.
     public static long windowInsets(android.view.View v) {
         if (v == null) return 0L;
+        // The system fitted the window itself below API 30 — see onCreate — so
+        // there is nothing left for facet to take off.
+        if (android.os.Build.VERSION.SDK_INT < 30) return 0L;
         android.view.WindowInsets w = v.getRootWindowInsets();
         if (w == null) return 0L;
+        // THE KEYBOARD IS AN INSET like any other. On a window the system no
+        // longer fits, the IME is the one that moves during use — and a field
+        // under it is a field typed into blind.
         android.graphics.Insets i = w.getInsets(
             android.view.WindowInsets.Type.systemBars()
-                | android.view.WindowInsets.Type.displayCutout());
+                | android.view.WindowInsets.Type.displayCutout()
+                | android.view.WindowInsets.Type.ime());
         return ((long) (i.left & 0xffff) << 48) | ((long) (i.top & 0xffff) << 32)
              | ((long) (i.right & 0xffff) << 16) | (long) (i.bottom & 0xffff);
     }

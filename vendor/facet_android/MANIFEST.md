@@ -266,6 +266,38 @@ rows has closed: what is left is PROPS on controls that already work.
   because every scroll in the gallery fills its page, and it is the same fix
   one class over when it is.
 
+- **THE KEYBOARD IS AN INSET, and it has to be, because the window no longer
+  resizes.** Left to itself Android resizes a window when the IME opens, and a
+  scroll view inside it then reveals the focused field by itself. Turning the
+  system's fitting off — the thing that makes `SafeArea::None` answerable — takes
+  that away: the window keeps its full height, the keyboard covers the bottom
+  third, and a field down there is typed into blind.
+
+  So `ime()` joins the system bars and the cutout in the inset the root is laid
+  out inside, and a `FacetInsets` listener is how a change arrives — on an
+  edge-to-edge window nothing else notices. The pass runs SYNCHRONOUSLY inside
+  that callback because the focused field is revealed immediately afterwards
+  with `requestRectangleOnScreen`, and asking a scroll view to reveal a rectangle
+  before it has been given its smaller height scrolls to where the field already
+  was. Measured on a device: the editor moves up 329px as the keyboard opens and
+  the caret stays in it.
+
+  `setDecorFitsSystemWindows` and `WindowInsets.Type.ime()` are BOTH API 30, and
+  this backend's floor is 26. Below 30 the call is skipped and `windowInsets`
+  answers zero — which is not a lesser mode but the older one: the system fits
+  the window, so there is nothing left for facet to take off.
+
+- **One `setInputType` per field, and it used to be two.** `keyboard`,
+  `is_secure`, `checks_spelling` and `predicts_text` are FOUR facet verbs and
+  ONE Android value, so they are computed together in `apply_input_flags`. A
+  second arm wrote `TYPE_CLASS_TEXT` on its own whenever a field was not secure —
+  after the flags, on the same pass, with every bit set at create. Every field on
+  the platform therefore came up plain: an email field, a phone field and a
+  number field reported `inputType=0x1` to the IME, identically, and the keyboard
+  verb looked like one this backend had never implemented. It was implemented and
+  then overwritten, one arm later. Verified against `dumpsys input_method`:
+  0x21 EMAIL, 0x3 PHONE, 0x2 NUMBER, 0x11 URL.
+
 - **A WIDGET ASKING FOR A LAYOUT REACHES FACET, or it never gets one.** Every
   host here has an empty `onLayout` because facet owns the frames, and that has
   a consequence nobody wrote down until a device found it: a child that changes

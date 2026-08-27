@@ -249,6 +249,17 @@ export extern fn facet_android_layout_requested(envp: *jni::JNIEnv, cls: jni::jo
     return;
 }
 
+// THE WINDOW'S INSETS CHANGED — the keyboard opening or closing, a rotation, a
+// split-screen resize. The cached insets are dropped and the pass runs HERE,
+// synchronously, because the caller reveals the focused field immediately
+// afterwards and that needs the new geometry to be in place.
+export extern fn facet_android_insets(envp: *jni::JNIEnv, cls: jni::jobject) {
+    e::set_env(rt::from_native(envp));
+    e::invalidate_insets();
+    scheduler::tick();
+    return;
+}
+
 export extern fn facet_android_picked(envp: *jni::JNIEnv, cls: jni::jobject, token: i64,
                                       index: i32) {
     e::set_env(rt::from_native(envp));
