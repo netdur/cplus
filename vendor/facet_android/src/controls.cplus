@@ -33,6 +33,7 @@ import "facet/scroll" as scroll;
 import "facet/stepper" as stepper;
 import "facet/split" as split;
 import "facet/carousel" as carousel;
+import "facet/tabs" as tabs;
 import "facet/canvas" as canvas;
 import "facet/page_dots" as page_dots;
 import "facet/date_picker" as date_picker;
@@ -1044,6 +1045,9 @@ fn create_multiline(n: *core::Node) -> *u8 {
     // TOP|START (0x30 | 0x800003). A multi-line field whose text sits centred
     // vertically is the tell that nobody set this.
     tv.set_gravity(8388659 as i32);
+    // THE CARET WATCH, which only a text AREA declares: `on_selection_changed`
+    // is a text_area verb, so a field and a search field pay nothing for it.
+    dex::watch_selection(env, { raw as jni::jobject }, watcher);
     let _keep: *u8 = t.into_raw();
     env.delete_local_ref(watcher);
     arm_edit(env, raw, n);
@@ -4411,6 +4415,52 @@ fn fire_resource_requested(token: i64, url: jni::jstring) {
     return;
 }
 
+// THE CARET MOVED, or a selection was made. Both offsets arrive in UTF-16 —
+// the Editable's units — and facet counts in BYTES, so they cross back the way
+// they came in. Written into the props first, so a handler asking
+// `area.selection_length()` is told where the caret IS rather than where it was.
+fn fire_selection(token: i64, start: i32, length: i32) {
+    let n: *core::Node = { token as *core::Node };
+    if n == (0 as *core::Node) { return; }
+    if core::kind_of(n) != props::K_TEXT_AREA { return; }
+    let p: *props::TextAreaProps = props_of(n, props::K_TEXT_AREA) as *props::TextAreaProps;
+    if p == (0 as *props::TextAreaProps) { return; }
+    var cur: [u8; 4096] = #zero::[[u8; 4096]]();
+    let cbase: *u8 = { #addr_of(cur[0]) };
+    let _c: bool = paint::cstr({ (*p).input_view.text.view() }, cbase, 4096 as usize);
+    let clen: usize = paint::cstr_len(cbase);
+    let text: str = { #str_from_raw_parts(cbase, clen) };
+    let start_b: usize = utf8_offset(text, start);
+    let end_b: usize = utf8_offset(text, start +% length);
+    { (*p).input_view.cursor_position = { start_b as i64 } };
+    { (*p).input_view.selection_length = { (end_b -% start_b) as i64 } };
+    let h: fn(*u8, *u8) = { (*p).on_selection_changed };
+    if h != props::no_handler { h(core::view_of(n), { (*p).on_selection_changed_ctx }); }
+    return;
+}
+
+// THE INVERSE OF `utf16_len`: how many BYTES of `s` come before UTF-16 unit
+// `units`. The pair is what keeps facet's byte offsets and Java's UTF-16 ones
+// from meeting.
+fn utf8_offset(s: str, units: i32) -> usize {
+    var seen: i32 = 0 as i32;
+    var i: usize = 0 as usize;
+    let n: usize = s.count();
+    while i < n {
+        if seen >= units { return i; }
+        let b: u8 = match s.byte_at(i) {
+            option::Option[u8]::Some(x) => x,
+            option::Option[u8]::None => 0 as u8,
+        };
+        if (b & (192 as u8)) != (128 as u8) {
+            if b >= (240 as u8) { seen = seen +% (2 as i32); }
+            else { seen = seen +% (1 as i32); }
+        }
+        i = i +% (1 as usize);
+    }
+    return n;
+}
+
 // ---- rich text -------------------------------------------------------------------
 //
 // TWO VERBS, ONE MECHANISM. A label's `formatted_text` is a formatted STRING:
@@ -4531,5 +4581,174 @@ fn apply_style_runs(env: rt::Env, v: *u8, runs: *vocab::StyleRuns, current: str)
     // NO LINKS on an editor: a URLSpan in an EditText makes the text clickable
     // and the caret unreachable, and `StyleRun` carries no destination anyway.
     dex::spans_commit(env, { v as jni::jobject }, false);
+    return;
+}
+
+// ---- tabs ----------------------------------------------------------------------
+//
+// THE PANES ARE THE CHILDREN and each pane's KEY is its title — facet_appkit's
+// reading, and the one the contract supports: `TabsProps` carries five bar
+// colours, a selected index and a handler, and nothing that could name a tab.
+// "A tab needs a title and every addressable node already has one."
+//
+// The strip is a native child this package owns, like the split's divider and
+// the swipe strip — nothing in facet's tree corresponds to it, so nothing else
+// in the frame walk would place it. It lives in the node's PADDING, which is
+// how flex is told it is there; without that a pane lays out over it.
+
+const TAB_STRIP_TAG: i32 = 2131886095 as i32;   // 0x7F0F000F — see SCROLL_DOC_TAG
+
+fn tabs_props(n: *core::Node) -> *props::TabsProps {
+    return props_of(n, props::K_TABS) as *props::TabsProps;
+}
+
+fn strip_height() -> f64 { return 40.0f64; }
+
+fn create_tabs(n: *core::Node) -> *u8 {
+    let env: rt::Env = e::env();
+    let raw: *u8 = global_of(dex::new_host(env, e::context()));
+    let strip: jni::jobject = dex::new_host(env, e::context());
+    attach_layout_params({ strip as *u8 });
+    var host: w::ViewGroup = w::ViewGroup::from_global(env, raw);
+    host.add_view_view(strip);
+    let _k: *u8 = host.into_raw();
+    var hv: w::View = w::View::from_global(env, raw);
+    hv.set_tag_i_object(TAB_STRIP_TAG, strip);
+    paint::unwrap_keep(hv);
+    env.delete_local_ref(strip);
+    return raw;
+}
+
+// The strip view, as a LOCAL ref — the caller's for the length of the call.
+fn tab_strip_of(v: *u8) -> jni::jobject {
+    if v == (0 as *u8) { return 0 as jni::jobject; }
+    if !e::have_env() { return 0 as jni::jobject; }
+    var view: w::View = w::View::from_global(e::env(), v);
+    let t: jni::jobject = view.get_tag_i(TAB_STRIP_TAG);
+    paint::unwrap_keep(view);
+    return t;
+}
+
+fn apply_tabs(v: *u8, n: *core::Node, dirty: u64) {
+    let p: *props::TabsProps = tabs_props(n);
+    if p == (0 as *props::TabsProps) { return; }
+    if dirty == paint::all_bits() {
+        { (*n).set_padding(flex::Edge::Top, flex::StyleLength::points(strip_height())) };
+    }
+    // THE STRIP IS REBUILT RATHER THAN DIFFED. A tab strip is short, the panes
+    // change rarely, and a diff would be more code than the rebuild it
+    // replaces — the same call facet_appkit makes about its own.
+    let rebuild: u64 = tabs::P_BAR_BACKGROUND | tabs::P_BAR_BACKGROUND_COLOR
+                     | tabs::P_BAR_TEXT_COLOR | tabs::P_SELECTED_TAB_COLOR
+                     | tabs::P_UNSELECTED_TAB_COLOR | tabs::P_SELECTED_INDEX;
+    if (dirty & rebuild) != (0 as u64) || dirty == paint::all_bits() {
+        rebuild_tab_strip(v, n, p);
+    }
+    if (dirty & tabs::P_SELECTED_INDEX) != (0 as u64) || dirty == paint::all_bits() {
+        show_selected_pane(n, { (*p).selected_index });
+    }
+    return;
+}
+
+// ONE BUTTON PER PANE. The buttons are placed by `place_tab_strip` in the frame
+// walk, because their width is the host's divided by the count and the host's
+// width is not known until then.
+fn rebuild_tab_strip(v: *u8, n: *core::Node, p: *props::TabsProps) {
+    if !e::have_env() { return; }
+    let env: rt::Env = e::env();
+    let strip: jni::jobject = tab_strip_of(v);
+    if strip == (0 as jni::jobject) { return; }
+    var g: w::ViewGroup = w::ViewGroup::from_global(env, env.new_global_ref({ strip as *u8 }));
+    g.remove_all_views();
+    let count: usize = core::child_count_of(n);
+    let at: i64 = { (*p).selected_index };
+    var back: vocab::Color = { (*p).bar_background_color };
+    if !back.is_set() {
+        // A GRADIENT BAR IS ITS FIRST COLOUR HERE. The strip is a flat host,
+        // not a drawn surface, and one colour is a truer reading than dropping
+        // the verb — the same reduction `apply_decoration` makes when a
+        // gradient lands somewhere that takes a colour.
+        let brush: vocab::Brush = { (*p).bar_background };
+        if { brush.start }.is_set() { back = { brush.start }; }
+    }
+    if back.is_set() {
+        var sv: w::View = w::View::from_global(env, env.new_global_ref({ strip as *u8 }));
+        sv.set_background_color(paint::argb_of(back));
+        paint::unwrap_keep(sv);
+    }
+    var i: usize = 0 as usize;
+    while i < count {
+        match core::child_of(n, i) {
+            option::Option[*core::Node]::Some(c) => {
+                var b: w::Button = w::Button::new_context(env, e::context());
+                let braw: *u8 = b.into_raw();
+                attach_layout_params(braw);
+                var bt: w::Button = w::Button::from_global(env, braw);
+                var btv: w::TextView = bt.as_text_view();
+                var key: [u8; 128] = #zero::[[u8; 128]]();
+                let kbase: *u8 = { #addr_of(key[0]) };
+                if paint::cstr({ (*c).key() }, kbase, 128 as usize) { btv.set_text_str(kbase); }
+                btv.set_all_caps(false);
+                // THE SELECTED TAB AND THE OTHERS ARE TWO COLOURS, and
+                // `bar_text_color` is the fallback for whichever is unset — a
+                // strip that states only one of the three should still read.
+                var fg: vocab::Color = { (*p).unselected_tab_color };
+                if { i as i64 } == at { fg = { (*p).selected_tab_color }; }
+                if !fg.is_set() { fg = { (*p).bar_text_color }; }
+                if fg.is_set() { btv.set_text_color_i(paint::argb_of(fg)); }
+                // A TAB IS A NODE'S INDEX, and the click carries it: the tab
+                // token packs the node with the index rather than pointing at
+                // the pane, because the pane is not what the handler is about.
+                let listener: jni::jobject = dex::new_tab_click(env,
+                    { #addr(n) as i64 }, { i as i32 });
+                if listener != (0 as jni::jobject) {
+                    var bv: w::View = w::View::from_global(env, env.new_global_ref(braw));
+                    bv.set_on_click_listener(listener);
+                    paint::unwrap_keep(bv);
+                    env.delete_local_ref(listener);
+                }
+                g.add_view_view({ braw as jni::jobject });
+                let _kb: *u8 = bt.into_raw();
+                env.delete_global_ref({ braw as jni::jobject });
+            }
+            option::Option[*core::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    let _kg: *u8 = g.into_raw();
+    env.delete_local_ref(strip);
+    return;
+}
+
+fn show_selected_pane(n: *core::Node, at: i64) {
+    var i: usize = 0 as usize;
+    let count: usize = core::child_count_of(n);
+    while i < count {
+        match core::child_of(n, i) {
+            option::Option[*core::Node]::Some(c) => {
+                if { i as i64 } == at { core::set_display(c, flex::Display::Flex); }
+                else { core::set_display(c, flex::Display::None); }
+            }
+            option::Option[*core::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return;
+}
+
+// A TAB WAS PICKED. `selected_index` is written before the handler, the rule
+// every read in this backend follows.
+fn fire_tab(token: i64, index: i32) {
+    let n: *core::Node = { token as *core::Node };
+    if n == (0 as *core::Node) { return; }
+    if core::kind_of(n) != props::K_TABS { return; }
+    let p: *props::TabsProps = tabs_props(n);
+    if p == (0 as *props::TabsProps) { return; }
+    let at: i64 = { index as i64 };
+    if { (*p).selected_index } == at { return; }
+    { (*p).selected_index = at };
+    core::touch(n, tabs::P_SELECTED_INDEX);
+    let h: fn(*u8, *u8) = { (*p).on_tab_changed };
+    if h != props::no_handler { h(core::view_of(n), { (*p).on_tab_changed_ctx }); }
     return;
 }

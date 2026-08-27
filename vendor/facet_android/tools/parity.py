@@ -44,12 +44,12 @@ BACKENDS = {
 # These are LOW and rising, which is the opposite of gtk's — this backend was
 # started on 2026-08-24 and the number is a progress bar rather than a guard
 # against regression. Raise it whenever it moves up; that is the whole ritual.
-FLOOR = 309
+FLOOR = 315
 # Same gate on the READ half. Kept separate because the two surfaces fail
 # differently: a missing prop is a control that ignores you, a missing handler
 # is a control that never answers — and the gap between 45% and 35% here says
 # this backend can be TOLD more than it can SAY.
-HANDLER_FLOOR = 65
+HANDLER_FLOOR = 67
 # The SHARED band, which every node has and which no per-kind number covers.
 SHARED_FLOOR = 19
 

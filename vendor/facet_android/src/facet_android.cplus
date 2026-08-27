@@ -209,6 +209,20 @@ export extern fn facet_android_resource(envp: *jni::JNIEnv, cls: jni::jobject,
     return;
 }
 
+export extern fn facet_android_selection(envp: *jni::JNIEnv, cls: jni::jobject,
+                                         token: i64, start: i32, length: i32) {
+    e::set_env(rt::from_native(envp));
+    controls::fire_selection(token, start, length);
+    return;
+}
+
+export extern fn facet_android_tab(envp: *jni::JNIEnv, cls: jni::jobject,
+                                   token: i64, index: i32) {
+    e::set_env(rt::from_native(envp));
+    controls::fire_tab(token, index);
+    return;
+}
+
 export extern fn facet_android_picked(envp: *jni::JNIEnv, cls: jni::jobject, token: i64,
                                       index: i32) {
     e::set_env(rt::from_native(envp));

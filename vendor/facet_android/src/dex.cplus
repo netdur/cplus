@@ -21,7 +21,7 @@ import "jni/jni" as jni;
 import "android_view/runtime" as rt;
 
 // Kept in step by tools/build_dex.sh; do not hand-edit.
-const DEX_LEN: usize = 33716;
+const DEX_LEN: usize = 35032;
 
 static LOADER: usize = 0;
 static C_HOST: usize = 0;
@@ -48,6 +48,7 @@ static C_WEB: usize = 0;
 static C_ZOOM: usize = 0;
 static C_CAROUSEL: usize = 0;
 static C_BRIDGE: usize = 0;
+static C_TABCLICK: usize = 0;
 
 // jni.h's JNINativeMethod with the fn slot concretely typed per shape.
 #[repr(C)]
@@ -160,6 +161,9 @@ extern fn facet_android_seek_start(envp: *jni::JNIEnv, cls: jni::jobject, token:
 extern fn facet_android_seek_stop(envp: *jni::JNIEnv, cls: jni::jobject, token: i64);
 extern fn facet_android_text(envp: *jni::JNIEnv, cls: jni::jobject, token: i64, s: jni::jobject);
 extern fn facet_android_step(envp: *jni::JNIEnv, cls: jni::jobject, token: i64, delta: i32);
+extern fn facet_android_selection(envp: *jni::JNIEnv, cls: jni::jobject, token: i64,
+                                  start: i32, length: i32);
+extern fn facet_android_tab(envp: *jni::JNIEnv, cls: jni::jobject, token: i64, index: i32);
 extern fn facet_android_carousel_page(envp: *jni::JNIEnv, cls: jni::jobject, token: i64,
                                       index: i32);
 extern fn facet_android_raw_message(envp: *jni::JNIEnv, cls: jni::jobject, token: i64,
@@ -223,6 +227,7 @@ fn web_class() -> jni::jclass { return { C_WEB as *u8 }; }
 fn zoom_class() -> jni::jclass { return { C_ZOOM as *u8 }; }
 fn carousel_class() -> jni::jclass { return { C_CAROUSEL as *u8 }; }
 fn bridge_class() -> jni::jclass { return { C_BRIDGE as *u8 }; }
+fn tabclick_class() -> jni::jclass { return { C_TABCLICK as *u8 }; }
 fn loaded() -> bool { return LOADER != 0; }
 
 // Load the dex and bind every native. Idempotent; `any_view` is only needed to
@@ -239,7 +244,7 @@ fn ensure_loaded(env: rt::Env, any_view: jni::jobject) {
     // Activity would hold a FacetHost of one class while this code registered
     // natives on the other, and `nativeSizeChanged` would never arrive.
     if load_merged(env) { return; }
-    let dex: *[u8; 33716] = #include_bytes("../facet_android.dex");
+    let dex: *[u8; 35032] = #include_bytes("../facet_android.dex");
     let buffer: jni::jobject = {
         (*(*env.raw())).NewDirectByteBuffer(env.raw(), { dex as *u8 }, DEX_LEN as i64)
     };
@@ -283,6 +288,7 @@ fn ensure_loaded(env: rt::Env, any_view: jni::jobject) {
     C_ZOOM = { #addr(load_class(env, loader, #str_ptr("cplus.facet.FacetZoomHost\0"))) };
     C_CAROUSEL = { #addr(load_class(env, loader, #str_ptr("cplus.facet.FacetCarousel\0"))) };
     C_BRIDGE = { #addr(load_class(env, loader, #str_ptr("cplus.facet.FacetBridge\0"))) };
+    C_TABCLICK = { #addr(load_class(env, loader, #str_ptr("cplus.facet.FacetTabClick\0"))) };
 
     bind_natives(env);
 
@@ -325,6 +331,7 @@ fn load_merged(env: rt::Env) -> bool {
     C_ZOOM = { #addr(find_global(env, #str_ptr("cplus/facet/FacetZoomHost\0"))) };
     C_CAROUSEL = { #addr(find_global(env, #str_ptr("cplus/facet/FacetCarousel\0"))) };
     C_BRIDGE = { #addr(find_global(env, #str_ptr("cplus/facet/FacetBridge\0"))) };
+    C_TABCLICK = { #addr(find_global(env, #str_ptr("cplus/facet/FacetTabClick\0"))) };
     // A sentinel rather than a loader object: `loaded()` asks whether the
     // classes are here, and by this path there is no loader to keep.
     LOADER = 1 as usize;
@@ -411,6 +418,13 @@ fn bind_natives(env: rt::Env) {
     };
     let _r7: i32 = { (*(*env.raw())).RegisterNatives(env.raw(), { C_TEXT as *u8 },
                                                      #addr_of(text_rec) as *u8, 1) };
+    var sel_rec: Native3LII = Native3LII {
+        name: #str_ptr("nativeSelection\0"),
+        signature: #str_ptr("(JII)V\0"),
+        fn_ptr: facet_android_selection,
+    };
+    let _r7b: i32 = { (*(*env.raw())).RegisterNatives(env.raw(), { C_TEXT as *u8 },
+                                                      #addr_of(sel_rec) as *u8, 1) };
 
     var job_rec: Native0 = Native0 {
         name: #str_ptr("nativeJob\0"),
@@ -593,6 +607,14 @@ fn bind_natives(env: rt::Env) {
     let _r14: i32 = { (*(*env.raw())).RegisterNatives(env.raw(), { C_WEB as *u8 },
                                                       #addr_of(resource_rec) as *u8, 1) };
 
+    var tab_rec: Native2LI = Native2LI {
+        name: #str_ptr("nativeTab\0"),
+        signature: #str_ptr("(JI)V\0"),
+        fn_ptr: facet_android_tab,
+    };
+    let _r15: i32 = { (*(*env.raw())).RegisterNatives(env.raw(), { C_TABCLICK as *u8 },
+                                                      #addr_of(tab_rec) as *u8, 1) };
+
     var step_rec: Native2LI = Native2LI {
         name: #str_ptr("nativeStep\0"),
         signature: #str_ptr("(JI)V\0"),
@@ -685,6 +707,21 @@ fn draw_input_transparent(env: rt::Env, view: jni::jobject, through: bool) {
     return;
 }
 
+// THE CARET WATCH, armed on the Editable rather than the view: a SpanWatcher
+// hears a selection move only if it is itself a span. Re-armed whenever the
+// text is replaced, because a new Editable carries none of the old one's spans.
+fn watch_selection(env: rt::Env, view: jni::jobject, watcher: jni::jobject) {
+    if C_TEXT == 0 { return; }
+    let mid: jni::jmethodID = env.method_id_static({ C_TEXT as *u8 },
+        #str_ptr("watchSelection\0"),
+        #str_ptr("(Landroid/widget/EditText;Lcplus/facet/FacetText;)V\0"));
+    if mid == (0 as jni::jmethodID) { return; }
+    var args: [jni::JValue; 2] = [jni::arg_object(view), jni::arg_object(watcher)];
+    { (*(*env.raw())).CallStaticVoidMethodA(env.raw(), { C_TEXT as *u8 }, mid,
+                                            #addr_of(args[0])) };
+    return;
+}
+
 // ---- rich text -----------------------------------------------------------------
 // The span builder lives on the view between these calls; see FacetDraw.
 
@@ -763,6 +800,17 @@ fn window_insets(env: rt::Env, host: jni::jobject) -> i64 {
     if mid == (0 as jni::jmethodID) { return 0 as i64; }
     var args: [jni::JValue; 1] = [jni::arg_object(host)];
     return { (*(*env.raw())).CallStaticLongMethodA(env.raw(), cls, mid, #addr_of(args[0])) };
+}
+
+// `new FacetTabClick(token, index)` — one tab button's listener.
+fn new_tab_click(env: rt::Env, token: i64, index: i32) -> jni::jobject {
+    if C_TABCLICK == 0 { return 0 as jni::jobject; }
+    let ctor: jni::jmethodID = env.method_id({ C_TABCLICK as *u8 }, #str_ptr("<init>\0"),
+                                             #str_ptr("(JI)V\0"));
+    if ctor == (0 as jni::jmethodID) { return 0 as jni::jobject; }
+    var args: [jni::JValue; 2] = [jni::arg_long(token), jni::arg_int(index)];
+    return { (*(*env.raw())).NewObjectA(env.raw(), { C_TABCLICK as *u8 }, ctor,
+                                        #addr_of(args[0])) };
 }
 
 // `new FacetBridge(token, host)` — the object a page posts to.

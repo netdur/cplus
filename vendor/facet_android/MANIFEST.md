@@ -160,14 +160,13 @@ count as answering it. Three surfaces, because they fail differently:
 
 | | android | gtk | appkit | uikit |
 |---|---|---|---|---|
-| props | 309/360 · 85% | 356 · 98% | 334 · 92% | 321 · 89% |
-| handlers | 65/68 · 95% | 68 · 100% | 68 · 100% | 65 · 95% |
+| props | 315/360 · 87% | 356 · 98% | 334 · 92% | 321 · 89% |
+| handlers | 67/68 · 98% | 68 · 100% | 68 · 100% | 65 · 95% |
 | shared band | 19/21 · 90% | 19 · 90% | 20 · 95% | 18 · 85% |
 
-The three handlers still unfired are a reorder that no kind here performs, a
-`tabs` change on a kind with no body, and a text area's selection. The gap
-between the two rows has closed: what is left is mostly PROPS on controls that
-already work.
+The ONE handler still unfired is `on_reorder_completed`, on a gesture this
+platform does not offer without AndroidX — §1 says so. The gap between the two
+rows has closed: what is left is PROPS on controls that already work.
 
 - **PULL-TO-REFRESH IS HAND-ROLLED**, because `SwipeRefreshLayout` is AndroidX
   — an `.aar` with its own dex and dependency graph — and this project ships no
@@ -182,12 +181,7 @@ already work.
   then a CANCEL every time. Claimed only at row zero, and released the moment
   the drag turns upward, which is a scroll and the page's.
 
-- **The controls still without a body.** `tabs` and the menu tier.
-
-  `tabs` is blocked on something else entirely: what its SEGMENTS are is not
-  settled. facet_uikit makes a UISegmentedControl and never populates it, so
-  there is no implementation to read the intent from, and guessing would be
-  inventing a control facet has not described.
+- **The controls still without a body.** The menu tier.
 
 - **Rich text is SPANS, and the two verbs differ only in where the string comes
   from.** A label's `formatted_text` carries the text inside each run, so
@@ -268,6 +262,42 @@ already work.
   because every scroll in the gallery fills its page, and it is the same fix
   one class over when it is.
 
+- **`tabs` reads the way facet_appkit reads it, and that settles a question this
+  file used to leave open.** The panes are the node's CHILDREN and each pane's
+  KEY is its title — "a tab needs a title and every addressable node already has
+  one". `TabsProps` carries five bar colours, a selected index and a handler,
+  and nothing that could name a tab, so there was no other reading available.
+  The note that stood here said the intent was unknown because facet_uikit
+  builds a UISegmentedControl and never populates it; AppKit had the answer all
+  along, and reading only the nearest backend is what hid it.
+
+  The strip is a native child this package owns — like the split's divider and
+  the swipe strip — placed by the frame walk, and it lives in the node's
+  PADDING, which is how flex is told it is there. An unselected pane is
+  `Display::None` rather than hidden: its space comes out of the layout.
+
+  A tab has its OWN listener class, because a tab click carries two things —
+  the node and which tab — and a listener is free to hold both. The first
+  attempt packed them into the one long `FacetClick` already carries, on the
+  reasoning that an ordinary address shifted back could not be a node. It cannot
+  be a VALID node, which is not the same thing: it is a garbage POINTER, and the
+  kind check dereferenced it. Every button in the application crashed on its
+  first click. Two fields cost less than that arithmetic did.
+
+- **A text area's caret is a SPAN, and the watch re-arms itself.** Android has
+  no selection listener. The caret is two spans on the Editable —
+  `Selection.SELECTION_START` and `SELECTION_END` — and a `SpanWatcher` hears
+  them move, but only by being set as a span itself. `setText` hands the view a
+  NEW Editable and spans do not survive that, so the watch is dropped by the
+  first apply that writes text, which is every one of them.
+  `afterTextChanged` is the one callback guaranteed to run afterwards — the
+  TextWatcher registration lives on the VIEW, not on the buffer — so that is
+  where it re-attaches.
+
+  Both spans move for one caret move, so the pair is compared before reporting
+  or every arrow key is two callbacks saying the same thing. Offsets convert
+  UTF-16 back to BYTES, the inverse of the rich-text path.
+
 - **A `collection`'s COLUMN WIDTH is the whole control, and `item_sizing` is
   half of one.** A GridView does not divide its width by its column count — it
   divides by a column WIDTH you give it, and hands the remainder back only if
@@ -312,8 +342,8 @@ already work.
   `text_button`, `text_area`, `search_field`, `image`, `icon_button`, `scroll`,
   `stepper`, `list`, `tree`, `split`, `canvas`, `swipeable`, `page_dots`,
   `date_picker`, `symbol`, `time_picker`, `bordered`, `popup`, `web`,
-  `refreshable`, `table`, `collection`, `carousel` and `hybrid_web` — each with
-  BOTH
+  `refreshable`, `table`, `collection`, `carousel`, `hybrid_web` and `tabs` —
+  each with BOTH
   halves, the props write and the event read. Half a control is worse than none:
   it looks finished and reports nothing, which is the shape of the bug
   facet_uikit carried in its checkbox until 2026-08-25.

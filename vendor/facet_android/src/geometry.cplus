@@ -319,6 +319,38 @@ fn settle_splits(node: *core::Node) -> bool {
     return wrote;
 }
 
+// A TAB STRIP, across the top of the tabs host and divided evenly. This
+// package's own view, like the split's divider and the swipe strip, so nothing
+// else in the walk places it — and its buttons are placed here too, because
+// their width is the host's over the count and the host's width is this pass's
+// answer.
+fn place_tab_strip(n: *core::Node, v: *u8, frame: flex::Frame) {
+    if core::kind_of(n) != props::K_TABS { return; }
+    if !e::have_env() { return; }
+    let env: rt::Env = e::env();
+    let strip: jni::jobject = controls::tab_strip_of(v);
+    if strip == (0 as jni::jobject) { return; }
+    let h: f64 = controls::strip_height();
+    place(strip, 0.0f64, 0.0f64, frame.width, h);
+    var g: w::ViewGroup = w::ViewGroup::from_global(env, env.new_global_ref({ strip as *u8 }));
+    let count: i32 = g.get_child_count();
+    if count > (0 as i32) {
+        let each: f64 = frame.width / { count as f64 };
+        var i: i32 = 0 as i32;
+        while i < count {
+            let b: jni::jobject = g.get_child_at(i);
+            if b != (0 as jni::jobject) {
+                place({ b as *u8 }, { i as f64 } * each, 0.0f64, each, h);
+                env.delete_local_ref(b);
+            }
+            i = i +% (1 as i32);
+        }
+    }
+    let _k: *u8 = g.into_raw();
+    env.delete_local_ref(strip);
+    return;
+}
+
 // A LIST'S REFRESH INDICATOR, centred above the list's own top edge — which is
 // where a pull reveals it. This package's own view, like the split's divider and
 // the swipe strip, so nothing else in the walk places it.
@@ -414,6 +446,7 @@ fn reposition(root: *core::Node) {
         place(rv, f.left + INSET_LEFT, f.top + INSET_TOP, f.width, f.height);
         size_document(root, rv, f);
         place_split_divider(root, rv, f);
+        place_tab_strip(root, rv, f);
         swipe::place_strip(root, rv, f, place);
         place_refresh_spinner(root, rv, f, f);
         reposition_children(root, f);
@@ -453,6 +486,7 @@ fn reposition_children(node: *core::Node, host_abs: flex::Frame) {
                     place(v, cf.left - host_abs.left, cf.top - host_abs.top, cf.width, cf.height);
                     size_document(c, v, cf);
                     place_split_divider(c, v, cf);
+                    place_tab_strip(c, v, cf);
                     swipe::place_strip(c, v, cf, place);
                     place_refresh_spinner(c, v, cf, host_abs);
                     reposition_children(c, cf);

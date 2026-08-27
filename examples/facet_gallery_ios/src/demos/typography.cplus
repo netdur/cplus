@@ -130,6 +130,28 @@ impl Fields {
     }
 }
 
+// THE CARET MOVED, or a range was selected. Android reports it as a SPAN move
+// on the editable — there is no listener for it — and the offsets arrive back
+// here in facet's own byte units.
+fn caret_moved(v: *u8, ctx: *u8) {
+    match text_area::find("t:area") {
+        option::Option[text_area::TextArea]::Some(t) => {
+            let at: i64 = t.cursor_position();
+            let len: i64 = t.selection_length();
+            match label::find("t:caret") {
+                option::Option[label::Label]::Some(l) => {
+                    let _s: label::Label = l.set_text(if len > (0 as i64) {
+                        "${len} byte(s) selected from ${at}"
+                    } else { "caret at ${at}" });
+                }
+                option::Option[label::Label]::None => { }
+            }
+        }
+        option::Option[text_area::TextArea]::None => { }
+    }
+    return;
+}
+
 impl Fields: component::Component {
     fn build(ref this) -> core::Node {
         var body: flex::Builder = flex::Builder::new();
@@ -168,7 +190,15 @@ impl Fields: component::Component {
             }
             option::Option[text_area::TextArea]::None => { }
         }
+        match text_area::find("t:area", within: #addr_of(editor)) {
+            option::Option[text_area::TextArea]::Some(t) => {
+                let _h: text_area::TextArea = t.set_on_selection_changed(caret_moved);
+            }
+            option::Option[text_area::TextArea]::None => { }
+        }
         area.add(editor);
+        area.add(ui::label("caret at 0", key: "t:caret", font_size: 13.0f64,
+                           text_color: vocab::Color::ink(0.7f64)));
         area.add(shell::caption("`style_runs` is the other half: it colours RANGES of text that is already there, by byte offset, without touching the text — which is what syntax highlighting is. The three words above are one run each."));
         area.add(shell::caption("A `text_area` is a UITextView, which is NOT a UIControl — it has no target/action at all, so its typing arrives through a synthesized UITextViewDelegate instead."));
         body.add(shell::card("EDITOR", area));

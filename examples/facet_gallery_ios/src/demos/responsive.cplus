@@ -30,6 +30,8 @@ import "facet/bands" as bands;
 import "facet/component" as component;
 import "facet/label" as label;
 import "facet/mount" as mount;
+import "facet/tabs" as tabs;
+import "stdlib/status" as status;
 import "facet/services" as services;
 import "facet/vocabulary" as vocab;
 import "flex_layout/flex_layout" as flex;
@@ -113,6 +115,34 @@ fn pane(title: str, body: str, fill: vocab::Color, key: str) -> core::Node {
     return n;
 }
 
+fn tab_pane(title: str, body: str) -> core::Node {
+    var b: flex::Builder = flex::Builder::new();
+    b.add(ui::label(title, font_size: 17.0f64,
+                    font_weight: vocab::FontWeight::Semibold));
+    b.add(ui::label(body, font_size: 14.0f64, max_lines: 3 as i64,
+                    line_break: vocab::LineBreak::WordWrap,
+                    text_color: vocab::Color::ink(0.7f64)));
+    return ui::column(b, key: title).padding(14.0f64).gap(6.0f64).grow(1.0f64);
+}
+
+fn tab_picked(v: *u8, ctx: *u8) {
+    match tabs::find("r:tabs") {
+        option::Option[tabs::Tabs]::Some(t) => {
+            let i: i64 = t.selected_index();
+            match label::find("r:tab:read") {
+                option::Option[label::Label]::Some(l) => {
+                    let _s: label::Label = l.set_text(if i == (0 as i64) { "showing Overview" }
+                                                      else if i == (1 as i64) { "showing Detail" }
+                                                      else { "showing About" });
+                }
+                option::Option[label::Label]::None => { }
+            }
+        }
+        option::Option[tabs::Tabs]::None => { }
+    }
+    return;
+}
+
 impl Responsive: component::Component {
     fn build(ref this) -> core::Node {
         var body: flex::Builder = flex::Builder::new();
@@ -141,6 +171,24 @@ impl Responsive: component::Component {
 
         var note: flex::Builder = flex::Builder::new();
         note.add(shell::caption("A band is a NAMED box constraint — `compact` is 300–600pt wide — defined once in `facet/bands` and referenced by name everywhere. That indirection is the point: a threshold written at the place it is used drifts, and two screens end up disagreeing about where a phone stops being a phone."));
+        // ---- tabs -----------------------------------------------------------
+        // THE PANES ARE THE CHILDREN and each pane's KEY is its title: a tab
+        // needs a title, and every addressable node already has one.
+        var tb: flex::Builder = flex::Builder::new();
+        var deck: core::Node = ui::tabs(key: "r:tabs",
+                                        bar_text_color: vocab::Color::ink(0.55f64),
+                                        selected_tab_color: vocab::Color::system_teal(),
+                                        on_tab_changed: tab_picked)
+            .height(150.0f64);
+        let _t1: status::Status = deck.add_child(tab_pane("Overview", "The first pane."));
+        let _t2: status::Status = deck.add_child(tab_pane("Detail", "The second, which the first tab hides."));
+        let _t3: status::Status = deck.add_child(tab_pane("About", "And a third."));
+        tb.add(shell::painted(deck, vocab::Color::fill(), 10.0f64));
+        tb.add(ui::label("showing Overview", key: "r:tab:read", font_size: 13.0f64,
+                         text_color: vocab::Color::ink(0.7f64)));
+        tb.add(shell::caption("One strip of buttons and one pane visible at a time. `selected_index` decides which; the others are `Display::None`, which takes their space out of the layout rather than merely hiding them."));
+        body.add(shell::card("TABS", tb));
+
         body.add(shell::card("WHAT A BAND IS", note));
 
         var how: flex::Builder = flex::Builder::new();
