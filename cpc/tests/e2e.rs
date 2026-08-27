@@ -26826,3 +26826,104 @@ fn build_hides_dependency_warnings_but_never_dependency_errors() {
         "a dependency's ERROR must never be suppressed:\n{broken}"
     );
 }
+
+/// A PREBUILT PACKAGE'S `async fn` MUST BE THE ARCHIVE'S, not an empty copy the
+/// consumer synthesized from the header.
+///
+/// bugs/closed/time-sleep-does-not-sleep.md. A prebuilt package declares its
+/// async fns body-less in `lib/include/<mod>.cplus` (`async fn f() -> i32 ;`).
+/// Codegen routed on `is_async` BEFORE the body-less-declaration guard, so it
+/// emitted a coroutine RAMP for the declaration: malloc a frame, run the
+/// final-suspend epilogue, mark DONE, return. The linker then had two
+/// `_pkg.src.mod.f` symbols and bound the consumer's call to its own empty one,
+/// so `await` completed immediately with an unwritten promise.
+///
+/// `await time::sleep(3000)` returned in under a millisecond, in a process that
+/// lived 0.3 seconds; all four of `stdlib/net`'s async I/O verbs were disarmed
+/// the same way.
+///
+/// THIS TEST LIVES HERE AND NOT IN THE PACKAGE'S OWN SUITE, which is the whole
+/// reason it went unseen for so long: a package's suite compiles its own
+/// modules from SOURCE, so the declaration path never runs and no assertion
+/// inside `stdlib` — however good — can fail against this. Only a CONSUMER of
+/// the archive sees it.
+///
+/// The value is the assertion rather than a duration: an empty coroutine leaves
+/// the promise unwritten, so reading 41 back proves the archive's body ran.
+#[test]
+fn a_prebuilt_packages_async_fn_runs_the_archives_body() {
+    let cpc = env!("CARGO_BIN_EXE_cpc");
+    let dir = tempdir();
+
+    // The dependency: prebuilt (the default), with one async fn and one
+    // ordinary fn so a failure separates "async is broken" from "the whole
+    // package is unreachable".
+    std::fs::create_dir_all(dir.join("vendor/asynclib/src")).unwrap();
+    std::fs::write(
+        dir.join("vendor/asynclib/Cplus.toml"),
+        "[package]\nname = \"asynclib\"\nversion = \"0.0.1\"\nedition = \"2026\"\n\n\
+         [dependencies]\nstdlib = \"*\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("vendor/asynclib/src/engine.cplus"),
+        "import \"stdlib/future\" as _;\n\
+         async fn answer() -> i32 { return 41; }\n\
+         fn plain_answer() -> i32 { return 41; }\n",
+    )
+    .unwrap();
+
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(
+        dir.join("Cplus.toml"),
+        "[package]\nname = \"asyncuser\"\nversion = \"0.0.1\"\nedition = \"2026\"\n\n\
+         [dependencies]\nstdlib = \"*\"\nasynclib = \"*\"\n",
+    )
+    .unwrap();
+    // stdlib comes from the repo; `asynclib` is the one written above, so the
+    // symlink must not shadow it — copy stdlib in beside it instead.
+    let repo_vendor = format!("{}/../vendor", env!("CARGO_MANIFEST_DIR"));
+    std::os::unix::fs::symlink(
+        format!("{repo_vendor}/stdlib"),
+        dir.join("vendor/stdlib"),
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("src/main.cplus"),
+        "import \"stdlib/io\" as io;\n\
+         import \"stdlib/executor\" as executor;\n\
+         import \"asynclib/engine\" as engine;\n\
+         \n\
+         fn main() -> i32 {\n\
+             io::println(\"plain ${engine::plain_answer()}\");\n\
+             let v: i32 = executor::block_on::[i32](engine::answer());\n\
+             io::println(\"async ${v}\");\n\
+             return 0;\n\
+         }\n",
+    )
+    .unwrap();
+
+    let out = Command::new(cpc)
+        .arg("build")
+        .current_dir(&dir)
+        .output()
+        .expect("invoke cpc build");
+    assert!(
+        out.status.success(),
+        "a consumer of a prebuilt async fn must LINK — an `internal` definition \
+         in the archive is the other half of this bug:\n{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr),
+    );
+
+    let run = Command::new(dir.join("target/debug/asyncuser"))
+        .output()
+        .expect("run the consumer");
+    let stdout = String::from_utf8_lossy(&run.stdout);
+    assert!(stdout.contains("plain 41"), "ordinary fn: {stdout}");
+    assert!(
+        stdout.contains("async 41"),
+        "the archive's async body must run; an empty synthesized copy leaves \
+         the promise unwritten: {stdout}"
+    );
+}

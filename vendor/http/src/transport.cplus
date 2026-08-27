@@ -1,0 +1,517 @@
+// transport — the Apple half: NSURLSession, and nothing else.
+//
+// THE PLATFORM DEFAULT, in the resolver's sense: this file has no `_<platform>`
+// suffix, so it is what `import "./transport"` means anywhere that has no
+// sibling shadowing it — macOS and iOS, which share it because NSURLSession is
+// Foundation rather than AppKit or UIKit. `transport_android.cplus` and
+// `transport_linux.cplus` shadow it on their platforms.
+//
+// It implements ONE stable symbol, `http_transport_perform_v1`, and the seam is
+// documented where it is declared — in `http.cplus`. Everything below the
+// export is the block machinery that makes an escaping Objective-C completion
+// handler callable from a language with no closures.
+//
+// WHY A STABLE SYMBOL rather than an import: `http.cplus` owns http::Request and
+// http::Response, so a transport must import it. If `http.cplus` imported the
+// transport back, that is a cycle. The symbol runs the dependency one way.
+
+import "stdlib/text" as text;
+import "stdlib/vec" as vec;
+import "stdlib/option" as option;
+import "stdlib/result" as result;
+import "stdlib/status" as status;
+import "objc/runtime" as rt;
+import "objc/bridge" as bridge;
+import "./http" as http;
+
+// ==========================================================================
+// The exported seam
+// ==========================================================================
+
+// Fill the out-parameters from `req`. The one symbol this file exists to
+// define; the seam is documented where it is declared, in `http.cplus`.
+export extern fn http_transport_perform_v1(req: *http::Request, ok: *bool,
+                                           response: *http::Response,
+                                           error: *http::Error) {
+    match _perform(req) {
+        result::Result[http::Response, http::Error]::Ok(r) => {
+            { (*response) = r };
+            { (*ok) = true };
+        }
+        result::Result[http::Response, http::Error]::Err(e) => {
+            { (*error) = e };
+            { (*ok) = false };
+        }
+    }
+    return;
+}
+
+// ==========================================================================
+// The C and libdispatch floor
+// ==========================================================================
+
+#[link_name = "malloc"]
+extern fn ext_malloc(n: usize) -> *u8;
+
+#[link_name = "free"]
+extern fn ext_free(p: *u8);
+
+#[link_name = "memcpy"]
+extern fn ext_memcpy(dst: *u8, src: *u8, n: usize) -> *u8;
+
+// libdispatch. Plain C functions with no macro in the way, so they bind
+// directly — unlike `dispatch_get_main_queue()`, which is a macro over a
+// global and is why the schedulers elsewhere in vendor go the long way round.
+extern fn dispatch_semaphore_create(value: i64) -> *u8;
+extern fn dispatch_semaphore_wait(sem: *u8, timeout: u64) -> i64;
+extern fn dispatch_semaphore_signal(sem: *u8) -> i64;
+
+// DISPATCH_TIME_FOREVER == ~0ull. Built arithmetically: an integer literal
+// wraps through i32 before `as`, so `18446744073709551615 as u64` is not the
+// way to spell it.
+fn _forever() -> u64 {
+    return (0 as u64) -% (1 as u64);
+}
+
+// The autorelease pool. `+[NSURL URLWithString:]`, `+[NSMutableURLRequest
+// requestWithURL:]` and the bridge's NSStrings are all autoreleased, and a
+// plain C thread has no pool — without these two the objects leak and the
+// runtime says so on stderr.
+#[link_name = "objc_autoreleasePoolPush"]
+extern fn pool_push() -> *u8;
+
+#[link_name = "objc_autoreleasePoolPop"]
+extern fn pool_pop(p: *u8);
+
+// -------------------------------------------------------------------------
+// The escaping block
+// -------------------------------------------------------------------------
+//
+// `-dataTaskWithRequest:completionHandler:` takes an ESCAPING block: the
+// session `Block_copy`s it during the msgSend and calls it much later, from a
+// background queue. This is the same hand-built stack-block shape that
+// `appkit_ext::dynamic_color` has been passing to AppKit — isa from
+// `rt::stack_block_isa()`, flags 0 (so there are no copy/dispose helpers and
+// nothing walks the captures), invoke, descriptor, then POD captures. Because
+// flags is 0 the copy is a flat memcpy of these 48 bytes, which is exactly why
+// `#addr_of` on a stack local is safe here: what escapes is the session's
+// copy, not this frame.
+//
+// Both captures are POD pointers, and both stay valid for the whole call: the
+// slot lives on the frame that is blocked in `dispatch_semaphore_wait`, and
+// the semaphore is released only after that wait returns.
+#[repr(C)]
+struct _CompletionBlock {
+    opaque isa: *u8,
+    flags: i32,
+    reserved: i32,
+    invoke: fn(*u8, *u8, *u8, *u8),
+    opaque descriptor: *u8,
+    opaque slot: *u8,
+    opaque sem: *u8,
+}
+
+// The descriptor is SHARED by every copy the session makes and is read after
+// the block is copied, so it must outlive any one call — hence a `static`
+// rather than a frame local. Fully initialised at its declaration, which is
+// what makes concurrent `send`s safe: `block_desc` only ever READS this, so
+// two threads in flight at once share it without a write between them. (The
+// malloc-a-descriptor-on-first-use idiom next door in appkit_ext would race
+// here, and leak the loser's copy.)
+static _BLOCK_DESC: rt::BlockDescriptor = rt::BlockDescriptor {
+    reserved: 0 as u64,
+    // A literal because a `static` initializer takes no `#size_of` (E0911) and
+    // no const may fold one (E0921). `completion_block_is_the_flags_zero_stack_
+    // shape` is the guard: it fails the moment the struct stops being 48 bytes.
+    size: 48 as u64,
+};
+
+fn _block_desc() -> *u8 {
+    return { #addr_of(_BLOCK_DESC) as *u8 };
+}
+
+// Everything the completion handler collected, handed back across the
+// semaphore. Plain data on purpose: the background queue writes POD only, and
+// the waiting thread does every allocation, every Text, every release. The
+// four pointers are `opaque` because this struct is a transfer record and owns
+// nothing — `slot_teardown` on the waiting side is the single owner.
+#[repr(C)]
+struct _Slot {
+    opaque body: *u8,       // malloc'd copy of the response bytes, 0 when empty
+    body_len: usize,
+    opaque response: *u8,   // RETAINED NSHTTPURLResponse, 0 on transport failure
+    opaque error: *u8,      // RETAINED NSError, 0 on success
+}
+
+// Runs on one of NSURLSession's background queues.
+//
+// Copy the bytes out of the NSData NOW — it is autoreleased into a pool this
+// code does not own, and the pool drains the moment this returns. The response
+// and the error are retained instead of copied: both are immutable value-ish
+// Foundation objects, and a +1 reference is a cheaper way to keep them alive
+// than transcribing them here.
+//
+// Signal LAST. Every write above must be visible to the waiting thread, and
+// the signal/wait pair is what makes them so.
+fn _completion_invoke(block: *u8, data: *u8, response: *u8, error: *u8) {
+    let b: *_CompletionBlock = { block as *_CompletionBlock };
+    let slot: *_Slot = { { (*b).slot } as *_Slot };
+
+    if data.is_not_null() {
+        let n: u64 = rt::msg_u64(data, rt::sel(#str_ptr("length\0")));
+        if n > (0 as u64) {
+            let src: *u8 = rt::msg_id(data, rt::sel(#str_ptr("bytes\0")));
+            // `src` is tested BEFORE the malloc: allocating first and then
+            // bailing out would strand the buffer, and nothing on this side of
+            // the semaphore will ever free it.
+            if src.is_not_null() {
+                let dst: *u8 = ext_malloc(n as usize);
+                // A failed malloc degrades to an empty body rather than
+                // trapping: the status and the headers are still worth
+                // delivering.
+                if dst.is_not_null() {
+                    let _c: *u8 = ext_memcpy(dst, src, n as usize);
+                    { (*slot).body = dst };
+                    { (*slot).body_len = n as usize };
+                }
+            }
+        }
+    }
+    if response.is_not_null() { { (*slot).response = rt::retain(response) }; }
+    if error.is_not_null() { { (*slot).error = rt::retain(error) }; }
+
+    let _s: i64 = dispatch_semaphore_signal({ (*b).sem });
+}
+
+fn _slot_teardown(ref slot: _Slot) {
+    ext_free(slot.body);
+    slot.body = 0 as *u8;
+    slot.body_len = 0 as usize;
+    if slot.response.is_not_null() { rt::release(slot.response); }
+    slot.response = 0 as *u8;
+    if slot.error.is_not_null() { rt::release(slot.error); }
+    slot.error = 0 as *u8;
+}
+
+// -------------------------------------------------------------------------
+// Building the NSURLRequest
+// -------------------------------------------------------------------------
+
+// An autoreleased NSMutableURLRequest carrying everything in `req`, or 0 when
+// `url` is not a URL Foundation will accept. Must be called inside a pool.
+fn _build_ns_request(req: *http::Request) -> *u8 {
+    let url_string: *u8 = bridge::nsstring({ (*req).url.view() });
+    let url: *u8 = rt::msg_id_id(rt::get_class(#str_ptr("NSURL\0")),
+                                 rt::sel(#str_ptr("URLWithString:\0")),
+                                 url_string);
+    if url.is_null() { return 0 as *u8; }
+
+    let ns_req: *u8 = rt::msg_id_id(rt::get_class(#str_ptr("NSMutableURLRequest\0")),
+                                    rt::sel(#str_ptr("requestWithURL:\0")),
+                                    url);
+    if ns_req.is_null() { return 0 as *u8; }
+
+    rt::msg_void_id(ns_req, rt::sel(#str_ptr("setHTTPMethod:\0")),
+                    bridge::nsstring(http::method_name({ (*req).method })));
+    rt::msg_void_f64(ns_req, rt::sel(#str_ptr("setTimeoutInterval:\0")), { (*req).timeout_seconds });
+
+    var i: usize = 0 as usize;
+    while i < { (*req).headers.count() } {
+        guard let option::Option[*http::Header]::Some(h) = { (*req).headers.at_ptr(i) } else { break; };
+        let name: *u8 = bridge::nsstring({ (*h).name });
+        let value: *u8 = bridge::nsstring({ (*h).value });
+        rt::msg_void_id_id(ns_req, rt::sel(#str_ptr("setValue:forHTTPHeaderField:\0")), value, name);
+        i = i +% (1 as usize);
+    }
+
+    let body_len: usize = { (*req).body.count() };
+    if body_len > (0 as usize) {
+        guard let option::Option[*u8]::Some(base) = { (*req).body.at_ptr(0 as usize) } else { return ns_req; };
+        let data: *u8 = rt::msg_id_id_u64(rt::get_class(#str_ptr("NSData\0")),
+                                          rt::sel(#str_ptr("dataWithBytes:length:\0")),
+                                          base, body_len as u64);
+        if data.is_not_null() {
+            rt::msg_void_id(ns_req, rt::sel(#str_ptr("setHTTPBody:\0")), data);
+        }
+    }
+    return ns_req;
+}
+
+// -------------------------------------------------------------------------
+// Reading the NSHTTPURLResponse
+// -------------------------------------------------------------------------
+
+// `response` is an NSURLResponse; only the HTTP subclass carries a status line.
+// Every http/https exchange produces one, but a `file://` URL does not, so ask
+// rather than assume.
+fn _is_http_response(response: *u8) -> bool {
+    if response.is_null() { return false; }
+    let cls: *u8 = rt::get_class(#str_ptr("NSHTTPURLResponse\0"));
+    return rt::msg_i8_id(response, rt::sel(#str_ptr("isKindOfClass:\0")), cls) != (0 as i8);
+}
+
+// `-allHeaderFields` copied out into owned C+ values, so a http::Response outlives
+// every Objective-C object it came from. Foundation has already merged
+// repeated fields and canonicalised the names.
+fn _read_headers(response: *u8) -> vec::Vec[http::Header] {
+    var out: vec::Vec[http::Header] = vec::new::[http::Header]();
+    if !_is_http_response(response) { return out; }
+
+    let dict: *u8 = rt::msg_id(response, rt::sel(#str_ptr("allHeaderFields\0")));
+    if dict.is_null() { return out; }
+    let keys: *u8 = rt::msg_id(dict, rt::sel(#str_ptr("allKeys\0")));
+    if keys.is_null() { return out; }
+
+    let n: u64 = rt::msg_u64(keys, rt::sel(#str_ptr("count\0")));
+    var i: u64 = 0 as u64;
+    while i < n {
+        let key: *u8 = rt::msg_id_u64(keys, rt::sel(#str_ptr("objectAtIndex:\0")), i);
+        let value: *u8 = rt::msg_id_id(dict, rt::sel(#str_ptr("objectForKey:\0")), key);
+        if key.is_not_null() && value.is_not_null() {
+            let _a: status::Status = out.append(http::Header {
+                name: bridge::to_text(key),
+                value: bridge::to_text(value),
+            });
+        }
+        i = i +% (1 as u64);
+    }
+    return out;
+}
+
+fn _read_error(err: *u8) -> http::Error {
+    let code: i64 = rt::msg_i64(err, rt::sel(#str_ptr("code\0")));
+    let described: *u8 = rt::msg_id(err, rt::sel(#str_ptr("localizedDescription\0")));
+    guard let option::Option[text::Text]::Some(message) = bridge::to_text_option(described) else {
+        return http::Error { code: code, message: text::from_str("request failed") };
+    };
+    return http::Error { code: code, message: message };
+}
+
+fn _fail(code: i64, message: str) -> result::Result[http::Response, http::Error] {
+    return result::Result[http::Response, http::Error]::Err(http::Error {
+        code: code,
+        message: text::from_str(message),
+    });
+}
+
+// -------------------------------------------------------------------------
+// The exchange
+// -------------------------------------------------------------------------
+
+fn _perform(req: *http::Request) -> result::Result[http::Response, http::Error] {
+    let pool: *u8 = pool_push();
+    defer pool_pop(pool);
+
+    let ns_req: *u8 = _build_ns_request(req);
+    if ns_req.is_null() {
+        return _fail(http::ERROR_INVALID_URL, "not a URL Foundation can request");
+    }
+
+    // `+sharedSession` is the process-wide session: the system cookie store,
+    // the system cache, the system credential store, and connection reuse
+    // across every caller. A package-private NSURLSessionConfiguration would
+    // be a policy decision this package has no business making.
+    let session: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSURLSession\0")),
+                                  rt::sel(#str_ptr("sharedSession\0")));
+
+    var slot: _Slot = #zero::[_Slot]();
+    let sem: *u8 = dispatch_semaphore_create(0 as i64);
+    if sem.is_null() {
+        return _fail(http::ERROR_TASK_REFUSED, "could not create a wait semaphore");
+    }
+
+    var blk: _CompletionBlock = _CompletionBlock {
+        isa: rt::stack_block_isa(),
+        flags: 0 as i32,
+        reserved: 0 as i32,
+        invoke: _completion_invoke,
+        descriptor: _block_desc(),
+        slot: { #addr_of(slot) as *u8 },
+        sem: sem,
+    };
+
+    let task: *u8 = rt::msg_id_id_id(session,
+                                     rt::sel(#str_ptr("dataTaskWithRequest:completionHandler:\0")),
+                                     ns_req,
+                                     { #addr_of(blk) as *u8 });
+    if task.is_null() {
+        rt::release(sem);
+        return _fail(http::ERROR_TASK_REFUSED, "NSURLSession refused the request");
+    }
+
+    rt::msg_void(task, rt::sel(#str_ptr("resume\0")));
+
+    // Unbounded on purpose. The request's own timeoutInterval guarantees the
+    // completion handler fires, so there is nothing to race — and racing a
+    // semaphore timeout against it would abandon the slot while a live
+    // background queue still holds a pointer into this frame.
+    let _w: i64 = dispatch_semaphore_wait(sem, _forever());
+
+    // Past the wait, the handler is done and the slot is ours alone. Releasing
+    // the semaphore here is safe for the same reason: `dispatch_semaphore_
+    // signal` touches nothing after the wake-up it caused.
+    rt::release(sem);
+
+    let out: result::Result[http::Response, http::Error] = _harvest(slot);
+    _slot_teardown(slot);
+    return out;
+}
+
+// Turn a completed slot into the public answer. Reads only — `slot_teardown`
+// does the freeing, so this stays a pure translation.
+fn _harvest(slot: _Slot) -> result::Result[http::Response, http::Error] {
+    if slot.error.is_not_null() {
+        return result::Result[http::Response, http::Error]::Err(_read_error(slot.error));
+    }
+    if !_is_http_response(slot.response) {
+        return _fail(http::ERROR_NO_RESPONSE, "no HTTP response and no error");
+    }
+
+    var body: vec::Vec[u8] = vec::new::[u8]();
+    if slot.body.is_not_null() && slot.body_len > (0 as usize) {
+        let _e: status::Status = body.extend_from_raw(slot.body, slot.body_len);
+    }
+
+    let status_code: i64 = rt::msg_i64(slot.response, rt::sel(#str_ptr("statusCode\0")));
+    return result::Result[http::Response, http::Error]::Ok(
+        http::Response::from_parts({ status_code as i32 },
+                                   _read_headers(slot.response),
+                                   body));
+}
+
+// ==========================================================================
+// Tests — the Foundation half only
+// ==========================================================================
+//
+// The portable half's tests live in `http.cplus`. These are the ones that
+// build a real NSMutableURLRequest or a real NSError and read it back, so they
+// belong to the transport that makes them and run only where it does.
+// ---- method vocabulary ---------------------------------------------------
+// ---- http::Request ------------------------------------------------------------
+// ---- http::Response -----------------------------------------------------------
+// ---- the block shape ----------------------------------------------------
+
+#[test]
+fn completion_block_is_the_flags_zero_stack_shape() {
+    // isa + flags + reserved + invoke + descriptor + two POD captures. The
+    // descriptor's `size` MUST be this number or Block_copy copies the wrong
+    // span, so pin it here rather than trusting a hand-written 48.
+    assert #size_of::[_CompletionBlock]() == (48 as usize);
+    let d: *rt::BlockDescriptor = { _block_desc() as *rt::BlockDescriptor };
+    assert { (*d).size } == (48 as u64);
+    assert { (*d).reserved } == (0 as u64);
+    assert rt::stack_block_isa().is_not_null();
+}
+
+#[test]
+fn forever_is_dispatch_time_forever() {
+    assert _forever() == (18446744073709551615 as u64);
+}
+
+// ---- request building, against real Foundation objects -------------------
+
+#[test]
+fn build_ns_request_carries_method_url_and_timeout() {
+    let pool: *u8 = pool_push();
+    defer pool_pop(pool);
+
+    let req: http::Request = http::Request::new("https://example.com/thing?x=1", method: http::Method::Delete, timeout_seconds: 7.5);
+    let ns_req: *u8 = _build_ns_request(#addr_of(req));
+    assert ns_req.is_not_null();
+
+    let method: text::Text = bridge::to_text(rt::msg_id(ns_req, rt::sel(#str_ptr("HTTPMethod\0"))));
+    assert method.equals("DELETE");
+
+    let url: *u8 = rt::msg_id(ns_req, rt::sel(#str_ptr("URL\0")));
+    let absolute: text::Text = bridge::to_text(rt::msg_id(url, rt::sel(#str_ptr("absoluteString\0"))));
+    assert absolute.equals("https://example.com/thing?x=1");
+
+    assert rt::msg_f64(ns_req, rt::sel(#str_ptr("timeoutInterval\0"))) == 7.5;
+}
+
+#[test]
+fn build_ns_request_carries_headers() {
+    let pool: *u8 = pool_push();
+    defer pool_pop(pool);
+
+    var req: http::Request = http::Request::new("https://example.com/a");
+    let _a: status::Status = req.set_header("Accept", to: "application/json");
+    let _b: status::Status = req.set_header("X-Trace", to: "abc");
+    let ns_req: *u8 = _build_ns_request(#addr_of(req));
+    assert ns_req.is_not_null();
+
+    let sel: *u8 = rt::sel(#str_ptr("valueForHTTPHeaderField:\0"));
+    let accept: text::Text = bridge::to_text(rt::msg_id_id(ns_req, sel, bridge::nsstring("Accept")));
+    assert accept.equals("application/json");
+    // Foundation looks header names up case-insensitively too — the same
+    // contract `http::Request::set_header` keeps, checked here against the real one.
+    let trace: text::Text = bridge::to_text(rt::msg_id_id(ns_req, sel, bridge::nsstring("x-trace")));
+    assert trace.equals("abc");
+}
+
+#[test]
+fn build_ns_request_carries_the_body() {
+    let pool: *u8 = pool_push();
+    defer pool_pop(pool);
+
+    var req: http::Request = http::Request::new("https://example.com/a", method: http::Method::Post);
+    let _b: status::Status = req.set_body_text("hello body");
+    let ns_req: *u8 = _build_ns_request(#addr_of(req));
+    assert ns_req.is_not_null();
+
+    let data: *u8 = rt::msg_id(ns_req, rt::sel(#str_ptr("HTTPBody\0")));
+    assert data.is_not_null();
+    assert rt::msg_u64(data, rt::sel(#str_ptr("length\0"))) == (10 as u64);
+}
+
+#[test]
+fn build_ns_request_leaves_an_empty_body_unset() {
+    let pool: *u8 = pool_push();
+    defer pool_pop(pool);
+
+    let req: http::Request = http::Request::new("https://example.com/a");
+    let ns_req: *u8 = _build_ns_request(#addr_of(req));
+    assert ns_req.is_not_null();
+    assert rt::msg_id(ns_req, rt::sel(#str_ptr("HTTPBody\0"))).is_null();
+}
+
+// ---- error mapping ------------------------------------------------------
+
+#[test]
+fn read_error_takes_the_code_and_the_localized_description() {
+    let pool: *u8 = pool_push();
+    defer pool_pop(pool);
+
+    // A real NSError, built the way Foundation builds the ones this package
+    // actually sees. -1009 is NSURLErrorNotConnectedToInternet.
+    let err: *u8 = rt::msg_id_id_i64_id(rt::get_class(#str_ptr("NSError\0")),
+                                        rt::sel(#str_ptr("errorWithDomain:code:userInfo:\0")),
+                                        bridge::nsstring("NSURLErrorDomain"),
+                                        -1009,
+                                        0 as *u8);
+    assert err.is_not_null();
+    let mapped: http::Error = _read_error(err);
+    assert mapped.code == -1009;
+    assert mapped.message.count() > (0 as usize);
+}
+
+#[test]
+fn harvest_of_an_empty_slot_reports_no_response() {
+    let slot: _Slot = #zero::[_Slot]();
+    guard let result::Result[http::Response, http::Error]::Err(e) = _harvest(slot) else {
+        assert false;
+        return;
+    };
+    assert e.code == http::ERROR_NO_RESPONSE;
+}
+
+#[test]
+fn slot_teardown_is_idempotent_on_a_zero_slot() {
+    var slot: _Slot = #zero::[_Slot]();
+    _slot_teardown(slot);
+    _slot_teardown(slot);
+    assert slot.body.is_null();
+    assert slot.body_len == (0 as usize);
+}
+
+// ---- integration: these need the internet --------------------------------

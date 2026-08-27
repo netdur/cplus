@@ -1,0 +1,599 @@
+// transport — the Android half: `java.net.HttpURLConnection`, and nothing else.
+//
+// THE SAME BARGAIN THE APPLE HALF MAKES, with a different platform's client.
+// TLS and certificate validation, DNS, redirects, connection reuse, the system
+// proxy, the user's network settings — all of it belongs to the JVM's own
+// stack, which is patched by the platform and not by this package.
+//
+// NO JAVA AND NO DEX. Every call below is reflective JNI against classes that
+// are already in every Android app's boot classpath, so this package compiles
+// to a .so and needs nothing merged into `classes.dex`. That is the difference
+// between one package and two: `facet_android` ships a dex because a
+// `WebViewClient` is a CLASS that must be subclassed; `HttpURLConnection` is a
+// class you only ever CALL, so there is nothing to subclass and nothing to
+// ship.
+//
+// ---- the JavaVM, and how a library with no app cooperation gets one --------
+//
+// A JNIEnv belongs to a thread, and the process-wide handle it hangs off is the
+// JavaVM. Three ways to reach one, and only the third works from a package:
+//
+//   * Be handed an env by a JVM callback. That is how `facet_android` does it,
+//     and it is unavailable here — this package has no Activity and must work
+//     in an app that never draws anything.
+//   * `JNI_GetCreatedJavaVMs`, which the NDK's jni.h declares. MEASURED, on an
+//     emulator: `dlsym(RTLD_DEFAULT, ...)` does not find it and no NDK stub
+//     library exports it — libart lives in a linker namespace an app's own
+//     namespace may not reach. It is a declaration with nothing behind it.
+//   * `JNI_OnLoad`. `System.loadLibrary` calls it in the .so if it defines one,
+//     handing over the JavaVM before any other code runs. MEASURED on the same
+//     emulator: it fires and the VM it hands over is live.
+//
+// So this file defines `JNI_OnLoad`. THE COST IS WORTH STATING: a shared
+// library has exactly one, so a package that defines it defines it for the
+// whole .so. An application that needs its own gets a duplicate-symbol error at
+// LINK — loud, at build time — and the way out is `http::set_java_vm(vm)` from
+// inside that application's own `JNI_OnLoad`, which is why that function is
+// public.
+//
+// ---- what runs on which thread --------------------------------------------
+//
+// EVERYTHING RUNS ON THE CALLING THREAD. `HttpURLConnection` blocks, which is
+// exactly the contract `http.cplus` documents, so there is no queue and no
+// completion handler here — the Apple half needs both only because
+// NSURLSession is asynchronous underneath.
+//
+// The calling thread is usually not the UI thread, and on Android that is not
+// merely good manners: the platform throws `NetworkOnMainThreadException` for a
+// request made from it. That arrives here as an ordinary exception and is
+// reported as an ordinary error, with the class name in the message, rather
+// than crashing the app.
+
+import "stdlib/text" as text;
+import "stdlib/vec" as vec;
+import "stdlib/option" as option;
+import "stdlib/result" as result;
+import "stdlib/status" as status;
+import "jni/jni" as jni;
+import "./http" as http;
+
+// ==========================================================================
+// Error codes
+// ==========================================================================
+//
+// NEGATIVE, because `http.cplus` reserves the positive space for "the request
+// never left this process". The JVM answers with an exception CLASS rather than
+// a number, so these are assigned here — one per shape a caller can act on —
+// and the exception's own message is what goes in `Error.message`.
+const ERROR_JVM_UNAVAILABLE: i64 = 0 - 2001;
+const ERROR_MALFORMED_URL: i64 = 0 - 2002;
+const ERROR_NOT_HTTP: i64 = 0 - 2003;
+const ERROR_ON_MAIN_THREAD: i64 = 0 - 2004;
+const ERROR_EXCEPTION: i64 = 0 - 2005;
+
+// ==========================================================================
+// The VM and this thread's env
+// ==========================================================================
+
+static VM: usize = 0;
+
+// The one entry point the JVM calls on `System.loadLibrary`. Returns
+// JNI_VERSION_1_6 (0x00010006), which is what every Android app reports.
+export extern fn JNI_OnLoad(vm: *u8, reserved: *u8) -> i32 {
+    VM = { #addr(vm) };
+    return 65542 as i32;
+}
+
+// The way in for an application that owns `JNI_OnLoad` itself. Call it once,
+// from inside that handler, before any request.
+fn set_java_vm(vm: *u8) { VM = { #addr(vm) }; return; }
+
+fn have_vm() -> bool { return VM != 0; }
+
+// This thread's env, attaching if the JVM has never called into it.
+//
+// AS A DAEMON, deliberately: an attached non-daemon thread keeps the VM alive,
+// and a thread that made one HTTP request should never be the reason a process
+// cannot exit. Same choice `facet_android/mainthread` documents.
+//
+// NOT DETACHED afterwards. Attaching is not free and a worker that made one
+// request usually makes another; the daemon flag is what makes leaving it
+// attached harmless.
+fn env_of_this_thread() -> *jni::JNIEnv {
+    if VM == 0 { return 0 as *jni::JNIEnv; }
+    let vm: *jni::JavaVM = { VM as *jni::JavaVM };
+    var envp: *jni::JNIEnv = 0 as *jni::JNIEnv;
+    // JNI_VERSION_1_6 = 0x00010006.
+    let got: i32 = { (*(*vm)).GetEnv(vm, { #addr_of(envp) as *u8 }, 65542 as i32) };
+    if got == (0 as i32) { return envp; }
+    let rc: i32 = { (*(*vm)).AttachCurrentThreadAsDaemon(vm, { #addr_of(envp) as *u8 },
+                                                          0 as *u8) };
+    if rc != (0 as i32) { return 0 as *jni::JNIEnv; }
+    return envp;
+}
+
+// ==========================================================================
+// The JNI helpers this file needs
+// ==========================================================================
+//
+// Deliberately local and deliberately small. `android_view/runtime` has a
+// richer `Env` with a method cache, and this package does not depend on it: a
+// package that fetches a URL must not drag in a UI toolkit's binding.
+
+fn find_class(e: *jni::JNIEnv, name: *u8) -> jni::jclass {
+    let c: jni::jclass = { (*(*e)).FindClass(e, name) };
+    clear_exception(e);
+    return c;
+}
+
+fn method(e: *jni::JNIEnv, cls: jni::jclass, name: *u8, sig: *u8) -> jni::jmethodID {
+    let m: jni::jmethodID = { (*(*e)).GetMethodID(e, cls, name, sig) };
+    clear_exception(e);
+    return m;
+}
+
+fn has_exception(e: *jni::JNIEnv) -> bool {
+    return { (*(*e)).ExceptionCheck(e) } != (0 as jni::jboolean);
+}
+
+fn clear_exception(e: *jni::JNIEnv) {
+    if has_exception(e) { { (*(*e)).ExceptionClear(e) }; }
+    return;
+}
+
+// The pending exception, described the way a person would read it:
+// `java.net.UnknownHostException: Unable to resolve host "nope.invalid"`.
+//
+// CLEARED BEFORE ANYTHING ELSE IS CALLED. A pending exception makes almost
+// every other JNI call undefined, so the throwable is taken out of the pending
+// slot first and interrogated after.
+fn take_exception_text(e: *jni::JNIEnv) -> text::Text {
+    if !has_exception(e) { return text::new(); }
+    let thr: jni::jthrowable = { (*(*e)).ExceptionOccurred(e) };
+    { (*(*e)).ExceptionClear(e) };
+    if thr == (0 as jni::jthrowable) { return text::from_str("an exception with no throwable"); }
+    let cls: jni::jclass = { (*(*e)).GetObjectClass(e, thr) };
+    var out: text::Text = text::new();
+    if cls != (0 as jni::jclass) {
+        let cls_cls: jni::jclass = { (*(*e)).GetObjectClass(e, { cls as jni::jobject }) };
+        let get_name: jni::jmethodID = method(e, cls_cls, #str_ptr("getName\0"),
+                                              #str_ptr("()Ljava/lang/String;\0"));
+        if get_name != (0 as jni::jmethodID) {
+            let s: jni::jstring = { (*(*e)).CallObjectMethodA(e, { cls as jni::jobject },
+                                                              get_name, 0 as *jni::JValue) };
+            let _a: status::Status = out.append(jstring_to_text(e, s).view());
+            delete_local(e, s);
+        }
+        delete_local(e, { cls_cls as jni::jobject });
+        delete_local(e, { cls as jni::jobject });
+    }
+    let thr_cls: jni::jclass = find_class(e, #str_ptr("java/lang/Throwable\0"));
+    if thr_cls != (0 as jni::jclass) {
+        let get_msg: jni::jmethodID = method(e, thr_cls, #str_ptr("getMessage\0"),
+                                             #str_ptr("()Ljava/lang/String;\0"));
+        if get_msg != (0 as jni::jmethodID) {
+            let s: jni::jstring = { (*(*e)).CallObjectMethodA(e, thr, get_msg, 0 as *jni::JValue) };
+            if s != (0 as jni::jstring) {
+                let _b: status::Status = out.append(": ");
+                let _c: status::Status = out.append(jstring_to_text(e, s).view());
+                delete_local(e, s);
+            }
+        }
+        delete_local(e, { thr_cls as jni::jobject });
+    }
+    // The exception carried nothing readable, which is legal — an
+    // `IOException()` with no message is a real thing a stream throws.
+    if out.is_empty() { let _d: status::Status = out.append("an exception with no message"); }
+    delete_local(e, thr);
+    return out;
+}
+
+fn delete_local(e: *jni::JNIEnv, o: jni::jobject) {
+    if o == (0 as jni::jobject) { return; }
+    { (*(*e)).DeleteLocalRef(e, o) };
+    return;
+}
+
+// A C+ `str` as a Java String. The caller deletes the local ref.
+fn new_jstring(e: *jni::JNIEnv, s: str) -> jni::jstring {
+    var buf: [u8; 4096] = #zero::[[u8; 4096]]();
+    let base: *u8 = { #addr_of(buf[0]) };
+    if !cstr(s, base, 4096 as usize) { return 0 as jni::jstring; }
+    return { (*(*e)).NewStringUTF(e, base) };
+}
+
+// And back. Answers "" for a null String, which is what every optional Java
+// String slot here means.
+fn jstring_to_text(e: *jni::JNIEnv, s: jni::jstring) -> text::Text {
+    if s == (0 as jni::jstring) { return text::new(); }
+    let p: *u8 = { (*(*e)).GetStringUTFChars(e, s, 0 as *jni::jboolean) };
+    if p == (0 as *u8) { return text::new(); }
+    let n: usize = cstr_len(p);
+    let out: text::Text = text::from_str({ #str_from_raw_parts(p, n) });
+    { (*(*e)).ReleaseStringUTFChars(e, s, p) };
+    return out;
+}
+
+// NUL-terminate `s` into `buf`. False when it does not fit, which is a refusal
+// rather than a truncation: a truncated URL is a request to somewhere else.
+fn cstr(s: str, buf: *u8, cap: usize) -> bool {
+    let n: usize = #str_len(s);
+    if n +% (1 as usize) > cap { return false; }
+    let src: *u8 = #str_ptr(s);
+    var i: usize = 0 as usize;
+    while i < n {
+        let d: *u8 = { ({ #addr(buf) } +% i) as *u8 };
+        { (*d) = { *(src + i) } };
+        i = i +% (1 as usize);
+    }
+    let term: *u8 = { ({ #addr(buf) } +% n) as *u8 };
+    { (*term) = 0 as u8 };
+    return true;
+}
+
+fn cstr_len(p: *u8) -> usize {
+    var i: usize = 0 as usize;
+    var going: bool = true;
+    while going {
+        let c: *u8 = { ({ #addr(p) } +% i) as *u8 };
+        if { (*c) } == (0 as u8) { going = false; } else { i = i +% (1 as usize); }
+    }
+    return i;
+}
+
+// ==========================================================================
+// The exported seam
+// ==========================================================================
+
+export extern fn http_transport_perform_v1(req: *http::Request, ok: *bool,
+                                           response: *http::Response,
+                                           error: *http::Error) {
+    perform(req, ok, response, error);
+    return;
+}
+
+fn fail(ok: *bool, error: *http::Error, code: i64, message: str) {
+    { (*ok) = false };
+    { (*error) = http::Error { code: code, message: text::from_str(message) } };
+    return;
+}
+
+fn fail_text(ok: *bool, error: *http::Error, code: i64, take message: text::Text) {
+    { (*ok) = false };
+    { (*error) = http::Error { code: code, message: message } };
+    return;
+}
+
+// ==========================================================================
+// The exchange
+// ==========================================================================
+
+fn perform(req: *http::Request, ok: *bool, response: *http::Response,
+           error: *http::Error) {
+    if !have_vm() {
+        fail(ok, error, ERROR_JVM_UNAVAILABLE,
+             "no JavaVM: this .so was not loaded by System.loadLibrary, or an application defined JNI_OnLoad without calling http::set_java_vm");
+        return;
+    }
+    let e: *jni::JNIEnv = env_of_this_thread();
+    if e == (0 as *jni::JNIEnv) {
+        fail(ok, error, ERROR_JVM_UNAVAILABLE, "could not attach this thread to the JVM");
+        return;
+    }
+
+    // ---- new URL(spec) ----------------------------------------------------
+    let url_cls: jni::jclass = find_class(e, #str_ptr("java/net/URL\0"));
+    if url_cls == (0 as jni::jclass) {
+        fail(ok, error, ERROR_JVM_UNAVAILABLE, "java.net.URL is not on the classpath");
+        return;
+    }
+    let url_ctor: jni::jmethodID = method(e, url_cls, #str_ptr("<init>\0"),
+                                          #str_ptr("(Ljava/lang/String;)V\0"));
+    let spec: jni::jstring = new_jstring(e, { (*req).url.view() });
+    if spec == (0 as jni::jstring) {
+        delete_local(e, { url_cls as jni::jobject });
+        fail(ok, error, http::ERROR_INVALID_URL, "the URL does not fit in 4096 bytes");
+        return;
+    }
+    var args1: [jni::JValue; 1] = #zero::[[jni::JValue; 1]]();
+    args1[0 as usize] = jni::arg_object({ spec as jni::jobject });
+    let url: jni::jobject = { (*(*e)).NewObjectA(e, url_cls, url_ctor, #addr_of(args1[0])) };
+    delete_local(e, spec);
+    delete_local(e, { url_cls as jni::jobject });
+    if url == (0 as jni::jobject) || has_exception(e) {
+        // MalformedURLException — the JVM's own reading of the string, which is
+        // stricter than Foundation's and is why this reports the platform code
+        // rather than the package's ERROR_INVALID_URL.
+        fail_text(ok, error, ERROR_MALFORMED_URL, take_exception_text(e));
+        delete_local(e, url);
+        return;
+    }
+
+    // ---- URL.openConnection() ---------------------------------------------
+    let url_cls2: jni::jclass = { (*(*e)).GetObjectClass(e, url) };
+    let open: jni::jmethodID = method(e, url_cls2, #str_ptr("openConnection\0"),
+                                      #str_ptr("()Ljava/net/URLConnection;\0"));
+    let conn: jni::jobject = { (*(*e)).CallObjectMethodA(e, url, open, 0 as *jni::JValue) };
+    delete_local(e, { url_cls2 as jni::jobject });
+    delete_local(e, url);
+    if conn == (0 as jni::jobject) || has_exception(e) {
+        fail_text(ok, error, ERROR_EXCEPTION, take_exception_text(e));
+        delete_local(e, conn);
+        return;
+    }
+
+    // A `file:` or `jar:` URL opens a URLConnection that is not an
+    // HttpURLConnection, and every call below would fail one at a time. Ask
+    // once, and say which it was.
+    let http_cls: jni::jclass = find_class(e, #str_ptr("java/net/HttpURLConnection\0"));
+    if http_cls == (0 as jni::jclass) ||
+       { (*(*e)).IsInstanceOf(e, conn, http_cls) } == (0 as jni::jboolean) {
+        delete_local(e, { http_cls as jni::jobject });
+        delete_local(e, conn);
+        fail(ok, error, ERROR_NOT_HTTP, "the URL did not open an HTTP connection (only http: and https: are supported)");
+        return;
+    }
+
+    configure(e, http_cls, conn, req);
+    if has_exception(e) {
+        let msg: text::Text = take_exception_text(e);
+        disconnect(e, http_cls, conn);
+        delete_local(e, { http_cls as jni::jobject });
+        delete_local(e, conn);
+        fail_text(ok, error, ERROR_EXCEPTION, msg);
+        return;
+    }
+
+    // ---- the round trip ---------------------------------------------------
+    //
+    // `getResponseCode` is what actually sends: everything above only
+    // configured the connection, and the request goes out on the first call
+    // that needs an answer. So this is the line that blocks, and the line every
+    // network exception comes out of.
+    let get_code: jni::jmethodID = method(e, http_cls, #str_ptr("getResponseCode\0"),
+                                          #str_ptr("()I\0"));
+    let code: i32 = { (*(*e)).CallIntMethodA(e, conn, get_code, 0 as *jni::JValue) };
+    if has_exception(e) {
+        let msg: text::Text = take_exception_text(e);
+        disconnect(e, http_cls, conn);
+        delete_local(e, { http_cls as jni::jobject });
+        delete_local(e, conn);
+        // NetworkOnMainThreadException reads as any other exception here, and
+        // the class name in the message is what tells a developer which one it
+        // was. Given its own code because it is a PROGRAMMING error rather than
+        // a network condition — nothing about retrying will help.
+        let on_main: bool = msg.view().has_prefix("android.os.NetworkOnMainThreadException");
+        if on_main {
+            fail_text(ok, error, ERROR_ON_MAIN_THREAD, msg);
+            return;
+        }
+        fail_text(ok, error, ERROR_EXCEPTION, msg);
+        return;
+    }
+
+    { (*response) = http::Response::from_parts(code,
+                                               read_headers(e, http_cls, conn),
+                                               read_body(e, http_cls, conn, code)) };
+    { (*ok) = true };
+    disconnect(e, http_cls, conn);
+    delete_local(e, { http_cls as jni::jobject });
+    delete_local(e, conn);
+    return;
+}
+
+// Method, timeouts, headers and body — everything that must be set before the
+// connection is used.
+fn configure(e: *jni::JNIEnv, cls: jni::jclass, conn: jni::jobject, req: *http::Request) {
+    // setRequestMethod
+    let set_method: jni::jmethodID = method(e, cls, #str_ptr("setRequestMethod\0"),
+                                            #str_ptr("(Ljava/lang/String;)V\0"));
+    let m: jni::jstring = new_jstring(e, http::method_name({ (*req).method }));
+    var a1: [jni::JValue; 1] = #zero::[[jni::JValue; 1]]();
+    a1[0 as usize] = jni::arg_object({ m as jni::jobject });
+    { (*(*e)).CallVoidMethodA(e, conn, set_method, #addr_of(a1[0])) };
+    delete_local(e, m);
+
+    // THE TIMEOUT IS TWO TIMEOUTS HERE, where Foundation has one. `timeout_
+    // seconds` is documented as an idle timeout between packets, which is
+    // exactly `setReadTimeout`; `setConnectTimeout` gets the same value because
+    // a caller who said "four seconds" did not mean "four seconds, plus however
+    // long the connect takes".
+    let ms: i32 = { ({ (*req).timeout_seconds } * 1000.0f64) as i32 };
+    set_int(e, cls, conn, #str_ptr("setConnectTimeout\0"), ms);
+    set_int(e, cls, conn, #str_ptr("setReadTimeout\0"), ms);
+
+    // setRequestProperty for each header. REPLACES rather than adds, matching
+    // `Request::set_header`'s own semantics — `addRequestProperty` would be the
+    // other one and is not what the type says.
+    let set_prop: jni::jmethodID = method(e, cls, #str_ptr("setRequestProperty\0"),
+                                          #str_ptr("(Ljava/lang/String;Ljava/lang/String;)V\0"));
+    var i: usize = 0 as usize;
+    while i < { (*req).headers.count() } {
+        match { (*req).headers.at_ptr(i) } {
+            option::Option[*http::Header]::Some(h) => {
+                let k: jni::jstring = new_jstring(e, { (*h).name.view() });
+                let v: jni::jstring = new_jstring(e, { (*h).value.view() });
+                var a2: [jni::JValue; 2] = #zero::[[jni::JValue; 2]]();
+                a2[0 as usize] = jni::arg_object({ k as jni::jobject });
+                a2[1 as usize] = jni::arg_object({ v as jni::jobject });
+                { (*(*e)).CallVoidMethodA(e, conn, set_prop, #addr_of(a2[0])) };
+                delete_local(e, k);
+                delete_local(e, v);
+            }
+            option::Option[*http::Header]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+
+    let n: usize = { (*req).body.count() };
+    if n == (0 as usize) { return; }
+    write_body(e, cls, conn, req, n);
+    return;
+}
+
+fn set_int(e: *jni::JNIEnv, cls: jni::jclass, conn: jni::jobject, name: *u8, v: i32) {
+    let mid: jni::jmethodID = method(e, cls, name, #str_ptr("(I)V\0"));
+    if mid == (0 as jni::jmethodID) { return; }
+    var a: [jni::JValue; 1] = #zero::[[jni::JValue; 1]]();
+    a[0 as usize] = jni::arg_int(v);
+    { (*(*e)).CallVoidMethodA(e, conn, mid, #addr_of(a[0])) };
+    return;
+}
+
+// setDoOutput(true) + setFixedLengthStreamingMode(n) + getOutputStream().write.
+//
+// FIXED LENGTH, not chunked: a `Content-Length` is what a server expects from a
+// body this package already holds whole, and chunked encoding would be a
+// different request for no reason.
+fn write_body(e: *jni::JNIEnv, cls: jni::jclass, conn: jni::jobject,
+              req: *http::Request, n: usize) {
+    let set_do_out: jni::jmethodID = method(e, cls, #str_ptr("setDoOutput\0"),
+                                            #str_ptr("(Z)V\0"));
+    var ab: [jni::JValue; 1] = #zero::[[jni::JValue; 1]]();
+    ab[0 as usize] = jni::arg_bool(1 as jni::jboolean);
+    { (*(*e)).CallVoidMethodA(e, conn, set_do_out, #addr_of(ab[0])) };
+    set_int(e, cls, conn, #str_ptr("setFixedLengthStreamingMode\0"), { n as i32 });
+
+    let get_os: jni::jmethodID = method(e, cls, #str_ptr("getOutputStream\0"),
+                                        #str_ptr("()Ljava/io/OutputStream;\0"));
+    let os: jni::jobject = { (*(*e)).CallObjectMethodA(e, conn, get_os, 0 as *jni::JValue) };
+    if os == (0 as jni::jobject) || has_exception(e) { return; }
+
+    let arr: jni::jbyteArray = { (*(*e)).NewByteArray(e, { n as jni::jsize }) };
+    guard let option::Option[*u8]::Some(first) = { (*req).body.at_ptr(0 as usize) } else {
+        delete_local(e, os);
+        return;
+    };
+    if arr != (0 as jni::jbyteArray) {
+        { (*(*e)).SetByteArrayRegion(e, arr, 0 as jni::jsize, { n as jni::jsize }, first) };
+        let os_cls: jni::jclass = { (*(*e)).GetObjectClass(e, os) };
+        let write: jni::jmethodID = method(e, os_cls, #str_ptr("write\0"), #str_ptr("([B)V\0"));
+        var aw: [jni::JValue; 1] = #zero::[[jni::JValue; 1]]();
+        aw[0 as usize] = jni::arg_object({ arr as jni::jobject });
+        { (*(*e)).CallVoidMethodA(e, os, write, #addr_of(aw[0])) };
+        let flush: jni::jmethodID = method(e, os_cls, #str_ptr("flush\0"), #str_ptr("()V\0"));
+        { (*(*e)).CallVoidMethodA(e, os, flush, 0 as *jni::JValue) };
+        delete_local(e, { os_cls as jni::jobject });
+        delete_local(e, { arr as jni::jobject });
+    }
+    let os_cls2: jni::jclass = { (*(*e)).GetObjectClass(e, os) };
+    let close: jni::jmethodID = method(e, os_cls2, #str_ptr("close\0"), #str_ptr("()V\0"));
+    { (*(*e)).CallVoidMethodA(e, os, close, 0 as *jni::JValue) };
+    delete_local(e, { os_cls2 as jni::jobject });
+    delete_local(e, os);
+    return;
+}
+
+// ==========================================================================
+// Reading the answer
+// ==========================================================================
+
+// `getHeaderFieldKey(i)` / `getHeaderField(i)` walked until the key is null.
+//
+// INDEX 0 IS THE STATUS LINE — `HttpURLConnection` reports it as a field with a
+// NULL key and the whole `HTTP/1.1 200 OK` as its value — so a walk that stops
+// at the first null key stops immediately. The loop skips a null key and
+// continues; it ends when BOTH are null, which is past the end.
+fn read_headers(e: *jni::JNIEnv, cls: jni::jclass, conn: jni::jobject) -> vec::Vec[http::Header] {
+    var out: vec::Vec[http::Header] = vec::new::[http::Header]();
+    let get_key: jni::jmethodID = method(e, cls, #str_ptr("getHeaderFieldKey\0"),
+                                         #str_ptr("(I)Ljava/lang/String;\0"));
+    let get_val: jni::jmethodID = method(e, cls, #str_ptr("getHeaderField\0"),
+                                         #str_ptr("(I)Ljava/lang/String;\0"));
+    if get_key == (0 as jni::jmethodID) { return out; }
+    var i: i32 = 0 as i32;
+    // BOUNDED. A server is not a trusted source of loop counts, and 256 header
+    // fields is far past anything real.
+    while i < (256 as i32) {
+        var a: [jni::JValue; 1] = #zero::[[jni::JValue; 1]]();
+        a[0 as usize] = jni::arg_int(i);
+        let k: jni::jstring = { (*(*e)).CallObjectMethodA(e, conn, get_key,
+                                                          #addr_of(a[0])) };
+        var a2: [jni::JValue; 1] = #zero::[[jni::JValue; 1]]();
+        a2[0 as usize] = jni::arg_int(i);
+        let v: jni::jstring = { (*(*e)).CallObjectMethodA(e, conn, get_val,
+                                                          #addr_of(a2[0])) };
+        clear_exception(e);
+        if k == (0 as jni::jstring) && v == (0 as jni::jstring) {
+            delete_local(e, k);
+            delete_local(e, v);
+            return out;
+        }
+        if k != (0 as jni::jstring) {
+            let _a: status::Status = out.append(http::Header {
+                name: jstring_to_text(e, k),
+                value: jstring_to_text(e, v),
+            });
+        }
+        delete_local(e, k);
+        delete_local(e, v);
+        i = i +% (1 as i32);
+    }
+    return out;
+}
+
+// `getInputStream()` for a 2xx/3xx, `getErrorStream()` for a 4xx/5xx.
+//
+// THE TWO STREAMS ARE NOT INTERCHANGEABLE and this is the one place
+// HttpURLConnection is genuinely surprising: `getInputStream` THROWS on a 404
+// rather than answering the error body, and the body a server sends with a 404
+// is usually the part a developer wants. `getErrorStream` never throws and
+// answers null when there is nothing.
+fn read_body(e: *jni::JNIEnv, cls: jni::jclass, conn: jni::jobject, code: i32) -> vec::Vec[u8] {
+    var out: vec::Vec[u8] = vec::new::[u8]();
+    var stream: jni::jobject = 0 as jni::jobject;
+    if code >= (400 as i32) {
+        let get_err: jni::jmethodID = method(e, cls, #str_ptr("getErrorStream\0"),
+                                             #str_ptr("()Ljava/io/InputStream;\0"));
+        stream = { (*(*e)).CallObjectMethodA(e, conn, get_err, 0 as *jni::JValue) };
+    } else {
+        let get_in: jni::jmethodID = method(e, cls, #str_ptr("getInputStream\0"),
+                                            #str_ptr("()Ljava/io/InputStream;\0"));
+        stream = { (*(*e)).CallObjectMethodA(e, conn, get_in, 0 as *jni::JValue) };
+    }
+    clear_exception(e);
+    if stream == (0 as jni::jobject) { return out; }
+
+    let in_cls: jni::jclass = { (*(*e)).GetObjectClass(e, stream) };
+    let read: jni::jmethodID = method(e, in_cls, #str_ptr("read\0"), #str_ptr("([B)I\0"));
+    let close: jni::jmethodID = method(e, in_cls, #str_ptr("close\0"), #str_ptr("()V\0"));
+    let chunk: usize = 16384 as usize;
+    let arr: jni::jbyteArray = { (*(*e)).NewByteArray(e, { chunk as jni::jsize }) };
+    let scratch: *u8 = { malloc(chunk) };
+    if arr != (0 as jni::jbyteArray) && scratch != (0 as *u8) {
+        var going: bool = true;
+        while going {
+            var a: [jni::JValue; 1] = #zero::[[jni::JValue; 1]]();
+            a[0 as usize] = jni::arg_object({ arr as jni::jobject });
+            let n: i32 = { (*(*e)).CallIntMethodA(e, stream, read, #addr_of(a[0])) };
+            if has_exception(e) { clear_exception(e); going = false; }
+            else if n <= (0 as i32) { going = false; }
+            else {
+                { (*(*e)).GetByteArrayRegion(e, arr, 0 as jni::jsize, { n as jni::jsize },
+                                             scratch) };
+                let _a: status::Status = out.extend_from_raw(scratch, { n as usize });
+            }
+        }
+    }
+    if scratch != (0 as *u8) { { free(scratch) }; }
+    delete_local(e, { arr as jni::jobject });
+    { (*(*e)).CallVoidMethodA(e, stream, close, 0 as *jni::JValue) };
+    clear_exception(e);
+    delete_local(e, { in_cls as jni::jobject });
+    delete_local(e, stream);
+    return out;
+}
+
+// `disconnect()` releases the socket back to the connection pool rather than
+// closing it, so this is not optional bookkeeping — without it a process that
+// makes many requests holds every socket it ever opened.
+fn disconnect(e: *jni::JNIEnv, cls: jni::jclass, conn: jni::jobject) {
+    let mid: jni::jmethodID = method(e, cls, #str_ptr("disconnect\0"), #str_ptr("()V\0"));
+    if mid == (0 as jni::jmethodID) { return; }
+    { (*(*e)).CallVoidMethodA(e, conn, mid, 0 as *jni::JValue) };
+    clear_exception(e);
+    return;
+}
+
+extern fn malloc(n: usize) -> *u8;
+extern fn free(p: *u8);

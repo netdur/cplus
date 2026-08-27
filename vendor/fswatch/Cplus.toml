@@ -5,8 +5,11 @@ edition = "2026"
 
 # fswatch — owner-thread filesystem change events.
 #
-# The first backend targets macOS with kqueue. Platform-specific backends keep
-# the public module stable when Linux and Windows support lands.
+# TWO BACKENDS, ONE PACKAGE. `backend.cplus` is kqueue (macOS); it is shadowed
+# by `backend_linux.cplus`, which is inotify and serves Android too — the
+# resolver falls back from `android` to `_linux`, and Android's kernel IS Linux.
+# A `backend_windows.cplus` (ReadDirectoryChangesW) would be the third. The
+# public module — `fswatch/fswatch` — is the same on all of them.
 
 [dependencies]
 stdlib = "*"

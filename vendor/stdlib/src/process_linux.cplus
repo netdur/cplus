@@ -1,6 +1,7 @@
 // stdlib/process_linux.cplus — subprocess spawning, Linux/Android.
 //
-// NOT PORTED, and this file exists so that says so at the right moment.
+// NOT PORTED, and this file exists so that says so at the right moment — and,
+// since 2026-08-28, so that it says so at RUNTIME rather than at compile time.
 //
 // `process.cplus` is written against Darwin's `posix_spawn`, and two things in
 // it are not merely differently-spelled on Linux:
@@ -15,21 +16,59 @@
 // So a real port is a real port, not a rename, and it belongs here rather than
 // as `#platform` branches inside the shared file.
 //
-// Nothing calls this on Android today — the consumers are `terminal` and
-// `agent_appkit`, both macOS-only. It exists because cpc emits ONE OBJECT PER
-// PACKAGE: the Darwin body's undefined symbols would otherwise land in the
-// Android slice of stdlib and fail the link of an app that never spawns
-// anything. See plans/plan.android.md.
+// ---- IT MIRRORS THE REAL SURFACE, which it used to not ----------------------
+//
+// This file used to export a DIFFERENT API from the one it shadows:
+//
+//     process.cplus         capture(argv: vec::Vec[text::Text], cwd: str) -> Output
+//     process_linux.cplus   capture(argv: *u8, argc: usize) -> Option[Text]
+//
+// So portable code calling `process::capture` did not fail at runtime with a
+// clear refusal — it failed to COMPILE for Android, with `E0405: no item named
+// Output in module stdlib.src.process_linux`. A stub whose whole job is to fail
+// gracefully must be substitutable for the thing it stands in for, or it is
+// just a hole with a comment.
+//
+// Every name below matches `process.cplus`: same spelling, same parameters,
+// same types, same defaults. `supported()` is the question to ask, and the
+// answers are the same ones the Darwin body gives when a spawn fails — `None`
+// from `spawn`, code 127 from `capture` — so a caller that already handles a
+// failed spawn handles this too, without knowing which platform it is on.
+//
+// ---- WHAT A REAL PORT WOULD BE ----------------------------------------------
+//
+// `fork` + `execvp` in the child, or `posix_spawn` with the Linux struct sizes
+// read from the platform's own headers rather than assumed. The pipe, poll and
+// waitpid halves of `process.cplus` are already portable — it is only the spawn
+// itself that is Darwin-shaped. Nothing in this repo builds for desktop Linux
+// yet, and the Android consumers (`terminal`, `agent_appkit`) are macOS-only,
+// which is why this has stayed a stub rather than becoming urgent.
 
 import "./option" as option;
 import "./text" as text;
+import "./vec" as vec;
 
 extern fn write(fd: i32, buf: *u8, n: usize) -> i64;
 extern fn strlen(s: *u8) -> usize;
 
+// ---- the signal numbers, which ARE portable ---------------------------------
+// Linux and Darwin agree on all four, and a caller passing `process::sig_term()`
+// to a `signal()` that refuses should still get the right number back.
+fn e_intr() -> i32 { return 4 as i32; }
+fn sig_int() -> i32 { return 2 as i32; }
+fn sig_term() -> i32 { return 15 as i32; }
+fn sig_kill() -> i32 { return 9 as i32; }
+
+// Also portable: pure arithmetic over a wait status word, no syscall in it.
+fn decode_status(status_word: i32) -> i32 {
+    let low: i32 = status_word & (0x7f as i32);
+    if low == (0 as i32) { return (status_word >> (8 as i32)) & (0xff as i32); }
+    return (128 as i32) + low;
+}
+
 // True where subprocess spawning works. `false` here, so a caller can ask
 // instead of discovering it by crashing — the shape `pty::supported` already
-// uses.
+// uses, and the ONE thing to branch on.
 fn supported() -> bool { return false; }
 
 fn unsupported(what: *u8) {
@@ -41,9 +80,96 @@ fn unsupported(what: *u8) {
     return;
 }
 
-// The one verb worth keeping callable, because its failure is expressible:
-// `None` is already what `capture` answers for a spawn that did not run.
-fn capture(argv: *u8, argc: usize) -> option::Option[text::Text] {
+// ---- the types, mirrored ------------------------------------------------------
+//
+// Same fields as `process.cplus`, so a caller can name `process::Output` and
+// read `.stdout` / `.code` on either platform. A `Child` here is never
+// constructed — `spawn` answers None — and its fields are the Darwin ones so
+// the shape a reader sees is the shape that exists.
+
+struct Child {
+    _pid: i32,
+    _stdin: i32,
+    _stdout: i32,
+    _stderr: i32,
+}
+
+struct Output {
+    stdout: text::Text,
+    stderr: text::Text,
+    code: i32,
+}
+
+fn spawn(argv: vec::Vec[text::Text], cwd: str = "") -> option::Option[Child] {
+    unsupported(#str_ptr("spawn\0"));
+    return option::Option[Child]::None;
+}
+
+// UNREACHABLE IN PRACTICE, because nothing here hands out a Child — but written
+// out rather than omitted, because the point of this file is that the surface
+// matches. Each answers what the Darwin body answers for a dead child.
+impl Child {
+    fn pid(ref this) -> i32 { return this._pid; }
+    fn stdout_fd(ref this) -> i32 { return this._stdout; }
+    fn stderr_fd(ref this) -> i32 { return this._stderr; }
+    fn take_stdout_fd(ref this) -> i32 { let fd: i32 = this._stdout; this._stdout = -1 as i32; return fd; }
+    fn take_stderr_fd(ref this) -> i32 { let fd: i32 = this._stderr; this._stderr = -1 as i32; return fd; }
+
+    fn signal(ref this, sig: i32) -> bool { return false; }
+    fn interrupt(ref this) -> bool { return false; }
+    fn terminate(ref this) -> bool { return false; }
+    fn kill_now(ref this) -> bool { return false; }
+
+    fn write_stdin(ref this, data: str) -> isize { return -1 as isize; }
+    fn close_stdin(ref this) { return; }
+    fn wait(ref this) -> i32 { return -1 as i32; }
+
+    fn output(take this) -> Output {
+        var _me: Child = this;
+        return Output { stdout: text::new(), stderr: text::new(), code: 127 as i32 };
+    }
+
+    fn drop(ref this) { return; }
+}
+
+// 127 is what a shell reports for "command not found" and what the Darwin body
+// returns for a spawn that did not happen. A caller checking `code != 0` needs
+// no platform knowledge.
+fn capture(argv: vec::Vec[text::Text], cwd: str = "") -> Output {
     unsupported(#str_ptr("capture\0"));
-    return option::Option[text::Text]::None;
+    return Output { stdout: text::new(), stderr: text::new(), code: 127 as i32 };
+}
+
+// ---- tests --------------------------------------------------------------------
+//
+// The half that is real here: the arithmetic and the constants, which are the
+// same on both platforms and are the reason they live in this file rather than
+// being refused with everything else.
+
+#[test]
+fn decode_status_reads_exit_code_and_signal() {
+    // Normal exit, code in the high byte.
+    assert decode_status(0x0500 as i32) == (5 as i32);
+    // Killed by SIGTERM (15): low seven bits carry the signal, 128 + it.
+    assert decode_status(15 as i32) == (143 as i32);
+}
+
+#[test]
+fn the_signal_numbers_match_the_darwin_body() {
+    assert sig_int() == (2 as i32);
+    assert sig_term() == (15 as i32);
+    assert sig_kill() == (9 as i32);
+    assert e_intr() == (4 as i32);
+}
+
+#[test]
+fn spawning_is_refused_rather_than_attempted() {
+    assert !supported();
+    var argv: vec::Vec[text::Text] = vec::new::[text::Text]();
+    let _a: i32 = { argv.append(text::from_str("/bin/true")) } as i32;
+    // The refusal is the Darwin body's own failure answer, so a caller that
+    // handles a failed spawn needs no platform branch.
+    let out: Output = capture(argv);
+    assert out.code == (127 as i32);
+    assert out.stdout.is_empty();
 }

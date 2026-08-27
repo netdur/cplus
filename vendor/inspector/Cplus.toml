@@ -11,6 +11,9 @@ edition = "2026"
 # - inspector/uikit:     the same two, on iOS — and `serve_if_asked` there takes
 #                        a PORT, because a Unix socket inside the app sandbox is
 #                        unreachable from the machine running the IDE
+# - inspector/serve_android: the same two again, on Android — where the port
+#                        arrives as the system property `debug.facet.inspect`,
+#                        because an Activity has no environment to set
 # - inspector/widget:    the facet-facing inspector UI applications embed
 #
 # This is NOT the agent surface. The agent surface is curated and permissioned;
@@ -49,3 +52,18 @@ uikit       = "*"
 webkit      = "*"
 agent_uikit = "*"
 agent_inapp = "*"
+
+# The Android half. `serve_android.cplus` is only ever compiled by a build that
+# imports it, so these are named for that build rather than for this package's
+# own — same reason as the iOS block above.
+#
+# `agent_android` is here because `facet_agent/agent` resolves to its Android
+# facade, which is written against that backend; the flat set the resolver
+# checks every import against is taken from the ROOT package's manifest, so a
+# transitive dependency of a dependency is still this file's to name.
+[android.dependencies]
+facet_android = "*"
+android_view  = "*"
+jni           = "*"
+agent_android = "*"
+agent_inapp   = "*"

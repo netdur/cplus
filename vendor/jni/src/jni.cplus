@@ -337,7 +337,13 @@ struct JNINativeInterface {
     // Primitive arrays (175-214): 8 New<P>Array, 8 Get<P>ArrayElements,
     // 8 Release<P>ArrayElements, 8 Get<P>ArrayRegion, 8 Set<P>ArrayRegion.
     opaque reserved_new_prim_array_0: *u8,
-    opaque reserved_new_prim_array_1: *u8,
+    // TYPED, and only this one of the eight. `byte[]` is the array every
+    // stream on the JVM speaks — `InputStream.read(byte[])`,
+    // `OutputStream.write(byte[])` — so a package that talks to
+    // `java.net` needs it and nothing else in the family. The other seven
+    // stay reserved until something wants them, because a slot typed on
+    // spec and never called is a slot nobody has checked.
+    NewByteArray: fn(*JNIEnv, jsize) -> jbyteArray,
     opaque reserved_new_prim_array_2: *u8,
     opaque reserved_new_prim_array_3: *u8,
     opaque reserved_new_prim_array_4: *u8,
@@ -361,7 +367,10 @@ struct JNINativeInterface {
     opaque reserved_release_prim_elems_6: *u8,
     opaque reserved_release_prim_elems_7: *u8,
     opaque reserved_get_prim_region_0: *u8,
-    opaque reserved_get_prim_region_1: *u8,
+    // Copy OUT of a Java `byte[]` into native memory. The `*u8` is the
+    // destination and must have room for `len` bytes; JNI writes and does
+    // not allocate.
+    GetByteArrayRegion: fn(*JNIEnv, jbyteArray, jsize, jsize, *u8),
     opaque reserved_get_prim_region_2: *u8,
     opaque reserved_get_prim_region_3: *u8,
     opaque reserved_get_prim_region_4: *u8,
@@ -369,7 +378,10 @@ struct JNINativeInterface {
     opaque reserved_get_prim_region_6: *u8,
     opaque reserved_get_prim_region_7: *u8,
     opaque reserved_set_prim_region_0: *u8,
-    opaque reserved_set_prim_region_1: *u8,
+    // And back IN. The pair is deliberately region-based rather than
+    // `Get<P>ArrayElements`: a region copy has no release to forget and no
+    // pinning for the GC to work around.
+    SetByteArrayRegion: fn(*JNIEnv, jbyteArray, jsize, jsize, *u8),
     opaque reserved_set_prim_region_2: *u8,
     opaque reserved_set_prim_region_3: *u8,
     opaque reserved_set_prim_region_4: *u8,

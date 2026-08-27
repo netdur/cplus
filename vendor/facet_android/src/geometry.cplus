@@ -249,6 +249,21 @@ fn safe_insets(root: *core::Node) -> Insets {
 static INSET_LEFT: f64 = 0.0f64;
 static INSET_TOP: f64 = 0.0f64;
 
+// WHERE THE ROOT HOST'S ORIGIN IS, in facet's units — which is the one thing a
+// reader OUTSIDE this file needs from the pair above, and the reason they are
+// readable at all.
+//
+// `reposition` applies the inset exactly once, and a viewless root's backed
+// descendants are placed against a host frame shifted the other way (see the
+// comment there). So facet's point (x, y) is at host point (x + inset_left,
+// y + inset_top), and anything that has to convert between the two spaces
+// without going through `place` — `inspector/serve_android` resolving a node
+// with no backed ancestor to a rectangle is the one that does — asks here
+// rather than keeping a second copy of a rule that has already cost a blank
+// screen once.
+fn inset_left() -> f64 { return INSET_LEFT; }
+fn inset_top() -> f64 { return INSET_TOP; }
+
 fn relayout_root(root: *core::Node, width: f64, height: f64) {
     if root == (0 as *core::Node) { return; }
     let ins: Insets = safe_insets(root);

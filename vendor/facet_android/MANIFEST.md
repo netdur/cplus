@@ -769,3 +769,25 @@ the app's archive. A missing archive fails at **dlopen, not at link**. Build
 with `-Wl,--no-undefined` — it turns a one-symbol-per-launch hunt into a single
 list at build time. `playground/facet_android_demo/build.sh` is the worked
 example.
+
+### A listening socket needs `android.permission.INTERNET`
+
+The inspector and the agent surface both bind a socket on LOOPBACK, and Android
+gates `socket()` on the app's membership of the inet group — which that
+permission is what grants. Without it the bind fails with `EACCES` the instant
+the serve worker starts. Nothing crashes: the app runs perfectly, the accept
+loop ends before anyone can connect, and the only trace is facet_agent's one
+`the accept loop ended` line in logcat.
+
+Loopback is not an exception. There is no permission below INTERNET that grants
+`socket()`, so an app that wants to be inspected declares it. `cpc init` writes
+it into the scaffolded AndroidManifest.xml beside the `serve_if_asked()` line
+that needs it; an app writing its own manifest has to.
+
+    adb shell setprop debug.facet.inspect 8787   # the port, since an Activity
+    adb shell am start -n <pkg>/cplus.facet.FacetActivity   # has no environment
+    adb forward tcp:8787 tcp:8787               # the counterpart of usbmuxd
+
+Measured on an emulator, 2026-08-27, in both directions: without the permission
+`/proc/net/tcp` has no listener and `inspector.describe` never connects; with
+it, `0100007F:2253` is there and the tree comes back.

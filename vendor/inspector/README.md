@@ -63,7 +63,8 @@ imcp::arm(itree::local_backend());
 | `inspector/inspector` | the neutral surface — `Handle`, `Value`, `Spec`, `Prop`, `Outcome`, `Backend` |
 | `inspector/tree` | the facet-tree walker, the typed dispatch, the structural verbs |
 | `inspector/widget` | the embeddable panel, written against the vtable |
-| `inspector/appkit` | highlight overlay, native rows, the UI-thread hop (macOS) |
+| `inspector/appkit` | highlight overlay, native rows, the UI-thread hop — the PLATFORM half, and it resolves per platform: `appkit.cplus` on macOS, `serve_ios.cplus` on iOS, `serve_android.cplus` on Android |
+| `inspector/serve` | `serve_if_asked()` — one name an entry calls on any platform to be inspectable when the launcher asked |
 | `inspector/mcp` | the `inspector.` namespace for `agent_mcp`'s server |
 
 ## Docs

@@ -1,8 +1,17 @@
 // macOS filesystem-watch primitives.
 //
-// This file is intentionally a narrow platform seam. A future
-// backend_linux.cplus / backend_windows.cplus can replace it through C+'s
-// platform-override convention without changing fswatch.cplus.
+// This file is intentionally a narrow platform seam. `backend_linux.cplus`
+// replaces it through C+'s platform-override convention (and serves Android,
+// which falls back to `_linux`); a `backend_windows.cplus` would be the third.
+//
+// THE SEAM GREW ONE FUNCTION when the second backend landed, and the header
+// used to promise it would not have to. `watch_path` returns an OPAQUE HANDLE,
+// not necessarily a file descriptor: on kqueue it is an `O_EVTONLY` fd that
+// `close` releases, on inotify it is a WATCH DESCRIPTOR that only
+// `inotify_rm_watch(queue, wd)` releases — and that needs the queue, which a
+// `fd_close(handle)` never had. So closing a watch is `watch_close(queue,
+// handle)` and closing the queue itself stays `fd_close`. The prediction was
+// close: one parameter, in the one place the two kernels genuinely differ.
 
 import "stdlib/option" as option;
 import "stdlib/text" as text;
@@ -99,8 +108,17 @@ fn queue_open() -> i32 {
     return { kqueue() };
 }
 
+// Close the QUEUE. A kqueue is an ordinary fd; so is an inotify instance.
 fn fd_close(fd: i32) {
     if fd >= (0 as i32) { let _rc: i32 = { close(fd) }; }
+    return;
+}
+
+// Release ONE WATCH. Here the handle is the `O_EVTONLY` fd `watch_path`
+// opened, and closing it de-registers the kqueue filter with it — so the queue
+// is unused. It is a parameter because inotify needs it; see the header.
+fn watch_close(queue: i32, handle: i32) {
+    if handle >= (0 as i32) { let _rc: i32 = { close(handle) }; }
     return;
 }
 

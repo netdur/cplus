@@ -1,0 +1,37 @@
+// transport — the Linux half. NOT BUILT, and this file exists so that says so
+// at the right moment.
+//
+// WHY IT EXISTS AT ALL, given that saying "no" is all it does: without it,
+// `import "./transport"` on Linux resolves to the BASE — which is Foundation —
+// and a Linux build ends on a page of undefined Objective-C symbols naming a
+// framework the developer never asked for. That is the same failure mode
+// `inspector/appkit_ios.cplus` was written for, and the same fix.
+//
+// It also keeps Android honest. The resolver falls back from `android` to
+// `_linux` when there is no `_android` sibling, and prefers `_android` when
+// there is — so this file is what an Android build would get if
+// `transport_android.cplus` were ever deleted, rather than Foundation.
+//
+// WHAT A REAL PORT WOULD BE. libcurl's easy interface: `curl_easy_init`,
+// `curl_easy_setopt` for the method, headers and body, a write callback that
+// appends to a `vec::Vec[u8]`, then a blocking `curl_easy_perform`. It is the
+// platform's own client in the same sense NSURLSession and HttpURLConnection
+// are — TLS, DNS, redirects and proxy all belong to it — and it is the one
+// every Linux program already links. The reason it is not here is that nothing
+// in this repo builds for Linux yet (`feedback_backend_priority_appkit_first`),
+// not that it is hard.
+
+import "stdlib/text" as text;
+import "./http" as http;
+
+// The same negative space the other transports use, so a caller comparing
+// against `http::ERROR_*` still sees a platform code here.
+const ERROR_NOT_BUILT: i64 = 0 - 3001;
+
+export extern fn http_transport_perform_v1(req: *http::Request, out: *http::Exchange) {
+    { (*out).ok = false };
+    { (*out).error_code = ERROR_NOT_BUILT };
+    { (*out).error_message = text::from_str(
+        "http: no transport is built for Linux (see vendor/http/src/transport_linux.cplus - libcurl is the port)") };
+    return;
+}

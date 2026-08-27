@@ -6614,7 +6614,7 @@ fn gen_function(
     // wrapping an LLVM coroutine handle; the user's declared return
     // type T lands in the coroutine promise for the executor to read.
     if f.is_async {
-        gen_async_function(out, f, sigs, types, str_lits, mode, test_mode, md, tramps);
+        gen_async_function(out, f, sigs, types, str_lits, mode, test_mode, md, tramps, is_lib);
         return;
     }
     // v0.0.4 Phase 4 Slice 4A: `gen fn` bodies are also coroutines, but
@@ -6623,7 +6623,7 @@ fn gen_function(
     // coroutine promise and suspends; the iterator's `next()` reads the
     // promise + resumes.
     if f.is_gen {
-        gen_gen_function(out, f, sigs, types, str_lits, mode, test_mode, md, tramps);
+        gen_gen_function(out, f, sigs, types, str_lits, mode, test_mode, md, tramps, is_lib);
         return;
     }
 
@@ -7258,6 +7258,7 @@ fn gen_async_method(
     test_mode: bool,
     md: &ModuleMetadata,
     tramps: &ThreadTrampolines,
+    is_lib: bool,
 ) {
     let struct_name = types.struct_defs[struct_id.0 as usize].name.clone();
     let sig = types.struct_defs[struct_id.0 as usize]
@@ -7286,7 +7287,28 @@ fn gen_async_method(
 
     // Function header: receiver + params, returns Future[T] (single-ptr
     // aggregate, fits in a register — no sret).
-    write!(out, "define {}{}{} @{}(", linkage, cc, future_llvm, mangled).unwrap();
+    // Body-less declaration → `declare`. See the note in `gen_async_function`:
+    // a synthesized empty coroutine shadows the archive's real one at link
+    // time and completes immediately with a garbage promise.
+    // A LIBRARY BUILD MAKES THE PUBLIC SURFACE LINKABLE, and the coroutine
+    // emitters missed the rule the ordinary ones apply — the same lockstep
+    // miss `gen_enum_method` records for 2026-08-16, one emitter family later.
+    // `internal` linkage on an archive's async fn means a consumer that
+    // declares it links against nothing, which is how `time::sleep` came to be
+    // resolved by an empty copy compiled from its own header rather than by the
+    // real one. `weak_odr` and not plain external for the reason spelled out in
+    // `gen_function`: a package ships its generic modules as source, so some
+    // definitions legitimately exist twice.
+    let linkage = if m.is_declaration {
+        ""
+    } else if lib_public_name(is_lib, &mangled) {
+        "weak_odr "
+    } else {
+        linkage
+    };
+    let cc = if linkage == "internal " { cc } else { "" };
+    let keyword = if m.is_declaration { "declare" } else { "define" };
+    write!(out, "{} {}{}{} @{}(", keyword, linkage, cc, future_llvm, mangled).unwrap();
     let mut llvm_idx: u32 = 0;
     let mut first = true;
     let struct_ty = Ty::Struct(struct_id);
@@ -7326,6 +7348,12 @@ fn gen_async_method(
         first = false;
     }
     out.push(')');
+    // Declaration: the signature is the whole emission. The implementation is
+    // in the bundled archive — see the note in `gen_async_function`.
+    if m.is_declaration {
+        out.push('\n');
+        return;
+    }
     out.push_str(&md.fn_attrs.borrow());
     out.push_str(" presplitcoroutine {\nentry:\n");
 
@@ -7478,6 +7506,7 @@ fn gen_gen_method(
     test_mode: bool,
     md: &ModuleMetadata,
     tramps: &ThreadTrampolines,
+    is_lib: bool,
 ) {
     let struct_name = types.struct_defs[struct_id.0 as usize].name.clone();
     let sig = types.struct_defs[struct_id.0 as usize]
@@ -7507,7 +7536,26 @@ fn gen_gen_method(
     // Function header: same receiver + param structure as a regular
     // method, but the return is `Iterator[T]` (one-ptr aggregate that
     // fits in a register, so no sret).
-    write!(out, "define {}{}{} @{}(", linkage, cc, iter_llvm, mangled).unwrap();
+    // Body-less declaration → `declare`, as in `gen_async_method`.
+    // A LIBRARY BUILD MAKES THE PUBLIC SURFACE LINKABLE, and the coroutine
+    // emitters missed the rule the ordinary ones apply — the same lockstep
+    // miss `gen_enum_method` records for 2026-08-16, one emitter family later.
+    // `internal` linkage on an archive's async fn means a consumer that
+    // declares it links against nothing, which is how `time::sleep` came to be
+    // resolved by an empty copy compiled from its own header rather than by the
+    // real one. `weak_odr` and not plain external for the reason spelled out in
+    // `gen_function`: a package ships its generic modules as source, so some
+    // definitions legitimately exist twice.
+    let linkage = if m.is_declaration {
+        ""
+    } else if lib_public_name(is_lib, &mangled) {
+        "weak_odr "
+    } else {
+        linkage
+    };
+    let cc = if linkage == "internal " { cc } else { "" };
+    let keyword = if m.is_declaration { "declare" } else { "define" };
+    write!(out, "{} {}{}{} @{}(", keyword, linkage, cc, iter_llvm, mangled).unwrap();
     let mut llvm_idx: u32 = 0;
     let mut first = true;
     let struct_ty = Ty::Struct(struct_id);
@@ -7547,6 +7595,12 @@ fn gen_gen_method(
         first = false;
     }
     out.push(')');
+    // Declaration: the signature is the whole emission. The implementation
+    // is in the bundled archive — see the note in `gen_async_function`.
+    if m.is_declaration {
+        out.push('\n');
+        return;
+    }
     out.push_str(&md.fn_attrs.borrow());
     out.push_str(" presplitcoroutine {\nentry:\n");
 
@@ -7680,6 +7734,7 @@ fn gen_gen_function(
     test_mode: bool,
     md: &ModuleMetadata,
     tramps: &ThreadTrampolines,
+    is_lib: bool,
 ) {
     let sig = sigs.get(&f.name.name).expect("sig was collected");
     let inner_ty = match &f.return_type {
@@ -7703,10 +7758,28 @@ fn gen_gen_function(
     };
     let iter_llvm = llvm_ty(&iter_ret_ty, types);
 
+    // Body-less declaration → `declare`, for the reason spelled out in
+    // `gen_async_function`: a synthesized empty coroutine would shadow the
+    // archive's real one at link time and silently answer an exhausted
+    // iterator. Same hole, same fix; no `gen fn` has been caught by it yet
+    // because none is declared across a prebuilt boundary today.
+    // A LIBRARY BUILD MAKES THE PUBLIC SURFACE LINKABLE — see the note in
+    // `gen_async_method`. Without it an archive's async fn is `internal` and a
+    // consumer's declaration of it links against nothing.
+    let linkage = if f.is_declaration {
+        ""
+    } else if lib_public_name(is_lib, &f.name.name) {
+        "weak_odr "
+    } else {
+        linkage
+    };
+    let cc = if linkage == "internal " { cc } else { "" };
+    let keyword = if f.is_declaration { "declare" } else { "define" };
+
     write!(
         out,
-        "define {}{}{} @{}(",
-        linkage, cc, iter_llvm, f.name.name
+        "{} {}{}{} @{}(",
+        keyword, linkage, cc, iter_llvm, f.name.name
     )
     .unwrap();
     // Same ABI classification as every other def emitter — `ref` and non-Copy
@@ -7722,6 +7795,10 @@ fn gen_gen_function(
         out.push_str(&classify_param(ps, METHOD_ABI, types).sig_fragment(i as u32));
     }
     out.push(')');
+    if f.is_declaration {
+        out.push('\n');
+        return;
+    }
     out.push_str(&md.fn_attrs.borrow());
     out.push_str(" presplitcoroutine {\nentry:\n");
 
@@ -7831,6 +7908,7 @@ fn gen_async_function(
     test_mode: bool,
     md: &ModuleMetadata,
     tramps: &ThreadTrampolines,
+    is_lib: bool,
 ) {
     let sig = sigs.get(&f.name.name).expect("sig was collected");
     // codegen's `collect_sigs` wraps async fn sigs to Future[T] for
@@ -7857,14 +7935,46 @@ fn gen_async_function(
     };
     let future_llvm = llvm_ty(&future_ret_ty, types);
 
+    // A BODY-LESS DECLARATION EMITS `declare`, NOT A RAMP — the same rule the
+    // ordinary path applies a few hundred lines up, and it was missing here
+    // because `is_async` routes to this function BEFORE that guard runs.
+    //
+    // What it cost: a prebuilt package's `lib/include/<mod>.cplus` declares its
+    // async fns body-less (`async fn sleep(milliseconds: u64) ;`). Emitting a
+    // `define` for one synthesizes a coroutine whose body is empty — it mallocs
+    // a frame, calls the final-suspend epilogue, marks itself DONE and returns.
+    // The linker then has two `_pkg.src.mod.f` symbols and binds the call site
+    // to the consumer's empty one, so `await` on it completes IMMEDIATELY with
+    // a garbage promise and the archive's real implementation is never reached.
+    //
+    // Measured: `await time::sleep(3000)` returned in under a millisecond, and
+    // the process it ran in lived 0.3 seconds. It also silently disarmed all
+    // four of `stdlib/net`'s async I/O verbs for every consumer of prebuilt
+    // stdlib. See bugs/time-sleep-does-not-sleep.md.
+    //
+    // The declaration reuses the SAME lowered signature the definition emits —
+    // `Future[T]` return, identical param ABI — so the two cannot drift.
+    // A LIBRARY BUILD MAKES THE PUBLIC SURFACE LINKABLE — see the note in
+    // `gen_async_method`. Without it an archive's async fn is `internal` and a
+    // consumer's declaration of it links against nothing.
+    let linkage = if f.is_declaration {
+        ""
+    } else if lib_public_name(is_lib, &f.name.name) {
+        "weak_odr "
+    } else {
+        linkage
+    };
+    let cc = if linkage == "internal " { cc } else { "" };
+    let keyword = if f.is_declaration { "declare" } else { "define" };
+
     // Function signature. Async fns can't be C-exports (no extern
     // export), so we don't need the C-ABI coercion paths. They also
     // can't use the sret return path because the return value
     // (Future[T] = { *u8 }) is just one ptr — fits in a register.
     write!(
         out,
-        "define {}{}{} @{}(",
-        linkage, cc, future_llvm, f.name.name
+        "{} {}{}{} @{}(",
+        keyword, linkage, cc, future_llvm, f.name.name
     )
     .unwrap();
     // Same ABI classification as every other def emitter — `ref` and non-Copy
@@ -7880,6 +7990,12 @@ fn gen_async_function(
         out.push_str(&classify_param(ps, METHOD_ABI, types).sig_fragment(i as u32));
     }
     out.push(')');
+    // Declaration: the signature is the whole emission. The implementation
+    // is in the bundled archive — see the note above.
+    if f.is_declaration {
+        out.push('\n');
+        return;
+    }
     out.push_str(&md.fn_attrs.borrow());
     out.push_str(" presplitcoroutine {\nentry:\n");
 
@@ -8418,7 +8534,7 @@ fn gen_method(
     // + parameter shape.
     if m.is_gen {
         gen_gen_method(
-            out, struct_id, m, sigs, types, str_lits, mode, test_mode, md, tramps,
+            out, struct_id, m, sigs, types, str_lits, mode, test_mode, md, tramps, is_lib,
         );
         return;
     }
@@ -8427,7 +8543,7 @@ fn gen_method(
     // suspend/end) but with method-shaped receiver + params.
     if m.is_async {
         gen_async_method(
-            out, struct_id, m, sigs, types, str_lits, mode, test_mode, md, tramps,
+            out, struct_id, m, sigs, types, str_lits, mode, test_mode, md, tramps, is_lib,
         );
         return;
     }

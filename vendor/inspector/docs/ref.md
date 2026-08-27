@@ -632,7 +632,16 @@ directly.
 
 # `inspector/appkit`
 
-macOS only. The two things facet's tree cannot answer, plus the thread hop.
+THE PLATFORM HALF, and it is not macOS only despite the name. The module
+resolves per platform — `appkit.cplus` on macOS, `serve_ios.cplus` on iOS,
+`serve_android.cplus` on Android — and all three answer the same six entry
+points: the two things facet's tree cannot answer, plus the thread hop. The
+name predates the second and third backends and is kept because it is what the
+docs and the probe already say.
+
+`inspector/serve` is the door an application should use: one `serve_if_asked()`
+that resolves to the same three files, so a shared entry does not name a
+toolkit.
 
 ### `install`
 
@@ -716,7 +725,7 @@ the prefix.
 | | |
 |---|---|
 | Name | `inspector` |
-| Modules | `inspector/inspector`, `inspector/tree`, `inspector/widget`, `inspector/appkit`, `inspector/mcp` |
+| Modules | `inspector/inspector`, `inspector/tree`, `inspector/widget`, `inspector/appkit`, `inspector/serve`, `inspector/mcp` |
 | Dependencies | `stdlib`, `flex_layout`, `facet`, `objc`, `appkit`, `quartzcore`, `json`, `agent_mcp`, `agent_core` |
-| Platform notes | `inspector/appkit` is macOS; `inspector/tree` is portable |
+| Platform notes | `inspector/tree` is portable. `inspector/appkit` is the platform half and resolves three ways — macOS, iOS, Android. On iOS and Android `serve_if_asked` takes a PORT rather than a socket path (a Unix socket inside the sandbox is unreachable from the development machine), and on Android the port arrives as the system property `debug.facet.inspect` because an Activity has no environment for a launcher to set; the app also needs `android.permission.INTERNET`, without which the bind fails and nothing listens |
 | Tests | `src/test_main.cplus` — `cd vendor/inspector && cpc test` |

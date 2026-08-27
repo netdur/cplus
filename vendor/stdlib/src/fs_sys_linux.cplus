@@ -28,8 +28,24 @@ fn make_dir(path: *u8, mode: u32) -> i32 {
 //
 // x86_64/aarch64 Linux: 144 bytes — the same SIZE as Darwin's and a completely
 // different layout, which is exactly why the Darwin offsets read plausible
-// garbage instead of faulting. st_mode is a u32 at byte 24, st_size an i64 at
-// byte 48, st_mtim.tv_sec an i64 at byte 88.
+// garbage instead of faulting. st_size is an i64 at byte 48 and st_mtim.tv_sec
+// an i64 at byte 88 on BOTH; `st_mode` is the one field that moves.
+//
+// AND IT MOVES BY ARCHITECTURE, not by OS — which is how it came to be wrong.
+// The two kernel layouts differ in where `st_nlink` sits:
+//
+//   x86_64    dev@0  ino@8  nlink@16(8)  MODE@24  uid@28 gid@32 ... size@48
+//   aarch64   dev@0  ino@8  MODE@16      nlink@20 uid@24 gid@28 ... size@48
+//
+// This file hard-coded 24, which on aarch64 reads `st_uid`. The effect was not
+// a crash and not a wrong number a reader would notice — `fs::is_dir` simply
+// answered FALSE for every directory on Android, because a uid ANDed with
+// S_IFMT is not S_IFDIR. Measured on an emulator, 2026-08-28, before the fix:
+// `fs::is_dir("/data/data/<pkg>/files")` was false while `fs::exists` on the
+// same path was true.
+//
+// `#arch()` is a compile-time string, so the branch folds; there is no runtime
+// cost and no way for the two to disagree at run time.
 
 fn stat_buf_bytes() -> usize { return 144 as usize; }
 
@@ -37,8 +53,14 @@ fn stat_path(path: *u8, buf: *u8) -> i32 {
     return { stat(path, buf) };
 }
 
+// Where `st_mode` is, for the architecture this binary is being built for.
+fn stat_mode_offset() -> usize {
+    if #arch() == "aarch64" { return 16 as usize; }
+    return 24 as usize;
+}
+
 fn stat_mode(buf: *u8) -> u32 {
-    return { *((buf + (24 as usize)) as *u32) };
+    return { *((buf + stat_mode_offset()) as *u32) };
 }
 
 fn stat_mtime_secs(buf: *u8) -> i64 {

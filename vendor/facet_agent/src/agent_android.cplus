@@ -166,6 +166,36 @@ fn serve_main(take job: AgentServe) -> i32 {
     // exactly like an agent nobody connected to. That is how the socket
     // constants being Darwin's on Android went unnoticed: nothing listened, and
     // nothing said so.
+    //
+    // AND IT SAYS WHICH SYSCALL, because "it ended" was not enough twice in one
+    // day. `bind_tcp` already separates the three, and on Android they are three
+    // different mistakes with nothing in common:
+    //
+    //   -1  socket()  refused. THE PERMISSION. Android gates socket() on the
+    //                 app's membership of the inet group and
+    //                 `android.permission.INTERNET` is what grants it —
+    //                 loopback included, there being no narrower one. `cpc init`
+    //                 writes it; an app with a hand-written AndroidManifest.xml
+    //                 that reads this line is missing it.
+    //   -2  bind()    refused. THE PORT IS TAKEN, usually by another app on the
+    //                 same emulator holding it — two probes, one port, and the
+    //                 second one looks exactly like the permission case if the
+    //                 message does not say which. (It was mine, 2026-08-27.)
+    //   -3  listen()  refused. Neither of the above; read errno.
+    //
+    // Anything else is a loop that ran and ended, which is the original meaning.
+    if rc == (- 1 as i32) {
+        alog::warn(#str_ptr("agent: socket() refused - the app is missing android.permission.INTERNET\0"));
+        return rc;
+    }
+    if rc == (- 2 as i32) {
+        alog::warn(#str_ptr("agent: bind() refused - the port is already in use by another process\0"));
+        return rc;
+    }
+    if rc == (- 3 as i32) {
+        alog::warn(#str_ptr("agent: listen() refused - nothing is served on this port\0"));
+        return rc;
+    }
     alog::warn(#str_ptr("agent: the accept loop ended - the surface is no longer served\0"));
     return rc;
 }

@@ -643,3 +643,85 @@ fn init_rejects_an_unknown_platform() {
     assert!(stderr.contains("macos"), "the error lists the valid names: {stderr}");
     assert!(!dir.path().join("x").exists(), "nothing scaffolded on error");
 }
+
+// An Android project is inspectable, which it was not until 2026-08-27.
+//
+// Three things have to agree or the Inspect tab is blank against a running app,
+// and each was separately absent: the ENTRY has to arm the server, the manifest
+// has to name what that line links, and the APK has to hold the permission
+// Android gates a listening socket on. See
+// iris/gaps/done/the-inspector-has-no-android-half.txt.
+#[test]
+fn init_android_arms_the_inspector() {
+    let dir = tempfile::tempdir().unwrap();
+    let out = Command::new(cpc())
+        .current_dir(dir.path())
+        // `--kind gui` and not the default: unlike `--platform ios`, android
+        // does not imply gui, so a bare `--platform android` scaffolds a
+        // printing entry. A facet app is the gui one, which is the form
+        // iris/gaps' own VERIFY block uses.
+        .args(["init", "--kind", "gui", "--platform", "android", "droid"])
+        .output()
+        .expect("run cpc init");
+    assert!(out.status.success(), "init failed: {}", String::from_utf8_lossy(&out.stderr));
+    let proj = dir.path().join("droid");
+
+    // 1. The entry arms it, exactly as the macOS and iOS entries do.
+    let main = read(&proj.join("src/main.cplus"));
+    assert!(main.contains("import \"inspector/serve\" as inspect;"), "{main}");
+    assert!(main.contains("inspect::serve_if_asked();"), "{main}");
+    // The channel is a system property, because an Activity has no environment
+    // for a launcher to set. A reader who does not know that cannot use it.
+    assert!(main.contains("debug.facet.inspect"), "{main}");
+
+    // 2. The closure names what that line links. The resolver checks every
+    //    import against ONE flat set taken from this manifest, so a missing
+    //    line here is a build failure and not a degraded feature.
+    let manifest = read(&proj.join("Cplus.toml"));
+    for dep in [
+        "facet_android", "android_view", "jni",
+        "inspector", "facet_agent", "agent_android", "agent_core",
+        "agent_inapp", "agent_mcp", "json",
+    ] {
+        assert!(
+            manifest.contains(&format!("{dep} ")),
+            "[android.dependencies] should name `{dep}`: {manifest}"
+        );
+    }
+    // And the SIBLING backends stay out: agent_android is the Android reader,
+    // and naming another platform's would resolve and then walk nothing.
+    assert!(!manifest.contains("agent_appkit"), "{manifest}");
+    assert!(!manifest.contains("agent_uikit"), "{manifest}");
+
+    // 3. The permission the socket needs. Without it `bind` fails with EACCES,
+    //    the accept loop ends the instant it starts, and the app runs perfectly
+    //    while nothing listens — which is exactly how this went unnoticed.
+    let android_manifest = read(&proj.join("android/AndroidManifest.xml"));
+    assert!(
+        android_manifest.contains("android.permission.INTERNET"),
+        "{android_manifest}"
+    );
+}
+
+// The reported case: one project, all three platforms, and the Inspect tab
+// blank on exactly one of them. Every entry arms the inspector now.
+#[test]
+fn init_three_platforms_all_arm_the_inspector() {
+    let dir = tempfile::tempdir().unwrap();
+    let out = Command::new(cpc())
+        .current_dir(dir.path())
+        .args(["init", "--kind", "gui", "--platform", "macos",
+               "--platform", "ios", "--platform", "android", "all3"])
+        .output()
+        .expect("run cpc init");
+    assert!(out.status.success(), "init failed: {}", String::from_utf8_lossy(&out.stderr));
+    let proj = dir.path().join("all3");
+
+    for entry in ["src/main.cplus", "src/main_ios.cplus", "src/main_android.cplus"] {
+        let body = read(&proj.join(entry));
+        assert!(
+            body.contains("inspect::serve_if_asked();"),
+            "{entry} does not arm the inspector: {body}"
+        );
+    }
+}

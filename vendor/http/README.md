@@ -1,14 +1,38 @@
 # http
 
-Blocking HTTP(S) over the OS's own client. Darwin only: **NSURLSession**, which
-is Foundation, so one backend serves both macOS and iOS. No TLS, DNS or HTTP
-framing of our own — the OS already ships all three.
+Blocking HTTP(S) over whatever client the platform already ships. No TLS, DNS
+or HTTP framing of our own — the platform ships all three.
+
+| | |
+|---|---|
+| macOS, iOS | `NSURLSession` (Foundation) |
+| Android | `java.net.HttpURLConnection` (JNI, no Java to compile) |
+| Linux | not built — refuses with a named error |
+
+**One package on every platform.** There is no `http_android`; the transport is
+a file inside this package, swapped by the resolver's `_<platform>` override.
+
+A consumer names `http` once, plus the transitive dep of whichever transport it
+builds — the same flat-closure rule every package in this repo follows (cpc
+resolves imports and link archives against ONE set taken from the consuming
+manifest, not from a dependency's own):
 
 ```toml
 [dependencies]
 http = "*"
-objc = "*"   # http's own dep; the resolver validates imports against THIS manifest
+
+[macos.dependencies]
+objc = "*"      # NSURLSession; brings -framework Foundation with it
+
+[ios.dependencies]
+objc = "*"
+
+[android.dependencies]
+jni  = "*"      # java.net.HttpURLConnection
 ```
+
+Name only the platforms you build for. Miss one and the link says which symbol
+it wanted, naming the package.
 
 ```cplus
 import "http/http" as http;

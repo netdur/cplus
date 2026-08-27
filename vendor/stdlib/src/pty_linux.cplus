@@ -1,28 +1,76 @@
 // stdlib/pty_linux.cplus — pseudo-terminal sessions, Linux/Android.
 //
-// NOT PORTED, and this file exists so that says so at the right moment.
+// NOT PORTED, and this file exists so that says so at RUNTIME rather than at
+// compile time — see `process_linux.cplus`, which was the same shape and got
+// the same treatment on 2026-08-28.
 //
 // `pty.cplus` builds on the same Darwin `posix_spawn` surface as
-// `process.cplus`, with the same struct-size problem (see process_linux.cplus),
-// plus `TIOCSWINSZ` and the `openpty`/`login_tty` family whose header and
-// library differ on bionic (`<pty.h>`, and bionic folds it into libc rather
-// than a separate `libutil`).
+// `process.cplus`, with the same struct-size problem, plus two of its own:
 //
-// Nothing calls this on Android today — the consumers are `terminal` and
-// `agent_appkit`, both macOS-only. It exists because cpc emits ONE OBJECT PER
-// PACKAGE: the Darwin body's undefined symbols would otherwise land in the
-// Android slice of stdlib and fail the link of an app that never spawns
-// anything. See plans/plan.android.md.
+//   * `openpty` lives in libutil on glibc (`-lutil`) and in bionic's libc,
+//     so the link line differs by platform as well as the code.
+//   * `TIOCSWINSZ` is 0x80087467 on Darwin and 0x5414 on Linux. The constant
+//     `pty.cplus` hard-codes is the Darwin one, and a resize with the wrong
+//     ioctl number is not an error — it is a different ioctl.
+//
+// ---- IT MIRRORS THE REAL SURFACE, which it used to not ----------------------
+//
+// This file used to export `start(argv: *u8, argc: usize) -> Option[Text]` —
+// a function `pty.cplus` does not have, in place of a `spawn` it does. So
+// portable code did not get a clear refusal; it got a compile error naming a
+// type that only exists on the other platform. Every name below now matches.
+//
+// ---- WHAT A REAL PORT WOULD BE ----------------------------------------------
+//
+// `forkpty` (or `openpty` + `fork` + `setsid` + `TIOCSCTTY`), with the Linux
+// `TIOCSWINSZ`. Everything above the spawn in `pty.cplus` — the winsize
+// packing, the read/write loops, the status decode — is already portable.
+//
+// The one consumer is `vendor/terminal`, which is macOS-only today
+// (`feedback_backend_priority_appkit_first`). A terminal emulator on Android is
+// a real thing to want and this is the file it starts in.
 
 import "./option" as option;
 import "./text" as text;
+import "./vec" as vec;
 
 extern fn write(fd: i32, buf: *u8, n: usize) -> i64;
 extern fn strlen(s: *u8) -> usize;
+extern fn malloc(n: usize) -> *u8;
 
-// True where subprocess spawning works. `false` here, so a caller can ask
-// instead of discovering it by crashing — the shape `pty::supported` already
-// uses.
+// ---- the portable constants ---------------------------------------------------
+fn e_intr() -> i32 { return 4 as i32; }
+fn sig_int() -> i32 { return 2 as i32; }
+fn sig_term() -> i32 { return 15 as i32; }
+fn sig_kill() -> i32 { return 9 as i32; }
+fn o_rdwr() -> i32 { return 2 as i32; }
+fn spawn_setsid() -> i16 { return 1024 as i16; }
+
+// THE ONE CONSTANT THAT IS NOT THE DARWIN ONE. `pty.cplus` answers
+// 2148037735 (0x80087467); Linux and bionic use 0x5414. Answering the right
+// number here rather than inheriting the wrong one is most of what a port
+// would have to remember, so it is written down now while the reason is known.
+fn tiocswinsz() -> u64 { return 21524 as u64; }
+
+fn decode_status(status_word: i32) -> i32 {
+    if (status_word & (0x7f as i32)) == (0 as i32) {
+        return (status_word >> (8 as i32)) & (0xff as i32);
+    }
+    return (128 as i32) + (status_word & (0x7f as i32));
+}
+
+// `struct winsize { unsigned short ws_row, ws_col, ws_xpixel, ws_ypixel; }` —
+// the same layout on both kernels, so this is real rather than refused.
+fn winsize_new(cols: u16, rows: u16) -> *u8 {
+    let w: *u8 = { malloc(8 as usize) };
+    if w == (0 as *u8) { return 0 as *u8; }
+    { *((w + (0 as usize)) as *u16) = rows; }
+    { *((w + (2 as usize)) as *u16) = cols; }
+    { *((w + (4 as usize)) as *u16) = 0 as u16; }
+    { *((w + (6 as usize)) as *u16) = 0 as u16; }
+    return w;
+}
+
 fn supported() -> bool { return false; }
 
 fn unsupported(what: *u8) {
@@ -34,9 +82,64 @@ fn unsupported(what: *u8) {
     return;
 }
 
-// A caller is expected to gate on `supported()`; `start` answering None is the
-// same shape the Darwin body uses when the fork fails.
-fn start(argv: *u8, argc: usize) -> option::Option[text::Text] {
-    unsupported(#str_ptr("start\0"));
-    return option::Option[text::Text]::None;
+struct PtyChild {
+    _pid: i32,
+    _master: i32,
+}
+
+// `None` is what the Darwin body answers for an empty argv or a failed spawn,
+// so a caller that already handles it needs no platform branch.
+fn spawn(argv: vec::Vec[text::Text], cwd: str, cols: u16, rows: u16)
+        -> option::Option[PtyChild] {
+    unsupported(#str_ptr("spawn\0"));
+    return option::Option[PtyChild]::None;
+}
+
+// Unreachable in practice — nothing here hands out a PtyChild — but written out
+// so the surface matches. Each answers what the Darwin body answers for a dead
+// child.
+impl PtyChild {
+    fn pid(ref this) -> i32 { return this._pid; }
+    fn read_fd(ref this) -> i32 { return this._master; }
+    fn take_fd(ref this) -> i32 { let fd: i32 = this._master; this._master = -1 as i32; return fd; }
+
+    fn write(ref this, data: str) -> isize { return -1 as isize; }
+    fn read(ref this, buf: *u8, count: usize) -> isize { return -1 as isize; }
+    fn resize(ref this, cols: u16, rows: u16) -> bool { return false; }
+
+    fn signal(ref this, sig: i32) -> bool { return false; }
+    fn interrupt(ref this) -> bool { return false; }
+    fn terminate(ref this) -> bool { return false; }
+    fn kill_now(ref this) -> bool { return false; }
+
+    fn wait(ref this) -> i32 { return -1 as i32; }
+    fn drop(ref this) { return; }
+}
+
+// ---- tests --------------------------------------------------------------------
+
+#[test]
+fn winsize_is_packed_rows_then_cols() {
+    let w: *u8 = winsize_new(80 as u16, 24 as u16);
+    assert w != (0 as *u8);
+    assert { *((w + (0 as usize)) as *u16) } == (24 as u16);
+    assert { *((w + (2 as usize)) as *u16) } == (80 as u16);
+}
+
+#[test]
+fn tiocswinsz_is_the_LINUX_encoding_not_the_darwin_one() {
+    // 0x5414. The Darwin body's 0x80087467 would be a different ioctl here, and
+    // a resize that quietly does something else is the failure this guards.
+    assert tiocswinsz() == (21524 as u64);
+}
+
+#[test]
+fn spawning_is_refused_rather_than_attempted() {
+    assert !supported();
+    var argv: vec::Vec[text::Text] = vec::new::[text::Text]();
+    let _a: i32 = { argv.append(text::from_str("/bin/sh")) } as i32;
+    match spawn(argv, "", 80 as u16, 24 as u16) {
+        option::Option[PtyChild]::Some(_c) => { assert false; }
+        option::Option[PtyChild]::None => { }
+    }
 }

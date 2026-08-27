@@ -21,8 +21,11 @@ import "stdlib/result" as result;
 import "http/http" as http;
 ```
 
-macOS and iOS only. `Foundation` links automatically — depending on `http` is
-enough.
+macOS, iOS and Android, from the same source. The manifest names `http` plus
+one transitive dep per platform you build for — `objc` on Apple (which brings
+`-framework Foundation` with it), `jni` on Android — which is the same rule
+every package here follows. Linux has no transport yet and says so at runtime
+rather than failing to link. See the README for the manifest block.
 
 ## GET something
 

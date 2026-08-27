@@ -361,11 +361,16 @@ struct WatchHandle {
     path: text::Text,
     inode: u64,
     fd: i32,
+    // THE QUEUE THE WATCH BELONGS TO, carried so `drop` can release it. On
+    // kqueue `fd` is an fd and closing it is enough; on inotify it is a watch
+    // descriptor that only `inotify_rm_watch(queue, wd)` releases, and a
+    // destructor has no other way to reach the queue. See backend.cplus.
+    queue: i32,
 }
 
 impl WatchHandle {
     fn drop(ref this) {
-        backend::fd_close(this.fd);
+        backend::watch_close(this.queue, this.fd);
         this.fd = (0 as i32) -% (1 as i32);
         return;
     }
@@ -544,9 +549,10 @@ impl Watcher {
                             path: (*p).path.clone(),
                             inode: (*p).inode,
                             fd: fd,
+                            queue: this._queue,
                         });
                         if added != status::Status::Ok {
-                            backend::fd_close(fd);
+                            backend::watch_close(this._queue, fd);
                             return result::err::[bool, WatchError](WatchError::OutOfMemory);
                         }
                     }

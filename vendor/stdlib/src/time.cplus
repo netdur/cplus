@@ -73,6 +73,38 @@ fn sleep_completes_via_block_on() {
     assert v == 7;
 }
 
+async fn _nap(ms: u64) -> i64 {
+    await sleep(ms);
+    return 1 as i64;
+}
+
+// THE ASSERTION THIS FAMILY WAS MISSING, and it is the whole of why the bug
+// above it went unseen: `sleep_completes_via_block_on` asserts that the VALUE
+// comes back and never that any time passed, so a timer that fired immediately
+// — or one that was never registered — passed it. For eight months it did.
+//
+// What was actually wrong was not in this file. A prebuilt package declares its
+// async fns body-less in `lib/include/`, codegen emitted a coroutine RAMP for
+// such a declaration instead of a `declare`, and the linker then bound every
+// consumer's `await time::sleep(n)` to that empty local copy: allocate a frame,
+// run the final-suspend epilogue, mark DONE, return. A 3-second sleep took a
+// 0.3-second process. It disarmed all four of `stdlib/net`'s async I/O verbs
+// the same way. See bugs/closed/time-sleep-does-not-sleep.md.
+//
+// 120ms and not 1ms because a 1ms assertion measures scheduler noise, and the
+// upper bound is generous on purpose: this is a floor test, not a latency one.
+// It fails by a factor of a hundred against the broken build, which is what a
+// regression test for this needs to do.
+#[test]
+fn sleep_actually_waits_rather_than_merely_completing() {
+    let t0: i64 = now_millis();
+    let v: i64 = executor::block_on::[i64](_nap(120 as u64));
+    let elapsed: i64 = now_millis() - t0;
+    assert v == (1 as i64);
+    assert elapsed >= (100 as i64);
+    assert elapsed < (5000 as i64);
+}
+
 #[test]
 fn now_is_a_plausible_epoch_time() {
     // Sanity: the clock reads a value well past 2023-11 (1_700_000_000) and

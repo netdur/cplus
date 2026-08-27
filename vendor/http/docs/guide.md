@@ -7,17 +7,53 @@ surprise you.
 
 `http` is a binding, not an implementation. Everything hard about an HTTPS
 request — certificate chain validation, DNS, connection reuse, HTTP/2 and
-HTTP/3, `Accept-Encoding` negotiation, proxies, VPN routing, the privacy
-switches in System Settings — is already in NSURLSession, already tested, and
-already patched by Apple on a schedule this repo does not keep. Re-implementing
-any of it here would be worse code shipping later.
+HTTP/3, `Accept-Encoding` negotiation, proxies, VPN routing, the user's privacy
+switches — is already in the platform's own client, already tested, and already
+patched on a schedule this repo does not keep. Re-implementing any of it here
+would be worse code shipping later.
 
 That decision is also what makes the package small. There are two verbs.
 
-NSURLSession lives in **Foundation**, not AppKit. That is deliberate and it is
-what makes the same source work on iOS; the manifest links Foundation and
-nothing else, and `cpc build --target ios-arm64` produces an arm64 iOS archive
-from the same file.
+## One package, three transports
+
+`http/http` is the module you import everywhere. Underneath it,
+`transport.cplus` is swapped per platform by the resolver's `_<platform>` file
+override — the same mechanism `stdlib` uses for `reactor.cplus` /
+`reactor_linux.cplus`:
+
+| Platform | File | Client |
+|---|---|---|
+| macOS, iOS | `transport.cplus` | `NSURLSession` |
+| Android | `transport_android.cplus` | `java.net.HttpURLConnection` |
+| Linux | `transport_linux.cplus` | none — refuses with `-3001` |
+
+NSURLSession lives in **Foundation**, not AppKit, which is what lets one file
+serve macOS and iOS both. The Android transport is reflective JNI against
+classes already on every app's boot classpath, so it compiles to a `.so` and
+ships **no Java and no dex**.
+
+The two halves meet at a stable symbol (`http_transport_perform_v1`) rather
+than an import: the transport must import `http` for `Request` and `Response`,
+and an import back would be a cycle, which C+ rejects (E0404). Same shape
+`stdlib/executor` uses to reach the reactor.
+
+### A socket client was the other option
+
+One implementation instead of three, and it is not what this package is. It
+would be **plaintext only** — TLS is the part nobody can write portably, and
+Android's own `libssl` sits in a linker namespace an app may not reach
+(measured: `dlopen` and `dlsym` both refuse). An `http` package that could not
+fetch an `https` URL would not be worth the name.
+
+### Android: two things to know
+
+`android.permission.INTERNET` is required — Android gates `socket()` on it and
+loopback is not an exception.
+
+Requests from the UI thread **fail**, they do not merely stutter: the platform
+throws `NetworkOnMainThreadException`, which arrives as `Error` code `-2004`.
+That is the same "call it off-main" rule as everywhere else, enforced by the
+platform instead of by convention.
 
 ## Why blocking
 
@@ -28,8 +64,10 @@ them is needed to fetch a JSON document. So v1 blocks, and a caller that needs
 concurrency gets it the way C+ gets concurrency everywhere else: a thread.
 
 Blocking the main thread does **not** deadlock — NSURLSession delivers its
-completion on a private serial queue, never on the main queue — it just freezes
-the UI for a network round trip. Both are bugs. Call it off-main.
+completion on a private serial queue, never on the main queue, and the Android
+transport is synchronous all the way down — it just freezes the UI for a network
+round trip. Both are bugs. Call it off-main. On Android the platform refuses
+outright; see above.
 
 The facet shape is a service: produce off the UI thread, apply on it.
 
@@ -66,7 +104,7 @@ if !r.is_success() { /* the server answered, and the answer was no */ }
 
 `Error` is `{ code: i64, message: Text }`.
 
-`code` is Foundation's own NSError code whenever the request reached the
+`code` is the platform's own code whenever the request reached the
 session, and every NSURLErrorDomain code is **negative**:
 
 | code  | means |

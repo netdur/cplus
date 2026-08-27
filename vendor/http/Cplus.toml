@@ -3,19 +3,26 @@ name    = "http"
 version = "0.0.1"
 edition = "2026"
 
-# http — HTTP(S) requests over the OS stack.
-#
-# Darwin only today: NSURLSession, which is Foundation, so one backend serves
-# both AppKit (macOS) and UIKit (iOS). Blocking, Result-typed, tiny: `get`,
-# `send`, `Response`. No TLS, DNS or framing of our own — the OS ships all
-# three and this package binds them. See docs/.
+# http — HTTP(S) over the platform's own client. ONE package on every platform:
+# `http/http` is the module an application imports, and the transport under it
+# is swapped by the resolver's `_<platform>` file override. There is no
+# `http_android` package; a consumer writes `http = "*"` and nothing else moves.
 
 [dependencies]
 stdlib = "*"
-objc   = "*"
 
-# Foundation, NOT AppKit — that is what keeps this building for iOS. `objc`
-# already pulls Foundation in; naming it here says it is this package's own
-# requirement and not a borrowed one.
-[link]
-frameworks = ["Foundation"]
+# THE APPLE TRANSPORT and its framework. Scoped, and that scoping is what keeps
+# `-framework Foundation` off an Android link line: a dep that is not active on
+# the target platform contributes no `[link]` splice, so Foundation travels with
+# `objc` rather than being named here. (A top-level `[link]` would be spliced on
+# every platform; `[macos.link]` is not a thing the manifest accepts.)
+[macos.dependencies]
+objc = "*"
+
+[ios.dependencies]
+objc = "*"
+
+# THE ANDROID TRANSPORT. `java.net.HttpURLConnection` reached reflectively, so
+# there is no Java to compile and no dex to merge — `jni` is the whole closure.
+[android.dependencies]
+jni = "*"

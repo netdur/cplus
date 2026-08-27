@@ -1,0 +1,280 @@
+// Linux and Android filesystem-watch primitives — inotify.
+//
+// The twin of `backend.cplus`, and the six functions are the whole seam. Read
+// that file first; what follows is only where the two kernels disagree.
+//
+// ---- kqueue watches a FILE, inotify watches a NAME --------------------------
+//
+// This is the one real difference and it decides everything else. A kqueue
+// `EVFILT_VNODE` registration is against an open fd, so it follows the inode:
+// rename the file and the watch is still on the file. An inotify watch is
+// against a PATH, and the kernel hands back a WATCH DESCRIPTOR — a small int
+// that is not a file descriptor and that `close` does not release. Only
+// `inotify_rm_watch(queue, wd)` does, which is why the seam carries the queue
+// (see `backend.cplus`).
+//
+// The engine above does not care, because it never asks what changed: it drains
+// the queue for "something happened", then re-scans the tree and diffs against
+// its own snapshot. That design is what makes one event source substitutable
+// for another, and it is why this file is 200 lines rather than a rewrite.
+//
+// ---- one read, many events ---------------------------------------------------
+//
+// A kqueue `kevent` call returns one event per slot asked for. An inotify read
+// returns as MANY packed variable-length records as fit in the buffer, and the
+// engine drains with `poll_one` until it answers 0. So this file buffers: one
+// read fills a scratch block, and each `poll_one` reports one record out of it
+// before going back to the kernel. Reporting the whole read as a single event
+// would also work — the engine re-scans either way — but it would lose the
+// overflow signal that has to be found by walking the records.
+//
+// ---- struct stat moves by ARCHITECTURE, not by OS ---------------------------
+//
+// `st_mode` is at byte 24 on x86_64 and byte 16 on aarch64, because the two
+// layouts put `st_nlink` in different places. Getting this wrong is not a
+// crash: it reads `st_uid`, and every directory then reports as not-a-
+// directory. `stdlib/fs_sys_linux.cplus` had exactly that bug until 2026-08-28
+// (bugs/closed/fs-is-dir-is-false-for-every-directory-on-android.md), so the
+// offsets here are taken from the NDK's own `sys/stat.h` and gated the same way.
+
+import "stdlib/option" as option;
+import "stdlib/text" as text;
+
+extern fn lstat(path: *u8, buf: *u8) -> i32;
+extern fn close(fd: i32) -> i32;
+extern fn read(fd: i32, buf: *u8, count: usize) -> i64;
+extern fn malloc(n: usize) -> *u8;
+
+// bionic and glibc agree on both spellings and both signatures.
+extern fn inotify_init1(flags: i32) -> i32;
+extern fn inotify_add_watch(fd: i32, path: *u8, mask: u32) -> i32;
+extern fn inotify_rm_watch(fd: i32, wd: i32) -> i32;
+
+// Bionic publishes the thread's errno slot as `__errno`; glibc calls it
+// `__errno_location`. Android is the platform this file is exercised on, and
+// `stdlib/netsys_android.cplus` exists for exactly this one-symbol difference —
+// so this file follows bionic and a desktop-Linux port changes this line.
+#[link_name = "__errno"]
+extern fn errno_location() -> *i32;
+
+// ---- the types, identical to the kqueue backend's ---------------------------
+
+enum NodeKind {
+    File,
+    Directory,
+    Symlink,
+    Other,
+}
+
+struct Metadata {
+    kind: NodeKind,
+    inode: u64,
+    size: i64,
+    mtime_sec: i64,
+    mtime_nsec: i64,
+    mode: u16,
+}
+
+enum MetadataResult {
+    Found(Metadata),
+    Missing,
+    PermissionDenied,
+    InvalidPath,
+    Failed,
+}
+
+fn errno_value() -> i32 {
+    let p: *i32 = { errno_location() };
+    return { *p };
+}
+
+// ---- struct stat ---------------------------------------------------------------
+//
+// 144 bytes on both architectures, and `st_size` (48) and `st_mtim` (88) sit at
+// the same offset on both. `st_ino` is at 8 on both. Only `st_mode` moves.
+
+fn stat_mode_offset() -> usize {
+    if #arch() == "aarch64" { return 16 as usize; }
+    return 24 as usize;
+}
+
+// lstat rather than stat: recursive scans never follow symlinks implicitly.
+fn metadata(path: str) -> MetadataResult {
+    let owned: text::Text = text::from_str(path);
+    match owned.c_str() {
+        option::Option[text::CString]::Some(cp) => {
+            var raw: [u8; 144] = [0 as u8; 144];
+            let rc: i32 = { lstat(cp.as_ptr(), #addr_of(raw) as *u8) };
+            if rc != (0 as i32) {
+                let e: i32 = errno_value();
+                if e == (2 as i32) { return MetadataResult::Missing; }            // ENOENT
+                if e == (13 as i32) { return MetadataResult::PermissionDenied; }  // EACCES
+                return MetadataResult::Failed;
+            }
+            let base: *u8 = { #addr_of(raw) as *u8 };
+            // `mode_t` is a u32 on Linux where Darwin makes it a u16. Narrowed
+            // to u16 to match the shared `Metadata`, which is lossless: every
+            // bit above 16 in a mode word is zero.
+            let mode: u16 = { *((base + stat_mode_offset()) as *u32) } as u16;
+            let file_type: u16 = mode & (0xF000 as u16);
+            var kind: NodeKind = NodeKind::Other;
+            if file_type == (0x8000 as u16) { kind = NodeKind::File; }
+            if file_type == (0x4000 as u16) { kind = NodeKind::Directory; }
+            if file_type == (0xA000 as u16) { kind = NodeKind::Symlink; }
+            return MetadataResult::Found(Metadata {
+                kind: kind,
+                inode: { *((base + (8 as usize)) as *u64) },
+                mtime_sec: { *((base + (88 as usize)) as *i64) },
+                mtime_nsec: { *((base + (96 as usize)) as *i64) },
+                size: { *((base + (48 as usize)) as *i64) },
+                mode: mode,
+            });
+        }
+        option::Option[text::CString]::None => { return MetadataResult::InvalidPath; }
+    }
+}
+
+// ---- the queue -------------------------------------------------------------------
+
+// IN_NONBLOCK (0o4000) | IN_CLOEXEC (0o2000000). NON-BLOCKING IS NOT OPTIONAL:
+// `poll_one` is a drain-until-empty call, so a blocking read would park the
+// owner thread on the first empty poll and never return.
+fn queue_open() -> i32 {
+    return { inotify_init1((2048 as i32) | (524288 as i32)) };
+}
+
+fn fd_close(fd: i32) {
+    if fd >= (0 as i32) { let _rc: i32 = { close(fd) }; }
+    return;
+}
+
+// A WATCH DESCRIPTOR, not a file descriptor — `close` would either fail or shut
+// an unrelated fd. See the header.
+fn watch_close(queue: i32, handle: i32) {
+    if queue < (0 as i32) { return; }
+    if handle < (0 as i32) { return; }
+    let _rc: i32 = { inotify_rm_watch(queue, handle) };
+    return;
+}
+
+// The mask, chosen to mirror what the kqueue backend asks for
+// (DELETE|WRITE|EXTEND|ATTRIB|LINK|RENAME|REVOKE):
+//
+//   IN_MODIFY      0x0002   contents changed
+//   IN_ATTRIB      0x0004   metadata changed (also fires on link-count change)
+//   IN_MOVED_FROM  0x0040   an entry moved out of a watched directory
+//   IN_MOVED_TO    0x0080   an entry moved in
+//   IN_CREATE      0x0100   an entry created in a watched directory
+//   IN_DELETE      0x0200   an entry deleted from one
+//   IN_DELETE_SELF 0x0400   the watched thing itself went away
+//   IN_MOVE_SELF   0x0800   the watched thing itself was renamed
+//
+// NOT IN_ACCESS or IN_OPEN: a read is not a change, and watching them would
+// wake the engine into a full re-scan every time anything opened a file in the
+// tree — including the re-scan's own reads.
+fn watch_mask() -> u32 {
+    return (0x0002 as u32) | (0x0004 as u32) | (0x0040 as u32) | (0x0080 as u32) |
+           (0x0100 as u32) | (0x0200 as u32) | (0x0400 as u32) | (0x0800 as u32);
+}
+
+// Register `path`. Returns the watch descriptor, or -1 on failure — the same
+// contract the kqueue backend has, including "the caller owns what comes back".
+//
+// inotify has no `O_EVTONLY` equivalent and needs no open at all: the kernel
+// resolves the path itself, which is why this is one call where kqueue needs
+// two. It does mean a watch survives nothing — a path that is replaced keeps
+// its old watch on the old inode until the engine's re-scan reconciles.
+fn watch_path(queue: i32, path: str) -> i32 {
+    let owned: text::Text = text::from_str(path);
+    match owned.c_str() {
+        option::Option[text::CString]::Some(cp) => {
+            let wd: i32 = { inotify_add_watch(queue, cp.as_ptr(), watch_mask()) };
+            if wd < (0 as i32) { return (0 as i32) -% (1 as i32); }
+            return wd;
+        }
+        option::Option[text::CString]::None => { return (0 as i32) -% (1 as i32); }
+    }
+}
+
+// ---- draining -------------------------------------------------------------------
+//
+// ONE BUFFER, PROCESS-WIDE, and that is honest rather than lazy: `poll_one`
+// takes only a queue, so per-queue state would need a map keyed by fd, and this
+// package's own contract is that a `Watcher` is owned by ONE thread and polled
+// by it. Two watchers on two threads would each need their own; that is the
+// same restriction the engine already documents, made no worse here.
+//
+// `struct inotify_event { int wd; uint32_t mask, cookie, len; char name[]; }` —
+// 16 bytes plus `len`, and `len` is zero for a watch on a file rather than on a
+// directory entry.
+static BUF: usize = 0;
+static FILLED: i64 = 0;   // bytes the last read produced
+static CURSOR: i64 = 0;   // how far into them `poll_one` has walked
+static BUF_QUEUE: i32 = 0 - 1;
+
+fn buffer_bytes() -> usize { return 8192 as usize; }
+
+fn ensure_buffer() -> *u8 {
+    if BUF != 0 { return { BUF as *u8 }; }
+    let p: *u8 = { malloc(buffer_bytes()) };
+    if p == (0 as *u8) { return 0 as *u8; }
+    BUF = { #addr(p) };
+    return p;
+}
+
+// 1 = an event, 0 = nothing pending, -1 = syscall error, -2 = the kernel
+// dropped events and a full re-scan is required. Same four answers the kqueue
+// backend gives, so the engine's loop is unchanged.
+fn poll_one(queue: i32) -> i32 {
+    let buf: *u8 = ensure_buffer();
+    if buf == (0 as *u8) { return (0 as i32) -% (1 as i32); }
+
+    // A DIFFERENT QUEUE INVALIDATES WHAT IS BUFFERED. One buffer means the
+    // records in it belong to whoever filled it; answering them to another
+    // watcher would report its tree as changed when someone else's did.
+    if BUF_QUEUE != queue {
+        FILLED = 0 as i64;
+        CURSOR = 0 as i64;
+        BUF_QUEUE = queue;
+    }
+
+    // Anything left from the last read comes out first.
+    if CURSOR < FILLED { return take_one(buf); }
+
+    let n: i64 = { read(queue, buf, buffer_bytes()) };
+    if n < (0 as i64) {
+        let e: i32 = errno_value();
+        // EAGAIN (11) / EWOULDBLOCK: the queue is empty, which is the ordinary
+        // end of a drain and not an error.
+        if e == (11 as i32) { return 0 as i32; }
+        if e == (4 as i32) { return 0 as i32; }          // EINTR — caller re-polls
+        return (0 as i32) -% (1 as i32);
+    }
+    if n == (0 as i64) { return 0 as i32; }
+    FILLED = n;
+    CURSOR = 0 as i64;
+    return take_one(buf);
+}
+
+// Step over one packed record and report what it was.
+fn take_one(buf: *u8) -> i32 {
+    let base: *u8 = { ({ #addr(buf) } +% { CURSOR as usize }) as *u8 };
+    // A truncated tail cannot happen (the kernel never splits a record across
+    // reads) but a bounds check costs nothing and a malformed one would walk
+    // off the buffer.
+    if (CURSOR +% (16 as i64)) > FILLED {
+        CURSOR = FILLED;
+        return 0 as i32;
+    }
+    let mask: u32 = { *((base + (4 as usize)) as *u32) };
+    let len: u32 = { *((base + (12 as usize)) as *u32) };
+    CURSOR = CURSOR +% (16 as i64) +% { len as i64 };
+    if CURSOR > FILLED { CURSOR = FILLED; }
+
+    // IN_Q_OVERFLOW (0x4000): the kernel's queue filled and events were lost,
+    // so a diff against the last snapshot is no longer trustworthy. Same answer
+    // the kqueue backend gives for EV_ERROR, and the engine turns both into a
+    // full re-scan plus a `ChangeKind::Overflow`.
+    if (mask & (0x4000 as u32)) != (0 as u32) { return (0 as i32) -% (2 as i32); }
+    return 1 as i32;
+}
