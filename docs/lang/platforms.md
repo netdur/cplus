@@ -114,15 +114,17 @@ A package with no entry archives its whole `src/` tree, and the archive
 must contain the same set of modules an app build resolves — one file per
 module, never two. So the synthesized package entry imports **base names
 only**, letting the resolver pick the active variant, and keeps a
-suffixed module *only* when it has no base file and its suffix names the
-active platform. (`src/test_main.cplus` is excluded outright: a package's
-tests are not part of what it ships.)
+suffixed module *only* when it has no base file and it is the variant this
+target would select. (`src/test_main.cplus` is excluded outright: a
+package's tests are not part of what it ships.)
 
-The practical consequence: a module that exists **only** as
-`foo_linux.cplus` with no `foo.cplus` is reached on `linux` and not on
-`android`, even though an import of `./foo` would fall back there. Give
-such a module a base file, or an `_android` variant, if Android must have
-it.
+"The variant this target would select" is the resolver's own answer, asked
+through one function — not a rule the archive re-derives. It used to be:
+the sweep compared against a single active suffix while the resolver walks
+an ordered list, so a module existing only as `foo_linux.cplus` was reached
+by an app build on `android` (through the fallback) and silently missing
+from a library archive built for the same target. Two answers to one
+question, differing on exactly one platform.
 
 ## 3. `#platform()`, `#arch()`, `#target()`
 

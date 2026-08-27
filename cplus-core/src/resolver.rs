@@ -1571,6 +1571,54 @@ fn relative_import_escapes_root(import_dir: &Path, rel: &str, manifest_root: &Pa
 ///
 /// A real `_android` file still wins when one exists, for the places where
 /// bionic genuinely differs from glibc.
+/// Whether `stem` is the module a build for `platform` actually compiles, given
+/// every module stem in the package.
+///
+/// THE ONE AUTHORITY FOR THAT QUESTION, and it exists because there were two.
+/// The resolver swaps a platform variant in for a base import; `cpc`'s library
+/// entry sweep decided the same thing for itself, by comparing against a single
+/// active suffix — and the two disagreed on exactly one platform. Android's
+/// suffix list has a FALLBACK (`_android`, then `_linux`, because Android's
+/// kernel is Linux), so a module that exists only as `foo_linux.cplus` is
+/// reachable from an app build on Android and was dropped from a library
+/// archive built for it. Nothing reported the difference: the module was simply
+/// not in the synthesized entry.
+///
+/// Callers pass every stem because the answer depends on the SIBLINGS: a
+/// variant whose base exists is reached through the base's import and must not
+/// be imported again, and among base-less variants the first suffix the
+/// platform accepts is the one that wins — the same order `platform_override`
+/// walks the disk in.
+pub fn is_active_module(stem: &str, stems: &[String], platform: &str) -> bool {
+    let Some((base, suffix)) = split_platform_suffix(stem) else {
+        // No platform suffix: always compiled. A variant may be swapped in for
+        // it, but that swap happens by FILE and keeps this import's name.
+        return true;
+    };
+    if stems.iter().any(|s| s == base) {
+        return false;
+    }
+    for candidate in override_suffixes_for(platform) {
+        if stems.iter().any(|s| s.as_str() == format!("{base}{candidate}")) {
+            return candidate == suffix;
+        }
+    }
+    false
+}
+
+/// `foo_linux` -> `("foo", "_linux")`, and `None` for a stem that names no
+/// platform. Split against the KNOWN platform list rather than on the last
+/// underscore, because `argv_sys` is not a variant of `argv`.
+fn split_platform_suffix(stem: &str) -> Option<(&str, String)> {
+    for p in crate::target::PLATFORMS {
+        let suffix = format!("_{p}");
+        if let Some(base) = stem.strip_suffix(suffix.as_str()) {
+            return Some((base, suffix));
+        }
+    }
+    None
+}
+
 fn override_suffixes_for(platform: &str) -> Vec<String> {
     if platform == "android" {
         return vec!["_android".to_string(), "_linux".to_string()];
@@ -3559,6 +3607,59 @@ mod tests {
     // ---- platform override suffixes ------------------------------------
     // These call `override_suffixes` directly rather than `platform_override`
     // so they do not depend on the ambient build target's filesystem.
+
+    // ---- which variant a LIBRARY ARCHIVE compiles ----------------------
+    // The same question the resolver answers for an import, asked by `cpc`'s
+    // library entry sweep. It used to answer it itself and the two disagreed on
+    // Android — see the fallback test below for why that list has two entries.
+
+    fn stems(v: &[&str]) -> Vec<String> {
+        v.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn a_baseless_linux_module_is_compiled_on_android() {
+        // THE BUG THIS FUNCTION EXISTS FOR. `foo_linux.cplus` with no
+        // `foo.cplus` beside it is reachable from an app build on Android
+        // through the resolver's fallback, and was dropped from a library
+        // archive built for the same target — silently, with nothing to read.
+        let all = stems(&["both", "only_linux"]);
+        assert!(super::is_active_module("only_linux", &all, "android"));
+        assert!(super::is_active_module("both", &all, "android"));
+        // And NOT on a platform whose list has no such fallback.
+        assert!(!super::is_active_module("only_linux", &all, "macos"));
+    }
+
+    #[test]
+    fn android_prefers_its_own_variant_over_the_linux_fallback() {
+        // Both exist and neither has a base: the FIRST suffix the platform
+        // accepts wins, which is the order `platform_override` walks the disk.
+        // Taking both would define the module twice.
+        let all = stems(&["pick_android", "pick_linux"]);
+        assert!(super::is_active_module("pick_android", &all, "android"));
+        assert!(!super::is_active_module("pick_linux", &all, "android"));
+    }
+
+    #[test]
+    fn a_variant_with_a_base_is_reached_through_the_base() {
+        // The resolver swaps the file in behind `import "./based"`, so the
+        // archive imports the BASE and never the variant — importing both is
+        // the same double definition by another route.
+        let all = stems(&["based", "based_linux"]);
+        assert!(super::is_active_module("based", &all, "android"));
+        assert!(!super::is_active_module("based_linux", &all, "android"));
+        assert!(super::is_active_module("based", &all, "linux"));
+        assert!(!super::is_active_module("based_linux", &all, "linux"));
+    }
+
+    #[test]
+    fn a_stem_that_merely_ends_in_an_underscore_word_is_not_a_variant() {
+        // `argv_sys` is not a variant of `argv`, and `_sys` is not a platform.
+        // Split against the KNOWN platform list, never on the last underscore.
+        let all = stems(&["argv_sys", "crypto_sys"]);
+        assert!(super::is_active_module("argv_sys", &all, "android"));
+        assert!(super::is_active_module("crypto_sys", &all, "macos"));
+    }
 
     #[test]
     fn android_falls_back_to_the_linux_override() {
