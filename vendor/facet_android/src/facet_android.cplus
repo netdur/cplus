@@ -223,6 +223,13 @@ export extern fn facet_android_tab(envp: *jni::JNIEnv, cls: jni::jobject,
     return;
 }
 
+export extern fn facet_android_menu_item(envp: *jni::JNIEnv, cls: jni::jobject,
+                                         token: i64, index: i32) {
+    e::set_env(rt::from_native(envp));
+    controls::fire_menu_item(token, index);
+    return;
+}
+
 export extern fn facet_android_picked(envp: *jni::JNIEnv, cls: jni::jobject, token: i64,
                                       index: i32) {
     e::set_env(rt::from_native(envp));

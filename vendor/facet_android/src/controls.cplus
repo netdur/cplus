@@ -34,6 +34,7 @@ import "facet/stepper" as stepper;
 import "facet/split" as split;
 import "facet/carousel" as carousel;
 import "facet/tabs" as tabs;
+import "facet/context_menu_item" as context_menu_item;
 import "facet/canvas" as canvas;
 import "facet/page_dots" as page_dots;
 import "facet/date_picker" as date_picker;
@@ -4750,5 +4751,129 @@ fn fire_tab(token: i64, index: i32) {
     core::touch(n, tabs::P_SELECTED_INDEX);
     let h: fn(*u8, *u8) = { (*p).on_tab_changed };
     if h != props::no_handler { h(core::view_of(n), { (*p).on_tab_changed_ctx }); }
+    return;
+}
+
+// ---- context_menu ----------------------------------------------------------------
+//
+// THE FIRST NON-VIEW KIND THIS BACKEND ANSWERS. A `context_menu` node decorates
+// the node it sits UNDER — a long press on the parent is what opens it — so it
+// has no place in the view tree and no frame, and neither have its items. Both
+// already answer `wants_view` with false, so `create` never runs on them; the
+// menu is built from the NODES at the moment the PARENT'S view is created and
+// hung on that view.
+//
+// facet_appkit hangs an NSMenu on `NSView.menu` and calls the right-click its
+// trigger. The gesture differs — a phone has no second button — and the shape
+// does not.
+
+fn attach_context_menu(v: *u8, n: *core::Node) {
+    if v == (0 as *u8) { return; }
+    if !e::have_env() { return; }
+    let menu: *core::Node = context_menu_child(n);
+    if menu == (0 as *core::Node) { return; }
+    // AN ITEM THAT CHANGED IS AN ITEM THE MENU HAS TO BE REBUILT FROM, and no
+    // apply will ever tell us: a menu and its items have no views, so
+    // `views::apply` is never called on them and their dirty bits are never
+    // cleared by anyone. Reading them HERE — on the parent's apply, which does
+    // run — is what makes an item's text or its destructive flag reach the
+    // menu after the first build.
+
+    let env: rt::Env = e::env();
+    let token: i64 = { #addr(menu) as i64 };
+    dex::menu_begin(env, token);
+    var i: usize = 0 as usize;
+    let count: usize = core::child_count_of(menu);
+    var buf: [u8; 256] = #zero::[[u8; 256]]();
+    let base: *u8 = { #addr_of(buf[0]) };
+    while i < count {
+        match core::child_of(menu, i) {
+            option::Option[*core::Node]::Some(c) => {
+                let p: *props::ContextMenuItemProps =
+                    props_of(c, props::K_CONTEXT_MENU_ITEM) as *props::ContextMenuItemProps;
+                if p != (0 as *props::ContextMenuItemProps) {
+                    if !paint::cstr({ (*p).menu_item.text.view() }, base, 256 as usize) {
+                        { (*base) = 0 as u8 };
+                    }
+                    dex::menu_add(env, token, base, { (*p).menu_item.is_destructive });
+                }
+            }
+            option::Option[*core::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    dex::menu_attach(env, { v as jni::jobject }, token);
+    return;
+}
+
+// Re-hang the menu if anything it says has changed. Called from the parent's
+// apply, which is the only pass that reaches a node with a menu under it.
+fn refresh_context_menu(v: *u8, n: *core::Node) {
+    let menu: *core::Node = context_menu_child(n);
+    if menu == (0 as *core::Node) { return; }
+    if !menu_is_stale(menu) { return; }
+    attach_context_menu(v, n);
+    return;
+}
+
+// Whether anything the menu SAYS has changed since it was last built. The items
+// carry the dirty bits; nothing else in the walk reads or clears them.
+fn menu_is_stale(menu: *core::Node) -> bool {
+    let watched: u64 = context_menu_item::P_TEXT | context_menu_item::P_IS_DESTRUCTIVE
+                     | context_menu_item::P_ICON | context_menu_item::P_SHORTCUT;
+    // The MENU node itself declares no prop bits — a `context_menu` is a
+    // container and its `count` is its children — so any dirt on it at all is a
+    // change to what it holds.
+    if core::dirty_of(menu) != (0 as u64) { return true; }
+    var i: usize = 0 as usize;
+    let count: usize = core::child_count_of(menu);
+    while i < count {
+        match core::child_of(menu, i) {
+            option::Option[*core::Node]::Some(c) => {
+                if (core::dirty_of(c) & watched) != (0 as u64) { return true; }
+            }
+            option::Option[*core::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return false;
+}
+
+// The `context_menu` child of a node, or null. A node has at most one — a
+// second would be two menus on one long press, which is not a thing.
+fn context_menu_child(n: *core::Node) -> *core::Node {
+    var i: usize = 0 as usize;
+    let count: usize = core::child_count_of(n);
+    while i < count {
+        match core::child_of(n, i) {
+            option::Option[*core::Node]::Some(c) => {
+                if core::kind_of(c) == props::K_CONTEXT_MENU { return c; }
+            }
+            option::Option[*core::Node]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return 0 as *core::Node;
+}
+
+// AN ITEM WAS CHOSEN. The token is the MENU node and the index is the item's
+// place among its children — which is what the menu was built from, so the two
+// cannot drift.
+fn fire_menu_item(token: i64, index: i32) {
+    let menu: *core::Node = { token as *core::Node };
+    if menu == (0 as *core::Node) { return; }
+    if core::kind_of(menu) != props::K_CONTEXT_MENU { return; }
+    match core::child_of(menu, { index as usize }) {
+        option::Option[*core::Node]::Some(c) => {
+            let p: *props::ContextMenuItemProps =
+                props_of(c, props::K_CONTEXT_MENU_ITEM) as *props::ContextMenuItemProps;
+            if p == (0 as *props::ContextMenuItemProps) { return; }
+            let h: fn(*u8, *u8) = { (*p).menu_item.on_clicked };
+            if h != props::no_handler {
+                h(core::view_of(menu), { (*p).menu_item.on_clicked_ctx });
+            }
+        }
+        option::Option[*core::Node]::None => { }
+    }
     return;
 }

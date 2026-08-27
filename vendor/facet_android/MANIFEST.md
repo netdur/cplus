@@ -160,7 +160,7 @@ count as answering it. Three surfaces, because they fail differently:
 
 | | android | gtk | appkit | uikit |
 |---|---|---|---|---|
-| props | 315/360 · 87% | 356 · 98% | 334 · 92% | 321 · 89% |
+| props | 319/360 · 89% | 356 · 98% | 334 · 92% | 321 · 89% |
 | handlers | 67/68 · 98% | 68 · 100% | 68 · 100% | 65 · 95% |
 | shared band | 19/21 · 90% | 19 · 90% | 20 · 95% | 18 · 85% |
 
@@ -181,7 +181,11 @@ rows has closed: what is left is PROPS on controls that already work.
   then a CANCEL every time. Claimed only at row zero, and released the moment
   the drag turns upward, which is a scroll and the page's.
 
-- **The controls still without a body.** The menu tier.
+- **The controls still without a body.** `menu` and `menu_item` — the MENU BAR
+  tier. A `MenuBarItem` is a desktop menu bar's top-level entry, and Android's
+  nearest thing is the app bar's overflow, which belongs to an ActionBar this
+  backend does not create. `context_menu` and `context_menu_item` ARE built —
+  see below.
 
 - **Rich text is SPANS, and the two verbs differ only in where the string comes
   from.** A label's `formatted_text` carries the text inside each run, so
@@ -261,6 +265,31 @@ rows has closed: what is left is PROPS on controls that already work.
   than its viewport and whose parent is a plain host**: it has not been seen
   because every scroll in the gallery fills its page, and it is the same fix
   one class over when it is.
+
+- **A `context_menu` is a LONG PRESS and a `PopupMenu`.** The first non-view
+  kind this backend answers: a `context_menu` node decorates the node it sits
+  UNDER, so it has no place in the view tree and no frame, and neither have its
+  items — both already answered `wants_view` with false. The menu is built from
+  the NODES at the moment the PARENT'S view is created and hung on that view,
+  which is where facet_appkit hangs its NSMenu for the same reason. The gesture
+  differs, because a phone has no second button; the shape does not.
+
+  `registerForContextMenu` is Android's other answer and is NOT used: it needs
+  the Activity to override `onCreateContextMenu`, and this backend's Activity is
+  the one class an app cannot replace.
+
+  DESTRUCTIVE IS A COLOUR, because Android's menu API has no flag for it and
+  every app that marks one marks it red — the same conclusion facet_appkit
+  reached about NSMenuItem. A contract verb the backend silently drops is worse
+  than one it answers plainly.
+
+  A menu and its items have no views, so `views::apply` never visits them and
+  nothing ever clears their dirty bits. Reading those bits from the PARENT —
+  which does apply — is the only place a changed item can be noticed, and the
+  rebuild is idempotent so a bit that stays set costs a few JNI calls. An item
+  changed with NOTHING else on the parent dirty does not reach the menu until
+  the parent next applies; facet_appkit attaches at create only, which is
+  strictly less.
 
 - **`tabs` reads the way facet_appkit reads it, and that settles a question this
   file used to leave open.** The panes are the node's CHILDREN and each pane's

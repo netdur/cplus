@@ -126,6 +126,11 @@ fn create(ctx: *u8, n: *core::Node) -> *u8 {
     // bit set. One code path with apply, so the two cannot drift.
     paint::configure(v, n, paint::all_bits());
     apply_for_kind(kind, v, n, paint::all_bits());
+    // A CONTEXT MENU IS THE PARENT'S, and this is the moment it can be hung:
+    // the node's children are already in the tree — build ran long before mount
+    // — even though no view exists for a menu or its items and none ever will.
+    // facet_appkit calls its own `attach_context_menu` from exactly here.
+    controls::attach_context_menu(v, n);
     return v;
 }
 
@@ -183,6 +188,12 @@ fn apply(ctx: *u8, n: *core::Node) {
     if d == (0 as u64) { return; }
     paint::configure(v, n, d);
     apply_for_kind(core::kind_of(n), v, n, d);
+    // A CONTEXT MENU IS REBUILT WHEN ITS ITEMS SAY SO. A menu and its items
+    // have no views, so this walk never visits them and nothing ever clears
+    // their dirty bits — reading those bits from the PARENT, which does apply,
+    // is the only place the change can be noticed. Rebuilding is idempotent, so
+    // a bit that stays set costs a few JNI calls and nothing else.
+    controls::refresh_context_menu(v, n);
     // A node that measures ITSELF has just been written to, so its measurement
     // is stale — and nothing else in the pipeline knows that. flex's
     // incremental cache prunes a subtree whose STYLE is unchanged, and

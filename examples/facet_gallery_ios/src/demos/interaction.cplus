@@ -138,6 +138,25 @@ impl Swipe: component::Component {
             key: "t:delete", text: "Delete", destructive: true,
             on_clicked: this.on_delete));
         sw.add(row);
+        // ---- the same actions, as a MENU ------------------------------------
+        // A `context_menu` decorates the node it sits UNDER: it has no view and
+        // no frame, and the platform decides what opens it. macOS right-clicks,
+        // Android long-presses, iOS does neither — which is why the swipe above
+        // exists.
+        var menu_body: flex::Builder = flex::Builder::new();
+        menu_body.add(ui::label("Long-press me", font_size: 16.0f64));
+        menu_body.add(ui::label("the same two actions, as a menu", font_size: 13.0f64,
+                                text_color: vocab::Color::ink(0.55f64)));
+        var menu_row: core::Node = shell::painted(
+            ui::column(menu_body).padding(14.0f64).gap(4.0f64),
+            vocab::Color::fill(), 8.0f64);
+        var cm: core::Node = ui::context_menu(key: "t:menu");
+        let _m1: status::Status = cm.add_child(ui::context_menu_item(
+            "Archive", key: "t:m:archive", on_clicked: this.on_archive));
+        let _m2: status::Status = cm.add_child(ui::context_menu_item(
+            "Delete", key: "t:m:delete", destructive: true, on_clicked: this.on_delete));
+        let _mr: status::Status = menu_row.add_child(cm);
+        sw.add(menu_row);
         sw.add(ui::label("last action: (none)", key: "t:status", font_size: 13.0f64,
                          text_color: vocab::Color::ink(0.7f64)));
         sw.add(shell::caption("Let go before 60 points and it closes; past it, it opens. That threshold is the verb `reveal_threshold`, and it is the reason this is a pan rather than UISwipeActionsConfiguration — UIKit owns that distance and exposes no way to name it."));
