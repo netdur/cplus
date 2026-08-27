@@ -33,6 +33,11 @@ DEPS="$V/facet_runtime/lib/$T/libfacet_runtime.a \
 # -llog: facet_android reports unbuilt kinds through liblog, because an app's
 # stderr goes to /dev/null on Android.
 #
+# -lm is NOT implied on Android the way it is on a Mac: libm is its own .so and
+# the driver does not add it. `drawing.gradient` is sin and cos, so without this
+# the link ends on two undefined symbols — and it is in the archive whether or
+# not this app draws a gradient.
+#
 # --no-undefined turns the DEFAULT failure mode inside out, and that is the
 # point. A shared library may legally leave symbols undefined, so a missing one
 # surfaces at `System.loadLibrary` as a dlopen error naming ONE symbol — you fix
@@ -41,7 +46,7 @@ DEPS="$V/facet_runtime/lib/$T/libfacet_runtime.a \
 # then `CC_SHA256`) is what prompted it.
 "$CC" -target aarch64-linux-android24 -shared \
     -Wl,--whole-archive target/android-arm64/debug/libfacet_gallery_android.a \
-    -Wl,--no-whole-archive $DEPS -llog \
+    -Wl,--no-whole-archive $DEPS -llog -lm \
     -Wl,--no-undefined \
     -o out/lib/arm64-v8a/libgallery.so
 

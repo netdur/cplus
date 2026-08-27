@@ -6535,15 +6535,16 @@ usage:
                     --kind exists to answer. `--kind cli --platform ios` is
                     refused rather than obeyed.
 
-                    Backends: macOS gets facet_appkit, iOS gets facet_uikit.
-                    A gui project naming a platform with no facet backend
-                    scaffolds the shared app and says which entry you will have
-                    to finish yourself.
+                    Backends: macOS gets facet_appkit, iOS facet_uikit,
+                    Android facet_android. A gui project naming a platform
+                    with no facet backend scaffolds the shared app and says
+                    which entry you will have to finish yourself.
 
-writes: Cplus.toml, src/main*.cplus, .gitignore, SKILL.md,
-        AGENTS.md, .mcp.json
-   gui: + src/app.cplus
-   ios: + ios/main.m, ios/Info.plist
+writes:  Cplus.toml, src/main*.cplus, .gitignore, SKILL.md,
+         AGENTS.md, .mcp.json
+    gui: + src/app.cplus
+    ios: + ios/main.m, ios/Info.plist
+android: + android/AndroidManifest.xml, android/build.sh
 ";
 
 /// What kind of program this project is. Not a boolean: C+ targets printing
@@ -6753,13 +6754,13 @@ fn run_init(args: &[OsString]) -> ExitCode {
     // with no hint about why.
     let backed: Vec<&String> = platforms
         .iter()
-        .filter(|p| matches!(p.as_str(), "macos" | "ios"))
+        .filter(|p| matches!(p.as_str(), "macos" | "ios" | "android"))
         .collect();
     if gui {
         let unbacked: Vec<&str> = platforms
             .iter()
             .map(String::as_str)
-            .filter(|p| !matches!(*p, "macos" | "ios"))
+            .filter(|p| !matches!(*p, "macos" | "ios" | "android"))
             .collect();
         if !unbacked.is_empty() {
             eprintln!(
@@ -6815,6 +6816,21 @@ fn run_init(args: &[OsString]) -> ExitCode {
                         agent_inapp  = \"*\"\n\
                         agent_mcp    = \"*\"\n\
                         json         = \"*\"\n"
+                .to_string(),
+            // Shorter than its neighbours, and not because it is unfinished:
+            // `inspector` has no android half (it is AppKit and UIKit), so the
+            // android entry does not call `serve_if_asked` and none of the
+            // agent packages are named. facet_android's own imports are the
+            // whole closure — android_view and jni — and `events` is NOT among
+            // them despite what examples/facet_gallery_android declares; that
+            // is the gallery's own import, not the backend's.
+            "android" => "\n# facet's Android backend and its closure. The JVM half — the Activity\n\
+                          # the manifest names — ships inside facet_android as a precompiled\n\
+                          # dex, so this app has no Java of its own; android/build.sh merges it.\n\
+                          [android.dependencies]\n\
+                          facet_android = \"*\"\n\
+                          android_view  = \"*\"\n\
+                          jni           = \"*\"\n"
                 .to_string(),
             _ => String::new(),
         }
@@ -6879,7 +6895,6 @@ fn run_init(args: &[OsString]) -> ExitCode {
          import \"facet/vocabulary\" as vocab;\n\
          import \"facet_runtime/runtime\" as runtime;\n\
          import \"stdlib/option\" as option;\n\
-         import \"stdlib/status\" as status;\n\
          import \"stdlib/vec\" as vec;\n\n\
          struct Home {{\n    taps: i64,\n}}\n\n\
          impl Home {{\n\
@@ -6935,15 +6950,19 @@ fn run_init(args: &[OsString]) -> ExitCode {
          \x20       return vec::new::[screen::MenuItem]();\n\
          \x20   }}\n\
          }}\n\n\
-         fn boxed() -> screen::ScreenBox {{ return screen::screen_box(Home::new()); }}\n\n\
-         // Every entry — iOS and desktop alike — comes through here.\n\
+         // Every entry — macOS, iOS and Android alike — comes through here.\n\
+         //\n\
+         // `run_screen` is the tier ALL THREE backends implement, and it reads\n\
+         // `chrome()` above for the title and size (a phone honours the part of\n\
+         // a Chrome a phone has). There is a larger tier — `runtime::App`, with\n\
+         // `app.screen(\"name\", factory)` and named routes — and it is where to\n\
+         // go when this app grows a second screen. It is NOT the default here\n\
+         // because facet's Android facade does not implement `App::run` yet: it\n\
+         // warns on `adb logcat -s facet` and returns InvalidInput, so an app\n\
+         // built on it launches to a blank Activity.\n\
          fn run() -> i32 {{\n\
-         \x20   var app: runtime::App = runtime::App::new(\"{proj_name}\");\n\
-         \x20   app.screen(\"home\", boxed);\n\
-         \x20   match app.run(\"home\") {{\n\
-         \x20       status::Status::Ok => {{ return 0 as i32; }}\n\
-         \x20       _other => {{ return 1 as i32; }}\n\
-         \x20   }}\n\
+         \x20   runtime::run_screen(Home::new());\n\
+         \x20   return 0 as i32;\n\
          }}\n"
     );
 
@@ -6963,6 +6982,43 @@ fn run_init(args: &[OsString]) -> ExitCode {
          \x20   // inside the app sandbox where the launcher cannot reach it — and\n\
          \x20   // `simctl launch` passes it in as `SIMCTL_CHILD_FACET_INSPECT`.\n\
          \x20   inspect::serve_if_asked();\n\
+         \x20   return app::run();\n}}\n"
+    );
+
+    // Android's entry is the iOS shape — `export extern fn {sym}_main` — and
+    // NOT the desktop one, which is the bug this replaced: an android entry
+    // written as `fn main` is rejected outright (E0409, "this build produces a
+    // library archive — `fn main` has no caller here"), so a scaffolded
+    // project did not compile once.
+    //
+    // Nothing here is Android-shaped, and that is the design: facet_android's
+    // Activity owns the JNI surface, finds this function by NAME through the
+    // `cplus.facet.main` meta-data in android/AndroidManifest.xml, and dlsym's
+    // it out of the .so. The app writes no Java and no JNI.
+    //
+    // No `serve_if_asked`: `inspector` is AppKit and UIKit only, so unlike the
+    // other two entries there is nothing to make inspectable yet.
+    //
+    // It DOES return, unlike iOS. `onCreate` called in, takes a View back and
+    // returns to the looper that was already running — so the Android facade's
+    // `App::run` builds and STORES the tree rather than entering a loop, and
+    // the 0 below is reached on every launch.
+    let facet_android_entry = format!(
+        "// {proj_name} — the entry point facet_android's Activity calls.\n\
+         //\n\
+         // `export extern fn` gives the symbol a stable, unmangled C name in the\n\
+         // .so. A `fn main` would not do: this target produces a STATICLIB, and a\n\
+         // library has no entry the system knows to call.\n\
+         //\n\
+         // The Activity finds this function BY NAME — `cplus.facet.main` in\n\
+         // android/AndroidManifest.xml — and dlsym's it, so nothing above this\n\
+         // line is Android-shaped and src/app.cplus is the same file every\n\
+         // platform builds. Rename the function and you must rename it there too.\n\n\
+         import \"./app\" as app;\n\n\
+         export extern fn {sym}_main() -> i32 {{\n\
+         \x20   // This RETURNS, unlike the iOS entry: onCreate is calling in and\n\
+         \x20   // needs its View back, so `App::run` builds the tree and stores it\n\
+         \x20   // rather than entering a loop it would never leave.\n\
          \x20   return app::run();\n}}\n"
     );
 
@@ -7128,6 +7184,200 @@ fn run_init(args: &[OsString]) -> ExitCode {
          </plist>\n"
     );
 
+    // ---- the Android side --------------------------------------------------
+    //
+    // THE MANIFEST IS NOT BOILERPLATE HERE, which is why it is scaffolded at
+    // all. `aapt2 link` takes it as a required input — there is no default and
+    // nothing downstream can synthesize one — and three of its lines are facet
+    // wiring an app cannot derive from anything it owns:
+    //
+    //   - the Activity is `cplus.facet.FacetActivity`, which lives in
+    //     facet_android and ships as a precompiled dex. Guess `MainActivity`
+    //     and the app dies at launch with ClassNotFoundException.
+    //   - `cplus.facet.lib` is the .so basename, which must agree with what
+    //     build.sh passes to `-o`. Two files, one name, neither derivable from
+    //     the other — which is exactly why both are written from one template.
+    //   - `cplus.facet.main` is the entry SYMBOL, dlsym'd by name. It is the
+    //     `export extern fn {sym}_main` in src/main_android.cplus.
+    //
+    // `configChanges` is the fourth: without it Android destroys and recreates
+    // the Activity on every rotation, which tears down the mounted facet tree.
+    //
+    // `package=` is deprecated under AGP (it moved to `namespace` in Gradle),
+    // but this is the no-Gradle path and `aapt2` still requires it.
+    //
+    // minSdk/targetSdk are aapt2 FLAGS in build.sh rather than a `<uses-sdk>`
+    // element, so there is one source of truth for them rather than two that
+    // can disagree.
+    //
+    // A Java package may not begin with a digit, and `app_id` is the project
+    // name with everything but alphanumerics stripped — so `9lives` would mint
+    // `cplus.9lives`, which aapt2 rejects.
+    let android_pkg = format!(
+        "cplus.{}",
+        if app_id.chars().next().is_some_and(|c| c.is_ascii_digit()) {
+            format!("app{app_id}")
+        } else {
+            app_id.clone()
+        }
+    );
+    let android_manifest = format!(
+        "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n\
+         <manifest xmlns:android=\"http://schemas.android.com/apk/res/android\"\n\
+         \x20   package=\"{android_pkg}\">\n\
+         \x20   <application android:label=\"{display}\"\n\
+         \x20                android:theme=\"@android:style/Theme.DeviceDefault.DayNight\">\n\
+         \x20       <!-- THE ACTIVITY IS FACET'S, not this app's. It ships inside\n\
+         \x20            facet_android as a precompiled dex and is merged into\n\
+         \x20            classes.dex by android/build.sh, so this app contains no\n\
+         \x20            Java of its own.\n\n\
+         \x20            configChanges is not a preference: without it the system\n\
+         \x20            destroys and recreates the Activity on rotation, and the\n\
+         \x20            mounted facet tree goes with it. -->\n\
+         \x20       <activity android:name=\"cplus.facet.FacetActivity\"\n\
+         \x20                 android:exported=\"true\"\n\
+         \x20                 android:configChanges=\"orientation|screenSize|keyboardHidden\">\n\
+         \x20           <!-- Which .so to load, the way NativeActivity takes\n\
+         \x20                android.app.lib_name — the Activity is generic across\n\
+         \x20                apps and cannot know the name. It must match the `-o`\n\
+         \x20                line in android/build.sh. -->\n\
+         \x20           <meta-data android:name=\"cplus.facet.lib\" android:value=\"{sym}\" />\n\
+         \x20           <!-- The app's entry, found BY NAME: facet_android's Activity\n\
+         \x20                dlsym's it, which is what lets src/app.cplus be the same\n\
+         \x20                source every platform builds. It is the\n\
+         \x20                `export extern fn` in src/main_android.cplus. -->\n\
+         \x20           <meta-data android:name=\"cplus.facet.main\" android:value=\"{sym}_main\" />\n\
+         \x20           <intent-filter>\n\
+         \x20               <action android:name=\"android.intent.action.MAIN\" />\n\
+         \x20               <category android:name=\"android.intent.category.LAUNCHER\" />\n\
+         \x20           </intent-filter>\n\
+         \x20       </activity>\n\
+         \x20   </application>\n\
+         </manifest>\n"
+    );
+
+    // A shell script is the one template where `format!` is the wrong tool:
+    // it is mostly `${...}`, and doubling every brace to escape it would make
+    // the source unreadable for no gain. Placeholders and one `replace` pass
+    // instead.
+    const ANDROID_BUILD_SH: &str = r#"#!/bin/sh
+# @NAME@ — cpc, the NDK linker, d8, aapt2, apksigner. No Gradle.
+#
+# Every step is visible on purpose; adopt Gradle when packaging demands it,
+# not for comfort. Run it from anywhere: `./android/build.sh`.
+#
+# THE LINK CLOSURE IS THE APP'S JOB on Android. cpc emits one archive per
+# PREBUILT dependency and compiles the source-mode ones (facet, facet_android)
+# into the app's own archive. Miss one and it fails at dlopen — at LAUNCH, with
+# a mangled C+ symbol and nothing else — rather than at link. `--no-undefined`
+# below turns that inside out and names them all at build time instead.
+set -e
+cd "$(dirname "$0")/.."
+
+APP=@NAME@          # the package: target/android-arm64/debug/lib$APP.a
+LIB=@SYM@           # the .so basename — AndroidManifest.xml's `cplus.facet.lib`
+PKG=@PKG@           # the Android package id, for `adb shell am start`
+
+# ---- toolchains ------------------------------------------------------------
+SDK="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-$HOME/Library/Android/sdk}}"
+if [ ! -d "$SDK" ]; then
+    echo "$0: no Android SDK at $SDK — set ANDROID_SDK_ROOT" >&2
+    exit 1
+fi
+# The newest of each, rather than pinned versions a scaffold would date itself
+# with. Set BT/NDK/PLAT in the environment to override.
+newest() { ls "$1" 2>/dev/null | sort -V | tail -1; }
+BT="${BT:-$SDK/build-tools/$(newest "$SDK/build-tools")}"
+NDK="${NDK:-$SDK/ndk/$(newest "$SDK/ndk")}"
+PLAT="${PLAT:-$SDK/platforms/$(newest "$SDK/platforms")}"
+AJ="$PLAT/android.jar"
+case "$(uname -s)" in Darwin) HOST=darwin-x86_64 ;; *) HOST=linux-x86_64 ;; esac
+CC="$NDK/toolchains/llvm/prebuilt/$HOST/bin/clang"
+CPC="${CPC:-cpc}"
+T=aarch64-linux-android      # the slice directory cpc writes for android-arm64
+
+"$CPC" build --target android-arm64
+
+# WHERE A DEPENDENCY'S ARCHIVE IS. `cpc pm install` resolves into the per-user
+# store; `--local` puts a copy in ./vendor. Check both, in the order the
+# resolver itself does, so either layout links.
+STORE="${CPLUS_HOME:-$HOME/.cplus}/v@VERSION@/vendor"
+slice() {
+    p=$1; f=$2
+    if   [ -f "vendor/$p/$f" ]; then echo "vendor/$p/$f"
+    elif [ -f "$STORE/$p/$f" ]; then echo "$STORE/$p/$f"
+    fi
+}
+DEPS=""
+for p in facet_runtime android_view jni flex_layout stdlib; do
+    a=$(slice "$p" "lib/$T/lib$p.a")
+    if [ -z "$a" ]; then
+        echo "$0: no android slice for '$p'" >&2
+        echo "    try: $CPC pm install" >&2
+        exit 1
+    fi
+    DEPS="$DEPS $a"
+done
+DEX=$(slice facet_android facet_android.dex)
+if [ -z "$DEX" ]; then echo "$0: facet_android.dex not found" >&2; exit 1; fi
+
+# ---- link ------------------------------------------------------------------
+rm -rf android/out && mkdir -p android/out/lib/arm64-v8a
+
+# -llog because an app's stderr goes to /dev/null on Android: facet_android
+# reports a kind it has no body for through liblog, or not at all.
+#
+# -lm is NOT implied on Android the way it is on a Mac. libm is its own .so
+# here and the driver does not add it, so facet_android's gradient — which is
+# sin and cos — is two undefined symbols without this.
+"$CC" -target aarch64-linux-android24 -shared \
+    -Wl,--whole-archive "target/android-arm64/debug/lib$APP.a" \
+    -Wl,--no-whole-archive $DEPS -llog -lm \
+    -Wl,--no-undefined \
+    -o "android/out/lib/arm64-v8a/lib$LIB.so"
+
+# ---- package ---------------------------------------------------------------
+# NO JAVA IN THIS APP. facet_android's dex carries the Activity the manifest
+# names, and `d8` takes a .dex as an INPUT — so this merge is the step that
+# would otherwise compile a MainActivity of your own.
+"$BT/d8" --release --lib "$AJ" --output android/out "$DEX"
+
+"$BT/aapt2" link -o android/out/base.apk \
+    --manifest android/AndroidManifest.xml -I "$AJ" \
+    --min-sdk-version 26 --target-sdk-version 34
+(cd android/out && zip -q base.apk classes.dex "lib/arm64-v8a/lib$LIB.so")
+"$BT/zipalign" -f -p 4 android/out/base.apk android/out/aligned.apk
+
+# The debug keystore is per-machine and is not in the SDK: a fresh machine that
+# has never run Android Studio has no ~/.android/debug.keystore, and apksigner
+# fails on a file nobody told you to make.
+KS="$HOME/.android/debug.keystore"
+if [ ! -f "$KS" ]; then
+    mkdir -p "$HOME/.android"
+    keytool -genkeypair -keystore "$KS" -storepass android -keypass android \
+        -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 10000 \
+        -dname "CN=Android Debug,O=Android,C=US"
+fi
+"$BT/apksigner" sign --ks "$KS" \
+    --ks-pass pass:android --ks-key-alias androiddebugkey --key-pass pass:android \
+    --out android/out/app.apk android/out/aligned.apk
+echo "android/out/app.apk"
+
+# ---- install ---------------------------------------------------------------
+# Only with a device attached, so this script is still the build in CI.
+ADB="$SDK/platform-tools/adb"
+if [ "${1:-}" != "--no-install" ] && [ -x "$ADB" ] && \
+   [ -n "$("$ADB" devices | sed '1d' | grep -w device || true)" ]; then
+    "$ADB" install -r android/out/app.apk
+    "$ADB" shell am start -n "$PKG/cplus.facet.FacetActivity"
+fi
+"#;
+    let android_build_sh = ANDROID_BUILD_SH
+        .replace("@NAME@", &proj_name)
+        .replace("@SYM@", &sym)
+        .replace("@PKG@", &android_pkg)
+        .replace("@VERSION@", env!("CARGO_PKG_VERSION"));
+
     let entry_body = |p: &str| -> String {
         if matches!(p, "ios" | "android") {
             external_main(p)
@@ -7136,7 +7386,15 @@ fn run_init(args: &[OsString]) -> ExitCode {
         }
     };
 
-    let gitignore = "/target\n/vendor\n";
+    let android = platforms.iter().any(|p| p == "android");
+    // `android/out` is where build.sh assembles the APK — objects, an
+    // intermediate unsigned .apk and a signed one. Ignored for the same reason
+    // /target is.
+    let gitignore = if gui && android {
+        "/target\n/vendor\n/android/out\n"
+    } else {
+        "/target\n/vendor\n"
+    };
 
     // ---- what the AGENT is handed ------------------------------------------
     //
@@ -7224,12 +7482,29 @@ fn run_init(args: &[OsString]) -> ExitCode {
         // The shared app, then one door per platform.
         files.push((src.join("app.cplus"), facet_app));
         for p in platforms.iter() {
-            let body = if p == "ios" {
-                facet_ios_entry.clone()
-            } else {
-                facet_desktop_entry(p)
+            // EVERY EXTERNAL-BUILDER PLATFORM, not just iOS. Testing `p ==
+            // "ios"` here is what handed android the desktop `fn main`, which
+            // its own build rejects (E0409) — so naming --platform ios flipped
+            // an android entry that was correct on its own from right to wrong.
+            let body = match p.as_str() {
+                "ios" => facet_ios_entry.clone(),
+                "android" => facet_android_entry.clone(),
+                _ => facet_desktop_entry(p),
             };
             files.push((src.join(entry_file(p)), body));
+        }
+        if android {
+            // The Gradle-free Android side: the manifest `aapt2` requires, and
+            // the pipeline that turns the archive cpc builds into an APK. Two
+            // files, one template, because the .so name in one has to match the
+            // `cplus.facet.lib` meta-data in the other.
+            let android_dir = root.join("android");
+            if let Err(e) = std::fs::create_dir_all(&android_dir) {
+                eprintln!("cpc init: could not create {}: {e}", android_dir.display());
+                return ExitCode::FAILURE;
+            }
+            files.push((android_dir.join("AndroidManifest.xml"), android_manifest.clone()));
+            files.push((android_dir.join("build.sh"), android_build_sh.clone()));
         }
         if ios {
             // The Xcode side. `main.m` is the whole of the Objective-C in a
@@ -7261,6 +7536,15 @@ fn run_init(args: &[OsString]) -> ExitCode {
             return ExitCode::FAILURE;
         }
     }
+    // A build script the scaffold tells you to run has to be runnable. Not
+    // fatal if it fails — the file is there and `sh android/build.sh` works
+    // either way — and there is no exec bit to set on Windows.
+    #[cfg(unix)]
+    if gui && android {
+        use std::os::unix::fs::PermissionsExt;
+        let sh = root.join("android").join("build.sh");
+        let _ = std::fs::set_permissions(&sh, std::fs::Permissions::from_mode(0o755));
+    }
 
     // `cpc init`, `cpc init .`, and `cpc init ./` all scaffold the current
     // directory in place (no `cd` to suggest); a name/path scaffolds into it.
@@ -7283,8 +7567,17 @@ fn run_init(args: &[OsString]) -> ExitCode {
         println!("directory to the header search path — examples/DEPLOYING.md has the recipe.");
         println!("The app is src/app.cplus; `cpc skill` prints facet's reference with it.");
     }
-    if platforms.iter().any(|p| p == "android") {
-        println!("  cpc build --target <android target>      # see examples/DEPLOYING.md");
+    if android {
+        if gui {
+            println!("  ./android/build.sh   # cpc -> .so -> APK -> device (no Gradle)");
+            println!();
+            println!("android/ holds the Android side: AndroidManifest.xml (names facet's own");
+            println!("Activity, and {sym}_main as `cplus.facet.main`) and build.sh, which");
+            println!("links, dexes, packages and installs. The Activity ships inside");
+            println!("facet_android as a dex — this app writes no Java.");
+        } else {
+            println!("  cpc build --target android-arm64         # -> lib{proj_name}.a + {proj_name}.h");
+        }
     }
     if platforms.is_empty()
         || platforms
