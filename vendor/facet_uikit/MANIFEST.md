@@ -201,6 +201,37 @@ an interaction the app never asked for and would collide with the context menu.
 | `split` | flex geometry plus a drawn divider (the drag is section 1) |
 | `menu`, `toolbar_item` | the menu BAR — iOS has none (section 1) |
 
+### `symbol` has TWO tiers, and the bundled one is the app's to ship
+
+The System tier is an SF Symbol in a `UIImageView` with a
+`UIImageSymbolConfiguration`. The BUNDLED tier — a codepoint in facet's own
+Material Symbols font, which is the set `symbol` recommends and the one the
+4,268 constants in `facet/icons` are written for — had no body at all: `P_ICON`
+sat in the watched band and nothing read it, so `symbol(icons::home)` drew
+nothing and said nothing.
+
+A codepoint is TEXT, so the bundled tier is a `UILabel` and the class is chosen
+at CREATE. That is safe here in a way it would not be for most props: the icon
+set has NO dirty bit, so it cannot change after construction.
+
+**The font ships with the APP, not with this package**, and on iOS the app
+declares it: the `.ttf` in the bundle plus a `UIAppFonts` array in Info.plist,
+which the system registers before any facet code runs. `[UIFont fontWithName:]`
+then answers it like any other family.
+
+NOT `CTFontManagerRegisterFontsForURL`, which is what facet_appkit uses and what
+this was written with first. It works, and it is CoreText — a framework this
+package's consumers do not link. They name their frameworks by hand (see
+DEPLOYING.md, the Xcode project, the test runner), so referencing one symbol
+from a new one would break the link for EVERY app using this backend, including
+apps that never draw a symbol. A backend does not get to add a framework to its
+consumers for a feature they may not use.
+
+The obligation is the same one facet_android carries — there the app copies the
+font into `assets/` and `aapt2` packages it. Either way the font travels with
+the application. A family that is not registered leaves the glyph unset rather
+than drawing tofu, and says so once on stderr.
+
 ### Why `swipeable` is a pan and not the table-row API
 
 `UISwipeActionsConfiguration` is the idiomatic iOS answer and it **cannot

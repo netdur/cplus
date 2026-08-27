@@ -14,6 +14,7 @@ import "stdlib/option" as option;
 import "stdlib/text" as text;
 import "stdlib/vec" as vec;
 import "stdlib/status" as status;
+import "stdlib/io" as io;
 import "facet/facet" as core;
 import "facet/props" as props;
 import "facet/vocabulary" as vocab;
@@ -994,16 +995,157 @@ fn content_mode_of(f: vocab::ImageFit) -> ui::ViewContentMode {
     };
 }
 
+// ---- the bundled glyph tier ----------------------------------------------------
+// facet carries TWO icon sets: the OS's own (SF Symbols here) and a BUNDLED
+// font whose glyph is a codepoint — the set `symbol` recommends and the one the
+// 4,268 constants in `facet/icons` are written for. Only the System tier was
+// implemented: `P_ICON` sat in the watched band and nothing read it, so
+// `symbol(icons::home)` drew nothing and said nothing.
+//
+// A codepoint is TEXT, so the bundled tier needs a label rather than an image
+// view — which is why the class is chosen at create. That is safe here in a way
+// it would not be for most props: the icon set has NO dirty bit, so it cannot
+// change after construction. facet_appkit puts both tiers on one NSTextField;
+// the System tier here already works through an image view and its symbol
+// configuration, and moving it onto a label to match would be a rewrite of a
+// working path for symmetry.
+
+// THE FONT IS THE APP'S TO SHIP, and on iOS the app declares it: a `.ttf` in
+// the bundle plus a `UIAppFonts` array in Info.plist, and the system registers
+// it before any of this runs. `[UIFont fontWithName:]` then answers it like any
+// other family.
+//
+// NOT `CTFontManagerRegisterFontsForURL`, which is what facet_appkit uses and
+// what this was written with first. It works — but it is CoreText, and this
+// package's consumers name their frameworks by hand on a link line (see
+// DEPLOYING.md, the Xcode project, the test runner). Referencing one symbol
+// from a new framework would break the link for EVERY app using this backend,
+// including apps that never draw a symbol. A backend does not get to add a
+// framework to its consumers for a feature they may not use.
+//
+// The obligation is the same one Android carries and is recorded beside it: on
+// that platform the app copies the font into `assets/`, here it declares it in
+// Info.plist. Either way the font ships with the app rather than the framework.
+
+fn bundled_family() -> str { return "Material Symbols Outlined"; }
+
+static SYMBOL_FONT_WARNED: bool = false;
+
+fn font_named(family: str, size: f64) -> *u8 {
+    return { rt::msg_id_id_f64(rt::get_class(#str_ptr("UIFont\0")),
+                           rt::sel(#str_ptr("fontWithName:size:\0")),
+                           bridge::nsstring(family), size) };
+}
+
+// A codepoint as an NSString, UTF-8 encoded by hand — the same conversion
+// facet_appkit does, and for the same reason: `stringWithUTF8String:` wants
+// bytes and a codepoint is not one.
+fn nsstring_of_codepoint(cp: u32) -> *u8 {
+    var buf: [u8; 8] = [0u8; 8];
+    var n: usize = 0 as usize;
+    if cp < 0x80u32 {
+        buf[0 as usize] = cp as u8;
+        n = 1 as usize;
+    } else if cp < 0x800u32 {
+        buf[0 as usize] = (0xC0u32 | (cp >> 6u32)) as u8;
+        buf[1 as usize] = (0x80u32 | (cp & 0x3Fu32)) as u8;
+        n = 2 as usize;
+    } else if cp < 0x10000u32 {
+        buf[0 as usize] = (0xE0u32 | (cp >> 12u32)) as u8;
+        buf[1 as usize] = (0x80u32 | ((cp >> 6u32) & 0x3Fu32)) as u8;
+        buf[2 as usize] = (0x80u32 | (cp & 0x3Fu32)) as u8;
+        n = 3 as usize;
+    } else {
+        buf[0 as usize] = (0xF0u32 | (cp >> 18u32)) as u8;
+        buf[1 as usize] = (0x80u32 | ((cp >> 12u32) & 0x3Fu32)) as u8;
+        buf[2 as usize] = (0x80u32 | ((cp >> 6u32) & 0x3Fu32)) as u8;
+        buf[3 as usize] = (0x80u32 | (cp & 0x3Fu32)) as u8;
+        n = 4 as usize;
+    }
+    buf[n] = 0u8;
+    return { rt::msg_id_id(rt::get_class(#str_ptr("NSString\0")),
+                           rt::sel(#str_ptr("stringWithUTF8String:\0")),
+                           #addr_of(buf) as *u8) };
+}
+
+fn wants_bundled(n: *core::Node) -> bool {
+    let p: *symbol::SymbolProps = props_of(n, symbol::K_SYMBOL) as *symbol::SymbolProps;
+    if p == (0 as *symbol::SymbolProps) { return false; }
+    return match { (*p).set } {
+        symbol::IconSet::Bundled => true,
+        symbol::IconSet::System => false,
+    };
+}
+
 fn create_symbol(n: *core::Node) -> *u8 {
+    // THE SET DECIDES THE CLASS, once. A bundled glyph is a codepoint in a
+    // font, which is text; the system tier is an image with a symbol
+    // configuration. Neither view can do the other's job, and the set has no
+    // dirty bit to change through.
+    if wants_bundled(n) {
+        let l: ui::Label = ui::Label::new_with_frame(zero_rect());
+        l.set_number_of_lines(1 as i64);
+        l.set_text_alignment(ui::NSTextAlignment::Center);
+        return { rt::retain(l.as_view().raw()) };
+    }
     let v: *u8 = { rt::alloc_init(#str_ptr("UIImageView\0")) };
     if v == (0 as *u8) { return v; }
     ui::ImageView::from_raw(v).as_view().set_content_mode(ui::ViewContentMode::ScaleAspectFit);
     return v;
 }
 
+// The codepoint, in the bundled font, at the stated size. `font` names a family
+// of the application's own when it is set — the same escape hatch facet_appkit
+// gives — and a family the device does not have leaves the glyph unset rather
+// than drawing tofu in the system font.
+fn apply_bundled_glyph(v: *u8, p: *symbol::SymbolProps) {
+    let cp: u32 = { (*p).icon };
+    if cp == (0u32) { return; }
+    let named: str = { (*p).font.view() };
+    var family: str = bundled_family();
+    if named != "" { family = named; }
+    var size: f64 = { (*p).size };
+    if (size > 0.0f64) == false { size = 24.0f64; }
+    let f: *u8 = font_named(family, size);
+    // A FAMILY THE APP DID NOT SHIP leaves the glyph unset rather than drawing
+    // tofu in the system font — and says so ONCE, because a symbol that fails
+    // silently is indistinguishable from a symbol that is not there, which is
+    // what this verb spent its whole life being.
+    if f == (0 as *u8) {
+        if !SYMBOL_FONT_WARNED {
+            SYMBOL_FONT_WARNED = true;
+            io::eprintln(text::from_str("facet_uikit: the font \"")
+                .appending(family)
+                .appending("\" is not registered — ship the .ttf in the app bundle and name it in Info.plist's UIAppFonts, or symbol(icon:) draws nothing"));
+        }
+        return;
+    }
+    let l: ui::Label = ui::Label::from_raw(v);
+    l.set_font(ui::Font::from_raw(f));
+    { rt::msg_void_id(v, rt::sel(#str_ptr("setText:\0")), nsstring_of_codepoint(cp)) };
+    return;
+}
+
 fn apply_symbol(v: *u8, n: *core::Node, dirty: u64) {
     let p: *symbol::SymbolProps = props_of(n, symbol::K_SYMBOL) as *symbol::SymbolProps;
     if p == (0 as *symbol::SymbolProps) { return; }
+    // THE BUNDLED TIER IS A LABEL, and it is the tier `symbol` recommends.
+    match { (*p).set } {
+        symbol::IconSet::Bundled => {
+            if (dirty & (symbol::P_ICON | symbol::P_SIZE | symbol::P_FONT))
+               != (0 as u64) {
+                apply_bundled_glyph(v, p);
+            }
+            if (dirty & symbol::P_COLOR) != (0 as u64) {
+                let c: vocab::Color = { (*p).color };
+                if c.is_set() {
+                    ui::Label::from_raw(v).set_text_color(paint::ui_color(c));
+                }
+            }
+            return;
+        }
+        symbol::IconSet::System => { }
+    }
     let iv: ui::ImageView = ui::ImageView::from_raw(v);
     // The image, its weight and its fill are ONE write: a symbol's appearance
     // is a name plus a UIImageSymbolConfiguration, and the configuration is
