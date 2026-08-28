@@ -40,6 +40,7 @@ import "./controls" as controls;
 import "./recycler" as recycler;
 import "./geometry" as geometry;
 import "./window" as window;
+import "./app_events_appkit" as app_events_appkit;
 
 type Node = flex::Node;
 
@@ -80,6 +81,9 @@ fn install() {
     // The reactor's wake source. Without it a `spawn_ui` task runs to its
     // first suspension and is never polled again — see scheduler.cplus.
     scheduler::install_async_pump();
+    // The delegate fan-out: the application-level moments an SDK package needs
+    // a share of. Armed once per process and never disarmed — see arm().
+    app_events_appkit::arm();
     return;
 }
 

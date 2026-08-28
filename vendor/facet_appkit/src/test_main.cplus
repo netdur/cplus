@@ -18,6 +18,8 @@ import "facet/screen" as screen;
 import "facet/theme" as theme;
 import "facet/vocabulary" as vocab;
 import "facet/application" as app;
+import "facet/app_events" as ev;
+import "./app_events_appkit" as app_events_appkit;
 import "facet/label" as label;
 import "facet/button" as button;
 import "facet/text_field" as text_field;
@@ -13223,5 +13225,228 @@ fn a_transform_leaves_the_view_where_layout_put_it() {
     // which is what leaves the layer's frame origin at (40, 60).
     assert approx(pos.x, 115.0f64);
     assert approx(pos.y, 96.0f64);
+    return;
+}
+
+// ---- adoption: a view the APPLICATION brought, through the real backend -------
+//
+// The seam a third-party SDK's view rides on (plans/third-party-sdks.md). facet
+// creates nothing for these nodes: `create_for_kind` never sees them, there is
+// no `K_*` for them, and the backend has no line about them anywhere. What must
+// still be true is everything else — insertion, layout, the shared band, and a
+// release that fires once.
+//
+// The foreign view here is a real `NSScrollView`, chosen because it is a class
+// this backend DOES know how to build for its own kinds: if the walk ever went
+// back to creating for an adopted node, a test using an unknown class would
+// pass for the wrong reason (both paths would produce something). This one
+// distinguishes them by POINTER.
+
+static ADOPT_FREED: i32 = 0;
+static ADOPT_LAST_FREED: *u8 = 0 as *u8;
+fn adopt_free(v: *u8) {
+    if v == (0 as *u8) { return; }
+    ADOPT_FREED = ADOPT_FREED + 1;
+    ADOPT_LAST_FREED = v;
+    rt::release(v);
+    return;
+}
+
+// `[[NSScrollView alloc] init]` at +1 — a real AppKit object facet did not make.
+fn foreign_view() -> *u8 {
+    let cls: *u8 = rt::get_class(#str_ptr("NSScrollView\0"));
+    let a: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
+    return rt::msg_id(a, rt::sel(#str_ptr("init\0")));
+}
+
+static ADOPT_MADE: i32 = 0;
+static ADOPT_LAST_MADE: *u8 = 0 as *u8;
+fn adopt_make(ctx: *u8) -> *u8 {
+    ADOPT_MADE = ADOPT_MADE + 1;
+    ADOPT_LAST_MADE = foreign_view();
+    return ADOPT_LAST_MADE;
+}
+
+#[test]
+fn an_adopted_foreign_view_is_inserted_into_its_host_and_laid_out() {
+    backend::install();
+    ADOPT_FREED = 0;
+    let host: *u8 = views::backing_view();
+    {
+        // A column with one adopted child, the shape a real app writes.
+        let brought: *u8 = foreign_view();
+        var kid: core::Node = core::adopt_native(brought, adopt_free, key: "sdk");
+        { (*#addr_of(kid)).set_grow(1.0f64) };
+        var b: core::Builder = core::Builder::new();
+        b.add(kid);
+        var root: core::Node = core::column(b, key: "root");
+        let rp: *core::Node = #addr_of(root);
+        { (*rp).set_width(flex::StyleLength::points(300.0f64)) };
+        { (*rp).set_height(flex::StyleLength::points(200.0f64)) };
+
+        let _v: *u8 = mount::realise(rp, host);
+
+        // 1. IT IS THE CALLER'S VIEW, still — not a replacement built by the
+        //    backend, which is the bug `view_adopted` fixed and which a second
+        //    adopted branch could reintroduce.
+        match core::find_in(rp, "sdk") {
+            option::Option[*core::Node]::Some(n) => {
+                assert core::native(n) == brought;
+                // 2. It is IN THE HIERARCHY. A created-but-never-inserted view
+                //    looks identical from the node's side.
+                match ak::View::from_raw(brought).superview() {
+                    option::Option[ak::View]::Some(_s) => { assert true; }
+                    option::Option[ak::View]::None => { assert false; }
+                }
+                // 3. flex laid it out: `grow(1)` took the column's whole box,
+                //    and the frame walk wrote it onto a view facet never made.
+                { (*rp).calculate_layout(300.0f64, 200.0f64, flex::Direction::LTR) };
+                mount::sync_from(rp);
+                assert approx(core::width_of(n), 300.0f64);
+                assert approx(core::height_of(n), 200.0f64);
+            }
+            option::Option[*core::Node]::None => { assert false; }
+        }
+        assert ADOPT_FREED == 0;
+    }
+    // 4. One release, at node teardown, through the pairing adoption made.
+    assert ADOPT_FREED == 1;
+    views::view_release(host);
+    backend::uninstall();
+    return;
+}
+
+// The SHARED BAND on a view the backend did not create. `set_clip` writes a
+// corner radius onto a layer AppKit owns — the claim that an adopted leaf is an
+// ordinary node in every respect except who built its view.
+#[test]
+fn the_shared_band_reaches_an_adopted_view() {
+    backend::install();
+    ADOPT_FREED = 0;
+    {
+        let brought: *u8 = foreign_view();
+        var kid: core::Node = core::adopt_native(brought, adopt_free, key: "sdk");
+        let p: *core::Node = #addr_of(kid);
+        let _v: *u8 = mount::realise(p);
+        core::set_opacity(p, 0.5f64);
+        core::set_corner_radius(p, vocab::Corners::all(12.0f64));
+        core::set_visible(p, false);
+        views::apply(0 as *u8, p);
+        let view: ak::View = ak::View::from_raw(brought);
+        assert approx(view.alpha_value(), 0.5f64);
+        assert view.is_hidden();
+        // The rounding is written onto a layer AppKit owns — facet reaching
+        // into a view it did not build, which is the whole claim.
+        let l: quartz::Layer = view.layer();
+        assert approx(l.corner_radius(), 12.0f64);
+    }
+    assert ADOPT_FREED == 1;
+    backend::uninstall();
+    return;
+}
+
+// THE FACTORY FORM through the real backend, and the Android case stated in
+// AppKit terms: the walk must BUILD the view rather than reuse the one from
+// last time. On Android "the one from last time" is a global ref into a
+// destroyed Activity; here it is merely stale, and the pointer says so.
+#[test]
+fn a_factory_adopted_view_is_built_at_mount_and_rebuilt_on_re_mount() {
+    backend::install();
+    ADOPT_MADE = 0;
+    ADOPT_FREED = 0;
+    let host: *u8 = views::backing_view();
+    {
+        var kid: core::Node = core::adopt_native_with(adopt_make, 0 as *u8, adopt_free, key: "sdk");
+        let p: *core::Node = #addr_of(kid);
+        // Nothing is built until the walk runs — a factory that touched AppKit
+        // at build time would run wherever the tree was composed.
+        assert ADOPT_MADE == 0;
+        assert core::native(p) == (0 as *u8);
+
+        let _v: *u8 = mount::realise(p, host);
+        assert ADOPT_MADE == 1;
+        let first: *u8 = core::native(p);
+        assert first == ADOPT_LAST_MADE;
+        assert first != (0 as *u8);
+        match ak::View::from_raw(first).superview() {
+            option::Option[ak::View]::Some(_s) => { assert true; }
+            option::Option[ak::View]::None => { assert false; }
+        }
+
+        // Re-mount: a fresh view, and the stale one handed back FIRST.
+        mount::unrealise(p);
+        let _v2: *u8 = mount::realise(p, host);
+        assert ADOPT_MADE == 2;
+        let second: *u8 = core::native(p);
+        assert second != first;
+        assert ADOPT_FREED == 1;
+        assert ADOPT_LAST_FREED == first;
+    }
+    assert ADOPT_FREED == 2;
+    views::view_release(host);
+    backend::uninstall();
+    return;
+}
+
+// ---- the delegate fan-out ----------------------------------------------------
+// `facet/app_events` is the surface an SDK package subscribes to; this backend
+// is what makes it fire on macOS. The end-to-end question — does a real
+// AppKit moment reach a real subscriber — is the only one worth asking, and it
+// is askable here because the notification centre can be posted to.
+
+static AE_SEEN: u32 = 0u32;
+static AE_COUNT: i32 = 0;
+fn ae_record(e: *ev::AppEvent, ctx: *u8) {
+    AE_SEEN = { (*e).kind };
+    AE_COUNT = AE_COUNT + 1;
+    return;
+}
+
+#[test]
+fn installing_the_backend_arms_the_application_events() {
+    backend::install();
+    // Without this the whole module is dead code that compiles: subscribers
+    // register, nothing ever fires, and there is no error anywhere.
+    assert app_events_appkit::armed();
+    backend::uninstall();
+    return;
+}
+
+#[test]
+fn a_real_appkit_notification_reaches_a_subscriber() {
+    backend::install();
+    ev::clear_app_events();
+    AE_SEEN = 0u32;
+    AE_COUNT = 0;
+    assert ev::on_app_event(ae_record).is_ok();
+
+    // Post the actual notification AppKit posts when the app comes forward.
+    let nc: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSNotificationCenter\0")),
+                             rt::sel(#str_ptr("defaultCenter\0")));
+    rt::msg_void_id_id(nc, rt::sel(#str_ptr("postNotificationName:object:\0")),
+                       bridge::nsstring("NSApplicationDidBecomeActiveNotification"),
+                       0 as *u8);
+
+    assert AE_COUNT == 1;
+    assert AE_SEEN == ev::E_FOREGROUND;
+
+    // And the other three are wired to the right kinds — a copy-paste that
+    // pointed two observers at one kind would pass a single-event test.
+    rt::msg_void_id_id(nc, rt::sel(#str_ptr("postNotificationName:object:\0")),
+                       bridge::nsstring("NSApplicationDidResignActiveNotification"),
+                       0 as *u8);
+    assert AE_SEEN == ev::E_BACKGROUND;
+    rt::msg_void_id_id(nc, rt::sel(#str_ptr("postNotificationName:object:\0")),
+                       bridge::nsstring("NSApplicationWillTerminateNotification"),
+                       0 as *u8);
+    assert AE_SEEN == ev::E_TERMINATING;
+    rt::msg_void_id_id(nc, rt::sel(#str_ptr("postNotificationName:object:\0")),
+                       bridge::nsstring("NSApplicationDidFinishLaunchingNotification"),
+                       0 as *u8);
+    assert AE_SEEN == ev::E_LAUNCHED;
+    assert AE_COUNT == 4;
+
+    ev::clear_app_events();
+    backend::uninstall();
     return;
 }

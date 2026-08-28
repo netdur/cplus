@@ -71,6 +71,33 @@ struct Data {
     // first — so it overwrote both, and every adopted native widget was
     // replaced by an empty container the instant it was mounted.
     view_adopted: bool,
+    // HOW to build the adopted view, for a caller that has a recipe rather
+    // than an object. 0 means "the caller brought the view itself", which is
+    // `adopt_native`'s eager form and stays the terminal widget's case.
+    //
+    // A recipe is not a convenience — on Android it is the only correct form.
+    // An Activity can be destroyed and recreated under a live tree: C+ state
+    // survives, every jobject does not, and recreation re-runs the mount walk
+    // to rebuild the views. facet's own controls are fine because the walk
+    // calls the backend's `create` unconditionally; an EAGER adopted view is
+    // not, because the walk reuses the one already on the node — which after
+    // recreation is a global ref to a view belonging to a dead Activity.
+    // Reusing it is a use of a dead object, not a leak, and it fails silently.
+    //
+    // So a factory-adopted node is re-made on every mount, exactly like a
+    // backend-created one, and `native_release` fires on the outgoing view
+    // first — one live view per node at all times.
+    native_create: fn(*u8) -> *u8,
+    opaque native_create_ctx: *u8,
+    // Intrinsic size for an adopted leaf, in flex's own shape. 0 = the leaf
+    // is sized by its box (a map fills what it is given); non-zero = it
+    // measures itself (an ad banner, a platform login button).
+    //
+    // flex already has this hook and facet's own controls ride it — this
+    // field exists only to defer INSTALLING it until the view exists, since
+    // the ctx flex passes is the view, the same convention the backends use
+    // (`set_context(v)` at create). A factory node has no view until mount.
+    native_measure: fn(*u8, f64, flex::MeasureMode, f64, flex::MeasureMode) -> flex::Size,
     // The presentation this node (an outlet) is showing: the component's
     // address and its typed detach trampoline. NODE-scoped by design — the
     // record dies with its owner, evicts naturally on teardown, and cannot
@@ -186,6 +213,9 @@ fn ensure_data(n: *Node) -> *Data {
                              release: no_release, common: props::CommonProps::new(),
                              view: 0 as *u8, view_release: no_release,
                              view_adopted: false,
+                             native_create: 0 as fn(*u8) -> *u8,
+                             native_create_ctx: 0 as *u8,
+                             native_measure: 0 as fn(*u8, f64, flex::MeasureMode, f64, flex::MeasureMode) -> flex::Size,
                              presented: 0 as *u8, presented_detach: no_release,
                              parked_display: flex::Display::Flex, dirty: 0u64,
                              is_focused: false, is_attached: false,
@@ -207,6 +237,9 @@ fn node_with(key: str, kind: u32, props_ptr: *u8, release: fn(*u8)) -> Node {
                          release: release, common: props::CommonProps::new(),
                          view: 0 as *u8, view_release: no_release,
                          view_adopted: false,
+                         native_create: 0 as fn(*u8) -> *u8,
+                         native_create_ctx: 0 as *u8,
+                         native_measure: 0 as fn(*u8, f64, flex::MeasureMode, f64, flex::MeasureMode) -> flex::Size,
                          presented: 0 as *u8, presented_detach: no_release,
                          parked_display: flex::Display::Flex, dirty: 0u64,
                          is_focused: false, is_attached: false,
@@ -1716,7 +1749,15 @@ fn native(n: *Node) -> *u8 {
 //
 // A LEAF: it has no children and no props, so the mount walk inserts the view
 // and stops. Layout is flex's as usual — size it with the ordinary verbs.
-fn adopt_native(v: *u8, release: fn(*u8), key: str = "") -> Node {
+// `measure` is flex's own intrinsic-size hook, and it is optional because the
+// two cases are genuinely different: a map view fills the box it is given and
+// wants no measure, while an ad banner or a platform sign-in button has a size
+// of its own. The ctx flex passes it is THE VIEW — the same convention every
+// backend uses for its controls — so one measure fn serves every node it is
+// installed on without the caller threading a context through.
+fn adopt_native(v: *u8, release: fn(*u8), key: str = "",
+                measure: fn(*u8, f64, flex::MeasureMode, f64, flex::MeasureMode) -> flex::Size
+                    = 0 as fn(*u8, f64, flex::MeasureMode, f64, flex::MeasureMode) -> flex::Size) -> Node {
     var n: Node = flex::Node::new();
     let d: *Data = ensure_data(#addr_of(n));
     if d == (0 as *Data) { return n; }
@@ -1724,7 +1765,95 @@ fn adopt_native(v: *u8, release: fn(*u8), key: str = "") -> Node {
     { (*d).view = v };
     { (*d).view_release = release };
     { (*d).view_adopted = true };
+    { (*d).native_measure = measure };
+    // The view is already here, so the hook can go on now.
+    install_native_measure(#addr_of(n), v);
     return n;
+}
+
+// The FACTORY form: a recipe for the view rather than the view.
+//
+// Everything `adopt_native` says holds — a leaf, the node owns the retain,
+// `release` is how it gives it back — with one difference, and it is the
+// reason this exists: the view is built at MOUNT time, once per mount, and the
+// previous one is released first. See `Data.native_create` for why Android
+// makes that mandatory rather than merely tidier.
+//
+// `create` runs on the UI thread, inside the mount walk, and must return a
+// view at +1 — the same contract a backend's `create` has, because this IS
+// that contract with the application supplying the implementation.
+// `create_ctx` is REQUIRED rather than defaulted, and that is the handler
+// convention paying rather than an oversight: a caller writing
+// `create: this.build_map` passes two things — the method and its receiver —
+// and the `*u8` immediately after the handler is where the receiver goes
+// (W0824). A default there would push `release` behind it, and a required
+// parameter cannot follow a defaulted one (E1007). Callers with a free
+// function pass `0 as *u8`, which is also the honest spelling: the ctx must
+// outlive the node, and naming it at every call site is where that is noticed.
+fn adopt_native_with(create: fn(*u8) -> *u8, create_ctx: *u8, release: fn(*u8), key: str = "",
+                     measure: fn(*u8, f64, flex::MeasureMode, f64, flex::MeasureMode) -> flex::Size
+                         = 0 as fn(*u8, f64, flex::MeasureMode, f64, flex::MeasureMode) -> flex::Size) -> Node {
+    var n: Node = flex::Node::new();
+    let d: *Data = ensure_data(#addr_of(n));
+    if d == (0 as *Data) { return n; }
+    { (*d).key = text::from_str(key) };
+    { (*d).view = 0 as *u8 };
+    { (*d).view_release = release };
+    { (*d).view_adopted = true };
+    { (*d).native_create = create };
+    { (*d).native_create_ctx = create_ctx };
+    { (*d).native_measure = measure };
+    return n;
+}
+
+// Put the measure hook on the node, now that there is a view to measure.
+// Private: the two adopt verbs and `make_native` are the callers, and each
+// calls it at the one moment the view becomes known.
+fn install_native_measure(n: *Node, v: *u8) {
+    if n == (0 as *Node) || v == (0 as *u8) { return; }
+    let d: *Data = { (*n).data() };
+    if d == (0 as *Data) { return; }
+    let m: fn(*u8, f64, flex::MeasureMode, f64, flex::MeasureMode) -> flex::Size = { (*d).native_measure };
+    if m == (0 as fn(*u8, f64, flex::MeasureMode, f64, flex::MeasureMode) -> flex::Size) { return; }
+    // flex's spare slot. facet's Data rides the ATTACHMENT, and the backends
+    // put the view here for exactly this reason — nothing else wants it.
+    { (*n).set_context(v) };
+    { (*n).set_measure(m) };
+    return;
+}
+
+// Does this node build its own view on mount? The mount walk's question.
+fn has_native_factory(n: *Node) -> bool {
+    if n == (0 as *Node) { return false; }
+    let d: *Data = { (*n).data() };
+    if d == (0 as *Data) { return false; }
+    return { (*d).native_create } != (0 as fn(*u8) -> *u8);
+}
+
+// Run the factory: release the outgoing view, build the replacement, install
+// it with the release the caller paired, and hand it back.
+//
+// The release comes FIRST and that ordering is deliberate. A backend view is
+// a scarce, retained platform object; holding two while the new one is being
+// built buys nothing and, on a surface that registers itself somewhere global
+// (a map view with a location subscription), means both are live and both are
+// listening for the moment in between.
+fn make_native(n: *Node) -> *u8 {
+    if n == (0 as *Node) { return 0 as *u8; }
+    let d: *Data = { (*n).data() };
+    if d == (0 as *Data) { return 0 as *u8; }
+    let f: fn(*u8) -> *u8 = { (*d).native_create };
+    if f == (0 as fn(*u8) -> *u8) { return { (*d).view }; }
+    let old: *u8 = { (*d).view };
+    if old != (0 as *u8) {
+        let r: fn(*u8) = { (*d).view_release };
+        { (*d).view = 0 as *u8 };
+        if r != (0 as fn(*u8)) { r(old); }
+    }
+    let v: *u8 = f({ (*d).native_create_ctx });
+    { (*d).view = v };
+    install_native_measure(n, v);
+    return v;
 }
 
 fn set_native(n: *Node, v: *u8) {

@@ -415,7 +415,17 @@ fn mount_walk(n: *core::Node, host: *u8, slot: usize, ref q: vec::Vec[*core::Nod
     let create: fn(*u8, *core::Node) -> *u8 = RENDERER.create;
     let adopted: bool = core::view_is_adopted(n);
     var v: *u8 = 0 as *u8;
-    if adopted { v = core::view_of(n); }
+    // Two adopted shapes, and the walk treats them the way each was declared.
+    // A node that brought a VIEW keeps it — that is the fix above. A node that
+    // brought a RECIPE runs it here, every mount, releasing the outgoing view
+    // first: the same lifecycle a backend-created view has, which is what an
+    // Android Activity recreation needs (see `Data.native_create`). Reusing a
+    // recipe node's previous view would hand the walk a global ref into a dead
+    // Activity — live-looking, and wrong in a way nothing reports.
+    if adopted {
+        if core::has_native_factory(n) { v = core::make_native(n); }
+        else { v = core::view_of(n); }
+    }
     else if create != (0 as fn(*u8, *core::Node) -> *u8) { v = create(RENDERER.ctx, n); }
     core::set_attached(n, true);
     q.append(n);

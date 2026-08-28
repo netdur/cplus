@@ -71,6 +71,8 @@ import "./theme" as theme;
 import "./mount" as mount;
 import "./application" as app;
 import "./bands" as bands;
+// The delegate fan-out: a third-party SDK's share of the app's own callbacks.
+import "./app_events" as app_events;
 
 fn approx(a: f64, b: f64) -> bool {
     let d: f64 = a - b;
@@ -1614,6 +1616,264 @@ fn an_adopted_view_is_marked_so_the_mount_walk_leaves_it_alone() {
         facet::set_view(#addr_of(plain), 99 as *u8, an_release);
         assert facet::view_is_adopted(#addr_of(plain)) == false;
     }
+    return;
+}
+
+// ---- the factory form of adoption --------------------------------------------
+// The seam a third-party SDK's view rides on. `adopt_native` takes the view;
+// `adopt_native_with` takes a RECIPE, and the mount walk runs it — which is
+// what Android's activity recreation needs, because every jobject on the node
+// is dead by the time the walk runs again and reusing one is a use of a dead
+// object rather than a leak.
+
+static AN_MADE: i32 = 0;
+static AN_LAST_CTX: *u8 = 0 as *u8;
+static AN_VIEWS: i64 = 100 as i64;
+
+fn an_make(ctx: *u8) -> *u8 {
+    AN_MADE = AN_MADE + 1;
+    AN_LAST_CTX = ctx;
+    AN_VIEWS = AN_VIEWS + (1 as i64);
+    return AN_VIEWS as *u8;
+}
+
+#[test]
+fn a_factory_adopted_node_has_no_view_until_it_is_mounted() {
+    AN_MADE = 0;
+    AN_RELEASED = 0;
+    {
+        var n: facet::Node = facet::adopt_native_with(an_make, 0 as *u8, an_release, key: "map");
+        let p: *facet::Node = #addr_of(n);
+        // The recipe has NOT been run: a factory that touched the platform at
+        // build time would run off the UI thread, in whatever code composed
+        // the tree.
+        assert AN_MADE == 0;
+        assert facet::native(p) == (0 as *u8);
+        // It is adopted all the same — the backend must not create for it.
+        assert facet::view_is_adopted(p);
+        assert facet::has_native_factory(p);
+        assert { (*p).key() } == "map";
+    }
+    // Nothing was ever made, so nothing is released.
+    assert AN_MADE == 0;
+    assert AN_RELEASED == 0;
+    return;
+}
+
+#[test]
+fn the_eager_form_has_no_factory() {
+    var n: facet::Node = facet::adopt_native(42 as *u8, an_release, key: "term");
+    assert facet::has_native_factory(#addr_of(n)) == false;
+    assert facet::view_is_adopted(#addr_of(n));
+    return;
+}
+
+#[test]
+fn make_native_runs_the_recipe_and_passes_the_ctx() {
+    AN_MADE = 0;
+    AN_RELEASED = 0;
+    AN_VIEWS = 100 as i64;
+    {
+        var marker: i64 = 5 as i64;
+        var n: facet::Node = facet::adopt_native_with(an_make, #addr_of(marker) as *u8,
+                                                      an_release, key: "map");
+        let p: *facet::Node = #addr_of(n);
+        let v: *u8 = facet::make_native(p);
+        assert AN_MADE == 1;
+        assert v == (101 as *u8);
+        assert facet::native(p) == (101 as *u8);
+        assert AN_LAST_CTX == (#addr_of(marker) as *u8);
+        // Nothing was replaced, so nothing was released.
+        assert AN_RELEASED == 0;
+    }
+    // The node owned the retain the recipe returned, and gave it back.
+    assert AN_RELEASED == 1;
+    return;
+}
+
+// THE ANDROID CASE. Re-making releases the outgoing view BEFORE building the
+// replacement: one live view per node, and the dead one is handed back rather
+// than dropped on the floor.
+#[test]
+fn re_making_releases_the_outgoing_view_first() {
+    AN_MADE = 0;
+    AN_RELEASED = 0;
+    AN_VIEWS = 100 as i64;
+    {
+        var n: facet::Node = facet::adopt_native_with(an_make, 0 as *u8, an_release, key: "map");
+        let p: *facet::Node = #addr_of(n);
+        let first: *u8 = facet::make_native(p);
+        assert first == (101 as *u8);
+        assert AN_RELEASED == 0;
+
+        let second: *u8 = facet::make_native(p);
+        assert AN_MADE == 2;
+        assert second == (102 as *u8);          // a FRESH view, not the stale one
+        assert first != second;
+        assert AN_RELEASED == 1;                // and the first went back
+        assert facet::native(p) == second;
+    }
+    assert AN_RELEASED == 2;                    // the second went with the node
+    return;
+}
+
+// The mount walk is the caller that matters, and it must reach the recipe.
+// Without this the walk reuses `Data.view` — which on Android is a global ref
+// into a destroyed Activity, and on any platform is a view the app expected to
+// be rebuilt.
+#[test]
+fn the_mount_walk_runs_the_factory_and_re_runs_it_on_re_mount() {
+    AN_MADE = 0;
+    AN_RELEASED = 0;
+    AN_VIEWS = 100 as i64;
+    mount::uninstall();
+    mount::install(mount::fr_renderer());
+    {
+        var n: facet::Node = facet::adopt_native_with(an_make, 0 as *u8, an_release, key: "map");
+        let p: *facet::Node = #addr_of(n);
+
+        let _v: *u8 = mount::realise(p);
+        assert AN_MADE == 1;
+        assert facet::native(p) == (101 as *u8);
+
+        // Unrealise then realise again — the recycling path, and the same
+        // shape an Activity recreation takes.
+        mount::unrealise(p);
+        let _v2: *u8 = mount::realise(p);
+        assert AN_MADE == 2;
+        assert facet::native(p) == (102 as *u8);
+        assert AN_RELEASED == 1;
+    }
+    mount::uninstall();
+    assert AN_RELEASED == 2;
+    return;
+}
+
+// The eager form keeps its ORIGINAL behaviour through the same walk: the view
+// the caller brought survives being mounted, which is the bug the flag fixed
+// and must not regress now that the branch has two arms.
+#[test]
+fn the_mount_walk_still_leaves_an_eagerly_adopted_view_alone() {
+    AN_RELEASED = 0;
+    mount::uninstall();
+    mount::install(mount::fr_renderer());
+    {
+        var n: facet::Node = facet::adopt_native(42 as *u8, an_release, key: "term");
+        let p: *facet::Node = #addr_of(n);
+        let _v: *u8 = mount::realise(p);
+        assert facet::native(p) == (42 as *u8);
+        assert AN_RELEASED == 0;
+        mount::unrealise(p);
+        let _v2: *u8 = mount::realise(p);
+        assert facet::native(p) == (42 as *u8);   // still the caller's
+        assert AN_RELEASED == 0;
+    }
+    mount::uninstall();
+    assert AN_RELEASED == 1;
+    return;
+}
+
+// ---- intrinsic size on an adopted leaf ---------------------------------------
+// A map fills its box and wants no measure; an ad banner or a platform sign-in
+// button has a size of its own. flex's hook is what answers the second, and the
+// ctx it hands the callback is THE VIEW — the convention every backend already
+// uses for its own controls.
+
+fn an_measure(ctx: *u8, w: f64, wm: flex::MeasureMode, h: f64, hm: flex::MeasureMode) -> flex::Size {
+    // Proves the ctx is the view: size derived from it, so a wrong ctx is a
+    // wrong number rather than a passing test.
+    let n: i64 = ctx as i64;
+    return flex::Size { width: (n as f64), height: 24.0f64 };
+}
+
+#[test]
+fn an_adopted_leaf_can_measure_itself_through_its_view() {
+    var n: facet::Node = facet::adopt_native(320 as *u8, an_release, key: "banner",
+                                             measure: an_measure);
+    let p: *facet::Node = #addr_of(n);
+    assert { (*p).has_measure() };
+    var root: facet::Node = flex::Node::new();
+    root.set_align_items(flex::Align::FlexStart);
+    root.add_child(n);
+    root.calculate_layout(500.0f64, 500.0f64, flex::Direction::LTR);
+    match root.child_frame(0 as usize) {
+        option::Option[flex::Frame]::Some(f) => {
+            assert approx(f.width, 320.0f64);     // the view IS the ctx
+            assert approx(f.height, 24.0f64);
+        }
+        option::Option[flex::Frame]::None => { assert false; }
+    }
+    return;
+}
+
+#[test]
+fn a_factory_leaf_gets_its_measure_when_the_view_arrives() {
+    AN_MADE = 0;
+    AN_VIEWS = 100 as i64;
+    var n: facet::Node = facet::adopt_native_with(an_make, 0 as *u8, an_release, key: "banner",
+                                                  measure: an_measure);
+    let p: *facet::Node = #addr_of(n);
+    // No view yet, so no hook yet — installing one whose ctx is 0 would make
+    // the leaf measure as garbage on the layout pass before the first mount.
+    assert { (*p).has_measure() } == false;
+    let _v: *u8 = facet::make_native(p);
+    assert { (*p).has_measure() };
+    var root: facet::Node = flex::Node::new();
+    root.set_align_items(flex::Align::FlexStart);
+    root.add_child(n);
+    root.calculate_layout(500.0f64, 500.0f64, flex::Direction::LTR);
+    match root.child_frame(0 as usize) {
+        option::Option[flex::Frame]::Some(f) => { assert approx(f.width, 101.0f64); }
+        option::Option[flex::Frame]::None => { assert false; }
+    }
+    return;
+}
+
+// ---- negative ----------------------------------------------------------------
+
+#[test]
+fn an_adopted_leaf_without_a_measure_is_sized_by_its_box() {
+    var n: facet::Node = facet::adopt_native(320 as *u8, an_release, key: "map");
+    let p: *facet::Node = #addr_of(n);
+    assert { (*p).has_measure() } == false;      // a map fills what it is given
+    facet::set_width(p, 200.0f64);
+    facet::set_height(p, 150.0f64);
+    var root: facet::Node = flex::Node::new();
+    root.add_child(n);
+    root.calculate_layout(500.0f64, 500.0f64, flex::Direction::LTR);
+    match root.child_frame(0 as usize) {
+        option::Option[flex::Frame]::Some(f) => {
+            assert approx(f.width, 200.0f64);
+            assert approx(f.height, 150.0f64);
+        }
+        option::Option[flex::Frame]::None => { assert false; }
+    }
+    return;
+}
+
+#[test]
+fn make_native_on_a_node_with_no_factory_is_inert() {
+    AN_RELEASED = 0;
+    {
+        // The eager form: `make_native` must hand back what is there rather
+        // than zero it, or a caller that asks twice destroys the view.
+        var e: facet::Node = facet::adopt_native(42 as *u8, an_release);
+        assert facet::make_native(#addr_of(e)) == (42 as *u8);
+        assert facet::native(#addr_of(e)) == (42 as *u8);
+        assert AN_RELEASED == 0;
+        // A plain node has neither factory nor view.
+        var plain: facet::Node = facet::column(facet::Builder::new());
+        assert facet::make_native(#addr_of(plain)) == (0 as *u8);
+        assert facet::has_native_factory(#addr_of(plain)) == false;
+    }
+    assert AN_RELEASED == 1;
+    return;
+}
+
+#[test]
+fn the_factory_verbs_are_inert_on_a_null_node() {
+    assert facet::has_native_factory(0 as *facet::Node) == false;
+    assert facet::make_native(0 as *facet::Node) == (0 as *u8);
     return;
 }
 
