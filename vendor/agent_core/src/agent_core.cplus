@@ -21,7 +21,7 @@ fn closed_gate() -> auth::AuthGate {
 
 // A subscriber to everything; also keeps `events` in the module graph.
 fn subscribe_all() -> events::Subscriber {
-    return events::subscriber(events::everything(), 64 as usize);
+    return events::subscriber(events::everything(), 64);
 }
 
 // A fresh text-version table; also keeps `surface` in the module graph.
@@ -32,5 +32,5 @@ fn new_versions() -> surface::TextVersions {
 #[test]
 fn test_root_constructs_registry() {
     let r: identity::Registry = new_registry();
-    assert r.count() == (1 as usize);
+    assert r.count() == 1;
 }

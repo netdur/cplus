@@ -76,7 +76,7 @@ fn on_probe_click(sender: *u8) {
 
 #[test]
 fn walk_classifies_and_exposes_only_tagged() {
-    let win = fixture_window(300.0f64, 200.0f64);
+    let win = fixture_window(300.0, 200.0);
     let content = content_of(win);
     let b = add_button(content, "go");
     agent::set_agent_id(b.as_view().raw(), "go-btn");
@@ -86,22 +86,22 @@ fn walk_classifies_and_exposes_only_tagged() {
     var s: agent::Surface = agent::open(win.raw());
     let nodes: vec::Vec[agent::AppKitNode] = s.describe(auth::operator());
     // window + content group + button + label = 4 nodes.
-    assert nodes.count() == (4 as usize);
-    match nodes.at_ptr(2 as usize) {
+    assert nodes.count() == 4;
+    match nodes.at_ptr(2) {
         option::Option[*agent::AppKitNode]::Some(n) => {
             assert identity::role_eq({ (*n).role }, identity::Role::Button);
             assert { (*n).id.view() } == "go-btn";
             assert { (*n).actionable };
         }
-        option::Option[*agent::AppKitNode]::None => { assert false; }
+        option::Option::None => { assert false; }
     }
-    match nodes.at_ptr(3 as usize) {
+    match nodes.at_ptr(3) {
         option::Option[*agent::AppKitNode]::Some(n) => {
             assert identity::role_eq({ (*n).role }, identity::Role::Text);
             // Untagged: auto id, not exposed, not actionable.
             assert !{ (*n).actionable };
         }
-        option::Option[*agent::AppKitNode]::None => { assert false; }
+        option::Option::None => { assert false; }
     };
     return;
 }
@@ -112,7 +112,7 @@ fn open_walks_titlebar_accessory_controls() {
     // contentView under NSThemeFrame; open() must reach them so a tagged control
     // there stays agent-addressable (regressed when #12 moved iris's toolbar
     // into the title bar). Attach the accessory raw — the library owns no appkit.
-    let win = fixture_window(400.0f64, 300.0f64);
+    let win = fixture_window(400.0, 300.0);
     let acc_view = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 200.0, h: 30.0 });
     let tb = add_button(acc_view, "run");
     agent::set_agent_id(tb.as_view().raw(), "run-toggle");
@@ -123,7 +123,7 @@ fn open_walks_titlebar_accessory_controls() {
     var s: agent::Surface = agent::open(win.raw());
     let nodes: vec::Vec[agent::AppKitNode] = s.describe(auth::operator());
     var found: bool = false;
-    var i: usize = 0 as usize;
+    var i: usize = 0;
     while i < nodes.count() {
         match nodes.at_ptr(i) {
             option::Option[*agent::AppKitNode]::Some(n) => {
@@ -133,9 +133,9 @@ fn open_walks_titlebar_accessory_controls() {
                     assert { (*n).actionable };
                 }
             }
-            option::Option[*agent::AppKitNode]::None => { }
+            option::Option::None => { }
         }
-        i = i +% (1 as usize);
+        i = i +% 1;
     }
     assert found;   // the accessory's control was NOT reached before the fix
     return;
@@ -144,7 +144,7 @@ fn open_walks_titlebar_accessory_controls() {
 #[test]
 fn click_gates_by_exposure_and_id() {
     CLICKS = 0;
-    let win = fixture_window(300.0f64, 200.0f64);
+    let win = fixture_window(300.0, 200.0);
     let content = content_of(win);
     let b = add_button(content, "go");
     b.as_control().set_on_action(on_probe_click);
@@ -158,12 +158,12 @@ fn click_gates_by_exposure_and_id() {
     assert surface::outcome_eq(s.click(auth::operator(), "nope"), surface::Outcome::NotFound);
     // The stray button's auto id resolves but the node is unexposed.
     let nodes: vec::Vec[agent::AppKitNode] = s.describe(auth::operator());
-    match nodes.at_ptr(3 as usize) {
+    match nodes.at_ptr(3) {
         option::Option[*agent::AppKitNode]::Some(n) => {
             let auto_id: text::Text = text::from_str({ (*n).id.view() });
             assert surface::outcome_eq(s.click(auth::operator(), auto_id.view()), surface::Outcome::NotExposed);
         }
-        option::Option[*agent::AppKitNode]::None => { assert false; }
+        option::Option::None => { assert false; }
     }
     assert CLICKS == 1;
 }
@@ -172,7 +172,7 @@ fn click_gates_by_exposure_and_id() {
 fn accessibility_identifier_is_the_declarative_tag_channel() {
     // A view tagged ONLY via accessibilityIdentifier (what facet's mount
     // applies) is exposed exactly like a set_agent_id pin...
-    let win = fixture_window(300.0f64, 200.0f64);
+    let win = fixture_window(300.0, 200.0);
     let content = content_of(win);
     let b = add_button(content, "go");
     ak::Accessibility::from_raw(b.as_view().raw()).set_accessibility_identifier("ax-btn");
@@ -189,7 +189,7 @@ fn accessibility_identifier_is_the_declarative_tag_channel() {
 
 #[test]
 fn removed_view_reports_stale_not_uaf() {
-    let win = fixture_window(300.0f64, 200.0f64);
+    let win = fixture_window(300.0, 200.0);
     let content = content_of(win);
     let b = add_button(content, "go");
     agent::set_agent_id(b.as_view().raw(), "go-btn");
@@ -224,7 +224,7 @@ fn click_on_view_without_performclick_reports_notactionable_not_raise() {
     // guards with respondsToSelector: (like `live_enabled` already does) and
     // reports NotActionable instead. facet clickables answer performClick: now,
     // so this exercises the defensive path for any non-clicking tagged view.
-    let win = fixture_window(300.0f64, 200.0f64);
+    let win = fixture_window(300.0, 200.0);
     let content = content_of(win);
     let plain = ak::View::new(rt::Rect { x: 5.0, y: 5.0, w: 40.0, h: 20.0 });
     content.add_subview(ak::View::from_raw(plain.raw()));
@@ -250,7 +250,7 @@ fn armed_view_class() -> *u8 {
     let existing: *u8 = { rt::get_class(#str_ptr("AgentProbeArmedView\0")) };
     if existing != (0 as *u8) { return existing; }
     let cls: *u8 = synth::allocate_class_pair(rt::get_class(#str_ptr("NSView\0")),
-                                              #str_ptr("AgentProbeArmedView\0"), 0 as usize);
+                                              #str_ptr("AgentProbeArmedView\0"), 0);
     let _a: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("performClick:\0")),
                                          probe_perform_click, #str_ptr("v@:@\0"));
     synth::register_class_pair(cls);
@@ -270,7 +270,7 @@ fn a_view_that_answers_performclick_is_wired() {
     // input, so answering `performClick:` is the answer. The exception is
     // appkit_ext's own two classes, whose `performClick:` reads the slot and
     // does nothing when it is empty — those are checked below.
-    let win = fixture_window(300.0f64, 200.0f64);
+    let win = fixture_window(300.0, 200.0);
     let content = content_of(win);
 
     // A view that answers the selector and is NOT one of the slot-reading
@@ -280,22 +280,22 @@ fn a_view_that_answers_performclick_is_wired() {
     PROBE_CLICKS = 0;
     let armed: *u8 = synth::alloc_init_class(armed_view_class());
     { rt::msg_void_rect(armed, rt::sel(#str_ptr("setFrame:\0")),
-                        rt::Rect { x: 5.0f64, y: 5.0f64, w: 40.0f64, h: 20.0f64 }) };
+                        rt::Rect { x: 5.0, y: 5.0, w: 40.0, h: 20.0 }) };
     content.add_subview(ak::View::from_raw(armed));
     agent::set_agent_id(armed, "live");
 
     var s: agent::Surface = agent::open(win.raw());
     let nodes: vec::Vec[agent::AppKitNode] = s.describe(auth::operator());
     var saw: bool = false;
-    var i: usize = 0 as usize;
+    var i: usize = 0;
     while i < nodes.count() {
         match nodes.at_ptr(i) {
             option::Option[*agent::AppKitNode]::Some(n) => {
                 if { (*n).id.view() } == "live" { saw = true; assert { (*n).wired }; }
             }
-            option::Option[*agent::AppKitNode]::None => { }
+            option::Option::None => { }
         }
-        i = i +% (1 as usize);
+        i = i +% 1;
     }
     assert saw;
     // ...and `click` delivers to it.
@@ -309,7 +309,7 @@ fn an_agent_clickable_view_is_wired_only_with_a_handler() {
     // `performClick:` unconditionally and then reads a slot, so for THIS class
     // — and only this class — answering the selector is not the same as being
     // wired.
-    let win = fixture_window(300.0f64, 200.0f64);
+    let win = fixture_window(300.0, 200.0);
     let content = content_of(win);
 
     let bare: ak::View = akx::new_clickable_view(rt::Rect { x: 5.0, y: 5.0, w: 40.0, h: 20.0 });
@@ -323,7 +323,7 @@ fn an_agent_clickable_view_is_wired_only_with_a_handler() {
 
     var s: agent::Surface = agent::open(win.raw());
     let nodes: vec::Vec[agent::AppKitNode] = s.describe(auth::operator());
-    var i: usize = 0 as usize;
+    var i: usize = 0;
     var saw_empty: bool = false;
     var saw_armed: bool = false;
     while i < nodes.count() {
@@ -338,9 +338,9 @@ fn an_agent_clickable_view_is_wired_only_with_a_handler() {
                     assert { (*n).wired };
                 }
             }
-            option::Option[*agent::AppKitNode]::None => { }
+            option::Option::None => { }
         }
-        i = i +% (1 as usize);
+        i = i +% 1;
     }
     assert saw_empty;
     assert saw_armed;
@@ -379,7 +379,7 @@ fn nothing_that_is_not_an_outline_row_grows_a_disclosure_part() {
     // A tagged view in a plain window is not a row of anything. If the gate
     // were loose this is where a phantom `:disclosure` would appear, on every
     // keyed node in every app.
-    let win = fixture_window(300.0f64, 200.0f64);
+    let win = fixture_window(300.0, 200.0);
     let content = content_of(win);
     let plain = ak::View::new(rt::Rect { x: 5.0, y: 5.0, w: 40.0, h: 20.0 });
     content.add_subview(ak::View::from_raw(plain.raw()));
@@ -390,16 +390,16 @@ fn nothing_that_is_not_an_outline_row_grows_a_disclosure_part() {
     var s: agent::Surface = agent::open(win.raw());
     let nodes: vec::Vec[agent::AppKitNode] = s.describe(auth::operator());
     // window + content + plain, and NOTHING else.
-    assert nodes.count() == (3 as usize);
-    var i: usize = 0 as usize;
+    assert nodes.count() == 3;
+    var i: usize = 0;
     while i < nodes.count() {
         match nodes.at_ptr(i) {
             option::Option[*agent::AppKitNode]::Some(n) => {
                 assert { (*n).id.view() } != "notarow:disclosure";
             }
-            option::Option[*agent::AppKitNode]::None => { assert false; }
+            option::Option::None => { assert false; }
         }
-        i = i +% (1 as usize);
+        i = i +% 1;
     }
     return;
 }
@@ -411,7 +411,7 @@ fn a_disclosure_press_with_no_outline_under_it_refuses_rather_than_pretending() 
     // between describe and click — the press must REFUSE. `allowed` for a
     // toggle that did not happen is the exact silent failure this whole entry
     // came from.
-    let win = fixture_window(300.0f64, 200.0f64);
+    let win = fixture_window(300.0, 200.0);
     let content = content_of(win);
     let plain = ak::View::new(rt::Rect { x: 5.0, y: 5.0, w: 40.0, h: 20.0 });
     content.add_subview(ak::View::from_raw(plain.raw()));
@@ -426,7 +426,7 @@ fn the_capability_flag_names_the_disclosure_part_too() {
     // `view_clickable` mirrors `click`'s body branch for branch, and a part
     // wired into `part_of` without an arm in BOTH would advertise a press that
     // does not exist. This is the pairing, asserted rather than assumed.
-    let win = fixture_window(300.0f64, 200.0f64);
+    let win = fixture_window(300.0, 200.0);
     let content = content_of(win);
     let plain = ak::View::new(rt::Rect { x: 5.0, y: 5.0, w: 40.0, h: 20.0 });
     content.add_subview(ak::View::from_raw(plain.raw()));
@@ -443,7 +443,7 @@ fn declared_affordance_overrides_native_classify() {
     // Phase 2: a plain NSView classifies as Group by type, but a declared
     // affordance (what facet set_identity records) wins — so a clickable
     // wrapper is Button, not Group, and describe stops guessing.
-    let win = fixture_window(300.0f64, 200.0f64);
+    let win = fixture_window(300.0, 200.0);
     let content = content_of(win);
     let plain = ak::View::new(rt::Rect { x: 5.0, y: 5.0, w: 40.0, h: 20.0 });
     content.add_subview(ak::View::from_raw(plain.raw()));
@@ -453,14 +453,14 @@ fn declared_affordance_overrides_native_classify() {
     var s: agent::Surface = agent::open(win.raw());
     let nodes: vec::Vec[agent::AppKitNode] = s.describe(auth::operator());
     // window + content + plain = 3.
-    assert nodes.count() == (3 as usize);
-    match nodes.at_ptr(2 as usize) {
+    assert nodes.count() == 3;
+    match nodes.at_ptr(2) {
         option::Option[*agent::AppKitNode]::Some(n) => {
             assert { (*n).id.view() } == "row-click";
             assert identity::role_eq({ (*n).role }, identity::Role::Button);
             assert { (*n).actionable };
         }
-        option::Option[*agent::AppKitNode]::None => { assert false; }
+        option::Option::None => { assert false; }
     };
 
     // Without a declaration the same native type stays Group (fallback).
@@ -469,12 +469,12 @@ fn declared_affordance_overrides_native_classify() {
     agent::set_agent_id(plain2.raw(), "bare");
     var s2: agent::Surface = agent::open(win.raw());
     let nodes2: vec::Vec[agent::AppKitNode] = s2.describe(auth::operator());
-    match nodes2.at_ptr(3 as usize) {
+    match nodes2.at_ptr(3) {
         option::Option[*agent::AppKitNode]::Some(n) => {
             assert { (*n).id.view() } == "bare";
             assert identity::role_eq({ (*n).role }, identity::Role::Group);
         }
-        option::Option[*agent::AppKitNode]::None => { assert false; }
+        option::Option::None => { assert false; }
     };
 }
 
@@ -483,7 +483,7 @@ fn declared_input_affordance_on_scroll_document_style_view() {
     // Composer/text_area identity lands on the inner NSTextView; if that
     // view carries a declared Input affordance it must win even if a future
     // classify regression would mis-tag it.
-    let win = fixture_window(300.0f64, 200.0f64);
+    let win = fixture_window(300.0, 200.0);
     let content = content_of(win);
     let tv = ak::TextView::new_with_frame(rt::Rect { x: 10.0, y: 10.0, w: 200.0, h: 60.0 });
     content.add_subview(tv.as_view());
@@ -504,7 +504,7 @@ fn declared_input_affordance_on_scroll_document_style_view() {
 fn declared_drive_none_is_observe_only() {
     // A tagged label with declared Text (drive_none) is exposed for reads but
     // never actionable — the agent cannot click or set_text it.
-    let win = fixture_window(300.0f64, 200.0f64);
+    let win = fixture_window(300.0, 200.0);
     let content = content_of(win);
     let l = ak::TextField::label_with_string("hello");
     content.add_subview(l.as_view());
@@ -513,13 +513,13 @@ fn declared_drive_none_is_observe_only() {
 
     var s: agent::Surface = agent::open(win.raw());
     let nodes: vec::Vec[agent::AppKitNode] = s.describe(auth::operator());
-    match nodes.at_ptr(2 as usize) {
+    match nodes.at_ptr(2) {
         option::Option[*agent::AppKitNode]::Some(n) => {
             assert { (*n).id.view() } == "title";
             assert identity::role_eq({ (*n).role }, identity::Role::Text);
             assert !{ (*n).actionable };
         }
-        option::Option[*agent::AppKitNode]::None => { assert false; }
+        option::Option::None => { assert false; }
     }
     assert surface::outcome_eq(s.click(auth::operator(), "title"), surface::Outcome::NotActionable);
     assert surface::outcome_eq(
@@ -529,7 +529,7 @@ fn declared_drive_none_is_observe_only() {
 
 #[test]
 fn declared_button_refuses_set_text() {
-    let win = fixture_window(300.0f64, 200.0f64);
+    let win = fixture_window(300.0, 200.0);
     let content = content_of(win);
     let b = add_button(content, "go");
     agent::set_agent_id(b.as_view().raw(), "go-btn");
@@ -549,7 +549,7 @@ fn set_text_persists_on_field_and_text_view() {
     // silently ignores — the outcome was Allowed but the text never landed
     // (bugs/agent-appkit-set-text-nstextview.md). Both setter paths must
     // actually persist on the widget.
-    let win = fixture_window(300.0f64, 240.0f64);
+    let win = fixture_window(300.0, 240.0);
     let content = content_of(win);
     let f = ak::TextField::new_with_frame(rt::Rect { x: 10.0, y: 50.0, w: 200.0, h: 24.0 });
     content.add_subview(f.as_view());
@@ -574,8 +574,8 @@ fn set_text_persists_on_field_and_text_view() {
     assert ttxt.view() == "a multi-line\ndescription";
 
     // Both writes bumped their versions.
-    assert s.text_version("name") > (0 as u64);
-    assert s.text_version("desc") > (0 as u64);
+    assert s.text_version("name") > 0;
+    assert s.text_version("desc") > 0;
 }
 
 #[test]
@@ -583,7 +583,7 @@ fn the_caret_can_be_placed_and_is_counted_in_bytes() {
     // No verb placed a caret, so a symbol command could not be AIMED: every
     // editor command that acts at the insertion point rested on an insertion
     // point nothing here could put anywhere.
-    let win = fixture_window(300.0f64, 240.0f64);
+    let win = fixture_window(300.0, 240.0);
     let content = content_of(win);
     let tv = ak::TextView::new_with_frame(rt::Rect { x: 10.0, y: 90.0, w: 200.0, h: 80.0 });
     content.add_subview(tv.as_view());
@@ -593,11 +593,11 @@ fn the_caret_can_be_placed_and_is_counted_in_bytes() {
         s.set_text(auth::operator(), "editor", "hello world", s.text_version("editor")),
         surface::Outcome::Allowed);
 
-    assert surface::outcome_eq(s.set_caret(auth::operator(), "editor", 6 as u64, 5 as u64),
+    assert surface::outcome_eq(s.set_caret(auth::operator(), "editor", 6, 5),
                                surface::Outcome::Allowed);
     let r: rt::Range = tv.as_text().selected_range();
-    assert { r.location } == (6 as u64);
-    assert { r.length } == (5 as u64);
+    assert { r.location } == 6;
+    assert { r.length } == 5;
 
     // BYTES, not UTF-16 units — the two disagree on exactly the characters a
     // code editor is full of, and a caret placed by the wrong index lands in
@@ -605,23 +605,23 @@ fn the_caret_can_be_placed_and_is_counted_in_bytes() {
     assert surface::outcome_eq(
         s.set_text(auth::operator(), "editor", "🙂ab", s.text_version("editor")),
         surface::Outcome::Allowed);
-    assert surface::outcome_eq(s.set_caret(auth::operator(), "editor", 4 as u64, 1 as u64),
+    assert surface::outcome_eq(s.set_caret(auth::operator(), "editor", 4, 1),
                                surface::Outcome::Allowed);
     let r2: rt::Range = tv.as_text().selected_range();
-    assert { r2.location } == (2 as u64);
-    assert { r2.length } == (1 as u64);
+    assert { r2.location } == 2;
+    assert { r2.length } == 1;
 }
 
 #[test]
 fn set_caret_refuses_a_control_whose_drive_is_not_text() {
-    let win = fixture_window(300.0f64, 200.0f64);
+    let win = fixture_window(300.0, 200.0);
     let content = content_of(win);
     let b = add_button(content, "go");
     agent::set_agent_id(b.as_view().raw(), "go-btn");
     var s: agent::Surface = agent::open(win.raw());
-    assert surface::outcome_eq(s.set_caret(auth::operator(), "go-btn", 0 as u64, 0 as u64),
+    assert surface::outcome_eq(s.set_caret(auth::operator(), "go-btn", 0, 0),
                                surface::Outcome::NotActionable);
-    assert surface::outcome_eq(s.set_caret(auth::operator(), "nobody", 0 as u64, 0 as u64),
+    assert surface::outcome_eq(s.set_caret(auth::operator(), "nobody", 0, 0),
                                surface::Outcome::NotFound);
 }
 
@@ -630,7 +630,7 @@ fn read_runs_reports_what_the_control_is_actually_drawing() {
     // "Did the syntax colour land" needed a temporary probe compiled into the
     // app four separate times, because every read verb answered `text` and none
     // answered how it is drawn.
-    let win = fixture_window(300.0f64, 240.0f64);
+    let win = fixture_window(300.0, 240.0);
     let content = content_of(win);
     let tv = ak::TextView::new_with_frame(rt::Rect { x: 10.0, y: 90.0, w: 200.0, h: 80.0 });
     content.add_subview(tv.as_view());
@@ -646,22 +646,22 @@ fn read_runs_reports_what_the_control_is_actually_drawing() {
     // answer to "what is it drawing" and a confusing one to assert.
     let red: *u8 = { msg_id_4f64(rt::get_class(#str_ptr("NSColor\0")),
                                  rt::sel(#str_ptr("colorWithDeviceRed:green:blue:alpha:\0")),
-                                 1.0f64, 0.0f64, 0.0f64, 1.0f64) };
+                                 1.0, 0.0, 0.0, 1.0) };
     { msg_void_id_id_range(storage, rt::sel(#str_ptr("addAttribute:value:range:\0")),
                            bridge::nsstring("NSColor"), red,
-                           rt::Range { location: 0 as u64, length: 3 as u64 }) };
+                           rt::Range { location: 0, length: 3 }) };
 
     let runs: surface::Runs = s.read_runs(auth::operator(), "editor");
     assert surface::outcome_eq(runs.outcome, surface::Outcome::Allowed);
     assert runs.supported;
-    assert runs.runs.count() >= (2 as usize);
-    match runs.runs.at_ptr(0 as usize) {
+    assert runs.runs.count() >= 2;
+    match runs.runs.at_ptr(0) {
         option::Option[*surface::TextRun]::Some(r) => {
-            assert { (*r).start } == (0 as u64);
-            assert { (*r).length } == (3 as u64);
+            assert { (*r).start } == 0;
+            assert { (*r).length } == 3;
             assert { (*r).color.view() } == "#ff0000";
         }
-        option::Option[*surface::TextRun]::None => { assert false; }
+        option::Option::None => { assert false; }
     }
 }
 
@@ -672,7 +672,7 @@ extern fn msg_void_id_id_range(recv: *u8, sel: *u8, a: *u8, b: *u8, r: rt::Range
 
 #[test]
 fn read_runs_says_unsupported_rather_than_empty_for_a_control_with_no_text() {
-    let win = fixture_window(300.0f64, 200.0f64);
+    let win = fixture_window(300.0, 200.0);
     let content = content_of(win);
     let b = add_button(content, "go");
     agent::set_agent_id(b.as_view().raw(), "go-btn");
@@ -681,7 +681,7 @@ fn read_runs_says_unsupported_rather_than_empty_for_a_control_with_no_text() {
     // An NSButton has no attributed store to walk. `supported: false` is a
     // different answer from "no runs", which is the distinction the `clickable`
     // field was added to make.
-    assert runs.runs.count() == (0 as usize);
+    assert runs.runs.count() == 0;
     assert runs.supported == false;
     let missing: surface::Runs = s.read_runs(auth::operator(), "nobody");
     assert surface::outcome_eq(missing.outcome, surface::Outcome::NotFound);
@@ -765,7 +765,7 @@ fn invoke_menu_worker() -> i32 {
     // would take its direct branch, the hop would never be exercised, and this
     // test would pass while proving nothing.
     if rt::msg_i8(rt::get_class(#str_ptr("NSThread\0")),
-                  rt::sel(#str_ptr("isMainThread\0"))) != (0 as i8) {
+                  rt::sel(#str_ptr("isMainThread\0"))) != 0 {
         OFFMAIN_WAS_MAIN = 1;
     } else {
         OFFMAIN_WAS_MAIN = 0;
@@ -777,7 +777,7 @@ fn invoke_menu_worker() -> i32 {
         OFFMAIN_RESULT = 0;
     }
     OFFMAIN_DONE = 1;
-    return 0 as i32;
+    return 0;
 }
 
 // One bounded turn of the main run loop. NSDefaultRunLoopMode IS the string
@@ -789,7 +789,7 @@ fn pump_main_runloop_once() {
     if rl == (0 as *u8) { return; }
     let until: *u8 = rt::msg_id_f64(rt::get_class(#str_ptr("NSDate\0")),
                                     rt::sel(#str_ptr("dateWithTimeIntervalSinceNow:\0")),
-                                    0.01f64);
+                                    0.01);
     let _ran: i8 = rt::msg_i8_id_id(rl, rt::sel(#str_ptr("runMode:beforeDate:\0")),
                                     bridge::nsstring("kCFRunLoopDefaultMode"), until);
     return;
@@ -837,7 +837,7 @@ fn a_menu_invoked_off_the_main_thread_does_not_abort() {
 fn describe_survives_a_replaced_tree() {
     // A full describe on a surface whose views were ALL removed must not
     // crash (views are retained; reads land on live, detached objects).
-    let win = fixture_window(300.0f64, 200.0f64);
+    let win = fixture_window(300.0, 200.0);
     let content = content_of(win);
     let b = add_button(content, "go");
     agent::set_agent_id(b.as_view().raw(), "go-btn");
@@ -845,7 +845,7 @@ fn describe_survives_a_replaced_tree() {
     var s: agent::Surface = agent::open(win.raw());
     b.as_view().remove_from_superview();
     let nodes: vec::Vec[agent::AppKitNode] = s.describe(auth::operator());
-    assert nodes.count() == (3 as usize);
+    assert nodes.count() == 3;
 }
 
 // ---- hit_test: the pointer question the action verbs cannot ask -------------
@@ -860,7 +860,7 @@ fn add_overlay(content: ak::View, over: rt::Rect) -> ak::View {
 
 #[test]
 fn hit_test_reports_a_reachable_control() {
-    let win = fixture_window(300.0f64, 200.0f64);
+    let win = fixture_window(300.0, 200.0);
     let content = content_of(win);
     let b = add_button(content, "go");
     agent::set_agent_id(b.as_view().raw(), "go-btn");
@@ -880,7 +880,7 @@ fn hit_test_reports_a_reachable_control() {
 // a bug, it is the blindness, and hit_test is what sees past it.
 #[test]
 fn hit_test_names_the_exposed_overlay_that_buries_a_control() {
-    let win = fixture_window(300.0f64, 200.0f64);
+    let win = fixture_window(300.0, 200.0);
     let content = content_of(win);
     let b = add_button(content, "go");
     agent::set_agent_id(b.as_view().raw(), "go-btn");
@@ -909,7 +909,7 @@ fn hit_test_names_the_exposed_overlay_that_buries_a_control() {
 // feature — `covered` still carries the fact.
 #[test]
 fn hit_test_reports_an_unexposed_obstruction_without_naming_it() {
-    let win = fixture_window(300.0f64, 200.0f64);
+    let win = fixture_window(300.0, 200.0);
     let content = content_of(win);
     let b = add_button(content, "go");
     agent::set_agent_id(b.as_view().raw(), "go-btn");
@@ -927,7 +927,7 @@ fn hit_test_reports_an_unexposed_obstruction_without_naming_it() {
 // its own content, which is the opposite of the answer wanted.
 #[test]
 fn hit_test_counts_a_hit_on_a_childs_view_as_reaching_the_parent() {
-    let win = fixture_window(300.0f64, 200.0f64);
+    let win = fixture_window(300.0, 200.0);
     let content = content_of(win);
     let group = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 200.0, h: 100.0 });
     content.add_subview(group);
@@ -944,7 +944,7 @@ fn hit_test_counts_a_hit_on_a_childs_view_as_reaching_the_parent() {
 
 #[test]
 fn hit_test_negatives_report_rather_than_guess() {
-    let win = fixture_window(300.0f64, 200.0f64);
+    let win = fixture_window(300.0, 200.0);
     let content = content_of(win);
     let b = add_button(content, "go");
     agent::set_agent_id(b.as_view().raw(), "go-btn");
@@ -986,7 +986,7 @@ extern fn pool_pop(p: *u8);
 // process dies here; the assertion below is simply that it did not.
 #[test]
 fn a_real_mouse_down_on_a_draggable_survives_the_pool_drain() {
-    let win = fixture_window(400.0f64, 300.0f64);
+    let win = fixture_window(400.0, 300.0);
     let content = content_of(win);
     let card = akx::new_drag_view("card-payload");
     card.set_frame(rt::Rect { x: 20.0, y: 20.0, w: 120.0, h: 60.0 });
@@ -999,16 +999,16 @@ fn a_real_mouse_down_on_a_draggable_survives_the_pool_drain() {
     match ak::Event::mouse_event_with_type(
         ak::EventType::LeftMouseDown,
         at,
-        0 as u64, 0.0f64, wnum,
+        0, 0.0, wnum,
         nilctx,
-        0 as i64, 1 as i64, 1.0f32,
+        0, 1, 1.0,
     ) {
         option::Option[ak::Event]::Some(ev) => {
             // THE CLICK. One mouseDown: was the whole trigger — no drag, no
             // drop, no movement.
             rt::msg_void_id(card.raw(), rt::sel(#str_ptr("mouseDown:\0")), ev.raw());
         }
-        option::Option[ak::Event]::None => { assert false; }
+        option::Option::None => { assert false; }
     }
     // THE CRASH SITE. Releases the drag session's array, which releases its
     // elements — one of which used to be freed memory.
@@ -1033,9 +1033,9 @@ fn mouse_at(win: ak::Window, ty: ak::EventType, x: f64, y: f64) -> ak::Event {
     let at: rt::Point = rt::Point { x: x, y: y };
     let nilctx: ak::GraphicsContext = ak::GraphicsContext::from_raw(0 as *u8);
     let wnum: i64 = rt::msg_i64(win.raw(), rt::sel(#str_ptr("windowNumber\0")));
-    return match ak::Event::mouse_event_with_type(ty, at, 0 as u64, 0.0f64, wnum, nilctx, 0 as i64, 1 as i64, 1.0f32) {
+    return match ak::Event::mouse_event_with_type(ty, at, 0, 0.0, wnum, nilctx, 0, 1, 1.0) {
         option::Option[ak::Event]::Some(e) => e,
-        option::Option[ak::Event]::None => { ak::Event::from_raw(0 as *u8) }
+        option::Option::None => { ak::Event::from_raw(0 as *u8) }
     };
 }
 
@@ -1046,7 +1046,7 @@ fn mouse_at(win: ak::Window, ty: ak::EventType, x: f64, y: f64) -> ak::Event {
 // never cleared stays lit forever.
 #[test]
 fn a_drop_target_reports_drag_enter_and_exit_including_on_drop() {
-    let win = fixture_window(400.0f64, 300.0f64);
+    let win = fixture_window(400.0, 300.0);
     let content = content_of(win);
     let lane = akx::new_drop_view(on_drop_probe, null_ctx());
     lane.set_frame(rt::Rect { x: 0.0, y: 0.0, w: 200.0, h: 200.0 });
@@ -1057,36 +1057,36 @@ fn a_drop_target_reports_drag_enter_and_exit_including_on_drop() {
     EXITS = 0;
     let entered_sel: *u8 = rt::sel(#str_ptr("draggingEntered:\0"));
     let exited_sel: *u8 = rt::sel(#str_ptr("draggingExited:\0"));
-    assert rt::msg_i8_id(lane.raw(), rt::sel(#str_ptr("respondsToSelector:\0")), exited_sel) != (0 as i8);
+    assert rt::msg_i8_id(lane.raw(), rt::sel(#str_ptr("respondsToSelector:\0")), exited_sel) != 0;
 
     assert akx::drag_targeted(lane.raw()) == false;
 
     // Enter sets the state BEFORE calling, so the handler already reads true —
     // and still advertises Copy (=1) to the dragger.
-    assert rt::msg_u64_id(lane.raw(), entered_sel, 0 as *u8) == (1 as u64);
-    assert ENTERS == (1 as i32);
-    assert EXITS == (0 as i32);
+    assert rt::msg_u64_id(lane.raw(), entered_sel, 0 as *u8) == 1;
+    assert ENTERS == 1;
+    assert EXITS == 0;
     assert akx::drag_targeted(lane.raw());
 
     // IDEMPOTENT: re-entering an already-targeted view fires nothing, so a
     // handler cannot be made to count edges that did not happen.
-    assert rt::msg_u64_id(lane.raw(), entered_sel, 0 as *u8) == (1 as u64);
-    assert ENTERS == (1 as i32);
+    assert rt::msg_u64_id(lane.raw(), entered_sel, 0 as *u8) == 1;
+    assert ENTERS == 1;
 
     // Leaving without dropping.
     rt::msg_void_id(lane.raw(), exited_sel, 0 as *u8);
-    assert EXITS == (1 as i32);
+    assert EXITS == 1;
     assert akx::drag_targeted(lane.raw()) == false;
     // ...and leaving twice is also idempotent.
     rt::msg_void_id(lane.raw(), exited_sel, 0 as *u8);
-    assert EXITS == (1 as i32);
+    assert EXITS == 1;
 
     // Dropping ALSO clears it — the case a highlight would otherwise survive
     // forever, and the reason the framework owns this edge rather than the app.
-    assert rt::msg_u64_id(lane.raw(), entered_sel, 0 as *u8) == (1 as u64);
-    assert ENTERS == (2 as i32);
+    assert rt::msg_u64_id(lane.raw(), entered_sel, 0 as *u8) == 1;
+    assert ENTERS == 2;
     let _ok: i8 = rt::msg_i8_id(lane.raw(), rt::sel(#str_ptr("performDragOperation:\0")), 0 as *u8);
-    assert EXITS == (2 as i32);
+    assert EXITS == 2;
     assert akx::drag_targeted(lane.raw()) == false;
 }
 
@@ -1096,16 +1096,16 @@ fn a_drop_target_reports_drag_enter_and_exit_including_on_drop() {
 // not a gesture anyone makes with a card in hand.
 #[test]
 fn a_drop_target_answers_dragging_updated_for_autoscroll() {
-    let win = fixture_window(400.0f64, 300.0f64);
+    let win = fixture_window(400.0, 300.0);
     let content = content_of(win);
     let lane = akx::new_drop_view(on_drop_probe, null_ctx());
     lane.set_frame(rt::Rect { x: 0.0, y: 0.0, w: 200.0, h: 200.0 });
     content.add_subview(lane);
 
     let updated: *u8 = rt::sel(#str_ptr("draggingUpdated:\0"));
-    assert rt::msg_i8_id(lane.raw(), rt::sel(#str_ptr("respondsToSelector:\0")), updated) != (0 as i8);
+    assert rt::msg_i8_id(lane.raw(), rt::sel(#str_ptr("respondsToSelector:\0")), updated) != 0;
     // Still advertises Copy, and survives a nil sender (no window, no drag).
-    assert rt::msg_u64_id(lane.raw(), updated, 0 as *u8) == (1 as u64);
+    assert rt::msg_u64_id(lane.raw(), updated, 0 as *u8) == 1;
 }
 
 // (b) THE ONE THAT MATTERS. A press that never travels is a CLICK: no drag
@@ -1115,23 +1115,23 @@ fn a_drop_target_answers_dragging_updated_for_autoscroll() {
 // source, its own snapshot becomes the drag preview, so (a) needs no API.
 #[test]
 fn a_press_without_movement_is_a_click_not_a_drag() {
-    let win = fixture_window(400.0f64, 300.0f64);
+    let win = fixture_window(400.0, 300.0);
     let content = content_of(win);
     let card = akx::new_drag_view("card-1");
     card.set_frame(rt::Rect { x: 20.0, y: 20.0, w: 200.0, h: 100.0 });
     content.add_subview(card);
 
     let responds: *u8 = rt::sel(#str_ptr("respondsToSelector:\0"));
-    assert rt::msg_i8_id(card.raw(), responds, rt::sel(#str_ptr("mouseDragged:\0"))) != (0 as i8);
-    assert rt::msg_i8_id(card.raw(), responds, rt::sel(#str_ptr("mouseUp:\0"))) != (0 as i8);
+    assert rt::msg_i8_id(card.raw(), responds, rt::sel(#str_ptr("mouseDragged:\0"))) != 0;
+    assert rt::msg_i8_id(card.raw(), responds, rt::sel(#str_ptr("mouseUp:\0"))) != 0;
 
     let pool: *u8 = { pool_push() };
     // Press: ARMED, and no session — the old behaviour began one right here.
-    rt::msg_void_id(card.raw(), rt::sel(#str_ptr("mouseDown:\0")), mouse_at(win, ak::EventType::LeftMouseDown, 100.0f64, 60.0f64).raw());
+    rt::msg_void_id(card.raw(), rt::sel(#str_ptr("mouseDown:\0")), mouse_at(win, ak::EventType::LeftMouseDown, 100.0, 60.0).raw());
     assert akx::drag_is_armed(card.raw());
     // Release without travel: disarmed, and the event went to the next
     // responder rather than being swallowed.
-    rt::msg_void_id(card.raw(), rt::sel(#str_ptr("mouseUp:\0")), mouse_at(win, ak::EventType::LeftMouseUp, 100.0f64, 60.0f64).raw());
+    rt::msg_void_id(card.raw(), rt::sel(#str_ptr("mouseUp:\0")), mouse_at(win, ak::EventType::LeftMouseUp, 100.0, 60.0).raw());
     assert akx::drag_is_armed(card.raw()) == false;
     { pool_pop(pool); }
     return;
@@ -1141,18 +1141,18 @@ fn a_press_without_movement_is_a_click_not_a_drag() {
 // deliberate click carries must not turn into a drag.
 #[test]
 fn a_press_within_the_threshold_is_still_a_click() {
-    let win = fixture_window(400.0f64, 300.0f64);
+    let win = fixture_window(400.0, 300.0);
     let content = content_of(win);
     let card = akx::new_drag_view("card-2");
     card.set_frame(rt::Rect { x: 20.0, y: 20.0, w: 200.0, h: 100.0 });
     content.add_subview(card);
 
     let pool: *u8 = { pool_push() };
-    rt::msg_void_id(card.raw(), rt::sel(#str_ptr("mouseDown:\0")), mouse_at(win, ak::EventType::LeftMouseDown, 100.0f64, 60.0f64).raw());
+    rt::msg_void_id(card.raw(), rt::sel(#str_ptr("mouseDown:\0")), mouse_at(win, ak::EventType::LeftMouseDown, 100.0, 60.0).raw());
     // ~1.4pt of travel, under the 3pt threshold: still a click in progress.
-    rt::msg_void_id(card.raw(), rt::sel(#str_ptr("mouseDragged:\0")), mouse_at(win, ak::EventType::LeftMouseDragged, 101.0f64, 61.0f64).raw());
+    rt::msg_void_id(card.raw(), rt::sel(#str_ptr("mouseDragged:\0")), mouse_at(win, ak::EventType::LeftMouseDragged, 101.0, 61.0).raw());
     assert akx::drag_is_armed(card.raw());
-    rt::msg_void_id(card.raw(), rt::sel(#str_ptr("mouseUp:\0")), mouse_at(win, ak::EventType::LeftMouseUp, 101.0f64, 61.0f64).raw());
+    rt::msg_void_id(card.raw(), rt::sel(#str_ptr("mouseUp:\0")), mouse_at(win, ak::EventType::LeftMouseUp, 101.0, 61.0).raw());
     assert akx::drag_is_armed(card.raw()) == false;
     { pool_pop(pool); }
     return;
@@ -1162,21 +1162,21 @@ fn a_press_within_the_threshold_is_still_a_click() {
 // state is consumed, so one press can only ever produce one session.
 #[test]
 fn a_press_past_the_threshold_becomes_a_drag() {
-    let win = fixture_window(400.0f64, 300.0f64);
+    let win = fixture_window(400.0, 300.0);
     let content = content_of(win);
     let card = akx::new_drag_view("card-3");
     card.set_frame(rt::Rect { x: 20.0, y: 20.0, w: 200.0, h: 100.0 });
     content.add_subview(card);
 
     let pool: *u8 = { pool_push() };
-    rt::msg_void_id(card.raw(), rt::sel(#str_ptr("mouseDown:\0")), mouse_at(win, ak::EventType::LeftMouseDown, 100.0f64, 60.0f64).raw());
+    rt::msg_void_id(card.raw(), rt::sel(#str_ptr("mouseDown:\0")), mouse_at(win, ak::EventType::LeftMouseDown, 100.0, 60.0).raw());
     assert akx::drag_is_armed(card.raw());
     // 40pt of travel — unambiguously a drag.
-    rt::msg_void_id(card.raw(), rt::sel(#str_ptr("mouseDragged:\0")), mouse_at(win, ak::EventType::LeftMouseDragged, 140.0f64, 60.0f64).raw());
+    rt::msg_void_id(card.raw(), rt::sel(#str_ptr("mouseDragged:\0")), mouse_at(win, ak::EventType::LeftMouseDragged, 140.0, 60.0).raw());
     assert akx::drag_is_armed(card.raw()) == false;   // consumed by the session
     // A second drag in the same press starts nothing more.
-    rt::msg_void_id(card.raw(), rt::sel(#str_ptr("mouseDragged:\0")), mouse_at(win, ak::EventType::LeftMouseDragged, 180.0f64, 60.0f64).raw());
-    rt::msg_void_id(card.raw(), rt::sel(#str_ptr("mouseUp:\0")), mouse_at(win, ak::EventType::LeftMouseUp, 180.0f64, 60.0f64).raw());
+    rt::msg_void_id(card.raw(), rt::sel(#str_ptr("mouseDragged:\0")), mouse_at(win, ak::EventType::LeftMouseDragged, 180.0, 60.0).raw());
+    rt::msg_void_id(card.raw(), rt::sel(#str_ptr("mouseUp:\0")), mouse_at(win, ak::EventType::LeftMouseUp, 180.0, 60.0).raw());
     { pool_pop(pool); }
     return;
 }
@@ -1186,17 +1186,17 @@ fn a_press_past_the_threshold_becomes_a_drag() {
 // point on every click.
 #[test]
 fn a_view_without_a_payload_never_arms_the_threshold() {
-    let win = fixture_window(400.0f64, 300.0f64);
+    let win = fixture_window(400.0, 300.0);
     let content = content_of(win);
     let plain: *u8 = { rt::msg_id(rt::msg_id(akx::drag_view_class(), rt::sel(#str_ptr("alloc\0"))), rt::sel(#str_ptr("init\0"))) };
     ak::View::from_raw(plain).set_frame(rt::Rect { x: 0.0, y: 0.0, w: 50.0, h: 50.0 });
     content.add_subview(ak::View::from_raw(plain));
 
     let pool: *u8 = { pool_push() };
-    rt::msg_void_id(plain, rt::sel(#str_ptr("mouseDown:\0")), mouse_at(win, ak::EventType::LeftMouseDown, 10.0f64, 10.0f64).raw());
-    rt::msg_void_id(plain, rt::sel(#str_ptr("mouseDragged:\0")), mouse_at(win, ak::EventType::LeftMouseDragged, 90.0f64, 90.0f64).raw());
+    rt::msg_void_id(plain, rt::sel(#str_ptr("mouseDown:\0")), mouse_at(win, ak::EventType::LeftMouseDown, 10.0, 10.0).raw());
+    rt::msg_void_id(plain, rt::sel(#str_ptr("mouseDragged:\0")), mouse_at(win, ak::EventType::LeftMouseDragged, 90.0, 90.0).raw());
     assert akx::drag_is_armed(plain) == false;   // never armed
-    rt::msg_void_id(plain, rt::sel(#str_ptr("mouseUp:\0")), mouse_at(win, ak::EventType::LeftMouseUp, 90.0f64, 90.0f64).raw());
+    rt::msg_void_id(plain, rt::sel(#str_ptr("mouseUp:\0")), mouse_at(win, ak::EventType::LeftMouseUp, 90.0, 90.0).raw());
     { pool_pop(pool); }
     return;
 }
@@ -1205,7 +1205,7 @@ fn a_view_without_a_payload_never_arms_the_threshold() {
 
 fn near(a: f64, b: f64) -> bool {
     let d: f64 = if a > b { a - b } else { b - a };
-    return d < 0.001f64;
+    return d < 0.001;
 }
 
 // `autoscroll:` only fires when the pointer leaves the view's bounds, so it
@@ -1216,30 +1216,30 @@ fn near(a: f64, b: f64) -> bool {
 #[test]
 fn autoscroll_band_is_proportional_and_only_near_the_edges() {
     // Dead centre: nothing. This is the case that must NOT jitter.
-    assert near(akx::autoscroll_delta(250.0f64, 0.0f64, 500.0f64), 0.0f64);
+    assert near(akx::autoscroll_delta(250.0, 0.0, 500.0), 0.0);
     // Just inside the band, either side: nothing.
-    assert near(akx::autoscroll_delta(41.0f64, 0.0f64, 500.0f64), 0.0f64);
-    assert near(akx::autoscroll_delta(459.0f64, 0.0f64, 500.0f64), 0.0f64);
+    assert near(akx::autoscroll_delta(41.0, 0.0, 500.0), 0.0);
+    assert near(akx::autoscroll_delta(459.0, 0.0, 500.0), 0.0);
 
     // At the leading edge: full step, negative (scroll back toward the start).
-    assert near(akx::autoscroll_delta(0.0f64, 0.0f64, 500.0f64), 0.0f64 - 16.0f64);
+    assert near(akx::autoscroll_delta(0.0, 0.0, 500.0), 0.0 - 16.0);
     // At the trailing edge: full step, positive.
-    assert near(akx::autoscroll_delta(500.0f64, 0.0f64, 500.0f64), 16.0f64);
+    assert near(akx::autoscroll_delta(500.0, 0.0, 500.0), 16.0);
 
     // Halfway into the band: half the step, so the nudge grows with depth
     // rather than jumping.
-    assert near(akx::autoscroll_delta(20.0f64, 0.0f64, 500.0f64), 0.0f64 - 8.0f64);
-    assert near(akx::autoscroll_delta(480.0f64, 0.0f64, 500.0f64), 8.0f64);
+    assert near(akx::autoscroll_delta(20.0, 0.0, 500.0), 0.0 - 8.0);
+    assert near(akx::autoscroll_delta(480.0, 0.0, 500.0), 8.0);
 
     // BEYOND the edge — which is all `autoscroll:` could ever detect — clamps to
     // the full step rather than running away. This is how the band subsumes the
     // old behaviour instead of replacing it.
-    assert near(akx::autoscroll_delta(-200.0f64, 0.0f64, 500.0f64), 0.0f64 - 16.0f64);
-    assert near(akx::autoscroll_delta(900.0f64, 0.0f64, 500.0f64), 16.0f64);
+    assert near(akx::autoscroll_delta(-200.0, 0.0, 500.0), 0.0 - 16.0);
+    assert near(akx::autoscroll_delta(900.0, 0.0, 500.0), 16.0);
 
     // A scrolled viewport: the band follows the visible range, not the document.
-    assert near(akx::autoscroll_delta(1000.0f64, 1000.0f64, 1500.0f64), 0.0f64 - 16.0f64);
-    assert near(akx::autoscroll_delta(1250.0f64, 1000.0f64, 1500.0f64), 0.0f64);
+    assert near(akx::autoscroll_delta(1000.0, 1000.0, 1500.0), 0.0 - 16.0);
+    assert near(akx::autoscroll_delta(1250.0, 1000.0, 1500.0), 0.0);
     return;
 }
 
@@ -1247,7 +1247,7 @@ fn autoscroll_band_is_proportional_and_only_near_the_edges() {
 // the jitter the report called out. Both axes, and through the real callback.
 #[test]
 fn autoscroll_leaves_a_clip_view_with_nothing_to_scroll_alone() {
-    let win = fixture_window(400.0f64, 300.0f64);
+    let win = fixture_window(400.0, 300.0);
     let content = content_of(win);
     let sv = ak::ScrollView::new(rt::Rect { x: 0.0, y: 0.0, w: 200.0, h: 200.0 });
     content.add_subview(sv.as_view());
@@ -1271,7 +1271,7 @@ fn autoscroll_leaves_a_clip_view_with_nothing_to_scroll_alone() {
 // "outside" it.
 #[test]
 fn autoscroll_moves_a_clip_view_that_has_range() {
-    let win = fixture_window(400.0f64, 300.0f64);
+    let win = fixture_window(400.0, 300.0);
     let content = content_of(win);
     let sv = ak::ScrollView::new(rt::Rect { x: 0.0, y: 0.0, w: 200.0, h: 200.0 });
     content.add_subview(sv.as_view());
@@ -1305,12 +1305,12 @@ fn on_field_action(sender: *u8, ctx: *u8) { FIELD_ACTIONS = FIELD_ACTIONS + 1; r
 // bugs/agent-set-text-does-not-notify-the-app.md
 #[test]
 fn set_text_on_a_value_control_fires_the_apps_change_handler() {
-    let win = fixture_window(320.0f64, 200.0f64);
+    let win = fixture_window(320.0, 200.0);
     let content = content_of(win);
     let sl = ak::Slider::new();
-    sl.set_min_value(0.0f64);
-    sl.set_max_value(1.0f64);
-    sl.as_control().set_double_value(0.55f64);
+    sl.set_min_value(0.0);
+    sl.set_max_value(1.0);
+    sl.as_control().set_double_value(0.55);
     sl.as_view().set_frame(rt::Rect { x: 10.0, y: 10.0, w: 200.0, h: 24.0 });
     content.add_subview(sl.as_view());
     akx::set_control_action_ctx(sl.as_control(), on_slider_changed, null_ctx());
@@ -1325,10 +1325,10 @@ fn set_text_on_a_value_control_fires_the_apps_change_handler() {
 
     // The control moved...
     let got: f64 = sl.as_control().double_value();
-    assert got > 0.65f64;
-    assert got < 0.75f64;
+    assert got > 0.65;
+    assert got < 0.75;
     // ...AND the app was told, which is the whole bug.
-    assert SLIDER_CHANGES == (1 as i32);
+    assert SLIDER_CHANGES == 1;
 }
 
 // A text field must NOT be notified: its action is the ENTER key, so firing it
@@ -1336,7 +1336,7 @@ fn set_text_on_a_value_control_fires_the_apps_change_handler() {
 // worse surprise than the one being fixed. A field is read on demand.
 #[test]
 fn set_text_on_a_field_does_not_fire_its_enter_action() {
-    let win = fixture_window(320.0f64, 200.0f64);
+    let win = fixture_window(320.0, 200.0);
     let content = content_of(win);
     let f = ak::TextField::new_with_frame(rt::Rect { x: 10.0, y: 50.0, w: 200.0, h: 24.0 });
     content.add_subview(f.as_view());
@@ -1351,13 +1351,13 @@ fn set_text_on_a_field_does_not_fire_its_enter_action() {
 
     let txt: text::Text = bridge::to_text(rt::msg_id(f.as_view().raw(), rt::sel(#str_ptr("stringValue\0"))));
     assert txt.view() == "typed";      // the write landed
-    assert FIELD_ACTIONS == (0 as i32); // and submitted nothing
+    assert FIELD_ACTIONS == 0; // and submitted nothing
 }
 
 // ---- a search field is THREE controls, not one -------------------------------
 
 static SEARCH_FIRED: i64 = 0;
-fn on_search_action(sender: *u8) { SEARCH_FIRED = SEARCH_FIRED + (1 as i64); return; }
+fn on_search_action(sender: *u8) { SEARCH_FIRED = SEARCH_FIRED + 1; return; }
 
 #[test]
 fn a_search_field_exposes_its_text_its_search_and_its_clear() {
@@ -1367,7 +1367,7 @@ fn a_search_field_exposes_its_text_its_search_and_its_clear() {
     // descends `subviews` — which a cell is not. The agent could type a query
     // and then had no way to run it or take it back.
     SEARCH_FIRED = 0;
-    let win = fixture_window(300.0f64, 200.0f64);
+    let win = fixture_window(300.0, 200.0);
     let content = content_of(win);
     let sf: *u8 = rt::alloc_init(#str_ptr("NSSearchField\0"));
     rt::msg_void_rect(sf, rt::sel(#str_ptr("setFrame:\0")),
@@ -1379,7 +1379,7 @@ fn a_search_field_exposes_its_text_its_search_and_its_clear() {
     var s: agent::Surface = agent::open(win.raw());
     let nodes: vec::Vec[agent::AppKitNode] = s.describe(auth::operator());
     // window + content group + the field + its two parts. It was 3.
-    assert nodes.count() == (5 as usize);
+    assert nodes.count() == 5;
 
     // 1 — type into it.
     assert surface::outcome_eq(s.set_text(auth::operator(), "search", "needle", s.text_version("search")),
@@ -1390,14 +1390,14 @@ fn a_search_field_exposes_its_text_its_search_and_its_clear() {
     // 2 — run the search. The magnifier fires the field's own action, which is
     // what Return reaches, so `on_submit` runs exactly as it does for a person.
     assert surface::outcome_eq(s.click(auth::operator(), "search:search"), surface::Outcome::Allowed);
-    assert SEARCH_FIRED == (1 as i64);
+    assert SEARCH_FIRED == 1;
 
     // 3 — clear it. The text goes, and the now-empty search runs, which is what
     // makes the glyph a clear rather than a select-all-and-delete.
     assert surface::outcome_eq(s.click(auth::operator(), "search:clear"), surface::Outcome::Allowed);
     let after: text::Text = bridge::to_text(rt::msg_id(sf, rt::sel(#str_ptr("stringValue\0"))));
     assert after.is_empty();
-    assert SEARCH_FIRED == (2 as i64);
+    assert SEARCH_FIRED == 2;
 
     // An id that names no part is still NotFound — the suffixes are addresses,
     // not a pattern the surface will invent an answer for.
@@ -1417,7 +1417,7 @@ fn describe_reports_delivery_beside_permission_and_capability() {
     // Two buttons, same class, same frame, same everything a describe can see.
     // The only difference is whether anything is on the other end.
     CLICKS = 0;
-    let win = fixture_window(300.0f64, 200.0f64);
+    let win = fixture_window(300.0, 200.0);
     let content = content_of(win);
 
     let live = add_button(content, "Live");
@@ -1430,7 +1430,7 @@ fn describe_reports_delivery_beside_permission_and_capability() {
 
     var saw_live: bool = false;
     var saw_dead: bool = false;
-    var i: usize = 0 as usize;
+    var i: usize = 0;
     while i < nodes.count() {
         match nodes.at_ptr(i) {
             option::Option[*agent::AppKitNode]::Some(n) => {
@@ -1450,9 +1450,9 @@ fn describe_reports_delivery_beside_permission_and_capability() {
                     assert { (*n).wired } == false;
                 }
             }
-            option::Option[*agent::AppKitNode]::None => { }
+            option::Option::None => { }
         }
-        i = i +% (1 as usize);
+        i = i +% 1;
     }
     assert saw_live;
     assert saw_dead;
@@ -1476,7 +1476,7 @@ fn describe_reports_the_click_capability_beside_the_permission() {
     // container is permitted and cannot, so every one of them advertised a
     // press that did not exist, and an agent — for which the flag is the whole
     // of what it knows — had to spend a click on each to find out.
-    let win = fixture_window(300.0f64, 200.0f64);
+    let win = fixture_window(300.0, 200.0);
     let content = content_of(win);
 
     let group = ak::View::new(rt::Rect { x: 5.0, y: 5.0, w: 100.0, h: 40.0 });
@@ -1488,28 +1488,28 @@ fn describe_reports_the_click_capability_beside_the_permission() {
 
     var s: agent::Surface = agent::open(win.raw());
     let nodes: vec::Vec[agent::AppKitNode] = s.describe(auth::operator());
-    assert nodes.count() == (4 as usize);
+    assert nodes.count() == 4;
 
     // The keyed container: permitted, not clickable — and `click` agrees.
-    match nodes.at_ptr(2 as usize) {
+    match nodes.at_ptr(2) {
         option::Option[*agent::AppKitNode]::Some(n) => {
             assert { (*n).id.view() } == "lane";
             assert { (*n).actionable };
             assert !{ (*n).clickable };
         }
-        option::Option[*agent::AppKitNode]::None => { assert false; }
+        option::Option::None => { assert false; }
     };
     assert surface::outcome_eq(s.click(auth::operator(), "lane"), surface::Outcome::NotActionable);
 
     // The button: both, and `click` agrees there too. The flag has to predict
     // the verb or it is worse than no flag at all.
-    match nodes.at_ptr(3 as usize) {
+    match nodes.at_ptr(3) {
         option::Option[*agent::AppKitNode]::Some(n) => {
             assert { (*n).id.view() } == "add";
             assert { (*n).actionable };
             assert { (*n).clickable };
         }
-        option::Option[*agent::AppKitNode]::None => { assert false; }
+        option::Option::None => { assert false; }
     };
     assert surface::outcome_eq(s.click(auth::operator(), "add"), surface::Outcome::Allowed);
     return;
@@ -1521,7 +1521,7 @@ fn describe_reports_a_text_drive_as_not_clickable() {
     // enabled and actionable — `set_text` is exactly what it is for — but
     // `click` refuses it rather than no-op, so `clickable` must say so. This is
     // the pairing that rules out folding the capability into `actionable`.
-    let win = fixture_window(300.0f64, 200.0f64);
+    let win = fixture_window(300.0, 200.0);
     let content = content_of(win);
     let f = ak::TextField::new_with_frame(rt::Rect { x: 10.0, y: 10.0, w: 120.0, h: 22.0 });
     content.add_subview(f.as_view());
@@ -1530,13 +1530,13 @@ fn describe_reports_a_text_drive_as_not_clickable() {
 
     var s: agent::Surface = agent::open(win.raw());
     let nodes: vec::Vec[agent::AppKitNode] = s.describe(auth::operator());
-    match nodes.at_ptr(2 as usize) {
+    match nodes.at_ptr(2) {
         option::Option[*agent::AppKitNode]::Some(n) => {
             assert { (*n).id.view() } == "title";
             assert { (*n).actionable };
             assert !{ (*n).clickable };
         }
-        option::Option[*agent::AppKitNode]::None => { assert false; }
+        option::Option::None => { assert false; }
     };
     assert surface::outcome_eq(s.click(auth::operator(), "title"), surface::Outcome::NotActionable);
     return;
@@ -1555,7 +1555,7 @@ fn the_walked_view_reports_an_untagged_node_own_text() {
     // node's own text as its registry NAME, and the walked view has always
     // carried `name`. The blank `text` only made the field lie — and since
     // `readable` reaches the wire on a gated node only, nothing said so.
-    let win = fixture_window(300.0f64, 200.0f64);
+    let win = fixture_window(300.0, 200.0);
     let content = content_of(win);
     let card = ak::View::new(rt::Rect { x: 5.0, y: 5.0, w: 200.0, h: 60.0 });
     content.add_subview(ak::View::from_raw(card.raw()));
@@ -1568,8 +1568,8 @@ fn the_walked_view_reports_an_untagged_node_own_text() {
     var s: agent::Surface = agent::open(win.raw());
     let nodes: vec::Vec[agent::AppKitNode] = s.describe(auth::operator());
     // window, content group, card, title.
-    assert nodes.count() == (4 as usize);
-    match nodes.at_ptr(3 as usize) {
+    assert nodes.count() == 4;
+    match nodes.at_ptr(3) {
         option::Option[*agent::AppKitNode]::Some(n) => {
             assert identity::role_eq({ (*n).role }, identity::Role::Text);
             // Still not exposed and still not actionable — curation is
@@ -1578,7 +1578,7 @@ fn the_walked_view_reports_an_untagged_node_own_text() {
             assert { (*n).text.view() } == "Card 1";
             assert { (*n).readable };
         }
-        option::Option[*agent::AppKitNode]::None => { assert false; }
+        option::Option::None => { assert false; }
     };
     return;
 }
@@ -1590,7 +1590,7 @@ fn the_walked_view_is_not_a_way_around_an_exclusion() {
     // withholds what it says however wide the grant. It stays LISTED — it is on
     // screen and it has a frame — and `readable: false` is what says the blank
     // is a refusal rather than an empty label.
-    let win = fixture_window(300.0f64, 200.0f64);
+    let win = fixture_window(300.0, 200.0);
     let content = content_of(win);
     let panel = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 200.0, h: 100.0 });
     content.add_subview(ak::View::from_raw(panel.raw()));
@@ -1601,8 +1601,8 @@ fn the_walked_view_is_not_a_way_around_an_exclusion() {
 
     var s: agent::Surface = agent::open(win.raw());
     let nodes: vec::Vec[agent::AppKitNode] = s.describe(auth::protected_operator());
-    assert nodes.count() == (4 as usize);
-    match nodes.at_ptr(3 as usize) {
+    assert nodes.count() == 4;
+    match nodes.at_ptr(3) {
         option::Option[*agent::AppKitNode]::Some(n) => {
             assert { (*n).text.view() } == "";
             assert !{ (*n).readable };
@@ -1613,7 +1613,7 @@ fn the_walked_view_is_not_a_way_around_an_exclusion() {
             // now, the same way it refuses a tiered one.
             assert { (*n).name.view() } == "";
         }
-        option::Option[*agent::AppKitNode]::None => { assert false; }
+        option::Option::None => { assert false; }
     };
     return;
 }
@@ -1625,7 +1625,7 @@ fn describe_carries_the_accessibility_label_as_the_node_name() {
     // whose title lives in a grandchild, and every icon-only control, arrived
     // as `text: ""` and said nothing about itself. The label is written on
     // purpose; the agent simply could not see it.
-    let win = fixture_window(300.0f64, 200.0f64);
+    let win = fixture_window(300.0, 200.0);
     let content = content_of(win);
 
     // A container with NO text of its own, named only by its label.
@@ -1642,21 +1642,21 @@ fn describe_carries_the_accessibility_label_as_the_node_name() {
     var s: agent::Surface = agent::open(win.raw());
     let nodes: vec::Vec[agent::AppKitNode] = s.describe(auth::operator());
 
-    match nodes.at_ptr(2 as usize) {
+    match nodes.at_ptr(2) {
         option::Option[*agent::AppKitNode]::Some(n) => {
             assert { (*n).id.view() } == "card:3";
             assert { (*n).text.view() } == "";
             assert { (*n).name.view() } == "the trail feed";
         }
-        option::Option[*agent::AppKitNode]::None => { assert false; }
+        option::Option::None => { assert false; }
     };
-    match nodes.at_ptr(3 as usize) {
+    match nodes.at_ptr(3) {
         option::Option[*agent::AppKitNode]::Some(n) => {
             assert { (*n).id.view() } == "col:add";
             assert { (*n).text.view() } == "+";
             assert { (*n).name.view() } == "Add a card";
         }
-        option::Option[*agent::AppKitNode]::None => { assert false; }
+        option::Option::None => { assert false; }
     };
     return;
 }
@@ -1666,7 +1666,7 @@ fn a_node_with_no_label_names_itself_by_its_own_title() {
     // No accessibility label anywhere: `name` falls back to the widget's own
     // title (which is what the registry already does), and a node with neither
     // reports "" rather than inventing one.
-    let win = fixture_window(300.0f64, 200.0f64);
+    let win = fixture_window(300.0, 200.0);
     let content = content_of(win);
     let b = add_button(content, "Save");
     agent::set_agent_id(b.as_view().raw(), "save");
@@ -1676,19 +1676,19 @@ fn a_node_with_no_label_names_itself_by_its_own_title() {
 
     var s: agent::Surface = agent::open(win.raw());
     let nodes: vec::Vec[agent::AppKitNode] = s.describe(auth::operator());
-    match nodes.at_ptr(2 as usize) {
+    match nodes.at_ptr(2) {
         option::Option[*agent::AppKitNode]::Some(n) => {
             assert { (*n).id.view() } == "save";
             assert { (*n).name.view() } == "Save";
         }
-        option::Option[*agent::AppKitNode]::None => { assert false; }
+        option::Option::None => { assert false; }
     };
-    match nodes.at_ptr(3 as usize) {
+    match nodes.at_ptr(3) {
         option::Option[*agent::AppKitNode]::Some(n) => {
             assert { (*n).id.view() } == "strip";
             assert { (*n).name.view() } == "";
         }
-        option::Option[*agent::AppKitNode]::None => { assert false; }
+        option::Option::None => { assert false; }
     };
     return;
 }
@@ -1727,15 +1727,15 @@ fn payment_form(content: ak::View) -> *u8 {
 }
 
 fn node_named(nodes: vec::Vec[agent::AppKitNode], id: str) -> option::Option[*agent::AppKitNode] {
-    var i: usize = 0 as usize;
+    var i: usize = 0;
     while i < nodes.count() {
         match nodes.at_ptr(i) {
             option::Option[*agent::AppKitNode]::Some(n) => {
                 if { (*n).id.view() } == id { return option::Option[*agent::AppKitNode]::Some(n); }
             }
-            option::Option[*agent::AppKitNode]::None => { }
+            option::Option::None => { }
         }
-        i = i +% (1 as usize);
+        i = i +% 1;
     }
     return option::Option[*agent::AppKitNode]::None;
 }
@@ -1745,7 +1745,7 @@ fn an_ordinary_assistant_sees_the_payment_fields_and_reads_neither() {
     // The shape of the whole feature. The assistant knows the form has a card
     // number and a security code, knows what they are called, and gets no
     // digits from either.
-    let win = fixture_window(400.0f64, 200.0f64);
+    let win = fixture_window(400.0, 200.0);
     let content = content_of(win);
     let card: *u8 = payment_form(content);
 
@@ -1759,7 +1759,7 @@ fn an_ordinary_assistant_sees_the_payment_fields_and_reads_neither() {
             assert { (*n).name.view() } == "Card number";   // the dev's label survives
             assert !{ (*n).actionable };
         }
-        option::Option[*agent::AppKitNode]::None => { assert false; }
+        option::Option::None => { assert false; }
     };
     match node_named(nodes, "payment:cvc") {
         option::Option[*agent::AppKitNode]::Some(n) => {
@@ -1768,12 +1768,12 @@ fn an_ordinary_assistant_sees_the_payment_fields_and_reads_neither() {
             assert { (*n).text.view() } == "";
             assert { (*n).name.view() } == "Security code";
         }
-        option::Option[*agent::AppKitNode]::None => { assert false; }
+        option::Option::None => { assert false; }
     };
     // The refusals say which is worth asking about and which is not.
-    assert surface::outcome_eq(s.set_text(auth::operator(), "payment:card", "5555555555554444", 0 as u64),
+    assert surface::outcome_eq(s.set_text(auth::operator(), "payment:card", "5555555555554444", 0),
                                surface::Outcome::NeedsGrant);
-    assert surface::outcome_eq(s.set_text(auth::operator(), "payment:cvc", "999", 0 as u64),
+    assert surface::outcome_eq(s.set_text(auth::operator(), "payment:cvc", "999", 0),
                                surface::Outcome::Forbidden);
     assert agent::node_text(card, identity::Role::Input).view() == "4242424242424242";
     // Attribute runs are a content read: one run of sixteen characters is the
@@ -1793,7 +1793,7 @@ fn the_approved_grant_autofills_the_card_and_still_not_the_cvc() {
     // `protected_operator`, and the same calls now pass — for the card. The
     // CVC is Private and this grant, like every grant the app hands out, does
     // not carry the bit.
-    let win = fixture_window(400.0f64, 200.0f64);
+    let win = fixture_window(400.0, 200.0);
     let content = content_of(win);
     let card: *u8 = payment_form(content);
     let approved: auth::Grant = auth::protected_operator();
@@ -1806,19 +1806,19 @@ fn the_approved_grant_autofills_the_card_and_still_not_the_cvc() {
             assert { (*n).text.view() } == "4242424242424242";
             assert { (*n).actionable };
         }
-        option::Option[*agent::AppKitNode]::None => { assert false; }
+        option::Option::None => { assert false; }
     };
     match node_named(nodes, "payment:cvc") {
         option::Option[*agent::AppKitNode]::Some(n) => {
             assert !{ (*n).readable };
             assert { (*n).text.view() } == "";
         }
-        option::Option[*agent::AppKitNode]::None => { assert false; }
+        option::Option::None => { assert false; }
     };
-    assert surface::outcome_eq(s.set_text(approved, "payment:card", "5555555555554444", 0 as u64),
+    assert surface::outcome_eq(s.set_text(approved, "payment:card", "5555555555554444", 0),
                                surface::Outcome::Allowed);
     assert agent::node_text(card, identity::Role::Input).view() == "5555555555554444";
-    assert surface::outcome_eq(s.set_text(approved, "payment:cvc", "999", 0 as u64),
+    assert surface::outcome_eq(s.set_text(approved, "payment:cvc", "999", 0),
                                surface::Outcome::Forbidden);
     return;
 }
@@ -1829,7 +1829,7 @@ fn a_secure_field_defaults_to_private_with_no_declaration_at_all() {
     // app never annotated is Private — not Protected, because the platform is
     // saying these contents are not to be shown, and Protected would mean
     // "there is a grant that opens this".
-    let win = fixture_window(400.0f64, 200.0f64);
+    let win = fixture_window(400.0, 200.0);
     let content = content_of(win);
     let pw: *u8 = rt::alloc_init(#str_ptr("NSSecureTextField\0"));
     rt::msg_void_id(pw, rt::sel(#str_ptr("setStringValue:\0")), bridge::nsstring("hunter2"));
@@ -1846,7 +1846,7 @@ fn a_secure_field_defaults_to_private_with_no_declaration_at_all() {
             // password this node's name, which is how it leaked.
             assert { (*n).name.view() } == "";
         }
-        option::Option[*agent::AppKitNode]::None => { assert false; }
+        option::Option::None => { assert false; }
     };
     return;
 }
@@ -1856,7 +1856,7 @@ fn an_explicit_declaration_beats_the_secure_class_default() {
     // The inference is a DEFAULT, not a law — in both directions. An app whose
     // "secure" field holds something an assistant is meant to drive (a
     // passphrase it just generated) says so, and the statement wins.
-    let win = fixture_window(400.0f64, 200.0f64);
+    let win = fixture_window(400.0, 200.0);
     let content = content_of(win);
     let pw: *u8 = rt::alloc_init(#str_ptr("NSSecureTextField\0"));
     rt::msg_void_id(pw, rt::sel(#str_ptr("setStringValue:\0")), bridge::nsstring("hunter2"));
@@ -1871,7 +1871,7 @@ fn an_explicit_declaration_beats_the_secure_class_default() {
             assert { (*n).readable };
             assert { (*n).text.view() } == "hunter2";
         }
-        option::Option[*agent::AppKitNode]::None => { assert false; }
+        option::Option::None => { assert false; }
     };
     return;
 }
@@ -1882,7 +1882,7 @@ fn a_tier_on_the_box_covers_the_label_nobody_would_have_named() {
     // the only version that holds: the leak is never the field you remembered,
     // it is the "Card ending 4242" label beside it — a plain NSTextField with
     // nothing secure about it.
-    let win = fixture_window(400.0f64, 300.0f64);
+    let win = fixture_window(400.0, 300.0);
     let content = content_of(win);
     let box_v = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 300.0, h: 80.0 });
     content.add_subview(ak::View::from_raw(box_v.raw()));
@@ -1907,7 +1907,7 @@ fn a_tier_on_the_box_covers_the_label_nobody_would_have_named() {
             assert { (*n).text.view() } == "";
             assert { (*n).name.view() } == "";
         }
-        option::Option[*agent::AppKitNode]::None => { assert false; }
+        option::Option::None => { assert false; }
     };
     // The neighbour is untouched. A tier that quietly blinds the rest of the
     // form is a tier nobody will turn on.
@@ -1918,9 +1918,9 @@ fn a_tier_on_the_box_covers_the_label_nobody_would_have_named() {
             assert { (*n).text.view() } == "ada@example.com";
             assert { (*n).actionable };
         }
-        option::Option[*agent::AppKitNode]::None => { assert false; }
+        option::Option::None => { assert false; }
     };
-    assert surface::outcome_eq(s.set_text(auth::operator(), "email", "grace@example.com", 0 as u64),
+    assert surface::outcome_eq(s.set_text(auth::operator(), "email", "grace@example.com", 0),
                                surface::Outcome::Allowed);
     return;
 }
@@ -1929,7 +1929,7 @@ fn a_tier_on_the_box_covers_the_label_nobody_would_have_named() {
 fn a_blind_grant_gets_no_tree_at_all() {
     // The gate is not only about tiers: an agent with no `read` bit is not a
     // reader of ordinary nodes either.
-    let win = fixture_window(400.0f64, 200.0f64);
+    let win = fixture_window(400.0, 200.0);
     let content = content_of(win);
     let _card: *u8 = payment_form(content);
     var s: agent::Surface = agent::open(win.raw());
@@ -1947,7 +1947,7 @@ fn an_excluded_subtree_is_gone_while_a_gated_one_is_present() {
     // `exclude` is for UI that is not the application's content (the
     // assistant's own panel), the tiers are for content that is not the
     // agent's.
-    let win = fixture_window(400.0f64, 200.0f64);
+    let win = fixture_window(400.0, 200.0);
     let content = content_of(win);
     let panel = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 200.0, h: 100.0 });
     content.add_subview(ak::View::from_raw(panel.raw()));

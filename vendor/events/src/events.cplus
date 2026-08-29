@@ -385,7 +385,7 @@ impl Bus {
             var hit: bool = false;
             match this._subs.at_ptr(i) {
                 option::Option[*BusListener]::Some(p) => { hit = { (*p).id } == id; }
-                option::Option[*BusListener]::None => {}
+                option::Option::None => {}
             }
             if hit {
                 let _gone: option::Option[BusListener] = this._subs.remove(i);
@@ -403,7 +403,7 @@ impl Bus {
             var hit: bool = false;
             match this._subs.at_ptr(i) {
                 option::Option[*BusListener]::Some(p) => { hit = { (*p).name } == name; }
-                option::Option[*BusListener]::None => {}
+                option::Option::None => {}
             }
             if hit {
                 let _gone: option::Option[BusListener] = this._subs.remove(i);
@@ -423,7 +423,7 @@ impl Bus {
             var hit: bool = false;
             match this._subs.at_ptr(i) {
                 option::Option[*BusListener]::Some(p) => { hit = { (*p).ctx } == ctx; }
-                option::Option[*BusListener]::None => {}
+                option::Option::None => {}
             }
             if hit {
                 let _gone: option::Option[BusListener] = this._subs.remove(i);
@@ -461,7 +461,7 @@ impl Bus {
                             }
                         }
                     }
-                    option::Option[*BusListener]::None => {}
+                    option::Option::None => {}
                 }
                 i = i + 1usize;
             }
@@ -486,7 +486,7 @@ impl Bus {
                 option::Option[*BusListener]::Some(p) => {
                     if { (*p).id } == id { return true; }
                 }
-                option::Option[*BusListener]::None => {}
+                option::Option::None => {}
             }
             i = i + 1usize;
         }
@@ -518,7 +518,7 @@ impl Bus {
                         hit = true;
                     }
                 }
-                option::Option[*BusListener]::None => {}
+                option::Option::None => {}
             }
             if hit { return true; }
             i = i + 1usize;
@@ -536,7 +536,7 @@ impl Bus {
                 option::Option[*BusListener]::Some(p) => {
                     if { (*p).name } == name { total = total + 1usize; }
                 }
-                option::Option[*BusListener]::None => {}
+                option::Option::None => {}
             }
             i = i + 1usize;
         }

@@ -38,16 +38,16 @@ import "agent_core/auth" as aauth;
 // The handle for the first row carrying `key`, or a null handle. By-value
 // params borrow, so the listing is not consumed and the caller keeps it.
 fn row_for(rows: vec::Vec[insp::Node], key: str) -> insp::Handle {
-    var i: usize = 0 as usize;
+    var i: usize = 0;
     let c: usize = rows.count();
     while i < c {
         match rows.at_ptr(i) {
             option::Option[*insp::Node]::Some(p) => {
                 if { (*p).key.view() } == key { return { (*p).handle }; }
             }
-            option::Option[*insp::Node]::None => { }
+            option::Option::None => { }
         }
-        i = i +% (1 as usize);
+        i = i +% 1;
     }
     return insp::Handle::none();
 }
@@ -55,20 +55,20 @@ fn row_for(rows: vec::Vec[insp::Node], key: str) -> insp::Handle {
 // The `nth` row carrying `key`, for the duplicate-key case where "first
 // match wins" is the behaviour under test.
 fn nth_for(rows: vec::Vec[insp::Node], key: str, nth: usize) -> insp::Handle {
-    var i: usize = 0 as usize;
-    var seen: usize = 0 as usize;
+    var i: usize = 0;
+    var seen: usize = 0;
     let c: usize = rows.count();
     while i < c {
         match rows.at_ptr(i) {
             option::Option[*insp::Node]::Some(p) => {
                 if { (*p).key.view() } == key {
                     if seen == nth { return { (*p).handle }; }
-                    seen = seen +% (1 as usize);
+                    seen = seen +% 1;
                 }
             }
-            option::Option[*insp::Node]::None => { }
+            option::Option::None => { }
         }
-        i = i +% (1 as usize);
+        i = i +% 1;
     }
     return insp::Handle::none();
 }
@@ -76,7 +76,7 @@ fn nth_for(rows: vec::Vec[insp::Node], key: str, nth: usize) -> insp::Handle {
 // The first node of a given kind carrying no key — how a test reaches the
 // unkeyed nodes that are the whole reason for walking facet's tree.
 fn unkeyed_of_kind(rows: vec::Vec[insp::Node], kind: u32) -> insp::Handle {
-    var i: usize = 0 as usize;
+    var i: usize = 0;
     let c: usize = rows.count();
     while i < c {
         match rows.at_ptr(i) {
@@ -85,24 +85,24 @@ fn unkeyed_of_kind(rows: vec::Vec[insp::Node], kind: u32) -> insp::Handle {
                     if { (*p).key.view() } == "" { return { (*p).handle }; }
                 }
             }
-            option::Option[*insp::Node]::None => { }
+            option::Option::None => { }
         }
-        i = i +% (1 as usize);
+        i = i +% 1;
     }
     return insp::Handle::none();
 }
 
 fn row_index(rows: vec::Vec[insp::Node], key: str) -> option::Option[usize] {
-    var i: usize = 0 as usize;
+    var i: usize = 0;
     let c: usize = rows.count();
     while i < c {
         match rows.at_ptr(i) {
             option::Option[*insp::Node]::Some(p) => {
                 if { (*p).key.view() } == key { return option::Option[usize]::Some(i); }
             }
-            option::Option[*insp::Node]::None => { }
+            option::Option::None => { }
         }
-        i = i +% (1 as usize);
+        i = i +% 1;
     }
     return option::Option[usize]::None;
 }
@@ -115,7 +115,7 @@ fn depth_of(rows: vec::Vec[insp::Node], key: str) -> usize {
                 option::Option[*insp::Node]::None => 0 as usize,
             }
         }
-        option::Option[usize]::None => 0 as usize,
+        option::Option::None => 0,
     };
 }
 
@@ -123,14 +123,14 @@ fn num_of_value(v: insp::Value) -> f64 {
     return match v {
         insp::Value::Num(x) => x,
         insp::Value::Int(i) => i as f64,
-        _ => 0.0f64 / 0.0f64,
+        _ => 0.0 / 0.0,
     };
 }
 
 fn get_num(h: insp::Handle, prop: str) -> f64 {
     return match tree::get(h, prop) {
         option::Option[insp::Value]::Some(v) => num_of_value(v),
-        option::Option[insp::Value]::None => 0.0f64 / 0.0f64,
+        option::Option::None => 0.0 / 0.0,
     };
 }
 
@@ -140,7 +140,7 @@ fn get_bool(h: insp::Handle, prop: str) -> bool {
             insp::Value::Bool(b) => b,
             _ => false,
         },
-        option::Option[insp::Value]::None => false,
+        option::Option::None => false,
     };
 }
 
@@ -150,36 +150,36 @@ fn text_eq(h: insp::Handle, prop: str, want: str) -> bool {
             insp::Value::Str(s) => s.view() == want,
             _ => false,
         },
-        option::Option[insp::Value]::None => false,
+        option::Option::None => false,
     };
 }
 
 fn prop_named(props_in: vec::Vec[insp::Prop], name: str) -> bool {
-    var i: usize = 0 as usize;
+    var i: usize = 0;
     let c: usize = props_in.count();
     while i < c {
         match props_in.at_ptr(i) {
             option::Option[*insp::Prop]::Some(p) => {
                 if { (*p).name } == name { return true; }
             }
-            option::Option[*insp::Prop]::None => { }
+            option::Option::None => { }
         }
-        i = i +% (1 as usize);
+        i = i +% 1;
     }
     return false;
 }
 
 fn prop_overridden(props_in: vec::Vec[insp::Prop], name: str) -> bool {
-    var i: usize = 0 as usize;
+    var i: usize = 0;
     let c: usize = props_in.count();
     while i < c {
         match props_in.at_ptr(i) {
             option::Option[*insp::Prop]::Some(p) => {
                 if { (*p).name } == name { return { (*p).overridden }; }
             }
-            option::Option[*insp::Prop]::None => { }
+            option::Option::None => { }
         }
-        i = i +% (1 as usize);
+        i = i +% 1;
     }
     return false;
 }
@@ -201,14 +201,14 @@ fn fresh() {
 fn child_key_is(parent: *core::Node, at: usize, want: str) -> bool {
     return match core::child_of(parent, at) {
         option::Option[*core::Node]::Some(c) => ({ (*c).key() } == want),
-        option::Option[*core::Node]::None => false,
+        option::Option::None => false,
     };
 }
 
 fn journal_line_is(i: usize, want: str) -> bool {
     return match tree::journal_at(i) {
         option::Option[text::Text]::Some(line) => line.view() == want,
-        option::Option[text::Text]::None => false,
+        option::Option::None => false,
     };
 }
 
@@ -219,7 +219,7 @@ fn journal_line_is(i: usize, want: str) -> bool {
 #[test]
 fn a_fresh_handle_is_live_and_a_null_one_is_not() {
     var n: core::Node = core::node_with("probe", 0u32, 0 as *u8, core::no_release);
-    let h: insp::Handle = insp::Handle::of(#addr_of(n), 0 as usize);
+    let h: insp::Handle = insp::Handle::of(#addr_of(n), 0);
     assert h.is_live();
     assert !h.is_none();
     let z: insp::Handle = insp::Handle::none();
@@ -318,7 +318,7 @@ fn outcomes_describe_themselves_and_only_ok_is_ok() {
 fn the_none_backend_refuses_every_write_and_answers_nothing() {
     let b: insp::Backend = insp::Backend::none();
     let rows: vec::Vec[insp::Node] = b.describe_now();
-    assert rows.count() == (0 as usize);
+    assert rows.count() == 0;
     let h: insp::Handle = insp::Handle::none();
     assert b.set_now(h, "opacity", insp::Value::Num(0.5f64)) == insp::Outcome::Unsupported;
     assert b.reset_now(h, "opacity") == insp::Outcome::Unsupported;
@@ -342,46 +342,46 @@ fn describe_lists_the_whole_tree_in_document_order_with_parents_and_depth() {
     app::open_window(#addr_of(root));
 
     let rows: vec::Vec[insp::Node] = tree::describe();
-    assert rows.count() == (5 as usize);
-    assert depth_of(rows, "root") == (0 as usize);
-    assert depth_of(rows, "toolbar") == (1 as usize);
-    assert depth_of(rows, "save") == (2 as usize);
-    assert depth_of(rows, "status") == (1 as usize);
+    assert rows.count() == 5;
+    assert depth_of(rows, "root") == 0;
+    assert depth_of(rows, "toolbar") == 1;
+    assert depth_of(rows, "save") == 2;
+    assert depth_of(rows, "status") == 1;
 
     // A root's parent is nothing; a child's is the row above it that owns it.
     assert match row_index(rows, "root") {
         option::Option[usize]::Some(i) => match rows.at_ptr(i) {
             option::Option[*insp::Node]::Some(p) => match { (*p).parent } {
                 option::Option[usize]::Some(_x) => false,
-                option::Option[usize]::None => true,
+                option::Option::None => true,
             },
-            option::Option[*insp::Node]::None => false,
+            option::Option::None => false,
         },
-        option::Option[usize]::None => false,
+        option::Option::None => false,
     };
     let i_bar: usize = match row_index(rows, "toolbar") {
         option::Option[usize]::Some(i) => i,
-        option::Option[usize]::None => 999 as usize,
+        option::Option::None => 999,
     };
     assert match row_index(rows, "save") {
         option::Option[usize]::Some(i) => match rows.at_ptr(i) {
             option::Option[*insp::Node]::Some(p) => match { (*p).parent } {
                 option::Option[usize]::Some(x) => x == i_bar,
-                option::Option[usize]::None => false,
+                option::Option::None => false,
             },
-            option::Option[*insp::Node]::None => false,
+            option::Option::None => false,
         },
-        option::Option[usize]::None => false,
+        option::Option::None => false,
     };
 
     // Document order: the toolbar and its children precede the status label.
     let i_toolbar: usize = match row_index(rows, "toolbar") {
         option::Option[usize]::Some(i) => i,
-        option::Option[usize]::None => 999 as usize,
+        option::Option::None => 999,
     };
     let i_status: usize = match row_index(rows, "status") {
         option::Option[usize]::Some(i) => i,
-        option::Option[usize]::None => 0 as usize,
+        option::Option::None => 0,
     };
     assert i_toolbar < i_status;
     return;
@@ -402,8 +402,8 @@ fn describe_includes_unkeyed_nodes_that_a_native_walk_would_miss() {
     app::open_window(#addr_of(root));
 
     let rows: vec::Vec[insp::Node] = tree::describe();
-    assert rows.count() == (3 as usize);
-    assert depth_of(rows, "buried") == (2 as usize);
+    assert rows.count() == 3;
+    assert depth_of(rows, "buried") == 2;
     // The invisible middle node is present, addressable, and has no view.
     let mid_h: insp::Handle = unkeyed_of_kind(rows, 0u32);
     assert !mid_h.is_none();
@@ -426,21 +426,21 @@ fn the_walk_survives_the_dataless_wrapper_the_dsl_hands_back() {
 
     let rows: vec::Vec[insp::Node] = tree::describe();
     // wrapper, column, label.
-    assert rows.count() == (3 as usize);
-    let wrapper: insp::Handle = match rows.at_ptr(0 as usize) {
+    assert rows.count() == 3;
+    let wrapper: insp::Handle = match rows.at_ptr(0) {
         option::Option[*insp::Node]::Some(p) => { (*p).handle }
-        option::Option[*insp::Node]::None => insp::Handle::none(),
+        option::Option::None => insp::Handle::none(),
     };
     assert !wrapper.is_none();
     // It has no key and no kind, and reads as a plain node rather than
     // crashing the walk.
-    assert match rows.at_ptr(0 as usize) {
+    assert match rows.at_ptr(0) {
         option::Option[*insp::Node]::Some(p) => ({ (*p).key.view() } == ""),
-        option::Option[*insp::Node]::None => false,
+        option::Option::None => false,
     };
     // Keys inside it still resolve, and the depth accounts for the wrapper.
-    assert depth_of(rows, "root") == (1 as usize);
-    assert depth_of(rows, "status") == (2 as usize);
+    assert depth_of(rows, "root") == 1;
+    assert depth_of(rows, "status") == 2;
     assert !row_for(rows, "status").is_none();
     return;
 }
@@ -458,13 +458,13 @@ fn describe_spans_every_open_window() {
     app::open_window(#addr_of(b));
 
     let rows: vec::Vec[insp::Node] = tree::describe();
-    assert rows.count() == (4 as usize);
+    assert rows.count() == 4;
     assert !row_for(rows, "a").is_none();
     assert !row_for(rows, "b").is_none();
     // Each row remembers which window it came from, so a keyed re-resolve is
     // scoped to the right tree. Two windows sharing a key is legal.
-    assert row_for(rows, "a").window == (0 as usize);
-    assert row_for(rows, "b").window == (1 as usize);
+    assert row_for(rows, "a").window == 0;
+    assert row_for(rows, "b").window == 1;
     return;
 }
 
@@ -482,10 +482,10 @@ fn the_same_key_in_two_windows_writes_to_the_right_one() {
     app::open_window(#addr_of(b));
 
     let rows: vec::Vec[insp::Node] = tree::describe();
-    let in_a: insp::Handle = nth_for(rows, "shared", 0 as usize);
-    let in_b: insp::Handle = nth_for(rows, "shared", 1 as usize);
-    assert in_a.window == (0 as usize);
-    assert in_b.window == (1 as usize);
+    let in_a: insp::Handle = nth_for(rows, "shared", 0);
+    let in_b: insp::Handle = nth_for(rows, "shared", 1);
+    assert in_a.window == 0;
+    assert in_b.window == 1;
 
     assert tree::set(in_b, "text", insp::Value::Str(text::from_str("edited b")))
         == insp::Outcome::Ok;
@@ -509,13 +509,13 @@ fn the_inspectors_own_subtree_is_marked_and_the_rest_is_not() {
     app::open_window(#addr_of(root));
     match core::find_in(#addr_of(root), "panel") {
         option::Option[*core::Node]::Some(p) => { tree::mark_self(p); }
-        option::Option[*core::Node]::None => { assert false; }
+        option::Option::None => { assert false; }
     }
 
     let rows: vec::Vec[insp::Node] = tree::describe();
     var saw_app: bool = false;
     var saw_panel_row: bool = false;
-    var i: usize = 0 as usize;
+    var i: usize = 0;
     let c: usize = rows.count();
     while i < c {
         match rows.at_ptr(i) {
@@ -530,9 +530,9 @@ fn the_inspectors_own_subtree_is_marked_and_the_rest_is_not() {
                     assert { (*p).is_inspector };
                 }
             }
-            option::Option[*insp::Node]::None => { }
+            option::Option::None => { }
         }
-        i = i +% (1 as usize);
+        i = i +% 1;
     }
     assert saw_app;
     assert saw_panel_row;
@@ -549,7 +549,7 @@ fn common_band_properties_round_trip_on_a_bare_container() {
     assert !h.is_none();
 
     assert tree::set(h, "opacity", insp::Value::Num(0.65f64)) == insp::Outcome::Ok;
-    assert get_num(h, "opacity") == 0.65f64;
+    assert get_num(h, "opacity") == 0.65;
 
     assert tree::set(h, "visible", insp::Value::Bool(false)) == insp::Outcome::Ok;
     assert !get_bool(h, "visible");
@@ -558,7 +558,7 @@ fn common_band_properties_round_trip_on_a_bare_container() {
     assert !get_bool(h, "enabled");
 
     assert tree::set(h, "corner_radius", insp::Value::Num(8.0f64)) == insp::Outcome::Ok;
-    assert get_num(h, "corner_radius") == 8.0f64;
+    assert get_num(h, "corner_radius") == 8.0;
 
     assert tree::set(h, "tooltip", insp::Value::Str(text::from_str("hi"))) == insp::Outcome::Ok;
     assert text_eq(h, "tooltip", "hi");
@@ -579,17 +579,17 @@ fn layout_properties_round_trip_and_raise_only_the_layout_bit() {
 
     core::clear_dirty(n);
     assert tree::set(h, "width", insp::Value::Num(320.0f64)) == insp::Outcome::Ok;
-    assert get_num(h, "width") == 320.0f64;
-    assert ({ core::dirty_of(n) } & props::C_LAYOUT) != (0 as u64);
+    assert get_num(h, "width") == 320.0;
+    assert ({ core::dirty_of(n) } & props::C_LAYOUT) != 0;
 
     assert tree::set(h, "padding", insp::Value::Num(12.0f64)) == insp::Outcome::Ok;
-    assert get_num(h, "padding") == 12.0f64;
+    assert get_num(h, "padding") == 12.0;
 
     assert tree::set(h, "grow", insp::Value::Num(1.0f64)) == insp::Outcome::Ok;
-    assert get_num(h, "grow") == 1.0f64;
+    assert get_num(h, "grow") == 1.0;
 
     assert tree::set(h, "gap", insp::Value::Num(6.0f64)) == insp::Outcome::Ok;
-    assert get_num(h, "gap") == 6.0f64;
+    assert get_num(h, "gap") == 6.0;
     return;
 }
 
@@ -601,7 +601,7 @@ fn an_int_is_accepted_where_a_number_is_wanted() {
     app::open_window(#addr_of(root));
     let h: insp::Handle = row_for(tree::describe(), "root");
     assert tree::set(h, "padding", insp::Value::Int(10 as i64)) == insp::Outcome::Ok;
-    assert get_num(h, "padding") == 10.0f64;
+    assert get_num(h, "padding") == 10.0;
     return;
 }
 
@@ -615,15 +615,15 @@ fn a_mixed_padding_reads_as_nothing_rather_than_as_one_edge() {
     let h: insp::Handle = row_for(tree::describe(), "root");
 
     assert tree::set(h, "padding", insp::Value::Num(4.0f64)) == insp::Outcome::Ok;
-    assert get_num(h, "padding") == 4.0f64;
+    assert get_num(h, "padding") == 4.0;
     assert tree::set(h, "padding_left", insp::Value::Num(20.0f64)) == insp::Outcome::Ok;
 
     assert match tree::get(h, "padding") {
         option::Option[insp::Value]::Some(v) => v.is_nothing(),
-        option::Option[insp::Value]::None => false,
+        option::Option::None => false,
     };
-    assert get_num(h, "padding_left") == 20.0f64;
-    assert get_num(h, "padding_top") == 4.0f64;
+    assert get_num(h, "padding_left") == 20.0;
+    assert get_num(h, "padding_top") == 4.0;
     return;
 }
 
@@ -648,7 +648,7 @@ fn control_text_and_title_round_trip_on_keyed_nodes() {
     // the same setter, not around it.
     match label::find("status", within: #addr_of(root)) {
         option::Option[label::Label]::Some(hit) => { assert hit.text() == "Busy"; }
-        option::Option[label::Label]::None => { assert false; }
+        option::Option::None => { assert false; }
     }
 
     let b: insp::Handle = row_for(rows, "save");
@@ -656,7 +656,7 @@ fn control_text_and_title_round_trip_on_keyed_nodes() {
     assert tree::set(b, "title", insp::Value::Str(text::from_str("Store"))) == insp::Outcome::Ok;
     match button::find("save", within: #addr_of(root)) {
         option::Option[button::Button]::Some(hit) => { assert hit.title() == "Store"; }
-        option::Option[button::Button]::None => { assert false; }
+        option::Option::None => { assert false; }
     }
     return;
 }
@@ -682,9 +682,9 @@ fn inspect_separates_declared_from_computed() {
             assert prop_named(d.computed, "kind");
             assert !prop_named(d.declared, "frame_width");
             // No platform module is installed in a headless suite.
-            assert d.native.count() == (0 as usize);
+            assert d.native.count() == 0;
         }
-        option::Option[insp::Detail]::None => { assert false; }
+        option::Option::None => { assert false; }
     }
     return;
 }
@@ -700,16 +700,16 @@ fn reset_restores_the_declared_value_and_not_the_type_default() {
     let h: insp::Handle = row_for(tree::describe(), "root");
 
     // What the application declared.
-    core::set_opacity(h.node, 0.8f64);
-    assert get_num(h, "opacity") == 0.8f64;
+    core::set_opacity(h.node, 0.8);
+    assert get_num(h, "opacity") == 0.8;
 
     assert tree::set(h, "opacity", insp::Value::Num(0.2f64)) == insp::Outcome::Ok;
-    assert get_num(h, "opacity") == 0.2f64;
-    assert tree::override_count() == (1 as usize);
+    assert get_num(h, "opacity") == 0.2;
+    assert tree::override_count() == 1;
 
     assert tree::reset(h, "opacity") == insp::Outcome::Ok;
-    assert get_num(h, "opacity") == 0.8f64;
-    assert tree::override_count() == (0 as usize);
+    assert get_num(h, "opacity") == 0.8;
+    assert tree::override_count() == 0;
     return;
 }
 
@@ -722,12 +722,12 @@ fn a_second_write_does_not_overwrite_the_recorded_original() {
     app::open_window(#addr_of(root));
     let h: insp::Handle = row_for(tree::describe(), "root");
 
-    core::set_opacity(h.node, 0.9f64);
+    core::set_opacity(h.node, 0.9);
     let _a: insp::Outcome = tree::set(h, "opacity", insp::Value::Num(0.5f64));
     let _b: insp::Outcome = tree::set(h, "opacity", insp::Value::Num(0.1f64));
-    assert tree::override_count() == (1 as usize);
+    assert tree::override_count() == 1;
     assert tree::reset(h, "opacity") == insp::Outcome::Ok;
-    assert get_num(h, "opacity") == 0.9f64;
+    assert get_num(h, "opacity") == 0.9;
     return;
 }
 
@@ -751,9 +751,9 @@ fn resetting_a_property_that_was_never_overridden_changes_nothing() {
     var root: core::Node = @ui { column(key: "root") { label("x", key: "x") } };
     app::open_window(#addr_of(root));
     let h: insp::Handle = row_for(tree::describe(), "root");
-    core::set_opacity(h.node, 0.7f64);
+    core::set_opacity(h.node, 0.7);
     assert tree::reset(h, "opacity") == insp::Outcome::Ok;
-    assert get_num(h, "opacity") == 0.7f64;
+    assert get_num(h, "opacity") == 0.7;
     return;
 }
 
@@ -770,7 +770,7 @@ fn inspect_marks_the_properties_an_override_is_currently_holding() {
             assert prop_overridden(d.declared, "opacity");
             assert !prop_overridden(d.declared, "padding");
         }
-        option::Option[insp::Detail]::None => { assert false; }
+        option::Option::None => { assert false; }
     }
     return;
 }
@@ -791,7 +791,7 @@ fn a_snippet_names_the_key_and_the_value_that_was_set() {
     let _b: insp::Outcome = tree::set(h, "padding", insp::Value::Num(12.0f64));
     let p: text::Text = tree::snippet_for(h, "padding");
     // Whole numbers read as whole numbers, for a line a human will paste.
-    assert p.contains("12.0f64");
+    assert p.contains("12.0");
     return;
 }
 
@@ -821,12 +821,12 @@ fn the_local_backend_answers_through_the_vtable() {
     let b: insp::Backend = tree::local_backend();
 
     let rows: vec::Vec[insp::Node] = b.describe_now();
-    assert rows.count() == (2 as usize);
+    assert rows.count() == 2;
     let h: insp::Handle = row_for(rows, "root");
     assert b.set_now(h, "opacity", insp::Value::Num(0.4f64)) == insp::Outcome::Ok;
     assert match b.inspect_now(h) {
         option::Option[insp::Detail]::Some(d) => prop_named(d.declared, "opacity"),
-        option::Option[insp::Detail]::None => false,
+        option::Option::None => false,
     };
     // No platform installed: highlighting degrades rather than crashing.
     b.highlight_now(h);
@@ -866,15 +866,15 @@ fn no_inspector_write_ever_issues_a_focus_blur_or_flush_command() {
     let after: u64 = core::dirty_of(n);
 
     // Real state bits were raised...
-    assert (after & props::C_OPACITY) != (0 as u64);
-    assert (after & props::C_LAYOUT) != (0 as u64);
+    assert (after & props::C_OPACITY) != 0;
+    assert (after & props::C_LAYOUT) != 0;
     // ...and not one command bit.
-    assert (after & props::C_COMMANDS) == (0 as u64);
+    assert (after & props::C_COMMANDS) == 0;
 
     // Reset takes the same path and must obey the same rule.
     core::clear_dirty(n);
     let _f: insp::Outcome = tree::reset(h, "opacity");
-    assert (core::dirty_of(n) & props::C_COMMANDS) == (0 as u64);
+    assert (core::dirty_of(n) & props::C_COMMANDS) == 0;
     return;
 }
 
@@ -888,7 +888,7 @@ fn a_misspelled_property_is_an_error_and_not_a_silent_no_op() {
     assert tree::set(h, "", insp::Value::Num(0.5f64)) == insp::Outcome::UnknownProperty;
     assert match tree::get(h, "opasity") {
         option::Option[insp::Value]::Some(_v) => false,
-        option::Option[insp::Value]::None => true,
+        option::Option::None => true,
     };
     return;
 }
@@ -920,10 +920,10 @@ fn a_refused_write_changes_nothing_and_records_nothing() {
     var root: core::Node = @ui { column(key: "root") { label("x", key: "x") } };
     app::open_window(#addr_of(root));
     let h: insp::Handle = row_for(tree::describe(), "root");
-    core::set_opacity(h.node, 0.75f64);
+    core::set_opacity(h.node, 0.75);
 
     assert tree::set(h, "opacity", insp::Value::Bool(true)) == insp::Outcome::TypeMismatch;
-    assert get_num(h, "opacity") == 0.75f64;
+    assert get_num(h, "opacity") == 0.75;
     return;
 }
 
@@ -962,7 +962,7 @@ fn a_control_property_on_an_unkeyed_node_is_unsupported_not_unknown() {
     // The common band and flex style still work on that very same node: tiers
     // 1 and 2 need no key at all, which is most of what an inspector edits.
     assert tree::set(h, "opacity", insp::Value::Num(0.5f64)) == insp::Outcome::Ok;
-    assert get_num(h, "opacity") == 0.5f64;
+    assert get_num(h, "opacity") == 0.5;
     assert tree::set(h, "padding", insp::Value::Num(6.0f64)) == insp::Outcome::Ok;
     return;
 }
@@ -979,8 +979,8 @@ fn a_duplicate_key_refuses_the_write_it_cannot_aim() {
     app::open_window(#addr_of(root));
 
     let rows: vec::Vec[insp::Node] = tree::describe();
-    let first: insp::Handle = nth_for(rows, "dup", 0 as usize);
-    let second: insp::Handle = nth_for(rows, "dup", 1 as usize);
+    let first: insp::Handle = nth_for(rows, "dup", 0);
+    let second: insp::Handle = nth_for(rows, "dup", 1);
     assert !first.is_none();
     assert !second.is_none();
     assert first.node != second.node;
@@ -1002,7 +1002,7 @@ fn a_duplicate_key_refuses_the_write_it_cannot_aim() {
     // other node's value as though it belonged to this one.
     assert match tree::get(second, "text") {
         option::Option[insp::Value]::Some(_v) => false,
-        option::Option[insp::Value]::None => true,
+        option::Option::None => true,
     };
     // So `inspect` offers no text editor on it at all, while the common band
     // it CAN aim stays available.
@@ -1011,7 +1011,7 @@ fn a_duplicate_key_refuses_the_write_it_cannot_aim() {
             assert !prop_named(d.declared, "text");
             assert prop_named(d.declared, "opacity");
         }
-        option::Option[insp::Detail]::None => { assert false; }
+        option::Option::None => { assert false; }
     }
     assert tree::set(second, "opacity", insp::Value::Num(0.5f64)) == insp::Outcome::Ok;
     return;
@@ -1033,10 +1033,10 @@ fn a_null_handle_is_not_found_and_a_dead_generation_is_stale() {
     assert tree::reset(z, "opacity") == insp::Outcome::NotFound;
 
     // Removing anything from any tree ends every outstanding generation.
-    let gone: option::Option[core::Node] = { root.remove_child(1 as usize) };
+    let gone: option::Option[core::Node] = { root.remove_child(1) };
     match gone {
         option::Option[core::Node]::Some(d) => { let _drop: core::Node = d; }
-        option::Option[core::Node]::None => { assert false; }
+        option::Option::None => { assert false; }
     }
 
     assert !h.is_live();
@@ -1044,11 +1044,11 @@ fn a_null_handle_is_not_found_and_a_dead_generation_is_stale() {
     assert tree::reset(h, "opacity") == insp::Outcome::Stale;
     assert match tree::inspect(h) {
         option::Option[insp::Detail]::Some(_d) => false,
-        option::Option[insp::Detail]::None => true,
+        option::Option::None => true,
     };
     assert match tree::get(h, "opacity") {
         option::Option[insp::Value]::Some(_v) => false,
-        option::Option[insp::Value]::None => true,
+        option::Option::None => true,
     };
     return;
 }
@@ -1064,7 +1064,7 @@ fn an_unset_length_reads_as_nothing_rather_than_as_zero() {
     // writes back as a real zero.
     assert match tree::get(h, "width") {
         option::Option[insp::Value]::Some(v) => v.is_nothing(),
-        option::Option[insp::Value]::None => false,
+        option::Option::None => false,
     };
     return;
 }
@@ -1073,7 +1073,7 @@ fn an_unset_length_reads_as_nothing_rather_than_as_zero() {
 fn describing_an_app_with_no_windows_is_empty_and_not_a_crash() {
     fresh();
     let rows: vec::Vec[insp::Node] = tree::describe();
-    assert rows.count() == (0 as usize);
+    assert rows.count() == 0;
     return;
 }
 
@@ -1118,7 +1118,7 @@ fn a_theme_token_renders_as_a_token_and_a_literal_renders_as_channels() {
     assert named.has_prefix("token:");
 
     let literal: text::Text =
-        vt(insp::Value::Color(vocab::Color::rgba(1.0f64, 0.0f64, 0.0f64, 1.0f64)));
+        vt(insp::Value::Color(vocab::Color::rgba(1.0, 0.0, 0.0, 1.0)));
     assert literal.has_prefix("rgba(");
     assert !literal.contains("token");
 
@@ -1128,8 +1128,8 @@ fn a_theme_token_renders_as_a_token_and_a_literal_renders_as_channels() {
     // A light/dark pair shows both sides, because either one alone is half an
     // answer about what will actually be drawn.
     let pair: text::Text = vt(insp::Value::Color(vocab::Color::adaptive(
-        vocab::Color::rgba(1.0f64, 1.0f64, 1.0f64, 1.0f64),
-        vocab::Color::rgba(0.0f64, 0.0f64, 0.0f64, 1.0f64))));
+        vocab::Color::rgba(1.0, 1.0, 1.0, 1.0),
+        vocab::Color::rgba(0.0, 0.0, 0.0, 1.0))));
     assert pair.contains("light");
     assert pair.contains("dark");
     return;
@@ -1140,14 +1140,14 @@ fn hex_colours_parse_and_bad_ones_are_refused() {
     assert match tree::parse_hex_color("#2277ff") {
         option::Option[vocab::Color]::Some(c) => {
             // 0x22 == 34, 34/255 is a shade over 0.13.
-            (c.r > 0.12f64) && (c.r < 0.14f64) && (c.b > 0.99f64)
+            (c.r > 0.12) && (c.r < 0.14) && (c.b > 0.99)
         }
-        option::Option[vocab::Color]::None => false,
+        option::Option::None => false,
     };
     // Uppercase is the same colour.
     assert match tree::parse_hex_color("#2277FF") {
         option::Option[vocab::Color]::Some(_c) => true,
-        option::Option[vocab::Color]::None => false,
+        option::Option::None => false,
     };
     return;
 }
@@ -1156,19 +1156,19 @@ fn hex_colours_parse_and_bad_ones_are_refused() {
 fn a_malformed_colour_is_refused_rather_than_read_as_black() {
     assert match tree::parse_hex_color("2277ff") {          // no hash
         option::Option[vocab::Color]::Some(_c) => false,
-        option::Option[vocab::Color]::None => true,
+        option::Option::None => true,
     };
     assert match tree::parse_hex_color("#22") {             // too short
         option::Option[vocab::Color]::Some(_c) => false,
-        option::Option[vocab::Color]::None => true,
+        option::Option::None => true,
     };
     assert match tree::parse_hex_color("#gggggg") {         // not hex
         option::Option[vocab::Color]::Some(_c) => false,
-        option::Option[vocab::Color]::None => true,
+        option::Option::None => true,
     };
     assert match tree::parse_hex_color("") {
         option::Option[vocab::Color]::Some(_c) => false,
-        option::Option[vocab::Color]::None => true,
+        option::Option::None => true,
     };
     return;
 }
@@ -1179,32 +1179,32 @@ fn a_malformed_colour_is_refused_rather_than_read_as_black() {
 fn typed_input_is_read_as_the_tag_the_property_already_holds() {
     assert match tree::parse_as(insp::Value::Num(1.0f64), "0.65") {
         option::Option[insp::Value]::Some(v) => match v {
-            insp::Value::Num(x) => x == 0.65f64,
+            insp::Value::Num(x) => x == 0.65,
             _ => false,
         },
-        option::Option[insp::Value]::None => false,
+        option::Option::None => false,
     };
     assert match tree::parse_as(insp::Value::Bool(false), "true") {
         option::Option[insp::Value]::Some(v) => match v {
             insp::Value::Bool(b) => b,
             _ => false,
         },
-        option::Option[insp::Value]::None => false,
+        option::Option::None => false,
     };
     assert match tree::parse_as(insp::Value::Str(text::from_str("a")), "anything at all") {
         option::Option[insp::Value]::Some(v) => match v {
             insp::Value::Str(s) => s.view() == "anything at all",
             _ => false,
         },
-        option::Option[insp::Value]::None => false,
+        option::Option::None => false,
     };
     // An unset length reads as a number, which is the only tag "unset" takes.
     assert match tree::parse_as(insp::Value::Nothing, "16") {
         option::Option[insp::Value]::Some(v) => match v {
-            insp::Value::Num(x) => x == 16.0f64,
+            insp::Value::Num(x) => x == 16.0,
             _ => false,
         },
-        option::Option[insp::Value]::None => false,
+        option::Option::None => false,
     };
     return;
 }
@@ -1213,15 +1213,15 @@ fn typed_input_is_read_as_the_tag_the_property_already_holds() {
 fn unreadable_input_is_refused_rather_than_written_as_zero() {
     assert match tree::parse_as(insp::Value::Num(1.0f64), "wide") {
         option::Option[insp::Value]::Some(_v) => false,
-        option::Option[insp::Value]::None => true,
+        option::Option::None => true,
     };
     assert match tree::parse_as(insp::Value::Bool(false), "yes") {
         option::Option[insp::Value]::Some(_v) => false,
-        option::Option[insp::Value]::None => true,
+        option::Option::None => true,
     };
     assert match tree::parse_as(insp::Value::Color(vocab::Color::none()), "blue") {
         option::Option[insp::Value]::Some(_v) => false,
-        option::Option[insp::Value]::None => true,
+        option::Option::None => true,
     };
     return;
 }
@@ -1251,8 +1251,8 @@ fn the_panel_refreshes_and_keeps_its_selection_across_a_new_snapshot() {
     // to them is a no-op. The state machine is what is under test.
     var panel: widget::Inspector = widget::new(tree::local_backend(), hide_self: false);
     widget::refresh(#addr_of(panel));
-    assert panel.row_count() == (3 as usize);
-    assert panel.shown_count() == (3 as usize);
+    assert panel.row_count() == 3;
+    assert panel.shown_count() == 3;
 
     let h: insp::Handle = row_for(tree::describe(), "save");
     { panel.selected = h };
@@ -1282,8 +1282,8 @@ fn the_model_leaves_out_the_inspectors_own_subtree() {
     { panel.rows = tree::describe() };
 
     var model: ftree::TreeNode = widget::build_model(#addr_of(panel));
-    assert panel.row_count() == (5 as usize);
-    assert widget::model_count(#addr_of(model)) == (3 as usize);
+    assert panel.row_count() == 5;
+    assert widget::model_count(#addr_of(model)) == 3;
     return;
 }
 
@@ -1310,12 +1310,12 @@ fn the_ancestry_trail_reads_from_the_root_down() {
             assert match t.find("#root") {
                 option::Option[usize]::Some(a) => match t.find("#save") {
                     option::Option[usize]::Some(b) => a < b,
-                    option::Option[usize]::None => false,
+                    option::Option::None => false,
                 },
-                option::Option[usize]::None => false,
+                option::Option::None => false,
             };
         }
-        option::Option[usize]::None => { assert false; }
+        option::Option::None => { assert false; }
     }
     return;
 }
@@ -1334,14 +1334,14 @@ fn a_tree_line_names_the_kind_and_key_without_indenting_the_text() {
     var panel: widget::Inspector = widget::new(tree::local_backend(), hide_self: false);
     widget::refresh(#addr_of(panel));
 
-    let line: text::Text = panel.line_for(1 as usize);
+    let line: text::Text = panel.line_for(1);
     assert line.has_prefix("label#status");
     assert !line.has_prefix(" ");
     // Nothing has mounted a backend in this suite, so no node has a view — and
     // "an ancestor draws this one" is the thing a native tree cannot say.
     assert line.contains("(viewless)");
     // An unkeyed node is just its kind, with no dangling hash.
-    let root_line: text::Text = panel.line_for(0 as usize);
+    let root_line: text::Text = panel.line_for(0);
     assert root_line.has_prefix("node#root");
     return;
 }
@@ -1355,7 +1355,7 @@ fn a_tree_line_names_the_kind_and_key_without_indenting_the_text() {
 fn model_child(n: *ftree::TreeNode, at: usize) -> *ftree::TreeNode {
     return match { (*n).child_ptr(at) } {
         option::Option[*ftree::TreeNode]::Some(c) => c,
-        option::Option[*ftree::TreeNode]::None => 0 as *ftree::TreeNode,
+        option::Option::None => 0 as *ftree::TreeNode,
     };
 }
 
@@ -1380,19 +1380,19 @@ fn the_model_mirrors_the_snapshots_shape() {
     var model: ftree::TreeNode = model_of(#addr_of(panel));
 
     // The synthetic root is not itself a row; the window root is its one child.
-    assert { model.child_count() } == (1 as usize);
-    let win: *ftree::TreeNode = model_child(#addr_of(model), 0 as usize);
-    assert { (*win).child_count() } == (2 as usize);       // card, after
-    let card: *ftree::TreeNode = model_child(win, 0 as usize);
-    assert { (*card).child_count() } == (2 as usize);      // a, b
+    assert { model.child_count() } == 1;
+    let win: *ftree::TreeNode = model_child(#addr_of(model), 0);
+    assert { (*win).child_count() } == 2;       // card, after
+    let card: *ftree::TreeNode = model_child(win, 0);
+    assert { (*card).child_count() } == 2;      // a, b
     // The sibling AFTER a subtree stays a sibling — the case a depth-based
     // walk gets wrong by carrying on too long.
-    let after: *ftree::TreeNode = model_child(win, 1 as usize);
+    let after: *ftree::TreeNode = model_child(win, 1);
     // The label also carries the viewless marker in a headless suite, so
     // match the head of it rather than the whole line.
     var after_label: text::Text = text::from_str({ (*after).label_of() });
     assert after_label.has_prefix("label#after");
-    assert widget::model_count(#addr_of(model)) == (5 as usize);
+    assert widget::model_count(#addr_of(model)) == 5;
     return;
 }
 
@@ -1410,9 +1410,9 @@ fn only_a_node_with_children_is_marked_a_branch() {
 
     var panel: widget::Inspector = widget::new(tree::local_backend(), hide_self: false);
     var model: ftree::TreeNode = model_of(#addr_of(panel));
-    let win: *ftree::TreeNode = model_child(#addr_of(model), 0 as usize);
-    let card: *ftree::TreeNode = model_child(win, 0 as usize);
-    let leaf: *ftree::TreeNode = model_child(card, 0 as usize);
+    let win: *ftree::TreeNode = model_child(#addr_of(model), 0);
+    let card: *ftree::TreeNode = model_child(win, 0);
+    let leaf: *ftree::TreeNode = model_child(card, 0);
 
     assert { (*win).is_branch };
     assert { (*card).is_branch };
@@ -1434,16 +1434,16 @@ fn identities_are_addresses_and_survive_a_rebuild() {
 
     var panel: widget::Inspector = widget::new(tree::local_backend(), hide_self: false);
     var m1: ftree::TreeNode = model_of(#addr_of(panel));
-    let win1: *ftree::TreeNode = model_child(#addr_of(m1), 0 as usize);
-    let b_id: text::Text = text::from_str({ (*model_child(win1, 1 as usize)).id_of() });
+    let win1: *ftree::TreeNode = model_child(#addr_of(m1), 0);
+    let b_id: text::Text = text::from_str({ (*model_child(win1, 1)).id_of() });
 
     // Rebuild with no change: the same node keeps the same identity, which is
     // what lets `restore` put expansion and selection back afterwards.
     var m2: ftree::TreeNode = model_of(#addr_of(panel));
-    let win2: *ftree::TreeNode = model_child(#addr_of(m2), 0 as usize);
-    assert { (*model_child(win2, 1 as usize)).id_of() } == b_id.view();
+    let win2: *ftree::TreeNode = model_child(#addr_of(m2), 0);
+    assert { (*model_child(win2, 1)).id_of() } == b_id.view();
 
-    let a_id: text::Text = text::from_str({ (*model_child(win2, 0 as usize)).id_of() });
+    let a_id: text::Text = text::from_str({ (*model_child(win2, 0)).id_of() });
     assert a_id.view() != b_id.view();
     return;
 }
@@ -1458,8 +1458,8 @@ fn the_model_carries_the_facet_node_so_selection_needs_no_lookup() {
 
     var panel: widget::Inspector = widget::new(tree::local_backend(), hide_self: false);
     var model: ftree::TreeNode = model_of(#addr_of(panel));
-    let win: *ftree::TreeNode = model_child(#addr_of(model), 0 as usize);
-    let a: *ftree::TreeNode = model_child(win, 0 as usize);
+    let win: *ftree::TreeNode = model_child(#addr_of(model), 0);
+    let a: *ftree::TreeNode = model_child(win, 0);
 
     assert ({ (*a).data } as *core::Node) == mount::node("a");
 
@@ -1482,8 +1482,8 @@ fn a_panel_alone_in_a_window_models_nothing_rather_than_itself() {
     tree::mark_self(mount::node("insp:root"));
 
     var model: ftree::TreeNode = model_of(#addr_of(panel));
-    assert panel.row_count() > (0 as usize);
-    assert widget::model_count(#addr_of(model)) == (0 as usize);
+    assert panel.row_count() > 0;
+    assert widget::model_count(#addr_of(model)) == 0;
     return;
 }
 
@@ -1541,19 +1541,19 @@ fn native_rows_explain_a_viewless_node_rather_than_being_empty() {
 
     // Before install: facet knows nothing about the platform and lists none.
     match tree::inspect(h) {
-        option::Option[insp::Detail]::Some(d) => { assert d.native.count() == (0 as usize); }
-        option::Option[insp::Detail]::None => { assert false; }
+        option::Option[insp::Detail]::Some(d) => { assert d.native.count() == 0; }
+        option::Option::None => { assert false; }
     }
 
     platform::install();
     match tree::inspect(h) {
         option::Option[insp::Detail]::Some(d) => {
-            assert d.native.count() >= (1 as usize);
+            assert d.native.count() >= 1;
             assert prop_named(d.native, "native_class");
             // And it never leaks into the writable list.
             assert !prop_named(d.declared, "native_class");
         }
-        option::Option[insp::Detail]::None => { assert false; }
+        option::Option::None => { assert false; }
     }
     // Installing the platform must not have made a native row writable.
     assert tree::set(h, "native_class", insp::Value::Str(text::from_str("NSButton")))
@@ -1600,8 +1600,8 @@ fn a_spec_carries_its_maker_and_clones_whole() {
 #[test]
 fn every_maker_name_builds_and_an_unknown_one_builds_nothing() {
     let names: vec::Vec[str] = tree::maker_names();
-    assert names.count() > (0 as usize);
-    var i: usize = 0 as usize;
+    assert names.count() > 0;
+    var i: usize = 0;
     while i < names.count() {
         match names.at(i) {
             option::Option[str]::Some(nm) => {
@@ -1612,17 +1612,17 @@ fn every_maker_name_builds_and_an_unknown_one_builds_nothing() {
                     option::Option[core::Node]::Some(n) => {
                         assert { n.key() } == "k";
                     }
-                    option::Option[core::Node]::None => { assert false; }
+                    option::Option::None => { assert false; }
                 }
             }
-            option::Option[str]::None => { assert false; }
+            option::Option::None => { assert false; }
         }
-        i = i +% (1 as usize);
+        i = i +% 1;
     }
 
     match tree::make(insp::Spec::of("frobnicate", "k", "t")) {
         option::Option[core::Node]::Some(_n) => { assert false; }
-        option::Option[core::Node]::None => { }
+        option::Option::None => { }
     }
     return;
 }
@@ -1657,14 +1657,14 @@ fn within_finds_a_descendant_itself_and_nothing_else() {
 
     let r: *core::Node = #addr_of(root);
     assert tree::within(r, r);
-    match core::child_of(r, 0 as usize) {
+    match core::child_of(r, 0) {
         option::Option[*core::Node]::Some(m) => {
             assert tree::within(r, m);
             // ...and not the other way. Containment has a direction, which is
             // the whole point of the cycle check that uses it.
             assert !tree::within(m, r);
         }
-        option::Option[*core::Node]::None => { assert false; }
+        option::Option::None => { assert false; }
     }
 
     var stranger: core::Node = ui::label("elsewhere", key: "elsewhere");
@@ -1685,12 +1685,12 @@ fn add_child_appends_into_the_live_tree_and_the_walk_sees_it() {
     let h: insp::Handle = row_for(tree::describe(), "root");
     // Past the end: `insert_child` clamps, so any index beyond the last is an
     // append. That is what makes "Add child" one verb rather than two.
-    assert tree::insert(h, 99 as usize, insp::Spec::of("label", "b", "hello")).is_ok();
+    assert tree::insert(h, 99, insp::Spec::of("label", "b", "hello")).is_ok();
 
     let r: *core::Node = #addr_of(root);
-    assert core::child_count_of(r) == (2 as usize);
-    assert child_key_is(r, 0 as usize, "a");
-    assert child_key_is(r, 1 as usize, "b");
+    assert core::child_count_of(r) == 2;
+    assert child_key_is(r, 0, "a");
+    assert child_key_is(r, 1, "b");
 
     // And the inspector's own walk sees it, with a live handle and the tier-3
     // property the new node's kind carries.
@@ -1712,13 +1712,13 @@ fn insert_lands_at_the_index_asked_for() {
     app::open_window(#addr_of(root));
 
     let h: insp::Handle = row_for(tree::describe(), "root");
-    assert tree::insert(h, 1 as usize, insp::Spec::of("label", "b", "mid")).is_ok();
+    assert tree::insert(h, 1, insp::Spec::of("label", "b", "mid")).is_ok();
 
     let r: *core::Node = #addr_of(root);
-    assert core::child_count_of(r) == (3 as usize);
-    assert child_key_is(r, 0 as usize, "a");
-    assert child_key_is(r, 1 as usize, "b");
-    assert child_key_is(r, 2 as usize, "c");
+    assert core::child_count_of(r) == 3;
+    assert child_key_is(r, 0, "a");
+    assert child_key_is(r, 1, "b");
+    assert child_key_is(r, 2, "c");
     return;
 }
 
@@ -1730,15 +1730,15 @@ fn an_inserted_node_is_editable_through_the_ordinary_property_path() {
     app::open_window(#addr_of(root));
 
     let h: insp::Handle = row_for(tree::describe(), "root");
-    assert tree::insert(h, 0 as usize, insp::Spec::of("column", "made")).is_ok();
+    assert tree::insert(h, 0, insp::Spec::of("column", "made")).is_ok();
 
     // The point of making the node rather than configuring it: it is
     // addressable the instant it exists, by the editor that was already there.
     let made: insp::Handle = row_for(tree::describe(), "made");
     assert tree::set(made, "padding", insp::Value::Num(12.0f64)).is_ok();
-    assert get_num(made, "padding") == 12.0f64;
+    assert get_num(made, "padding") == 12.0;
     assert tree::set(made, "opacity", insp::Value::Num(0.5f64)).is_ok();
-    assert get_num(made, "opacity") == 0.5f64;
+    assert get_num(made, "opacity") == 0.5;
     return;
 }
 
@@ -1755,19 +1755,19 @@ fn remove_takes_the_node_out_and_undo_puts_it_back_where_it_was() {
     let r: *core::Node = #addr_of(root);
     let h: insp::Handle = row_for(tree::describe(), "b");
     assert tree::remove(h).is_ok();
-    assert core::child_count_of(r) == (2 as usize);
-    assert child_key_is(r, 0 as usize, "a");
-    assert child_key_is(r, 1 as usize, "c");
+    assert core::child_count_of(r) == 2;
+    assert child_key_is(r, 0, "a");
+    assert child_key_is(r, 1, "c");
     assert row_for(tree::describe(), "b").is_none();
     // Held, not freed. That is the difference between `remove_child` and
     // `remove_node`, and it is what makes the verb undoable.
-    assert tree::trash_count() == (1 as usize);
+    assert tree::trash_count() == 1;
 
     assert tree::undo_remove().is_ok();
-    assert core::child_count_of(r) == (3 as usize);
+    assert core::child_count_of(r) == 3;
     // Back in the MIDDLE, not appended: the index went into the trash with it.
-    assert child_key_is(r, 1 as usize, "b");
-    assert tree::trash_count() == (0 as usize);
+    assert child_key_is(r, 1, "b");
+    assert tree::trash_count() == 0;
     assert !row_for(tree::describe(), "b").is_none();
     return;
 }
@@ -1784,7 +1784,7 @@ fn undo_unwinds_in_reverse_and_a_restored_parent_can_take_its_child_back() {
 
     assert tree::remove(row_for(tree::describe(), "kid")).is_ok();
     assert tree::remove(row_for(tree::describe(), "holder")).is_ok();
-    assert tree::trash_count() == (2 as usize);
+    assert tree::trash_count() == 2;
 
     // The holder comes back first, and only then is there a parent for the kid
     // to go back into. A stack, and it has to be one.
@@ -1792,7 +1792,7 @@ fn undo_unwinds_in_reverse_and_a_restored_parent_can_take_its_child_back() {
     assert !row_for(tree::describe(), "holder").is_none();
     assert tree::undo_remove().is_ok();
     assert !row_for(tree::describe(), "kid").is_none();
-    assert tree::trash_count() == (0 as usize);
+    assert tree::trash_count() == 0;
     return;
 }
 
@@ -1813,9 +1813,9 @@ fn undo_restores_into_a_parent_that_came_back_at_a_new_address() {
     var root: core::Node = ui::column(body, key: "root");
     app::open_window(#addr_of(root));
 
-    let held: *core::Node = match core::child_of(#addr_of(root), 0 as usize) {
+    let held: *core::Node = match core::child_of(#addr_of(root), 0) {
         option::Option[*core::Node]::Some(c) => c,
-        option::Option[*core::Node]::None => 0 as *core::Node,
+        option::Option::None => 0 as *core::Node,
     };
     assert held != (0 as *core::Node);
 
@@ -1828,19 +1828,19 @@ fn undo_restores_into_a_parent_that_came_back_at_a_new_address() {
     while i < 8 {
         assert tree::insert(
             row_for(tree::describe(), "root"),
-            0 as usize,
+            0,
             insp::Spec::of("label", "filler", "f")
         ).is_ok();
         i = i + 1;
     }
 
     assert tree::undo_remove().is_ok();
-    let back: *core::Node = match core::child_of(#addr_of(root), 0 as usize) {
+    let back: *core::Node = match core::child_of(#addr_of(root), 0) {
         option::Option[*core::Node]::Some(c) => c,
-        option::Option[*core::Node]::None => 0 as *core::Node,
+        option::Option::None => 0 as *core::Node,
     };
     assert back != (0 as *core::Node);
-    assert child_key_is(#addr_of(root), 0 as usize, "holder");
+    assert child_key_is(#addr_of(root), 0, "holder");
     // The premise of the test: the holder is NOT where it was.
     assert back != held;
 
@@ -1850,9 +1850,9 @@ fn undo_restores_into_a_parent_that_came_back_at_a_new_address() {
     // kid inside whichever node took the address over and still report `Ok`.
     assert tree::undo_remove().is_ok();
     assert !row_for(tree::describe(), "kid").is_none();
-    assert core::child_count_of(back) == (1 as usize);
-    assert child_key_is(back, 0 as usize, "kid");
-    assert tree::trash_count() == (0 as usize);
+    assert core::child_count_of(back) == 1;
+    assert child_key_is(back, 0, "kid");
+    assert tree::trash_count() == 0;
     return;
 }
 
@@ -1869,14 +1869,14 @@ fn reparent_moves_a_node_between_containers() {
     app::open_window(#addr_of(root));
 
     let rows: vec::Vec[insp::Node] = tree::describe();
-    assert tree::reparent(row_for(rows, "x"), row_for(rows, "right"), 0 as usize).is_ok();
+    assert tree::reparent(row_for(rows, "x"), row_for(rows, "right"), 0).is_ok();
 
     let after: vec::Vec[insp::Node] = tree::describe();
     let lh: insp::Handle = row_for(after, "left");
     let rh: insp::Handle = row_for(after, "right");
-    assert core::child_count_of(lh.node) == (0 as usize);
-    assert core::child_count_of(rh.node) == (1 as usize);
-    assert child_key_is(rh.node, 0 as usize, "x");
+    assert core::child_count_of(lh.node) == 0;
+    assert core::child_count_of(rh.node) == 1;
+    assert child_key_is(rh.node, 0, "x");
     // Moved, not copied and not dropped — the walk still finds exactly one.
     assert !row_for(after, "x").is_none();
     return;
@@ -1896,7 +1896,7 @@ fn an_insert_leaves_handles_live_and_a_removal_ends_them() {
 
     // An insert does not touch flex's removal counter, so a client's whole
     // snapshot survives it.
-    assert tree::insert(row_for(tree::describe(), "root"), 0 as usize,
+    assert tree::insert(row_for(tree::describe(), "root"), 0,
                         insp::Spec::of("spacer")).is_ok();
     assert held.is_live();
 
@@ -1918,21 +1918,21 @@ fn the_journal_reads_as_the_source_that_made_the_edit() {
 
     let h: insp::Handle = row_for(tree::describe(), "root");
     // An append is `add_child`, which is what an application writes...
-    assert tree::insert(h, 9 as usize, insp::Spec::of("label", "b", "hello")).is_ok();
-    assert journal_line_is(0 as usize,
+    assert tree::insert(h, 9, insp::Spec::of("label", "b", "hello")).is_ok();
+    assert journal_line_is(0,
         "mount::add_child(mount::node(\"root\"), ui::label(\"hello\", key: \"b\"));");
 
     // ...and only a genuine mid-list insert carries an index.
-    assert tree::insert(h, 0 as usize, insp::Spec::of("spacer", "sp")).is_ok();
-    assert journal_line_is(1 as usize,
+    assert tree::insert(h, 0, insp::Spec::of("spacer", "sp")).is_ok();
+    assert journal_line_is(1,
         "mount::insert_child(mount::node(\"root\"), ui::spacer(key: \"sp\"), 0);");
 
     assert tree::remove(row_for(tree::describe(), "a")).is_ok();
-    assert journal_line_is(2 as usize, "mount::remove(\"a\");");
-    assert tree::journal_count() == (3 as usize);
+    assert journal_line_is(2, "mount::remove(\"a\");");
+    assert tree::journal_count() == 3;
 
     tree::forget_journal();
-    assert tree::journal_count() == (0 as usize);
+    assert tree::journal_count() == 0;
     return;
 }
 
@@ -1949,15 +1949,15 @@ fn the_journal_says_so_rather_than_inventing_an_address_it_does_not_have() {
     // would produce a line that compiles and edits a different node.
     let un: insp::Handle = unkeyed_of_kind(tree::describe(), 0u32);
     assert !un.is_none();
-    assert tree::insert(un, 0 as usize, insp::Spec::of("label", "", "hi")).is_ok();
-    assert journal_line_is(0 as usize,
+    assert tree::insert(un, 0, insp::Spec::of("label", "", "hi")).is_ok();
+    assert journal_line_is(0,
         "// inserted label under an unkeyed node - give that node a key to address this");
 
     // Same for a removal with no key of its own.
     let made: insp::Handle = unkeyed_of_kind(tree::describe(), props::K_LABEL);
     assert !made.is_none();
     assert tree::remove(made).is_ok();
-    assert journal_line_is(1 as usize,
+    assert journal_line_is(1,
         "// removed an unkeyed label - no key, so no line that addresses it");
     return;
 }
@@ -1977,13 +1977,13 @@ fn a_leaf_control_refuses_an_inserted_child() {
     // A label hosts no views: the child's view would land in the LABEL'S
     // parent while the node sat under the label. Faithful, and not what
     // anybody meant.
-    assert tree::insert(row_for(rows, "a"), 0 as usize, insp::Spec::of("label"))
+    assert tree::insert(row_for(rows, "a"), 0, insp::Spec::of("label"))
         == insp::Outcome::NotAContainer;
-    assert tree::insert(row_for(rows, "go"), 0 as usize, insp::Spec::of("label"))
+    assert tree::insert(row_for(rows, "go"), 0, insp::Spec::of("label"))
         == insp::Outcome::NotAContainer;
     // Refused all the way down: nothing was made and nothing was journalled.
-    assert core::child_count_of(row_for(rows, "a").node) == (0 as usize);
-    assert tree::journal_count() == (0 as usize);
+    assert core::child_count_of(row_for(rows, "a").node) == 0;
+    assert tree::journal_count() == 0;
     return;
 }
 
@@ -1997,10 +1997,10 @@ fn an_unknown_maker_is_its_own_refusal_and_changes_nothing() {
     let h: insp::Handle = row_for(tree::describe(), "root");
     // `UnknownKind` and not `NotAContainer`: the parent was fine, the spelling
     // was not. Same distinction as `UnknownProperty` against `Unsupported`.
-    assert tree::insert(h, 0 as usize, insp::Spec::of("blink", "k"))
+    assert tree::insert(h, 0, insp::Spec::of("blink", "k"))
         == insp::Outcome::UnknownKind;
-    assert core::child_count_of(#addr_of(root)) == (0 as usize);
-    assert tree::journal_count() == (0 as usize);
+    assert core::child_count_of(#addr_of(root)) == 0;
+    assert tree::journal_count() == 0;
     return;
 }
 
@@ -2023,12 +2023,12 @@ fn a_window_root_is_protected_from_removal() {
     let rows: vec::Vec[insp::Node] = tree::describe();
     let h: insp::Handle = row_for(rows, "root");
     assert tree::remove(h) == insp::Outcome::Protected;
-    assert tree::reparent(h, row_for(rows, "other"), 0 as usize)
+    assert tree::reparent(h, row_for(rows, "other"), 0)
         == insp::Outcome::Protected;
     // Into ITSELF is the cycle check, which runs first because it is the
     // cheaper answer and the more specific one.
-    assert tree::reparent(h, h, 0 as usize) == insp::Outcome::Cycle;
-    assert tree::insert(h, 0 as usize, insp::Spec::of("spacer")).is_ok();
+    assert tree::reparent(h, h, 0) == insp::Outcome::Cycle;
+    assert tree::insert(h, 0, insp::Spec::of("spacer")).is_ok();
     return;
 }
 
@@ -2056,9 +2056,9 @@ fn the_panels_own_subtree_is_protected_from_every_structural_verb() {
     // Not just the root of it: everything under it, which is what the walk in
     // `within` is for.
     assert tree::remove(inside) == insp::Outcome::Protected;
-    assert tree::insert(own, 0 as usize, insp::Spec::of("label"))
+    assert tree::insert(own, 0, insp::Spec::of("label"))
         == insp::Outcome::Protected;
-    assert tree::reparent(app_side, own, 0 as usize) == insp::Outcome::Protected;
+    assert tree::reparent(app_side, own, 0) == insp::Outcome::Protected;
     // ...while the application beside it is editable as ever.
     assert tree::remove(app_side).is_ok();
     return;
@@ -2081,10 +2081,10 @@ fn a_move_into_a_nodes_own_subtree_is_refused_as_a_cycle() {
 
     // Checked BEFORE the removal. Afterwards the answer would still be no and
     // the tree would already be cut.
-    assert tree::reparent(outer, inner_h, 0 as usize) == insp::Outcome::Cycle;
-    assert tree::reparent(outer, outer, 0 as usize) == insp::Outcome::Cycle;
-    assert core::child_count_of(outer.node) == (1 as usize);
-    assert tree::trash_count() == (0 as usize);
+    assert tree::reparent(outer, inner_h, 0) == insp::Outcome::Cycle;
+    assert tree::reparent(outer, outer, 0) == insp::Outcome::Cycle;
+    assert core::child_count_of(outer.node) == 1;
+    assert tree::trash_count() == 0;
     return;
 }
 
@@ -2107,14 +2107,14 @@ fn undo_refuses_rather_than_restoring_into_a_parent_that_has_gone() {
     assert tree::undo_remove() == insp::Outcome::NothingToUndo;
     // And the subtree is still held rather than inserted somewhere it cannot
     // be seen or reached.
-    assert tree::trash_count() == (1 as usize);
+    assert tree::trash_count() == 1;
     return;
 }
 
 #[test]
 fn undo_with_nothing_removed_says_so() {
     fresh();
-    assert tree::trash_count() == (0 as usize);
+    assert tree::trash_count() == 0;
     assert tree::undo_remove() == insp::Outcome::NothingToUndo;
     return;
 }
@@ -2129,18 +2129,18 @@ fn structural_verbs_refuse_a_null_or_stale_handle() {
     app::open_window(#addr_of(root));
 
     let none: insp::Handle = insp::Handle::none();
-    assert tree::insert(none, 0 as usize, insp::Spec::of("label")) == insp::Outcome::NotFound;
+    assert tree::insert(none, 0, insp::Spec::of("label")) == insp::Outcome::NotFound;
     assert tree::remove(none) == insp::Outcome::NotFound;
-    assert tree::reparent(none, none, 0 as usize) == insp::Outcome::NotFound;
+    assert tree::reparent(none, none, 0) == insp::Outcome::NotFound;
 
     // Liveness before existence: a handle from before a removal is `Stale`,
     // which tells the client to re-describe, rather than `NotFound`, which
     // would say the node was never there.
     let held: insp::Handle = row_for(tree::describe(), "root");
     assert tree::remove(row_for(tree::describe(), "b")).is_ok();
-    assert tree::insert(held, 0 as usize, insp::Spec::of("label")) == insp::Outcome::Stale;
+    assert tree::insert(held, 0, insp::Spec::of("label")) == insp::Outcome::Stale;
     assert tree::remove(held) == insp::Outcome::Stale;
-    assert tree::reparent(held, held, 0 as usize) == insp::Outcome::Stale;
+    assert tree::reparent(held, held, 0) == insp::Outcome::Stale;
     return;
 }
 
@@ -2166,9 +2166,9 @@ fn the_degraded_backend_refuses_every_structural_verb_and_crashes_nothing() {
     fresh();
     let b: insp::Backend = insp::Backend::none();
     let h: insp::Handle = insp::Handle::none();
-    assert b.insert_now(h, 0 as usize, insp::Spec::of("label")) == insp::Outcome::Unsupported;
+    assert b.insert_now(h, 0, insp::Spec::of("label")) == insp::Outcome::Unsupported;
     assert b.remove_now(h) == insp::Outcome::Unsupported;
-    assert b.reparent_now(h, h, 0 as usize) == insp::Outcome::Unsupported;
+    assert b.reparent_now(h, h, 0) == insp::Outcome::Unsupported;
     assert b.undo_now() == insp::Outcome::NothingToUndo;
     return;
 }
@@ -2185,7 +2185,7 @@ fn the_local_backend_routes_every_structural_verb_to_the_tree() {
     // a panel button that silently does nothing.
     let b: insp::Backend = tree::local_backend();
     let h: insp::Handle = row_for(b.describe_now(), "root");
-    assert b.insert_now(h, 9 as usize, insp::Spec::of("label", "made", "hi")).is_ok();
+    assert b.insert_now(h, 9, insp::Spec::of("label", "made", "hi")).is_ok();
     assert !row_for(b.describe_now(), "made").is_none();
 
     assert b.remove_now(row_for(b.describe_now(), "made")).is_ok();
@@ -2194,8 +2194,8 @@ fn the_local_backend_routes_every_structural_verb_to_the_tree() {
     assert !row_for(b.describe_now(), "made").is_none();
 
     let rows: vec::Vec[insp::Node] = b.describe_now();
-    assert b.reparent_now(row_for(rows, "made"), row_for(rows, "root"), 0 as usize).is_ok();
-    assert child_key_is(row_for(rows, "root").node, 0 as usize, "made");
+    assert b.reparent_now(row_for(rows, "made"), row_for(rows, "root"), 0).is_ok();
+    assert child_key_is(row_for(rows, "root").node, 0, "made");
     return;
 }
 
@@ -2224,7 +2224,7 @@ fn rpc(line: str) -> text::Text {
 
 // The same, under a stated policy — for the tests that are about WHO is asking.
 fn rpc_as(policy: fn(aauth::Request) -> aauth::Grant, line: str) -> text::Text {
-    var sub: aevents::Subscriber = aevents::subscriber(aevents::everything(), 4 as usize);
+    var sub: aevents::Subscriber = aevents::subscriber(aevents::everything(), 4);
     let surf: *u8 = 0 as *u8;
     return bridge::handle_request(surf, bridge::fake_backend(), sub,
                                   aauth::serve(policy), line);
@@ -2260,7 +2260,7 @@ fn describe_puts_the_tree_on_the_wire_with_indices_as_addresses() {
     // whole reason this listing walks facet's tree instead.
     assert r.contains("\"has_view\"");
     assert r.contains("\"kind\":\"label\"");
-    assert mcp::snapshot_count() == (2 as usize);
+    assert mcp::snapshot_count() == 2;
     return;
 }
 
@@ -2300,7 +2300,7 @@ fn a_write_goes_through_the_same_setters_the_panel_uses() {
     // A number for a number property.
     let a: text::Text = rpc("{\"method\":\"inspector.set\",\"params\":{\"node\":0,\"property\":\"opacity\",\"value\":0.4},\"id\":2}");
     assert a.contains("\"outcome\":\"ok\"");
-    assert get_num(row_for(tree::describe(), "root"), "opacity") == 0.4f64;
+    assert get_num(row_for(tree::describe(), "root"), "opacity") == 0.4;
 
     // A string for a text property — tier 3, and it reaches through the key.
     let b: text::Text = rpc("{\"method\":\"inspector.set\",\"params\":{\"node\":1,\"property\":\"text\",\"value\":\"rewritten\"},\"id\":3}");
@@ -2316,7 +2316,7 @@ fn a_write_goes_through_the_same_setters_the_panel_uses() {
     // And reset puts back what the application declared.
     let d: text::Text = rpc("{\"method\":\"inspector.reset\",\"params\":{\"node\":0,\"property\":\"opacity\"},\"id\":5}");
     assert d.contains("\"outcome\":\"ok\"");
-    assert get_num(row_for(tree::describe(), "root"), "opacity") == 1.0f64;
+    assert get_num(row_for(tree::describe(), "root"), "opacity") == 1.0;
     return;
 }
 
@@ -2471,7 +2471,7 @@ fn arming_the_inspector_is_not_a_way_around_the_agents_consent_gate() {
     // The gate runs FIRST and covers both namespaces. An inspector that could
     // be reached with consent denied would be the one hole in the whole
     // permission model — and it is the more powerful of the two surfaces.
-    var sub: aevents::Subscriber = aevents::subscriber(aevents::everything(), 4 as usize);
+    var sub: aevents::Subscriber = aevents::subscriber(aevents::everything(), 4);
     let denied: text::Text = bridge::handle_request(0 as *u8, bridge::fake_backend(), sub,
         aauth::deny_all(), "{\"method\":\"inspector.describe\",\"id\":1}");
     assert denied.contains("-32001");
@@ -2490,7 +2490,7 @@ fn a_degraded_backend_refuses_on_the_wire_without_crashing() {
 
     let d: text::Text = rpc("{\"method\":\"inspector.describe\",\"id\":1}");
     assert d.contains("\"nodes\"");
-    assert mcp::snapshot_count() == (0 as usize);
+    assert mcp::snapshot_count() == 0;
 
     let s: text::Text = rpc("{\"method\":\"inspector.set\",\"params\":{\"node\":0,\"property\":\"opacity\",\"value\":1},\"id\":2}");
     assert s.contains("\"outcome\":\"not_found\"");
@@ -2517,13 +2517,13 @@ fn a_property_named_over_the_wire_is_still_addressable_by_a_later_reset() {
     wire_ready();
     var body: core::Builder = core::Builder::new();
     var root: core::Node = ui::column(body, key: "root");
-    core::set_opacity(#addr_of(root), 0.9f64);
+    core::set_opacity(#addr_of(root), 0.9);
     app::open_window(#addr_of(root));
     let _d: text::Text = rpc("{\"method\":\"inspector.describe\",\"id\":1}");
 
     let _s: text::Text = rpc("{\"method\":\"inspector.set\",\"params\":{\"node\":0,\"property\":\"opacity\",\"value\":0.25},\"id\":2}");
-    assert get_num(row_for(tree::describe(), "root"), "opacity") == 0.25f64;
-    assert tree::override_count() == (1 as usize);
+    assert get_num(row_for(tree::describe(), "root"), "opacity") == 0.25;
+    assert tree::override_count() == 1;
 
     // The ledger entry is findable — by the panel, which uses the literal, and
     // by a second request, which does not.
@@ -2532,8 +2532,8 @@ fn a_property_named_over_the_wire_is_still_addressable_by_a_later_reset() {
     let r: text::Text = rpc("{\"method\":\"inspector.reset\",\"params\":{\"node\":0,\"property\":\"opacity\"},\"id\":3}");
     assert r.contains("\"outcome\":\"ok\"");
     // Back to what the APPLICATION declared — 0.9, not the type default of 1.0.
-    assert get_num(row_for(tree::describe(), "root"), "opacity") == 0.9f64;
-    assert tree::override_count() == (0 as usize);
+    assert get_num(row_for(tree::describe(), "root"), "opacity") == 0.9;
+    assert tree::override_count() == 0;
     return;
 }
 
@@ -2543,21 +2543,21 @@ fn a_property_named_over_the_wire_is_still_addressable_by_a_later_reset() {
 fn canonical_prop_answers_this_packages_own_literal_or_nothing() {
     assert match tree::canonical_prop("opacity") {
         option::Option[str]::Some(n) => n == "opacity",
-        option::Option[str]::None => false,
+        option::Option::None => false,
     };
     // Read-only names resolve too, so a caller naming one is told it is
     // read-only rather than that it does not exist.
     assert match tree::canonical_prop("frame_width") {
         option::Option[str]::Some(n) => n == "frame_width",
-        option::Option[str]::None => false,
+        option::Option::None => false,
     };
     assert match tree::canonical_prop("colour") {
         option::Option[str]::Some(_n) => false,
-        option::Option[str]::None => true,
+        option::Option::None => true,
     };
     assert match tree::canonical_prop("") {
         option::Option[str]::Some(_n) => false,
-        option::Option[str]::None => true,
+        option::Option::None => true,
     };
     return;
 }
@@ -2751,21 +2751,21 @@ fn an_absent_describe_prefix_keeps_the_whole_tree() {
 // of when a client chokes.
 #[test]
 fn both_namespaces_emit_the_same_envelope() {
-    let a: text::Text = mcp::ok_response(7.0f64, mcp::jstr("x")).to_text();
-    let b: text::Text = bridge::ok_response(7.0f64, bridge::jstr("x")).to_text();
+    let a: text::Text = mcp::ok_response(7.0, mcp::jstr("x")).to_text();
+    let b: text::Text = bridge::ok_response(7.0, bridge::jstr("x")).to_text();
     assert a.view() == b.view();
 
-    let ea: text::Text = mcp::err_response(9.0f64, - 32601 as f64, "nope").to_text();
-    let eb: text::Text = bridge::err_response(9.0f64, - 32601 as f64, "nope").to_text();
+    let ea: text::Text = mcp::err_response(9.0, - 32601 as f64, "nope").to_text();
+    let eb: text::Text = bridge::err_response(9.0, - 32601 as f64, "nope").to_text();
     assert ea.view() == eb.view();
 
     // Including the parameter refusal, whose exact wording a caller reads.
-    let ma: text::Text = mcp::missing_param(3.0f64, "inspector.set", "node").to_text();
-    let mb: text::Text = bridge::missing_param(3.0f64, "inspector.set", "node").to_text();
+    let ma: text::Text = mcp::missing_param(3.0, "inspector.set", "node").to_text();
+    let mb: text::Text = bridge::missing_param(3.0, "inspector.set", "node").to_text();
     assert ma.view() == mb.view();
 
     // ...and the scalar builders underneath them.
-    assert mcp::jnum(2.5f64).to_text().view() == bridge::jnum(2.5f64).to_text().view();
+    assert mcp::jnum(2.5).to_text().view() == bridge::jnum(2.5).to_text().view();
     assert mcp::jbool(true).to_text().view() == bridge::jbool(true).to_text().view();
     return;
 }

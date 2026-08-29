@@ -6916,11 +6916,11 @@ fn run_init(args: &[OsString]) -> ExitCode {
          import \"stdlib/vec\" as vec;\n\n\
          struct Home {{\n    taps: i64,\n}}\n\n\
          impl Home {{\n\
-         \x20   fn new() -> Home {{ return Home {{ taps: 0 as i64 }}; }}\n\n\
+         \x20   fn new() -> Home {{ return Home {{ taps: 0 }}; }}\n\n\
          \x20   // A handler is a bound METHOD — `on_click: this.on_tap` wires it, and\n\
          \x20   // the compiler fills the context slot. Never hand-roll `#addr_of(this)`.\n\
          \x20   fn on_tap(ref this, sender: *u8) {{\n\
-         \x20       this.taps = this.taps + (1 as i64);\n\
+         \x20       this.taps = this.taps + 1;\n\
          \x20       this.show_taps();\n\
          \x20       return;\n\
          \x20   }}\n\n\
@@ -6939,14 +6939,14 @@ fn run_init(args: &[OsString]) -> ExitCode {
          \x20       return @ui {{\n\
          \x20           column {{\n\
          \x20               label(\"Hello from C+\", key: \"hello\",\n\
-         \x20                     font_size: 28.0f64,\n\
+         \x20                     font_size: 28.0,\n\
          \x20                     font_weight: vocab::FontWeight::Bold)\n\
          \x20               label(\"tapped 0\", key: \"taps\")\n\
          \x20               button(\"Tap me\", key: \"tap\", on_click: this.on_tap)\n\
          \x20           }}\n\
-         \x20               .grow(1.0f64)\n\
-         \x20               .gap(12.0f64)\n\
-         \x20               .padding(24.0f64)\n\
+         \x20               .grow(1.0)\n\
+         \x20               .gap(12.0)\n\
+         \x20               .padding(24.0)\n\
          \x20               .align(flex::Align::Center)\n\
          \x20               .justify(flex::Justify::Center)\n\
          \x20       }};\n\
@@ -6962,7 +6962,7 @@ fn run_init(args: &[OsString]) -> ExitCode {
          \x20       // window — but they are the same facade on both platforms and the\n\
          \x20       // iOS backend drops them.\n\
          \x20       return screen::Chrome::new(title: \"{proj_name}\",\n\
-         \x20                                  width: 390.0f64, height: 844.0f64);\n\
+         \x20                                  width: 390.0, height: 844.0);\n\
          \x20   }}\n\
          \x20   fn menu_items(this) -> vec::Vec[screen::MenuItem] {{\n\
          \x20       return vec::new::[screen::MenuItem]();\n\
@@ -7001,7 +7001,7 @@ fn run_init(args: &[OsString]) -> ExitCode {
          \x20   inspect::arm();\n\
          \x20   runtime::agent_mcp(\"{proj_name}\");\n\
          \x20   runtime::run_screen(Home::new());\n\
-         \x20   return 0 as i32;\n\
+         \x20   return 0;\n\
          }}\n"
     );
 
@@ -7467,7 +7467,7 @@ fn run_init(args: &[OsString]) -> ExitCode {
          import \"facet/services\" as services;\n\
          import \"stdlib/text\" as text;\n\n\
          fn answered(index: i32, ctx: *u8) {{\n\
-         \x20   if index == (0 as i32) {{ consent::allow_pending(); return; }}\n\
+         \x20   if index == 0 {{ consent::allow_pending(); return; }}\n\
          \x20   consent::deny_pending();\n\
          \x20   return;\n\
          }}\n\n\

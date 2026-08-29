@@ -80,13 +80,13 @@ enum Channel {
 // Functions rather than consts so they are usable in every position C+ allows a
 // call, and so the numeric values stay in exactly one place.
 
-fn cap_read() -> u32 { return 1 as u32; }
-fn cap_act() -> u32 { return 2 as u32; }
-fn cap_read_protected() -> u32 { return 4 as u32; }
-fn cap_act_protected() -> u32 { return 8 as u32; }
-fn cap_read_private() -> u32 { return 16 as u32; }
-fn cap_act_private() -> u32 { return 32 as u32; }
-fn cap_edit_tree() -> u32 { return 64 as u32; }
+fn cap_read() -> u32 { return 1; }
+fn cap_act() -> u32 { return 2; }
+fn cap_read_protected() -> u32 { return 4; }
+fn cap_act_protected() -> u32 { return 8; }
+fn cap_read_private() -> u32 { return 16; }
+fn cap_act_private() -> u32 { return 32; }
+fn cap_edit_tree() -> u32 { return 64; }
 
 // The capability set an agent is operating under. Copy — it is a bitset, and it
 // is passed by value through every authorization call rather than stored
@@ -99,7 +99,7 @@ struct Grant {
 // The closed grant: nothing at all. What an un-served surface answers, and what
 // a policy returns to refuse.
 fn nothing() -> Grant {
-    return Grant { bits: 0 as u32 };
+    return Grant { bits: 0 };
 }
 
 fn with_capability(g: Grant, cap: u32) -> Grant {
@@ -151,7 +151,7 @@ impl Grant {
     // Nothing is possible under this grant. The transports use it to refuse a
     // connection outright rather than answering every verb with a denial.
     fn is_empty(this) -> bool {
-        return this.bits == (0 as u32);
+        return this.bits == 0;
     }
 
     fn with(this, cap: u32) -> Grant {
@@ -306,7 +306,7 @@ fn no_bundled_grant_reaches_private() {
     assert !protected_reader().has(cap_read_private());
     assert !protected_operator().has(cap_read_private());
     assert !protected_operator().has(cap_act_private());
-    assert (protected_operator().bits & priv_caps) == (0 as u32);
+    assert (protected_operator().bits & priv_caps) == 0;
     // Nor does any of them carry the power to rewrite the UI.
     assert !protected_operator().has(cap_edit_tree());
     // Reaching it takes naming the bit, which is exactly one grep away from
@@ -331,7 +331,7 @@ fn capability_bits_are_distinct_and_removable() {
     // capability grant another.
     let all: u32 = cap_read() | cap_act() | cap_read_protected() | cap_act_protected()
                  | cap_read_private() | cap_act_private() | cap_edit_tree();
-    assert all == (127 as u32);
+    assert all == 127;
     let g: Grant = Grant { bits: all };
     assert g.without(cap_edit_tree()).has(cap_act_private());
     assert !g.without(cap_edit_tree()).has(cap_edit_tree());

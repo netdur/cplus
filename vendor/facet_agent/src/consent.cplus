@@ -51,7 +51,7 @@
 //                        secondary: "Deny", on_answer: answered);
 //     }
 //     fn answered(index: i32, ctx: *u8) {
-//         if index == (0 as i32) { consent::allow_pending(); } else { consent::deny_pending(); }
+//         if index == 0 { consent::allow_pending(); } else { consent::deny_pending(); }
 //     }
 //
 //     fn run() -> i32 {
@@ -118,7 +118,7 @@ fn on_ask(f: fn(str, *u8), ctx: *u8 = 0 as *u8) {
 // The sentence a refused caller gets. `retry_after_seconds` is a hint, not a
 // contract: nothing here is counting, and a client that waits longer is fine.
 fn deny_hint() -> str {
-    if PENDING.count() > (0 as usize) {
+    if PENDING.count() > 0 {
         return "consent pending: a prompt is on screen — retry in a few seconds (retry_after_seconds: 3)";
     }
     return "consent denied: the user refused this client; it will not be asked again";
@@ -151,7 +151,7 @@ fn pending() -> str { return PENDING.view(); }
 fn allow_pending() {
     let who: text::Text = PENDING;
     PENDING = text::new();
-    if who.count() == (0 as usize) { return; }
+    if who.count() == 0 { return; }
     allow(who.view());
     return;
 }
@@ -159,7 +159,7 @@ fn allow_pending() {
 fn deny_pending() {
     let who: text::Text = PENDING;
     PENDING = text::new();
-    if who.count() == (0 as usize) { return; }
+    if who.count() == 0 { return; }
     deny(who.view());
     return;
 }
@@ -197,7 +197,7 @@ fn decision(client: str) -> option::Option[bool] {
             else if v == DENIED { option::Option[bool]::Some(false) }
             else { option::Option[bool]::None }
         }
-        option::Option[i32]::None => option::Option[bool]::None,
+        option::Option::None => option::Option[bool]::None,
     };
 }
 
@@ -215,14 +215,14 @@ fn gate(req: auth::Request) -> auth::Grant {
             if ok { return auth::operator(); }
             return auth::nothing();
         }
-        option::Option[bool]::None => { }
+        option::Option::None => { }
     }
 
     // Undecided. Refuse THIS request, and ask — so the answer is there for the
     // next one. Asking is a side effect of refusing, never a thing that
     // happens instead of answering.
     if ASK_FN == (0 as fn(str, *u8)) { return auth::nothing(); }
-    if PENDING.count() > (0 as usize) { return auth::nothing(); }
+    if PENDING.count() > 0 { return auth::nothing(); }
     PENDING = text::from_str(who);
     let ask: fn(str, *u8) = ASK_FN;
     ask(who, ASK_CTX);
@@ -236,7 +236,7 @@ static ASK_COUNT: i32 = 0;
 
 fn spy_ask(client: str, ctx: *u8) {
     ASKED_ABOUT = text::from_str(client);
-    ASK_COUNT = ASK_COUNT +% (1 as i32);
+    ASK_COUNT = ASK_COUNT +% 1;
     return;
 }
 
@@ -244,7 +244,7 @@ fn reset_for_test() {
     forget_all();
     cancel_pending();
     ASKED_ABOUT = text::new();
-    ASK_COUNT = 0 as i32;
+    ASK_COUNT = 0;
     on_ask(spy_ask);
     return;
 }
@@ -262,7 +262,7 @@ fn an_unknown_agent_is_refused_asked_about_and_then_admitted() {
 
     let first: auth::Grant = gate(external("claude-code", "describe_ui"));
     assert first.is_empty();
-    assert ASK_COUNT == (1 as i32);
+    assert ASK_COUNT == 1;
     assert ASKED_ABOUT.view() == "claude-code";
     assert pending() == "claude-code";
 
@@ -272,7 +272,7 @@ fn an_unknown_agent_is_refused_asked_about_and_then_admitted() {
     let second: auth::Grant = gate(external("claude-code", "describe_ui"));
     assert second.is_empty() == false;
     // ...and it does not ask again.
-    assert ASK_COUNT == (1 as i32);
+    assert ASK_COUNT == 1;
     return;
 }
 
@@ -285,12 +285,12 @@ fn a_denied_agent_stays_denied_without_asking_again() {
     let _first: auth::Grant = gate(external("stranger", "click"));
     deny_pending();
 
-    var i: i32 = 0 as i32;
-    while i < (5 as i32) {
+    var i: i32 = 0;
+    while i < 5 {
         assert gate(external("stranger", "click")).is_empty();
-        i = i +% (1 as i32);
+        i = i +% 1;
     }
-    assert ASK_COUNT == (1 as i32);
+    assert ASK_COUNT == 1;
     return;
 }
 
@@ -308,7 +308,7 @@ fn one_agents_answer_does_not_admit_another() {
     // A different name is a different question.
     let b: auth::Grant = gate(external("someone-else", "describe_ui"));
     assert b.is_empty();
-    assert ASK_COUNT == (2 as i32);
+    assert ASK_COUNT == 2;
     assert ASKED_ABOUT.view() == "someone-else";
     return;
 }
@@ -327,7 +327,7 @@ fn a_second_agent_mid_prompt_does_not_steal_the_question() {
     let b: auth::Grant = gate(external("second", "describe_ui"));
     assert b.is_empty();
     assert pending() == "first";
-    assert ASK_COUNT == (1 as i32);
+    assert ASK_COUNT == 1;
 
     // The answer lands on the agent it was asked about.
     allow_pending();
@@ -349,7 +349,7 @@ fn an_abandoned_prompt_does_not_wedge_the_gate() {
 
     let _b: auth::Grant = gate(external("ghost", "describe_ui"));
     assert pending() == "ghost";
-    assert ASK_COUNT == (2 as i32);
+    assert ASK_COUNT == 2;
     return;
 }
 
@@ -385,7 +385,7 @@ fn with_no_prompt_installed_nothing_external_is_admitted() {
     ASK_FN = #zero::[fn(str, *u8)]();
 
     assert gate(external("anyone", "describe_ui")).is_empty();
-    assert ASK_COUNT == (0 as i32);
+    assert ASK_COUNT == 0;
 
     // In-process callers are unaffected: that channel is code the developer
     // compiled in, bounded by the session the app opens rather than by this.
@@ -405,6 +405,6 @@ fn an_unnamed_agent_is_still_one_question() {
     allow_pending();
 
     assert gate(external("", "click")).is_empty() == false;
-    assert ASK_COUNT == (1 as i32);
+    assert ASK_COUNT == 1;
     return;
 }

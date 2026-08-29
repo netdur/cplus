@@ -82,16 +82,16 @@ fn obj_get(v: json::Value, key: str) -> json::Value { return bridge::obj_get(v, 
 fn as_usize(v: json::Value, fallback: usize) -> usize {
     return match v.as_number() {
         option::Option[f64]::Some(n) => {
-            if n < 0.0f64 { fallback } else { n as usize }
+            if n < 0.0 { fallback } else { n as usize }
         }
-        option::Option[f64]::None => fallback,
+        option::Option::None => fallback,
     };
 }
 
 fn as_text(v: json::Value) -> text::Text {
     return match v.as_text() {
         option::Option[text::Text]::Some(t) => t,
-        option::Option[text::Text]::None => text::new(),
+        option::Option::None => text::new(),
     };
 }
 
@@ -185,13 +185,13 @@ fn prop_json(p: *insp::Prop) -> json::Value {
 
 fn props_json(ps: vec::Vec[insp::Prop]) -> json::Value {
     var arr: vec::Vec[json::Value] = vec::new::[json::Value]();
-    var i: usize = 0 as usize;
+    var i: usize = 0;
     while i < ps.count() {
         match ps.at_ptr(i) {
             option::Option[*insp::Prop]::Some(p) => { arr.append(prop_json(p)); }
-            option::Option[*insp::Prop]::None => { }
+            option::Option::None => { }
         }
-        i = i +% (1 as usize);
+        i = i +% 1;
     }
     return json::Value::Array(arr);
 }
@@ -204,7 +204,7 @@ fn node_json(p: *insp::Node, index: usize) -> json::Value {
     m.append(member("index", jnum(index as f64)));
     m.append(member("parent", match { (*p).parent } {
         option::Option[usize]::Some(pi) => jnum(pi as f64),
-        option::Option[usize]::None => json::Value::Null,
+        option::Option::None => json::Value::Null,
     }));
     m.append(member("depth", jnum({ (*p).depth } as f64)));
     m.append(member("kind", jstr(insp::kind_name({ (*p).kind }))));
@@ -470,12 +470,12 @@ fn key_matches(key: str, prefix: str) -> bool {
 fn new_call(op: u32) -> Call {
     return Call {
         op: op,
-        node: 0 as usize,
-        parent: 0 as usize,
-        at: 0 as usize,
+        node: 0,
+        parent: 0,
+        at: 0,
         prop: text::new(),
         raw: text::new(),
-        num: 0.0f64,
+        num: 0.0,
         flag: false,
         tag: TAG_NONE,
         prefix: text::new(),
@@ -490,7 +490,7 @@ fn new_call(op: u32) -> Call {
 fn resolve(i: usize) -> insp::Handle {
     return match SNAPSHOT.at_ptr(i) {
         option::Option[*insp::Node]::Some(p) => { (*p).handle }
-        option::Option[*insp::Node]::None => insp::Handle::none(),
+        option::Option::None => insp::Handle::none(),
     };
 }
 
@@ -510,7 +510,7 @@ fn value_for(h: insp::Handle, prop: str, tag: u32, num: f64, flag: bool, raw: st
                     option::Option[insp::Value]::Some(insp::Value::Int(num as i64)),
                 _ => option::Option[insp::Value]::Some(insp::Value::Num(num)),
             },
-            option::Option[insp::Value]::None => option::Option[insp::Value]::None,
+            option::Option::None => option::Option[insp::Value]::None,
         };
     }
     if tag == TAG_STR {
@@ -533,7 +533,7 @@ fn run_call(ctx: *u8) {
         SNAPSHOT = b.describe_now();
         let pfx: str = { (*c).prefix };
         var arr: vec::Vec[json::Value] = vec::new::[json::Value]();
-        var i: usize = 0 as usize;
+        var i: usize = 0;
         while i < SNAPSHOT.count() {
             match SNAPSHOT.at_ptr(i) {
                 option::Option[*insp::Node]::Some(p) => {
@@ -548,9 +548,9 @@ fn run_call(ctx: *u8) {
                     let kp: *text::Text = { #addr_of((*p).key) };
                     if key_matches({ (*kp).view() }, pfx) { arr.append(node_json(p, i)); }
                 }
-                option::Option[*insp::Node]::None => { }
+                option::Option::None => { }
             }
-            i = i +% (1 as usize);
+            i = i +% 1;
         }
         var m: vec::Vec[json::Member] = vec::new::[json::Member]();
         m.append(member("revision", jnum(flex::removal_count() as f64)));
@@ -561,16 +561,16 @@ fn run_call(ctx: *u8) {
     }
     if op == OP_JOURNAL {
         var arr: vec::Vec[json::Value] = vec::new::[json::Value]();
-        var i: usize = 0 as usize;
+        var i: usize = 0;
         let n: usize = tree::journal_count();
         while i < n {
             match tree::journal_at(i) {
                 option::Option[text::Text]::Some(line) => {
                     arr.append(json::Value::Text(line.clone()));
                 }
-                option::Option[text::Text]::None => { }
+                option::Option::None => { }
             }
-            i = i +% (1 as usize);
+            i = i +% 1;
         }
         var m: vec::Vec[json::Member] = vec::new::[json::Member]();
         m.append(member("lines", json::Value::Array(arr)));
@@ -609,7 +609,7 @@ fn run_call(ctx: *u8) {
             }
             // A live handle that inspects to nothing went stale between the
             // listing and the read, which is a re-describe and not a mistake.
-            option::Option[insp::Detail]::None => {
+            option::Option::None => {
                 { (*c).outcome = insp::Outcome::Stale };
             }
         }
@@ -632,7 +632,7 @@ fn run_call(ctx: *u8) {
             option::Option[str]::Some(name) => {
                 { (*c).outcome = b.reset_now(h, name) };
             }
-            option::Option[str]::None => {
+            option::Option::None => {
                 { (*c).outcome = insp::Outcome::UnknownProperty };
             }
         }
@@ -643,7 +643,7 @@ fn run_call(ctx: *u8) {
         let rp: *text::Text = { #addr_of((*c).raw) };
         let prop: str = match tree::canonical_prop({ (*pp).view() }) {
             option::Option[str]::Some(name) => name,
-            option::Option[str]::None => {
+            option::Option::None => {
                 { (*c).outcome = insp::Outcome::UnknownProperty };
                 return;
             }
@@ -656,7 +656,7 @@ fn run_call(ctx: *u8) {
             // case: it is real, it has a name in the table, and it answers no
             // readable value — so `set` is left to say `ReadOnly` rather than
             // this guessing `UnknownProperty` for something that plainly exists.
-            option::Option[insp::Value]::None => {
+            option::Option::None => {
                 { (*c).outcome = b.set_now(h, prop, insp::Value::Nothing) };
             }
         }
@@ -725,7 +725,7 @@ fn do_answering(id: f64, take c: Call) -> json::Value {
     let o: insp::Outcome = c.outcome;
     return match take_out() {
         option::Option[json::Value]::Some(v) => ok_response(id, v),
-        option::Option[json::Value]::None => ok_response(id, outcome_result(o)),
+        option::Option::None => ok_response(id, outcome_result(o)),
     };
 }
 
@@ -742,13 +742,13 @@ fn do_describe(id: f64, params: json::Value) -> json::Value {
 fn do_inspect(id: f64, params: json::Value, grant: auth::Grant) -> json::Value {
     if !params.has("node") { return missing_param(id, "inspector.inspect", "node"); }
     var c: Call = new_call(OP_INSPECT);
-    c.node = as_usize(obj_get(params, "node"), 0 as usize);
+    c.node = as_usize(obj_get(params, "node"), 0);
     // `inspect` answers a node WHOLE, control props included, so it is a
     // content read whenever the node carries a tier — there is no per-property
     // request to narrow. Structure alone is still available through `describe`,
     // which is why refusing here does not blind a developer's tooling.
     let tier: u32 = effective_tier(c.node);
-    if tier != (0 as u32) {
+    if tier != 0 {
         if !grant.has(content_caps(tier)) {
             return refused(id, "inspector: this node's contents are behind a tier this grant does not carry");
         }
@@ -765,7 +765,7 @@ fn do_set(id: f64, params: json::Value) -> json::Value {
     if !params.has("value") { return missing_param(id, "inspector.set", "value"); }
 
     var c: Call = new_call(OP_SET);
-    c.node = as_usize(obj_get(params, "node"), 0 as usize);
+    c.node = as_usize(obj_get(params, "node"), 0);
     c.prop = as_text(obj_get(params, "property"));
     let v: json::Value = obj_get(params, "value");
     match v {
@@ -786,7 +786,7 @@ fn do_reset(id: f64, params: json::Value) -> json::Value {
     if !params.has("node") { return missing_param(id, "inspector.reset", "node"); }
     if !params.has("property") { return missing_param(id, "inspector.reset", "property"); }
     var c: Call = new_call(OP_RESET);
-    c.node = as_usize(obj_get(params, "node"), 0 as usize);
+    c.node = as_usize(obj_get(params, "node"), 0);
     c.prop = as_text(obj_get(params, "property"));
     run_ui(run_call, #addr_of(c) as *u8);
     return ok_response(id, outcome_result(c.outcome));
@@ -796,7 +796,7 @@ fn do_insert(id: f64, params: json::Value) -> json::Value {
     if !params.has("node") { return missing_param(id, "inspector.insert", "node"); }
     if !params.has("element") { return missing_param(id, "inspector.insert", "element"); }
     var c: Call = new_call(OP_INSERT);
-    c.node = as_usize(obj_get(params, "node"), 0 as usize);
+    c.node = as_usize(obj_get(params, "node"), 0);
     let maker: text::Text = as_text(obj_get(params, "element"));
     let key: text::Text = as_text(obj_get(params, "key"));
     let label: text::Text = as_text(obj_get(params, "text"));
@@ -811,7 +811,7 @@ fn do_insert(id: f64, params: json::Value) -> json::Value {
 fn do_remove(id: f64, params: json::Value) -> json::Value {
     if !params.has("node") { return missing_param(id, "inspector.remove", "node"); }
     var c: Call = new_call(OP_REMOVE);
-    c.node = as_usize(obj_get(params, "node"), 0 as usize);
+    c.node = as_usize(obj_get(params, "node"), 0);
     run_ui(run_call, #addr_of(c) as *u8);
     return ok_response(id, outcome_result(c.outcome));
 }
@@ -820,8 +820,8 @@ fn do_reparent(id: f64, params: json::Value) -> json::Value {
     if !params.has("node") { return missing_param(id, "inspector.reparent", "node"); }
     if !params.has("parent") { return missing_param(id, "inspector.reparent", "parent"); }
     var c: Call = new_call(OP_REPARENT);
-    c.node = as_usize(obj_get(params, "node"), 0 as usize);
-    c.parent = as_usize(obj_get(params, "parent"), 0 as usize);
+    c.node = as_usize(obj_get(params, "node"), 0);
+    c.parent = as_usize(obj_get(params, "parent"), 0);
     c.at = as_usize(obj_get(params, "at"), (0 as usize) -% (1 as usize));
     run_ui(run_call, #addr_of(c) as *u8);
     return ok_response(id, outcome_result(c.outcome));
@@ -836,7 +836,7 @@ fn do_simple(id: f64, op: u32) -> json::Value {
 fn do_highlight(id: f64, params: json::Value) -> json::Value {
     if !params.has("node") { return missing_param(id, "inspector.highlight", "node"); }
     var c: Call = new_call(OP_HIGHLIGHT);
-    c.node = as_usize(obj_get(params, "node"), 0 as usize);
+    c.node = as_usize(obj_get(params, "node"), 0);
     run_ui(run_call, #addr_of(c) as *u8);
     return ok_response(id, outcome_result(c.outcome));
 }
@@ -846,23 +846,23 @@ fn do_highlight(id: f64, params: json::Value) -> json::Value {
 fn do_vocabulary(id: f64) -> json::Value {
     var elements: vec::Vec[json::Value] = vec::new::[json::Value]();
     let mk: vec::Vec[str] = tree::maker_names();
-    var i: usize = 0 as usize;
+    var i: usize = 0;
     while i < mk.count() {
         match mk.at(i) {
             option::Option[str]::Some(nm) => { elements.append(jstr(nm)); }
-            option::Option[str]::None => { }
+            option::Option::None => { }
         }
-        i = i +% (1 as usize);
+        i = i +% 1;
     }
     var props: vec::Vec[json::Value] = vec::new::[json::Value]();
     let pn: vec::Vec[str] = tree::declared_names();
-    var j: usize = 0 as usize;
+    var j: usize = 0;
     while j < pn.count() {
         match pn.at(j) {
             option::Option[str]::Some(nm) => { props.append(jstr(nm)); }
-            option::Option[str]::None => { }
+            option::Option::None => { }
         }
-        j = j +% (1 as usize);
+        j = j +% 1;
     }
     var m: vec::Vec[json::Member] = vec::new::[json::Member]();
     m.append(member("elements", json::Value::Array(elements)));
@@ -918,12 +918,12 @@ fn is_content_property(prop: str) -> bool {
 // Same rule agent_core applies, over the only parent chain this module has.
 // Bounded by the snapshot length so a malformed listing cannot loop.
 fn effective_tier(index: usize) -> u32 {
-    var worst: u32 = 0 as u32;
+    var worst: u32 = 0;
     var cur: option::Option[usize] = option::Option[usize]::Some(index);
-    var steps: usize = 0 as usize;
+    var steps: usize = 0;
     loop {
         if steps > SNAPSHOT.count() { return worst; }
-        steps = steps +% (1 as usize);
+        steps = steps +% 1;
         match cur {
             option::Option[usize]::Some(i) => {
                 match SNAPSHOT.at_ptr(i) {
@@ -932,21 +932,21 @@ fn effective_tier(index: usize) -> u32 {
                         if t > worst { worst = t; }
                         cur = { (*p).parent };
                     }
-                    option::Option[*insp::Node]::None => { return worst; }
+                    option::Option::None => { return worst; }
                 }
             }
-            option::Option[usize]::None => { return worst; }
+            option::Option::None => { return worst; }
         }
     }
 }
 
-// The capabilities a content read costs at a tier. `Hidden` (3) is not a tier
+// The capabilities a content read costs at a tier. `Hidden` 3 is not a tier
 // but an exclusion, and there is no grant for it — a node the application took
 // out of the agent's world does not answer its contents to one.
 fn content_caps(tier: u32) -> u32 {
-    if tier == (1 as u32) { return auth::cap_read() | auth::cap_read_protected(); }
-    if tier == (2 as u32) { return auth::cap_read() | auth::cap_read_private(); }
-    if tier == (3 as u32) { return auth::cap_read() | auth::cap_read_private() | auth::cap_edit_tree(); }
+    if tier == 1 { return auth::cap_read() | auth::cap_read_protected(); }
+    if tier == 2 { return auth::cap_read() | auth::cap_read_private(); }
+    if tier == 3 { return auth::cap_read() | auth::cap_read_private() | auth::cap_edit_tree(); }
     return auth::cap_read();
 }
 

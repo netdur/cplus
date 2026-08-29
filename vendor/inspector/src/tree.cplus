@@ -105,7 +105,7 @@ fn self_root() -> *core::Node { return SELF_ROOT; }
 fn clear_self() { SELF_ROOT = 0 as *core::Node; return; }
 
 fn ledger_index(n: *core::Node, prop: str) -> option::Option[usize] {
-    var i: usize = 0 as usize;
+    var i: usize = 0;
     let c: usize = OVERRIDES.count();
     while i < c {
         match OVERRIDES.at_ptr(i) {
@@ -114,9 +114,9 @@ fn ledger_index(n: *core::Node, prop: str) -> option::Option[usize] {
                     if { (*p).prop } == prop { return option::Option[usize]::Some(i); }
                 }
             }
-            option::Option[*Override]::None => { }
+            option::Option::None => { }
         }
-        i = i +% (1 as usize);
+        i = i +% 1;
     }
     return option::Option[usize]::None;
 }
@@ -124,7 +124,7 @@ fn ledger_index(n: *core::Node, prop: str) -> option::Option[usize] {
 fn is_overridden(n: *core::Node, prop: str) -> bool {
     return match ledger_index(n, prop) {
         option::Option[usize]::Some(_i) => true,
-        option::Option[usize]::None => false,
+        option::Option::None => false,
     };
 }
 
@@ -133,7 +133,7 @@ fn is_overridden(n: *core::Node, prop: str) -> bool {
 fn ledger_record(n: *core::Node, prop: str, take original: insp::Value) {
     match ledger_index(n, prop) {
         option::Option[usize]::Some(_i) => { return; }
-        option::Option[usize]::None => { }
+        option::Option::None => { }
     }
     let _s: status::Status = OVERRIDES.append(Override {
         node: n, prop: prop, original: original,
@@ -151,12 +151,12 @@ fn ledger_take(n: *core::Node, prop: str) -> option::Option[insp::Value] {
             var copied: insp::Value = insp::Value::Nothing;
             match OVERRIDES.at_ptr(i) {
                 option::Option[*Override]::Some(p) => { copied = { (*p).original }.clone(); }
-                option::Option[*Override]::None => { }
+                option::Option::None => { }
             }
             let _gone: option::Option[Override] = OVERRIDES.remove(i);
             option::Option[insp::Value]::Some(copied)
         }
-        option::Option[usize]::None => option::Option[insp::Value]::None,
+        option::Option::None => option::Option[insp::Value]::None,
     };
 }
 
@@ -193,10 +193,10 @@ fn row_of(
         dirty: core::dirty_of(n),
         child_count: core::child_count_of(n),
         agent_tier: match core::agent(n) {
-            vocab::Agent::Open => 0 as u32,
-            vocab::Agent::Protected => 1 as u32,
-            vocab::Agent::Private => 2 as u32,
-            vocab::Agent::Hidden => 3 as u32,
+            vocab::Agent::Open => 0,
+            vocab::Agent::Protected => 1,
+            vocab::Agent::Private => 2,
+            vocab::Agent::Hidden => 3,
         },
         is_inspector: mine,
     };
@@ -217,17 +217,17 @@ fn walk(
     }
     let idx: usize = { (*out).count() };
     let _s: status::Status = { (*out).append(row_of(n, parent, depth, window, mine)) };
-    var i: usize = 0 as usize;
+    var i: usize = 0;
     let c: usize = core::child_count_of(n);
     while i < c {
         match core::child_of(n, i) {
             option::Option[*core::Node]::Some(ch) => {
-                walk(ch, option::Option[usize]::Some(idx), depth +% (1 as usize),
+                walk(ch, option::Option[usize]::Some(idx), depth +% 1,
                      window, mine, out);
             }
-            option::Option[*core::Node]::None => { }
+            option::Option::None => { }
         }
-        i = i +% (1 as usize);
+        i = i +% 1;
     }
     return;
 }
@@ -237,14 +237,14 @@ fn walk(
 // number and a key lookup never disagree about which node is "first".
 fn describe() -> vec::Vec[insp::Node] {
     var out: vec::Vec[insp::Node] = vec::new::[insp::Node]();
-    var w: usize = 0 as usize;
+    var w: usize = 0;
     let n: usize = app::window_count();
     while w < n {
         let r: *core::Node = app::window_root(w);
         if r != (0 as *core::Node) {
-            walk(r, option::Option[usize]::None, 0 as usize, w, false, #addr_of(out));
+            walk(r, option::Option[usize]::None, 0, w, false, #addr_of(out));
         }
-        w = w +% (1 as usize);
+        w = w +% 1;
     }
     return out;
 }
@@ -278,14 +278,14 @@ fn as_points(l: flex::StyleLength) -> option::Option[f64] {
 fn same_points(l: flex::StyleLength, x: f64) -> bool {
     return match as_points(l) {
         option::Option[f64]::Some(y) => y == x,
-        option::Option[f64]::None => false,
+        option::Option::None => false,
     };
 }
 
 fn len_value(l: flex::StyleLength) -> insp::Value {
     return match as_points(l) {
         option::Option[f64]::Some(x) => insp::Value::Num(x),
-        option::Option[f64]::None => insp::Value::Nothing,
+        option::Option::None => insp::Value::Nothing,
     };
 }
 
@@ -304,7 +304,7 @@ fn uniform(a: flex::StyleLength, b: flex::StyleLength,
             if !same_points(d, x) { return insp::Value::Nothing; }
             insp::Value::Num(x)
         }
-        option::Option[f64]::None => insp::Value::Nothing,
+        option::Option::None => insp::Value::Nothing,
     };
 }
 
@@ -360,7 +360,7 @@ fn get_uniform(n: *core::Node, prop: str) -> option::Option[insp::Value] {
                 if same_points(gc, x) { num(x) }
                 else { option::Option[insp::Value]::Some(insp::Value::Nothing) }
             }
-            option::Option[f64]::None =>
+            option::Option::None =>
                 option::Option[insp::Value]::Some(insp::Value::Nothing),
         };
     }
@@ -382,7 +382,7 @@ fn keyed_resolves_here(n: *core::Node, window: usize) -> bool {
     if r == (0 as *core::Node) { return false; }
     return match core::find_in(r, k) {
         option::Option[*core::Node]::Some(p) => p == n,
-        option::Option[*core::Node]::None => false,
+        option::Option::None => false,
     };
 }
 
@@ -398,19 +398,19 @@ fn get_control(n: *core::Node, prop: str, window: usize) -> option::Option[insp:
         if kind == props::K_LABEL {
             return match label::find(k, within: root) {
                 option::Option[label::Label]::Some(l) => owned(l.text()),
-                option::Option[label::Label]::None => option::Option[insp::Value]::None,
+                option::Option::None => option::Option[insp::Value]::None,
             };
         }
         if kind == props::K_TEXT_FIELD {
             return match text_field::find(k, within: root) {
                 option::Option[text_field::TextField]::Some(t) => owned(t.text()),
-                option::Option[text_field::TextField]::None => option::Option[insp::Value]::None,
+                option::Option::None => option::Option[insp::Value]::None,
             };
         }
         if kind == props::K_TEXT_AREA {
             return match text_area::find(k, within: root) {
                 option::Option[text_area::TextArea]::Some(t) => owned(t.text()),
-                option::Option[text_area::TextArea]::None => option::Option[insp::Value]::None,
+                option::Option::None => option::Option[insp::Value]::None,
             };
         }
         return option::Option[insp::Value]::None;
@@ -420,7 +420,7 @@ fn get_control(n: *core::Node, prop: str, window: usize) -> option::Option[insp:
         if kind == props::K_BUTTON {
             return match button::find(k, within: root) {
                 option::Option[button::Button]::Some(b) => owned(b.title()),
-                option::Option[button::Button]::None => option::Option[insp::Value]::None,
+                option::Option::None => option::Option[insp::Value]::None,
             };
         }
         return option::Option[insp::Value]::None;
@@ -430,13 +430,13 @@ fn get_control(n: *core::Node, prop: str, window: usize) -> option::Option[insp:
         if kind == props::K_CHECKBOX {
             return match checkbox::find(k, within: root) {
                 option::Option[checkbox::Checkbox]::Some(c) => boolean(c.on()),
-                option::Option[checkbox::Checkbox]::None => option::Option[insp::Value]::None,
+                option::Option::None => option::Option[insp::Value]::None,
             };
         }
         if kind == props::K_TOGGLE {
             return match toggle::find(k, within: root) {
                 option::Option[toggle::Toggle]::Some(t) => boolean(t.on()),
-                option::Option[toggle::Toggle]::None => option::Option[insp::Value]::None,
+                option::Option::None => option::Option[insp::Value]::None,
             };
         }
         return option::Option[insp::Value]::None;
@@ -450,7 +450,7 @@ fn get(h: insp::Handle, prop: str) -> option::Option[insp::Value] {
     let n: *core::Node = h.node;
     match get_uniform(n, prop) {
         option::Option[insp::Value]::Some(v) => { return option::Option[insp::Value]::Some(v); }
-        option::Option[insp::Value]::None => { }
+        option::Option::None => { }
     }
     return get_control(n, prop, h.window);
 }
@@ -473,11 +473,11 @@ fn hex_digit(b: u8) -> i32 {
 fn hex_pair(t: text::Text, at: usize) -> i32 {
     let hi: i32 = match t.byte_at(at) {
         option::Option[u8]::Some(b) => hex_digit(b),
-        option::Option[u8]::None => -1,
+        option::Option::None => -1,
     };
-    let lo: i32 = match t.byte_at(at +% (1 as usize)) {
+    let lo: i32 = match t.byte_at(at +% 1) {
         option::Option[u8]::Some(b) => hex_digit(b),
-        option::Option[u8]::None => -1,
+        option::Option::None => -1,
     };
     if hi < 0 { return -1; }
     if lo < 0 { return -1; }
@@ -487,16 +487,16 @@ fn hex_pair(t: text::Text, at: usize) -> i32 {
 // `#2277ff`, the spelling every developer already has in their fingers.
 fn parse_hex_color(s: str) -> option::Option[vocab::Color] {
     let t: text::Text = text::from_str(s);
-    if t.count() != (7 as usize) { return option::Option[vocab::Color]::None; }
+    if t.count() != 7 { return option::Option[vocab::Color]::None; }
     if !t.has_prefix("#") { return option::Option[vocab::Color]::None; }
-    let r: i32 = hex_pair(t, 1 as usize);
-    let g: i32 = hex_pair(t, 3 as usize);
-    let b: i32 = hex_pair(t, 5 as usize);
+    let r: i32 = hex_pair(t, 1);
+    let g: i32 = hex_pair(t, 3);
+    let b: i32 = hex_pair(t, 5);
     if r < 0 { return option::Option[vocab::Color]::None; }
     if g < 0 { return option::Option[vocab::Color]::None; }
     if b < 0 { return option::Option[vocab::Color]::None; }
     return option::Option[vocab::Color]::Some(vocab::Color::rgba(
-        (r as f64) / 255.0f64, (g as f64) / 255.0f64, (b as f64) / 255.0f64, 1.0f64));
+        (r as f64) / 255.0, (g as f64) / 255.0, (b as f64) / 255.0, 1.0));
 }
 
 // What arrived, read as the tag the property already holds. The current value
@@ -513,24 +513,24 @@ fn parse_as(current: insp::Value, typed: str) -> option::Option[insp::Value] {
         }
         insp::Value::Num(_x) => match typed.to_f64() {
             option::Option[f64]::Some(f) => option::Option[insp::Value]::Some(insp::Value::Num(f)),
-            option::Option[f64]::None => option::Option[insp::Value]::None,
+            option::Option::None => option::Option[insp::Value]::None,
         },
         insp::Value::Int(_i) => match typed.to_i64() {
             option::Option[i64]::Some(n) => option::Option[insp::Value]::Some(insp::Value::Int(n)),
-            option::Option[i64]::None => option::Option[insp::Value]::None,
+            option::Option::None => option::Option[insp::Value]::None,
         },
         insp::Value::Str(_s) =>
             option::Option[insp::Value]::Some(insp::Value::Str(text::from_str(typed))),
         insp::Value::Color(_c) => match parse_hex_color(typed) {
             option::Option[vocab::Color]::Some(c) =>
                 option::Option[insp::Value]::Some(insp::Value::Color(c)),
-            option::Option[vocab::Color]::None => option::Option[insp::Value]::None,
+            option::Option::None => option::Option[insp::Value]::None,
         },
         // An unset length. Empty clears nothing (there is no "unset" write in
         // v1), a number sets points.
         insp::Value::Nothing => match typed.to_f64() {
             option::Option[f64]::Some(f) => option::Option[insp::Value]::Some(insp::Value::Num(f)),
-            option::Option[f64]::None => option::Option[insp::Value]::None,
+            option::Option::None => option::Option[insp::Value]::None,
         },
         insp::Value::Enum(_e) =>
             option::Option[insp::Value]::Some(insp::Value::Enum(text::from_str(typed))),
@@ -543,7 +543,7 @@ fn parse_as(current: insp::Value, typed: str) -> option::Option[insp::Value] {
 fn parse_for(h: insp::Handle, prop: str, typed: str) -> option::Option[insp::Value] {
     return match get(h, prop) {
         option::Option[insp::Value]::Some(cur) => parse_as(cur, typed),
-        option::Option[insp::Value]::None => option::Option[insp::Value]::None,
+        option::Option::None => option::Option[insp::Value]::None,
     };
 }
 
@@ -630,13 +630,13 @@ fn computed_names() -> vec::Vec[str] {
 }
 
 fn in_list(names: vec::Vec[str], prop: str) -> bool {
-    var i: usize = 0 as usize;
+    var i: usize = 0;
     while i < names.count() {
         match names.at(i) {
             option::Option[str]::Some(nm) => { if nm == prop { return true; } }
-            option::Option[str]::None => { }
+            option::Option::None => { }
         }
-        i = i +% (1 as usize);
+        i = i +% 1;
     }
     return false;
 }
@@ -659,28 +659,28 @@ fn is_computed_prop(prop: str) -> bool { return in_list(computed_names(), prop);
 // stored.
 fn canonical_prop(name: str) -> option::Option[str] {
     let declared: vec::Vec[str] = declared_names();
-    var i: usize = 0 as usize;
+    var i: usize = 0;
     while i < declared.count() {
         match declared.at(i) {
             option::Option[str]::Some(nm) => {
                 if nm == name { return option::Option[str]::Some(nm); }
             }
-            option::Option[str]::None => { }
+            option::Option::None => { }
         }
-        i = i +% (1 as usize);
+        i = i +% 1;
     }
     // The read-only ones too, so a caller naming a computed property is told it
     // is read-only rather than that it does not exist.
     let computed: vec::Vec[str] = computed_names();
-    var j: usize = 0 as usize;
+    var j: usize = 0;
     while j < computed.count() {
         match computed.at(j) {
             option::Option[str]::Some(nm) => {
                 if nm == name { return option::Option[str]::Some(nm); }
             }
-            option::Option[str]::None => { }
+            option::Option::None => { }
         }
-        j = j +% (1 as usize);
+        j = j +% 1;
     }
     return option::Option[str]::None;
 }
@@ -690,49 +690,49 @@ fn apply_uniform(n: *core::Node, prop: str, v: insp::Value) -> insp::Outcome {
     if prop == "opacity" {
         return match num_of(v) {
             option::Option[f64]::Some(x) => { core::set_opacity(n, x); insp::Outcome::Ok }
-            option::Option[f64]::None => insp::Outcome::TypeMismatch,
+            option::Option::None => insp::Outcome::TypeMismatch,
         };
     }
     if prop == "visible" {
         return match bool_of(v) {
             option::Option[bool]::Some(b) => { core::set_visible(n, b); insp::Outcome::Ok }
-            option::Option[bool]::None => insp::Outcome::TypeMismatch,
+            option::Option::None => insp::Outcome::TypeMismatch,
         };
     }
     if prop == "enabled" {
         return match bool_of(v) {
             option::Option[bool]::Some(b) => { core::set_enabled(n, b); insp::Outcome::Ok }
-            option::Option[bool]::None => insp::Outcome::TypeMismatch,
+            option::Option::None => insp::Outcome::TypeMismatch,
         };
     }
     if prop == "input_transparent" {
         return match bool_of(v) {
             option::Option[bool]::Some(b) => { core::set_input_transparent(n, b); insp::Outcome::Ok }
-            option::Option[bool]::None => insp::Outcome::TypeMismatch,
+            option::Option::None => insp::Outcome::TypeMismatch,
         };
     }
     if prop == "rotation" {
         return match num_of(v) {
             option::Option[f64]::Some(x) => { core::set_rotation(n, x); insp::Outcome::Ok }
-            option::Option[f64]::None => insp::Outcome::TypeMismatch,
+            option::Option::None => insp::Outcome::TypeMismatch,
         };
     }
     if prop == "scale" {
         return match num_of(v) {
             option::Option[f64]::Some(x) => { core::set_scale(n, x); insp::Outcome::Ok }
-            option::Option[f64]::None => insp::Outcome::TypeMismatch,
+            option::Option::None => insp::Outcome::TypeMismatch,
         };
     }
     if prop == "translation_x" {
         return match num_of(v) {
             option::Option[f64]::Some(x) => { core::set_translation_x(n, x); insp::Outcome::Ok }
-            option::Option[f64]::None => insp::Outcome::TypeMismatch,
+            option::Option::None => insp::Outcome::TypeMismatch,
         };
     }
     if prop == "translation_y" {
         return match num_of(v) {
             option::Option[f64]::Some(x) => { core::set_translation_y(n, x); insp::Outcome::Ok }
-            option::Option[f64]::None => insp::Outcome::TypeMismatch,
+            option::Option::None => insp::Outcome::TypeMismatch,
         };
     }
     if prop == "corner_radius" {
@@ -741,7 +741,7 @@ fn apply_uniform(n: *core::Node, prop: str, v: insp::Value) -> insp::Outcome {
                 core::set_corner_radius(n, vocab::Corners::all(x));
                 insp::Outcome::Ok
             }
-            option::Option[f64]::None => insp::Outcome::TypeMismatch,
+            option::Option::None => insp::Outcome::TypeMismatch,
         };
     }
     if prop == "background_color" {
@@ -767,19 +767,19 @@ fn apply_uniform(n: *core::Node, prop: str, v: insp::Value) -> insp::Outcome {
     if prop == "grow" {
         return match num_of(v) {
             option::Option[f64]::Some(x) => { core::set_grow(n, x); insp::Outcome::Ok }
-            option::Option[f64]::None => insp::Outcome::TypeMismatch,
+            option::Option::None => insp::Outcome::TypeMismatch,
         };
     }
     if prop == "shrink" {
         return match num_of(v) {
             option::Option[f64]::Some(x) => { core::set_shrink(n, x); insp::Outcome::Ok }
-            option::Option[f64]::None => insp::Outcome::TypeMismatch,
+            option::Option::None => insp::Outcome::TypeMismatch,
         };
     }
     if is_length_prop(prop) {
         return match num_of(v) {
             option::Option[f64]::Some(x) => { set_len(n, prop, x); insp::Outcome::Ok }
-            option::Option[f64]::None => insp::Outcome::TypeMismatch,
+            option::Option::None => insp::Outcome::TypeMismatch,
         };
     }
 
@@ -805,7 +805,7 @@ fn apply_control(n: *core::Node, prop: str, v: insp::Value, window: usize) -> in
                             let _h: label::Label = l.set_text(s.view());
                             return insp::Outcome::Ok;
                         }
-                        option::Option[label::Label]::None => { return insp::Outcome::NotFound; }
+                        option::Option::None => { return insp::Outcome::NotFound; }
                     }
                 }
                 if kind == props::K_TEXT_FIELD {
@@ -814,7 +814,7 @@ fn apply_control(n: *core::Node, prop: str, v: insp::Value, window: usize) -> in
                             let _h: text_field::TextField = t.set_text(s.view());
                             return insp::Outcome::Ok;
                         }
-                        option::Option[text_field::TextField]::None => { return insp::Outcome::NotFound; }
+                        option::Option::None => { return insp::Outcome::NotFound; }
                     }
                 }
                 if kind == props::K_TEXT_AREA {
@@ -823,7 +823,7 @@ fn apply_control(n: *core::Node, prop: str, v: insp::Value, window: usize) -> in
                             let _h: text_area::TextArea = t.set_text(s.view());
                             return insp::Outcome::Ok;
                         }
-                        option::Option[text_area::TextArea]::None => { return insp::Outcome::NotFound; }
+                        option::Option::None => { return insp::Outcome::NotFound; }
                     }
                 }
                 return insp::Outcome::UnknownProperty;
@@ -841,7 +841,7 @@ fn apply_control(n: *core::Node, prop: str, v: insp::Value, window: usize) -> in
                         let _h: button::Button = b.set_title(s.view());
                         return insp::Outcome::Ok;
                     }
-                    option::Option[button::Button]::None => { return insp::Outcome::NotFound; }
+                    option::Option::None => { return insp::Outcome::NotFound; }
                 }
             }
             _ => insp::Outcome::TypeMismatch,
@@ -857,7 +857,7 @@ fn apply_control(n: *core::Node, prop: str, v: insp::Value, window: usize) -> in
                         let _h: checkbox::Checkbox = c.set_on(b);
                         return insp::Outcome::Ok;
                     }
-                    option::Option[checkbox::Checkbox]::None => { return insp::Outcome::NotFound; }
+                    option::Option::None => { return insp::Outcome::NotFound; }
                 }
             }
             if kind == props::K_TOGGLE {
@@ -866,12 +866,12 @@ fn apply_control(n: *core::Node, prop: str, v: insp::Value, window: usize) -> in
                         let _h: toggle::Toggle = t.set_on(b);
                         return insp::Outcome::Ok;
                     }
-                    option::Option[toggle::Toggle]::None => { return insp::Outcome::NotFound; }
+                    option::Option::None => { return insp::Outcome::NotFound; }
                 }
             }
             return insp::Outcome::UnknownProperty;
         }
-        option::Option[bool]::None => insp::Outcome::TypeMismatch,
+        option::Option::None => insp::Outcome::TypeMismatch,
     };
 }
 
@@ -888,7 +888,7 @@ fn set(h: insp::Handle, prop: str, take v: insp::Value) -> insp::Outcome {
     // to this pair replaces it.
     match get(h, prop) {
         option::Option[insp::Value]::Some(orig) => { ledger_record(n, prop, orig); }
-        option::Option[insp::Value]::None => { }
+        option::Option::None => { }
     }
 
     let r: insp::Outcome = apply_uniform(n, prop, v);
@@ -914,7 +914,7 @@ fn reset(h: insp::Handle, prop: str) -> insp::Outcome {
                 _ => r,
             }
         }
-        option::Option[insp::Value]::None => insp::Outcome::Ok,
+        option::Option::None => insp::Outcome::Ok,
     };
 }
 
@@ -969,7 +969,7 @@ fn declared_names() -> vec::Vec[str] {
 fn declared_props(h: insp::Handle, n: *core::Node) -> vec::Vec[insp::Prop] {
     var out: vec::Vec[insp::Prop] = vec::new::[insp::Prop]();
     let names: vec::Vec[str] = declared_names();
-    var i: usize = 0 as usize;
+    var i: usize = 0;
     let c: usize = names.count();
     while i < c {
         match names.at(i) {
@@ -979,12 +979,12 @@ fn declared_props(h: insp::Handle, n: *core::Node) -> vec::Vec[insp::Prop] {
                         let _s: status::Status =
                             out.append(insp::Prop::editable(nm, v, is_overridden(n, nm)));
                     }
-                    option::Option[insp::Value]::None => { }
+                    option::Option::None => { }
                 }
             }
-            option::Option[str]::None => { }
+            option::Option::None => { }
         }
-        i = i +% (1 as usize);
+        i = i +% 1;
     }
     return out;
 }
@@ -1021,7 +1021,7 @@ fn inspect(h: insp::Handle) -> option::Option[insp::Detail] {
     if !h.is_live() { return option::Option[insp::Detail]::None; }
     let n: *core::Node = h.node;
     return option::Option[insp::Detail]::Some(insp::Detail {
-        node: row_of(n, option::Option[usize]::None, 0 as usize, h.window, false),
+        node: row_of(n, option::Option[usize]::None, 0, h.window, false),
         declared: declared_props(h, n),
         computed: computed_props(n),
         native: native_props(n),
@@ -1034,7 +1034,7 @@ fn append_num(t: *text::Text, x: f64) {
     // Whole numbers read as whole numbers: `12` and not `12.000000`, because
     // the snippet is meant to be pasted into source a human will read.
     let r: f64 = x - (((x as i64) as f64));
-    if r == 0.0f64 {
+    if r == 0.0 {
         let _a: status::Status = { (*t).append({ (x as i64) }.to_text().view()) };
         let _b: status::Status = { (*t).append(".0f64") };
         return;
@@ -1085,7 +1085,7 @@ fn snippet_for(h: insp::Handle, prop: str) -> text::Text {
             }
             let _m: status::Status = out.append(");");
         }
-        option::Option[insp::Value]::None => { }
+        option::Option::None => { }
     }
     return out;
 }
@@ -1160,7 +1160,7 @@ fn make(sp: insp::Spec) -> option::Option[core::Node] {
         return option::Option[core::Node]::Some(ui::column(b, key: k));
     }
     if m == "spacer" {
-        return option::Option[core::Node]::Some(ui::spacer(key: k).grow(1.0f64));
+        return option::Option[core::Node]::Some(ui::spacer(key: k).grow(1.0));
     }
     if m == "box" {
         return option::Option[core::Node]::Some(
@@ -1200,7 +1200,7 @@ fn maker_names() -> vec::Vec[str] {
 fn can_host_children(n: *core::Node) -> bool {
     if n == (0 as *core::Node) { return false; }
     let kind: u32 = core::kind_of(n);
-    if kind == (0 as u32) { return true; }
+    if kind == 0 { return true; }
     if kind == props::K_BOX { return true; }
     if kind == props::K_SCROLL { return true; }
     return false;
@@ -1215,16 +1215,16 @@ fn within(root: *core::Node, target: *core::Node) -> bool {
     if root == (0 as *core::Node) { return false; }
     if target == (0 as *core::Node) { return false; }
     if root == target { return true; }
-    var i: usize = 0 as usize;
+    var i: usize = 0;
     let c: usize = core::child_count_of(root);
     while i < c {
         match core::child_of(root, i) {
             option::Option[*core::Node]::Some(ch) => {
                 if within(ch, target) { return true; }
             }
-            option::Option[*core::Node]::None => { }
+            option::Option::None => { }
         }
-        i = i +% (1 as usize);
+        i = i +% 1;
     }
     return false;
 }
@@ -1287,7 +1287,7 @@ fn path_to(root: *core::Node, target: *core::Node, ref out: vec::Vec[usize]) -> 
     if root == (0 as *core::Node) { return false; }
     if target == (0 as *core::Node) { return false; }
     if root == target { return true; }
-    var i: usize = 0 as usize;
+    var i: usize = 0;
     let c: usize = core::child_count_of(root);
     while i < c {
         match core::child_of(root, i) {
@@ -1296,9 +1296,9 @@ fn path_to(root: *core::Node, target: *core::Node, ref out: vec::Vec[usize]) -> 
                 if path_to(ch, target, out) { return true; }
                 let _r: option::Option[usize] = out.remove_last();
             }
-            option::Option[*core::Node]::None => { }
+            option::Option::None => { }
         }
-        i = i +% (1 as usize);
+        i = i +% 1;
     }
     return false;
 }
@@ -1307,7 +1307,7 @@ fn path_to(root: *core::Node, target: *core::Node, ref out: vec::Vec[usize]) -> 
 // is a removal whose parent is already gone — the caller keeps the subtree out
 // of the trash rather than storing a path that can never resolve.
 fn trash_push_parent(p: *core::Node) -> bool {
-    var w: usize = 0 as usize;
+    var w: usize = 0;
     let n: usize = app::window_count();
     while w < n {
         let before: usize = TRASH_PATH.count();
@@ -1316,7 +1316,7 @@ fn trash_push_parent(p: *core::Node) -> bool {
             let _l: status::Status = TRASH_PATH_LEN.append(TRASH_PATH.count() -% before);
             return true;
         }
-        w = w +% (1 as usize);
+        w = w +% 1;
     }
     return false;
 }
@@ -1326,7 +1326,7 @@ fn trash_push_parent(p: *core::Node) -> bool {
 fn or_zero(o: option::Option[usize]) -> usize {
     return match o {
         option::Option[usize]::Some(x) => x,
-        option::Option[usize]::None => 0 as usize,
+        option::Option::None => 0,
     };
 }
 
@@ -1335,22 +1335,22 @@ fn or_zero(o: option::Option[usize]) -> usize {
 // not there any more, and `undo_remove` refuses rather than guessing.
 fn trash_top_parent() -> *core::Node {
     let c: usize = TRASH_PATH_LEN.count();
-    if c == (0 as usize) { return 0 as *core::Node; }
-    let last: usize = c -% (1 as usize);
+    if c == 0 { return 0 as *core::Node; }
+    let last: usize = c -% 1;
     let len: usize = or_zero(TRASH_PATH_LEN.at(last));
     let w: usize = or_zero(TRASH_WINDOW.at(last));
     if w >= app::window_count() { return 0 as *core::Node; }
     if len > TRASH_PATH.count() { return 0 as *core::Node; }
     var n: *core::Node = app::window_root(w);
     let base: usize = TRASH_PATH.count() -% len;
-    var i: usize = 0 as usize;
+    var i: usize = 0;
     while i < len {
         if n == (0 as *core::Node) { return 0 as *core::Node; }
         match core::child_of(n, or_zero(TRASH_PATH.at(base +% i))) {
             option::Option[*core::Node]::Some(ch) => { n = ch; }
-            option::Option[*core::Node]::None => { return 0 as *core::Node; }
+            option::Option::None => { return 0 as *core::Node; }
         }
-        i = i +% (1 as usize);
+        i = i +% 1;
     }
     return n;
 }
@@ -1358,16 +1358,16 @@ fn trash_top_parent() -> *core::Node {
 // Drop the top entry's path. Paired with every `TRASH.remove_last()`.
 fn trash_pop_parent() {
     let c: usize = TRASH_PATH_LEN.count();
-    if c == (0 as usize) { return; }
+    if c == 0 { return; }
     let len: usize = match TRASH_PATH_LEN.remove_last() {
         option::Option[usize]::Some(x) => x,
-        option::Option[usize]::None => 0 as usize,
+        option::Option::None => 0,
     };
     let _w: option::Option[usize] = TRASH_WINDOW.remove_last();
-    var i: usize = 0 as usize;
+    var i: usize = 0;
     while i < len {
         let _s: option::Option[usize] = TRASH_PATH.remove_last();
-        i = i +% (1 as usize);
+        i = i +% 1;
     }
     return;
 }
@@ -1390,7 +1390,7 @@ fn journal_count() -> usize { return JOURNAL.count(); }
 fn journal_at(i: usize) -> option::Option[text::Text] {
     return match JOURNAL.at_ptr(i) {
         option::Option[*text::Text]::Some(p) => option::Option[text::Text]::Some({ (*p) }.clone()),
-        option::Option[*text::Text]::None => option::Option[text::Text]::None,
+        option::Option::None => option::Option[text::Text]::None,
     };
 }
 
@@ -1530,7 +1530,7 @@ fn insert(parent: insp::Handle, at: usize, take sp: insp::Spec) -> insp::Outcome
                 insp::Outcome::NotAContainer
             }
         }
-        option::Option[core::Node]::None => insp::Outcome::UnknownKind,
+        option::Option::None => insp::Outcome::UnknownKind,
     };
 }
 
@@ -1545,9 +1545,9 @@ fn remove(h: insp::Handle) -> insp::Outcome {
     return match mount::parent_of(n) {
         // No parent means a window root — closed with `app::close_window`, not
         // deleted out from under itself.
-        option::Option[*core::Node]::None => insp::Outcome::Protected,
+        option::Option::None => insp::Outcome::Protected,
         option::Option[*core::Node]::Some(p) => match { (*p).child_index(n) } {
-            option::Option[usize]::None => insp::Outcome::NotFound,
+            option::Option::None => insp::Outcome::NotFound,
             option::Option[usize]::Some(at) => {
                 // Journalled while the node is still whole: after the removal
                 // its key is not readable from a pointer this scope still has.
@@ -1565,7 +1565,7 @@ fn remove(h: insp::Handle) -> insp::Outcome {
                             let _c: status::Status = TRASH_AT.append(at);
                             insp::Outcome::Ok
                         }
-                        option::Option[core::Node]::None => {
+                        option::Option::None => {
                             trash_pop_parent();
                             insp::Outcome::NotFound
                         }
@@ -1595,9 +1595,9 @@ fn reparent(h: insp::Handle, parent: insp::Handle, at: usize) -> insp::Outcome {
     if within(n, p) { return insp::Outcome::Cycle; }
 
     return match mount::parent_of(n) {
-        option::Option[*core::Node]::None => insp::Outcome::Protected,
+        option::Option::None => insp::Outcome::Protected,
         option::Option[*core::Node]::Some(old) => match { (*old).child_index(n) } {
-            option::Option[usize]::None => insp::Outcome::NotFound,
+            option::Option::None => insp::Outcome::NotFound,
             option::Option[usize]::Some(from) => {
                 var line: text::Text = text::new();
                 if addressable(n) {
@@ -1619,7 +1619,7 @@ fn reparent(h: insp::Handle, parent: insp::Handle, at: usize) -> insp::Outcome {
                         // nothing that still points at it.
                         else { insp::Outcome::NotAContainer }
                     }
-                    option::Option[core::Node]::None => insp::Outcome::NotFound,
+                    option::Option::None => insp::Outcome::NotFound,
                 }
             }
         },
@@ -1629,10 +1629,10 @@ fn reparent(h: insp::Handle, parent: insp::Handle, at: usize) -> insp::Outcome {
 // Put the most recent removal back where it came from.
 fn undo_remove() -> insp::Outcome {
     let c: usize = TRASH.count();
-    if c == (0 as usize) { return insp::Outcome::NothingToUndo; }
-    let at: usize = match TRASH_AT.at(c -% (1 as usize)) {
+    if c == 0 { return insp::Outcome::NothingToUndo; }
+    let at: usize = match TRASH_AT.at(c -% 1) {
         option::Option[usize]::Some(x) => x,
-        option::Option[usize]::None => 0 as usize,
+        option::Option::None => 0,
     };
     // Resolved now, not stored then: the parent may have been removed and put
     // back by an earlier undo, at a different address. Null means the path no
@@ -1653,7 +1653,7 @@ fn undo_remove() -> insp::Outcome {
             if mount::insert_child(parent, n, at) { insp::Outcome::Ok }
             else { insp::Outcome::NotAContainer }
         }
-        option::Option[core::Node]::None => insp::Outcome::NothingToUndo,
+        option::Option::None => insp::Outcome::NothingToUndo,
     };
 }
 

@@ -60,7 +60,7 @@ struct Handle {
 
 impl Handle {
     fn none() -> Handle {
-        return Handle { node: 0 as *core::Node, seen: 0 as u64, window: 0 as usize };
+        return Handle { node: 0 as *core::Node, seen: 0, window: 0 };
     }
 
     fn of(n: *core::Node, window: usize) -> Handle {

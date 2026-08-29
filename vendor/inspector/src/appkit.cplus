@@ -65,14 +65,14 @@ extern fn dispatch_sync_f(queue: *u8, ctx: *u8, work: fn(*u8));
 // `dispatch_get_main_queue()` is a macro over a libdispatch global, so there is
 // no function to call — dlsym the symbol (RTLD_DEFAULT is -2 on Darwin).
 fn main_queue() -> *u8 {
-    let rtld_default: *u8 = { ((0 as usize) -% (2 as usize)) as *u8 };
+    let rtld_default: *u8 = { (0 -% 2) as *u8 };
     return { dlsym(rtld_default, #str_ptr("_dispatch_main_q\0")) };
 }
 
 fn on_main_thread() -> bool {
     let ns_thread: *u8 = rt::get_class(#str_ptr("NSThread\0"));
     if ns_thread == (0 as *u8) { return true; }
-    return rt::msg_i8(ns_thread, rt::sel(#str_ptr("isMainThread\0"))) != (0 as i8);
+    return rt::msg_i8(ns_thread, rt::sel(#str_ptr("isMainThread\0"))) != 0;
 }
 
 fn run_on_main_sync(ctx: *u8, work: fn(*u8)) {
@@ -104,8 +104,8 @@ fn ensure_colours() {
         // A wash plus a solid edge. Two channels, not one: a fill alone
         // disappears over busy content and an edge alone is invisible on a
         // one-pixel control.
-        FILL = cg_rgba(0.13f64, 0.47f64, 1.0f64, 0.22f64);
-        STROKE = cg_rgba(0.13f64, 0.47f64, 1.0f64, 0.95f64);
+        FILL = cg_rgba(0.13, 0.47, 1.0, 0.22);
+        STROKE = cg_rgba(0.13, 0.47, 1.0, 0.95);
     }
     return;
 }
@@ -116,10 +116,10 @@ fn overlay_layer() -> qc::Layer {
         let l: qc::Layer = qc::Layer::new();
         l.set_background_color(FILL);
         l.set_border_color(STROKE);
-        l.set_border_width(1.0f64);
-        l.set_corner_radius(2.0f64);
+        l.set_border_width(1.0);
+        l.set_corner_radius(2.0);
         // Above whatever the application drew into the same layer tree.
-        l.set_z_position(10000.0f64);
+        l.set_z_position(10000.0);
         OVERLAY = rt::retain(l.raw());
         return l;
     }
@@ -148,7 +148,7 @@ struct Placed {
 fn place(n: *core::Node) -> Placed {
     let none: Placed = Placed {
         view: 0 as *u8,
-        rect: rt::Rect { x: 0.0f64, y: 0.0f64, w: 0.0f64, h: 0.0f64 },
+        rect: rt::Rect { x: 0.0, y: 0.0, w: 0.0, h: 0.0 },
         found: false,
     };
     if n == (0 as *core::Node) { return none; }
@@ -167,11 +167,11 @@ fn place(n: *core::Node) -> Placed {
 
     var cur: *core::Node = n;
     // Bounded by the tree's own depth; a parent link always goes up.
-    var steps: usize = 0 as usize;
-    while steps < (256 as usize) {
+    var steps: usize = 0;
+    while steps < 256 {
         let p: *core::Node = match mount::parent_of(cur) {
             option::Option[*core::Node]::Some(q) => q,
-            option::Option[*core::Node]::None => 0 as *core::Node,
+            option::Option::None => 0 as *core::Node,
         };
         if p == (0 as *core::Node) { return none; }
         let pv: *u8 = core::view_of(p);
@@ -196,7 +196,7 @@ fn place(n: *core::Node) -> Placed {
         x = x + pf.left;
         y = y + pf.top;
         cur = p;
-        steps = steps +% (1 as usize);
+        steps = steps +% 1;
     }
     return none;
 }
@@ -219,11 +219,11 @@ fn highlight(s: *u8, h: insp::Handle) {
     let target: ak::View = ak::View::from_raw(p.view);
     let win: ak::Window = match target.window() {
         option::Option[ak::Window]::Some(w) => w,
-        option::Option[ak::Window]::None => { return; }
+        option::Option::None => { return; }
     };
     let content: ak::View = match win.content_view() {
         option::Option[ak::View]::Some(c) => c,
-        option::Option[ak::View]::None => { return; }
+        option::Option::None => { return; }
     };
 
     // Into the content view's space, which is where the overlay lives. The
@@ -284,7 +284,7 @@ fn native_props(n: *core::Node) -> vec::Vec[insp::Prop] {
             let _l: status::Status = out.append(insp::Prop::read_only(
                 "first_responder", insp::Value::Bool(fr == v)));
         }
-        option::Option[ak::Window]::None => { }
+        option::Option::None => { }
     }
     return out;
 }

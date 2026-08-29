@@ -115,7 +115,7 @@ fn is_view(e: rt::Env, o: jni::jobject) -> bool {
 }
 
 fn class_name_of(e: rt::Env, o: jni::jobject, buf: *u8, cap: usize) -> bool {
-    { (*buf) = 0 as u8 };
+    { (*buf) = 0 };
     let p: *jni::JNIEnv = e.raw();
     let cls: jni::jclass = { (*(*p)).GetObjectClass(p, o) };
     if cls == (0 as jni::jclass) { return false; }
@@ -148,8 +148,8 @@ static OVERLAY_HOST: usize = 0;
 // Solid enough to find, transparent enough to read the control under it — the
 // same 0.13/0.47/1.0 blue the other two halves draw, packed as ARGB because
 // that is the only colour Android takes.
-fn fill_argb() -> i32 { return { (56 as i32) << (24 as i32) } | (0x2278FF as i32); }
-fn stroke_argb() -> i32 { return { { (0 as i32) -% (16777216 as i32) } | (0x2278FF as i32) }; }
+fn fill_argb() -> i32 { return { 56 << 24 } | (0x2278FF as i32); }
+fn stroke_argb() -> i32 { return { { 0 -% 16777216 } | (0x2278FF as i32) }; }
 
 fn new_overlay(e: rt::Env) -> jni::jobject {
     let ctx: jni::jobject = aenv::context();
@@ -158,8 +158,8 @@ fn new_overlay(e: rt::Env) -> jni::jobject {
 
     var d: w::GradientDrawable = w::GradientDrawable::new_void(e);
     d.set_color_i(fill_argb());
-    d.set_stroke_i_i({ { aenv::px(1.0f64) as i32 } }, stroke_argb());
-    d.set_corner_radius({ { aenv::px(2.0f64) } as f32 });
+    d.set_stroke_i_i({ { aenv::px(1.0) as i32 } }, stroke_argb());
+    d.set_corner_radius({ { aenv::px(2.0) } as f32 });
     var drawable: w::Drawable = d.as_drawable();
     v.set_background(drawable.into_raw());
     let _kept: jni::jobject = d.into_raw();
@@ -173,7 +173,7 @@ fn new_overlay(e: rt::Env) -> jni::jobject {
     // have one, and `setZ` reorders the drawing without the `requestLayout`
     // that `bringToFront` raises — which on this host is forwarded to facet and
     // would schedule a layout pass for a rectangle.
-    v.set_z({ 10000.0f64 as f32 });
+    v.set_z({ 10000.0 as f32 });
     return v.into_raw();
 }
 
@@ -271,7 +271,7 @@ struct Placed {
 fn nothing_placed() -> Placed {
     return Placed {
         view: 0 as *u8,
-        rect: Rect { x: 0.0f64, y: 0.0f64, w: 0.0f64, h: 0.0f64 },
+        rect: Rect { x: 0.0, y: 0.0, w: 0.0, h: 0.0 },
         found: false,
     };
 }
@@ -289,14 +289,14 @@ struct Offset {
 
 fn offset_to_host(e: rt::Env, from: jni::jobject) -> Offset {
     let host: jni::jobject = aenv::host();
-    var x: f64 = 0.0f64;
-    var y: f64 = 0.0f64;
+    var x: f64 = 0.0;
+    var y: f64 = 0.0;
     var cur: jni::jobject = from;
     // A LOCAL REF PER STEP, released as the walk moves on. The first `cur` is
     // the caller's and is never released here.
     var owned: jni::jobject = 0 as jni::jobject;
-    var steps: i32 = 0 as i32;
-    while steps < (128 as i32) {
+    var steps: i32 = 0;
+    while steps < 128 {
         if same_object(e, cur, host) {
             if owned != (0 as jni::jobject) { e.delete_local_ref(owned); }
             return Offset { x: x, y: y, ok: true };
@@ -310,7 +310,7 @@ fn offset_to_host(e: rt::Env, from: jni::jobject) -> Offset {
         if !is_view(e, parent) {
             if parent != (0 as jni::jobject) { e.delete_local_ref(parent); }
             if owned != (0 as jni::jobject) { e.delete_local_ref(owned); }
-            return Offset { x: 0.0f64, y: 0.0f64, ok: false };
+            return Offset { x: 0.0, y: 0.0, ok: false };
         }
         // A CHILD SITS IN ITS PARENT'S SCROLLED CONTENT. `getLeft` is the
         // unscrolled position, so a row halfway down a scrolled list would
@@ -323,10 +323,10 @@ fn offset_to_host(e: rt::Env, from: jni::jobject) -> Offset {
         if owned != (0 as jni::jobject) { e.delete_local_ref(owned); }
         owned = parent;
         cur = parent;
-        steps = steps +% (1 as i32);
+        steps = steps +% 1;
     }
     if owned != (0 as jni::jobject) { e.delete_local_ref(owned); }
-    return Offset { x: 0.0f64, y: 0.0f64, ok: false };
+    return Offset { x: 0.0, y: 0.0, ok: false };
 }
 
 fn place(n: *core::Node) -> Placed {
@@ -363,11 +363,11 @@ fn place(n: *core::Node) -> Placed {
     let ht: f64 = f.height;
 
     var cur: *core::Node = n;
-    var steps: usize = 0 as usize;
-    while steps < (256 as usize) {
+    var steps: usize = 0;
+    while steps < 256 {
         let p: *core::Node = match mount::parent_of(cur) {
             option::Option[*core::Node]::Some(q) => q,
-            option::Option[*core::Node]::None => 0 as *core::Node,
+            option::Option::None => 0 as *core::Node,
         };
         if p == (0 as *core::Node) {
             // THE ROOT ITSELF IS OFTEN VIEWLESS, and that is the ordinary shape
@@ -416,7 +416,7 @@ fn place(n: *core::Node) -> Placed {
         x = x + pf.left;
         y = y + pf.top;
         cur = p;
-        steps = steps +% (1 as usize);
+        steps = steps +% 1;
     }
     return nothing_placed();
 }
@@ -450,7 +450,7 @@ fn place(n: *core::Node) -> Placed {
 // measuring, a dropped or doubled frame is invisible — and `schedule` is facet's
 // own sync channel, which an overlay that is not a facet node must not enter.
 const GLIDE_STEPS: i32 = 15;
-const GLIDE_TICK: f64 = 0.0166f64;
+const GLIDE_TICK: f64 = 0.0166;
 
 // Where the overlay IS, where it started, and where it is going. `CUR` is the
 // one that matters between glides: a move interrupted half way starts from
@@ -458,8 +458,8 @@ const GLIDE_TICK: f64 = 0.0166f64;
 static CUR: Rect = #zero::[Rect]();
 static FROM: Rect = #zero::[Rect]();
 static TO: Rect = #zero::[Rect]();
-static STEP: i32 = 0 as i32;
-static GLIDE_TOKEN: u64 = 0 as u64;
+static STEP: i32 = 0;
+static GLIDE_TOKEN: u64 = 0;
 
 fn place_overlay(r: Rect) {
     if OVERLAY == 0 { return; }
@@ -469,9 +469,9 @@ fn place_overlay(r: Rect) {
 }
 
 fn stop_glide() {
-    if GLIDE_TOKEN == (0 as u64) { return; }
+    if GLIDE_TOKEN == 0 { return; }
     sched::cancel_after(GLIDE_TOKEN);
-    GLIDE_TOKEN = 0 as u64;
+    GLIDE_TOKEN = 0;
     return;
 }
 
@@ -485,11 +485,11 @@ fn glide_to(want: Rect) {
     stop_glide();
     FROM = CUR;
     TO = want;
-    STEP = 0 as i32;
+    STEP = 0;
     GLIDE_TOKEN = sched::after(GLIDE_TICK, glide_tick, 0 as *u8);
     // A timer that could not be scheduled — no env, no host, or all 64 slots
     // taken — is not a reason to leave the highlight behind on the last node.
-    if GLIDE_TOKEN == (0 as u64) {
+    if GLIDE_TOKEN == 0 {
         CUR = want;
         place_overlay(want);
     }
@@ -497,13 +497,13 @@ fn glide_to(want: Rect) {
 }
 
 fn glide_tick(_ctx: *u8) {
-    GLIDE_TOKEN = 0 as u64;
+    GLIDE_TOKEN = 0;
     if OVERLAY == 0 { return; }
     if !aenv::have_env() { return; }
-    STEP = STEP + (1 as i32);
+    STEP = STEP + 1;
     let raw: f64 = { STEP as f64 } / { GLIDE_STEPS as f64 };
-    let t: f64 = if raw > (1.0f64) { 1.0f64 } else { raw };
-    let e: f64 = { t * t } * { 3.0f64 - { 2.0f64 * t } };
+    let t: f64 = if raw > 1.0 { 1.0 } else { raw };
+    let e: f64 = { t * t } * { 3.0 - { 2.0 * t } };
     CUR = Rect {
         x: lerp(FROM.x, TO.x, e),
         y: lerp(FROM.y, TO.y, e),
@@ -550,7 +550,7 @@ fn native_props(n: *core::Node) -> vec::Vec[insp::Prop] {
     var buf: [u8; 256] = #zero::[[u8; 256]]();
     let base: *u8 = { #addr_of(buf[0]) };
     var name: text::Text = text::from_str("(unreadable)");
-    if class_name_of(e, v, base, 256 as usize) {
+    if class_name_of(e, v, base, 256) {
         name = text::from_str({ #str_from_raw_parts(base, paint::cstr_len(base)) });
     }
     let _c: status::Status = out.append(insp::Prop::read_only(
@@ -562,7 +562,7 @@ fn native_props(n: *core::Node) -> vec::Vec[insp::Prop] {
     // layout question this row is not asked.
     let vis: i32 = view.get_visibility();
     let _d: status::Status = out.append(insp::Prop::read_only(
-        "native_hidden", insp::Value::Bool(vis != (0 as i32))));
+        "native_hidden", insp::Value::Bool(vis != 0)));
 
     // IN FACET'S UNITS, so the row beside it is comparable. The frame Android
     // holds is in physical pixels and would read three times too large on a
@@ -640,12 +640,12 @@ fn asked_port() -> text::Text {
     var buf: [u8; 96] = #zero::[[u8; 96]]();
     let base: *u8 = { #addr_of(buf[0]) };
     let n: i32 = { system_property_get(#str_ptr("debug.facet.inspect\0"), base) };
-    if n > (0 as i32) {
+    if n > 0 {
         return text::from_str({ #str_from_raw_parts(base, { n as usize }) });
     }
     return match env::var("FACET_INSPECT") {
         option::Option[text::Text]::Some(p) => p,
-        option::Option[text::Text]::None => text::new(),
+        option::Option::None => text::new(),
     };
 }
 

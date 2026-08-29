@@ -25,8 +25,8 @@
 // Example:
 //
 //   var config: ResponsiveConfig = ResponsiveConfig::new("desktop");
-//   config.add_breakpoint("mobile", up_to: 300.0f64);
-//   config.add_breakpoint("tablet", up_to: 900.0f64);
+//   config.add_breakpoint("mobile", up_to: 300.0);
+//   config.add_breakpoint("tablet", up_to: 900.0);
 //
 //   let env: LayoutEnvironment = config.resolve(view_width, view_height);
 //   if env.is("mobile") { ... build/configure a compact layout ... }
@@ -101,7 +101,7 @@ impl ResponsiveConfig {
     fn fallback(this) -> str { return this._fallback.view(); }
 
     fn set_fallback(ref this, name: str) -> status::Status {
-        if #str_len(name) == (0 as usize) { return status::Status::InvalidInput; }
+        if #str_len(name) == 0 { return status::Status::InvalidInput; }
         this._fallback = text::from_str(name);
         return status::Status::Ok;
     }
@@ -110,13 +110,13 @@ impl ResponsiveConfig {
     // its threshold, which makes configuration reloads idempotent. Empty
     // names, NaN, zero, and negative widths are InvalidInput.
     fn add_breakpoint(ref this, name: str, up_to: f64) -> status::Status {
-        if #str_len(name) == (0 as usize) { return status::Status::InvalidInput; }
+        if #str_len(name) == 0 { return status::Status::InvalidInput; }
         // Written as a positive predicate so NaN is rejected under ordered
         // floating-point comparison semantics too.
-        if !(up_to > 0.0f64) { return status::Status::InvalidInput; }
+        if !(up_to > 0.0) { return status::Status::InvalidInput; }
 
         let n: usize = this._breakpoints.count();
-        var i: usize = 0 as usize;
+        var i: usize = 0;
         while i < n {
             match this._breakpoints.at_ptr(i) {
                 option::Option[*Breakpoint]::Some(p) => {
@@ -125,9 +125,9 @@ impl ResponsiveConfig {
                         return status::Status::Ok;
                     }
                 }
-                option::Option[*Breakpoint]::None => { }
+                option::Option::None => { }
             }
-            i = i +% (1 as usize);
+            i = i +% 1;
         }
 
         return this._breakpoints.append(Breakpoint {
@@ -140,7 +140,7 @@ impl ResponsiveConfig {
     // name — the Vec::remove idiom for detach-and-return).
     fn remove_breakpoint(ref this, name: str) -> option::Option[f64] {
         let n: usize = this._breakpoints.count();
-        var i: usize = 0 as usize;
+        var i: usize = 0;
         while i < n {
             match this._breakpoints.at_ptr(i) {
                 option::Option[*Breakpoint]::Some(p) => {
@@ -150,9 +150,9 @@ impl ResponsiveConfig {
                         return option::Option[f64]::Some(had);
                     }
                 }
-                option::Option[*Breakpoint]::None => { }
+                option::Option::None => { }
             }
-            i = i +% (1 as usize);
+            i = i +% 1;
         }
         return option::Option[f64]::None;
     }
@@ -171,14 +171,14 @@ impl ResponsiveConfig {
     fn resolve(this, width: f64, height: f64) -> LayoutEnvironment {
         var resolved_width: f64 = width;
         var resolved_height: f64 = height;
-        if resolved_width < 0.0f64 { resolved_width = 0.0f64; }
-        if resolved_height < 0.0f64 { resolved_height = 0.0f64; }
+        if resolved_width < 0.0 { resolved_width = 0.0; }
+        if resolved_height < 0.0 { resolved_height = 0.0; }
 
         var chosen: *Breakpoint = { 0 as *Breakpoint };
-        var chosen_max: f64 = 0.0f64;
+        var chosen_max: f64 = 0.0;
         if resolved_width == resolved_width {
             let n: usize = this._breakpoints.count();
-            var i: usize = 0 as usize;
+            var i: usize = 0;
             while i < n {
                 match this._breakpoints.at_ptr(i) {
                     option::Option[*Breakpoint]::Some(p) => {
@@ -190,9 +190,9 @@ impl ResponsiveConfig {
                             }
                         }
                     }
-                    option::Option[*Breakpoint]::None => { }
+                    option::Option::None => { }
                 }
-                i = i +% (1 as usize);
+                i = i +% 1;
             }
         }
 
@@ -210,7 +210,7 @@ impl ResponsiveConfig {
             _width: resolved_width,
             _height: resolved_height,
             _class_name: this._fallback.clone(),
-            _breakpoint: 0.0f64,
+            _breakpoint: 0.0,
             _matched_breakpoint: false,
         };
     }
@@ -224,87 +224,87 @@ impl ResponsiveConfig {
 fn width_or(o: option::Option[f64], fallback: f64) -> f64 {
     return match o {
         option::Option[f64]::Some(w) => w,
-        option::Option[f64]::None => fallback,
+        option::Option::None => fallback,
     };
 }
 
 fn standard_config() -> ResponsiveConfig {
     var c: ResponsiveConfig = ResponsiveConfig::new("desktop");
-    c.add_breakpoint("tablet", 900.0f64); // deliberately registered out of order
-    c.add_breakpoint("mobile", 300.0f64);
+    c.add_breakpoint("tablet", 900.0); // deliberately registered out of order
+    c.add_breakpoint("mobile", 300.0);
     return c;
 }
 
 #[test]
 fn narrowest_matching_breakpoint_wins() {
     let c: ResponsiveConfig = standard_config();
-    let mobile: LayoutEnvironment = c.resolve(280.0f64, 640.0f64);
+    let mobile: LayoutEnvironment = c.resolve(280.0, 640.0);
     assert mobile.is("mobile");
-    assert width_or(mobile.breakpoint_width(), -1.0f64) == 300.0f64;
+    assert width_or(mobile.breakpoint_width(), -1.0) == 300.0;
 
-    let tablet: LayoutEnvironment = c.resolve(700.0f64, 900.0f64);
+    let tablet: LayoutEnvironment = c.resolve(700.0, 900.0);
     assert tablet.is("tablet");
-    assert width_or(tablet.breakpoint_width(), -1.0f64) == 900.0f64;
+    assert width_or(tablet.breakpoint_width(), -1.0) == 900.0;
 }
 
 #[test]
 fn breakpoint_maximum_is_inclusive() {
     let c: ResponsiveConfig = standard_config();
-    assert c.resolve(300.0f64, 600.0f64).is("mobile");
-    assert c.resolve(301.0f64, 600.0f64).is("tablet");
-    assert c.resolve(900.0f64, 600.0f64).is("tablet");
+    assert c.resolve(300.0, 600.0).is("mobile");
+    assert c.resolve(301.0, 600.0).is("tablet");
+    assert c.resolve(900.0, 600.0).is("tablet");
 }
 
 #[test]
 fn fallback_applies_above_every_breakpoint() {
     let c: ResponsiveConfig = standard_config();
-    let env: LayoutEnvironment = c.resolve(1200.0f64, 800.0f64);
+    let env: LayoutEnvironment = c.resolve(1200.0, 800.0);
     assert env.is("desktop");
     assert env.class_name() == "desktop";
     assert c.fallback() == "desktop";
-    assert width_or(env.breakpoint_width(), -1.0f64) == -1.0f64;   // fallback: no maximum
+    assert width_or(env.breakpoint_width(), -1.0) == -1.0;   // fallback: no maximum
 }
 
 #[test]
 fn named_breakpoint_update_is_idempotent() {
     var c: ResponsiveConfig = standard_config();
-    assert c.breakpoint_count() == (2 as usize);
-    assert c.add_breakpoint("mobile", 360.0f64) == status::Status::Ok;
-    assert c.breakpoint_count() == (2 as usize);
-    assert c.resolve(340.0f64, 700.0f64).is("mobile");
+    assert c.breakpoint_count() == 2;
+    assert c.add_breakpoint("mobile", 360.0) == status::Status::Ok;
+    assert c.breakpoint_count() == 2;
+    assert c.resolve(340.0, 700.0).is("mobile");
 }
 
 #[test]
 fn invalid_breakpoints_are_rejected() {
     var c: ResponsiveConfig = ResponsiveConfig::new("wide");
-    assert c.add_breakpoint("", 300.0f64) == status::Status::InvalidInput;
-    assert c.add_breakpoint("zero", 0.0f64) == status::Status::InvalidInput;
-    assert c.add_breakpoint("negative", -1.0f64) == status::Status::InvalidInput;
-    let z: f64 = 0.0f64;
+    assert c.add_breakpoint("", 300.0) == status::Status::InvalidInput;
+    assert c.add_breakpoint("zero", 0.0) == status::Status::InvalidInput;
+    assert c.add_breakpoint("negative", -1.0) == status::Status::InvalidInput;
+    let z: f64 = 0.0;
     assert c.add_breakpoint("nan", z / z) == status::Status::InvalidInput;
-    assert c.breakpoint_count() == (0 as usize);
+    assert c.breakpoint_count() == 0;
 }
 
 #[test]
 fn breakpoint_can_be_removed_and_fallback_changed() {
     var c: ResponsiveConfig = standard_config();
-    assert width_or(c.remove_breakpoint("mobile"), -1.0f64) == 300.0f64;
-    assert width_or(c.remove_breakpoint("missing"), -1.0f64) == -1.0f64;
-    assert c.resolve(280.0f64, 640.0f64).is("tablet");
+    assert width_or(c.remove_breakpoint("mobile"), -1.0) == 300.0;
+    assert width_or(c.remove_breakpoint("missing"), -1.0) == -1.0;
+    assert c.resolve(280.0, 640.0).is("tablet");
     assert c.set_fallback("") == status::Status::InvalidInput;
     assert c.set_fallback("large") == status::Status::Ok;
-    assert c.resolve(1200.0f64, 800.0f64).is("large");
+    assert c.resolve(1200.0, 800.0).is("large");
     c.remove_all_breakpoints();
-    assert c.breakpoint_count() == (0 as usize);
-    assert c.resolve(100.0f64, 800.0f64).is("large");
+    assert c.breakpoint_count() == 0;
+    assert c.resolve(100.0, 800.0).is("large");
 }
 
 #[test]
 fn environment_reports_orientation_and_class_transition() {
     let c: ResponsiveConfig = standard_config();
-    let portrait: LayoutEnvironment = c.resolve(280.0f64, 640.0f64);
-    let portrait_again: LayoutEnvironment = c.resolve(300.0f64, 700.0f64);
-    let landscape: LayoutEnvironment = c.resolve(700.0f64, 400.0f64);
+    let portrait: LayoutEnvironment = c.resolve(280.0, 640.0);
+    let portrait_again: LayoutEnvironment = c.resolve(300.0, 700.0);
+    let landscape: LayoutEnvironment = c.resolve(700.0, 400.0);
 
     assert portrait.orientation() == Orientation::Portrait;
     assert landscape.orientation() == Orientation::Landscape;
@@ -315,9 +315,9 @@ fn environment_reports_orientation_and_class_transition() {
 #[test]
 fn negative_dimensions_are_normalized() {
     let c: ResponsiveConfig = standard_config();
-    let env: LayoutEnvironment = c.resolve(-10.0f64, -20.0f64);
-    assert env.width() == 0.0f64;
-    assert env.height() == 0.0f64;
+    let env: LayoutEnvironment = c.resolve(-10.0, -20.0);
+    assert env.width() == 0.0;
+    assert env.height() == 0.0;
     assert env.is("mobile");
     assert env.orientation() == Orientation::Square;
 }

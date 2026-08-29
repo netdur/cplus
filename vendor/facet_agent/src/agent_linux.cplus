@@ -170,7 +170,7 @@ struct AgentServe {
 }
 
 fn serve_main(take job: AgentServe) -> i32 {
-    var sub: events::Subscriber = events::subscriber(events::everything(), 64 as usize);
+    var sub: events::Subscriber = events::subscriber(events::everything(), 64);
     let surf: *u8 = #addr_of(AGENT_SURFACE) as *u8;
     return mcp::accept_loop(surf, agent_gtk::mcp_backend(), sub, effective_policy(), job.fd, true);
 }
@@ -202,13 +202,13 @@ fn serve_once(id: str) {
     }
     let path: text::Text = mcp::uds_path(id, mcp::current_pid());
     let fd: i32 = mcp::bind_uds(path.view());
-    if fd < (0 as i32) {
+    if fd < 0 {
         let why: text::Text = "facet: agent surface not served at ${path} — ${mcp::bind_reason(fd)}";
         io::eprintln(why.view());
         return;
     }
     let l: i32 = mcp::listen_on(fd);
-    if l < (0 as i32) {
+    if l < 0 {
         let why2: text::Text = "facet: agent surface not served at ${path} — ${mcp::bind_reason(l)}";
         io::eprintln(why2.view());
         mcp::unlink_bound_socket();
@@ -279,7 +279,7 @@ fn the_pinned_tier_is_what_the_agent_surface_reads_back() {
     // A GtkLabel needs GTK up, and this suite must run without a display —
     // `gtk_init_check` answers that, and the test says so when it skips rather
     // than passing quietly over nothing.
-    if { gtk_init_check() } == (0 as i32) {
+    if { gtk_init_check() } == 0 {
         io::eprintln("facet_agent: no display — the pin round trip is skipped.");
         return;
     }

@@ -78,12 +78,12 @@ fn index_key(prefix: str, i: usize) -> text::Text {
 fn key_tail(k: text::Text) -> text::Text {
     return match k.rfind(":") {
         option::Option[usize]::Some(p) => {
-            match k.slice(p +% (1 as usize), k.count()) {
+            match k.slice(p +% 1, k.count()) {
                 option::Option[str]::Some(t) => t.to_text(),
-                option::Option[str]::None => text::new(),
+                option::Option::None => text::new(),
             }
         }
-        option::Option[usize]::None => text::new(),
+        option::Option::None => text::new(),
     };
 }
 
@@ -93,7 +93,7 @@ fn f64_text(x: f64) -> text::Text {
     // Whole numbers read as whole numbers. A padding box showing `12.000000`
     // is a box a developer has to edit before they can think.
     let whole: f64 = (x as i64) as f64;
-    if (x - whole) == 0.0f64 { return { (x as i64) }.to_text(); }
+    if (x - whole) == 0.0 { return { (x as i64) }.to_text(); }
     return x.to_text();
 }
 
@@ -177,7 +177,7 @@ fn new(take backend: insp::Backend, hide_self: bool = true) -> Inspector {
         backend: backend,
         rows: vec::new::[insp::Node](),
         selected: insp::Handle::none(),
-        shown: 0 as usize,
+        shown: 0,
         hide_self: hide_self,
     };
 }
@@ -198,28 +198,28 @@ impl Inspector {
         if !this.hide_self { return true; }
         return match this.rows.at_ptr(i) {
             option::Option[*insp::Node]::Some(p) => !{ (*p).is_inspector },
-            option::Option[*insp::Node]::None => false,
+            option::Option::None => false,
         };
     }
 
     fn has_children(this, i: usize) -> bool {
         return match this.rows.at_ptr(i) {
-            option::Option[*insp::Node]::Some(p) => ({ (*p).child_count } > (0 as usize)),
-            option::Option[*insp::Node]::None => false,
+            option::Option[*insp::Node]::Some(p) => ({ (*p).child_count } > 0),
+            option::Option::None => false,
         };
     }
 
     fn depth_at(this, i: usize) -> usize {
         return match this.rows.at_ptr(i) {
             option::Option[*insp::Node]::Some(p) => { (*p).depth }
-            option::Option[*insp::Node]::None => 0 as usize,
+            option::Option::None => 0,
         };
     }
 
     fn node_at(this, i: usize) -> *core::Node {
         return match this.rows.at_ptr(i) {
             option::Option[*insp::Node]::Some(p) => { (*p).handle.node }
-            option::Option[*insp::Node]::None => 0 as *core::Node,
+            option::Option::None => 0 as *core::Node,
         };
     }
 
@@ -232,8 +232,8 @@ impl Inspector {
         // Bounded by the listing's own size. A parent index always points
         // backwards into the flat array, so the chain is finite, but the bound
         // means a malformed snapshot cannot hang the panel either.
-        var steps: usize = 0 as usize;
-        let limit: usize = this.rows.count() +% (1 as usize);
+        var steps: usize = 0;
+        let limit: usize = this.rows.count() +% 1;
         while steps < limit {
             let here: usize = match cur {
                 option::Option[usize]::Some(i) => i,
@@ -243,14 +243,14 @@ impl Inspector {
                 let _s: status::Status = chain.append(here);
                 cur = match this.rows.at_ptr(here) {
                     option::Option[*insp::Node]::Some(p) => { (*p).parent }
-                    option::Option[*insp::Node]::None => option::Option[usize]::None,
+                    option::Option::None => option::Option[usize]::None,
                 };
-                steps = steps +% (1 as usize);
+                steps = steps +% 1;
             }
         }
         var j: usize = chain.count();
-        while j > (0 as usize) {
-            j = j -% (1 as usize);
+        while j > 0 {
+            j = j -% 1;
             match chain.at(j) {
                 option::Option[usize]::Some(i) => {
                     match this.rows.at_ptr(i) {
@@ -263,10 +263,10 @@ impl Inspector {
                                 let _d: status::Status = out.append({ (*p).key.view() });
                             }
                         }
-                        option::Option[*insp::Node]::None => { }
+                        option::Option::None => { }
                     }
                 }
-                option::Option[usize]::None => { }
+                option::Option::None => { }
             }
         }
         return out;
@@ -295,7 +295,7 @@ impl Inspector {
                     let _d: status::Status = out.append("   (viewless)");
                 }
             }
-            option::Option[*insp::Node]::None => { }
+            option::Option::None => { }
         }
         return out;
     }
@@ -304,7 +304,7 @@ impl Inspector {
     fn parent_row_of(this, at: usize) -> option::Option[usize] {
         return match this.rows.at_ptr(at) {
             option::Option[*insp::Node]::Some(p) => { (*p).parent }
-            option::Option[*insp::Node]::None => option::Option[usize]::None,
+            option::Option::None => option::Option[usize]::None,
         };
     }
 
@@ -313,16 +313,16 @@ impl Inspector {
     // question rather than an identity one.
     fn index_of_node(this, n: *core::Node) -> option::Option[usize] {
         if n == (0 as *core::Node) { return option::Option[usize]::None; }
-        var i: usize = 0 as usize;
+        var i: usize = 0;
         let c: usize = this.rows.count();
         while i < c {
             match this.rows.at_ptr(i) {
                 option::Option[*insp::Node]::Some(p) => {
                     if { (*p).handle.node } == n { return option::Option[usize]::Some(i); }
                 }
-                option::Option[*insp::Node]::None => { }
+                option::Option::None => { }
             }
-            i = i +% (1 as usize);
+            i = i +% 1;
         }
         return option::Option[usize]::None;
     }
@@ -337,7 +337,7 @@ impl Inspector {
 fn set_label(key: text::Text, to: str) {
     match label::find(key.view()) {
         option::Option[label::Label]::Some(l) => { let _x: label::Label = l.set_text(to); }
-        option::Option[label::Label]::None => { }
+        option::Option::None => { }
     }
     return;
 }
@@ -347,7 +347,7 @@ fn set_field(key: text::Text, to: str) {
         option::Option[tfield::TextField]::Some(f) => {
             let _x: tfield::TextField = f.set_text(to);
         }
-        option::Option[tfield::TextField]::None => { }
+        option::Option::None => { }
     }
     return;
 }
@@ -355,7 +355,7 @@ fn set_field(key: text::Text, to: str) {
 fn field_text(key: text::Text) -> text::Text {
     return match tfield::find(key.view()) {
         option::Option[tfield::TextField]::Some(f) => text::from_str(f.text()),
-        option::Option[tfield::TextField]::None => text::new(),
+        option::Option::None => text::new(),
     };
 }
 
@@ -364,7 +364,7 @@ fn set_row_title(key: text::Text, to: str) {
         option::Option[tbutton::TextButton]::Some(b) => {
             let _x: tbutton::TextButton = b.set_title(to);
         }
-        option::Option[tbutton::TextButton]::None => { }
+        option::Option::None => { }
     }
     return;
 }
@@ -397,7 +397,7 @@ fn say(msg: str) {
 // ---- the row -----------------------------------------------------------------
 
 // How tall a row is, stated in both places that decide it.
-const ROW_H: f64 = 20.0f64;
+const ROW_H: f64 = 20.0;
 
 // The key the row's own label answers to. Row nodes are detached from any
 // window, so this is resolved with `within:` against the row itself and can be
@@ -427,7 +427,7 @@ fn tree_row_bind(n: *ftree::TreeNode, _ctx: *u8, row: *core::Node) {
         option::Option[label::Label]::Some(l) => {
             let _x: label::Label = l.set_text({ (*n).label_of() });
         }
-        option::Option[label::Label]::None => { }
+        option::Option::None => { }
     }
     return;
 }
@@ -460,7 +460,7 @@ fn build_subtree(st: *Inspector, i: usize) -> ftree::TreeNode {
         is_branch: { (*st).has_children(i) },
         data: n as *u8);
 
-    var j: usize = i +% (1 as usize);
+    var j: usize = i +% 1;
     let c: usize = { (*st).rows.count() };
     while j < c {
         var is_child: bool = false;
@@ -468,17 +468,17 @@ fn build_subtree(st: *Inspector, i: usize) -> ftree::TreeNode {
             option::Option[*insp::Node]::Some(p) => {
                 match { (*p).parent } {
                     option::Option[usize]::Some(x) => { is_child = x == i; }
-                    option::Option[usize]::None => { }
+                    option::Option::None => { }
                 }
             }
-            option::Option[*insp::Node]::None => { }
+            option::Option::None => { }
         }
         if is_child {
             if { (*st).eligible(j) } {
                 let _s: status::Status = t.add_child(build_subtree(st, j));
             }
         }
-        j = j +% (1 as usize);
+        j = j +% 1;
     }
     return t;
 }
@@ -487,7 +487,7 @@ fn build_subtree(st: *Inspector, i: usize) -> ftree::TreeNode {
 // Several window roots are several top-level rows.
 fn build_model(st: *Inspector) -> ftree::TreeNode {
     var root: ftree::TreeNode = ftree::TreeNode::new("", "@root", is_branch: true);
-    var i: usize = 0 as usize;
+    var i: usize = 0;
     let c: usize = { (*st).rows.count() };
     while i < c {
         var top: bool = false;
@@ -495,35 +495,35 @@ fn build_model(st: *Inspector) -> ftree::TreeNode {
             option::Option[*insp::Node]::Some(p) => {
                 top = match { (*p).parent } {
                     option::Option[usize]::Some(_x) => false,
-                    option::Option[usize]::None => true,
+                    option::Option::None => true,
                 };
             }
-            option::Option[*insp::Node]::None => { }
+            option::Option::None => { }
         }
         if top {
             if { (*st).eligible(i) } {
                 let _s: status::Status = root.add_child(build_subtree(st, i));
             }
         }
-        i = i +% (1 as usize);
+        i = i +% 1;
     }
     return root;
 }
 
 // How many rows the model holds, for the status line.
 fn model_count(n: *ftree::TreeNode) -> usize {
-    if n == (0 as *ftree::TreeNode) { return 0 as usize; }
-    var total: usize = 0 as usize;
-    var i: usize = 0 as usize;
+    if n == (0 as *ftree::TreeNode) { return 0; }
+    var total: usize = 0;
+    var i: usize = 0;
     let c: usize = { (*n).child_count() };
     while i < c {
         match { (*n).child_ptr(i) } {
             option::Option[*ftree::TreeNode]::Some(ch) => {
-                total = total +% (1 as usize) +% model_count(ch);
+                total = total +% 1 +% model_count(ch);
             }
-            option::Option[*ftree::TreeNode]::None => { }
+            option::Option::None => { }
         }
-        i = i +% (1 as usize);
+        i = i +% 1;
     }
     return total;
 }
@@ -547,11 +547,11 @@ fn rebuild_tree(st: *Inspector) {
             // Read the CURRENT expansion off the control first — the user's
             // own clicks on the disclosure triangles live there, not here.
             var open: vocab::TextList = vocab::TextList::new();
-            var i: usize = 0 as usize;
+            var i: usize = 0;
             let c: usize = t.expanded_count();
             while i < c {
                 let _s: status::Status = open.add(t.expanded(i));
-                i = i +% (1 as usize);
+                i = i +% 1;
             }
             let chosen: text::Text = text::from_str(t.selected());
             // Set on the handle, not at construction — `tree()` takes a row
@@ -561,7 +561,7 @@ fn rebuild_tree(st: *Inspector) {
             let t2: ftree::Tree = tb.set_root(model);
             let _t3: ftree::Tree = t2.restore(open, selected: chosen.view());
         }
-        option::Option[ftree::Tree]::None => { }
+        option::Option::None => { }
     }
     return;
 }
@@ -573,13 +573,13 @@ fn paint_props(st: *Inspector) {
     if h.is_none() {
         set_label(text::from_str("insp:headline"), "nothing selected");
         set_label(text::from_str("insp:trail"), "");
-        var i: usize = 0 as usize;
+        var i: usize = 0;
         while i < names.count() {
             match names.at(i) {
                 option::Option[str]::Some(nm) => { show_node(joined("insp:r:", nm), false); }
-                option::Option[str]::None => { }
+                option::Option::None => { }
             }
-            i = i +% (1 as usize);
+            i = i +% 1;
         }
         set_label(text::from_str("insp:computed"), "");
         return;
@@ -600,21 +600,21 @@ fn paint_props(st: *Inspector) {
                     let t: text::Text = { (*st).trail(at) };
                     set_label(text::from_str("insp:trail"), t.view());
                 }
-                option::Option[usize]::None => {
+                option::Option::None => {
                     set_label(text::from_str("insp:trail"), "");
                 }
             }
 
             // A property the node does not answer gets no row at all, rather
             // than an empty editor for something that does not exist.
-            var i: usize = 0 as usize;
+            var i: usize = 0;
             while i < names.count() {
                 match names.at(i) {
                     option::Option[str]::Some(nm) => {
                         var found: bool = false;
                         var over: bool = false;
                         var shown_value: text::Text = text::new();
-                        var j: usize = 0 as usize;
+                        var j: usize = 0;
                         while j < d.declared.count() {
                             match d.declared.at_ptr(j) {
                                 option::Option[*insp::Prop]::Some(p) => {
@@ -624,9 +624,9 @@ fn paint_props(st: *Inspector) {
                                         shown_value = value_text({ (*p).value }.clone());
                                     }
                                 }
-                                option::Option[*insp::Prop]::None => { }
+                                option::Option::None => { }
                             }
-                            j = j +% (1 as usize);
+                            j = j +% 1;
                         }
                         show_node(joined("insp:r:", nm), found);
                         if found {
@@ -639,13 +639,13 @@ fn paint_props(st: *Inspector) {
                             show_node(joined("insp:x:", nm), over);
                         }
                     }
-                    option::Option[str]::None => { }
+                    option::Option::None => { }
                 }
-                i = i +% (1 as usize);
+                i = i +% 1;
             }
 
             var comp: text::Text = text::new();
-            var k: usize = 0 as usize;
+            var k: usize = 0;
             while k < d.computed.count() {
                 match d.computed.at_ptr(k) {
                     option::Option[*insp::Prop]::Some(p) => {
@@ -655,11 +655,11 @@ fn paint_props(st: *Inspector) {
                         let vt: text::Text = value_text({ (*p).value }.clone());
                         let _h2: status::Status = comp.append(vt.view());
                     }
-                    option::Option[*insp::Prop]::None => { }
+                    option::Option::None => { }
                 }
-                k = k +% (1 as usize);
+                k = k +% 1;
             }
-            var l: usize = 0 as usize;
+            var l: usize = 0;
             while l < d.native.count() {
                 match d.native.at_ptr(l) {
                     option::Option[*insp::Prop]::Some(p) => {
@@ -669,13 +669,13 @@ fn paint_props(st: *Inspector) {
                         let vt: text::Text = value_text({ (*p).value }.clone());
                         let _l2: status::Status = comp.append(vt.view());
                     }
-                    option::Option[*insp::Prop]::None => { }
+                    option::Option::None => { }
                 }
-                l = l +% (1 as usize);
+                l = l +% 1;
             }
             set_label(text::from_str("insp:computed"), comp.view());
         }
-        option::Option[insp::Detail]::None => {
+        option::Option::None => {
             set_label(text::from_str("insp:headline"), "stale - refresh");
             set_label(text::from_str("insp:trail"), "");
         }
@@ -696,10 +696,10 @@ fn refresh(st: *Inspector) {
             option::Option[usize]::Some(i) => {
                 match { (*st).rows.at_ptr(i) } {
                     option::Option[*insp::Node]::Some(p) => { { (*st).selected = { (*p).handle } }; }
-                    option::Option[*insp::Node]::None => { }
+                    option::Option::None => { }
                 }
             }
-            option::Option[usize]::None => { { (*st).selected = insp::Handle::none() }; }
+            option::Option::None => { { (*st).selected = insp::Handle::none() }; }
         }
     }
 
@@ -744,16 +744,16 @@ fn on_tree_select(n: *ftree::TreeNode, ctx: *u8) {
     if target == (0 as *core::Node) { return; }
 
     var found: insp::Handle = insp::Handle::none();
-    var i: usize = 0 as usize;
+    var i: usize = 0;
     let c: usize = { (*st).rows.count() };
     while i < c {
         match { (*st).rows.at_ptr(i) } {
             option::Option[*insp::Node]::Some(p) => {
                 if { (*p).handle.node } == target { found = { (*p).handle }; i = c; }
             }
-            option::Option[*insp::Node]::None => { }
+            option::Option::None => { }
         }
-        i = i +% (1 as usize);
+        i = i +% 1;
     }
     if found.is_none() { say("that node is gone - refresh"); return; }
 
@@ -772,18 +772,18 @@ fn on_tree_select(n: *ftree::TreeNode, ctx: *u8) {
 fn current_declared(b: insp::Backend, h: insp::Handle, prop: str) -> insp::Value {
     match b.inspect_now(h) {
         option::Option[insp::Detail]::Some(d) => {
-            var j: usize = 0 as usize;
+            var j: usize = 0;
             while j < d.declared.count() {
                 match d.declared.at_ptr(j) {
                     option::Option[*insp::Prop]::Some(p) => {
                         if { (*p).name } == prop { return { (*p).value }.clone(); }
                     }
-                    option::Option[*insp::Prop]::None => { }
+                    option::Option::None => { }
                 }
-                j = j +% (1 as usize);
+                j = j +% 1;
             }
         }
-        option::Option[insp::Detail]::None => { }
+        option::Option::None => { }
     }
     return insp::Value::Nothing;
 }
@@ -806,7 +806,7 @@ fn on_commit(sender: *u8, ctx: *u8) {
             say(r.describe());
             paint_props(st);
         }
-        option::Option[insp::Value]::None => {
+        option::Option::None => {
             // The refusal is visible and the field goes back to the truth,
             // rather than sitting there showing something that was never set.
             say("could not read that value");
@@ -834,13 +834,13 @@ fn on_reset_all(_sender: *u8, ctx: *u8) {
     if h.is_none() { return; }
     let b: insp::Backend = { (*st).backend };
     let names: vec::Vec[str] = tree::declared_names();
-    var i: usize = 0 as usize;
+    var i: usize = 0;
     while i < names.count() {
         match names.at(i) {
             option::Option[str]::Some(nm) => { let _r: insp::Outcome = b.reset_now(h, nm); }
-            option::Option[str]::None => { }
+            option::Option::None => { }
         }
-        i = i +% (1 as usize);
+        i = i +% 1;
     }
     say("overrides reset");
     paint_props(st);
@@ -859,22 +859,22 @@ fn prop_row(prop: str, me: *u8) -> core::Node {
     var b: core::Builder = core::Builder::new();
     b.add(ui::label(prop, key: nk.view(),
                     text_align: vocab::TextAlign::Start,
-                    text_color: vocab::Color::text_secondary()).width(100.0f64));
+                    text_color: vocab::Color::text_secondary()).width(100.0));
     var field: core::Node = ui::text_field("", key: fk.view(),
                                            text_align: vocab::TextAlign::Start,
                                            on_submit: on_commit, on_submit_ctx: me)
-        .grow(1.0f64);
+        .grow(1.0);
     // Basis 0, or the field starts from the width its TEXT wants and grows
     // from there — which runs it, and the reset button after it, off the
     // right edge of the pane. Flex's default shrink is 0, so nothing gives
     // way. Same trap as the app side; it wants stating once per grow.
-    core::set_basis(#addr_of(field), 0.0f64);
+    core::set_basis(#addr_of(field), 0.0);
     b.add(field);
     b.add(ui::text_button("reset", key: xk.view(),
                           text_color: vocab::Color::link(),
                           on_click: on_reset_one, on_click_ctx: me)
-        .width(44.0f64));
-    return ui::row(b, key: rk.view()).gap(8.0f64);
+        .width(44.0));
+    return ui::row(b, key: rk.view()).gap(8.0);
 }
 
 impl Inspector: component::Component {
@@ -889,8 +889,8 @@ impl Inspector: component::Component {
                                 on_click: on_reset_all, on_click_ctx: me));
         bar.add(ui::label("", key: "insp:status",
                           text_align: vocab::TextAlign::Start,
-                          text_color: vocab::Color::text_secondary()).grow(1.0f64));
-        var toolbar: core::Node = ui::row(bar, key: "insp:toolbar").gap(12.0f64).padding(8.0f64);
+                          text_color: vocab::Color::text_secondary()).grow(1.0));
+        var toolbar: core::Node = ui::row(bar, key: "insp:toolbar").gap(12.0).padding(8.0);
 
         // The tree pane: one control. It recycles its cells, indents its own
         // rows, and owns expansion — none of which this file has to.
@@ -903,7 +903,7 @@ impl Inspector: component::Component {
             row: tree_row_view,
             on_select: on_tree_select, on_select_ctx: me,
             row_height: ROW_H,
-        ).width(260.0f64);
+        ).width(260.0);
 
         // property pane
         var col: core::Builder = core::Builder::new();
@@ -917,13 +917,13 @@ impl Inspector: component::Component {
                           text_align: vocab::TextAlign::Start,
                           text_color: vocab::Color::text_tertiary()));
         let names: vec::Vec[str] = tree::declared_names();
-        var j: usize = 0 as usize;
+        var j: usize = 0;
         while j < names.count() {
             match names.at(j) {
                 option::Option[str]::Some(nm) => { col.add(prop_row(nm, me)); }
-                option::Option[str]::None => { }
+                option::Option::None => { }
             }
-            j = j +% (1 as usize);
+            j = j +% 1;
         }
         col.add(ui::label("COMPUTED + NATIVE", key: "insp:h_computed",
                           text_align: vocab::TextAlign::Start,
@@ -931,15 +931,15 @@ impl Inspector: component::Component {
         col.add(ui::label("", key: "insp:computed",
                           text_align: vocab::TextAlign::Start,
                           text_color: vocab::Color::text_secondary(),
-                          max_lines: 4 as i64));
+                          max_lines: 4));
         var prop_col: core::Node = ui::column(col, key: "insp:proplist")
-            .padding(10.0f64).gap(6.0f64);
+            .padding(10.0).gap(6.0);
         var prop_scroll: core::Node = ui::scroll(key: "insp:propscroll");
         let _ps: status::Status = prop_scroll.add_child(prop_col);
-        var prop_pane: core::Node = prop_scroll.grow(1.0f64);
+        var prop_pane: core::Node = prop_scroll.grow(1.0);
         // Basis 0, so the pane takes what is left beside the 300pt tree pane
         // instead of starting from its content's width and growing past it.
-        core::set_basis(#addr_of(prop_pane), 0.0f64);
+        core::set_basis(#addr_of(prop_pane), 0.0);
 
         var body: core::Builder = core::Builder::new();
         body.add(tree_pane);
@@ -948,8 +948,8 @@ impl Inspector: component::Component {
         // toolbar, never from how tall its content happens to be. Without it a
         // long property list makes the panel taller than the window.
         var body_row: core::Node = ui::row(body, key: "insp:body")
-            .grow(1.0f64).shrink(1.0f64);
-        core::set_basis(#addr_of(body_row), 0.0f64);
+            .grow(1.0).shrink(1.0);
+        core::set_basis(#addr_of(body_row), 0.0);
 
         var rootb: core::Builder = core::Builder::new();
         rootb.add(toolbar);

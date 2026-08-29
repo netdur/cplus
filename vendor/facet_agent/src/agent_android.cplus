@@ -144,7 +144,7 @@ fn effective_policy() -> fn(auth::Request) -> auth::Grant {
 struct AgentServe { fd: i32 }
 
 fn serve_main(take job: AgentServe) -> i32 {
-    var sub: events::Subscriber = events::subscriber(events::everything(), 64 as usize);
+    var sub: events::Subscriber = events::subscriber(events::everything(), 64);
     let surf: *u8 = #addr_of(AGENT_SURFACE) as *u8;
     // HTTP, NOT THE PRIVATE FRAMING. This platform has no Unix socket a client
     // could reach, so the loopback port is the ONLY door — which makes it the
@@ -174,7 +174,7 @@ fn serve_once(id: str) {
     }
     let port: u16 = mcp::loopback_port(mcp::current_pid());
     let fd: i32 = mcp::bind_tcp(port);
-    if fd < (0 as i32) {
+    if fd < 0 {
         // logcat, not stderr: a device has nowhere to put stderr, and this is
         // the message that says why the Inspect tab is empty. `adb logcat -s facet`.
         let why: text::Text = "agent: not served on port ${port} - ${mcp::bind_reason(fd)}";
