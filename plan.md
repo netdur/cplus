@@ -10,6 +10,58 @@ here is a crash. It is a seam that grew a second copy of itself, and a set of
 silences around that seam that turn every misconfiguration into "the app runs
 fine and the tooling shows nothing".
 
+## Where this stands (end of 2026-08-29)
+
+Branch `agent-surface-one-door`, nine commits, every suite green.
+
+### The model, as the user explained it — do not re-derive or argue with it
+
+**Two surfaces, two jobs.** The agent surface (`agent_mcp`, armed by
+`runtime::agent_mcp(id)`) is what a USER sees and does: an app has layout, a
+user does not see layout, a user sees elements placed — so the agent sees
+user-visible elements, and the actions are the small set a person has (point
+and click, type, gestures). That is the RELEASE surface, 9 verbs.
+
+The inspector (`inspect::arm()`, 12 verbs) is the whole tree, every attribute
+including layout, plus structural edits. It is the DEBUG surface and it exists
+**instead of hot reload** — hot reload was deliberately not built because the
+retained tree plus MCP already does the job. The workflow: a button looks
+wrong, so rather than edit → rebuild → look → repeat, nudge its attributes on
+the live app until it sits right, then write the numbers into the source.
+
+**Curation by key is correct — it is the DOM model.** A DOM has thousands of
+elements and the interesting ones have ids. `mode:"full"` is a deliberate
+escape hatch and not the default, because serving the whole tree to an agent
+reproduces what makes DOM and a11y trees miserable: context blown, signal
+buried. The developer's opt-out is `vocab::Agent { Open, Protected, Private,
+Hidden }` on the shared band — inherits down, strictest wins, defaults `Open`.
+
+**Any facet app is a native ACI.** The surface is product, not instrumentation:
+it ships ON, and the control is runtime consent rather than a build flag. Only
+the auth gate matters; the developer builds what they need with `set_policy`.
+Today it serves iris's inspector and agent-run tests; it is heading for a
+supervised call-centre workstation and voice-only operation.
+
+### Still open
+
+1. **`bugs/int-literal-in-an-i64-slot-is-stored-as-i32.md`** — an integer
+   literal type-checks against `i64` and is emitted as `i32`. Silently wrong in
+   an enum payload, invalid IR elsewhere. `stdlib`, `facet` and `facet_runtime`
+   still carry their redundant literal casts because of it.
+2. **iris needs three changes**, none made (separate repo): it sets
+   `FACET_INSPECT`, which nothing reads any more; `remote.cplus` speaks the
+   line-delimited framing that only the desktop socket still serves; and
+   `agents_md.cplus:224` writes that stale advice into every project it opens,
+   with a test at `:518` asserting the string is present.
+3. **No audit of agent actions.** `inspector.journal` logs inspector
+   mutations; clicks and `set_text` leave no trace. The supervised-operator
+   case needs one.
+4. **Startup could report what is armed** — `— 21 verbs (core, inspector)`
+   vs `9 verbs (core)`. Discussed, not built; it replaces the canary that
+   splitting `serve_if_asked` took away.
+5. **Trailing `return;` is done**; the concise-literal pass is done except for
+   the three packages blocked on (1).
+
 ## Status
 
 | Item | State |
