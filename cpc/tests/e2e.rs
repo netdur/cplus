@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::Path;
 use std::process::Command;
 
 #[test]
@@ -3667,7 +3667,7 @@ fn generic_call_in_interpolation_monomorphizes() {
     )
     .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
-    std::os::unix::fs::symlink(
+    symlink_dir(
         format!("{}/../vendor", env!("CARGO_MANIFEST_DIR")),
         dir.join("vendor"),
     )
@@ -3721,7 +3721,7 @@ fn interp_call_text_parts_freed_place_parts_not() {
     )
     .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
-    std::os::unix::fs::symlink(
+    symlink_dir(
         format!("{}/../vendor", env!("CARGO_MANIFEST_DIR")),
         dir.join("vendor"),
     )
@@ -3809,7 +3809,7 @@ fn interp_in_print_sink_position_never_allocates() {
     )
     .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
-    std::os::unix::fs::symlink(
+    symlink_dir(
         format!("{}/../vendor", env!("CARGO_MANIFEST_DIR")),
         dir.join("vendor"),
     )
@@ -3896,7 +3896,7 @@ fn text_append_interp_appends_in_place() {
     )
     .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
-    std::os::unix::fs::symlink(
+    symlink_dir(
         format!("{}/../vendor", env!("CARGO_MANIFEST_DIR")),
         dir.join("vendor"),
     )
@@ -4006,7 +4006,7 @@ fn no_alloc_admits_sink_interpolation_only() {
     )
     .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
-    std::os::unix::fs::symlink(
+    symlink_dir(
         format!("{}/../vendor", env!("CARGO_MANIFEST_DIR")),
         dir.join("vendor"),
     )
@@ -6698,7 +6698,7 @@ fn nll_view_borrow_ends_at_last_use() {
     )
     .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
-    std::os::unix::fs::symlink(
+    symlink_dir(
         format!("{}/../vendor", env!("CARGO_MANIFEST_DIR")),
         dir.join("vendor"),
     )
@@ -7932,7 +7932,7 @@ fn str_view_cannot_outlive_owner() {
     )
     .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
-    std::os::unix::fs::symlink(
+    symlink_dir(
         format!("{}/../vendor", env!("CARGO_MANIFEST_DIR")),
         dir.join("vendor"),
     )
@@ -7982,7 +7982,7 @@ fn str_builtin_methods_compile_and_run() {
     )
     .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
-    std::os::unix::fs::symlink(
+    symlink_dir(
         format!("{}/../vendor", env!("CARGO_MANIFEST_DIR")),
         dir.join("vendor"),
     )
@@ -8041,7 +8041,7 @@ fn slice_array_count_and_to_f64_run() {
     )
     .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
-    std::os::unix::fs::symlink(
+    symlink_dir(
         format!("{}/../vendor", env!("CARGO_MANIFEST_DIR")),
         dir.join("vendor"),
     )
@@ -8098,7 +8098,7 @@ fn discard_import_alias_underscore() {
     )
     .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
-    std::os::unix::fs::symlink(
+    symlink_dir(
         format!("{}/../vendor", env!("CARGO_MANIFEST_DIR")),
         dir.join("vendor"),
     )
@@ -8144,7 +8144,7 @@ fn str_builtin_methods_negative_paths() {
     )
     .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
-    std::os::unix::fs::symlink(
+    symlink_dir(
         format!("{}/../vendor", env!("CARGO_MANIFEST_DIR")),
         dir.join("vendor"),
     )
@@ -8218,7 +8218,7 @@ fn generic_vec_slice_view_invalidation_rejected() {
     )
     .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
-    std::os::unix::fs::symlink(
+    symlink_dir(
         format!("{}/../vendor", env!("CARGO_MANIFEST_DIR")),
         dir.join("vendor"),
     )
@@ -8521,7 +8521,7 @@ fn str_view_coercion_and_free_fn_ties() {
     )
     .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
-    std::os::unix::fs::symlink(
+    symlink_dir(
         format!("{}/../vendor", env!("CARGO_MANIFEST_DIR")),
         dir.join("vendor"),
     )
@@ -18906,12 +18906,23 @@ fn const_static_emits_expected_globals() {
         .expect("invoke cpc");
     assert!(out.status.success(), "exited {:?}", out.status);
     let ir = String::from_utf8_lossy(&out.stdout);
+    // What this pins is the ROUTING — a `static` becomes a `global` (.data),
+    // never a `constant`. The LINKAGE in between is a platform decision and not
+    // what this test is about: on Windows a name-public static is emitted
+    // `weak_odr` with a comdat, because a strong definition beside the same
+    // static's copy in a package archive is a COFF `duplicate symbol`. So the
+    // match tolerates a linkage keyword and still fails if `global` becomes
+    // `constant`.
+    let emits_global = |name: &str, ty_val: &str| -> bool {
+        ir.contains(&format!("@{name} = {ty_val}"))
+            || ir.contains(&format!("@{name} = weak_odr {ty_val}"))
+    };
     assert!(
-        ir.contains("@IMMUTABLE_OFFSET = global i32 50"),
+        emits_global("IMMUTABLE_OFFSET", "global i32 50"),
         "expected static emitted as global; ir was:\n{ir}"
     );
     assert!(
-        ir.contains("@COUNTER = global i32 5"),
+        emits_global("COUNTER", "global i32 5"),
         "expected mutable-static global; ir was:\n{ir}"
     );
     // Const items never become globals — verify ADD_CONST is absent.
@@ -23111,6 +23122,39 @@ fn nm_prog() -> &'static str {
     }
 }
 
+/// Link a directory into a test's temp package. Every call site points a fresh
+/// package's `vendor/` at the repo's own, so the test compiles against the real
+/// stdlib sources rather than a transcribed copy of them.
+///
+/// The two platforms spell this differently, and Windows splits it further by
+/// target kind: `symlink_dir` is the one that works on a directory, and
+/// `symlink_file` would produce a link the resolver cannot walk. The Windows
+/// call also needs `SeCreateSymbolicLinkPrivilege`, which Developer Mode grants
+/// and a default account does not — hence the note on the error, because
+/// "Access is denied. (os error 5)" surfacing from a test that never mentions
+/// symlinks is a long afternoon.
+#[cfg(unix)]
+fn symlink_dir(src: impl AsRef<Path>, dst: impl AsRef<Path>) -> std::io::Result<()> {
+    std::os::unix::fs::symlink(src, dst)
+}
+
+#[cfg(windows)]
+fn symlink_dir(src: impl AsRef<Path>, dst: impl AsRef<Path>) -> std::io::Result<()> {
+    std::os::windows::fs::symlink_dir(src.as_ref(), dst.as_ref()).map_err(|e| {
+        std::io::Error::new(
+            e.kind(),
+            format!(
+                "symlink_dir({} -> {}): {e}\n\
+                 note: Windows needs SeCreateSymbolicLinkPrivilege for this — \
+                 enable Developer Mode (Settings > System > For developers), \
+                 or run the test elevated.",
+                src.as_ref().display(),
+                dst.as_ref().display()
+            ),
+        )
+    })
+}
+
 /// The shared pure-C+ builder package for the DSL.2 e2e tests: `Item`
 /// carries a value and a weight, `leaf(v)` constructs one, `boost(by)`
 /// is a method modifier, and `Builder::finish` returns an `Item` so
@@ -24121,7 +24165,7 @@ fn gen_fn_protocol_survives_nested_option_instantiation() {
     )
     .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
-    std::os::unix::fs::symlink(
+    symlink_dir(
         format!("{}/../vendor", env!("CARGO_MANIFEST_DIR")),
         dir.join("vendor"),
     )
@@ -24195,7 +24239,7 @@ fn blessed_capabilities_agree_between_bounds_dispatch_and_impls() {
     let dir = tempdir();
     std::fs::write(dir.join("Cplus.toml"), "[package]\nname = \"blessed\"\n\n[dependencies]\nstdlib = \"*\"\n").unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
-    std::os::unix::fs::symlink(
+    symlink_dir(
         format!("{}/../vendor", env!("CARGO_MANIFEST_DIR")),
         dir.join("vendor"),
     )
@@ -24546,7 +24590,7 @@ fn str_literal_coerces_to_text_in_every_owning_position() {
     )
     .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
-    std::os::unix::fs::symlink(
+    symlink_dir(
         format!("{}/../vendor", env!("CARGO_MANIFEST_DIR")),
         dir.join("vendor"),
     )
@@ -24661,7 +24705,7 @@ fn user_generic_named_iterator_is_not_a_coroutine() {
     )
     .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
-    std::os::unix::fs::symlink(
+    symlink_dir(
         format!("{}/../vendor", env!("CARGO_MANIFEST_DIR")),
         dir.join("vendor"),
     )
@@ -24733,7 +24777,7 @@ fn async_and_gen_fns_pointer_pass_ref_params() {
     )
     .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
-    std::os::unix::fs::symlink(
+    symlink_dir(
         format!("{}/../vendor", env!("CARGO_MANIFEST_DIR")),
         dir.join("vendor"),
     )
@@ -24811,7 +24855,7 @@ fn empty_text_coerces_to_valid_str_view() {
     )
     .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
-    std::os::unix::fs::symlink(
+    symlink_dir(
         format!("{}/../vendor", env!("CARGO_MANIFEST_DIR")),
         dir.join("vendor"),
     )
@@ -24865,7 +24909,7 @@ fn borrow_error_names_the_offending_module() {
     )
     .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
-    std::os::unix::fs::symlink(
+    symlink_dir(
         format!("{}/../vendor", env!("CARGO_MANIFEST_DIR")),
         dir.join("vendor"),
     )
@@ -26394,7 +26438,7 @@ fn a_user_type_named_like_a_lang_item_does_not_shadow_it() {
     )
     .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
-    std::os::unix::fs::symlink(
+    symlink_dir(
         format!("{}/../vendor", env!("CARGO_MANIFEST_DIR")),
         dir.join("vendor"),
     )
@@ -26564,7 +26608,7 @@ fn thread_cancel_unparks_a_blocking_read_end_to_end() {
     )
     .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
-    std::os::unix::fs::symlink(
+    symlink_dir(
         format!("{}/../vendor", env!("CARGO_MANIFEST_DIR")),
         dir.join("vendor"),
     )
@@ -26647,7 +26691,7 @@ fn run_cancel_destroys_the_frame_tree_and_runs_drops_end_to_end() {
     )
     .unwrap();
     std::fs::create_dir_all(dir.join("src")).unwrap();
-    std::os::unix::fs::symlink(
+    symlink_dir(
         format!("{}/../vendor", env!("CARGO_MANIFEST_DIR")),
         dir.join("vendor"),
     )
@@ -26883,7 +26927,7 @@ fn a_prebuilt_packages_async_fn_runs_the_archives_body() {
     // stdlib comes from the repo; `asynclib` is the one written above, so the
     // symlink must not shadow it — copy stdlib in beside it instead.
     let repo_vendor = format!("{}/../vendor", env!("CARGO_MANIFEST_DIR"));
-    std::os::unix::fs::symlink(
+    symlink_dir(
         format!("{repo_vendor}/stdlib"),
         dir.join("vendor/stdlib"),
     )

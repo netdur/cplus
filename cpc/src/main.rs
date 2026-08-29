@@ -5586,8 +5586,19 @@ fn run_clang(
     // WSAStartup, recv/send/closesocket/ioctlsocket. ws2_32 is not auto-
     // linked by the MSVC driver, so request it here. Harmless (an import
     // table entry) for programs that don't touch sockets.
+    //
+    // shell32 is `CommandLineToArgvW`, the OS's own command-line splitter that
+    // argv_sys_windows.cplus uses instead of re-deriving Windows' quoting
+    // rules; bcrypt is CNG, which crypto_sys_windows.cplus binds for SHA-2,
+    // HMAC and the system CSPRNG; ntdll is `RtlGetVersion`, the only call that
+    // reports the real Windows version; winhttp is the http package's transport.
+    // None is auto-linked, and each is the same import-table-only cost as ws2_32.
     if cfg!(windows) {
         cmd.arg("-lws2_32");
+        cmd.arg("-lshell32");
+        cmd.arg("-lbcrypt");
+        cmd.arg("-lntdll");
+        cmd.arg("-lwinhttp");
     }
     cmd.arg("-o").arg(out);
     // Under `-g`, clang DISCARDS the whole module's debug info — with only a

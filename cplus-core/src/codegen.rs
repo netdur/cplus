@@ -1423,8 +1423,13 @@ fn generate_inner(
     // which user code may legitimately re-declare to get a typed
     // handle.
     for sym in [
-        "pthread_create",
-        "pthread_join",
+        thread_create_sym(),
+        thread_join_sym(),
+        // Windows preamble declares these for the thread helpers above;
+        // thread_sys_windows.cplus re-declares CloseHandle for `detach`.
+        "CreateThread",
+        "WaitForSingleObject",
+        "CloseHandle",
         "malloc",
         "free",
         "memcpy",
@@ -1634,6 +1639,11 @@ fn generate_inner(
         let src = std::fs::read_to_string(path).ok();
         emit_dwarf_metadata(&mut out, program, path, src.as_deref());
     }
+    // COFF only: give every weak definition a comdat so two objects defining
+    // it coalesce instead of colliding. See `attach_coff_comdats`.
+    if crate::target::active_platform() == "windows" {
+        out = attach_coff_comdats(&out);
+    }
     #[cfg(debug_assertions)]
     assert_every_define_carries_fn_attrs(&out, &md.fn_attrs.borrow());
     out
@@ -1662,6 +1672,35 @@ fn generate_inner(
 /// `non-leaf` rather than `all` is what clang emits on this platform: a leaf
 /// function needs no record, because the innermost frame is read from pc/lr
 /// and there is nothing below it to find.
+/// The symbols the `thread::spawn` / `JoinHandle::join` intrinsics call to
+/// start and reap an OS thread.
+///
+/// POSIX targets call `pthread_create` / `pthread_join` directly, which is what
+/// the emitted IR has always done and what keeps those targets byte-identical.
+///
+/// WINDOWS HAS NEITHER, and the port cannot simply define them in stdlib: the
+/// preamble `declare`s both in every module, so an `export extern fn
+/// pthread_create` in C+ lands in the same module as its own declaration and
+/// clang rejects it as an invalid redefinition. So Windows gets its own two
+/// names, which `stdlib/thread_sys_windows.cplus` defines over `CreateThread`
+/// and `WaitForSingleObject` — the same shape the intrinsics already use to
+/// reach the reactor through `stdlib_reactor_*_v1` rather than by C+ name.
+fn thread_create_sym() -> &'static str {
+    if crate::target::active_platform() == "windows" {
+        "__cplus_thread_create_v1"
+    } else {
+        "pthread_create"
+    }
+}
+
+fn thread_join_sym() -> &'static str {
+    if crate::target::active_platform() == "windows" {
+        "__cplus_thread_join_v1"
+    } else {
+        "pthread_join"
+    }
+}
+
 fn fn_attrs_for(sanitizers: &[&str]) -> String {
     let mut attrs: Vec<&str> = vec!["\"frame-pointer\"=\"non-leaf\""];
     attrs.extend(sanitizers.iter().filter_map(|s| match *s {
@@ -1674,6 +1713,94 @@ fn fn_attrs_for(sanitizers: &[&str]) -> String {
         _ => None,
     }));
     format!(" {}", attrs.join(" "))
+}
+
+/// COFF needs an explicit COMDAT for a `weak_odr` / `linkonce_odr` definition to
+/// coalesce; ELF and Mach-O do not.
+///
+/// WHAT BREAKS WITHOUT IT. LLVM's COFF backend, handed a weak definition with no
+/// comdat attached, does not emit one — it emits a real definition plus a weak
+/// external alias. Two objects that both define the symbol are then two real
+/// definitions, and lld-link reports `duplicate symbol`. Measured on a two-file
+/// reduction: `define weak_odr i32 @shared()` in two objects fails to link, and
+/// the same pair with `$shared = comdat any` + `comdat` on the define links.
+///
+/// This is not a corner case on Windows — it is every generic instantiation.
+/// `Vec[u8]`'s methods are emitted `weak_odr` into every package archive that
+/// uses them, so an application depending on two C+ packages that both touch a
+/// `Vec[u8]` had two definitions of `stdlib.src.vec.new__u8` and could not
+/// link. It also took out the cancellation slot the preamble emits into every
+/// module.
+///
+/// Done as a post-pass rather than at each of the nine emitters that can choose
+/// `weak_odr`: the rule is "every weak definition in this module", which is
+/// exactly what a pass over the finished text can see and what nine separate
+/// call sites would each have to remember.
+fn attach_coff_comdats(ir: &str) -> String {
+    let mut names: Vec<String> = Vec::new();
+    let mut body = String::with_capacity(ir.len() + 4096);
+    for line in ir.lines() {
+        let is_weak_define = line.starts_with("define weak_odr ")
+            || line.starts_with("define linkonce_odr ");
+        if is_weak_define && line.ends_with('{') {
+            // The name runs from the first `@` to the `(` that opens its
+            // parameter list. A struct return type sits before the `@`, so the
+            // first `@` on the line is always the symbol.
+            if let Some(at) = line.find('@') {
+                if let Some(paren) = line[at..].find('(') {
+                    let name = &line[at + 1..at + paren];
+                    if !name.is_empty() {
+                        names.push(name.to_string());
+                        // ` comdat` goes after the attributes, before the brace.
+                        let head = line[..line.len() - 1].trim_end();
+                        body.push_str(head);
+                        body.push_str(" comdat {
+");
+                        continue;
+                    }
+                }
+            }
+        }
+        // Globals take the same treatment, with LLVM's other spelling: the
+        // comdat goes in the attribute list after the initializer rather than
+        // before the brace. `weak_odr` statics and the preamble's cancellation
+        // slot both land here.
+        let is_weak_global = line.starts_with('@')
+            && (line.contains(" = weak_odr ") || line.contains(" = linkonce_odr "));
+        if is_weak_global {
+            if let Some(sp) = line.find(' ') {
+                let name = &line[1..sp];
+                if !name.is_empty() && !line.contains(", comdat") {
+                    names.push(name.to_string());
+                    // Before `, align N` when there is one, else at the end.
+                    let rewritten = match line.rfind(", align ") {
+                        Some(at) => format!("{}, comdat{}", &line[..at], &line[at..]),
+                        None => format!("{line}, comdat"),
+                    };
+                    body.push_str(&rewritten);
+                    body.push('\n');
+                    continue;
+                }
+            }
+        }
+        body.push_str(line);
+        body.push('\n');
+    }
+    if names.is_empty() {
+        return ir.to_string();
+    }
+    names.sort();
+    names.dedup();
+    let mut out = String::with_capacity(body.len() + names.len() * 24);
+    out.push_str("; COFF comdats for weak definitions — see attach_coff_comdats.
+");
+    for n in &names {
+        out.push_str(&format!("${n} = comdat any
+"));
+    }
+    out.push('\n');
+    out.push_str(&body);
+    out
 }
 
 /// issue-08: every `define` carries the module's function attributes. The
@@ -5234,8 +5361,67 @@ fn write_preamble(out: &mut String, fn_attrs: &str) {
     // as an 8-byte pointer for the ccc convention. On macOS pthread
     // is part of libSystem (linked by default); Linux callers need
     // `[link] libs = ["pthread"]` in their manifest (Phase 5C).
-    out.push_str("declare i32 @pthread_create(ptr, ptr, ptr, ptr)\n");
-    out.push_str("declare i32 @pthread_join(i64, ptr)\n");
+    if crate::target::active_platform() == "windows" {
+        // WINDOWS HAS NO PTHREADS, so the two symbols the spawn/join intrinsics
+        // call are DEFINED here rather than declared, as `internal` — the same answer
+        // `__cplus_reactor_get_state` above gives. Every module gets its own copy
+        // of two stateless wrappers, which costs nothing and cannot collide.
+        // `linkonce_odr` was the first choice and lld-link reported a duplicate
+        // symbol against the stdlib archive, so COMDAT merging is not something
+        // to rely on for these.
+        //
+        // Defining them in stdlib instead was the obvious move and does not
+        // work — the preamble is emitted into EVERY module including stdlib's
+        // own, so a C+ `export extern fn` of the same name lands beside its own
+        // declaration and clang rejects it as an invalid redefinition. Emitting
+        // the body here sidesteps that and keeps the pair in one place.
+        //
+        // The handle is stored in the i64 the emitter models `pthread_t` as.
+        // `CreateThread` wants a `DWORD (LPVOID)` start routine and the
+        // trampoline is `ptr (ptr)`; on x64 both take one pointer argument and
+        // return in RAX, and the caller discards the value.
+        out.push_str("declare ptr @CreateThread(ptr, i64, ptr, ptr, i32, ptr)
+");
+        out.push_str("declare i32 @WaitForSingleObject(ptr, i32)
+");
+        out.push_str("declare i32 @CloseHandle(ptr)
+");
+        out.push_str(&format!(
+            "define internal i32 @{}(ptr %tid, ptr %attr, ptr %start, ptr %arg){} {{
+             entry:
+                 %h = call ptr @CreateThread(ptr null, i64 0, ptr %start, ptr %arg, i32 0, ptr null)
+                 %isnull = icmp eq ptr %h, null
+                 br i1 %isnull, label %fail, label %ok
+             ok:
+                 %hi = ptrtoint ptr %h to i64
+                 store i64 %hi, ptr %tid
+                 ret i32 0
+             fail:
+                 ret i32 1
+             }}
+",
+            thread_create_sym(),
+            fn_attrs
+        ));
+        // INFINITE is 0xFFFFFFFF, which is -1 read as the i32 DWORD is.
+        out.push_str(&format!(
+            "define internal i32 @{}(i64 %tid, ptr %retval){} {{
+             entry:
+                 %h = inttoptr i64 %tid to ptr
+                 %w = call i32 @WaitForSingleObject(ptr %h, i32 -1)
+                 %c = call i32 @CloseHandle(ptr %h)
+                 ret i32 0
+             }}
+",
+            thread_join_sym(),
+            fn_attrs
+        ));
+    } else {
+        out.push_str(&format!("declare i32 @{}(ptr, ptr, ptr, ptr)
+", thread_create_sym()));
+        out.push_str(&format!("declare i32 @{}(i64, ptr)
+", thread_join_sym()));
+    }
     // v0.0.3 Phase 5 Slice 5E.3: LLVM coroutine intrinsics for the
     // `async fn` lowering. The `presplitcoroutine` function attribute
     // on each async fn triggers LLVM's CoroSplit pass during the
@@ -5338,17 +5524,32 @@ fn write_preamble(out: &mut String, fn_attrs: &str) {
     // Same general-dynamic TLS model as the reactor slot, for the same
     // dlopen reasons.
     out.push_str("\n; v0.0.29: cancellation slot (per-thread), one per image.\n");
-    out.push_str(
-        "@__cplus_cancel_slot = linkonce_odr hidden thread_local global ptr null, align 8\n",
-    );
+    // `hidden` is an ELF/Mach-O concept; COFF has no visibility field, so on
+    // Windows it hides nothing and only stops LLVM emitting these into a
+    // COMDAT — lld-link then reports the app's copy and stdlib's as a
+    // duplicate symbol, which is what a threaded Windows program hit. Dropping
+    // it there restores the coalescing the comment above describes; ELF and
+    // Mach-O keep it, where it does real work.
+    // `hidden` is an ELF/Mach-O concept; COFF has no visibility field. Windows
+    // therefore drops it and relies on the comdat `attach_coff_comdats` attaches
+    // to every weak definition, which is what makes the copies in stdlib and in
+    // the application coalesce instead of colliding.
+    let linkage = if crate::target::active_platform() == "windows" {
+        "linkonce_odr "
+    } else {
+        "linkonce_odr hidden "
+    };
     out.push_str(&format!(
-        "define linkonce_odr hidden ptr @__cplus_cancel_get_slot(){fn_attrs} {{\n  \
+        "@__cplus_cancel_slot = {linkage}thread_local global ptr null, align 8\n",
+    ));
+    out.push_str(&format!(
+        "define {linkage}ptr @__cplus_cancel_get_slot(){fn_attrs} {{\n  \
          %p = load ptr, ptr @__cplus_cancel_slot, align 8\n  \
          ret ptr %p\n\
          }}\n"
     ));
     out.push_str(&format!(
-        "define linkonce_odr hidden void @__cplus_cancel_set_slot(ptr %p){fn_attrs} {{\n  \
+        "define {linkage}void @__cplus_cancel_set_slot(ptr %p){fn_attrs} {{\n  \
          store ptr %p, ptr @__cplus_cancel_slot, align 8\n  \
          ret void\n\
          }}\n"
@@ -6054,9 +6255,22 @@ fn emit_statics(
     // `weak_odr`, not `linkonce_odr` — the archive must retain its public
     // surface even though nothing inside the archive references it.
     // Executable builds are unaffected: statics keep external linkage.
+    // COFF NEEDS THE EXECUTABLE TO PLAY ALONG TOO. On ELF and Mach-O the note
+    // above holds: the executable's strong definition simply wins over the
+    // archive's weak one and nothing is reported. COFF has no such rule — a
+    // strong definition beside the archive's comdat copy is a `duplicate
+    // symbol`, which is what `stdlib.src.text.INTERN_HEAD` did to every Windows
+    // test driver. So on Windows an executable emits the same `weak_odr` a
+    // library does, and `attach_coff_comdats` gives both copies a comdat to
+    // merge through.
+    let coff = crate::target::active_platform() == "windows";
     let static_linkage = |qname: &str| -> &'static str {
         if !is_lib {
-            ""
+            if coff && lib_public_name(true, qname) {
+                "weak_odr "
+            } else {
+                ""
+            }
         } else if lib_public_name(is_lib, qname) {
             "weak_odr "
         } else {
@@ -9036,6 +9250,13 @@ fn gen_str_method(
         out.push('\n');
         return;
     }
+    // The module's attributes first, then the method's own `#[inline]` — the
+    // same order every other emitter uses. This one pushed only the inline
+    // attribute, so every `impl str` method came out without the frame-pointer
+    // attribute (and without the sanitizer ones), which
+    // `assert_every_define_carries_fn_attrs` catches now that the frame pointer
+    // put a non-empty string in `md.fn_attrs` on every debug build.
+    out.push_str(&md.fn_attrs.borrow());
     out.push_str(&fn_attrs);
     out.push_str(" {\n");
     out.push_str("entry:\n");
@@ -15754,7 +15975,8 @@ impl<'a> FnState<'a> {
         self.emit(&format!("{tid_slot} = call ptr @malloc(i64 8)"));
         let err = self.next_tmp();
         self.emit(&format!(
-            "{err} = call i32 @pthread_create(ptr {tid_slot}, ptr null, ptr @{tramp_sym}, ptr {ctx})"
+            "{err} = call i32 @{sym}(ptr {tid_slot}, ptr null, ptr @{tramp_sym}, ptr {ctx})",
+            sym = thread_create_sym()
         ));
         // pthread_create returns 0 on success. Trap on failure so the
         // user doesn't get a zero'd tid silently. v0.0.3 has no
@@ -15851,7 +16073,8 @@ impl<'a> FnState<'a> {
         self.emit(&format!("{tid_slot} = call ptr @malloc(i64 8)"));
         let err = self.next_tmp();
         self.emit(&format!(
-            "{err} = call i32 @pthread_create(ptr {tid_slot}, ptr null, ptr @{tramp_sym}, ptr {ctx})"
+            "{err} = call i32 @{sym}(ptr {tid_slot}, ptr null, ptr @{tramp_sym}, ptr {ctx})",
+            sym = thread_create_sym()
         ));
         let ok = self.next_tmp();
         let trap_bb = self.next_block_label();
@@ -16397,7 +16620,8 @@ impl<'a> FnState<'a> {
         self.emit(&format!("{ctx} = extractvalue {handle_llvm} {h_val}, 1"));
         let _err = self.next_tmp();
         self.emit(&format!(
-            "{_err} = call i32 @pthread_join(i64 {tid}, ptr null)"
+            "{_err} = call i32 @{sym}(i64 {tid}, ptr null)",
+            sym = thread_join_sym()
         ));
         // v0.0.4 Phase 2 Slice 2H: refcounted ctx. After pthread_join
         // returns, the worker has finished and atomically decremented
