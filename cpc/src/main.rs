@@ -6911,6 +6911,7 @@ fn run_init(args: &[OsString]) -> ExitCode {
          import \"facet_runtime/runtime\" as runtime;\n\
          import \"facet_agent/agent\" as agent;\n\
          import \"inspector/serve\" as inspect;\n\
+         import \"./agent_consent\" as agent_consent;\n\
          import \"stdlib/option\" as option;\n\
          import \"stdlib/vec\" as vec;\n\n\
          struct Home {{\n    taps: i64,\n}}\n\n\
@@ -6993,6 +6994,9 @@ fn run_init(args: &[OsString]) -> ExitCode {
          \x20   //\n\
          \x20   // Delete all three (and the agent packages from Cplus.toml) if you\n\
          \x20   // would rather this binary could not be driven.\n\
+         \x20   //\n\
+         \x20   // ANYTHING THAT CONNECTS IS ADMITTED. To ask the user first, add\n\
+         \x20   // `agent_consent::install();` above — see src/agent_consent.cplus.\n\
          \x20   agent::enable();\n\
          \x20   inspect::arm();\n\
          \x20   runtime::agent_mcp(\"{proj_name}\");\n\
@@ -7410,10 +7414,54 @@ fn run_init(args: &[OsString]) -> ExitCode {
         "{{\n  \"mcpServers\": {{\n    \"cplus\": {{\n      \"command\": \"{cpc_path}\",\n      \"args\": [\"mcp\"]\n    }}\n  }}\n}}\n"
     );
 
+
+    // Consent, as a file the developer OWNS rather than a paragraph in a
+    // comment. Generated unwired: the surface admits by default so an agent can
+    // drive a fresh project immediately, and turning this on is one call. The
+    // file itself carries no explanation — `facet_agent/consent` is where the
+    // reasoning lives, and a generated file that lectures is a generated file
+    // people delete.
+    let facet_consent = format!(
+        "// Ask before an agent may drive this app.\n\
+         //\n\
+         // Wire it in src/app.cplus, before `agent::enable()`:\n\
+         //\n\
+         //     agent_consent::install();\n\n\
+         import \"facet_runtime/runtime\" as runtime;\n\
+         import \"facet_agent/agent\" as agent;\n\
+         import \"facet_agent/consent\" as consent;\n\
+         import \"facet/services\" as services;\n\
+         import \"stdlib/text\" as text;\n\n\
+         fn answered(index: i32, ctx: *u8) {{\n\
+         \x20   if index == (0 as i32) {{ consent::allow_pending(); return; }}\n\
+         \x20   consent::deny_pending();\n\
+         \x20   return;\n\
+         }}\n\n\
+         fn show(ctx: *u8) {{\n\
+         \x20   let message: text::Text = \"${{consent::pending()}} wants to read this app and press its buttons.\";\n\
+         \x20   runtime::alert(\"Allow agent access?\", message.view(), \"Allow\",\n\
+         \x20                  secondary: \"Deny\", on_answer: answered);\n\
+         \x20   return;\n\
+         }}\n\n\
+         fn ask(client: str, ctx: *u8) {{\n\
+         \x20   // `ask` runs on the serve thread. A dialog built there is an\n\
+         \x20   // NSWindow off the main thread, which aborts the process.\n\
+         \x20   if !services::has_main_hop() {{ consent::cancel_pending(); return; }}\n\
+         \x20   services::run_on_main(show, 0 as *u8);\n\
+         \x20   return;\n\
+         }}\n\n\
+         fn install() {{\n\
+         \x20   consent::on_ask(ask);\n\
+         \x20   agent::set_policy(consent::gate);\n\
+         \x20   return;\n\
+         }}\n"
+    );
+
     let mut files: Vec<(PathBuf, String)> = vec![(manifest, manifest_toml)];
     if gui {
         // The shared app, then one door per platform.
         files.push((src.join("app.cplus"), facet_app));
+        files.push((src.join("agent_consent.cplus"), facet_consent.clone()));
         for p in platforms.iter() {
             // EVERY EXTERNAL-BUILDER PLATFORM, not just iOS. Testing `p ==
             // "ios"` here is what handed android the desktop `fn main`, which

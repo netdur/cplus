@@ -66,6 +66,7 @@ import "stdlib/option" as option;
 import "stdlib/status" as status;
 import "stdlib/string_map" as smap;
 import "agent_core/auth" as auth;
+import "agent_mcp/agent_mcp" as mcp;
 
 // What the user said about each client, by name.
 //
@@ -106,7 +107,21 @@ fn ensure_map() {
 fn on_ask(f: fn(str, *u8), ctx: *u8 = 0 as *u8) {
     ASK_FN = f;
     ASK_CTX = ctx;
+    // TELL A REFUSED CLIENT WHETHER TO COME BACK. Every first contact is
+    // refused by design, and "consent denied" reads as final — so an agent that
+    // believes it would never retry, and the Allow the user just clicked would
+    // do nothing. The refusal has to distinguish "not yet" from "no".
+    mcp::set_deny_hint(deny_hint);
     return;
+}
+
+// The sentence a refused caller gets. `retry_after_seconds` is a hint, not a
+// contract: nothing here is counting, and a client that waits longer is fine.
+fn deny_hint() -> str {
+    if PENDING.count() > (0 as usize) {
+        return "consent pending: a prompt is on screen — retry in a few seconds (retry_after_seconds: 3)";
+    }
+    return "consent denied: the user refused this client; it will not be asked again";
 }
 
 fn key_of(req: auth::Request) -> str {
@@ -335,6 +350,30 @@ fn an_abandoned_prompt_does_not_wedge_the_gate() {
     let _b: auth::Grant = gate(external("ghost", "describe_ui"));
     assert pending() == "ghost";
     assert ASK_COUNT == (2 as i32);
+    return;
+}
+
+// EVERY FIRST CONTACT IS REFUSED, so the refusal has to say whether coming back
+// is worth it. "consent denied" reads as final; a client that believes it never
+// retries, and the Allow the user just clicked does nothing at all. Pending and
+// denied are different answers and now say so.
+#[test]
+fn a_refusal_says_whether_to_come_back() {
+    reset_for_test();
+
+    // Nothing asked yet, nothing decided: the flat answer.
+    assert text::from_str(deny_hint()).contains("denied");
+
+    // A prompt is up — the commonest refusal by far, and the one a client must
+    // retry rather than give up on.
+    let _a: auth::Grant = gate(external("claude-code", "describe_ui"));
+    assert text::from_str(deny_hint()).contains("pending");
+    assert text::from_str(deny_hint()).contains("retry");
+
+    // Answered no: final, and it says so rather than inviting a retry loop.
+    deny_pending();
+    assert text::from_str(deny_hint()).contains("denied");
+    assert text::from_str(deny_hint()).contains("pending") == false;
     return;
 }
 

@@ -857,6 +857,13 @@ static CLIENT_NAME: text::Text = #zero::[text::Text]();
 // named one.
 static SERVER_NAME: text::Text = #zero::[text::Text]();
 
+// What a consent refusal SAYS. See `dispatch`: an interactive policy refuses
+// "not yet" far more often than "no", and a client cannot tell those apart from
+// a bitset. Supplied by the policy, because only the policy knows.
+static DENY_HINT: fn() -> str = #zero::[fn() -> str]();
+
+fn set_deny_hint(f: fn() -> str) { DENY_HINT = f; return; }
+
 fn set_server_name(id: str) { SERVER_NAME = text::from_str(id); return; }
 
 fn server_name() -> str {
@@ -918,7 +925,17 @@ fn dispatch(
     // An empty grant can do nothing at all, so it is refused here rather than
     // one verb at a time. Every other refusal is per node and per tier, and
     // says which.
+    //
+    // WHY it was refused is the policy's to say. "consent denied" reads as
+    // final, and for an interactive gate it usually is not: the commonest
+    // refusal is "a prompt is on screen and nobody has answered yet", which a
+    // client should retry and would otherwise give up on. A policy that knows
+    // the difference installs a hint; one that does not keeps the flat message.
     if grant.is_empty() {
+        let hint: fn() -> str = DENY_HINT;
+        if hint != (0 as fn() -> str) {
+            return err_response(id, - 32001 as f64, hint());
+        }
         return err_response(id, - 32001 as f64, "consent denied");
     }
 
