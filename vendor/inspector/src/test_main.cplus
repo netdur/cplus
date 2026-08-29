@@ -2738,3 +2738,34 @@ fn an_absent_describe_prefix_keeps_the_whole_tree() {
     // ...and an unkeyed node is correctly NOT matched by a real prefix.
     assert mcp::key_matches("", "board:") == false;
 }
+
+// ---- one wire frame, two namespaces ----------------------------------------------
+
+// BOTH NAMESPACES RIDE ONE SOCKET and one client parses both, so an envelope
+// that differed between them would be a malformed frame on exactly half of a
+// connection — the kind of defect where each side looks correct on its own.
+//
+// `inspector/mcp` had byte-identical reimplementations of eight of `agent_mcp`'s
+// JSON and envelope helpers; they are forwards now. This asserts the PROPERTY
+// rather than the implementation, so re-inlining a body is caught here instead
+// of when a client chokes.
+#[test]
+fn both_namespaces_emit_the_same_envelope() {
+    let a: text::Text = mcp::ok_response(7.0f64, mcp::jstr("x")).to_text();
+    let b: text::Text = bridge::ok_response(7.0f64, bridge::jstr("x")).to_text();
+    assert a.view() == b.view();
+
+    let ea: text::Text = mcp::err_response(9.0f64, - 32601 as f64, "nope").to_text();
+    let eb: text::Text = bridge::err_response(9.0f64, - 32601 as f64, "nope").to_text();
+    assert ea.view() == eb.view();
+
+    // Including the parameter refusal, whose exact wording a caller reads.
+    let ma: text::Text = mcp::missing_param(3.0f64, "inspector.set", "node").to_text();
+    let mb: text::Text = bridge::missing_param(3.0f64, "inspector.set", "node").to_text();
+    assert ma.view() == mb.view();
+
+    // ...and the scalar builders underneath them.
+    assert mcp::jnum(2.5f64).to_text().view() == bridge::jnum(2.5f64).to_text().view();
+    assert mcp::jbool(true).to_text().view() == bridge::jbool(true).to_text().view();
+    return;
+}

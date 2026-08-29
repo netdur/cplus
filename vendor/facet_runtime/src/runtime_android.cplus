@@ -116,8 +116,49 @@ fn null_title_fn() -> fn(*u8) -> text::Text { return screen::null_title_fn(); }
 
 // A window-shaped app. There are no windows here — an Activity has one screen —
 // so the Chrome is read for its ROOT and the rest of it recorded as ignored.
+// ---- the agent surface, for every host ---------------------------------------
+//
+// WHICH HOST AN APP IS ON IS NOT A REASON FOR ITS AGENT SURFACE TO DIFFER, and
+// it used to be the whole reason: `agent_mcp` was a method on `App`, so the
+// three blocking hosts — `run`, `run_component`, `run_screen` — had no way to
+// ask for one at all. A scaffolded app is on `run_screen` (AGENTS.md prescribes
+// it, because facet's Android facade does not implement `App::run`), so the
+// generated shape was exactly the shape that could not serve. See plan.md.
+//
+// ONE STORAGE, at process scope, because that is what the thing being described
+// actually is: one address, one accept loop, latched once by
+// `facet_agent::serve_once`. `App::agent_mcp` writes here too.
+//
+// Setting it is not enough on its own — the app still calls
+// `facet_agent::enable()` to fill the serving seam, exactly as the `App` tier
+// has always required.
+static AGENT_ID: text::Text = #zero::[text::Text]();
+
+// Serve the agent surface under the name `id`. Call before the host, on any
+// tier. AN ID, NOT AN ADDRESS: see the macOS facade for why, and
+// `agent_mcp::uds_path` / `agent_mcp::loopback_port` for the conventions.
+fn agent_mcp(id: str) {
+    AGENT_ID = text::from_str(id);
+    return;
+}
+
+// The name this process serves under, or "" if the app never asked.
+fn agent_id() -> str { return AGENT_ID.view(); }
+
+// Start the worker if an address was named. Called by every host, BEFORE the
+// first window, so an agent that connects immediately waits on an empty surface
+// for a moment rather than being refused by a socket that does not exist yet.
+// `serve_once` latches, so a host that later opens more windows is a no-op
+// after the first.
+fn serve_agent_if_asked() {
+    let id: str = AGENT_ID.view();
+    if id != "" { app::agent_serve_once(id); }
+    return;
+}
+
 fn run[W: Window](take window: W) {
     backend::install();
+    serve_agent_if_asked();
     var owned_window: W = window;
     // BOXED, because the tree's handlers were bound against THIS instance in
     // `build(ref this)` and the caller's frame is about to unwind. On iOS the
@@ -152,6 +193,7 @@ fn run_component[C: component::Component + component::Lifecycle](
     take menu: AppMenu = screen::empty_app_menu(),
 ) -> C {
     backend::install();
+    serve_agent_if_asked();
     var owned_menu: AppMenu = menu;
     // An Activity has no menu bar. Recorded rather than dropped silently: an
     // app that passes one has said something this platform cannot honour.
@@ -217,6 +259,7 @@ fn run_screen[S: component::Component + component::Lifecycle + screen::Screen](
     take menu: AppMenu = screen::empty_app_menu(),
 ) -> S {
     backend::install();
+    serve_agent_if_asked();
     var owned_menu: AppMenu = menu;
     if { owned_menu.items.count() } > (0 as usize) { no_backend("an app menu"); }
     // The Chrome's title, size and window buttons describe a desktop window.
@@ -374,7 +417,6 @@ struct App {
     on_launch_fn: fn(*u8),
     on_quit_fn: fn(*u8),
     opaque hook_ctx: *u8,
-    agent_path: text::Text,
     routes: vec::Vec[AppRoute],
 }
 
@@ -387,7 +429,6 @@ impl App {
             on_launch_fn: app_hook_noop,
             on_quit_fn: app_hook_noop,
             hook_ctx: 0 as *u8,
-            agent_path: text::new(),
             routes: vec::new::[AppRoute](),
         };
     }
@@ -404,8 +445,9 @@ impl App {
         return;
     }
 
-    fn agent_mcp(ref this, path: str) {
-        this.agent_path = text::from_str(path);
+    fn agent_mcp(ref this, id: str = "") {
+        if id == "" { agent_mcp(this.name()); return; }
+        agent_mcp(id);
         return;
     }
 

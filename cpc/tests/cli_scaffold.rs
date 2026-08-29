@@ -666,13 +666,17 @@ fn init_android_arms_the_inspector() {
     assert!(out.status.success(), "init failed: {}", String::from_utf8_lossy(&out.stderr));
     let proj = dir.path().join("droid");
 
-    // 1. The entry arms it, exactly as the macOS and iOS entries do.
+    // 1. The APP arms it — one file, every platform, not three per-platform
+    //    entries reading three differently-spelled channels. The entry itself
+    //    is now agent-free, which is the point: nothing about arming a surface
+    //    is Android-shaped.
+    let app = read(&proj.join("src/app.cplus"));
+    assert!(app.contains("import \"inspector/serve\" as inspect;"), "{app}");
+    assert!(app.contains("agent::enable();"), "{app}");
+    assert!(app.contains("inspect::arm();"), "{app}");
+    assert!(app.contains("runtime::agent_mcp(\"droid\");"), "{app}");
     let main = read(&proj.join("src/main.cplus"));
-    assert!(main.contains("import \"inspector/serve\" as inspect;"), "{main}");
-    assert!(main.contains("inspect::serve_if_asked();"), "{main}");
-    // The channel is a system property, because an Activity has no environment
-    // for a launcher to set. A reader who does not know that cannot use it.
-    assert!(main.contains("debug.facet.inspect"), "{main}");
+    assert!(!main.contains("serve_if_asked"), "the entry should not arm anything: {main}");
 
     // 2. The closure names what that line links. The resolver checks every
     //    import against ONE flat set taken from this manifest, so a missing
@@ -717,11 +721,18 @@ fn init_three_platforms_all_arm_the_inspector() {
     assert!(out.status.success(), "init failed: {}", String::from_utf8_lossy(&out.stderr));
     let proj = dir.path().join("all3");
 
+    // ONE file arms the surface, and it is the one every platform builds.
+    let app = read(&proj.join("src/app.cplus"));
+    assert!(app.contains("inspect::arm();"), "src/app.cplus does not arm the inspector: {app}");
+    assert!(app.contains("runtime::agent_mcp(\"all3\");"), "{app}");
+
+    // ...and no entry does. Three copies of it, reading three channels, is what
+    // this replaced — see plan.md.
     for entry in ["src/main.cplus", "src/main_ios.cplus", "src/main_android.cplus"] {
         let body = read(&proj.join(entry));
         assert!(
-            body.contains("inspect::serve_if_asked();"),
-            "{entry} does not arm the inspector: {body}"
+            !body.contains("serve_if_asked"),
+            "{entry} should not arm anything of its own: {body}"
         );
     }
 }

@@ -781,7 +781,7 @@ loop ends before anyone can connect, and the only trace is facet_agent's one
 
 Loopback is not an exception. There is no permission below INTERNET that grants
 `socket()`, so an app that wants to be inspected declares it. `cpc init` writes
-it into the scaffolded AndroidManifest.xml beside the `serve_if_asked()` line
+it into the scaffolded AndroidManifest.xml beside the agent-surface lines
 that needs it; an app writing its own manifest has to.
 
     adb shell setprop debug.facet.inspect 8787   # the port, since an Activity

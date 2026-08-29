@@ -99,6 +99,63 @@ fn menu_action_find_replace() -> u32 { return screen::menu_action_find_replace()
 fn null_enabled_fn() -> fn(*u8) -> bool { return screen::null_enabled_fn(); }
 fn null_title_fn() -> fn(*u8) -> text::Text { return screen::null_title_fn(); }
 
+// ---- the agent surface, for every host ---------------------------------------
+//
+// WHICH HOST AN APP IS ON IS NOT A REASON FOR ITS AGENT SURFACE TO DIFFER, and
+// it used to be the whole reason: `agent_mcp` was a method on `App`, so the
+// three blocking hosts — `run`, `run_component`, `run_screen` — had no way to
+// ask for one at all. A scaffolded app is on `run_screen` (AGENTS.md prescribes
+// it, because facet's Android facade does not implement `App::run`), so the
+// generated shape was exactly the shape that could not serve, and the only way
+// to make it inspectable was a second entry point in another package reading an
+// environment variable. See plan.md.
+//
+// ONE STORAGE, at process scope, because that is what the thing being described
+// actually is: one address, one accept loop, latched once by
+// `facet_agent::serve_once`. `App::agent_mcp` writes here too.
+//
+// Setting it is not enough on its own — the app still calls
+// `facet_agent::enable()` to fill the serving seam, exactly as the `App` tier
+// has always required. Without it `agent_serve_once` finds a null hook and says
+// so rather than serving quietly.
+static AGENT_ID: text::Text = #zero::[text::Text]();
+
+// Serve the agent surface under the name `id`. Call before the host, on any
+// tier:
+//
+//     agent::enable();
+//     runtime::agent_mcp("myapp");
+//     runtime::run_screen(Home::new());
+//
+// AN ID, NOT AN ADDRESS. Where an app listens is a platform question — a Unix
+// socket on a desktop, a loopback port on a phone — and the app is the one
+// party that cannot answer it. It knows its own name. `agent_mcp::uds_path` and
+// `agent_mcp::loopback_port` are the conventions, both keyed on this process's
+// pid so that a launcher, holding only the pid it spawned, can find the app
+// without being told and without an environment variable.
+//
+// A `/` is refused rather than sanitised — see `agent_mcp::valid_id`. Passing
+// an old-style path here is a caller who means to name an address, and the
+// honest answer is that this parameter stopped being one.
+fn agent_mcp(id: str) {
+    AGENT_ID = text::from_str(id);
+    return;
+}
+
+// The name this process serves under, or "" if the app never asked.
+fn agent_id() -> str { return AGENT_ID.view(); }
+
+// Start the worker if an address was named. Called by every host, BEFORE the
+// first window: an agent that connects immediately then waits on an empty
+// surface for a moment rather than being refused by a socket that does not
+// exist yet. `serve_once` latches, so calling this from a host that later opens
+// more windows is a no-op after the first.
+fn serve_agent_if_asked() {
+    let id: str = AGENT_ID.view();
+    if id != "" { app::agent_serve_once(id); }
+    return;
+}
+
 // ---- the blocking hosts ------------------------------------------------------
 
 fn chrome_of_window[W: Window](ref w: W) -> Chrome {
@@ -121,6 +178,9 @@ fn chrome_of_window[W: Window](ref w: W) -> Chrome {
 
 fn run[W: Window](take window: W) {
     backend::install();
+    // The agent surface, if the app asked for one — on this host too, which it
+    // was not before. See `agent_mcp` above.
+    serve_agent_if_asked();
     var owned_window: W = window;
     var root: Node = owned_window.root();
     // The menu this window declares. `has_app_menu` and `app_menu` were
@@ -180,6 +240,7 @@ fn run_component[C: component::Component + component::Lifecycle](
     take menu: AppMenu = screen::empty_app_menu(),
 ) -> C {
     backend::install();
+    serve_agent_if_asked();
     var owned_menu: AppMenu = menu;
     host::install_app_menu(#addr_of(owned_menu));
     var owned: C = component_v;
@@ -209,6 +270,7 @@ fn run_screen[S: component::Component + component::Lifecycle + screen::Screen](
     take menu: AppMenu = screen::empty_app_menu(),
 ) -> S {
     backend::install();
+    serve_agent_if_asked();
     var owned: S = screen_v;
     // The screen's own contribution, merged before the bar is installed. Same
     // rule App::run follows; a screen that declares menu items gets them
@@ -365,9 +427,9 @@ fn present_window(take root: Node, title: str, width: f64, height: f64) {
                 p, screen::Chrome::new(title: title, width: width, height: height),
                 will_close: presented_closed, will_close_ctx: p as *u8,
             );
-            // Same reason as a pushed screen: the agent follows the window an
-            // application just put in front of the user.
-            if w != (0 as *u8) { app::agent_attach(w); }
+            // The agent follows the window; `host::open_window` attaches it,
+            // on the one path every caller here takes. See window.cplus.
+            let _presented: *u8 = w;
         }
         option::Option[box::Box[Node]]::None => { }
     }
@@ -502,7 +564,6 @@ struct App {
     on_quit_fn: fn(*u8),
     on_should_quit_fn: fn(*u8) -> bool,
     opaque hook_ctx: *u8,
-    agent_path: text::Text,
     routes: vec::Vec[AppRoute],
 }
 
@@ -516,7 +577,6 @@ impl App {
             on_quit_fn: app_hook_noop,
             on_should_quit_fn: app_always_quit,
             hook_ctx: 0 as *u8,
-            agent_path: text::new(),
             routes: vec::new::[AppRoute](),
         };
     }
@@ -532,7 +592,16 @@ impl App {
         return;
     }
 
-    fn agent_mcp(ref this, path: str) { this.agent_path = text::from_str(path); return; }
+    // The same door as the free `runtime::agent_mcp` below, kept as a method
+    // because that is how every existing app spells it. There is ONE address
+    // per process and one serve worker, so there is one storage — an `App`
+    // field would have been a second place to look, and the tier an app happens
+    // to be on is not a reason for its agent surface to work differently.
+    fn agent_mcp(ref this, id: str = "") {
+        if id == "" { agent_mcp(this.name()); return; }
+        agent_mcp(id);
+        return;
+    }
 
     fn on_launch(ref this, f: fn(*u8), ctx: *u8 = 0 as *u8) {
         this.on_launch_fn = f;
@@ -624,8 +693,7 @@ impl App {
         //
         // `agent_mcp(path)` recorded the path and nothing served it until now:
         // the same shape as the app menu, which was built and never installed.
-        let sock: str = this.agent_path.view();
-        if sock != "" { app::agent_serve_once(sock); }
+        serve_agent_if_asked();
         // ⌘Q ARRIVES HERE, and it is the only path that does. `terminate:`
         // never returns to `run_loop()`, so this is installed before the first
         // window rather than anywhere past it.
@@ -651,10 +719,12 @@ impl App {
             let w: *u8 = host::open_window(#addr_of(root), c);
             CURRENT_ROOT = #addr_of(root);
             // The agent reads the LIVE view tree, so the surface is re-opened
-            // on the new window each time a screen is shown. The serve worker
-            // holds the surface's ADDRESS, so re-opening in place retargets
-            // every later request rather than needing the worker restarted.
-            if w != (0 as *u8) { app::agent_attach(w); }
+            // on the new window each time a screen is shown — by
+            // `host::open_window`, which is now the single attach site. The
+            // serve worker holds the surface's ADDRESS, so re-opening in place
+            // retargets every later request rather than needing the worker
+            // restarted.
+            let _shown: *u8 = w;
             sb.on_attach();
             host::run_loop();        // blocks until this screen's window closes
             close_all_pushed();      // replacing the root dismisses pushed screens
@@ -794,7 +864,8 @@ fn push_screen(route: str, arg: str) -> bool {
     // and so was an `alert` sheet. The sheet case is the sharp one: dialogs
     // argues it was rewritten off NSAlert/runModal precisely so "an agent
     // cannot answer it" would stop being true, and the surface never followed.
-    app::agent_attach(w);
+    // `host::open_window` does the attach now, for this caller and the five
+    // others that used to disagree about whether to.
     let stack: *vec::Vec[PushedScreen] = #addr_of(PUSHED);
     { (*stack).append(PushedScreen { root: tp, sbp: sbp }) };
     { (*(sbp as *screen::ScreenBox)).on_attach() };
@@ -1241,6 +1312,86 @@ fn the_terminate_seam_is_inert_with_no_app_running() {
     // NSTerminateNow. Refusing here would wedge a process that has no App.
     app::release_current();
     assert app_should_terminate(0 as *u8) == (1 as i8);
+    return;
+}
+
+// ---- the agent address is process-scoped -------------------------------------
+
+static SERVED_PATH: text::Text = #zero::[text::Text]();
+static SERVE_CALLS: i32 = 0;
+
+fn spy_serve_once(path: str) {
+    SERVED_PATH = text::from_str(path);
+    SERVE_CALLS = SERVE_CALLS +% (1 as i32);
+    return;
+}
+fn spy_attach_window(w: *u8) { return; }
+fn spy_pin_policy(v: *u8, a: vocab::Agent) { return; }
+
+fn install_serve_spy() {
+    SERVED_PATH = text::new();
+    SERVE_CALLS = 0 as i32;
+    app::install_agent(app::AgentHooks {
+        attach_window: spy_attach_window,
+        serve_once: spy_serve_once,
+        pin_policy: spy_pin_policy,
+    });
+    return;
+}
+
+fn clear_serve_spy() {
+    app::install_agent(app::AgentHooks { attach_window: 0 as fn(*u8), serve_once: 0 as fn(str),
+                                         pin_policy: 0 as fn(*u8, vocab::Agent) });
+    agent_mcp("");
+    return;
+}
+
+// THE TWO SPELLINGS ARE ONE STORAGE. `App::agent_mcp` was a field on `App` and
+// the free `agent_mcp` did not exist, which is why the three blocking hosts had
+// no agent surface at all: `run_screen` — the tier `cpc init` generates — has
+// no `App` to call a method on.
+//
+// A field AND a static would have been the same class of defect this whole
+// change is about: two places to look, and a reader who finds one of them
+// believing they have found the answer.
+#[test]
+fn both_spellings_of_agent_mcp_name_one_address() {
+    install_serve_spy();
+
+    agent_mcp("free-function");
+    assert agent_id() == "free-function";
+
+    // The method writes the same storage the free function reads.
+    var a: App = App::new(name: "probe");
+    a.agent_mcp("via-the-app");
+    assert agent_id() == "via-the-app";
+
+    // ...and with no argument it names the app, which is the whole reason the
+    // parameter became a name: an app already has one.
+    a.agent_mcp();
+    assert agent_id() == "probe";
+
+    clear_serve_spy();
+    return;
+}
+
+// An app that never asked serves nothing. This is the rule the whole surface
+// hangs off — no `agent_mcp`, no socket — and it is what makes the address
+// un-settable from outside the program.
+#[test]
+fn a_host_serves_nothing_until_an_address_is_named() {
+    install_serve_spy();
+    agent_mcp("");
+
+    serve_agent_if_asked();
+    assert SERVE_CALLS == (0 as i32);
+
+    agent_mcp("asked-for");
+    serve_agent_if_asked();
+    assert SERVE_CALLS == (1 as i32);
+    assert SERVED_PATH.view() == "asked-for";
+
+    clear_serve_spy();
     return;
 }
 

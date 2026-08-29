@@ -93,6 +93,25 @@ fn menu_action_find_replace() -> u32 { return screen::menu_action_find_replace()
 fn null_enabled_fn() -> fn(*u8) -> bool { return screen::null_enabled_fn(); }
 fn null_title_fn() -> fn(*u8) -> text::Text { return screen::null_title_fn(); }
 
+// ---- the agent surface, for every host ---------------------------------------
+//
+// The neutral facade's half. `agent_mcp` exists here so a portable app that
+// names an address COMPILES on a target with no facet backend; what it cannot
+// do is serve, because there is no window for an agent to read. Binding a
+// socket anyway would advertise a surface that answers nothing, which is worse
+// than not being there — the same reasoning the no-backend hosts below already
+// follow.
+static AGENT_ID: text::Text = #zero::[text::Text]();
+
+fn agent_mcp(id: str) {
+    AGENT_ID = text::from_str(id);
+    return;
+}
+
+fn agent_id() -> str { return AGENT_ID.view(); }
+
+fn serve_agent_if_asked() { return; }
+
 fn run[W: Window](take window: W) {
     var owned_window: W = window;
     no_backend("run");
@@ -259,7 +278,6 @@ struct App {
     on_launch_fn: fn(*u8),
     on_quit_fn: fn(*u8),
     opaque hook_ctx: *u8,
-    agent_path: text::Text,
     routes: vec::Vec[AppRoute],
 }
 
@@ -272,7 +290,6 @@ impl App {
             on_launch_fn: app_hook_noop,
             on_quit_fn: app_hook_noop,
             hook_ctx: 0 as *u8,
-            agent_path: text::new(),
             routes: vec::new::[AppRoute](),
         };
     }
@@ -289,8 +306,9 @@ impl App {
         return;
     }
 
-    fn agent_mcp(ref this, path: str) {
-        this.agent_path = text::from_str(path);
+    fn agent_mcp(ref this, id: str = "") {
+        if id == "" { agent_mcp(this.name()); return; }
+        agent_mcp(id);
         return;
     }
 

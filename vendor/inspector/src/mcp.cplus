@@ -59,21 +59,25 @@ import "./inspector" as insp;
 import "./tree" as tree;
 
 // ---- JSON helpers --------------------------------------------------------------
+//
+// FORWARDS, NOT COPIES. These eight were byte-identical reimplementations of
+// `agent_mcp`'s, in a file that already imports it and already calls
+// `bridge::prop`, `bridge::tool` and `bridge::required1` across the same
+// import — so the duplication was an oversight rather than a boundary, and it
+// was in the half where a drift would emit a malformed JSON-RPC frame on ONE
+// namespace of a shared socket.
+//
+// Kept as local names rather than rewritten to `bridge::` at 140 call sites:
+// the point is one definition of the frame, which a forward gives, and every
+// descriptor below stays readable. Do not "simplify" these back into bodies.
 
-fn jstr(s: str) -> json::Value { return json::Value::Text(text::from_str(s)); }
-fn jnum(n: f64) -> json::Value { return json::Value::Number(n); }
-fn jbool(b: bool) -> json::Value { return json::Value::Bool(b); }
+fn jstr(s: str) -> json::Value { return bridge::jstr(s); }
+fn jnum(n: f64) -> json::Value { return bridge::jnum(n); }
+fn jbool(b: bool) -> json::Value { return bridge::jbool(b); }
 
-fn member(k: str, take v: json::Value) -> json::Member {
-    return json::Member { key: text::from_str(k), value: v };
-}
+fn member(k: str, take v: json::Value) -> json::Member { return bridge::member(k, v); }
 
-fn obj_get(v: json::Value, key: str) -> json::Value {
-    return match v.value(key) {
-        option::Option[json::Value]::Some(val) => val,
-        option::Option[json::Value]::None => json::Value::Null,
-    };
-}
+fn obj_get(v: json::Value, key: str) -> json::Value { return bridge::obj_get(v, key); }
 
 fn as_usize(v: json::Value, fallback: usize) -> usize {
     return match v.as_number() {
@@ -92,32 +96,25 @@ fn as_text(v: json::Value) -> text::Text {
 }
 
 // ---- envelopes -----------------------------------------------------------------
+//
+// Forwards, for the reason above. THE FRAME IS ONE THING: both namespaces ride
+// one socket and one client parses both, so `{"jsonrpc","id","result"}` must
+// come from a single place or the two can disagree about what a response looks
+// like without either being obviously wrong.
 
 fn ok_response(id: f64, take result: json::Value) -> json::Value {
-    var m: vec::Vec[json::Member] = vec::new::[json::Member]();
-    m.append(member("jsonrpc", jstr("2.0")));
-    m.append(member("id", jnum(id)));
-    m.append(member("result", result));
-    return json::Value::Object(m);
+    return bridge::ok_response(id, result);
 }
 
 fn err_response(id: f64, code: f64, msg: str) -> json::Value {
-    var e: vec::Vec[json::Member] = vec::new::[json::Member]();
-    e.append(member("code", jnum(code)));
-    e.append(member("message", jstr(msg)));
-    var m: vec::Vec[json::Member] = vec::new::[json::Member]();
-    m.append(member("jsonrpc", jstr("2.0")));
-    m.append(member("id", jnum(id)));
-    m.append(member("error", json::Value::Object(e)));
-    return json::Value::Object(m);
+    return bridge::err_response(id, code, msg);
 }
 
 // A required parameter is absent. The same -32602 the agent surface uses, and
 // for the same reason it exists there: every reader below falls back, so a
 // misspelled parameter name would otherwise answer success and act on index 0.
 fn missing_param(id: f64, method: str, param: str) -> json::Value {
-    let msg: text::Text = "${method}: missing required parameter \"${param}\"";
-    return err_response(id, - 32602 as f64, msg.view());
+    return bridge::missing_param(id, method, param);
 }
 
 // ---- values on the wire --------------------------------------------------------
@@ -382,7 +379,7 @@ fn disarm() {
     ARMED = false;
     BACKEND = insp::Backend::none();
     SNAPSHOT.remove_all();
-    bridge::disarm_extension();
+    bridge::disarm_extension("inspector.");
     return;
 }
 

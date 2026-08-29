@@ -268,6 +268,18 @@ secondary:, initial:, on_typed:, on_answer:)` adds a text field and reports
 what was typed through `on_typed`. `choose(title, message, options,
 on_answer:)` reports which option by index.
 
+The callbacks are function POINTERS with an explicit context argument — C+ has
+no closures, so anything the callback needs is passed alongside it rather than
+captured:
+
+```cplus
+on_answer: fn(i32, *u8)     paired with  on_answer_ctx: *u8   // all three dialogs
+on_typed:  fn(str, *u8)     paired with  on_typed_ctx:  *u8   // prompt only
+```
+
+Both context parameters default to `0 as *u8`, so a callback that reads only
+statics can ignore them.
+
 `initial` is what the field STARTS with and `placeholder` is the hint shown
 while it is empty — a rename passes the old name as `initial`, and the caret
 lands in the field with it selected, so the first keystroke replaces it.
@@ -475,7 +487,21 @@ platform's agent package in its `Cplus.toml`, then names a socket with
 The surface answers `describe_ui` (the live tree, addressed by key) and drives
 controls through the same path a mouse takes.
 
-`in_app(policy)` opens the attached surface directly for an embedded assistant.
-It returns an `agent_inapp::Session`; no Unix socket or MCP transport is used.
-Each `describe_ui`, `click`, `set_text`, `scroll_to`, and `hit_test` call checks
-the policy with `auth::Channel::InApp` before touching the backend.
+`in_app()` opens the attached surface directly for an embedded assistant. It
+takes nothing and returns an `agent_inapp::Session`; no Unix socket or MCP
+transport is used. Each `describe_ui`, `click`, `set_text`, `scroll_to`, and
+`hit_test` call checks the policy with `auth::Channel::InApp` before touching
+the backend. `in_app_with_grant(grant)` is the same door opened with a wider
+authority the user has already approved — a new session rather than a widened
+one, so a permission granted for one task does not outlive it.
+
+`set_policy(f)` installs the application's own authorization policy,
+`fn(auth::Request) -> auth::Grant`. It is the ONLY way an app can be narrower
+(or wider) than the default: without it every connection is served the same
+built-in grant, which is `auth::operator()` — read the UI and drive it, nothing
+from behind a tier. An app that wants to ask its user first, check a token, or
+refuse outright puts that here.
+
+**Call it before `enable()`.** The serve thread reads the policy once, when it
+starts; a policy installed afterwards leaves a window in which the default
+served, and nothing reports that it happened.

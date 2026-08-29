@@ -170,17 +170,37 @@ fn grant_eq(a: Grant, b: Grant) -> bool {
 // What the policy decides over. `token` is whatever credential the transport
 // received, uninterpreted — "" when there was none. The core never reads it;
 // it exists so a developer's policy can.
+//
+// `client` and `method` are here because a policy could not otherwise ANSWER
+// THE QUESTION IT IS ASKED. A consent prompt says "X wants to do Y"; with only
+// a channel and a token it could say neither, so an application wanting an
+// interactive gate had to reach for `agent_mcp::current_client()` behind the
+// core's back and could not do per-verb consent at all — "allow reading but ask
+// before pressing anything" was not expressible.
+//
+// `client` IS NOT A CREDENTIAL. It is what the caller said its name was in
+// MCP's `initialize` handshake, so it is identity in the sense a From: header
+// is: it makes a prompt legible and a remembered answer specific. Anything that
+// must be unforgeable goes in `token` and is checked by the policy.
+//
+// Both are BORROWED for the duration of the call, like `token`. A policy that
+// wants to remember one copies it.
 struct Request {
     channel: Channel,
     token: str,
+    client: str,
+    method: str,
 }
 
 fn request(channel: Channel) -> Request {
-    return Request { channel: channel, token: "" };
+    return Request { channel: channel, token: "", client: "", method: "" };
 }
 
-fn request_with_token(channel: Channel, token: str) -> Request {
-    return Request { channel: channel, token: token };
+// Defaulted rather than a second constructor: every existing caller passes two
+// arguments and still means the same thing.
+fn request_with_token(channel: Channel, token: str,
+                      client: str = "", method: str = "") -> Request {
+    return Request { channel: channel, token: token, client: client, method: method };
 }
 
 // The gate holds the developer's policy. A function pointer, not a closure

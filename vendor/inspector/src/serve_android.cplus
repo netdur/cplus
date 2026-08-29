@@ -43,7 +43,7 @@
 //     reads in a layout dump are recoverable rather than a mystery factor of 3.
 //
 //   * THE TARGET IS A SYSTEM PROPERTY, not an environment variable. See
-//     `serve_if_asked`.
+//     `arm`.
 
 import "stdlib/vec" as vec;
 import "stdlib/text" as text;
@@ -654,15 +654,29 @@ fn asked_port() -> text::Text {
 // namespace, and the serving thread. Arming stays a deliberate act — linking
 // this package in still exposes nothing; only the launcher that set the
 // property gets a listener.
-fn serve_if_asked() {
-    let port: text::Text = asked_port();
-    if port.is_empty() { return; }
+// Arm the inspector namespace on the agent's socket, WITHOUT binding anything.
+//
+// This is the half an application actually chooses. `agent_mcp` decides whether
+// this process serves at all and at what address; this decides whether the
+// twelve `inspector.*` verbs are among what it serves. Separating them is the
+// point: there is one server and one consent gate, and the inspector is a
+// namespace inside it rather than a second door with its own socket.
+//
+// STILL EXPLICIT. Linking this package in exposes nothing — a process that
+// never calls `arm` answers "method not found" to every `inspector.*` method,
+// and the agent's policy still runs first and covers this namespace too.
+// Arming opens a door; it is not a way around the gate.
+//
+// Call it before the host, beside `agent_mcp`:
+//
+//     agent::enable();
+//     inspect::arm();
+//     runtime::agent_mcp("/tmp/myapp.sock");
+//     runtime::run_screen(Home::new());
+//
+fn arm() {
     install();
     mcp::arm(tree::local_backend());
-    // `serve_once` is installed by `enable`; without it the dispatch below is a
-    // null fn-pointer check that quietly serves nothing.
-    agent::enable();
-    runtime::agent_serve_once(port.view());
-    alog::info(#str_ptr("inspector: serving on the port in debug.facet.inspect\0"));
     return;
 }
+

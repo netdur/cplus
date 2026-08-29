@@ -65,6 +65,15 @@ Used by dispatch; available if you extend the protocol.
 ```cplus
 fn current_pid() -> i32
 
+// The connected client's self-reported `clientInfo.name` from `initialize`,
+// or "" before one arrives. NOT a credential: a client picks its own name and
+// can pick any name, so this is identity in the sense a From: header is —
+// what makes a consent prompt legible and a remembered answer specific, not
+// what makes it safe. Use `token` and a policy that checks it for that.
+// Cleared when a connection opens, so a second agent cannot inherit the
+// first's name and, with it, the first's consent.
+fn current_client() -> str
+
 fn read_line(fd: i32, buf_ptr: *u8, cap: usize) -> i64
 fn write_all(fd: i32, ptr: *u8, len: usize)
 
@@ -72,7 +81,7 @@ fn serve_fd(
     surf: *u8,
     vt: backend::Backend,
     ref sub: events::Subscriber,
-    policy: fn(auth::Request) -> auth::Decision,
+    policy: fn(auth::Request) -> auth::Grant,
     fd: i32,
 ) -> i32
 
@@ -80,7 +89,7 @@ fn serve_uds(
     surf: *u8,
     vt: backend::Backend,
     ref sub: events::Subscriber,
-    policy: fn(auth::Request) -> auth::Decision,
+    policy: fn(auth::Request) -> auth::Grant,
     path: str,
 ) -> i32
 ```

@@ -33,36 +33,7 @@ import "agent_uikit/agent_uikit" as agent_uikit;
 static AGENT_SURFACE: agent_uikit::Surface = #zero::[agent_uikit::Surface]();
 static AGENT_SERVING: bool = false;
 
-// THE TRANSPORT IS A PORT, not a path, and that is the whole iOS story.
-//
-// A Unix socket lives in the app's sandbox, where nothing on the development
-// machine can reach it — and to a DEVICE there is no shared filesystem at all.
-// A port is reachable, forwarded over USB by usbmuxd, which is how Flutter's
-// Dart VM Service and Chrome's remote debugging are reached. So the path an
-// application passes is read as a PORT NUMBER, and a path that is not one gets
-// the default.
-//
-// Bound to loopback by `serve_tcp`, never to every interface: this surface can
-// read a UI and press its buttons.
-const DEFAULT_PORT: u16 = 8787u16;
 
-fn port_of(path: str) -> u16 {
-    var n: u32 = 0 as u32;
-    var any: bool = false;
-    let bytes: *u8 = #str_ptr(path);
-    let len: usize = #str_len(path);
-    var i: usize = 0 as usize;
-    while i < len {
-        let c: u8 = { *(bytes + i) };
-        if c < ('0' as u8) || c > ('9' as u8) { return DEFAULT_PORT; }
-        n = n * (10 as u32) + ((c -% ('0' as u8)) as u32);
-        if n > (65535 as u32) { return DEFAULT_PORT; }
-        any = true;
-        i = i +% (1 as usize);
-    }
-    if !any { return DEFAULT_PORT; }
-    return n as u16;
-}
 
 fn enable() {
     app::install_agent(app::AgentHooks {
@@ -139,23 +110,82 @@ fn attach_window(win: *u8) {
 // an app supplying its own policy, which is a place a reader can find it.
 fn admit(req: auth::Request) -> auth::Grant { return auth::operator(); }
 
-struct AgentServe { port: u16 }
+// THE APP'S OWN POLICY, if it has one.
+//
+// THIS PLATFORM DID NOT HAVE ONE AT ALL until now, and the absence was silent
+// in the worst direction: `set_policy` existed only in the desktop facade, so
+// an app that installed a consent gate and then built for a phone either failed
+// to compile or — on the path that did compile — served `admit` to anything
+// that reached the loopback port, which on a device is every other app on it.
+// The grant model is not a desktop feature.
+//
+// A function pointer and not a closure, matching `auth::AuthGate`: C+ has no
+// closures, and per-caller behaviour comes from the `Request`.
+//
+// SET IT BEFORE `enable()`. The serve thread reads it once when it starts; a
+// policy installed afterwards would leave a window in which the default served.
+static AGENT_POLICY: fn(auth::Request) -> auth::Grant =
+    #zero::[fn(auth::Request) -> auth::Grant]();
+
+fn set_policy(f: fn(auth::Request) -> auth::Grant) {
+    AGENT_POLICY = f;
+    return;
+}
+
+fn effective_policy() -> fn(auth::Request) -> auth::Grant {
+    if AGENT_POLICY == (0 as fn(auth::Request) -> auth::Grant) { return admit; }
+    return AGENT_POLICY;
+}
+
+struct AgentServe { fd: i32 }
 
 fn serve_main(take job: AgentServe) -> i32 {
     var sub: events::Subscriber = events::subscriber(events::everything(), 64 as usize);
     let surf: *u8 = #addr_of(AGENT_SURFACE) as *u8;
-    return mcp::serve_tcp(surf, agent_uikit::mcp_backend(), sub, admit, job.port);
+    // HTTP, NOT THE PRIVATE FRAMING. This platform has no Unix socket a client
+    // could reach, so the loopback port is the ONLY door — which makes it the
+    // one place the framing has to be something an MCP client already speaks.
+    // It served line-delimited JSON-RPC, so reaching a phone app meant writing
+    // a bridge for it; now `adb forward` or a simulator's shared loopback is
+    // enough and any client connects to `http://127.0.0.1:<port>/`.
+    return mcp::accept_loop(surf, agent_uikit::mcp_backend(), sub, effective_policy(),
+                            job.fd, false, http: true);
 }
 
-// Start the serve worker exactly once per process. The accept loop lives for
-// the app's life.
-fn serve_once(path: str) {
+// Start the serve worker exactly once per process.
+//
+// `id` NAMES THE APP; the port is derived from the pid —
+// `agent_mcp::loopback_port`. BOUND ON THIS THREAD so a failure is something a
+// caller can hear: on this platform the documented one is Android refusing
+// `socket()` without `android.permission.INTERNET`, which used to end the
+// accept loop instantly and look exactly like an agent nobody connected to.
+fn serve_once(id: str) {
     if AGENT_SERVING { return; }
+    // Clear out what dead processes left behind. A path carries the pid, so a
+    // name is never reused and nothing else would ever remove these.
+    let _swept: usize = mcp::sweep_stale();
+    if !mcp::valid_id(id) {
+        let bad: text::Text = "facet: agent surface not served — \"${id}\" is not a valid id (a NAME, not a path)";
+        io::eprintln(bad.view());
+        return;
+    }
+    let port: u16 = mcp::loopback_port(mcp::current_pid());
+    let fd: i32 = mcp::bind_tcp(port);
+    if fd < (0 as i32) {
+        let why: text::Text = "facet: agent surface not served on port ${port} — ${mcp::bind_reason(fd)}";
+        io::eprintln(why.view());
+        return;
+    }
     AGENT_SERVING = true;
+    mcp::set_server_name(id);
+    let addr: text::Text = "http://127.0.0.1:${port}/";
+    let _d: bool = mcp::write_descriptor(id, mcp::current_pid(), "http", addr.view());
     let _t: thread::JoinHandle[i32] = thread::spawn_with::[AgentServe, i32](
-        AgentServe { port: port_of(path) },
+        AgentServe { fd: fd },
         serve_main,
     );
+    let ok: text::Text = "facet: agent surface on http://127.0.0.1:${port}/";
+    io::eprintln(ok.view());
     return;
 }
 

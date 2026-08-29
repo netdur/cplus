@@ -6788,7 +6788,7 @@ fn run_init(args: &[OsString]) -> ExitCode {
                       objc        = \"*\"\n\
                       quartzcore  = \"*\"\n\
                       webkit      = \"*\"\n\n\
-                      # What `serve_if_asked` in src/main_ios.cplus links, named here for\n\
+                      # What the agent surface in src/app.cplus links, named here for\n\
                       # the same flat-set reason as the backend's own closure.\n\
                       inspector   = \"*\"\n\
                       facet_agent = \"*\"\n\
@@ -6805,7 +6805,7 @@ fn run_init(args: &[OsString]) -> ExitCode {
                         objc         = \"*\"\n\
                         quartzcore   = \"*\"\n\
                         webkit       = \"*\"\n\n\
-                        # What `serve_if_asked` in the desktop entry links. Named here for\n\
+                        # What the agent surface in src/app.cplus links. Named here for\n\
                         # the same reason the backend's closure is: the resolver checks every\n\
                         # import against this one flat set. Delete these with that line if\n\
                         # you would rather the binary could not be inspected.\n\
@@ -6818,10 +6818,10 @@ fn run_init(args: &[OsString]) -> ExitCode {
                         json         = \"*\"\n"
                 .to_string(),
             // The third full closure. It used to be three lines, and the note
-            // here said why: `inspector` had no Android half, so the entry did
-            // not call `serve_if_asked` and none of the agent packages were
-            // named. It has one now (`inspector/serve_android`), so this is the
-            // same shape as its two neighbours.
+            // here said why: `inspector` had no Android half, so nothing armed
+            // the surface and none of the agent packages were named. It has one
+            // now (`inspector/serve_android`), so this is the same shape as its
+            // two neighbours.
             //
             // `agent_android` is the Android sibling of agent_appkit and
             // agent_uikit and walks facet's OWN node tree rather than a native
@@ -6835,7 +6835,7 @@ fn run_init(args: &[OsString]) -> ExitCode {
                           facet_android = \"*\"\n\
                           android_view  = \"*\"\n\
                           jni           = \"*\"\n\n\
-                          # What `serve_if_asked` in src/main_android.cplus links, named here\n\
+                          # What the agent surface in src/app.cplus links, named here\n\
                           # for the same flat-set reason as the backend's own closure. The\n\
                           # port arrives as the system property `debug.facet.inspect`, since\n\
                           # an Activity has no environment for the launcher to set.\n\
@@ -6909,6 +6909,8 @@ fn run_init(args: &[OsString]) -> ExitCode {
          import \"facet/screen\" as screen;\n\
          import \"facet/vocabulary\" as vocab;\n\
          import \"facet_runtime/runtime\" as runtime;\n\
+         import \"facet_agent/agent\" as agent;\n\
+         import \"inspector/serve\" as inspect;\n\
          import \"stdlib/option\" as option;\n\
          import \"stdlib/vec\" as vec;\n\n\
          struct Home {{\n    taps: i64,\n}}\n\n\
@@ -6976,6 +6978,24 @@ fn run_init(args: &[OsString]) -> ExitCode {
          // warns on `adb logcat -s facet` and returns InvalidInput, so an app\n\
          // built on it launches to a blank Activity.\n\
          fn run() -> i32 {{\n\
+         \x20   // DRIVEABLE BY AN AGENT, and by the IDE that launched it. Three\n\
+         \x20   // lines, each saying what it does:\n\
+         \x20   //\n\
+         \x20   //   enable()      fills the serving seam (without it, nothing serves)\n\
+         \x20   //   arm()         adds the `inspector.*` verbs — the developer half,\n\
+         \x20   //                 which sees unexposed nodes and writes properties\n\
+         \x20   //                 that are not user affordances\n\
+         \x20   //   agent_mcp(id) names THIS APP; the platform derives where it\n\
+         \x20   //                 listens — `/tmp/mcp-{proj_name}-<pid>.socket` on a\n\
+         \x20   //                 desktop, a loopback port on a phone. A launcher\n\
+         \x20   //                 knows the pid it spawned, so it can work the\n\
+         \x20   //                 address out without being told.\n\
+         \x20   //\n\
+         \x20   // Delete all three (and the agent packages from Cplus.toml) if you\n\
+         \x20   // would rather this binary could not be driven.\n\
+         \x20   agent::enable();\n\
+         \x20   inspect::arm();\n\
+         \x20   runtime::agent_mcp(\"{proj_name}\");\n\
          \x20   runtime::run_screen(Home::new());\n\
          \x20   return 0 as i32;\n\
          }}\n"
@@ -6989,14 +7009,14 @@ fn run_init(args: &[OsString]) -> ExitCode {
          // produces a STATICLIB, and a library has no entry the system knows to\n\
          // call. It does not return — `UIApplicationMain` owns the process from\n\
          // here — so the value below is unreachable in a running app.\n\n\
-         import \"./app\" as app;\n\
-         import \"inspector/serve\" as inspect;\n\n\
+         import \"./app\" as app;\n\n\
          export extern fn {sym}_main() -> i32 {{\n\
-         \x20   // Inspectable ON REQUEST, the same line the desktop entry has.\n\
-         \x20   // `FACET_INSPECT` carries a PORT here — a Unix socket would sit\n\
-         \x20   // inside the app sandbox where the launcher cannot reach it — and\n\
-         \x20   // `simctl launch` passes it in as `SIMCTL_CHILD_FACET_INSPECT`.\n\
-         \x20   inspect::serve_if_asked();\n\
+         \x20   // The agent surface is armed in src/app.cplus, the one file every\n\
+         \x20   // platform builds — there is nothing platform-shaped about it. On\n\
+         \x20   // this platform it listens on a loopback PORT rather than a socket\n\
+         \x20   // path, because a Unix socket sits inside the app sandbox where the\n\
+         \x20   // launcher cannot reach it; the port is derived from the pid, which\n\
+         \x20   // `simctl launch` and `devicectl` both report.\n\
          \x20   return app::run();\n}}\n"
     );
 
@@ -7011,12 +7031,11 @@ fn run_init(args: &[OsString]) -> ExitCode {
     // `cplus.facet.main` meta-data in android/AndroidManifest.xml, and dlsym's
     // it out of the .so. The app writes no Java and no JNI.
     //
-    // It DOES call `serve_if_asked`, like both its neighbours. That line used
-    // to be absent and the reason given here was that `inspector` was AppKit
-    // and UIKit only; `inspector/serve_android` closed that, and the channel it
-    // reads is the one difference worth knowing about — an Activity has no
-    // environment for a launcher to set, so the port is the system property
-    // `debug.facet.inspect` rather than a variable.
+    // It arms NOTHING of its own, like both its neighbours: the agent surface
+    // is set up in src/app.cplus, which every platform builds. That used to be
+    // three per-platform `serve_if_asked` calls reading three differently-spelled
+    // channels; the address is derived from the pid now, so there is no channel
+    // and no per-platform line.
     //
     // It DOES return, unlike iOS. `onCreate` called in, takes a View back and
     // returns to the looper that was already running — so the Android facade's
@@ -7033,45 +7052,39 @@ fn run_init(args: &[OsString]) -> ExitCode {
          // android/AndroidManifest.xml — and dlsym's it, so nothing above this\n\
          // line is Android-shaped and src/app.cplus is the same file every\n\
          // platform builds. Rename the function and you must rename it there too.\n\n\
-         import \"./app\" as app;\n\
-         import \"inspector/serve\" as inspect;\n\n\
+         import \"./app\" as app;\n\n\
          export extern fn {sym}_main() -> i32 {{\n\
-         \x20   // Inspectable ON REQUEST, the same line the other two entries have.\n\
-         \x20   // The port arrives as a SYSTEM PROPERTY here — an Activity has no\n\
-         \x20   // environment for a launcher to set, and `am start` takes an Intent:\n\
+         \x20   // The agent surface is armed in src/app.cplus, the one file every\n\
+         \x20   // platform builds. It listens on a loopback port derived from this\n\
+         \x20   // process\'s pid, so nothing has to be passed in — an Activity has no\n\
+         \x20   // environment for a launcher to set, which is what the old system\n\
+         \x20   // property was working around:\n\
          \x20   //\n\
-         \x20   //     adb shell setprop debug.facet.inspect 8787\n\
          \x20   //     adb shell am start -n <pkg>/cplus.facet.FacetActivity\n\
-         \x20   //     adb forward tcp:8787 tcp:8787\n\
-         \x20   //\n\
-         \x20   // Launched without that property this costs one property read.\n\
-         \x20   inspect::serve_if_asked();\n\
+         \x20   //     pid=$(adb shell pidof <pkg>); adb forward tcp:$((9000+pid%1000)) tcp:$((9000+pid%1000))\n\
+         \x20   //\
          \x20   // This RETURNS, unlike the iOS entry: onCreate is calling in and\n\
          \x20   // needs its View back, so `App::run` builds the tree and stores it\n\
          \x20   // rather than entering a loop it would never leave.\n\
          \x20   return app::run();\n}}\n"
     );
 
-    // macOS gets one line the other desktops do not: the inspector is an
-    // AppKit package, and `serve_if_asked` is what makes a launched binary
-    // inspectable BY THE LAUNCHER. An IDE (iris's Run) sets FACET_INSPECT to a
-    // socket path and connects a remote backend to it; without this call the
-    // variable arrives at a process that serves nothing, and the IDE's inspect
-    // pane sits empty against an app that is running perfectly. Scaffolded in
-    // because a fresh project's first Run is exactly when that reads as broken.
+    // Every desktop entry is now the same three lines: the agent surface is
+    // armed in src/app.cplus, not here. It used to be macOS-only and in the
+    // entry, because the inspector was an AppKit package reached through
+    // `serve_if_asked` reading FACET_INSPECT — a second way to start the same
+    // server, which silently decided whether eleven of the socket's twenty-one
+    // verbs existed. See plan.md.
     let facet_desktop_entry = |p: &str| -> String {
         if p == "macos" {
             format!(
                 "// {proj_name} — the desktop entry. The same `app::run` the iOS shell\n\
                  // calls; `facet_runtime` selects its own per-platform backend, so there\n\
                  // is nothing to install here.\n\n\
-                 import \"./app\" as app;\n\
-                 import \"inspector/serve\" as inspect;\n\n\
+                 import \"./app\" as app;\n\n\
                  fn main() -> i32 {{\n\
-                 \x20   // Inspectable ON REQUEST. `FACET_INSPECT` names a socket the\n\
-                 \x20   // launcher is listening on; started any other way there is no\n\
-                 \x20   // variable and this costs one getenv.\n\
-                 \x20   inspect::serve_if_asked();\n\
+                 \x20   // The agent surface is armed in src/app.cplus, the one file\n\
+                 \x20   // every platform builds.\n\
                  \x20   return app::run();\n}}\n"
             )
         } else {
@@ -7257,15 +7270,15 @@ fn run_init(args: &[OsString]) -> ExitCode {
          <manifest xmlns:android=\"http://schemas.android.com/apk/res/android\"\n\
          \x20   package=\"{android_pkg}\">\n\
          \x20   <!-- FOR THE INSPECTOR, and for nothing else this project does.\n\
-         \x20        `serve_if_asked` in src/main_android.cplus binds a listening\n\
+         \x20        the agent surface in src/app.cplus binds a listening\n\
          \x20        socket on LOOPBACK, and Android gates socket() on the app's\n\
          \x20        membership of the inet group — which this permission is what\n\
          \x20        grants. Without it the bind fails with EACCES, the accept loop\n\
          \x20        ends the instant it starts, and an IDE that set\n\
          \x20        debug.facet.inspect connects to nothing while the app runs\n\
          \x20        perfectly. Measured, on an emulator, before this line existed.\n\n\
-         \x20        Delete it with `serve_if_asked` if you would rather the app\n\
-         \x20        could not be inspected: the two belong together. -->\n\
+         \x20        Delete it with the three lines in src/app.cplus if you would\n\
+         \x20        rather the app could not be inspected: they belong together. -->\n\
          \x20   <uses-permission android:name=\"android.permission.INTERNET\" />\n\
          \x20   <application android:label=\"{display}\"\n\
          \x20                android:theme=\"@android:style/Theme.DeviceDefault.DayNight\">\n\

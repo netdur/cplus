@@ -13,10 +13,10 @@
 //     so the coordinate branch that file carries has nothing to decide here.
 //   * THE TARGET IS A PORT, not a socket path. A Unix socket lives inside the
 //     app sandbox where nothing on the development machine can reach it, and a
-//     real device shares no filesystem at all — so `serve_if_asked` hands the
-//     value straight to `agent_serve_once`, which on this backend binds TCP on
-//     loopback. It is the choice the agent surface already made, for the same
-//     reason, and it is why the value is not called `path` anywhere below.
+//     real device shares no filesystem at all — so this backend binds TCP on
+//     loopback, at `agent_mcp::loopback_port(pid)`. It is the choice the agent
+//     surface already made, for the same reason, and it is why nothing below
+//     is called `path`.
 
 import "stdlib/vec" as vec;
 import "stdlib/text" as text;
@@ -246,15 +246,29 @@ fn install() {
 // the launcher sets `SIMCTL_CHILD_FACET_INSPECT` and simctl passes the
 // unprefixed variable to the app. Launched any other way there is no variable
 // and this costs one getenv.
-fn serve_if_asked() {
-    let port: text::Text = match env::var("FACET_INSPECT") {
-        option::Option[text::Text]::Some(p) => p,
-        option::Option[text::Text]::None => { return; }
-    };
-    if port.is_empty() { return; }
+// Arm the inspector namespace on the agent's socket, WITHOUT binding anything.
+//
+// This is the half an application actually chooses. `agent_mcp` decides whether
+// this process serves at all and at what address; this decides whether the
+// twelve `inspector.*` verbs are among what it serves. Separating them is the
+// point: there is one server and one consent gate, and the inspector is a
+// namespace inside it rather than a second door with its own socket.
+//
+// STILL EXPLICIT. Linking this package in exposes nothing — a process that
+// never calls `arm` answers "method not found" to every `inspector.*` method,
+// and the agent's policy still runs first and covers this namespace too.
+// Arming opens a door; it is not a way around the gate.
+//
+// Call it before the host, beside `agent_mcp`:
+//
+//     agent::enable();
+//     inspect::arm();
+//     runtime::agent_mcp("/tmp/myapp.sock");
+//     runtime::run_screen(Home::new());
+//
+fn arm() {
     install();
     mcp::arm(tree::local_backend());
-    agent::enable();
-    runtime::agent_serve_once(port.view());
     return;
 }
+

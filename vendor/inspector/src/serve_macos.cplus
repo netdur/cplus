@@ -4,4 +4,5 @@
 
 import "./appkit" as platform;
 
-fn serve_if_asked() { platform::serve_if_asked(); return; }
+fn arm() { platform::arm(); return; }
+

@@ -938,6 +938,101 @@ fn open_window_mounts_shows_and_records_its_handle() {
     return;
 }
 
+// ---- the agent follows the window ---------------------------------------------
+
+// What `open_window` handed the agent seam, and how many times.
+static ATTACHED_WIN: *u8 = 0 as *u8;
+static ATTACH_CALLS: i32 = 0;
+
+fn spy_attach(win: *u8) {
+    ATTACHED_WIN = win;
+    ATTACH_CALLS = ATTACH_CALLS +% (1 as i32);
+    return;
+}
+fn spy_serve(path: str) { return; }
+fn spy_pin(v: *u8, a: vocab::Agent) { return; }
+
+// OPENING A WINDOW ATTACHES IT TO THE AGENT SURFACE, and this test exists
+// because nothing asserted it and the omission shipped.
+//
+// `agent_appkit` cannot find a window by itself — no keyWindow lookup anywhere
+// in that package — and it re-walks from the surface's OWN node 1, so a window
+// nobody hands over leaves `describe_ui`, `click` and `hit_test` answering
+// against an empty registry for the whole life of the process, with no way to
+// recover. The runtime attached at three of its six `open_window` calls;
+// `run`, `run_component` and `run_screen` did not, and `run_screen` is the one
+// `cpc init` generates.
+//
+// It is asserted HERE, on the one path all six take, rather than six times over
+// in the runtime — which is the arrangement runtime_ios.cplus:605 argued for
+// and the macOS side did not adopt.
+//
+// Measured before the fix, against a real `run_screen` app on this socket:
+// `describe_ui` and `describe_ui mode:"full"` both answered `[]` while
+// `inspector.*` returned the whole tree over the same connection.
+#[test]
+fn opening_a_window_hands_it_to_the_agent_surface() {
+    backend::install();
+    app::reset_default_for_tests();
+    ATTACHED_WIN = 0 as *u8;
+    ATTACH_CALLS = 0 as i32;
+    app::install_agent(app::AgentHooks {
+        attach_window: spy_attach,
+        serve_once: spy_serve,
+        pin_policy: spy_pin,
+    });
+
+    var root: core::Node = empty_keyed_column();
+    let rp: *core::Node = #addr_of(root);
+    let win: *u8 = window::open_window(rp, screen::Chrome::new(title: "agent", width: 300.0f64, height: 200.0f64));
+    assert win != (0 as *u8);
+
+    // The window itself, not some other handle: the surface walks from this
+    // pointer, so a plausible-but-wrong one fails the same way as none.
+    assert ATTACHED_WIN == win;
+    // ONCE. The runtime used to attach again after its own `open_window`
+    // returned; those calls are gone, and a second attach here would mean one
+    // came back.
+    assert ATTACH_CALLS == (1 as i32);
+
+    window::close_window(win);
+    app::install_agent(app::AgentHooks {
+        attach_window: 0 as fn(*u8),
+        serve_once: 0 as fn(str),
+        pin_policy: 0 as fn(*u8, vocab::Agent),
+    });
+    backend::uninstall();
+    app::reset_default_for_tests();
+    return;
+}
+
+// A refused window attaches NOTHING. `open_window` returns null before it
+// builds anything, and handing the agent surface a null would give it a node 1
+// it can never walk — inert in exactly the way that reads as "the app has not
+// come up yet".
+#[test]
+fn a_refused_window_is_not_attached() {
+    backend::install();
+    ATTACHED_WIN = 0 as *u8;
+    ATTACH_CALLS = 0 as i32;
+    app::install_agent(app::AgentHooks {
+        attach_window: spy_attach,
+        serve_once: spy_serve,
+        pin_policy: spy_pin,
+    });
+
+    assert window::open_window(0 as *core::Node, screen::Chrome::new()) == (0 as *u8);
+    assert ATTACH_CALLS == (0 as i32);
+
+    app::install_agent(app::AgentHooks {
+        attach_window: 0 as fn(*u8),
+        serve_once: 0 as fn(str),
+        pin_policy: 0 as fn(*u8, vocab::Agent),
+    });
+    backend::uninstall();
+    return;
+}
+
 #[test]
 fn open_window_refuses_a_null_root_and_close_is_inert() {
     backend::install();

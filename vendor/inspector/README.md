@@ -64,7 +64,7 @@ imcp::arm(itree::local_backend());
 | `inspector/tree` | the facet-tree walker, the typed dispatch, the structural verbs |
 | `inspector/widget` | the embeddable panel, written against the vtable |
 | `inspector/appkit` | highlight overlay, native rows, the UI-thread hop — the PLATFORM half, and it resolves per platform: `appkit.cplus` on macOS, `serve_ios.cplus` on iOS, `serve_android.cplus` on Android |
-| `inspector/serve` | `serve_if_asked()` — one name an entry calls on any platform to be inspectable when the launcher asked |
+| `inspector/serve` | `arm()` — one name an app calls on any platform to add the `inspector.*` verbs to the agent socket it already serves. Binds nothing: `runtime::agent_mcp(id)` decides whether this process serves at all |
 | `inspector/mcp` | the `inspector.` namespace for `agent_mcp`'s server |
 
 ## Docs

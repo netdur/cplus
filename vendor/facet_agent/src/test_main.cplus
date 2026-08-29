@@ -6,6 +6,10 @@
 // that needs a window or a live socket belongs to an app under playground/.
 
 import "./agent" as _;
+// The consent policy is portable — it names no platform and no window — so it
+// is imported here rather than from `agent.cplus`, which would put it in every
+// build whether the app installs it or not.
+import "./consent" as _consent;
 
 #[test]
 fn the_agent_surface_compiles() {

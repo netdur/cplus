@@ -30,8 +30,6 @@ import "./serve_ios" as ios;
 
 fn install() { ios::install(); return; }
 
-fn serve_if_asked() { ios::serve_if_asked(); return; }
-
 fn place(n: *core::Node) -> ios::Placed { return ios::place(n); }
 
 fn highlight(s: *u8, h: insp::Handle) { ios::highlight(s, h); return; }

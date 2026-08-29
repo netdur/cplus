@@ -34,48 +34,7 @@ import "facet_android/log" as alog;
 static AGENT_SURFACE: agent_android::Surface = #zero::[agent_android::Surface]();
 static AGENT_SERVING: bool = false;
 
-// THE TRANSPORT IS A PORT, not a path, and Android's reason is the same shape as
-// iOS's with a different plumbing.
-//
-// An app's files live under /data/data/<pkg>, which is not readable from the
-// development machine without root — so a Unix socket is as unreachable here as
-// it is inside an iOS sandbox. A port is reachable: `adb forward tcp:8787
-// tcp:8787` is the counterpart of usbmuxd, and the same MCP client talks to
-// both without knowing which it reached.
-//
-// (Below is the iOS note this was ported from, kept because the reasoning is
-// the same one.)
-//
-// ORIGINAL:
-//
-// A Unix socket lives in the app's sandbox, where nothing on the development
-// machine can reach it — and to a DEVICE there is no shared filesystem at all.
-// A port is reachable, forwarded over USB by usbmuxd, which is how Flutter's
-// Dart VM Service and Chrome's remote debugging are reached. So the path an
-// application passes is read as a PORT NUMBER, and a path that is not one gets
-// the default.
-//
-// Bound to loopback by `serve_tcp`, never to every interface: this surface can
-// read a UI and press its buttons.
-const DEFAULT_PORT: u16 = 8787u16;
 
-fn port_of(path: str) -> u16 {
-    var n: u32 = 0 as u32;
-    var any: bool = false;
-    let bytes: *u8 = #str_ptr(path);
-    let len: usize = #str_len(path);
-    var i: usize = 0 as usize;
-    while i < len {
-        let c: u8 = { *(bytes + i) };
-        if c < ('0' as u8) || c > ('9' as u8) { return DEFAULT_PORT; }
-        n = n * (10 as u32) + ((c -% ('0' as u8)) as u32);
-        if n > (65535 as u32) { return DEFAULT_PORT; }
-        any = true;
-        i = i +% (1 as usize);
-    }
-    if !any { return DEFAULT_PORT; }
-    return n as u16;
-}
 
 fn enable() {
     app::install_agent(app::AgentHooks {
@@ -155,60 +114,83 @@ fn attach_window(win: *u8) {
 // an app supplying its own policy, which is a place a reader can find it.
 fn admit(req: auth::Request) -> auth::Grant { return auth::operator(); }
 
-struct AgentServe { port: u16 }
+// THE APP'S OWN POLICY, if it has one.
+//
+// THIS PLATFORM DID NOT HAVE ONE AT ALL until now, and the absence was silent
+// in the worst direction: `set_policy` existed only in the desktop facade, so
+// an app that installed a consent gate and then built for a phone either failed
+// to compile or — on the path that did compile — served `admit` to anything
+// that reached the loopback port, which on a device is every other app on it.
+// The grant model is not a desktop feature.
+//
+// A function pointer and not a closure, matching `auth::AuthGate`: C+ has no
+// closures, and per-caller behaviour comes from the `Request`.
+//
+// SET IT BEFORE `enable()`. The serve thread reads it once when it starts; a
+// policy installed afterwards would leave a window in which the default served.
+static AGENT_POLICY: fn(auth::Request) -> auth::Grant =
+    #zero::[fn(auth::Request) -> auth::Grant]();
+
+fn set_policy(f: fn(auth::Request) -> auth::Grant) {
+    AGENT_POLICY = f;
+    return;
+}
+
+fn effective_policy() -> fn(auth::Request) -> auth::Grant {
+    if AGENT_POLICY == (0 as fn(auth::Request) -> auth::Grant) { return admit; }
+    return AGENT_POLICY;
+}
+
+struct AgentServe { fd: i32 }
 
 fn serve_main(take job: AgentServe) -> i32 {
     var sub: events::Subscriber = events::subscriber(events::everything(), 64 as usize);
     let surf: *u8 = #addr_of(AGENT_SURFACE) as *u8;
-    let rc: i32 = mcp::serve_tcp(surf, agent_android::mcp_backend(), sub, admit, job.port);
-    // KEPT, because the silence was the bug. `serve_tcp` returning at all means
-    // the accept loop is over — a failed bind returns instantly and looks
-    // exactly like an agent nobody connected to. That is how the socket
-    // constants being Darwin's on Android went unnoticed: nothing listened, and
-    // nothing said so.
-    //
-    // AND IT SAYS WHICH SYSCALL, because "it ended" was not enough twice in one
-    // day. `bind_tcp` already separates the three, and on Android they are three
-    // different mistakes with nothing in common:
-    //
-    //   -1  socket()  refused. THE PERMISSION. Android gates socket() on the
-    //                 app's membership of the inet group and
-    //                 `android.permission.INTERNET` is what grants it —
-    //                 loopback included, there being no narrower one. `cpc init`
-    //                 writes it; an app with a hand-written AndroidManifest.xml
-    //                 that reads this line is missing it.
-    //   -2  bind()    refused. THE PORT IS TAKEN, usually by another app on the
-    //                 same emulator holding it — two probes, one port, and the
-    //                 second one looks exactly like the permission case if the
-    //                 message does not say which. (It was mine, 2026-08-27.)
-    //   -3  listen()  refused. Neither of the above; read errno.
-    //
-    // Anything else is a loop that ran and ended, which is the original meaning.
-    if rc == (- 1 as i32) {
-        alog::warn(#str_ptr("agent: socket() refused - the app is missing android.permission.INTERNET\0"));
-        return rc;
-    }
-    if rc == (- 2 as i32) {
-        alog::warn(#str_ptr("agent: bind() refused - the port is already in use by another process\0"));
-        return rc;
-    }
-    if rc == (- 3 as i32) {
-        alog::warn(#str_ptr("agent: listen() refused - nothing is served on this port\0"));
-        return rc;
-    }
-    alog::warn(#str_ptr("agent: the accept loop ended - the surface is no longer served\0"));
-    return rc;
+    // HTTP, NOT THE PRIVATE FRAMING. This platform has no Unix socket a client
+    // could reach, so the loopback port is the ONLY door — which makes it the
+    // one place the framing has to be something an MCP client already speaks.
+    // It served line-delimited JSON-RPC, so reaching a phone app meant writing
+    // a bridge for it; now `adb forward` or a simulator's shared loopback is
+    // enough and any client connects to `http://127.0.0.1:<port>/`.
+    return mcp::accept_loop(surf, agent_android::mcp_backend(), sub, effective_policy(),
+                            job.fd, false, http: true);
 }
 
-// Start the serve worker exactly once per process. The accept loop lives for
-// the app's life.
-fn serve_once(path: str) {
+// Start the serve worker exactly once per process.
+//
+// `id` NAMES THE APP; the port is derived from the pid —
+// `agent_mcp::loopback_port`. BOUND ON THIS THREAD so a failure is something a
+// caller can hear: on this platform the documented one is Android refusing
+// `socket()` without `android.permission.INTERNET`, which used to end the
+// accept loop instantly and look exactly like an agent nobody connected to.
+fn serve_once(id: str) {
     if AGENT_SERVING { return; }
+    // Clear out what dead processes left behind. A path carries the pid, so a
+    // name is never reused and nothing else would ever remove these.
+    let _swept: usize = mcp::sweep_stale();
+    if !mcp::valid_id(id) {
+        alog::warn(#str_ptr("agent: not served - the id is a NAME, not a path\0"));
+        return;
+    }
+    let port: u16 = mcp::loopback_port(mcp::current_pid());
+    let fd: i32 = mcp::bind_tcp(port);
+    if fd < (0 as i32) {
+        // logcat, not stderr: a device has nowhere to put stderr, and this is
+        // the message that says why the Inspect tab is empty. `adb logcat -s facet`.
+        let why: text::Text = "agent: not served on port ${port} - ${mcp::bind_reason(fd)}";
+        alog::warn(#str_ptr(why.view()));
+        return;
+    }
     AGENT_SERVING = true;
+    mcp::set_server_name(id);
+    let addr: text::Text = "http://127.0.0.1:${port}/";
+    let _d: bool = mcp::write_descriptor(id, mcp::current_pid(), "http", addr.view());
     let _t: thread::JoinHandle[i32] = thread::spawn_with::[AgentServe, i32](
-        AgentServe { port: port_of(path) },
+        AgentServe { fd: fd },
         serve_main,
     );
+    let ok: text::Text = "agent: serving on http://127.0.0.1:${port}/";
+    alog::info(#str_ptr(ok.view()));
     return;
 }
 

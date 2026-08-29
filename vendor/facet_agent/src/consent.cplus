@@ -1,0 +1,371 @@
+// consent — ask the user once per agent, then remember.
+//
+// THE FORTY LINES EVERY APP WAS WRITING. `facet_agent::set_policy` is the seam
+// an application supplies its own authorization through, and the commonest
+// thing to want through it is "when something connects, ask me". Every app that
+// wanted that built the same machinery by hand — a decision flag, a
+// have-I-asked-yet guard, a way for the dialog's callback to get its answer
+// back to the gate — and one measured attempt also built a channel and a
+// timeout and parked the serve thread, which works and costs more than it
+// looks (see `agent_core/docs/guide.md`, "Your policy MAY block").
+//
+// This is that machinery, once, non-blocking.
+//
+// ---- refuse, then admit the retry -----------------------------------------------
+//
+// `gate` NEVER BLOCKS. The first request from an unknown agent is refused with
+// an empty grant, and scheduling the prompt is a side effect of refusing it.
+// The agent's NEXT request is admitted, or refused for good, depending on what
+// the person said.
+//
+// The alternative — park the serve thread until the dialog is answered — makes
+// the first request wait instead of fail, which is nicer, and today it stalls
+// the whole surface while it waits, because `agent_mcp::serve_fd` handles one
+// connection at a time. So a second agent does not even get refused; it hangs.
+// That is the trade, and it is why this is the shape that ships. An app that
+// wants the other one can still write it: `set_policy` takes any function.
+//
+// ---- one decision per CLIENT, not per connection --------------------------------
+//
+// `Request.client` is what the caller named itself in MCP's `initialize`. That
+// is what makes "always allow this one" mean something more specific than
+// "always allow anything that connects" — and it is why remembering is keyed on
+// it rather than on the connection, which changes every time a one-shot client
+// reconnects.
+//
+// IT IS NOT A CREDENTIAL. A caller picks its own name and can pick any name, so
+// this is identity in the sense a From: header is: it makes the prompt legible
+// and the remembered answer specific, not safe. An app that needs unforgeable
+// identity checks `Request.token` and does not use this module.
+//
+// ---- the app supplies the asking ------------------------------------------------
+//
+// `on_ask` takes the function that puts a question on screen, because THIS
+// MODULE MUST NOT KNOW WHAT A DIALOG IS: facet_agent is the tier below the one
+// that owns windows, and reaching up for `runtime::alert` would put the whole
+// UI runtime into every app that serves an agent. The app already has both.
+//
+//     fn ask(client: str, ctx: *u8) {
+//         let msg: text::Text = "${client} wants to read this app and press its buttons.";
+//         runtime::alert("Allow agent?", msg.view(), "Allow",
+//                        secondary: "Deny", on_answer: answered);
+//     }
+//     fn answered(index: i32, ctx: *u8) {
+//         if index == (0 as i32) { consent::allow_pending(); } else { consent::deny_pending(); }
+//     }
+//
+//     fn run() -> i32 {
+//         consent::on_ask(ask);
+//         agent::set_policy(consent::gate);
+//         agent::enable();
+//         ...
+//     }
+
+import "stdlib/text" as text;
+import "stdlib/option" as option;
+import "stdlib/status" as status;
+import "stdlib/string_map" as smap;
+import "agent_core/auth" as auth;
+
+// What the user said about each client, by name.
+//
+// Three states in an i32 rather than two in a bool, because `StringMap` has no
+// `remove`: absent AND `ASK_AGAIN` both mean "not decided", which is what lets
+// `forget` put a client back to unasked without deleting the row.
+const ALLOWED: i32 = 1;
+const DENIED: i32 = 2;
+const ASK_AGAIN: i32 = 0;
+
+static DECISIONS: smap::StringMap[i32] = #zero::[smap::StringMap[i32]]();
+static READY: bool = false;
+
+// The client a prompt is currently up for, or "" when none is. One at a time:
+// two dialogs stacked over each other is not a question anyone can answer, and
+// the second agent is refused meanwhile rather than queued behind a decision
+// that is not about it.
+static PENDING: text::Text = #zero::[text::Text]();
+
+static ASK_FN: fn(str, *u8) = #zero::[fn(str, *u8)]();
+static ASK_CTX: *u8 = 0 as *u8;
+
+// An unnamed caller — one that never sent `initialize`, or sent it without a
+// `clientInfo.name`. Given a stable key so the answer can be remembered like
+// any other, and named so a prompt reads as a sentence.
+fn anonymous_key() -> str { return "an unnamed agent"; }
+
+fn ensure_map() {
+    if READY { return; }
+    DECISIONS = smap::new::[i32]();
+    READY = true;
+    return;
+}
+
+// Install the function that puts the question on screen. Until this is called
+// `gate` refuses everything external and never prompts — which is the right
+// default: a surface with no way to ask is a surface with no way to consent.
+fn on_ask(f: fn(str, *u8), ctx: *u8 = 0 as *u8) {
+    ASK_FN = f;
+    ASK_CTX = ctx;
+    return;
+}
+
+fn key_of(req: auth::Request) -> str {
+    if req.client == "" { return anonymous_key(); }
+    return req.client;
+}
+
+// Record an answer for a named client. The app's dialog callback calls
+// `allow_pending`/`deny_pending`; these are for an app that decides some other
+// way (a stored preference, a token it recognises).
+fn allow(client: str) {
+    ensure_map();
+    let _s: status::Status = DECISIONS.insert(text::from_str(client), ALLOWED);
+    return;
+}
+
+fn deny(client: str) {
+    ensure_map();
+    let _s: status::Status = DECISIONS.insert(text::from_str(client), DENIED);
+    return;
+}
+
+// The client a prompt is up for, or "" — what a dialog callback needs, since
+// the callback signature carries an index and a context and not a name.
+fn pending() -> str { return PENDING.view(); }
+
+fn allow_pending() {
+    let who: text::Text = PENDING;
+    PENDING = text::new();
+    if who.count() == (0 as usize) { return; }
+    allow(who.view());
+    return;
+}
+
+fn deny_pending() {
+    let who: text::Text = PENDING;
+    PENDING = text::new();
+    if who.count() == (0 as usize) { return; }
+    deny(who.view());
+    return;
+}
+
+// A prompt that was never answered — the window closed, the app quit the
+// screen. Clears the slot so the NEXT request asks again instead of finding a
+// prompt still pending and refusing forever.
+fn cancel_pending() {
+    PENDING = text::new();
+    return;
+}
+
+// Forget one client's answer, so the next request asks again. Written as a
+// value rather than a deletion — `StringMap` has no `remove`, and `ASK_AGAIN`
+// reads the same as never having been there.
+fn forget(client: str) {
+    ensure_map();
+    let _s: status::Status = DECISIONS.insert(text::from_str(client), ASK_AGAIN);
+    return;
+}
+
+// Forget every answer. For an app offering "revoke all agent access".
+fn forget_all() {
+    READY = false;
+    ensure_map();
+    return;
+}
+
+// Has this client been decided, and how? `None` = never asked, or forgotten.
+fn decision(client: str) -> option::Option[bool] {
+    ensure_map();
+    return match DECISIONS.get(client) {
+        option::Option[i32]::Some(v) => {
+            if v == ALLOWED { option::Option[bool]::Some(true) }
+            else if v == DENIED { option::Option[bool]::Some(false) }
+            else { option::Option[bool]::None }
+        }
+        option::Option[i32]::None => option::Option[bool]::None,
+    };
+}
+
+// THE POLICY. Hand this to `agent::set_policy`.
+//
+// In-process callers are admitted without asking: `agent_inapp` is code the
+// developer compiled in, and the grant it gets is bounded by what the app opens
+// its session with, not by this gate.
+fn gate(req: auth::Request) -> auth::Grant {
+    if auth::channel_eq(req.channel, auth::Channel::InApp) { return auth::operator(); }
+
+    let who: str = key_of(req);
+    match decision(who) {
+        option::Option[bool]::Some(ok) => {
+            if ok { return auth::operator(); }
+            return auth::nothing();
+        }
+        option::Option[bool]::None => { }
+    }
+
+    // Undecided. Refuse THIS request, and ask — so the answer is there for the
+    // next one. Asking is a side effect of refusing, never a thing that
+    // happens instead of answering.
+    if ASK_FN == (0 as fn(str, *u8)) { return auth::nothing(); }
+    if PENDING.count() > (0 as usize) { return auth::nothing(); }
+    PENDING = text::from_str(who);
+    let ask: fn(str, *u8) = ASK_FN;
+    ask(who, ASK_CTX);
+    return auth::nothing();
+}
+
+// ---- tests ---------------------------------------------------------------------
+
+static ASKED_ABOUT: text::Text = #zero::[text::Text]();
+static ASK_COUNT: i32 = 0;
+
+fn spy_ask(client: str, ctx: *u8) {
+    ASKED_ABOUT = text::from_str(client);
+    ASK_COUNT = ASK_COUNT +% (1 as i32);
+    return;
+}
+
+fn reset_for_test() {
+    forget_all();
+    cancel_pending();
+    ASKED_ABOUT = text::new();
+    ASK_COUNT = 0 as i32;
+    on_ask(spy_ask);
+    return;
+}
+
+fn external(client: str, method: str) -> auth::Request {
+    return auth::request_with_token(auth::Channel::External, "",
+                                    client: client, method: method);
+}
+
+// The whole shape in one test: refused, asked about BY NAME, and the retry
+// admitted.
+#[test]
+fn an_unknown_agent_is_refused_asked_about_and_then_admitted() {
+    reset_for_test();
+
+    let first: auth::Grant = gate(external("claude-code", "describe_ui"));
+    assert first.is_empty();
+    assert ASK_COUNT == (1 as i32);
+    assert ASKED_ABOUT.view() == "claude-code";
+    assert pending() == "claude-code";
+
+    allow_pending();
+    assert pending() == "";
+
+    let second: auth::Grant = gate(external("claude-code", "describe_ui"));
+    assert second.is_empty() == false;
+    // ...and it does not ask again.
+    assert ASK_COUNT == (1 as i32);
+    return;
+}
+
+// Deny sticks, and does not re-prompt on every request — which would make a
+// refused agent able to nag the user by retrying in a loop.
+#[test]
+fn a_denied_agent_stays_denied_without_asking_again() {
+    reset_for_test();
+
+    let _first: auth::Grant = gate(external("stranger", "click"));
+    deny_pending();
+
+    var i: i32 = 0 as i32;
+    while i < (5 as i32) {
+        assert gate(external("stranger", "click")).is_empty();
+        i = i +% (1 as i32);
+    }
+    assert ASK_COUNT == (1 as i32);
+    return;
+}
+
+// A DECISION IS ABOUT ONE AGENT. Remembering per connection would re-ask a
+// one-shot client on every call; remembering globally would hand the second
+// agent what the user granted the first. This is why the key is the name.
+#[test]
+fn one_agents_answer_does_not_admit_another() {
+    reset_for_test();
+
+    let _a: auth::Grant = gate(external("trusted", "describe_ui"));
+    allow_pending();
+    assert gate(external("trusted", "describe_ui")).is_empty() == false;
+
+    // A different name is a different question.
+    let b: auth::Grant = gate(external("someone-else", "describe_ui"));
+    assert b.is_empty();
+    assert ASK_COUNT == (2 as i32);
+    assert ASKED_ABOUT.view() == "someone-else";
+    return;
+}
+
+// One prompt at a time. A second agent arriving mid-decision is refused rather
+// than stacking a dialog nobody can answer — and crucially it does NOT take
+// over the pending slot, or the first agent's answer would be recorded against
+// the second's name.
+#[test]
+fn a_second_agent_mid_prompt_does_not_steal_the_question() {
+    reset_for_test();
+
+    let _a: auth::Grant = gate(external("first", "describe_ui"));
+    assert pending() == "first";
+
+    let b: auth::Grant = gate(external("second", "describe_ui"));
+    assert b.is_empty();
+    assert pending() == "first";
+    assert ASK_COUNT == (1 as i32);
+
+    // The answer lands on the agent it was asked about.
+    allow_pending();
+    assert gate(external("first", "describe_ui")).is_empty() == false;
+    assert gate(external("second", "describe_ui")).is_empty();
+    return;
+}
+
+// A prompt nobody answered must not wedge the gate. Without `cancel_pending`
+// the slot stays full and every later request is refused with no prompt — an
+// app that looks permanently closed after one dismissed dialog.
+#[test]
+fn an_abandoned_prompt_does_not_wedge_the_gate() {
+    reset_for_test();
+
+    let _a: auth::Grant = gate(external("ghost", "describe_ui"));
+    assert pending() == "ghost";
+    cancel_pending();
+
+    let _b: auth::Grant = gate(external("ghost", "describe_ui"));
+    assert pending() == "ghost";
+    assert ASK_COUNT == (2 as i32);
+    return;
+}
+
+// NO WAY TO ASK IS NO CONSENT. An app that installs this policy and forgets
+// `on_ask` must refuse rather than admit — the failure has to fall closed.
+#[test]
+fn with_no_prompt_installed_nothing_external_is_admitted() {
+    reset_for_test();
+    ASK_FN = #zero::[fn(str, *u8)]();
+
+    assert gate(external("anyone", "describe_ui")).is_empty();
+    assert ASK_COUNT == (0 as i32);
+
+    // In-process callers are unaffected: that channel is code the developer
+    // compiled in, bounded by the session the app opens rather than by this.
+    let inapp: auth::Grant = gate(auth::request(auth::Channel::InApp));
+    assert inapp.is_empty() == false;
+    return;
+}
+
+// An agent that never introduced itself still gets ONE decision rather than
+// being asked about on every request under an empty name.
+#[test]
+fn an_unnamed_agent_is_still_one_question() {
+    reset_for_test();
+
+    let _a: auth::Grant = gate(external("", "describe_ui"));
+    assert ASKED_ABOUT.view() == anonymous_key();
+    allow_pending();
+
+    assert gate(external("", "click")).is_empty() == false;
+    assert ASK_COUNT == (1 as i32);
+    return;
+}

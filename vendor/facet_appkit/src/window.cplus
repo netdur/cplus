@@ -342,6 +342,31 @@ fn open_window(root: *core::Node, take chrome: Chrome,
     // After layout, so a control that sizes itself has done it before it is
     // asked whether it takes focus.
     wire_key_loop(win.raw(), root);
+
+    // THE AGENT FOLLOWS THE WINDOW, and it is attached HERE — one site, on the
+    // path every caller takes — rather than at each of the runtime's six.
+    //
+    // `agent_appkit` cannot find the window by itself: there is no keyWindow
+    // lookup anywhere in that package, and it re-walks from the surface's OWN
+    // node 1, which does not exist until somebody hands it one. So a window
+    // that is never attached serves `describe_ui`, `click` and `hit_test`
+    // against an empty registry for the life of the process — and cannot
+    // recover, because every refresh returns at the same null check.
+    //
+    // The runtime attached at three of its six `open_window` calls:
+    // `present_window`, `App::run` and `push_screen` did, while `run`,
+    // `run_component` and `run_screen` did not. `run_screen` is the one the
+    // scaffold generates, so every scaffolded macOS app was undriveable from
+    // its own socket while `inspector.*` answered the full tree over the same
+    // connection — which is what made it read as a permissions bug.
+    //
+    // runtime_ios.cplus:605 predicted this exactly, and centralised its own
+    // attach in `attach_root` for the same reason: "four call sites here would
+    // still have left a hole." There were six.
+    //
+    // Inert when no agent is enabled — `app::agent_attach` is a null-hook check
+    // unless `facet_agent::enable()` filled the seam.
+    app::agent_attach(win.raw());
     return win.raw();
 }
 

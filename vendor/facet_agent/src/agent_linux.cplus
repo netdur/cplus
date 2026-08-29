@@ -166,24 +166,68 @@ fn effective_policy() -> fn(auth::Request) -> auth::Grant {
 }
 
 struct AgentServe {
-    path: text::Text,
+    fd: i32,
 }
 
 fn serve_main(take job: AgentServe) -> i32 {
     var sub: events::Subscriber = events::subscriber(events::everything(), 64 as usize);
     let surf: *u8 = #addr_of(AGENT_SURFACE) as *u8;
-    return mcp::serve_uds(surf, agent_gtk::mcp_backend(), sub, effective_policy(), job.path.view());
+    return mcp::accept_loop(surf, agent_gtk::mcp_backend(), sub, effective_policy(), job.fd, true);
 }
 
-// Start the serve worker exactly once per process. The accept loop lives for
-// the app's life; a stale socket file at `path` is unlinked on entry.
-fn serve_once(path: str) {
+// Start the serve worker exactly once per process.
+//
+// `id` NAMES THE APP and this derives where it listens —
+// `agent_mcp::uds_path`, `/tmp/mcp-<id>-<pid>.socket`.
+//
+// BOUND ON THIS THREAD, NOT THE WORKER'S, so the result is something a caller
+// is still alive to hear. It used to bind inside the spawned thread whose
+// return value nobody reads, so every setup failure was silent: a path too
+// long, a stale path a live server still answers, a permission the app does not
+// have. All of them looked identical to an app nobody had connected to yet, and
+// two of them are documented failures this project has actually hit.
+//
+// It prints on SUCCESS too, and that is not noise: the address is derived now,
+// so the one line naming it is how a developer finds out where to connect
+// without recomputing the convention by hand.
+fn serve_once(id: str) {
     if AGENT_SERVING { return; }
+    // Clear out what dead processes left behind. A path carries the pid, so a
+    // name is never reused and nothing else would ever remove these.
+    let _swept: usize = mcp::sweep_stale();
+    if !mcp::valid_id(id) {
+        let bad: text::Text = "facet: agent surface not served — \"${id}\" is not a valid id (a NAME, not a path)";
+        io::eprintln(bad.view());
+        return;
+    }
+    let path: text::Text = mcp::uds_path(id, mcp::current_pid());
+    let fd: i32 = mcp::bind_uds(path.view());
+    if fd < (0 as i32) {
+        let why: text::Text = "facet: agent surface not served at ${path} — ${mcp::bind_reason(fd)}";
+        io::eprintln(why.view());
+        return;
+    }
+    let l: i32 = mcp::listen_on(fd);
+    if l < (0 as i32) {
+        let why2: text::Text = "facet: agent surface not served at ${path} — ${mcp::bind_reason(l)}";
+        io::eprintln(why2.view());
+        mcp::unlink_bound_socket();
+        return;
+    }
     AGENT_SERVING = true;
+    // WHO THIS IS, on the wire. A client that reached a stale address finds out
+    // during the handshake instead of driving the wrong process.
+    mcp::set_server_name(id);
+    // ...and what was actually bound, beside the socket. The address is
+    // derivable, so this is confirmation rather than discovery — see
+    // `agent_mcp::write_descriptor`.
+    let _d: bool = mcp::write_descriptor(id, mcp::current_pid(), "uds", path.view());
     let _t: thread::JoinHandle[i32] = thread::spawn_with::[AgentServe, i32](
-        AgentServe { path: text::from_str(path) },
+        AgentServe { fd: fd },
         serve_main,
     );
+    let ok: text::Text = "facet: agent surface on ${path}";
+    io::eprintln(ok.view());
     return;
 }
 
