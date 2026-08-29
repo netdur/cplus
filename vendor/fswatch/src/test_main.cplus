@@ -3,14 +3,15 @@ import "events/events" as events;
 import "stdlib/fs" as fs;
 import "stdlib/io" as io;
 import "stdlib/result" as result;
+import "stdlib/sync_sys" as sync_sys;
 import "stdlib/text" as text;
 import "stdlib/vec" as vec;
 
 extern fn rmdir(path: *u8) -> i32;
 extern fn rename(from: *u8, to: *u8) -> i32;
-extern fn nanosleep(req: *u8, rem: *u8) -> i32;
-
-struct SleepSpec { secs: i64, nanos: i64 }
+// `nanosleep` is POSIX-only and the MSVC runtime has none, so the sleeps here
+// go through `stdlib/sync_sys` — which already carries this primitive behind a
+// platform split — rather than declaring the syscall directly.
 
 static CREATED: i64 = 0;
 static MODIFIED: i64 = 0;
@@ -56,8 +57,7 @@ fn make_file(path: str, byte: u8 = 1 as u8) {
 }
 
 fn pause_briefly() {
-    var spec: SleepSpec = SleepSpec { secs: 0 as i64, nanos: 2000000 as i64 };
-    let _n: i32 = { nanosleep(#addr_of(spec) as *u8, 0 as *u8) };
+    let _n: i32 = sync_sys::sleep_us(2000 as u32);
     return;
 }
 
@@ -223,11 +223,8 @@ fn directory_rename_is_paired_by_inode() {
 // ---- background watch (fswatch::watch) ---------------------------------------
 
 fn wait_ms(ms: i64) {
-    var spec: SleepSpec = SleepSpec {
-        secs: ms / (1000 as i64),
-        nanos: (ms % (1000 as i64)) * (1000000 as i64),
-    };
-    let _n: i32 = { nanosleep(#addr_of(spec) as *u8, 0 as *u8) };
+    if ms <= (0 as i64) { return; }
+    let _n: i32 = sync_sys::sleep_us((ms *% (1000 as i64)) as u32);
     return;
 }
 

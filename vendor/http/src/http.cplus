@@ -562,7 +562,15 @@ fn send_reports_an_unusable_url_as_a_transport_error() {
         assert false;
         return;
     };
-    assert e.code == -1002;
+    // WHICH SIDE REJECTS IT IS THE PLATFORM'S BUSINESS, and the sign says which
+    // happened. Foundation percent-escapes almost anything rather than refusing
+    // it, so this reaches the session and comes back -1002; WinHTTP is handed a
+    // host and a path, so the transport rejects it locally and reports the
+    // package's own `ERROR_INVALID_URL`. Both are the documented contract — a
+    // negative code is the platform's numbering, a positive one means the
+    // request never left the process — so the assertion is on the contract, not
+    // on one platform's answer.
+    assert e.code != (0 as i64);
     assert e.message.count() > (0 as usize);
 }
 
@@ -572,7 +580,9 @@ fn send_reports_an_empty_url_as_a_transport_error() {
         assert false;
         return;
     };
-    assert e.code < (0 as i64);
+    // Same reason as above: an empty URL is refused locally on a backend that
+    // parses one, and by the session on a backend that does not.
+    assert e.code != (0 as i64);
 }
 
 // ---- integration: these need the internet --------------------------------

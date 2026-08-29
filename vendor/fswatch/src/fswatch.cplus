@@ -6,6 +6,7 @@ import "stdlib/fs" as fs;
 import "stdlib/option" as option;
 import "stdlib/result" as result;
 import "stdlib/status" as status;
+import "stdlib/sync_sys" as sync_sys;
 import "stdlib/text" as text;
 import "stdlib/thread" as thread;
 import "stdlib/time" as time;
@@ -749,18 +750,18 @@ fn recursive_ignore_prunes_the_directory_itself() {
 // executor. Poll errors inside the thread are dropped; use the low-level
 // `Watcher` when error observation matters.
 
-struct WatchSleepSpec {
-    secs: i64,
-    nanos: i64,
-}
-extern fn nanosleep(req: *u8, rem: *u8) -> i32;
-
+// `nanosleep` was declared here directly and is POSIX-only — the MSVC runtime
+// has no such function, so this one line kept the whole package from linking on
+// Windows. `stdlib/sync_sys` already owns exactly this primitive behind a
+// platform split (`usleep` on POSIX, `Sleep` on Windows), so it is borrowed
+// rather than re-split here.
 fn watch_sleep_ms(ms: u64) {
-    var ts: WatchSleepSpec = WatchSleepSpec {
-        secs: (ms / (1000 as u64)) as i64,
-        nanos: ((ms % (1000 as u64)) * (1000000 as u64)) as i64,
-    };
-    { nanosleep(#addr_of(ts) as *u8, 0 as *u8); }
+    // The poll intervals this is used with are milliseconds, far inside u32.
+    // Clamped rather than wrapped so a preposterous value cannot come out as a
+    // near-zero sleep and turn the poll loop into a spin.
+    var us: u64 = ms *% (1000 as u64);
+    if us > (4000000000 as u64) { us = 4000000000 as u64; }
+    let _s: i32 = sync_sys::sleep_us(us as u32);
     return;
 }
 

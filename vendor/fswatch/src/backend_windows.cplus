@@ -1,0 +1,441 @@
+// Windows filesystem-watch primitives — the third backend the header of
+// `backend.cplus` predicted. Replaces it through C+'s platform-override
+// convention, the same way `backend_linux.cplus` does.
+//
+// ---- THE SHAPE IS NOT kqueue's OR inotify's ----------------------------------
+//
+// Both of those hand out a QUEUE descriptor and let you register watches
+// against it, which is why the seam is `queue_open` / `watch_path` /
+// `poll_one`. Windows has no queue: `ReadDirectoryChangesW` is issued PER
+// DIRECTORY HANDLE, and its result arrives through an OVERLAPPED structure
+// with an event the caller waits on. So the queue is synthesised here — a table
+// of watch slots tagged with a queue id — and `poll_one` walks the slots for
+// one queue asking each event whether it is signalled, with a zero timeout.
+//
+// The seam survives that because it only ever carries an `i32` opaque handle:
+// on kqueue it is an `O_EVTONLY` fd, on inotify a watch descriptor, and here it
+// is an index into the table below. Nothing outside this file interprets it.
+//
+// ---- EVENTS ARE A WAKEUP, NOT A PAYLOAD -------------------------------------
+//
+// `poll_one` reports only 1/0/-1/-2, never WHAT changed, because the engine
+// above is a snapshot differ: it rescans and compares. That is what makes the
+// Windows port tractable — the `FILE_NOTIFY_INFORMATION` records
+// `ReadDirectoryChangesW` writes are read and discarded, and the buffer exists
+// only because the call requires one. It also means a buffer overflow is not a
+// correctness problem: the rescan finds everything regardless.
+//
+// Watches are per-directory and NOT recursive (`bWatchSubtree` is false), which
+// matches the other two backends — the engine registers a watch for every
+// directory it walks and expects exactly one wakeup source per directory.
+//
+// ---- `metadata` IS AN lstat ---------------------------------------------------
+//
+// `FILE_FLAG_OPEN_REPARSE_POINT` is what makes it one: without it the open
+// follows a symlink and reports the target, and the snapshot engine explicitly
+// does not want that. `GetFileInformationByHandle` then answers attributes,
+// size, mtime AND the file index in one call — and the index matters, because
+// the engine uses `inode` to match a deleted entry against a created one when
+// it detects renames. A backend that returned 0 for every inode would make
+// every deletion look like a rename of the first candidate.
+
+import "stdlib/text" as text;
+import "stdlib/option" as option;
+
+extern fn CreateFileW(path: *u8, access: u32, share: u32, sa: *u8,
+                      disposition: u32, flags: u32, template: *u8) -> *u8;
+extern fn CloseHandle(h: *u8) -> i32;
+extern fn GetFileInformationByHandle(h: *u8, info: *u8) -> i32;
+extern fn GetLastError() -> u32;
+extern fn CreateEventW(sa: *u8, manual_reset: i32, initial: i32, name: *u8) -> *u8;
+extern fn ResetEvent(h: *u8) -> i32;
+extern fn WaitForSingleObject(h: *u8, ms: u32) -> u32;
+extern fn ReadDirectoryChangesW(dir: *u8, buf: *u8, len: u32, subtree: i32,
+                                filter: u32, returned: *u32, ovl: *u8,
+                                completion: *u8) -> i32;
+extern fn GetOverlappedResult(h: *u8, ovl: *u8, transferred: *u32, wait: i32) -> i32;
+extern fn CancelIo(h: *u8) -> i32;
+extern fn MultiByteToWideChar(codepage: u32, flags: u32, mb: *u8, mb_len: i32,
+                              wide: *u8, wide_len: i32) -> i32;
+extern fn malloc(n: usize) -> *u8;
+extern fn free(p: *u8);
+extern fn memset(p: *u8, v: i32, n: usize) -> *u8;
+
+// ---- constants, transcribed from the SDK headers on this host ----------------
+
+fn _cp_utf8() -> u32 { return 65001 as u32; }
+fn _nul_terminated() -> i32 { return 0 - 1; }
+
+fn _file_read_attributes() -> u32 { return 0x80 as u32; }
+fn _file_list_directory() -> u32 { return 0x1 as u32; }
+fn _share_all() -> u32 { return 0x7 as u32; }          // READ|WRITE|DELETE
+fn _open_existing() -> u32 { return 3 as u32; }
+fn _flag_backup_semantics() -> u32 { return 0x02000000 as u32; }
+fn _flag_open_reparse_point() -> u32 { return 0x00200000 as u32; }
+fn _flag_overlapped() -> u32 { return 0x40000000 as u32; }
+
+fn _attr_directory() -> u32 { return 0x10 as u32; }
+fn _attr_reparse_point() -> u32 { return 0x400 as u32; }
+
+// FILE_NOTIFY_CHANGE_{FILE_NAME,DIR_NAME,ATTRIBUTES,SIZE,LAST_WRITE,CREATION}.
+fn _notify_filter() -> u32 { return 0x5F as u32; }
+
+fn _wait_object_0() -> u32 { return 0 as u32; }
+
+fn _err_file_not_found() -> i32 { return 2 as i32; }
+fn _err_path_not_found() -> i32 { return 3 as i32; }
+fn _err_access_denied() -> i32 { return 5 as i32; }
+
+// INVALID_HANDLE_VALUE is (HANDLE)-1, not null — the one Win32 sentinel that
+// catches everyone, since every other handle-returning call uses null.
+fn _invalid_handle() -> *u8 { return { ((0 as usize) -% (1 as usize)) as *u8 }; }
+
+fn _is_bad_handle(h: *u8) -> bool {
+    return h == (0 as *u8) || h == _invalid_handle();
+}
+
+// BY_HANDLE_FILE_INFORMATION: 52 bytes. Offsets verified with `offsetof`
+// against the real header, not read off a manual page.
+fn _bhfi_bytes() -> usize { return 52 as usize; }
+fn _off_attrs() -> usize { return 0 as usize; }
+fn _off_last_write() -> usize { return 20 as usize; }
+fn _off_size_high() -> usize { return 32 as usize; }
+fn _off_size_low() -> usize { return 36 as usize; }
+fn _off_index_high() -> usize { return 44 as usize; }
+fn _off_index_low() -> usize { return 48 as usize; }
+
+// OVERLAPPED is 32 bytes with hEvent at 24.
+fn _overlapped_bytes() -> usize { return 32 as usize; }
+fn _off_hevent() -> usize { return 24 as usize; }
+
+fn _notify_buf_bytes() -> usize { return 8192 as usize; }
+
+fn _read_u32(p: *u8, at: usize) -> u32 {
+    return { *({ ({ #addr(p) } +% at) as *u32 }) };
+}
+
+// ---- the public types, identical to backend.cplus ----------------------------
+
+enum NodeKind {
+    File,
+    Directory,
+    Symlink,
+    Other,
+}
+
+struct Metadata {
+    kind: NodeKind,
+    inode: u64,
+    size: i64,
+    mtime_sec: i64,
+    mtime_nsec: i64,
+    mode: u16,
+}
+
+enum MetadataResult {
+    Found(Metadata),
+    Missing,
+    PermissionDenied,
+    InvalidPath,
+    Failed,
+}
+
+fn errno_value() -> i32 {
+    return { GetLastError() } as i32;
+}
+
+// UTF-8 path to a malloc'd UTF-16 buffer the caller frees, or null.
+fn _widen(path: str) -> *u8 {
+    let owned: text::Text = text::from_str(path);
+    match owned.c_str() {
+        option::Option[text::CString]::Some(cp) => {
+            let need: i32 = { MultiByteToWideChar(_cp_utf8(), 0 as u32, cp.as_ptr(),
+                                                  _nul_terminated(), 0 as *u8, 0 as i32) };
+            if need <= (0 as i32) { return 0 as *u8; }
+            let wide: *u8 = { malloc((need as usize) *% (2 as usize)) };
+            if wide == (0 as *u8) { return 0 as *u8; }
+            let got: i32 = { MultiByteToWideChar(_cp_utf8(), 0 as u32, cp.as_ptr(),
+                                                 _nul_terminated(), wide, need) };
+            if got <= (0 as i32) { free(wide); return 0 as *u8; }
+            return wide;
+        }
+        option::Option[text::CString]::None => { return 0 as *u8; }
+    }
+}
+
+// FILETIME counts 100 ns intervals since 1601-01-01; the Unix epoch is
+// 116444736000000000 of them later.
+fn _epoch_delta_100ns() -> u64 { return 116444736000000000 as u64; }
+
+fn _filetime_at(info: *u8, at: usize) -> u64 {
+    let lo: u32 = _read_u32(info, at);
+    let hi: u32 = _read_u32(info, at +% (4 as usize));
+    return ((hi as u64) *% (4294967296 as u64)) +% (lo as u64);
+}
+
+fn metadata(path: str) -> MetadataResult {
+    let wide: *u8 = _widen(path);
+    if wide == (0 as *u8) { return MetadataResult::InvalidPath; }
+    // OPEN_REPARSE_POINT is what makes this an lstat; BACKUP_SEMANTICS is what
+    // lets a DIRECTORY be opened at all.
+    let h: *u8 = { CreateFileW(wide, _file_read_attributes(), _share_all(),
+                               0 as *u8, _open_existing(),
+                               _flag_backup_semantics() | _flag_open_reparse_point(),
+                               0 as *u8) };
+    // READ THE ERROR BEFORE ANYTHING ELSE. `GetLastError` is per-thread and
+    // clobbered by the NEXT api call that sets it — `free` reaches HeapFree and
+    // does. Capturing it after the cleanup reported whatever the allocator last
+    // thought, which showed up as a plain file coming back PermissionDenied.
+    let err: i32 = errno_value();
+    free(wide);
+    if _is_bad_handle(h) {
+        let e: i32 = err;
+        if e == _err_file_not_found() { return MetadataResult::Missing; }
+        if e == _err_path_not_found() { return MetadataResult::Missing; }
+        if e == _err_access_denied() { return MetadataResult::PermissionDenied; }
+        return MetadataResult::Failed;
+    }
+    let info: *u8 = { malloc(_bhfi_bytes()) };
+    if info == (0 as *u8) { let _c: i32 = { CloseHandle(h) }; return MetadataResult::Failed; }
+    let ok: i32 = { GetFileInformationByHandle(h, info) };
+    let _c: i32 = { CloseHandle(h) };
+    if ok == (0 as i32) { free(info); return MetadataResult::Failed; }
+
+    let attrs: u32 = _read_u32(info, _off_attrs());
+    var kind: NodeKind = NodeKind::File;
+    var mode: u16 = 0x8000 as u16;                       // S_IFREG
+    if (attrs & _attr_reparse_point()) != (0 as u32) {
+        kind = NodeKind::Symlink;
+        mode = 0xA000 as u16;                            // S_IFLNK
+    } else {
+        if (attrs & _attr_directory()) != (0 as u32) {
+            kind = NodeKind::Directory;
+            mode = 0x4000 as u16;                        // S_IFDIR
+        }
+    }
+
+    let size_hi: u32 = _read_u32(info, _off_size_high());
+    let size_lo: u32 = _read_u32(info, _off_size_low());
+    let size: i64 = (((size_hi as u64) *% (4294967296 as u64)) +% (size_lo as u64)) as i64;
+
+    let idx_hi: u32 = _read_u32(info, _off_index_high());
+    let idx_lo: u32 = _read_u32(info, _off_index_low());
+    let inode: u64 = ((idx_hi as u64) *% (4294967296 as u64)) +% (idx_lo as u64);
+
+    let ft: u64 = _filetime_at(info, _off_last_write());
+    var msec: i64 = 0 as i64;
+    var mnsec: i64 = 0 as i64;
+    if ft >= _epoch_delta_100ns() {
+        let since: u64 = ft -% _epoch_delta_100ns();
+        msec = (since / (10000000 as u64)) as i64;
+        mnsec = ((since % (10000000 as u64)) *% (100 as u64)) as i64;
+    }
+    free(info);
+
+    return MetadataResult::Found(Metadata {
+        kind: kind,
+        inode: inode,
+        size: size,
+        mtime_sec: msec,
+        mtime_nsec: mnsec,
+        mode: mode,
+    });
+}
+
+// ---- the synthesised queue ---------------------------------------------------
+//
+// One flat table. `queue` is 0 for a free slot, so queue ids start at 1 and
+// `queue_open` never hands back an id that `#zero` could be mistaken for.
+
+const MAX_WATCHES: usize = 256;
+const MAX_QUEUES: i32 = 32;
+
+struct WatchSlots {
+    queue: [i32; 256],
+    dir: [usize; 256],
+    ev: [usize; 256],
+    ovl: [usize; 256],
+    buf: [usize; 256],
+}
+
+static SLOTS: WatchSlots = #zero::[WatchSlots]();
+static NEXT_QUEUE: i32 = 0;
+
+fn queue_open() -> i32 {
+    if NEXT_QUEUE >= MAX_QUEUES { return (0 as i32) -% (1 as i32); }
+    NEXT_QUEUE = NEXT_QUEUE + (1 as i32);
+    return NEXT_QUEUE;
+}
+
+fn _free_slot() -> isize {
+    var i: usize = 0 as usize;
+    while i < MAX_WATCHES {
+        if SLOTS.queue[i] == (0 as i32) { return i as isize; }
+        i = i +% (1 as usize);
+    }
+    return (0 as isize) -% (1 as isize);
+}
+
+fn _arm(idx: usize) -> bool {
+    let dir: *u8 = { SLOTS.dir[idx] as *u8 };
+    let buf: *u8 = { SLOTS.buf[idx] as *u8 };
+    let ovl: *u8 = { SLOTS.ovl[idx] as *u8 };
+    // The OVERLAPPED must be cleared before every reissue — a stale Internal
+    // field makes the call report the PREVIOUS result.
+    let ev: usize = SLOTS.ev[idx];
+    { memset(ovl, 0 as i32, _overlapped_bytes()) };
+    { *({ ({ #addr(ovl) } +% _off_hevent()) as **u8 }) = { ev as *u8 } };
+    let rc: i32 = { ReadDirectoryChangesW(dir, buf, _notify_buf_bytes() as u32,
+                                          0 as i32, _notify_filter(),
+                                          0 as *u32, ovl, 0 as *u8) };
+    return rc != (0 as i32);
+}
+
+fn _release(idx: usize) {
+    let dir: *u8 = { SLOTS.dir[idx] as *u8 };
+    if !_is_bad_handle(dir) {
+        let _x: i32 = { CancelIo(dir) };
+        let _c: i32 = { CloseHandle(dir) };
+    }
+    let ev: *u8 = { SLOTS.ev[idx] as *u8 };
+    if !_is_bad_handle(ev) { let _c: i32 = { CloseHandle(ev) }; }
+    let ovl: *u8 = { SLOTS.ovl[idx] as *u8 };
+    if ovl != (0 as *u8) { free(ovl); }
+    let buf: *u8 = { SLOTS.buf[idx] as *u8 };
+    if buf != (0 as *u8) { free(buf); }
+    SLOTS.queue[idx] = 0 as i32;
+    SLOTS.dir[idx] = 0 as usize;
+    SLOTS.ev[idx] = 0 as usize;
+    SLOTS.ovl[idx] = 0 as usize;
+    SLOTS.buf[idx] = 0 as usize;
+    return;
+}
+
+// Close the QUEUE: every watch still open under it goes with it. The other
+// backends get this for free because the queue is an fd the kernel owns; here
+// the slots have to be walked.
+fn fd_close(fd: i32) {
+    if fd <= (0 as i32) { return; }
+    var i: usize = 0 as usize;
+    while i < MAX_WATCHES {
+        if SLOTS.queue[i] == fd { _release(i); }
+        i = i +% (1 as usize);
+    }
+    return;
+}
+
+// Release ONE watch. `queue` is unused here — the slot already knows which
+// queue it belongs to — but it is in the signature because inotify needs it.
+fn watch_close(queue: i32, handle: i32) {
+    if handle < (0 as i32) { return; }
+    let idx: usize = handle as usize;
+    if idx >= MAX_WATCHES { return; }
+    if SLOTS.queue[idx] == (0 as i32) { return; }
+    _release(idx);
+    return;
+}
+
+// Open the directory for change notifications and issue the first read.
+// Returns the slot index, or -1 on failure.
+fn _is_directory(path: str) -> bool {
+    return match metadata(path) {
+        MetadataResult::Found(m) => m.kind == NodeKind::Directory,
+        _ => false,
+    };
+}
+
+fn watch_path(queue: i32, path: str) -> i32 {
+    if queue <= (0 as i32) { return (0 as i32) -% (1 as i32); }
+    let slot: isize = _free_slot();
+    if slot < (0 as isize) { return (0 as i32) -% (1 as i32); }
+    let idx: usize = slot as usize;
+
+    // A FILE TARGET GETS A PASSIVE SLOT, and that is the one place this backend
+    // cannot mirror the others one-for-one. kqueue watches any vnode and
+    // inotify any path, so the engine registers a watch for EVERY snapshot
+    // entry — files included. `ReadDirectoryChangesW` takes only directories,
+    // and opening a file with `FILE_LIST_DIRECTORY` to hand it one fails with
+    // ACCESS_DENIED, which the engine reads as `PermissionDenied` and returns
+    // from `poll` the moment any file appears.
+    //
+    // Failing is also the wrong answer, because the notification the engine
+    // wants ALREADY ARRIVES: a change to `dir/a.txt` is reported by the watch on
+    // `dir`, which the engine holds. So a file target is accepted and recorded,
+    // holds no OS resources, and never signals. The bookkeeping above stays
+    // one-handle-per-target and the wakeup comes from the parent.
+    if !_is_directory(path) {
+        SLOTS.queue[idx] = queue;
+        SLOTS.dir[idx] = 0 as usize;
+        SLOTS.ev[idx] = 0 as usize;
+        SLOTS.ovl[idx] = 0 as usize;
+        SLOTS.buf[idx] = 0 as usize;
+        return idx as i32;
+    }
+
+    let wide: *u8 = _widen(path);
+    if wide == (0 as *u8) { return (0 as i32) -% (1 as i32); }
+    let dir: *u8 = { CreateFileW(wide, _file_list_directory(), _share_all(),
+                                 0 as *u8, _open_existing(),
+                                 _flag_backup_semantics() | _flag_overlapped(),
+                                 0 as *u8) };
+    free(wide);
+    if _is_bad_handle(dir) { return (0 as i32) -% (1 as i32); }
+
+    // Manual reset: `poll_one` decides when the event is consumed, and an
+    // auto-reset event would be cleared by the zero-timeout wait itself.
+    let ev: *u8 = { CreateEventW(0 as *u8, 1 as i32, 0 as i32, 0 as *u8) };
+    if _is_bad_handle(ev) { let _c: i32 = { CloseHandle(dir) }; return (0 as i32) -% (1 as i32); }
+    let ovl: *u8 = { malloc(_overlapped_bytes()) };
+    let buf: *u8 = { malloc(_notify_buf_bytes()) };
+    if ovl == (0 as *u8) || buf == (0 as *u8) {
+        if ovl != (0 as *u8) { free(ovl); }
+        if buf != (0 as *u8) { free(buf); }
+        let _ce: i32 = { CloseHandle(ev) };
+        let _cd: i32 = { CloseHandle(dir) };
+        return (0 as i32) -% (1 as i32);
+    }
+
+    SLOTS.queue[idx] = queue;
+    SLOTS.dir[idx] = { #addr(dir) };
+    SLOTS.ev[idx] = { #addr(ev) };
+    SLOTS.ovl[idx] = { #addr(ovl) };
+    SLOTS.buf[idx] = { #addr(buf) };
+
+    if !_arm(idx) { _release(idx); return (0 as i32) -% (1 as i32); }
+    return idx as i32;
+}
+
+// Non-blocking single-event drain. 1 = event, 0 = empty, -1 = error,
+// -2 = overflow / rescan required.
+//
+// The notify records themselves are never read: the engine above rescans and
+// diffs, so all this owes it is "something under this queue changed". That is
+// also why a zero-byte completion (the overflow signal, where the kernel
+// dropped records) is reported as -2 rather than being treated as spurious.
+fn poll_one(queue: i32) -> i32 {
+    if queue <= (0 as i32) { return (0 as i32) -% (1 as i32); }
+    var i: usize = 0 as usize;
+    while i < MAX_WATCHES {
+        // A passive slot (a file target — see `watch_path`) holds no event and
+        // is never the source of a wakeup.
+        if SLOTS.queue[i] == queue && SLOTS.ev[i] != (0 as usize) {
+            let ev: *u8 = { SLOTS.ev[i] as *u8 };
+            let waited: u32 = { WaitForSingleObject(ev, 0 as u32) };
+            if waited == _wait_object_0() {
+                let dir: *u8 = { SLOTS.dir[i] as *u8 };
+                let ovl: *u8 = { SLOTS.ovl[i] as *u8 };
+                var moved: u32 = 0 as u32;
+                let ok: i32 = { GetOverlappedResult(dir, ovl, #addr_of(moved), 0 as i32) };
+                let _r: i32 = { ResetEvent(ev) };
+                let rearmed: bool = _arm(i);
+                if ok == (0 as i32) { return (0 as i32) -% (1 as i32); }
+                if !rearmed { return (0 as i32) -% (1 as i32); }
+                // Zero bytes transferred is the documented overflow report.
+                if moved == (0 as u32) { return (0 as i32) -% (2 as i32); }
+                return 1 as i32;
+            }
+        }
+        i = i +% (1 as usize);
+    }
+    return 0 as i32;
+}

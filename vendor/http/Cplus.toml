@@ -26,3 +26,8 @@ objc = "*"
 # there is no Java to compile and no dex to merge — `jni` is the whole closure.
 [android.dependencies]
 jni = "*"
+
+# THE WINDOWS TRANSPORT. WinHTTP is in the OS, reached through `-lwinhttp` on
+# the link line rather than a C+ package, so there is no dependency to declare
+# here — this section exists to say that deliberately, next to the two that do
+# carry one.
