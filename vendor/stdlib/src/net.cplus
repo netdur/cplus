@@ -19,6 +19,7 @@ import "./future" as future;
 // resolver's `_linux` override). Keeps this file platform-neutral.
 import "./netsys" as netsys;
 import "./thread" as thread;
+import "./sync_sys" as sync_sys;
 
 extern fn socket(domain: i32, ty: i32, protocol: i32) -> i32;
 extern fn connect(fd: i32, addr: *u8, len: u32) -> i32;
@@ -431,8 +432,7 @@ async fn accept_fd_async(listener_fd: i32) -> i32 {
 
 // ───────────────────────────── tests ─────────────────────────────
 
-extern fn usleep(us: u32) -> i32;
-extern fn socketpair(domain: i32, ty: i32, proto: i32, fds: *i32) -> i32;
+
 
 // A write to a socket whose peer has gone away must REPORT the dead peer,
 // not raise SIGPIPE — whose default disposition terminates the process with
@@ -446,7 +446,7 @@ extern fn socketpair(domain: i32, ty: i32, proto: i32, fds: *i32) -> i32;
 #[test]
 fn a_write_to_a_departed_peer_reports_instead_of_killing_us() {
     var fds: [i32; 2] = [0, 0];
-    assert { socketpair(1 as i32, 1 as i32, 0 as i32, #addr_of(fds) as *i32) } == 0;
+    assert { netsys::socket_pair(#addr_of(fds) as *i32) } == 0;
     assert netsys::set_nosigpipe(fds[0]) == (0 as i32);
     { netsys::close_fd(fds[1]); }               // the peer goes away
     var buf: [u8; 8] = [65u8; 8];
@@ -482,7 +482,7 @@ fn net_accept_reports_cancellation_instead_of_blocking() {
         result::Result[TcpListener, result::IoError]::Ok(l) => {
             let h: thread::JoinHandle[i64] =
                 thread::spawn_with::[TcpListener, i64](l, _accept_until_cancelled);
-            usleep(3000 as u32);
+            sync_sys::sleep_us(3000 as u32);
             h.cancel();
             assert h.join() == (5 as i64);
         }

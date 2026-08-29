@@ -102,3 +102,13 @@ fn set_nonblocking(fd: i32) -> i32 {
 
 // Socket subsystem init — a no-op on POSIX (matches Winsock's WSAStartup).
 fn startup() -> i32 { return 0 as i32; }
+
+// A connected socket pair, for the tests that need a peer they can hang up on.
+// Wrapped because Windows has no `socketpair` at ANY spelling — see
+// netsys_windows.cplus, which builds one over loopback TCP.
+extern fn socketpair(domain: i32, ty: i32, proto: i32, fds: *i32) -> i32;
+
+// AF_UNIX (1), SOCK_STREAM (1).
+fn socket_pair(fds: *i32) -> i32 {
+    return { socketpair(1 as i32, 1 as i32, 0 as i32, fds) };
+}

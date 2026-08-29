@@ -35,14 +35,11 @@ import "./atomic" as atomic;
 import "./option" as option;
 import "./status" as status;
 import "./text" as text;
+import "./sync_sys" as sync_sys;
 
 extern fn malloc(n: usize) -> *u8;
 extern fn free(p: *u8);
 
-extern fn pthread_mutex_init(mutex: *u8, attr: *u8) -> i32;
-extern fn pthread_mutex_destroy(mutex: *u8) -> i32;
-extern fn pthread_mutex_lock(mutex: *u8) -> i32;
-extern fn pthread_mutex_unlock(mutex: *u8) -> i32;
 
 struct Mutex[T] {
     // Pointer to heap block: { u64 refcount, [64 bytes pthread mutex], T value }.
@@ -89,7 +86,7 @@ fn new[T](take v: T) -> option::Option[Mutex[T]] {
     let refct: *u64 = { raw as *u64 };
     { *refct = 1 as u64; }
     let mutex_ptr: *u8 = { raw + refct_bytes };
-    let _err: i32 = { pthread_mutex_init(mutex_ptr, 0 as *u8) };
+    let _err: i32 = { sync_sys::mutex_init(mutex_ptr, 0 as *u8) };
     let value_off: usize = refct_bytes +% mutex_bytes;
     let value_ptr: *T = { (raw + value_off) as *T };
     { *value_ptr = v; }
@@ -126,7 +123,7 @@ impl Mutex[T] {
             atomic::fetch_add_u64(refct, 1 as u64, atomic::Ordering::Relaxed)
         };
         let mutex_ptr: *u8 = { this._ctrl + refct_bytes };
-        let _err: i32 = { pthread_mutex_lock(mutex_ptr) };
+        let _err: i32 = { sync_sys::mutex_lock(mutex_ptr) };
         return MutexGuard[T] { _ctrl: this._ctrl };
     }
 
@@ -147,7 +144,7 @@ impl Mutex[T] {
         if prev == (1 as u64) {
             let refct_bytes: usize = 8 as usize;
             let mutex_ptr: *u8 = { this._ctrl + refct_bytes };
-            let _err: i32 = { pthread_mutex_destroy(mutex_ptr) };
+            let _err: i32 = { sync_sys::mutex_destroy(mutex_ptr) };
             // v0.0.5 Phase 1C: invoke inner-T Drop on the last
             // reference before freeing the heap block. Value lives
             // at refcount(8B) + pthread_mutex_t(64B) = offset 72.
@@ -228,13 +225,13 @@ impl MutexGuard[T] {
     fn drop(ref this) {
         let refct_bytes: usize = 8 as usize;
         let mutex_ptr: *u8 = { this._ctrl + refct_bytes };
-        let _err: i32 = { pthread_mutex_unlock(mutex_ptr) };
+        let _err: i32 = { sync_sys::mutex_unlock(mutex_ptr) };
         let refct: *u64 = { this._ctrl as *u64 };
         let prev: u64 = {
             atomic::fetch_sub_u64(refct, 1 as u64, atomic::Ordering::AcqRel)
         };
         if prev == (1 as u64) {
-            let _derr: i32 = { pthread_mutex_destroy(mutex_ptr) };
+            let _derr: i32 = { sync_sys::mutex_destroy(mutex_ptr) };
             let value_off: usize = (8 as usize) +% (64 as usize);
             let value_ptr: *T = { (this._ctrl + value_off) as *T };
             { #drop_in_place::[T](value_ptr); }

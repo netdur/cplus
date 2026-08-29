@@ -76,17 +76,9 @@ import "./option" as option;
 import "./status" as status;
 import "./netsys" as netsys;
 import "./platform_sys" as platform_sys;
+import "./sync_sys" as sync_sys;
+import "./thread_sys" as thread_sys;
 
-extern fn pthread_create(tid: *u64, attr: *u8, start: fn(*u8) -> *u8, arg: *u8) -> i32;
-extern fn pthread_join(tid: u64, retval: *u8) -> i32;
-extern fn pthread_detach(tid: u64) -> i32;
-extern fn pthread_kill(tid: u64, sig: i32) -> i32;
-extern fn pthread_mutex_lock(m: *u8) -> i32;
-extern fn pthread_mutex_unlock(m: *u8) -> i32;
-extern fn pthread_cond_broadcast(c: *u8) -> i32;
-extern fn signal(sig: i32, handler: fn(i32)) -> *u8;
-extern fn siginterrupt(sig: i32, flag: i32) -> i32;
-extern fn usleep(us: u32) -> i32;
 extern fn malloc(n: usize) -> *u8;
 extern fn free(p: *u8);
 
@@ -179,6 +171,9 @@ impl JoinHandle[O] {
         _cancel_runtime_init();
         let rec: *u8 = { this._ctx + (16 as usize) };
         atomic::store_u64(rec as *u64, 1 as u64, atomic::Ordering::SeqCst);
+        // Rounds of kicking, counted only where a kick is not guaranteed to
+        // land. See `thread_sys::interrupt_is_reliable`.
+        var rounds: u32 = 0 as u32;
         loop {
             let pp: *u64 = { (rec + _c_off_parked()) as *u64 };
             let parked: u64 = atomic::load_u64(pp, atomic::Ordering::SeqCst);
@@ -186,7 +181,7 @@ impl JoinHandle[O] {
             // Syscall parks: a signal until one lands DURING the park and
             // forces EINTR (one landing before is consumed by the no-op
             // handler — hence the loop; measured cost 1 kick, 2 worst).
-            pthread_kill(this._tid, _cancel_signal());
+            thread_sys::interrupt(this._tid);
             // Condvar parks: broadcast the published verb under its mutex.
             // Holding the verb spinlock across the broadcast is what makes
             // `park_end`'s clear a hard barrier — after it returns, this
@@ -198,12 +193,24 @@ impl JoinHandle[O] {
             if c.is_not_null() {
                 let mp: **u8 = { (rec + _c_off_verb_mutex()) as **u8 };
                 let m: *u8 = { *mp };
-                pthread_mutex_lock(m);
-                pthread_cond_broadcast(c);
-                pthread_mutex_unlock(m);
+                sync_sys::mutex_lock(m);
+                sync_sys::cond_broadcast(c);
+                sync_sys::mutex_unlock(m);
             }
             _verb_unlock(rec);
-            usleep(50 as u32);
+            // WHERE THE KICK IS NOT RELIABLE, STOP KICKING. On POSIX the signal
+            // always lands eventually, so the loop is a wait and terminates. On
+            // Windows nothing breaks a thread out of a blocking `recv`, so the
+            // same loop is an infinite one — measured, it hung a `cancel` on a
+            // socket-parked worker forever. Giving up leaves the request in
+            // place and every wakeable park already woken above: cancellation
+            // becomes cooperative rather than immediate, which is a weaker
+            // promise than POSIX's but a promise, where a hang is neither.
+            if !thread_sys::interrupt_is_reliable() {
+                rounds = rounds +% (1 as u32);
+                if rounds >= _max_unreliable_kicks() { return; }
+            }
+            sync_sys::sleep_us(50 as u32);
         }
     }
 
@@ -220,7 +227,7 @@ impl JoinHandle[O] {
     // worker would race the worker's result-store. With the refcount
     // both sides safely cooperate on lifetime.
     fn drop(ref this) {
-        { pthread_detach(this._tid); }
+        { thread_sys::detach(this._tid); }
         let refct: *u64 = { this._ctx as *u64 };
         let prev: u64 = {
             atomic::fetch_sub_u64(refct, 1 as u64, atomic::Ordering::AcqRel)
@@ -231,6 +238,12 @@ impl JoinHandle[O] {
         return;
     }
 }
+
+// How many 50 us rounds `cancel` spends kicking a park it may not be able to
+// wake. Long enough (10 ms) for a condition-variable park to be broadcast and
+// notice, short enough that a caller is not blocked on a thread that will only
+// observe the flag when its syscall returns.
+fn _max_unreliable_kicks() -> u32 { return 200 as u32; }
 
 // ═══════════════════════════ cancellation ═══════════════════════════
 //
@@ -245,23 +258,6 @@ fn _c_off_parked() -> usize { return 8 as usize; }
 fn _c_off_verb_lock() -> usize { return 16 as usize; }
 fn _c_off_verb_cond() -> usize { return 24 as usize; }
 fn _c_off_verb_mutex() -> usize { return 32 as usize; }
-
-// The signal the cancel protocol interrupts blocking syscalls with. SIGURG:
-// ignored by default, meaningless to almost every program (it exists for
-// TCP urgent data), and therefore the conventional choice for exactly this
-// job. stdlib OWNS it — a program that installs its own SIGURG handler
-// forfeits syscall-park cancellation.
-fn _cancel_signal() -> i32 {
-    // NOT `#platform() == "linux"`. That answers false on Android, whose kernel
-    // is Linux — and 16 is SIGSTKFLT there, not SIGURG. See
-    // `platform_sys::is_linux_abi`.
-    if platform_sys::is_linux_abi() { return 23; }
-    return 16;                                  // Darwin
-}
-
-fn _cancel_sig_noop(sig: i32) {
-    return;
-}
 
 // One-time, process-wide install of the no-op SIGURG handler, with
 // SA_RESTART stripped (BSD `signal()` sets it; a restarting park never
@@ -278,8 +274,7 @@ fn _cancel_runtime_init() {
             let prev: i32 = atomic::compare_exchange_i32(
                 #addr_of(_CANCEL_SIG_STATE), 0, 1, atomic::Ordering::AcqRel);
             if prev == 0 {
-                signal(_cancel_signal(), _cancel_sig_noop);
-                siginterrupt(_cancel_signal(), 1);
+                thread_sys::install_interrupt_handler();
                 atomic::store_i32(#addr_of(_CANCEL_SIG_STATE), 2, atomic::Ordering::Release);
                 return;
             }
@@ -479,7 +474,7 @@ impl Scope {
         { (*cell)._d = #addr_of(data) as *T; }
         var tid: u64 = 0 as u64;
         let rc: i32 = {
-            pthread_create(#addr_of(tid), 0 as *u8, _run_lend::[T], raw)
+            thread_sys::create(#addr_of(tid), _run_lend::[T], raw)
         };
         if rc != (0 as i32) {
             { free(raw); }
@@ -488,14 +483,14 @@ impl Scope {
         if this._tids.append(tid) != status::Status::Ok {
             // The thread is running and we cannot record it. Joining here is
             // the only way to keep the promise this type makes.
-            { pthread_join(tid, 0 as *u8); }
+            { thread_sys::join(tid); }
             { free(raw); }
             return status::Status::OutOfMemory;
         }
         if this._cells.append(raw) != status::Status::Ok {
             // Same, one step later: the tid IS recorded, so the join happens
             // at drop; only the cell would leak. Free it after joining now.
-            { pthread_join(tid, 0 as *u8); }
+            { thread_sys::join(tid); }
             { free(raw); }
             return status::Status::OutOfMemory;
         }
@@ -514,7 +509,7 @@ impl Scope {
         var i: usize = 0 as usize;
         while i < this._tids.count() {
             match this._tids.at(i) {
-                option::Option[u64]::Some(tid) => { { pthread_join(tid, 0 as *u8); } }
+                option::Option[u64]::Some(tid) => { { thread_sys::join(tid); } }
                 option::Option[u64]::None => { }
             }
             i = i + (1 as usize);
@@ -593,7 +588,7 @@ fn scope_lends_two_different_locals_at_once() {
 
 // ---- cancellation ----
 
-extern fn pipe(fds: *i32) -> i32;
+
 
 static _CANCEL_TEST_DROPS: u64 = 0u64;
 static _CANCEL_TEST_DEFERS: u64 = 0u64;
@@ -649,7 +644,7 @@ fn _poll_worker(take x: i64) -> i64 {
     var spins: i64 = 0 as i64;
     loop {
         if cancelled() { return 9 as i64; }
-        usleep(100 as u32);
+        sync_sys::sleep_us(100 as u32);
         spins = spins +% (1 as i64);
         if spins > (300000 as i64) { return (0 - 9) as i64; }
     }
@@ -658,9 +653,9 @@ fn _poll_worker(take x: i64) -> i64 {
 #[test]
 fn cancel_interrupts_a_read_park() {
     var fds: [i32; 2] = [0, 0];
-    assert pipe(#addr_of(fds) as *i32) == 0;
+    assert thread_sys::make_pipe(#addr_of(fds) as *i32) == 0;
     let h: JoinHandle[i64] = spawn_with::[i64, i64](fds[0] as i64, _read_park_worker);
-    usleep(2000 as u32);
+    sync_sys::sleep_us(2000 as u32);
     h.cancel();
     assert h.join() == (7 as i64);
     netsys::close_fd(fds[0]);
@@ -670,7 +665,7 @@ fn cancel_interrupts_a_read_park() {
 #[test]
 fn cancel_reaches_a_compute_worker_through_cancelled() {
     let h: JoinHandle[i64] = spawn_with::[i64, i64](0 as i64, _poll_worker);
-    usleep(1000 as u32);
+    sync_sys::sleep_us(1000 as u32);
     h.cancel();
     assert h.join() == (9 as i64);
 }
@@ -678,7 +673,7 @@ fn cancel_reaches_a_compute_worker_through_cancelled() {
 #[test]
 fn cancel_is_idempotent() {
     var fds: [i32; 2] = [0, 0];
-    assert pipe(#addr_of(fds) as *i32) == 0;
+    assert thread_sys::make_pipe(#addr_of(fds) as *i32) == 0;
     let h: JoinHandle[i64] = spawn_with::[i64, i64](fds[0] as i64, _read_park_worker);
     h.cancel();
     h.cancel();
@@ -690,9 +685,9 @@ fn cancel_is_idempotent() {
 #[test]
 fn cancel_runs_drops_and_defers() {
     var fds: [i32; 2] = [0, 0];
-    assert pipe(#addr_of(fds) as *i32) == 0;
+    assert thread_sys::make_pipe(#addr_of(fds) as *i32) == 0;
     let h: JoinHandle[i64] = spawn_with::[i64, i64](fds[0] as i64, _drop_probe_worker);
-    usleep(2000 as u32);
+    sync_sys::sleep_us(2000 as u32);
     h.cancel();
     assert h.join() == (8 as i64);
     let drops: u64 = atomic::load_u64(#addr_of(_CANCEL_TEST_DROPS), atomic::Ordering::Acquire);

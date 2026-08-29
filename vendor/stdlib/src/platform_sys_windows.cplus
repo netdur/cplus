@@ -1,0 +1,173 @@
+// stdlib/platform_sys_windows.cplus — the Windows half of `stdlib/platform`'s
+// runtime tier. Shadows `platform_sys.cplus` through the resolver's `_windows`
+// override.
+//
+// Same two facts, same raw-answer contract ("" or 0 on failure); different
+// calls entirely, since neither `sysctlbyname` nor `sysconf` exists here.
+
+import "./text" as text;
+import "./vec" as vec;
+
+// The processor count, across ALL processor groups. `GetSystemInfo` would also
+// answer, but its `SYSTEM_INFO.dwNumberOfProcessors` is a field at a
+// hand-computed offset in a 48-byte struct AND it is capped at the 64
+// processors of the caller's own group — so on a large machine it silently
+// under-reports. This call returns the number directly, with no struct to lay
+// out and no cap.
+extern fn GetActiveProcessorCount(group: u16) -> u32;
+
+// The REAL version, from ntdll. `GetVersionExW` is the documented call and it
+// LIES: since Windows 8.1 it reports 6.2 to any process without an explicit
+// compatibility manifest, so an availability check written against it is wrong
+// on every modern Windows. `RtlGetVersion` is the kernel's own answer and is
+// not manifest-gated — the same reason Rust's standard library reaches for it.
+extern fn RtlGetVersion(info: *u8) -> i32;
+
+extern fn malloc(n: usize) -> *u8;
+extern fn free(p: *u8);
+
+// ALL_PROCESSOR_GROUPS.
+fn _all_processor_groups() -> u16 { return 0xFFFF as u16; }
+
+// RTL_OSVERSIONINFOW: dwOSVersionInfoSize, dwMajorVersion, dwMinorVersion,
+// dwBuildNumber, dwPlatformId (five ULONGs), then WCHAR szCSDVersion[128].
+// 20 + 256 = 276. The size field must be filled in BEFORE the call — it is how
+// the kernel knows which layout the caller compiled against, and a zero there
+// is a failed call, not a smaller answer.
+fn _osversioninfo_size() -> usize { return 276 as usize; }
+fn _off_major() -> usize { return 4 as usize; }
+fn _off_minor() -> usize { return 8 as usize; }
+fn _off_build() -> usize { return 12 as usize; }
+
+fn _read_u32(p: *u8, at: usize) -> u32 {
+    return { *({ ({ #addr(p) } +% at) as *u32 }) };
+}
+
+fn _write_u32(p: *u8, at: usize, v: u32) {
+    { *({ ({ #addr(p) } +% at) as *u32 }) = v };
+    return;
+}
+
+// Online CPU count, or 0 when the query fails.
+fn cpu_count_raw() -> usize {
+    let n: u32 = { GetActiveProcessorCount(_all_processor_groups()) };
+    if n == (0 as u32) { return 0 as usize; }
+    return n as usize;
+}
+
+// ---- decimal formatting ------------------------------------------------------
+// `text` has no integer formatter, and the two other platform halves never
+// needed one: Darwin's sysctl and Linux's uname both hand back a STRING. The
+// Windows version arrives as three integers, so the spelling has to be built
+// here.
+
+struct _Digits { d: [u8; 12] }
+
+// Write the decimal spelling of `v` into `buf` at `at`, returning the offset
+// just past it. Digits come out least-significant first, so they are collected
+// and then emitted in reverse.
+fn _put_u32(buf: *u8, at: usize, v: u32) -> usize {
+    if v == (0 as u32) {
+        { *({ ({ #addr(buf) } +% at) as *u8 }) = 48 as u8 };
+        return at +% (1 as usize);
+    }
+    var digits: _Digits = #zero::[_Digits]();
+    var n: usize = 0 as usize;
+    var x: u32 = v;
+    while x > (0 as u32) {
+        digits.d[n] = (((x % (10 as u32)) as u8) +% (48 as u8));
+        x = x / (10 as u32);
+        n = n +% (1 as usize);
+    }
+    var out: usize = at;
+    var i: usize = n;
+    while i > (0 as usize) {
+        i = i -% (1 as usize);
+        { *({ ({ #addr(buf) } +% out) as *u8 }) = digits.d[i] };
+        out = out +% (1 as usize);
+    }
+    return out;
+}
+
+fn _put_dot(buf: *u8, at: usize) -> usize {
+    { *({ ({ #addr(buf) } +% at) as *u8 }) = 46 as u8 };
+    return at +% (1 as usize);
+}
+
+// The Windows version as "major.minor.build" — "10.0.26100" on Windows 11,
+// which reports major 10. That is the platform's own spelling, the same
+// contract the Darwin half keeps by reporting the PRODUCT version rather than
+// the kernel's: it is what a user and a compatibility check both mean by "the
+// Windows version".
+//
+// Returns "" when the query fails.
+fn os_version_raw() -> text::Text {
+    let empty: text::Text = text::from_str("");
+    let info: *u8 = { malloc(_osversioninfo_size()) };
+    if info == (0 as *u8) { return empty; }
+    _write_u32(info, 0 as usize, _osversioninfo_size() as u32);
+    // STATUS_SUCCESS is 0.
+    let rc: i32 = { RtlGetVersion(info) };
+    if rc != (0 as i32) { free(info); return empty; }
+
+    let major: u32 = _read_u32(info, _off_major());
+    let minor: u32 = _read_u32(info, _off_minor());
+    let build: u32 = _read_u32(info, _off_build());
+    free(info);
+
+    // Three u32s and two dots: 10 digits each at the very most, so 34 bytes is
+    // already generous.
+    let buf: *u8 = { malloc(48 as usize) };
+    if buf == (0 as *u8) { return empty; }
+    var at: usize = 0 as usize;
+    at = _put_u32(buf, at, major);
+    at = _put_dot(buf, at);
+    at = _put_u32(buf, at, minor);
+    at = _put_dot(buf, at);
+    at = _put_u32(buf, at, build);
+    let out: text::Text = { #str_from_raw_parts(buf, at) }.to_text();
+    free(buf);
+    return out;
+}
+
+// ---- the ABI family ----------------------------------------------------------
+// Windows is not the Linux ABI. See `platform_sys.cplus` for why this question
+// rides the resolver's override rather than a comparison against `#platform()`.
+fn is_linux_abi() -> bool { return false; }
+
+// ---- tests -------------------------------------------------------------------
+
+#[test]
+fn put_u32_spells_zero_as_one_digit() {
+    let buf: *u8 = { malloc(16 as usize) };
+    let n: usize = _put_u32(buf, 0 as usize, 0 as u32);
+    assert n == (1 as usize);
+    assert { *buf } == (48 as u8);
+    free(buf);
+}
+
+#[test]
+fn put_u32_spells_a_multi_digit_number_most_significant_first() {
+    let buf: *u8 = { malloc(16 as usize) };
+    let n: usize = _put_u32(buf, 0 as usize, 26100 as u32);
+    assert n == (5 as usize);
+    let v: str = { #str_from_raw_parts(buf, n) };
+    assert v == "26100";
+    free(buf);
+}
+
+#[test]
+fn os_version_is_three_dotted_numbers() {
+    var v: text::Text = os_version_raw();
+    // The call can legitimately fail; only the shape of a success is pinned.
+    if !v.is_empty() {
+        let s: str = v.view();
+        let parts: vec::Vec[str] = s.split(".");
+        assert parts.count() == (3 as usize);
+    }
+}
+
+#[test]
+fn cpu_count_is_at_least_one() {
+    assert cpu_count_raw() >= (1 as usize);
+}

@@ -1,0 +1,32 @@
+// The wall-clock read `time` is built on — the ONE call in that module that is
+// not portable, split out for the one-object-per-package reason recorded in
+// `exe_path.cplus`.
+//
+// This file is the POSIX base, used on Darwin, Linux and Android alike.
+// `time_sys_windows.cplus` shadows it through the resolver's `_windows`
+// override.
+//
+// `time()` itself is NOT here: it is ISO C, and the Windows CRT has it. Only
+// `clock_gettime` is POSIX-only, and it is the sole reason a program that
+// merely asked for the time failed to link on Windows.
+
+// A 16-byte `struct timespec` — { time_t tv_sec; long tv_nsec; } — both fields
+// are 64-bit on Darwin and 64-bit Linux, so this maps 1:1 with no padding.
+struct Timespec {
+    tv_sec: i64,
+    tv_nsec: i64,
+}
+
+extern fn clock_gettime(clock_id: i32, tp: *u8) -> i32;
+
+// Milliseconds since the Unix epoch, or a NEGATIVE value when the clock read
+// fails. The caller falls back to whole-second precision on a negative answer,
+// so this never has to invent one.
+//
+// CLOCK_REALTIME is id 0 on Darwin and on Linux both.
+fn now_millis_raw() -> i64 {
+    var ts: Timespec = Timespec { tv_sec: 0 as i64, tv_nsec: 0 as i64 };
+    let r: i32 = { clock_gettime(0 as i32, #addr_of(ts) as *u8) };
+    if r != (0 as i32) { return (0 - 1) as i64; }
+    return (ts.tv_sec * (1000 as i64)) + (ts.tv_nsec / (1000000 as i64));
+}

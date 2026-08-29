@@ -1,0 +1,167 @@
+// stdlib/process_windows.cplus — subprocess spawning, Windows.
+//
+// NOT PORTED, and this file exists so that says so at RUNTIME rather than at
+// compile time — the treatment `process_linux.cplus` got on 2026-08-28, for
+// the same reason and with the same shape.
+//
+// WHY A STUB RATHER THAN A PORT. `process.cplus` is `posix_spawn` plus
+// `pipe`, `fcntl`, `poll` and `waitpid`. On Windows not one of those exists:
+// the equivalent is `CreateProcessW` with a `STARTUPINFO` carrying inherited
+// handles, anonymous pipes from `CreatePipe`, `WaitForSingleObject` and
+// `GetExitCodeProcess`. That is a different program, not a different spelling,
+// and it belongs in its own file rather than as `#platform` branches inside
+// the shared one.
+//
+// WITHOUT THIS FILE the resolver falls through to the Darwin base, and a
+// Windows link ends on a page of undefined POSIX symbols — `posix_spawnp`,
+// `posix_spawn_file_actions_init`, `fcntl`, `pipe`, `waitpid` — in a program
+// that never spawned anything. That is the failure `transport_linux.cplus`
+// and `exe_path.cplus` both describe, arriving here through the one-object-
+// per-package rule.
+//
+// IT MIRRORS THE REAL SURFACE. Every name below matches `process.cplus`: same
+// spelling, same parameters, same types, same defaults. `supported()` is the
+// question to ask, and the refusals are the answers the Darwin body already
+// gives when a spawn fails — `None` from `spawn`, code 127 from `capture` —
+// so a caller that handles a failed spawn handles this too without knowing
+// what platform it is on. A stub that is not substitutable for the thing it
+// shadows is just a hole with a comment; `process_linux.cplus` learned that
+// the hard way (it exported a different `capture` and broke the Android build
+// at compile time).
+//
+// WHAT A REAL PORT WOULD BE. `CreateProcessW` with `bInheritHandles` and three
+// `CreatePipe` pairs wired into `STARTUPINFO.hStdInput/hStdOutput/hStdError`,
+// then `WaitForSingleObject` + `GetExitCodeProcess` in place of `waitpid`. The
+// argv-to-command-line direction is the awkward half — Windows takes one
+// string, so the quoting rules `argv_sys_windows.cplus` reads with
+// `CommandLineToArgvW` have to be WRITTEN here.
+import "./option" as option;
+import "./text" as text;
+import "./vec" as vec;
+
+extern fn write(fd: i32, buf: *u8, n: usize) -> i64;
+extern fn strlen(s: *u8) -> usize;
+
+// ---- the signal numbers, which ARE portable ---------------------------------
+// Windows has no signals, but the API exposes these numbers and a caller
+// passing `process::sig_term()` onward should still get the right one back, and a caller passing `process::sig_term()`
+// to a `signal()` that refuses should still get the right number back.
+fn e_intr() -> i32 { return 4 as i32; }
+fn sig_int() -> i32 { return 2 as i32; }
+fn sig_term() -> i32 { return 15 as i32; }
+fn sig_kill() -> i32 { return 9 as i32; }
+
+// Also portable: pure arithmetic over a wait status word, no syscall in it.
+fn decode_status(status_word: i32) -> i32 {
+    let low: i32 = status_word & (0x7f as i32);
+    if low == (0 as i32) { return (status_word >> (8 as i32)) & (0xff as i32); }
+    return (128 as i32) + low;
+}
+
+// True where subprocess spawning works. `false` here, so a caller can ask
+// instead of discovering it by crashing — the shape `pty::supported` already
+// uses, and the ONE thing to branch on.
+fn supported() -> bool { return false; }
+
+fn unsupported(what: *u8) {
+    let a: *u8 = #str_ptr("stdlib/process: not ported to this platform: \0");
+    let _x: i64 = { write(2 as i32, a, strlen(a)) };
+    let _y: i64 = { write(2 as i32, what, strlen(what)) };
+    let b: *u8 = #str_ptr("\n  (see stdlib/src/process_windows.cplus; ask process::supported() first)\n\0");
+    let _z: i64 = { write(2 as i32, b, strlen(b)) };
+    return;
+}
+
+// ---- the types, mirrored ------------------------------------------------------
+//
+// Same fields as `process.cplus`, so a caller can name `process::Output` and
+// read `.stdout` / `.code` on either platform. A `Child` here is never
+// constructed — `spawn` answers None — and its fields are the Darwin ones so
+// the shape a reader sees is the shape that exists.
+
+struct Child {
+    _pid: i32,
+    _stdin: i32,
+    _stdout: i32,
+    _stderr: i32,
+}
+
+struct Output {
+    stdout: text::Text,
+    stderr: text::Text,
+    code: i32,
+}
+
+fn spawn(argv: vec::Vec[text::Text], cwd: str = "") -> option::Option[Child] {
+    unsupported(#str_ptr("spawn\0"));
+    return option::Option[Child]::None;
+}
+
+// UNREACHABLE IN PRACTICE, because nothing here hands out a Child — but written
+// out rather than omitted, because the point of this file is that the surface
+// matches. Each answers what the Darwin body answers for a dead child.
+impl Child {
+    fn pid(ref this) -> i32 { return this._pid; }
+    fn stdout_fd(ref this) -> i32 { return this._stdout; }
+    fn stderr_fd(ref this) -> i32 { return this._stderr; }
+    fn take_stdout_fd(ref this) -> i32 { let fd: i32 = this._stdout; this._stdout = -1 as i32; return fd; }
+    fn take_stderr_fd(ref this) -> i32 { let fd: i32 = this._stderr; this._stderr = -1 as i32; return fd; }
+
+    fn signal(ref this, sig: i32) -> bool { return false; }
+    fn interrupt(ref this) -> bool { return false; }
+    fn terminate(ref this) -> bool { return false; }
+    fn kill_now(ref this) -> bool { return false; }
+
+    fn write_stdin(ref this, data: str) -> isize { return -1 as isize; }
+    fn close_stdin(ref this) { return; }
+    fn wait(ref this) -> i32 { return -1 as i32; }
+
+    fn output(take this) -> Output {
+        var _me: Child = this;
+        return Output { stdout: text::new(), stderr: text::new(), code: 127 as i32 };
+    }
+
+    fn drop(ref this) { return; }
+}
+
+// 127 is what a shell reports for "command not found" and what the Darwin body
+// returns for a spawn that did not happen. A caller checking `code != 0` needs
+// no platform knowledge.
+fn capture(argv: vec::Vec[text::Text], cwd: str = "") -> Output {
+    unsupported(#str_ptr("capture\0"));
+    return Output { stdout: text::new(), stderr: text::new(), code: 127 as i32 };
+}
+
+// ---- tests --------------------------------------------------------------------
+//
+// The half that is real here: the arithmetic and the constants, which are the
+// same on both platforms and are the reason they live in this file rather than
+// being refused with everything else.
+
+#[test]
+fn decode_status_reads_exit_code_and_signal() {
+    // Normal exit, code in the high byte.
+    assert decode_status(0x0500 as i32) == (5 as i32);
+    // Killed by SIGTERM (15): low seven bits carry the signal, 128 + it.
+    assert decode_status(15 as i32) == (143 as i32);
+}
+
+#[test]
+fn the_signal_numbers_match_the_darwin_body() {
+    assert sig_int() == (2 as i32);
+    assert sig_term() == (15 as i32);
+    assert sig_kill() == (9 as i32);
+    assert e_intr() == (4 as i32);
+}
+
+#[test]
+fn spawning_is_refused_rather_than_attempted() {
+    assert !supported();
+    var argv: vec::Vec[text::Text] = vec::new::[text::Text]();
+    let _a: i32 = { argv.append(text::from_str("/bin/true")) } as i32;
+    // The refusal is the Darwin body's own failure answer, so a caller that
+    // handles a failed spawn needs no platform branch.
+    let out: Output = capture(argv);
+    assert out.code == (127 as i32);
+    assert out.stdout.is_empty();
+}

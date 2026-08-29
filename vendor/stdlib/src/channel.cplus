@@ -33,6 +33,7 @@ import "./atomic" as atomic;
 import "./option" as option;
 import "./status" as status;
 import "./thread" as thread;
+import "./sync_sys" as sync_sys;
 
 extern fn malloc(n: usize) -> *u8;
 extern fn realloc(p: *u8, n: usize) -> *u8;
@@ -40,15 +41,6 @@ extern fn free(p: *u8);
 extern fn memcpy(dest: *u8, src: *u8, n: usize) -> *u8;
 extern fn memmove(dest: *u8, src: *u8, n: usize) -> *u8;
 
-extern fn pthread_mutex_init(m: *u8, a: *u8) -> i32;
-extern fn pthread_mutex_destroy(m: *u8) -> i32;
-extern fn pthread_mutex_lock(m: *u8) -> i32;
-extern fn pthread_mutex_unlock(m: *u8) -> i32;
-extern fn pthread_cond_init(c: *u8, a: *u8) -> i32;
-extern fn pthread_cond_destroy(c: *u8) -> i32;
-extern fn pthread_cond_wait(c: *u8, m: *u8) -> i32;
-extern fn pthread_cond_signal(c: *u8) -> i32;
-extern fn pthread_cond_broadcast(c: *u8) -> i32;
 
 struct Channel[T] {
     _ctrl: *u8,
@@ -111,8 +103,8 @@ fn new[T]() -> option::Option[Channel[T]] {
     // init mutex + cond
     let mutex_ptr: *u8 = { raw + off_mutex() };
     let cond_ptr: *u8 = { raw + off_cond() };
-    let _e1: i32 = { pthread_mutex_init(mutex_ptr, 0 as *u8) };
-    let _e2: i32 = { pthread_cond_init(cond_ptr, 0 as *u8) };
+    let _e1: i32 = { sync_sys::mutex_init(mutex_ptr, 0 as *u8) };
+    let _e2: i32 = { sync_sys::cond_init(cond_ptr, 0 as *u8) };
     // head = tail = 0; capacity = initial; closed = 0
     let head_ptr: *usize = { (raw + off_head()) as *usize };
     let tail_ptr: *usize = { (raw + off_tail()) as *usize };
@@ -128,8 +120,8 @@ fn new[T]() -> option::Option[Channel[T]] {
     let buf_raw: *u8 = { malloc(buf_bytes) };
     if buf_raw.is_null() {
         // Roll back the header allocation — the channel never came to exist.
-        let _d1: i32 = { pthread_cond_destroy(cond_ptr) };
-        let _d2: i32 = { pthread_mutex_destroy(mutex_ptr) };
+        let _d1: i32 = { sync_sys::cond_destroy(cond_ptr) };
+        let _d2: i32 = { sync_sys::mutex_destroy(mutex_ptr) };
         { free(raw); }
         return option::Option[Channel[T]]::None;
     }
@@ -154,7 +146,7 @@ impl Channel[T] {
     fn send(this, take v: T) -> status::Status {
         let mutex_ptr: *u8 = { this._ctrl + off_mutex() };
         let cond_ptr: *u8 = { this._ctrl + off_cond() };
-        let _e1: i32 = { pthread_mutex_lock(mutex_ptr) };
+        let _e1: i32 = { sync_sys::mutex_lock(mutex_ptr) };
         let head_ptr: *usize = { (this._ctrl + off_head()) as *usize };
         let tail_ptr: *usize = { (this._ctrl + off_tail()) as *usize };
         let cap_ptr: *usize = { (this._ctrl + off_capacity()) as *usize };
@@ -184,7 +176,7 @@ impl Channel[T] {
                 if new_buf.is_null() {
                     // Grow failed: the old buffer is still intact and referenced
                     // by buf_ptr_slot. Release the lock and report; `v` drops.
-                    let _eu: i32 = { pthread_mutex_unlock(mutex_ptr) };
+                    let _eu: i32 = { sync_sys::mutex_unlock(mutex_ptr) };
                     return status::Status::OutOfMemory;
                 }
                 buf = new_buf;
@@ -197,8 +189,8 @@ impl Channel[T] {
         { *slot = v; }
         tail = tail +% (1 as usize);
         { *tail_ptr = tail; }
-        let _e2: i32 = { pthread_cond_signal(cond_ptr) };
-        let _e3: i32 = { pthread_mutex_unlock(mutex_ptr) };
+        let _e2: i32 = { sync_sys::cond_signal(cond_ptr) };
+        let _e3: i32 = { sync_sys::mutex_unlock(mutex_ptr) };
         return status::Status::Ok;
     }
 
@@ -223,7 +215,7 @@ impl Channel[T] {
         let buf_ptr_slot: **u8 = { (this._ctrl + off_buffer()) as **u8 };
         let closed_ptr: *u64 = { (this._ctrl + off_closed()) as *u64 };
         let _pre: bool = { thread::park_begin_cond(cond_ptr, mutex_ptr) };
-        let _e1: i32 = { pthread_mutex_lock(mutex_ptr) };
+        let _e1: i32 = { sync_sys::mutex_lock(mutex_ptr) };
         loop {
             let head: usize = { *head_ptr };
             let tail: usize = { *tail_ptr };
@@ -233,22 +225,22 @@ impl Channel[T] {
                 let slot: *T = { (buf + (head *% elem_bytes)) as *T };
                 let v: T = { #take::[T](slot) };
                 { *head_ptr = head +% (1 as usize); }
-                let _eu: i32 = { pthread_mutex_unlock(mutex_ptr) };
+                let _eu: i32 = { sync_sys::mutex_unlock(mutex_ptr) };
                 { thread::park_end(); }
                 return ReceiveResult[T]::Value(v);
             }
             let closed: u64 = { *closed_ptr };
             if closed != (0 as u64) {
-                let _eu: i32 = { pthread_mutex_unlock(mutex_ptr) };
+                let _eu: i32 = { sync_sys::mutex_unlock(mutex_ptr) };
                 { thread::park_end(); }
                 return ReceiveResult[T]::Closed;
             }
             if thread::cancelled() {
-                let _eu: i32 = { pthread_mutex_unlock(mutex_ptr) };
+                let _eu: i32 = { sync_sys::mutex_unlock(mutex_ptr) };
                 { thread::park_end(); }
                 return ReceiveResult[T]::Cancelled;
             }
-            let _ew: i32 = { pthread_cond_wait(cond_ptr, mutex_ptr) };
+            let _ew: i32 = { sync_sys::cond_wait(cond_ptr, mutex_ptr) };
         }
     }
 
@@ -261,7 +253,7 @@ impl Channel[T] {
         let tail_ptr: *usize = { (this._ctrl + off_tail()) as *usize };
         let buf_ptr_slot: **u8 = { (this._ctrl + off_buffer()) as **u8 };
         let closed_ptr: *u64 = { (this._ctrl + off_closed()) as *u64 };
-        let _e1: i32 = { pthread_mutex_lock(mutex_ptr) };
+        let _e1: i32 = { sync_sys::mutex_lock(mutex_ptr) };
         let head: usize = { *head_ptr };
         let tail: usize = { *tail_ptr };
         if head < tail {
@@ -270,11 +262,11 @@ impl Channel[T] {
             let slot: *T = { (buf + (head *% elem_bytes)) as *T };
             let v: T = { #take::[T](slot) };
             { *head_ptr = head +% (1 as usize); }
-            let _eu: i32 = { pthread_mutex_unlock(mutex_ptr) };
+            let _eu: i32 = { sync_sys::mutex_unlock(mutex_ptr) };
             return TryReceiveResult[T]::Value(v);
         }
         let closed: u64 = { *closed_ptr };
-        let _eu: i32 = { pthread_mutex_unlock(mutex_ptr) };
+        let _eu: i32 = { sync_sys::mutex_unlock(mutex_ptr) };
         if closed != (0 as u64) {
             return TryReceiveResult[T]::Closed;
         }
@@ -288,10 +280,10 @@ impl Channel[T] {
         let mutex_ptr: *u8 = { this._ctrl + off_mutex() };
         let cond_ptr: *u8 = { this._ctrl + off_cond() };
         let closed_ptr: *u64 = { (this._ctrl + off_closed()) as *u64 };
-        let _e1: i32 = { pthread_mutex_lock(mutex_ptr) };
+        let _e1: i32 = { sync_sys::mutex_lock(mutex_ptr) };
         { *closed_ptr = 1 as u64; }
-        let _e2: i32 = { pthread_cond_broadcast(cond_ptr) };
-        let _e3: i32 = { pthread_mutex_unlock(mutex_ptr) };
+        let _e2: i32 = { sync_sys::cond_broadcast(cond_ptr) };
+        let _e3: i32 = { sync_sys::mutex_unlock(mutex_ptr) };
         return;
     }
 
@@ -327,8 +319,8 @@ impl Channel[T] {
                 { #drop_in_place::[T](elem_ptr); }
                 i = i +% (1 as usize);
             }
-            let _e1: i32 = { pthread_cond_destroy(cond_ptr) };
-            let _e2: i32 = { pthread_mutex_destroy(mutex_ptr) };
+            let _e1: i32 = { sync_sys::cond_destroy(cond_ptr) };
+            let _e2: i32 = { sync_sys::mutex_destroy(mutex_ptr) };
             { free(buf); }
             { free(this._ctrl); }
         }
@@ -338,7 +330,6 @@ impl Channel[T] {
 
 // ───────────────────────────── tests ─────────────────────────────
 
-extern fn usleep(us: u32) -> i32;
 
 #[test]
 fn channel_send_then_recv() {
@@ -406,7 +397,7 @@ fn channel_receive_reports_cancellation_instead_of_blocking() {
         option::Option[Channel[i32]]::Some(ch) => {
             let h: thread::JoinHandle[i64] =
                 thread::spawn_with::[Channel[i32], i64](ch.clone(), _recv_until_cancelled);
-            usleep(3000 as u32);
+            sync_sys::sleep_us(3000 as u32);
             h.cancel();
             assert h.join() == (5 as i64);
         }

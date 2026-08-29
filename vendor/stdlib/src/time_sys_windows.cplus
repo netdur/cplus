@@ -1,0 +1,33 @@
+// The wall-clock read `time` is built on — the Windows half. Shadows
+// `time_sys.cplus` through the resolver's `_windows` override. No
+// `clock_gettime` may be DECLARED here; the Windows CRT does not have it.
+//
+// `GetSystemTimeAsFileTime` is the cheap read — it copies a value the kernel
+// already maintains in shared memory, with no syscall. Its resolution is the
+// system timer tick (about 15.6 ms by default), which is coarser than
+// `clock_gettime`'s but is what `now_millis` is asking for anyway.
+// `GetSystemTimePreciseAsFileTime` exists and is sub-microsecond, but it costs
+// a real time-source read, and nothing here needs that to report milliseconds.
+
+extern fn GetSystemTimeAsFileTime(ft: *u8);
+
+// FILETIME counts 100-nanosecond intervals since 1601-01-01 UTC. The Unix
+// epoch is 11644473600 seconds later, which is 116444736000000000 of those
+// intervals — the constant below, and the whole of the conversion.
+fn _epoch_delta_100ns() -> u64 { return 116444736000000000 as u64; }
+
+// Milliseconds since the Unix epoch, or a NEGATIVE value when the clock read
+// fails — the same contract the POSIX base keeps.
+//
+// A FILETIME below the epoch delta would underflow the unsigned subtraction
+// into an enormous positive number, so it is rejected rather than wrapped.
+// That only happens if the system clock is set before 1601, which is not a
+// real configuration, but "not real" and "cannot happen" are different claims
+// and only one of them is safe to write.
+fn now_millis_raw() -> i64 {
+    var ft: u64 = 0 as u64;
+    { GetSystemTimeAsFileTime(#addr_of(ft) as *u8) };
+    if ft < _epoch_delta_100ns() { return (0 - 1) as i64; }
+    let since_epoch: u64 = ft -% _epoch_delta_100ns();
+    return (since_epoch / (10000 as u64)) as i64;
+}

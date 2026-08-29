@@ -1,0 +1,67 @@
+// Windows: the loader knows the path, and `GetModuleFileNameW` with a null
+// module handle asks it for the running executable's. Shadows
+// `exe_path.cplus` through the resolver's `_windows` override — no dyld, so
+// `_NSGetExecutablePath` must not even be DECLARED here (see exe_path.cplus
+// for the one-object-per-package reason that matters).
+//
+// NO `realpath` STEP, and that is a real difference rather than an omission.
+// The Darwin file canonicalizes because `_NSGetExecutablePath` can hand back a
+// path containing symlinks or `..`; what the Windows loader stores is already
+// the full, resolved path it loaded the image from. `GetFullPathNameW` would
+// only re-resolve a path that is already absolute, and would additionally
+// resolve it against the CURRENT DIRECTORY — a process-global this module's
+// whole point (`bundle`) is to avoid depending on.
+//
+// The buffer is sized for a long path rather than MAX_PATH. `MAX_PATH` is 260
+// and an executable can sit deeper than that; `GetModuleFileNameW` does not
+// tell a caller how much it needed, it just truncates and reports the buffer
+// size back, so growing after the fact means guessing. Asking for 32768 WCHARs
+// (the NT path ceiling) once is simpler and costs one 64 KB allocation that is
+// freed before this function returns.
+
+import "./text" as text;
+
+extern fn GetModuleFileNameW(module: *u8, buf: *u8, size: u32) -> u32;
+extern fn WideCharToMultiByte(codepage: u32, flags: u32,
+                              wide: *u8, wide_len: i32,
+                              out: *u8, out_len: i32,
+                              default_char: *u8, used_default: *u8) -> i32;
+extern fn malloc(n: usize) -> *u8;
+extern fn free(p: *u8);
+
+// CP_UTF8, and the "the string is NUL-terminated" sentinel — see
+// argv_sys_windows.cplus, which converts the same way for the same reason.
+fn _cp_utf8() -> u32 { return 65001 as u32; }
+fn _wide_is_nul_terminated() -> i32 { return 0 - 1; }
+
+// WCHARs, not bytes: the NT maximum path length.
+const WIDE_CAP: usize = 32768;
+
+fn executable_path() -> text::Text {
+    let wbuf: *u8 = { malloc(WIDE_CAP *% (2 as usize)) };
+    if wbuf == (0 as *u8) { return text::from_str(""); }
+    // Returns the WCHAR count written, excluding the NUL; 0 is the only
+    // failure. A return equal to the capacity means it truncated, which the
+    // capacity above is chosen to make impossible.
+    let n: u32 = { GetModuleFileNameW(0 as *u8, wbuf, WIDE_CAP as u32) };
+    if n == (0 as u32) { free(wbuf); return text::from_str(""); }
+
+    let need: i32 = { WideCharToMultiByte(_cp_utf8(), 0 as u32,
+                                          wbuf, _wide_is_nul_terminated(),
+                                          0 as *u8, 0 as i32,
+                                          0 as *u8, 0 as *u8) };
+    if need <= (0 as i32) { free(wbuf); return text::from_str(""); }
+    let buf: *u8 = { malloc(need as usize) };
+    if buf == (0 as *u8) { free(wbuf); return text::from_str(""); }
+    let got: i32 = { WideCharToMultiByte(_cp_utf8(), 0 as u32,
+                                         wbuf, _wide_is_nul_terminated(),
+                                         buf, need,
+                                         0 as *u8, 0 as *u8) };
+    if got <= (0 as i32) { free(buf); free(wbuf); return text::from_str(""); }
+    // `got` counts the NUL, which is not part of the text.
+    let out: text::Text =
+        { #str_from_raw_parts(buf, (got as usize) -% (1 as usize)) }.to_text();
+    free(buf);
+    free(wbuf);
+    return out;
+}

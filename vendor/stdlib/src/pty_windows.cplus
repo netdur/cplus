@@ -1,0 +1,142 @@
+// stdlib/pty_windows.cplus — pseudo-terminal sessions, Windows.
+//
+// NOT PORTED, and this file exists so that says so at RUNTIME rather than at
+// compile time — see `process_windows.cplus`, which is the same shape for the
+// same reason, and `pty_linux.cplus`, which got the treatment first.
+//
+// WHY A STUB RATHER THAN A PORT. `pty.cplus` is `openpty` + `posix_spawn` +
+// `ioctl(TIOCSWINSZ)`. Windows has a pty — ConPTY, since Windows 10 1809 —
+// but it is not that shape: `CreatePseudoConsole` takes a pair of pipe handles
+// and a COORD, and the child is launched through
+// `PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE` on an `EXTENDED_STARTUPINFO_PRESENT`
+// `CreateProcessW`. Resize is `ResizePseudoConsole`, not an ioctl. So the port
+// is a rewrite of every line, and it belongs in its own file.
+//
+// WITHOUT THIS FILE the resolver falls through to the Darwin base and a
+// Windows link ends on undefined `openpty`, `ioctl` and `posix_spawn` symbols
+// in a program that never opened a terminal.
+//
+// IT MIRRORS THE REAL SURFACE — same names, parameters, types and defaults as
+// `pty.cplus`, so `supported()` is the question and the refusals are the same
+// answers a failed spawn already produces. See `process_windows.cplus` for why
+// a stub that is not substitutable is worse than no stub.
+//
+// THE CONSTANTS BELOW ARE THE DARWIN ONES, not invented Windows values, and
+// that is deliberate: Windows has no ioctl and no termios, so there is no
+// Windows encoding for `tiocswinsz` to be right about. Matching the base file
+// keeps a caller that reads them from seeing a third set of numbers, and
+// nothing here ever passes them to a syscall.
+import "./option" as option;
+import "./text" as text;
+import "./vec" as vec;
+
+extern fn write(fd: i32, buf: *u8, n: usize) -> i64;
+extern fn strlen(s: *u8) -> usize;
+extern fn malloc(n: usize) -> *u8;
+
+// ---- the portable constants ---------------------------------------------------
+fn e_intr() -> i32 { return 4 as i32; }
+fn sig_int() -> i32 { return 2 as i32; }
+fn sig_term() -> i32 { return 15 as i32; }
+fn sig_kill() -> i32 { return 9 as i32; }
+fn o_rdwr() -> i32 { return 2 as i32; }
+fn spawn_setsid() -> i16 { return 1024 as i16; }
+
+// THE ONE CONSTANT THAT IS NOT THE DARWIN ONE. `pty.cplus` answers
+// 2148037735 (0x80087467); Linux and bionic use 0x5414. Answering the right
+// number here rather than inheriting the wrong one is most of what a port
+// would have to remember, so it is written down now while the reason is known.
+fn tiocswinsz() -> u64 { return 2148037735 as u64; }
+
+fn decode_status(status_word: i32) -> i32 {
+    if (status_word & (0x7f as i32)) == (0 as i32) {
+        return (status_word >> (8 as i32)) & (0xff as i32);
+    }
+    return (128 as i32) + (status_word & (0x7f as i32));
+}
+
+// `struct winsize { unsigned short ws_row, ws_col, ws_xpixel, ws_ypixel; }` —
+// the same layout on both kernels, so this is real rather than refused.
+fn winsize_new(cols: u16, rows: u16) -> *u8 {
+    let w: *u8 = { malloc(8 as usize) };
+    if w == (0 as *u8) { return 0 as *u8; }
+    { *((w + (0 as usize)) as *u16) = rows; }
+    { *((w + (2 as usize)) as *u16) = cols; }
+    { *((w + (4 as usize)) as *u16) = 0 as u16; }
+    { *((w + (6 as usize)) as *u16) = 0 as u16; }
+    return w;
+}
+
+fn supported() -> bool { return false; }
+
+fn unsupported(what: *u8) {
+    let a: *u8 = #str_ptr("stdlib/pty: not ported to this platform: \0");
+    let _x: i64 = { write(2 as i32, a, strlen(a)) };
+    let _y: i64 = { write(2 as i32, what, strlen(what)) };
+    let b: *u8 = #str_ptr("\n  (see stdlib/src/pty_windows.cplus; ask pty::supported() first)\n\0");
+    let _z: i64 = { write(2 as i32, b, strlen(b)) };
+    return;
+}
+
+struct PtyChild {
+    _pid: i32,
+    _master: i32,
+}
+
+// `None` is what the Darwin body answers for an empty argv or a failed spawn,
+// so a caller that already handles it needs no platform branch.
+fn spawn(argv: vec::Vec[text::Text], cwd: str, cols: u16, rows: u16)
+        -> option::Option[PtyChild] {
+    unsupported(#str_ptr("spawn\0"));
+    return option::Option[PtyChild]::None;
+}
+
+// Unreachable in practice — nothing here hands out a PtyChild — but written out
+// so the surface matches. Each answers what the Darwin body answers for a dead
+// child.
+impl PtyChild {
+    fn pid(ref this) -> i32 { return this._pid; }
+    fn read_fd(ref this) -> i32 { return this._master; }
+    fn take_fd(ref this) -> i32 { let fd: i32 = this._master; this._master = -1 as i32; return fd; }
+
+    fn write(ref this, data: str) -> isize { return -1 as isize; }
+    fn read(ref this, buf: *u8, count: usize) -> isize { return -1 as isize; }
+    fn resize(ref this, cols: u16, rows: u16) -> bool { return false; }
+
+    fn signal(ref this, sig: i32) -> bool { return false; }
+    fn interrupt(ref this) -> bool { return false; }
+    fn terminate(ref this) -> bool { return false; }
+    fn kill_now(ref this) -> bool { return false; }
+
+    fn wait(ref this) -> i32 { return -1 as i32; }
+    fn drop(ref this) { return; }
+}
+
+// ---- tests --------------------------------------------------------------------
+
+#[test]
+fn winsize_is_packed_rows_then_cols() {
+    let w: *u8 = winsize_new(80 as u16, 24 as u16);
+    assert w != (0 as *u8);
+    assert { *((w + (0 as usize)) as *u16) } == (24 as u16);
+    assert { *((w + (2 as usize)) as *u16) } == (80 as u16);
+}
+
+#[test]
+fn tiocswinsz_matches_the_base_encoding() {
+    // 0x80087467 — the Darwin value, carried unchanged because Windows has no
+    // ioctl for it to disagree with. This pins the constant against drift, not
+    // against a kernel: nothing in this file ever passes it to a syscall.
+    assert tiocswinsz() == (2148037735 as u64);
+}
+
+#[test]
+fn spawning_is_refused_rather_than_attempted() {
+    assert !supported();
+    var argv: vec::Vec[text::Text] = vec::new::[text::Text]();
+    let _a: i32 = { argv.append(text::from_str("/bin/sh")) } as i32;
+    match spawn(argv, "", 80 as u16, 24 as u16) {
+        option::Option[PtyChild]::Some(_c) => { assert false; }
+        option::Option[PtyChild]::None => { }
+    }
+}

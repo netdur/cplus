@@ -27,6 +27,7 @@ import "./channel" as channel;
 import "./atomic" as atomic;
 import "./option" as option;
 import "./status" as status;
+import "./sync_sys" as sync_sys;
 
 // Codegen-emitted stable wrappers around the LLVM coroutine intrinsics —
 // the pieces `run`'s surface-C+ drive loop is written out of.
@@ -176,7 +177,6 @@ fn _touch_reactor() -> i32 {
 
 // ───────────────────────────── tests ─────────────────────────────
 
-extern fn usleep(us: u32) -> i32;
 
 async fn _ready_value() -> i32 {
     return 42;
@@ -268,7 +268,7 @@ fn _run_sleepy(take x: i64) -> i64 {
 fn run_reports_cancellation_and_runs_the_frames_drops() {
     let before: u64 = atomic::load_u64(#addr_of(_P2_DROPS), atomic::Ordering::Acquire);
     let h: thread::JoinHandle[i64] = thread::spawn_with::[i64, i64](0 as i64, _run_sleepy);
-    usleep(20000 as u32);
+    sync_sys::sleep_us(20000 as u32);
     h.cancel();
     assert h.join() == (77 as i64);
     let after: u64 = atomic::load_u64(#addr_of(_P2_DROPS), atomic::Ordering::Acquire);
@@ -333,7 +333,7 @@ fn join_worker_bridges_a_thread_result_into_async() {
 }
 
 fn _send_late(take ch: channel::Channel[i32]) -> i64 {
-    usleep(5000 as u32);
+    sync_sys::sleep_us(5000 as u32);
     let _s: status::Status = ch.send(33);
     return 0 as i64;
 }
@@ -374,7 +374,7 @@ fn receive_or_cancel_surfaces_cancellation() {
         option::Option[channel::Channel[i32]]::Some(ch) => {
             let h: thread::JoinHandle[i64] =
                 thread::spawn_with::[channel::Channel[i32], i64](ch.clone(), _recv_bridge_worker);
-            usleep(10000 as u32);
+            sync_sys::sleep_us(10000 as u32);
             h.cancel();
             assert h.join() == ((0 - 2) as i64);
         }

@@ -1,0 +1,105 @@
+// The four platform primitives `crypto` is built on — the Windows half.
+// Shadows `crypto_sys.cplus` through the resolver's `_windows` override.
+//
+// Windows ships CNG (bcrypt.dll), which is the platform's own crypto in the
+// same sense CommonCrypto is on Darwin: kernel-backed, maintained by Windows
+// Update rather than by this repo. So this file BINDS, where
+// `crypto_sys_linux.cplus` had to implement SHA-2 in 500 lines of portable
+// arithmetic — glibc ships no digest and OpenSSL is not guaranteed present, so
+// there was nothing on Linux to bind to. Here there is.
+//
+// ONE CALL PER DIGEST. `BCryptHash` is CNG's one-shot: it opens the algorithm,
+// hashes, and closes internally, so there is no provider handle to cache and
+// no cleanup path to leak. It covers HMAC too, by taking the key as `pbSecret`
+// against an HMAC algorithm handle — which is why `hmac_into` below is the
+// same call with a different first argument and nothing else.
+//
+// THE PSEUDO-HANDLES are why no string appears in this file. CNG's documented
+// entry point is `BCryptOpenAlgorithmProvider(&h, L"SHA256", ...)`, and a
+// UTF-16 literal is something C+ has no syntax for — it would have to be a
+// hand-built byte array per algorithm. Windows 10 predefines one handle
+// constant per algorithm that `BCryptHash` accepts directly, which removes the
+// strings entirely.
+//
+// The values are transcribed from the SDK's own bcrypt.h (10.0.26100.0), and
+// the pairing is easy to get wrong from memory: SHA-512 is 0x61. 0x51 is
+// SHA-384, and passing it here would half-fill a 64-byte buffer with a
+// perfectly valid digest of the wrong algorithm — the exact silent-wrong-answer
+// failure `crypto.cplus`'s header warns about.
+
+extern fn BCryptHash(alg: *u8, secret: *u8, secret_len: u32,
+                     input: *u8, input_len: u32,
+                     output: *u8, output_len: u32) -> i32;
+extern fn BCryptGenRandom(alg: *u8, buf: *u8, len: u32, flags: u32) -> i32;
+extern fn write(fd: i32, buf: *u8, n: usize) -> isize;
+extern fn abort();
+extern fn strlen(s: *u8) -> usize;
+
+// BCRYPT_*_ALG_HANDLE, from bcrypt.h. Pointer-typed in C, so they are cast to
+// `*u8` at each call rather than declared as integers.
+fn _alg_sha256() -> *u8 { return { (0x41 as usize) as *u8 }; }
+fn _alg_sha512() -> *u8 { return { (0x61 as usize) as *u8 }; }
+fn _alg_hmac_sha256() -> *u8 { return { (0xb1 as usize) as *u8 }; }
+fn _alg_hmac_sha512() -> *u8 { return { (0xd1 as usize) as *u8 }; }
+
+// BCRYPT_USE_SYSTEM_PREFERRED_RNG — use the system RNG rather than a provider
+// handle, which is what lets `alg` be null below.
+fn _use_system_rng() -> u32 { return 0x00000002 as u32; }
+
+// Every BCrypt entry point returns an NTSTATUS; STATUS_SUCCESS is 0 and every
+// failure is non-zero (the error codes are negative when read as signed).
+fn _ok(status: i32) -> bool { return status == (0 as i32); }
+
+fn not_implemented(what: *u8) {
+    let msg: *u8 = #str_ptr("stdlib/crypto: not implemented on this platform: \0");
+    let _a: isize = { write(2 as i32, msg, strlen(msg)) };
+    let _b: isize = { write(2 as i32, what, strlen(what)) };
+    let nl: *u8 = #str_ptr("\n  (see crypto_sys_windows.cplus)\n\0");
+    let _c: isize = { write(2 as i32, nl, strlen(nl)) };
+    { abort(); }
+    return;
+}
+
+// ---- digests -----------------------------------------------------------------
+// A plain hash is the keyed call with no key: null secret, zero length.
+
+fn sha256_into(p: *u8, n: usize, out: *u8) {
+    let _s: i32 = { BCryptHash(_alg_sha256(), 0 as *u8, 0 as u32,
+                               p, n as u32, out, 32 as u32) };
+    return;
+}
+
+fn sha512_into(p: *u8, n: usize, out: *u8) {
+    let _s: i32 = { BCryptHash(_alg_sha512(), 0 as *u8, 0 as u32,
+                               p, n as u32, out, 64 as u32) };
+    return;
+}
+
+// `alg` is crypto.cplus's own vocabulary (2 = SHA-256, 4 = SHA-512), not
+// CommonCrypto's and not CNG's — the same two constants reactor_linux's
+// counterpart dispatches on, so all three backends agree on the mapping.
+fn hmac_into(alg: u32, key: *u8, key_len: usize, msg: *u8, msg_len: usize, out: *u8) {
+    if alg == (2 as u32) {
+        let _s: i32 = { BCryptHash(_alg_hmac_sha256(), key, key_len as u32,
+                                   msg, msg_len as u32, out, 32 as u32) };
+        return;
+    }
+    if alg == (4 as u32) {
+        let _s: i32 = { BCryptHash(_alg_hmac_sha512(), key, key_len as u32,
+                                   msg, msg_len as u32, out, 64 as u32) };
+        return;
+    }
+    not_implemented(#str_ptr("hmac: only SHA-256 (2) and SHA-512 (4)\0"));
+    return;
+}
+
+// ---- randomness --------------------------------------------------------------
+
+// The system CSPRNG. One call fills the whole buffer or fails — there is no
+// short-read case to loop over, which is the one way this is simpler than the
+// `/dev/urandom` path on Linux. A zero-length request is success by definition
+// and is not passed on, since CNG treats a null/empty buffer as invalid.
+fn random_into(p: *u8, n: usize) -> bool {
+    if n == (0 as usize) { return true; }
+    return _ok({ BCryptGenRandom(0 as *u8, p, n as u32, _use_system_rng()) });
+}

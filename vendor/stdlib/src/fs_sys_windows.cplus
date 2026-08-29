@@ -1,0 +1,286 @@
+// The parts of `fs` that are the C RUNTIME's ABI rather than portable POSIX —
+// the Windows half. Shadows `fs_sys.cplus` through the resolver's `_windows`
+// override.
+//
+// THIS FILE FIXES A SILENT BUG, not a missing symbol. Windows had no
+// `fs_sys_windows.cplus`, so it fell through to the DARWIN base — and unlike
+// every other gap in this port, that one LINKED. `open`, `stat` and `mkdir` all
+// exist in the MSVC runtime, so nothing failed loudly; the CONSTANTS were just
+// wrong. Measured against the real UCRT headers on 2026-08-28:
+//
+//   * `create_flags()` 1537 is `O_WRONLY|O_CREAT|O_TRUNC` on Darwin. The same
+//     bits on MSVC are `_O_WRONLY|_O_TRUNC|_O_EXCL` — no `_O_CREAT` at all, so
+//     `fs::create` could not create a file, and `_O_EXCL` without `_O_CREAT` is
+//     undefined on top of that.
+//   * `stat_buf_bytes()` 144 against a 56-byte `struct _stat64`, with every
+//     field read from a Darwin offset: `st_mode` at 4 instead of 6, `st_size`
+//     at 96, `st_mtime` at 48. Every answer garbage, no crash.
+//   * `dirent_name()` indexing 21 bytes into a struct that does not exist here.
+//
+// ---- TEXT MODE, which POSIX does not have -----------------------------------
+//
+// The MSVC runtime opens in TEXT mode unless told otherwise, and text mode
+// rewrites bytes: CRLF collapses to LF on read, LF expands to CRLF on write,
+// and a lone 0x1A ends the file early. A `read_to_string` would return fewer
+// bytes than `stat` reported, and any binary file would be corrupted on the way
+// through. So `_O_BINARY` is set on every flag set below, including the read
+// path — which is why `read_flags()` exists at all, since on POSIX it is 0 and
+// `fs.cplus` used to hardcode that.
+//
+// ---- `_stat64`, not `stat` ---------------------------------------------------
+//
+// Plain `struct stat` on MSVC carries a 32-BIT `st_size`, so a file over 2 GB
+// reports a truncated length. `_stat64` is the same call with a 64-bit size and
+// a 64-bit time, which is what this module's `i64` return types already
+// promise.
+
+// `_mkdir` takes no mode — Windows has no POSIX permission bits to apply.
+extern fn _mkdir(path: *u8) -> i32;
+extern fn _stat64(path: *u8, buf: *u8) -> i32;
+
+extern fn FindFirstFileW(pattern: *u8, data: *u8) -> *u8;
+extern fn FindNextFileW(handle: *u8, data: *u8) -> i32;
+extern fn FindClose(handle: *u8) -> i32;
+extern fn MultiByteToWideChar(codepage: u32, flags: u32, mb: *u8, mb_len: i32,
+                              wide: *u8, wide_len: i32) -> i32;
+extern fn WideCharToMultiByte(codepage: u32, flags: u32,
+                              wide: *u8, wide_len: i32,
+                              out: *u8, out_len: i32,
+                              default_char: *u8, used_default: *u8) -> i32;
+extern fn malloc(n: usize) -> *u8;
+extern fn free(p: *u8);
+extern fn strlen(s: *u8) -> usize;
+
+fn _cp_utf8() -> u32 { return 65001 as u32; }
+fn _nul_terminated() -> i32 { return 0 - 1; }
+
+// _O_WRONLY 0x0001, _O_CREAT 0x0100, _O_TRUNC 0x0200, _O_APPEND 0x0008,
+// _O_BINARY 0x8000. Values from the UCRT's own fcntl.h, not from the POSIX
+// names they share.
+fn create_flags() -> i32 { return 33537 as i32; }   // WRONLY|CREAT|TRUNC|BINARY
+fn append_flags() -> i32 { return 33033 as i32; }   // WRONLY|CREAT|APPEND|BINARY
+fn read_flags() -> i32 { return 32768 as i32; }     // RDONLY(0)|BINARY
+
+// `mode` is dropped: Windows has no POSIX permission bits, and `_mkdir` takes
+// only a path. A caller asking for 0o700 gets whatever the parent's ACL
+// inherits, which is the closest thing this platform has to an answer.
+fn make_dir(path: *u8, mode: u32) -> i32 {
+    return { _mkdir(path) };
+}
+
+// ---- struct _stat64 ----------------------------------------------------------
+//
+// 56 bytes; st_mode a u16 at byte 6, st_size an i64 at byte 24, st_mtime an
+// i64 at byte 40. Verified with offsetof against the UCRT headers on this host,
+// not read off a manual page.
+
+fn stat_buf_bytes() -> usize { return 56 as usize; }
+
+fn stat_path(path: *u8, buf: *u8) -> i32 {
+    return { _stat64(path, buf) };
+}
+
+// S_IFMT (0xF000) and S_IFDIR (0x4000) happen to agree with POSIX here, which
+// is the one thing `fs.cplus` relies on and the reason it can stay shared.
+fn stat_mode(buf: *u8) -> u32 {
+    return { *((buf + (6 as usize)) as *u16) } as u32;
+}
+
+fn stat_mtime_secs(buf: *u8) -> i64 {
+    return { *((buf + (40 as usize)) as *i64) };
+}
+
+fn stat_file_size(buf: *u8) -> i64 {
+    return { *((buf + (24 as usize)) as *i64) };
+}
+
+// ---- directory iteration -----------------------------------------------------
+//
+// Windows has no `opendir`/`readdir`/`closedir`. `FindFirstFileW` takes a
+// GLOB, not a directory, and hands back the first entry as part of opening —
+// so the POSIX shape (open, then read repeatedly) has to be rebuilt on top of
+// it. The state block below is what makes the two agree:
+//
+//   0    HANDLE from FindFirstFileW
+//   8    i32 "the first entry has not been consumed yet"
+//   16   WIN32_FIND_DATAW (592 bytes, cFileName at 44)
+//   608  UTF-8 scratch for the name
+//
+// `dir_next` returns a pointer to the state block itself rather than to the
+// find-data, so `dir_name` can reach the scratch buffer from it. The scratch is
+// OVERWRITTEN on every call, which is safe because `fs::read_dir` copies each
+// name into an owned `Text` before asking for the next one.
+
+fn _off_handle() -> usize { return 0 as usize; }
+fn _off_pending() -> usize { return 8 as usize; }
+fn _off_find_data() -> usize { return 16 as usize; }
+fn _off_name_utf8() -> usize { return 608 as usize; }
+fn _off_cfilename() -> usize { return 44 as usize; }
+fn _state_bytes() -> usize { return 1632 as usize; }
+fn _name_utf8_cap() -> i32 { return 1024 as i32; }
+
+// INVALID_HANDLE_VALUE is (HANDLE)-1, NOT null — the one Win32 sentinel that
+// catches everyone, because every other handle-returning call uses null.
+fn _invalid_handle() -> *u8 { return { ((0 as usize) -% (1 as usize)) as *u8 }; }
+
+// `path` + "\*", widened. Returns a malloc'd wide buffer the caller frees.
+fn _wide_glob(path: *u8) -> *u8 {
+    let n: usize = { strlen(path) };
+    // path + backslash + star + NUL
+    let mb: *u8 = { malloc(n +% (3 as usize)) };
+    if mb == (0 as *u8) { return 0 as *u8; }
+    var i: usize = 0 as usize;
+    while i < n {
+        { *({ ({ #addr(mb) } +% i) as *u8 }) = { *({ ({ #addr(path) } +% i) as *u8 }) } };
+        i = i +% (1 as usize);
+    }
+    { *({ ({ #addr(mb) } +% n) as *u8 }) = 92 as u8 };                    // '\'
+    { *({ ({ #addr(mb) } +% (n +% (1 as usize))) as *u8 }) = 42 as u8 };  // '*'
+    { *({ ({ #addr(mb) } +% (n +% (2 as usize))) as *u8 }) = 0 as u8 };
+
+    let need: i32 = { MultiByteToWideChar(_cp_utf8(), 0 as u32, mb, _nul_terminated(),
+                                          0 as *u8, 0 as i32) };
+    if need <= (0 as i32) { free(mb); return 0 as *u8; }
+    let wide: *u8 = { malloc((need as usize) *% (2 as usize)) };
+    if wide == (0 as *u8) { free(mb); return 0 as *u8; }
+    let got: i32 = { MultiByteToWideChar(_cp_utf8(), 0 as u32, mb, _nul_terminated(),
+                                         wide, need) };
+    free(mb);
+    if got <= (0 as i32) { free(wide); return 0 as *u8; }
+    return wide;
+}
+
+fn dir_open(path: *u8) -> *u8 {
+    let wide: *u8 = _wide_glob(path);
+    if wide == (0 as *u8) { return 0 as *u8; }
+    let state: *u8 = { malloc(_state_bytes()) };
+    if state == (0 as *u8) { free(wide); return 0 as *u8; }
+    let data: *u8 = { ({ #addr(state) } +% _off_find_data()) as *u8 };
+    let h: *u8 = { FindFirstFileW(wide, data) };
+    free(wide);
+    if h == _invalid_handle() { free(state); return 0 as *u8; }
+    { *({ ({ #addr(state) } +% _off_handle()) as **u8 }) = h };
+    { *({ ({ #addr(state) } +% _off_pending()) as *i32 }) = 1 as i32 };
+    return state;
+}
+
+// Convert the current entry's UTF-16 name into the state's scratch buffer.
+// A conversion failure yields an empty name rather than a null return, so one
+// unrepresentable filename does not truncate the whole listing.
+fn _fill_name(state: *u8) {
+    let wname: *u8 = { ({ #addr(state) } +% (_off_find_data() +% _off_cfilename())) as *u8 };
+    let out: *u8 = { ({ #addr(state) } +% _off_name_utf8()) as *u8 };
+    let got: i32 = { WideCharToMultiByte(_cp_utf8(), 0 as u32,
+                                         wname, _nul_terminated(),
+                                         out, _name_utf8_cap(),
+                                         0 as *u8, 0 as *u8) };
+    if got <= (0 as i32) { { *out = 0 as u8 }; }
+    return;
+}
+
+fn dir_next(dirp: *u8) -> *u8 {
+    if dirp == (0 as *u8) { return 0 as *u8; }
+    let pending: *i32 = { ({ #addr(dirp) } +% _off_pending()) as *i32 };
+    if { *pending } == (1 as i32) {
+        // The entry FindFirstFileW already produced. Consuming it here is what
+        // makes the first `dir_next` behave like a POSIX `readdir`.
+        { *pending = 0 as i32 };
+        _fill_name(dirp);
+        return dirp;
+    }
+    let h: *u8 = { *({ ({ #addr(dirp) } +% _off_handle()) as **u8 }) };
+    let data: *u8 = { ({ #addr(dirp) } +% _off_find_data()) as *u8 };
+    // Zero means "no more files" (or an error, which is also the end as far as
+    // a directory listing is concerned).
+    if { FindNextFileW(h, data) } == (0 as i32) { return 0 as *u8; }
+    _fill_name(dirp);
+    return dirp;
+}
+
+fn dir_name(ent: *u8) -> *u8 {
+    return { ({ #addr(ent) } +% _off_name_utf8()) as *u8 };
+}
+
+fn dir_close(dirp: *u8) -> i32 {
+    if dirp == (0 as *u8) { return 0 as i32; }
+    let h: *u8 = { *({ ({ #addr(dirp) } +% _off_handle()) as **u8 }) };
+    let _c: i32 = { FindClose(h) };
+    free(dirp);
+    return 0 as i32;
+}
+
+// Kept only so the surface matches `fs_sys.cplus`; there is no `struct dirent`
+// here and nothing calls it — `fs.cplus` goes through `dir_name`.
+fn dirent_name(ent: *u8) -> *u8 {
+    return dir_name(ent);
+}
+
+// ---- path separators ---------------------------------------------------------
+//
+// Windows accepts BOTH separators — every API takes `/` as readily as `\` — so
+// `is_separator` matches either. It is only the spelling used when JOINING that
+// has to pick one, and that is the backslash, because it is what the OS itself
+// prints and what a user pasting the path back will see.
+//
+// POSIX cannot do the same: a backslash is a perfectly legal character in a
+// Unix filename, so treating it as a separator there would split paths that
+// contain one. That asymmetry is the reason this lives behind the platform
+// split rather than being a shared "accept both" helper.
+
+fn separator() -> u8 { return 92 as u8; }
+fn separator_str() -> str { return "\\"; }
+fn is_separator(c: u8) -> bool {
+    return c == (92 as u8) || c == (47 as u8);
+}
+
+// Absolute on Windows means a drive-qualified path (`C:\...`, and `C:/...`
+// which the OS accepts too) or a UNC path (`\server\share`). A leading
+// separator alone is drive-RELATIVE — `\dir` means `dir` on the current
+// drive — but it is rooted enough for every caller here, and the executable
+// path this backs is always fully qualified anyway.
+fn is_absolute(path: str) -> bool {
+    let n: usize = #str_len(path);
+    if n == (0 as usize) { return false; }
+    let p: *u8 = #str_ptr(path);
+    if is_separator({ *p }) { return true; }
+    if n < (3 as usize) { return false; }
+    let colon: u8 = { *(p + (1 as usize)) };
+    let third: u8 = { *(p + (2 as usize)) };
+    return colon == (58 as u8) && is_separator(third);
+}
+
+// ---- read / write ------------------------------------------------------------
+//
+// THE RETURN TYPE IS THE BUG THIS FIXES. `fs.cplus` declared POSIX's
+// `ssize_t read(int, void*, size_t)` and the MSVC runtime provides
+// `int _read(int, void*, unsigned int)` — a 32-bit return where a 64-bit one
+// was expected. The upper half is then whatever was in the register, so the
+// EOF return of 0 comes back as a large positive number, `read_to_end`'s
+// `if n == 0 { return }` never fires, and it asks `extend_from_raw` to copy
+// gigabytes. That is a hang, not a wrong answer, and it took the whole stdlib
+// suite down with no output.
+//
+// The count is narrowed the same way: `unsigned int`, not `size_t`. A request
+// larger than an `int` can report is clamped rather than truncated, so the
+// caller sees a short read and loops, which every caller here already handles.
+
+extern fn _read(fd: i32, buf: *u8, count: u32) -> i32;
+extern fn _write(fd: i32, buf: *u8, count: u32) -> i32;
+
+// The largest count these can report back without the result looking negative.
+fn _io_chunk_max() -> usize { return 2147483647 as usize; }
+
+fn _clamp_count(count: usize) -> u32 {
+    if count > _io_chunk_max() { return _io_chunk_max() as u32; }
+    return count as u32;
+}
+
+fn read_fd(fd: i32, buf: *u8, count: usize) -> isize {
+    let n: i32 = { _read(fd, buf, _clamp_count(count)) };
+    return n as isize;
+}
+
+fn write_fd(fd: i32, buf: *u8, count: usize) -> isize {
+    let n: i32 = { _write(fd, buf, _clamp_count(count)) };
+    return n as isize;
+}

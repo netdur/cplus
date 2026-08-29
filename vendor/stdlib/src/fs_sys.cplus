@@ -66,3 +66,64 @@ fn stat_file_size(buf: *u8) -> i64 {
 fn dirent_name(ent: *u8) -> *u8 {
     return { ent + (21 as usize) };
 }
+
+// O_RDONLY = 0, and there is no mode bit to add: POSIX has no text/binary
+// distinction. Split out because Windows does — see fs_sys_windows.cplus.
+fn read_flags() -> i32 { return 0 as i32; }
+
+// ---- directory iteration -----------------------------------------------------
+//
+// `opendir` / `readdir` / `closedir` wrapped rather than called directly from
+// `fs.cplus`, because Windows has none of the three: its enumeration is
+// `FindFirstFileW`, which returns the FIRST entry as part of opening. The
+// wrapper is the seam that lets one shape serve both.
+//
+// `dir_next` returns an opaque entry pointer, or null at the end. `dir_name`
+// turns that into a NUL-terminated C string. Nothing outside this file reads
+// the entry.
+
+extern fn opendir(path: *u8) -> *u8;
+extern fn readdir(dirp: *u8) -> *u8;
+extern fn closedir(dirp: *u8) -> i32;
+
+fn dir_open(path: *u8) -> *u8 { return { opendir(path) }; }
+fn dir_next(dirp: *u8) -> *u8 { return { readdir(dirp) }; }
+fn dir_name(ent: *u8) -> *u8 { return dirent_name(ent); }
+fn dir_close(dirp: *u8) -> i32 { return { closedir(dirp) }; }
+
+// ---- path separators ---------------------------------------------------------
+//
+// Split out for `bundle`, which walks and joins paths and had `/` written into
+// it directly. POSIX has exactly one separator and a backslash is an ordinary
+// filename character, so only `/` may match here.
+
+fn separator() -> u8 { return 47 as u8; }
+fn separator_str() -> str { return "/"; }
+fn is_separator(c: u8) -> bool { return c == (47 as u8); }
+
+// An absolute path starts at the root.
+fn is_absolute(path: str) -> bool {
+    let n: usize = #str_len(path);
+    if n == (0 as usize) { return false; }
+    let p: *u8 = #str_ptr(path);
+    return { *p } == (47 as u8);
+}
+
+// ---- read / write ------------------------------------------------------------
+//
+// Wrapped because the MSVC runtime is not POSIX here: its `_read`/`_write`
+// return `int` and take an `unsigned int` count, where POSIX returns `ssize_t`
+// and takes `size_t`. Declaring the POSIX shape against the Windows CRT leaves
+// the upper 32 bits of the return undefined — an EOF `0` can read back as a
+// huge positive count, and a read loop that stops at 0 never stops.
+
+extern fn read(fd: i32, buf: *u8, count: usize) -> isize;
+extern fn write(fd: i32, buf: *u8, count: usize) -> isize;
+
+fn read_fd(fd: i32, buf: *u8, count: usize) -> isize {
+    return { read(fd, buf, count) };
+}
+
+fn write_fd(fd: i32, buf: *u8, count: usize) -> isize {
+    return { write(fd, buf, count) };
+}

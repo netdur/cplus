@@ -25,8 +25,6 @@ import "./fs_sys" as fsys;
 // aarch64-darwin a fixed third arg lands in a register but libc's
 // implementation reads it via `va_arg`, which expects stack passing).
 extern fn open(path: *u8, flags: i32, ...) -> i32;
-extern fn read(fd: i32, buf: *u8, count: usize) -> isize;
-extern fn write(fd: i32, buf: *u8, count: usize) -> isize;
 extern fn close(fd: i32) -> i32;
 extern fn malloc(n: usize) -> *u8;
 extern fn free(p: *u8);
@@ -37,9 +35,6 @@ extern fn free(p: *u8);
 // `./fs_sys` behind `make_dir` / `stat_*`.
 extern fn access(path: *u8, amode: i32) -> i32;
 extern fn unlink(path: *u8) -> i32;
-extern fn opendir(path: *u8) -> *u8;
-extern fn readdir(dirp: *u8) -> *u8;
-extern fn closedir(dirp: *u8) -> i32;
 extern fn strlen(s: *u8) -> usize;
 
 // Owned file handle. `fd == -1` is the invalid / closed state (disarms Drop).
@@ -60,11 +55,13 @@ fn c_path(path: str) -> option::Option[text::CString] {
     return text::from_str(path).c_str();
 }
 
-// Open `path` for reading. macOS + Linux: O_RDONLY = 0.
+// Open `path` for reading. The flags come from `./fs_sys`: O_RDONLY is 0 on
+// macOS and Linux, but Windows needs _O_BINARY on top or the runtime rewrites
+// CRLF on the way through and the byte count stops matching the file.
 fn open_read(path: str) -> result::Result[File, result::IoError] {
     match c_path(path) {
         option::Option[text::CString]::Some(cp) => {
-            let fd: i32 = { open(cp.as_ptr(), 0 as i32, 0 as i32) };
+            let fd: i32 = { open(cp.as_ptr(), fsys::read_flags(), 0 as i32) };
             if fd < (0 as i32) {
                 return result::io_err::[File](result::IoError::NotFound);
             }
@@ -193,7 +190,7 @@ impl File {
             return result::io_err::[vec::Vec[u8]](result::IoError::Other);
         }
         loop {
-            let n: isize = { read(this._fd, chunk, chunk_size) };
+            let n: isize = { fsys::read_fd(this._fd, chunk, chunk_size) };
             if n < (0 as isize) {
                 { free(chunk); }
                 return result::io_err::[vec::Vec[u8]](result::IoError::Other);
@@ -221,7 +218,7 @@ impl File {
         while written < n {
             let remaining: usize = n -% written;
             let q: *u8 = { p + written };
-            let w: isize = { write(this._fd, q, remaining) };
+            let w: isize = { fsys::write_fd(this._fd, q, remaining) };
             if w <= (0 as isize) {
                 return result::io_err::[usize](result::IoError::BrokenPipe);
             }
@@ -243,7 +240,7 @@ impl File {
         while written < n {
             let remaining: usize = n -% written;
             let q: *u8 = { p + written };
-            let w: isize = { write(this._fd, q, remaining) };
+            let w: isize = { fsys::write_fd(this._fd, q, remaining) };
             if w <= (0 as isize) {
                 return result::io_err::[usize](result::IoError::BrokenPipe);
             }
@@ -291,7 +288,7 @@ impl File {
             return;   // cannot allocate the scan buffer; yield no lines
         }
         loop {
-            let n: isize = { read(this._fd, chunk, chunk_size) };
+            let n: isize = { fsys::read_fd(this._fd, chunk, chunk_size) };
             if n <= (0 as isize) {
                 // EOF (n == 0) or error (n < 0). Yield any pending
                 // partial line, then stop. Read errors are silently
@@ -475,27 +472,27 @@ fn read_dir(path: str) -> option::Option[vec::Vec[text::Text]] {
     // opendir copies the path internally, so the CString need only outlive the
     // call (it does — bound in the match arm).
     let dir: *u8 = match c_path(path) {
-        option::Option[text::CString]::Some(cp) => { opendir(cp.as_ptr()) }
+        option::Option[text::CString]::Some(cp) => { fsys::dir_open(cp.as_ptr()) }
         option::Option[text::CString]::None => { 0 as *u8 }
     };
     if dir == { 0 as *u8 } {
         return option::Option[vec::Vec[text::Text]]::None;
     }
     var out: vec::Vec[text::Text] = vec::new::[text::Text]();
-    var ent: *u8 = { readdir(dir) };
+    var ent: *u8 = { fsys::dir_next(dir) };
     while ent != { 0 as *u8 } {
         // `d_name` is a NUL-terminated C string, but at a per-platform offset
         // into `struct dirent` (Darwin has a d_namlen field Linux does not), so
         // the offset comes from `./fs_sys`.
-        let name_ptr: *u8 = fsys::dirent_name(ent);
+        let name_ptr: *u8 = fsys::dir_name(ent);
         let len: usize = { strlen(name_ptr) };
         if !_is_dot_entry(name_ptr, len) {
             let name: str = { #str_from_raw_parts(name_ptr, len) };
             out.append(name.to_text());
         }
-        ent = { readdir(dir) };
+        ent = { fsys::dir_next(dir) };
     }
-    let _c: i32 = { closedir(dir) };
+    let _c: i32 = { fsys::dir_close(dir) };
     return option::Option[vec::Vec[text::Text]]::Some(out);
 }
 

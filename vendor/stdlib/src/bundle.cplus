@@ -19,6 +19,7 @@ import "./option" as option;
 import "./result" as result;
 import "./fs" as fs;
 import "./exe_path" as exe_path;
+import "./fs_sys" as fsys;
 
 // Full, canonical path of the running executable. "" only if dyld refuses (never
 // seen in practice).
@@ -34,11 +35,11 @@ fn parent_of(path: str) -> text::Text {
     var last: i64 = -1 as i64;
     var i: usize = 0 as usize;
     while i < n {
-        if { *(p + i) } == ('/' as u8) { last = i as i64; }
+        if fsys::is_separator({ *(p + i) }) { last = i as i64; }
         i = i +% (1 as usize);
     }
     if last < (0 as i64) { return path.to_text(); }
-    if last == (0 as i64) { return text::from_str("/"); }
+    if last == (0 as i64) { return text::from_str(fsys::separator_str()); }
     return { #str_from_raw_parts(p, last as usize) }.to_text();
 }
 
@@ -51,7 +52,8 @@ fn dir() -> text::Text {
 // Path to a resource named `name` sitting beside the executable (`dir()/name`).
 fn resource(name: str) -> text::Text {
     let d: text::Text = dir();
-    return "${d}/${name}";
+    let sep: str = fsys::separator_str();
+    return "${d}${sep}${name}";
 }
 
 // Does a path exist at all (file or directory)?
@@ -70,7 +72,8 @@ fn find_up_from(start: str, marker: str) -> option::Option[text::Text] {
     var cur: text::Text = start.to_text();
     var depth: i32 = 0 as i32;
     while depth < (64 as i32) {
-        let cand: text::Text = "${cur}/${marker}";
+        let sep: str = fsys::separator_str();
+        let cand: text::Text = "${cur}${sep}${marker}";
         if exists(cand.view()) { return option::Option[text::Text]::Some(cur); }
         let parent: text::Text = parent_of(cur.view());
         if parent.view() == cur.view() { return option::Option[text::Text]::None; }
@@ -94,7 +97,9 @@ fn executable_path_is_absolute_and_nonempty() {
     let ep: text::Text = executable_path();
     assert ep.count() > (0 as usize);
     let s: str = ep.view();
-    assert { *(#str_ptr(s)) } == ('/' as u8);   // canonical absolute path
+    // Absolute, in whatever this platform means by it: rooted at `/` on POSIX,
+    // drive- or UNC-qualified on Windows.
+    assert fsys::is_absolute(s);
 }
 
 #[test]
@@ -102,12 +107,13 @@ fn dir_is_a_prefix_and_resource_joins() {
     let d: text::Text = dir();
     assert d.count() > (0 as usize);
     // resource(name) == dir()/name
+    let sep: str = fsys::separator_str();
     let r: text::Text = resource("assets");
-    assert r.view() == "${d}/assets";
-    // The executable lives directly under dir(): dir + "/" + basename == ep.
+    assert r.view() == "${d}${sep}assets";
+    // The executable lives directly under dir(): dir + sep + basename == ep.
     let ep: text::Text = executable_path();
     let base: text::Text = parent_leaf(ep.view());
-    assert ep.view() == "${d}/${base}";
+    assert ep.view() == "${d}${sep}${base}";
 }
 
 fn parent_leaf(path: str) -> text::Text {
@@ -117,7 +123,7 @@ fn parent_leaf(path: str) -> text::Text {
     var last: i64 = -1 as i64;
     var i: usize = 0 as usize;
     while i < n {
-        if { *(p + i) } == ('/' as u8) { last = i as i64; }
+        if fsys::is_separator({ *(p + i) }) { last = i as i64; }
         i = i +% (1 as usize);
     }
     let start: usize = (last + (1 as i64)) as usize;
@@ -128,14 +134,19 @@ fn parent_leaf(path: str) -> text::Text {
 fn find_up_from_locates_an_ancestor_with_the_marker() {
     // Plant a marker under /tmp, then find it from a deep (non-existent) subpath
     // — the walk is pure string parenting, so the intermediate dirs need not exist.
+    // Anchored at the executable's own directory rather than a hardcoded
+    // `/tmp`, which is not a writable path on every platform this builds for.
     let marker: str = "cplus_bundle_marker.txt";
-    let mpath: str = "/tmp/cplus_bundle_marker.txt";
-    let _w: result::Result[usize, result::IoError] = fs::write_string(mpath, "x");
-    match find_up_from("/tmp/deep/does/not/exist", marker) {
-        option::Option[text::Text]::Some(found) => { assert found.view() == "/tmp"; }
+    let d: text::Text = dir();
+    let sep: str = fsys::separator_str();
+    let mpath: text::Text = "${d}${sep}${marker}";
+    let _w: result::Result[usize, result::IoError] = fs::write_string(mpath.view(), "x");
+    let deep: text::Text = "${d}${sep}deep${sep}does${sep}not${sep}exist";
+    match find_up_from(deep.view(), marker) {
+        option::Option[text::Text]::Some(found) => { assert found.view() == d.view(); }
         option::Option[text::Text]::None => { assert false; }
     }
-    let _rm: result::Result[bool, result::IoError] = fs::remove_file(mpath);
+    let _rm: result::Result[bool, result::IoError] = fs::remove_file(mpath.view());
 }
 
 #[test]
