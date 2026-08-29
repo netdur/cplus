@@ -275,7 +275,10 @@ fn snapshot_count() -> usize { return SNAPSHOT.count(); }
 fn arm(take b: insp::Backend) {
     BACKEND = b;
     ARMED = true;
-    bridge::arm_extension("inspector.", handle, describe_tools);
+    // NO PREFIX. The prefix existed because this namespace described a
+    // DIFFERENT TREE from the agent surface and its verbs had to be told apart.
+    // Both walk facet's tree now, so there is one surface and these sit in it.
+    bridge::arm_extension(verb_names(), handle, describe_tools);
 }
 
 // ---- what this namespace tells `tools/list` ---------------------------------
@@ -303,13 +306,13 @@ fn describe_tools() -> vec::Vec[json::Value] {
     var p_desc: vec::Vec[json::Member] = bridge::no_props();
     p_desc.append(tools_prop("prefix", "string",
         "Answer only with nodes whose key starts with this, e.g. \"board:detail:\". Absent means the whole tree — which against a real application runs to tens of thousands of characters, large enough that a client may refuse it. Indices are unaffected by filtering: they stay addressable by the other verbs."));
-    out.append(bridge::tool("inspector.describe",
+    out.append(bridge::tool("describe_tree",
         "The live view tree of THE APPLICATION SERVING THIS ENDPOINT, as the DEVELOPER sees it: every node, keyed or not, with its index. An app launched by this one has its own endpoint and does not appear here. Unlike describe_ui this is not curated — it is the whole tree — so pass \"prefix\" unless you really want all of it. Node indices from here are what every other inspector verb addresses.",
         p_desc, bridge::no_required()));
 
     var p_node: vec::Vec[json::Member] = bridge::no_props();
     p_node.append(tools_prop("node", "number", "Node index, from inspector.describe."));
-    out.append(bridge::tool("inspector.inspect",
+    out.append(bridge::tool("inspect",
         "One node WHOLE — every property, control properties included. This is a content read, so a node behind a privacy tier is refused unless the grant carries it.",
         p_node, bridge::required1("node")));
 
@@ -317,56 +320,56 @@ fn describe_tools() -> vec::Vec[json::Value] {
     p_set.append(tools_prop("node", "number", "Node index."));
     p_set.append(tools_prop("property", "string", "Property name, as inspector.vocabulary lists it."));
     p_set.append(tools_prop("value", "string", "New value: a number, a boolean or a string."));
-    out.append(bridge::tool("inspector.set",
+    out.append(bridge::tool("set",
         "Write one property on one node, live. Undoable with inspector.undo.",
         p_set, bridge::required2("node", "property")));
 
     var p_reset: vec::Vec[json::Member] = bridge::no_props();
     p_reset.append(tools_prop("node", "number", "Node index."));
     p_reset.append(tools_prop("property", "string", "Property to return to its built value."));
-    out.append(bridge::tool("inspector.reset",
+    out.append(bridge::tool("reset",
         "Undo one property back to what the app built it with.",
         p_reset, bridge::required2("node", "property")));
 
     var p_insert: vec::Vec[json::Member] = bridge::no_props();
     p_insert.append(tools_prop("node", "number", "Node index to insert relative to."));
     p_insert.append(tools_prop("element", "string", "Element kind to create."));
-    out.append(bridge::tool("inspector.insert",
+    out.append(bridge::tool("insert",
         "Add a new element to the live tree. A developer edit, not something a user could do.",
         p_insert, bridge::required2("node", "element")));
 
     var p_remove: vec::Vec[json::Member] = bridge::no_props();
     p_remove.append(tools_prop("node", "number", "Node index to remove."));
-    out.append(bridge::tool("inspector.remove",
+    out.append(bridge::tool("remove",
         "Remove a node from the live tree.",
         p_remove, bridge::required1("node")));
 
     var p_rep: vec::Vec[json::Member] = bridge::no_props();
     p_rep.append(tools_prop("node", "number", "Node index to move."));
     p_rep.append(tools_prop("parent", "number", "Node index of its new parent."));
-    out.append(bridge::tool("inspector.reparent",
+    out.append(bridge::tool("reparent",
         "Move a node under a different parent.",
         p_rep, bridge::required2("node", "parent")));
 
-    out.append(bridge::tool("inspector.undo",
+    out.append(bridge::tool("undo",
         "Undo the last inspector mutation.",
         bridge::no_props(), bridge::no_required()));
 
     var p_hi: vec::Vec[json::Member] = bridge::no_props();
     p_hi.append(tools_prop("node", "number", "Node index to outline on screen."));
-    out.append(bridge::tool("inspector.highlight",
+    out.append(bridge::tool("highlight",
         "Draw an overlay around a node on the screen of the application serving this endpoint — how you show a person which node you mean.",
         p_hi, bridge::required1("node")));
 
-    out.append(bridge::tool("inspector.clear_highlight",
+    out.append(bridge::tool("clear_highlight",
         "Remove the highlight overlay.",
         bridge::no_props(), bridge::no_required()));
 
-    out.append(bridge::tool("inspector.vocabulary",
+    out.append(bridge::tool("vocabulary",
         "Which properties exist and what types they take. Read this before inspector.set rather than guessing a property name.",
         bridge::no_props(), bridge::no_required()));
 
-    out.append(bridge::tool("inspector.journal",
+    out.append(bridge::tool("journal",
         "The log of inspector mutations made this session.",
         bridge::no_props(), bridge::no_required()));
 
@@ -377,7 +380,7 @@ fn disarm() {
     ARMED = false;
     BACKEND = insp::Backend::none();
     SNAPSHOT.remove_all();
-    bridge::disarm_extension("inspector.");
+    bridge::disarm_extension("describe_tree");
 }
 
 // ---- the marshalled call -------------------------------------------------------
@@ -735,7 +738,7 @@ fn do_describe(id: f64, params: json::Value) -> json::Value {
 }
 
 fn do_inspect(id: f64, params: json::Value, grant: auth::Grant) -> json::Value {
-    if !params.has("node") { return missing_param(id, "inspector.inspect", "node"); }
+    if !params.has("node") { return missing_param(id, "inspect", "node"); }
     var c: Call = new_call(OP_INSPECT);
     c.node = as_usize(obj_get(params, "node"), 0);
     // `inspect` answers a node WHOLE, control props included, so it is a
@@ -752,12 +755,12 @@ fn do_inspect(id: f64, params: json::Value, grant: auth::Grant) -> json::Value {
 }
 
 fn do_set(id: f64, params: json::Value) -> json::Value {
-    if !params.has("node") { return missing_param(id, "inspector.set", "node"); }
-    if !params.has("property") { return missing_param(id, "inspector.set", "property"); }
+    if !params.has("node") { return missing_param(id, "set", "node"); }
+    if !params.has("property") { return missing_param(id, "set", "property"); }
     // Absent and null are both refused; an explicit `""` still writes an empty
     // string. Same rule the agent surface learned: a misspelled parameter that
     // answers success is an app that looks broken and an RPC that looks fine.
-    if !params.has("value") { return missing_param(id, "inspector.set", "value"); }
+    if !params.has("value") { return missing_param(id, "set", "value"); }
 
     var c: Call = new_call(OP_SET);
     c.node = as_usize(obj_get(params, "node"), 0);
@@ -778,8 +781,8 @@ fn do_set(id: f64, params: json::Value) -> json::Value {
 }
 
 fn do_reset(id: f64, params: json::Value) -> json::Value {
-    if !params.has("node") { return missing_param(id, "inspector.reset", "node"); }
-    if !params.has("property") { return missing_param(id, "inspector.reset", "property"); }
+    if !params.has("node") { return missing_param(id, "reset", "node"); }
+    if !params.has("property") { return missing_param(id, "reset", "property"); }
     var c: Call = new_call(OP_RESET);
     c.node = as_usize(obj_get(params, "node"), 0);
     c.prop = as_text(obj_get(params, "property"));
@@ -788,8 +791,8 @@ fn do_reset(id: f64, params: json::Value) -> json::Value {
 }
 
 fn do_insert(id: f64, params: json::Value) -> json::Value {
-    if !params.has("node") { return missing_param(id, "inspector.insert", "node"); }
-    if !params.has("element") { return missing_param(id, "inspector.insert", "element"); }
+    if !params.has("node") { return missing_param(id, "insert", "node"); }
+    if !params.has("element") { return missing_param(id, "insert", "element"); }
     var c: Call = new_call(OP_INSERT);
     c.node = as_usize(obj_get(params, "node"), 0);
     let maker: text::Text = as_text(obj_get(params, "element"));
@@ -804,7 +807,7 @@ fn do_insert(id: f64, params: json::Value) -> json::Value {
 }
 
 fn do_remove(id: f64, params: json::Value) -> json::Value {
-    if !params.has("node") { return missing_param(id, "inspector.remove", "node"); }
+    if !params.has("node") { return missing_param(id, "remove", "node"); }
     var c: Call = new_call(OP_REMOVE);
     c.node = as_usize(obj_get(params, "node"), 0);
     run_ui(run_call, #addr_of(c) as *u8);
@@ -812,8 +815,8 @@ fn do_remove(id: f64, params: json::Value) -> json::Value {
 }
 
 fn do_reparent(id: f64, params: json::Value) -> json::Value {
-    if !params.has("node") { return missing_param(id, "inspector.reparent", "node"); }
-    if !params.has("parent") { return missing_param(id, "inspector.reparent", "parent"); }
+    if !params.has("node") { return missing_param(id, "reparent", "node"); }
+    if !params.has("parent") { return missing_param(id, "reparent", "parent"); }
     var c: Call = new_call(OP_REPARENT);
     c.node = as_usize(obj_get(params, "node"), 0);
     c.parent = as_usize(obj_get(params, "parent"), 0);
@@ -829,7 +832,7 @@ fn do_simple(id: f64, op: u32) -> json::Value {
 }
 
 fn do_highlight(id: f64, params: json::Value) -> json::Value {
-    if !params.has("node") { return missing_param(id, "inspector.highlight", "node"); }
+    if !params.has("node") { return missing_param(id, "highlight", "node"); }
     var c: Call = new_call(OP_HIGHLIGHT);
     c.node = as_usize(obj_get(params, "node"), 0);
     run_ui(run_call, #addr_of(c) as *u8);
@@ -954,6 +957,26 @@ fn refused(id: f64, what: str) -> json::Value {
 
 // Registered into `agent_mcp` by `arm`. The bridge has already run the consent
 // gate and matched the prefix; this only has to say which verb.
+// THE VERBS THIS PROVIDER ANSWERS. It must agree with `handle` below and with
+// `describe_tools` above — three lists that have to match, which is one more
+// than is comfortable; a generated table would collapse all three.
+fn verb_names() -> vec::Vec[str] {
+    var v: vec::Vec[str] = vec::new::[str]();
+    let _1: status::Status = v.append("describe_tree");
+    let _2: status::Status = v.append("inspect");
+    let _3: status::Status = v.append("set");
+    let _4: status::Status = v.append("reset");
+    let _5: status::Status = v.append("insert");
+    let _6: status::Status = v.append("remove");
+    let _7: status::Status = v.append("reparent");
+    let _8: status::Status = v.append("undo");
+    let _9: status::Status = v.append("highlight");
+    let _10: status::Status = v.append("clear_highlight");
+    let _11: status::Status = v.append("vocabulary");
+    let _12: status::Status = v.append("journal");
+    return v;
+}
+
 fn handle(method: str, params: json::Value, id: f64, grant: auth::Grant) -> json::Value {
     // Disarmed mid-session, or armed by something that then dropped its
     // backend. Refused rather than run against a zeroed vtable, whose fn
@@ -968,27 +991,27 @@ fn handle(method: str, params: json::Value, id: f64, grant: auth::Grant) -> json
     // Rewriting it. Checked once, here, rather than in each `do_` body: a verb
     // added later gets the rule by being in this list, and a verb that forgot
     // to ask would be a hole with no symptom.
-    let mutates: bool = method == "inspector.set" || method == "inspector.reset"
-        || method == "inspector.insert" || method == "inspector.remove"
-        || method == "inspector.reparent" || method == "inspector.undo";
+    let mutates: bool = method == "set" || method == "reset"
+        || method == "insert" || method == "remove"
+        || method == "reparent" || method == "undo";
     if mutates {
         if !grant.has(auth::cap_edit_tree()) {
             return refused(id, "inspector: rewriting the tree needs the edit_tree capability");
         }
     }
 
-    if method == "inspector.describe" { return do_describe(id, params); }
-    if method == "inspector.inspect" { return do_inspect(id, params, grant); }
-    if method == "inspector.set" { return do_set(id, params); }
-    if method == "inspector.reset" { return do_reset(id, params); }
-    if method == "inspector.insert" { return do_insert(id, params); }
-    if method == "inspector.remove" { return do_remove(id, params); }
-    if method == "inspector.reparent" { return do_reparent(id, params); }
-    if method == "inspector.undo" { return do_simple(id, OP_UNDO); }
-    if method == "inspector.highlight" { return do_highlight(id, params); }
-    if method == "inspector.clear_highlight" { return do_simple(id, OP_CLEAR); }
-    if method == "inspector.vocabulary" { return do_vocabulary(id); }
-    if method == "inspector.journal" { return do_journal(id); }
+    if method == "describe_tree" { return do_describe(id, params); }
+    if method == "inspect" { return do_inspect(id, params, grant); }
+    if method == "set" { return do_set(id, params); }
+    if method == "reset" { return do_reset(id, params); }
+    if method == "insert" { return do_insert(id, params); }
+    if method == "remove" { return do_remove(id, params); }
+    if method == "reparent" { return do_reparent(id, params); }
+    if method == "undo" { return do_simple(id, OP_UNDO); }
+    if method == "highlight" { return do_highlight(id, params); }
+    if method == "clear_highlight" { return do_simple(id, OP_CLEAR); }
+    if method == "vocabulary" { return do_vocabulary(id); }
+    if method == "journal" { return do_journal(id); }
     let unknown: text::Text = "method not found: ${method}";
     return err_response(id, - 32601 as f64, unknown.view());
 }

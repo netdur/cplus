@@ -689,11 +689,18 @@ fn core_tools() -> vec::Vec[json::Value] {
 // and nothing says why" failure this module keeps running into. Only the
 // inspector arms one today, which made it latent rather than absent.
 struct Extension {
-    // Owned, not a `str`. A borrowed {ptr,len} in process-lifetime storage is
+    // THE VERB NAMES THIS PROVIDER ANSWERS, not a prefix.
+    //
+    // It was a prefix, and the prefix was a symptom: the inspector needed
+    // `inspector.` because it described a DIFFERENT TREE from the agent
+    // surface, so its verbs had to be told apart. Both walk facet's tree now,
+    // so there is one surface and the names sit in it directly — a client sees
+    // one list and does not have to know which half of the server it reached.
+    //
+    // Owned, not `str`. A borrowed {ptr,len} in process-lifetime storage is
     // sound for a literal and a use-after-free for anything computed, and a
-    // caller composing a prefix is not a mistake this module should be able to
-    // punish.
-    prefix: text::Text,
+    // caller composing a name is not a mistake this module should punish.
+    names: vec::Vec[text::Text],
     handler: fn(str, json::Value, f64, auth::Grant) -> json::Value,
     // How the namespace lists its own verbs for `tools/list`. Separate from the
     // handler because answering a call and describing what can be called are
@@ -706,18 +713,48 @@ static EXTENSIONS: vec::Vec[Extension] = #zero::[vec::Vec[Extension]]();
 
 // The row holding exactly this prefix, or -1. Exact, not prefix-of-prefix:
 // this answers "is this namespace already registered", which re-arming needs.
-fn extension_index(prefix: str) -> i64 {
+// The row that answers `verb`, or -1.
+fn extension_index_for(verb: str) -> i64 {
     var i: usize = 0;
     while i < EXTENSIONS.count() {
         match EXTENSIONS.at_ptr(i) {
             option::Option[*Extension]::Some(e) => {
-                if { (*e).prefix.view() } == prefix { return i as i64; }
+                var j: usize = 0;
+                while j < { (*e).names.count() } {
+                    match { (*e).names.at_ptr(j) } {
+                        option::Option[*text::Text]::Some(nm) => {
+                            if { (*nm).view() } == verb { return i as i64; }
+                        }
+                        option::Option::None => { }
+                    }
+                    j = j +% 1;
+                }
             }
             option::Option::None => { }
         }
         i = i +% 1;
     }
-    return - 1;
+    return - 1 as i64;
+}
+
+// The row whose FIRST verb is this — the identity a re-arm replaces.
+fn extension_index(tag: str) -> i64 {
+    var i: usize = 0;
+    while i < EXTENSIONS.count() {
+        match EXTENSIONS.at_ptr(i) {
+            option::Option[*Extension]::Some(e) => {
+                match { (*e).names.at_ptr(0 as usize) } {
+                    option::Option[*text::Text]::Some(nm) => {
+                        if { (*nm).view() } == tag { return i as i64; }
+                    }
+                    option::Option::None => { }
+                }
+            }
+            option::Option::None => { }
+        }
+        i = i +% 1;
+    }
+    return - 1 as i64;
 }
 
 // `describe` is optional and defaults to none — an extension armed without one
@@ -729,17 +766,45 @@ fn extension_index(prefix: str) -> i64 {
 // Re-arming the SAME prefix replaces that row rather than adding a second one,
 // so a disarm/arm cycle is idempotent. It moves to the end of the table, which
 // only matters if two prefixes overlap — see `extension_for`.
-fn arm_extension(prefix: str, h: fn(str, json::Value, f64, auth::Grant) -> json::Value,
+// Build a name list. There is no vec literal, and a provider registering one or
+// two verbs should not have to write the loop.
+fn verbs1(a: str) -> vec::Vec[str] {
+    var v: vec::Vec[str] = vec::new::[str]();
+    let _a: status::Status = v.append(a);
+    return v;
+}
+
+fn verbs2(a: str, b: str) -> vec::Vec[str] {
+    var v: vec::Vec[str] = verbs1(a);
+    let _b: status::Status = v.append(b);
+    return v;
+}
+
+fn arm_extension(names: vec::Vec[str], h: fn(str, json::Value, f64, auth::Grant) -> json::Value,
                  describe: fn() -> vec::Vec[json::Value] = 0 as fn() -> vec::Vec[json::Value]) {
-    if prefix == "" { return; }
-    let existing: i64 = extension_index(prefix);
-    if existing >= 0 {
+    if names.count() == (0 as usize) { return; }
+    var owned: vec::Vec[text::Text] = vec::new::[text::Text]();
+    var i: usize = 0;
+    while i < names.count() {
+        match names.at(i) {
+            option::Option[str]::Some(nm) => { let _a: status::Status = owned.append(text::from_str(nm)); }
+            option::Option[str]::None => { }
+        }
+        i = i +% 1;
+    }
+    // Re-arming the same provider — identified by its first verb — replaces its
+    // row rather than adding a second, so a disarm/arm cycle is idempotent.
+    var tag: text::Text = text::new();
+    match owned.at_ptr(0 as usize) {
+        option::Option[*text::Text]::Some(t) => { tag = text::from_str({ (*t).view() }); }
+        option::Option[*text::Text]::None => { }
+    }
+    let existing: i64 = extension_index(tag.view());
+    if existing >= (0 as i64) {
         let _old: option::Option[Extension] = EXTENSIONS.remove(existing as usize);
     }
     let _s: status::Status = EXTENSIONS.append(Extension {
-        prefix: text::from_str(prefix),
-        handler: h,
-        describer: describe,
+        names: owned, handler: h, describer: describe,
     });
     return;
 }
@@ -777,8 +842,8 @@ fn all_tools() -> vec::Vec[json::Value] {
 // Close ONE namespace. Named, because the slot version's `disarm_extension()`
 // meant "close whatever is armed" — which with a table would let the inspector
 // tearing itself down take every other namespace with it.
-fn disarm_extension(prefix: str) {
-    let ix: i64 = extension_index(prefix);
+fn disarm_extension(tag: str) {
+    let ix: i64 = extension_index(tag);
     if ix < 0 { return; }
     let _gone: option::Option[Extension] = EXTENSIONS.remove(ix as usize);
 }
@@ -798,23 +863,16 @@ fn extension_count() -> usize { return EXTENSIONS.count(); }
 // `inspector.`). Namespaces should not overlap; this says what happens if they
 // do rather than leaving it to the reader.
 fn extension_for(method: str) -> i64 {
-    var i: usize = 0;
-    while i < EXTENSIONS.count() {
-        match EXTENSIONS.at_ptr(i) {
-            option::Option[*Extension]::Some(e) => {
-                let h: fn(str, json::Value, f64, auth::Grant) -> json::Value = { (*e).handler };
-                if h.is_not_null() {
-                    let pfx: str = { (*e).prefix.view() };
-                    if pfx != "" {
-                        if text::from_str(method).has_prefix(pfx) { return i as i64; }
-                    }
-                }
-            }
-            option::Option::None => { }
+    let ix: i64 = extension_index_for(method);
+    if ix < 0 { return ix; }
+    match EXTENSIONS.at_ptr(ix as usize) {
+        option::Option[*Extension]::Some(e) => {
+            let h: fn(str, json::Value, f64, auth::Grant) -> json::Value = { (*e).handler };
+            if h.is_null() { return - 1 as i64; }
         }
-        i = i +% 1;
+        option::Option::None => { return - 1 as i64; }
     }
-    return - 1;
+    return ix;
 }
 
 fn is_extension_method(method: str) -> bool {
@@ -2758,7 +2816,7 @@ fn tools_list_describes_every_verb_including_an_extensions() {
     // A NAMESPACE ANSWERS FOR ITSELF. This module must not know what an
     // extension is; without a describer the twelve inspector verbs would be
     // invisible to exactly the clients that need telling.
-    arm_extension("probe.", ext_probe, ext_describes_two);
+    arm_extension(verbs2("probe.one", "probe.two"), ext_probe, ext_describes_two);
     let armed: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(allow_all),
         "{\"method\":\"tools/list\",\"id\":2}");
     assert armed.contains("describe_ui");
@@ -2773,7 +2831,7 @@ fn an_extension_armed_without_a_describer_still_works() {
     // describer is what makes a namespace discoverable, not what makes it run.
     var sub: events::Subscriber = events::subscriber(events::everything(), 4);
     let surf: *u8 = #addr_of(FAKE_SURF) as *u8;
-    arm_extension("probe.", ext_probe);
+    arm_extension(verbs1("probe.anything"), ext_probe);
     let listed: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(allow_all),
         "{\"method\":\"tools/list\",\"id\":1}");
     assert listed.contains("probe.one") == false;
@@ -3237,8 +3295,8 @@ fn two_namespaces_coexist_and_each_answers_its_own() {
     EXT_CALLS = 0;
     SECOND_CALLS = 0;
 
-    arm_extension("inspector.", fake_extension, ext_describes_two);
-    arm_extension("second.", second_extension, second_describes_one);
+    arm_extension(verbs1("inspector.describe"), fake_extension, ext_describes_two);
+    arm_extension(verbs1("second.only"), second_extension, second_describes_one);
     assert extension_count() == 2;
 
     var sub: events::Subscriber = events::subscriber(events::everything(), 8);
@@ -3263,7 +3321,7 @@ fn two_namespaces_coexist_and_each_answers_its_own() {
 
     // Disarming one leaves the other alone — the reason `disarm_extension`
     // takes a name. The slot version's no-arg disarm would have closed both.
-    disarm_extension("inspector.");
+    disarm_extension("inspector.describe");
     assert extension_count() == 1;
     assert is_extension_method("second.only");
     assert is_extension_method("inspector.describe") == false;
@@ -3280,8 +3338,8 @@ fn re_arming_a_namespace_replaces_it_rather_than_stacking() {
     EXT_CALLS = 0;
     SECOND_CALLS = 0;
 
-    arm_extension("inspector.", fake_extension);
-    arm_extension("inspector.", second_extension);
+    arm_extension(verbs1("inspector.describe"), fake_extension);
+    arm_extension(verbs1("inspector.describe"), second_extension);
     assert extension_count() == 1;
 
     var sub: events::Subscriber = events::subscriber(events::everything(), 8);
@@ -3321,7 +3379,7 @@ fn an_armed_namespace_routes_its_own_methods_and_leaves_the_surface_alone() {
     var sub: events::Subscriber = events::subscriber(events::everything(), 4);
     let surf: *u8 = #addr_of(FAKE_SURF) as *u8;
 
-    arm_extension("inspector.", fake_extension);
+    arm_extension(verbs1("inspector.describe"), fake_extension);
     assert extension_armed();
 
     let r: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(allow_all),
@@ -3360,7 +3418,7 @@ fn the_consent_gate_covers_the_extension_namespace_too() {
     EXT_CALLS = 0;
     var sub: events::Subscriber = events::subscriber(events::everything(), 4);
     let surf: *u8 = #addr_of(FAKE_SURF) as *u8;
-    arm_extension("inspector.", fake_extension);
+    arm_extension(verbs1("inspector.describe"), fake_extension);
 
     let denied: text::Text = handle_request(surf, fake_backend(), sub, auth::deny_all(),
         "{\"method\":\"inspector.describe\",\"id\":1}");
@@ -3376,16 +3434,16 @@ fn the_consent_gate_covers_the_extension_namespace_too() {
 // A `str` static here would be a borrowed {ptr,len} into a Text that is gone by
 // the first request — sound for a literal, a use-after-free for anything else.
 #[test]
-fn a_composed_prefix_survives_the_call_that_armed_it() {
+fn a_composed_verb_name_survives_the_call_that_armed_it() {
     disarm_all_extensions();
     EXT_CALLS = 0;
     var sub: events::Subscriber = events::subscriber(events::everything(), 4);
     let surf: *u8 = #addr_of(FAKE_SURF) as *u8;
 
     var built: text::Text = text::from_str("insp");
-    let _a: status::Status = built.append("ector.");
-    arm_extension(built.view(), fake_extension);
-    // The Text that supplied it is finished with here; the prefix must not be.
+    let _a: status::Status = built.append("ector.set");
+    arm_extension(verbs1(built.view()), fake_extension);
+    // The Text that supplied it is finished with here; the NAME must not be.
     built = text::from_str("clobbered");
 
     let r: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(allow_all),
@@ -3726,7 +3784,7 @@ fn an_extension_namespace_is_told_which_capabilities_the_caller_has() {
     disarm_all_extensions();
     var sub: events::Subscriber = events::subscriber(events::everything(), 4);
     let surf: *u8 = #addr_of(FAKE_SURF) as *u8;
-    arm_extension("inspector.", fake_extension);
+    arm_extension(verbs1("inspector.describe"), fake_extension);
 
     let plain: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(allow_all),
         "{\"method\":\"inspector.describe\",\"id\":1}");

@@ -2165,7 +2165,7 @@ fn describe_puts_the_tree_on_the_wire_with_indices_as_addresses() {
     var root: core::Node = ui::column(body, key: "root");
     app::open_window(#addr_of(root));
 
-    let r: text::Text = rpc("{\"method\":\"inspector.describe\",\"id\":1}");
+    let r: text::Text = rpc("{\"method\":\"describe_tree\",\"id\":1}");
     assert r.contains("\"key\":\"root\"");
     assert r.contains("\"key\":\"greeting\"");
     // The index is stated on the row, not left implicit in the array position:
@@ -2187,9 +2187,9 @@ fn inspect_keeps_declared_computed_and_native_apart_on_the_wire() {
     body.add(ui::label("hello", key: "greeting"));
     var root: core::Node = ui::column(body, key: "root");
     app::open_window(#addr_of(root));
-    let _d: text::Text = rpc("{\"method\":\"inspector.describe\",\"id\":1}");
+    let _d: text::Text = rpc("{\"method\":\"describe_tree\",\"id\":1}");
 
-    let r: text::Text = rpc("{\"method\":\"inspector.inspect\",\"params\":{\"node\":1},\"id\":2}");
+    let r: text::Text = rpc("{\"method\":\"inspect\",\"params\":{\"node\":1},\"id\":2}");
     assert r.contains("\"declared\"");
     assert r.contains("\"computed\"");
     assert r.contains("\"native\"");
@@ -2210,26 +2210,26 @@ fn a_write_goes_through_the_same_setters_the_panel_uses() {
     body.add(ui::label("hello", key: "greeting"));
     var root: core::Node = ui::column(body, key: "root");
     app::open_window(#addr_of(root));
-    let _d: text::Text = rpc("{\"method\":\"inspector.describe\",\"id\":1}");
+    let _d: text::Text = rpc("{\"method\":\"describe_tree\",\"id\":1}");
 
     // A number for a number property.
-    let a: text::Text = rpc("{\"method\":\"inspector.set\",\"params\":{\"node\":0,\"property\":\"opacity\",\"value\":0.4},\"id\":2}");
+    let a: text::Text = rpc("{\"method\":\"set\",\"params\":{\"node\":0,\"property\":\"opacity\",\"value\":0.4},\"id\":2}");
     assert a.contains("\"outcome\":\"ok\"");
     assert get_num(row_for(tree::describe(), "root"), "opacity") == 0.4;
 
     // A string for a text property — tier 3, and it reaches through the key.
-    let b: text::Text = rpc("{\"method\":\"inspector.set\",\"params\":{\"node\":1,\"property\":\"text\",\"value\":\"rewritten\"},\"id\":3}");
+    let b: text::Text = rpc("{\"method\":\"set\",\"params\":{\"node\":1,\"property\":\"text\",\"value\":\"rewritten\"},\"id\":3}");
     assert b.contains("\"outcome\":\"ok\"");
     assert text_eq(row_for(tree::describe(), "greeting"), "text", "rewritten");
 
     // A hex string for a colour property: the panel's rule, unchanged. The
     // string is read as the tag the property already holds, which is what makes
     // `#2277ff` a colour here and seven literal characters on a text property.
-    let c: text::Text = rpc("{\"method\":\"inspector.set\",\"params\":{\"node\":0,\"property\":\"background_color\",\"value\":\"#2277ff\"},\"id\":4}");
+    let c: text::Text = rpc("{\"method\":\"set\",\"params\":{\"node\":0,\"property\":\"background_color\",\"value\":\"#2277ff\"},\"id\":4}");
     assert c.contains("\"outcome\":\"ok\"");
 
     // And reset puts back what the application declared.
-    let d: text::Text = rpc("{\"method\":\"inspector.reset\",\"params\":{\"node\":0,\"property\":\"opacity\"},\"id\":5}");
+    let d: text::Text = rpc("{\"method\":\"reset\",\"params\":{\"node\":0,\"property\":\"opacity\"},\"id\":5}");
     assert d.contains("\"outcome\":\"ok\"");
     assert get_num(row_for(tree::describe(), "root"), "opacity") == 1.0;
 }
@@ -2241,28 +2241,28 @@ fn the_structural_verbs_are_on_the_wire_with_their_journal() {
     body.add(ui::label("a", key: "a"));
     var root: core::Node = ui::column(body, key: "root");
     app::open_window(#addr_of(root));
-    let _d: text::Text = rpc("{\"method\":\"inspector.describe\",\"id\":1}");
+    let _d: text::Text = rpc("{\"method\":\"describe_tree\",\"id\":1}");
 
-    let i: text::Text = rpc("{\"method\":\"inspector.insert\",\"params\":{\"node\":0,\"element\":\"label\",\"key\":\"made\",\"text\":\"hi\"},\"id\":2}");
+    let i: text::Text = rpc("{\"method\":\"insert\",\"params\":{\"node\":0,\"element\":\"label\",\"key\":\"made\",\"text\":\"hi\"},\"id\":2}");
     assert i.contains("\"outcome\":\"ok\"");
     assert !row_for(tree::describe(), "made").is_none();
 
     // Indices are re-issued by a describe. The client's own is the one it was
     // handed, so a structural edit is followed by a re-describe — which is
     // exactly what `revision` is on every answer to prompt.
-    let _d2: text::Text = rpc("{\"method\":\"inspector.describe\",\"id\":3}");
-    let r: text::Text = rpc("{\"method\":\"inspector.remove\",\"params\":{\"node\":1},\"id\":4}");
+    let _d2: text::Text = rpc("{\"method\":\"describe_tree\",\"id\":3}");
+    let r: text::Text = rpc("{\"method\":\"remove\",\"params\":{\"node\":1},\"id\":4}");
     assert r.contains("\"outcome\":\"ok\"");
     assert row_for(tree::describe(), "a").is_none();
 
-    let u: text::Text = rpc("{\"method\":\"inspector.undo\",\"id\":5}");
+    let u: text::Text = rpc("{\"method\":\"undo\",\"id\":5}");
     assert u.contains("\"outcome\":\"ok\"");
     assert !row_for(tree::describe(), "a").is_none();
 
     // The edits come back as the source that would make them. An agent that
     // changes a running app and cannot say what it did in the app's own
     // language has produced a change nobody can keep.
-    let j: text::Text = rpc("{\"method\":\"inspector.journal\",\"id\":6}");
+    let j: text::Text = rpc("{\"method\":\"journal\",\"id\":6}");
     assert j.contains("mount::add_child");
     assert j.contains("ui::label(\\\"hi\\\", key: \\\"made\\\")");
     assert j.contains("mount::remove(\\\"a\\\")");
@@ -2271,7 +2271,7 @@ fn the_structural_verbs_are_on_the_wire_with_their_journal() {
 #[test]
 fn the_vocabulary_is_answered_rather_than_carried_by_the_client() {
     wire_ready();
-    let r: text::Text = rpc("{\"method\":\"inspector.vocabulary\",\"id\":1}");
+    let r: text::Text = rpc("{\"method\":\"vocabulary\",\"id\":1}");
     // Both lists come from `tree`, so a client never holds a copy that can
     // drift from what this build actually makes and writes.
     assert r.contains("\"elements\"");
@@ -2291,29 +2291,29 @@ fn refusals_travel_by_name_and_by_sentence() {
     body.add(ui::label("a", key: "a"));
     var root: core::Node = ui::column(body, key: "root");
     app::open_window(#addr_of(root));
-    let _d: text::Text = rpc("{\"method\":\"inspector.describe\",\"id\":1}");
+    let _d: text::Text = rpc("{\"method\":\"describe_tree\",\"id\":1}");
 
     // A client matching on a name should not have to parse prose; a developer
     // reading a transcript should not have to look the name up. So both.
-    let leaf: text::Text = rpc("{\"method\":\"inspector.insert\",\"params\":{\"node\":1,\"element\":\"label\"},\"id\":2}");
+    let leaf: text::Text = rpc("{\"method\":\"insert\",\"params\":{\"node\":1,\"element\":\"label\"},\"id\":2}");
     assert leaf.contains("\"outcome\":\"not_a_container\"");
     assert leaf.contains("does not take inserted children");
 
-    let kind: text::Text = rpc("{\"method\":\"inspector.insert\",\"params\":{\"node\":0,\"element\":\"blink\"},\"id\":3}");
+    let kind: text::Text = rpc("{\"method\":\"insert\",\"params\":{\"node\":0,\"element\":\"blink\"},\"id\":3}");
     assert kind.contains("\"outcome\":\"unknown_kind\"");
 
-    let root_rm: text::Text = rpc("{\"method\":\"inspector.remove\",\"params\":{\"node\":0},\"id\":4}");
+    let root_rm: text::Text = rpc("{\"method\":\"remove\",\"params\":{\"node\":0},\"id\":4}");
     assert root_rm.contains("\"outcome\":\"protected\"");
 
-    let ro: text::Text = rpc("{\"method\":\"inspector.set\",\"params\":{\"node\":0,\"property\":\"frame_width\",\"value\":10},\"id\":5}");
+    let ro: text::Text = rpc("{\"method\":\"set\",\"params\":{\"node\":0,\"property\":\"frame_width\",\"value\":10},\"id\":5}");
     assert ro.contains("\"outcome\":\"read_only\"");
 
-    let bad_prop: text::Text = rpc("{\"method\":\"inspector.set\",\"params\":{\"node\":0,\"property\":\"colour\",\"value\":10},\"id\":6}");
+    let bad_prop: text::Text = rpc("{\"method\":\"set\",\"params\":{\"node\":0,\"property\":\"colour\",\"value\":10},\"id\":6}");
     assert bad_prop.contains("\"outcome\":\"unknown_property\"");
 
     // An index that was never issued is "no such address", the same answer a
     // null handle gets — because that is what both are.
-    let oob: text::Text = rpc("{\"method\":\"inspector.inspect\",\"params\":{\"node\":9999},\"id\":7}");
+    let oob: text::Text = rpc("{\"method\":\"inspect\",\"params\":{\"node\":9999},\"id\":7}");
     assert oob.contains("\"outcome\":\"not_found\"");
 }
 
@@ -2323,27 +2323,27 @@ fn a_missing_parameter_is_refused_rather_than_defaulted_to_node_zero() {
     var body: core::Builder = core::Builder::new();
     var root: core::Node = ui::column(body, key: "root");
     app::open_window(#addr_of(root));
-    let _d: text::Text = rpc("{\"method\":\"inspector.describe\",\"id\":1}");
+    let _d: text::Text = rpc("{\"method\":\"describe_tree\",\"id\":1}");
 
     // Every reader here falls back, so an absent `node` would silently act on
     // index 0 — the window root. The agent surface learned this the expensive
     // way; the same rule applies to a namespace that can DELETE what it hits.
-    let n: text::Text = rpc("{\"method\":\"inspector.remove\",\"params\":{},\"id\":2}");
+    let n: text::Text = rpc("{\"method\":\"remove\",\"params\":{},\"id\":2}");
     assert n.contains("-32602");
     assert n.contains("node");
     assert n.contains("\"outcome\"") == false;
 
-    let p: text::Text = rpc("{\"method\":\"inspector.set\",\"params\":{\"node\":0,\"value\":1},\"id\":3}");
+    let p: text::Text = rpc("{\"method\":\"set\",\"params\":{\"node\":0,\"value\":1},\"id\":3}");
     assert p.contains("-32602");
     assert p.contains("property");
 
-    let v: text::Text = rpc("{\"method\":\"inspector.set\",\"params\":{\"node\":0,\"property\":\"opacity\"},\"id\":4}");
+    let v: text::Text = rpc("{\"method\":\"set\",\"params\":{\"node\":0,\"property\":\"opacity\"},\"id\":4}");
     assert v.contains("-32602");
     assert v.contains("value");
 
     // A value of a type no property takes is refused at the edge, not turned
     // into a guess.
-    let obj: text::Text = rpc("{\"method\":\"inspector.set\",\"params\":{\"node\":0,\"property\":\"opacity\",\"value\":{}},\"id\":5}");
+    let obj: text::Text = rpc("{\"method\":\"set\",\"params\":{\"node\":0,\"property\":\"opacity\",\"value\":{}},\"id\":5}");
     assert obj.contains("-32602");
 }
 
@@ -2356,17 +2356,17 @@ fn the_namespace_is_absent_until_it_is_armed_and_absent_again_after() {
     // Linking the module in is not exposure. A process that never armed the
     // namespace does not serve it — which is the whole gate, because this
     // namespace is strictly more powerful than the agent surface beside it.
-    let off: text::Text = rpc("{\"method\":\"inspector.describe\",\"id\":1}");
+    let off: text::Text = rpc("{\"method\":\"describe_tree\",\"id\":1}");
     assert off.contains("-32601");
     assert off.contains("\"nodes\"") == false;
 
     mcp::arm(tree::local_backend());
     assert mcp::armed();
-    let on: text::Text = rpc("{\"method\":\"inspector.describe\",\"id\":2}");
+    let on: text::Text = rpc("{\"method\":\"describe_tree\",\"id\":2}");
     assert on.contains("\"nodes\"");
 
     mcp::disarm();
-    let after: text::Text = rpc("{\"method\":\"inspector.describe\",\"id\":3}");
+    let after: text::Text = rpc("{\"method\":\"describe_tree\",\"id\":3}");
     assert after.contains("-32601");
 }
 
@@ -2382,7 +2382,7 @@ fn arming_the_inspector_is_not_a_way_around_the_agents_consent_gate() {
     // permission model — and it is the more powerful of the two surfaces.
     var sub: aevents::Subscriber = aevents::subscriber(aevents::everything(), 4);
     let denied: text::Text = bridge::handle_request(0 as *u8, bridge::fake_backend(), sub,
-        aauth::deny_all(), "{\"method\":\"inspector.describe\",\"id\":1}");
+        aauth::deny_all(), "{\"method\":\"describe_tree\",\"id\":1}");
     assert denied.contains("-32001");
     assert denied.contains("\"nodes\"") == false;
 }
@@ -2396,14 +2396,14 @@ fn a_degraded_backend_refuses_on_the_wire_without_crashing() {
     // should look like from outside, rather than a null call.
     mcp::arm(insp::Backend::none());
 
-    let d: text::Text = rpc("{\"method\":\"inspector.describe\",\"id\":1}");
+    let d: text::Text = rpc("{\"method\":\"describe_tree\",\"id\":1}");
     assert d.contains("\"nodes\"");
     assert mcp::snapshot_count() == 0;
 
-    let s: text::Text = rpc("{\"method\":\"inspector.set\",\"params\":{\"node\":0,\"property\":\"opacity\",\"value\":1},\"id\":2}");
+    let s: text::Text = rpc("{\"method\":\"set\",\"params\":{\"node\":0,\"property\":\"opacity\",\"value\":1},\"id\":2}");
     assert s.contains("\"outcome\":\"not_found\"");
 
-    let u: text::Text = rpc("{\"method\":\"inspector.undo\",\"id\":3}");
+    let u: text::Text = rpc("{\"method\":\"undo\",\"id\":3}");
     assert u.contains("\"outcome\":\"nothing_to_undo\"");
 
     mcp::disarm();
@@ -2426,9 +2426,9 @@ fn a_property_named_over_the_wire_is_still_addressable_by_a_later_reset() {
     var root: core::Node = ui::column(body, key: "root");
     core::set_opacity(#addr_of(root), 0.9);
     app::open_window(#addr_of(root));
-    let _d: text::Text = rpc("{\"method\":\"inspector.describe\",\"id\":1}");
+    let _d: text::Text = rpc("{\"method\":\"describe_tree\",\"id\":1}");
 
-    let _s: text::Text = rpc("{\"method\":\"inspector.set\",\"params\":{\"node\":0,\"property\":\"opacity\",\"value\":0.25},\"id\":2}");
+    let _s: text::Text = rpc("{\"method\":\"set\",\"params\":{\"node\":0,\"property\":\"opacity\",\"value\":0.25},\"id\":2}");
     assert get_num(row_for(tree::describe(), "root"), "opacity") == 0.25;
     assert tree::override_count() == 1;
 
@@ -2436,7 +2436,7 @@ fn a_property_named_over_the_wire_is_still_addressable_by_a_later_reset() {
     // by a second request, which does not.
     assert tree::is_overridden(row_for(tree::describe(), "root").node, "opacity");
 
-    let r: text::Text = rpc("{\"method\":\"inspector.reset\",\"params\":{\"node\":0,\"property\":\"opacity\"},\"id\":3}");
+    let r: text::Text = rpc("{\"method\":\"reset\",\"params\":{\"node\":0,\"property\":\"opacity\"},\"id\":3}");
     assert r.contains("\"outcome\":\"ok\"");
     // Back to what the APPLICATION declared — 0.9, not the type default of 1.0.
     assert get_num(row_for(tree::describe(), "root"), "opacity") == 0.9;
@@ -2486,15 +2486,15 @@ fn a_theme_token_crosses_the_wire_as_a_name_and_a_literal_as_channels() {
     var root: core::Node = ui::column(body, key: "root");
     core::set_background_color(#addr_of(root), vocab::Color::control_background());
     app::open_window(#addr_of(root));
-    let _d: text::Text = rpc("{\"method\":\"inspector.describe\",\"id\":1}");
+    let _d: text::Text = rpc("{\"method\":\"describe_tree\",\"id\":1}");
 
-    let themed: text::Text = rpc("{\"method\":\"inspector.inspect\",\"params\":{\"node\":0},\"id\":2}");
+    let themed: text::Text = rpc("{\"method\":\"inspect\",\"params\":{\"node\":0},\"id\":2}");
     assert themed.contains("\"type\":\"color\"");
     // A role carries its token and NO channels, because there are none yet.
     assert themed.contains("\"rgba\"") == false;
 
-    let _s: text::Text = rpc("{\"method\":\"inspector.set\",\"params\":{\"node\":0,\"property\":\"background_color\",\"value\":\"#2277ff\"},\"id\":3}");
-    let literal: text::Text = rpc("{\"method\":\"inspector.inspect\",\"params\":{\"node\":0},\"id\":4}");
+    let _s: text::Text = rpc("{\"method\":\"set\",\"params\":{\"node\":0,\"property\":\"background_color\",\"value\":\"#2277ff\"},\"id\":3}");
+    let literal: text::Text = rpc("{\"method\":\"inspect\",\"params\":{\"node\":0},\"id\":4}");
     assert literal.contains("\"token\":255");
     assert literal.contains("\"rgba\"");
 }
@@ -2531,7 +2531,7 @@ fn approved_agent(req: aauth::Request) -> aauth::Grant { return aauth::protected
 
 #[test]
 fn inspect_does_not_hand_over_a_gated_nodes_contents() {
-    // THE BYPASS THIS CLOSES. `inspector.inspect` read a text field's live
+    // THE BYPASS THIS CLOSES. `inspect` read a text field's live
     // value straight off the control — same value, same process, different
     // socket name — while the agent surface beside it refused the same read. A
     // second namespace is a place to put verbs, not a place to escape what
@@ -2539,17 +2539,17 @@ fn inspect_does_not_hand_over_a_gated_nodes_contents() {
     wire_ready();
     var root: core::Node = payment_root();
     app::open_window(#addr_of(root));
-    let _d: text::Text = rpc("{\"method\":\"inspector.describe\",\"id\":1}");
+    let _d: text::Text = rpc("{\"method\":\"describe_tree\",\"id\":1}");
 
     // 0 root, 1 payment box, 2 card, 3 cvc, 4 email.
     let card: text::Text =
-        rpc_as(plain_agent, "{\"method\":\"inspector.inspect\",\"params\":{\"node\":2},\"id\":2}");
+        rpc_as(plain_agent, "{\"method\":\"inspect\",\"params\":{\"node\":2},\"id\":2}");
     assert card.contains("behind a tier");
     assert card.contains("4242") == false;
     // INHERITED from the box, which is the declaration a developer actually
     // writes — the field itself says nothing.
     let box_r: text::Text =
-        rpc_as(plain_agent, "{\"method\":\"inspector.inspect\",\"params\":{\"node\":1},\"id\":3}");
+        rpc_as(plain_agent, "{\"method\":\"inspect\",\"params\":{\"node\":1},\"id\":3}");
     assert box_r.contains("behind a tier");
 }
 
@@ -2562,10 +2562,10 @@ fn the_grant_that_opens_the_field_opens_it_here_too() {
     wire_ready();
     var root: core::Node = payment_root();
     app::open_window(#addr_of(root));
-    let _d: text::Text = rpc("{\"method\":\"inspector.describe\",\"id\":1}");
+    let _d: text::Text = rpc("{\"method\":\"describe_tree\",\"id\":1}");
 
     let allowed: text::Text =
-        rpc_as(approved_agent, "{\"method\":\"inspector.inspect\",\"params\":{\"node\":2},\"id\":2}");
+        rpc_as(approved_agent, "{\"method\":\"inspect\",\"params\":{\"node\":2},\"id\":2}");
     assert allowed.contains("behind a tier") == false;
     assert allowed.contains("\"declared\"");
 }
@@ -2577,10 +2577,10 @@ fn an_ungated_neighbour_is_untouched() {
     wire_ready();
     var root: core::Node = payment_root();
     app::open_window(#addr_of(root));
-    let _d: text::Text = rpc("{\"method\":\"inspector.describe\",\"id\":1}");
+    let _d: text::Text = rpc("{\"method\":\"describe_tree\",\"id\":1}");
 
     let email: text::Text =
-        rpc_as(plain_agent, "{\"method\":\"inspector.inspect\",\"params\":{\"node\":4},\"id\":2}");
+        rpc_as(plain_agent, "{\"method\":\"inspect\",\"params\":{\"node\":4},\"id\":2}");
     assert email.contains("behind a tier") == false;
     assert email.contains("\"declared\"");
 }
@@ -2593,26 +2593,26 @@ fn rewriting_the_tree_costs_a_capability_nothing_else_carries() {
     wire_ready();
     var root: core::Node = payment_root();
     app::open_window(#addr_of(root));
-    let _d: text::Text = rpc("{\"method\":\"inspector.describe\",\"id\":1}");
+    let _d: text::Text = rpc("{\"method\":\"describe_tree\",\"id\":1}");
 
     let set_r: text::Text = rpc_as(plain_agent,
-        "{\"method\":\"inspector.set\",\"params\":{\"node\":4,\"property\":\"opacity\",\"value\":0.5},\"id\":2}");
+        "{\"method\":\"set\",\"params\":{\"node\":4,\"property\":\"opacity\",\"value\":0.5},\"id\":2}");
     assert set_r.contains("edit_tree");
     let rm: text::Text = rpc_as(plain_agent,
-        "{\"method\":\"inspector.remove\",\"params\":{\"node\":4},\"id\":3}");
+        "{\"method\":\"remove\",\"params\":{\"node\":4},\"id\":3}");
     assert rm.contains("edit_tree");
-    let undo: text::Text = rpc_as(plain_agent, "{\"method\":\"inspector.undo\",\"id\":4}");
+    let undo: text::Text = rpc_as(plain_agent, "{\"method\":\"undo\",\"id\":4}");
     assert undo.contains("edit_tree");
     // Reading the STRUCTURE is not rewriting it, and stays open.
-    let d: text::Text = rpc_as(plain_agent, "{\"method\":\"inspector.describe\",\"id\":5}");
+    let d: text::Text = rpc_as(plain_agent, "{\"method\":\"describe_tree\",\"id\":5}");
     assert d.contains("\"key\":\"payment\"");
     // The developer tool that says so out loud still works.
     let ok: text::Text = rpc(
-        "{\"method\":\"inspector.set\",\"params\":{\"node\":4,\"property\":\"opacity\",\"value\":0.5},\"id\":6}");
+        "{\"method\":\"set\",\"params\":{\"node\":4,\"property\":\"opacity\",\"value\":0.5},\"id\":6}");
     assert ok.contains("edit_tree") == false;
 }
 
-// ---- inspector.describe `prefix` (demo/bugs/04-describe-verbs-cannot-be-scoped)
+// ---- describe_tree `prefix` (demo/bugs/04-describe-verbs-cannot-be-scoped)
 
 #[test]
 fn describe_prefix_matches_a_key_path_and_nothing_else() {
@@ -2659,8 +2659,8 @@ fn both_namespaces_emit_the_same_envelope() {
     assert ea.view() == eb.view();
 
     // Including the parameter refusal, whose exact wording a caller reads.
-    let ma: text::Text = mcp::missing_param(3.0, "inspector.set", "node").to_text();
-    let mb: text::Text = bridge::missing_param(3.0, "inspector.set", "node").to_text();
+    let ma: text::Text = mcp::missing_param(3.0, "set", "node").to_text();
+    let mb: text::Text = bridge::missing_param(3.0, "set", "node").to_text();
     assert ma.view() == mb.view();
 
     // ...and the scalar builders underneath them.
