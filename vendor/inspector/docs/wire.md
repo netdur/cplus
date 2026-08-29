@@ -16,21 +16,19 @@ agent surface beside it.
 
 ```cplus
 import "inspector/tree" as itree;
-import "inspector/mcp" as imcp;
-import "inspector/appkit" as iplatform;
+import "inspector/serve" as inspect;
+import "facet_runtime/runtime" as runtime;
 import "facet_agent/agent" as agent;
 
 fn main() -> i32 {
-    iplatform::install();               // overlay, native rows, and the UI-thread hop
-    imcp::arm(itree::local_backend());  // publish `inspector.` — explicit, always
+    inspect::arm();                 // overlay, UI-thread hop, and `inspector.`
     agent::enable();
-    var app: runtime::App = runtime::App::new("Iris");
-    app.agent_mcp("/tmp/iris.sock");    // the transport both namespaces share
+    runtime::agent_mcp("iris");     // the transport both namespaces share
     ...
 }
 ```
 
-`iplatform::install()` is not optional for a served app. `mount::install`
+`inspect::arm()` is not optional for a served app. `mount::install`
 records the UI thread and `core::touch` asserts on it, so a write arriving on the
 server's thread aborts the process; the platform module installs the synchronous
 hop that prevents it. Without it the panel still works in-process, because that

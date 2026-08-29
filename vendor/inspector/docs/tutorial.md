@@ -100,13 +100,13 @@ let _u: insp::Outcome = itree::undo_remove();   // back in the same slot
 ## Over the socket
 
 If your app already serves an agent, one call publishes an `inspector.`
-namespace inside the same server:
+namespace inside the same server — `import "inspector/serve" as inspect;`,
+which resolves per platform and is a no-op where there is no backend:
 
 ```cplus
-iplatform::install();                    // installs the UI-thread hop too
-imcp::arm(itree::local_backend());
+inspect::arm();                   // install + publish `inspector.`, portably
 agent::enable();
-app.agent_mcp("/tmp/app.sock");
+runtime::agent_mcp("app");        // an ID; the platform derives the address
 ```
 
 Then `inspector.describe`, `inspector.set`, `inspector.insert`, … See

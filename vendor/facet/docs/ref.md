@@ -481,8 +481,23 @@ the import path moved.)
 
 `enable()` registers the serving hooks; `disable()` returns to the no-op. An
 application also declares `agent_core`, `agent_inapp`, `agent_mcp` and the
-platform's agent package in its `Cplus.toml`, then names a socket with
-`App::agent_mcp`.
+platform's agent package in its `Cplus.toml`, then names ITSELF with
+`runtime::agent_mcp(id)`.
+
+`agent_mcp` takes an **id, not an address** — a name like `"myapp"`, from which
+the platform derives where to listen: `/tmp/mcp-<id>-<pid>.socket` at mode 0600
+plus `http://127.0.0.1:<9000+pid%1000>/` on a desktop, the HTTP port alone on a
+phone. Both are keyed on this process's pid, so a launcher that spawned the app
+can compute the address without being told; the app also reports it on stderr
+and writes it to `/tmp/mcp-<id>-<pid>.json`. An id containing `/` is refused.
+
+It is a free function on every host tier — `run`, `run_component`, `run_screen`
+and `App::run` alike — and `App::agent_mcp(id)` forwards to it, defaulting to
+the app's own name when called with no argument. There is ONE address per
+process. **No `agent_mcp` call, no server**: nothing outside the program can
+turn one on.
+
+`facet_agent` is documented in its own `docs/` — tutorial, guide and reference.
 
 The surface answers `describe_ui` (the live tree, addressed by key) and drives
 controls through the same path a mouse takes.

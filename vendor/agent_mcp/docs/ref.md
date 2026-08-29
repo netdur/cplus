@@ -60,6 +60,114 @@ Used by dispatch; available if you extend the protocol.
 
 ---
 
+## The address convention
+
+The app names itself; these turn that into somewhere to listen. Both are keyed
+on the pid, which is the join key between the socket namespace and the process
+table — so a launcher holding only the pid it spawned computes the address, and
+a client globbing `/tmp` enumerates every live facet app. There is no
+environment variable.
+
+```cplus
+fn valid_id(id: str) -> bool
+fn uds_path(id: str, pid: i32) -> text::Text      // /tmp/mcp-<id>-<pid>.socket
+fn loopback_port(pid: i32) -> u16                 // 9000 + pid % 1000
+fn current_pid() -> i32
+fn pid_is_live(pid: i32) -> bool                  // kill(pid, 0)
+```
+
+`valid_id` refuses `""`, anything over 60 bytes, and anything containing `/` or
+NUL. A caller passing an old-style path means to name an address, and this
+parameter is a NAME.
+
+### Descriptor
+
+```cplus
+fn descriptor_path(id: str, pid: i32) -> text::Text   // /tmp/mcp-<id>-<pid>.json
+fn write_descriptor(id: str, pid: i32, transport: str, address: str) -> bool
+fn unlink_descriptor()
+fn sweep_stale() -> usize
+```
+
+The descriptor records what was actually BOUND — the address is derivable, so
+this is confirmation rather than discovery:
+
+```json
+{"id":"myapp","pid":8161,"transport":"http",
+ "address":"http://127.0.0.1:9161/","protocol":"2024-11-05"}
+```
+
+Written 0600. `sweep_stale` removes sockets and descriptors whose pid is no
+longer live; a path carries the pid so a name is never reused, and the `atexit`
+hook covers a normal quit but not a kill.
+
+---
+
+## Identity and refusals
+
+```cplus
+fn set_server_name(id: str)
+fn server_name() -> str
+fn current_client() -> str
+fn forget_client()
+fn set_deny_hint(f: fn() -> str)
+```
+
+`server_name` is what `initialize` answers as `serverInfo.name` — the app's id,
+so a client that reached a stale address finds out at the handshake instead of
+driving the wrong app. Defaults to `"facet-agent-surface"`.
+
+`current_client()` is the caller's self-reported `clientInfo.name`, `""` before
+`initialize`. **Not a credential**: a client picks its own name. It is identity
+in the sense a From: header is — what makes a consent prompt legible and a
+remembered answer specific. Cleared when a connection opens, so a second agent
+cannot inherit the first's consent.
+
+`set_deny_hint` supplies the sentence an empty grant is refused with. Only the
+policy knows whether a refusal is "not yet" (a prompt is up, retry) or "no", and
+a client cannot tell those apart from a bitset. With none installed the message
+is the flat `"consent denied"`.
+
+---
+
+## HTTP transport
+
+MCP defines stdio and Streamable HTTP; line-delimited JSON-RPC is neither, which
+is why a client otherwise needs a `nc` bridge written for it. This is the other
+half: POST a JSON-RPC message, get one back as `application/json`.
+
+```cplus
+fn serve_http(
+    surf: *u8,
+    vt: backend::Backend,
+    ref sub: events::Subscriber,
+    policy: fn(auth::Request) -> auth::Grant,
+    port: u16,
+) -> i32
+
+fn serve_http_fd(surf, vt, ref sub, policy, fd: i32) -> i32
+```
+
+Same `handle_request` as the socket transports, so a verb cannot exist on one
+door and not the other.
+
+**Keep-alive, not `Connection: close`** — the connection is the session. A
+client's name arrives in `initialize` and is cleared per connection, so closing
+after each request would hand every later one an empty `client`.
+
+| request | answer |
+|---|---|
+| `POST` with a JSON-RPC body | `200`, `application/json` |
+| a notification (no `id`) | `202`, empty body — silence would hang a waiting client |
+| anything but `POST` | `405`, in words |
+| `Content-Length` over 64 KiB | `413`, and the connection ends (an unread body would desynchronise the next request) |
+| empty body | `400` |
+
+SSE is not implemented. Nothing here pushes — `poll_event` stands in for that —
+so plain JSON responses are conformant.
+
+---
+
 ## UDS transport
 
 ```cplus
@@ -92,6 +200,25 @@ fn serve_uds(
     policy: fn(auth::Request) -> auth::Grant,
     path: str,
 ) -> i32
+```
+
+The bound socket is **0600** — `bind_uds` sets the umask around the bind so the
+mode is atomic, and chmods after.
+
+### Bind, listen and accept, separately
+
+`serve_uds` and `serve_tcp` block in `accept` forever, so a caller can only run
+them on a worker whose return value nobody is alive to read — which made every
+setup failure silent. Split so an application can bind on its OWN thread, find
+out, and say so:
+
+```cplus
+fn bind_uds(path: str) -> i32          // bound fd, or a negative code
+fn bind_tcp(port: u16) -> i32          // binds AND listens
+fn listen_on(fd: i32) -> i32           // 0, or -3
+fn bind_reason(code: i32) -> str       // the code as a sentence
+fn accept_loop(surf, vt, ref sub, policy, fd: i32,
+               unlink_on_exit: bool, http: bool = false) -> i32
 ```
 
 | `serve_uds` return | meaning |
