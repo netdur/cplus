@@ -439,6 +439,17 @@ fn outcome_result_for(o: surface::Outcome, target: str) -> json::Value {
             "no node \"${target}\" in the UI of the application serving this endpoint. Re-read describe_ui — ids change as the UI does — and note that an app launched BY this one has its own agent endpoint: this one only ever answers for its own UI.";
         m.append(member("hint", jstr({ hint.view() })));
     }
+    // A DEAD END OTHERWISE. `not_exposed` reaches a caller that has usually
+    // just READ this node — `describe_ui mode:"full"` shows the whole tree and
+    // hands back an id like `root/button#2` — so the bare outcome reads as a
+    // bug in the surface rather than a decision by the app. It is a decision:
+    // either nobody named the node, or it was declared out. Saying which two
+    // things it can be turns a refusal into something a developer can act on.
+    if surface::outcome_eq(o, surface::Outcome::NotExposed) {
+        let hint: text::Text =
+            "\"${target}\" is in the tree but not on the agent surface. Either the app never named it (only a node with a key is addressable — `mode:\"full\"` shows unnamed ones so you can SEE the structure, not drive it), or it is declared out with `agent: Hidden`. Neither is a fault you can retry: to drive it, the app has to give it a key.";
+        m.append(member("hint", jstr({ hint.view() })));
+    }
     return json::Value::Object(m);
 }
 
@@ -3005,6 +3016,36 @@ fn hit_test_is_behind_the_consent_gate() {
         "{\"method\":\"hit_test\",\"params\":{\"id\":\"btn\"},\"id\":1}");
     assert denied.contains("-32001");
     assert denied.contains("reachable") == false;
+}
+
+// A REFUSAL A CALLER CAN ACT ON. `not_exposed` arrives at someone who has
+// usually just seen the node — `mode:"full"` lists the whole tree and hands
+// back ids like `root/button#2` — so a bare outcome reads as the surface being
+// broken rather than the app having decided. It has exactly two causes and the
+// hint names both, because the remedy differs: one is "give it a key", the
+// other is "the app said no".
+#[test]
+fn a_refusal_for_an_unexposed_node_says_which_of_the_two_it_is() {
+    let r: json::Value = outcome_result_for(surface::Outcome::NotExposed, "root/button#2");
+    let t: text::Text = r.to_text();
+    assert t.contains("not_exposed");
+    assert t.contains("root/button#2");
+    // The two causes, and the fact that retrying is not the answer.
+    assert t.contains("key");
+    assert t.contains("agent: Hidden");
+    assert t.contains("retry");
+
+    // `not_found` keeps its own, different hint — the two must not collapse
+    // into one message, because "there is no such node" and "there is, and you
+    // may not touch it" send a caller to different places.
+    let nf: text::Text = outcome_result_for(surface::Outcome::NotFound, "ghost").to_text();
+    assert nf.contains("no node");
+    assert (nf.contains("agent: Hidden")) == false;
+
+    // An allowed outcome carries no hint at all.
+    let ok: text::Text = outcome_result_for(surface::Outcome::Allowed, "tap").to_text();
+    assert (ok.contains("hint")) == false;
+    return;
 }
 
 // ---- required parameters ------------------------------------------------------
