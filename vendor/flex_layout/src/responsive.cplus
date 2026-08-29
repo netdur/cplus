@@ -159,7 +159,6 @@ impl ResponsiveConfig {
 
     fn remove_all_breakpoints(ref this) {
         this._breakpoints.remove_all();
-        return;
     }
 
     fn breakpoint_count(this) -> usize { return this._breakpoints.count(); }

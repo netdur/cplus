@@ -75,7 +75,6 @@ fn perform_on_main(target: *u8, action: *u8, arg: *u8) {
         arg,
         1,
     );
-    return;
 }
 
 // scroll_to passes an NSRect (a struct), which performSelectorOnMainThread
@@ -88,7 +87,6 @@ static SCROLL_METHOD_REGISTERED: bool = false;
 fn cplus_scroll_self_visible(view: *u8, _cmd: *u8, _sender: *u8) {
     let b: rt::Rect = rt::msg_rect(view, rt::sel(#str_ptr("bounds\0")));
     rt::msg_void_rect(view, rt::sel(#str_ptr("scrollRectToVisible:\0")), b);
-    return;
 }
 
 fn ensure_scroll_method() {
@@ -105,7 +103,6 @@ fn ensure_scroll_method() {
         );
     }
     { SCROLL_METHOD_REGISTERED = true; }
-    return;
 }
 
 // Tell the app the value changed, the way a real edit would.
@@ -130,7 +127,6 @@ fn cplus_agent_send_action(view: *u8, _cmd: *u8, _sender: *u8) {
     if is_null(action) { return; }
     let target: *u8 = rt::msg_id(view, rt::sel(#str_ptr("target\0")));
     let _sent: i8 = rt::msg_i8_id_id(view, rt::sel(#str_ptr("sendAction:to:\0")), action, target);
-    return;
 }
 
 fn ensure_send_action_method() {
@@ -145,7 +141,6 @@ fn ensure_send_action_method() {
         );
     }
     { SEND_ACTION_METHOD_REGISTERED = true; }
-    return;
 }
 
 // Whether writing this view's value owes the app its ACTION. Text controls are
@@ -198,14 +193,12 @@ fn notify_text_changed_on_main(view: *u8) {
         return;
     }
     perform_on_main(delegate, sel, note);
-    return;
 }
 
 fn notify_value_changed_on_main(view: *u8) {
     if !value_control_notifies(view) { return; }
     ensure_send_action_method();
     perform_on_main(view, rt::sel(#str_ptr("cplusAgentSendAction:\0")), null());
-    return;
 }
 
 // Scroll `view`'s bounds into view on the main thread.
@@ -223,7 +216,6 @@ fn scroll_visible_on_main(view: *u8) {
         null(),
         1,
     );
-    return;
 }
 
 // ---- agent-id tagging -------------------------------------------------------
@@ -288,7 +280,6 @@ fn set_agent_policy(view: *u8, policy: u32) {
     if is_null(view) { return; }
     rt::set_associated_object(view, identity::policy_key(),
                               identity::pack_policy(policy), 0);
-    return;
 }
 
 // The pinned policy, or `policy_none` when the view was never marked.
@@ -347,7 +338,6 @@ fn set_affordance(view: *u8, role: identity::Role) {
     let packed: *u8 = identity::pack_affordance(identity::role_index(role) as u32, drive);
     // OBJC_ASSOCIATION_ASSIGN 0: value is an integer disguised as a pointer.
     rt::set_associated_object(view, identity::affordance_key(), packed, 0);
-    return;
 }
 
 // Record role + an explicit drive method (for widgets whose drive does not
@@ -356,7 +346,6 @@ fn set_affordance_drive(view: *u8, role: identity::Role, drive: u32) {
     if is_null(view) { return; }
     let packed: *u8 = identity::pack_affordance(identity::role_index(role) as u32, drive);
     rt::set_associated_object(view, identity::affordance_key(), packed, 0);
-    return;
 }
 
 // Declared role if the view was annotated; None means "fall back to classify".
@@ -534,7 +523,6 @@ static CARET_METHOD_REGISTERED: bool = false;
 
 fn cplus_set_caret_self(view: *u8, _cmd: *u8, _sender: *u8) {
     rt::msg_void_range(view, rt::sel(#str_ptr("setSelectedRange:\0")), CARET_RANGE);
-    return;
 }
 
 fn ensure_caret_method() {
@@ -545,7 +533,6 @@ fn ensure_caret_method() {
                                        cplus_set_caret_self, #str_ptr("v@:@\0"));
     }
     CARET_METHOD_REGISTERED = true;
-    return;
 }
 
 #[link_name = "class_addMethod"]
@@ -565,7 +552,6 @@ fn set_selected_range_on_main(tv: *u8, r: rt::Range) {
         null(),
         1,
     );
-    return;
 }
 
 // The attributed store behind a TEXT control, or null when this is not one.
@@ -1115,7 +1101,6 @@ fn walk(ref reg: identity::Registry, ref views: vec::Vec[ViewRef], view: *u8, pa
         walk(reg, views, subview_at(view, i), reg_node);
         i = i +% 1;
     }
-    return;
 }
 
 // Walk a window's view hierarchy into a `Surface`. The window is the root node
@@ -1193,7 +1178,6 @@ impl Surface {
             }
             i = i +% 1;
         }
-        return;
     }
 
     fn view_of(this, node: usize) -> *u8 {
@@ -1587,7 +1571,7 @@ impl Surface {
                 if is_detached(v) { return surface::runs_refused(surface::Outcome::Stale, true); }
                 let tv: *u8 = text_target(v);
                 let storage: *u8 = attributed_storage_of(tv);
-                if storage == (0 as *u8) {
+                if storage.is_null() {
                     // Not a text control, or one with no attribute model —
                     // which is a different answer from "no runs".
                     return surface::runs_refused(surface::Outcome::Allowed, false);
@@ -1739,14 +1723,12 @@ fn refresh_in_place(p: *u8) {
     let win: *u8 = { (*s).view_of(1) };
     if is_null(win) { return; }
     { *s = open(win); }
-    return;
 }
 
 fn cplus_agent_refresh(receiver: *u8, _cmd: *u8, _arg: *u8) {
     let p: *u8 = REFRESH_TARGET;
     if is_null(p) { return; }
     refresh_in_place(p);
-    return;
 }
 
 fn ensure_refresh_method() {
@@ -1763,7 +1745,6 @@ fn ensure_refresh_method() {
         );
     }
     { REFRESH_METHOD_REGISTERED = true; }
-    return;
 }
 
 // ---- row selection (agent click on a table/outline row cell) ---------------
@@ -1777,7 +1758,6 @@ static SELECT_METHOD_REGISTERED: bool = false;
 
 fn cplus_agent_select_row(table: *u8, _cmd: *u8, idxset: *u8) {
     rt::msg_void_id_i8(table, rt::sel(#str_ptr("selectRowIndexes:byExtendingSelection:\0")), idxset, 0);
-    return;
 }
 
 fn ensure_select_method() {
@@ -1794,7 +1774,6 @@ fn ensure_select_method() {
         );
     }
     { SELECT_METHOD_REGISTERED = true; }
-    return;
 }
 
 // The nearest enclosing NSTableView (NSOutlineView included) above `v`, or null.
@@ -2026,7 +2005,6 @@ fn refresh_surface(p: *u8) {
     REFRESH_TARGET = p;
     perform_on_main(win, rt::sel(#str_ptr("cplusAgentRefresh:\0")), null());
     REFRESH_TARGET = null();
-    return;
 }
 
 // The curated describe: identity::Registry.describe() over the wire — only
@@ -2202,7 +2180,6 @@ fn cplus_invoke_menu_path(app: *u8, _cmd: *u8, ns_path: *u8) {
     // validation and all; nothing here synthesizes a click at a coordinate.
     { rt::msg_void_i64(menu, rt::sel(#str_ptr("performActionForItemAtIndex:\0")), idx) };
     MENU_RESULT = MENU_R_ALLOWED;
-    return;
 }
 
 fn ensure_menu_method() {
@@ -2213,7 +2190,6 @@ fn ensure_menu_method() {
                                        cplus_invoke_menu_path, #str_ptr("v@:@\0"));
     }
     MENU_METHOD_REGISTERED = true;
-    return;
 }
 
 fn mcp_invoke_menu(p: *u8, grant: auth::Grant, path: str) -> surface::Outcome {

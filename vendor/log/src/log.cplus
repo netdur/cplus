@@ -121,7 +121,6 @@ static USE_COLORS: bool = true;
 // dropped. Reads as "set max level to Warn".
 fn set_max_level(level: Level) {
     { MAX_LEVEL = level.severity(); }
-    return;
 }
 
 // The lowest level currently being emitted.
@@ -139,7 +138,6 @@ fn is_enabled(level: Level) -> bool {
 // `set_uses_color(false)`.
 fn set_uses_color(enabled: bool) {
     { USE_COLORS = enabled; }
-    return;
 }
 
 // True when log output is currently colorized.
@@ -157,7 +155,6 @@ fn write_str(fd: i32, s: str) {
         if w <= 0 { return; }
         written = written +% (w as usize);
     }
-    return;
 }
 
 fn print_timestamp(fd: i32) {
@@ -185,7 +182,6 @@ fn print_timestamp(fd: i32) {
         let view: str = { #str_from_raw_parts(#addr_of(buf) as *u8, n as usize) };
         write_str(fd, view);
     }
-    return;
 }
 
 // The one workhorse: emit `message` at `level`, gated on `max_level` and
@@ -209,7 +205,6 @@ fn log(level: Level, message: str) {
     if colored {
         write_str(fd, ANSI_RESET);
     }
-    return;
 }
 
 fn trace(message: str) { log(Level::Trace, message); return; }

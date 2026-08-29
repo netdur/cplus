@@ -301,7 +301,6 @@ impl Attachment {
             f(this._ptr);
             this._armed = false;
         }
-        return;
     }
 }
 
@@ -525,7 +524,6 @@ impl Node {
             this._grid_col_line_names.set(line.to_text(), idx);
         }
         this._grid_cols.append(track);
-        return;
     }
     fn add_grid_row(ref this, track: GridTrack, line: str = "") {
         if #str_len(line) > 0 {
@@ -534,7 +532,6 @@ impl Node {
             this._grid_row_line_names.set(line.to_text(), idx);
         }
         this._grid_rows.append(track);
-        return;
     }
     fn set_grid_dense(ref this, dense: bool) { this._grid_dense = dense; return; }        // container
     fn set_grid_column_span(ref this, count: i32) { this._grid_col_span = if count < 1 { 1 } else { count }; return; }  // item
@@ -579,7 +576,6 @@ impl Node {
             Gutter::Column => { this.style.gap_column = length; }
             Gutter::All => { this.style.gap_row = length; this.style.gap_column = length; }
         }
-        return;
     }
     fn set_position_type(ref this, position: PositionType) { this.style.position_type = position; return; }
     fn set_display(ref this, display: Display) { this.style.display = display; return; }
@@ -647,7 +643,6 @@ impl Node {
         this.style.flex_grow = factor;
         this.style.flex_shrink = 1.0;
         this.style.flex_basis = StyleLength::points(0.0);
-        return;
     }
 
     fn set_width(ref this, length: StyleLength) { this.style.width = length; return; }
@@ -665,7 +660,6 @@ impl Node {
         if edge_hits_top(edge) { this.style.margin_top = length; }
         if edge_hits_bottom(edge) { this.style.margin_bottom = length; }
         match edge { Edge::Start => { this.style.margin_start = length; } Edge::End => { this.style.margin_end = length; } _ => {} }
-        return;
     }
     fn set_padding(ref this, edge: Edge, length: StyleLength) {
         if edge_hits_left(edge) { this.style.padding_left = length; }
@@ -673,7 +667,6 @@ impl Node {
         if edge_hits_top(edge) { this.style.padding_top = length; }
         if edge_hits_bottom(edge) { this.style.padding_bottom = length; }
         match edge { Edge::Start => { this.style.padding_start = length; } Edge::End => { this.style.padding_end = length; } _ => {} }
-        return;
     }
     fn set_border(ref this, edge: Edge, length: StyleLength) {
         if edge_hits_left(edge) { this.style.border_left = length; }
@@ -681,7 +674,6 @@ impl Node {
         if edge_hits_top(edge) { this.style.border_top = length; }
         if edge_hits_bottom(edge) { this.style.border_bottom = length; }
         match edge { Edge::Start => { this.style.border_start = length; } Edge::End => { this.style.border_end = length; } _ => {} }
-        return;
     }
     fn set_position(ref this, edge: Edge, length: StyleLength) {
         if edge_hits_left(edge) { this.style.position_left = length; }
@@ -689,7 +681,6 @@ impl Node {
         if edge_hits_top(edge) { this.style.position_top = length; }
         if edge_hits_bottom(edge) { this.style.position_bottom = length; }
         match edge { Edge::Start => { this.style.position_start = length; } Edge::End => { this.style.position_end = length; } _ => {} }
-        return;
     }
 
     // Opaque per-node context handed to the measure / baseline callbacks — a
@@ -699,7 +690,6 @@ impl Node {
     fn set_context(ref this, ctx: *u8) {
         this._node_ctx = ctx;
         this._cached_valid = false;
-        return;
     }
     fn context(this) -> *u8 { return this._node_ctx; }
 
@@ -708,7 +698,6 @@ impl Node {
     // once: on node drop, on `detach()`, or when a new `attach` replaces it.
     fn attach(ref this, ptr: *u8, release: fn(*u8)) {
         this._attachment = Attachment::own(ptr, release);
-        return;
     }
     fn attachment(this) -> option::Option[*u8] {
         if this._attachment.armed() { return option::Option[*u8]::Some(this._attachment.get()); }
@@ -723,7 +712,6 @@ impl Node {
         this._measure = f;
         this._has_measure = true;
         this._cached_valid = false;
-        return;
     }
     fn has_measure(this) -> bool { return this._has_measure; }
     // Back to no measure fn: the node sizes from style / children / content-fit.
@@ -731,7 +719,6 @@ impl Node {
         this._measure = measure_none;
         this._has_measure = false;
         this._cached_valid = false;
-        return;
     }
     // Provide a baseline (ascent from the top, given ctx + the item's width/height)
     // for align-items: baseline — e.g. a text view's first-line baseline.
@@ -739,14 +726,12 @@ impl Node {
         this._baseline = f;
         this._has_baseline = true;
         this._cached_valid = false;
-        return;
     }
     fn has_baseline(this) -> bool { return this._has_baseline; }
     fn clear_baseline(ref this) {
         this._baseline = baseline_none;
         this._has_baseline = false;
         this._cached_valid = false;
-        return;
     }
 
     // ---- computed layout getters ----
@@ -975,7 +960,6 @@ impl Node {
         h = clamp(h, this.style.min_height.resolve(height), this.style.max_height.resolve(height));
 
         this.apply_layout(Frame { left: 0.0, top: 0.0, width: w, height: h }, dir);
-        return;
     }
 
     // ---- band evaluation ----------------------------------------------
@@ -1228,7 +1212,6 @@ impl Node {
         this._cached_dir = dir;
         this._cached_child_count = this._children.count();
         this._cached_grid_sig = this.grid_sig();
-        return;
     }
 
     // Did the last `calculate_layout` actually re-lay this node out? false =
@@ -1269,7 +1252,6 @@ impl Node {
             }
             i = i +% 1;
         }
-        return;
     }
 
     // Lay out this node's children within its already-known box (this._layout.width
@@ -1705,7 +1687,6 @@ impl Node {
             }
             i = i +% 1;
         }
-        return;
     }
 
     // ======================================================================
@@ -1891,7 +1872,6 @@ impl Node {
             }
             i = i +% 1;
         }
-        return;
     }
 
     // --- small per-child readers/writers (encapsulate the one raw-ptr use) ---
@@ -2012,7 +1992,6 @@ impl Node {
             }
             i = i +% 1;
         }
-        return;
     }
 
     fn intrinsic_compute(this, avail_w: f64, avail_h: f64) -> Size {
@@ -2184,7 +2163,6 @@ impl Node {
             }
             option::Option::None => {}
         }
-        return;
     }
 
     // Set a child's absolute frame, then recurse to lay out its own children.
@@ -2198,7 +2176,6 @@ impl Node {
             }
             option::Option::None => {}
         }
-        return;
     }
 
     // Position an absolute child against the padding box using its insets and
@@ -2435,7 +2412,6 @@ fn line_index(names: vec::Vec[text::Text], name: str) -> i32 {
 // --- grid occupancy (row-major bitmap, grown a row at a time) ---
 fn occ_ensure(ref occ: vec::Vec[bool], rows_needed: usize, col_count: usize) {
     while occ.count() < rows_needed * col_count { occ.append(false); }
-    return;
 }
 fn occ_free(occ: vec::Vec[bool], r: usize, c: usize, rspan: usize, cspan: usize, col_count: usize) -> bool {
     var rr: usize = r;
@@ -2461,7 +2437,6 @@ fn occ_mark(ref occ: vec::Vec[bool], r: usize, c: usize, rspan: usize, cspan: us
         }
         rr = rr +% 1;
     }
-    return;
 }
 // Total extent of `span` consecutive tracks from `start`, including inner gaps.
 fn span_extent(sizes: vec::Vec[f64], start: usize, span: usize, gap: f64) -> f64 {
@@ -3260,7 +3235,6 @@ fn set_child_display(root: Node, at: usize, d: Display) {
         option::Option[*Node]::Some(p) => { { (*p).set_display(d) }; }
         option::Option::None => {}
     }
-    return;
 }
 
 #[test]
@@ -3301,7 +3275,6 @@ fn test_child_layout_out_of_range_none() {
         option::Option[Frame]::Some(x) => { assert false; }
         option::Option::None => { assert true; }
     }
-    return;
 }
 
 // ---- Phase 2a: content-fit / intrinsic sizing ----
@@ -4337,7 +4310,6 @@ fn test_layout_changed_reports_cache_skips() {
         option::Option[*Node]::Some(p) => { assert { (*p).layout_changed() }; }
         option::Option::None => { assert false; }
     }
-    return;
 }
 
 static CONTENT_H: f64 = 20.0;
@@ -4373,7 +4345,6 @@ fn test_mark_content_changed_forces_remeasure() {
     root.calculate_layout(100.0, 50.0, Direction::LTR);
     assert approx(must(root.child_frame(0)).height, 35.0);   // re-measured
     assert root.layout_changed();
-    return;
 }
 
 // ---- Phase 5e: subgrid ----
@@ -4534,7 +4505,6 @@ static ATTACH_LAST: i64 = 0;
 fn counting_release(p: *u8) {
     ATTACH_RELEASES = ATTACH_RELEASES + 1;
     ATTACH_LAST = p as i64;
-    return;
 }
 
 // The attachment as an integer: -1 when none (for asserts).
@@ -4636,7 +4606,6 @@ fn test_child_address_stable_across_append_and_move() {
         option::Option[*Node]::Some(p3) => { assert p3 == p0; }
         option::Option::None => { assert false; }
     }
-    return;
 }
 
 #[test]
@@ -4677,7 +4646,6 @@ fn test_remove_child_returns_subtree_and_releases() {
         option::Option[Node]::Some(_x) => { assert false; }
         option::Option::None => { }
     }
-    return;
 }
 
 // The reorder cache trap: two same-styled subtrees swapped in place used to
@@ -4723,7 +4691,6 @@ fn test_remove_then_reinsert_reparents_subtree() {
         }
         option::Option::None => { assert false; }
     }
-    return;
 }
 
 // ---- style & grid read-back ----
@@ -4812,7 +4779,6 @@ fn test_grid_template_and_item_read_back() {
     assert !item.is_grid_columns_subgrid();
     item.set_grid_columns_subgrid(true);
     assert item.is_grid_columns_subgrid();
-    return;
 }
 
 fn measure_fixed_40x10(ctx: *u8, w: f64, wm: MeasureMode, h: f64, hm: MeasureMode) -> Size {
@@ -4850,7 +4816,6 @@ fn test_measure_swap_and_clear_invalidate() {
     }
     root.calculate_layout();
     assert approx(root.frame().height, 0.0);  // no content, no style size
-    return;
 }
 
 // The cursor-revalidation primitive: unchanged count == proof no cursor died.
@@ -4874,7 +4839,6 @@ fn test_removal_count_bumps_only_on_removal() {
         option::Option::None => { assert false; }
     }
     assert removal_count() == c0 +% 1;      // the one event that kills cursors
-    return;
 }
 
 #[test]

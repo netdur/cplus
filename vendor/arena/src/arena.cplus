@@ -218,12 +218,10 @@ impl Arena {
             curr = next;
         }
         this._head = { 0 as *u8 };
-        return;
     }
 
     fn drop(ref this) {
         this.reset();
-        return;
     }
 }
 

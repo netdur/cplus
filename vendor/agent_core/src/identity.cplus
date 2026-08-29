@@ -238,7 +238,7 @@ fn pack_policy(p: u32) -> *u8 {
 }
 
 fn unpack_policy(packed: *u8) -> u32 {
-    if packed == (0 as *u8) { return policy_none(); }
+    if packed.is_null() { return policy_none(); }
     if ((packed as usize) & 1) != 1 { return policy_none(); }
     return (((packed as usize) >> 1) & (0xFF as usize)) as u32;
 }
@@ -266,7 +266,7 @@ fn unpack_drive(packed: *u8) -> u32 {
 
 // True when `p` looks like a pack_affordance result (marker bit set, non-null).
 fn is_packed_affordance(p: *u8) -> bool {
-    if p == (0 as *u8) { return false; }
+    if p.is_null() { return false; }
     return ((p as usize) & 1) == 1;
 }
 
@@ -476,7 +476,6 @@ impl Registry {
     fn set_name(ref this, node: usize, name: str) {
         assert this.is_valid(node);
         this.names.set(text::from_str(name), node);
-        return;
     }
 
     // Set the name from the WIDGET'S OWN CONTENT — a button's title, a field's
@@ -509,7 +508,6 @@ impl Registry {
         // one-setter leak arriving through the other door.
         if this.in_excluded_subtree(node) { return; }
         this.names.set(text::from_str(name), node);
-        return;
     }
 
     // The accessible name, as a view into registry-owned storage ("" if unset).
@@ -527,7 +525,6 @@ impl Registry {
     fn set_description(ref this, node: usize, d: str) {
         assert this.is_valid(node);
         this.descriptions.set(text::from_str(d), node);
-        return;
     }
 
     // The intent description ("" if unset), a view into registry-owned storage.
@@ -542,7 +539,6 @@ impl Registry {
     fn set_enabled(ref this, node: usize, on: bool) {
         assert this.is_valid(node);
         this.enabled.set(on, node);
-        return;
     }
 
     fn is_enabled(this, node: usize) -> bool {
@@ -558,7 +554,6 @@ impl Registry {
     fn set_observe_only(ref this, node: usize) {
         assert this.is_valid(node);
         this.actionable.set(false, node);
-        return;
     }
 
     // Whether the agent may act on this node AS FAR AS THE WIDGET IS CONCERNED
@@ -581,7 +576,6 @@ impl Registry {
     fn set_tier(ref this, node: usize, tier: u32) {
         assert this.is_valid(node);
         this.tiers.set(tier, node);
-        return;
     }
 
     // The node's own declared tier, ignoring its ancestors.
@@ -626,7 +620,6 @@ impl Registry {
         if policy == policy_protected() { this.set_tier(node, tier_protected()); return; }
         if policy == policy_private() { this.set_tier(node, tier_private()); return; }
         if policy == policy_exclude() { this.set_excluded(node, true); return; }
-        return;
     }
 
     // --- what a PARTICULAR grant may do -----------------------------------
@@ -700,7 +693,6 @@ impl Registry {
     fn set_excluded(ref this, node: usize, on: bool) {
         assert this.is_valid(node);
         this.excluded.set(on, node);
-        return;
     }
 
     // Is this node inside an excluded subtree? Walks up, so marking the root is
@@ -725,7 +717,6 @@ impl Registry {
     fn set_exposed(ref this, node: usize, on: bool) {
         assert this.is_valid(node);
         this.exposed.set(on, node);
-        return;
     }
 
     // The curated UI description (plan.agent-core.md §4, §5.1): the agent-visible
@@ -1097,7 +1088,6 @@ fn test_describe_lists_every_node_with_fields() {
         }
         option::Option::None => { assert false; }
     }
-    return;
 }
 
 #[test]
@@ -1114,7 +1104,6 @@ fn test_describe_reflects_ceiling() {
         }
         option::Option::None => { assert false; }
     }
-    return;
 }
 
 // Memory safety: describe() returns a Vec[NodeView] that owns two strings per
@@ -1223,7 +1212,6 @@ fn test_describe_parent_indexes_the_answer_not_the_registry() {
         }
         option::Option::None => { assert false; }
     }
-    return;
 }
 
 // Every `parent` in an answer must address that answer: in range, and above
@@ -1257,7 +1245,6 @@ fn test_describe_parents_are_in_range_and_ascend() {
         }
         i = i +% 1;
     }
-    return;
 }
 
 #[test]
@@ -1394,7 +1381,6 @@ fn an_excluded_subtree_hides_its_keyed_children_too() {
     }
     assert saw_send == false;
     assert saw_app;
-    return;
 }
 
 #[test]
@@ -1429,7 +1415,6 @@ fn a_protected_node_is_still_described_with_its_label() {
         i = i +% 1;
     }
     assert seen;
-    return;
 }
 
 #[test]
@@ -1459,7 +1444,6 @@ fn the_same_tree_answers_two_grants_differently() {
         }
         option::Option::None => { assert false; }
     };
-    return;
 }
 
 #[test]
@@ -1481,7 +1465,6 @@ fn a_content_name_never_lands_on_a_sensitive_node() {
     // The dev-authored label is a different door and stays open.
     r.set_name(card, "Card number");
     assert r.name_of(card) == "Card number";
-    return;
 }
 
 #[test]
@@ -1501,7 +1484,6 @@ fn a_content_name_never_lands_inside_an_excluded_subtree_either() {
     // panel may still be called "Assistant"; that is not the user's data.
     r.set_name(panel, "Assistant");
     assert r.name_of(panel) == "Assistant";
-    return;
 }
 
 #[test]
@@ -1534,7 +1516,6 @@ fn the_walked_read_gate_drops_curation_and_keeps_the_two_that_are_content() {
     // ...and a tier is still a tier in the mode an agent chooses for itself.
     assert r.can_read_value_walked(auth::operator(), card) == false;
     assert r.can_read_value_walked(auth::protected_operator(), card);
-    return;
 }
 
 #[test]
@@ -1550,7 +1531,6 @@ fn policy_values_round_trip_through_a_pinned_word() {
     // field the app meant to close.
     assert unpack_policy(0 as *u8) == policy_none();
     assert unpack_policy(8 as *u8) == policy_none();
-    return;
 }
 
 #[test]
@@ -1570,7 +1550,6 @@ fn set_policy_routes_to_the_right_mechanism() {
     assert r.is_exposed(b);
     assert !r.is_exposed(c);       // exclusion does
     assert r.tier_of(d) == tier_open();
-    return;
 }
 
 #[test]
@@ -1586,5 +1565,4 @@ fn tier_capabilities_are_distinct_per_tier() {
     assert act_caps_for_tier(tier_private()) == (auth::cap_act() | auth::cap_act_private());
     assert stricter_tier(tier_open(), tier_private()) == tier_private();
     assert stricter_tier(tier_private(), tier_protected()) == tier_private();
-    return;
 }

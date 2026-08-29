@@ -105,7 +105,6 @@ fn make_nonblocking(fd: i32) {
     if flags >= (0 as i32) {
         let _rc: i32 = { fcntl(fd, 4 as i32, flags | (4 as i32)) }; // F_SETFL, O_NONBLOCK
     }
-    return;
 }
 
 // ---- shell integration ------------------------------------------------------
@@ -174,7 +173,6 @@ fn capture_original_zdotdir() {
         }
         option::Option[text::Text]::None => {}
     }
-    return;
 }
 
 // The shell half of the command API.
@@ -525,11 +523,9 @@ impl Session {
         }
         this._reaped = true;
         this._status = -1 as i32;
-        return;
     }
 
     fn drop(ref this) {
         this.close();
-        return;
     }
 }

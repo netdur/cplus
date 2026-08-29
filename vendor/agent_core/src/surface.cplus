@@ -262,7 +262,6 @@ impl TextVersions {
     fn bump(ref this, node: usize) {
         let cur: u64 = this.version_of(node);
         this.v.insert(node, cur +% 1);
-        return;
     }
 }
 

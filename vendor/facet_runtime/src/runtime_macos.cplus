@@ -139,7 +139,6 @@ static AGENT_ID: text::Text = #zero::[text::Text]();
 // honest answer is that this parameter stopped being one.
 fn agent_mcp(id: str) {
     AGENT_ID = text::from_str(id);
-    return;
 }
 
 // The name this process serves under, or "" if the app never asked.
@@ -153,7 +152,6 @@ fn agent_id() -> str { return AGENT_ID.view(); }
 fn serve_agent_if_asked() {
     let id: str = AGENT_ID.view();
     if id != "" { app::agent_serve_once(id); }
-    return;
 }
 
 // ---- the blocking hosts ------------------------------------------------------
@@ -202,7 +200,6 @@ fn run[W: Window](take window: W) {
     );
     host::run_loop();
     settle_and_teardown(#addr_of(root));
-    return;
 }
 
 fn default_should_close(ctx: *u8) -> bool { return true; }
@@ -324,14 +321,12 @@ fn settle_and_teardown(root: *core::Node) {
             break;
         }
     }
-    return;
 }
 
 // One turn of the main loop, so a queued apply can land. The window is gone by
 // now, so this is the only thing that moves the queue at all.
 fn drain_once() {
     services::pump_async(0 as *u8);
-    return;
 }
 
 // ---- modal verbs -------------------------------------------------------------
@@ -433,7 +428,6 @@ fn present_window(take root: Node, title: str, width: f64, height: f64) {
         }
         option::Option[box::Box[Node]]::None => { }
     }
-    return;
 }
 
 // ---- window verbs ------------------------------------------------------------
@@ -516,7 +510,6 @@ fn observe_stopped(cb: fn(*u8), ctx: *u8 = 0 as *u8) -> services::Cancellable {
 // only way to undo an override and therefore not optional.
 fn set_app_appearance(a: vocab::Appearance) {
     host::set_app_appearance(a);
-    return;
 }
 
 fn app_appearance() -> vocab::Appearance {
@@ -531,7 +524,6 @@ fn window_frame() -> vocab::Rect {
 
 fn set_window_frame(frame: vocab::Rect) {
     dialogs::set_window_frame_of(app::newest_window_root(), frame);
-    return;
 }
 
 // ---- App ---------------------------------------------------------------------
@@ -589,7 +581,6 @@ impl App {
     // boxed screen each time the route is shown.
     fn screen(ref this, name: str, factory: fn() -> screen::ScreenBox) {
         this.routes.append(AppRoute { name: text::from_str(name), factory: factory });
-        return;
     }
 
     // The same door as the free `runtime::agent_mcp` below, kept as a method
@@ -600,13 +591,11 @@ impl App {
     fn agent_mcp(ref this, id: str = "") {
         if id == "" { agent_mcp(this.name()); return; }
         agent_mcp(id);
-        return;
     }
 
     fn on_launch(ref this, f: fn(*u8), ctx: *u8 = 0 as *u8) {
         this.on_launch_fn = f;
         this.hook_ctx = ctx;
-        return;
     }
 
     fn on_quit(ref this, f: fn(*u8)) { this.on_quit_fn = f; return; }
@@ -633,8 +622,7 @@ impl App {
         this.on_should_quit_fn = f;
         // ONLY WHEN GIVEN. An App has one `hook_ctx` and `on_launch` may have
         // set it already; an omitted ctx here must not zero that.
-        if ctx != (0 as *u8) { this.hook_ctx = ctx; }
-        return;
+        if ctx.is_not_null() { this.hook_ctx = ctx; }
     }
 
     fn route_factory(this, route: str) -> fn() -> screen::ScreenBox {
@@ -654,7 +642,7 @@ impl App {
 
     fn build_menu(this) -> AppMenu {
         let f: fn() -> AppMenu = this.menu_fn;
-        if f != (0 as fn() -> AppMenu) { return f(); }
+        if f.is_not_null() { return f(); }
         var m: AppMenu = screen::app_menu(this.name());
         m.add_item(this.name(), "Quit", "q", screen::menu_action_quit());
         return m;
@@ -705,7 +693,7 @@ impl App {
         var outcome: status::Status = status::Status::Ok;
         loop {
             let f: fn() -> screen::ScreenBox = this.route_factory(route.view());
-            if f == (0 as fn() -> screen::ScreenBox) { outcome = status::Status::InvalidInput; break; }
+            if f.is_null() { outcome = status::Status::InvalidInput; break; }
             var sb: screen::ScreenBox = f();
             if !sb.valid() { outcome = status::Status::InvalidInput; break; }
             // The app's menu plus THIS screen's contribution, rebuilt per
@@ -777,9 +765,9 @@ static CURRENT_ROOT: *core::Node = #zero::[*core::Node]();
 // function ends a quit by starting the only one there is.
 fn app_should_terminate(_ctx: *u8) -> i8 {
     let ap: *App = running_app();
-    if ap == (0 as *App) { return 1 as i8; }    // no app running: let it go
+    if ap.is_null() { return 1 as i8; }    // no app running: let it go
     let ask: fn(*u8) -> bool = { (*ap).on_should_quit_fn };
-    if ask != (0 as fn(*u8) -> bool) {
+    if ask.is_not_null() {
         if !ask({ (*ap).hook_ctx }) {
             // The app said not yet. Nothing else happens — holding the moment
             // is the point, and finishing is the app's business.
@@ -792,7 +780,7 @@ fn app_should_terminate(_ctx: *u8) -> i8 {
     // Cancel here would wedge a process that cannot quit any other way.
     // Between screens is the real case: the old root is closed and the next
     // is not open yet.
-    if CURRENT_ROOT == (0 as *core::Node) { return 1 as i8; }
+    if CURRENT_ROOT.is_null() { return 1 as i8; }
     nav::quit();
     return 0 as i8;
 }
@@ -808,9 +796,8 @@ fn close_current() {
     close_all_pushed();
     let r: *core::Node = CURRENT_ROOT;
     CURRENT_ROOT = 0 as *core::Node;
-    if r == (0 as *core::Node) { return; }
+    if r.is_null() { return; }
     host::close_window_of(r);
-    return;
 }
 
 // One pushed (secondary) screen: the tree it shows and the heap ScreenBox that
@@ -825,19 +812,18 @@ static PUSHED: vec::Vec[PushedScreen] = #zero::[vec::Vec[PushedScreen]]();
 // A presented window closed: give its tree back. Without this the box made in
 // `present_window` was never reclaimed.
 fn presented_closed(ctx: *u8) {
-    if ctx == (0 as *u8) { return; }
+    if ctx.is_null() { return; }
     // As `pushed_closed`: no settle here, because it would spin the main
     // thread inside a close callback. Same hole, same reason, same file.
     let _b: box::Box[Node] = box::from_raw::[Node](ctx);
-    return;
 }
 
 // nav::push: show `route` in a window alongside the primary.
 fn push_screen(route: str, arg: str) -> bool {
     let ap: *App = running_app();
-    if ap == (0 as *App) { return false; }
+    if ap.is_null() { return false; }
     let f: fn() -> screen::ScreenBox = { (*ap).route_factory(route) };
-    if f == (0 as fn() -> screen::ScreenBox) { return false; }
+    if f.is_null() { return false; }
     nav::set_arg(arg);   // after the lookup: a failed push leaves arg alone
     var sb: screen::ScreenBox = f();
     if !sb.valid() { return false; }
@@ -848,17 +834,17 @@ fn push_screen(route: str, arg: str) -> bool {
         option::Option[box::Box[Node]]::Some(tb) => { tb.into_raw() } as *core::Node,
         option::Option[box::Box[Node]]::None => 0 as *core::Node,
     };
-    if tp == (0 as *core::Node) { return false; }
+    if tp.is_null() { return false; }
     let sbp: *u8 = match box::new::[screen::ScreenBox](sb) {
         option::Option[box::Box[screen::ScreenBox]]::Some(b) => b.into_raw(),
         option::Option[box::Box[screen::ScreenBox]]::None => 0 as *u8,
     };
-    if sbp == (0 as *u8) { return false; }
+    if sbp.is_null() { return false; }
     let w: *u8 = host::open_window(tp, c,
                                    should_close: default_should_close,
                                    should_close_ctx: sbp,
                                    will_close: pushed_closed, will_close_ctx: sbp);
-    if w == (0 as *u8) { return false; }
+    if w.is_null() { return false; }
     // The agent reads the LIVE view tree of ONE window, and it was only ever
     // pointed at the primary — so a pushed screen was invisible to an agent,
     // and so was an `alert` sheet. The sheet case is the sharp one: dialogs
@@ -876,7 +862,7 @@ fn push_screen(route: str, arg: str) -> bool {
 // close button, the unwind sweep) — from windowWillClose, BEFORE the tree
 // unmounts, so the screen's views are alive for on_detach.
 fn pushed_closed(ctx: *u8) {
-    if ctx == (0 as *u8) { return; }
+    if ctx.is_null() { return; }
     { (*(ctx as *screen::ScreenBox)).on_detach() };
     pushed_remove(ctx);
     // NO SETTLE HERE, and the attempt to add one is why: `settle_and_teardown`
@@ -890,7 +876,6 @@ fn pushed_closed(ctx: *u8) {
     // wait that does not block the thread the workers are trying to reach —
     // deferring the free until settled, rather than waiting for it here.
     let _b: box::Box[screen::ScreenBox] = box::from_raw::[screen::ScreenBox](ctx);
-    return;
 }
 
 fn pushed_remove(sbp: *u8) {
@@ -908,7 +893,6 @@ fn pushed_remove(sbp: *u8) {
         }
         i = i +% (1 as usize);
     }
-    return;
 }
 
 // nav::pop: dismiss the most recently pushed screen. False when none is up.
@@ -920,7 +904,7 @@ fn pop_screen() -> bool {
         option::Option[*PushedScreen]::Some(pp) => { (*pp).root },
         option::Option[*PushedScreen]::None => 0 as *core::Node,
     };
-    if r == (0 as *core::Node) { return false; }
+    if r.is_null() { return false; }
     host::close_window_of(r);   // fires pushed_closed, which removes the entry
     return true;
 }
@@ -937,7 +921,6 @@ fn close_all_pushed() {
         sweeps = sweeps + 1;
         let _p: bool = pop_screen();
     }
-    return;
 }
 
 // ---- app context -------------------------------------------------------------
@@ -954,20 +937,20 @@ fn app_running() -> bool { return running_app() != (0 as *App); }
 
 fn app_name() -> str {
     let ap: *App = running_app();
-    if ap == (0 as *App) { return ""; }
+    if ap.is_null() { return ""; }
     return { (*ap).name() };
 }
 
 fn has_screen(route: str) -> bool {
     let ap: *App = running_app();
-    if ap == (0 as *App) { return false; }
+    if ap.is_null() { return false; }
     let f: fn() -> screen::ScreenBox = { (*ap).route_factory(route) };
-    return f != (0 as fn() -> screen::ScreenBox);
+    return f.is_not_null();
 }
 
 fn register_screen(route: str, factory: fn() -> screen::ScreenBox) -> bool {
     let ap: *App = running_app();
-    if ap == (0 as *App) { return false; }
+    if ap.is_null() { return false; }
     if has_screen(route) { return false; }
     { (*ap).screen(route, factory) };
     return true;
@@ -1001,7 +984,6 @@ impl HeldService: services::Job {
             services::sched_yield_once();
         }
         this.ran = this.ran + 1;
-        return;
     }
     fn apply(ref this) { return; }
 }
@@ -1025,7 +1007,6 @@ fn teardown_does_not_return_while_a_worker_is_in_a_job() {
     assert services::jobs_in_flight() == (0 as u64);
     assert j.ran == 1;
     let _r: i32 = h.join();
-    return;
 }
 
 fn release_after_a_moment(take p: *u64) -> i32 {
@@ -1045,7 +1026,6 @@ fn app_routes_register_and_resolve() {
     a.screen("settings", rt_screen_factory);
     assert a.route_factory("workspace") != (0 as fn() -> screen::ScreenBox);
     assert a.route_factory("nowhere") == (0 as fn() -> screen::ScreenBox);
-    return;
 }
 
 #[test]
@@ -1057,7 +1037,6 @@ fn app_context_is_inert_without_a_running_app() {
     assert app_name() == "";
     assert has_screen("workspace") == false;
     assert register_screen("workspace", rt_screen_factory) == false;
-    return;
 }
 
 #[test]
@@ -1085,7 +1064,6 @@ fn the_running_app_is_reached_through_the_one_door() {
     a.application.host = 0 as *u8;
     assert app_running() == false;
     assert app_name() == "";
-    return;
 }
 
 #[test]
@@ -1101,7 +1079,6 @@ fn the_default_menu_names_the_app_and_carries_quit() {
         }
         option::Option[*MenuItem]::None => { assert false; }
     }
-    return;
 }
 
 #[test]
@@ -1114,7 +1091,6 @@ fn nav_push_and_pop_are_inert_with_no_app_running() {
     close_all_pushed();                        // nothing to sweep
     // close_current with no primary window up closes nothing and does not trap.
     close_current();
-    return;
 }
 
 #[test]
@@ -1125,7 +1101,6 @@ fn window_frame_is_zero_with_no_window_up() {
     assert f.height == 0.0f64;
     // The write half is equally inert rather than reaching a null window.
     set_window_frame(vocab::Rect { x: 10.0f64, y: 10.0f64, width: 100.0f64, height: 100.0f64 });
-    return;
 }
 
 // ---- ⌘Q ----------------------------------------------------------------------
@@ -1176,7 +1151,6 @@ fn an_app_that_says_not_yet_holds_the_quit() {
     CURRENT_ROOT = 0 as *core::Node;
     app::release_current();
     a.application.host = 0 as *u8;
-    return;
 }
 
 #[test]
@@ -1203,7 +1177,6 @@ fn a_quit_nobody_refuses_takes_the_ORDINARY_unwind() {
     CURRENT_ROOT = 0 as *core::Node;
     app::release_current();
     a.application.host = 0 as *u8;
-    return;
 }
 
 #[test]
@@ -1224,7 +1197,6 @@ fn an_app_with_no_opinion_still_takes_the_ordinary_unwind() {
     CURRENT_ROOT = 0 as *core::Node;
     app::release_current();
     a.application.host = 0 as *u8;
-    return;
 }
 
 // THE SEAM ITSELF, end to end and through the ObjC runtime rather than around
@@ -1239,7 +1211,7 @@ fn an_app_with_no_opinion_still_takes_the_ordinary_unwind() {
 fn the_terminate_seam_yields_to_an_application_that_owns_the_delegate() {
     let app: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSApplication\0")),
                               rt::sel(#str_ptr("sharedApplication\0")));
-    assert app != (0 as *u8);
+    assert app.is_not_null();
 
     // (a) AN APPLICATION'S OWN DELEGATE WINS. It is answering this selector
     // itself, or wants to, and replacing it would silently break whatever else
@@ -1247,7 +1219,7 @@ fn the_terminate_seam_yields_to_an_application_that_owns_the_delegate() {
     let squatter: *u8 = rt::msg_id(rt::msg_id(rt::get_class(#str_ptr("NSObject\0")),
                                               rt::sel(#str_ptr("alloc\0"))),
                                    rt::sel(#str_ptr("init\0")));
-    assert squatter != (0 as *u8);
+    assert squatter.is_not_null();
     rt::msg_void_id(app, rt::sel(#str_ptr("setDelegate:\0")), squatter);
     assert akx::install_should_terminate(app_should_terminate, 0 as *u8) == false;
     assert akx::should_terminate_installed() == false;
@@ -1257,7 +1229,7 @@ fn the_terminate_seam_yields_to_an_application_that_owns_the_delegate() {
     assert akx::install_should_terminate(app_should_terminate, 0 as *u8);
     assert akx::should_terminate_installed();
     let d: *u8 = rt::msg_id(app, rt::sel(#str_ptr("delegate\0")));
-    assert d != (0 as *u8);
+    assert d.is_not_null();
     assert rt::msg_i8_id(d, rt::sel(#str_ptr("respondsToSelector:\0")),
                          rt::sel(#str_ptr("applicationShouldTerminate:\0"))) != (0 as i8);
 
@@ -1281,7 +1253,6 @@ fn the_terminate_seam_yields_to_an_application_that_owns_the_delegate() {
     CURRENT_ROOT = 0 as *core::Node;
     app::release_current();
     a.application.host = 0 as *u8;
-    return;
 }
 
 #[test]
@@ -1303,7 +1274,6 @@ fn a_quit_with_no_window_up_is_not_held() {
 
     app::release_current();
     a.application.host = 0 as *u8;
-    return;
 }
 
 #[test]
@@ -1312,7 +1282,6 @@ fn the_terminate_seam_is_inert_with_no_app_running() {
     // NSTerminateNow. Refusing here would wedge a process that has no App.
     app::release_current();
     assert app_should_terminate(0 as *u8) == (1 as i8);
-    return;
 }
 
 // ---- the agent address is process-scoped -------------------------------------
@@ -1323,7 +1292,6 @@ static SERVE_CALLS: i32 = 0;
 fn spy_serve_once(path: str) {
     SERVED_PATH = text::from_str(path);
     SERVE_CALLS = SERVE_CALLS +% (1 as i32);
-    return;
 }
 fn spy_attach_window(w: *u8) { return; }
 fn spy_pin_policy(v: *u8, a: vocab::Agent) { return; }
@@ -1336,14 +1304,12 @@ fn install_serve_spy() {
         serve_once: spy_serve_once,
         pin_policy: spy_pin_policy,
     });
-    return;
 }
 
 fn clear_serve_spy() {
     app::install_agent(app::AgentHooks { attach_window: 0 as fn(*u8), serve_once: 0 as fn(str),
                                          pin_policy: 0 as fn(*u8, vocab::Agent) });
     agent_mcp("");
-    return;
 }
 
 // THE TWO SPELLINGS ARE ONE STORAGE. `App::agent_mcp` was a field on `App` and
@@ -1372,7 +1338,6 @@ fn both_spellings_of_agent_mcp_name_one_address() {
     assert agent_id() == "probe";
 
     clear_serve_spy();
-    return;
 }
 
 // An app that never asked serves nothing. This is the rule the whole surface
@@ -1392,7 +1357,6 @@ fn a_host_serves_nothing_until_an_address_is_named() {
     assert SERVED_PATH.view() == "asked-for";
 
     clear_serve_spy();
-    return;
 }
 
 #[test]
@@ -1405,5 +1369,4 @@ fn the_agent_hooks_default_to_saying_so() {
     app::agent_attach(0 as *u8);               // inert, not a trap
     app::agent_serve_once("/tmp/probe.sock");  // prints the reason
     app::agent_pin(0 as *u8, vocab::Agent::Private);   // and the pin is inert too
-    return;
 }

@@ -14,9 +14,8 @@ import "../shell" as shell;
 fn note(s: str) {
     match label::find("toggles:echo") {
         option::Option[label::Label]::Some(l) => { let _l: label::Label = l.set_text(s); }
-        option::Option[label::Label]::None => { }
+        option::Option::None => { }
     }
-    return;
 }
 
 fn on_check(sender: *u8, ctx: *u8) {
@@ -24,9 +23,8 @@ fn on_check(sender: *u8, ctx: *u8) {
         option::Option[checkbox::Checkbox]::Some(c) => {
             if c.on() { note("checkbox on"); } else { note("checkbox off"); }
         }
-        option::Option[checkbox::Checkbox]::None => { }
+        option::Option::None => { }
     }
-    return;
 }
 
 fn on_switch(sender: *u8, ctx: *u8) {
@@ -34,9 +32,8 @@ fn on_switch(sender: *u8, ctx: *u8) {
         option::Option[toggle::Toggle]::Some(t) => {
             if t.on() { note("switch on"); } else { note("switch off"); }
         }
-        option::Option[toggle::Toggle]::None => { }
+        option::Option::None => { }
     }
-    return;
 }
 
 fn on_red(sender: *u8, ctx: *u8) { note("radio: red"); return; }
@@ -59,7 +56,7 @@ fn build() -> core::Node {
     b.add(ui::radio(false, key: "toggles:green", text: "Green", group: "colour",
                     on_checked_changed: on_green));
 
-    b.add(ui::label("(nothing changed yet)", key: "toggles:echo", font_size: 15.0f64,
-                    text_color: vocab::Color::rgba(0.35f64, 0.35f64, 0.40f64)));
+    b.add(ui::label("(nothing changed yet)", key: "toggles:echo", font_size: 15.0,
+                    text_color: vocab::Color::rgba(0.35, 0.35, 0.40)));
     return shell::page(b, "demo:toggles");
 }

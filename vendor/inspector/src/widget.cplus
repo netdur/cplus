@@ -115,7 +115,6 @@ fn channels(t: *text::Text, r: f64, g: f64, b: f64, a: f64) {
     let _g: status::Status = { (*t).append(", ") };
     let _h: status::Status = { (*t).append(f64_text(a).view()) };
     let _i: status::Status = { (*t).append(")") };
-    return;
 }
 
 fn colour_text(c: vocab::Color) -> text::Text {
@@ -312,7 +311,7 @@ impl Inspector {
     // handle's identity IS its node pointer, and its generation is a liveness
     // question rather than an identity one.
     fn index_of_node(this, n: *core::Node) -> option::Option[usize] {
-        if n == (0 as *core::Node) { return option::Option[usize]::None; }
+        if n.is_null() { return option::Option[usize]::None; }
         var i: usize = 0;
         let c: usize = this.rows.count();
         while i < c {
@@ -339,7 +338,6 @@ fn set_label(key: text::Text, to: str) {
         option::Option[label::Label]::Some(l) => { let _x: label::Label = l.set_text(to); }
         option::Option::None => { }
     }
-    return;
 }
 
 fn set_field(key: text::Text, to: str) {
@@ -349,7 +347,6 @@ fn set_field(key: text::Text, to: str) {
         }
         option::Option::None => { }
     }
-    return;
 }
 
 fn field_text(key: text::Text) -> text::Text {
@@ -366,7 +363,6 @@ fn set_row_title(key: text::Text, to: str) {
         }
         option::Option::None => { }
     }
-    return;
 }
 
 // `display`, not `visible`.
@@ -382,16 +378,14 @@ fn set_row_title(key: text::Text, to: str) {
 // use.
 fn show_node(key: text::Text, on: bool) {
     let n: *core::Node = mount::node(key.view());
-    if n == (0 as *core::Node) { return; }
+    if n.is_null() { return; }
     core::set_visible(n, on);
     if on { core::set_display(n, flex::Display::Flex); }
     else { core::set_display(n, flex::Display::None); }
-    return;
 }
 
 fn say(msg: str) {
     set_label(text::from_str("insp:status"), msg);
-    return;
 }
 
 // ---- the row -----------------------------------------------------------------
@@ -422,14 +416,13 @@ fn tree_row_view(n: *ftree::TreeNode, _ctx: *u8) -> flex::Node {
 // Supplying this is what turns recycling ON — the backend reuses a cell only
 // when a bind is set, and rebuilds every row from scratch otherwise.
 fn tree_row_bind(n: *ftree::TreeNode, _ctx: *u8, row: *core::Node) {
-    if n == (0 as *ftree::TreeNode) { return; }
+    if n.is_null() { return; }
     match label::find(ROW_KEY, within: row) {
         option::Option[label::Label]::Some(l) => {
             let _x: label::Label = l.set_text({ (*n).label_of() });
         }
         option::Option::None => { }
     }
-    return;
 }
 
 // ---- the model ---------------------------------------------------------------
@@ -512,7 +505,7 @@ fn build_model(st: *Inspector) -> ftree::TreeNode {
 
 // How many rows the model holds, for the status line.
 fn model_count(n: *ftree::TreeNode) -> usize {
-    if n == (0 as *ftree::TreeNode) { return 0; }
+    if n.is_null() { return 0; }
     var total: usize = 0;
     var i: usize = 0;
     let c: usize = { (*n).child_count() };
@@ -563,7 +556,6 @@ fn rebuild_tree(st: *Inspector) {
         }
         option::Option::None => { }
     }
-    return;
 }
 
 fn paint_props(st: *Inspector) {
@@ -680,7 +672,6 @@ fn paint_props(st: *Inspector) {
             set_label(text::from_str("insp:trail"), "");
         }
     }
-    return;
 }
 
 fn refresh(st: *Inspector) {
@@ -706,7 +697,6 @@ fn refresh(st: *Inspector) {
     rebuild_tree(st);
     paint_props(st);
     say_counts(st);
-    return;
 }
 
 // What the pane is showing.
@@ -727,21 +717,19 @@ fn say_counts(st: *Inspector) {
         let _e: status::Status = msg.append(" are the panel's own)");
     }
     say(msg.view());
-    return;
 }
 
 // ---- handlers ----------------------------------------------------------------
 
 fn on_refresh(_sender: *u8, ctx: *u8) {
     refresh(ctx as *Inspector);
-    return;
 }
 
 fn on_tree_select(n: *ftree::TreeNode, ctx: *u8) {
     let st: *Inspector = ctx as *Inspector;
-    if n == (0 as *ftree::TreeNode) { return; }
+    if n.is_null() { return; }
     let target: *core::Node = { (*n).data } as *core::Node;
-    if target == (0 as *core::Node) { return; }
+    if target.is_null() { return; }
 
     var found: insp::Handle = insp::Handle::none();
     var i: usize = 0;
@@ -761,7 +749,6 @@ fn on_tree_select(n: *ftree::TreeNode, ctx: *u8) {
     let b: insp::Backend = { (*st).backend };
     b.highlight_now(found);
     paint_props(st);
-    return;
 }
 
 // The property's current value, read through the VTABLE. This was `tree::get`,
@@ -813,7 +800,6 @@ fn on_commit(sender: *u8, ctx: *u8) {
             paint_props(st);
         }
     }
-    return;
 }
 
 fn on_reset_one(sender: *u8, ctx: *u8) {
@@ -825,7 +811,6 @@ fn on_reset_one(sender: *u8, ctx: *u8) {
     let r: insp::Outcome = b.reset_now(h, prop.view());
     say(r.describe());
     paint_props(st);
-    return;
 }
 
 fn on_reset_all(_sender: *u8, ctx: *u8) {
@@ -844,7 +829,6 @@ fn on_reset_all(_sender: *u8, ctx: *u8) {
     }
     say("overrides reset");
     paint_props(st);
-    return;
 }
 
 
@@ -976,18 +960,16 @@ fn attach(st: *Inspector) {
         // A host that called `attach` before its tree was mounted gets a panel
         // that lists its own controls. Silently listing itself would look like
         // a bug in the WALKER, so it is reported as what it is.
-        missed = own == (0 as *core::Node);
+        missed = own.is_null();
     }
     refresh(st);
     if missed { say("attached before mount: the panel is listing itself"); }
-    return;
 }
 
 fn detach(st: *Inspector) {
     if { (*st).hide_self } { tree::clear_self(); }
     let b: insp::Backend = { (*st).backend };
     b.clear_highlight_now();
-    return;
 }
 
 impl Inspector: component::Lifecycle {

@@ -214,7 +214,6 @@ impl TcpStream {
         if this._fd >= (0 as i32) {
             { shutdown(this._fd, 1 as i32); }
         }
-        return;
     }
 
     fn close(ref this) {
@@ -222,14 +221,12 @@ impl TcpStream {
             { netsys::close_fd(this._fd); }
             this._fd = 0 -% 1 as i32;
         }
-        return;
     }
 
     fn drop(ref this) {
         if this._fd >= (0 as i32) {
             { netsys::close_fd(this._fd); }
         }
-        return;
     }
 
     // v0.0.5 Phase 4 Slice 4B: async I/O method form. `mut this` is
@@ -300,14 +297,12 @@ impl TcpListener {
             { netsys::close_fd(this._fd); }
             this._fd = 0 -% 1 as i32;
         }
-        return;
     }
 
     fn drop(ref this) {
         if this._fd >= (0 as i32) {
             { netsys::close_fd(this._fd); }
         }
-        return;
     }
 
     // v0.0.5 Phase 4 Slice 4B: async accept method form. Slice 4F's
@@ -488,7 +483,6 @@ fn net_accept_reports_cancellation_instead_of_blocking() {
         }
         result::Result[TcpListener, result::IoError]::Err(e) => { assert false; }
     }
-    return;
 }
 
 #[test]
@@ -502,5 +496,4 @@ fn net_listen_tcp_binds_on_ephemeral_port() {
         }
         result::Result[TcpListener, result::IoError]::Err(e) => { assert false; }
     }
-    return;
 }

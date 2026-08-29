@@ -231,7 +231,6 @@ fn encode_matches_the_rfc_4648_vectors() {
     assert encode("foob").view() == "Zm9vYg==";
     assert encode("fooba").view() == "Zm9vYmE=";
     assert encode("foobar").view() == "Zm9vYmFy";
-    return;
 }
 
 #[test]
@@ -243,7 +242,6 @@ fn decode_matches_the_rfc_4648_vectors() {
     assert round_trip("foob");
     assert round_trip("fooba");
     assert round_trip("foobar");
-    return;
 }
 
 #[test]
@@ -262,7 +260,6 @@ fn url_safe_uses_its_own_two_characters_and_no_padding() {
         option::Option[vec::Vec[u8]]::Some(_) => { assert false; }
         option::Option[vec::Vec[u8]]::None => { }
     };
-    return;
 }
 
 #[test]
@@ -281,7 +278,6 @@ fn a_url_decode_accepts_padded_and_unpadded_alike() {
         }
         option::Option[vec::Vec[u8]]::None => { assert false; }
     };
-    return;
 }
 
 #[test]
@@ -301,7 +297,6 @@ fn a_character_outside_the_alphabet_is_refused_not_skipped() {
         option::Option[vec::Vec[u8]]::Some(_) => { assert false; }
         option::Option[vec::Vec[u8]]::None => { }
     };
-    return;
 }
 
 #[test]
@@ -327,7 +322,6 @@ fn impossible_lengths_and_misplaced_padding_are_refused() {
         option::Option[vec::Vec[u8]]::Some(_) => { assert false; }
         option::Option[vec::Vec[u8]]::None => { }
     };
-    return;
 }
 
 #[test]
@@ -355,7 +349,6 @@ fn every_byte_value_survives_a_round_trip() {
         }
         option::Option[vec::Vec[u8]]::None => { assert false; }
     };
-    return;
 }
 
 #[test]
@@ -369,5 +362,4 @@ fn decode_url_text_reads_a_json_segment() {
         option::Option[text::Text]::Some(_) => { assert false; }
         option::Option[text::Text]::None => { }
     };
-    return;
 }

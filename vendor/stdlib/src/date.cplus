@@ -225,7 +225,6 @@ fn parse_and_format_iso8601_roundtrip() {
         }
         option::Option[DateTime]::None => { assert false; }
     }
-    return;
 }
 
 #[test]
@@ -237,7 +236,6 @@ fn parse_date_only_is_midnight() {
         }
         option::Option[DateTime]::None => { assert false; }
     }
-    return;
 }
 
 #[test]
@@ -245,7 +243,6 @@ fn parse_rejects_garbage_and_out_of_range() {
     match parse_iso8601("not-a-date!") { option::Option[DateTime]::Some(x) => { assert false; } option::Option[DateTime]::None => { } }
     match parse_iso8601("2026-13-01") { option::Option[DateTime]::Some(x) => { assert false; } option::Option[DateTime]::None => { } }
     match parse_iso8601("2026/07/23") { option::Option[DateTime]::Some(x) => { assert false; } option::Option[DateTime]::None => { } }
-    return;
 }
 
 #[test]
@@ -278,5 +275,4 @@ fn today_and_yesterday_differ_by_one_day() {
         }
         option::Option[DateTime]::None => { assert false; }
     }
-    return;
 }

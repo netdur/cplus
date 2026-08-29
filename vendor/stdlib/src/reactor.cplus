@@ -228,12 +228,10 @@ fn ptr_is_null(p: *u8) -> bool {
 // polish — at which point these can rename via link_name).
 export extern fn stdlib_reactor_register_read_v1(fd: i32, hdl: *u8) {
     register_read(fd, hdl);
-    return;
 }
 
 export extern fn stdlib_reactor_register_write_v1(fd: i32, hdl: *u8) {
     register_write(fd, hdl);
-    return;
 }
 
 // v0.0.5 Slice 4A: register a one-shot timer that fires after `ms`
@@ -243,7 +241,6 @@ export extern fn stdlib_reactor_register_write_v1(fd: i32, hdl: *u8) {
 // lookup, no separate timer-id allocation.
 export extern fn stdlib_reactor_register_timer_v1(ms: u64, hdl: *u8) {
     register_timer(ms, hdl);
-    return;
 }
 
 // v0.0.5 Slice 4F: awaiter-of-completed-coroutine notification.
@@ -253,12 +250,10 @@ export extern fn stdlib_reactor_register_timer_v1(ms: u64, hdl: *u8) {
 // top of this file for the full flow.
 export extern fn stdlib_reactor_register_awaiter_v1(awaitee: *u8, awaiter: *u8) {
     register_awaiter(awaitee, awaiter);
-    return;
 }
 
 export extern fn stdlib_reactor_notify_completed_v1(awaitee: *u8) {
     notify_completed(awaitee);
-    return;
 }
 
 // v0.0.29 phase 2: called from each await's DESTROY edge, just before the
@@ -267,7 +262,6 @@ export extern fn stdlib_reactor_notify_completed_v1(awaitee: *u8) {
 // frame's address.
 export extern fn stdlib_reactor_unregister_awaiter_v1(awaitee: *u8) {
     unregister_awaiter(awaitee);
-    return;
 }
 
 // v0.0.29 phase 2: remove `hdl` from the pending queue. Called wherever a
@@ -278,12 +272,10 @@ export extern fn stdlib_reactor_unregister_awaiter_v1(awaitee: *u8) {
 // thread call `coro_done` on freed memory (found by ASan, 2026-08-22).
 export extern fn stdlib_reactor_unregister_pending_v1(hdl: *u8) {
     unregister_pending(hdl);
-    return;
 }
 
 export extern fn stdlib_reactor_enqueue_pending_v1(hdl: *u8) {
     enqueue_pending(hdl);
-    return;
 }
 
 export extern fn stdlib_reactor_drain_pending_v1() -> i32 {
@@ -340,13 +332,11 @@ export extern fn stdlib_reactor_kqfd_v1() -> i32 {
 // Register fd for read-readiness; record the coroutine handle to wake.
 fn register_read(fd: i32, hdl: *u8) {
     register_filter(fd, hdl, evfilt_read());
-    return;
 }
 
 // Register fd for write-readiness (kqueue EVFILT_WRITE).
 fn register_write(fd: i32, hdl: *u8) {
     register_filter(fd, hdl, evfilt_write());
-    return;
 }
 
 // v0.0.5 Slice 4A: register a one-shot timer. Submits EVFILT_TIMER with
@@ -383,7 +373,6 @@ fn register_timer(ms: u64, hdl: *u8) {
     let udata_slot: **u8 = { (kb + (24 as usize)) as **u8 };
     { *udata_slot = 0 as *u8; }
     let _r: i32 = { kevent(kqfd, kb, 1 as i32, 0 as *u8, 0 as i32, 0 as *u8) };
-    return;
 }
 
 // Append a (fd, filter, hdl) triple to the waiter arrays and submit a
@@ -440,7 +429,6 @@ fn register_filter(fd: i32, hdl: *u8, filter: i16) {
     let udata_slot: **u8 = { (kb + (24 as usize)) as **u8 };
     { *udata_slot = 0 as *u8; }
     let _r: i32 = { kevent(kqfd, kb, 1 as i32, 0 as *u8, 0 as i32, 0 as *u8) };
-    return;
 }
 
 // Wait for one fd to become ready, then resume its waiter. Blocks the
@@ -493,7 +481,6 @@ fn teardown() {
     { free(*((cur + off_awaiter_hdls()) as **u8)); }
     { free(cur); }
     { #reactor_set_state(0 as *u8); }
-    return;
 }
 
 // The non-blocking form: a zero timespec makes kevent return immediately
@@ -618,7 +605,6 @@ fn unregister_pending(hdl: *u8) {
         }
     }
     { *np_slot = n; }
-    return;
 }
 
 // Push a coroutine handle to the spawn_local queue.
@@ -639,7 +625,6 @@ fn enqueue_pending(hdl: *u8) {
     let slot: **u8 = { hdls + (n as usize) };
     { *slot = hdl; }
     { *np_slot = n +% (1 as i32); }
-    return;
 }
 
 // Snapshot of "pending kevent-side work" — fd waiters plus active
@@ -720,7 +705,6 @@ fn register_awaiter(awaitee: *u8, awaiter: *u8) {
     let ars_dst: **u8 = { ars + (n as usize) };
     { *ars_dst = awaiter; }
     { *na_slot = n +% (1 as i32); }
-    return;
 }
 
 // v0.0.29 phase 2: remove EVERY awaiter entry registered on `awaitee` —
@@ -753,7 +737,6 @@ fn unregister_awaiter(awaitee: *u8) {
         }
     }
     { *na_slot = n; }
-    return;
 }
 
 // v0.0.5 Slice 4F: linear scan for an awaiter registered on `awaitee`.
@@ -798,7 +781,6 @@ fn notify_completed(awaitee: *u8) {
         }
         i = i +% (1 as i32);
     }
-    return;
 }
 
 // ───────────────────────────── tests ─────────────────────────────

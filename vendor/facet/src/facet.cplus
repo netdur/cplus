@@ -170,29 +170,28 @@ fn no_release(p: *u8) { return; }
 
 // flex calls this on node drop, on detach, and when an attach replaces it.
 fn release_data(p: *u8) {
-    if p == (0 as *u8) { return; }
+    if p.is_null() { return; }
     let d: *Data = p as *Data;
     let f: fn(*u8) = { (*d).release };
-    if f != (0 as fn(*u8)) { f({ (*d).props }); }
+    if f.is_not_null() { f({ (*d).props }); }
     // The presented component (if any) learns its presentation ended.
     let pa: *u8 = { (*d).presented };
-    if pa != (0 as *u8) {
+    if pa.is_not_null() {
         let pd: fn(*u8) = { (*d).presented_detach };
-        if pd != (0 as fn(*u8)) { pd(pa); }
+        if pd.is_not_null() { pd(pa); }
     }
     // M1: the native view, through the release the backend paired with it.
     let vp: *u8 = { (*d).view };
-    if vp != (0 as *u8) {
+    if vp.is_not_null() {
         let vr: fn(*u8) = { (*d).view_release };
-        if vr != (0 as fn(*u8)) { vr(vp); }
+        if vr.is_not_null() { vr(vp); }
     }
     let gp: *u8 = { (*d).gestures };
-    if gp != (0 as *u8) {
+    if gp.is_not_null() {
         let gr: fn(*u8) = { (*d).gestures_release };
-        if gr != (0 as fn(*u8)) { gr(gp); }
+        if gr.is_not_null() { gr(gp); }
     }
     let _b: box::Box[Data] = box::from_raw::[Data](p);
-    return;
 }
 
 // A node with no control behind it: a container, a spacer, anything flex built.
@@ -206,9 +205,9 @@ const K_NODE: u32 = 0u32;
 // node with nothing attached, so `set_opacity`, `set_visible` and `.gesture()`
 // all found a null Data and returned. They reported success and did nothing.
 fn ensure_data(n: *Node) -> *Data {
-    if n == (0 as *Node) { return 0 as *Data; }
+    if n.is_null() { return 0 as *Data; }
     let d: *Data = { (*n).data() };
-    if d != (0 as *Data) { return d; }
+    if d.is_not_null() { return d; }
     let fresh: Data = Data { key: text::new(), slot: text::new(), kind: K_NODE, props: 0 as *u8,
                              release: no_release, common: props::CommonProps::new(),
                              view: 0 as *u8, view_release: no_release,
@@ -266,7 +265,7 @@ impl flex::Node {
     // A view of the node's OWN bytes, so it lives exactly as long as the node.
     fn key(this) -> str {
         let d: *Data = this.data();
-        if d == (0 as *Data) { return ""; }
+        if d.is_null() { return ""; }
         return { (*d).key.view() };
     }
 }
@@ -296,16 +295,15 @@ fn on_ui_thread() -> bool {
 }
 
 fn touch(n: *Node, bit: u64) {
-    if n == (0 as *Node) { return; }
+    if n.is_null() { return; }
     let d: *Data = { (*n).data() };
-    if d == (0 as *Data) { return; }
+    if d.is_null() { return; }
     assert on_ui_thread();
     { (*d).dirty = { (*d).dirty } | bit };
     if { (*d).batch } == (0 as i64) {
         let f: fn() = SYNC_REQUEST_FN;
-        if f != (0 as fn()) { f(); }
+        if f.is_not_null() { f(); }
     }
-    return;
 }
 
 // Every FACT at once: "re-read this node whole". The sync walk raises it on a
@@ -324,32 +322,30 @@ fn touch(n: *Node, bit: u64) {
 // first one is what "whole" ever meant.
 fn touch_all(n: *Node) {
     touch(n, props::C_ALL_STATE);
-    return;
 }
 
 // Backend/mount door: pair the native view with its release. Symmetric with
 // `attach`'s (payload, release) — see M1 on the struct.
 fn set_view(n: *Node, v: *u8, release: fn(*u8)) {
     let d: *Data = ensure_data(n);
-    if d == (0 as *Data) { return; }
+    if d.is_null() { return; }
     { (*d).view = v };
     { (*d).view_release = release };
-    return;
 }
 
 // Is this node's view one the APPLICATION brought? The mount walk asks before
 // it creates anything, because an adopted view must survive being mounted.
 fn view_is_adopted(n: *Node) -> bool {
-    if n == (0 as *Node) { return false; }
+    if n.is_null() { return false; }
     let d: *Data = { (*n).data() };
-    if d == (0 as *Data) { return false; }
+    if d.is_null() { return false; }
     return { (*d).view_adopted };
 }
 
 fn view_of(n: *Node) -> *u8 {
-    if n == (0 as *Node) { return 0 as *u8; }
+    if n.is_null() { return 0 as *u8; }
     let d: *Data = { (*n).data() };
-    if d == (0 as *Data) { return 0 as *u8; }
+    if d.is_null() { return 0 as *u8; }
     return { (*d).view };
 }
 
@@ -373,15 +369,14 @@ fn view_of(n: *Node) -> *u8 {
 // re-reads the item with them.
 fn set_item(n: *Node, p: *u8) {
     let d: *Data = ensure_data(n);
-    if d == (0 as *Data) { return; }
+    if d.is_null() { return; }
     { (*d).item = p };
     touch(n, props::C_HANDLERS);
-    return;
 }
 
 fn item_of(n: *Node) -> *u8 {
     let d: *Data = node_data(n);
-    if d == (0 as *Data) { return 0 as *u8; }
+    if d.is_null() { return 0 as *u8; }
     return { (*d).item };
 }
 
@@ -401,7 +396,6 @@ fn item_of(n: *Node) -> *u8 {
 // both, and mixing them is a cast the reader cannot check.
 fn set_item_index(n: *Node, at: usize) {
     set_item(n, { (at +% (1 as usize)) as *u8 });
-    return;
 }
 
 fn item_index_of(n: *Node) -> option::Option[usize] {
@@ -412,38 +406,34 @@ fn item_index_of(n: *Node) -> option::Option[usize] {
 
 fn set_on_focus(n: *Node, f: fn(*u8, *u8), ctx: *u8) {
     let d: *Data = ensure_data(n);
-    if d == (0 as *Data) { return; }
+    if d.is_null() { return; }
     { (*d).common.on_focus = f };
     { (*d).common.on_focus_ctx = ctx };
     touch(n, props::C_HANDLERS);
-    return;
 }
 
 fn set_on_blur(n: *Node, f: fn(*u8, *u8), ctx: *u8) {
     let d: *Data = ensure_data(n);
-    if d == (0 as *Data) { return; }
+    if d.is_null() { return; }
     { (*d).common.on_blur = f };
     { (*d).common.on_blur_ctx = ctx };
     touch(n, props::C_HANDLERS);
-    return;
 }
 
 fn set_on_attach(n: *Node, f: fn(*u8, *u8), ctx: *u8) {
     let d: *Data = ensure_data(n);
-    if d == (0 as *Data) { return; }
+    if d.is_null() { return; }
     { (*d).common.on_attach = f };
     { (*d).common.on_attach_ctx = ctx };
     touch(n, props::C_HANDLERS);
-    return;
 }
 
 fn set_on_detach(n: *Node, f: fn(*u8, *u8), ctx: *u8) {
     let d: *Data = ensure_data(n);
-    if d == (0 as *Data) { return; }
+    if d.is_null() { return; }
     { (*d).common.on_detach = f };
     { (*d).common.on_detach_ctx = ctx };
     touch(n, props::C_HANDLERS);
-    return;
 }
 
 // Fire helpers: sender is the node's native view (0 headless), ctx is what
@@ -451,18 +441,16 @@ fn set_on_detach(n: *Node, f: fn(*u8, *u8), ctx: *u8) {
 // focus/blur from its first-responder observers.
 fn fire_attach_handler(n: *Node) {
     let d: *Data = { (*n).data() };
-    if d == (0 as *Data) { return; }
+    if d.is_null() { return; }
     let f: fn(*u8, *u8) = { (*d).common.on_attach };
-    if f != (0 as fn(*u8, *u8)) && f != props::no_handler { f({ (*d).view }, { (*d).common.on_attach_ctx }); }
-    return;
+    if f.is_not_null() && f != props::no_handler { f({ (*d).view }, { (*d).common.on_attach_ctx }); }
 }
 
 fn fire_detach_handler(n: *Node) {
     let d: *Data = { (*n).data() };
-    if d == (0 as *Data) { return; }
+    if d.is_null() { return; }
     let f: fn(*u8, *u8) = { (*d).common.on_detach };
-    if f != (0 as fn(*u8, *u8)) && f != props::no_handler { f({ (*d).view }, { (*d).common.on_detach_ctx }); }
-    return;
+    if f.is_not_null() && f != props::no_handler { f({ (*d).view }, { (*d).common.on_detach_ctx }); }
 }
 
 // Does this node want to be told about focus changes? The backend asks before
@@ -470,36 +458,34 @@ fn fire_detach_handler(n: *Node) {
 // gestures still needs the class that reports one.
 fn wants_focus_events(n: *Node) -> bool {
     let d: *Data = { (*n).data() };
-    if d == (0 as *Data) { return false; }
+    if d.is_null() { return false; }
     let f: fn(*u8, *u8) = { (*d).common.on_focus };
     let b: fn(*u8, *u8) = { (*d).common.on_blur };
-    if f != (0 as fn(*u8, *u8)) && f != props::no_handler { return true; }
-    if b != (0 as fn(*u8, *u8)) && b != props::no_handler { return true; }
+    if f.is_not_null() && f != props::no_handler { return true; }
+    if b.is_not_null() && b != props::no_handler { return true; }
     return false;
 }
 
 fn fire_focus_handler(n: *Node) {
     let d: *Data = { (*n).data() };
-    if d == (0 as *Data) { return; }
+    if d.is_null() { return; }
     let f: fn(*u8, *u8) = { (*d).common.on_focus };
-    if f != (0 as fn(*u8, *u8)) && f != props::no_handler { f({ (*d).view }, { (*d).common.on_focus_ctx }); }
-    return;
+    if f.is_not_null() && f != props::no_handler { f({ (*d).view }, { (*d).common.on_focus_ctx }); }
 }
 
 fn fire_blur_handler(n: *Node) {
     let d: *Data = { (*n).data() };
-    if d == (0 as *Data) { return; }
+    if d.is_null() { return; }
     let f: fn(*u8, *u8) = { (*d).common.on_blur };
-    if f != (0 as fn(*u8, *u8)) && f != props::no_handler { f({ (*d).view }, { (*d).common.on_blur_ctx }); }
-    return;
+    if f.is_not_null() && f != props::no_handler { f({ (*d).view }, { (*d).common.on_blur_ctx }); }
 }
 
 // The control kind tag — what a backend's create/apply dispatch on.
 // K_NODE (0) is a bare container.
 fn kind_of(n: *Node) -> u32 {
-    if n == (0 as *Node) { return K_NODE; }
+    if n.is_null() { return K_NODE; }
     let d: *Data = { (*n).data() };
-    if d == (0 as *Data) { return K_NODE; }
+    if d.is_null() { return K_NODE; }
     return { (*d).kind };
 }
 
@@ -507,29 +493,28 @@ fn kind_of(n: *Node) -> u32 {
 // component_at reads it, teardown and eviction fire the trampoline.
 fn set_presented(n: *Node, addr: *u8, detach: fn(*u8)) {
     let d: *Data = ensure_data(n);
-    if d == (0 as *Data) { return; }
+    if d.is_null() { return; }
     { (*d).presented = addr };
     { (*d).presented_detach = detach };
-    return;
 }
 
 fn presented_of(n: *Node) -> *u8 {
-    if n == (0 as *Node) { return 0 as *u8; }
+    if n.is_null() { return 0 as *u8; }
     let d: *Data = { (*n).data() };
-    if d == (0 as *Data) { return 0 as *u8; }
+    if d.is_null() { return 0 as *u8; }
     return { (*d).presented };
 }
 
 // Evict: notify through the trampoline, clear the record. True when
 // something was presented.
 fn evict_presented(n: *Node) -> bool {
-    if n == (0 as *Node) { return false; }
+    if n.is_null() { return false; }
     let d: *Data = { (*n).data() };
-    if d == (0 as *Data) { return false; }
+    if d.is_null() { return false; }
     let pa: *u8 = { (*d).presented };
-    if pa == (0 as *u8) { return false; }
+    if pa.is_null() { return false; }
     let pd: fn(*u8) = { (*d).presented_detach };
-    if pd != (0 as fn(*u8)) { pd(pa); }
+    if pd.is_not_null() { pd(pa); }
     { (*d).presented = 0 as *u8 };
     { (*d).presented_detach = no_release };
     return true;
@@ -538,15 +523,14 @@ fn evict_presented(n: *Node) -> bool {
 // switch_to's memory of a parked pane's display mode.
 fn set_parked_display(n: *Node, d: flex::Display) {
     let dp: *Data = ensure_data(n);
-    if dp == (0 as *Data) { return; }
+    if dp.is_null() { return; }
     { (*dp).parked_display = d };
-    return;
 }
 
 fn parked_display_of(n: *Node) -> flex::Display {
-    if n == (0 as *Node) { return flex::Display::Flex; }
+    if n.is_null() { return flex::Display::Flex; }
     let dp: *Data = { (*n).data() };
-    if dp == (0 as *Data) { return flex::Display::Flex; }
+    if dp.is_null() { return flex::Display::Flex; }
     return { (*dp).parked_display };
 }
 
@@ -569,35 +553,32 @@ fn parked_display_of(n: *Node) -> flex::Display {
 // hand on resize: the pass that already runs does it. `facet/bands` holds the
 // vocabulary and ships six bands whether or not an app configures any.
 fn hide_in(n: *Node, band: str) {
-    if n == (0 as *Node) { return; }
+    if n.is_null() { return; }
     { (*n).add_rule(band, hide: true) };
     touch(n, props::C_LAYOUT);
-    return;
 }
 
 fn show_in(n: *Node, band: str) {
-    if n == (0 as *Node) { return; }
+    if n.is_null() { return; }
     { (*n).add_rule(band, hide: false) };
     touch(n, props::C_LAYOUT);
-    return;
 }
 
 // Drop every rule on this node. Its display stops being governed by bands and
 // keeps whatever it had — an explicit `set_display` still works either way.
 fn clear_rules(n: *Node) {
-    if n == (0 as *Node) { return; }
+    if n.is_null() { return; }
     { (*n).clear_rules() };
     touch(n, props::C_LAYOUT);
-    return;
 }
 
 fn rule_count_of(n: *Node) -> usize {
-    if n == (0 as *Node) { return 0 as usize; }
+    if n.is_null() { return 0 as usize; }
     return { (*n).rule_count() };
 }
 
 fn set_display(n: *Node, v: flex::Display) {
-    if n == (0 as *Node) { return; }
+    if n.is_null() { return; }
     { (*n).set_display(v) };
     // The parked value follows a deliberate write, so `switch_to` re-attaching
     // a screen restores what the app last asked for rather than Flex.
@@ -606,7 +587,6 @@ fn set_display(n: *Node, v: flex::Display) {
         _ => { set_parked_display(n, v); }
     }
     touch(n, props::C_LAYOUT);
-    return;
 }
 
 // Is this node off screen? The OR of the two verbs that mean it: `set_visible`
@@ -614,7 +594,7 @@ fn set_display(n: *Node, v: flex::Display) {
 // One rule, in the model, so two backends cannot disagree and two writers of
 // the same platform flag cannot race each other.
 fn is_hidden(n: *Node) -> bool {
-    if n == (0 as *Node) { return false; }
+    if n.is_null() { return false; }
     if is_visible(n) == false { return true; }
     return match { (*n).display() } {
         flex::Display::None => true,
@@ -623,7 +603,7 @@ fn is_hidden(n: *Node) -> bool {
 }
 
 fn display_of(n: *Node) -> flex::Display {
-    if n == (0 as *Node) { return flex::Display::Flex; }
+    if n.is_null() { return flex::Display::Flex; }
     return { (*n).display() };
 }
 
@@ -632,30 +612,28 @@ fn display_of(n: *Node) -> flex::Display {
 // Restores whatever display the node last carried, so hiding a grid and
 // showing it again does not silently turn it into a flex box.
 fn set_shown(n: *Node, on: bool) {
-    if n == (0 as *Node) { return; }
+    if n.is_null() { return; }
     set_visible(n, on);
     if on { set_display(n, parked_display_of(n)); }
     else { set_display(n, flex::Display::None); }
-    return;
 }
 
 // The dirty word, read and cleared by the sync walk.
 fn dirty_of(n: *Node) -> u64 {
-    if n == (0 as *Node) { return 0 as u64; }
+    if n.is_null() { return 0 as u64; }
     let d: *Data = { (*n).data() };
-    if d == (0 as *Data) { return 0 as u64; }
+    if d.is_null() { return 0 as u64; }
     return { (*d).dirty };
 }
 
 fn clear_dirty(n: *Node) {
-    if n == (0 as *Node) { return; }
+    if n.is_null() { return; }
     let d: *Data = { (*n).data() };
-    if d == (0 as *Data) { return; }
+    if d.is_null() { return; }
     { (*d).dirty = 0 as u64 };
     // The node has been applied, so any `set_*` recorded on it has reached the
     // view: it is no longer a dead snap for the next `animate_*` to name.
     { (*d).common.animate_channels = { (*d).common.animate_channels } & ~props::SNAP_ANY };
-    return;
 }
 
 // ---- the shared band --------------------------------------------------------
@@ -681,18 +659,17 @@ fn clear_dirty(n: *Node) {
 
 fn set_opacity(n: *Node, v: f64) {
     let d: *Data = ensure_data(n);
-    if d == (0 as *Data) { return; }
+    if d.is_null() { return; }
     { (*d).common.opacity = v };
     // A snap cancels the channel's pending interpolate so apply does not
     // animate a write that asked to set.
     _snap_channel(d, n, props::ANIM_OPACITY, props::SNAP_OPACITY);
     touch(n, props::C_OPACITY);
-    return;
 }
 
 fn opacity(n: *Node) -> f64 {
     let d: *Data = node_data(n);
-    if d == (0 as *Data) { return 1.0f64; }
+    if d.is_null() { return 1.0f64; }
     return { (*d).common.opacity };
 }
 
@@ -704,15 +681,14 @@ fn opacity(n: *Node) -> f64 {
 // this node" is one question, and the backend re-reads the answer whole.
 fn set_background_image(n: *Node, v: str) {
     let d: *Data = ensure_data(n);
-    if d == (0 as *Data) { return; }
+    if d.is_null() { return; }
     { (*d).common.background_image = text::from_str(v) };
     touch(n, props::C_BACKGROUND);
-    return;
 }
 
 fn background_image(n: *Node) -> str {
     let d: *Data = node_data(n);
-    if d == (0 as *Data) { return ""; }
+    if d.is_null() { return ""; }
     return { (*d).common.background_image.view() };
 }
 
@@ -729,15 +705,14 @@ fn background_image(n: *Node) -> str {
 // geometry, so the layout pass has to run again for it to mean anything.
 fn set_safe_area(n: *Node, v: vocab::SafeArea) {
     let d: *Data = ensure_data(n);
-    if d == (0 as *Data) { return; }
+    if d.is_null() { return; }
     { (*d).common.safe_area = v };
     touch(n, props::C_SAFE_AREA | props::C_LAYOUT);
-    return;
 }
 
 fn safe_area(n: *Node) -> vocab::SafeArea {
     let d: *Data = node_data(n);
-    if d == (0 as *Data) { return vocab::SafeArea::Default; }
+    if d.is_null() { return vocab::SafeArea::Default; }
     return { (*d).common.safe_area };
 }
 
@@ -756,29 +731,27 @@ fn honours_safe_area(n: *Node) -> bool {
 
 fn set_enabled(n: *Node, v: bool) {
     let d: *Data = ensure_data(n);
-    if d == (0 as *Data) { return; }
+    if d.is_null() { return; }
     { (*d).common.is_enabled = v };
     touch(n, props::C_IS_ENABLED);
-    return;
 }
 
 fn is_enabled(n: *Node) -> bool {
     let d: *Data = node_data(n);
-    if d == (0 as *Data) { return true; }
+    if d.is_null() { return true; }
     return { (*d).common.is_enabled };
 }
 
 fn set_visible(n: *Node, v: bool) {
     let d: *Data = ensure_data(n);
-    if d == (0 as *Data) { return; }
+    if d.is_null() { return; }
     { (*d).common.is_visible = v };
     touch(n, props::C_IS_VISIBLE);
-    return;
 }
 
 fn is_visible(n: *Node) -> bool {
     let d: *Data = node_data(n);
-    if d == (0 as *Data) { return true; }
+    if d.is_null() { return true; }
     return { (*d).common.is_visible };
 }
 
@@ -788,91 +761,85 @@ fn is_visible(n: *Node) -> bool {
 // say, and an app had to fake it with a box behind a stack.
 fn set_corner_radius(n: *Node, v: vocab::Corners) {
     let d: *Data = ensure_data(n);
-    if d == (0 as *Data) { return; }
+    if d.is_null() { return; }
     { (*d).common.corner_radius = v };
     touch(n, props::C_CORNER_RADIUS);
-    return;
 }
 
 fn corner_radius(n: *Node) -> vocab::Corners {
     let d: *Data = node_data(n);
-    if d == (0 as *Data) { return vocab::Corners::none(); }
+    if d.is_null() { return vocab::Corners::none(); }
     return { (*d).common.corner_radius };
 }
 
 fn set_background_color(n: *Node, v: vocab::Color) {
     let d: *Data = ensure_data(n);
-    if d == (0 as *Data) { return; }
+    if d.is_null() { return; }
     { (*d).common.background_color = v };
     touch(n, props::C_BACKGROUND_COLOR);
-    return;
 }
 
 fn background_color(n: *Node) -> vocab::Color {
     let d: *Data = node_data(n);
-    if d == (0 as *Data) { return vocab::Color::clear(); }
+    if d.is_null() { return vocab::Color::clear(); }
     return { (*d).common.background_color };
 }
 
 fn set_background(n: *Node, v: vocab::Brush) {
     let d: *Data = ensure_data(n);
-    if d == (0 as *Data) { return; }
+    if d.is_null() { return; }
     { (*d).common.background = v };
     touch(n, props::C_BACKGROUND);
-    return;
 }
 
 fn background(n: *Node) -> vocab::Brush {
     let d: *Data = node_data(n);
-    if d == (0 as *Data) { return vocab::Brush::none(); }
+    if d.is_null() { return vocab::Brush::none(); }
     return { (*d).common.background };
 }
 
 fn set_shadow(n: *Node, v: vocab::Shadow) {
     let d: *Data = ensure_data(n);
-    if d == (0 as *Data) { return; }
+    if d.is_null() { return; }
     { (*d).common.shadow = v };
     touch(n, props::C_SHADOW);
-    return;
 }
 
 fn shadow(n: *Node) -> vocab::Shadow {
     let d: *Data = node_data(n);
-    if d == (0 as *Data) { return vocab::Shadow::none(); }
+    if d.is_null() { return vocab::Shadow::none(); }
     return { (*d).common.shadow };
 }
 
 fn set_clip(n: *Node, v: vocab::Shape) {
     let d: *Data = ensure_data(n);
-    if d == (0 as *Data) { return; }
+    if d.is_null() { return; }
     { (*d).common.clip = v };
     touch(n, props::C_CLIP);
-    return;
 }
 
 fn clip(n: *Node) -> vocab::Shape {
     let d: *Data = node_data(n);
-    if d == (0 as *Data) { return vocab::Shape::none(); }
+    if d.is_null() { return vocab::Shape::none(); }
     return { (*d).common.clip };
 }
 
 fn set_input_transparent(n: *Node, v: bool) {
     let d: *Data = ensure_data(n);
-    if d == (0 as *Data) { return; }
+    if d.is_null() { return; }
     { (*d).common.input_transparent = v };
     touch(n, props::C_INPUT_TRANSPARENT);
-    return;
 }
 
 fn input_transparent(n: *Node) -> bool {
     let d: *Data = node_data(n);
-    if d == (0 as *Data) { return false; }
+    if d.is_null() { return false; }
     return { (*d).common.input_transparent };
 }
 
 fn set_flow_direction(n: *Node, v: vocab::FlowDirection) {
     let d: *Data = ensure_data(n);
-    if d == (0 as *Data) { return; }
+    if d.is_null() { return; }
     { (*d).common.flow_direction = v };
     // AND THE LAYOUT ENGINE, which is the half that was missing. The backend
     // flipped the VIEW — AppKit's userInterfaceLayoutDirection — and nothing
@@ -886,7 +853,6 @@ fn set_flow_direction(n: *Node, v: vocab::FlowDirection) {
     { (*n).set_direction(flex_direction_of(v)) };
     touch(n, props::C_LAYOUT);
     touch(n, props::C_FLOW_DIRECTION);
-    return;
 }
 
 fn flex_direction_of(v: vocab::FlowDirection) -> flex::Direction {
@@ -899,7 +865,7 @@ fn flex_direction_of(v: vocab::FlowDirection) -> flex::Direction {
 
 fn flow_direction(n: *Node) -> vocab::FlowDirection {
     let d: *Data = node_data(n);
-    if d == (0 as *Data) { return vocab::FlowDirection::MatchParent; }
+    if d.is_null() { return vocab::FlowDirection::MatchParent; }
     return { (*d).common.flow_direction };
 }
 
@@ -909,149 +875,139 @@ fn flow_direction(n: *Node) -> vocab::FlowDirection {
 
 fn set_rotation(n: *Node, v: f64) {
     let d: *Data = ensure_data(n);
-    if d == (0 as *Data) { return; }
+    if d.is_null() { return; }
     { (*d).common.rotation = v };
     _snap_channel(d, n, props::ANIM_TRANSFORM, props::SNAP_TRANSFORM);
     touch(n, props::C_TRANSFORM);
-    return;
 }
 
 fn rotation(n: *Node) -> f64 {
     let d: *Data = node_data(n);
-    if d == (0 as *Data) { return 0.0f64; }
+    if d.is_null() { return 0.0f64; }
     return { (*d).common.rotation };
 }
 
 fn set_rotation_x(n: *Node, v: f64) {
     let d: *Data = ensure_data(n);
-    if d == (0 as *Data) { return; }
+    if d.is_null() { return; }
     { (*d).common.rotation_x = v };
     _snap_channel(d, n, props::ANIM_TRANSFORM, props::SNAP_TRANSFORM);
     touch(n, props::C_TRANSFORM);
-    return;
 }
 
 fn rotation_x(n: *Node) -> f64 {
     let d: *Data = node_data(n);
-    if d == (0 as *Data) { return 0.0f64; }
+    if d.is_null() { return 0.0f64; }
     return { (*d).common.rotation_x };
 }
 
 fn set_rotation_y(n: *Node, v: f64) {
     let d: *Data = ensure_data(n);
-    if d == (0 as *Data) { return; }
+    if d.is_null() { return; }
     { (*d).common.rotation_y = v };
     _snap_channel(d, n, props::ANIM_TRANSFORM, props::SNAP_TRANSFORM);
     touch(n, props::C_TRANSFORM);
-    return;
 }
 
 fn rotation_y(n: *Node) -> f64 {
     let d: *Data = node_data(n);
-    if d == (0 as *Data) { return 0.0f64; }
+    if d.is_null() { return 0.0f64; }
     return { (*d).common.rotation_y };
 }
 
 fn set_scale(n: *Node, v: f64) {
     let d: *Data = ensure_data(n);
-    if d == (0 as *Data) { return; }
+    if d.is_null() { return; }
     { (*d).common.scale = v };
     _snap_channel(d, n, props::ANIM_TRANSFORM, props::SNAP_TRANSFORM);
     touch(n, props::C_TRANSFORM);
-    return;
 }
 
 fn scale(n: *Node) -> f64 {
     let d: *Data = node_data(n);
-    if d == (0 as *Data) { return 1.0f64; }
+    if d.is_null() { return 1.0f64; }
     return { (*d).common.scale };
 }
 
 fn set_scale_x(n: *Node, v: f64) {
     let d: *Data = ensure_data(n);
-    if d == (0 as *Data) { return; }
+    if d.is_null() { return; }
     { (*d).common.scale_x = v };
     _snap_channel(d, n, props::ANIM_TRANSFORM, props::SNAP_TRANSFORM);
     touch(n, props::C_TRANSFORM);
-    return;
 }
 
 fn scale_x(n: *Node) -> f64 {
     let d: *Data = node_data(n);
-    if d == (0 as *Data) { return 1.0f64; }
+    if d.is_null() { return 1.0f64; }
     return { (*d).common.scale_x };
 }
 
 fn set_scale_y(n: *Node, v: f64) {
     let d: *Data = ensure_data(n);
-    if d == (0 as *Data) { return; }
+    if d.is_null() { return; }
     { (*d).common.scale_y = v };
     _snap_channel(d, n, props::ANIM_TRANSFORM, props::SNAP_TRANSFORM);
     touch(n, props::C_TRANSFORM);
-    return;
 }
 
 fn scale_y(n: *Node) -> f64 {
     let d: *Data = node_data(n);
-    if d == (0 as *Data) { return 1.0f64; }
+    if d.is_null() { return 1.0f64; }
     return { (*d).common.scale_y };
 }
 
 fn set_translation_x(n: *Node, v: f64) {
     let d: *Data = ensure_data(n);
-    if d == (0 as *Data) { return; }
+    if d.is_null() { return; }
     { (*d).common.translation_x = v };
     _snap_channel(d, n, props::ANIM_TRANSFORM, props::SNAP_TRANSFORM);
     touch(n, props::C_TRANSFORM);
-    return;
 }
 
 fn translation_x(n: *Node) -> f64 {
     let d: *Data = node_data(n);
-    if d == (0 as *Data) { return 0.0f64; }
+    if d.is_null() { return 0.0f64; }
     return { (*d).common.translation_x };
 }
 
 fn set_translation_y(n: *Node, v: f64) {
     let d: *Data = ensure_data(n);
-    if d == (0 as *Data) { return; }
+    if d.is_null() { return; }
     { (*d).common.translation_y = v };
     _snap_channel(d, n, props::ANIM_TRANSFORM, props::SNAP_TRANSFORM);
     touch(n, props::C_TRANSFORM);
-    return;
 }
 
 fn translation_y(n: *Node) -> f64 {
     let d: *Data = node_data(n);
-    if d == (0 as *Data) { return 0.0f64; }
+    if d.is_null() { return 0.0f64; }
     return { (*d).common.translation_y };
 }
 
 fn set_anchor_x(n: *Node, v: f64) {
     let d: *Data = ensure_data(n);
-    if d == (0 as *Data) { return; }
+    if d.is_null() { return; }
     { (*d).common.anchor_x = v };
     touch(n, props::C_TRANSFORM);
-    return;
 }
 
 fn anchor_x(n: *Node) -> f64 {
     let d: *Data = node_data(n);
-    if d == (0 as *Data) { return 0.5f64; }
+    if d.is_null() { return 0.5f64; }
     return { (*d).common.anchor_x };
 }
 
 fn set_anchor_y(n: *Node, v: f64) {
     let d: *Data = ensure_data(n);
-    if d == (0 as *Data) { return; }
+    if d.is_null() { return; }
     { (*d).common.anchor_y = v };
     touch(n, props::C_TRANSFORM);
-    return;
 }
 
 fn anchor_y(n: *Node) -> f64 {
     let d: *Data = node_data(n);
-    if d == (0 as *Data) { return 0.5f64; }
+    if d.is_null() { return 0.5f64; }
     return { (*d).common.anchor_y };
 }
 
@@ -1063,14 +1019,13 @@ fn anchor_y(n: *Node) -> f64 {
 // siblings while it is placing them. It had the same hole as the size verbs
 // (write the value, tell nobody).
 fn set_z_index(n: *Node, v: i64) {
-    if n == (0 as *Node) { return; }
+    if n.is_null() { return; }
     { (*n).set_z_index(v as i32) };
     touch(n, props::C_LAYOUT);
-    return;
 }
 
 fn z_index(n: *Node) -> i64 {
-    if n == (0 as *Node) { return 0 as i64; }
+    if n.is_null() { return 0 as i64; }
     return { (*n).z_index() } as i64;
 }
 
@@ -1103,17 +1058,15 @@ fn z_index(n: *Node) -> i64 {
 // would pay that cost forever instead of only when something actually moved.
 
 fn set_grow(n: *Node, v: f64) {
-    if n == (0 as *Node) { return; }
+    if n.is_null() { return; }
     { (*n).set_flex_grow(v) };
     touch(n, props::C_LAYOUT);
-    return;
 }
 
 fn set_shrink(n: *Node, v: f64) {
-    if n == (0 as *Node) { return; }
+    if n.is_null() { return; }
     { (*n).set_flex_shrink(v) };
     touch(n, props::C_LAYOUT);
-    return;
 }
 
 // The size a node starts from BEFORE grow and shrink divide the free space.
@@ -1127,71 +1080,62 @@ fn set_shrink(n: *Node, v: f64) {
 // was no way to say it. flex's StyleLength carried percent all along; facet
 // exposed it for width and height only.
 fn set_min_width_percent(n: *Node, v: f64) {
-    if n == (0 as *Node) { return; }
+    if n.is_null() { return; }
     { (*n).set_min_width(flex::StyleLength::percent(v)) };
     touch(n, props::C_LAYOUT);
-    return;
 }
 
 fn set_min_height_percent(n: *Node, v: f64) {
-    if n == (0 as *Node) { return; }
+    if n.is_null() { return; }
     { (*n).set_min_height(flex::StyleLength::percent(v)) };
     touch(n, props::C_LAYOUT);
-    return;
 }
 
 fn set_max_width_percent(n: *Node, v: f64) {
-    if n == (0 as *Node) { return; }
+    if n.is_null() { return; }
     { (*n).set_max_width(flex::StyleLength::percent(v)) };
     touch(n, props::C_LAYOUT);
-    return;
 }
 
 fn set_max_height_percent(n: *Node, v: f64) {
-    if n == (0 as *Node) { return; }
+    if n.is_null() { return; }
     { (*n).set_max_height(flex::StyleLength::percent(v)) };
     touch(n, props::C_LAYOUT);
-    return;
 }
 
 // An overlay placed as a FRACTION of its parent — centred cards, sheets that
 // take half the window, a toast a tenth from the bottom.
 fn set_left_percent(n: *Node, v: f64) {
-    if n == (0 as *Node) { return; }
+    if n.is_null() { return; }
     { (*n).set_position(flex::Edge::Left, flex::StyleLength::percent(v)) };
     touch(n, props::C_LAYOUT);
-    return;
 }
 
 fn set_top_percent(n: *Node, v: f64) {
-    if n == (0 as *Node) { return; }
+    if n.is_null() { return; }
     { (*n).set_position(flex::Edge::Top, flex::StyleLength::percent(v)) };
     touch(n, props::C_LAYOUT);
-    return;
 }
 
 fn set_right_percent(n: *Node, v: f64) {
-    if n == (0 as *Node) { return; }
+    if n.is_null() { return; }
     { (*n).set_position(flex::Edge::Right, flex::StyleLength::percent(v)) };
     touch(n, props::C_LAYOUT);
-    return;
 }
 
 fn set_bottom_percent(n: *Node, v: f64) {
-    if n == (0 as *Node) { return; }
+    if n.is_null() { return; }
     { (*n).set_position(flex::Edge::Bottom, flex::StyleLength::percent(v)) };
     touch(n, props::C_LAYOUT);
-    return;
 }
 
 // Does a width MEAN the content box or the whole box including padding and
 // border? CSS's `border-box` is what almost every author assumes, and a fixed
 // width that padding then widened is the classic surprise.
 fn set_box_sizing(n: *Node, v: flex::BoxSizing) {
-    if n == (0 as *Node) { return; }
+    if n.is_null() { return; }
     { (*n).set_box_sizing(v) };
     touch(n, props::C_LAYOUT);
-    return;
 }
 
 // ---- the grid engine flex already had ---------------------------------------
@@ -1207,56 +1151,49 @@ fn set_box_sizing(n: *Node, v: flex::BoxSizing) {
 
 // Item: how many tracks this cell covers.
 fn set_grid_column_span(n: *Node, v: i32) {
-    if n == (0 as *Node) { return; }
+    if n.is_null() { return; }
     { (*n).set_grid_column_span(v) };
     touch(n, props::C_LAYOUT);
-    return;
 }
 
 fn set_grid_row_span(n: *Node, v: i32) {
-    if n == (0 as *Node) { return; }
+    if n.is_null() { return; }
     { (*n).set_grid_row_span(v) };
     touch(n, props::C_LAYOUT);
-    return;
 }
 
 // Item: which line it starts on, for a cell that must sit somewhere exact.
 fn set_grid_column_start(n: *Node, v: i32) {
-    if n == (0 as *Node) { return; }
+    if n.is_null() { return; }
     { (*n).set_grid_column_start(v) };
     touch(n, props::C_LAYOUT);
-    return;
 }
 
 fn set_grid_row_start(n: *Node, v: i32) {
-    if n == (0 as *Node) { return; }
+    if n.is_null() { return; }
     { (*n).set_grid_row_start(v) };
     touch(n, props::C_LAYOUT);
-    return;
 }
 
 // Container: backfill holes left by spans instead of leaving them.
 fn set_grid_dense(n: *Node, on: bool) {
-    if n == (0 as *Node) { return; }
+    if n.is_null() { return; }
     { (*n).set_grid_dense(on) };
     touch(n, props::C_LAYOUT);
-    return;
 }
 
 // Container: adopt the parent grid's tracks rather than starting new ones, so
 // a nested section stays aligned with the rows around it.
 fn set_grid_columns_subgrid(n: *Node, on: bool) {
-    if n == (0 as *Node) { return; }
+    if n.is_null() { return; }
     { (*n).set_grid_columns_subgrid(on) };
     touch(n, props::C_LAYOUT);
-    return;
 }
 
 fn set_grid_rows_subgrid(n: *Node, on: bool) {
-    if n == (0 as *Node) { return; }
+    if n.is_null() { return; }
     { (*n).set_grid_rows_subgrid(on) };
     touch(n, props::C_LAYOUT);
-    return;
 }
 
 // ---- what this node is, for anyone not looking at it ------------------------
@@ -1273,16 +1210,15 @@ fn set_grid_rows_subgrid(n: *Node, on: bool) {
 
 fn set_accessibility_label(n: *Node, v: str) {
     let d: *Data = ensure_data(n);
-    if d == (0 as *Data) { return; }
+    if d.is_null() { return; }
     { (*d).common.accessibility_label = text::from_str(v) };
     touch(n, props::C_SEMANTICS);
-    return;
 }
 
 fn accessibility_label(n: *Node) -> str {
-    if n == (0 as *Node) { return ""; }
+    if n.is_null() { return ""; }
     let d: *Data = { (*n).data() };
-    if d == (0 as *Data) { return ""; }
+    if d.is_null() { return ""; }
     return { (*d).common.accessibility_label.view() };
 }
 
@@ -1306,31 +1242,29 @@ fn accessibility_label(n: *Node) -> str {
 // stored enum and nothing else.
 fn set_agent(n: *Node, v: vocab::Agent) {
     let d: *Data = ensure_data(n);
-    if d == (0 as *Data) { return; }
+    if d.is_null() { return; }
     { (*d).common.agent = v };
     touch(n, props::C_AGENT);
-    return;
 }
 
 fn agent(n: *Node) -> vocab::Agent {
-    if n == (0 as *Node) { return vocab::Agent::Open; }
+    if n.is_null() { return vocab::Agent::Open; }
     let d: *Data = { (*n).data() };
-    if d == (0 as *Data) { return vocab::Agent::Open; }
+    if d.is_null() { return vocab::Agent::Open; }
     return { (*d).common.agent };
 }
 
 fn set_accessibility_hint(n: *Node, v: str) {
     let d: *Data = ensure_data(n);
-    if d == (0 as *Data) { return; }
+    if d.is_null() { return; }
     { (*d).common.accessibility_hint = text::from_str(v) };
     touch(n, props::C_SEMANTICS);
-    return;
 }
 
 fn accessibility_hint(n: *Node) -> str {
-    if n == (0 as *Node) { return ""; }
+    if n.is_null() { return ""; }
     let d: *Data = { (*n).data() };
-    if d == (0 as *Data) { return ""; }
+    if d.is_null() { return ""; }
     return { (*d).common.accessibility_hint.view() };
 }
 
@@ -1338,16 +1272,15 @@ fn accessibility_hint(n: *Node) -> str {
 // node is not a heading, which is what almost every node is.
 fn set_heading_level(n: *Node, v: i64) {
     let d: *Data = ensure_data(n);
-    if d == (0 as *Data) { return; }
+    if d.is_null() { return; }
     { (*d).common.heading_level = v };
     touch(n, props::C_SEMANTICS);
-    return;
 }
 
 fn heading_level(n: *Node) -> i64 {
-    if n == (0 as *Node) { return 0 as i64; }
+    if n.is_null() { return 0 as i64; }
     let d: *Data = { (*n).data() };
-    if d == (0 as *Data) { return 0 as i64; }
+    if d.is_null() { return 0 as i64; }
     return { (*d).common.heading_level };
 }
 
@@ -1355,16 +1288,15 @@ fn heading_level(n: *Node) -> i64 {
 // an attached property and why it belongs to the band rather than to a control.
 fn set_tooltip(n: *Node, v: str) {
     let d: *Data = ensure_data(n);
-    if d == (0 as *Data) { return; }
+    if d.is_null() { return; }
     { (*d).common.tooltip = text::from_str(v) };
     touch(n, props::C_TOOLTIP);
-    return;
 }
 
 fn tooltip(n: *Node) -> str {
-    if n == (0 as *Node) { return ""; }
+    if n.is_null() { return ""; }
     let d: *Data = { (*n).data() };
-    if d == (0 as *Data) { return ""; }
+    if d.is_null() { return ""; }
     return { (*d).common.tooltip.view() };
 }
 
@@ -1396,16 +1328,15 @@ fn tooltip(n: *Node) -> str {
 // overlay is an ordinary node that says where it sits, not a new layer with a
 // registry of its own.
 fn set_absolute(n: *Node, on: bool) {
-    if n == (0 as *Node) { return; }
+    if n.is_null() { return; }
     let t: flex::PositionType = if on { flex::PositionType::Absolute }
                                 else { flex::PositionType::Relative };
     { (*n).set_position_type(t) };
     touch(n, props::C_LAYOUT);
-    return;
 }
 
 fn is_absolute(n: *Node) -> bool {
-    if n == (0 as *Node) { return false; }
+    if n.is_null() { return false; }
     return match { (*n).position_type() } {
         flex::PositionType::Absolute => true,
         _ => false,
@@ -1416,88 +1347,77 @@ fn is_absolute(n: *Node) -> bool {
 // is what an author means and `set_position(n, Edge::Left, points(12))` is the
 // same sentence with the grammar showing.
 fn set_left(n: *Node, v: f64) {
-    if n == (0 as *Node) { return; }
+    if n.is_null() { return; }
     { (*n).set_position(flex::Edge::Left, flex::StyleLength::points(v)) };
     touch(n, props::C_LAYOUT);
-    return;
 }
 
 fn set_top(n: *Node, v: f64) {
-    if n == (0 as *Node) { return; }
+    if n.is_null() { return; }
     { (*n).set_position(flex::Edge::Top, flex::StyleLength::points(v)) };
     touch(n, props::C_LAYOUT);
-    return;
 }
 
 fn set_right(n: *Node, v: f64) {
-    if n == (0 as *Node) { return; }
+    if n.is_null() { return; }
     { (*n).set_position(flex::Edge::Right, flex::StyleLength::points(v)) };
     touch(n, props::C_LAYOUT);
-    return;
 }
 
 fn set_bottom(n: *Node, v: f64) {
-    if n == (0 as *Node) { return; }
+    if n.is_null() { return; }
     { (*n).set_position(flex::Edge::Bottom, flex::StyleLength::points(v)) };
     touch(n, props::C_LAYOUT);
-    return;
 }
 
 // CONSTRAINTS. A growing node with no floor collapses under pressure and one
 // with no ceiling eats the window; both are ordinary things to want and neither
 // could be said.
 fn set_min_width(n: *Node, v: f64) {
-    if n == (0 as *Node) { return; }
+    if n.is_null() { return; }
     { (*n).set_min_width(flex::StyleLength::points(v)) };
     touch(n, props::C_LAYOUT);
-    return;
 }
 
 fn set_min_height(n: *Node, v: f64) {
-    if n == (0 as *Node) { return; }
+    if n.is_null() { return; }
     { (*n).set_min_height(flex::StyleLength::points(v)) };
     touch(n, props::C_LAYOUT);
-    return;
 }
 
 fn set_max_width(n: *Node, v: f64) {
-    if n == (0 as *Node) { return; }
+    if n.is_null() { return; }
     { (*n).set_max_width(flex::StyleLength::points(v)) };
     touch(n, props::C_LAYOUT);
-    return;
 }
 
 fn set_max_height(n: *Node, v: f64) {
-    if n == (0 as *Node) { return; }
+    if n.is_null() { return; }
     { (*n).set_max_height(flex::StyleLength::points(v)) };
     touch(n, props::C_LAYOUT);
-    return;
 }
 
 // One child disagreeing with its siblings' alignment, without a wrapper row
 // built to hold the disagreement.
 fn set_align_self(n: *Node, v: flex::Align) {
-    if n == (0 as *Node) { return; }
+    if n.is_null() { return; }
     { (*n).set_align_self(v) };
     touch(n, props::C_LAYOUT);
-    return;
 }
 
 // How WRAPPED LINES sit against each other — which `set_columns` on a
 // collection made reachable and then had no way to control.
 fn set_align_content(n: *Node, v: flex::Align) {
-    if n == (0 as *Node) { return; }
+    if n.is_null() { return; }
     { (*n).set_align_content(v) };
     touch(n, props::C_LAYOUT);
-    return;
 }
 
 // A card that stays 16:9 whatever width it is given.
 fn set_aspect_ratio(n: *Node, v: f64) {
-    if n == (0 as *Node) { return; }
+    if n.is_null() { return; }
     { (*n).set_aspect_ratio(v) };
     touch(n, props::C_LAYOUT);
-    return;
 }
 
 // `row` and `column` are CONSTRUCTORS, so a container built one way stayed that
@@ -1507,67 +1427,58 @@ fn set_aspect_ratio(n: *Node, v: f64) {
 // `set_direction` and it means something else entirely — LTR versus RTL. Two
 // verbs one letter apart that change different things is worse than a new word.
 fn set_flow(n: *Node, v: flex::FlexDirection) {
-    if n == (0 as *Node) { return; }
+    if n.is_null() { return; }
     { (*n).set_flex_direction(v) };
     touch(n, props::C_LAYOUT);
-    return;
 }
 
 // Clip or spill. A pane whose content overflows had no way to say which.
 fn set_overflow(n: *Node, v: flex::Overflow) {
-    if n == (0 as *Node) { return; }
+    if n.is_null() { return; }
     { (*n).set_overflow(v) };
     touch(n, props::C_LAYOUT);
-    return;
 }
 
 fn set_basis(n: *Node, v: f64) {
-    if n == (0 as *Node) { return; }
+    if n.is_null() { return; }
     { (*n).set_flex_basis(flex::StyleLength::points(v)) };
     touch(n, props::C_LAYOUT);
-    return;
 }
 
 fn set_width(n: *Node, v: f64) {
-    if n == (0 as *Node) { return; }
+    if n.is_null() { return; }
     { (*n).set_width(flex::StyleLength::points(v)) };
     touch(n, props::C_LAYOUT);
-    return;
 }
 
 fn set_height(n: *Node, v: f64) {
-    if n == (0 as *Node) { return; }
+    if n.is_null() { return; }
     { (*n).set_height(flex::StyleLength::points(v)) };
     touch(n, props::C_LAYOUT);
-    return;
 }
 
 fn set_width_percent(n: *Node, v: f64) {
-    if n == (0 as *Node) { return; }
+    if n.is_null() { return; }
     { (*n).set_width(flex::StyleLength::percent(v)) };
     touch(n, props::C_LAYOUT);
-    return;
 }
 
 fn set_height_percent(n: *Node, v: f64) {
-    if n == (0 as *Node) { return; }
+    if n.is_null() { return; }
     { (*n).set_height(flex::StyleLength::percent(v)) };
     touch(n, props::C_LAYOUT);
-    return;
 }
 
 fn set_padding(n: *Node, v: f64) {
-    if n == (0 as *Node) { return; }
+    if n.is_null() { return; }
     { (*n).set_padding(flex::Edge::All, flex::StyleLength::points(v)) };
     touch(n, props::C_LAYOUT);
-    return;
 }
 
 fn set_margin(n: *Node, v: f64) {
-    if n == (0 as *Node) { return; }
+    if n.is_null() { return; }
     { (*n).set_margin(flex::Edge::All, flex::StyleLength::points(v)) };
     touch(n, props::C_LAYOUT);
-    return;
 }
 
 // Per-EDGE padding and margin. `set_padding(v)` writes all four, which is the
@@ -1575,45 +1486,39 @@ fn set_margin(n: *Node, v: f64) {
 // `{ (*n).set_padding(Edge::Top, StyleLength::points(v)) }` calls after the
 // @ui block, each of them a write past the dirty-bit seam.
 fn set_padding_edge(n: *Node, edge: flex::Edge, v: f64) {
-    if n == (0 as *Node) { return; }
+    if n.is_null() { return; }
     { (*n).set_padding(edge, flex::StyleLength::points(v)) };
     touch(n, props::C_LAYOUT);
-    return;
 }
 
 fn set_margin_edge(n: *Node, edge: flex::Edge, v: f64) {
-    if n == (0 as *Node) { return; }
+    if n.is_null() { return; }
     { (*n).set_margin(edge, flex::StyleLength::points(v)) };
     touch(n, props::C_LAYOUT);
-    return;
 }
 
 fn set_gap(n: *Node, v: f64) {
-    if n == (0 as *Node) { return; }
+    if n.is_null() { return; }
     { (*n).set_gap(flex::Gutter::All, flex::StyleLength::points(v)) };
     touch(n, props::C_LAYOUT);
-    return;
 }
 
 fn set_justify(n: *Node, v: flex::Justify) {
-    if n == (0 as *Node) { return; }
+    if n.is_null() { return; }
     { (*n).set_justify_content(v) };
     touch(n, props::C_LAYOUT);
-    return;
 }
 
 fn set_align(n: *Node, v: flex::Align) {
-    if n == (0 as *Node) { return; }
+    if n.is_null() { return; }
     { (*n).set_align_items(v) };
     touch(n, props::C_LAYOUT);
-    return;
 }
 
 fn set_wrap(n: *Node, v: flex::Wrap) {
-    if n == (0 as *Node) { return; }
+    if n.is_null() { return; }
     { (*n).set_flex_wrap(v) };
     touch(n, props::C_LAYOUT);
-    return;
 }
 
 // ---- reads flex already owns: forward, store nothing -------------------------
@@ -1630,7 +1535,7 @@ fn bounds_of(n: *Node) -> vocab::Rect {
 }
 
 fn child_of(n: *Node, at: usize) -> option::Option[*Node] {
-    if n == (0 as *Node) { return option::Option[*Node]::None; }
+    if n.is_null() { return option::Option[*Node]::None; }
     return { (*n).child_ptr(at) };
 }
 
@@ -1640,41 +1545,38 @@ fn child_of(n: *Node, at: usize) -> option::Option[*Node] {
 
 fn is_focused(n: *Node) -> bool {
     let d: *Data = node_data(n);
-    if d == (0 as *Data) { return false; }
+    if d.is_null() { return false; }
     return { (*d).is_focused };
 }
 
 fn set_focused(n: *Node, v: bool) {
     let d: *Data = ensure_data(n);
-    if d == (0 as *Data) { return; }
+    if d.is_null() { return; }
     { (*d).is_focused = v };
-    return;
 }
 
 fn is_attached(n: *Node) -> bool {
     let d: *Data = node_data(n);
-    if d == (0 as *Data) { return false; }
+    if d.is_null() { return false; }
     return { (*d).is_attached };
 }
 
 fn set_attached(n: *Node, v: bool) {
     let d: *Data = ensure_data(n);
-    if d == (0 as *Data) { return; }
+    if d.is_null() { return; }
     { (*d).is_attached = v };
-    return;
 }
 
 fn window_of(n: *Node) -> vocab::WindowRef {
     let d: *Data = node_data(n);
-    if d == (0 as *Data) { return vocab::WindowRef::none(); }
+    if d.is_null() { return vocab::WindowRef::none(); }
     return { (*d).window };
 }
 
 fn set_window(n: *Node, w: vocab::WindowRef) {
     let d: *Data = ensure_data(n);
-    if d == (0 as *Data) { return; }
+    if d.is_null() { return; }
     { (*d).window = w };
-    return;
 }
 
 // ---- where a character is -----------------------------------------------------
@@ -1683,14 +1585,13 @@ fn set_window(n: *Node, w: vocab::WindowRef) {
 
 fn set_caret_probe(n: *Node, f: fn(*u8, i64, *vocab::Rect) -> bool) {
     let d: *Data = ensure_data(n);
-    if d == (0 as *Data) { return; }
+    if d.is_null() { return; }
     { (*d).caret_probe = f };
-    return;
 }
 
 fn has_caret_probe(n: *Node) -> bool {
     let d: *Data = node_data(n);
-    if d == (0 as *Data) { return false; }
+    if d.is_null() { return false; }
     return { (*d).caret_probe } != (0 as fn(*u8, i64, *vocab::Rect) -> bool);
 }
 
@@ -1712,13 +1613,13 @@ fn has_caret_probe(n: *Node) -> bool {
 // astral character, and wrong silently.
 fn rect_for_offset(n: *Node, offset: i64) -> option::Option[vocab::Rect] {
     let d: *Data = node_data(n);
-    if d == (0 as *Data) { return option::Option[vocab::Rect]::None; }
+    if d.is_null() { return option::Option[vocab::Rect]::None; }
     let f: fn(*u8, i64, *vocab::Rect) -> bool = { (*d).caret_probe };
-    if f == (0 as fn(*u8, i64, *vocab::Rect) -> bool) {
+    if f.is_null() {
         return option::Option[vocab::Rect]::None;
     }
     let v: *u8 = { (*d).view };
-    if v == (0 as *u8) { return option::Option[vocab::Rect]::None; }
+    if v.is_null() { return option::Option[vocab::Rect]::None; }
     var out: vocab::Rect = vocab::Rect::zero();
     if !f(v, offset, #addr_of(out)) { return option::Option[vocab::Rect]::None; }
     return option::some(out);
@@ -1728,7 +1629,7 @@ fn rect_for_offset(n: *Node, offset: i64) -> option::Option[vocab::Rect] {
 // node is unmounted. The one verb in facet that names a backend.
 fn native(n: *Node) -> *u8 {
     let d: *Data = node_data(n);
-    if d == (0 as *Data) { return 0 as *u8; }
+    if d.is_null() { return 0 as *u8; }
     return { (*d).view };
 }
 
@@ -1760,7 +1661,7 @@ fn adopt_native(v: *u8, release: fn(*u8), key: str = "",
                     = 0 as fn(*u8, f64, flex::MeasureMode, f64, flex::MeasureMode) -> flex::Size) -> Node {
     var n: Node = flex::Node::new();
     let d: *Data = ensure_data(#addr_of(n));
-    if d == (0 as *Data) { return n; }
+    if d.is_null() { return n; }
     { (*d).key = text::from_str(key) };
     { (*d).view = v };
     { (*d).view_release = release };
@@ -1795,7 +1696,7 @@ fn adopt_native_with(create: fn(*u8) -> *u8, create_ctx: *u8, release: fn(*u8), 
                          = 0 as fn(*u8, f64, flex::MeasureMode, f64, flex::MeasureMode) -> flex::Size) -> Node {
     var n: Node = flex::Node::new();
     let d: *Data = ensure_data(#addr_of(n));
-    if d == (0 as *Data) { return n; }
+    if d.is_null() { return n; }
     { (*d).key = text::from_str(key) };
     { (*d).view = 0 as *u8 };
     { (*d).view_release = release };
@@ -1810,23 +1711,22 @@ fn adopt_native_with(create: fn(*u8) -> *u8, create_ctx: *u8, release: fn(*u8), 
 // Private: the two adopt verbs and `make_native` are the callers, and each
 // calls it at the one moment the view becomes known.
 fn install_native_measure(n: *Node, v: *u8) {
-    if n == (0 as *Node) || v == (0 as *u8) { return; }
+    if n.is_null() || v.is_null() { return; }
     let d: *Data = { (*n).data() };
-    if d == (0 as *Data) { return; }
+    if d.is_null() { return; }
     let m: fn(*u8, f64, flex::MeasureMode, f64, flex::MeasureMode) -> flex::Size = { (*d).native_measure };
-    if m == (0 as fn(*u8, f64, flex::MeasureMode, f64, flex::MeasureMode) -> flex::Size) { return; }
+    if m.is_null() { return; }
     // flex's spare slot. facet's Data rides the ATTACHMENT, and the backends
     // put the view here for exactly this reason — nothing else wants it.
     { (*n).set_context(v) };
     { (*n).set_measure(m) };
-    return;
 }
 
 // Does this node build its own view on mount? The mount walk's question.
 fn has_native_factory(n: *Node) -> bool {
-    if n == (0 as *Node) { return false; }
+    if n.is_null() { return false; }
     let d: *Data = { (*n).data() };
-    if d == (0 as *Data) { return false; }
+    if d.is_null() { return false; }
     return { (*d).native_create } != (0 as fn(*u8) -> *u8);
 }
 
@@ -1839,16 +1739,16 @@ fn has_native_factory(n: *Node) -> bool {
 // (a map view with a location subscription), means both are live and both are
 // listening for the moment in between.
 fn make_native(n: *Node) -> *u8 {
-    if n == (0 as *Node) { return 0 as *u8; }
+    if n.is_null() { return 0 as *u8; }
     let d: *Data = { (*n).data() };
-    if d == (0 as *Data) { return 0 as *u8; }
+    if d.is_null() { return 0 as *u8; }
     let f: fn(*u8) -> *u8 = { (*d).native_create };
-    if f == (0 as fn(*u8) -> *u8) { return { (*d).view }; }
+    if f.is_null() { return { (*d).view }; }
     let old: *u8 = { (*d).view };
-    if old != (0 as *u8) {
+    if old.is_not_null() {
         let r: fn(*u8) = { (*d).view_release };
         { (*d).view = 0 as *u8 };
-        if r != (0 as fn(*u8)) { r(old); }
+        if r.is_not_null() { r(old); }
     }
     let v: *u8 = f({ (*d).native_create_ctx });
     { (*d).view = v };
@@ -1858,9 +1758,8 @@ fn make_native(n: *Node) -> *u8 {
 
 fn set_native(n: *Node, v: *u8) {
     let d: *Data = ensure_data(n);
-    if d == (0 as *Data) { return; }
+    if d.is_null() { return; }
     { (*d).view = v };
-    return;
 }
 
 // ---- commands ---------------------------------------------------------------
@@ -1899,18 +1798,16 @@ fn _snap_channel(d: *Data, n: *Node, anim: u32, snap: u32) {
     var ch: u32 = { (*d).common.animate_channels } & ~anim;
     if view_of(n) != (0 as *u8) { ch = ch | snap; }
     { (*d).common.animate_channels = ch };
-    return;
 }
 
 fn _arm_animate(n: *Node, channel: u32, duration: vocab::Duration, easing: vocab::Easing) {
     let d: *Data = ensure_data(n);
-    if d == (0 as *Data) { return; }
+    if d.is_null() { return; }
     warn_if_snap_is_dead(n, channel);
     { (*d).common.animate_duration = duration };
     { (*d).common.animate_easing = easing };
     { (*d).common.animate_channels = { (*d).common.animate_channels } | channel };
     touch(n, props::C_ANIMATE);
-    return;
 }
 
 // A `set_*` on this channel is still pending in this tick, so the value it
@@ -1921,7 +1818,7 @@ fn _arm_animate(n: *Node, channel: u32, duration: vocab::Duration, easing: vocab
 // nothing to go on.
 fn warn_if_snap_is_dead(n: *Node, channel: u32) {
     let d: *Data = node_data(n);
-    if d == (0 as *Data) { return; }
+    if d.is_null() { return; }
     // The SNAP bits, not the dirty word: `touch_all` raises C_OPACITY and
     // C_TRANSFORM on a node nobody set, and warning there would be a lie.
     let pending: u32 = { (*d).common.animate_channels };
@@ -1933,124 +1830,112 @@ fn warn_if_snap_is_dead(n: *Node, channel: u32) {
         io::eprintln("facet animate_*: a set_scale/rotation/translation in this same tick is dead — both write the transform, and the animation starts from what the view already shows. Set the start value a tick earlier (at build, or from on_attach) and animate after.");
         return;
     }
-    return;
 }
 
 fn animate_opacity(n: *Node, to: f64, duration: vocab::Duration, easing: vocab::Easing) {
     let d: *Data = ensure_data(n);
-    if d == (0 as *Data) { return; }
+    if d.is_null() { return; }
     { (*d).common.opacity = to };
     _arm_animate(n, props::ANIM_OPACITY, duration, easing);
-    return;
 }
 
 fn animate_scale(n: *Node, to: f64, duration: vocab::Duration, easing: vocab::Easing) {
     let d: *Data = ensure_data(n);
-    if d == (0 as *Data) { return; }
+    if d.is_null() { return; }
     { (*d).common.scale = to };
     _arm_animate(n, props::ANIM_TRANSFORM, duration, easing);
-    return;
 }
 
 fn animate_scale_x(n: *Node, to: f64, duration: vocab::Duration, easing: vocab::Easing) {
     let d: *Data = ensure_data(n);
-    if d == (0 as *Data) { return; }
+    if d.is_null() { return; }
     { (*d).common.scale_x = to };
     _arm_animate(n, props::ANIM_TRANSFORM, duration, easing);
-    return;
 }
 
 fn animate_scale_y(n: *Node, to: f64, duration: vocab::Duration, easing: vocab::Easing) {
     let d: *Data = ensure_data(n);
-    if d == (0 as *Data) { return; }
+    if d.is_null() { return; }
     { (*d).common.scale_y = to };
     _arm_animate(n, props::ANIM_TRANSFORM, duration, easing);
-    return;
 }
 
 fn animate_rotation(n: *Node, to: f64, duration: vocab::Duration, easing: vocab::Easing) {
     let d: *Data = ensure_data(n);
-    if d == (0 as *Data) { return; }
+    if d.is_null() { return; }
     { (*d).common.rotation = to };
     _arm_animate(n, props::ANIM_TRANSFORM, duration, easing);
-    return;
 }
 
 fn animate_rotation_x(n: *Node, to: f64, duration: vocab::Duration, easing: vocab::Easing) {
     let d: *Data = ensure_data(n);
-    if d == (0 as *Data) { return; }
+    if d.is_null() { return; }
     { (*d).common.rotation_x = to };
     _arm_animate(n, props::ANIM_TRANSFORM, duration, easing);
-    return;
 }
 
 fn animate_rotation_y(n: *Node, to: f64, duration: vocab::Duration, easing: vocab::Easing) {
     let d: *Data = ensure_data(n);
-    if d == (0 as *Data) { return; }
+    if d.is_null() { return; }
     { (*d).common.rotation_y = to };
     _arm_animate(n, props::ANIM_TRANSFORM, duration, easing);
-    return;
 }
 
 fn animate_translation(n: *Node, x: f64, y: f64, duration: vocab::Duration, easing: vocab::Easing) {
     let d: *Data = ensure_data(n);
-    if d == (0 as *Data) { return; }
+    if d.is_null() { return; }
     { (*d).common.translation_x = x };
     { (*d).common.translation_y = y };
     _arm_animate(n, props::ANIM_TRANSFORM, duration, easing);
-    return;
 }
 
 // Abort in-flight motion. End values stay in the model; the backend snaps
 // presentation to them (freeze-at-presentation is not v1).
 fn cancel_animations(n: *Node) {
     let d: *Data = ensure_data(n);
-    if d == (0 as *Data) { return; }
+    if d.is_null() { return; }
     { (*d).common.animate_channels = 0u32 };
     touch(n, props::C_CANCEL_ANIMATIONS);
-    return;
 }
 
 fn animate_duration_of(n: *Node) -> vocab::Duration {
     let d: *Data = node_data(n);
-    if d == (0 as *Data) { return vocab::Duration::animation(); }
+    if d.is_null() { return vocab::Duration::animation(); }
     return { (*d).common.animate_duration };
 }
 
 fn animate_easing_of(n: *Node) -> vocab::Easing {
     let d: *Data = node_data(n);
-    if d == (0 as *Data) { return vocab::Easing::SinInOut; }
+    if d.is_null() { return vocab::Easing::SinInOut; }
     return { (*d).common.animate_easing };
 }
 
 fn animate_channels_of(n: *Node) -> u32 {
     let d: *Data = node_data(n);
-    if d == (0 as *Data) { return 0u32; }
+    if d.is_null() { return 0u32; }
     return { (*d).common.animate_channels };
 }
 
 fn clear_animate_channels(n: *Node) {
     let d: *Data = node_data(n);
-    if d == (0 as *Data) { return; }
+    if d.is_null() { return; }
     { (*d).common.animate_channels = 0u32 };
-    return;
 }
 
 // Invalidate this subtree's cached layout. flex recomputes on the next pass,
 // and C_LAYOUT is what asks for that pass to happen — without it the
 // invalidation sat in the tree until some unrelated write woke the backend.
 fn relayout(n: *Node) {
-    if n == (0 as *Node) { return; }
+    if n.is_null() { return; }
     { (*n).mark_content_changed() };
     touch(n, props::C_LAYOUT);
-    return;
 }
 
 // Lay the subtree out under these constraints and report the size it wants.
 // This IS a layout pass, so the frames it leaves behind are the measurement's:
 // the next real pass overwrites them.
 fn measure(n: *Node, width: f64, height: f64) -> vocab::Size {
-    if n == (0 as *Node) { return vocab::Size::zero(); }
+    if n.is_null() { return vocab::Size::zero(); }
     { (*n).calculate_layout(width: width, height: height) };
     let f: Frame = { (*n).frame() };
     return vocab::Size { width: f.width, height: f.height };
@@ -2059,24 +1944,22 @@ fn measure(n: *Node, width: f64, height: f64) -> vocab::Size {
 // Coalesce writes. The backend syncs when the depth returns to zero.
 fn begin_updates(n: *Node) {
     let d: *Data = ensure_data(n);
-    if d == (0 as *Data) { return; }
+    if d.is_null() { return; }
     { (*d).batch = { (*d).batch } +% (1 as i64) };
-    return;
 }
 
 fn end_updates(n: *Node) {
     let d: *Data = ensure_data(n);
-    if d == (0 as *Data) { return; }
+    if d.is_null() { return; }
     let depth: i64 = { (*d).batch };
     if depth <= (0 as i64) { { (*d).batch = 0 as i64 }; return; }
     { (*d).batch = depth -% (1 as i64) };
     if { (*d).batch } == (0 as i64) { touch(n, props::C_FLUSH); }
-    return;
 }
 
 fn is_batching(n: *Node) -> bool {
     let d: *Data = node_data(n);
-    if d == (0 as *Data) { return false; }
+    if d.is_null() { return false; }
     return { (*d).batch } > (0 as i64);
 }
 
@@ -2271,15 +2154,14 @@ impl flex::Node {
 // key: the application named that node and must keep being able to find it.
 fn slot_of(n: *Node) -> str {
     let d: *Data = node_data(n);
-    if d == (0 as *Data) { return ""; }
+    if d.is_null() { return ""; }
     return { (*d).slot.view() };
 }
 
 fn _mark_slot(n: *Node, name: str) {
     let d: *Data = node_data(n);
-    if d == (0 as *Data) { return; }
+    if d.is_null() { return; }
     { (*d).slot = text::from_str(name) };
-    return;
 }
 
 // Index of the child in `name`'s slot, or child_count() when the slot is empty.
@@ -2299,7 +2181,7 @@ fn _slot_index(n: *Node, name: str) -> usize {
 }
 
 fn set_slot(n: *Node, name: str, take child: Node) {
-    if n == (0 as *Node) { return; }
+    if n.is_null() { return; }
     let count: usize = { (*n).child_count() };
     let at: usize = _slot_index(n, name);
     // An allocation can fail. Only mark the slot when the child really landed
@@ -2317,11 +2199,10 @@ fn set_slot(n: *Node, name: str, take child: Node) {
         option::Option[*Node]::Some(c) => { _mark_slot(c, name); }
         option::Option[*Node]::None => { }
     }
-    return;
 }
 
 fn slot(n: *Node, name: str) -> option::Option[*Node] {
-    if n == (0 as *Node) { return option::Option[*Node]::None; }
+    if n.is_null() { return option::Option[*Node]::None; }
     let at: usize = _slot_index(n, name);
     if at >= { (*n).child_count() } { return option::Option[*Node]::None; }
     return { (*n).child_ptr(at) };
@@ -2329,7 +2210,7 @@ fn slot(n: *Node, name: str) -> option::Option[*Node] {
 
 // Detach the child in a slot and hand the subtree back.
 fn take_slot(n: *Node, name: str) -> option::Option[Node] {
-    if n == (0 as *Node) { return option::Option[Node]::None; }
+    if n.is_null() { return option::Option[Node]::None; }
     let at: usize = _slot_index(n, name);
     if at >= { (*n).child_count() } { return option::Option[Node]::None; }
     return { (*n).remove_child(at) };
@@ -2340,14 +2221,14 @@ fn is_slot_name(name: str) -> bool { return name.has_prefix(SLOT_PREFIX); }
 
 // A free-fn twin of Node::data, callable where a method on *Node is not.
 fn node_data(n: *Node) -> *Data {
-    if n == (0 as *Node) { return 0 as *Data; }
+    if n.is_null() { return 0 as *Data; }
     return { (*n).data() };
 }
 
 // Depth-first search for a key. Returns a cursor: flex node addresses are
 // stable, so this stays valid until its node or an ancestor is removed.
 fn find_in(n: *Node, key: str) -> option::Option[*Node] {
-    if n == (0 as *Node) { return option::Option[*Node]::None; }
+    if n.is_null() { return option::Option[*Node]::None; }
     if { (*n).key() } == key { return option::Option[*Node]::Some(n); }
     let count: usize = { (*n).child_count() };
     var i: usize = 0 as usize;
@@ -2379,7 +2260,7 @@ type Builder = flex::Builder;
 fn _own(take n: Node, key: str) -> Node {
     var m: Node = n;
     let d: *Data = ensure_data(#addr_of(m));
-    if d != (0 as *Data) { { (*d).key = text::from_str(key) }; }
+    if d.is_not_null() { { (*d).key = text::from_str(key) }; }
     return m;
 }
 
@@ -2428,5 +2309,4 @@ fn touch_all_re_reads_every_fact_and_issues_no_verb() {
     // The two masks partition the word: no bit is both, none is neither.
     assert (props::C_COMMANDS & props::C_ALL_STATE) == (0 as u64);
     assert (props::C_COMMANDS | props::C_ALL_STATE) == 18446744073709551615u64;
-    return;
 }

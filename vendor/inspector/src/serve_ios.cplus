@@ -50,16 +50,15 @@ fn main_queue() -> *u8 {
 
 fn on_main_thread() -> bool {
     let ns_thread: *u8 = rt::get_class(#str_ptr("NSThread\0"));
-    if ns_thread == (0 as *u8) { return true; }
+    if ns_thread.is_null() { return true; }
     return rt::msg_i8(ns_thread, rt::sel(#str_ptr("isMainThread\0"))) != 0;
 }
 
 fn run_on_main_sync(ctx: *u8, work: fn(*u8)) {
     if on_main_thread() { work(ctx); return; }
     let q: *u8 = main_queue();
-    if q == (0 as *u8) { work(ctx); return; }
+    if q.is_null() { work(ctx); return; }
     { dispatch_sync_f(q, ctx, work) };
-    return;
 }
 
 #[link_name = "CGColorCreateGenericRGB"]
@@ -73,16 +72,15 @@ static FILL: *u8 = 0 as *u8;
 static STROKE: *u8 = 0 as *u8;
 
 fn ensure_colours() {
-    if FILL == (0 as *u8) {
+    if FILL.is_null() {
         FILL = cg_rgba(0.13, 0.47, 1.0, 0.22);
         STROKE = cg_rgba(0.13, 0.47, 1.0, 0.95);
     }
-    return;
 }
 
 fn overlay_layer() -> qc::Layer {
     ensure_colours();
-    if OVERLAY == (0 as *u8) {
+    if OVERLAY.is_null() {
         let l: qc::Layer = qc::Layer::new();
         l.set_background_color(FILL);
         l.set_border_color(STROKE);
@@ -112,10 +110,10 @@ fn place(n: *core::Node) -> Placed {
         rect: rt::Rect { x: 0.0, y: 0.0, w: 0.0, h: 0.0 },
         found: false,
     };
-    if n == (0 as *core::Node) { return none; }
+    if n.is_null() { return none; }
 
     let own: *u8 = core::view_of(n);
-    if own != (0 as *u8) {
+    if own.is_not_null() {
         let b: rt::Rect = { uik::View::from_raw(own).bounds() };
         return Placed { view: own, rect: b, found: true };
     }
@@ -136,9 +134,9 @@ fn place(n: *core::Node) -> Placed {
             option::Option[*core::Node]::Some(q) => q,
             option::Option::None => 0 as *core::Node,
         };
-        if p == (0 as *core::Node) { return none; }
+        if p.is_null() { return none; }
         let pv: *u8 = core::view_of(p);
-        if pv != (0 as *u8) {
+        if pv.is_not_null() {
             // No flip branch: every UIView's origin is its top-left, which is
             // flex's own, so the accumulated offset IS the view-space rect.
             return Placed {
@@ -159,10 +157,9 @@ fn place(n: *core::Node) -> Placed {
 // ---- highlight ---------------------------------------------------------------
 
 fn clear_highlight(_s: *u8) {
-    if OVERLAY == (0 as *u8) { return; }
+    if OVERLAY.is_null() { return; }
     let l: qc::Layer = qc::Layer::from_raw(OVERLAY);
     l.remove_from_superlayer();
-    return;
 }
 
 fn highlight(s: *u8, h: insp::Handle) {
@@ -187,7 +184,6 @@ fn highlight(s: *u8, h: insp::Handle) {
     let l: qc::Layer = overlay_layer();
     l.set_frame(r);
     host.add_sublayer(l);
-    return;
 }
 
 // ---- native rows -------------------------------------------------------------
@@ -195,7 +191,7 @@ fn highlight(s: *u8, h: insp::Handle) {
 fn native_props(n: *core::Node) -> vec::Vec[insp::Prop] {
     var out: vec::Vec[insp::Prop] = vec::new::[insp::Prop]();
     let v: *u8 = core::view_of(n);
-    if v == (0 as *u8) {
+    if v.is_null() {
         let _a: status::Status = out.append(insp::Prop::read_only(
             "native_class", insp::Value::Str(text::from_str("(drawn by an ancestor)"))));
         return out;
@@ -236,7 +232,6 @@ fn install() {
     tree::install_platform(highlight, clear_highlight);
     tree::set_native_fn(native_props);
     mcp::set_marshal(run_on_main_sync);
-    return;
 }
 
 // Serve the inspector IF the environment asks — the one line an iOS app adds to
@@ -269,6 +264,5 @@ fn install() {
 fn arm() {
     install();
     mcp::arm(tree::local_backend());
-    return;
 }
 

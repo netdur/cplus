@@ -292,7 +292,6 @@ impl Channel[T] {
         { *closed_ptr = 1 as u64; }
         let _e2: i32 = { pthread_cond_broadcast(cond_ptr) };
         let _e3: i32 = { pthread_mutex_unlock(mutex_ptr) };
-        return;
     }
 
     // Snapshot of refcount. Racy except in single-threaded use.
@@ -332,7 +331,6 @@ impl Channel[T] {
             { free(buf); }
             { free(this._ctrl); }
         }
-        return;
     }
 }
 
@@ -353,7 +351,6 @@ fn channel_send_then_recv() {
         }
         option::Option[Channel[i32]]::None => { assert false; }
     }
-    return;
 }
 
 #[test]
@@ -369,7 +366,6 @@ fn channel_close_then_recv_is_closed() {
         }
         option::Option[Channel[i32]]::None => { assert false; }
     }
-    return;
 }
 
 // ---- cancellation ----
@@ -412,7 +408,6 @@ fn channel_receive_reports_cancellation_instead_of_blocking() {
         }
         option::Option[Channel[i32]]::None => { assert false; }
     }
-    return;
 }
 
 #[test]
@@ -427,5 +422,4 @@ fn channel_data_wins_over_cancellation() {
         }
         option::Option[Channel[i32]]::None => { assert false; }
     }
-    return;
 }

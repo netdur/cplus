@@ -131,7 +131,7 @@ All thirteen are **compiler-enforced**, not convention. The error code you hit w
 | 8 | No `class` / `function` | `struct` + `impl`, `fn`. Locals are `let`/`var`. | E0100 |
 | 9 | Mutability is explicit, no `mut` | `var` (local), `static` (global), `ref` (write-back). | E0305 / E0328 |
 | 10 | Generics use `[T]`, not `<T>` | Avoids `a<b>(c)` ambiguity. | E0100 |
-| 11 | Explicit `return` | No implicit tail returns at function level. | E0333 |
+| 11 | Explicit `return` for a VALUE | No implicit tail returns at function level. A unit fn needs no trailing `return;`. | E0333 |
 | 12 | `::` for types, `.` for instances | Strict separation. | E0303 / E0327 |
 | 13 | Module-private via `_`, public by default | Leading `_` = private (items, fields, methods); `export` marks the C-ABI surface. | E0403 |
 
@@ -726,7 +726,6 @@ entry takes `*u8` + `usize` and rebuilds the view inside:
 export fn probe_emit(name_ptr: *u8, name_len: usize) {
     let name: str = #str_from_raw_parts(name_ptr, name_len);
     events::emit(name);
-    return;
 }
 ```
 

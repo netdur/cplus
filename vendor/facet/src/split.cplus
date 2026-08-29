@@ -92,9 +92,8 @@ impl SplitProps {
 }
 
 fn release_split_props(p: *u8) {
-    if p == (0 as *u8) { return; }
+    if p.is_null() { return; }
     let _b: box::Box[SplitProps] = box::from_raw::[SplitProps](p);
-    return;
 }
 
 fn split(
@@ -126,7 +125,7 @@ fn split(
         SplitAxis::Rows => flex::column(b),
     };
     let d: *core::Data = core::ensure_data(#addr_of(n));
-    if d != (0 as *core::Data) {
+    if d.is_not_null() {
         { (*d).key = text::from_str(key) };
         { (*d).kind = K_SPLIT };
         match box::new::[SplitProps](p) {
@@ -154,7 +153,7 @@ impl Split {
 
     fn _props(this) -> *SplitProps {
         let d: *core::Data = { (*this._p).data() };
-        if d == (0 as *core::Data) { return 0 as *SplitProps; }
+        if d.is_null() { return 0 as *SplitProps; }
         if { (*d).kind } != K_SPLIT { return 0 as *SplitProps; }
         return { (*d).props } as *SplitProps;
     }
@@ -164,7 +163,7 @@ impl Split {
     // position must read back what was actually applied, not what it asked for.
     fn set_position(this, v: f64) -> Split {
         let p: *SplitProps = this._props();
-        if p == (0 as *SplitProps) { return this; }
+        if p.is_null() { return this; }
         var want: f64 = v;
         let lo: f64 = { (*p).min_leading };
         if want < lo { want = lo; }
@@ -175,13 +174,13 @@ impl Split {
 
     fn position(this) -> f64 {
         let p: *SplitProps = this._props();
-        if p == (0 as *SplitProps) { return 0.0f64; }
+        if p.is_null() { return 0.0f64; }
         return { (*p).position };
     }
 
     fn set_divider_color(this, v: vocab::Color) -> Split {
         let p: *SplitProps = this._props();
-        if p == (0 as *SplitProps) { return this; }
+        if p.is_null() { return this; }
         { (*p).divider_color = v };
         core::touch(this._p, P_DIVIDER);
         return this;
@@ -189,7 +188,7 @@ impl Split {
 
     fn divider_color(this) -> vocab::Color {
         let p: *SplitProps = this._props();
-        if p == (0 as *SplitProps) { return vocab::Color::separator(); }
+        if p.is_null() { return vocab::Color::separator(); }
         return { (*p).divider_color };
     }
 
@@ -197,7 +196,7 @@ impl Split {
     // own: the divider is part of the geometry it sits in.
     fn set_divider_thickness(this, v: f64) -> Split {
         let p: *SplitProps = this._props();
-        if p == (0 as *SplitProps) { return this; }
+        if p.is_null() { return this; }
         { (*p).divider_thickness = v };
         core::touch(this._p, P_DIVIDER);
         core::relayout(this._p);
@@ -206,13 +205,13 @@ impl Split {
 
     fn divider_thickness(this) -> f64 {
         let p: *SplitProps = this._props();
-        if p == (0 as *SplitProps) { return 1.0f64; }
+        if p.is_null() { return 1.0f64; }
         return { (*p).divider_thickness };
     }
 
     fn set_axis(this, v: SplitAxis) -> Split {
         let p: *SplitProps = this._props();
-        if p == (0 as *SplitProps) { return this; }
+        if p.is_null() { return this; }
         { (*p).axis = v };
         core::touch(this._p, P_AXIS);
         return this;
@@ -220,7 +219,7 @@ impl Split {
 
     fn axis(this) -> SplitAxis {
         let p: *SplitProps = this._props();
-        if p == (0 as *SplitProps) { return SplitAxis::Columns; }
+        if p.is_null() { return SplitAxis::Columns; }
         return { (*p).axis };
     }
 
@@ -230,7 +229,7 @@ impl Split {
 
     fn set_min(this, pane: Pane, v: f64) -> Split {
         let p: *SplitProps = this._props();
-        if p == (0 as *SplitProps) { return this; }
+        if p.is_null() { return this; }
         match pane {
             Pane::Leading => { { (*p).min_leading = v }; core::touch(this._p, P_MIN_LEADING); }
             Pane::Trailing => { { (*p).min_trailing = v }; core::touch(this._p, P_MIN_TRAILING); }
@@ -240,7 +239,7 @@ impl Split {
 
     fn min(this, pane: Pane) -> f64 {
         let p: *SplitProps = this._props();
-        if p == (0 as *SplitProps) { return 0.0f64; }
+        if p.is_null() { return 0.0f64; }
         return match pane {
             Pane::Leading => { (*p).min_leading },
             Pane::Trailing => { (*p).min_trailing },
@@ -254,7 +253,7 @@ impl Split {
 
     fn _set_collapsed(this, pane: Pane, v: bool) -> Split {
         let p: *SplitProps = this._props();
-        if p == (0 as *SplitProps) { return this; }
+        if p.is_null() { return this; }
         // Remember where the divider was BEFORE it goes to the edge, and put
         // it back on the way out. Only on the transition — collapsing an
         // already-collapsed pane must not overwrite the saved position with
@@ -281,7 +280,7 @@ impl Split {
 
     fn is_collapsed(this, pane: Pane) -> bool {
         let p: *SplitProps = this._props();
-        if p == (0 as *SplitProps) { return false; }
+        if p.is_null() { return false; }
         return match pane {
             Pane::Leading => { (*p).collapsed_leading },
             Pane::Trailing => { (*p).collapsed_trailing },
@@ -294,7 +293,7 @@ impl Split {
 
     fn set_on_move(this, f: fn(*u8, *u8), ctx: *u8 = 0 as *u8) -> Split {
         let p: *SplitProps = this._props();
-        if p == (0 as *SplitProps) { return this; }
+        if p.is_null() { return this; }
         { (*p).on_move = f };
         { (*p).ctx = ctx };
         return this;
@@ -305,7 +304,7 @@ impl Split {
     fn moved(this, to: f64) -> Split {
         let _a: Split = this.set_position(to);
         let p: *SplitProps = this._props();
-        if p == (0 as *SplitProps) { return this; }
+        if p.is_null() { return this; }
         let f: fn(*u8, *u8) = { (*p).on_move };
         if f != no_move { f(this._p as *u8, { (*p).ctx }); }
         return this;
@@ -360,15 +359,15 @@ impl Split {
 // Narrow a node to this control, the DOM step: a node carries what EVERY
 // node has, and a checked cast adds what only this control has.
 fn from(p: *core::Node) -> option::Option[Split] {
-    if p == (0 as *core::Node) { return option::Option[Split]::None; }
+    if p.is_null() { return option::Option[Split]::None; }
     let d: *core::Data = { (*p).data() };
-    if d == (0 as *core::Data) { return option::Option[Split]::None; }
+    if d.is_null() { return option::Option[Split]::None; }
     if { (*d).kind } != K_SPLIT { return option::Option[Split]::None; }
     return option::Option[Split]::Some(Split::_of(p));
 }
 
 fn find(key: str, within: *core::Node = 0 as *core::Node) -> option::Option[Split] {
-    if within != (0 as *core::Node) {
+    if within.is_not_null() {
         return match core::find_in(within, key) {
             option::Option[*core::Node]::Some(p) => from(p),
             option::Option[*core::Node]::None => option::Option[Split]::None,

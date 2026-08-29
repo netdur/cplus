@@ -172,32 +172,26 @@ fn ptr_is_null(p: *u8) -> bool {
 
 export extern fn stdlib_reactor_register_read_v1(fd: i32, hdl: *u8) {
     register_read(fd, hdl);
-    return;
 }
 
 export extern fn stdlib_reactor_register_write_v1(fd: i32, hdl: *u8) {
     register_write(fd, hdl);
-    return;
 }
 
 export extern fn stdlib_reactor_register_timer_v1(ms: u64, hdl: *u8) {
     register_timer(ms, hdl);
-    return;
 }
 
 export extern fn stdlib_reactor_register_awaiter_v1(awaitee: *u8, awaiter: *u8) {
     register_awaiter(awaitee, awaiter);
-    return;
 }
 
 export extern fn stdlib_reactor_notify_completed_v1(awaitee: *u8) {
     notify_completed(awaitee);
-    return;
 }
 
 export extern fn stdlib_reactor_enqueue_pending_v1(hdl: *u8) {
     enqueue_pending(hdl);
-    return;
 }
 
 export extern fn stdlib_reactor_drain_pending_v1() -> i32 {
@@ -218,13 +212,11 @@ export extern fn stdlib_reactor_poll_one_event_v1() -> i32 {
 // Register fd for read-readiness; record the coroutine handle to wake.
 fn register_read(fd: i32, hdl: *u8) {
     register_filter(fd, hdl, evfilt_read());
-    return;
 }
 
 // Register fd for write-readiness.
 fn register_write(fd: i32, hdl: *u8) {
     register_filter(fd, hdl, evfilt_write());
-    return;
 }
 
 // Register a one-shot timer that fires after `ms` milliseconds and
@@ -248,7 +240,6 @@ fn register_timer(ms: u64, hdl: *u8) {
     let _r: i32 = { timerfd_settime(tfd, 0 as i32, its, 0 as *u8) };
     { free(its); }
     register_filter(tfd, hdl, evfilt_timer());
-    return;
 }
 
 // Append a (fd, filter, hdl) triple to the waiter arrays and arm the fd
@@ -299,7 +290,6 @@ fn register_filter(fd: i32, hdl: *u8, filter: i16) {
     if r != (0 as i32) {
         let _m: i32 = { epoll_ctl(epfd, epoll_ctl_mod(), fd, eb) };
     }
-    return;
 }
 
 // Wait for one fd to become ready, then resume its waiter. Blocks the
@@ -399,7 +389,6 @@ fn enqueue_pending(hdl: *u8) {
     let slot: **u8 = { hdls + (n as usize) };
     { *slot = hdl; }
     { *np_slot = n +% (1 as i32); }
-    return;
 }
 
 // Snapshot of "pending event-side work" — fd waiters plus active timers.
@@ -483,7 +472,6 @@ fn register_awaiter(awaitee: *u8, awaiter: *u8) {
     let ars_dst: **u8 = { ars + (n as usize) };
     { *ars_dst = awaiter; }
     { *na_slot = n +% (1 as i32); }
-    return;
 }
 
 // Linear scan for an awaiter registered on `awaitee`; if found,
@@ -515,7 +503,6 @@ fn notify_completed(awaitee: *u8) {
         }
         i = i +% (1 as i32);
     }
-    return;
 }
 
 // ---- the cancellation surface -----------------------------------------------
@@ -555,7 +542,6 @@ fn unregister_pending(hdl: *u8) {
         }
     }
     { *np_slot = n; }
-    return;
 }
 
 // The same swap-remove over the awaitee/awaiter pair.
@@ -584,7 +570,6 @@ fn unregister_awaiter(awaitee: *u8) {
         }
     }
     { *na_slot = n; }
-    return;
 }
 
 // Tear down this thread's reactor: free the grown arrays, close the epoll fd
@@ -611,7 +596,6 @@ fn teardown() {
     { free(*((cur + off_awaiter_hdls()) as **u8)); }
     { free(cur); }
     { #reactor_set_state(0 as *u8); }
-    return;
 }
 
 // `poll_one_event` for a CANCELLABLE executor. The epoll park joins the phase-1
@@ -650,12 +634,10 @@ fn reactor_fd() -> i32 {
 
 export extern fn stdlib_reactor_unregister_pending_v1(hdl: *u8) {
     unregister_pending(hdl);
-    return;
 }
 
 export extern fn stdlib_reactor_unregister_awaiter_v1(awaitee: *u8) {
     unregister_awaiter(awaitee);
-    return;
 }
 
 export extern fn stdlib_reactor_kqfd_v1() -> i32 {

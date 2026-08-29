@@ -69,11 +69,11 @@ impl Handle {
 
     // Both halves: a handle to nothing is not live either.
     fn is_live(this) -> bool {
-        if this.node == (0 as *core::Node) { return false; }
+        if this.node.is_null() { return false; }
         return this.seen == flex::removal_count();
     }
 
-    fn is_none(this) -> bool { return this.node == (0 as *core::Node); }
+    fn is_none(this) -> bool { return this.node.is_null(); }
 }
 
 // ---- values ------------------------------------------------------------------
@@ -450,12 +450,10 @@ impl Backend {
     fn highlight_now(this, h: Handle) {
         let f: fn(*u8, Handle) = this.highlight;
         f(this.surface, h);
-        return;
     }
     fn clear_highlight_now(this) {
         let f: fn(*u8) = this.clear_highlight;
         f(this.surface);
-        return;
     }
     fn insert_now(this, parent: Handle, at: usize, take sp: Spec) -> Outcome {
         let f: fn(*u8, Handle, usize, take Spec) -> Outcome = this.insert;

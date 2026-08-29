@@ -86,7 +86,7 @@ fn renderer_none() -> Renderer {
 // `create` hook is no backend, and a separate flag could disagree.
 static RENDERER: Renderer = #zero::[Renderer]();
 
-fn installed() -> bool { return RENDERER.create != (0 as fn(*u8, *core::Node) -> *u8); }
+fn installed() -> bool { return RENDERER.create.is_not_null(); }
 
 // Install the process's backend. Also arms M5 (touch's sync request routes
 // to the renderer's scheduler) and M6 (this thread becomes THE UI thread).
@@ -94,7 +94,6 @@ fn install(take r: Renderer) {
     RENDERER = r;
     core::set_main_thread_id(ui_thread_id());
     core::set_sync_request_fn(request_sync);
-    return;
 }
 
 // Tests and teardown: back to the portable no-backend posture.
@@ -102,7 +101,6 @@ fn uninstall() {
     RENDERER = renderer_none();
     core::set_main_thread_id(0 as u64);
     core::set_sync_request_fn(0 as fn());
-    return;
 }
 
 #[link_name = "pthread_self"]
@@ -111,8 +109,7 @@ extern fn ui_thread_id() -> u64;
 fn request_sync() {
     if !installed() { return; }
     let f: fn(*u8) = RENDERER.schedule;
-    if f != (0 as fn(*u8)) { f(RENDERER.ctx); }
-    return;
+    if f.is_not_null() { f(RENDERER.ctx); }
 }
 
 // ---- mounted windows (M7) ----------------------------------------------------
@@ -152,7 +149,6 @@ fn debug_find_wrong_kind(key: str, wanted: str) {
     if !find_debugging() { return; }
     let m: text::Text = "facet find(\"${key}\"): the node exists but is not a ${wanted} — the typed cursor answered None";
     io::eprintln(m.view());
-    return;
 }
 
 // The DOM rule (user decision, 2026-08-04): a bare `find(key)` resolves like
@@ -164,7 +160,7 @@ fn find_node(key: str) -> option::Option[*core::Node] {
     let n: usize = app::window_count();
     while i < n {
         let r: *core::Node = app::window_root(i);
-        if r != (0 as *core::Node) {
+        if r.is_not_null() {
             match core::find_in(r, key) {
                 option::Option[*core::Node]::Some(p) => { return option::Option[*core::Node]::Some(p); }
                 option::Option[*core::Node]::None => { }
@@ -192,13 +188,13 @@ fn find_node(key: str) -> option::Option[*core::Node] {
 // `within:` matches the typed finds exactly, so the signature reads the same
 // whether you are asking for a Button or for a bare node.
 fn find(key: str, within: *core::Node = 0 as *core::Node) -> option::Option[*core::Node] {
-    if within != (0 as *core::Node) { return core::find_in(within, key); }
+    if within.is_not_null() { return core::find_in(within, key); }
     return find_node(key);
 }
 
 // The same lookup, answering NOTHING as a null pointer instead of an Option.
 //
-// Every band verb already opens with `if n == (0 as *Node) { return; }`, so a
+// Every band verb already opens with `if n.is_null() { return; }`, so a
 // key that resolves to nothing is a no-op either way — the `Option` was making
 // the caller re-state a check the callee performs. That cost three lines and a
 // `match` PER WRITE:
@@ -232,7 +228,7 @@ fn node(key: str, within: *core::Node = 0 as *core::Node) -> *core::Node {
 // Answers the node that was there, so a caller can keep it alive or drop it.
 fn replace_child(parent: *core::Node, at: usize, take child: core::Node)
     -> option::Option[core::Node] {
-    if parent == (0 as *core::Node) { return option::Option[core::Node]::None; }
+    if parent.is_null() { return option::Option[core::Node]::None; }
     if at >= core::child_count_of(parent) { return option::Option[core::Node]::None; }
     let old: option::Option[core::Node] = remove_child(parent, at);
     let _ok: bool = insert_child(parent, child, at);
@@ -243,7 +239,7 @@ fn replace_child(parent: *core::Node, at: usize, take child: core::Node)
 // child's key, not its index.
 fn replace(key: str, take child: core::Node) -> option::Option[core::Node] {
     let old: *core::Node = node(key);
-    if old == (0 as *core::Node) { return option::Option[core::Node]::None; }
+    if old.is_null() { return option::Option[core::Node]::None; }
     var parent: *core::Node = 0 as *core::Node;
     match parent_of(old) {
         option::Option[*core::Node]::Some(p) => { parent = p; }
@@ -279,7 +275,6 @@ fn drain_attach_queue(ref q: vec::Vec[*core::Node]) {
         i = i +% (1 as usize);
     }
     q.truncate(0 as usize);
-    return;
 }
 
 fn drain_detach_queue(ref q: vec::Vec[*core::Node]) {
@@ -293,7 +288,6 @@ fn drain_detach_queue(ref q: vec::Vec[*core::Node]) {
         i = i +% (1 as usize);
     }
     q.truncate(0 as usize);
-    return;
 }
 
 // ---- the mount walk (M3, M4) -------------------------------------------------
@@ -304,7 +298,7 @@ fn drain_detach_queue(ref q: vec::Vec[*core::Node]) {
 // nowhere; the caller (a runtime facade) puts it into a window.
 fn mount(root: *core::Node) -> bool {
     if !installed() { return false; }
-    if root == (0 as *core::Node) { return false; }
+    if root.is_null() { return false; }
     var q: vec::Vec[*core::Node] = vec::new::[*core::Node]();
     let _slots: usize = mount_walk(root, 0 as *u8, 0 as usize, q);
     app::open_window(root);
@@ -341,7 +335,7 @@ fn mount(root: *core::Node) -> bool {
 // root can find it; with a host, the placing has already happened.
 fn realise(n: *core::Node, host: *u8 = 0 as *u8) -> *u8 {
     if !installed() { return 0 as *u8; }
-    if n == (0 as *core::Node) { return 0 as *u8; }
+    if n.is_null() { return 0 as *u8; }
     var q: vec::Vec[*core::Node] = vec::new::[*core::Node]();
     let _slots: usize = mount_walk(n, host, 0 as usize, q);
     drain_attach_queue(q);
@@ -351,11 +345,10 @@ fn realise(n: *core::Node, host: *u8 = 0 as *u8) -> *u8 {
 // The matching teardown: on_detach fires, attach state clears. Views go the
 // same way they always do — with the node.
 fn unrealise(n: *core::Node) {
-    if n == (0 as *core::Node) { return; }
+    if n.is_null() { return; }
     var q: vec::Vec[*core::Node] = vec::new::[*core::Node]();
     detach_walk(n, q);
     drain_detach_queue(q);
-    return;
 }
 
 // Apply the dirty bits over a subtree that is NOT in a window.
@@ -371,9 +364,8 @@ fn unrealise(n: *core::Node) {
 // a row applies it immediately, because the row is about to be shown.
 fn sync_from(n: *core::Node) {
     if !installed() { return; }
-    if n == (0 as *core::Node) { return; }
+    if n.is_null() { return; }
     sync_walk(n);
-    return;
 }
 
 // Unmount: out of the registry, attach state cleared. Views are torn down by
@@ -384,7 +376,6 @@ fn unmount(root: *core::Node) {
     var q: vec::Vec[*core::Node] = vec::new::[*core::Node]();
     detach_walk(root, q);
     drain_detach_queue(q);
-    return;
 }
 
 // One node: create + insert + recurse. Returns the next free slot in `host`.
@@ -426,17 +417,17 @@ fn mount_walk(n: *core::Node, host: *u8, slot: usize, ref q: vec::Vec[*core::Nod
         if core::has_native_factory(n) { v = core::make_native(n); }
         else { v = core::view_of(n); }
     }
-    else if create != (0 as fn(*u8, *core::Node) -> *u8) { v = create(RENDERER.ctx, n); }
+    else if create.is_not_null() { v = create(RENDERER.ctx, n); }
     core::set_attached(n, true);
     q.append(n);
-    if v != (0 as *u8) {
+    if v.is_not_null() {
         // An adopted view keeps the release `adopt_native` paired with it. The
         // application said who frees this view; the backend does not get to
         // overwrite that answer on its way past.
         if !adopted { core::set_view(n, v, RENDERER.view_release); }
-        if host != (0 as *u8) {
+        if host.is_not_null() {
             let ins: fn(*u8, *u8, *u8, usize) = RENDERER.insert;
-            if ins != (0 as fn(*u8, *u8, *u8, usize)) { ins(RENDERER.ctx, host, v, slot); }
+            if ins.is_not_null() { ins(RENDERER.ctx, host, v, slot); }
         }
         var child_slot: usize = 0 as usize;
         var i: usize = 0 as usize;
@@ -475,7 +466,6 @@ fn detach_walk(n: *core::Node, ref q: vec::Vec[*core::Node]) {
         }
         i = i +% (1 as usize);
     }
-    return;
 }
 
 // ---- the sync walk (M5) ------------------------------------------------------
@@ -489,15 +479,13 @@ fn sync() {
     let n: usize = app::window_count();
     while i < n {
         let r: *core::Node = app::window_root(i);
-        if r != (0 as *core::Node) { sync_walk(r); }
+        if r.is_not_null() { sync_walk(r); }
         i = i +% (1 as usize);
     }
-    return;
 }
 
 fn sync_walk(n: *core::Node) {
     let _absorbed: bool = sync_subtree(n);
-    return;
 }
 
 // Apply every dirty node, and route the ones that have no view of their own.
@@ -549,8 +537,7 @@ fn sync_subtree(n: *core::Node) -> bool {
 
 fn apply_now(n: *core::Node) {
     let ap: fn(*u8, *core::Node) = RENDERER.apply;
-    if ap != (0 as fn(*u8, *core::Node)) { ap(RENDERER.ctx, n); }
-    return;
+    if ap.is_not_null() { ap(RENDERER.ctx, n); }
 }
 
 // ---- tests ------------------------------------------------------------------
@@ -578,7 +565,6 @@ fn fr_reset() {
     FR_INS_HOSTS.truncate(0 as usize);
     FR_INS_SLOTS.truncate(0 as usize);
     FR_REMOVES = 0;
-    return;
 }
 
 fn fr_create(ctx: *u8, n: *core::Node) -> *u8 {
@@ -596,7 +582,6 @@ fn fr_apply(ctx: *u8, n: *core::Node) { FR_APPLIES = FR_APPLIES + 1; return; }
 fn fr_insert(ctx: *u8, host: *u8, child: *u8, slot: usize) {
     FR_INS_HOSTS.append(host as u64);
     FR_INS_SLOTS.append(slot as u64);
-    return;
 }
 
 fn fr_remove(ctx: *u8, host: *u8, child: *u8) { FR_REMOVES = FR_REMOVES + 1; return; }
@@ -626,7 +611,6 @@ fn mount_without_a_renderer_is_inert() {
     assert mount(#addr_of(root)) == false;
     assert mounted_count() == (0 as usize);
     assert core::is_attached(#addr_of(root)) == false;
-    return;
 }
 
 #[test]
@@ -648,7 +632,7 @@ fn mount_creates_topdown_and_inserts_into_the_nearest_host() {
     // Root backed (keyed), three leaves backed, inner column passed through.
     assert FR_CREATES == 4;
     let rv: *u8 = core::view_of(#addr_of(root));
-    assert rv != (0 as *u8);
+    assert rv.is_not_null();
     // Every insert landed in the root's view, slots 0,1,2 in walk order.
     assert FR_INS_HOSTS.count() == (3 as usize);
     var i: usize = 0 as usize;
@@ -669,7 +653,6 @@ fn mount_creates_topdown_and_inserts_into_the_nearest_host() {
         option::Option[*core::Node]::None => { assert false; }
     }
     uninstall();
-    return;
 }
 
 #[test]
@@ -698,7 +681,6 @@ fn touch_requests_sync_and_sync_applies_only_dirty() {
         option::Option[*core::Node]::None => { assert false; }
     }
     uninstall();
-    return;
 }
 
 #[test]
@@ -722,7 +704,6 @@ fn batched_writes_request_once_at_flush() {
         option::Option[*core::Node]::None => { assert false; }
     }
     uninstall();
-    return;
 }
 
 // ---- geometry writes are on the dirty path too --------------------------------
@@ -772,7 +753,6 @@ fn a_size_write_requests_a_sync_and_marks_layout() {
         option::Option[*core::Node]::None => { assert false; }
     }
     uninstall();
-    return;
 }
 
 #[test]
@@ -799,7 +779,6 @@ fn geometry_writes_batch_and_stay_off_dataless_nodes() {
     // And a null cursor is inert, the standing convention.
     core::set_width(0 as *core::Node, 10.0f64);
     core::relayout(0 as *core::Node);
-    return;
 }
 
 #[test]
@@ -818,7 +797,6 @@ fn mounted_root_is_the_most_recent_and_unmount_detaches() {
     assert core::is_attached(#addr_of(second)) == false;
     assert core::is_attached(#addr_of(first));
     uninstall();
-    return;
 }
 
 #[test]
@@ -840,7 +818,6 @@ fn view_release_fires_on_node_teardown() {
     // Scope exit dropped the tree: every created view released exactly once.
     assert FR_RELEASES == 3;
     uninstall();
-    return;
 }
 
 // ---- lifecycle handler tests -------------------------------------------------
@@ -854,10 +831,9 @@ fn lc_on_attach(sender: *u8, ctx: *u8) {
     LC_ATTACHES = LC_ATTACHES + 1;
     // M4: by the time any handler fires the WHOLE tree is attached — even a
     // sibling mounted after this node in walk order.
-    if LC_SIBLING != (0 as *core::Node) {
+    if LC_SIBLING.is_not_null() {
         LC_SAW_SIBLING_ATTACHED = core::is_attached(LC_SIBLING);
     }
-    return;
 }
 
 fn lc_on_detach(sender: *u8, ctx: *u8) { LC_DETACHES = LC_DETACHES + 1; return; }
@@ -896,7 +872,6 @@ fn mount_fires_on_attach_after_the_whole_walk() {
     assert LC_DETACHES == 1;
     LC_SIBLING = 0 as *core::Node;
     uninstall();
-    return;
 }
 
 // ---- composition: set_content and switch_to ----------------------------------
@@ -933,11 +908,11 @@ fn mount_fires_on_attach_after_the_whole_walk() {
 // not descend past it (their view_release still fires on node drop).
 fn remove_native_views(n: *core::Node, host: *u8) {
     if !installed() { return; }
-    if host == (0 as *u8) { return; }
+    if host.is_null() { return; }
     let v: *u8 = core::view_of(n);
-    if v != (0 as *u8) {
+    if v.is_not_null() {
         let rm: fn(*u8, *u8, *u8) = RENDERER.remove;
-        if rm != (0 as fn(*u8, *u8, *u8)) { rm(RENDERER.ctx, host, v); }
+        if rm.is_not_null() { rm(RENDERER.ctx, host, v); }
         return;
     }
     var i: usize = 0 as usize;
@@ -949,7 +924,6 @@ fn remove_native_views(n: *core::Node, host: *u8) {
         }
         i = i +% (1 as usize);
     }
-    return;
 }
 
 // Fill `outlet` with `c`'s tree. Rebuilds on repeat: the previous occupant is
@@ -963,7 +937,7 @@ fn remove_native_views(n: *core::Node, host: *u8) {
 // native slot accounting is exact; an unbacked outlet shares an ancestor
 // host, where slot positions among foreign siblings are not tracked.
 fn set_content[C: component::Component + component::Lifecycle](outlet: *core::Node, ref c: C) -> bool {
-    if outlet == (0 as *core::Node) { return false; }
+    if outlet.is_null() { return false; }
     // Out with the previous occupant — notify, detach its native views from
     // the host, then remove. Removal is correct here (set_content REBUILDS);
     // parking is switch_to's job.
@@ -1013,12 +987,12 @@ fn set_content[C: component::Component + component::Lifecycle](outlet: *core::No
 // in this subtree.
 fn nearest_host(n: *core::Node) -> *u8 {
     let own: *u8 = core::view_of(n);
-    if own != (0 as *u8) { return own; }
+    if own.is_not_null() { return own; }
     var i: usize = 0 as usize;
     let count: usize = app::window_count();
     while i < count {
         let r: *core::Node = app::window_root(i);
-        if r != (0 as *core::Node) {
+        if r.is_not_null() {
             match host_search(r, 0 as *u8, n) {
                 option::Option[*u8]::Some(h) => { return h; }
                 option::Option[*u8]::None => { }
@@ -1032,7 +1006,7 @@ fn nearest_host(n: *core::Node) -> *u8 {
 fn host_search(cur: *core::Node, host: *u8, target: *core::Node) -> option::Option[*u8] {
     var h: *u8 = host;
     let v: *u8 = core::view_of(cur);
-    if v != (0 as *u8) { h = v; }
+    if v.is_not_null() { h = v; }
     if cur == target { return option::Option[*u8]::Some(h); }
     var i: usize = 0 as usize;
     let count: usize = core::child_count_of(cur);
@@ -1064,7 +1038,6 @@ fn attach_flags_walk(n: *core::Node, ref q: vec::Vec[*core::Node]) {
         }
         i = i +% (1 as usize);
     }
-    return;
 }
 
 // Show exactly the child of `outlet` keyed `key`; park every other child
@@ -1073,7 +1046,7 @@ fn attach_flags_walk(n: *core::Node, ref q: vec::Vec[*core::Node]) {
 // on the children whose state changed, post-swap. False when no child
 // carries the key (and nothing changes).
 fn switch_to(outlet: *core::Node, key: str) -> bool {
-    if outlet == (0 as *core::Node) { return false; }
+    if outlet.is_null() { return false; }
     // First pass: the key must exist, or this is a typo and a no-op.
     var found: bool = false;
     var i: usize = 0 as usize;
@@ -1153,7 +1126,7 @@ fn switch_to(outlet: *core::Node, key: str) -> bool {
 // its view); an unbacked one contributes whatever its children do — which is
 // how a pure-layout column inside a scroll view passes through.
 fn native_span(n: *core::Node) -> usize {
-    if n == (0 as *core::Node) { return 0 as usize; }
+    if n.is_null() { return 0 as usize; }
     if core::view_of(n) != (0 as *u8) { return 1 as usize; }
     var total: usize = 0 as usize;
     var i: usize = 0 as usize;
@@ -1221,13 +1194,13 @@ fn scan_slots_before(cur: *core::Node, parent: *core::Node, at: usize) -> SlotSc
 // ancestor. flex nodes carry no parent pointer, so the search goes DOWN from
 // the running app's windows, exactly like nearest_host.
 fn host_node_of(n: *core::Node) -> *core::Node {
-    if n == (0 as *core::Node) { return 0 as *core::Node; }
+    if n.is_null() { return 0 as *core::Node; }
     if core::view_of(n) != (0 as *u8) { return n; }
     var i: usize = 0 as usize;
     let count: usize = app::window_count();
     while i < count {
         let r: *core::Node = app::window_root(i);
-        if r != (0 as *core::Node) {
+        if r.is_not_null() {
             match host_node_search(r, 0 as *core::Node, n) {
                 option::Option[*core::Node]::Some(h) => { return h; }
                 option::Option[*core::Node]::None => { }
@@ -1268,7 +1241,7 @@ fn native_slot_for(parent: *core::Node, at: usize) -> usize {
         return scan_slots_before(parent, parent, at).count;
     }
     let h: *core::Node = host_node_of(parent);
-    if h == (0 as *core::Node) { return 0 as usize; }
+    if h.is_null() { return 0 as usize; }
     var i: usize = 0 as usize;
     var c: usize = 0 as usize;
     let count: usize = core::child_count_of(h);
@@ -1290,7 +1263,7 @@ fn native_slot_for(parent: *core::Node, at: usize) -> usize {
 // parent is live. False when the parent is null or the tree edit failed —
 // and then nothing was mounted either.
 fn insert_child(parent: *core::Node, take child: core::Node, at: usize) -> bool {
-    if parent == (0 as *core::Node) { return false; }
+    if parent.is_null() { return false; }
     let n: usize = core::child_count_of(parent);
     var index: usize = at;
     if index > n { index = n; }
@@ -1326,7 +1299,7 @@ fn insert_child(parent: *core::Node, take child: core::Node, at: usize) -> bool 
 
 // Append. The everyday verb — filling a list is this in a loop.
 fn add_child(parent: *core::Node, take child: core::Node) -> bool {
-    if parent == (0 as *core::Node) { return false; }
+    if parent.is_null() { return false; }
     return insert_child(parent, child, core::child_count_of(parent));
 }
 
@@ -1335,7 +1308,7 @@ fn add_child(parent: *core::Node, take child: core::Node) -> bool {
 // what releases its views (through the release the renderer paired with them).
 // None when there is no such child, and then nothing changed.
 fn remove_child(parent: *core::Node, at: usize) -> option::Option[core::Node] {
-    if parent == (0 as *core::Node) { return option::Option[core::Node]::None; }
+    if parent.is_null() { return option::Option[core::Node]::None; }
     if at >= core::child_count_of(parent) { return option::Option[core::Node]::None; }
     match core::child_of(parent, at) {
         option::Option[*core::Node]::Some(cp) => {
@@ -1366,7 +1339,7 @@ fn remove_child(parent: *core::Node, at: usize) -> option::Option[core::Node] {
 
 // The node that has `target` as a direct child, searching `n`'s subtree.
 fn _parent_in(n: *core::Node, target: *core::Node) -> option::Option[*core::Node] {
-    if n == (0 as *core::Node) { return option::Option[*core::Node]::None; }
+    if n.is_null() { return option::Option[*core::Node]::None; }
     match { (*n).child_index(target) } {
         option::Option[usize]::Some(_at) => { return option::Option[*core::Node]::Some(n); }
         option::Option[usize]::None => { }
@@ -1391,12 +1364,12 @@ fn _parent_in(n: *core::Node, target: *core::Node) -> option::Option[*core::Node
 // The mounted parent of `target`, or None when it is a window root (or not in
 // any open window). Same order as `find_node`: windows as they were opened.
 fn parent_of(target: *core::Node) -> option::Option[*core::Node] {
-    if target == (0 as *core::Node) { return option::Option[*core::Node]::None; }
+    if target.is_null() { return option::Option[*core::Node]::None; }
     var i: usize = 0 as usize;
     let n: usize = app::window_count();
     while i < n {
         let r: *core::Node = app::window_root(i);
-        if r != (0 as *core::Node) {
+        if r.is_not_null() {
             match _parent_in(r, target) {
                 option::Option[*core::Node]::Some(p) => { return option::Option[*core::Node]::Some(p); }
                 option::Option[*core::Node]::None => { }
@@ -1507,7 +1480,6 @@ fn add_child_mounts_into_the_live_tree() {
     assert fr_last_slot() == (4 as u64);
     unmount(#addr_of(root));
     uninstall();
-    return;
 }
 
 #[test]
@@ -1544,7 +1516,6 @@ fn insert_under_a_passthrough_container_counts_document_order() {
     }
     unmount(#addr_of(root));
     uninstall();
-    return;
 }
 
 #[test]
@@ -1603,7 +1574,6 @@ fn remove_by_key_deletes_the_row_and_leaves_its_siblings() {
 
     app::close_window(#addr_of(root));
     uninstall();
-    return;
 }
 
 #[test]
@@ -1638,7 +1608,6 @@ fn parent_of_answers_the_mounted_parent_and_none_for_a_root() {
         option::Option[*core::Node]::None => { assert true; }
     }
     app::close_window(#addr_of(root));
-    return;
 }
 
 #[test]
@@ -1683,7 +1652,6 @@ fn remove_child_notifies_detaches_and_takes_the_views_out() {
     }
     unmount(#addr_of(root));
     uninstall();
-    return;
 }
 
 #[test]
@@ -1726,7 +1694,6 @@ fn structural_verbs_negatives_and_the_headless_posture() {
         option::Option[*core::Node]::None => { assert false; }
     }
     app::close_window(#addr_of(h));
-    return;
 }
 
 // ---- composition tests -------------------------------------------------------
@@ -1783,7 +1750,6 @@ fn find_is_find_node_and_takes_within() {
         option::Option[*core::Node]::None => true,
     };
     app::close_window(#addr_of(root));
-    return;
 }
 
 #[test]
@@ -1821,7 +1787,6 @@ fn set_content_fills_registers_and_rebuilds_on_repeat() {
     }
     let _e: bool = core::evict_presented(#addr_of(outlet));
     app::close_window(#addr_of(outlet));
-    return;
 }
 
 #[test]
@@ -1867,7 +1832,6 @@ fn switch_to_parks_under_display_none_and_restores() {
     }
     // A key no child carries: false, and nothing moves.
     assert switch_to(#addr_of(outlet), "nope") == false;
-    return;
 }
 
 #[test]
@@ -1908,7 +1872,6 @@ fn switch_to_walks_the_whole_subtree_and_keeps_grid() {
         }
         option::Option[*core::Node]::None => { assert false; }
     }
-    return;
 }
 
 #[test]
@@ -1920,7 +1883,7 @@ fn set_content_under_a_renderer_removes_old_views_and_mounts_new() {
     var outlet: core::Node = core::column(core::Builder::new(), key: "slot");
     assert mount(#addr_of(outlet));
     let ov: *u8 = core::view_of(#addr_of(outlet));
-    assert ov != (0 as *u8);
+    assert ov.is_not_null();
     var c: ScComp = ScComp { n: 1, attaches: 0, detaches: 0 };
     assert set_content(#addr_of(outlet), c);
     // First fill: nothing to remove; the built leaf mounted into the outlet.
@@ -1937,7 +1900,6 @@ fn set_content_under_a_renderer_removes_old_views_and_mounts_new() {
     assert FR_CREATES > creates_after_first;
     unmount(#addr_of(outlet));
     uninstall();
-    return;
 }
 
 #[test]
@@ -1957,7 +1919,7 @@ fn a_realised_subtree_is_whole_but_has_no_window() {
 
     let v: *u8 = realise(p);
     // Whole: the root and both children were created...
-    assert v != (0 as *u8);
+    assert v.is_not_null();
     assert FR_CREATES == 3;
     // ...and the children were inserted into their own parent. Only the ROOT
     // is left unplaced, because the caller has its own host for it.
@@ -1971,7 +1933,7 @@ fn a_realised_subtree_is_whole_but_has_no_window() {
     var bare: core::Node = core::column(bare_kids);
     let host: *u8 = { 77 as *u8 };
     let bv: *u8 = realise(#addr_of(bare), host);
-    assert bv == (0 as *u8);                        // the root itself is not backed
+    assert bv.is_null();                        // the root itself is not backed
     assert FR_INS_HOSTS.count() == (1 as usize);    // ...and its child went to the host
     match FR_INS_HOSTS.at(0 as usize) {
         option::Option[u64]::Some(h) => { assert h == (77 as u64); }
@@ -1986,7 +1948,6 @@ fn a_realised_subtree_is_whole_but_has_no_window() {
     assert core::is_attached(p) == false;
     assert mounted_count() == windows_before;
     uninstall();
-    return;
 }
 
 #[test]
@@ -1998,5 +1959,4 @@ fn realise_is_inert_with_no_backend() {
     assert realise(#addr_of(n)) == (0 as *u8);
     assert realise(0 as *core::Node) == (0 as *u8);
     unrealise(0 as *core::Node);
-    return;
 }

@@ -70,13 +70,11 @@ type ScreenBox = screen::ScreenBox;
 fn not_on_ios(entry: str) {
     io::eprintln(text::from_str("facet(ios): ").appending(entry)
         .appending(" has no iOS equivalent — see vendor/facet_uikit/MANIFEST.md. It is a no-op here.").view());
-    return;
 }
 
 fn not_yet(entry: str) {
     io::eprintln(text::from_str("facet(ios): ").appending(entry)
         .appending(" is not built in facet_uikit yet — see its MANIFEST.md. It is a no-op here.").view());
-    return;
 }
 
 // The window an application describes by hand. Identical to runtime.cplus's
@@ -188,7 +186,6 @@ static AGENT_ID: text::Text = #zero::[text::Text]();
 // `agent_mcp::uds_path` / `agent_mcp::loopback_port` for the conventions.
 fn agent_mcp(id: str) {
     AGENT_ID = text::from_str(id);
-    return;
 }
 
 // The name this process serves under, or "" if the app never asked.
@@ -202,7 +199,6 @@ fn agent_id() -> str { return AGENT_ID.view(); }
 fn serve_agent_if_asked() {
     let id: str = AGENT_ID.view();
     if id != "" { app::agent_serve_once(id); }
-    return;
 }
 
 fn run[W: Window](take window: W) {
@@ -224,7 +220,6 @@ fn run[W: Window](take window: W) {
     // unwinds — which is what makes taking their addresses safe here, exactly
     // as the macOS facade relies on its own blocking loop.
     host::run_loop();
-    return;
 }
 
 fn default_should_close(ctx: *u8) -> bool { return true; }
@@ -245,7 +240,6 @@ fn default_will_close(ctx: *u8) { return; }
 fn attach_trampoline[C: component::Component + component::Lifecycle](ctx: *u8) {
     let p: *C = ctx as *C;
     { (*p).on_attach() };
-    return;
 }
 
 // A component that owns its own lifetime.
@@ -395,10 +389,9 @@ fn present_window(take root: Node, title: str, width: f64, height: f64) {
         option::Option[box::Box[Node]]::Some(b) => { b.into_raw() } as *core::Node,
         option::Option[box::Box[Node]]::None => 0 as *core::Node,
     };
-    if tp == (0 as *core::Node) { return; }
+    if tp.is_null() { return; }
     if !mount::mount(tp) { return; }
     let _ok: bool = host::present_screen(tp, title, 0 as *u8);
-    return;
 }
 
 // An application may not close, minimise or zoom its own window. Apple rejects
@@ -435,7 +428,7 @@ fn is_window_active() -> bool {
 // is watching the window.
 fn observe_window_size(cb: fn(*u8), ctx: *u8 = 0 as *u8) -> services::Cancellable {
     let root: *core::Node = app::window_root(0 as usize);
-    if root == (0 as *core::Node) { return services::Cancellable::none(); }
+    if root.is_null() { return services::Cancellable::none(); }
     return services::observe_size(root, cb, ctx);
 }
 
@@ -478,7 +471,6 @@ fn observe_window_inactive(cb: fn(*u8), ctx: *u8 = 0 as *u8) -> services::Cancel
 // meaning and one of the few window-level properties iOS does have.
 fn set_app_appearance(a: vocab::Appearance) {
     host::set_app_appearance(a);
-    return;
 }
 
 fn app_appearance() -> vocab::Appearance {
@@ -535,19 +527,16 @@ impl App {
 
     fn screen(ref this, name: str, factory: fn() -> screen::ScreenBox) {
         this.routes.append(AppRoute { name: text::from_str(name), factory: factory });
-        return;
     }
 
     fn agent_mcp(ref this, id: str = "") {
         if id == "" { agent_mcp(this.name()); return; }
         agent_mcp(id);
-        return;
     }
 
     fn on_launch(ref this, f: fn(*u8), ctx: *u8 = 0 as *u8) {
         this.on_launch_fn = f;
         this.hook_ctx = ctx;
-        return;
     }
 
     fn on_quit(ref this, f: fn(*u8)) { this.on_quit_fn = f; return; }
@@ -569,7 +558,7 @@ impl App {
 
     fn build_menu(this) -> AppMenu {
         let f: fn() -> AppMenu = this.menu_fn;
-        if f != (0 as fn() -> AppMenu) { return f(); }
+        if f.is_not_null() { return f(); }
         var m: AppMenu = screen::app_menu(this.name());
         m.add_item(this.name(), "Quit", "q", screen::menu_action_quit());
         return m;
@@ -625,14 +614,13 @@ static PENDING_ROUTE: text::Text = #zero::[text::Text]();
 // The launch hook for an App: show the initial screen once the window exists.
 fn show_pending(ctx: *u8) {
     let _ok: bool = show_route(PENDING_ROUTE.view());
-    return;
 }
 
 fn show_route(route: str) -> bool {
-    if CURRENT_APP == (0 as *u8) { return false; }
+    if CURRENT_APP.is_null() { return false; }
     let ap: *App = CURRENT_APP as *App;
     let f: fn() -> screen::ScreenBox = { (*ap).route_factory(route) };
-    if f == (0 as fn() -> screen::ScreenBox) { return false; }
+    if f.is_null() { return false; }
     var sb: screen::ScreenBox = f();
     if !sb.valid() { return false; }
     // The app's menu plus THIS screen's contribution — built for parity with
@@ -642,7 +630,7 @@ fn show_route(route: str) -> bool {
     host::install_app_menu(#addr_of(bar));
     let c: Chrome = sb.chrome();
     let p: *core::Node = hold_root(sb.build());
-    if p == (0 as *core::Node) { return false; }
+    if p.is_null() { return false; }
     // Tear the previous screen down only once the new one is built: a failed
     // build would otherwise leave the window showing nothing at all.
     drop_current_screen();
@@ -665,7 +653,7 @@ fn show_route(route: str) -> bool {
 }
 
 fn drop_current_screen() {
-    if CURRENT_SB == (0 as *u8) { return; }
+    if CURRENT_SB.is_null() { return; }
     let sp: *screen::ScreenBox = CURRENT_SB as *screen::ScreenBox;
     { (*sp).on_detach() };
     CURRENT_SB = 0 as *u8;
@@ -676,7 +664,6 @@ fn drop_current_screen() {
     // per navigation rather than free something a queued apply still holds.
     // MANIFEST.md records it: the fix is a settle that runs ON the loop, not
     // after it.
-    return;
 }
 
 // nav::go / nav::quit while a loop runs.
@@ -692,7 +679,6 @@ fn close_current() {
         // reported and refused rather than honoured badly.
         not_on_ios("nav::quit");
     }
-    return;
 }
 
 // Pushed screens are a modal presentation on iOS — the tier `alert` and
@@ -706,10 +692,10 @@ fn close_current() {
 // the box is what the host hands back when the screen goes, whichever way it
 // went.
 fn push_screen(route: str, arg: str) -> bool {
-    if CURRENT_APP == (0 as *u8) { return false; }
+    if CURRENT_APP.is_null() { return false; }
     let ap: *App = CURRENT_APP as *App;
     let f: fn() -> screen::ScreenBox = { (*ap).route_factory(route) };
-    if f == (0 as fn() -> screen::ScreenBox) { return false; }
+    if f.is_null() { return false; }
     nav::set_arg(arg);   // after the lookup: a failed push leaves arg alone
     var sb: screen::ScreenBox = f();
     if !sb.valid() { return false; }
@@ -718,13 +704,13 @@ fn push_screen(route: str, arg: str) -> bool {
         option::Option[box::Box[Node]]::Some(b) => { b.into_raw() } as *core::Node,
         option::Option[box::Box[Node]]::None => 0 as *core::Node,
     };
-    if tp == (0 as *core::Node) { return false; }
+    if tp.is_null() { return false; }
     if !mount::mount(tp) { return false; }
     let sbp: *u8 = match box::new::[screen::ScreenBox](sb) {
         option::Option[box::Box[screen::ScreenBox]]::Some(b) => b.into_raw(),
         option::Option[box::Box[screen::ScreenBox]]::None => 0 as *u8,
     };
-    if sbp == (0 as *u8) { return false; }
+    if sbp.is_null() { return false; }
     if !host::push_screen(tp, c.title(), sbp) { return false; }
     { (*(sbp as *screen::ScreenBox)).on_attach() };
     return true;
@@ -734,13 +720,12 @@ fn push_screen(route: str, arg: str) -> bool {
 // button, or the swipe-back gesture. The host cannot tell those apart and does
 // not try: it reports what is no longer on the stack.
 fn pushed_gone(box_: *u8) {
-    if box_ == (0 as *u8) { return; }
+    if box_.is_null() { return; }
     { (*(box_ as *screen::ScreenBox)).on_detach() };
     // The ScreenBox and its tree are deliberately NOT freed, for the reason
     // `drop_current_screen` gives: there is no moment on this platform where
     // the loop has returned and the job queue is settled, so freeing something
     // a queued apply still holds would be worse than leaking it.
-    return;
 }
 
 fn pop_screen() -> bool {
@@ -759,20 +744,20 @@ fn app_running() -> bool { return running_app() != (0 as *App); }
 
 fn app_name() -> str {
     let ap: *App = running_app();
-    if ap == (0 as *App) { return ""; }
+    if ap.is_null() { return ""; }
     return { (*ap).name() };
 }
 
 fn has_screen(route: str) -> bool {
     let ap: *App = running_app();
-    if ap == (0 as *App) { return false; }
+    if ap.is_null() { return false; }
     let f: fn() -> screen::ScreenBox = { (*ap).route_factory(route) };
-    return f != (0 as fn() -> screen::ScreenBox);
+    return f.is_not_null();
 }
 
 fn register_screen(route: str, factory: fn() -> screen::ScreenBox) -> bool {
     let ap: *App = running_app();
-    if ap == (0 as *App) { return false; }
+    if ap.is_null() { return false; }
     if has_screen(route) { return false; }
     { (*ap).screen(route, factory) };
     return true;

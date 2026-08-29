@@ -41,7 +41,6 @@ fn enable() {
         serve_once: serve_once,
         pin_policy: pin_policy,
     });
-    return;
 }
 
 fn disable() {
@@ -50,7 +49,6 @@ fn disable() {
         serve_once: 0 as fn(str),
         pin_policy: 0 as fn(*u8, vocab::Agent),
     });
-    return;
 }
 
 // The in-process assistant, which needs no socket at all: it drives the same
@@ -94,14 +92,12 @@ fn policy_for(a: vocab::Agent) -> u32 {
 
 fn pin_policy(view: *u8, a: vocab::Agent) {
     agent_uikit::set_agent_policy(view, policy_for(a));
-    return;
 }
 
 // Walk `win`'s live view tree into the surface, replacing the previous
 // screen's — whose retained views are released by the drop.
 fn attach_window(win: *u8) {
     AGENT_SURFACE = agent_uikit::open(win);
-    return;
 }
 
 // The default channel policy: the developer opted in by asking for a port, so
@@ -129,11 +125,10 @@ static AGENT_POLICY: fn(auth::Request) -> auth::Grant =
 
 fn set_policy(f: fn(auth::Request) -> auth::Grant) {
     AGENT_POLICY = f;
-    return;
 }
 
 fn effective_policy() -> fn(auth::Request) -> auth::Grant {
-    if AGENT_POLICY == (0 as fn(auth::Request) -> auth::Grant) { return admit; }
+    if AGENT_POLICY.is_null() { return admit; }
     return AGENT_POLICY;
 }
 
@@ -186,7 +181,6 @@ fn serve_once(id: str) {
     );
     let ok: text::Text = "facet: agent surface on http://127.0.0.1:${port}/";
     io::eprintln(ok.view());
-    return;
 }
 
 // ---- tests ------------------------------------------------------------------
@@ -201,5 +195,4 @@ fn every_facet_tier_maps_to_the_policy_the_core_reads() {
     assert policy_for(vocab::Agent::Protected) == identity::policy_protected();
     assert policy_for(vocab::Agent::Private) == identity::policy_private();
     assert policy_for(vocab::Agent::Hidden) == identity::policy_exclude();
-    return;
 }

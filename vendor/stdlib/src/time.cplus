@@ -24,7 +24,6 @@ import "./executor" as executor;
 
 async fn sleep(milliseconds: u64) {
     { #reactor_wait_timer(milliseconds); }
-    return;
 }
 
 // ───────────────────── wall-clock (synchronous) ──────────────────

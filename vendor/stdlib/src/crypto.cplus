@@ -290,7 +290,6 @@ fn sha256_matches_the_fips_180_4_vectors() {
         == "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
     assert sha256("abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq").hex().view()
         == "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1";
-    return;
 }
 
 #[test]
@@ -303,7 +302,6 @@ fn sha512_matches_the_fips_180_4_vectors() {
     // the compression function; this one proves the block loop as well.
     assert sha512("abcdefghbcdefghicdefghijdefghijkefghijklfghijklmghijklmnhijklmnoijklmnopjklmnopqklmnopqrlmnopqrsmnopqrstnopqrstu").hex().view()
         == "8e959b75dae313da8cf4f72814fc143f8f7779c6eb9f7fa17299aeadb6889018501d289e4900f7e4331b99dec4b5433ac7d329eeb6dd26545e96e55b874be909";
-    return;
 }
 
 // ---- padding, at the lengths where the rule changes --------------------------
@@ -335,7 +333,6 @@ fn sha256_padding_holds_at_every_block_boundary() {
         == "31eba51c313a5c08226adf18d4a359cfdfd8d2e816b13f4af952f7ea6584dcfb";
     assert sha256_bytes(p, 120 as usize).hex().view()
         == "2f3d335432c70b580af0e8e1b3674a7c020d683aa5f73aaaedfdc55af904c21c";
-    return;
 }
 
 #[test]
@@ -355,7 +352,6 @@ fn sha512_padding_holds_at_every_block_boundary() {
         == "b73d1929aa615934e61a871596b3f3b33359f42b8175602e89f7e06e5f658a243667807ed300314b95cacdd579f3e33abdfbe351909519a846d465c59582f321";
     assert sha512_bytes(p, 129 as usize).hex().view()
         == "4f681e0bd53cda4b5a2041cc8a06f2eabde44fb16c951fbd5b87702f07aeab611565b19c47fde30587177ebb852e3971bbd8d3fd30da18d71037dfbd98420429";
-    return;
 }
 
 #[test]
@@ -363,7 +359,6 @@ fn hmac_sha256_matches_the_rfc_4231_vectors() {
     // RFC 4231 case 2: key "Jefe", data "what do ya want for nothing?".
     assert hmac_sha256("Jefe", "what do ya want for nothing?").hex().view()
         == "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843";
-    return;
 }
 
 #[test]
@@ -376,7 +371,6 @@ fn hmac_sha256_handles_a_key_longer_than_the_block() {
                                       { #str_ptr(data) }, { #str_len(data) });
     assert d.hex().view()
         == "60e431591ee0b67f0d8a26aacbf5b77f8e0bc6213728c5140546040f0ee37f54";
-    return;
 }
 
 #[test]
@@ -392,7 +386,6 @@ fn hmac_sha256_accepts_a_key_of_exactly_the_block_size() {
         == "8d399ac19a777322d6932c70aade08e1cc09c3305a9ea8f1d7e040ac39b11f7b";
     assert hmac_sha256("", "").hex().view()
         == "b613679a0814d9ec772f95d778c35fc5ff1697c493715653c6c712144292c5ad";
-    return;
 }
 
 #[test]
@@ -411,7 +404,6 @@ fn hmac_sha512_matches_the_rfc_4231_vectors() {
         == "80b24263c7c1a3ebb71493c1dd7be8b49b46d1f41b4aeec1121b013783f8f3526b56d037e05f2598bd0fd2215d6a1e5295e64f73f63f0aec8b915a985d786598";
     assert hmac_sha512("", "").hex().view()
         == "b936cee86c9f87aa5d3c6f2e84cb5a4239a5fe50480a6ec66b70ab5b1f4ac6730c6c515421b327ec1d69402e53dfb49ad7381eb067b338fd7b0cb22247225d47";
-    return;
 }
 
 #[test]
@@ -422,7 +414,6 @@ fn hmac_is_not_the_hash_of_key_and_message_concatenated() {
     let h: Digest = hmac_sha256("key", "message");
     let naive: Digest = sha256("keymessage");
     assert !h.equals(naive);
-    return;
 }
 
 #[test]
@@ -435,7 +426,6 @@ fn a_digest_compares_equal_only_to_the_same_bytes() {
     // And the comparison is over the WHOLE digest: two that share every byte
     // but the last must not compare equal.
     assert !sha256("").equals(sha256("a"));
-    return;
 }
 
 #[test]
@@ -456,7 +446,6 @@ fn the_constant_time_compare_answers_correctly_at_every_position() {
     // Zero bytes compare equal — the degenerate case a `while` loop gets right
     // and an off-by-one does not.
     assert bytes_equal(#addr_of(a) as *u8, #addr_of(first) as *u8, 0 as usize);
-    return;
 }
 
 #[test]
@@ -468,7 +457,6 @@ fn digest_bytes_are_readable_and_bounds_checked() {
     // Past the end answers 0 rather than reading off the struct.
     assert d.byte(32 as usize) == (0 as u8);
     assert d.byte(9999 as usize) == (0 as u8);
-    return;
 }
 
 #[test]
@@ -484,7 +472,6 @@ fn random_bytes_fills_the_buffer_and_does_not_repeat() {
     // "did not run".
     var zeros: [u8; 32] = [0u8; 32];
     assert !bytes_equal(#addr_of(a) as *u8, #addr_of(zeros) as *u8, 32 as usize);
-    return;
 }
 
 #[test]
@@ -502,7 +489,6 @@ fn random_hex_is_the_right_length_and_refuses_past_its_buffer() {
         option::Option[text::Text]::Some(_) => { assert false; }
         option::Option[text::Text]::None => { }
     };
-    return;
 }
 
 #[test]
@@ -511,5 +497,4 @@ fn hex_is_lowercase_and_zero_padded() {
     // classic hex bug and it silently shortens a digest.
     var buf: [u8; 3] = [0x00u8, 0x0fu8, 0xffu8];
     assert hex_of_bytes(#addr_of(buf) as *u8, 3 as usize).view() == "000fff";
-    return;
 }

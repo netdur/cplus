@@ -15,5 +15,4 @@ import "./consent" as _consent;
 fn the_agent_surface_compiles() {
     // The import above is the assertion: on macOS it compiles agent.cplus
     // and the agent_appkit overlay it drives; on iOS, agent_ios.cplus.
-    return;
 }

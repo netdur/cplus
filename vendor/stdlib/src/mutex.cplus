@@ -156,7 +156,6 @@ impl Mutex[T] {
             { #drop_in_place::[T](value_ptr); }
             { free(this._ctrl); }
         }
-        return;
     }
 }
 
@@ -186,7 +185,6 @@ impl MutexGuard[T] {
         let value_off: usize = (8 as usize) +% (64 as usize);
         let value_ptr: *T = { (this._ctrl + value_off) as *T };
         { f(*value_ptr); }
-        return;
     }
 
     // Scoped exclusive access: call `f` with the guarded value through a
@@ -200,7 +198,6 @@ impl MutexGuard[T] {
         let value_off: usize = (8 as usize) +% (64 as usize);
         let value_ptr: *T = { (this._ctrl + value_off) as *T };
         { f(*value_ptr); }
-        return;
     }
 
     // Write inner T, dropping the value previously stored first (mirrors
@@ -213,7 +210,6 @@ impl MutexGuard[T] {
         let value_ptr: *T = { (this._ctrl + value_off) as *T };
         { #drop_in_place::[T](value_ptr); }
         { *value_ptr = v; }
-        return;
     }
 
     // Destructor: release the lock, then drop the guard's own reference.
@@ -240,7 +236,6 @@ impl MutexGuard[T] {
             { #drop_in_place::[T](value_ptr); }
             { free(this._ctrl); }
         }
-        return;
     }
 }
 
@@ -255,7 +250,6 @@ fn mutex_lock_and_get() {
         }
         option::Option[Mutex[i32]]::None => { assert false; }
     }
-    return;
 }
 
 #[test]
@@ -268,7 +262,6 @@ fn mutex_lock_set_then_get() {
         }
         option::Option[Mutex[i32]]::None => { assert false; }
     }
-    return;
 }
 
 // Callbacks for the `with`/`with_mut` tests — plain fns; a fn-pointer
@@ -277,7 +270,6 @@ fn expect_100(v: i32) { assert v == 100; return; }
 fn bump(ref v: i32) { v = v +% 1; return; }
 fn append_world(ref t: text::Text) {
     let _st: status::Status = t.append(" world");
-    return;
 }
 fn expect_hello_world(t: text::Text) { assert t.equals("hello world"); return; }
 
@@ -291,7 +283,6 @@ fn mutex_guard_with_reads_in_place() {
         }
         option::Option[Mutex[i32]]::None => { assert false; }
     }
-    return;
 }
 
 #[test]
@@ -304,7 +295,6 @@ fn mutex_guard_with_mut_mutates_in_place() {
         }
         option::Option[Mutex[i32]]::None => { assert false; }
     }
-    return;
 }
 
 // Non-Copy payload: `value()` is unavailable (T: Copy gate) and `set()`
@@ -320,5 +310,4 @@ fn mutex_guard_with_mut_non_copy_in_place() {
         }
         option::Option[Mutex[text::Text]]::None => { assert false; }
     }
-    return;
 }

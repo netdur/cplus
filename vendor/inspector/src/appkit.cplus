@@ -71,7 +71,7 @@ fn main_queue() -> *u8 {
 
 fn on_main_thread() -> bool {
     let ns_thread: *u8 = rt::get_class(#str_ptr("NSThread\0"));
-    if ns_thread == (0 as *u8) { return true; }
+    if ns_thread.is_null() { return true; }
     return rt::msg_i8(ns_thread, rt::sel(#str_ptr("isMainThread\0"))) != 0;
 }
 
@@ -81,9 +81,8 @@ fn run_on_main_sync(ctx: *u8, work: fn(*u8)) {
     // No queue means no libdispatch to hop through. Running directly is wrong
     // on a worker, and it is the only thing left that is not "do nothing at
     // all" — which for an RPC would be an answer that is silently a lie.
-    if q == (0 as *u8) { work(ctx); return; }
+    if q.is_null() { work(ctx); return; }
     { dispatch_sync_f(q, ctx, work) };
-    return;
 }
 
 #[link_name = "CGColorCreateGenericRGB"]
@@ -100,19 +99,18 @@ static FILL: *u8 = 0 as *u8;
 static STROKE: *u8 = 0 as *u8;
 
 fn ensure_colours() {
-    if FILL == (0 as *u8) {
+    if FILL.is_null() {
         // A wash plus a solid edge. Two channels, not one: a fill alone
         // disappears over busy content and an edge alone is invisible on a
         // one-pixel control.
         FILL = cg_rgba(0.13, 0.47, 1.0, 0.22);
         STROKE = cg_rgba(0.13, 0.47, 1.0, 0.95);
     }
-    return;
 }
 
 fn overlay_layer() -> qc::Layer {
     ensure_colours();
-    if OVERLAY == (0 as *u8) {
+    if OVERLAY.is_null() {
         let l: qc::Layer = qc::Layer::new();
         l.set_background_color(FILL);
         l.set_border_color(STROKE);
@@ -151,10 +149,10 @@ fn place(n: *core::Node) -> Placed {
         rect: rt::Rect { x: 0.0, y: 0.0, w: 0.0, h: 0.0 },
         found: false,
     };
-    if n == (0 as *core::Node) { return none; }
+    if n.is_null() { return none; }
 
     let own: *u8 = core::view_of(n);
-    if own != (0 as *u8) {
+    if own.is_not_null() {
         let b: rt::Rect = { ak::View::from_raw(own).bounds() };
         return Placed { view: own, rect: b, found: true };
     }
@@ -173,9 +171,9 @@ fn place(n: *core::Node) -> Placed {
             option::Option[*core::Node]::Some(q) => q,
             option::Option::None => 0 as *core::Node,
         };
-        if p == (0 as *core::Node) { return none; }
+        if p.is_null() { return none; }
         let pv: *u8 = core::view_of(p);
-        if pv != (0 as *u8) {
+        if pv.is_not_null() {
             let host: ak::View = ak::View::from_raw(pv);
             var top: f64 = y;
             // facet's hosts are flipped, so flex's top-left origin is the
@@ -204,10 +202,9 @@ fn place(n: *core::Node) -> Placed {
 // ---- highlight ---------------------------------------------------------------
 
 fn clear_highlight(_s: *u8) {
-    if OVERLAY == (0 as *u8) { return; }
+    if OVERLAY.is_null() { return; }
     let l: qc::Layer = qc::Layer::from_raw(OVERLAY);
     l.remove_from_superlayer();
-    return;
 }
 
 fn highlight(s: *u8, h: insp::Handle) {
@@ -238,7 +235,6 @@ fn highlight(s: *u8, h: insp::Handle) {
     let l: qc::Layer = overlay_layer();
     l.set_frame(r);
     host.add_sublayer(l);
-    return;
 }
 
 // ---- native rows -------------------------------------------------------------
@@ -249,7 +245,7 @@ fn highlight(s: *u8, h: insp::Handle) {
 fn native_props(n: *core::Node) -> vec::Vec[insp::Prop] {
     var out: vec::Vec[insp::Prop] = vec::new::[insp::Prop]();
     let v: *u8 = core::view_of(n);
-    if v == (0 as *u8) {
+    if v.is_null() {
         // Not an absence of information — a fact about the node, and the one
         // that explains why it has no frame of its own.
         let _a: status::Status = out.append(insp::Prop::read_only(
@@ -301,7 +297,6 @@ fn install() {
     // libdispatch, and a build with no platform shim keeps `mcp`'s direct call,
     // which is right for headless and for an in-process caller.
     mcp::set_marshal(run_on_main_sync);
-    return;
 }
 
 // Serve the inspector IF the environment asks — the one line an application
@@ -338,6 +333,5 @@ fn install() {
 fn arm() {
     install();
     mcp::arm(tree::local_backend());
-    return;
 }
 

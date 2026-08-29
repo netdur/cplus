@@ -260,7 +260,6 @@ fn no_params() -> json::Value {
 
 fn set_fault(rp: *Remote, msg: str) {
     { (*rp)._fault = text::from_str(msg) };
-    return;
 }
 
 // One call: connect, one line out, one line in, close. `None` is a transport
@@ -627,7 +626,6 @@ fn append_hex_byte(out: *text::Text, chan: f64) {
     pair[0] = hex_nibble(b / 16);
     pair[1] = hex_nibble(b % 16);
     let _s: status::Status = { (*out).append(#str_from_raw_parts(#addr_of(pair[0]), 2)) };
-    return;
 }
 
 // "#rrggbb" — the one spelling the far side's parser reads. Only a literal
@@ -737,14 +735,12 @@ fn r_highlight(s: *u8, h: insp::Handle) {
         }
         option::Option::None => { }
     }
-    return;
 }
 
 fn r_clear_highlight(s: *u8) {
     let rp: *Remote = s as *Remote;
     let _r: option::Option[json::Value] =
         rpc(rp, "inspector.clear_highlight", no_params());
-    return;
 }
 
 fn r_insert(s: *u8, h: insp::Handle, at: usize, take sp: insp::Spec) -> insp::Outcome {
@@ -836,7 +832,6 @@ fn a_remote_handle_is_the_wire_index_one_biased_never_a_pointer() {
         option::Option[usize]::Some(_i) => { assert false; }
         option::Option::None => { }
     }
-    return;
 }
 
 #[test]
@@ -847,7 +842,6 @@ fn kind_names_read_back_as_the_codes_that_wrote_them() {
     // The fallback both ways: an unknown name is a plain node, code 0.
     assert kind_from_name("node") == 0;
     assert kind_from_name("no_such_kind") == 0;
-    return;
 }
 
 #[test]
@@ -884,7 +878,6 @@ fn a_describe_answer_becomes_rows_with_parents_frames_and_wire_handles() {
         }
         option::Option::None => { assert false; }
     }
-    return;
 }
 
 #[test]
@@ -915,7 +908,6 @@ fn an_inspect_answer_becomes_a_detail_and_wire_names_become_our_literals() {
         option::Option[insp::Detail]::Some(_d) => false,
         option::Option::None => true,
     };
-    return;
 }
 
 #[test]
@@ -926,7 +918,6 @@ fn outcomes_come_back_by_name_and_a_drifted_name_is_not_read_as_ok() {
     assert outcome_of(#addr_of(ro)) == insp::Outcome::ReadOnly;
     let odd: json::Value = parsed("{\"outcome\":\"something_new\",\"revision\":1}");
     assert outcome_of(#addr_of(odd)) == insp::Outcome::Unsupported;
-    return;
 }
 
 #[test]
@@ -959,11 +950,9 @@ fn a_write_crosses_as_number_boolean_or_string_and_a_colour_as_hex() {
         option::Option[json::Value]::Some(_v) => false,
         option::Option::None => true,
     };
-    return;
 }
 
 #[test]
 fn probing_a_path_nobody_listens_on_answers_no_rather_than_hanging() {
     assert !probe("/tmp/iris-remote-inspector-test-nothing-here.sock");
-    return;
 }

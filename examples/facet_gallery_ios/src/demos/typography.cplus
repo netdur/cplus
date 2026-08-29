@@ -30,23 +30,23 @@ impl Type: component::Component {
         var body: flex::Builder = flex::Builder::new();
 
         var type_: flex::Builder = flex::Builder::new();
-        type_.add(ui::label("Display", font_size: 34.0f64,
+        type_.add(ui::label("Display", font_size: 34.0,
                             font_weight: vocab::FontWeight::Bold));
-        type_.add(ui::label("Title", font_size: 22.0f64,
+        type_.add(ui::label("Title", font_size: 22.0,
                             font_weight: vocab::FontWeight::Semibold));
         type_.add(ui::label("Body — the size a paragraph is set at, and the one Dynamic Type scales when the reader has asked for larger text.",
-                            font_size: 17.0f64, max_lines: 0 as i64,
+                            font_size: 17.0, max_lines: 0,
                             line_break: vocab::LineBreak::WordWrap));
-        type_.add(ui::label("Caption", font_size: 13.0f64,
-                            text_color: vocab::Color::ink(0.5f64)));
+        type_.add(ui::label("Caption", font_size: 13.0,
+                            text_color: vocab::Color::ink(0.5)));
         body.add(shell::card("SCALE", type_));
 
         var align: flex::Builder = flex::Builder::new();
         align.add(ui::label("Start — follows the writing direction",
-                            font_size: 15.0f64, text_align: vocab::TextAlign::Start));
-        align.add(ui::label("Center", font_size: 15.0f64,
+                            font_size: 15.0, text_align: vocab::TextAlign::Start));
+        align.add(ui::label("Center", font_size: 15.0,
                             text_align: vocab::TextAlign::Center));
-        align.add(ui::label("End", font_size: 15.0f64,
+        align.add(ui::label("End", font_size: 15.0,
                             text_align: vocab::TextAlign::End));
         align.add(shell::caption("`Start` is NSTextAlignment.Natural, which mirrors under RTL. `End` is Right and does not — Foundation has no natural-trailing, on either platform."));
         body.add(shell::card("ALIGNMENT", align));
@@ -58,31 +58,31 @@ impl Type: component::Component {
         var rich: flex::Builder = flex::Builder::new();
         var runs: vocab::Spans = vocab::Spans::new();
         let _r1: status::Status = runs.add(vocab::TextSpan::of("One label, ",
-                                                               font_size: 16.0f64));
+                                                               font_size: 16.0));
         let _r2: status::Status = runs.add(vocab::TextSpan::of("bold",
-            font_size: 16.0f64, font_weight: vocab::FontWeight::Bold));
-        let _r3: status::Status = runs.add(vocab::TextSpan::of(", ", font_size: 16.0f64));
+            font_size: 16.0, font_weight: vocab::FontWeight::Bold));
+        let _r3: status::Status = runs.add(vocab::TextSpan::of(", ", font_size: 16.0));
         let _r4: status::Status = runs.add(vocab::TextSpan::of("italic",
-            font_size: 16.0f64, italic: true));
-        let _r5: status::Status = runs.add(vocab::TextSpan::of(", ", font_size: 16.0f64));
+            font_size: 16.0, italic: true));
+        let _r5: status::Status = runs.add(vocab::TextSpan::of(", ", font_size: 16.0));
         let _r6: status::Status = runs.add(vocab::TextSpan::of("coloured",
-            font_size: 16.0f64, color: vocab::Color::system_teal()));
-        let _r7: status::Status = runs.add(vocab::TextSpan::of(", ", font_size: 16.0f64));
+            font_size: 16.0, color: vocab::Color::system_teal()));
+        let _r7: status::Status = runs.add(vocab::TextSpan::of(", ", font_size: 16.0));
         let _r8: status::Status = runs.add(vocab::TextSpan::of("underlined",
-            font_size: 16.0f64, decoration: vocab::TextDecoration::Underline));
+            font_size: 16.0, decoration: vocab::TextDecoration::Underline));
         let _r9: status::Status = runs.add(vocab::TextSpan::of(" and ",
-                                                               font_size: 16.0f64));
+                                                               font_size: 16.0));
         let _r10: status::Status = runs.add(vocab::TextSpan::of("bigger",
-            font_size: 22.0f64, font_weight: vocab::FontWeight::Semibold));
-        let _r11: status::Status = runs.add(vocab::TextSpan::of(".", font_size: 16.0f64));
-        var rich_label: core::Node = ui::label("", key: "t:rich", font_size: 16.0f64,
+            font_size: 22.0, font_weight: vocab::FontWeight::Semibold));
+        let _r11: status::Status = runs.add(vocab::TextSpan::of(".", font_size: 16.0));
+        var rich_label: core::Node = ui::label("", key: "t:rich", font_size: 16.0,
                                                line_break: vocab::LineBreak::WordWrap,
-                                               max_lines: 4 as i64);
+                                               max_lines: 4);
         match label::find("t:rich", within: #addr_of(rich_label)) {
             option::Option[label::Label]::Some(l) => {
                 let _f: label::Label = l.set_formatted_text(runs);
             }
-            option::Option[label::Label]::None => { }
+            option::Option::None => { }
         }
         rich.add(rich_label);
         rich.add(shell::caption("Each run carries its own text and its own styling — a size, a weight, a slant, two colours, an underline and a link. The label is one view; the runs are spans inside it."));
@@ -121,12 +121,11 @@ impl Fields {
                             let _l: label::Label = l.set_text(typed);
                         }
                     }
-                    option::Option[label::Label]::None => { }
+                    option::Option::None => { }
                 }
             }
-            option::Option[text_field::TextField]::None => { }
+            option::Option::None => { }
         }
-        return;
     }
 }
 
@@ -140,16 +139,15 @@ fn caret_moved(v: *u8, ctx: *u8) {
             let len: i64 = t.selection_length();
             match label::find("t:caret") {
                 option::Option[label::Label]::Some(l) => {
-                    let _s: label::Label = l.set_text(if len > (0 as i64) {
+                    let _s: label::Label = l.set_text(if len > 0 {
                         "${len} byte(s) selected from ${at}"
                     } else { "caret at ${at}" });
                 }
-                option::Option[label::Label]::None => { }
+                option::Option::None => { }
             }
         }
-        option::Option[text_area::TextArea]::None => { }
+        option::Option::None => { }
     }
-    return;
 }
 
 impl Fields: component::Component {
@@ -161,12 +159,12 @@ impl Fields: component::Component {
                                   clear_button: vocab::ClearButton::WhileEditing,
                                   return_key: vocab::ReturnKey::Done,
                                   on_text_changed: this.on_typed)
-                   .height(44.0f64));
-        fields.add(ui::label("(nothing typed)", key: "t:echo", font_size: 15.0f64,
-                             text_color: vocab::Color::ink(0.6f64)));
+                   .height(44.0));
+        fields.add(ui::label("(nothing typed)", key: "t:echo", font_size: 15.0,
+                             text_color: vocab::Color::ink(0.6)));
         fields.add(ui::text_field("", key: "t:secure", placeholder: "Password",
                                   secure: true, return_key: vocab::ReturnKey::Go)
-                   .height(44.0f64));
+                   .height(44.0));
         fields.add(shell::caption("`secure` is a PROPERTY on iOS. On macOS it names a different class, and the AppKit backend carries a whole live-reclass path for that one prop."));
         body.add(shell::card("TEXT FIELDS", fields));
 
@@ -174,31 +172,31 @@ impl Fields: component::Component {
         var editor: core::Node = ui::text_area("let x = 42; // and a note",
                                                key: "t:area",
                                                placeholder: "A longer note…")
-            .height(110.0f64);
+            .height(110.0);
         var styles: vocab::StyleRuns = vocab::StyleRuns::new();
         // "let" bold, "42" teal, the comment grey — by BYTE offset, which is
         // what facet counts in and what a lexer hands back.
-        let _s1: status::Status = styles.add(vocab::StyleRun::of(0 as usize, 3 as usize,
+        let _s1: status::Status = styles.add(vocab::StyleRun::of(0, 3,
             color: vocab::Color::system_indigo(), font_weight: vocab::FontWeight::Bold));
-        let _s2: status::Status = styles.add_color(8 as usize, 2 as usize,
+        let _s2: status::Status = styles.add_color(8, 2,
                                                    vocab::Color::system_teal());
-        let _s3: status::Status = styles.add_color(12 as usize, 13 as usize,
-                                                   vocab::Color::ink(0.45f64));
+        let _s3: status::Status = styles.add_color(12, 13,
+                                                   vocab::Color::ink(0.45));
         match text_area::find("t:area", within: #addr_of(editor)) {
             option::Option[text_area::TextArea]::Some(t) => {
                 let _r: text_area::TextArea = t.set_style_runs(styles);
             }
-            option::Option[text_area::TextArea]::None => { }
+            option::Option::None => { }
         }
         match text_area::find("t:area", within: #addr_of(editor)) {
             option::Option[text_area::TextArea]::Some(t) => {
                 let _h: text_area::TextArea = t.set_on_selection_changed(caret_moved);
             }
-            option::Option[text_area::TextArea]::None => { }
+            option::Option::None => { }
         }
         area.add(editor);
-        area.add(ui::label("caret at 0", key: "t:caret", font_size: 13.0f64,
-                           text_color: vocab::Color::ink(0.7f64)));
+        area.add(ui::label("caret at 0", key: "t:caret", font_size: 13.0,
+                           text_color: vocab::Color::ink(0.7)));
         area.add(shell::caption("`style_runs` is the other half: it colours RANGES of text that is already there, by byte offset, without touching the text — which is what syntax highlighting is. The three words above are one run each."));
         area.add(shell::caption("A `text_area` is a UITextView, which is NOT a UIControl — it has no target/action at all, so its typing arrives through a synthesized UITextViewDelegate instead."));
         body.add(shell::card("EDITOR", area));
@@ -229,14 +227,14 @@ impl Keyboards: component::Component {
         var keys: flex::Builder = flex::Builder::new();
         keys.add(ui::text_field("", key: "t:email", placeholder: "Email",
                                 keyboard: vocab::Keyboard::Email,
-                                return_key: vocab::ReturnKey::Next).height(44.0f64));
+                                return_key: vocab::ReturnKey::Next).height(44.0));
         keys.add(ui::text_field("", key: "t:phone", placeholder: "Phone",
-                                keyboard: vocab::Keyboard::Telephone).height(44.0f64));
+                                keyboard: vocab::Keyboard::Telephone).height(44.0));
         keys.add(ui::text_field("", key: "t:num", placeholder: "Amount",
-                                keyboard: vocab::Keyboard::Numeric).height(44.0f64));
+                                keyboard: vocab::Keyboard::Numeric).height(44.0));
         keys.add(ui::text_field("", key: "t:url", placeholder: "Website",
                                 keyboard: vocab::Keyboard::Url,
-                                return_key: vocab::ReturnKey::Search).height(44.0f64));
+                                return_key: vocab::ReturnKey::Search).height(44.0));
         keys.add(shell::caption("Tap each field and watch the keyboard change — and the return key with it: Next, then the plain one, then the numeric pad, then Search."));
         body.add(shell::card("ONE PROPERTY, FOUR KEYBOARDS", keys));
 

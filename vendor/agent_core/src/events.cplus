@@ -226,7 +226,6 @@ impl Subscriber {
         }
         this.queue = nq;
         this.head = 0;
-        return;
     }
 
     // Offer an event. Enqueues iff it matches the filter, applying backpressure:
@@ -247,7 +246,6 @@ impl Subscriber {
         }
         this.queue.append(ev);
         this.compact();
-        return;
     }
 
     // Dequeue the oldest pending event, or None.
@@ -327,7 +325,6 @@ fn test_verb_filter() {
         option::Option[Event]::Some(e) => { assert verb_eq(e.verb, Verb::Clicked); }
         option::Option::None => { assert false; }
     }
-    return;
 }
 
 #[test]
@@ -385,7 +382,6 @@ fn test_overflow_drops_oldest_and_counts() {
         option::Option[Event]::Some(e) => { assert verb_eq(e.verb, Verb::Changed); }
         option::Option::None => { assert false; }
     }
-    return;
 }
 
 #[test]

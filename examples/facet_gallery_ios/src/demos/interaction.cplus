@@ -43,33 +43,32 @@ fn draw_badge(into: *vocab::Canvas, dirty: vocab::Rect, ctx: *u8) {
 
     { (*into).set_fill(vocab::Color::system_indigo()) };
     let _bg: status::Status = { (*into).fill_rounded_rect(
-        vocab::Rect::of(0.0f64, 0.0f64, w, h), 12.0f64) };
+        vocab::Rect::of(0.0, 0.0, w, h), 12.0) };
 
     { (*into).set_fill(vocab::Color::system_teal()) };
     let _c: status::Status = { (*into).fill_ellipse(
-        vocab::Rect::of(14.0f64, 14.0f64, h - 28.0f64, h - 28.0f64)) };
+        vocab::Rect::of(14.0, 14.0, h - 28.0, h - 28.0)) };
 
     // A LITERAL. `Color::on(role)` answers a derived ink for a THEME ROLE and
     // `none()` for a system colour — and an unset colour resolves to
     // transparent black, which draws nothing at all.
-    { (*into).set_stroke(vocab::Color::rgba(1.0f64, 1.0f64, 1.0f64, 1.0f64)) };
-    { (*into).set_stroke_width(3.0f64) };
+    { (*into).set_stroke(vocab::Color::rgba(1.0, 1.0, 1.0, 1.0)) };
+    { (*into).set_stroke_width(3.0) };
     let _l1: status::Status = { (*into).draw_line(
-        from: vocab::Point::of(w - 70.0f64, 22.0f64),
-        to: vocab::Point::of(w - 22.0f64, 22.0f64)) };
+        from: vocab::Point::of(w - 70.0, 22.0),
+        to: vocab::Point::of(w - 22.0, 22.0)) };
     let _l2: status::Status = { (*into).draw_line(
-        from: vocab::Point::of(w - 70.0f64, h / 2.0f64),
-        to: vocab::Point::of(w - 34.0f64, h / 2.0f64)) };
+        from: vocab::Point::of(w - 70.0, h / 2.0),
+        to: vocab::Point::of(w - 34.0, h / 2.0)) };
     let _l3: status::Status = { (*into).draw_line(
-        from: vocab::Point::of(w - 70.0f64, h - 22.0f64),
-        to: vocab::Point::of(w - 46.0f64, h - 22.0f64)) };
+        from: vocab::Point::of(w - 70.0, h - 22.0),
+        to: vocab::Point::of(w - 46.0, h - 22.0)) };
 
-    { (*into).set_text_color(vocab::Color::rgba(1.0f64, 1.0f64, 1.0f64, 1.0f64)) };
-    let _f: status::Status = { (*into).set_font(size: 15.0f64,
+    { (*into).set_text_color(vocab::Color::rgba(1.0, 1.0, 1.0, 1.0)) };
+    let _f: status::Status = { (*into).set_font(size: 15.0,
                                                 weight: vocab::FontWeight::Medium) };
     let _t: status::Status = { (*into).draw_text(drawn_by(),
-        at: vocab::Point::of(20.0f64, h - 26.0f64)) };
-    return;
+        at: vocab::Point::of(20.0, h - 26.0)) };
 }
 
 impl Canvas: component::Component {
@@ -77,7 +76,7 @@ impl Canvas: component::Component {
         var body: flex::Builder = flex::Builder::new();
         var cv: flex::Builder = flex::Builder::new();
         cv.add(ui::canvas(key: "t:canvas", drawable: vocab::Drawable::of(draw_badge))
-                   .height(120.0f64));
+                   .height(120.0));
         cv.add(shell::caption("Every shape above was RECORDED by a function that names no platform, then replayed — against Core Graphics on iOS and against android.graphics on Android. The same list, the same replay loop and the same arc convention; the reader is the only part that differs."));
         body.add(shell::card("A RECORDED DRAWING", cv));
 
@@ -109,9 +108,8 @@ fn say(what: str) {
         option::Option[label::Label]::Some(l) => {
             let _l: label::Label = l.set_text("last action: ${what}");
         }
-        option::Option[label::Label]::None => { }
+        option::Option::None => { }
     }
-    return;
 }
 
 impl Swipe: component::Component {
@@ -120,17 +118,17 @@ impl Swipe: component::Component {
         var sw: flex::Builder = flex::Builder::new();
 
         var row_body: flex::Builder = flex::Builder::new();
-        row_body.add(ui::label("Meeting notes", key: "t:title", font_size: 15.0f64,
+        row_body.add(ui::label("Meeting notes", key: "t:title", font_size: 15.0,
                                font_weight: vocab::FontWeight::Medium));
         row_body.add(ui::label("Drag me to the left", key: "t:sub",
-                               font_size: 12.0f64,
-                               text_color: vocab::Color::ink(0.55f64)));
-        var content: core::Node = ui::column(row_body).padding(12.0f64).gap(2.0f64);
+                               font_size: 12.0,
+                               text_color: vocab::Color::ink(0.55)));
+        var content: core::Node = ui::column(row_body).padding(12.0).gap(2.0);
         content.set_background_color(vocab::Color::fill());
-        content.set_corner_radius(vocab::Corners::all(8.0f64));
+        content.set_corner_radius(vocab::Corners::all(8.0));
 
-        var row: core::Node = ui::swipeable(key: "t:row", reveal_threshold: 60.0f64)
-            .height(64.0f64);
+        var row: core::Node = ui::swipeable(key: "t:row", reveal_threshold: 60.0)
+            .height(64.0);
         let _c: status::Status = row.add_child(content);
         let _a: status::Status = row.add_child(ui::swipe_item(
             key: "t:archive", text: "Archive", on_clicked: this.on_archive));
@@ -144,12 +142,12 @@ impl Swipe: component::Component {
         // Android long-presses, iOS does neither — which is why the swipe above
         // exists.
         var menu_body: flex::Builder = flex::Builder::new();
-        menu_body.add(ui::label("Long-press me", font_size: 16.0f64));
-        menu_body.add(ui::label("the same two actions, as a menu", font_size: 13.0f64,
-                                text_color: vocab::Color::ink(0.55f64)));
+        menu_body.add(ui::label("Long-press me", font_size: 16.0));
+        menu_body.add(ui::label("the same two actions, as a menu", font_size: 13.0,
+                                text_color: vocab::Color::ink(0.55)));
         var menu_row: core::Node = shell::painted(
-            ui::column(menu_body).padding(14.0f64).gap(4.0f64),
-            vocab::Color::fill(), 8.0f64);
+            ui::column(menu_body).padding(14.0).gap(4.0),
+            vocab::Color::fill(), 8.0);
         var cm: core::Node = ui::context_menu(key: "t:menu");
         let _m1: status::Status = cm.add_child(ui::context_menu_item(
             "Archive", key: "t:m:archive", on_clicked: this.on_archive));
@@ -157,8 +155,8 @@ impl Swipe: component::Component {
             "Delete", key: "t:m:delete", destructive: true, on_clicked: this.on_delete));
         let _mr: status::Status = menu_row.add_child(cm);
         sw.add(menu_row);
-        sw.add(ui::label("last action: (none)", key: "t:status", font_size: 13.0f64,
-                         text_color: vocab::Color::ink(0.7f64)));
+        sw.add(ui::label("last action: (none)", key: "t:status", font_size: 13.0,
+                         text_color: vocab::Color::ink(0.7)));
         sw.add(shell::caption("Let go before 60 points and it closes; past it, it opens. That threshold is the verb `reveal_threshold`, and it is the reason this is a pan rather than UISwipeActionsConfiguration — UIKit owns that distance and exposes no way to name it."));
         body.add(shell::card("SWIPE TO REVEAL", sw));
 
@@ -182,11 +180,11 @@ impl Radio: component::Component {
         var body: flex::Builder = flex::Builder::new();
         var rd: flex::Builder = flex::Builder::new();
         rd.add(ui::radio(true, key: "t:r1", text: "Every hour", group: "when",
-                         font_size: 16.0f64));
+                         font_size: 16.0));
         rd.add(ui::radio(false, key: "t:r2", text: "Every day", group: "when",
-                         font_size: 16.0f64));
+                         font_size: 16.0));
         rd.add(ui::radio(false, key: "t:r3", text: "Never", group: "when",
-                         font_size: 16.0f64, text_color: vocab::Color::danger()));
+                         font_size: 16.0, text_color: vocab::Color::danger()));
         rd.add(shell::caption("Tap one and the others turn off. Nothing in UIKit does that, so facet's group name is walked over the mounted tree — the only place the siblings can be found."));
         body.add(shell::card("ONE GROUP, THREE MEMBERS", rd));
 
@@ -231,12 +229,11 @@ fn divider_moved(v: *u8, ctx: *u8) {
                 option::Option[label::Label]::Some(l) => {
                     let _t: label::Label = l.set_text("position ${at}");
                 }
-                option::Option[label::Label]::None => { }
+                option::Option::None => { }
             }
         }
-        option::Option[m_split::Split]::None => { }
+        option::Option::None => { }
     }
-    return;
 }
 
 struct Split { _unused: i32 }
@@ -248,19 +245,19 @@ impl Split: component::Component {
         var sp: flex::Builder = flex::Builder::new();
         var panes: flex::Builder = flex::Builder::new();
         panes.add(shell::painted(ui::column(flex::Builder::new()),
-                                 vocab::Color::system_teal(), 8.0f64));
+                                 vocab::Color::system_teal(), 8.0));
         panes.add(shell::painted(ui::column(flex::Builder::new()),
-                                 vocab::Color::system_indigo(), 8.0f64));
+                                 vocab::Color::system_indigo(), 8.0));
         sp.add(ui::split(panes, key: "t:split", axis: m_split::SplitAxis::Rows,
-                         position: 44.0f64, min_leading: 20.0f64,
-                         min_trailing: 20.0f64, on_move: divider_moved,
-                         divider_thickness: 2.0f64).height(120.0f64));
-        sp.add(shell::caption("The divider sits at `position` (44), clamped by both minimums, with the hairline drawn in the gap between the panes. The leading pane takes a fixed main-axis size and the trailing one takes the remainder from a zero basis — all of it flex, none of it UIKit."));
+                         position: 44.0, min_leading: 20.0,
+                         min_trailing: 20.0, on_move: divider_moved,
+                         divider_thickness: 2.0).height(120.0));
+        sp.add(shell::caption("The divider sits at `position` 44, clamped by both minimums, with the hairline drawn in the gap between the panes. The leading pane takes a fixed main-axis size and the trailing one takes the remainder from a zero basis — all of it flex, none of it UIKit."));
         body.add(shell::card("TWO PANES", sp));
 
         var no: flex::Builder = flex::Builder::new();
-        no.add(ui::label("position 44", key: "t:pos", font_size: 13.0f64,
-                         text_color: vocab::Color::ink(0.7f64)));
+        no.add(ui::label("position 44", key: "t:pos", font_size: 13.0,
+                         text_color: vocab::Color::ink(0.7)));
         no.add(shell::caption(drag_note()));
         body.add(shell::card(drag_title(), no));
 

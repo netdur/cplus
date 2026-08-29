@@ -98,7 +98,6 @@ fn ensure_map() {
     if READY { return; }
     DECISIONS = smap::new::[i32]();
     READY = true;
-    return;
 }
 
 // Install the function that puts the question on screen. Until this is called
@@ -112,7 +111,6 @@ fn on_ask(f: fn(str, *u8), ctx: *u8 = 0 as *u8) {
     // believes it would never retry, and the Allow the user just clicked would
     // do nothing. The refusal has to distinguish "not yet" from "no".
     mcp::set_deny_hint(deny_hint);
-    return;
 }
 
 // The sentence a refused caller gets. `retry_after_seconds` is a hint, not a
@@ -135,13 +133,11 @@ fn key_of(req: auth::Request) -> str {
 fn allow(client: str) {
     ensure_map();
     let _s: status::Status = DECISIONS.insert(text::from_str(client), ALLOWED);
-    return;
 }
 
 fn deny(client: str) {
     ensure_map();
     let _s: status::Status = DECISIONS.insert(text::from_str(client), DENIED);
-    return;
 }
 
 // The client a prompt is up for, or "" — what a dialog callback needs, since
@@ -153,7 +149,6 @@ fn allow_pending() {
     PENDING = text::new();
     if who.count() == 0 { return; }
     allow(who.view());
-    return;
 }
 
 fn deny_pending() {
@@ -161,7 +156,6 @@ fn deny_pending() {
     PENDING = text::new();
     if who.count() == 0 { return; }
     deny(who.view());
-    return;
 }
 
 // A prompt that was never answered — the window closed, the app quit the
@@ -169,7 +163,6 @@ fn deny_pending() {
 // prompt still pending and refusing forever.
 fn cancel_pending() {
     PENDING = text::new();
-    return;
 }
 
 // Forget one client's answer, so the next request asks again. Written as a
@@ -178,14 +171,12 @@ fn cancel_pending() {
 fn forget(client: str) {
     ensure_map();
     let _s: status::Status = DECISIONS.insert(text::from_str(client), ASK_AGAIN);
-    return;
 }
 
 // Forget every answer. For an app offering "revoke all agent access".
 fn forget_all() {
     READY = false;
     ensure_map();
-    return;
 }
 
 // Has this client been decided, and how? `None` = never asked, or forgotten.
@@ -221,7 +212,7 @@ fn gate(req: auth::Request) -> auth::Grant {
     // Undecided. Refuse THIS request, and ask — so the answer is there for the
     // next one. Asking is a side effect of refusing, never a thing that
     // happens instead of answering.
-    if ASK_FN == (0 as fn(str, *u8)) { return auth::nothing(); }
+    if ASK_FN.is_null() { return auth::nothing(); }
     if PENDING.count() > 0 { return auth::nothing(); }
     PENDING = text::from_str(who);
     let ask: fn(str, *u8) = ASK_FN;
@@ -237,7 +228,6 @@ static ASK_COUNT: i32 = 0;
 fn spy_ask(client: str, ctx: *u8) {
     ASKED_ABOUT = text::from_str(client);
     ASK_COUNT = ASK_COUNT +% 1;
-    return;
 }
 
 fn reset_for_test() {
@@ -246,7 +236,6 @@ fn reset_for_test() {
     ASKED_ABOUT = text::new();
     ASK_COUNT = 0;
     on_ask(spy_ask);
-    return;
 }
 
 fn external(client: str, method: str) -> auth::Request {
@@ -273,7 +262,6 @@ fn an_unknown_agent_is_refused_asked_about_and_then_admitted() {
     assert second.is_empty() == false;
     // ...and it does not ask again.
     assert ASK_COUNT == 1;
-    return;
 }
 
 // Deny sticks, and does not re-prompt on every request — which would make a
@@ -291,7 +279,6 @@ fn a_denied_agent_stays_denied_without_asking_again() {
         i = i +% 1;
     }
     assert ASK_COUNT == 1;
-    return;
 }
 
 // A DECISION IS ABOUT ONE AGENT. Remembering per connection would re-ask a
@@ -310,7 +297,6 @@ fn one_agents_answer_does_not_admit_another() {
     assert b.is_empty();
     assert ASK_COUNT == 2;
     assert ASKED_ABOUT.view() == "someone-else";
-    return;
 }
 
 // One prompt at a time. A second agent arriving mid-decision is refused rather
@@ -333,7 +319,6 @@ fn a_second_agent_mid_prompt_does_not_steal_the_question() {
     allow_pending();
     assert gate(external("first", "describe_ui")).is_empty() == false;
     assert gate(external("second", "describe_ui")).is_empty();
-    return;
 }
 
 // A prompt nobody answered must not wedge the gate. Without `cancel_pending`
@@ -350,7 +335,6 @@ fn an_abandoned_prompt_does_not_wedge_the_gate() {
     let _b: auth::Grant = gate(external("ghost", "describe_ui"));
     assert pending() == "ghost";
     assert ASK_COUNT == 2;
-    return;
 }
 
 // EVERY FIRST CONTACT IS REFUSED, so the refusal has to say whether coming back
@@ -374,7 +358,6 @@ fn a_refusal_says_whether_to_come_back() {
     deny_pending();
     assert text::from_str(deny_hint()).contains("denied");
     assert text::from_str(deny_hint()).contains("pending") == false;
-    return;
 }
 
 // NO WAY TO ASK IS NO CONSENT. An app that installs this policy and forgets
@@ -391,7 +374,6 @@ fn with_no_prompt_installed_nothing_external_is_admitted() {
     // compiled in, bounded by the session the app opens rather than by this.
     let inapp: auth::Grant = gate(auth::request(auth::Channel::InApp));
     assert inapp.is_empty() == false;
-    return;
 }
 
 // An agent that never introduced itself still gets ONE decision rather than
@@ -406,5 +388,4 @@ fn an_unnamed_agent_is_still_one_question() {
 
     assert gate(external("", "click")).is_empty() == false;
     assert ASK_COUNT == 1;
-    return;
 }

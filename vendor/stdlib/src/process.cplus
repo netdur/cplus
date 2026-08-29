@@ -87,7 +87,7 @@ struct Pipe { read: i32, write: i32, ok: bool }
 
 fn make_pipe() -> Pipe {
     let b: *u8 = { malloc(8 as usize) };
-    if b == (0 as *u8) { return Pipe { read: -1 as i32, write: -1 as i32, ok: false }; }
+    if b.is_null() { return Pipe { read: -1 as i32, write: -1 as i32, ok: false }; }
     let rc: i32 = { pipe(b as *i32) };
     let r: i32 = { *(b as *i32) };
     let w: i32 = { *((b + (4 as usize)) as *i32) };
@@ -102,7 +102,7 @@ fn drain_fd(fd: i32) -> vec::Vec[u8] {
     var acc: vec::Vec[u8] = vec::new::[u8]();
     let bufsz: usize = 8192 as usize;
     let buf: *u8 = { malloc(bufsz) };
-    if buf == (0 as *u8) { return acc; }
+    if buf.is_null() { return acc; }
     loop {
         let n: isize = { read(fd, buf, bufsz) };
         if n <= (0 as isize) {
@@ -121,7 +121,6 @@ fn pollfd_set(base: *u8, slot: usize, fd: i32) {
     { *((base + off) as *i32) = fd; }
     { *((base + off + (4 as usize)) as *i16) = 1 as i16; }   // POLLIN
     { *((base + off + (6 as usize)) as *i16) = 0 as i16; }   // revents
-    return;
 }
 fn pollfd_revents(base: *u8, slot: usize) -> i16 {
     return { *((base + (slot *% (8 as usize)) + (6 as usize)) as *i16) };
@@ -137,9 +136,9 @@ fn pollfd_revents(base: *u8, slot: usize) -> i16 {
 fn drain_both(out_fd: i32, err_fd: i32, out_acc: *vec::Vec[u8], err_acc: *vec::Vec[u8]) {
     let bufsz: usize = 8192 as usize;
     let buf: *u8 = { malloc(bufsz) };
-    if buf == (0 as *u8) { return; }
+    if buf.is_null() { return; }
     let pfds: *u8 = { malloc(16 as usize) };
-    if pfds == (0 as *u8) { free(buf); return; }
+    if pfds.is_null() { free(buf); return; }
     var o: i32 = out_fd;
     var e: i32 = err_fd;
     loop {
@@ -169,7 +168,6 @@ fn drain_both(out_fd: i32, err_fd: i32, out_acc: *vec::Vec[u8], err_acc: *vec::V
     }
     free(pfds);
     free(buf);
-    return;
 }
 
 fn bytes_to_text(take bytes: vec::Vec[u8]) -> text::Text {
@@ -236,7 +234,7 @@ fn spawn(argv: vec::Vec[text::Text], cwd: str = "") -> option::Option[Child] {
     // 0/1/2 so the child's stdio survives. addchdir_np handles cwd atomically.
     let fa: *u8 = { malloc(8 as usize) };
     let _fi: i32 = { posix_spawn_file_actions_init(fa) };
-    if cwd_ptr != (0 as *u8) { let _cd: i32 = { posix_spawn_file_actions_addchdir_np(fa, cwd_ptr) }; }
+    if cwd_ptr.is_not_null() { let _cd: i32 = { posix_spawn_file_actions_addchdir_np(fa, cwd_ptr) }; }
     let _d0: i32 = { posix_spawn_file_actions_adddup2(fa, in_p.read, 0 as i32) };
     let _d1: i32 = { posix_spawn_file_actions_adddup2(fa, out_p.write, 1 as i32) };
     let _d2: i32 = { posix_spawn_file_actions_adddup2(fa, err_p.write, 2 as i32) };
@@ -304,7 +302,6 @@ impl Child {
     // Close the child's stdin (signals EOF to the child).
     fn close_stdin(ref this) {
         if this._stdin >= (0 as i32) { let _c: i32 = { close(this._stdin) }; this._stdin = -1 as i32; }
-        return;
     }
 
     // Reap the child and return its exit code (128 + signal if it was killed),
@@ -314,7 +311,7 @@ impl Child {
     fn wait(ref this) -> i32 {
         if this._pid <= (0 as i32) { return -1 as i32; }
         let st: *u8 = { malloc(4 as usize) };
-        if st == (0 as *u8) { return -1 as i32; }
+        if st.is_null() { return -1 as i32; }
         { *(st as *i32) = 0 as i32; }
         var rc: i32 = 0 as i32;
         loop {
@@ -357,7 +354,6 @@ impl Child {
         if this._stdin >= (0 as i32) { let _a: i32 = { close(this._stdin) }; this._stdin = -1 as i32; }
         if this._stdout >= (0 as i32) { let _b: i32 = { close(this._stdout) }; this._stdout = -1 as i32; }
         if this._stderr >= (0 as i32) { let _c: i32 = { close(this._stderr) }; this._stderr = -1 as i32; }
-        return;
     }
 }
 
@@ -388,7 +384,6 @@ fn empty_argv_is_none() {
         option::Option[Child]::Some(c) => { assert false; }
         option::Option[Child]::None => { assert true; }
     }
-    return;
 }
 
 #[test]

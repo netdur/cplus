@@ -71,7 +71,6 @@ fn add_dead_button(content: ak::View, title: str) -> ak::Button {
 static CLICKS: i32 = 0;
 fn on_probe_click(sender: *u8) {
     CLICKS = CLICKS + 1;
-    return;
 }
 
 #[test]
@@ -103,7 +102,6 @@ fn walk_classifies_and_exposes_only_tagged() {
         }
         option::Option::None => { assert false; }
     };
-    return;
 }
 
 #[test]
@@ -138,7 +136,6 @@ fn open_walks_titlebar_accessory_controls() {
         i = i +% 1;
     }
     assert found;   // the accessory's control was NOT reached before the fix
-    return;
 }
 
 #[test]
@@ -243,12 +240,11 @@ fn click_on_view_without_performclick_reports_notactionable_not_raise() {
 static PROBE_CLICKS: i32 = 0;
 fn probe_perform_click(self_obj: *u8, cmd: *u8, sender: *u8) {
     PROBE_CLICKS = PROBE_CLICKS + 1;
-    return;
 }
 
 fn armed_view_class() -> *u8 {
     let existing: *u8 = { rt::get_class(#str_ptr("AgentProbeArmedView\0")) };
-    if existing != (0 as *u8) { return existing; }
+    if existing.is_not_null() { return existing; }
     let cls: *u8 = synth::allocate_class_pair(rt::get_class(#str_ptr("NSView\0")),
                                               #str_ptr("AgentProbeArmedView\0"), 0);
     let _a: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("performClick:\0")),
@@ -401,7 +397,6 @@ fn nothing_that_is_not_an_outline_row_grows_a_disclosure_part() {
         }
         i = i +% 1;
     }
-    return;
 }
 
 #[test]
@@ -418,7 +413,6 @@ fn a_disclosure_press_with_no_outline_under_it_refuses_rather_than_pretending() 
 
     assert surface::outcome_eq(agent::click_part(plain.raw(), agent::PART_DISCLOSURE),
                                surface::Outcome::NotActionable);
-    return;
 }
 
 #[test]
@@ -435,7 +429,6 @@ fn the_capability_flag_names_the_disclosure_part_too() {
     assert agent::view_clickable(plain.raw(), 99u32) == false;
     assert surface::outcome_eq(agent::click_part(plain.raw(), 99u32),
                                surface::Outcome::NotActionable);
-    return;
 }
 
 #[test]
@@ -691,7 +684,6 @@ static MENU_FIRED: i32 = 0;
 
 fn on_menu_command(sender: *u8) {
     MENU_FIRED = MENU_FIRED + 1;
-    return;
 }
 
 #[test]
@@ -786,13 +778,12 @@ fn invoke_menu_worker() -> i32 {
 fn pump_main_runloop_once() {
     let rl: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSRunLoop\0")),
                              rt::sel(#str_ptr("mainRunLoop\0")));
-    if rl == (0 as *u8) { return; }
+    if rl.is_null() { return; }
     let until: *u8 = rt::msg_id_f64(rt::get_class(#str_ptr("NSDate\0")),
                                     rt::sel(#str_ptr("dateWithTimeIntervalSinceNow:\0")),
                                     0.01);
     let _ran: i8 = rt::msg_i8_id_id(rl, rt::sel(#str_ptr("runMode:beforeDate:\0")),
                                     bridge::nsstring("kCFRunLoopDefaultMode"), until);
-    return;
 }
 
 #[test]
@@ -1025,7 +1016,6 @@ static EXITS: i32 = 0;
 // that had to be told would be a handler that can be told wrong.
 fn on_target_probe(sender: *u8, ctx: *u8) {
     if akx::drag_targeted(sender) { ENTERS = ENTERS + 1; } else { EXITS = EXITS + 1; }
-    return;
 }
 fn on_drop_probe(sender: *u8, ctx: *u8) { return; }
 
@@ -1134,7 +1124,6 @@ fn a_press_without_movement_is_a_click_not_a_drag() {
     rt::msg_void_id(card.raw(), rt::sel(#str_ptr("mouseUp:\0")), mouse_at(win, ak::EventType::LeftMouseUp, 100.0, 60.0).raw());
     assert akx::drag_is_armed(card.raw()) == false;
     { pool_pop(pool); }
-    return;
 }
 
 // A press that moves less than the threshold is still a click — the tremor a
@@ -1155,7 +1144,6 @@ fn a_press_within_the_threshold_is_still_a_click() {
     rt::msg_void_id(card.raw(), rt::sel(#str_ptr("mouseUp:\0")), mouse_at(win, ak::EventType::LeftMouseUp, 101.0, 61.0).raw());
     assert akx::drag_is_armed(card.raw()) == false;
     { pool_pop(pool); }
-    return;
 }
 
 // ...and past it, the press BECOMES a drag: the session starts and the press
@@ -1178,7 +1166,6 @@ fn a_press_past_the_threshold_becomes_a_drag() {
     rt::msg_void_id(card.raw(), rt::sel(#str_ptr("mouseDragged:\0")), mouse_at(win, ak::EventType::LeftMouseDragged, 180.0, 60.0).raw());
     rt::msg_void_id(card.raw(), rt::sel(#str_ptr("mouseUp:\0")), mouse_at(win, ak::EventType::LeftMouseUp, 180.0, 60.0).raw());
     { pool_pop(pool); }
-    return;
 }
 
 // A view with no payload is not a drag source at all, and must not accumulate
@@ -1198,7 +1185,6 @@ fn a_view_without_a_payload_never_arms_the_threshold() {
     assert akx::drag_is_armed(plain) == false;   // never armed
     rt::msg_void_id(plain, rt::sel(#str_ptr("mouseUp:\0")), mouse_at(win, ak::EventType::LeftMouseUp, 90.0, 90.0).raw());
     { pool_pop(pool); }
-    return;
 }
 
 // ---- drag auto-scroll: an edge BAND, not "outside the view" ----------------
@@ -1240,7 +1226,6 @@ fn autoscroll_band_is_proportional_and_only_near_the_edges() {
     // A scrolled viewport: the band follows the visible range, not the document.
     assert near(akx::autoscroll_delta(1000.0, 1000.0, 1500.0), 0.0 - 16.0);
     assert near(akx::autoscroll_delta(1250.0, 1000.0, 1500.0), 0.0);
-    return;
 }
 
 // A clip view whose document FITS has no range on that axis and must not move —
@@ -1256,14 +1241,13 @@ fn autoscroll_leaves_a_clip_view_with_nothing_to_scroll_alone() {
     sv.set_document_view(doc);
 
     let clip: *u8 = { rt::msg_id(sv.raw(), rt::sel(#str_ptr("contentView\0"))) };
-    assert clip != (0 as *u8);
+    assert clip.is_not_null();
     let before: rt::Rect = rt::msg_rect(clip, rt::sel(#str_ptr("bounds\0")));
     // A pointer hard against the corner — deep in both bands.
     akx::autoscroll_clip(clip, rt::Point { x: 0.0, y: 0.0 });
     let after: rt::Rect = rt::msg_rect(clip, rt::sel(#str_ptr("bounds\0")));
     assert near(after.x, before.x);
     assert near(after.y, before.y);
-    return;
 }
 
 // ...and one that DOES overflow moves, on the axis with range. This is the half
@@ -1287,7 +1271,6 @@ fn autoscroll_moves_a_clip_view_that_has_range() {
     let after: rt::Rect = rt::msg_rect(clip, rt::sel(#str_ptr("bounds\0")));
     assert after.x > before.x;          // walked toward the far end
     assert near(after.y, before.y);     // the axis with no range stayed put
-    return;
 }
 
 // ---- set_text must tell the app, for controls that are told ----------------
@@ -1402,7 +1385,6 @@ fn a_search_field_exposes_its_text_its_search_and_its_clear() {
     // An id that names no part is still NotFound — the suffixes are addresses,
     // not a pattern the surface will invent an answer for.
     assert surface::outcome_eq(s.click(auth::operator(), "search:zoom"), surface::Outcome::NotFound);
-    return;
 }
 
 #[test]
@@ -1464,7 +1446,6 @@ fn describe_reports_delivery_beside_permission_and_capability() {
     assert surface::outcome_eq(s.click(auth::operator(), "dead"), surface::Outcome::NoHandler);
     // The click was still SENT — this is a report, not a refusal.
     assert CLICKS == 1;
-    return;
 }
 
 #[test]
@@ -1512,7 +1493,6 @@ fn describe_reports_the_click_capability_beside_the_permission() {
         option::Option::None => { assert false; }
     };
     assert surface::outcome_eq(s.click(auth::operator(), "add"), surface::Outcome::Allowed);
-    return;
 }
 
 #[test]
@@ -1539,7 +1519,6 @@ fn describe_reports_a_text_drive_as_not_clickable() {
         option::Option::None => { assert false; }
     };
     assert surface::outcome_eq(s.click(auth::operator(), "title"), surface::Outcome::NotActionable);
-    return;
 }
 
 #[test]
@@ -1580,7 +1559,6 @@ fn the_walked_view_reports_an_untagged_node_own_text() {
         }
         option::Option::None => { assert false; }
     };
-    return;
 }
 
 #[test]
@@ -1615,7 +1593,6 @@ fn the_walked_view_is_not_a_way_around_an_exclusion() {
         }
         option::Option::None => { assert false; }
     };
-    return;
 }
 
 #[test]
@@ -1658,7 +1635,6 @@ fn describe_carries_the_accessibility_label_as_the_node_name() {
         }
         option::Option::None => { assert false; }
     };
-    return;
 }
 
 #[test]
@@ -1690,7 +1666,6 @@ fn a_node_with_no_label_names_itself_by_its_own_title() {
         }
         option::Option::None => { assert false; }
     };
-    return;
 }
 
 // ---- the tiers: visible, named, and gated on the grant -----------------------
@@ -1784,7 +1759,6 @@ fn an_ordinary_assistant_sees_the_payment_fields_and_reads_neither() {
     // onto the screen so the PERSON can fill it in.
     assert surface::outcome_eq(s.scroll_to(auth::operator(), "payment:card"),
                                surface::Outcome::Allowed);
-    return;
 }
 
 #[test]
@@ -1820,7 +1794,6 @@ fn the_approved_grant_autofills_the_card_and_still_not_the_cvc() {
     assert agent::node_text(card, identity::Role::Input).view() == "5555555555554444";
     assert surface::outcome_eq(s.set_text(approved, "payment:cvc", "999", 0),
                                surface::Outcome::Forbidden);
-    return;
 }
 
 #[test]
@@ -1848,7 +1821,6 @@ fn a_secure_field_defaults_to_private_with_no_declaration_at_all() {
         }
         option::Option::None => { assert false; }
     };
-    return;
 }
 
 #[test]
@@ -1873,7 +1845,6 @@ fn an_explicit_declaration_beats_the_secure_class_default() {
         }
         option::Option::None => { assert false; }
     };
-    return;
 }
 
 #[test]
@@ -1922,7 +1893,6 @@ fn a_tier_on_the_box_covers_the_label_nobody_would_have_named() {
     };
     assert surface::outcome_eq(s.set_text(auth::operator(), "email", "grace@example.com", 0),
                                surface::Outcome::Allowed);
-    return;
 }
 
 #[test]
@@ -1938,7 +1908,6 @@ fn a_blind_grant_gets_no_tree_at_all() {
     // one an application declares and never mints.
     assert surface::outcome_eq(s.click(auth::nothing(), "payment"), surface::Outcome::NeedsGrant);
     assert surface::outcome_eq(s.scroll_to(auth::nothing(), "payment"), surface::Outcome::NeedsGrant);
-    return;
 }
 
 #[test]
@@ -1963,5 +1932,4 @@ fn an_excluded_subtree_is_gone_while_a_gated_one_is_present() {
                                surface::Outcome::NotExposed);
     assert surface::outcome_eq(s.scroll_to(auth::protected_operator(), "assistant"),
                                surface::Outcome::NotExposed);
-    return;
 }

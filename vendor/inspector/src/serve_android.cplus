@@ -90,7 +90,6 @@ import "./mcp" as mcp;
 fn run_on_main_sync(ctx: *u8, work: fn(*u8)) {
     if mainthread::run_on_ui(work, ctx) { return; }
     alog::warn(#str_ptr("inspector: a request could not reach the UI thread - answering empty\0"));
-    return;
 }
 
 // ---- the JNI calls this file needs and the binding does not name -------------
@@ -191,7 +190,6 @@ fn clear_highlight(_s: *u8) {
     e.delete_global_ref(ov);
     OVERLAY = 0;
     OVERLAY_HOST = 0;
-    return;
 }
 
 fn highlight(s: *u8, h: insp::Handle) {
@@ -243,7 +241,6 @@ fn highlight(s: *u8, h: insp::Handle) {
     }
 
     glide_to(want);
-    return;
 }
 
 // ---- resolving a node to a rectangle -----------------------------------------
@@ -330,13 +327,13 @@ fn offset_to_host(e: rt::Env, from: jni::jobject) -> Offset {
 }
 
 fn place(n: *core::Node) -> Placed {
-    if n == (0 as *core::Node) { return nothing_placed(); }
+    if n.is_null() { return nothing_placed(); }
     if !aenv::have_env() { return nothing_placed(); }
     if !aenv::have_host() { return nothing_placed(); }
     let e: rt::Env = aenv::env();
 
     let own: *u8 = core::view_of(n);
-    if own != (0 as *u8) {
+    if own.is_not_null() {
         var v: w::View = w::View::from_global(e, own);
         let wd: f64 = { v.get_width() as f64 };
         let ht: f64 = { v.get_height() as f64 };
@@ -369,7 +366,7 @@ fn place(n: *core::Node) -> Placed {
             option::Option[*core::Node]::Some(q) => q,
             option::Option::None => 0 as *core::Node,
         };
-        if p == (0 as *core::Node) {
+        if p.is_null() {
             // THE ROOT ITSELF IS OFTEN VIEWLESS, and that is the ordinary shape
             // rather than an edge: an app whose page is a plain column gets no
             // view for it, and `window::add_root_views` hands the backed
@@ -395,7 +392,7 @@ fn place(n: *core::Node) -> Placed {
             };
         }
         let pv: *u8 = core::view_of(p);
-        if pv != (0 as *u8) {
+        if pv.is_not_null() {
             let o: Offset = offset_to_host(e, pv);
             if !o.ok { return nothing_placed(); }
             return Placed {
@@ -465,14 +462,12 @@ fn place_overlay(r: Rect) {
     if OVERLAY == 0 { return; }
     let ov: jni::jobject = { OVERLAY as jni::jobject };
     geometry::place(ov, r.x, r.y, r.w, r.h);
-    return;
 }
 
 fn stop_glide() {
     if GLIDE_TOKEN == 0 { return; }
     sched::cancel_after(GLIDE_TOKEN);
     GLIDE_TOKEN = 0;
-    return;
 }
 
 fn lerp(a: f64, b: f64, t: f64) -> f64 { return a + { (b - a) * t }; }
@@ -493,7 +488,6 @@ fn glide_to(want: Rect) {
         CUR = want;
         place_overlay(want);
     }
-    return;
 }
 
 fn glide_tick(_ctx: *u8) {
@@ -520,7 +514,6 @@ fn glide_tick(_ctx: *u8) {
         return;
     }
     GLIDE_TOKEN = sched::after(GLIDE_TICK, glide_tick, 0 as *u8);
-    return;
 }
 
 // ---- native rows -------------------------------------------------------------
@@ -528,7 +521,7 @@ fn glide_tick(_ctx: *u8) {
 fn native_props(n: *core::Node) -> vec::Vec[insp::Prop] {
     var out: vec::Vec[insp::Prop] = vec::new::[insp::Prop]();
     let v: *u8 = core::view_of(n);
-    if v == (0 as *u8) {
+    if v.is_null() {
         // Not an absence of information — a fact about the node, and the one
         // that explains why it has no frame of its own. Same sentence as the
         // other two, deliberately.
@@ -601,7 +594,6 @@ fn install() {
     tree::install_platform(highlight, clear_highlight);
     tree::set_native_fn(native_props);
     mcp::set_marshal(run_on_main_sync);
-    return;
 }
 
 // The launcher's channel, and it is the one part of this file with no analogue
@@ -677,6 +669,5 @@ fn asked_port() -> text::Text {
 fn arm() {
     install();
     mcp::arm(tree::local_backend());
-    return;
 }
 

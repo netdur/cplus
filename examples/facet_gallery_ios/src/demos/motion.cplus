@@ -18,8 +18,8 @@ import "../shell" as shell;
 
 fn dot(fill: vocab::Color, key: str) -> core::Node {
     return shell::painted(
-        ui::column(flex::Builder::new(), key: key).width(56.0f64).height(56.0f64),
-        fill, 28.0f64);
+        ui::column(flex::Builder::new(), key: key).width(56.0).height(56.0),
+        fill, 28.0);
 }
 
 // A dot built ALREADY HIDDEN — the entrance pattern's first half. The zero
@@ -27,7 +27,7 @@ fn dot(fill: vocab::Color, key: str) -> core::Node {
 // animation something to travel from.
 fn hidden_dot(fill: vocab::Color, key: str) -> core::Node {
     var n: core::Node = dot(fill, key);
-    n.set_opacity(0.0f64);
+    n.set_opacity(0.0);
     return n;
 }
 
@@ -44,15 +44,15 @@ fn pointer(fill: vocab::Color, key: str) -> core::Node {
     // anything else, and a system colour is anything else. An unset colour
     // paints nothing, which is what this bar did on its first run.
     inner.add(shell::painted(
-        ui::column(flex::Builder::new()).width(22.0f64).height(8.0f64),
-        vocab::Color::rgba(1.0f64, 1.0f64, 1.0f64, 1.0f64), 4.0f64));
+        ui::column(flex::Builder::new()).width(22.0).height(8.0),
+        vocab::Color::rgba(1.0, 1.0, 1.0, 1.0), 4.0));
     var n: core::Node = ui::column(inner, key: key)
-        .width(56.0f64)
-        .height(56.0f64)
-        .padding(8.0f64)
+        .width(56.0)
+        .height(56.0)
+        .padding(8.0)
         .align(flex::Align::Center);
     n.set_background_color(fill);
-    n.set_corner_radius(vocab::Corners::all(12.0f64));
+    n.set_corner_radius(vocab::Corners::all(12.0));
     return n;
 }
 
@@ -60,7 +60,7 @@ fn stage(take control: core::Node, take target: core::Node) -> core::Node {
     var row: flex::Builder = flex::Builder::new();
     row.add(target);
     row.add(control);
-    return ui::row(row).gap(16.0f64).align(flex::Align::Center);
+    return ui::row(row).gap(16.0).align(flex::Align::Center);
 }
 
 // ---- opacity -----------------------------------------------------------------
@@ -73,17 +73,16 @@ impl Fade {
         match mount::find("m:fader") {
             option::Option[*core::Node]::Some(n) => {
                 if this.faded {
-                    core::animate_opacity(n, 1.0f64, vocab::Duration::of_seconds(0.35f64),
+                    core::animate_opacity(n, 1.0, vocab::Duration::of_seconds(0.35),
                                           vocab::Easing::SinOut);
                 } else {
-                    core::animate_opacity(n, 0.15f64, vocab::Duration::of_seconds(0.35f64),
+                    core::animate_opacity(n, 0.15, vocab::Duration::of_seconds(0.35),
                                           vocab::Easing::SinOut);
                 }
                 this.faded = !this.faded;
             }
-            option::Option[*core::Node]::None => { }
+            option::Option::None => { }
         }
-        return;
     }
 }
 
@@ -91,7 +90,7 @@ impl Fade: component::Component {
     fn build(ref this) -> core::Node {
         var body: flex::Builder = flex::Builder::new();
         var f: flex::Builder = flex::Builder::new();
-        f.add(stage(ui::button("Fade", on_click: this.go).height(44.0f64),
+        f.add(stage(ui::button("Fade", on_click: this.go).height(44.0),
                     dot(vocab::Color::system_blue(), "m:fader")));
         f.add(shell::caption("`animate_opacity` drives the layer's own opacity through an explicit CABasicAnimation rather than through UIView's block API — the same call the AppKit backend makes."));
         body.add(shell::card("OPACITY", f));
@@ -109,7 +108,7 @@ impl Fade: component::Lifecycle {
 
 struct Spin { spun: f64 }
 impl Spin {
-    fn new() -> Spin { return Spin { spun: 0.0f64 }; }
+    fn new() -> Spin { return Spin { spun: 0.0 }; }
 
     // A HALF turn, not a whole one. The matrix for 360° is the matrix for 0°,
     // so a full revolution has no path between its ends and plays nothing —
@@ -117,13 +116,12 @@ impl Spin {
     fn go(ref this, sender: *u8) {
         match mount::find("m:spinner") {
             option::Option[*core::Node]::Some(n) => {
-                this.spun = this.spun + 180.0f64;
-                core::animate_rotation(n, this.spun, vocab::Duration::of_seconds(0.5f64),
+                this.spun = this.spun + 180.0;
+                core::animate_rotation(n, this.spun, vocab::Duration::of_seconds(0.5),
                                        vocab::Easing::CubicInOut);
             }
-            option::Option[*core::Node]::None => { }
+            option::Option::None => { }
         }
-        return;
     }
 }
 
@@ -131,7 +129,7 @@ impl Spin: component::Component {
     fn build(ref this) -> core::Node {
         var body: flex::Builder = flex::Builder::new();
         var s: flex::Builder = flex::Builder::new();
-        s.add(stage(ui::button("Half turn", on_click: this.go).height(44.0f64),
+        s.add(stage(ui::button("Half turn", on_click: this.go).height(44.0),
                     pointer(vocab::Color::system_orange(), "m:spinner")));
         s.add(shell::caption("Half a turn, not a whole one: the matrix for 360° IS the matrix for 0°, so a full revolution has no path between its ends and plays nothing."));
         s.add(shell::caption("The bar is there so the turn can be SEEN. This demo used a circle, and a rotated circle is the same circle — a square would have been no better, because a square at 180° is a square."));
@@ -163,13 +161,12 @@ impl Pop {
     fn go(ref this, sender: *u8) {
         match mount::find("m:popper") {
             option::Option[*core::Node]::Some(n) => {
-                core::animate_scale(n, 1.4f64, vocab::Duration::of_seconds(0.16f64),
+                core::animate_scale(n, 1.4, vocab::Duration::of_seconds(0.16),
                                     vocab::Easing::SinOut);
-                this.pop_timer = services::after(0.16f64, unpop, n as *u8);
+                this.pop_timer = services::after(0.16, unpop, n as *u8);
             }
-            option::Option[*core::Node]::None => { }
+            option::Option::None => { }
         }
-        return;
     }
 }
 
@@ -178,17 +175,16 @@ impl Pop {
 // the two writes would still collapse into one apply.
 fn unpop(ctx: *u8) {
     let n: *core::Node = ctx as *core::Node;
-    if n == (0 as *core::Node) { return; }
-    core::animate_scale(n, 1.0f64, vocab::Duration::of_seconds(0.22f64),
+    if n.is_null() { return; }
+    core::animate_scale(n, 1.0, vocab::Duration::of_seconds(0.22),
                         vocab::Easing::SinInOut);
-    return;
 }
 
 impl Pop: component::Component {
     fn build(ref this) -> core::Node {
         var body: flex::Builder = flex::Builder::new();
         var p: flex::Builder = flex::Builder::new();
-        p.add(stage(ui::button("Pop", on_click: this.go).height(44.0f64),
+        p.add(stage(ui::button("Pop", on_click: this.go).height(44.0),
                     dot(vocab::Color::system_green(), "m:popper")));
         p.add(shell::caption("Up, then back on a TIMER. A main-queue hop would be drained in the same run-loop turn as the tap, ahead of the sync, and the two writes would collapse into one apply."));
         body.add(shell::card("SCALE", p));
@@ -211,9 +207,8 @@ impl Entrance { fn new() -> Entrance { return Entrance { _unused: 0 }; } }
 // value reaches the view in the mount walk's apply, and the animation is armed
 // on the NEXT tick — which is what makes it a fade-in rather than a no-op.
 fn fade_in(n: *core::Node) {
-    core::animate_opacity(n, 1.0f64, vocab::Duration::of_seconds(0.5f64),
+    core::animate_opacity(n, 1.0, vocab::Duration::of_seconds(0.5),
                           vocab::Easing::SinOut);
-    return;
 }
 
 impl Entrance: component::Component {
@@ -222,7 +217,7 @@ impl Entrance: component::Component {
         var e: flex::Builder = flex::Builder::new();
         var erow: flex::Builder = flex::Builder::new();
         erow.add(hidden_dot(vocab::Color::system_purple(), "m:entrance"));
-        e.add(ui::row(erow).gap(16.0f64).align(flex::Align::Center));
+        e.add(ui::row(erow).gap(16.0).align(flex::Align::Center));
         e.add(shell::caption("Built at opacity 0 and animated from on_attach. The start value gets its own apply in the mount walk, which is the whole of why this works. Leave the demo and come back to see it again."));
         body.add(shell::card("ENTRANCE", e));
         return shell::page("Entrance",
@@ -234,9 +229,8 @@ impl Entrance: component::Lifecycle {
     fn on_attach(ref this) {
         match mount::find("m:entrance") {
             option::Option[*core::Node]::Some(n) => { fade_in(n); }
-            option::Option[*core::Node]::None => { }
+            option::Option::None => { }
         }
-        return;
     }
     fn on_detach(ref this) { return; }
 }
@@ -254,13 +248,12 @@ impl DeadSnap {
     fn go(ref this, sender: *u8) {
         match mount::find("m:dead") {
             option::Option[*core::Node]::Some(n) => {
-                core::set_opacity(n, 0.0f64);
-                core::animate_opacity(n, 1.0f64, vocab::Duration::of_seconds(0.6f64),
+                core::set_opacity(n, 0.0);
+                core::animate_opacity(n, 1.0, vocab::Duration::of_seconds(0.6),
                                       vocab::Easing::SinInOut);
             }
-            option::Option[*core::Node]::None => { }
+            option::Option::None => { }
         }
-        return;
     }
 }
 
@@ -268,7 +261,7 @@ impl DeadSnap: component::Component {
     fn build(ref this) -> core::Node {
         var body: flex::Builder = flex::Builder::new();
         var d: flex::Builder = flex::Builder::new();
-        d.add(stage(ui::button("Dead snap", on_click: this.go).height(44.0f64),
+        d.add(stage(ui::button("Dead snap", on_click: this.go).height(44.0),
                     dot(vocab::Color::system_red(), "m:dead")));
         d.add(shell::caption("Deliberately wrong: set_opacity(0) and animate_opacity(1) in ONE handler. There is one field per property and one apply per tick, so the second write wins and the animation travels from where the view already is to where it already is. Nothing moves, and facet says why on stderr."));
         body.add(shell::card("THE FAILURE THAT IS SILENT", d));

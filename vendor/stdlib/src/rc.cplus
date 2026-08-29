@@ -194,7 +194,6 @@ impl Rc[T] {
                 { free(this._ctrl); }
             }
         }
-        return;
     }
 }
 
@@ -246,7 +245,6 @@ impl Weak[T] {
         if w_new == (0 as u64) {
             { free(this._ctrl); }
         }
-        return;
     }
 }
 
@@ -258,7 +256,6 @@ fn rc_new_and_get() {
         option::Option[Rc[i32]]::Some(r) => { assert r.value() == 5; }
         option::Option[Rc[i32]]::None => { assert false; }
     }
-    return;
 }
 
 #[test]
@@ -272,7 +269,6 @@ fn rc_clone_bumps_strong_count() {
         }
         option::Option[Rc[i32]]::None => { assert false; }
     }
-    return;
 }
 
 #[test]
@@ -286,7 +282,6 @@ fn rc_is_unique_tracks_clones() {
         }
         option::Option[Rc[i32]]::None => { assert false; }
     }
-    return;
 }
 
 #[test]
@@ -300,7 +295,6 @@ fn rc_try_unwrap_sole_handle_recovers_value() {
         }
         option::Option[Rc[i32]]::None => { assert false; }
     }
-    return;
 }
 
 // Shared handle refuses to unwrap; the refusal decrements like a normal
@@ -324,7 +318,6 @@ fn rc_try_unwrap_shared_refuses_then_survivor_unwraps() {
         }
         option::Option[Rc[i32]]::None => { assert false; }
     }
-    return;
 }
 
 // Callbacks for the `with_mut` tests — plain fns; a fn-pointer callback
@@ -332,7 +325,6 @@ fn rc_try_unwrap_shared_refuses_then_survivor_unwraps() {
 fn bump(ref n: i32) { n = n +% 1; return; }
 fn append_world(ref t: text::Text) {
     let _st: status::Status = t.append(" world");
-    return;
 }
 
 #[test]
@@ -345,7 +337,6 @@ fn rc_with_mut_unique_mutates_in_place() {
         }
         option::Option[Rc[i32]]::None => { assert false; }
     }
-    return;
 }
 
 // A shared handle refuses scoped mutation (`Shared`), leaving the value
@@ -363,7 +354,6 @@ fn rc_with_mut_shared_refuses() {
         }
         option::Option[Rc[i32]]::None => { assert false; }
     }
-    return;
 }
 
 // The flagship shape: in-place mutation of a non-Copy payload through a
@@ -383,7 +373,6 @@ fn rc_with_mut_non_copy_payload_in_place() {
         }
         option::Option[Rc[text::Text]]::None => { assert false; }
     }
-    return;
 }
 
 // Non-Copy Drop payload: `value()` is unavailable (T: Copy gate), so
@@ -402,7 +391,6 @@ fn rc_try_unwrap_non_copy_payload() {
         }
         option::Option[Rc[text::Text]]::None => { assert false; }
     }
-    return;
 }
 
 // ─────────────────────────── Weak tests ───────────────────────────
@@ -445,7 +433,6 @@ fn rc_downgrade_upgrade_roundtrip_while_alive() {
         }
         option::Option[Rc[i32]]::None => { assert false; }
     }
-    return;
 }
 
 #[test]
@@ -461,7 +448,6 @@ fn rc_weak_count_excludes_implicit_and_tracks_clones() {
         }
         option::Option[Rc[i32]]::None => { assert false; }
     }
-    return;
 }
 
 #[test]
@@ -478,7 +464,6 @@ fn rc_upgrade_none_after_last_strong_drops() {
         }
         option::Option[Rc[i32]]::None => { assert false; }
     }
-    return;
 }
 
 // The soundness invariant: when the last strong drops but a Weak still points at
@@ -501,7 +486,6 @@ fn rc_value_dropped_once_when_strong_gone_weak_lingers() {
         option::Option[Rc[RcTracked]]::None => { assert false; }
     }
     assert RC_WEAK_DROPS == (1 as i64);
-    return;
 }
 
 // A live Weak makes exclusive mutation refuse (it could be upgraded to a second
@@ -518,7 +502,6 @@ fn rc_with_mut_refuses_while_a_weak_exists() {
         }
         option::Option[Rc[i32]]::None => { assert false; }
     }
-    return;
 }
 fn held_weak_then_confirm_refusal(take rr: Rc[i32]) -> Weak[i32] {
     var m: Rc[i32] = rr;

@@ -9,8 +9,8 @@ import "../shell" as shell;
 
 fn swatch(text: str, grow: f64) -> core::Node {
     var b: core::Builder = core::Builder::new();
-    b.add(ui::label(text, key: "", font_size: 15.0f64));
-    return core::column(b).padding(10.0f64).grow(grow);
+    b.add(ui::label(text, key: "", font_size: 15.0));
+    return core::column(b).padding(10.0).grow(grow);
 }
 
 fn build() -> core::Node {
@@ -20,36 +20,36 @@ fn build() -> core::Node {
 
     b.add(shell::heading("row"));
     var r1: core::Builder = core::Builder::new();
-    r1.add(swatch("one", 1.0f64));
-    r1.add(swatch("two", 1.0f64));
-    r1.add(swatch("three", 1.0f64));
-    b.add(core::row(r1).gap(8.0f64));
+    r1.add(swatch("one", 1.0));
+    r1.add(swatch("two", 1.0));
+    r1.add(swatch("three", 1.0));
+    b.add(core::row(r1).gap(8.0));
 
     b.add(shell::heading("grow"));
     b.add(shell::body("1 : 2 : 1"));
     var r2: core::Builder = core::Builder::new();
-    r2.add(swatch("1", 1.0f64));
-    r2.add(swatch("2", 2.0f64));
-    r2.add(swatch("1", 1.0f64));
-    b.add(core::row(r2).gap(8.0f64));
+    r2.add(swatch("1", 1.0));
+    r2.add(swatch("2", 2.0));
+    r2.add(swatch("1", 1.0));
+    b.add(core::row(r2).gap(8.0));
 
     b.add(shell::heading("nesting"));
     var inner: core::Builder = core::Builder::new();
-    inner.add(ui::label("a column", key: "", font_size: 15.0f64));
+    inner.add(ui::label("a column", key: "", font_size: 15.0));
     inner.add(ui::button("inside a row", key: "layout:btn"));
     var r3: core::Builder = core::Builder::new();
-    r3.add(swatch("left", 1.0f64));
-    r3.add(core::column(inner).gap(6.0f64).grow(2.0f64));
-    b.add(core::row(r3).gap(8.0f64));
+    r3.add(swatch("left", 1.0));
+    r3.add(core::column(inner).gap(6.0).grow(2.0));
+    b.add(core::row(r3).gap(8.0));
 
     b.add(shell::heading("a tall page"));
     b.add(shell::body("Everything below exists so this screen overflows and the scroll has something to do."));
-    var i: i64 = 0 as i64;
-    while i < (12 as i64) {
-        b.add(ui::label("row ${i}", key: "", font_size: 15.0f64));
-        i = i + (1 as i64);
+    var i: i64 = 0;
+    while i < 12 {
+        b.add(ui::label("row ${i}", key: "", font_size: 15.0));
+        i = i + 1;
     }
-    b.add(ui::label("the end", key: "", font_size: 20.0f64,
+    b.add(ui::label("the end", key: "", font_size: 20.0,
                     font_weight: vocab::FontWeight::Semibold));
     return shell::page(b, "demo:layout");
 }

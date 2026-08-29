@@ -747,7 +747,7 @@ fn all_tools() -> vec::Vec[json::Value] {
             option::Option::None => { }
         }
         i = i +% 1;
-        if d == (0 as fn() -> vec::Vec[json::Value]) { continue; }
+        if d.is_null() { continue; }
         // DRAINED, not copied: `json::Value` owns its payloads and has no clone
         // — a descriptor tree is Vecs of Vecs, and duplicating one would mean a
         // deep copy this has no reason to make. The extension handed us its
@@ -770,14 +770,12 @@ fn disarm_extension(prefix: str) {
     let ix: i64 = extension_index(prefix);
     if ix < 0 { return; }
     let _gone: option::Option[Extension] = EXTENSIONS.remove(ix as usize);
-    return;
 }
 
 // Close all of them. For a test that wants a known-empty table, and for a
 // process tearing the whole surface down.
 fn disarm_all_extensions() {
     EXTENSIONS.remove_all();
-    return;
 }
 
 fn extension_armed() -> bool { return EXTENSIONS.count() > 0; }
@@ -794,7 +792,7 @@ fn extension_for(method: str) -> i64 {
         match EXTENSIONS.at_ptr(i) {
             option::Option[*Extension]::Some(e) => {
                 let h: fn(str, json::Value, f64, auth::Grant) -> json::Value = { (*e).handler };
-                if h != (0 as fn(str, json::Value, f64, auth::Grant) -> json::Value) {
+                if h.is_not_null() {
                     let pfx: str = { (*e).prefix.view() };
                     if pfx != "" {
                         if text::from_str(method).has_prefix(pfx) { return i as i64; }
@@ -888,7 +886,6 @@ fn note_client(req: json::Value) {
     let name: text::Text = val_as_text(obj_get(info, "name"));
     if name.count() == 0 { return; }
     CLIENT_NAME = name;
-    return;
 }
 
 // ---- the dispatch -----------------------------------------------------------
@@ -933,7 +930,7 @@ fn dispatch(
     // the difference installs a hint; one that does not keeps the flat message.
     if grant.is_empty() {
         let hint: fn() -> str = DENY_HINT;
-        if hint != (0 as fn() -> str) {
+        if hint.is_not_null() {
             return err_response(id, - 32001 as f64, hint());
         }
         return err_response(id, - 32001 as f64, "consent denied");
@@ -1036,7 +1033,7 @@ fn dispatch_verb(
             option::Option[*Extension]::Some(e) => { h = { (*e).handler }; }
             option::Option::None => { }
         }
-        if h != (0 as fn(str, json::Value, f64, auth::Grant) -> json::Value) {
+        if h.is_not_null() {
             return h(method, params, id, grant);
         }
     }
@@ -1232,7 +1229,6 @@ fn unlink_bound_socket() {
     if SOCK_PATH[0] == 0 { return; }
     { unlink(#addr_of(SOCK_PATH[0])); }
     SOCK_PATH[0] = 0;   // idempotent: the explicit teardown may also call it
-    return;
 }
 
 // Build the `sockaddr_un` and bind. Returns the bound fd, or the same negative
@@ -1461,7 +1457,6 @@ fn unlink_descriptor() {
     if DESC_PATH[0] == 0 { return; }
     { unlink(#addr_of(DESC_PATH[0])); }
     DESC_PATH[0] = 0;
-    return;
 }
 
 // Record what was bound. Called after a successful bind, by the facade that
@@ -1636,7 +1631,6 @@ fn write_all(fd: i32, ptr: *u8, len: usize) {
         }
         off = off +% (w as usize);
     }
-    return;
 }
 
 // Serve one connected stream socket: read requests line by line, dispatch each
@@ -1956,7 +1950,6 @@ fn read_exact(fd: i32, buf: *u8, len: usize) -> bool {
 
 fn write_str(fd: i32, s: str) {
     write_all(fd, #str_ptr(s), #str_len(s));
-    return;
 }
 
 // One response. `body` may be empty, in which case Content-Length: 0 is still
@@ -1967,7 +1960,6 @@ fn write_http_response(fd: i32, status_line: str, content_type: str, body: str) 
         "HTTP/1.1 ${status_line}\r\nContent-Type: ${content_type}\r\nContent-Length: ${#str_len(body)}\r\n\r\n";
     write_str(fd, head.view());
     if #str_len(body) > 0 { write_str(fd, body); }
-    return;
 }
 
 // Serve HTTP on one accepted connection until the peer closes it.
@@ -1994,7 +1986,7 @@ fn serve_http_fd(
     // bigger. A buffer sized by the protocol does not belong on a stack sized
     // by the threading runtime.
     let body_buf: *u8 = { malloc(HTTP_MAX_BODY) };
-    if body_buf == (0 as *u8) { return 0; }
+    if body_buf.is_null() { return 0; }
     var head_buf: [u8; 8192] = [0; 8192];
     loop {
         let head: HttpHead = read_http_head(fd, { #addr_of(head_buf[0]) }, HTTP_MAX_HEAD);
@@ -2060,7 +2052,6 @@ fn serve_http_fd(
 fn put_be16(ref buf: [u8; 16], at: usize, v: u16) {
     buf[at] = { (v / 256) as u8 };
     buf[at +% 1] = { (v % 256) as u8 };
-    return;
 }
 
 // Bind a loopback listener on `port`. Returns the fd, or a negative setup code
@@ -2167,7 +2158,6 @@ fn an_address_is_not_a_valid_id() {
     var i: i32 = 0;
     while i < 80 { let _a: status::Status = long_id.append("x"); i = i +% 1; }
     assert valid_id(long_id.view()) == false;
-    return;
 }
 
 // The two halves of the convention, and the property that matters about both:
@@ -2192,7 +2182,6 @@ fn the_address_is_a_function_of_the_id_and_the_pid() {
     assert (loopback_port(8161) == loopback_port(8162)) == false;
     assert loopback_port(999999) >= 9000;
     assert loopback_port(999999) <= 9999;
-    return;
 }
 
 // A derived path fits the socket budget, which is the constraint `valid_id`'s
@@ -2209,7 +2198,6 @@ fn a_derived_path_binds() {
     assert fd >= 0;
     unlink_bound_socket();
     { close(fd); }
-    return;
 }
 
 // Every setup code says something a developer can act on. Two of these are
@@ -2227,7 +2215,6 @@ fn every_setup_failure_has_a_reason() {
     // would interpolate into a sentence that trails off.
     assert bind_reason(- 99) != "";
     assert #str_len(bind_reason(- 99)) > 0;
-    return;
 }
 
 // Bind and listen are separable, and both report. This is what lets a caller
@@ -2248,7 +2235,6 @@ fn bind_and_listen_are_separable_and_report() {
 
     unlink_bound_socket();
     { close(fd); }
-    return;
 }
 
 // ---- the descriptor and the sweep ------------------------------------------------
@@ -2267,7 +2253,6 @@ fn a_name_yields_the_pid_it_carries() {
     assert pid_in_name("mcp-demo_1-abc.socket") == (- 1);
     assert pid_in_name("mcp-demo_1-8161.txt") == (- 1);
     assert pid_in_name("something-else") == (- 1);
-    return;
 }
 
 // Liveness is one syscall, which is the whole reason the address carries a pid
@@ -2279,7 +2264,6 @@ fn liveness_is_one_syscall() {
     assert pid_is_live(- 1) == false;
     // A pid past the system maximum cannot be running.
     assert pid_is_live(2147483647) == false;
-    return;
 }
 
 // The descriptor says what was BOUND, which a derived address cannot: derived
@@ -2316,7 +2300,6 @@ fn the_descriptor_records_what_was_bound() {
         result::Result[text::Text, result::IoError]::Err(_e) => { assert false; }
     }
     unlink_descriptor();
-    return;
 }
 
 // The sweep removes what dead processes left and leaves live ones alone. This
@@ -2339,7 +2322,6 @@ fn the_sweep_takes_the_dead_and_spares_the_living() {
     assert fs::exists(mine.view());
 
     let _rm: result::Result[bool, result::IoError] = fs::remove_file(mine.view());
-    return;
 }
 
 // ---- the HTTP door ---------------------------------------------------------------
@@ -2358,7 +2340,6 @@ fn a_header_name_is_matched_without_case() {
     // The colon has to be there, or a longer name matches a shorter one.
     assert header_is("Content-Length-Extra: 12", "content-length") == false;
     assert header_is("Content-Type: application/json", "content-length") == false;
-    return;
 }
 
 #[test]
@@ -2371,7 +2352,6 @@ fn a_header_number_reads_its_value() {
     // A length past the cap SATURATES rather than wrapping — a wrapped one
     // would come back as something small and be accepted.
     assert header_number("Content-Length: 99999999999999999999") > HTTP_MAX_BODY;
-    return;
 }
 
 // One request in, one response out, over a real socket pair — the whole framing
@@ -2419,7 +2399,6 @@ fn a_post_reaches_the_same_verbs_the_socket_does() {
     assert response_contains({ #addr_of(out[0]) }, n, "Content-Type: application/json");
     assert response_contains({ #addr_of(out[0]) }, n, "\"jsonrpc\":\"2.0\"");
     assert response_contains({ #addr_of(out[0]) }, n, "result");
-    return;
 }
 
 // KEEP-ALIVE, which is what lets the connection be the session: two requests on
@@ -2446,7 +2425,6 @@ fn two_requests_on_one_connection_share_an_identity() {
     // The server names ITSELF too, so a client that reached a stale address
     // finds out here rather than by driving the wrong app.
     assert response_contains({ #addr_of(out[0]) }, n, "serverInfo");
-    return;
 }
 
 // A body at the CAP is accepted and one past it is refused, and the two
@@ -2473,7 +2451,6 @@ fn the_body_cap_and_the_buffer_are_one_number() {
     // ...and a body AT the cap is within the allocation rather than one byte
     // over it, which is the off-by-one this pairing exists to pin.
     assert HTTP_MAX_BODY == 65536;
-    return;
 }
 
 // A GET is not a request this endpoint can answer, and saying so beats hanging:
@@ -2486,7 +2463,6 @@ fn a_get_is_refused_in_words() {
     assert n > 0;
     assert response_contains({ #addr_of(out[0]) }, n, "405 Method Not Allowed");
     assert response_contains({ #addr_of(out[0]) }, n, "POST");
-    return;
 }
 
 // A body larger than the buffer is REFUSED, not truncated. Truncating would
@@ -2500,7 +2476,6 @@ fn an_oversized_body_is_refused_rather_than_truncated() {
     let n: usize = http_round_trip(req, { #addr_of(out[0]) }, 2048);
     assert n > 0;
     assert response_contains({ #addr_of(out[0]) }, n, "413");
-    return;
 }
 
 // A notification carries no id and is entitled to no reply — but over HTTP the
@@ -2516,7 +2491,6 @@ fn a_notification_gets_an_empty_202_rather_than_silence() {
     assert n > 0;
     assert response_contains({ #addr_of(out[0]) }, n, "202 Accepted");
     assert response_contains({ #addr_of(out[0]) }, n, "Content-Length: 0");
-    return;
 }
 
 // ---- tests for the TCP transport ---------------------------------------------
@@ -2528,7 +2502,6 @@ fn a_loopback_listener_binds_and_closes() {
     let fd: i32 = bind_tcp(0);
     assert fd >= 0;
     { close(fd); }
-    return;
 }
 
 #[test]
@@ -2538,7 +2511,6 @@ fn the_port_is_written_big_endian() {
     // 8123 = 0x1FBB, so the high byte comes first on the wire.
     assert buf[2] == (0x1F as u8);
     assert buf[3] == (0xBB as u8);
-    return;
 }
 
 #[test]
@@ -2551,7 +2523,6 @@ fn two_listeners_on_one_port_is_a_bind_error() {
     let b: i32 = bind_tcp(1);
     assert b == (0 - 2);
     { close(a); }
-    return;
 }
 
 // ---- tests -------------------------------------------------------------------
@@ -3022,7 +2993,6 @@ fn hit_test_carries_reachability_and_names_only_exposed_obstructions() {
         "{\"method\":\"hit_test\",\"params\":{},\"id\":4}");
     assert bad.contains("-32602");
     assert bad.contains("hit_test");
-    return;
 }
 
 // The consent gate covers it like every other verb: an un-served (deny-all)
@@ -3035,7 +3005,6 @@ fn hit_test_is_behind_the_consent_gate() {
         "{\"method\":\"hit_test\",\"params\":{\"id\":\"btn\"},\"id\":1}");
     assert denied.contains("-32001");
     assert denied.contains("reachable") == false;
-    return;
 }
 
 // ---- required parameters ------------------------------------------------------
@@ -3070,7 +3039,6 @@ fn a_misspelled_set_text_parameter_is_refused_not_silently_emptied() {
     let good: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(allow_all),
         "{\"method\":\"set_text\",\"params\":{\"id\":\"n\",\"value\":\"hello\"},\"id\":3}");
     assert good.contains("allowed");
-    return;
 }
 
 // The same fallback hid a missing target on every verb that takes one. A
@@ -3106,7 +3074,6 @@ fn every_verb_that_takes_a_target_requires_one() {
     let p: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(allow_all),
         "{\"method\":\"poll_event\",\"id\":5}");
     assert p.contains("-32602") == false;
-    return;
 }
 
 // ---- what the policy is told -----------------------------------------------------
@@ -3165,7 +3132,6 @@ fn the_policy_is_told_who_is_calling_and_what_they_want() {
     let _c: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(recording_policy),
         "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"describe_ui\"}");
     assert SEEN_CLIENT.view() == "";
-    return;
 }
 
 // Per-verb consent, end to end on the wire: reads answer, writes are refused,
@@ -3184,7 +3150,6 @@ fn a_policy_can_admit_a_read_and_refuse_a_write() {
     let write: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(reads_only),
         "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"click\",\"params\":{\"id\":\"btn\"}}");
     assert write.contains("-32001");
-    return;
 }
 
 // ---- the extension namespace ---------------------------------------------------
@@ -3263,7 +3228,6 @@ fn two_namespaces_coexist_and_each_answers_its_own() {
     assert is_extension_method("inspector.describe") == false;
 
     disarm_all_extensions();
-    return;
 }
 
 // Re-arming the same prefix REPLACES its row. A disarm/arm cycle — which is
@@ -3289,7 +3253,6 @@ fn re_arming_a_namespace_replaces_it_rather_than_stacking() {
     assert EXT_CALLS == 0;
 
     disarm_all_extensions();
-    return;
 }
 
 #[test]
@@ -3308,7 +3271,6 @@ fn an_unarmed_extension_namespace_is_simply_not_there() {
     // a protocol mismatch.
     assert r.contains("inspector.describe");
     assert r.contains("extension") == false;
-    return;
 }
 
 #[test]
@@ -3346,7 +3308,6 @@ fn an_armed_namespace_routes_its_own_methods_and_leaves_the_surface_alone() {
         "{\"method\":\"inspector.describe\",\"id\":4}");
     assert after.contains("-32601");
     assert EXT_CALLS == 1;
-    return;
 }
 
 // Arming opens a namespace, not a way around consent. An extension is strictly
@@ -3368,7 +3329,6 @@ fn the_consent_gate_covers_the_extension_namespace_too() {
     assert EXT_CALLS == 0;
 
     disarm_all_extensions();
-    return;
 }
 
 // The prefix is owned, so a caller that composes one is not punished for it.
@@ -3393,7 +3353,6 @@ fn a_composed_prefix_survives_the_call_that_armed_it() {
     assert EXT_CALLS == 1;
 
     disarm_all_extensions();
-    return;
 }
 
 // ---- socket teardown ---------------------------------------------------------
@@ -3442,7 +3401,6 @@ fn binding_arms_the_socket_cleanup() {
     assert path_exists(path) == false;
 
     { close(fd); }
-    return;
 }
 
 // The bound socket is 0600, so a path anyone can guess is still a door only its
@@ -3480,7 +3438,6 @@ fn a_bound_socket_is_not_world_connectable() {
 
     unlink_bound_socket();
     { close(fd); }
-    return;
 }
 
 // A path longer than `sun_path` is rejected before any syscall, and rejecting
@@ -3504,7 +3461,6 @@ fn an_over_long_path_is_rejected_without_disarming() {
     unlink_bound_socket();
     assert path_exists(good) == false;
     { close(fd); }
-    return;
 }
 
 // A socket file left by a process that died without running its exit hook —
@@ -3531,7 +3487,6 @@ fn a_stale_socket_file_is_reclaimed_by_the_next_bind() {
     unlink_bound_socket();
     assert path_exists(path) == false;
     { close(fresh); }
-    return;
 }
 
 // The other half: a path a LIVE server is answering on must be refused, not
@@ -3559,7 +3514,6 @@ fn a_live_server_keeps_its_socket_against_a_second_bind() {
     unlink_bound_socket();
     assert path_exists(path) == false;
     { close(live); }
-    return;
 }
 
 #[test]
@@ -3575,7 +3529,6 @@ fn a_gated_node_is_on_the_wire_with_its_name_and_no_value() {
     assert r.contains("\"tier\":\"protected\""); // and which gate it is behind
     assert r.contains("\"readable\":false");     // and that this agent is outside it
     assert r.contains("4242") == false;
-    return;
 }
 
 #[test]
@@ -3598,7 +3551,6 @@ fn the_grant_the_policy_returns_is_what_reaches_the_backend() {
     // The DECLARATION does not change with the grant — the field is still a
     // protected one, it is just one this agent may now read.
     assert approved.contains("\"tier\":\"protected\"");
-    return;
 }
 
 #[test]
@@ -3623,7 +3575,6 @@ fn ask_and_stop_are_different_words_on_the_wire() {
     let runs: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(allow_all),
         "{\"method\":\"read_runs\",\"params\":{\"id\":\"payment:card\"},\"id\":3}");
     assert runs.contains("needs_grant");
-    return;
 }
 #[test]
 fn every_outcome_has_its_own_word_on_the_wire() {
@@ -3641,7 +3592,6 @@ fn every_outcome_has_its_own_word_on_the_wire() {
     assert outcome_to_str(surface::Outcome::Forbidden) == "forbidden";
     assert outcome_to_str(surface::Outcome::NoHandler) == "no_handler";
     assert outcome_to_str(surface::Outcome::VersionConflict) == "version_conflict";
-    return;
 }
 
 
@@ -3656,7 +3606,6 @@ fn the_full_view_is_not_a_way_around_a_tier() {
     assert r.contains("payment:card");
     assert r.contains("\"tier\":\"protected\"");
     assert r.contains("4242") == false;
-    return;
 }
 
 #[test]
@@ -3678,7 +3627,6 @@ fn a_blank_text_says_whether_it_was_withheld() {
     // keeps it meaningful where it does appear.
     assert r.contains("\"id\":\"empty-label\"");
     assert r.contains("\"text\":\"\",\"actionable\":false");
-    return;
 }
 
 #[test]
@@ -3692,7 +3640,6 @@ fn an_empty_grant_is_refused_once_rather_than_per_verb() {
         "{\"method\":\"describe_ui\",\"id\":1}");
     assert r.contains("consent denied");
     assert r.contains("exposed-node") == false;
-    return;
 }
 
 // A policy shaped like real middleware: verify the credential in your own code
@@ -3723,7 +3670,6 @@ fn the_request_carries_a_credential_the_policy_can_read() {
     let approved: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(token_policy),
         "{\"method\":\"describe_ui\",\"params\":{\"token\":\"autofill-approved\"},\"id\":3}");
     assert approved.contains("4242424242424242");
-    return;
 }
 
 fn allow_builder(req: auth::Request) -> auth::Grant {
@@ -3749,7 +3695,6 @@ fn an_extension_namespace_is_told_which_capabilities_the_caller_has() {
         "{\"method\":\"inspector.describe\",\"id\":2}");
     assert builder.contains("\"may_edit_tree\":true");
     disarm_all_extensions();
-    return;
 }
 
 // ---- cancellation of the transport parks -------------------------------------
@@ -3779,7 +3724,6 @@ fn read_line_reports_cancellation_instead_of_parking_forever() {
     assert h.join() == 11;
     { close(fds[0]); }
     { close(fds[1]); }
-    return;
 }
 
 extern fn socketpair(domain: i32, ty: i32, proto: i32, fds: *i32) -> i32;
@@ -3808,7 +3752,6 @@ fn write_all_to_a_departed_client_does_not_kill_the_server() {
     }
     { close(fds[0]); }
     assert true;                                // reached = we survived
-    return;
 }
 
 // ---- describe_ui `prefix` (demo/bugs/04-describe-verbs-cannot-be-scoped) -----

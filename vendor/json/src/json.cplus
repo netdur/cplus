@@ -275,7 +275,6 @@ fn buf_push(b: Buf, byte: u8) -> Buf {
 
 fn buf_free(b: Buf) {
     if { #addr(b._ptr) } != 0 { { free(b._ptr); } }
-    return;
 }
 
 fn buf_to_string(b: Buf) -> text::Text {
@@ -1082,7 +1081,6 @@ fn test_parse_object_get_by_key() {
         option::Option[Value]::Some(x) => { assert false; }
         option::Option::None => { assert true; }
     }
-    return;
 }
 
 #[test]
@@ -1197,7 +1195,6 @@ fn test_value_distinguishes_null_from_missing() {
         option::Option[Value]::Some(x) => { assert false; }
         option::Option::None => { assert true; }
     }
-    return;
 }
 
 #[test]
@@ -1205,7 +1202,6 @@ fn test_accessors_none_on_type_mismatch() {
     let v: Value = parse_ok("42");        // a number
     match v.as_boolean() { option::Option[bool]::Some(b) => { assert false; } option::Option::None => { assert true; } }
     match v.as_text() { option::Option[text::Text]::Some(t) => { assert false; } option::Option::None => { assert true; } }
-    return;
 }
 
 #[test]
@@ -1219,7 +1215,6 @@ fn test_item_with_label_and_bounds() {
         option::Option[Value]::Some(x) => { assert false; }
         option::Option::None => { assert true; }
     }
-    return;
 }
 
 #[test]
@@ -1234,7 +1229,6 @@ fn test_object_key_value_at() {
         option::Option[Value]::Some(val) => { assert _must_number(val) >= 1.5; }
         option::Option::None => { assert false; }
     }
-    return;
 }
 
 #[test]

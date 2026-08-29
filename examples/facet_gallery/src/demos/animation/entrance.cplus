@@ -19,8 +19,8 @@ import "facet/services" as services;
 import "facet/vocabulary" as vocab;
 import "../../shell" as shell;
 
-const COUNT: i64 = 5 as i64;
-const RISE: f64 = 16.0f64;
+const COUNT: i64 = 5;
+const RISE: f64 = 16.0;
 
 struct Entrance {
     // The replay timer's handle. It has to be KEPT: dropping a `Cancellable`
@@ -30,18 +30,18 @@ struct Entrance {
 }
 
 fn card_key(i: i64) -> str {
-    if i == (1 as i64) { return "en:1"; }
-    if i == (2 as i64) { return "en:2"; }
-    if i == (3 as i64) { return "en:3"; }
-    if i == (4 as i64) { return "en:4"; }
+    if i == 1 { return "en:1"; }
+    if i == 2 { return "en:2"; }
+    if i == 3 { return "en:3"; }
+    if i == 4 { return "en:4"; }
     return "en:0";
 }
 
 fn card_text(i: i64) -> str {
-    if i == (1 as i64) { return "Two"; }
-    if i == (2 as i64) { return "Three"; }
-    if i == (3 as i64) { return "Four"; }
-    if i == (4 as i64) { return "Five"; }
+    if i == 1 { return "Two"; }
+    if i == 2 { return "Three"; }
+    if i == 3 { return "Four"; }
+    if i == 4 { return "Five"; }
     return "One";
 }
 
@@ -50,26 +50,24 @@ fn card_text(i: i64) -> str {
 // `services::after(delay, ...)` — and would mean keeping each `Cancellable`
 // alive, since dropping one cancels its timer.
 fn seconds_for(i: i64) -> f64 {
-    return 0.55f64 + ((i as f64) * 0.16f64);
+    return 0.55 + ((i as f64) * 0.16);
 }
 
 fn play_in() {
-    var i: i64 = 0 as i64;
+    var i: i64 = 0;
     while i < COUNT {
         let n: *core::Node = mount::node(card_key(i));
         let d: vocab::Duration = vocab::Duration::of_seconds(seconds_for(i));
-        core::animate_opacity(n, 1.0f64, d, vocab::Easing::SinOut);
-        core::animate_translation(n, 0.0f64, 0.0f64, d, vocab::Easing::SinOut);
-        i = i +% (1 as i64);
+        core::animate_opacity(n, 1.0, d, vocab::Easing::SinOut);
+        core::animate_translation(n, 0.0, 0.0, d, vocab::Easing::SinOut);
+        i = i +% 1;
     }
-    return;
 }
 
 // The other half of the hop: this runs on the next turn of the run loop, by
 // which time the snap below has been applied and the cards really are hidden.
 fn replay_step(ctx: *u8) {
     play_in();
-    return;
 }
 
 impl Entrance {
@@ -81,12 +79,12 @@ impl Entrance {
         // Tick 1: snap back to the hidden state. A `set_*` also cancels any
         // animation still in flight on the same band, so a fast double-click
         // cannot leave a card half-faded.
-        var i: i64 = 0 as i64;
+        var i: i64 = 0;
         while i < COUNT {
             let n: *core::Node = mount::node(card_key(i));
-            core::set_opacity(n, 0.0f64);
+            core::set_opacity(n, 0.0);
             core::set_translation_y(n, RISE);
-            i = i +% (1 as i64);
+            i = i +% 1;
         }
         // Tick 2: animate. Written as `set` then `animate` in ONE handler this
         // would do nothing at all, and facet would say so on stderr.
@@ -95,8 +93,7 @@ impl Entrance {
         // observer that applies dirty nodes — so the snap above and the animate
         // below collapsed into ONE apply and the cards never showed the hidden
         // state. A timer fires on a later turn, after that sync has committed.
-        this.pending = services::after(0.05f64, replay_step, 0 as *u8);
-        return;
+        this.pending = services::after(0.05, replay_step, 0 as *u8);
     }
 }
 
@@ -105,25 +102,25 @@ fn card(i: i64) -> core::Node {
     inner.add(ui::label(
         card_text(i),
         key: "",
-        font_size: 14.0f64,
+        font_size: 14.0,
         font_weight: vocab::FontWeight::Semibold,
         text_color: vocab::Color::ink(),
     ));
     inner.add(ui::label(
         "faded in over ${seconds_for(i)}s",
         key: "",
-        font_size: 11.0f64,
-        text_color: vocab::Color::ink(0.55f64),
+        font_size: 11.0,
+        text_color: vocab::Color::ink(0.55),
     ));
     var n: core::Node = core::column(inner, key: card_key(i))
-        .padding(12.0f64)
-        .gap(2.0f64)
-        .width(260.0f64);
+        .padding(12.0)
+        .gap(2.0)
+        .width(260.0);
     n.set_background_color(vocab::Color::raised());
-    n.set_corner_radius(vocab::Corners::all(10.0f64));
+    n.set_corner_radius(vocab::Corners::all(10.0));
     // The hidden state, applied by the MOUNT walk — which is what makes the
     // animation in `on_attach` start from somewhere.
-    n.set_opacity(0.0f64);
+    n.set_opacity(0.0);
     n.set_translation_y(RISE);
     return n;
 }
@@ -134,26 +131,26 @@ impl Entrance: component::Component {
         body.add(ui::button("Replay", key: "en:replay", on_click: this.on_replay));
 
         var cards: core::Builder = core::Builder::new();
-        var i: i64 = 0 as i64;
+        var i: i64 = 0;
         while i < COUNT {
             cards.add(card(i));
-            i = i +% (1 as i64);
+            i = i +% 1;
         }
-        body.add(core::column(cards).gap(8.0f64));
+        body.add(core::column(cards).gap(8.0));
 
         body.add(ui::label(
             "Built at opacity 0 with a 16pt drop, animated to 1 and 0 from on_attach. The mount walk applies the hidden state; on_attach runs after it, so the animation has somewhere to start. Replay snaps back and hops through services::run_on_main, because the snap needs its own apply too.",
             key: "en:note",
-            font_size: 12.0f64,
-            text_color: vocab::Color::ink(0.6f64),
-            max_lines: 5 as i64,
+            font_size: 12.0,
+            text_color: vocab::Color::ink(0.6),
+            max_lines: 5,
             line_break: vocab::LineBreak::WordWrap,
         ));
 
         return shell::panel(
             "Entrance",
             "Fade-and-rise on attach — and the tick discipline that makes it work.",
-            core::column(body).gap(12.0f64),
+            core::column(body).gap(12.0),
             howto: "// build\nvar n = core::column(b, key: \"card\");\nn.set_opacity(0.0);          // applied by the mount walk\n\n// on_attach — a later tick\ncore::animate_opacity(mount::node(\"card\"), 1.0, d, Easing::SinOut);",
         );
     }

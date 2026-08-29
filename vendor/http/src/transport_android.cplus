@@ -138,7 +138,6 @@ fn has_exception(e: *jni::JNIEnv) -> bool {
 
 fn clear_exception(e: *jni::JNIEnv) {
     if has_exception(e) { { (*(*e)).ExceptionClear(e) }; }
-    return;
 }
 
 // The pending exception, described the way a person would read it:
@@ -191,7 +190,6 @@ fn take_exception_text(e: *jni::JNIEnv) -> text::Text {
 fn delete_local(e: *jni::JNIEnv, o: jni::jobject) {
     if o == (0 as jni::jobject) { return; }
     { (*(*e)).DeleteLocalRef(e, o) };
-    return;
 }
 
 // A C+ `str` as a Java String. The caller deletes the local ref.
@@ -207,7 +205,7 @@ fn new_jstring(e: *jni::JNIEnv, s: str) -> jni::jstring {
 fn jstring_to_text(e: *jni::JNIEnv, s: jni::jstring) -> text::Text {
     if s == (0 as jni::jstring) { return text::new(); }
     let p: *u8 = { (*(*e)).GetStringUTFChars(e, s, 0 as *jni::jboolean) };
-    if p == (0 as *u8) { return text::new(); }
+    if p.is_null() { return text::new(); }
     let n: usize = cstr_len(p);
     let out: text::Text = text::from_str({ #str_from_raw_parts(p, n) });
     { (*(*e)).ReleaseStringUTFChars(e, s, p) };
@@ -255,13 +253,11 @@ export extern fn http_transport_perform_v1(req: *http::Request, ok: *bool,
 fn fail(ok: *bool, error: *http::Error, code: i64, message: str) {
     { (*ok) = false };
     { (*error) = http::Error { code: code, message: text::from_str(message) } };
-    return;
 }
 
 fn fail_text(ok: *bool, error: *http::Error, code: i64, take message: text::Text) {
     { (*ok) = false };
     { (*error) = http::Error { code: code, message: message } };
-    return;
 }
 
 // ==========================================================================
@@ -276,7 +272,7 @@ fn perform(req: *http::Request, ok: *bool, response: *http::Response,
         return;
     }
     let e: *jni::JNIEnv = env_of_this_thread();
-    if e == (0 as *jni::JNIEnv) {
+    if e.is_null() {
         fail(ok, error, ERROR_JVM_UNAVAILABLE, "could not attach this thread to the JVM");
         return;
     }
@@ -428,7 +424,6 @@ fn configure(e: *jni::JNIEnv, cls: jni::jclass, conn: jni::jobject, req: *http::
     let n: usize = { (*req).body.count() };
     if n == (0 as usize) { return; }
     write_body(e, cls, conn, req, n);
-    return;
 }
 
 fn set_int(e: *jni::JNIEnv, cls: jni::jclass, conn: jni::jobject, name: *u8, v: i32) {
@@ -437,7 +432,6 @@ fn set_int(e: *jni::JNIEnv, cls: jni::jclass, conn: jni::jobject, name: *u8, v: 
     var a: [jni::JValue; 1] = #zero::[[jni::JValue; 1]]();
     a[0 as usize] = jni::arg_int(v);
     { (*(*e)).CallVoidMethodA(e, conn, mid, #addr_of(a[0])) };
-    return;
 }
 
 // setDoOutput(true) + setFixedLengthStreamingMode(n) + getOutputStream().write.
@@ -560,7 +554,7 @@ fn read_body(e: *jni::JNIEnv, cls: jni::jclass, conn: jni::jobject, code: i32) -
     let chunk: usize = 16384 as usize;
     let arr: jni::jbyteArray = { (*(*e)).NewByteArray(e, { chunk as jni::jsize }) };
     let scratch: *u8 = { malloc(chunk) };
-    if arr != (0 as jni::jbyteArray) && scratch != (0 as *u8) {
+    if arr != (0 as jni::jbyteArray) && scratch.is_not_null() {
         var going: bool = true;
         while going {
             var a: [jni::JValue; 1] = #zero::[[jni::JValue; 1]]();
@@ -575,7 +569,7 @@ fn read_body(e: *jni::JNIEnv, cls: jni::jclass, conn: jni::jobject, code: i32) -
             }
         }
     }
-    if scratch != (0 as *u8) { { free(scratch) }; }
+    if scratch.is_not_null() { { free(scratch) }; }
     delete_local(e, { arr as jni::jobject });
     { (*(*e)).CallVoidMethodA(e, stream, close, 0 as *jni::JValue) };
     clear_exception(e);
@@ -592,7 +586,6 @@ fn disconnect(e: *jni::JNIEnv, cls: jni::jclass, conn: jni::jobject) {
     if mid == (0 as jni::jmethodID) { return; }
     { (*(*e)).CallVoidMethodA(e, conn, mid, 0 as *jni::JValue) };
     clear_exception(e);
-    return;
 }
 
 extern fn malloc(n: usize) -> *u8;

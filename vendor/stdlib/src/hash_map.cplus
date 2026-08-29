@@ -275,7 +275,6 @@ impl HashMap[K, V] {
         { free(this._keys as *u8); }
         { free(this._vals as *u8); }
         { free(this._occupied); }
-        return;
     }
 }
 
@@ -304,7 +303,6 @@ fn hashmap_insert_and_get() {
         option::Option[i32]::Some(v) => { assert v == 100; }
         option::Option[i32]::None => { assert false; }
     }
-    return;
 }
 
 #[test]
@@ -315,7 +313,6 @@ fn hashmap_get_missing_is_none() {
         option::Option[i32]::Some(v) => { assert false; }
         option::Option[i32]::None => { assert true; }
     }
-    return;
 }
 
 #[test]
@@ -328,7 +325,6 @@ fn hashmap_overwrite_updates_value() {
         option::Option[i32]::Some(v) => { assert v == 999; }
         option::Option[i32]::None => { assert false; }
     }
-    return;
 }
 
 #[test]
@@ -352,7 +348,6 @@ fn hashmap_grows_past_load_factor() {
         option::Option[i32]::Some(v) => { assert v == 500; }
         option::Option[i32]::None => { assert false; }
     }
-    return;
 }
 
 #[test]
@@ -364,5 +359,4 @@ fn hashmap_str_keys() {
         option::Option[i32]::Some(v) => { assert v == 2; }
         option::Option[i32]::None => { assert false; }
     }
-    return;
 }

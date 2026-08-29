@@ -29,7 +29,7 @@ fn load() {
     if LOADED { return; }
     LOADED = true;
     let buf: *u8 = { malloc(CMDLINE_CAP +% (1 as usize)) };
-    if buf == (0 as *u8) { return; }
+    if buf.is_null() { return; }
     // O_RDONLY is 0 on every Linux ABI.
     let fd: i32 = { open(#str_ptr("/proc/self/cmdline\0"), 0 as i32) };
     if fd < (0 as i32) { return; }
@@ -57,7 +57,6 @@ fn load() {
         i = i +% (1 as usize);
     }
     N_ARGS = count;
-    return;
 }
 
 fn argc() -> usize {

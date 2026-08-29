@@ -231,7 +231,6 @@ impl Arc[T] {
                 { free(this._ctrl); }
             }
         }
-        return;
     }
 }
 
@@ -299,7 +298,6 @@ impl Weak[T] {
         if prevw == (1 as u64) {
             { free(this._ctrl); }
         }
-        return;
     }
 }
 
@@ -325,7 +323,6 @@ fn arc_new_and_get() {
         option::Option[Arc[i32]]::Some(a) => { assert a.value() == 9; }
         option::Option[Arc[i32]]::None => { assert false; }
     }
-    return;
 }
 
 #[test]
@@ -339,7 +336,6 @@ fn arc_clone_bumps_strong_count() {
         }
         option::Option[Arc[i32]]::None => { assert false; }
     }
-    return;
 }
 
 #[test]
@@ -353,7 +349,6 @@ fn arc_is_unique_tracks_clones() {
         }
         option::Option[Arc[i32]]::None => { assert false; }
     }
-    return;
 }
 
 #[test]
@@ -367,7 +362,6 @@ fn arc_try_unwrap_sole_handle_recovers_value() {
         }
         option::Option[Arc[i32]]::None => { assert false; }
     }
-    return;
 }
 
 // Shared handle refuses to unwrap (CAS observes count 2); the refusal
@@ -392,7 +386,6 @@ fn arc_try_unwrap_shared_refuses_then_survivor_unwraps() {
         }
         option::Option[Arc[i32]]::None => { assert false; }
     }
-    return;
 }
 
 // Callbacks for the `with_mut` tests — plain fns; a fn-pointer callback
@@ -400,7 +393,6 @@ fn arc_try_unwrap_shared_refuses_then_survivor_unwraps() {
 fn bump(ref n: i32) { n = n +% 1; return; }
 fn append_world(ref t: text::Text) {
     let _st: status::Status = t.append(" world");
-    return;
 }
 
 #[test]
@@ -413,7 +405,6 @@ fn arc_with_mut_unique_mutates_in_place() {
         }
         option::Option[Arc[i32]]::None => { assert false; }
     }
-    return;
 }
 
 // A shared handle refuses scoped mutation (`Shared`), leaving the value
@@ -431,7 +422,6 @@ fn arc_with_mut_shared_refuses() {
         }
         option::Option[Arc[i32]]::None => { assert false; }
     }
-    return;
 }
 
 // In-place mutation of a non-Copy payload through a shared handle, then
@@ -451,7 +441,6 @@ fn arc_with_mut_non_copy_payload_in_place() {
         }
         option::Option[Arc[text::Text]]::None => { assert false; }
     }
-    return;
 }
 
 // Non-Copy Drop payload: `value()` is unavailable (T: Copy gate), so
@@ -470,7 +459,6 @@ fn arc_try_unwrap_non_copy_payload() {
         }
         option::Option[Arc[text::Text]]::None => { assert false; }
     }
-    return;
 }
 
 // ─────────────────────────── Weak tests ───────────────────────────
@@ -512,7 +500,6 @@ fn arc_downgrade_upgrade_roundtrip_while_alive() {
         }
         option::Option[Arc[i32]]::None => { assert false; }
     }
-    return;
 }
 
 #[test]
@@ -528,7 +515,6 @@ fn arc_weak_count_excludes_implicit_and_tracks_clones() {
         }
         option::Option[Arc[i32]]::None => { assert false; }
     }
-    return;
 }
 
 #[test]
@@ -545,7 +531,6 @@ fn arc_upgrade_none_after_last_strong_drops() {
         }
         option::Option[Arc[i32]]::None => { assert false; }
     }
-    return;
 }
 
 // The soundness invariant: when the last strong drops but a Weak still points at
@@ -568,5 +553,4 @@ fn arc_value_dropped_once_when_strong_gone_weak_lingers() {
         option::Option[Arc[ArcTracked]]::None => { assert false; }
     }
     assert ARC_WEAK_DROPS == (1 as i64);
-    return;
 }

@@ -52,7 +52,7 @@ static ZOOMS: vec::Vec[HostZoom] = #zero::[vec::Vec[HostZoom]]();
 static PAN_FILTER: *u8 = 0 as *u8;
 
 fn entry_of(host: *u8) -> option::Option[*HostZoom] {
-    if host == (0 as *u8) { return option::Option[*HostZoom]::None; }
+    if host.is_null() { return option::Option[*HostZoom]::None; }
     let zs: *vec::Vec[HostZoom] = #addr_of(ZOOMS);
     let n: usize = { (*zs).count() };
     var i: usize = 0 as usize;
@@ -168,7 +168,6 @@ fn apply(host: *u8, target: f64, ax: f64, ay: f64) {
         }
         option::Option[*HostZoom]::None => { }
     }
-    return;
 }
 
 // The visible cut's centre — the anchor when there is no gesture location
@@ -206,7 +205,6 @@ fn on_magnify(sender: *u8, ctx: *u8) {
         }
         option::Option[*HostZoom]::None => { }
     }
-    return;
 }
 
 // ---- pan while zoomed --------------------------------------------------------
@@ -258,7 +256,7 @@ fn pan_filter(ctx: *u8, event: *u8) -> *u8 {
 // Install pinch-to-zoom on a host. Re-installing updates the RANGE without
 // adding a second recognizer, so a window that reopens does not accumulate them.
 fn install(host: *u8, min_zoom: f64 = 1.0f64, max_zoom: f64 = 4.0f64) {
-    if host == (0 as *u8) { return; }
+    if host.is_null() { return; }
     let lo: f64 = heal_min(min_zoom);
     let hi: f64 = heal_max(lo, max_zoom);
     match entry_of(host) {
@@ -279,10 +277,9 @@ fn install(host: *u8, min_zoom: f64 = 1.0f64, max_zoom: f64 = 4.0f64) {
     // The first zoomable host brings the pan filter with it. Never removed:
     // with no zoomed host it is a pure pass-through, and hosts come and go for
     // the life of the process.
-    if PAN_FILTER == (0 as *u8) {
+    if PAN_FILTER.is_null() {
         PAN_FILTER = akx::add_local_event_filter(ak::event_mask_scroll_wheel, pan_filter, 0 as *u8);
     }
-    return;
 }
 
 // The programmatic path — a menu item, a shortcut, a test, an AGENT. It drives
@@ -323,7 +320,7 @@ fn is_zoomable(host: *u8) -> bool {
 // A window is closing: drop its entry so the registry does not grow for the
 // life of the process and a recycled address cannot inherit a stale range.
 fn forget(host: *u8) {
-    if host == (0 as *u8) { return; }
+    if host.is_null() { return; }
     let zs: *vec::Vec[HostZoom] = #addr_of(ZOOMS);
     var i: usize = 0 as usize;
     while i < { (*zs).count() } {
@@ -338,11 +335,9 @@ fn forget(host: *u8) {
         }
         i = i +% (1 as usize);
     }
-    return;
 }
 
 fn reset_for_tests() {
     let zs: *vec::Vec[HostZoom] = #addr_of(ZOOMS);
     { (*zs).remove_all() };
-    return;
 }

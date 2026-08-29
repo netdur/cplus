@@ -253,9 +253,8 @@ fn set_marshal(f: fn(*u8, fn(*u8))) { MARSHAL = f; return; }
 
 fn run_ui(work: fn(*u8), ctx: *u8) {
     let f: fn(*u8, fn(*u8)) = MARSHAL;
-    if f == (0 as fn(*u8, fn(*u8))) { work(ctx); return; }
+    if f.is_null() { work(ctx); return; }
     f(ctx, work);
-    return;
 }
 
 // ---- the session ---------------------------------------------------------------
@@ -277,7 +276,6 @@ fn arm(take b: insp::Backend) {
     BACKEND = b;
     ARMED = true;
     bridge::arm_extension("inspector.", handle, describe_tools);
-    return;
 }
 
 // ---- what this namespace tells `tools/list` ---------------------------------
@@ -380,7 +378,6 @@ fn disarm() {
     BACKEND = insp::Backend::none();
     SNAPSHOT.remove_all();
     bridge::disarm_extension("inspector.");
-    return;
 }
 
 // ---- the marshalled call -------------------------------------------------------
@@ -450,7 +447,6 @@ static OUT: vec::Vec[json::Value] = #zero::[vec::Vec[json::Value]]();
 fn put_out(take v: json::Value) {
     OUT.remove_all();
     let _s: status::Status = OUT.append(v);
-    return;
 }
 
 fn take_out() -> option::Option[json::Value] { return OUT.remove_last(); }
@@ -675,7 +671,6 @@ fn run_call(ctx: *u8) {
     let p: insp::Handle = resolve({ (*c).parent });
     if p.is_none() { { (*c).outcome = insp::Outcome::NotFound }; return; }
     { (*c).outcome = b.reparent_now(h, p, { (*c).at }) };
-    return;
 }
 
 // ---- outcomes on the wire ------------------------------------------------------

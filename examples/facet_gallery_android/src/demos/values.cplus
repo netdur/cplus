@@ -21,9 +21,8 @@ import "../shell" as shell;
 fn note(s: str) {
     match label::find("values:echo") {
         option::Option[label::Label]::Some(l) => { let _l: label::Label = l.set_text(s); }
-        option::Option[label::Label]::None => { }
+        option::Option::None => { }
     }
-    return;
 }
 
 fn on_slide(sender: *u8, ctx: *u8) {
@@ -36,14 +35,13 @@ fn on_slide(sender: *u8, ctx: *u8) {
             // the same pass as the event that caused it.
             match progress::find("values:progress") {
                 option::Option[progress::Progress]::Some(p) => {
-                    let _p: progress::Progress = p.set_progress({ s.value() } / 100.0f64);
+                    let _p: progress::Progress = p.set_progress({ s.value() } / 100.0);
                 }
-                option::Option[progress::Progress]::None => { }
+                option::Option::None => { }
             }
         }
-        option::Option[slider::Slider]::None => { }
+        option::Option::None => { }
     }
-    return;
 }
 
 fn on_step(sender: *u8, ctx: *u8) {
@@ -52,9 +50,8 @@ fn on_step(sender: *u8, ctx: *u8) {
             let v: i32 = { s.value() as i32 };
             note("stepper ${v}");
         }
-        option::Option[stepper::Stepper]::None => { }
+        option::Option::None => { }
     }
-    return;
 }
 
 fn on_spin(sender: *u8, ctx: *u8) {
@@ -65,13 +62,12 @@ fn on_spin(sender: *u8, ctx: *u8) {
                 option::Option[spinner::Spinner]::Some(s) => {
                     let _s: spinner::Spinner = s.set_running(on);
                 }
-                option::Option[spinner::Spinner]::None => { }
+                option::Option::None => { }
             }
             if on { note("spinner running"); } else { note("spinner stopped"); }
         }
-        option::Option[toggle::Toggle]::None => { }
+        option::Option::None => { }
     }
-    return;
 }
 
 fn build() -> core::Node {
@@ -79,24 +75,24 @@ fn build() -> core::Node {
     b.add(shell::title("Values"));
 
     b.add(shell::heading("slider"));
-    b.add(ui::slider(25.0f64, key: "values:slider", minimum: 0.0f64, maximum: 100.0f64,
+    b.add(ui::slider(25.0, key: "values:slider", minimum: 0.0, maximum: 100.0,
                      on_value_changed: on_slide));
 
     b.add(shell::heading("progress"));
     b.add(shell::body("Driven by the slider above."));
-    b.add(ui::progress(0.25f64, key: "values:progress"));
+    b.add(ui::progress(0.25, key: "values:progress"));
 
     b.add(shell::heading("stepper"));
     b.add(shell::body("The one COMPOSITE control: minus, value and plus are three Android views inside one facet node, arranged by a LinearLayout. facet owns the layout of facet's tree, and these three are not in it."));
-    b.add(ui::stepper(3.0f64, key: "values:stepper", minimum: 0.0f64, maximum: 10.0f64,
-                      increment: 1.0f64, on_value_changed: on_step));
+    b.add(ui::stepper(3.0, key: "values:stepper", minimum: 0.0, maximum: 10.0,
+                      increment: 1.0, on_value_changed: on_step));
 
     b.add(shell::heading("spinner"));
     b.add(shell::body("Android has no stop, so a spinner that is not running is GONE — not invisible, because facet lays this tree out itself and a stopped spinner should take no space."));
     b.add(ui::toggle(true, key: "values:running", on_toggled: on_spin));
     b.add(ui::spinner(vocab::Color::clear(), key: "values:spinner", running: true));
 
-    b.add(ui::label("(nothing moved yet)", key: "values:echo", font_size: 15.0f64,
-                    text_color: vocab::Color::rgba(0.35f64, 0.35f64, 0.40f64)));
+    b.add(ui::label("(nothing moved yet)", key: "values:echo", font_size: 15.0,
+                    text_color: vocab::Color::rgba(0.35, 0.35, 0.40)));
     return shell::page(b, "demo:values");
 }

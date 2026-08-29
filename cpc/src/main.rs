@@ -6922,7 +6922,6 @@ fn run_init(args: &[OsString]) -> ExitCode {
          \x20   fn on_tap(ref this, sender: *u8) {{\n\
          \x20       this.taps = this.taps + 1;\n\
          \x20       this.show_taps();\n\
-         \x20       return;\n\
          \x20   }}\n\n\
          \x20   // The live tree, reached through a TYPED cursor. A label is not a\n\
          \x20   // button: the wrong kind of `find` answers None and does nothing.\n\
@@ -6931,7 +6930,6 @@ fn run_init(args: &[OsString]) -> ExitCode {
          \x20       if let option::Option::Some(l) = label::find(\"taps\") {{\n\
          \x20           let _l: label::Label = l.set_text(\"tapped ${{n}}\");\n\
          \x20       }}\n\
-         \x20       return;\n\
          \x20   }}\n\
          }}\n\n\
          impl Home: component::Component {{\n\
@@ -6953,8 +6951,8 @@ fn run_init(args: &[OsString]) -> ExitCode {
          \x20   }}\n\
          }}\n\n\
          impl Home: component::Lifecycle {{\n\
-         \x20   fn on_attach(ref this) {{ return; }}\n\
-         \x20   fn on_detach(ref this) {{ return; }}\n\
+         \x20   fn on_attach(ref this) {{ }}\n\
+         \x20   fn on_detach(ref this) {{ }}\n\
          }}\n\n\
          impl Home: screen::Screen {{\n\
          \x20   fn chrome(this) -> screen::Chrome {{\n\
@@ -7469,25 +7467,21 @@ fn run_init(args: &[OsString]) -> ExitCode {
          fn answered(index: i32, ctx: *u8) {{\n\
          \x20   if index == 0 {{ consent::allow_pending(); return; }}\n\
          \x20   consent::deny_pending();\n\
-         \x20   return;\n\
          }}\n\n\
          fn show(ctx: *u8) {{\n\
          \x20   let message: text::Text = \"${{consent::pending()}} wants to read this app and press its buttons.\";\n\
          \x20   runtime::alert(\"Allow agent access?\", message.view(), \"Allow\",\n\
          \x20                  secondary: \"Deny\", on_answer: answered);\n\
-         \x20   return;\n\
          }}\n\n\
          fn ask(client: str, ctx: *u8) {{\n\
          \x20   // `ask` runs on the serve thread. A dialog built there is an\n\
          \x20   // NSWindow off the main thread, which aborts the process.\n\
          \x20   if !services::has_main_hop() {{ consent::cancel_pending(); return; }}\n\
          \x20   services::run_on_main(show, 0 as *u8);\n\
-         \x20   return;\n\
          }}\n\n\
          fn install() {{\n\
          \x20   consent::on_ask(ask);\n\
          \x20   agent::set_policy(consent::gate);\n\
-         \x20   return;\n\
          }}\n"
     );
 

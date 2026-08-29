@@ -43,7 +43,6 @@ type ScreenBox = screen::ScreenBox;
 // One loud line per entry point that would otherwise render something.
 fn no_backend(entry: str) {
     io::eprintln(text::from_str("facet: no backend for this target platform — ").appending(entry).appending(" is a no-op. Add a runtime_<platform>.cplus facade over a facet_<toolkit> backend.").view());
-    return;
 }
 
 interface Window {
@@ -105,7 +104,6 @@ static AGENT_ID: text::Text = #zero::[text::Text]();
 
 fn agent_mcp(id: str) {
     AGENT_ID = text::from_str(id);
-    return;
 }
 
 fn agent_id() -> str { return AGENT_ID.view(); }
@@ -115,7 +113,6 @@ fn serve_agent_if_asked() { return; }
 fn run[W: Window](take window: W) {
     var owned_window: W = window;
     no_backend("run");
-    return;
 }
 
 fn run_component[C: component::Component + component::Lifecycle](
@@ -195,7 +192,6 @@ fn observe_stopped(cb: fn(*u8), ctx: *u8 = 0 as *u8) -> services::Cancellable {
 
 fn set_app_appearance(a: vocab::Appearance) {
     no_backend("set_app_appearance");
-    return;
 }
 
 fn app_appearance() -> vocab::Appearance {
@@ -238,7 +234,6 @@ fn choose_file() -> option::Option[text::Text] {
 
 fn present_window(take root: Node, title: str, width: f64, height: f64) {
     no_backend("present_window");
-    return;
 }
 
 fn window_close(sender: *u8) { return; }
@@ -298,29 +293,24 @@ impl App {
 
     fn menu(ref this, build: fn() -> AppMenu) {
         this.menu_fn = build;
-        return;
     }
 
     fn screen(ref this, name: str, factory: fn() -> screen::ScreenBox) {
         this.routes.append(AppRoute { name: text::from_str(name), factory: factory });
-        return;
     }
 
     fn agent_mcp(ref this, id: str = "") {
         if id == "" { agent_mcp(this.name()); return; }
         agent_mcp(id);
-        return;
     }
 
     fn on_launch(ref this, f: fn(*u8), ctx: *u8 = 0 as *u8) {
         this.on_launch_fn = f;
         this.hook_ctx = ctx;
-        return;
     }
 
     fn on_quit(ref this, f: fn(*u8)) {
         this.on_quit_fn = f;
-        return;
     }
 
     fn route_factory(this, route: str) -> fn() -> screen::ScreenBox {
@@ -372,20 +362,20 @@ fn app_running() -> bool { return running_app() != (0 as *App); }
 
 fn app_name() -> str {
     let ap: *App = running_app();
-    if ap == (0 as *App) { return ""; }
+    if ap.is_null() { return ""; }
     return { (*ap).name() };
 }
 
 fn has_screen(route: str) -> bool {
     let ap: *App = running_app();
-    if ap == (0 as *App) { return false; }
+    if ap.is_null() { return false; }
     let f: fn() -> screen::ScreenBox = { (*ap).route_factory(route) };
-    return f != (0 as fn() -> screen::ScreenBox);
+    return f.is_not_null();
 }
 
 fn register_screen(route: str, factory: fn() -> screen::ScreenBox) -> bool {
     let ap: *App = running_app();
-    if ap == (0 as *App) { return false; }
+    if ap.is_null() { return false; }
     if has_screen(route) { return false; }
     { (*ap).screen(route, factory) };
     return true;
@@ -439,7 +429,6 @@ fn choose(title: str, message: str, take options: vec::Vec[text::Text],
 
 fn close_current() {
     no_backend("close_current");
-    return;
 }
 
 fn push_screen(route: str, arg: str) -> bool {
@@ -489,7 +478,6 @@ fn app_routes_register_and_resolve() {
     a.screen("settings", rt_screen_factory);
     assert a.route_factory("workspace") != (0 as fn() -> screen::ScreenBox);
     assert a.route_factory("nowhere") == (0 as fn() -> screen::ScreenBox);
-    return;
 }
 
 #[test]
@@ -500,7 +488,6 @@ fn app_context_is_inert_without_a_running_app() {
     assert app_name() == "";
     assert has_screen("workspace") == false;
     assert register_screen("workspace", rt_screen_factory) == false;
-    return;
 }
 
 #[test]
@@ -508,7 +495,6 @@ fn app_run_without_a_backend_refuses_loudly() {
     var a: App = App::new();
     let s: status::Status = a.run("main");
     assert s == status::Status::InvalidInput;
-    return;
 }
 
 #[test]
@@ -525,5 +511,4 @@ fn the_dialog_and_nav_tier_is_present_and_inert() {
     // The pure adapters answer for real, with no backend anywhere.
     assert default_should_close(0 as *u8) == true;
     default_will_close(0 as *u8);
-    return;
 }

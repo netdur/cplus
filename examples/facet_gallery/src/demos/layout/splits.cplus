@@ -18,11 +18,11 @@ impl Splits {
 
 fn pane(title: str, color: vocab::Color) -> core::Node {
     var b: core::Builder = core::Builder::new();
-    b.add(ui::label(title, key: "", font_size: 14.0f64,
+    b.add(ui::label(title, key: "", font_size: 14.0,
         font_weight: vocab::FontWeight::Semibold, text_color: vocab::Color::ink()));
-    b.add(ui::label("Drag the divider.", key: "", font_size: 12.0f64,
-        text_color: vocab::Color::ink(0.55f64)));
-    var n: core::Node = core::column(b).padding(16.0f64).gap(6.0f64).grow(1.0f64);
+    b.add(ui::label("Drag the divider.", key: "", font_size: 12.0,
+        text_color: vocab::Color::ink(0.55)));
+    var n: core::Node = core::column(b).padding(16.0).gap(6.0).grow(1.0);
     n.set_background_color(color);
     return n;
 }
@@ -34,9 +34,9 @@ impl Splits: component::Component {
         body.add(ui::label(
             "position is the divider offset; min_leading / min_trailing clamp it. This window's shell is the same control.",
             key: "sp:note",
-            font_size: 13.0f64,
-            text_color: vocab::Color::ink(0.65f64),
-            max_lines: 3 as i64,
+            font_size: 13.0,
+            text_color: vocab::Color::ink(0.65),
+            max_lines: 3,
             line_break: vocab::LineBreak::WordWrap,
         ));
 
@@ -47,15 +47,15 @@ impl Splits: component::Component {
             panes,
             key: "sp:demo",
             axis: split::SplitAxis::Columns,
-            position: 160.0f64,
-            min_leading: 100.0f64,
-            min_trailing: 100.0f64,
-        ).height(200.0f64));
+            position: 160.0,
+            min_leading: 100.0,
+            min_trailing: 100.0,
+        ).height(200.0));
 
         return shell::panel(
             "Split",
             "Draggable divider between two panes. Axis names the RESULT (Columns | Rows).",
-            core::column(body).gap(12.0f64),
+            core::column(body).gap(12.0),
             howto: "var b = Builder::new();\nb.add(leading); b.add(trailing);\nui::split(b, key: \"s\", position: 180.0, min_leading: 120.0)",
         );
     }

@@ -187,7 +187,6 @@ impl Signal[T] {
             }
             best_f(value, best_ctx);
         }
-        return;
     }
 
     // True when a listener with this token is still registered (paused or
@@ -254,7 +253,6 @@ impl Signal[T] {
     // reset), so a stale `off` after this stays a false no-op.
     fn remove_all(ref this) {
         this._subs.remove_all();
-        return;
     }
 }
 
@@ -300,7 +298,6 @@ impl SignalSubscription[T] {
     // the handle becomes inert and its drop no longer cancels.
     fn detach(ref this) {
         this._id = 0u64;
-        return;
     }
 
     // Mute the listener without removing it. False when unknown or inert.
@@ -319,7 +316,6 @@ impl SignalSubscription[T] {
     fn drop(ref this) {
         if this._id == 0u64 { return; }
         let _removed: bool = { (*this._sig).off(this._id) };
-        return;
     }
 }
 
@@ -411,7 +407,6 @@ impl Bus {
                 i = i + 1usize;
             }
         }
-        return;
     }
 
     // Remove every listener registered with this ctx, across all names —
@@ -472,7 +467,6 @@ impl Bus {
             }
             best_f(payload, best_ctx);
         }
-        return;
     }
 
     // True when a listener with this token is still registered (paused or
@@ -546,7 +540,6 @@ impl Bus {
     // Drop every listener for every name.
     fn remove_all(ref this) {
         this._subs.remove_all();
-        return;
     }
 }
 
@@ -592,7 +585,6 @@ impl Subscription {
     // handle becomes inert and its drop no longer cancels.
     fn detach(ref this) {
         this._id = 0u64;
-        return;
     }
 
     // Mute the listener without removing it. False when unknown or inert.
@@ -611,7 +603,6 @@ impl Subscription {
     fn drop(ref this) {
         if this._id == 0u64 { return; }
         let _removed: bool = { (*this._bus).off(this._id) };
-        return;
     }
 }
 
@@ -664,7 +655,6 @@ fn off(id: u64) -> bool {
 fn off_all(name: str) {
     let b: *Bus = shared();
     { (*b).off_all(name); }
-    return;
 }
 
 fn off_ctx(ctx: *u8) -> usize {
@@ -675,7 +665,6 @@ fn off_ctx(ctx: *u8) -> usize {
 fn emit(name: str, payload: str = "") {
     let b: *Bus = shared();
     { (*b).emit(name, payload: payload); }
-    return;
 }
 
 fn count(name: str) -> usize {
@@ -686,5 +675,4 @@ fn count(name: str) -> usize {
 fn remove_all() {
     let b: *Bus = shared();
     { (*b).remove_all(); }
-    return;
 }

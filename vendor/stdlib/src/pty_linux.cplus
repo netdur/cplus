@@ -63,7 +63,7 @@ fn decode_status(status_word: i32) -> i32 {
 // the same layout on both kernels, so this is real rather than refused.
 fn winsize_new(cols: u16, rows: u16) -> *u8 {
     let w: *u8 = { malloc(8 as usize) };
-    if w == (0 as *u8) { return 0 as *u8; }
+    if w.is_null() { return 0 as *u8; }
     { *((w + (0 as usize)) as *u16) = rows; }
     { *((w + (2 as usize)) as *u16) = cols; }
     { *((w + (4 as usize)) as *u16) = 0 as u16; }
@@ -79,7 +79,6 @@ fn unsupported(what: *u8) {
     let _y: i64 = { write(2 as i32, what, strlen(what)) };
     let b: *u8 = #str_ptr("\n  (see stdlib/src/pty_linux.cplus; ask pty::supported() first)\n\0");
     let _z: i64 = { write(2 as i32, b, strlen(b)) };
-    return;
 }
 
 struct PtyChild {
@@ -121,7 +120,7 @@ impl PtyChild {
 #[test]
 fn winsize_is_packed_rows_then_cols() {
     let w: *u8 = winsize_new(80 as u16, 24 as u16);
-    assert w != (0 as *u8);
+    assert w.is_not_null();
     assert { *((w + (0 as usize)) as *u16) } == (24 as u16);
     assert { *((w + (2 as usize)) as *u16) } == (80 as u16);
 }

@@ -66,7 +66,6 @@ fn enable() {
         serve_once: serve_once,
         pin_policy: pin_policy,
     });
-    return;
 }
 
 // Back to the portable no-op: an app that stops serving has no surface, and
@@ -77,7 +76,6 @@ fn disable() {
         serve_once: 0 as fn(str),
         pin_policy: 0 as fn(*u8, vocab::Agent),
     });
-    return;
 }
 
 // Open the already-attached Facet surface for an assistant embedded in this
@@ -131,14 +129,12 @@ fn policy_for(a: vocab::Agent) -> u32 {
 // for every node whose C_AGENT bit is up.
 fn pin_policy(view: *u8, a: vocab::Agent) {
     agent_appkit::set_agent_policy(view, policy_for(a));
-    return;
 }
 
 // Walk `win`'s live view tree into the surface, replacing the previous
 // screen's (its retained views are released by the drop).
 fn attach_window(win: *u8) {
     AGENT_SURFACE = agent_appkit::open(win);
-    return;
 }
 
 // The default channel policy: the developer opted in by giving a socket path,
@@ -174,11 +170,10 @@ static AGENT_POLICY: fn(auth::Request) -> auth::Grant =
 
 fn set_policy(f: fn(auth::Request) -> auth::Grant) {
     AGENT_POLICY = f;
-    return;
 }
 
 fn effective_policy() -> fn(auth::Request) -> auth::Grant {
-    if AGENT_POLICY == (0 as fn(auth::Request) -> auth::Grant) { return admit; }
+    if AGENT_POLICY.is_null() { return admit; }
     return AGENT_POLICY;
 }
 
@@ -283,7 +278,6 @@ fn serve_once(id: str) {
     let _hd: bool = mcp::write_descriptor(id, mcp::current_pid(), "http", hurl.view());
     let hok: text::Text = "facet: agent surface on ${hurl}";
     io::eprintln(hok.view());
-    return;
 }
 
 // ---- tests ------------------------------------------------------------------
@@ -300,7 +294,6 @@ fn enable_fills_the_install_struct_and_disable_empties_it() {
     // window exists; the surface opens empty rather than refusing.
     app::agent_attach(0 as *u8);
     disable();
-    return;
 }
 
 #[test]
@@ -322,7 +315,6 @@ fn every_facet_tier_maps_to_the_policy_the_core_reads() {
     assert identity::policy_none() != identity::policy_protected();
     assert identity::policy_protected() != identity::policy_private();
     assert identity::policy_private() != identity::policy_exclude();
-    return;
 }
 
 #[test]
@@ -331,7 +323,7 @@ fn the_pinned_tier_is_what_the_agent_surface_reads_back() {
     // enum in, agent_core's policy out, through the same call `paint` makes at
     // mount. Both halves are tested on their own; this is the join.
     let probe: *u8 = rt::alloc_init(#str_ptr("NSView\0"));
-    assert probe != (0 as *u8);
+    assert probe.is_not_null();
     pin_policy(probe, vocab::Agent::Private);
     assert agent_appkit::get_agent_policy(probe) == identity::policy_private();
     pin_policy(probe, vocab::Agent::Protected);
@@ -339,5 +331,4 @@ fn the_pinned_tier_is_what_the_agent_surface_reads_back() {
     // Clearing is a write too, not an absence.
     pin_policy(probe, vocab::Agent::Open);
     assert agent_appkit::get_agent_policy(probe) == identity::policy_none();
-    return;
 }

@@ -101,7 +101,7 @@ fn get_protocol(name: *u8) -> *u8 {
 // Declare that `cls` conforms. BEFORE `register_class_pair` — a registered class
 // cannot gain a protocol, and the call quietly answers false if it is too late.
 fn add_protocol(cls: *u8, protocol: *u8) -> i8 {
-    if protocol == (0 as *u8) { return 0 as i8; }
+    if protocol.is_null() { return 0 as i8; }
     return { class_addProtocol(cls, protocol) };
 }
 
@@ -257,12 +257,12 @@ extern fn class_getMethodImplementation(cls: *u8, sel: *u8) -> *u8;
 // superclass answers with something else — or 0 when `mine` is not in the
 // chain at all. Every class below the definer merely inherits it.
 fn defining_class_of(self_obj: *u8, cmd: *u8, mine: *u8) -> *u8 {
-    if self_obj == (0 as *u8) { return 0 as *u8; }
+    if self_obj.is_null() { return 0 as *u8; }
     var cls: *u8 = { object_getClass(self_obj) };
-    while cls != (0 as *u8) {
+    while cls.is_not_null() {
         let sup: *u8 = { class_getSuperclass(cls) };
         if { class_getMethodImplementation(cls, cmd) } == mine {
-            if sup == (0 as *u8) { return 0 as *u8; }
+            if sup.is_null() { return 0 as *u8; }
             if { class_getMethodImplementation(sup, cmd) } != mine { return cls; }
         }
         cls = sup;
@@ -287,12 +287,12 @@ fn defining_class_of(self_obj: *u8, cmd: *u8, mine: *u8) -> *u8 {
 // safe, because an implementation that is not in the chain cannot recurse into
 // itself.
 fn super_class_below(self_obj: *u8, cmd: *u8, mine: *u8) -> *u8 {
-    if self_obj == (0 as *u8) { return 0 as *u8; }
+    if self_obj.is_null() { return 0 as *u8; }
     let one_hop: *u8 = { class_getSuperclass(object_getClass(self_obj)) };
     let definer: *u8 = defining_class_of(self_obj, cmd, mine);
-    if definer == (0 as *u8) { return one_hop; }
+    if definer.is_null() { return one_hop; }
     let sup: *u8 = { class_getSuperclass(definer) };
-    if sup == (0 as *u8) { return one_hop; }
+    if sup.is_null() { return one_hop; }
     return sup;
 }
 
@@ -301,6 +301,6 @@ fn super_class_below(self_obj: *u8, cmd: *u8, mine: *u8) -> *u8 {
 // variant on x86_64 for a struct return, and does not on arm64).
 fn super_imp_below(self_obj: *u8, cmd: *u8, mine: *u8) -> *u8 {
     let cls: *u8 = super_class_below(self_obj, cmd, mine);
-    if cls == (0 as *u8) { return 0 as *u8; }
+    if cls.is_null() { return 0 as *u8; }
     return { class_getMethodImplementation(cls, cmd) };
 }
