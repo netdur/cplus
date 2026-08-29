@@ -7394,6 +7394,40 @@ fn run_init(args: &[OsString]) -> ExitCode {
          cpc test           run the tests\n\
          cpc fmt            canonical formatting\n\
          ```\n\n\
+         ## Driving the running app\n\n\
+         This app is an ACI: while it runs it serves MCP, and you can read its\n\
+         UI and act on it. `src/app.cplus` is where that is turned on.\n\n\
+         **Find it.** The address is derived from the app id and its pid, so a\n\
+         running instance writes `/tmp/mcp-{proj_name}-<pid>.json` saying where\n\
+         it landed:\n\n\
+         ```\n\
+         cat /tmp/mcp-{proj_name}-*.json\n\
+         ```\n\n\
+         A pid whose process is gone is a leftover — check with `kill -0 <pid>`.\n\
+         If you launched the app yourself you already know the pid, so you can\n\
+         skip the file: the port is `9000 + pid % 1000`.\n\n\
+         **Talk to it.** Plain JSON-RPC over POST, no bridge:\n\n\
+         ```\n\
+         curl -s -X POST http://127.0.0.1:<port>/ \\\n\
+         \x20    -d '{{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"describe_ui\"}}'\n\
+         ```\n\n\
+         `tools/list` names every verb. The core ones are `describe_ui`,\n\
+         `click`, `set_text`, `hit_test`, `scroll_to` and `poll_event`; if the\n\
+         app called `inspect::arm()` there are twelve more under `inspector.`\n\
+         that see the whole tree, not just what is exposed.\n\n\
+         **This is how you test a UI change.** `describe_ui` answers a flat node\n\
+         list and each `id` is the `key:` written in the code. Click, describe\n\
+         again, and read the change — that is evidence, in a way \"it should work\n\
+         now\" is not.\n\n\
+         Two things worth knowing before you are confused by them:\n\n\
+         - **You have no hands.** There is no drag, pinch or swipe verb and\n\
+         \x20 there will not be one. An affordance only a gesture can reach is a\n\
+         \x20 bug in the app — it is unreachable for anyone driving by voice too.\n\
+         \x20 Fix the click path; do not look for a gesture verb.\n\
+         - **You may be refused once.** If the app wired `agent_consent`, your\n\
+         \x20 first request is refused while a dialog asks the user. The error\n\
+         \x20 says whether to retry — `consent pending` means come back,\n\
+         \x20 `consent denied` means the user said no.\n\n\
          <!-- Sections below this line are written by your IDE and are rewritten\n\
               when it opens the project. Edit above the line, not below it. -->\n"
     );
