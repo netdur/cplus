@@ -893,20 +893,50 @@ struct SigTable {
 /// it), and `ref` is a write-back borrow — neither moves. This mirrors codegen
 /// `effective_move` (`p.move_ && non-Copy aggregate`).
 ///
-/// Restricted to `TypeKind::Path` on purpose: borrowck runs *before*
-/// monomorphization, so a generic instantiation (`Vec[T]`, `Pair[A, B]`) or a
-/// bare generic param (`T`) is unresolved here — `definitely_non_copy` returns
-/// false for those. Treating them as non-moves keeps the analysis conservative;
-/// codegen still moves them correctly post-mono.
-fn param_is_effective_move(p: &crate::ast::Param, oracle: &CopyOracle) -> bool {
+/// A `take` parameter whose type NAMES ONE OF THE CALLEE'S OWN GENERIC PARAMS
+/// (`take x: T`, `take x: Option[T]`) is a move too — a *conditional* one,
+/// settled at the call site by the argument's own type, which is always
+/// concrete there. Skipping it was a soundness hole, not conservatism:
+///
+/// ```text
+/// fn nsink(take x: Text)   -> E0372 when `x` is borrowed
+/// fn gsink[T](take x: T)   -> silence, and the borrow outlives the value
+/// ```
+///
+/// The permissive direction is what made it dangerous. "Unresolved, so assume
+/// it does not move" admits a real move; the analysis has to assume it MIGHT.
+/// `thread::spawn_with[I, O](take input: I, ...)` is on the silent side of
+/// that line, so the standard library's threading entry point would move a
+/// `Text` out from under a live `str` view of it — a use-after-free the
+/// checker was built to reject and reported clean (2026-08-28).
+///
+/// Callers must pair this with the argument-side gate in the call walker:
+/// `T` may instantiate to a Copy type, and moving a Copy value invalidates
+/// nothing. Whether it consumes is the ARGUMENT's business, and the caller
+/// knows the argument's type whether or not the callee is generic.
+fn param_is_effective_move(
+    p: &crate::ast::Param,
+    oracle: &CopyOracle,
+    generic_names: &[String],
+) -> bool {
     // `Path` and `Generic` (an instantiation like `Vec[i32]`) both reach
     // `definitely_non_copy`, which now answers definitively for Drop generic
     // bases — so passing a `take v: Vec[T]` consumes it, and a move-while-view
-    // is caught. Non-Drop generics still answer `false` there (conservative),
-    // so this stays a no-move for genuinely-maybe-Copy instantiations.
+    // is caught. Non-Drop generics still answer `false` there, which is where
+    // the generic-param arm below takes over.
     p.move_
         && matches!(&p.ty.kind, TypeKind::Path(_) | TypeKind::Generic { .. })
-        && oracle.definitely_non_copy(&p.ty)
+        && (oracle.definitely_non_copy(&p.ty) || type_mentions_name(&p.ty, generic_names))
+}
+
+/// Is this `take` parameter's move CONDITIONAL on the argument — i.e. did it
+/// qualify only through the generic-param arm above? A parameter whose written
+/// type is definitely non-Copy moves whatever the caller hands it; one typed
+/// `T` moves only when `T` turned out non-Copy, and the call walker asks the
+/// argument. Recomputed at the call site from the recorded parameter type
+/// rather than stored, so no signature entry has to carry a parallel vector.
+fn param_move_is_conditional(param_ty: &Type, oracle: &CopyOracle) -> bool {
+    !oracle.definitely_non_copy(param_ty)
 }
 
 /// Does this type name any of the given generic params anywhere in its
@@ -1018,7 +1048,7 @@ impl SigTable {
                             param_moves: f
                                 .params
                                 .iter()
-                                .map(|p| param_is_effective_move(p, oracle))
+                                .map(|p| param_is_effective_move(p, oracle, &generic_names))
                                 .collect(),
                             param_muts: f.params.iter().map(|p| p.mutable).collect(),
                             return_borrow,
@@ -1128,7 +1158,7 @@ impl SigTable {
                                 param_moves: m
                                     .params
                                     .iter()
-                                    .map(|p| param_is_effective_move(p, oracle))
+                                    .map(|p| param_is_effective_move(p, oracle, &generic_names))
                                     .collect(),
                                 param_muts: m.params.iter().map(|p| p.mutable).collect(),
                                 return_borrow,
@@ -1178,6 +1208,10 @@ impl SigTable {
     /// and detect the four intra-call conflict patterns.
     fn fn_param_muts(&self, name: &str) -> Option<&Vec<bool>> {
         self.fns.get(name).map(|e| &e.param_muts)
+    }
+
+    fn fn_param_tys(&self, name: &str) -> Option<&Vec<Type>> {
+        self.fns.get(name).map(|e| &e.param_tys)
     }
 
     /// The effective per-param keeps flags for an entry: declared
@@ -7284,6 +7318,13 @@ impl Analyzer<'_> {
             ExprKind::Ident(name) => self.sigs.fn_param_muts(name).cloned(),
             _ => None,
         };
+        // Parallel to `move_flags`: the callee's WRITTEN parameter types, which
+        // is how the move loop below tells an unconditional `take Text` from a
+        // `take T` whose move depends on what the caller passed.
+        let mut param_tys: Option<Vec<Type>> = match &callee.kind {
+            ExprKind::Ident(name) => self.sigs.fn_param_tys(name).cloned(),
+            _ => None,
+        };
         // Handle-projection Tier 2: an indirect call through a fn-pointer
         // local. The callee ident isn't a named fn, but its recorded binding
         // type carries the per-param `take`/`ref` markers — source the same
@@ -7323,6 +7364,20 @@ impl Analyzer<'_> {
         } = &callee.kind
         {
             if let ExprKind::Ident(recv_name) = &receiver.kind {
+                // NOTE (2026-08-28): matching only `Path` here means a method
+                // call on a GENERIC-typed receiver (`Vec[T]`, `Box[T]`,
+                // `Option[T]`, `Mutex[T]`) carries no flags at all — no move
+                // flags, no `ref` flags, no receiver claim — so E0372 and the
+                // whole intra-call family (E0380/E0381/E0382/E0374) skip it
+                // while firing on the concrete-receiver spelling of the same
+                // call. Extending the match to `Generic` closes it in three
+                // lines and every suite stays green, but it then rejects real
+                // code through a SEPARATE precision bug: a view whose last use
+                // is an `if` condition is still treated as live inside the
+                // branch body, so `if !seen(p) { out.append(pg); }` reports
+                // E0372 against a borrow that NLL should already have ended.
+                // Fix that first. See
+                // bugs/generic-receiver-method-calls-carry-no-borrow-flags.md.
                 let entry = self
                     .binding_type(recv_name)
                     .and_then(|bt| match &bt.kind {
@@ -7336,6 +7391,7 @@ impl Analyzer<'_> {
                 if let Some(entry) = entry {
                     if move_flags.is_none() {
                         move_flags = Some(entry.param_moves.clone());
+                        param_tys = Some(entry.param_tys.clone());
                     }
                     if mut_flags.is_none() {
                         mut_flags = Some(entry.param_muts.clone());
@@ -7426,8 +7482,23 @@ impl Analyzer<'_> {
                 .unwrap_or(false);
             if arg_is_move {
                 if let ExprKind::Ident(name) = &arg.kind {
-                    self.apply_move_of_binding(name, arg.span, state);
-                    continue;
+                    // A `take` parameter written as one of the callee's own
+                    // generic params consumes only what is actually non-Copy,
+                    // and the CALLER is where that is known — `gsink::[Text](t)`
+                    // moves, `gsink::[i32](n)` copies. A parameter with a
+                    // definitely-non-Copy written type moves unconditionally,
+                    // which is the pre-existing path and stays exact: asking
+                    // the argument there would silently drop the check for a
+                    // binding whose type borrowck could not infer.
+                    let conditional = param_tys
+                        .as_ref()
+                        .and_then(|v| v.get(i))
+                        .map(|t| param_move_is_conditional(t, &self.oracle))
+                        .unwrap_or(false);
+                    if !conditional || self.binding_is_non_copy(name) {
+                        self.apply_move_of_binding(name, arg.span, state);
+                        continue;
+                    }
                 }
             }
             self.apply_expr(arg, state);
@@ -8806,6 +8877,65 @@ fn caller() {
         assert!(
             codes.iter().any(|c| c == "E0372"),
             "take non-Copy struct arg while borrowed should move (E0372), got {codes:?}"
+        );
+    }
+
+    // 2026-08-28: the GENERIC half of the same rule, which was missing.
+    // `param_is_effective_move` asked whether the WRITTEN parameter type is
+    // definitely non-Copy, and a bare `T` never is before monomorphization —
+    // so `fn gsink[T](take x: T)` recorded no move at all and a live view
+    // outlived the value it borrowed. That is not a corner: the signature is
+    // `thread::spawn_with[I, O](take input: I, ...)`, so the standard
+    // library's threading entry point moved a `Text` into a worker out from
+    // under a `str` view of it, and the checker reported clean. Confirmed as a
+    // real heap-use-after-free under `--asan` (freed by `Text.drop` inside the
+    // instantiated sink) before the fix went in.
+    //
+    // The comment on the old code called treating `T` as a non-move
+    // "conservative". It is the opposite: for a move-while-borrowed check,
+    // assuming no move is the PERMISSIVE direction, and it admits a real one.
+    #[test]
+    fn generic_take_param_while_borrowed_is_move_e0372() {
+        let src = "\
+struct B { x: i32 }
+impl B { fn drop(ref this) { return; } }
+fn cursor(ref b: B) -> B { return b; }
+fn gsink[T](take v: T) -> i32 { return 0; }
+fn caller() {
+  let v: B = B { x: 1 };
+  let cur: B = cursor(v);
+  let n: i32 = gsink::[B](v);
+  let m: i32 = cur.x;
+  return;
+}";
+        let codes = check_src(src);
+        assert!(
+            codes.iter().any(|c| c == "E0372"),
+            "a `take` param typed by the callee's own generic param still moves; got {codes:?}"
+        );
+    }
+
+    // The other half, and the reason the call site asks the ARGUMENT rather
+    // than trusting the parameter: `T` may instantiate Copy, and moving a Copy
+    // value invalidates nothing. Marking every generic `take` a move outright
+    // would have turned this into a false E0335/E0372 — a compile error on
+    // correct code, which is worse than the hole it closes.
+    #[test]
+    fn generic_take_param_of_a_copy_argument_is_not_a_move() {
+        let src = "\
+fn gsink[T](take v: T) -> i32 { return 0; }
+fn caller() -> i32 {
+  let y: i32 = 1;
+  let a: i32 = gsink::[i32](y);
+  let b: i32 = gsink::[i32](y);
+  return y;
+}";
+        let codes = check_src(src);
+        assert!(
+            !codes
+                .iter()
+                .any(|c| c == "E0372" || c == "E0335" || c == "E0370"),
+            "a Copy instantiation consumes nothing; got {codes:?}"
         );
     }
 

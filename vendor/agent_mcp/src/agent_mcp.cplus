@@ -311,13 +311,29 @@ fn filtered_positions(nodes: vec::Vec[backend::UiNode], prefix: str) -> vec::Vec
 // the immediate parent keeps the subset a tree: a match whose parent was
 // dropped re-attaches to the nearest match above it, and only a node with no
 // surviving ancestor at all comes back parentless.
+//
+// THE CLIMB IS BOUNDED, because this walks a `parent` chain it does not own.
+// A walk up a tree visits each node at most once, so more steps than there
+// are nodes proves the chain is not a tree — and an unbounded loop over a
+// malformed one does not fail, it never returns: a backend that numbered
+// `parent` in a different index space than the array carrying it wedged this
+// function for 120s+ per call and left a core spinning afterwards, taking the
+// whole agent surface down with it (demo_11/bugs/001). That backend bug is
+// fixed in `identity::Registry.describe`; this bound is why the next one
+// costs a wrong answer instead of the process.
+//
+// It stays invisible on the honest path: the chain is short, and an unfiltered
+// call returns on its first step because every ancestor was kept.
 fn kept_parent_index(
     nodes: vec::Vec[backend::UiNode],
     pos: vec::Vec[i64],
     start: usize,
 ) -> i64 {
     var cur: option::Option[usize] = parent_of(nodes, start);
+    var steps: usize = 0 as usize;
     loop {
+        if steps >= nodes.count() { return (0 as i64) -% (1 as i64); }
+        steps = steps +% (1 as usize);
         match cur {
             option::Option[usize]::Some(pi) => {
                 match pos.at(pi) {
@@ -2638,6 +2654,45 @@ fn a_deeper_match_reattaches_to_the_nearest_surviving_ancestor() {
     assert scoped.contains("\"parent\":null");   // board itself
     assert scoped.contains("\"parent\":1");      // card under col
     assert scoped.contains("\"parent\":3");      // title under detail
+}
+
+// A `parent` chain that is not a tree — two nodes naming each other. No walk
+// of a real UI produces this; a backend numbering `parent` in one index space
+// while its array is numbered in another does, and one did.
+fn cyclic_describe(p: *u8, grant: auth::Grant) -> vec::Vec[backend::UiNode] {
+    var out: vec::Vec[backend::UiNode] = vec::new::[backend::UiNode]();
+    out.append(fake_node("window"));                                  // 0
+    out.append(fake_child_node("a", 2 as usize));                     // 1 -> 2
+    out.append(fake_child_node("b", 1 as usize));                     // 2 -> 1
+    out.append(fake_child_node("board:detail:3", 1 as usize));        // 3 -> the loop
+    return out;
+}
+
+fn cyclic_backend() -> backend::Backend {
+    var b: backend::Backend = fake_backend();
+    b.describe = cyclic_describe;
+    b.describe_exposed = cyclic_describe;
+    return b;
+}
+
+#[test]
+fn a_malformed_parent_chain_answers_instead_of_hanging() {
+    // THIS TEST HANGS RATHER THAN FAILS IF THE BOUND GOES. That is the shape of
+    // the defect: unbounded, the climb never returns, so there is no wrong
+    // answer to assert against — the client times out at 120s and the server
+    // keeps a core busy until it is killed (demo_11/bugs/001).
+    //
+    // The prefix is what makes it reachable. Every ancestor here is filtered
+    // out, so no step can end the climb early; without a prefix the first step
+    // finds a kept parent and the same malformed chain costs nothing.
+    var sub: events::Subscriber = events::subscriber(events::everything(), 4 as usize);
+    let surf: *u8 = #addr_of(FAKE_SURF) as *u8;
+    let scoped: text::Text = handle_request(surf, cyclic_backend(), sub, auth::serve(allow_all),
+        "{\"method\":\"describe_ui\",\"params\":{\"prefix\":\"board:detail:\"},\"id\":1}");
+    // It answers, and the node whose ancestry is unwalkable comes back
+    // parentless — the honest report of "no kept parent I can name".
+    assert scoped.contains("board:detail:3");
+    assert scoped.contains("\"parent\":null");
 }
 
 #[test]

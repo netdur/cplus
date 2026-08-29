@@ -122,9 +122,6 @@ extern fn msg_point_point_id(recv: *u8, sel: *u8, a: rt::Point, b: *u8) -> rt::P
 #[link_name = "objc_msgSend"]
 extern fn msg_id_i64_i64_i8(recv: *u8, sel: *u8, a: i64, b: i64, c: i8) -> *u8;
 
-#[link_name = "class_getSuperclass"]
-extern fn row_class_getSuperclass(cls: *u8) -> *u8;
-
 // The deepest menu under a view, itself first. The row's node may or may not be
 // the one whose view AppKit hands back — `viewAtColumn:row:` answers the cell,
 // and `attach_context_menu` hung the menu on whichever view the menu-bearing
@@ -168,11 +165,16 @@ fn menu_for_row_event(table: *u8, event: *u8) -> *u8 {
 }
 
 fn imp_row_menu_for_event(self_obj: *u8, cmd: *u8, event: *u8) -> *u8 {
-    let sup: RowSuper = RowSuper {
-        receiver: self_obj,
-        super_class: { row_class_getSuperclass(synth::object_class(self_obj)) },
-    };
-    let inherited: *u8 = { msg_super_id_id(#addr_of(sup), cmd, event) };
+    // Past our OWN implementation, not one hop up: a table that is also armed
+    // for input wears another subclass on top of this one, and one hop would
+    // land back here. See the super-dispatch note in input.cplus.
+    let f_self: fn(*u8, *u8, *u8) -> *u8 = imp_row_menu_for_event;
+    let target: *u8 = synth::super_class_below(self_obj, cmd, { f_self as *u8 });
+    var inherited: *u8 = 0 as *u8;
+    if target != (0 as *u8) {
+        let sup: RowSuper = RowSuper { receiver: self_obj, super_class: target };
+        inherited = { msg_super_id_id(#addr_of(sup), cmd, event) };
+    }
     let mine: *u8 = menu_for_row_event(self_obj, event);
     if mine != (0 as *u8) { return mine; }
     return inherited;

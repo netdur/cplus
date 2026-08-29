@@ -271,9 +271,11 @@ fn is_packed_affordance(p: *u8) -> bool {
 }
 
 // One node as surfaced by `describe` (plan.agent-core.md §4): the curated view
-// the agent consumes. `parent` is the NodeId of the parent (None for the root),
-// so the flat list reconstructs the tree. `actionable` is the resolved affordance
-// ceiling (enabled AND not observe-only), i.e. whether the agent may act on it.
+// the agent consumes. `parent` is the parent's INDEX IN THAT SAME ANSWER (None
+// for the root), so the flat list reconstructs the tree on its own terms — not
+// a NodeId, because `describe` prunes and its numbering is therefore not the
+// registry's. `actionable` is the resolved affordance ceiling (enabled AND not
+// observe-only), i.e. whether the agent may act on it.
 struct NodeView {
     id: text::Text,
     role: Role,
@@ -730,18 +732,42 @@ impl Registry {
     // tree. Only exposed nodes appear; each node's `parent` is its nearest
     // exposed ancestor, so unexposed intermediates collapse and the tree stays
     // connected. NodeId order means parents precede children.
+    //
+    // `parent` INDEXES THIS ANSWER, not the registry. It has to: the answer
+    // omits every unexposed node, so the two numberings part company the
+    // moment anything is pruned — and a NodeId arriving in an array of
+    // positions does not read as an error, it reads as a different node. A
+    // consumer walking that chain climbs through unrelated ancestors, and one
+    // that climbs until it reaches a root never reaches one: this is what hung
+    // `agent_mcp::kept_parent_index` indefinitely, a whole core per call, on
+    // every prefixed `describe_ui` (demo_11/bugs/001).
+    //
+    // One pass is enough because a parent's NodeId is always below its child's
+    // — `add_child` can only name a node that already exists — so an
+    // ancestor's position is settled before any descendant asks for it.
     fn describe(this, grant: auth::Grant) -> vec::Vec[NodeView] {
         var out: vec::Vec[NodeView] = vec::new::[NodeView]();
+        // Where each NodeId landed in `out`; -1 for one this view pruned.
+        var pos: vec::Vec[i64] = vec::new::[i64]();
         let n: usize = this.ids.count();
         var i: usize = 0 as usize;
         while i < n {
             if this.is_exposed(i) && grant.has(auth::cap_read()) {
+                var parent: option::Option[usize] = option::Option[usize]::None;
+                if let option::Option[usize]::Some(a) = this.nearest_exposed_ancestor(i) {
+                    if let option::Option[i64]::Some(np) = pos.at(a) {
+                        if np >= (0 as i64) {
+                            parent = option::Option[usize]::Some(np as usize);
+                        }
+                    }
+                }
+                pos.append(out.count() as i64);
                 out.append(NodeView {
                     id: text::from_str(this.id_view(i)),
                     role: this.role_of(i),
                     name: text::from_str(this.name_of(i)),
                     description: text::from_str(this.description_of(i)),
-                    parent: this.nearest_exposed_ancestor(i),
+                    parent: parent,
                     enabled: this.is_enabled(i),
                     // `actionable` is what THIS grant may do, not what the
                     // widget could take. A model uses it as its tool list, so
@@ -751,6 +777,8 @@ impl Registry {
                     tier: this.tier_of(i),
                     readable: this.can_read_value(grant, i),
                 });
+            } else {
+                pos.append((0 as i64) -% (1 as i64));
             }
             i = i +% (1 as usize);
         }
@@ -1150,6 +1178,86 @@ fn test_describe_prunes_unexposed_and_reparents() {
         i = i +% (1 as usize);
     }
     assert found_btn;
+}
+
+// THE CASE THE TEST ABOVE CANNOT SEE. There, the surviving parent is the root
+// — NodeId 0 and answer index 0 — so a `parent` in either numbering reads the
+// same and a NodeId leaking onto the wire looks correct. Push the pruning down
+// one level and the two numbers part company, which is the whole bug: every
+// consumer treats `parent` as an index into the array it was handed.
+#[test]
+fn test_describe_parent_indexes_the_answer_not_the_registry() {
+    var r: Registry = new();
+    let root: usize = r.root();
+    // root(0) -> skip(1, auto/pruned)
+    //         -> panel(2, exposed) -> group(3, auto/pruned) -> btn(4, exposed)
+    //
+    // The answer is [root, panel, btn], so the panel is NodeId 2 and answer
+    // index 1. The pruned sibling is there to make those two numbers differ —
+    // without it they coincide and the test proves nothing.
+    let _skip: usize = r.add_child(root, none_str(), Role::Group);
+    let panel: usize = r.add_child(root, option::Option[str]::Some("panel"), Role::Group);
+    let group: usize = r.add_child(panel, none_str(), Role::Group);
+    let btn: usize = r.add_child(group, option::Option[str]::Some("btn"), Role::Button);
+    assert panel == (2 as usize);
+    assert btn == (4 as usize);
+
+    let v: vec::Vec[NodeView] = r.describe(auth::operator());
+    // root, panel, btn — the two auto groups are pruned.
+    assert v.count() == (3 as usize);
+    // Answer index 1 is the panel, and NodeId 2 is what the old code sent.
+    match v.at_ptr(1 as usize) {
+        option::Option[*NodeView]::Some(p) => { assert (*p).id.equals("panel"); }
+        option::Option[*NodeView]::None => { assert false; }
+    }
+    match v.at_ptr(2 as usize) {
+        option::Option[*NodeView]::Some(p) => {
+            assert (*p).id.equals("btn");
+            let parent: usize = match { (*p).parent } {
+                option::Option[usize]::Some(x) => x,
+                option::Option[usize]::None => 999 as usize,
+            };
+            // The panel's place in THIS array, not its NodeId.
+            assert parent == (1 as usize);
+            assert parent != panel;
+        }
+        option::Option[*NodeView]::None => { assert false; }
+    }
+    return;
+}
+
+// Every `parent` in an answer must address that answer: in range, and above
+// the node carrying it. A chain that only ever climbs cannot cycle, and a
+// consumer walking it to the root is what a wrong index left spinning.
+#[test]
+fn test_describe_parents_are_in_range_and_ascend() {
+    var r: Registry = new();
+    let root: usize = r.root();
+    let a: usize = r.add_child(root, option::Option[str]::Some("a"), Role::Group);
+    let hidden: usize = r.add_child(a, none_str(), Role::Group);
+    let b: usize = r.add_child(hidden, option::Option[str]::Some("b"), Role::Group);
+    let _c: usize = r.add_child(b, option::Option[str]::Some("c"), Role::Button);
+    let _d: usize = r.add_child(hidden, option::Option[str]::Some("d"), Role::Button);
+
+    let v: vec::Vec[NodeView] = r.describe(auth::operator());
+    var i: usize = 0 as usize;
+    while i < v.count() {
+        match v.at_ptr(i) {
+            option::Option[*NodeView]::Some(p) => {
+                match { (*p).parent } {
+                    option::Option[usize]::Some(x) => {
+                        assert x < v.count();
+                        assert x < i;
+                    }
+                    // Only the first node — the root — comes back parentless.
+                    option::Option[usize]::None => { assert i == (0 as usize); }
+                }
+            }
+            option::Option[*NodeView]::None => { assert false; }
+        }
+        i = i +% (1 as usize);
+    }
+    return;
 }
 
 #[test]

@@ -3001,6 +3001,123 @@ fn a_plain_subview_hit_tests_the_same_way_an_armed_one_should() {
     return;
 }
 
+#[test]
+fn a_second_subclass_over_an_armed_view_still_hit_tests() {
+    // THE CRASH, and it was a real one. `arm` puts FacetInput00 on the view;
+    // anything that reclasses afterwards puts ITS subclass on top of that —
+    // `arm_key_surface` on a borrowed field editor, compose on a later prop
+    // write. `imp_hit_test` then took `class_getSuperclass(object_class(self))`
+    // for its super, which is the class carrying `imp_hit_test`, and called
+    // itself ~27000 times until the stack guard: EXC_BAD_ACCESS with a single
+    // frame repeated for the whole backtrace, arriving through AppKit's cursor
+    // tracking after a zoom moved the content under the pointer.
+    backend::install();
+    let w: ak::Window = window::make_shell_window(screen::Chrome::new(
+        title: "stacked", width: 200.0f64, height: 200.0f64));
+    let host: ak::View = akx::new_flipped_view(
+        rt::Rect { x: 0.0f64, y: 0.0f64, w: 200.0f64, h: 200.0f64 });
+    w.set_content_view(host);
+
+    var n: core::Node = box_view::box(color: vocab::Color::rgba(0.0f64, 1.0f64, 0.0f64),
+                                      key: "stacked").gesture(on_click: h_took());
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    assert v != (0 as *u8);
+    assert input::is_armed(v);
+    let armed: *u8 = synth::object_class(v);
+
+    // The second layer, arriving the way a field editor's does.
+    input::arm_key_surface(v, p);
+    let stacked: *u8 = synth::object_class(v);
+    assert stacked != armed;
+    assert input::class_super(stacked) == armed;
+
+    { rt::msg_void_rect(v, rt::sel(#str_ptr("setFrame:\0")),
+                        rt::Rect { x: 0.0f64, y: 0.0f64, w: 100.0f64, h: 50.0f64 }) };
+    host.add_subview(ak::View::from_raw(v));
+    // Answering at all is the regression: the recursion never returned. And it
+    // must still answer ITSELF — the Opaque rule has to survive the extra
+    // subclass, not just the stack.
+    let inside: *u8 = { msg_id_point(v, rt::sel(#str_ptr("hitTest:\0")),
+                                     rt::Point { x: 50.0f64, y: 25.0f64 }) };
+    assert inside == v;
+    views::view_release(v);
+    w.close();
+    return;
+}
+
+#[test]
+fn a_stacked_resign_first_responder_reaches_both_layers() {
+    // The other half, and the reason the walk looks for the class that DEFINES
+    // the running implementation rather than the first class that answers with
+    // something else: `resignFirstResponder` is overridden by the key class
+    // AND by the input class, and the input class is the one that does the
+    // focus work. "First class that answers differently" hands the key class
+    // the input class's override — which then finds the key class's again, and
+    // the two call each other until the stack guard, trading the crash for the
+    // same crash one selector over.
+    backend::install();
+    var n: core::Node = box_view::box(color: vocab::Color::rgba(0.0f64, 0.0f64, 1.0f64),
+                                      key: "resign").gesture(on_click: h_took());
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    assert v != (0 as *u8);
+    assert input::is_armed(v);
+    input::arm_key_surface(v, p);
+    assert input::class_super(synth::object_class(v)) != (0 as *u8);
+
+    core::set_focused(p, true);
+    let ok: i8 = { rt::msg_i8(v, rt::sel(#str_ptr("resignFirstResponder\0"))) };
+    assert ok != (0 as i8);
+    // Only the INPUT class's override clears this. Seeing it false means the
+    // key class declined into it instead of past it or back into itself.
+    assert core::is_focused(p) == false;
+    views::view_release(v);
+    return;
+}
+
+// An implementation that is installed on NOTHING — the walk must not find it.
+fn an_imp_that_is_on_no_class(self_obj: *u8, cmd: *u8, p: rt::Point) -> *u8 {
+    return 0 as *u8;
+}
+
+#[test]
+fn the_super_walk_never_answers_nil_for_an_imp_it_cannot_find() {
+    // THE FALLBACK IS THE SAFETY NET, and it is load-bearing: every caller reads
+    // 0 as "there is no super". `imp_hit_test` turns that into a nil hit test,
+    // which makes the whole window CLICK-THROUGH — no click lands, so the window
+    // never becomes key, the traffic lights never light, and a zoom gesture on
+    // the content view never sees an event. That is what shipped for one build
+    // when an early return for "reached the root" was hoisted out of the guard
+    // that made it mean "reached the root still carrying MY implementation".
+    //
+    // 901 tests passed with that in place, because every one of them asked
+    // about an IMP the walk could find.
+    backend::install();
+    var n: core::Node = box_view::box(color: vocab::Color::rgba(1.0f64, 1.0f64, 0.0f64),
+                                      key: "fallback").gesture(on_click: h_took());
+    let p: *core::Node = #addr_of(n);
+    let v: *u8 = views::create(0 as *u8, p);
+    assert v != (0 as *u8);
+    assert input::is_armed(v);
+    let sel_hit: *u8 = rt::sel(#str_ptr("hitTest:\0"));
+
+    let f_absent: fn(*u8, *u8, rt::Point) -> *u8 = an_imp_that_is_on_no_class;
+    let absent: *u8 = synth::super_class_below(v, sel_hit, { f_absent as *u8 });
+    assert absent != (0 as *u8);
+    // ...and the answer is what the code said before the walk existed: one hop.
+    assert absent == input::class_super(synth::object_class(v));
+
+    // The claim the walk exists to make, stated as a test: with only ONE facet
+    // class on the view, it resolves to exactly what one hop resolved to.
+    let f_real: fn(*u8, *u8, rt::Point) -> *u8 = input::imp_hit_test;
+    let real: *u8 = synth::super_class_below(v, sel_hit, { f_real as *u8 });
+    assert real == input::class_super(synth::object_class(v));
+
+    views::view_release(v);
+    return;
+}
+
 extern fn CFRunLoopRunInMode(mode: *u8, seconds: f64, return_after_source: i8) -> i32;
 extern fn CFStringCreateWithCString(alloc: *u8, cstr: *u8, encoding: u32) -> *u8;
 
