@@ -32,6 +32,7 @@ default.
 |---|---|
 | `vendor/facet/src/*.cplus` (control modules, `props`, `elements`, `vocabulary`) | `tools/gen_contract.py` |
 | `vendor/appkit/src/appkit.cplus` | `cpc-bindgen` (hand additions go in `appkit_ext.cplus`) |
+| `vendor/win32/src/{winuser,wingdi,commctrl,libloaderapi}.cplus` | `tools/gen_win32.sh` (hand additions go in the curated modules — `core`, `controls`, …) |
 | `docs/lang/errors.md` | `docs/lang/gen_errors.py` from `docs/lang/errors.toml` |
 
 A fix written into a generated file survives exactly until the next regen. This

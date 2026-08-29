@@ -1,0 +1,167 @@
+// Hand-maintained supplement APPENDED INTO the generated `wingdi.cplus` by
+// `tools/gen_win32.sh`. Not a module of its own — see the script for why.
+//
+// ---- WHY THESE FIVE ARE NOT GENERATED ---------------------------------------
+//
+// `cpc-bindgen` refuses to emit a record that sits inside a `#pragma pack(N)`
+// region, and says so in the output:
+//
+//     // UNBOUND struct `tagRGBTRIPLE`: `#pragma pack(N)` applies, and clang's
+//     //   JSON AST does not carry N — the field offsets cannot be reproduced
+//     //   from it. Declare this one by hand with `#[repr(C, packed = N)]`.
+//
+// That is the right call, not a shortcoming: clang's JSON carries a bare
+// `MaxFieldAlignmentAttr` with `implicit: true` and NO value (verified on the
+// 10.0.26100.0 SDK), so a generator that emitted a layout anyway would be
+// guessing offsets, and wrong offsets in an FFI struct corrupt silently.
+//
+// ---- WHY THEY CANNOT LIVE IN `win32_ext.cplus` ------------------------------
+//
+// Because the generated code names them. `_OUTLINETEXTMETRICA` has a
+// `otmTextMetrics: tagTEXTMETRICA` field, and C+ modules are namespaced — a
+// type in a sibling module is `other::T`, not `T`. So these have to be IN
+// `wingdi.cplus`, which is why the script appends rather than the package
+// carrying one more file. Everything that does not need to be inside a
+// generated module still goes in `win32_ext.cplus`, per the `appkit_ext`
+// convention.
+//
+// ---- WHY `#[repr(C)]` AND NOT `packed` --------------------------------------
+//
+// The pack region these sit in is `pshpack4.h`, and every field is 4 bytes or
+// smaller, so the packed layout and the natural one are the same. Confirmed
+// against the real headers with `offsetof`/`sizeof` rather than reasoned about:
+//
+//     RGBTRIPLE      size 3    blue@0  green@1  red@2
+//     TEXTMETRICA    size 56   tmFirstChar@44 (1)  tmPitchAndFamily@51  tmCharSet@52
+//     TEXTMETRICW    size 60   tmFirstChar@44 (2)
+//     NEWTEXTMETRICA size 72   ntmFlags@56
+//     NEWTEXTMETRICW size 76   ntmFlags@60
+//
+// The `#[test]`s at the bottom pin those numbers, so a future SDK that changes
+// the packing fails here instead of returning wrong glyph metrics.
+
+// ---- the five ----------------------------------------------------------------
+
+#[repr(C)] struct tagRGBTRIPLE {
+    rgbtBlue: u8,
+    rgbtGreen: u8,
+    rgbtRed: u8,
+}
+
+// `tmFirstChar` .. `tmBreakChar` are CHAR here and WCHAR in the W variant,
+// which is the whole difference between the two and the reason the sizes are
+// 56 and 60.
+#[repr(C)] struct tagTEXTMETRICA {
+    tmHeight: i32,
+    tmAscent: i32,
+    tmDescent: i32,
+    tmInternalLeading: i32,
+    tmExternalLeading: i32,
+    tmAveCharWidth: i32,
+    tmMaxCharWidth: i32,
+    tmWeight: i32,
+    tmOverhang: i32,
+    tmDigitizedAspectX: i32,
+    tmDigitizedAspectY: i32,
+    tmFirstChar: u8,
+    tmLastChar: u8,
+    tmDefaultChar: u8,
+    tmBreakChar: u8,
+    tmItalic: u8,
+    tmUnderlined: u8,
+    tmStruckOut: u8,
+    tmPitchAndFamily: u8,
+    tmCharSet: u8,
+}
+
+#[repr(C)] struct tagTEXTMETRICW {
+    tmHeight: i32,
+    tmAscent: i32,
+    tmDescent: i32,
+    tmInternalLeading: i32,
+    tmExternalLeading: i32,
+    tmAveCharWidth: i32,
+    tmMaxCharWidth: i32,
+    tmWeight: i32,
+    tmOverhang: i32,
+    tmDigitizedAspectX: i32,
+    tmDigitizedAspectY: i32,
+    tmFirstChar: u16,
+    tmLastChar: u16,
+    tmDefaultChar: u16,
+    tmBreakChar: u16,
+    tmItalic: u8,
+    tmUnderlined: u8,
+    tmStruckOut: u8,
+    tmPitchAndFamily: u8,
+    tmCharSet: u8,
+}
+
+#[repr(C)] struct tagNEWTEXTMETRICA {
+    tmHeight: i32,
+    tmAscent: i32,
+    tmDescent: i32,
+    tmInternalLeading: i32,
+    tmExternalLeading: i32,
+    tmAveCharWidth: i32,
+    tmMaxCharWidth: i32,
+    tmWeight: i32,
+    tmOverhang: i32,
+    tmDigitizedAspectX: i32,
+    tmDigitizedAspectY: i32,
+    tmFirstChar: u8,
+    tmLastChar: u8,
+    tmDefaultChar: u8,
+    tmBreakChar: u8,
+    tmItalic: u8,
+    tmUnderlined: u8,
+    tmStruckOut: u8,
+    tmPitchAndFamily: u8,
+    tmCharSet: u8,
+    ntmFlags: u32,
+    ntmSizeEM: u32,
+    ntmCellHeight: u32,
+    ntmAvgWidth: u32,
+}
+
+#[repr(C)] struct tagNEWTEXTMETRICW {
+    tmHeight: i32,
+    tmAscent: i32,
+    tmDescent: i32,
+    tmInternalLeading: i32,
+    tmExternalLeading: i32,
+    tmAveCharWidth: i32,
+    tmMaxCharWidth: i32,
+    tmWeight: i32,
+    tmOverhang: i32,
+    tmDigitizedAspectX: i32,
+    tmDigitizedAspectY: i32,
+    tmFirstChar: u16,
+    tmLastChar: u16,
+    tmDefaultChar: u16,
+    tmBreakChar: u16,
+    tmItalic: u8,
+    tmUnderlined: u8,
+    tmStruckOut: u8,
+    tmPitchAndFamily: u8,
+    tmCharSet: u8,
+    ntmFlags: u32,
+    ntmSizeEM: u32,
+    ntmCellHeight: u32,
+    ntmAvgWidth: u32,
+}
+
+// ---- the layout guards -------------------------------------------------------
+//
+// These are the whole reason the numbers above can be trusted. An FFI struct
+// whose size drifts from the SDK's does not fail loudly — it reads the wrong
+// field — so the sizes are asserted rather than assumed.
+
+#[test]
+fn packed_gdi_structs_match_the_sdk_layout() {
+    assert #size_of::[tagRGBTRIPLE]() == (3 as usize);
+    assert #size_of::[tagTEXTMETRICA]() == (56 as usize);
+    assert #size_of::[tagTEXTMETRICW]() == (60 as usize);
+    assert #size_of::[tagNEWTEXTMETRICA]() == (72 as usize);
+    assert #size_of::[tagNEWTEXTMETRICW]() == (76 as usize);
+}

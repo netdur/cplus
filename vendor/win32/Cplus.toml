@@ -17,4 +17,10 @@ edition = "2026"
 stdlib = "*"
 
 [link]
-libs = ["user32", "gdi32", "comctl32", "comdlg32"]
+# The four the hand-written GUI facade needs, plus three the GENERATED modules
+# reach into: `wingdi.h` declares the `wgl*` family (opengl32), AlphaBlend /
+# GradientFill / TransparentBlt (msimg32) and DeviceCapabilities (winspool).
+# Binding a header binds everything it declares, so the link line has to cover
+# everything it declares. All seven ship with Windows and sit on the default
+# search path, so this still needs nothing installed.
+libs = ["user32", "gdi32", "comctl32", "comdlg32", "opengl32", "msimg32", "winspool"]

@@ -14,6 +14,21 @@ import "./menu" as menu;
 import "./dialogs" as dialogs;
 import "./graphics" as graphics;
 
+// The RAW generated surface, straight from the SDK headers (see
+// `tools/gen_win32.sh`). Imported here rather than only reachable as
+// `import "win32/winuser"` for two reasons: it puts the whole binding on one
+// `cpc build`, so a regeneration that stops compiling fails immediately, and it
+// is what makes the generated modules' own `#[test]`s — the gdi struct-layout
+// guards among them — discoverable by `cpc test`.
+//
+// No `type` aliases are re-exported from these: the curated names above are the
+// facade, and a caller who wants `CreateWindowExA` by its C name imports the
+// module directly.
+import "./winuser" as winuser;
+import "./wingdi" as wingdi;
+import "./commctrl" as commctrl;
+import "./libloaderapi" as libloaderapi;
+
 type Window = window::Window;
 
 type Button = controls::Button;
