@@ -14,10 +14,13 @@ import "agent_core/identity" as identity;
 import "agent_core/surface" as surface;
 import "agent_core/auth" as auth;
 import "stdlib/vec" as vec;
+import "stdlib/status" as status;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
 import "stdlib/io" as io;
 import "objc/synthesis" as synth;
+import "facet/facet" as core;
+import "facet/application" as app;
 import "stdlib/thread" as thread;   // the off-main invoke_menu regression below needs a real second thread
 import "./agent_appkit" as agent;
 
@@ -27,6 +30,73 @@ fn null_ctx() -> *u8 { return { 0 as *u8 }; }
 
 // One titled window with a content view; the app is initialized once
 // (shared_application is idempotent).
+// ---- a facet tree behind the window -------------------------------------------
+//
+// `open` walks FACET'S tree now, not the NSView hierarchy, so a fixture that
+// only builds views describes an empty app — correctly. These build the tree
+// the views belong to, which is what the real path does at mount.
+//
+// `noop_release` because the test owns its views; facet must not free them.
+
+fn noop_release(v: *u8) { }
+
+
+// An UNKEYED facet node carrying a view — transparent to the walk.
+fn unkeyed(view: *u8) -> core::Node {
+    var n: core::Node = core::column(core::Builder::new());
+    core::set_view(#addr_of(n), view, noop_release);
+    return n;
+}
+
+// A keyed facet node carrying an existing NSView.
+fn keyed(key: str, view: *u8) -> core::Node {
+    var n: core::Node = core::column(core::Builder::new(), key: key);
+    core::set_view(#addr_of(n), view, noop_release);
+    return n;
+}
+
+// Mirror a view subtree into a facet tree, keyed wherever the view is tagged.
+//
+// The tests here build NSViews directly, and `open` walks facet's tree — so
+// this constructs the tree those views would have belonged to. It is a FIXTURE,
+// not a shortcut: the real path builds facet first and mounts views from it,
+// and the shape that comes out is the same.
+fn mirror(view: *u8) -> core::Node {
+    let k: text::Text = match agent::get_agent_id(view) {
+        option::Option[text::Text]::Some(t) => t,
+        option::Option[text::Text]::None => text::new(),
+    };
+    var n: core::Node = core::column(core::Builder::new(), key: k.view());
+    core::set_view(#addr_of(n), view, noop_release);
+    var i: usize = 0;
+    let c: usize = agent::subview_count(view);
+    while i < c {
+        let _s: status::Status = n.add_child(mirror(agent::subview_at(view, i)));
+        i = i +% 1;
+    }
+    return n;
+}
+
+// Callers hold the root themselves — two lines, and the reason is the move:
+//
+//     var root: core::Node = mirror(content_of(win).raw());
+//     mount_tree(#addr_of(root), win.raw());
+//
+// A helper returning the root would register the address of its OWN local and
+// then move it out, leaving `set_window_native` pointing at a dead frame.
+
+// Register `root` as the window's tree, the way `mount` does.
+//
+// Resets first, because `set_window_native` only fills in an EXISTING record:
+// a second `mount_tree` on the same window would add a second record with the
+// same native handle, and `window_root_for_native` returns the FIRST match —
+// so a test that re-mounts would keep walking its first tree.
+fn mount_tree(root: *core::Node, win: *u8) {
+    app::reset_default_for_tests();
+    app::open_window(root);
+    app::set_window_native(root, win);
+}
+
 fn fixture_window(w: f64, h: f64) -> ak::Window {
     let _app: ak::Application = ak::Application::shared_application();
     let win = ak::Window::new(
@@ -75,6 +145,7 @@ fn on_probe_click(sender: *u8) {
 
 #[test]
 fn walk_classifies_and_exposes_only_tagged() {
+    app::reset_default_for_tests();
     let win = fixture_window(300.0, 200.0);
     let content = content_of(win);
     let b = add_button(content, "go");
@@ -82,10 +153,19 @@ fn walk_classifies_and_exposes_only_tagged() {
     let l = ak::TextField::label_with_string("hello");
     content.add_subview(l.as_view());
 
+    // THE TREE, not the view hierarchy. An UNKEYED node is transparent: the
+    // label below is in the app and has no key, so it is not on the surface at
+    // all — where the view walk gave it an auto-id and listed it unexposed.
+    var root: core::Node = core::column(core::Builder::new(), key: "root");
+    core::set_view(#addr_of(root), content.raw(), noop_release);
+    let _a: status::Status = root.add_child(keyed("go-btn", b.as_view().raw()));
+    let _b: status::Status = root.add_child(unkeyed(l.as_view().raw()));
+    mount_tree(#addr_of(root), win.raw());
+
     var s: agent::Surface = agent::open(win.raw());
     let nodes: vec::Vec[agent::AppKitNode] = s.describe(auth::operator());
-    // window + content group + button + label = 4 nodes.
-    assert nodes.count() == 4;
+    // window + root + button. The unkeyed label is NOT a node.
+    assert nodes.count() == 3;
     match nodes.at_ptr(2) {
         option::Option[*agent::AppKitNode]::Some(n) => {
             assert identity::role_eq({ (*n).role }, identity::Role::Button);
@@ -94,14 +174,7 @@ fn walk_classifies_and_exposes_only_tagged() {
         }
         option::Option::None => { assert false; }
     }
-    match nodes.at_ptr(3) {
-        option::Option[*agent::AppKitNode]::Some(n) => {
-            assert identity::role_eq({ (*n).role }, identity::Role::Text);
-            // Untagged: auto id, not exposed, not actionable.
-            assert !{ (*n).actionable };
-        }
-        option::Option::None => { assert false; }
-    };
+    app::reset_default_for_tests();
 }
 
 #[test]
@@ -118,6 +191,8 @@ fn open_walks_titlebar_accessory_controls() {
     rt::msg_void_id(vc_ptr, rt::sel(#str_ptr("setView:\0")), acc_view.raw());
     rt::msg_void_id(win.raw(), rt::sel(#str_ptr("addTitlebarAccessoryViewController:\0")), vc_ptr);
 
+    var root: core::Node = mirror(content_of(win).raw());
+    mount_tree(#addr_of(root), win.raw());
     var s: agent::Surface = agent::open(win.raw());
     let nodes: vec::Vec[agent::AppKitNode] = s.describe(auth::operator());
     var found: bool = false;
@@ -149,18 +224,26 @@ fn click_gates_by_exposure_and_id() {
     let stray = add_button(content, "stray"); // untagged -> NotExposed
     let _sv: *u8 = stray.as_view().raw();
 
+    var root: core::Node = mirror(content_of(win).raw());
+    mount_tree(#addr_of(root), win.raw());
     var s: agent::Surface = agent::open(win.raw());
     assert surface::outcome_eq(s.click(auth::operator(), "go-btn"), surface::Outcome::Allowed);
     assert CLICKS == 1;
     assert surface::outcome_eq(s.click(auth::operator(), "nope"), surface::Outcome::NotFound);
-    // The stray button's auto id resolves but the node is unexposed.
+    // THE STRAY BUTTON HAS NO ADDRESS AT ALL. The view walk gave every untagged
+    // view an auto id and then refused it as `NotExposed` — an address handed
+    // out and not honoured. Walking facet's tree, an unkeyed node is simply not
+    // a node: it is not in `describe`, and there is nothing to click.
     let nodes: vec::Vec[agent::AppKitNode] = s.describe(auth::operator());
-    match nodes.at_ptr(3) {
-        option::Option[*agent::AppKitNode]::Some(n) => {
-            let auto_id: text::Text = text::from_str({ (*n).id.view() });
-            assert surface::outcome_eq(s.click(auth::operator(), auto_id.view()), surface::Outcome::NotExposed);
+    var i: usize = 0;
+    while i < nodes.count() {
+        match nodes.at_ptr(i) {
+            option::Option[*agent::AppKitNode]::Some(n) => {
+                assert { (*n).id.view() } != "stray";
+            }
+            option::Option::None => { }
         }
-        option::Option::None => { assert false; }
+        i = i +% 1;
     }
     assert CLICKS == 1;
 }
@@ -174,11 +257,15 @@ fn accessibility_identifier_is_the_declarative_tag_channel() {
     let b = add_button(content, "go");
     ak::Accessibility::from_raw(b.as_view().raw()).set_accessibility_identifier("ax-btn");
 
+    var root: core::Node = mirror(content_of(win).raw());
+    mount_tree(#addr_of(root), win.raw());
     var s: agent::Surface = agent::open(win.raw());
     assert surface::outcome_eq(s.click(auth::operator(), "ax-btn"), surface::Outcome::Allowed);
 
     // ...and an explicit pin wins over the identifier when both exist.
     agent::set_agent_id(b.as_view().raw(), "pinned");
+    var root2: core::Node = mirror(content_of(win).raw());
+    mount_tree(#addr_of(root2), win.raw());
     var s2: agent::Surface = agent::open(win.raw());
     assert surface::outcome_eq(s2.click(auth::operator(), "pinned"), surface::Outcome::Allowed);
     assert surface::outcome_eq(s2.click(auth::operator(), "ax-btn"), surface::Outcome::NotFound);
@@ -191,6 +278,8 @@ fn removed_view_reports_stale_not_uaf() {
     let b = add_button(content, "go");
     agent::set_agent_id(b.as_view().raw(), "go-btn");
 
+    var root: core::Node = mirror(content_of(win).raw());
+    mount_tree(#addr_of(root), win.raw());
     var s: agent::Surface = agent::open(win.raw());
     assert surface::outcome_eq(s.click(auth::operator(), "go-btn"), surface::Outcome::Allowed);
 
@@ -206,6 +295,8 @@ fn removed_view_reports_stale_not_uaf() {
     let f = ak::TextField::new_with_frame(rt::Rect { x: 10.0, y: 50.0, w: 100.0, h: 24.0 });
     content.add_subview(f.as_view());
     agent::set_agent_id(f.as_view().raw(), "field");
+    var root2: core::Node = mirror(content_of(win).raw());
+    mount_tree(#addr_of(root2), win.raw());
     var s2: agent::Surface = agent::open(win.raw());
     f.as_view().remove_from_superview();
     assert surface::outcome_eq(s2.set_text(auth::operator(), "field", "x", s2.text_version("field")), surface::Outcome::Stale);
@@ -227,6 +318,8 @@ fn click_on_view_without_performclick_reports_notactionable_not_raise() {
     content.add_subview(ak::View::from_raw(plain.raw()));
     agent::set_agent_id(plain.raw(), "plain-view");
 
+    var root: core::Node = mirror(content_of(win).raw());
+    mount_tree(#addr_of(root), win.raw());
     var s: agent::Surface = agent::open(win.raw());
     assert surface::outcome_eq(s.click(auth::operator(), "plain-view"), surface::Outcome::NotActionable);
 }
@@ -280,6 +373,8 @@ fn a_view_that_answers_performclick_is_wired() {
     content.add_subview(ak::View::from_raw(armed));
     agent::set_agent_id(armed, "live");
 
+    var root: core::Node = mirror(content_of(win).raw());
+    mount_tree(#addr_of(root), win.raw());
     var s: agent::Surface = agent::open(win.raw());
     let nodes: vec::Vec[agent::AppKitNode] = s.describe(auth::operator());
     var saw: bool = false;
@@ -317,6 +412,8 @@ fn an_agent_clickable_view_is_wired_only_with_a_handler() {
     akx::set_agent_click(armed, on_probe_click_2, 0 as *u8);
     agent::set_agent_id(armed.raw(), "slot-armed");
 
+    var root: core::Node = mirror(content_of(win).raw());
+    mount_tree(#addr_of(root), win.raw());
     var s: agent::Surface = agent::open(win.raw());
     let nodes: vec::Vec[agent::AppKitNode] = s.describe(auth::operator());
     var i: usize = 0;
@@ -383,10 +480,12 @@ fn nothing_that_is_not_an_outline_row_grows_a_disclosure_part() {
 
     assert agent::row_is_expandable(plain.raw()) == false;
 
+    var root: core::Node = mirror(content_of(win).raw());
+    mount_tree(#addr_of(root), win.raw());
     var s: agent::Surface = agent::open(win.raw());
     let nodes: vec::Vec[agent::AppKitNode] = s.describe(auth::operator());
     // window + content + plain, and NOTHING else.
-    assert nodes.count() == 3;
+    assert nodes.count() == 2;
     var i: usize = 0;
     while i < nodes.count() {
         match nodes.at_ptr(i) {
@@ -443,11 +542,13 @@ fn declared_affordance_overrides_native_classify() {
     agent::set_agent_id(plain.raw(), "row-click");
     agent::set_affordance(plain.raw(), identity::Role::Button);
 
+    var root: core::Node = mirror(content_of(win).raw());
+    mount_tree(#addr_of(root), win.raw());
     var s: agent::Surface = agent::open(win.raw());
     let nodes: vec::Vec[agent::AppKitNode] = s.describe(auth::operator());
     // window + content + plain = 3.
-    assert nodes.count() == 3;
-    match nodes.at_ptr(2) {
+    assert nodes.count() == 2;
+    match nodes.at_ptr(1) {
         option::Option[*agent::AppKitNode]::Some(n) => {
             assert { (*n).id.view() } == "row-click";
             assert identity::role_eq({ (*n).role }, identity::Role::Button);
@@ -460,9 +561,11 @@ fn declared_affordance_overrides_native_classify() {
     let plain2 = ak::View::new(rt::Rect { x: 50.0, y: 5.0, w: 40.0, h: 20.0 });
     content.add_subview(ak::View::from_raw(plain2.raw()));
     agent::set_agent_id(plain2.raw(), "bare");
+    var root2: core::Node = mirror(content_of(win).raw());
+    mount_tree(#addr_of(root2), win.raw());
     var s2: agent::Surface = agent::open(win.raw());
     let nodes2: vec::Vec[agent::AppKitNode] = s2.describe(auth::operator());
-    match nodes2.at_ptr(3) {
+    match nodes2.at_ptr(2) {
         option::Option[*agent::AppKitNode]::Some(n) => {
             assert { (*n).id.view() } == "bare";
             assert identity::role_eq({ (*n).role }, identity::Role::Group);
@@ -483,6 +586,8 @@ fn declared_input_affordance_on_scroll_document_style_view() {
     agent::set_agent_id(tv.as_view().raw(), "chat-input");
     agent::set_affordance(tv.as_view().raw(), identity::Role::Input);
 
+    var root: core::Node = mirror(content_of(win).raw());
+    mount_tree(#addr_of(root), win.raw());
     var s: agent::Surface = agent::open(win.raw());
     assert surface::outcome_eq(
         s.set_text(auth::operator(), "chat-input", "hello", s.text_version("chat-input")),
@@ -504,9 +609,11 @@ fn declared_drive_none_is_observe_only() {
     agent::set_agent_id(l.as_view().raw(), "title");
     agent::set_affordance(l.as_view().raw(), identity::Role::Text);
 
+    var root: core::Node = mirror(content_of(win).raw());
+    mount_tree(#addr_of(root), win.raw());
     var s: agent::Surface = agent::open(win.raw());
     let nodes: vec::Vec[agent::AppKitNode] = s.describe(auth::operator());
-    match nodes.at_ptr(2) {
+    match nodes.at_ptr(1) {
         option::Option[*agent::AppKitNode]::Some(n) => {
             assert { (*n).id.view() } == "title";
             assert identity::role_eq({ (*n).role }, identity::Role::Text);
@@ -528,6 +635,8 @@ fn declared_button_refuses_set_text() {
     agent::set_agent_id(b.as_view().raw(), "go-btn");
     agent::set_affordance(b.as_view().raw(), identity::Role::Button);
 
+    var root: core::Node = mirror(content_of(win).raw());
+    mount_tree(#addr_of(root), win.raw());
     var s: agent::Surface = agent::open(win.raw());
     assert surface::outcome_eq(
         s.set_text(auth::operator(), "go-btn", "nope", s.text_version("go-btn")),
@@ -551,6 +660,8 @@ fn set_text_persists_on_field_and_text_view() {
     content.add_subview(tv.as_view());
     agent::set_agent_id(tv.as_view().raw(), "desc");
 
+    var root: core::Node = mirror(content_of(win).raw());
+    mount_tree(#addr_of(root), win.raw());
     var s: agent::Surface = agent::open(win.raw());
     assert surface::outcome_eq(
         s.set_text(auth::operator(), "name", "AgentApp", s.text_version("name")),
@@ -581,6 +692,8 @@ fn the_caret_can_be_placed_and_is_counted_in_bytes() {
     let tv = ak::TextView::new_with_frame(rt::Rect { x: 10.0, y: 90.0, w: 200.0, h: 80.0 });
     content.add_subview(tv.as_view());
     agent::set_agent_id(tv.as_view().raw(), "editor");
+    var root: core::Node = mirror(content_of(win).raw());
+    mount_tree(#addr_of(root), win.raw());
     var s: agent::Surface = agent::open(win.raw());
     assert surface::outcome_eq(
         s.set_text(auth::operator(), "editor", "hello world", s.text_version("editor")),
@@ -611,6 +724,8 @@ fn set_caret_refuses_a_control_whose_drive_is_not_text() {
     let content = content_of(win);
     let b = add_button(content, "go");
     agent::set_agent_id(b.as_view().raw(), "go-btn");
+    var root: core::Node = mirror(content_of(win).raw());
+    mount_tree(#addr_of(root), win.raw());
     var s: agent::Surface = agent::open(win.raw());
     assert surface::outcome_eq(s.set_caret(auth::operator(), "go-btn", 0, 0),
                                surface::Outcome::NotActionable);
@@ -628,6 +743,8 @@ fn read_runs_reports_what_the_control_is_actually_drawing() {
     let tv = ak::TextView::new_with_frame(rt::Rect { x: 10.0, y: 90.0, w: 200.0, h: 80.0 });
     content.add_subview(tv.as_view());
     agent::set_agent_id(tv.as_view().raw(), "editor");
+    var root: core::Node = mirror(content_of(win).raw());
+    mount_tree(#addr_of(root), win.raw());
     var s: agent::Surface = agent::open(win.raw());
     assert surface::outcome_eq(
         s.set_text(auth::operator(), "editor", "let x", s.text_version("editor")),
@@ -669,6 +786,8 @@ fn read_runs_says_unsupported_rather_than_empty_for_a_control_with_no_text() {
     let content = content_of(win);
     let b = add_button(content, "go");
     agent::set_agent_id(b.as_view().raw(), "go-btn");
+    var root: core::Node = mirror(content_of(win).raw());
+    mount_tree(#addr_of(root), win.raw());
     var s: agent::Surface = agent::open(win.raw());
     let runs: surface::Runs = s.read_runs(auth::operator(), "go-btn");
     // An NSButton has no attributed store to walk. `supported: false` is a
@@ -833,10 +952,12 @@ fn describe_survives_a_replaced_tree() {
     let b = add_button(content, "go");
     agent::set_agent_id(b.as_view().raw(), "go-btn");
 
+    var root: core::Node = mirror(content_of(win).raw());
+    mount_tree(#addr_of(root), win.raw());
     var s: agent::Surface = agent::open(win.raw());
     b.as_view().remove_from_superview();
     let nodes: vec::Vec[agent::AppKitNode] = s.describe(auth::operator());
-    assert nodes.count() == 3;
+    assert nodes.count() == 2;
 }
 
 // ---- hit_test: the pointer question the action verbs cannot ask -------------
@@ -856,6 +977,8 @@ fn hit_test_reports_a_reachable_control() {
     let b = add_button(content, "go");
     agent::set_agent_id(b.as_view().raw(), "go-btn");
 
+    var root: core::Node = mirror(content_of(win).raw());
+    mount_tree(#addr_of(root), win.raw());
     var s: agent::Surface = agent::open(win.raw());
     let h: surface::HitTest = s.hit_test(auth::operator(), "go-btn");
     assert surface::outcome_eq(h.outcome, surface::Outcome::Allowed);
@@ -879,6 +1002,8 @@ fn hit_test_names_the_exposed_overlay_that_buries_a_control() {
     let ov = add_overlay(content, rt::Rect { x: 0.0, y: 0.0, w: 200.0, h: 100.0 });
     agent::set_agent_id(ov.raw(), "overlay");
 
+    var root: core::Node = mirror(content_of(win).raw());
+    mount_tree(#addr_of(root), win.raw());
     var s: agent::Surface = agent::open(win.raw());
     let h: surface::HitTest = s.hit_test(auth::operator(), "go-btn");
     assert surface::outcome_eq(h.outcome, surface::Outcome::Allowed);
@@ -906,6 +1031,8 @@ fn hit_test_reports_an_unexposed_obstruction_without_naming_it() {
     agent::set_agent_id(b.as_view().raw(), "go-btn");
     let _ov = add_overlay(content, rt::Rect { x: 0.0, y: 0.0, w: 200.0, h: 100.0 });   // untagged
 
+    var root: core::Node = mirror(content_of(win).raw());
+    mount_tree(#addr_of(root), win.raw());
     var s: agent::Surface = agent::open(win.raw());
     let h: surface::HitTest = s.hit_test(auth::operator(), "go-btn");
     assert h.reachable == false;
@@ -927,6 +1054,8 @@ fn hit_test_counts_a_hit_on_a_childs_view_as_reaching_the_parent() {
     group.add_subview(inner.as_view());
     agent::set_agent_id(inner.as_view().raw(), "inner-btn");
 
+    var root: core::Node = mirror(content_of(win).raw());
+    mount_tree(#addr_of(root), win.raw());
     var s: agent::Surface = agent::open(win.raw());
     let h: surface::HitTest = s.hit_test(auth::operator(), "group");
     assert h.reachable;
@@ -939,6 +1068,8 @@ fn hit_test_negatives_report_rather_than_guess() {
     let content = content_of(win);
     let b = add_button(content, "go");
     agent::set_agent_id(b.as_view().raw(), "go-btn");
+    var root: core::Node = mirror(content_of(win).raw());
+    mount_tree(#addr_of(root), win.raw());
     var s: agent::Surface = agent::open(win.raw());
 
     // Unknown id: no reachability claim at all.
@@ -1301,6 +1432,8 @@ fn set_text_on_a_value_control_fires_the_apps_change_handler() {
     agent::set_affordance_drive(sl.as_view().raw(), identity::Role::Input, identity::drive_text());
 
     SLIDER_CHANGES = 0;
+    var root: core::Node = mirror(content_of(win).raw());
+    mount_tree(#addr_of(root), win.raw());
     var s: agent::Surface = agent::open(win.raw());
     assert surface::outcome_eq(
         s.set_text(auth::operator(), "progress", "0.7", s.text_version("progress")),
@@ -1327,6 +1460,8 @@ fn set_text_on_a_field_does_not_fire_its_enter_action() {
     agent::set_agent_id(f.as_view().raw(), "name");
 
     FIELD_ACTIONS = 0;
+    var root: core::Node = mirror(content_of(win).raw());
+    mount_tree(#addr_of(root), win.raw());
     var s: agent::Surface = agent::open(win.raw());
     assert surface::outcome_eq(
         s.set_text(auth::operator(), "name", "typed", s.text_version("name")),
@@ -1359,10 +1494,12 @@ fn a_search_field_exposes_its_text_its_search_and_its_clear() {
     agent::set_agent_id(sf, "search");
     ak::Control::from_raw(sf).set_on_action(on_search_action);
 
+    var root: core::Node = mirror(content_of(win).raw());
+    mount_tree(#addr_of(root), win.raw());
     var s: agent::Surface = agent::open(win.raw());
     let nodes: vec::Vec[agent::AppKitNode] = s.describe(auth::operator());
     // window + content group + the field + its two parts. It was 3.
-    assert nodes.count() == 5;
+    assert nodes.count() == 4;
 
     // 1 — type into it.
     assert surface::outcome_eq(s.set_text(auth::operator(), "search", "needle", s.text_version("search")),
@@ -1407,6 +1544,8 @@ fn describe_reports_delivery_beside_permission_and_capability() {
     let dead = add_dead_button(content, "Dead");
     agent::set_agent_id(dead.as_view().raw(), "dead");
 
+    var root: core::Node = mirror(content_of(win).raw());
+    mount_tree(#addr_of(root), win.raw());
     var s: agent::Surface = agent::open(win.raw());
     let nodes: vec::Vec[agent::AppKitNode] = s.describe(auth::operator());
 
@@ -1467,12 +1606,14 @@ fn describe_reports_the_click_capability_beside_the_permission() {
     let b = add_button(content, "Add");
     agent::set_agent_id(b.as_view().raw(), "add");
 
+    var root: core::Node = mirror(content_of(win).raw());
+    mount_tree(#addr_of(root), win.raw());
     var s: agent::Surface = agent::open(win.raw());
     let nodes: vec::Vec[agent::AppKitNode] = s.describe(auth::operator());
-    assert nodes.count() == 4;
+    assert nodes.count() == 3;
 
     // The keyed container: permitted, not clickable — and `click` agrees.
-    match nodes.at_ptr(2) {
+    match nodes.at_ptr(1) {
         option::Option[*agent::AppKitNode]::Some(n) => {
             assert { (*n).id.view() } == "lane";
             assert { (*n).actionable };
@@ -1484,7 +1625,7 @@ fn describe_reports_the_click_capability_beside_the_permission() {
 
     // The button: both, and `click` agrees there too. The flag has to predict
     // the verb or it is worse than no flag at all.
-    match nodes.at_ptr(3) {
+    match nodes.at_ptr(2) {
         option::Option[*agent::AppKitNode]::Some(n) => {
             assert { (*n).id.view() } == "add";
             assert { (*n).actionable };
@@ -1508,9 +1649,11 @@ fn describe_reports_a_text_drive_as_not_clickable() {
     agent::set_agent_id(f.as_view().raw(), "title");
     agent::set_affordance(f.as_view().raw(), identity::Role::Input);
 
+    var root: core::Node = mirror(content_of(win).raw());
+    mount_tree(#addr_of(root), win.raw());
     var s: agent::Surface = agent::open(win.raw());
     let nodes: vec::Vec[agent::AppKitNode] = s.describe(auth::operator());
-    match nodes.at_ptr(2) {
+    match nodes.at_ptr(1) {
         option::Option[*agent::AppKitNode]::Some(n) => {
             assert { (*n).id.view() } == "title";
             assert { (*n).actionable };
@@ -1543,17 +1686,26 @@ fn the_walked_view_reports_an_untagged_node_own_text() {
     // structural label in a real tree.
     let title = ak::TextField::label_with_string("Card 1");
     card.add_subview(title.as_view());
+    // KEYED, because an unkeyed node is not on the surface at all now. What
+    // this tests — a node with no a11y label naming itself by its own text —
+    // is unchanged; only its address had to become real.
+    agent::set_agent_id(title.as_view().raw(), "card:1:title");
 
+    var root: core::Node = mirror(content_of(win).raw());
+    mount_tree(#addr_of(root), win.raw());
     var s: agent::Surface = agent::open(win.raw());
     let nodes: vec::Vec[agent::AppKitNode] = s.describe(auth::operator());
-    // window, content group, card, title.
-    assert nodes.count() == 4;
-    match nodes.at_ptr(3) {
+    // window, card, title — the content group is not a facet node.
+    assert nodes.count() == 3;
+    match nodes.at_ptr(2) {
         option::Option[*agent::AppKitNode]::Some(n) => {
             assert identity::role_eq({ (*n).role }, identity::Role::Text);
-            // Still not exposed and still not actionable — curation is
-            // untouched. Only the content question changed its answer.
-            assert !{ (*n).actionable };
+            // Actionability is NOT asserted here any more. It used to be false
+            // because the node was untagged and therefore unexposed; now the
+            // node is keyed, and what it may be driven with comes from the
+            // declared affordance — which a raw NSTextField built in a test
+            // does not carry. `declared_drive_none_is_observe_only` covers that
+            // question directly.
             assert { (*n).text.view() } == "Card 1";
             assert { (*n).readable };
         }
@@ -1576,11 +1728,16 @@ fn the_walked_view_is_not_a_way_around_an_exclusion() {
     agent::set_agent_policy(panel.raw(), identity::policy_exclude());
     let line = ak::TextField::label_with_string("thinking about your card");
     panel.add_subview(line.as_view());
+    // Keyed on purpose: the point is that a node INSIDE an excluded subtree is
+    // still excluded, and it has to be a node for that to mean anything.
+    agent::set_agent_id(line.as_view().raw(), "assistant:line");
 
+    var root: core::Node = mirror(content_of(win).raw());
+    mount_tree(#addr_of(root), win.raw());
     var s: agent::Surface = agent::open(win.raw());
     let nodes: vec::Vec[agent::AppKitNode] = s.describe(auth::protected_operator());
-    assert nodes.count() == 4;
-    match nodes.at_ptr(3) {
+    assert nodes.count() == 3;
+    match nodes.at_ptr(2) {
         option::Option[*agent::AppKitNode]::Some(n) => {
             assert { (*n).text.view() } == "";
             assert !{ (*n).readable };
@@ -1616,10 +1773,12 @@ fn describe_carries_the_accessibility_label_as_the_node_name() {
     agent::set_agent_id(b.as_view().raw(), "col:add");
     ak::Accessibility::from_raw(b.as_view().raw()).set_accessibility_label("Add a card");
 
+    var root: core::Node = mirror(content_of(win).raw());
+    mount_tree(#addr_of(root), win.raw());
     var s: agent::Surface = agent::open(win.raw());
     let nodes: vec::Vec[agent::AppKitNode] = s.describe(auth::operator());
 
-    match nodes.at_ptr(2) {
+    match nodes.at_ptr(1) {
         option::Option[*agent::AppKitNode]::Some(n) => {
             assert { (*n).id.view() } == "card:3";
             assert { (*n).text.view() } == "";
@@ -1627,7 +1786,7 @@ fn describe_carries_the_accessibility_label_as_the_node_name() {
         }
         option::Option::None => { assert false; }
     };
-    match nodes.at_ptr(3) {
+    match nodes.at_ptr(2) {
         option::Option[*agent::AppKitNode]::Some(n) => {
             assert { (*n).id.view() } == "col:add";
             assert { (*n).text.view() } == "+";
@@ -1650,16 +1809,18 @@ fn a_node_with_no_label_names_itself_by_its_own_title() {
     content.add_subview(ak::View::from_raw(group.raw()));
     agent::set_agent_id(group.raw(), "strip");
 
+    var root: core::Node = mirror(content_of(win).raw());
+    mount_tree(#addr_of(root), win.raw());
     var s: agent::Surface = agent::open(win.raw());
     let nodes: vec::Vec[agent::AppKitNode] = s.describe(auth::operator());
-    match nodes.at_ptr(2) {
+    match nodes.at_ptr(1) {
         option::Option[*agent::AppKitNode]::Some(n) => {
             assert { (*n).id.view() } == "save";
             assert { (*n).name.view() } == "Save";
         }
         option::Option::None => { assert false; }
     };
-    match nodes.at_ptr(3) {
+    match nodes.at_ptr(2) {
         option::Option[*agent::AppKitNode]::Some(n) => {
             assert { (*n).id.view() } == "strip";
             assert { (*n).name.view() } == "";
@@ -1724,6 +1885,8 @@ fn an_ordinary_assistant_sees_the_payment_fields_and_reads_neither() {
     let content = content_of(win);
     let card: *u8 = payment_form(content);
 
+    var root: core::Node = mirror(content_of(win).raw());
+    mount_tree(#addr_of(root), win.raw());
     var s: agent::Surface = agent::open(win.raw());
     let nodes: vec::Vec[agent::AppKitNode] = s.describe(auth::operator());
     match node_named(nodes, "payment:card") {
@@ -1772,6 +1935,8 @@ fn the_approved_grant_autofills_the_card_and_still_not_the_cvc() {
     let card: *u8 = payment_form(content);
     let approved: auth::Grant = auth::protected_operator();
 
+    var root: core::Node = mirror(content_of(win).raw());
+    mount_tree(#addr_of(root), win.raw());
     var s: agent::Surface = agent::open(win.raw());
     let nodes: vec::Vec[agent::AppKitNode] = s.describe(approved);
     match node_named(nodes, "payment:card") {
@@ -1809,6 +1974,8 @@ fn a_secure_field_defaults_to_private_with_no_declaration_at_all() {
     content.add_subview(ak::View::from_raw(pw));
     agent::set_agent_id(pw, "pw");
 
+    var root: core::Node = mirror(content_of(win).raw());
+    mount_tree(#addr_of(root), win.raw());
     var s: agent::Surface = agent::open(win.raw());
     match node_named(s.describe(auth::protected_operator()), "pw") {
         option::Option[*agent::AppKitNode]::Some(n) => {
@@ -1836,6 +2003,8 @@ fn an_explicit_declaration_beats_the_secure_class_default() {
     agent::set_agent_id(pw, "pw");
     agent::set_agent_policy(pw, identity::policy_none());
 
+    var root: core::Node = mirror(content_of(win).raw());
+    mount_tree(#addr_of(root), win.raw());
     var s: agent::Surface = agent::open(win.raw());
     match node_named(s.describe(auth::operator()), "pw") {
         option::Option[*agent::AppKitNode]::Some(n) => {
@@ -1870,6 +2039,8 @@ fn a_tier_on_the_box_covers_the_label_nobody_would_have_named() {
     content.add_subview(email.as_view());
     agent::set_agent_id(email.as_view().raw(), "email");
 
+    var root: core::Node = mirror(content_of(win).raw());
+    mount_tree(#addr_of(root), win.raw());
     var s: agent::Surface = agent::open(win.raw());
     let nodes: vec::Vec[agent::AppKitNode] = s.describe(auth::operator());
     match node_named(nodes, "payment:summary") {
@@ -1902,6 +2073,8 @@ fn a_blind_grant_gets_no_tree_at_all() {
     let win = fixture_window(400.0, 200.0);
     let content = content_of(win);
     let _card: *u8 = payment_form(content);
+    var root: core::Node = mirror(content_of(win).raw());
+    mount_tree(#addr_of(root), win.raw());
     var s: agent::Surface = agent::open(win.raw());
     // `NeedsGrant`, not `Forbidden`: a missing BASE capability is what a wider
     // grant fixes. `Forbidden` is reserved for the Private tier, which is the
@@ -1925,6 +2098,8 @@ fn an_excluded_subtree_is_gone_while_a_gated_one_is_present() {
     let send = add_button(panel, "Send");
     agent::set_agent_id(send.as_view().raw(), "assistant:send");
 
+    var root: core::Node = mirror(content_of(win).raw());
+    mount_tree(#addr_of(root), win.raw());
     var s: agent::Surface = agent::open(win.raw());
     // Its own Send button is not addressable — the assistant cannot press it,
     // even with the widest grant the app ever mints.

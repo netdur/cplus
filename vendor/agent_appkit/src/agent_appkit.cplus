@@ -27,6 +27,8 @@ import "stdlib/option" as option;
 import "stdlib/text" as text;
 import "objc/runtime" as rt;
 import "objc/bridge" as bridge;
+import "facet/facet" as core;
+import "facet/application" as app;
 import "agent_core/identity" as identity;
 import "agent_core/surface" as surface;
 import "agent_core/auth" as auth;
@@ -1103,6 +1105,80 @@ fn walk(ref reg: identity::Registry, ref views: vec::Vec[ViewRef], view: *u8, pa
     }
 }
 
+// ---- the walk over FACET'S tree ------------------------------------------------
+//
+// AN APP IS A FACET TREE. AppKit is one backend's realisation of it, and walking
+// the NSView hierarchy described the realisation instead of the app: every
+// wrapper view AppKit inserts came back as a node the developer never wrote,
+// with a path id (`hello/group#0`) that names a position in a view hierarchy
+// rather than anything in the source. Measured on a four-element screen: five
+// facet nodes, twelve view nodes, and more than half of what an agent saw was
+// AppKit's.
+//
+// `agent_android` has always walked facet's tree. This is macOS catching up, and
+// the rule is the same one: ONLY A KEYED NODE IS REGISTERED. An unkeyed node is
+// transparent — its children attach to the nearest keyed ancestor — so the tree
+// an agent reads is the tree that was written, and there is nothing to
+// synthesise an id for.
+//
+// The per-node reads still come off the VIEW, and that is deliberate: they are
+// LIVE reads (is it enabled *now*, what does it say *now*), and the view is
+// where "now" lives. `core::view_of` is the bridge, set by the backend at mount.
+fn walk_facet(ref reg: identity::Registry, ref views: vec::Vec[ViewRef],
+              n: *core::Node, parent_reg: usize) {
+    var me: usize = parent_reg;
+    let key: str = { (*n).key() };
+    if key != "" {
+        let view: *u8 = core::view_of(n);
+        // A keyed node with no view is not on screen — registering it would
+        // advertise something no verb could act on.
+        if !is_null(view) {
+            me = reg.add_child(parent_reg, option::Option[str]::Some(key),
+                               resolve_role(view));
+            reg.set_enabled(me, live_enabled(view));
+            // Sensitivity BEFORE any content read — the registry's guards
+            // answer against the flag that is already set.
+            reg.set_policy(me, effective_policy(view));
+            let label: text::Text = view_a11y_string(view, "accessibilityLabel\0");
+            if label.is_empty() == false {
+                reg.set_name(me, { label.view() });
+            } else if !reg.is_sensitive(me) {
+                let own: text::Text = node_text(view, resolve_role(view));
+                if own.is_empty() == false { reg.set_content_name(me, { own.view() }); }
+            }
+            let ds: text::Text = view_a11y_string(view, "accessibilityHelp\0");
+            if ds.is_empty() == false { reg.set_description(me, { ds.view() }); }
+            match get_declared_drive(view) {
+                option::Option[u32]::Some(d) => {
+                    if d == identity::drive_none() { reg.set_observe_only(me); }
+                }
+                option::Option::None => { }
+            }
+            let _r: *u8 = rt::retain(view);
+            views.append(ViewRef { p: view, part: PART_SELF });
+
+            // The parts a tree walk cannot reach: a control that carries more
+            // than one affordance. Same rule as before — only on a keyed node.
+            if is_kind(view, #str_ptr("NSSearchField\0")) {
+                add_part(reg, views, view, me, key, PART_SEARCH, ":search", "Search");
+                add_part(reg, views, view, me, key, PART_CLEAR, ":clear", "Clear");
+            }
+            if row_is_expandable(view) {
+                add_part(reg, views, view, me, key, PART_DISCLOSURE, ":disclosure", "Disclosure");
+            }
+        }
+    }
+    var i: usize = 0;
+    let count: usize = core::child_count_of(n);
+    while i < count {
+        match core::child_of(n, i) {
+            option::Option[*core::Node]::Some(c) => { walk_facet(reg, views, c, me); }
+            option::Option[*core::Node]::None => { }
+        }
+        i = i +% 1;
+    }
+}
+
 // Walk a window's view hierarchy into a `Surface`. The window is the root node
 // (role Window) under the registry's app root; its contentView subtree follows.
 fn open(window: *u8) -> Surface {
@@ -1127,9 +1203,13 @@ fn open(window: *u8) -> Surface {
     let _rw: *u8 = rt::retain(window);
     views.append(ViewRef { p: window, part: PART_SELF });
 
-    let content: *u8 = rt::msg_id(window, rt::sel(#str_ptr("contentView\0")));
-    if !is_null(content) {
-        walk(reg, views, content, win_reg);
+    // THE TREE, not the view hierarchy. `window_root_for_native` is facet's own
+    // window->root map, recorded by the backend at mount, so this is the same
+    // tree `label::find("taps")` addresses in-process. The wire surface and the
+    // in-process API now describe one thing.
+    let root: *core::Node = app::window_root_for_native(window);
+    if !is_null(root as *u8) {
+        walk_facet(reg, views, root, win_reg);
     }
 
     // Title-bar accessory views (fak::install_titlebar) are siblings of the
@@ -1145,6 +1225,8 @@ fn open(window: *u8) -> Surface {
             let vc: *u8 = rt::msg_id_u64(accs, rt::sel(#str_ptr("objectAtIndex:\0")), ai as u64);
             let av: *u8 = rt::msg_id(vc, rt::sel(#str_ptr("view\0")));
             if !is_null(av) {
+                // Still a VIEW walk: a titlebar accessory is AppKit's, not a
+                // facet subtree, so there is no node to walk instead.
                 walk(reg, views, av, win_reg);
             }
             ai = ai +% 1;
