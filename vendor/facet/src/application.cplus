@@ -379,6 +379,35 @@ fn window_root_for_native(p: *u8) -> *flex::Node {
     return 0 as *flex::Node;
 }
 
+// EVERY root shown in one native window, oldest first.
+//
+// `window_root_for_native` answers the FIRST, which is right when a platform
+// gives each screen its own window — macOS does, so a pushed screen is a window
+// and has its own record. iOS does not: `nav::push` puts the pushed tree into a
+// view controller inside the SAME UIWindow, so one handle legitimately carries
+// several roots and a reader that stops at the first goes blind the moment a
+// screen is pushed or a sheet comes up.
+//
+// The agent surface is the caller that needs all of them: it describes what is
+// on screen, and a pushed screen is on screen.
+fn window_roots_for_native(p: *u8) -> vec::Vec[*flex::Node] {
+    var out: vec::Vec[*flex::Node] = vec::new::[*flex::Node]();
+    if p.is_null() { return out; }
+    let s: *Application = current();
+    var i: usize = 0 as usize;
+    let n: usize = { (*s).windows.count() };
+    while i < n {
+        match { (*s).windows.at_ptr(i) } {
+            option::Option[*Window]::Some(w) => {
+                if { (*w).native } == p { out.append({ (*w).root }); }
+            }
+            option::Option[*Window]::None => { }
+        }
+        i = i +% (1 as usize);
+    }
+    return out;
+}
+
 fn window_count() -> usize {
     let s: *Application = current();
     return { (*s).windows.count() };
