@@ -94,14 +94,23 @@ supervised call-centre workstation and voice-only operation.
    concurrent means auditing every static under `handle_request` (the client
    name, the action log, the inspector's snapshot) plus the UI-thread hop. It
    is a design change, not a fix.
-9. **Mobile is verified by COMPILATION this session, not by running.** Both
-   facades were edited (the startup line) and both were proven to be in the
-   build the hard way — a deliberate syntax error in `agent_ios.cplus` and
-   `agent_android.cplus` fails the build for its target, and neither does
-   without it. The gallery's Xcode project links against the DEVICE library
-   paths, so `xcodebuild -sdk iphonesimulator` fails on architecture and a
-   simulator run needs a project change; the device recipe in `DEPLOYING.md` is
-   untouched and `tools/mcp_check.py` still drives both.
+9. ~~Mobile is verified by compilation, not by running.~~ **iOS RUNS AND IS
+   CHECKED** — iPhone 16 Pro / iOS 18.5, all 28 of `tools/mcp_check.py`. The
+   Xcode project linked the DEVICE archives unconditionally, so a simulator
+   build failed at the link; `CPLUS_TRIPLE`/`CPLUS_TARGETDIR` are conditioned
+   on the SDK now and the device recipe is untouched.
+
+   **The run paid for itself three times over**, and every one of the three was
+   invisible to a cross-build: the app was serving on the pid-derived port
+   while every doc and the harness said 8787 (it still passed "8787", which had
+   silently become its ID); the harness spoke the retired line framing where
+   mobile serves Streamable HTTP; and list rows had disappeared from
+   `describe_ui` when both backends moved to walking facet's tree, so a list
+   was something an agent could see and could not enter.
+
+   Android is still compilation-only — proven to be in the build the hard way,
+   with a deliberate syntax error in `agent_android.cplus`, but not run.
+   A device run of iOS has not been repeated since 2026-08-19.
 
 ## Status
 
