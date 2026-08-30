@@ -57,6 +57,7 @@ import "agent_core/auth" as auth;
 import "facet/vocabulary" as vocab;
 import "./inspector" as insp;
 import "./tree" as tree;
+import "./vocabulary" as voc;
 
 // ---- JSON helpers --------------------------------------------------------------
 //
@@ -154,6 +155,39 @@ fn color_json(c: vocab::Color) -> json::Value {
     }
     // A role, or `clear`. No channels, because there are none to report.
     return json::Value::Object(m);
+}
+
+// One value, moved by a delta, in whatever unit it is already in.
+//
+// A percent nudges in percent and points nudge in points — the alternative is a
+// client that has to know the unit before it can move something by two, which
+// is the knowledge `nudge` exists to remove. An UNSET length starts from zero:
+// nudging a `top` that was never set is exactly the drag that positions it for
+// the first time, and refusing it would mean the first move of every element
+// had to be a `set`.
+fn nudged(cur: insp::Value, by: f64) -> option::Option[insp::Value] {
+    return match cur {
+        insp::Value::Num(x) => option::Option[insp::Value]::Some(insp::Value::Num(x + by)),
+        insp::Value::Int(i) =>
+            option::Option[insp::Value]::Some(insp::Value::Int(i + (by as i64))),
+        insp::Value::Nothing => option::Option[insp::Value]::Some(insp::Value::Num(by)),
+        insp::Value::Str(s) => nudged_spelling(s.view(), by),
+        _ => option::Option[insp::Value]::None,
+    };
+}
+
+fn nudged_spelling(spelled: str, by: f64) -> option::Option[insp::Value] {
+    // `auto` has no number to move, and inventing one would silently pin a box
+    // that was sizing itself.
+    if !spelled.has_suffix("%") { return option::Option[insp::Value]::None; }
+    return match spelled.drop_last(1).trim().to_f64() {
+        option::Option[f64]::Some(x) => {
+            var t: text::Text = tree::plain_num(x + by);
+            let _a: status::Status = t.append("%");
+            option::Option[insp::Value]::Some(insp::Value::Str(t))
+        }
+        option::Option::None => option::Option[insp::Value]::None,
+    };
 }
 
 fn value_json(v: insp::Value) -> json::Value {
@@ -311,18 +345,33 @@ fn describe_tools() -> vec::Vec[json::Value] {
         p_desc, bridge::no_required()));
 
     var p_node: vec::Vec[json::Member] = bridge::no_props();
-    p_node.append(tools_prop("node", "number", "Node index, from inspector.describe."));
+    p_node.append(tools_prop("node", "number", "Node index, from describe_tree."));
     out.append(bridge::tool("inspect",
         "One node WHOLE — every property, control properties included. This is a content read, so a node behind a privacy tier is refused unless the grant carries it.",
         p_node, bridge::required1("node")));
 
     var p_set: vec::Vec[json::Member] = bridge::no_props();
     p_set.append(tools_prop("node", "number", "Node index."));
-    p_set.append(tools_prop("property", "string", "Property name, as inspector.vocabulary lists it."));
-    p_set.append(tools_prop("value", "string", "New value: a number, a boolean or a string."));
+    p_set.append(tools_prop("property", "string", "Property name, exactly as vocabulary lists it."));
+    p_set.append(tools_prop("value", "string", "New value: a number, a boolean, a string, or null to unset. A length takes a number of points, \"50%\", or \"auto\"; a colour takes \"#rrggbb\" or \"#rrggbbaa\"; an enum takes one of the spellings vocabulary lists for it."));
     out.append(bridge::tool("set",
-        "Write one property on one node, live. Undoable with inspector.undo.",
+        "Write one property on one node, live. Send null to unset a length — that is how a width goes back to sizing itself. Undoable with undo.",
         p_set, bridge::required2("node", "property")));
+
+    var p_nudge: vec::Vec[json::Member] = bridge::no_props();
+    p_nudge.append(tools_prop("node", "number", "Node index."));
+    p_nudge.append(tools_prop("property", "string", "A numeric property — a position, a size, a spacing, an opacity."));
+    p_nudge.append(tools_prop("by", "number", "How far to move it, in the unit the property already holds. Negative moves the other way."));
+    out.append(bridge::tool("nudge",
+        "Move one numeric property BY an amount instead of TO a value — the arrow-key nudge you would use to slide an element into place. Answers the value it landed on. A percent nudges in percent; an unset length starts from zero.",
+        p_nudge, bridge::required2("node", "property")));
+
+    var p_many: vec::Vec[json::Member] = bridge::no_props();
+    p_many.append(tools_prop("node", "number", "Node index."));
+    p_many.append(tools_prop("properties", "object", "An object of property name to value, e.g. {\"absolute\": true, \"top\": 34, \"left\": 12.5}. Same values set takes."));
+    out.append(bridge::tool("set_many",
+        "Write several properties on one node in one call. Placing an element usually takes three of them, and each one on its own is a round trip. Applies every property it can and names the outcome of each; it does not stop at the first failure.",
+        p_many, bridge::required2("node", "properties")));
 
     var p_reset: vec::Vec[json::Member] = bridge::no_props();
     p_reset.append(tools_prop("node", "number", "Node index."));
@@ -365,9 +414,12 @@ fn describe_tools() -> vec::Vec[json::Value] {
         "Remove the highlight overlay.",
         bridge::no_props(), bridge::no_required()));
 
+    var p_vocab: vec::Vec[json::Member] = bridge::no_props();
+    p_vocab.append(tools_prop("element", "string",
+        "Answer only with the properties this kind of element carries — \"button\", \"label\", \"text_field\", or any kind describe_tree reports. Absent means every property."));
     out.append(bridge::tool("vocabulary",
-        "Which properties exist and what types they take. Read this before inspector.set rather than guessing a property name.",
-        bridge::no_props(), bridge::no_required()));
+        "Every writable property: its name, its type, its unit, the element kinds that carry it, the closed set of spellings it accepts if it has one, and a line saying what it does. Read this before set rather than guessing a name or a value.",
+        p_vocab, bridge::no_required()));
 
     out.append(bridge::tool("journal",
         "The log of inspector mutations made this session.",
@@ -396,6 +448,7 @@ const OP_UNDO: u32 = 8u32;
 const OP_HIGHLIGHT: u32 = 9u32;
 const OP_CLEAR: u32 = 10u32;
 const OP_JOURNAL: u32 = 11u32;
+const OP_NUDGE: u32 = 12u32;
 
 // What the client sent for `value`, kept in the shape JSON gave it.
 //
@@ -406,6 +459,10 @@ const TAG_NONE: u32 = 0u32;
 const TAG_NUM: u32 = 1u32;
 const TAG_BOOL: u32 = 2u32;
 const TAG_STR: u32 = 3u32;
+// JSON null. Not "absent" — absent is refused before a tag is chosen — but an
+// explicit request to UNSET, which is the only way to put a length back to the
+// `auto` or the nothing the application built it with.
+const TAG_NOTHING: u32 = 4u32;
 
 // One request, across the thread hop and back.
 //
@@ -541,6 +598,9 @@ fn resolve(i: usize) -> insp::Handle {
 fn value_for(h: insp::Handle, prop: str, tag: u32, num: f64, flag: bool, raw: str)
     -> option::Option[insp::Value] {
     if tag == TAG_BOOL { return option::Option[insp::Value]::Some(insp::Value::Bool(flag)); }
+    if tag == TAG_NOTHING {
+        return option::Option[insp::Value]::Some(insp::Value::Nothing);
+    }
     if tag == TAG_NUM {
         // Against the current tag, so a client sending `12` for an integer
         // property gets an integer rather than a number that reads back
@@ -667,6 +727,48 @@ fn run_call(ctx: *u8) {
     // is not a crash but a `reset` that answers `Ok` and restores nothing. So
     // the name is exchanged for this package's own literal first, and a name in
     // neither table never reaches a setter at all.
+    // MOVE IT BY A LITTLE, which is the gesture the whole loop is named for.
+    //
+    // `set` needs the number the property should end at; a person nudging a
+    // button two points left does not know that number and should not have to
+    // read, add and write to find it. The add happens on THIS side of the hop,
+    // against the value as it is right now, so two clients nudging the same
+    // property cannot each add to a value they read before the other wrote.
+    if op == OP_NUDGE {
+        let pp: *text::Text = { #addr_of((*c).prop) };
+        let prop: str = match tree::canonical_prop({ (*pp).view() }) {
+            option::Option[str]::Some(name) => name,
+            option::Option::None => {
+                { (*c).outcome = insp::Outcome::UnknownProperty };
+                return;
+            }
+        };
+        let by: f64 = { (*c).num };
+        let moved: option::Option[insp::Value] = match tree::get(h, prop) {
+            option::Option[insp::Value]::Some(cur) => nudged(cur, by),
+            option::Option::None => option::Option[insp::Value]::None,
+        };
+        match moved {
+            option::Option[insp::Value]::Some(v) => {
+                let after: insp::Value = v.clone();
+                { (*c).outcome = b.set_now(h, prop, v) };
+                if { (*c).outcome }.is_ok() {
+                    var m: vec::Vec[json::Member] = vec::new::[json::Member]();
+                    m.append(member("outcome", jstr("ok")));
+                    // The number it landed on, so the client does not have to
+                    // read it back to know where it is.
+                    m.append(member("value", value_json(after)));
+                    m.append(member("revision", jnum(flex::removal_count() as f64)));
+                    put_out(json::Value::Object(m));
+                }
+            }
+            option::Option::None => {
+                { (*c).outcome = insp::Outcome::TypeMismatch };
+            }
+        }
+        return;
+    }
+
     if op == OP_RESET {
         let pp: *text::Text = { #addr_of((*c).prop) };
         match tree::canonical_prop({ (*pp).view() }) {
@@ -693,12 +795,29 @@ fn run_call(ctx: *u8) {
             option::Option[insp::Value]::Some(v) => {
                 { (*c).outcome = b.set_now(h, prop, v) };
             }
-            // No value could be built. A read-only property is the interesting
-            // case: it is real, it has a name in the table, and it answers no
-            // readable value — so `set` is left to say `ReadOnly` rather than
-            // this guessing `UnknownProperty` for something that plainly exists.
+            // No value could be built, and TWO different failures wear that one
+            // shape.
+            //
+            // A property that answers no readable value at all is the read-only
+            // case: it is real, it has a name in the table, and letting `set`
+            // run says `ReadOnly` rather than this guessing `UnknownProperty`
+            // for something that plainly exists.
+            //
+            // A property that DOES read and whose string simply did not parse
+            // is a type mismatch, and must not reach that fallback. `Nothing`
+            // means UNSET on a length, so falling through would turn a typo
+            // into a silent clear and answer `ok` — a width the client asked to
+            // be "soonish" would come back sizing itself, reported as success.
             option::Option::None => {
-                { (*c).outcome = b.set_now(h, prop, insp::Value::Nothing) };
+                let reads: bool = match tree::get(h, prop) {
+                    option::Option[insp::Value]::Some(_v) => true,
+                    option::Option::None => false,
+                };
+                if reads {
+                    { (*c).outcome = insp::Outcome::TypeMismatch };
+                } else {
+                    { (*c).outcome = b.set_now(h, prop, insp::Value::Nothing) };
+                }
             }
         }
         return;
@@ -799,8 +918,9 @@ fn do_inspect(id: f64, params: json::Value, grant: auth::Grant) -> json::Value {
 fn do_set(id: f64, params: json::Value) -> json::Value {
     if !has_target(params) { return missing_param(id, "set", "id\" or \"node"); }
     if !params.has("property") { return missing_param(id, "set", "property"); }
-    // Absent and null are both refused; an explicit `""` still writes an empty
-    // string. Same rule the agent surface learned: a misspelled parameter that
+    // Absent is refused; an explicit `""` still writes an empty string, and an
+    // explicit `null` means UNSET, which is how a length goes back to sizing
+    // itself. Same rule the agent surface learned: a misspelled parameter that
     // answers success is an app that looks broken and an RPC that looks fine.
     if !params.has("value") { return missing_param(id, "set", "value"); }
 
@@ -812,14 +932,94 @@ fn do_set(id: f64, params: json::Value) -> json::Value {
         json::Value::Number(n) => { c.tag = TAG_NUM; c.num = n; }
         json::Value::Bool(b) => { c.tag = TAG_BOOL; c.flag = b; }
         json::Value::Text(t) => { c.tag = TAG_STR; c.raw = t.clone(); }
+        json::Value::Null => { c.tag = TAG_NOTHING; }
         _ => { c.tag = TAG_NONE; }
     }
     if c.tag == TAG_NONE {
         return err_response(id, - 32602 as f64,
-            "inspector.set: \"value\" must be a number, a boolean or a string");
+            "set: \"value\" must be a number, a boolean, a string, or null to unset");
     }
     run_ui(run_call, #addr_of(c) as *u8);
     return ok_response(id, outcome_result(c.outcome));
+}
+
+fn do_nudge(id: f64, params: json::Value) -> json::Value {
+    if !has_target(params) { return missing_param(id, "nudge", "id\" or \"node"); }
+    if !params.has("property") { return missing_param(id, "nudge", "property"); }
+    if !params.has("by") { return missing_param(id, "nudge", "by"); }
+    var c: Call = new_call(OP_NUDGE);
+    c.node = target_of(params) as usize;
+    c.prop = as_text(obj_get(params, "property"));
+    c.num = match obj_get(params, "by").as_number() {
+        option::Option[f64]::Some(n) => n,
+        option::Option::None => 0.0,
+    };
+    return do_answering(id, c);
+}
+
+// SEVERAL PROPERTIES, ONE ROUND TRIP.
+//
+// Getting a button to sit right is rarely one property — it is `absolute`, then
+// `top`, then `left`, and each one over a socket is a round trip whose latency
+// a person feels while dragging. Each still crosses the thread hop on its own,
+// because that hop is cheap and sharing one would mean marshalling a list; what
+// this saves is the wire.
+//
+// It does NOT stop at the first failure. A client that sent five properties and
+// misspelled one wants the four that were right applied and the one that was
+// wrong named, not four silent no-ops behind one error.
+fn do_set_many(id: f64, params: json::Value) -> json::Value {
+    if !has_target(params) { return missing_param(id, "set_many", "id\" or \"node"); }
+    if !params.has("properties") { return missing_param(id, "set_many", "properties"); }
+    let obj: json::Value = obj_get(params, "properties");
+    if !obj.is_object() {
+        return err_response(id, - 32602 as f64,
+            "set_many: \"properties\" must be an object of property name to value");
+    }
+    let node: usize = target_of(params) as usize;
+
+    var results: vec::Vec[json::Member] = vec::new::[json::Member]();
+    var applied: usize = 0;
+    var first_bad: insp::Outcome = insp::Outcome::Ok;
+    var i: usize = 0;
+    let n: usize = obj.item_count();
+    while i < n {
+        let name: text::Text = match obj.key(i) {
+            option::Option[text::Text]::Some(k) => k,
+            option::Option::None => text::new(),
+        };
+        let v: json::Value = match obj.object_value(i) {
+            option::Option[json::Value]::Some(x) => x,
+            option::Option::None => json::Value::Null,
+        };
+        var c: Call = new_call(OP_SET);
+        c.node = node;
+        c.prop = name.clone();
+        match v {
+            json::Value::Number(x) => { c.tag = TAG_NUM; c.num = x; }
+            json::Value::Bool(b) => { c.tag = TAG_BOOL; c.flag = b; }
+            json::Value::Text(t) => { c.tag = TAG_STR; c.raw = t.clone(); }
+            json::Value::Null => { c.tag = TAG_NOTHING; }
+            _ => { c.tag = TAG_NONE; }
+        }
+        if c.tag == TAG_NONE {
+            // An array or an object as a property value: nothing here takes one.
+            c.outcome = insp::Outcome::TypeMismatch;
+        } else {
+            run_ui(run_call, #addr_of(c) as *u8);
+        }
+        if c.outcome.is_ok() { applied = applied +% 1; }
+        else if first_bad.is_ok() { first_bad = c.outcome; }
+        results.append(member(name.view(), jstr(outcome_name(c.outcome))));
+        i = i +% 1;
+    }
+
+    var m: vec::Vec[json::Member] = vec::new::[json::Member]();
+    m.append(member("outcome", jstr(outcome_name(first_bad))));
+    m.append(member("applied", jnum(applied as f64)));
+    m.append(member("results", json::Value::Object(results)));
+    m.append(member("revision", jnum(flex::removal_count() as f64)));
+    return ok_response(id, json::Value::Object(m));
 }
 
 fn do_reset(id: f64, params: json::Value) -> json::Value {
@@ -881,9 +1081,49 @@ fn do_highlight(id: f64, params: json::Value) -> json::Value {
     return ok_response(id, outcome_result(c.outcome));
 }
 
-// What this build can make and what it can write. Discovery, so a client does
-// not have to carry a copy of two lists that live in `tree` and would drift.
-fn do_vocabulary(id: f64) -> json::Value {
+// What this build can make, and what every writable property IS.
+//
+// Discovery, so a client never carries a copy of a list that lives in `tree`
+// and drifts. It used to answer two arrays of bare names under a tool
+// description promising "which properties exist and what types they take",
+// which is a promise the shape could not keep: a name alone does not tell a
+// client that `align_items` takes one of eleven words, that a length also
+// accepts "50%" and "auto", or that `title` exists on a button and nowhere
+// else. Each of those was a round trip that failed only when someone tried it.
+//
+// `element` narrows the answer to the kinds one element carries — the way a
+// client with a button in hand should ask, rather than reading fifty
+// descriptors to find the eight that apply.
+fn spellings_of(values: str) -> json::Value {
+    var out: vec::Vec[json::Value] = vec::new::[json::Value]();
+    let parts: vec::Vec[str] = values.split(" ");
+    var i: usize = 0;
+    while i < parts.count() {
+        match parts.at(i) {
+            option::Option[str]::Some(w) => { if w != "" { out.append(jstr(w)); } }
+            option::Option::None => { }
+        }
+        i = i +% 1;
+    }
+    return json::Value::Array(out);
+}
+
+fn descriptor_json(d: *voc::Descriptor) -> json::Value {
+    var m: vec::Vec[json::Member] = vec::new::[json::Member]();
+    m.append(member("name", jstr({ (*d).name })));
+    m.append(member("type", jstr({ (*d).ty })));
+    if { (*d).unit } != "" { m.append(member("unit", jstr({ (*d).unit }))); }
+    // `["*"]` is every kind. Always an array, so a client has one shape to read.
+    m.append(member("applies_to", spellings_of({ (*d).applies })));
+    if { (*d).values } != "" { m.append(member("values", spellings_of({ (*d).values }))); }
+    m.append(member("doc", jstr({ (*d).doc })));
+    return json::Value::Object(m);
+}
+
+fn do_vocabulary(id: f64, params: json::Value) -> json::Value {
+    var kind: text::Text = text::from_str("");
+    if params.has("element") { kind = as_text(obj_get(params, "element")); }
+
     var elements: vec::Vec[json::Value] = vec::new::[json::Value]();
     let mk: vec::Vec[str] = tree::maker_names();
     var i: usize = 0;
@@ -894,16 +1134,22 @@ fn do_vocabulary(id: f64) -> json::Value {
         }
         i = i +% 1;
     }
+
     var props: vec::Vec[json::Value] = vec::new::[json::Value]();
-    let pn: vec::Vec[str] = tree::declared_names();
+    let t: vec::Vec[voc::Descriptor] = voc::table();
     var j: usize = 0;
-    while j < pn.count() {
-        match pn.at(j) {
-            option::Option[str]::Some(nm) => { props.append(jstr(nm)); }
+    while j < t.count() {
+        match t.at_ptr(j) {
+            option::Option[*voc::Descriptor]::Some(d) => {
+                if voc::covers({ (*d).applies }, kind.view()) {
+                    props.append(descriptor_json(d));
+                }
+            }
             option::Option::None => { }
         }
         j = j +% 1;
     }
+
     var m: vec::Vec[json::Member] = vec::new::[json::Member]();
     m.append(member("elements", json::Value::Array(elements)));
     m.append(member("properties", json::Value::Array(props)));
@@ -1016,6 +1262,8 @@ fn verb_names() -> vec::Vec[str] {
     let _10: status::Status = v.append("clear_highlight");
     let _11: status::Status = v.append("vocabulary");
     let _12: status::Status = v.append("journal");
+    let _13: status::Status = v.append("nudge");
+    let _14: status::Status = v.append("set_many");
     return v;
 }
 
@@ -1034,6 +1282,7 @@ fn handle(method: str, params: json::Value, id: f64, grant: auth::Grant) -> json
     // added later gets the rule by being in this list, and a verb that forgot
     // to ask would be a hole with no symptom.
     let mutates: bool = method == "set" || method == "reset"
+        || method == "set_many" || method == "nudge"
         || method == "insert" || method == "remove"
         || method == "reparent" || method == "undo";
     if mutates {
@@ -1052,7 +1301,9 @@ fn handle(method: str, params: json::Value, id: f64, grant: auth::Grant) -> json
     if method == "undo" { return do_simple(id, OP_UNDO); }
     if method == "highlight" { return do_highlight(id, params); }
     if method == "clear_highlight" { return do_simple(id, OP_CLEAR); }
-    if method == "vocabulary" { return do_vocabulary(id); }
+    if method == "nudge" { return do_nudge(id, params); }
+    if method == "set_many" { return do_set_many(id, params); }
+    if method == "vocabulary" { return do_vocabulary(id, params); }
     if method == "journal" { return do_journal(id); }
     let unknown: text::Text = "method not found: ${method}";
     return err_response(id, - 32601 as f64, unknown.view());

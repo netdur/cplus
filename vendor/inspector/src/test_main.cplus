@@ -23,7 +23,9 @@ import "facet/button" as button;
 import "facet/mount" as mount;
 import "facet/tree" as ftree;
 import "./inspector" as insp;
+import "json/json" as json;
 import "./tree" as tree;
+import "./vocabulary" as voc;
 import "./widget" as widget;
 import "./appkit" as platform;
 // Pulled in for its own `#[test]`s: without an import the module is not in the
@@ -1025,10 +1027,28 @@ fn an_unset_length_reads_as_nothing_rather_than_as_zero() {
     var root: core::Node = @ui { column(key: "root") { label("x", key: "x") } };
     app::open_window(#addr_of(root));
     let h: insp::Handle = row_for(tree::describe(), "root");
-    // Nothing has declared a width, and `auto` is not a number the inspector
-    // could hand back unchanged. Answering 0.0 would be a value the UI then
-    // writes back as a real zero.
-    assert match tree::get(h, "width") {
+
+    // NEVER 0.0 — that is a number the UI would write straight back as a real
+    // zero, pinning a box that was sizing itself. The two honest answers are
+    // the word for what it is and nothing at all, and flex uses both: a size
+    // defaults to `auto`, an inset and an edge default to unset.
+    assert str_prop(h, "width") == "auto";
+    assert str_prop(h, "height") == "auto";
+    assert match tree::get(h, "padding_left") {
+        option::Option[insp::Value]::Some(v) => v.is_nothing(),
+        option::Option::None => false,
+    };
+    assert match tree::get(h, "top") {
+        option::Option[insp::Value]::Some(v) => v.is_nothing(),
+        option::Option::None => false,
+    };
+
+    // And both round-trip: writing back what was read changes nothing. That is
+    // the property the whole rule exists for.
+    assert tree::set(h, "width", insp::Value::Str(text::from_str("auto"))) == insp::Outcome::Ok;
+    assert str_prop(h, "width") == "auto";
+    assert tree::set(h, "top", insp::Value::Nothing) == insp::Outcome::Ok;
+    assert match tree::get(h, "top") {
         option::Option[insp::Value]::Some(v) => v.is_nothing(),
         option::Option::None => false,
     };
@@ -2720,20 +2740,334 @@ fn a_verb_takes_a_key_or_an_index_and_they_reach_one_node() {
 // property nobody can reach. It runs BOTH ways on purpose: a name advertised
 // and not settable is a lie, and a name settable and not advertised is a
 // feature nobody can find.
+fn num_prop(h: insp::Handle, prop: str) -> f64 {
+    return match tree::get(h, prop) {
+        option::Option[insp::Value]::Some(insp::Value::Num(x)) => x,
+        _ => -1.0f64,
+    };
+}
+
+fn str_prop(h: insp::Handle, prop: str) -> text::Text {
+    return match tree::get(h, prop) {
+        option::Option[insp::Value]::Some(insp::Value::Str(t)) => t.clone(),
+        _ => text::from_str("<not a string>"),
+    };
+}
+
+fn enum_is(h: insp::Handle, prop: str, want: str) -> bool {
+    return match tree::get(h, prop) {
+        option::Option[insp::Value]::Some(insp::Value::Enum(e)) => e.view() == want,
+        _ => false,
+    };
+}
+
+fn overridden(h: insp::Handle, prop: str) -> bool {
+    return tree::is_overridden(h.node, prop);
+}
+
+// Does this node's editor list that property at all?
+fn lists(h: insp::Handle, prop: str) -> bool {
+    let ps: vec::Vec[insp::Prop] = tree::declared_props(h, h.node);
+    var i: usize = 0;
+    while i < ps.count() {
+        match ps.at_ptr(i) {
+            option::Option[*insp::Prop]::Some(q) => {
+                if { (*q).name } == prop { return true; }
+            }
+            option::Option::None => { }
+        }
+        i = i +% 1;
+    }
+    return false;
+}
+
+fn handle_for(root: *core::Node, key: str) -> insp::Handle {
+    return match core::find_in(root, key) {
+        option::Option[*core::Node]::Some(p) => insp::Handle::of(p, 0),
+        option::Option::None => insp::Handle::none(),
+    };
+}
+
+// Font and colour, the other half of "make it look right without rebuilding".
+// Mounted, because a control property goes through the typed cursor.
+#[test]
+fn the_type_face_is_settable_and_reads_back() {
+    fresh();
+    var body: core::Builder = core::Builder::new();
+    body.add(ui::label("Ready", key: "tf:lbl"));
+    body.add(ui::button("Save", key: "tf:btn"));
+    var root: core::Node = ui::column(body, key: "tf:root");
+    app::open_window(#addr_of(root));
+
+    let lbl: insp::Handle = handle_for(#addr_of(root), "tf:lbl");
+    let btn: insp::Handle = handle_for(#addr_of(root), "tf:btn");
+    assert lbl.is_live();
+    assert btn.is_live();
+
+    assert tree::set(lbl, "font_size", insp::Value::Num(18.0)) == insp::Outcome::Ok;
+    assert num_prop(lbl, "font_size") == 18.0;
+
+    // An integer is a size too — refusing 18 for 18.0 would be pedantry.
+    assert tree::set(btn, "font_size", insp::Value::Int(13 as i64)) == insp::Outcome::Ok;
+    assert num_prop(btn, "font_size") == 13.0;
+
+    // The weight travels as its SPELLING, both ways.
+    assert tree::set(lbl, "font_weight", insp::Value::Enum(text::from_str("bold")))
+        == insp::Outcome::Ok;
+    assert enum_is(lbl, "font_weight", "bold");
+    // A client that has not read `vocabulary` sends a plain JSON string.
+    assert tree::set(btn, "font_weight", insp::Value::Str(text::from_str("semibold")))
+        == insp::Outcome::Ok;
+    assert enum_is(btn, "font_weight", "semibold");
+    // A spelling that is not in the set is refused, not rounded to Default.
+    assert tree::set(lbl, "font_weight", insp::Value::Str(text::from_str("chunky")))
+        == insp::Outcome::TypeMismatch;
+    assert enum_is(lbl, "font_weight", "bold");
+
+    let red: vocab::Color = vocab::Color::rgba(1.0, 0.0, 0.0, 1.0);
+    assert tree::set(lbl, "text_color", insp::Value::Color(red)) == insp::Outcome::Ok;
+    assert match tree::get(lbl, "text_color") {
+        option::Option[insp::Value]::Some(insp::Value::Color(c)) => c.r == 1.0,
+        _ => false,
+    };
+    // A number is not a colour.
+    assert tree::set(lbl, "text_color", insp::Value::Num(3.0)) == insp::Outcome::TypeMismatch;
+
+    // A border is a button's, and only a button's.
+    assert tree::set(btn, "border_width", insp::Value::Num(2.0)) == insp::Outcome::Ok;
+    assert num_prop(btn, "border_width") == 2.0;
+    assert tree::set(btn, "border_color", insp::Value::Color(red)) == insp::Outcome::Ok;
+    assert tree::set(lbl, "border_width", insp::Value::Num(2.0))
+        == insp::Outcome::UnknownProperty;
+    assert match tree::get(lbl, "border_width") {
+        option::Option[insp::Value]::Some(_v) => false,
+        option::Option::None => true,
+    };
+
+    // Every one of them is the developer's until an inspector writes it, and
+    // says so — that flag is what tells a person which numbers to keep.
+    assert overridden(lbl, "font_size");
+    assert overridden(btn, "font_weight");
+    assert !overridden(btn, "text_color");
+
+    // And reset puts back what the application declared.
+    assert tree::reset(lbl, "font_size") == insp::Outcome::Ok;
+    assert !overridden(lbl, "font_size");
+}
+
+// A label has no border and says so by not listing one; a button lists both.
+#[test]
+fn declared_props_lists_only_what_the_kind_carries() {
+    fresh();
+    var body: core::Builder = core::Builder::new();
+    body.add(ui::label("Ready", key: "dp:lbl"));
+    body.add(ui::button("Save", key: "dp:btn"));
+    var root: core::Node = ui::column(body, key: "dp:root");
+    app::open_window(#addr_of(root));
+
+    let lbl: insp::Handle = handle_for(#addr_of(root), "dp:lbl");
+    let btn: insp::Handle = handle_for(#addr_of(root), "dp:btn");
+    assert lists(lbl, "font_size");
+    assert lists(lbl, "text_color");
+    assert !lists(lbl, "border_width");
+    assert lists(btn, "border_width");
+    assert lists(btn, "border_color");
+    assert lists(btn, "title");
+    assert !lists(lbl, "title");
+}
+
+// The row that would not centre. `justify_content` and its neighbours were
+// unreachable before — the surface could place a node absolutely but could not
+// say the one word that fixes most layouts.
+#[test]
+fn the_flex_box_can_be_re_laid_out_by_name() {
+    fresh();
+    var body: core::Builder = core::Builder::new();
+    body.add(ui::label("a", key: "fx:a"));
+    var root: core::Node = ui::column(body, key: "fx:root");
+    app::open_window(#addr_of(root));
+    let h: insp::Handle = handle_for(#addr_of(root), "fx:root");
+
+    // A plain JSON string is accepted, and reads back as an enum.
+    assert tree::set(h, "justify_content", insp::Value::Str(text::from_str("center")))
+        == insp::Outcome::Ok;
+    assert enum_is(h, "justify_content", "center");
+    assert tree::set(h, "align_items", insp::Value::Enum(text::from_str("flex_end")))
+        == insp::Outcome::Ok;
+    assert enum_is(h, "align_items", "flex_end");
+    assert tree::set(h, "flex_direction", insp::Value::Enum(text::from_str("row")))
+        == insp::Outcome::Ok;
+    assert enum_is(h, "flex_direction", "row");
+    assert tree::set(h, "flex_wrap", insp::Value::Enum(text::from_str("wrap")))
+        == insp::Outcome::Ok;
+    assert enum_is(h, "flex_wrap", "wrap");
+    assert tree::set(h, "display", insp::Value::Enum(text::from_str("none")))
+        == insp::Outcome::Ok;
+    assert enum_is(h, "display", "none");
+
+    // A word that is not in the set is refused and changes nothing. Rounding
+    // it to the first variant is how an inspector teaches a developer that a
+    // property does not work.
+    assert tree::set(h, "justify_content", insp::Value::Enum(text::from_str("centre")))
+        == insp::Outcome::TypeMismatch;
+    assert enum_is(h, "justify_content", "center");
+    // And a number is not a word.
+    assert tree::set(h, "align_items", insp::Value::Num(2.0)) == insp::Outcome::TypeMismatch;
+}
+
+// EVERY SPELLING THE TABLE ADVERTISES, applied for real.
+//
+// This is the check that makes `vocabulary` an answer rather than a claim: the
+// verb hands a client a closed set per property, and every member of every set
+// is set on a live node here and read back unchanged. A spelling in the table
+// that the parser does not know would otherwise be a documented value that
+// fails only when someone tries it.
+#[test]
+fn every_spelling_the_vocabulary_advertises_round_trips() {
+    fresh();
+    var body: core::Builder = core::Builder::new();
+    body.add(ui::label("a", key: "sp:lbl"));
+    var root: core::Node = ui::column(body, key: "sp:root");
+    app::open_window(#addr_of(root));
+    let box: insp::Handle = handle_for(#addr_of(root), "sp:root");
+    let lbl: insp::Handle = handle_for(#addr_of(root), "sp:lbl");
+
+    let t: vec::Vec[voc::Descriptor] = voc::table();
+    var checked: usize = 0;
+    var i: usize = 0;
+    while i < t.count() {
+        match t.at_ptr(i) {
+            option::Option[*voc::Descriptor]::Some(dp) => {
+                if { (*dp).ty } == "enum" {
+                    // font_weight is a control property; everything else in the
+                    // set is on the shared band.
+                    let h: insp::Handle = if voc::covers({ (*dp).applies }, "label") && ({ (*dp).applies } != "*") { lbl } else { box };
+                    let words: vec::Vec[str] = { (*dp).values }.split(" ");
+                    assert words.count() > 1;
+                    var w: usize = 0;
+                    while w < words.count() {
+                        match words.at(w) {
+                            option::Option[str]::Some(word) => {
+                                let r: insp::Outcome =
+                                    tree::set(h, { (*dp).name }, insp::Value::Enum(text::from_str(word)));
+                                if r != insp::Outcome::Ok {
+                                    io::println({ (*dp).name });
+                                    io::println(word);
+                                    io::println("  ^ advertised spelling the dispatch refuses");
+                                }
+                                assert r == insp::Outcome::Ok;
+                                if !enum_is(h, { (*dp).name }, word) {
+                                    io::println({ (*dp).name });
+                                    io::println(word);
+                                    io::println("  ^ set, but reads back as something else");
+                                }
+                                assert enum_is(h, { (*dp).name }, word);
+                                checked = checked +% 1;
+                            }
+                            option::Option[str]::None => { }
+                        }
+                        w = w +% 1;
+                    }
+                }
+            }
+            option::Option[*voc::Descriptor]::None => { }
+        }
+        i = i +% 1;
+    }
+    // Ten enum properties' worth of spellings, so a table that quietly stopped
+    // listing values fails here rather than passing on an empty loop.
+    assert checked > 50;
+}
+
+// A length is three things and the wire carries all three.
+#[test]
+fn a_length_is_points_a_percent_or_auto() {
+    fresh();
+    var root: core::Node = ui::column(core::Builder::new(), key: "ln:root");
+    app::open_window(#addr_of(root));
+    let h: insp::Handle = handle_for(#addr_of(root), "ln:root");
+
+    assert tree::set(h, "width", insp::Value::Num(120.0)) == insp::Outcome::Ok;
+    assert num_prop(h, "width") == 120.0;
+
+    // A PERCENT READS BACK AS A PERCENT. Answering the bare 50 would be read as
+    // 50 points, so a client that read a value and wrote it back would shrink
+    // the element — the exact failure the string exists to prevent.
+    assert tree::set(h, "width", insp::Value::Str(text::from_str("50%"))) == insp::Outcome::Ok;
+    assert str_prop(h, "width") == "50%";
+    assert tree::set(h, "padding", insp::Value::Str(text::from_str("2.5%"))) == insp::Outcome::Ok;
+    assert str_prop(h, "padding_left") == "2.5%";
+
+    assert tree::set(h, "width", insp::Value::Str(text::from_str("auto"))) == insp::Outcome::Ok;
+    assert str_prop(h, "width") == "auto";
+
+    // A number in a string is points, because a client that sends "12" means 12.
+    assert tree::set(h, "height", insp::Value::Str(text::from_str("12"))) == insp::Outcome::Ok;
+    assert num_prop(h, "height") == 12.0;
+
+    // Nonsense is refused rather than parsed to zero.
+    assert tree::set(h, "height", insp::Value::Str(text::from_str("soon")))
+        == insp::Outcome::TypeMismatch;
+    assert num_prop(h, "height") == 12.0;
+
+    // Insets take the same three, and min/max now do too — they were points
+    // only, which made a percent minimum unwritable.
+    assert tree::set(h, "min_width", insp::Value::Str(text::from_str("25%"))) == insp::Outcome::Ok;
+    assert str_prop(h, "min_width") == "25%";
+    assert tree::set(h, "top", insp::Value::Str(text::from_str("10%"))) == insp::Outcome::Ok;
+    assert str_prop(h, "top") == "10%";
+}
+
+// A shadow has no `Value` tag, so it is five names.
+#[test]
+fn the_drop_shadow_is_five_scalars() {
+    fresh();
+    var root: core::Node = ui::column(core::Builder::new(), key: "sh:root");
+    app::open_window(#addr_of(root));
+    let h: insp::Handle = handle_for(#addr_of(root), "sh:root");
+
+    let grey: vocab::Color = vocab::Color::rgba(0.2, 0.2, 0.2, 1.0);
+    assert tree::set(h, "shadow_color", insp::Value::Color(grey)) == insp::Outcome::Ok;
+    assert tree::set(h, "shadow_opacity", insp::Value::Num(0.35)) == insp::Outcome::Ok;
+    assert tree::set(h, "shadow_radius", insp::Value::Num(8.0)) == insp::Outcome::Ok;
+    assert tree::set(h, "shadow_offset_x", insp::Value::Num(0.0)) == insp::Outcome::Ok;
+    assert tree::set(h, "shadow_offset_y", insp::Value::Num(2.0)) == insp::Outcome::Ok;
+
+    // Each write reads the whole shadow, replaces one field and puts it back,
+    // so the check that matters is that the LAST write did not clear the first.
+    assert num_prop(h, "shadow_opacity") == 0.35;
+    assert num_prop(h, "shadow_radius") == 8.0;
+    assert num_prop(h, "shadow_offset_y") == 2.0;
+    assert match tree::get(h, "shadow_color") {
+        option::Option[insp::Value]::Some(insp::Value::Color(c)) => c.r == 0.2,
+        _ => false,
+    };
+    assert tree::set(h, "shadow_radius", insp::Value::Bool(true)) == insp::Outcome::TypeMismatch;
+}
+
 #[test]
 fn every_advertised_property_is_settable_and_readable() {
     // SEVERAL KINDS, because a property can be legitimately unknown on the
     // wrong one — a column has no `title`. The invariant is that every
     // advertised name is implemented SOMEWHERE, not everywhere.
-    var col: core::Node = ui::column(core::Builder::new(), key: "p:col");
-    var lbl: core::Node = ui::label("x", key: "p:lbl");
-    var btn: core::Node = ui::button("x", key: "p:btn");
-    var fld: core::Node = ui::text_field("x", key: "p:fld");
+    //
+    // MOUNTED, in a real window. A control property is written through the
+    // typed cursor, which resolves the node by key from the window root; an
+    // unmounted node answers `Unsupported` to every one of them, and this test
+    // would then pass on nothing but the spelling in the gate.
+    fresh();
+    var body: core::Builder = core::Builder::new();
+    body.add(ui::label("x", key: "p:lbl"));
+    body.add(ui::button("x", key: "p:btn"));
+    body.add(ui::text_field("x", key: "p:fld"));
+    var col: core::Node = ui::column(body, key: "p:col");
+    app::open_window(#addr_of(col));
+
     var hs: vec::Vec[insp::Handle] = vec::new::[insp::Handle]();
     let _h1: status::Status = hs.append(insp::Handle::of(#addr_of(col), 0));
-    let _h2: status::Status = hs.append(insp::Handle::of(#addr_of(lbl), 0));
-    let _h3: status::Status = hs.append(insp::Handle::of(#addr_of(btn), 0));
-    let _h4: status::Status = hs.append(insp::Handle::of(#addr_of(fld), 0));
+    let _h2: status::Status = hs.append(handle_for(#addr_of(col), "p:lbl"));
+    let _h3: status::Status = hs.append(handle_for(#addr_of(col), "p:btn"));
+    let _h4: status::Status = hs.append(handle_for(#addr_of(col), "p:fld"));
 
     let names: vec::Vec[str] = tree::declared_names();
     assert names.count() > 30;
@@ -2811,4 +3145,258 @@ fn a_node_can_be_taken_out_of_flow_and_placed() {
         option::Option[insp::Value]::Some(insp::Value::Bool(b)) => { assert b == false; }
         _ => { assert false; }
     }
+}
+
+// ==============================================================================
+// the wire, part two: what a property IS
+// ==============================================================================
+
+// `vocabulary` used to answer two arrays of bare names under a tool description
+// promising "which properties exist and what types they take". A name is not a
+// type, and the gap was a set of round trips that failed only when tried.
+#[test]
+fn vocabulary_says_what_a_property_is_not_only_that_it_exists() {
+    wire_ready();
+    let r: text::Text = rpc("{\"method\":\"vocabulary\",\"id\":1}");
+
+    // A type and a unit on the numbers.
+    assert r.contains("\"name\":\"top\"");
+    assert r.contains("\"type\":\"length\"");
+    assert r.contains("\"unit\":\"points\"");
+    // The closed set, spelled out, for the properties that have one.
+    assert r.contains("\"name\":\"align_items\"");
+    assert r.contains("\"values\":[");
+    assert r.contains("\"space_between\"");
+    assert r.contains("\"name\":\"font_weight\"");
+    assert r.contains("\"semibold\"");
+    // Which kinds carry it — `["*"]` for the shared band, named kinds otherwise.
+    assert r.contains("\"applies_to\":[\"*\"]");
+    assert r.contains("\"applies_to\":[\"button\"]");
+    // And a line saying what it does, which is the part a client cannot guess.
+    assert r.contains("\"doc\":");
+    assert r.contains("takes no space");
+    // Still answers what this build can MAKE, which it always did.
+    assert r.contains("\"elements\":[");
+}
+
+// A client holding a button should be able to ask what a button takes.
+#[test]
+fn vocabulary_narrows_to_one_kind_of_element() {
+    wire_ready();
+    let r: text::Text = rpc(
+        "{\"method\":\"vocabulary\",\"params\":{\"element\":\"button\"},\"id\":1}");
+    assert r.contains("\"name\":\"title\"");
+    assert r.contains("\"name\":\"border_width\"");
+    // The shared band applies to everything, so it is still there.
+    assert r.contains("\"name\":\"opacity\"");
+    // But a label's own text property is not a button's.
+    assert !r.contains("\"name\":\"text\"");
+
+    let l: text::Text = rpc(
+        "{\"method\":\"vocabulary\",\"params\":{\"element\":\"label\"},\"id\":2}");
+    assert l.contains("\"name\":\"text\"");
+    assert l.contains("\"name\":\"font_size\"");
+    assert !l.contains("\"name\":\"title\"");
+    assert !l.contains("\"name\":\"border_width\"");
+}
+
+// The three shapes of a length, over the wire, where the client is JSON and
+// cannot send a tagged value.
+#[test]
+fn a_length_crosses_the_wire_as_points_a_percent_or_auto() {
+    wire_ready();
+    var body: core::Builder = core::Builder::new();
+    body.add(ui::label("hello", key: "greeting"));
+    var root: core::Node = ui::column(body, key: "root");
+    app::open_window(#addr_of(root));
+    let _d: text::Text = rpc("{\"method\":\"describe_tree\",\"id\":1}");
+
+    let a: text::Text = rpc(
+        "{\"method\":\"set\",\"params\":{\"node\":0,\"property\":\"width\",\"value\":320},\"id\":2}");
+    assert a.contains("\"outcome\":\"ok\"");
+    let probe: text::Text = rpc("{\"method\":\"inspect\",\"params\":{\"node\":0},\"id\":3}");
+    assert probe.contains("\"value\":320");
+
+    // A PERCENT ONTO A PROPERTY THAT CURRENTLY HOLDS POINTS. This is the case
+    // the old rule could not do: a string was parsed against the tag the
+    // property already had, and `50%` is not a number.
+    let b: text::Text = rpc(
+        "{\"method\":\"set\",\"params\":{\"node\":0,\"property\":\"width\",\"value\":\"50%\"},\"id\":4}");
+    assert b.contains("\"outcome\":\"ok\"");
+    assert rpc("{\"method\":\"inspect\",\"params\":{\"node\":0},\"id\":5}")
+        .contains("\"value\":\"50%\"");
+
+    // null UNSETS — the only way back to a width that sizes itself.
+    let c: text::Text = rpc(
+        "{\"method\":\"set\",\"params\":{\"node\":0,\"property\":\"width\",\"value\":null},\"id\":6}");
+    assert c.contains("\"outcome\":\"ok\"");
+
+    // And a word that is not a length is still refused.
+    let d: text::Text = rpc(
+        "{\"method\":\"set\",\"params\":{\"node\":0,\"property\":\"width\",\"value\":\"soonish\"},\"id\":7}");
+    assert d.contains("\"outcome\":\"type_mismatch\"");
+}
+
+// The one word that fixes most layouts, sent as a plain JSON string.
+#[test]
+fn an_enum_crosses_the_wire_as_its_spelling() {
+    wire_ready();
+    var body: core::Builder = core::Builder::new();
+    body.add(ui::label("hello", key: "greeting"));
+    var root: core::Node = ui::column(body, key: "root");
+    app::open_window(#addr_of(root));
+    let _d: text::Text = rpc("{\"method\":\"describe_tree\",\"id\":1}");
+
+    let a: text::Text = rpc(
+        "{\"method\":\"set\",\"params\":{\"node\":0,\"property\":\"justify_content\",\"value\":\"center\"},\"id\":2}");
+    assert a.contains("\"outcome\":\"ok\"");
+    assert rpc("{\"method\":\"inspect\",\"params\":{\"node\":0},\"id\":3}")
+        .contains("\"value\":\"center\"");
+
+    let b: text::Text = rpc(
+        "{\"method\":\"set\",\"params\":{\"node\":0,\"property\":\"justify_content\",\"value\":\"centre\"},\"id\":4}");
+    assert b.contains("\"outcome\":\"type_mismatch\"");
+}
+
+// THE THREE LISTS, checked. `verb_names` is what the bridge routes to this
+// namespace, `describe_tools` is what a model is shown, and `handle` is what
+// actually answers. The comment above `verb_names` says three lists have to
+// match and that one more than is comfortable; this is the check that makes a
+// mismatch a failing test instead of a verb a model can see and not call, or
+// call and not see.
+#[test]
+fn every_verb_is_listed_declared_and_dispatched() {
+    wire_ready();
+    let names: vec::Vec[str] = mcp::verb_names();
+    let tools: vec::Vec[json::Value] = mcp::describe_tools();
+    assert names.count() == tools.count();
+
+    var i: usize = 0;
+    while i < names.count() {
+        match names.at(i) {
+            option::Option[str]::Some(nm) => {
+                // Declared to the model.
+                var declared: bool = false;
+                var j: usize = 0;
+                while j < tools.count() {
+                    match tools.at_ptr(j) {
+                        option::Option[*json::Value]::Some(t) => {
+                            let got: text::Text = { (*t) }.field_str("name", "");
+                            if got.view() == nm { declared = true; }
+                        }
+                        option::Option::None => { }
+                    }
+                    j = j +% 1;
+                }
+                if !declared {
+                    io::println(nm);
+                    io::println("  ^ routed to this namespace, never shown to a model");
+                }
+                assert declared;
+
+                // And dispatched. Params are deliberately absent, so a routed
+                // verb answers "missing parameter" and only an unrouted one
+                // answers "method not found".
+                var line: text::Text = text::from_str("{\"method\":\"");
+                let _a: status::Status = line.append(nm);
+                let _b: status::Status = line.append("\",\"id\":1}");
+                let r: text::Text = rpc(line.view());
+                if r.contains("method not found") {
+                    io::println(nm);
+                    io::println("  ^ listed and declared, but handle() does not answer it");
+                }
+                assert !r.contains("method not found");
+            }
+            option::Option[str]::None => { }
+        }
+        i = i +% 1;
+    }
+}
+
+// The arrow-key drag: move it by two and see where it landed.
+#[test]
+fn nudge_moves_a_property_by_a_delta() {
+    wire_ready();
+    var body: core::Builder = core::Builder::new();
+    body.add(ui::label("hello", key: "greeting"));
+    var root: core::Node = ui::column(body, key: "root");
+    app::open_window(#addr_of(root));
+    let _d: text::Text = rpc("{\"method\":\"describe_tree\",\"id\":1}");
+
+    let _s: text::Text = rpc(
+        "{\"method\":\"set\",\"params\":{\"node\":0,\"property\":\"top\",\"value\":10},\"id\":2}");
+    let a: text::Text = rpc(
+        "{\"method\":\"nudge\",\"params\":{\"node\":0,\"property\":\"top\",\"by\":5},\"id\":3}");
+    // The value it landed on comes back, so a client dragging does not have to
+    // read after every step.
+    assert a.contains("\"value\":15");
+
+    // Negative moves the other way, and an UNSET length starts from zero — the
+    // first drag of an element that was never positioned.
+    let b: text::Text = rpc(
+        "{\"method\":\"nudge\",\"params\":{\"node\":0,\"property\":\"left\",\"by\":-4},\"id\":4}");
+    assert b.contains("\"value\":-4");
+
+    // A percent nudges IN PERCENT. Moving a 50% width "by 2" and getting 52
+    // points would be the unit quietly changing under the client.
+    let _p: text::Text = rpc(
+        "{\"method\":\"set\",\"params\":{\"node\":0,\"property\":\"width\",\"value\":\"50%\"},\"id\":5}");
+    let c: text::Text = rpc(
+        "{\"method\":\"nudge\",\"params\":{\"node\":0,\"property\":\"width\",\"by\":2},\"id\":6}");
+    assert c.contains("\"value\":\"52%\"");
+
+    // `auto` has no number to move, and inventing one would pin a box that was
+    // sizing itself.
+    let _u: text::Text = rpc(
+        "{\"method\":\"set\",\"params\":{\"node\":0,\"property\":\"height\",\"value\":\"auto\"},\"id\":7}");
+    let d: text::Text = rpc(
+        "{\"method\":\"nudge\",\"params\":{\"node\":0,\"property\":\"height\",\"by\":2},\"id\":8}");
+    assert d.contains("\"outcome\":\"type_mismatch\"");
+
+    // Neither has a boolean.
+    let e: text::Text = rpc(
+        "{\"method\":\"nudge\",\"params\":{\"node\":0,\"property\":\"visible\",\"by\":1},\"id\":9}");
+    assert e.contains("\"outcome\":\"type_mismatch\"");
+
+    // And a misspelling is still a misspelling.
+    let f: text::Text = rpc(
+        "{\"method\":\"nudge\",\"params\":{\"node\":0,\"property\":\"topp\",\"by\":1},\"id\":10}");
+    assert f.contains("\"outcome\":\"unknown_property\"");
+}
+
+// Placing an element is three properties, and three round trips is three
+// latencies a person feels.
+#[test]
+fn set_many_places_an_element_in_one_call() {
+    wire_ready();
+    var body: core::Builder = core::Builder::new();
+    body.add(ui::label("hello", key: "greeting"));
+    var root: core::Node = ui::column(body, key: "root");
+    app::open_window(#addr_of(root));
+    let _d: text::Text = rpc("{\"method\":\"describe_tree\",\"id\":1}");
+
+    let a: text::Text = rpc(
+        "{\"method\":\"set_many\",\"params\":{\"node\":1,\"properties\":{\"absolute\":true,\"top\":34,\"left\":12.5}},\"id\":2}");
+    assert a.contains("\"outcome\":\"ok\"");
+    assert a.contains("\"applied\":3");
+
+    let r: text::Text = rpc("{\"method\":\"inspect\",\"params\":{\"node\":1},\"id\":3}");
+    assert r.contains("\"value\":34");
+    assert r.contains("\"value\":12.5");
+
+    // IT DOES NOT STOP AT THE FIRST FAILURE. A client that misspelled one of
+    // five wants the four that were right applied and the one that was wrong
+    // named — not four silent no-ops behind one error.
+    let b: text::Text = rpc(
+        "{\"method\":\"set_many\",\"params\":{\"node\":1,\"properties\":{\"topp\":1,\"left\":20}},\"id\":4}");
+    assert b.contains("\"applied\":1");
+    assert b.contains("\"topp\":\"unknown_property\"");
+    assert b.contains("\"left\":\"ok\"");
+    assert b.contains("\"outcome\":\"unknown_property\"");
+
+    // A value shape nothing takes is named, not silently dropped.
+    let c: text::Text = rpc(
+        "{\"method\":\"set_many\",\"params\":{\"node\":1,\"properties\":{\"top\":[1,2]}},\"id\":5}");
+    assert c.contains("\"top\":\"type_mismatch\"");
+    assert c.contains("\"applied\":0");
 }

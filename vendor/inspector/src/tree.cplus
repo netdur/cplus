@@ -64,6 +64,7 @@ import "facet/text_area" as text_area;
 import "facet/checkbox" as checkbox;
 import "facet/toggle" as toggle;
 import "./inspector" as insp;
+import "./vocabulary" as voc;
 
 // ---- the override ledger -----------------------------------------------------
 
@@ -280,10 +281,64 @@ fn same_points(l: flex::StyleLength, x: f64) -> bool {
     };
 }
 
+fn plain_num(x: f64) -> text::Text {
+    // Whole numbers read as whole numbers. This is the value a person copies
+    // back into source, so `50%` beats `50.000000%`.
+    let r: f64 = x - (((x as i64) as f64));
+    if r == 0.0 { return { (x as i64) }.to_text(); }
+    return x.to_text();
+}
+
+// A length answers as the thing a developer would write.
+//
+// Points are a number. A percent and `auto` are STRINGS, because they are not
+// numbers and answering the bare scalar of a percent would be read back as
+// points — the nudge loop's worst failure, where reading a value and writing it
+// straight back moves the element. Unset is `Nothing`, which draws as an empty
+// field and means "the app never said".
 fn len_value(l: flex::StyleLength) -> insp::Value {
-    return match as_points(l) {
-        option::Option[f64]::Some(x) => insp::Value::Num(x),
-        option::Option::None => insp::Value::Nothing,
+    return match l.unit {
+        flex::Unit::Point => insp::Value::Num(l.value),
+        flex::Unit::Percent => {
+            var t: text::Text = plain_num(l.value);
+            let _a: status::Status = t.append("%");
+            insp::Value::Str(t)
+        }
+        flex::Unit::Auto => insp::Value::Str(text::from_str("auto")),
+        _ => insp::Value::Nothing,
+    };
+}
+
+// And the same three shapes on the way in. `Nothing` CLEARS — it is what a
+// reset of a property the app never set puts back, and without it the round
+// trip has a hole exactly where an unset length is.
+fn length_of(v: insp::Value) -> option::Option[flex::StyleLength] {
+    return match v {
+        insp::Value::Num(x) => option::Option[flex::StyleLength]::Some(flex::StyleLength::points(x)),
+        insp::Value::Int(i) => option::Option[flex::StyleLength]::Some(flex::StyleLength::points(i as f64)),
+        insp::Value::Nothing => option::Option[flex::StyleLength]::Some(flex::StyleLength::undefined()),
+        insp::Value::Str(t) => parse_length(t.view()),
+        _ => option::Option[flex::StyleLength]::None,
+    };
+}
+
+fn parse_length(spelled: str) -> option::Option[flex::StyleLength] {
+    let t: str = spelled.trim();
+    if t == "auto" { return option::Option[flex::StyleLength]::Some(flex::StyleLength::auto()); }
+    if t == "" { return option::Option[flex::StyleLength]::Some(flex::StyleLength::undefined()); }
+    if t.has_suffix("%") {
+        return match t.drop_last(1).trim().to_f64() {
+            option::Option[f64]::Some(x) =>
+                option::Option[flex::StyleLength]::Some(flex::StyleLength::percent(x)),
+            option::Option::None => option::Option[flex::StyleLength]::None,
+        };
+    }
+    // A bare number in a string is points — a client that sends "12" for a
+    // length means 12, and refusing it teaches nothing.
+    return match t.to_f64() {
+        option::Option[f64]::Some(x) =>
+            option::Option[flex::StyleLength]::Some(flex::StyleLength::points(x)),
+        option::Option::None => option::Option[flex::StyleLength]::None,
     };
 }
 
@@ -358,6 +413,34 @@ fn get_uniform(n: *core::Node, prop: str) -> option::Option[insp::Value] {
         if ar != ar { return option::Option[insp::Value]::Some(insp::Value::Nothing); }
         return num(ar);
     }
+    // ---- how the children sit ----
+    //
+    // Carried as SPELLINGS. These are the properties a person actually reaches
+    // for when a row is not centred, and they were unreachable — the surface
+    // could move a node to an absolute position but could not say `center`.
+    if prop == "flex_direction" { return named(voc::flex_direction_name({ (*n).style.flex_direction })); }
+    if prop == "justify_content" { return named(voc::justify_name({ (*n).style.justify_content })); }
+    if prop == "align_items" { return named(voc::align_name({ (*n).style.align_items })); }
+    if prop == "align_self" { return named(voc::align_name({ (*n).style.align_self })); }
+    if prop == "align_content" { return named(voc::align_name({ (*n).style.align_content })); }
+    if prop == "flex_wrap" { return named(voc::wrap_name({ (*n).style.flex_wrap })); }
+    if prop == "overflow" { return named(voc::overflow_name({ (*n).style.overflow })); }
+    if prop == "display" { return named(voc::display_name({ (*n).style.display })); }
+    if prop == "box_sizing" { return named(voc::box_sizing_name({ (*n).style.box_sizing })); }
+
+    // ---- the drop shadow, one scalar at a time ----
+    //
+    // `Value` has no tag for a struct, and inventing one for the single
+    // property that needs it would be a second encoding for every client to
+    // learn. A shadow is five numbers and a colour; five names cost nothing and
+    // each one is editable on its own, which is what a nudge loop wants anyway.
+    if prop == "shadow_color" { let sh: vocab::Shadow = core::shadow(n); return colour(sh.color); }
+    if prop == "shadow_opacity" { let sh: vocab::Shadow = core::shadow(n); return num(sh.opacity); }
+    if prop == "shadow_radius" { let sh: vocab::Shadow = core::shadow(n); return num(sh.radius); }
+    if prop == "shadow_offset_x" { let sh: vocab::Shadow = core::shadow(n); return num(sh.offset.x); }
+    if prop == "shadow_offset_y" { let sh: vocab::Shadow = core::shadow(n); return num(sh.offset.y); }
+
+    if prop == "flex_basis" { return option::Option[insp::Value]::Some(len_value({ (*n).style.flex_basis })); }
     if prop == "width" { return option::Option[insp::Value]::Some(len_value({ (*n).style.width })); }
     if prop == "height" { return option::Option[insp::Value]::Some(len_value({ (*n).style.height })); }
     if prop == "grow" { return num({ (*n).style.flex_grow }); }
@@ -423,6 +506,61 @@ fn get_control(n: *core::Node, prop: str, window: usize) -> option::Option[insp:
     if !keyed_resolves_here(n, window) { return option::Option[insp::Value]::None; }
     let root: *core::Node = app::window_root(window);
     let kind: u32 = core::kind_of(n);
+
+    if is_type_face(prop) {
+        if kind == props::K_LABEL {
+            return match label::find(k, within: root) {
+                option::Option[label::Label]::Some(l) => {
+                    if prop == "font_size" { return num(l.font_size()); }
+                    if prop == "font_weight" { return named(voc::font_weight_name(l.font_weight())); }
+                    return colour(l.text_color());
+                }
+                option::Option::None => option::Option[insp::Value]::None,
+            };
+        }
+        if kind == props::K_BUTTON {
+            return match button::find(k, within: root) {
+                option::Option[button::Button]::Some(b) => {
+                    if prop == "font_size" { return num(b.font_size()); }
+                    if prop == "font_weight" { return named(voc::font_weight_name(b.font_weight())); }
+                    return colour(b.text_color());
+                }
+                option::Option::None => option::Option[insp::Value]::None,
+            };
+        }
+        if kind == props::K_TEXT_FIELD {
+            return match text_field::find(k, within: root) {
+                option::Option[text_field::TextField]::Some(t) => {
+                    if prop == "font_size" { return num(t.font_size()); }
+                    if prop == "font_weight" { return named(voc::font_weight_name(t.font_weight())); }
+                    return colour(t.text_color());
+                }
+                option::Option::None => option::Option[insp::Value]::None,
+            };
+        }
+        if kind == props::K_TEXT_AREA {
+            return match text_area::find(k, within: root) {
+                option::Option[text_area::TextArea]::Some(t) => {
+                    if prop == "font_size" { return num(t.font_size()); }
+                    if prop == "font_weight" { return named(voc::font_weight_name(t.font_weight())); }
+                    return colour(t.text_color());
+                }
+                option::Option::None => option::Option[insp::Value]::None,
+            };
+        }
+        return option::Option[insp::Value]::None;
+    }
+
+    if is_button_border(prop) {
+        if kind != props::K_BUTTON { return option::Option[insp::Value]::None; }
+        return match button::find(k, within: root) {
+            option::Option[button::Button]::Some(b) => {
+                if prop == "border_width" { return num(b.border_width()); }
+                return colour(b.border_color());
+            }
+            option::Option::None => option::Option[insp::Value]::None,
+        };
+    }
 
     if prop == "text" {
         if kind == props::K_LABEL {
@@ -571,6 +709,21 @@ fn parse_as(current: insp::Value, typed: str) -> option::Option[insp::Value] {
 // what it holds. `None` when the node does not answer that property at all,
 // which the caller reports as `UnknownProperty` rather than guessing a tag.
 fn parse_for(h: insp::Handle, prop: str, typed: str) -> option::Option[insp::Value] {
+    // A LENGTH IS NOT ITS CURRENT TAG.
+    //
+    // Everything else parses against what the property holds, which is the rule
+    // that makes `#2277ff` a colour on a colour property. A length breaks it:
+    // one holding 120 points reads as a Num, and parsing `50%` against a Num
+    // fails — so a percent was writable only onto a property that already held
+    // a percent, which is nearly none of them. A length knows its own three
+    // shapes, so it parses as a length wherever it stands.
+    if is_length_prop(prop) {
+        return match parse_length(typed) {
+            option::Option[flex::StyleLength]::Some(l) =>
+                option::Option[insp::Value]::Some(len_value(l)),
+            option::Option::None => option::Option[insp::Value]::None,
+        };
+    }
     return match get(h, prop) {
         option::Option[insp::Value]::Some(cur) => parse_as(cur, typed),
         option::Option::None => option::Option[insp::Value]::None,
@@ -600,8 +753,12 @@ fn bool_of(v: insp::Value) -> option::Option[bool] {
     };
 }
 
-fn set_len(n: *core::Node, which: str, x: f64) {
-    let l: flex::StyleLength = flex::StyleLength::points(x);
+// EVERY length goes through here. Before this there were three write paths —
+// `core::set_top` and friends took an f64, `set_len` took an f64, and the
+// min/max pair took a third — and all three could only say points. A property
+// whose read can answer `50%` and whose write cannot accept it is a round trip
+// that silently converts, so they are one path that speaks the whole unit.
+fn set_len(n: *core::Node, which: str, l: flex::StyleLength) {
     if which == "width" { { (*n).set_width(l) }; }
     if which == "height" { { (*n).set_height(l) }; }
     if which == "padding" { { (*n).set_padding(flex::Edge::All, l) }; }
@@ -617,6 +774,15 @@ fn set_len(n: *core::Node, which: str, x: f64) {
     if which == "gap" { { (*n).set_gap(flex::Gutter::All, l) }; }
     if which == "gap_row" { { (*n).set_gap(flex::Gutter::Row, l) }; }
     if which == "gap_column" { { (*n).set_gap(flex::Gutter::Column, l) }; }
+    if which == "top" { { (*n).set_position(flex::Edge::Top, l) }; }
+    if which == "left" { { (*n).set_position(flex::Edge::Left, l) }; }
+    if which == "right" { { (*n).set_position(flex::Edge::Right, l) }; }
+    if which == "bottom" { { (*n).set_position(flex::Edge::Bottom, l) }; }
+    if which == "min_width" { { (*n).set_min_width(l) }; }
+    if which == "max_width" { { (*n).set_max_width(l) }; }
+    if which == "min_height" { { (*n).set_min_height(l) }; }
+    if which == "max_height" { { (*n).set_max_height(l) }; }
+    if which == "flex_basis" { { (*n).set_flex_basis(l) }; }
     // One bit for every one of them: layout is re-run, props are not re-read.
     core::touch(n, props::C_LAYOUT);
 }
@@ -637,6 +803,15 @@ fn is_length_prop(prop: str) -> bool {
     if prop == "gap" { return true; }
     if prop == "gap_row" { return true; }
     if prop == "gap_column" { return true; }
+    if prop == "top" { return true; }
+    if prop == "left" { return true; }
+    if prop == "right" { return true; }
+    if prop == "bottom" { return true; }
+    if prop == "min_width" { return true; }
+    if prop == "max_width" { return true; }
+    if prop == "min_height" { return true; }
+    if prop == "max_height" { return true; }
+    if prop == "flex_basis" { return true; }
     return false;
 }
 
@@ -714,6 +889,190 @@ fn canonical_prop(name: str) -> option::Option[str] {
     return option::Option[str]::None;
 }
 
+// An enum write is two steps kept apart on purpose: the SPELLING is pulled out
+// of the value where it lives (a `str` lifted out of a `Text` and returned
+// would be a view into bytes the caller still owns), and the already-decoded
+// variant is handed to the applier. So each of these takes an Option that has
+// already failed or not, and `None` is one answer in one place.
+fn set_align_to(n: *core::Node, prop: str, o: option::Option[flex::Align]) -> insp::Outcome {
+    return match o {
+        option::Option[flex::Align]::Some(a) => {
+            if prop == "align_items" { { (*n).set_align_items(a) }; }
+            if prop == "align_self" { { (*n).set_align_self(a) }; }
+            if prop == "align_content" { { (*n).set_align_content(a) }; }
+            core::touch(n, props::C_LAYOUT);
+            insp::Outcome::Ok
+        }
+        option::Option::None => insp::Outcome::TypeMismatch,
+    };
+}
+
+fn set_justify_to(n: *core::Node, o: option::Option[flex::Justify]) -> insp::Outcome {
+    return match o {
+        option::Option[flex::Justify]::Some(j) => {
+            { (*n).set_justify_content(j) };
+            core::touch(n, props::C_LAYOUT);
+            insp::Outcome::Ok
+        }
+        option::Option::None => insp::Outcome::TypeMismatch,
+    };
+}
+
+fn set_flex_direction_to(n: *core::Node, o: option::Option[flex::FlexDirection]) -> insp::Outcome {
+    return match o {
+        option::Option[flex::FlexDirection]::Some(d) => {
+            { (*n).set_flex_direction(d) };
+            core::touch(n, props::C_LAYOUT);
+            insp::Outcome::Ok
+        }
+        option::Option::None => insp::Outcome::TypeMismatch,
+    };
+}
+
+fn set_wrap_to(n: *core::Node, o: option::Option[flex::Wrap]) -> insp::Outcome {
+    return match o {
+        option::Option[flex::Wrap]::Some(w) => {
+            { (*n).set_flex_wrap(w) };
+            core::touch(n, props::C_LAYOUT);
+            insp::Outcome::Ok
+        }
+        option::Option::None => insp::Outcome::TypeMismatch,
+    };
+}
+
+fn set_overflow_to(n: *core::Node, o: option::Option[flex::Overflow]) -> insp::Outcome {
+    return match o {
+        option::Option[flex::Overflow]::Some(x) => {
+            { (*n).set_overflow(x) };
+            core::touch(n, props::C_LAYOUT);
+            insp::Outcome::Ok
+        }
+        option::Option::None => insp::Outcome::TypeMismatch,
+    };
+}
+
+fn set_display_to(n: *core::Node, o: option::Option[flex::Display]) -> insp::Outcome {
+    return match o {
+        option::Option[flex::Display]::Some(x) => {
+            { (*n).set_display(x) };
+            core::touch(n, props::C_LAYOUT);
+            insp::Outcome::Ok
+        }
+        option::Option::None => insp::Outcome::TypeMismatch,
+    };
+}
+
+fn set_box_sizing_to(n: *core::Node, o: option::Option[flex::BoxSizing]) -> insp::Outcome {
+    return match o {
+        option::Option[flex::BoxSizing]::Some(x) => {
+            { (*n).set_box_sizing(x) };
+            core::touch(n, props::C_LAYOUT);
+            insp::Outcome::Ok
+        }
+        option::Option::None => insp::Outcome::TypeMismatch,
+    };
+}
+
+fn apply_style_enum(n: *core::Node, prop: str, v: insp::Value) -> insp::Outcome {
+    if prop == "align_items" || prop == "align_self" || prop == "align_content" {
+        return match v {
+            insp::Value::Enum(e) => set_align_to(n, prop, voc::align_from(e.view())),
+            insp::Value::Str(t) => set_align_to(n, prop, voc::align_from(t.view())),
+            _ => insp::Outcome::TypeMismatch,
+        };
+    }
+    if prop == "justify_content" {
+        return match v {
+            insp::Value::Enum(e) => set_justify_to(n, voc::justify_from(e.view())),
+            insp::Value::Str(t) => set_justify_to(n, voc::justify_from(t.view())),
+            _ => insp::Outcome::TypeMismatch,
+        };
+    }
+    if prop == "flex_direction" {
+        return match v {
+            insp::Value::Enum(e) => set_flex_direction_to(n, voc::flex_direction_from(e.view())),
+            insp::Value::Str(t) => set_flex_direction_to(n, voc::flex_direction_from(t.view())),
+            _ => insp::Outcome::TypeMismatch,
+        };
+    }
+    if prop == "flex_wrap" {
+        return match v {
+            insp::Value::Enum(e) => set_wrap_to(n, voc::wrap_from(e.view())),
+            insp::Value::Str(t) => set_wrap_to(n, voc::wrap_from(t.view())),
+            _ => insp::Outcome::TypeMismatch,
+        };
+    }
+    if prop == "overflow" {
+        return match v {
+            insp::Value::Enum(e) => set_overflow_to(n, voc::overflow_from(e.view())),
+            insp::Value::Str(t) => set_overflow_to(n, voc::overflow_from(t.view())),
+            _ => insp::Outcome::TypeMismatch,
+        };
+    }
+    if prop == "display" {
+        return match v {
+            insp::Value::Enum(e) => set_display_to(n, voc::display_from(e.view())),
+            insp::Value::Str(t) => set_display_to(n, voc::display_from(t.view())),
+            _ => insp::Outcome::TypeMismatch,
+        };
+    }
+    if prop == "box_sizing" {
+        return match v {
+            insp::Value::Enum(e) => set_box_sizing_to(n, voc::box_sizing_from(e.view())),
+            insp::Value::Str(t) => set_box_sizing_to(n, voc::box_sizing_from(t.view())),
+            _ => insp::Outcome::TypeMismatch,
+        };
+    }
+    return insp::Outcome::UnknownProperty;
+}
+
+fn is_style_enum(prop: str) -> bool {
+    if prop == "flex_direction" { return true; }
+    if prop == "justify_content" { return true; }
+    if prop == "align_items" { return true; }
+    if prop == "align_self" { return true; }
+    if prop == "align_content" { return true; }
+    if prop == "flex_wrap" { return true; }
+    if prop == "overflow" { return true; }
+    if prop == "display" { return true; }
+    if prop == "box_sizing" { return true; }
+    return false;
+}
+
+// A shadow is read whole, one field replaced, and written back — there is one
+// setter and it takes the struct.
+fn apply_shadow(n: *core::Node, prop: str, v: insp::Value) -> insp::Outcome {
+    var sh: vocab::Shadow = core::shadow(n);
+    if prop == "shadow_color" {
+        match color_of(v) {
+            option::Option[vocab::Color]::Some(c) => { sh.color = c; }
+            option::Option::None => { return insp::Outcome::TypeMismatch; }
+        }
+        core::set_shadow(n, sh);
+        return insp::Outcome::Ok;
+    }
+    return match num_of(v) {
+        option::Option[f64]::Some(x) => {
+            if prop == "shadow_opacity" { sh.opacity = x; }
+            if prop == "shadow_radius" { sh.radius = x; }
+            if prop == "shadow_offset_x" { sh.offset.x = x; }
+            if prop == "shadow_offset_y" { sh.offset.y = x; }
+            core::set_shadow(n, sh);
+            insp::Outcome::Ok
+        }
+        option::Option::None => insp::Outcome::TypeMismatch,
+    };
+}
+
+fn is_shadow_prop(prop: str) -> bool {
+    if prop == "shadow_color" { return true; }
+    if prop == "shadow_opacity" { return true; }
+    if prop == "shadow_radius" { return true; }
+    if prop == "shadow_offset_x" { return true; }
+    if prop == "shadow_offset_y" { return true; }
+    return false;
+}
+
 fn apply_uniform(n: *core::Node, prop: str, v: insp::Value) -> insp::Outcome {
     // ---- position: the DOM move ----
     //
@@ -730,54 +1089,6 @@ fn apply_uniform(n: *core::Node, prop: str, v: insp::Value) -> insp::Outcome {
     if prop == "z_index" {
         return match num_of(v) {
             option::Option[f64]::Some(x) => { core::set_z_index(n, x as i64); insp::Outcome::Ok }
-            option::Option::None => insp::Outcome::TypeMismatch,
-        };
-    }
-    if prop == "top" {
-        return match num_of(v) {
-            option::Option[f64]::Some(x) => { core::set_top(n, x); insp::Outcome::Ok }
-            option::Option::None => insp::Outcome::TypeMismatch,
-        };
-    }
-    if prop == "left" {
-        return match num_of(v) {
-            option::Option[f64]::Some(x) => { core::set_left(n, x); insp::Outcome::Ok }
-            option::Option::None => insp::Outcome::TypeMismatch,
-        };
-    }
-    if prop == "right" {
-        return match num_of(v) {
-            option::Option[f64]::Some(x) => { core::set_right(n, x); insp::Outcome::Ok }
-            option::Option::None => insp::Outcome::TypeMismatch,
-        };
-    }
-    if prop == "bottom" {
-        return match num_of(v) {
-            option::Option[f64]::Some(x) => { core::set_bottom(n, x); insp::Outcome::Ok }
-            option::Option::None => insp::Outcome::TypeMismatch,
-        };
-    }
-    if prop == "min_width" {
-        return match num_of(v) {
-            option::Option[f64]::Some(x) => { core::set_min_width(n, x); insp::Outcome::Ok }
-            option::Option::None => insp::Outcome::TypeMismatch,
-        };
-    }
-    if prop == "max_width" {
-        return match num_of(v) {
-            option::Option[f64]::Some(x) => { core::set_max_width(n, x); insp::Outcome::Ok }
-            option::Option::None => insp::Outcome::TypeMismatch,
-        };
-    }
-    if prop == "min_height" {
-        return match num_of(v) {
-            option::Option[f64]::Some(x) => { core::set_min_height(n, x); insp::Outcome::Ok }
-            option::Option::None => insp::Outcome::TypeMismatch,
-        };
-    }
-    if prop == "max_height" {
-        return match num_of(v) {
-            option::Option[f64]::Some(x) => { core::set_max_height(n, x); insp::Outcome::Ok }
             option::Option::None => insp::Outcome::TypeMismatch,
         };
     }
@@ -806,6 +1117,15 @@ fn apply_uniform(n: *core::Node, prop: str, v: insp::Value) -> insp::Outcome {
         };
     }
     if prop == "aspect_ratio" {
+        // Unset is a value here too — `Nothing` puts back flex's undefined,
+        // which is what a reset of a ratio the app never set has to write.
+        match v {
+            insp::Value::Nothing => {
+                core::set_aspect_ratio(n, flex::undefined());
+                return insp::Outcome::Ok;
+            }
+            _ => { }
+        }
         return match num_of(v) {
             option::Option[f64]::Some(x) => { core::set_aspect_ratio(n, x); insp::Outcome::Ok }
             option::Option::None => insp::Outcome::TypeMismatch,
@@ -901,9 +1221,11 @@ fn apply_uniform(n: *core::Node, prop: str, v: insp::Value) -> insp::Outcome {
             option::Option::None => insp::Outcome::TypeMismatch,
         };
     }
+    if is_style_enum(prop) { return apply_style_enum(n, prop, v); }
+    if is_shadow_prop(prop) { return apply_shadow(n, prop, v); }
     if is_length_prop(prop) {
-        return match num_of(v) {
-            option::Option[f64]::Some(x) => { set_len(n, prop, x); insp::Outcome::Ok }
+        return match length_of(v) {
+            option::Option[flex::StyleLength]::Some(l) => { set_len(n, prop, l); insp::Outcome::Ok }
             option::Option::None => insp::Outcome::TypeMismatch,
         };
     }
@@ -913,13 +1235,184 @@ fn apply_uniform(n: *core::Node, prop: str, v: insp::Value) -> insp::Outcome {
 
 // Tier 3. `Unsupported` and not `UnknownProperty` when the node has no usable
 // key: the name was right, this build cannot reach it here.
+// ---- the type face -------------------------------------------------------------
+//
+// The spellings live in `vocabulary`, with every other closed set and with the
+// descriptor that advertises them. Here is only the decoding.
+
+fn named(v: str) -> option::Option[insp::Value] {
+    return option::Option[insp::Value]::Some(insp::Value::Enum(text::from_str(v)));
+}
+
+// A weight arrives as its spelling. `Str` is accepted alongside `Enum` because
+// a client that has not read `vocabulary` sends JSON, and JSON has one string.
+fn weight_of(v: insp::Value) -> option::Option[vocab::FontWeight] {
+    return match v {
+        insp::Value::Enum(e) => voc::font_weight_from(e.view()),
+        insp::Value::Str(s) => voc::font_weight_from(s.view()),
+        _ => option::Option[vocab::FontWeight]::None,
+    };
+}
+
+// Colour is scalars all the way down, so unlike text it survives being pulled
+// out of a `Value` and returned.
+fn color_of(v: insp::Value) -> option::Option[vocab::Color] {
+    return match v {
+        insp::Value::Color(c) => option::Option[vocab::Color]::Some(c),
+        _ => option::Option[vocab::Color]::None,
+    };
+}
+
+// The three every text-bearing control carries, and the two only a button does.
+fn is_type_face(prop: str) -> bool {
+    return (prop == "font_size") || (prop == "font_weight") || (prop == "text_color");
+}
+
+fn is_button_border(prop: str) -> bool {
+    return (prop == "border_color") || (prop == "border_width");
+}
+
 fn apply_control(n: *core::Node, prop: str, v: insp::Value, window: usize) -> insp::Outcome {
     let kind: u32 = core::kind_of(n);
-    let known: bool = (prop == "text") || (prop == "title") || (prop == "on");
+    let known: bool = (prop == "text") || (prop == "title") || (prop == "on")
+        || is_type_face(prop) || is_button_border(prop);
     if !known { return insp::Outcome::UnknownProperty; }
     if !keyed_resolves_here(n, window) { return insp::Outcome::Unsupported; }
     let k: str = { (*n).key() };
     let root: *core::Node = app::window_root(window);
+
+    // ---- the type face ----
+    //
+    // Decoded BEFORE the kind switch. A wrong type is wrong on a label and on a
+    // button alike, and checking it once is the difference between one answer
+    // and four copies of it that drift.
+    if is_type_face(prop) {
+        var size: f64 = 0.0f64;
+        var weight: vocab::FontWeight = vocab::FontWeight::Default;
+        var color: vocab::Color = vocab::Color::clear();
+        if prop == "font_size" {
+            match num_of(v) {
+                option::Option[f64]::Some(x) => { size = x; }
+                option::Option::None => { return insp::Outcome::TypeMismatch; }
+            }
+        }
+        if prop == "font_weight" {
+            match weight_of(v) {
+                option::Option[vocab::FontWeight]::Some(w) => { weight = w; }
+                option::Option::None => { return insp::Outcome::TypeMismatch; }
+            }
+        }
+        if prop == "text_color" {
+            match color_of(v) {
+                option::Option[vocab::Color]::Some(c) => { color = c; }
+                option::Option::None => { return insp::Outcome::TypeMismatch; }
+            }
+        }
+        if kind == props::K_LABEL {
+            match label::find(k, within: root) {
+                option::Option[label::Label]::Some(l) => {
+                    if prop == "font_size" {
+                        let _h: label::Label = l.set_font_size(size);
+                        return insp::Outcome::Ok;
+                    }
+                    if prop == "font_weight" {
+                        let _h: label::Label = l.set_font_weight(weight);
+                        return insp::Outcome::Ok;
+                    }
+                    let _h: label::Label = l.set_text_color(color);
+                    return insp::Outcome::Ok;
+                }
+                option::Option::None => { return insp::Outcome::NotFound; }
+            }
+        }
+        if kind == props::K_BUTTON {
+            match button::find(k, within: root) {
+                option::Option[button::Button]::Some(b) => {
+                    if prop == "font_size" {
+                        let _h: button::Button = b.set_font_size(size);
+                        return insp::Outcome::Ok;
+                    }
+                    if prop == "font_weight" {
+                        let _h: button::Button = b.set_font_weight(weight);
+                        return insp::Outcome::Ok;
+                    }
+                    let _h: button::Button = b.set_text_color(color);
+                    return insp::Outcome::Ok;
+                }
+                option::Option::None => { return insp::Outcome::NotFound; }
+            }
+        }
+        if kind == props::K_TEXT_FIELD {
+            match text_field::find(k, within: root) {
+                option::Option[text_field::TextField]::Some(t) => {
+                    if prop == "font_size" {
+                        let _h: text_field::TextField = t.set_font_size(size);
+                        return insp::Outcome::Ok;
+                    }
+                    if prop == "font_weight" {
+                        let _h: text_field::TextField = t.set_font_weight(weight);
+                        return insp::Outcome::Ok;
+                    }
+                    let _h: text_field::TextField = t.set_text_color(color);
+                    return insp::Outcome::Ok;
+                }
+                option::Option::None => { return insp::Outcome::NotFound; }
+            }
+        }
+        if kind == props::K_TEXT_AREA {
+            match text_area::find(k, within: root) {
+                option::Option[text_area::TextArea]::Some(t) => {
+                    if prop == "font_size" {
+                        let _h: text_area::TextArea = t.set_font_size(size);
+                        return insp::Outcome::Ok;
+                    }
+                    if prop == "font_weight" {
+                        let _h: text_area::TextArea = t.set_font_weight(weight);
+                        return insp::Outcome::Ok;
+                    }
+                    let _h: text_area::TextArea = t.set_text_color(color);
+                    return insp::Outcome::Ok;
+                }
+                option::Option::None => { return insp::Outcome::NotFound; }
+            }
+        }
+        return insp::Outcome::UnknownProperty;
+    }
+
+    // ---- the button's border ----
+    //
+    // Only a button carries one. A box draws its edge with `background_color`
+    // and `corner_radius` on the shared band, which is a different property and
+    // reached by a different door.
+    if is_button_border(prop) {
+        if kind != props::K_BUTTON { return insp::Outcome::UnknownProperty; }
+        if prop == "border_width" {
+            return match num_of(v) {
+                option::Option[f64]::Some(x) => {
+                    match button::find(k, within: root) {
+                        option::Option[button::Button]::Some(b) => {
+                            let _h: button::Button = b.set_border_width(x);
+                            return insp::Outcome::Ok;
+                        }
+                        option::Option::None => { return insp::Outcome::NotFound; }
+                    }
+                }
+                option::Option::None => insp::Outcome::TypeMismatch,
+            };
+        }
+        return match color_of(v) {
+            option::Option[vocab::Color]::Some(c) => {
+                match button::find(k, within: root) {
+                    option::Option[button::Button]::Some(b) => {
+                        let _h: button::Button = b.set_border_color(c);
+                        return insp::Outcome::Ok;
+                    }
+                    option::Option::None => { return insp::Outcome::NotFound; }
+                }
+            }
+            option::Option::None => insp::Outcome::TypeMismatch,
+        };
+    }
 
     if prop == "text" {
         return match v {
@@ -1058,47 +1551,30 @@ static NATIVE_FN: fn(*core::Node) -> vec::Vec[insp::Prop] =
 
 fn set_native_fn(f: fn(*core::Node) -> vec::Vec[insp::Prop]) { NATIVE_FN = f; return; }
 
-// The order is the order the UI draws, so it is grouped the way a developer
-// reads: what it is, then how big, then how it looks.
+// ONE LIST, and it is not this one.
+//
+// `vocabulary::table` is the list — name, type, unit, the kinds that carry it,
+// and a line saying what it does — and this reads the names off it. Before,
+// the names were written here and the types were written in a tool description
+// that promised them and never returned any, and the two disagreed about five
+// properties. A second hand-written list cannot drift from the first if there
+// is no second list.
+//
+// The order is the table's order, which is the order the UI draws: what it is,
+// then how big, then how it looks.
 fn declared_names() -> vec::Vec[str] {
     var v: vec::Vec[str] = vec::new::[str]();
-    let _n0: status::Status = v.append("absolute");
-    let _n1: status::Status = v.append("z_index");
-    let _n2: status::Status = v.append("top");
-    let _n3: status::Status = v.append("left");
-    let _n4: status::Status = v.append("right");
-    let _n5: status::Status = v.append("bottom");
-    let _n6: status::Status = v.append("min_width");
-    let _n7: status::Status = v.append("max_width");
-    let _n8: status::Status = v.append("min_height");
-    let _n9: status::Status = v.append("max_height");
-    let _n10: status::Status = v.append("aspect_ratio");
-    let _n11: status::Status = v.append("scale_x");
-    let _n12: status::Status = v.append("scale_y");
-    let _n13: status::Status = v.append("rotation_x");
-    let _n14: status::Status = v.append("rotation_y");
-    let _a: status::Status = v.append("text");
-    let _b: status::Status = v.append("title");
-    let _c: status::Status = v.append("on");
-    let _d: status::Status = v.append("visible");
-    let _e: status::Status = v.append("enabled");
-    let _f: status::Status = v.append("input_transparent");
-    let _g: status::Status = v.append("width");
-    let _h: status::Status = v.append("height");
-    let _i: status::Status = v.append("grow");
-    let _j: status::Status = v.append("shrink");
-    let _k: status::Status = v.append("padding");
-    let _l: status::Status = v.append("margin");
-    let _m: status::Status = v.append("gap");
-    let _n: status::Status = v.append("opacity");
-    let _o: status::Status = v.append("background_color");
-    let _p: status::Status = v.append("corner_radius");
-    let _q: status::Status = v.append("rotation");
-    let _r: status::Status = v.append("scale");
-    let _s: status::Status = v.append("translation_x");
-    let _t: status::Status = v.append("translation_y");
-    let _u: status::Status = v.append("tooltip");
-    let _w: status::Status = v.append("accessibility_label");
+    let t: vec::Vec[voc::Descriptor] = voc::table();
+    var i: usize = 0;
+    while i < t.count() {
+        match t.at_ptr(i) {
+            option::Option[*voc::Descriptor]::Some(p) => {
+                let _s: status::Status = v.append({ (*p).name });
+            }
+            option::Option::None => { }
+        }
+        i = i +% 1;
+    }
     return v;
 }
 

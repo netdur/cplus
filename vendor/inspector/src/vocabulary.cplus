@@ -1,0 +1,493 @@
+// inspector/vocabulary — what a property IS.
+//
+// Three things live here, and they live together because they are one fact
+// seen from three sides:
+//
+//   * the closed sets a style property can hold, as SPELLINGS. `align_items`
+//     is not a number a client should send; it is one of eleven words, and the
+//     word is the contract. A discriminant would break the first time the set
+//     gained a member in the middle.
+//   * the descriptor for every writable property — its type, its unit, the
+//     kinds that carry it, and one line saying what it does.
+//   * nothing else. `tree` decides what a write DOES; this module only says
+//     what a client is allowed to send and what the answer will mean.
+//
+// The descriptor table is what the `vocabulary` verb serves, and it is checked
+// against `tree::declared_names` BOTH WAYS by the suite. That check is the
+// point of the file: before it, the tool description promised "which properties
+// exist and what types they take" and the verb answered two arrays of bare
+// names, which is neither.
+
+import "stdlib/vec" as vec;
+import "stdlib/status" as status;
+import "stdlib/option" as option;
+import "stdlib/str" as _;
+import "flex_layout/flex_layout" as flex;
+import "facet/vocabulary" as fvocab;
+
+// ---- the closed sets ---------------------------------------------------------
+//
+// Every one of these is a pair — a spelling from a value and a value from a
+// spelling — and the pair has to round-trip. A name that parses to a variant
+// whose name is a different spelling is a property that silently changes when
+// you read it back, which in a nudge loop reads as the app fighting you.
+
+fn font_weight_names() -> vec::Vec[str] {
+    var v: vec::Vec[str] = vec::new::[str]();
+    let _a: status::Status = v.append("default");
+    let _b: status::Status = v.append("ultra_light");
+    let _c: status::Status = v.append("thin");
+    let _d: status::Status = v.append("light");
+    let _e: status::Status = v.append("regular");
+    let _f: status::Status = v.append("medium");
+    let _g: status::Status = v.append("semibold");
+    let _h: status::Status = v.append("bold");
+    let _i: status::Status = v.append("heavy");
+    let _j: status::Status = v.append("black");
+    return v;
+}
+
+fn font_weight_name(w: fvocab::FontWeight) -> str {
+    return match w {
+        fvocab::FontWeight::Default => "default",
+        fvocab::FontWeight::UltraLight => "ultra_light",
+        fvocab::FontWeight::Thin => "thin",
+        fvocab::FontWeight::Light => "light",
+        fvocab::FontWeight::Regular => "regular",
+        fvocab::FontWeight::Medium => "medium",
+        fvocab::FontWeight::Semibold => "semibold",
+        fvocab::FontWeight::Bold => "bold",
+        fvocab::FontWeight::Heavy => "heavy",
+        fvocab::FontWeight::Black => "black",
+    };
+}
+
+fn font_weight_from(name: str) -> option::Option[fvocab::FontWeight] {
+    if name == "default" { return option::Option[fvocab::FontWeight]::Some(fvocab::FontWeight::Default); }
+    if name == "ultra_light" { return option::Option[fvocab::FontWeight]::Some(fvocab::FontWeight::UltraLight); }
+    if name == "thin" { return option::Option[fvocab::FontWeight]::Some(fvocab::FontWeight::Thin); }
+    if name == "light" { return option::Option[fvocab::FontWeight]::Some(fvocab::FontWeight::Light); }
+    if name == "regular" { return option::Option[fvocab::FontWeight]::Some(fvocab::FontWeight::Regular); }
+    if name == "medium" { return option::Option[fvocab::FontWeight]::Some(fvocab::FontWeight::Medium); }
+    if name == "semibold" { return option::Option[fvocab::FontWeight]::Some(fvocab::FontWeight::Semibold); }
+    if name == "bold" { return option::Option[fvocab::FontWeight]::Some(fvocab::FontWeight::Bold); }
+    if name == "heavy" { return option::Option[fvocab::FontWeight]::Some(fvocab::FontWeight::Heavy); }
+    if name == "black" { return option::Option[fvocab::FontWeight]::Some(fvocab::FontWeight::Black); }
+    return option::Option[fvocab::FontWeight]::None;
+}
+
+fn flex_direction_names() -> vec::Vec[str] {
+    var v: vec::Vec[str] = vec::new::[str]();
+    let _a: status::Status = v.append("column");
+    let _b: status::Status = v.append("column_reverse");
+    let _c: status::Status = v.append("row");
+    let _d: status::Status = v.append("row_reverse");
+    return v;
+}
+
+fn flex_direction_name(d: flex::FlexDirection) -> str {
+    return match d {
+        flex::FlexDirection::Column => "column",
+        flex::FlexDirection::ColumnReverse => "column_reverse",
+        flex::FlexDirection::Row => "row",
+        flex::FlexDirection::RowReverse => "row_reverse",
+    };
+}
+
+fn flex_direction_from(name: str) -> option::Option[flex::FlexDirection] {
+    if name == "column" { return option::Option[flex::FlexDirection]::Some(flex::FlexDirection::Column); }
+    if name == "column_reverse" { return option::Option[flex::FlexDirection]::Some(flex::FlexDirection::ColumnReverse); }
+    if name == "row" { return option::Option[flex::FlexDirection]::Some(flex::FlexDirection::Row); }
+    if name == "row_reverse" { return option::Option[flex::FlexDirection]::Some(flex::FlexDirection::RowReverse); }
+    return option::Option[flex::FlexDirection]::None;
+}
+
+fn justify_names() -> vec::Vec[str] {
+    var v: vec::Vec[str] = vec::new::[str]();
+    let _a: status::Status = v.append("flex_start");
+    let _b: status::Status = v.append("center");
+    let _c: status::Status = v.append("flex_end");
+    let _d: status::Status = v.append("space_between");
+    let _e: status::Status = v.append("space_around");
+    let _f: status::Status = v.append("space_evenly");
+    let _g: status::Status = v.append("stretch");
+    let _h: status::Status = v.append("start");
+    let _i: status::Status = v.append("end");
+    return v;
+}
+
+fn justify_name(j: flex::Justify) -> str {
+    return match j {
+        flex::Justify::FlexStart => "flex_start",
+        flex::Justify::Center => "center",
+        flex::Justify::FlexEnd => "flex_end",
+        flex::Justify::SpaceBetween => "space_between",
+        flex::Justify::SpaceAround => "space_around",
+        flex::Justify::SpaceEvenly => "space_evenly",
+        flex::Justify::Stretch => "stretch",
+        flex::Justify::Start => "start",
+        flex::Justify::End => "end",
+    };
+}
+
+fn justify_from(name: str) -> option::Option[flex::Justify] {
+    if name == "flex_start" { return option::Option[flex::Justify]::Some(flex::Justify::FlexStart); }
+    if name == "center" { return option::Option[flex::Justify]::Some(flex::Justify::Center); }
+    if name == "flex_end" { return option::Option[flex::Justify]::Some(flex::Justify::FlexEnd); }
+    if name == "space_between" { return option::Option[flex::Justify]::Some(flex::Justify::SpaceBetween); }
+    if name == "space_around" { return option::Option[flex::Justify]::Some(flex::Justify::SpaceAround); }
+    if name == "space_evenly" { return option::Option[flex::Justify]::Some(flex::Justify::SpaceEvenly); }
+    if name == "stretch" { return option::Option[flex::Justify]::Some(flex::Justify::Stretch); }
+    if name == "start" { return option::Option[flex::Justify]::Some(flex::Justify::Start); }
+    if name == "end" { return option::Option[flex::Justify]::Some(flex::Justify::End); }
+    return option::Option[flex::Justify]::None;
+}
+
+fn align_names() -> vec::Vec[str] {
+    var v: vec::Vec[str] = vec::new::[str]();
+    let _a: status::Status = v.append("auto");
+    let _b: status::Status = v.append("flex_start");
+    let _c: status::Status = v.append("center");
+    let _d: status::Status = v.append("flex_end");
+    let _e: status::Status = v.append("stretch");
+    let _f: status::Status = v.append("baseline");
+    let _g: status::Status = v.append("space_between");
+    let _h: status::Status = v.append("space_around");
+    let _i: status::Status = v.append("space_evenly");
+    let _j: status::Status = v.append("start");
+    let _k: status::Status = v.append("end");
+    return v;
+}
+
+fn align_name(a: flex::Align) -> str {
+    return match a {
+        flex::Align::Auto => "auto",
+        flex::Align::FlexStart => "flex_start",
+        flex::Align::Center => "center",
+        flex::Align::FlexEnd => "flex_end",
+        flex::Align::Stretch => "stretch",
+        flex::Align::Baseline => "baseline",
+        flex::Align::SpaceBetween => "space_between",
+        flex::Align::SpaceAround => "space_around",
+        flex::Align::SpaceEvenly => "space_evenly",
+        flex::Align::Start => "start",
+        flex::Align::End => "end",
+    };
+}
+
+fn align_from(name: str) -> option::Option[flex::Align] {
+    if name == "auto" { return option::Option[flex::Align]::Some(flex::Align::Auto); }
+    if name == "flex_start" { return option::Option[flex::Align]::Some(flex::Align::FlexStart); }
+    if name == "center" { return option::Option[flex::Align]::Some(flex::Align::Center); }
+    if name == "flex_end" { return option::Option[flex::Align]::Some(flex::Align::FlexEnd); }
+    if name == "stretch" { return option::Option[flex::Align]::Some(flex::Align::Stretch); }
+    if name == "baseline" { return option::Option[flex::Align]::Some(flex::Align::Baseline); }
+    if name == "space_between" { return option::Option[flex::Align]::Some(flex::Align::SpaceBetween); }
+    if name == "space_around" { return option::Option[flex::Align]::Some(flex::Align::SpaceAround); }
+    if name == "space_evenly" { return option::Option[flex::Align]::Some(flex::Align::SpaceEvenly); }
+    if name == "start" { return option::Option[flex::Align]::Some(flex::Align::Start); }
+    if name == "end" { return option::Option[flex::Align]::Some(flex::Align::End); }
+    return option::Option[flex::Align]::None;
+}
+
+fn wrap_names() -> vec::Vec[str] {
+    var v: vec::Vec[str] = vec::new::[str]();
+    let _a: status::Status = v.append("no_wrap");
+    let _b: status::Status = v.append("wrap");
+    let _c: status::Status = v.append("wrap_reverse");
+    return v;
+}
+
+fn wrap_name(w: flex::Wrap) -> str {
+    return match w {
+        flex::Wrap::NoWrap => "no_wrap",
+        flex::Wrap::Wrap => "wrap",
+        flex::Wrap::WrapReverse => "wrap_reverse",
+    };
+}
+
+fn wrap_from(name: str) -> option::Option[flex::Wrap] {
+    if name == "no_wrap" { return option::Option[flex::Wrap]::Some(flex::Wrap::NoWrap); }
+    if name == "wrap" { return option::Option[flex::Wrap]::Some(flex::Wrap::Wrap); }
+    if name == "wrap_reverse" { return option::Option[flex::Wrap]::Some(flex::Wrap::WrapReverse); }
+    return option::Option[flex::Wrap]::None;
+}
+
+fn overflow_names() -> vec::Vec[str] {
+    var v: vec::Vec[str] = vec::new::[str]();
+    let _a: status::Status = v.append("visible");
+    let _b: status::Status = v.append("hidden");
+    let _c: status::Status = v.append("scroll");
+    return v;
+}
+
+fn overflow_name(o: flex::Overflow) -> str {
+    return match o {
+        flex::Overflow::Visible => "visible",
+        flex::Overflow::Hidden => "hidden",
+        flex::Overflow::Scroll => "scroll",
+    };
+}
+
+fn overflow_from(name: str) -> option::Option[flex::Overflow] {
+    if name == "visible" { return option::Option[flex::Overflow]::Some(flex::Overflow::Visible); }
+    if name == "hidden" { return option::Option[flex::Overflow]::Some(flex::Overflow::Hidden); }
+    if name == "scroll" { return option::Option[flex::Overflow]::Some(flex::Overflow::Scroll); }
+    return option::Option[flex::Overflow]::None;
+}
+
+fn display_names() -> vec::Vec[str] {
+    var v: vec::Vec[str] = vec::new::[str]();
+    let _a: status::Status = v.append("flex");
+    let _b: status::Status = v.append("none");
+    let _c: status::Status = v.append("grid");
+    return v;
+}
+
+fn display_name(d: flex::Display) -> str {
+    return match d {
+        flex::Display::Flex => "flex",
+        flex::Display::None => "none",
+        flex::Display::Grid => "grid",
+    };
+}
+
+fn display_from(name: str) -> option::Option[flex::Display] {
+    if name == "flex" { return option::Option[flex::Display]::Some(flex::Display::Flex); }
+    if name == "none" { return option::Option[flex::Display]::Some(flex::Display::None); }
+    if name == "grid" { return option::Option[flex::Display]::Some(flex::Display::Grid); }
+    return option::Option[flex::Display]::None;
+}
+
+fn box_sizing_names() -> vec::Vec[str] {
+    var v: vec::Vec[str] = vec::new::[str]();
+    let _a: status::Status = v.append("border_box");
+    let _b: status::Status = v.append("content_box");
+    return v;
+}
+
+fn box_sizing_name(b: flex::BoxSizing) -> str {
+    return match b {
+        flex::BoxSizing::BorderBox => "border_box",
+        flex::BoxSizing::ContentBox => "content_box",
+    };
+}
+
+fn box_sizing_from(name: str) -> option::Option[flex::BoxSizing] {
+    if name == "border_box" { return option::Option[flex::BoxSizing]::Some(flex::BoxSizing::BorderBox); }
+    if name == "content_box" { return option::Option[flex::BoxSizing]::Some(flex::BoxSizing::ContentBox); }
+    return option::Option[flex::BoxSizing]::None;
+}
+
+// ---- the descriptor table ----------------------------------------------------
+
+// One writable property, described well enough that a client never has to
+// guess. `applies` is `*` for the shared band or a space-separated list of the
+// kinds that carry it; `values` is the closed set for an `enum`, empty
+// otherwise.
+struct Descriptor {
+    name: str,
+    ty: str,
+    unit: str,
+    applies: str,
+    values: str,
+    doc: str,
+}
+
+fn d(name: str, ty: str, unit: str, applies: str, values: str, doc: str) -> Descriptor {
+    return Descriptor { name: name, ty: ty, unit: unit, applies: applies, values: values, doc: doc };
+}
+
+// A length is a number of points, or one of two words. Named once because five
+// property groups say it and a client reads it once.
+const LENGTH_DOC: str =
+    "A number is points. The strings \"auto\" and \"50%\" are also accepted, and a percent or auto reads back as that string.";
+
+fn table() -> vec::Vec[Descriptor] {
+    var v: vec::Vec[Descriptor] = vec::new::[Descriptor]();
+
+    // ---- taking a node out of flow, and placing it ----
+    let _p0: status::Status = v.append(d("absolute", "bool", "", "*", "",
+        "Take the node out of flow. Its siblings then lay out as if it were not there, and top/left/right/bottom place it against its parent's padding box."));
+    let _p1: status::Status = v.append(d("z_index", "number", "", "*", "",
+        "Paint order among overlapping siblings; higher is on top. Layout-neutral."));
+    let _p2: status::Status = v.append(d("top", "length", "points", "*", "", LENGTH_DOC));
+    let _p3: status::Status = v.append(d("left", "length", "points", "*", "", LENGTH_DOC));
+    let _p4: status::Status = v.append(d("right", "length", "points", "*", "", LENGTH_DOC));
+    let _p5: status::Status = v.append(d("bottom", "length", "points", "*", "", LENGTH_DOC));
+
+    // ---- how big ----
+    let _s0: status::Status = v.append(d("width", "length", "points", "*", "", LENGTH_DOC));
+    let _s1: status::Status = v.append(d("height", "length", "points", "*", "", LENGTH_DOC));
+    let _s2: status::Status = v.append(d("min_width", "length", "points", "*", "", LENGTH_DOC));
+    let _s3: status::Status = v.append(d("max_width", "length", "points", "*", "", LENGTH_DOC));
+    let _s4: status::Status = v.append(d("min_height", "length", "points", "*", "", LENGTH_DOC));
+    let _s5: status::Status = v.append(d("max_height", "length", "points", "*", "", LENGTH_DOC));
+    let _s6: status::Status = v.append(d("aspect_ratio", "number", "width/height", "*", "",
+        "Width divided by height. Unset reads as nothing rather than as a number."));
+    let _s7: status::Status = v.append(d("grow", "number", "factor", "*", "",
+        "Share of leftover space along the parent's main axis. 0 takes none."));
+    let _s8: status::Status = v.append(d("shrink", "number", "factor", "*", "",
+        "Share of the overflow given up when the line is too small. 0 refuses to shrink."));
+    let _s9: status::Status = v.append(d("flex_basis", "length", "points", "*", "",
+        "The size along the main axis before grow and shrink are applied."));
+
+    // ---- space around and inside ----
+    let _m0: status::Status = v.append(d("padding", "length", "points", "*", "",
+        "All four inner edges at once. Reads as nothing when the four disagree — set an edge by name to see it."));
+    let _m1: status::Status = v.append(d("padding_left", "length", "points", "*", "", LENGTH_DOC));
+    let _m2: status::Status = v.append(d("padding_top", "length", "points", "*", "", LENGTH_DOC));
+    let _m3: status::Status = v.append(d("padding_right", "length", "points", "*", "", LENGTH_DOC));
+    let _m4: status::Status = v.append(d("padding_bottom", "length", "points", "*", "", LENGTH_DOC));
+    let _m5: status::Status = v.append(d("margin", "length", "points", "*", "",
+        "All four outer edges at once. Reads as nothing when the four disagree."));
+    let _m6: status::Status = v.append(d("margin_left", "length", "points", "*", "", LENGTH_DOC));
+    let _m7: status::Status = v.append(d("margin_top", "length", "points", "*", "", LENGTH_DOC));
+    let _m8: status::Status = v.append(d("margin_right", "length", "points", "*", "", LENGTH_DOC));
+    let _m9: status::Status = v.append(d("margin_bottom", "length", "points", "*", "", LENGTH_DOC));
+    let _m10: status::Status = v.append(d("gap", "length", "points", "*", "",
+        "Space between children, both axes. Reads as nothing when the two axes disagree."));
+    let _m11: status::Status = v.append(d("gap_row", "length", "points", "*", "",
+        "Space between rows — between items when the direction is a column."));
+    let _m12: status::Status = v.append(d("gap_column", "length", "points", "*", "",
+        "Space between columns — between items when the direction is a row."));
+
+    // ---- how the children sit ----
+    let _f0: status::Status = v.append(d("flex_direction", "enum", "", "*",
+        "column column_reverse row row_reverse",
+        "The main axis children are laid along."));
+    let _f1: status::Status = v.append(d("justify_content", "enum", "", "*",
+        "flex_start center flex_end space_between space_around space_evenly stretch start end",
+        "How children are distributed along the main axis."));
+    let _f2: status::Status = v.append(d("align_items", "enum", "", "*",
+        "auto flex_start center flex_end stretch baseline space_between space_around space_evenly start end",
+        "How children are placed across the cross axis. The default, stretch, is why a child with no height fills its row."));
+    let _f3: status::Status = v.append(d("align_content", "enum", "", "*",
+        "auto flex_start center flex_end stretch baseline space_between space_around space_evenly start end",
+        "How WRAPPED LINES are distributed across the cross axis. No effect unless flex_wrap wraps."));
+    let _f4: status::Status = v.append(d("align_self", "enum", "", "*",
+        "auto flex_start center flex_end stretch baseline space_between space_around space_evenly start end",
+        "This node's own cross-axis placement, overriding the parent's align_items. auto defers to the parent."));
+    let _f5: status::Status = v.append(d("flex_wrap", "enum", "", "*",
+        "no_wrap wrap wrap_reverse",
+        "Whether children that do not fit start a new line."));
+    let _f6: status::Status = v.append(d("display", "enum", "", "*",
+        "flex none grid",
+        "none removes the node from layout entirely — it takes no space, unlike visible=false which reserves it."));
+    let _f7: status::Status = v.append(d("overflow", "enum", "", "*",
+        "visible hidden scroll",
+        "What happens to content past the edge."));
+    let _f8: status::Status = v.append(d("box_sizing", "enum", "", "*",
+        "border_box content_box",
+        "Whether width and height measure the border box or the content box."));
+
+    // ---- what it looks like ----
+    let _a0: status::Status = v.append(d("visible", "bool", "", "*", "",
+        "Hide the node while KEEPING its space. Use display=none to take the space back."));
+    let _a1: status::Status = v.append(d("enabled", "bool", "", "*", "",
+        "Whether the control responds to input and draws in its normal colours."));
+    let _a2: status::Status = v.append(d("input_transparent", "bool", "", "*", "",
+        "Let clicks pass through to whatever is behind."));
+    let _a3: status::Status = v.append(d("opacity", "number", "0..1", "*", "",
+        "1 is fully opaque. Applies to the node and everything under it."));
+    let _a4: status::Status = v.append(d("background_color", "color", "", "*", "",
+        "Fill behind the node's content. Send #rrggbb or #rrggbbaa."));
+    let _a5: status::Status = v.append(d("corner_radius", "number", "points", "*", "",
+        "All four corners. Reads the top-leading corner."));
+    let _a6: status::Status = v.append(d("shadow_color", "color", "", "*", "",
+        "The drop shadow's colour. Its opacity is separate — a colour alone draws nothing until shadow_opacity is above zero."));
+    let _a7: status::Status = v.append(d("shadow_opacity", "number", "0..1", "*", "",
+        "How strongly the drop shadow prints. 0 is no shadow."));
+    let _a8: status::Status = v.append(d("shadow_radius", "number", "points", "*", "",
+        "The drop shadow's blur."));
+    let _a9: status::Status = v.append(d("shadow_offset_x", "number", "points", "*", "",
+        "How far right the drop shadow falls."));
+    let _a10: status::Status = v.append(d("shadow_offset_y", "number", "points", "*", "",
+        "How far down the drop shadow falls."));
+
+    // ---- moved without being re-laid-out ----
+    let _t0: status::Status = v.append(d("rotation", "number", "degrees", "*", "",
+        "Rotate about the centre. Paint only — layout keeps the unrotated box."));
+    let _t1: status::Status = v.append(d("rotation_x", "number", "degrees", "*", "",
+        "Rotate about the horizontal axis."));
+    let _t2: status::Status = v.append(d("rotation_y", "number", "degrees", "*", "",
+        "Rotate about the vertical axis."));
+    let _t3: status::Status = v.append(d("scale", "number", "factor", "*", "",
+        "Scale both axes about the centre. 1 is unscaled. Paint only."));
+    let _t4: status::Status = v.append(d("scale_x", "number", "factor", "*", "",
+        "Scale horizontally about the centre."));
+    let _t5: status::Status = v.append(d("scale_y", "number", "factor", "*", "",
+        "Scale vertically about the centre."));
+    let _t6: status::Status = v.append(d("translation_x", "number", "points", "*", "",
+        "Shift right at paint time, without moving anything else."));
+    let _t7: status::Status = v.append(d("translation_y", "number", "points", "*", "",
+        "Shift down at paint time, without moving anything else."));
+
+    // ---- what it says ----
+    let _c0: status::Status = v.append(d("text", "string", "", "label text_field text_area", "",
+        "The words the control shows."));
+    let _c1: status::Status = v.append(d("title", "string", "", "button", "",
+        "The button's label."));
+    let _c2: status::Status = v.append(d("on", "bool", "", "checkbox toggle", "",
+        "Whether the control is switched on."));
+    let _c3: status::Status = v.append(d("font_size", "number", "points", "label button text_field text_area", "",
+        "Point size of the control's text."));
+    let _c4: status::Status = v.append(d("font_weight", "enum", "",
+        "label button text_field text_area",
+        "default ultra_light thin light regular medium semibold bold heavy black",
+        "Stroke weight of the control's text."));
+    let _c5: status::Status = v.append(d("text_color", "color", "", "label button text_field text_area", "",
+        "Colour of the control's text. Send #rrggbb or #rrggbbaa."));
+    let _c6: status::Status = v.append(d("border_color", "color", "", "button", "",
+        "Colour of the button's border. Draws nothing until border_width is above zero."));
+    let _c7: status::Status = v.append(d("border_width", "number", "points", "button", "",
+        "Thickness of the button's border."));
+
+    // ---- what it says to someone who cannot see it ----
+    let _x0: status::Status = v.append(d("tooltip", "string", "", "*", "",
+        "Hover text."));
+    let _x1: status::Status = v.append(d("accessibility_label", "string", "", "*", "",
+        "What a screen reader — or an agent reading the tree — is told this node is."));
+
+    return v;
+}
+
+// The descriptor for a name, or None. Linear: the table is fifty-odd entries
+// read once per `vocabulary` call, and a map would be a second thing to keep
+// in step with the table for no measurable gain.
+fn describe(name: str) -> option::Option[Descriptor] {
+    let t: vec::Vec[Descriptor] = table();
+    var i: usize = 0;
+    while i < t.count() {
+        match t.at_ptr(i) {
+            option::Option[*Descriptor]::Some(p) => {
+                if { (*p).name } == name {
+                    return option::Option[Descriptor]::Some(Descriptor {
+                        name: { (*p).name }, ty: { (*p).ty }, unit: { (*p).unit },
+                        applies: { (*p).applies }, values: { (*p).values }, doc: { (*p).doc },
+                    });
+                }
+            }
+            option::Option::None => { }
+        }
+        i = i +% 1;
+    }
+    return option::Option[Descriptor]::None;
+}
+
+// Does `applies` cover this kind? `*` covers every one, and an empty kind is
+// a caller who did not name one, which is not a reason to hide anything.
+fn covers(applies: str, kind_name: str) -> bool {
+    if applies == "*" { return true; }
+    if kind_name == "" { return true; }
+    let parts: vec::Vec[str] = applies.split(" ");
+    var i: usize = 0;
+    while i < parts.count() {
+        match parts.at(i) {
+            option::Option[str]::Some(w) => { if w == kind_name { return true; } }
+            option::Option::None => { }
+        }
+        i = i +% 1;
+    }
+    return false;
+}

@@ -61,6 +61,20 @@ supervised call-centre workstation and voice-only operation.
    splitting `serve_if_asked` took away.
 5. **Trailing `return;` is done**; the concise-literal pass is done except for
    the three packages blocked on (1).
+6. **Grid is not editable.** `grid_template_columns` and its neighbours are
+   track LISTS — `Vec[GridTrack]`, each a value and a unit — and `Value` has no
+   tag that carries one. Every other composite decomposed into scalars
+   (`shadow_*`, `corner_radius`); a track list does not, and inventing a
+   string encoding for the one property that needs it would be a second
+   grammar for every client to learn. Left out deliberately, not overlooked.
+7. **Three verbs were considered and rejected**, recorded so they are not
+   re-proposed. `press_key`: `backend.cplus` already rules it out in as many
+   words — "Enter-to-commit: a button beside the field" — and the no-hands
+   rule is an accessibility position, not a testing convenience. `set_value`:
+   not a gap, `set_text` already reaches sliders, steppers, popups and
+   switches AND fires their action. `focus`, `find`, `box`, `disable`: each is
+   an existing verb under another name (`set_caret`, `describe_ui` with
+   `prefix`, `inspect`'s computed frame, `set enabled=false`).
 
 ## Status
 
@@ -77,6 +91,8 @@ supervised call-centre workstation and voice-only operation.
 | 9 — duplicated envelopes | **DONE.** The eight byte-identical helpers in `inspector/mcp` are forwards to `agent_mcp`'s now — kept as local names rather than rewritten at 140 call sites, since the point is one definition of the frame and the descriptors stay readable. A test asserts the two namespaces emit the SAME envelope, and fails if a body is re-inlined |
 | 10 — extension slot | **DONE.** Folded into item 1: `arm_extension` is a table, `disarm_extension` takes a prefix |
 | 11 — doc defects | **DONE.** All five, plus a stale `serve.cplus` reference in `agent_mcp`'s header and the deny-all sentence in item 6 |
+| 12 — element editing | **DONE.** The surface advertised 22 properties against facet's 92 setters and could not change a font, a colour, an alignment or a percent. It now writes **65**: position and insets, min/max, per-axis scale and rotation, per-edge padding and margin, `flex_basis`, the nine flex enums, the five shadow scalars, and the control tier — `font_size`, `font_weight`, `text_color`, `border_color`, `border_width`. A length is points, `"50%"` or `"auto"` on BOTH sides, and `null` unsets. Two new verbs: `nudge` (move by a delta, in whatever unit the property holds; answers where it landed) and `set_many` (place an element in one round trip; applies what it can and names each outcome). Verified live on `playground/attachprobe` over the socket, including `reset` restoring `auto` and `default` |
+| 13 — `vocabulary` | **DONE.** It promised "which properties exist and what types they take" and answered two arrays of bare names. There is now ONE table — `inspector/vocabulary::table()` — carrying name, type, unit, the kinds that carry it, the closed set of spellings, and a line of prose; `declared_names()` READS FROM IT, so the two lists cannot drift. `vocabulary(element: "button")` narrows to the 65 a button takes. Four checks make it honest: every advertised name reaches the dispatch, every advertised SPELLING round-trips on a live node, `verb_names`/`describe_tools`/`handle` agree, and a label lists no `border_width` |
 
 Also done, out of the numbered list: **the bound socket is `0600`**. `bind_uds`
 chmodded nothing, so `bind` created it `0777 & ~umask` — measured `srwxr-xr-x`
