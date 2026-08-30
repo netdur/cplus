@@ -212,6 +212,36 @@ fn verb_to_str(v: events::Verb) -> str {
 // `prefix` filter the answer is a subset, and `parent` has to be renumbered
 // into it (see `describe_to_json`) or it would point at whatever node happens
 // to sit at that offset in a shorter array.
+// ---- how much text a listing carries -------------------------------------------
+//
+// A LISTING IS READ ON EVERY LOOP and a value is not. One populated text area
+// or a paragraph of body copy dominates the response, and the same argument
+// that makes `mode:"full"` opt-in applies one level down: the default protects
+// the context window, and the whole value is one verb away.
+//
+// The marker matters as much as the cut. A clipped string that does not say it
+// was clipped is a lie an agent acts on — it will happily conclude the field
+// ends mid-sentence.
+const DESCRIBE_TEXT_BUDGET: usize = 200;
+
+// Clip at a UTF-8 boundary, never mid-codepoint. `str::prefix` counts BYTES, so
+// cutting a multi-byte character in half is one call away — and the result is
+// invalid UTF-8 that a client's JSON parser is entitled to reject, taking the
+// whole response with it rather than the one string.
+fn clip_utf8(s: str, budget: usize) -> str {
+    if #str_len(s) <= budget { return s; }
+    let b: *u8 = #str_ptr(s);
+    var n: usize = budget;
+    // Byte `n` is the first EXCLUDED one. While it is a continuation byte
+    // (0b10xxxxxx) the character starting before it would be split, so back up.
+    while n > 0 {
+        let c: u8 = { *(b + n) };
+        if (c & 192) != 128 { break; }
+        n = n -% 1;
+    }
+    return s.prefix(n);
+}
+
 fn node_to_json(p: *backend::UiNode, with_geometry: bool, parent_index: i64) -> json::Value {
     let parent_val: json::Value = if parent_index < 0 {
         json::Value::Null
@@ -232,7 +262,16 @@ fn node_to_json(p: *backend::UiNode, with_geometry: bool, parent_index: i64) -> 
         m.append(member("frame", json::Value::Object(frame)));
     }
     m.append(member("hidden", jbool({ (*p).is_hidden })));
-    m.append(member("text", jstr({ (*p).text })));
+    // Clipped, with the full length beside it so a reader knows there is more
+    // and `read_text` knows it is worth asking. Absent `text_len` means what
+    // you see is all of it.
+    let full: str = { (*p).text };
+    let shown: str = clip_utf8(full, DESCRIBE_TEXT_BUDGET);
+    m.append(member("text", jstr(shown)));
+    if #str_len(shown) < #str_len(full) {
+        m.append(member("text_len", jnum(#str_len(full) as f64)));
+        m.append(member("text_truncated", jbool(true)));
+    }
     // ON THE WIRE ONLY WHEN GATED, and then both fields — the ones here that
     // exist to be READ BY A MODEL rather than by a test. `text: ""` on its own
     // says "this field is empty, go and fill it in". With `tier` and
@@ -606,7 +645,7 @@ fn core_tools() -> vec::Vec[json::Value] {
     p_describe.append(prop("prefix", "string",
         "Answer only with nodes whose id starts with this, e.g. \"board:detail:\". Absent means the whole view. Use it: a whole-tree answer runs to tens of thousands of characters, and the id path is a path, so the question you are asking almost always has a prefix."));
     out.append(tool("describe_ui",
-        "The live UI of THE APPLICATION SERVING THIS ENDPOINT, as a flat list of nodes: id, role, text, hidden, actionable, clickable, wired, parent. The three flags are different questions and you need all three: `actionable` is whether you are ALLOWED to act, `clickable` is whether a click would LAND, and `wired` is whether it would reach a handler — a control can pass the first two and still do nothing. `wired` absent means this backend cannot answer it, which is not the same as false. If that application launched another one, the launched app has its own endpoint and does NOT appear here. Read this FIRST — a node's id is its address for every other verb, and the id path is the schema. Pass \"prefix\" to ask about one part of it.",
+        "The live UI of THE APPLICATION SERVING THIS ENDPOINT, as a flat list of nodes: id, role, text, hidden, actionable, clickable, wired, parent. The three flags are different questions and you need all three: `actionable` is whether you are ALLOWED to act, `clickable` is whether a click would LAND, and `wired` is whether it would reach a handler — a control can pass the first two and still do nothing. `wired` absent means this backend cannot answer it, which is not the same as false. If that application launched another one, the launched app has its own endpoint and does NOT appear here. Read this FIRST — a node's id is its address for every other verb, and the id path is the schema. Pass \"prefix\" to ask about one part of it. Long text is CLIPPED here and marked `text_truncated` with the full `text_len`; `read_text` answers the whole value.",
         p_describe, no_required()));
 
     var p_click: vec::Vec[json::Member] = no_props();
@@ -635,6 +674,12 @@ fn core_tools() -> vec::Vec[json::Value] {
     out.append(tool("set_caret",
         "Place the caret, or select a range, inside a text control.",
         p_caret, required2("id", "at")));
+
+    var p_readtext: vec::Vec[json::Member] = no_props();
+    p_readtext.append(prop("id", "string", "Node id, from describe_ui."));
+    out.append(tool("read_text",
+        "The WHOLE text of one node. `describe_ui` clips a long value and marks it `text_truncated` with a `text_len` — this is how you get the rest. A node behind a tier you cannot read answers the same empty string it does there: asking twice is not a way past the gate.",
+        p_readtext, required1("id")));
 
     var p_runs: vec::Vec[json::Member] = no_props();
     p_runs.append(prop("id", "string", "The node id of a text control."));
@@ -1149,6 +1194,42 @@ fn dispatch_verb(
         return ok_response(id, outcome_result_for(o, { target.view() }));
     }
     // READ BACK WHAT IS DRAWN — one run per stretch of uniform attributes.
+    // THE WHOLE VALUE, when a listing clipped it.
+    //
+    // `describe_ui` carries a text budget, so a long value comes back cut with
+    // `text_truncated` set. This is the other half: one node, one string, no
+    // budget. It walks the tree the same way describe does — one extra walk on
+    // a verb you only reach when you already know there is more to read.
+    //
+    // Not `read_runs`, which answers styled RUNS: a caller that wants the words
+    // should not have to reassemble them, and a plain label has no runs to
+    // speak of.
+    if method == "read_text" {
+        if !params.has("id") { return missing_param(id, "read_text", "id"); }
+        let want: text::Text = val_as_text(obj_get(params, "id"));
+        let nodes: vec::Vec[backend::UiNode] = (vt.describe)(surf, grant);
+        var i: usize = 0;
+        while i < nodes.count() {
+            match nodes.at_ptr(i) {
+                option::Option[*backend::UiNode]::Some(n) => {
+                    let idp: *text::Text = { #addr_of((*n).id) };
+                    if { (*idp).view() } == { want.view() } {
+                        // The same gate the listing answers to: a node behind a
+                        // tier this grant cannot read reports "" there, and
+                        // must not become readable by asking a second time.
+                        var m: vec::Vec[json::Member] = vec::new::[json::Member]();
+                        m.append(member("id", jstr({ want.view() })));
+                        m.append(member("text", jstr({ (*n).text })));
+                        m.append(member("readable", jbool({ (*n).readable })));
+                        return ok_response(id, json::Value::Object(m));
+                    }
+                }
+                option::Option::None => { }
+            }
+            i = i +% 1;
+        }
+        return ok_response(id, outcome_result_for(surface::Outcome::NotFound, { want.view() }));
+    }
     if method == "read_runs" {
         if !params.has("id") { return missing_param(id, "read_runs", "id"); }
         let target: text::Text = val_as_text(obj_get(params, "id"));
@@ -2391,6 +2472,62 @@ fn the_sweep_takes_the_dead_and_spares_the_living() {
     assert fs::exists(mine.view());
 
     let _rm: result::Result[bool, result::IoError] = fs::remove_file(mine.view());
+}
+
+// ---- clipping a value --------------------------------------------------------------
+
+// NEVER MID-CODEPOINT. `str::prefix` counts bytes, so the obvious spelling
+// splits a multi-byte character in half and emits invalid UTF-8 — which a
+// client's JSON parser is entitled to reject, losing the WHOLE response over one
+// string. Only reachable with non-ASCII text, which is exactly the input a
+// developer testing in English never types.
+#[test]
+fn a_clipped_value_is_still_valid_utf8() {
+    // Four 3-byte characters: every budget from 1..12 must land on a boundary.
+    let s: str = "日本語で";
+    assert #str_len(s) == 12;
+    var budget: usize = 1;
+    while budget <= 12 {
+        let cut: str = clip_utf8(s, budget);
+        // A boundary is a byte that is not a continuation byte, and the clip
+        // never exceeds what was asked for.
+        assert #str_len(cut) <= budget;
+        assert #str_len(cut) % 3 == 0;
+        budget = budget +% 1;
+    }
+    // ASCII is untouched below the budget and cut exactly at it.
+    assert clip_utf8("hello", 200) == "hello";
+    assert #str_len(clip_utf8("hello", 3)) == 3;
+    // A budget past the end is the whole string, not a read past it.
+    assert clip_utf8("hi", 500) == "hi";
+    assert clip_utf8("", 10) == "";
+    return;
+}
+
+// The listing says WHEN it clipped. A cut string that does not announce itself
+// is a lie an agent acts on — it concludes the field ends mid-sentence.
+#[test]
+fn a_listing_marks_what_it_clipped_and_leaves_short_text_alone() {
+    var long_t: text::Text = text::new();
+    var i: i32 = 0;
+    while i < 60 {
+        let _a: status::Status = long_t.append("0123456789");
+        i = i +% 1;
+    }
+    var n: backend::UiNode = fake_node("big");
+    n.text = long_t;
+    let j: text::Text = node_to_json(#addr_of(n), false, - 1 as i64).to_text();
+    assert j.contains("\"text_truncated\":true");
+    assert j.contains("\"text_len\":600");
+
+    // Short text carries neither marker — their absence is the signal that what
+    // you see is all of it.
+    var m: backend::UiNode = fake_node("small");
+    m.text = text::from_str("hi");
+    let k: text::Text = node_to_json(#addr_of(m), false, - 1 as i64).to_text();
+    assert k.contains("text_truncated") == false;
+    assert k.contains("text_len") == false;
+    return;
 }
 
 // ---- the HTTP door ---------------------------------------------------------------
