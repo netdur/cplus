@@ -14149,18 +14149,70 @@ impl<'a> FnState<'a> {
         self.gen_store(&Ty::I32, &tag.to_string(), &tag_ptr);
         // Store each payload value at its byte offset (shared layout with
         // match extraction + enum-variant drop).
-        let ptys: Vec<Ty> = args.iter().map(|(_, t)| t.clone()).collect();
+        //
+        // THE DECLARED TYPES, not the argument ones. This side used to take
+        // both the offsets and the store widths from whatever the argument
+        // expressions happened to produce, while match extraction and
+        // enum-variant drop take theirs from `variant_payloads` — so the two
+        // halves read different tables and only agreed by luck.
+        //
+        // They did not agree for `V::Int(10)` where the payload is declared
+        // `i64`: sema accepts the literal at i64, codegen generated it as an
+        // i32 and emitted `store i32 10` into a 64-bit slot. The high word kept
+        // whatever the alloca held, `get(V::Int(10)) != get(V::Int(10 as i64))`,
+        // and both printed 10 when truncated — a silently wrong value that
+        // type-checks. In `stdlib` the same defect surfaced as invalid IR that
+        // clang rejected ("defined with type 'i32' but expected 'i64'"), which
+        // is the same bug where the store happens to be checkable.
+        // bugs/int-literal-in-an-i64-slot-is-stored-as-i32.md
+        let declared: Vec<Ty> = self.types.enum_defs[id.0 as usize]
+            .variant_payloads
+            .get(tag as usize)
+            .cloned()
+            .unwrap_or_default();
+        let ptys: Vec<Ty> = if declared.len() == args.len() {
+            declared
+        } else {
+            args.iter().map(|(_, t)| t.clone()).collect()
+        };
         for (i, (val, ty)) in args.iter().enumerate() {
+            let want = ptys.get(i).cloned().unwrap_or_else(|| ty.clone());
             let slot_ptr = self.payload_slot_ptr(&llvm_enum, &slot, &ptys, i);
+            let (v, st) = self.widen_int_for_slot(val, ty, &want);
             // v0.0.7 Slice 1.2: payload store — primitive payload types
             // pick up their TBAA leaf via gen_store; aggregate payloads
             // (struct/enum/string/etc.) fall through untagged.
-            self.gen_store(ty, val, &slot_ptr);
+            self.gen_store(&st, &v, &slot_ptr);
         }
         // Load the aggregate value (whole enum — gen_load skips TBAA on aggregates).
         let v = self.next_tmp();
         self.gen_load(&v, &enum_ty, &slot);
         (v, enum_ty)
+    }
+
+    /// Widen an integer value to the type of the slot it is about to be stored
+    /// into, so the store covers the whole slot.
+    ///
+    /// Only int-to-wider-int, and only when the two differ: everything else is
+    /// left exactly as it was, because sema has already rejected the
+    /// mismatches that are not this one. A constant operand (`sext i32 10 to
+    /// i64`) folds, so the concise form costs nothing the cast form did not.
+    fn widen_int_for_slot(&mut self, val: &str, from: &Ty, to: &Ty) -> (String, Ty) {
+        if from == to {
+            return (val.to_string(), to.clone());
+        }
+        if !(from.is_int() && to.is_int()) {
+            return (val.to_string(), from.clone());
+        }
+        if ty_bit_width(from) >= ty_bit_width(to) {
+            return (val.to_string(), from.clone());
+        }
+        let r = self.next_tmp();
+        let ext = if from.is_signed_int() { "sext" } else { "zext" };
+        let flty = self.lty(from);
+        let tlty = self.lty(to);
+        self.emit(&format!("{r} = {ext} {flty} {val} to {tlty}"));
+        (r, to.clone())
     }
 
     /// Materialize a tagged-enum value as a pointer (for match destructuring).
@@ -21360,6 +21412,98 @@ fn main() -> i32 {\n\
             agg_stores >= 4,
             "if-arm enum-ctor value dropped: expected >=4 aggregate enum stores \
              in @pick (both if-branches + merge + direct arm), got {agg_stores}.\n{pick}"
+        );
+    }
+
+    #[test]
+    fn a_narrow_literal_widens_to_its_declared_enum_payload() {
+        // A SILENTLY WRONG VALUE THAT TYPE-CHECKS. Sema accepts a bare `10`
+        // against an `i64` payload; codegen generated it as an i32 and emitted
+        // `store i32 10` into the 64-bit slot, so the high word kept whatever
+        // the alloca held and `V::Int(10) != V::Int(10 as i64)`. Both printed
+        // 10 through a truncating read, which is what hid it.
+        //
+        // Nobody wrote the concise form — the house style casts — so the bug
+        // was only reachable by writing what the type checker already accepts.
+        // bugs/int-literal-in-an-i64-slot-is-stored-as-i32.md
+        let ir = gen_src(
+            "enum V { Int(i64) }\n\
+             fn make() -> V { return V::Int(10); }\n\
+             fn main() -> i32 { return 0; }\n",
+        );
+        let make = ir
+            .split("@make")
+            .nth(1)
+            .expect("make defined")
+            .split("\n}")
+            .next()
+            .expect("make body");
+        assert!(
+            !make.contains("store i32 10"),
+            "narrow store into a 64-bit payload slot:\n{make}"
+        );
+        assert!(
+            make.contains("store i64"),
+            "payload not stored at its declared width:\n{make}"
+        );
+    }
+
+    #[test]
+    fn an_unsigned_literal_fills_its_whole_slot_too() {
+        // The unsigned twin. Only a LITERAL can reach this: sema refuses an
+        // implicit `u32` into a `u64` payload (E0302), so the widening path
+        // exists for the value the type checker lets through and for nothing
+        // else — which is exactly the shape the signed bug had.
+        let ir = gen_src(
+            "enum W { Big(u64) }\n\
+             fn make() -> W { return W::Big(10); }\n\
+             fn main() -> i32 { return 0; }\n",
+        );
+        let make = ir
+            .split("@make")
+            .nth(1)
+            .expect("make defined")
+            .split("\n}")
+            .next()
+            .expect("make body");
+        assert!(
+            !make.contains("store i32 10"),
+            "narrow store into a 64-bit unsigned payload slot:\n{make}"
+        );
+        assert!(
+            make.contains("store i64"),
+            "unsigned payload not stored at its declared width:\n{make}"
+        );
+    }
+
+    #[test]
+    fn construction_and_destructuring_agree_on_payload_offsets() {
+        // The two halves used to read DIFFERENT tables: construction took its
+        // offsets from whatever the argument expressions produced, extraction
+        // from `variant_payloads`. With a mixed-width variant and a concise
+        // literal, those disagree — the write lands at one offset and the read
+        // looks at another. Both sides take the declared types now.
+        let ir = gen_src(
+            "enum P { Two(i64, i64) }\n\
+             fn make() -> P { return P::Two(1, 2); }\n\
+             fn second(p: P) -> i64 { return match p { P::Two(_a, b) => b }; }\n\
+             fn main() -> i32 { return 0; }\n",
+        );
+        let make = ir
+            .split("@make")
+            .nth(1)
+            .expect("make defined")
+            .split("\n}")
+            .next()
+            .expect("make body");
+        assert!(
+            !make.contains("store i32 1") && !make.contains("store i32 2"),
+            "mixed-width payload stored narrow:\n{make}"
+        );
+        // The second payload sits 8 bytes in, on BOTH sides.
+        assert!(
+            make.contains("i64 8"),
+            "second payload not written at its declared offset:\n{make}"
         );
     }
 

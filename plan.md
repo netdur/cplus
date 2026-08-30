@@ -44,10 +44,14 @@ supervised call-centre workstation and voice-only operation.
 
 ### Still open
 
-1. **`bugs/int-literal-in-an-i64-slot-is-stored-as-i32.md`** — an integer
-   literal type-checks against `i64` and is emitted as `i32`. Silently wrong in
-   an enum payload, invalid IR elsewhere. `stdlib`, `facet` and `facet_runtime`
-   still carry their redundant literal casts because of it.
+1. ~~`bugs/int-literal-in-an-i64-slot-is-stored-as-i32.md`~~ **FIXED**, report
+   moved to `bugs/closed/`. Construction read the argument types where every
+   reader reads `variant_payloads`; it reads the declared table now and widens
+   to it. A second, unfiled bug fell out of the same change — a mixed-width
+   variant with concise literals wrote its second payload at the wrong OFFSET.
+   The redundant-cast cleanup in `stdlib`, `facet` and `facet_runtime` is
+   unblocked but has not been run: it is churn across three large packages and
+   the compiler bug was the part that mattered.
 2. **iris needs three changes**, none made (separate repo): it sets
    `FACET_INSPECT`, which nothing reads any more; `remote.cplus` speaks the
    line-delimited framing that only the desktop socket still serves; and
@@ -57,7 +61,7 @@ supervised call-centre workstation and voice-only operation.
 4. ~~Startup could report what is armed.~~ **DONE** — a scaffolded app now says
    `25 verbs (11 core, 14 armed)`. See the Status table.
 5. **Trailing `return;` is done**; the concise-literal pass is done except for
-   the three packages blocked on (1).
+   the three packages that were blocked on (1) and are now merely unrun.
 6. **Grid is not editable.** `grid_template_columns` and its neighbours are
    track LISTS — `Vec[GridTrack]`, each a value and a unit — and `Value` has no
    tag that carries one. Every other composite decomposed into scalars
