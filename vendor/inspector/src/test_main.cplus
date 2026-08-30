@@ -3119,7 +3119,8 @@ fn a_node_can_be_taken_out_of_flow_and_placed() {
     let h: insp::Handle = insp::Handle::of(#addr_of(n), 0);
     assert h.is_live();
 
-    assert tree::set(h, "absolute", insp::Value::Bool(true)) == insp::Outcome::Ok;
+    assert tree::set(h, "position", insp::Value::Enum(text::from_str("absolute")))
+        == insp::Outcome::Ok;
     assert tree::set(h, "top", insp::Value::Num(34.0)) == insp::Outcome::Ok;
     assert tree::set(h, "left", insp::Value::Num(12.5)) == insp::Outcome::Ok;
     assert tree::set(h, "z_index", insp::Value::Num(3.0)) == insp::Outcome::Ok;
@@ -3134,17 +3135,26 @@ fn a_node_can_be_taken_out_of_flow_and_placed() {
         option::Option[insp::Value]::Some(insp::Value::Num(x)) => { assert x == 12.5; }
         _ => { assert false; }
     }
-    match tree::get(h, "absolute") {
-        option::Option[insp::Value]::Some(insp::Value::Bool(b)) => { assert b; }
-        _ => { assert false; }
-    }
+    assert enum_is(h, "position", "absolute");
 
-    // And back out of flow: `reset` returns it to what the app built.
-    assert tree::reset(h, "absolute") == insp::Outcome::Ok;
-    match tree::get(h, "absolute") {
-        option::Option[insp::Value]::Some(insp::Value::Bool(b)) => { assert b == false; }
-        _ => { assert false; }
-    }
+    // THREE VALUES, and the third is the one a bool could never say.
+    // `relative` offsets the flowed frame by its insets; `static` ignores
+    // them entirely. The engine has always told them apart, and the
+    // checkbox reached two of the three.
+    assert tree::set(h, "position", insp::Value::Enum(text::from_str("static")))
+        == insp::Outcome::Ok;
+    assert enum_is(h, "position", "static");
+    assert tree::set(h, "position", insp::Value::Enum(text::from_str("relative")))
+        == insp::Outcome::Ok;
+    assert enum_is(h, "position", "relative");
+    // A word outside the set is refused rather than rounded to the first.
+    assert tree::set(h, "position", insp::Value::Enum(text::from_str("fixed")))
+        == insp::Outcome::TypeMismatch;
+    assert enum_is(h, "position", "relative");
+
+    // And back: `reset` returns it to what the app built.
+    assert tree::reset(h, "position") == insp::Outcome::Ok;
+    assert enum_is(h, "position", "relative");
 }
 
 // ==============================================================================
@@ -3376,7 +3386,7 @@ fn set_many_places_an_element_in_one_call() {
     let _d: text::Text = rpc("{\"method\":\"describe_tree\",\"id\":1}");
 
     let a: text::Text = rpc(
-        "{\"method\":\"set_many\",\"params\":{\"node\":1,\"properties\":{\"absolute\":true,\"top\":34,\"left\":12.5}},\"id\":2}");
+        "{\"method\":\"set_many\",\"params\":{\"node\":1,\"properties\":{\"position\":\"absolute\",\"top\":34,\"left\":12.5}},\"id\":2}");
     assert a.contains("\"outcome\":\"ok\"");
     assert a.contains("\"applied\":3");
 
@@ -3600,7 +3610,8 @@ fn the_clipboard_is_a_platform_seam_and_says_so_when_absent() {
 #[test]
 fn each_property_gets_the_control_its_type_asks_for() {
     assert widget::editor_for("visible") == widget::ED_BOOL;
-    assert widget::editor_for("absolute") == widget::ED_BOOL;
+    assert widget::editor_for("position") == widget::ED_ENUM;
+    assert widget::editor_for("direction") == widget::ED_ENUM;
     assert widget::editor_for("align_items") == widget::ED_ENUM;
     assert widget::editor_for("font_weight") == widget::ED_ENUM;
     // A RANGE is a number with both ends known — `0..1`. Everything else
@@ -3768,4 +3779,81 @@ fn a_half_written_number_is_refused_without_touching_the_text() {
     };
     // Nothing was written, so nothing has to be undone.
     assert tree::changes_text().view() == "{}\n";
+}
+
+// ---- the rest of the layout ---------------------------------------------------
+//
+// An audit against `flex::Style` found thirteen fields the surface never
+// offered, plus `position_type` collapsed into a bool. Every one of them is a
+// thing the engine acts on.
+
+#[test]
+fn the_logical_edges_and_the_layout_border_are_settable() {
+    fresh();
+    var root: core::Node = ui::column(core::Builder::new(), key: "root");
+    app::open_window(#addr_of(root));
+    let h: insp::Handle = handle_for(#addr_of(root), "root");
+
+    // FLEX'S BORDER IS A LAYOUT INSET, not a stroke — it reserves space the way
+    // padding does and draws nothing. The visible one is `border_width` on a
+    // button, which is why there is no bare `border` shorthand: two things one
+    // letter apart, and the shorthand is where they would be confused.
+    assert tree::set(h, "border_left", insp::Value::Num(4.0)) == insp::Outcome::Ok;
+    assert num_prop(h, "border_left") == 4.0;
+    assert tree::set(h, "border_top", insp::Value::Num(2.0)) == insp::Outcome::Ok;
+    assert num_prop(h, "border_top") == 2.0;
+
+    // The logical edges follow the writing direction, so a layout written in
+    // them mirrors under rtl and one written in left/right does not.
+    assert tree::set(h, "margin_start", insp::Value::Num(8.0)) == insp::Outcome::Ok;
+    assert num_prop(h, "margin_start") == 8.0;
+    assert tree::set(h, "padding_end", insp::Value::Num(6.0)) == insp::Outcome::Ok;
+    assert num_prop(h, "padding_end") == 6.0;
+    assert tree::set(h, "start", insp::Value::Num(3.0)) == insp::Outcome::Ok;
+    assert num_prop(h, "start") == 3.0;
+    // ...and they take the same three shapes every other length does.
+    assert tree::set(h, "margin_end", insp::Value::Str(text::from_str("25%")))
+        == insp::Outcome::Ok;
+    assert str_prop(h, "margin_end") == "25%";
+}
+
+#[test]
+fn the_writing_direction_is_settable() {
+    fresh();
+    var root: core::Node = ui::column(core::Builder::new(), key: "root");
+    app::open_window(#addr_of(root));
+    let h: insp::Handle = handle_for(#addr_of(root), "root");
+    // It decides which physical edge `start` and `end` mean, so an inspector
+    // that cannot set it cannot check an rtl layout at all.
+    assert enum_is(h, "direction", "inherit");
+    assert tree::set(h, "direction", insp::Value::Enum(text::from_str("rtl")))
+        == insp::Outcome::Ok;
+    assert enum_is(h, "direction", "rtl");
+    assert tree::set(h, "direction", insp::Value::Enum(text::from_str("sideways")))
+        == insp::Outcome::TypeMismatch;
+    assert enum_is(h, "direction", "rtl");
+}
+
+#[test]
+fn a_grid_items_placement_is_settable_and_auto_reads_as_nothing() {
+    fresh();
+    var root: core::Node = ui::column(core::Builder::new(), key: "root");
+    app::open_window(#addr_of(root));
+    let h: insp::Handle = handle_for(#addr_of(root), "root");
+
+    // A span defaults to one track.
+    assert num_prop(h, "grid_column_span") == 1.0;
+    assert tree::set(h, "grid_column_span", insp::Value::Num(3.0)) == insp::Outcome::Ok;
+    assert num_prop(h, "grid_column_span") == 3.0;
+    assert tree::set(h, "grid_row_span", insp::Value::Num(2.0)) == insp::Outcome::Ok;
+    assert num_prop(h, "grid_row_span") == 2.0;
+
+    // AN AUTO-PLACED ITEM HAS NO LINE, and says so rather than answering a
+    // number it does not have — the same rule an unset length follows.
+    assert match tree::get(h, "grid_column_start") {
+        option::Option[insp::Value]::Some(v) => v.is_nothing(),
+        option::Option::None => false,
+    };
+    assert tree::set(h, "grid_column_start", insp::Value::Num(2.0)) == insp::Outcome::Ok;
+    assert num_prop(h, "grid_column_start") == 2.0;
 }

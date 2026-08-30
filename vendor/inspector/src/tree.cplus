@@ -396,10 +396,14 @@ fn get_uniform(n: *core::Node, prop: str) -> option::Option[insp::Value] {
     // renders a StyleLength as the number a developer typed, so an unset inset
     // reads as nothing rather than as 0 — "not positioned" and "positioned at
     // zero" are different answers and a nudge loop needs to tell them apart.
-    if prop == "absolute" {
-        return option::Option[insp::Value]::Some(insp::Value::Bool(
-            match { (*n).style.position_type } { flex::PositionType::Absolute => true, _ => false }));
+    // THREE VALUES, NOT TWO. This was a bool, and a bool cannot say `static`:
+    // `relative` offsets the flowed frame by its insets, `static` ignores them
+    // entirely, and the engine has always distinguished them. The checkbox
+    // reached `absolute` and `relative` and left the third unreachable.
+    if prop == "position" {
+        return named(voc::position_name({ (*n).style.position_type }));
     }
+    if prop == "direction" { return named(voc::direction_name({ (*n).style.direction })); }
     if prop == "z_index" { return num({ (*n).style.z_index } as f64); }
     if prop == "top" { return option::Option[insp::Value]::Some(len_value({ (*n).style.position_top })); }
     if prop == "left" { return option::Option[insp::Value]::Some(len_value({ (*n).style.position_left })); }
@@ -467,6 +471,35 @@ fn get_uniform(n: *core::Node, prop: str) -> option::Option[insp::Value] {
         return option::Option[insp::Value]::Some(uniform(
             { (*n).style.margin_left }, { (*n).style.margin_top },
             { (*n).style.margin_right }, { (*n).style.margin_bottom }));
+    }
+    if prop == "border_left" { return option::Option[insp::Value]::Some(len_value({ (*n).style.border_left })); }
+    if prop == "border_top" { return option::Option[insp::Value]::Some(len_value({ (*n).style.border_top })); }
+    if prop == "border_right" { return option::Option[insp::Value]::Some(len_value({ (*n).style.border_right })); }
+    if prop == "border_bottom" { return option::Option[insp::Value]::Some(len_value({ (*n).style.border_bottom })); }
+    if prop == "margin_start" { return option::Option[insp::Value]::Some(len_value({ (*n).style.margin_start })); }
+    if prop == "margin_end" { return option::Option[insp::Value]::Some(len_value({ (*n).style.margin_end })); }
+    if prop == "padding_start" { return option::Option[insp::Value]::Some(len_value({ (*n).style.padding_start })); }
+    if prop == "padding_end" { return option::Option[insp::Value]::Some(len_value({ (*n).style.padding_end })); }
+    if prop == "border_start" { return option::Option[insp::Value]::Some(len_value({ (*n).style.border_start })); }
+    if prop == "border_end" { return option::Option[insp::Value]::Some(len_value({ (*n).style.border_end })); }
+    if prop == "start" { return option::Option[insp::Value]::Some(len_value({ (*n).style.position_start })); }
+    if prop == "end" { return option::Option[insp::Value]::Some(len_value({ (*n).style.position_end })); }
+    // Grid, the item side. A span defaults to 1; a start is optional, and an
+    // auto-placed item answers `Nothing` rather than a line number it does not
+    // have.
+    if prop == "grid_column_span" { return num({ (*n).grid_column_span() } as f64); }
+    if prop == "grid_row_span" { return num({ (*n).grid_row_span() } as f64); }
+    if prop == "grid_column_start" {
+        return match { (*n).grid_column_start() } {
+            option::Option[i32]::Some(x) => num(x as f64),
+            option::Option::None => option::Option[insp::Value]::Some(insp::Value::Nothing),
+        };
+    }
+    if prop == "grid_row_start" {
+        return match { (*n).grid_row_start() } {
+            option::Option[i32]::Some(x) => num(x as f64),
+            option::Option::None => option::Option[insp::Value]::Some(insp::Value::Nothing),
+        };
     }
     if prop == "gap_row" { return option::Option[insp::Value]::Some(len_value({ (*n).style.gap_row })); }
     if prop == "gap_column" { return option::Option[insp::Value]::Some(len_value({ (*n).style.gap_column })); }
@@ -788,6 +821,22 @@ fn set_len(n: *core::Node, which: str, l: flex::StyleLength) {
     if which == "min_height" { { (*n).set_min_height(l) }; }
     if which == "max_height" { { (*n).set_max_height(l) }; }
     if which == "flex_basis" { { (*n).set_flex_basis(l) }; }
+    // Flex's border is a layout inset — it reserves space the way padding does
+    // and draws nothing. The visible stroke is a control property
+    // (`border_width`), and they are deliberately not the same name.
+    if which == "border_left" { { (*n).set_border(flex::Edge::Left, l) }; }
+    if which == "border_top" { { (*n).set_border(flex::Edge::Top, l) }; }
+    if which == "border_right" { { (*n).set_border(flex::Edge::Right, l) }; }
+    if which == "border_bottom" { { (*n).set_border(flex::Edge::Bottom, l) }; }
+    // The logical edges follow the writing direction.
+    if which == "margin_start" { { (*n).set_margin(flex::Edge::Start, l) }; }
+    if which == "margin_end" { { (*n).set_margin(flex::Edge::End, l) }; }
+    if which == "padding_start" { { (*n).set_padding(flex::Edge::Start, l) }; }
+    if which == "padding_end" { { (*n).set_padding(flex::Edge::End, l) }; }
+    if which == "border_start" { { (*n).set_border(flex::Edge::Start, l) }; }
+    if which == "border_end" { { (*n).set_border(flex::Edge::End, l) }; }
+    if which == "start" { { (*n).set_position(flex::Edge::Start, l) }; }
+    if which == "end" { { (*n).set_position(flex::Edge::End, l) }; }
     // One bit for every one of them: layout is re-run, props are not re-read.
     core::touch(n, props::C_LAYOUT);
 }
@@ -817,6 +866,18 @@ fn is_length_prop(prop: str) -> bool {
     if prop == "min_height" { return true; }
     if prop == "max_height" { return true; }
     if prop == "flex_basis" { return true; }
+    if prop == "border_left" { return true; }
+    if prop == "border_top" { return true; }
+    if prop == "border_right" { return true; }
+    if prop == "border_bottom" { return true; }
+    if prop == "margin_start" { return true; }
+    if prop == "margin_end" { return true; }
+    if prop == "padding_start" { return true; }
+    if prop == "padding_end" { return true; }
+    if prop == "border_start" { return true; }
+    if prop == "border_end" { return true; }
+    if prop == "start" { return true; }
+    if prop == "end" { return true; }
     return false;
 }
 
@@ -967,6 +1028,28 @@ fn set_display_to(n: *core::Node, o: option::Option[flex::Display]) -> insp::Out
     };
 }
 
+fn set_position_to(n: *core::Node, o: option::Option[flex::PositionType]) -> insp::Outcome {
+    return match o {
+        option::Option[flex::PositionType]::Some(x) => {
+            { (*n).set_position_type(x) };
+            core::touch(n, props::C_LAYOUT);
+            insp::Outcome::Ok
+        }
+        option::Option::None => insp::Outcome::TypeMismatch,
+    };
+}
+
+fn set_direction_to(n: *core::Node, o: option::Option[flex::Direction]) -> insp::Outcome {
+    return match o {
+        option::Option[flex::Direction]::Some(x) => {
+            { (*n).set_direction(x) };
+            core::touch(n, props::C_LAYOUT);
+            insp::Outcome::Ok
+        }
+        option::Option::None => insp::Outcome::TypeMismatch,
+    };
+}
+
 fn set_box_sizing_to(n: *core::Node, o: option::Option[flex::BoxSizing]) -> insp::Outcome {
     return match o {
         option::Option[flex::BoxSizing]::Some(x) => {
@@ -1028,6 +1111,20 @@ fn apply_style_enum(n: *core::Node, prop: str, v: insp::Value) -> insp::Outcome 
             _ => insp::Outcome::TypeMismatch,
         };
     }
+    if prop == "position" {
+        return match v {
+            insp::Value::Enum(e) => set_position_to(n, voc::position_from(e.view())),
+            insp::Value::Str(t) => set_position_to(n, voc::position_from(t.view())),
+            _ => insp::Outcome::TypeMismatch,
+        };
+    }
+    if prop == "direction" {
+        return match v {
+            insp::Value::Enum(e) => set_direction_to(n, voc::direction_from(e.view())),
+            insp::Value::Str(t) => set_direction_to(n, voc::direction_from(t.view())),
+            _ => insp::Outcome::TypeMismatch,
+        };
+    }
     return insp::Outcome::UnknownProperty;
 }
 
@@ -1041,6 +1138,8 @@ fn is_style_enum(prop: str) -> bool {
     if prop == "overflow" { return true; }
     if prop == "display" { return true; }
     if prop == "box_sizing" { return true; }
+    if prop == "position" { return true; }
+    if prop == "direction" { return true; }
     return false;
 }
 
@@ -1085,12 +1184,6 @@ fn apply_uniform(n: *core::Node, prop: str, v: insp::Value) -> insp::Outcome {
     // place it. That pairing is the whole "nudge it until it sits right" loop,
     // and none of it was reachable before — `flex_layout` has had
     // `PositionType::Absolute` and computed insets all along.
-    if prop == "absolute" {
-        return match bool_of(v) {
-            option::Option[bool]::Some(b) => { core::set_absolute(n, b); insp::Outcome::Ok }
-            option::Option::None => insp::Outcome::TypeMismatch,
-        };
-    }
     if prop == "z_index" {
         return match num_of(v) {
             option::Option[f64]::Some(x) => { core::set_z_index(n, x as i64); insp::Outcome::Ok }
@@ -1223,6 +1316,48 @@ fn apply_uniform(n: *core::Node, prop: str, v: insp::Value) -> insp::Outcome {
     if prop == "shrink" {
         return match num_of(v) {
             option::Option[f64]::Some(x) => { core::set_shrink(n, x); insp::Outcome::Ok }
+            option::Option::None => insp::Outcome::TypeMismatch,
+        };
+    }
+    // Grid, the item side. A span is at least 1 — the engine clamps, and so
+    // does this, so the value that reads back is the value that was stored.
+    if prop == "grid_column_span" {
+        return match num_of(v) {
+            option::Option[f64]::Some(x) => {
+                { (*n).set_grid_column_span(x as i32) };
+                core::touch(n, props::C_LAYOUT);
+                insp::Outcome::Ok
+            }
+            option::Option::None => insp::Outcome::TypeMismatch,
+        };
+    }
+    if prop == "grid_row_span" {
+        return match num_of(v) {
+            option::Option[f64]::Some(x) => {
+                { (*n).set_grid_row_span(x as i32) };
+                core::touch(n, props::C_LAYOUT);
+                insp::Outcome::Ok
+            }
+            option::Option::None => insp::Outcome::TypeMismatch,
+        };
+    }
+    if prop == "grid_column_start" {
+        return match num_of(v) {
+            option::Option[f64]::Some(x) => {
+                { (*n).set_grid_column_start(x as i32) };
+                core::touch(n, props::C_LAYOUT);
+                insp::Outcome::Ok
+            }
+            option::Option::None => insp::Outcome::TypeMismatch,
+        };
+    }
+    if prop == "grid_row_start" {
+        return match num_of(v) {
+            option::Option[f64]::Some(x) => {
+                { (*n).set_grid_row_start(x as i32) };
+                core::touch(n, props::C_LAYOUT);
+                insp::Outcome::Ok
+            }
             option::Option::None => insp::Outcome::TypeMismatch,
         };
     }

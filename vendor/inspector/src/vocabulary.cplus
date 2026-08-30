@@ -76,6 +76,52 @@ fn font_weight_from(name: str) -> option::Option[fvocab::FontWeight] {
     return option::Option[fvocab::FontWeight]::None;
 }
 
+fn position_names() -> vec::Vec[str] {
+    var v: vec::Vec[str] = vec::new::[str]();
+    let _a: status::Status = v.append("static");
+    let _b: status::Status = v.append("relative");
+    let _c: status::Status = v.append("absolute");
+    return v;
+}
+
+fn position_name(p: flex::PositionType) -> str {
+    return match p {
+        flex::PositionType::Static => "static",
+        flex::PositionType::Relative => "relative",
+        flex::PositionType::Absolute => "absolute",
+    };
+}
+
+fn position_from(name: str) -> option::Option[flex::PositionType] {
+    if name == "static" { return option::Option[flex::PositionType]::Some(flex::PositionType::Static); }
+    if name == "relative" { return option::Option[flex::PositionType]::Some(flex::PositionType::Relative); }
+    if name == "absolute" { return option::Option[flex::PositionType]::Some(flex::PositionType::Absolute); }
+    return option::Option[flex::PositionType]::None;
+}
+
+fn direction_names() -> vec::Vec[str] {
+    var v: vec::Vec[str] = vec::new::[str]();
+    let _a: status::Status = v.append("inherit");
+    let _b: status::Status = v.append("ltr");
+    let _c: status::Status = v.append("rtl");
+    return v;
+}
+
+fn direction_name(d: flex::Direction) -> str {
+    return match d {
+        flex::Direction::Inherit => "inherit",
+        flex::Direction::LTR => "ltr",
+        flex::Direction::RTL => "rtl",
+    };
+}
+
+fn direction_from(name: str) -> option::Option[flex::Direction] {
+    if name == "inherit" { return option::Option[flex::Direction]::Some(flex::Direction::Inherit); }
+    if name == "ltr" { return option::Option[flex::Direction]::Some(flex::Direction::LTR); }
+    if name == "rtl" { return option::Option[flex::Direction]::Some(flex::Direction::RTL); }
+    return option::Option[flex::Direction]::None;
+}
+
 fn flex_direction_names() -> vec::Vec[str] {
     var v: vec::Vec[str] = vec::new::[str]();
     let _a: status::Status = v.append("column");
@@ -307,8 +353,12 @@ fn table() -> vec::Vec[Descriptor] {
     var v: vec::Vec[Descriptor] = vec::new::[Descriptor]();
 
     // ---- taking a node out of flow, and placing it ----
-    let _p0: status::Status = v.append(d("absolute", "bool", "", "*", "",
-        "Take the node out of flow. Its siblings then lay out as if it were not there, and top/left/right/bottom place it against its parent's padding box."));
+    let _p0: status::Status = v.append(d("position", "enum", "", "*",
+        "static relative absolute",
+        "How the node is placed. `absolute` takes it out of flow — siblings lay out as if it were not there — and top/left/right/bottom place it against the parent's padding box. `relative` keeps it in flow and OFFSETS the flowed frame by those insets, without moving its siblings. `static` is in flow and ignores the insets entirely."));
+    let _p0b: status::Status = v.append(d("direction", "enum", "", "*",
+        "inherit ltr rtl",
+        "Writing direction, which decides which physical edge `start` and `end` mean. `inherit` takes the parent's."));
     let _p1: status::Status = v.append(d("z_index", "number", "", "*", "",
         "Paint order among overlapping siblings; higher is on top. Layout-neutral."));
     let _p2: status::Status = v.append(d("top", "length", "points", "*", "", LENGTH_DOC));
@@ -345,6 +395,40 @@ fn table() -> vec::Vec[Descriptor] {
     let _m7: status::Status = v.append(d("margin_top", "length", "points", "*", "", LENGTH_DOC));
     let _m8: status::Status = v.append(d("margin_right", "length", "points", "*", "", LENGTH_DOC));
     let _m9: status::Status = v.append(d("margin_bottom", "length", "points", "*", "", LENGTH_DOC));
+    // FLEX'S BORDER IS A LAYOUT INSET, not a stroke: it reserves space inside
+    // the frame the way padding does and draws nothing. `border_width` on a
+    // button is the visible one, which is why there is no bare `border`
+    // shorthand here — two things one letter apart, and the shorthand is where
+    // they would be confused.
+    let _b0: status::Status = v.append(d("border_left", "length", "points", "*", "",
+        "Layout inset on the left edge — space reserved inside the frame, drawn by nobody. Not a stroke; see border_width."));
+    let _b1: status::Status = v.append(d("border_top", "length", "points", "*", "",
+        "Layout inset on the top edge. Reserves space; draws nothing."));
+    let _b2: status::Status = v.append(d("border_right", "length", "points", "*", "",
+        "Layout inset on the right edge. Reserves space; draws nothing."));
+    let _b3: status::Status = v.append(d("border_bottom", "length", "points", "*", "",
+        "Layout inset on the bottom edge. Reserves space; draws nothing."));
+
+    // THE LOGICAL EDGES. `start` and `end` follow the writing direction, so a
+    // layout written in them mirrors under `direction: rtl` and a layout
+    // written in left/right does not. A physical edge wins where both are set.
+    let _l0: status::Status = v.append(d("margin_start", "length", "points", "*", "",
+        "Outer space on the leading edge — left under ltr, right under rtl. A physical margin_left wins where both are set."));
+    let _l1: status::Status = v.append(d("margin_end", "length", "points", "*", "",
+        "Outer space on the trailing edge — right under ltr, left under rtl."));
+    let _l2: status::Status = v.append(d("padding_start", "length", "points", "*", "",
+        "Inner space on the leading edge."));
+    let _l3: status::Status = v.append(d("padding_end", "length", "points", "*", "",
+        "Inner space on the trailing edge."));
+    let _l4: status::Status = v.append(d("border_start", "length", "points", "*", "",
+        "Layout inset on the leading edge."));
+    let _l5: status::Status = v.append(d("border_end", "length", "points", "*", "",
+        "Layout inset on the trailing edge."));
+    let _l6: status::Status = v.append(d("start", "length", "points", "*", "",
+        "Inset from the leading edge, for a positioned node — the logical twin of `left`."));
+    let _l7: status::Status = v.append(d("end", "length", "points", "*", "",
+        "Inset from the trailing edge — the logical twin of `right`."));
+
     let _m10: status::Status = v.append(d("gap", "length", "points", "*", "",
         "Space between children, both axes. Reads as nothing when the two axes disagree."));
     let _m11: status::Status = v.append(d("gap_row", "length", "points", "*", "",
@@ -377,6 +461,24 @@ fn table() -> vec::Vec[Descriptor] {
     let _f7: status::Status = v.append(d("overflow", "enum", "", "*",
         "visible hidden scroll",
         "What happens to content past the edge."));
+    // GRID, the half that is numbers. The TRACK LISTS
+    // (`grid_template_columns` and friends) are `Vec[GridTrack]` — a value and
+    // a unit per track — and `Value` has no tag that carries one, so they stay
+    // out. These four are a grid ITEM's placement and are plain integers.
+    //
+    // `grid_dense` and the two subgrid flags are settable on the engine and
+    // have no getter, so an inspector could write them and never show them —
+    // which is worse than not offering them. They need a reader in
+    // `flex_layout` first.
+    let _g0: status::Status = v.append(d("grid_column_span", "number", "tracks", "*", "",
+        "How many columns this item spans. 1 unless set."));
+    let _g1: status::Status = v.append(d("grid_row_span", "number", "tracks", "*", "",
+        "How many rows this item spans. 1 unless set."));
+    let _g2: status::Status = v.append(d("grid_column_start", "number", "line", "*", "",
+        "The column line this item starts at, 1-based. Unset means auto-placed."));
+    let _g3: status::Status = v.append(d("grid_row_start", "number", "line", "*", "",
+        "The row line this item starts at, 1-based. Unset means auto-placed."));
+
     let _f8: status::Status = v.append(d("box_sizing", "enum", "", "*",
         "border_box content_box",
         "Whether width and height measure the border box or the content box."));
