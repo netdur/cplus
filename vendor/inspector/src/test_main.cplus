@@ -3857,3 +3857,79 @@ fn a_grid_items_placement_is_settable_and_auto_reads_as_nothing() {
     assert tree::set(h, "grid_column_start", insp::Value::Num(2.0)) == insp::Outcome::Ok;
     assert num_prop(h, "grid_column_start") == 2.0;
 }
+
+// ---- up and down on a number ----------------------------------------------------
+
+#[test]
+fn only_the_rows_holding_a_number_take_the_arrows() {
+    // A field editor answers Up/Down by moving the caret, and the backend
+    // forwards those two commands only to a field carrying a key gesture — so
+    // this predicate IS the opt-in. Wiring it to a string or a colour would
+    // take the keys away from the editor for nothing.
+    assert widget::steps_by_arrow("padding");
+    assert widget::steps_by_arrow("width");          // a length steps too
+    assert widget::steps_by_arrow("opacity");
+    assert widget::steps_by_arrow("rotation");
+    assert !widget::steps_by_arrow("text");
+    assert !widget::steps_by_arrow("background_color");
+    assert !widget::steps_by_arrow("align_items");   // a dropdown walks the set
+    assert !widget::steps_by_arrow("visible");
+    assert !widget::steps_by_arrow("no_such_property");
+}
+
+#[test]
+fn an_arrow_step_moves_a_value_in_its_own_unit() {
+    // Points move in points and a percent moves in percent: the unit a person
+    // is looking at is the unit the key should step.
+    assert match widget::nudged_value(insp::Value::Num(12.0), 1.0) {
+        option::Option[insp::Value]::Some(insp::Value::Num(x)) => x == 13.0,
+        _ => false,
+    };
+    assert match widget::nudged_value(insp::Value::Num(12.0), - 10.0) {
+        option::Option[insp::Value]::Some(insp::Value::Num(x)) => x == 2.0,
+        _ => false,
+    };
+    assert match widget::nudged_value(insp::Value::Str(text::from_str("50%")), 1.0) {
+        option::Option[insp::Value]::Some(insp::Value::Str(t)) => t.view() == "51%",
+        _ => false,
+    };
+    // AN UNSET LENGTH STARTS FROM ZERO — the first press on a `top` nobody set
+    // is what positions it.
+    assert match widget::nudged_value(insp::Value::Nothing, 1.0) {
+        option::Option[insp::Value]::Some(insp::Value::Num(x)) => x == 1.0,
+        _ => false,
+    };
+    // `auto`, a colour, a word: nothing to move. The handler declines and the
+    // field editor gets the key back.
+    assert match widget::nudged_value(insp::Value::Str(text::from_str("auto")), 1.0) {
+        option::Option[insp::Value]::Some(_v) => false,
+        option::Option::None => true,
+    };
+    assert match widget::nudged_value(insp::Value::Enum(text::from_str("center")), 1.0) {
+        option::Option[insp::Value]::Some(_v) => false,
+        option::Option::None => true,
+    };
+}
+
+#[test]
+fn reset_puts_a_refused_value_back() {
+    // THE CASE THAT HAD NO WAY OUT. A value the parse refuses leaves your text
+    // in the box and writes nothing — so a reset button that appeared only
+    // after a successful write was missing exactly when it was wanted. It is
+    // always offered now, and resetting a property nobody overrode is `Ok` and
+    // changes no value: it repaints the field, which is the ask.
+    fresh();
+    var root: core::Node = ui::column(core::Builder::new(), key: "root");
+    app::open_window(#addr_of(root));
+    let h: insp::Handle = handle_for(#addr_of(root), "root");
+
+    assert tree::reset(h, "corner_radius") == insp::Outcome::Ok;
+    assert tree::changes_text().view() == "{}\n";
+
+    // ...and it still restores a real override.
+    assert tree::set(h, "corner_radius", insp::Value::Num(9.0)) == insp::Outcome::Ok;
+    assert num_prop(h, "corner_radius") == 9.0;
+    assert tree::reset(h, "corner_radius") == insp::Outcome::Ok;
+    assert num_prop(h, "corner_radius") == 0.0;
+    assert tree::changes_text().view() == "{}\n";
+}

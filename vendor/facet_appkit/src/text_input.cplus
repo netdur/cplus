@@ -347,6 +347,28 @@ fn escape_to_chain(host: *u8) -> i8 {
 // control:textView:doCommandBySelector: — a FIELD's editor asks the field,
 // the field asks this delegate.
 fn field_do_command_imp(self_obj: *u8, cmd: *u8, control: *u8, tv: *u8, which: *u8) -> i8 {
+    // ARROWS, TO A FIELD THAT ASKED FOR THEM.
+    //
+    // A field editor answers Up/Down by moving the caret to the start or end
+    // of the line, which in a one-line field is nothing anyone wanted — and it
+    // is the one gesture a number field owes you. It cannot simply be taken:
+    // `on_key` is opt-in per node, so a field with no key gesture keeps the
+    // editor's behaviour exactly, and only a field that declared an interest
+    // sees the event. The handler's `false` declines, and the editor still
+    // gets it.
+    if (which == rt::sel(#str_ptr("moveUp:\0")))
+        || (which == rt::sel(#str_ptr("moveDown:\0"))) {
+        let kn: *core::Node = node_of(self_obj);
+        if kn.is_null() { return 0 as i8; }
+        if gestures::on_key_of(kn) == gestures::no_gesture { return 0 as i8; }
+        let app2: *u8 = { rt::msg_id(rt::get_class(#str_ptr("NSApplication\0")),
+                                     rt::sel(#str_ptr("sharedApplication\0"))) };
+        if app2.is_null() { return 0 as i8; }
+        let ev2: *u8 = { rt::msg_id(app2, rt::sel(#str_ptr("currentEvent\0"))) };
+        if ev2.is_null() { return 0 as i8; }
+        if gestures::fire_key(kn, ev2) { return 1 as i8; }
+        return 0 as i8;
+    }
     if which != rt::sel(#str_ptr("cancelOperation:\0")) { return 0 as i8; }
     if control.is_not_null() {
         let is_search: i8 = { rt::msg_i8_id(control, rt::sel(#str_ptr("isKindOfClass:\0")),

@@ -39,6 +39,7 @@ import "facet/checkbox" as cbox;
 import "facet/popup" as popup;
 import "facet/slider" as slider;
 import "facet/services" as services;
+import "facet/gestures" as gestures;
 
 // The tree pane is `facet/tree` — a recycling NSOutlineView on macOS.
 //
@@ -663,7 +664,21 @@ fn paint_props(st: *Inspector) {
                             var nm_text: text::Text = text::from_str(nm);
                             if over { let _c: status::Status = nm_text.append("  *"); }
                             set_label(joined("insp:n:", nm), nm_text.view());
-                            show_node(joined("insp:x:", nm), over);
+                            // ALWAYS REACHABLE, not only when overridden.
+                            //
+                            // Its job is "put this field back to the truth",
+                            // and the case that needs it most is the one where
+                            // there is no override: a value that was REFUSED
+                            // leaves your text sitting in the box and nothing
+                            // written, so a button that appears only after a
+                            // successful write is missing exactly when it is
+                            // wanted. Resetting a property nobody overrode is
+                            // already `Ok` and changes no value — it repaints
+                            // the field, which is the whole ask.
+                            //
+                            // The `*` on the name is what marks an override;
+                            // the button never carried that alone.
+                            show_node(joined("insp:x:", nm), true);
                         }
                     }
                     option::Option::None => { }
@@ -1218,6 +1233,122 @@ fn paint_editor(prop: str, shown: str) {
     set_field(key, shown);
 }
 
+// Which rows the arrows are worth wiring: the ones holding a number. A string,
+// a colour and an enum have nothing to step — an enum has a dropdown, which is
+// the right control for walking a closed set.
+fn steps_by_arrow(prop: str) -> bool {
+    return match voc::describe(prop) {
+        option::Option[voc::Descriptor]::Some(d) => (d.ty == "number") || (d.ty == "length"),
+        option::Option::None => false,
+    };
+}
+
+fn focused_prop() -> text::Text {
+    let names: vec::Vec[str] = tree::declared_names();
+    var i: usize = 0;
+    while i < names.count() {
+        match names.at(i) {
+            option::Option[str]::Some(nm) => {
+                let k: text::Text = joined("insp:f:", nm);
+                let n: *core::Node = mount::node(k.view());
+                if n.is_not_null() {
+                    if core::is_focused(n) { return text::from_str(nm); }
+                }
+            }
+            option::Option::None => { }
+        }
+        i = i +% 1;
+    }
+    return text::new();
+}
+
+// ---- up and down on a number ---------------------------------------------------
+//
+// A field editor answers Up/Down by moving the caret to the start or end of the
+// line, which in a one-line field is nothing anyone wanted — and it is the one
+// gesture a number field owes you. `facet_appkit` forwards those two commands
+// to a field that carries an `on_key` gesture and to no other, so this is opt-in
+// per row and every other text field in every app keeps the editor's behaviour.
+//
+// One point a press, ten with Shift. Devtools everywhere use that pair and
+// there is no reason to invent a third.
+fn key_step(event: *u8) -> f64 {
+    let named: i64 = gestures::key_named(event);
+    var step: f64 = 0.0;
+    if named == gestures::key_arrow_up() { step = 1.0; }
+    if named == gestures::key_arrow_down() { step = - 1.0; }
+    if step == 0.0 { return 0.0; }
+    if gestures::has_modifier(gestures::key_modifiers(event), gestures::mod_shift()) {
+        step = step * 10.0;
+    }
+    return step;
+}
+
+fn on_arrow(event: *u8, ctx: *u8) -> bool {
+    let st: *Inspector = ctx as *Inspector;
+    let h: insp::Handle = { (*st).selected };
+    if h.is_none() { return false; }
+    let by: f64 = key_step(event);
+    // Not an arrow: decline, and the editor behaves as it always did.
+    if by == 0.0 { return false; }
+
+    // WHICH ROW. The handler signature carries the EVENT and a context, not the
+    // sender, so the row is found by asking which field has focus — exact, and
+    // it needs no per-row context or remembered state that could go stale
+    // between focusing a field and pressing a key in it.
+    let prop: text::Text = focused_prop();
+    if prop.is_empty() { return false; }
+
+    // Against the value as it stands, so holding the key accumulates instead of
+    // repeatedly adding to the number that was there when the row was drawn.
+    let b: insp::Backend = { (*st).backend };
+    let cur: insp::Value = current_declared(b, h, prop.view());
+    let moved: option::Option[insp::Value] = nudged_value(cur, by);
+    match moved {
+        option::Option[insp::Value]::Some(v) => {
+            let r: insp::Outcome = b.set_now(h, prop.view(), v);
+            if !r.is_ok() { say(r.describe()); return true; }
+            var m: text::Text = prop.clone();
+            let _s: status::Status = m.append(" = ");
+            let _t: status::Status = m.append(value_text(current_declared(b, h, prop.view())).view());
+            say(m.view());
+            paint_props(st);
+            rehighlight_after_layout(st);
+            return true;
+        }
+        // A property with no number to move — a colour, a word, `auto`. The
+        // arrow is not ours; let the editor have it.
+        option::Option::None => { return false; }
+    }
+}
+
+// One value, moved. Points move in points and a percent moves in percent — the
+// unit a person is looking at is the unit the key should step.
+fn nudged_value(cur: insp::Value, by: f64) -> option::Option[insp::Value] {
+    return match cur {
+        insp::Value::Num(x) => option::Option[insp::Value]::Some(insp::Value::Num(x + by)),
+        insp::Value::Int(i) =>
+            option::Option[insp::Value]::Some(insp::Value::Int(i + (by as i64))),
+        // An unset length starts from zero: the first press on a `top` nobody
+        // set is what positions it.
+        insp::Value::Nothing => option::Option[insp::Value]::Some(insp::Value::Num(by)),
+        insp::Value::Str(s) => percent_moved(s.view(), by),
+        _ => option::Option[insp::Value]::None,
+    };
+}
+
+fn percent_moved(spelled: str, by: f64) -> option::Option[insp::Value] {
+    if !spelled.has_suffix("%") { return option::Option[insp::Value]::None; }
+    return match spelled.drop_last(1).trim().to_f64() {
+        option::Option[f64]::Some(x) => {
+            var t: text::Text = tree::plain_num(x + by);
+            let _a: status::Status = t.append("%");
+            option::Option[insp::Value]::Some(insp::Value::Str(t))
+        }
+        option::Option::None => option::Option[insp::Value]::None,
+    };
+}
+
 fn prop_row(prop: str, me: *u8) -> core::Node {
     let nk: text::Text = joined("insp:n:", prop);
     let fk: text::Text = joined("insp:f:", prop);
@@ -1247,6 +1378,23 @@ fn prop_row(prop: str, me: *u8) -> core::Node {
                        on_text_changed: on_typed, on_text_changed_ctx: me)
     };
     core::set_grow(#addr_of(field), 1.0);
+    // OPT IN TO THE ARROWS, on the rows where a step means something. The
+    // backend forwards Up/Down only to a field carrying a key gesture, so this
+    // is the whole switch: every other text field in every app keeps the field
+    // editor's behaviour untouched.
+    //
+    // A length gets them too — `12` steps, and so does `50%`, in its own unit.
+    // `auto` has no number to move and the handler declines, which hands the
+    // key back to the editor.
+    if (kind == ED_TEXT) && steps_by_arrow(prop) {
+        let fp: *core::Node = #addr_of(field);
+        var g: gestures::Gestures = gestures::Gestures::new();
+        let existing: *gestures::Gestures = gestures::gestures_of(fp);
+        if existing.is_not_null() { g = { (*existing) }; }
+        g.on_key = on_arrow;
+        g.on_key_ctx = me;
+        gestures::attach(fp, g);
+    }
     // Basis 0, or the field starts from the width its TEXT wants and grows
     // from there — which runs it, and the reset button after it, off the
     // right edge of the pane. Flex's default shrink is 0, so nothing gives
