@@ -78,8 +78,8 @@ struct MutexGuard[T] {
 // A `Mutex` is always a live heap block, so on allocation failure `new` returns
 // `None` (and `v` drops as the function returns) rather than trapping.
 fn new[T](take v: T) -> option::Option[Mutex[T]] {
-    let refct_bytes: usize = 8 as usize;
-    let mutex_bytes: usize = 64 as usize;
+    let refct_bytes: usize = 8;
+    let mutex_bytes: usize = 64;
     let value_size: usize = #size_of::[T]();
     let total: usize = refct_bytes +% mutex_bytes +% value_size;
     let raw: *u8 = { malloc(total) };
@@ -120,7 +120,7 @@ impl Mutex[T] {
     // before handing the _ctrl pointer over — Relaxed mirrors `clone` (the
     // block is already visible to this thread).
     fn lock(this) -> MutexGuard[T] {
-        let refct_bytes: usize = 8 as usize;
+        let refct_bytes: usize = 8;
         let refct: *u64 = { this._ctrl as *u64 };
         let _prev: u64 = {
             atomic::fetch_add_u64(refct, 1 as u64, atomic::Ordering::Relaxed)
@@ -145,7 +145,7 @@ impl Mutex[T] {
             atomic::fetch_sub_u64(refct, 1 as u64, atomic::Ordering::AcqRel)
         };
         if prev == (1 as u64) {
-            let refct_bytes: usize = 8 as usize;
+            let refct_bytes: usize = 8;
             let mutex_ptr: *u8 = { this._ctrl + refct_bytes };
             let _err: i32 = { pthread_mutex_destroy(mutex_ptr) };
             // v0.0.5 Phase 1C: invoke inner-T Drop on the last
@@ -222,7 +222,7 @@ impl MutexGuard[T] {
     // The free is inlined here (not delegated) so the raw-pointer
     // accountability check is satisfied — same shape as `Mutex::drop`.
     fn drop(ref this) {
-        let refct_bytes: usize = 8 as usize;
+        let refct_bytes: usize = 8;
         let mutex_ptr: *u8 = { this._ctrl + refct_bytes };
         let _err: i32 = { pthread_mutex_unlock(mutex_ptr) };
         let refct: *u64 = { this._ctrl as *u64 };

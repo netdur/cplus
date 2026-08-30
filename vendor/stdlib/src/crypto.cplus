@@ -438,7 +438,7 @@ fn the_constant_time_compare_answers_correctly_at_every_position() {
     var first: [u8; 4] = [9u8, 2u8, 3u8, 4u8];
     var last: [u8; 4] = [1u8, 2u8, 3u8, 9u8];
     var mid: [u8; 4] = [1u8, 9u8, 3u8, 4u8];
-    let n: usize = 4 as usize;
+    let n: usize = 4;
     assert bytes_equal(#addr_of(a) as *u8, #addr_of(same) as *u8, n);
     assert !bytes_equal(#addr_of(a) as *u8, #addr_of(first) as *u8, n);
     assert !bytes_equal(#addr_of(a) as *u8, #addr_of(last) as *u8, n);

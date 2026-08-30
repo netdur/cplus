@@ -45,7 +45,7 @@ struct Weak[T] {
 // always a live heap slot, so on allocation failure `new` returns `None` (and
 // `v` drops as the function returns) rather than trapping.
 fn new[T](take v: T) -> option::Option[Rc[T]] {
-    let header: usize = 16 as usize;
+    let header: usize = 16;
     let value_size: usize = #size_of::[T]();
     let total: usize = header +% value_size;
     let raw: *u8 = { malloc(total) };
@@ -89,7 +89,7 @@ impl Rc[T] {
 impl Rc[T: Copy] {
     // Read inner T (bitwise copy).
     fn value(this) -> T {
-        let header: usize = 16 as usize;
+        let header: usize = 16;
         let value_ptr: *T = { (this._ctrl + header) as *T };
         return { *value_ptr };
     }

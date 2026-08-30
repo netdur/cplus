@@ -82,7 +82,7 @@ fn open_read(path: str) -> result::Result[File, result::IoError] {
 // factor of eight between Darwin and Linux.
 fn create(path: str) -> result::Result[File, result::IoError] {
     let flags: i32 = fsys::create_flags();
-    let mode: i32 = 420 as i32;
+    let mode: i32 = 420;
     match c_path(path) {
         option::Option[text::CString]::Some(cp) => {
             let fd: i32 = { open(cp.as_ptr(), flags, mode) };
@@ -100,7 +100,7 @@ fn create(path: str) -> result::Result[File, result::IoError] {
 // Open `path` for appending, creating it if missing. Mode 0o644.
 fn open_append(path: str) -> result::Result[File, result::IoError] {
     let flags: i32 = fsys::append_flags();
-    let mode: i32 = 420 as i32;
+    let mode: i32 = 420;
     match c_path(path) {
         option::Option[text::CString]::Some(cp) => {
             let fd: i32 = { open(cp.as_ptr(), flags, mode) };
@@ -187,7 +187,7 @@ impl File {
         if this._fd < (0 as i32) {
             return result::io_err::[vec::Vec[u8]](result::IoError::InvalidInput);
         }
-        let chunk_size: usize = 4096 as usize;
+        let chunk_size: usize = 4096;
         let chunk: *u8 = { malloc(chunk_size) };
         if chunk.is_null() {
             return result::io_err::[vec::Vec[u8]](result::IoError::Other);
@@ -284,7 +284,7 @@ impl File {
     // is yielded as the last line.
     gen fn lines(this) -> text::Text {
         var carry: vec::Vec[u8] = vec::new::[u8]();
-        let chunk_size: usize = 4096 as usize;
+        let chunk_size: usize = 4096;
         let chunk: *u8 = { malloc(chunk_size) };
         if chunk.is_null() {
             return;   // cannot allocate the scan buffer; yield no lines

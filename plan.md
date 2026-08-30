@@ -50,8 +50,18 @@ supervised call-centre workstation and voice-only operation.
    to it. A second, unfiled bug fell out of the same change — a mixed-width
    variant with concise literals wrote its second payload at the wrong OFFSET.
    The redundant-cast cleanup in `stdlib`, `facet` and `facet_runtime` is
-   unblocked but has not been run: it is churn across three large packages and
-   the compiler bug was the part that mattered.
+   unblocked, and the **provably safe part is done** — 20 sites where the cast
+   only repeated the annotation on the same line (`let n: usize = 4 as usize`).
+   The other ~3,380 are NOT a mechanical job and should not be done as one. A
+   literal's type is decided by its context, and `1 as u64 << 40` is not
+   `1 << 40`: the bare literal wraps through `i32` first, which is the trap
+   CLAUDE.md names and which no test would necessarily catch. Removing a cast
+   safely needs the type the checker inferred at that position, which a
+   substitution does not have. Density says the same: the converted packages
+   sit near zero (agent_core 4, json 5, events 0, flex_layout 8, agent_mcp 27)
+   while stdlib carries 2,257 and facet 1,080 — so this is a large semantic
+   rewrite of the two most-depended-on packages, for style, with a silent
+   numeric failure mode.
 2. **iris needs three changes**, none made (separate repo): it sets
    `FACET_INSPECT`, which nothing reads any more; `remote.cplus` speaks the
    line-delimited framing that only the desktop socket still serves; and

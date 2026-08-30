@@ -144,7 +144,7 @@ impl TcpStream {
         if this._fd < (0 as i32) {
             return result::io_err::[vec::Vec[u8]](result::IoError::InvalidInput);
         }
-        let chunk_size: usize = 4096 as usize;
+        let chunk_size: usize = 4096;
         let chunk: *u8 = { malloc(chunk_size) };
         if chunk.is_null() {
             return result::io_err::[vec::Vec[u8]](result::IoError::Other);

@@ -63,7 +63,7 @@ impl Weak[T: Send + Sync]: Sync {}
 // by whoever drops `weak` to 0 — which makes the strong/weak teardown race-free
 // (a live `Weak` safely outlives the value).
 fn new[T](take v: T) -> option::Option[Arc[T]] {
-    let header: usize = 16 as usize;
+    let header: usize = 16;
     let value_size: usize = #size_of::[T]();
     let total: usize = header +% value_size;
     let raw: *u8 = { malloc(total) };
@@ -309,7 +309,7 @@ impl Weak[T] {
 impl Arc[T: Copy] {
     // Read inner T (bitwise copy).
     fn value(this) -> T {
-        let header: usize = 16 as usize;
+        let header: usize = 16;
         let value_ptr: *T = { (this._ctrl + header) as *T };
         return { *value_ptr };
     }

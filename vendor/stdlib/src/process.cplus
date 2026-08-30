@@ -100,7 +100,7 @@ fn make_pipe() -> Pipe {
 // see drain_both for the two-pipe case.
 fn drain_fd(fd: i32) -> vec::Vec[u8] {
     var acc: vec::Vec[u8] = vec::new::[u8]();
-    let bufsz: usize = 8192 as usize;
+    let bufsz: usize = 8192;
     let buf: *u8 = { malloc(bufsz) };
     if buf.is_null() { return acc; }
     loop {
@@ -134,7 +134,7 @@ fn pollfd_revents(base: *u8, slot: usize) -> i16 {
 // the parent waits forever. A build command with many warnings is exactly this
 // shape. poll() hands back whichever side is ready, so neither can wedge.
 fn drain_both(out_fd: i32, err_fd: i32, out_acc: *vec::Vec[u8], err_acc: *vec::Vec[u8]) {
-    let bufsz: usize = 8192 as usize;
+    let bufsz: usize = 8192;
     let buf: *u8 = { malloc(bufsz) };
     if buf.is_null() { return; }
     let pfds: *u8 = { malloc(16 as usize) };
