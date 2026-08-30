@@ -1507,16 +1507,36 @@ fn set(h: insp::Handle, prop: str, take v: insp::Value) -> insp::Outcome {
     if is_computed_prop(prop) { return insp::Outcome::ReadOnly; }
     let n: *core::Node = h.node;
 
+    // THE NAME IS EXCHANGED FOR OURS HERE, not in the caller.
+    //
+    // `Override.prop` is a `str` — a borrowed {ptr,len} — and is sound only
+    // because every name reaching the ledger is a literal that lives as long as
+    // the program. A caller-supplied name does not: the panel reads one out of
+    // a widget key into a request-scoped `Text`, and recording a view of THAT
+    // leaves the ledger holding freed bytes.
+    //
+    // The socket adapter already exchanged its names and the panel did not, so
+    // the hazard was real and silent — `reset` compared a dangling name,
+    // matched nothing and answered `Ok`. It became visible the moment the diff
+    // started printing those names: the property came out as seven bytes of
+    // whatever had reused the allocation. Doing it in the one function every
+    // writer goes through is what makes the invariant hold for callers that
+    // have not read the comment.
+    let mine: str = match canonical_prop(prop) {
+        option::Option[str]::Some(name) => name,
+        option::Option::None => { return insp::Outcome::UnknownProperty; }
+    };
+
     // Record what the application declared, before the first inspector write
     // to this pair replaces it.
-    match get(h, prop) {
-        option::Option[insp::Value]::Some(orig) => { ledger_record(n, h.window, prop, orig); }
+    match get(h, mine) {
+        option::Option[insp::Value]::Some(orig) => { ledger_record(n, h.window, mine, orig); }
         option::Option::None => { }
     }
 
-    let r: insp::Outcome = apply_uniform(n, prop, v);
+    let r: insp::Outcome = apply_uniform(n, mine, v);
     return match r {
-        insp::Outcome::UnknownProperty => apply_control(n, prop, v, h.window),
+        insp::Outcome::UnknownProperty => apply_control(n, mine, v, h.window),
         _ => r,
     };
 }
@@ -1529,6 +1549,12 @@ fn reset(h: insp::Handle, prop: str) -> insp::Outcome {
     if !h.is_live() { return insp::Outcome::Stale; }
     if is_computed_prop(prop) { return insp::Outcome::ReadOnly; }
     let n: *core::Node = h.node;
+    // Ours, for the same reason `set` takes ours: the ledger is keyed by the
+    // name and a comparison against a caller's temporary matches nothing.
+    let prop: str = match canonical_prop(prop) {
+        option::Option[str]::Some(name) => name,
+        option::Option::None => { return insp::Outcome::UnknownProperty; }
+    };
     return match ledger_take(n, prop) {
         option::Option[insp::Value]::Some(orig) => {
             let r: insp::Outcome = apply_uniform(n, prop, orig);

@@ -3588,3 +3588,126 @@ fn the_clipboard_is_a_platform_seam_and_says_so_when_absent() {
 
     tree::set_clipboard_fn(#zero::[fn(str) -> bool]());
 }
+
+// ---- the editor a property gets ----------------------------------------------
+//
+// A free-form text box for everything was honest when there were twenty-two
+// mostly-numeric properties and no table saying what they took. `vocabulary`
+// says now, so the panel offers the control that fits: a checkbox for a bool, a
+// dropdown for a closed set, a slider for a number with both ends known, a box
+// for the rest.
+
+#[test]
+fn each_property_gets_the_control_its_type_asks_for() {
+    assert widget::editor_for("visible") == widget::ED_BOOL;
+    assert widget::editor_for("absolute") == widget::ED_BOOL;
+    assert widget::editor_for("align_items") == widget::ED_ENUM;
+    assert widget::editor_for("font_weight") == widget::ED_ENUM;
+    // A RANGE is a number with both ends known — `0..1`. Everything else
+    // numeric is unbounded, and a slider over `translation_x` would have to
+    // invent limits.
+    assert widget::editor_for("opacity") == widget::ED_RANGE;
+    assert widget::editor_for("shadow_opacity") == widget::ED_RANGE;
+    assert widget::editor_for("translation_x") == widget::ED_TEXT;
+    assert widget::editor_for("rotation") == widget::ED_TEXT;
+    // A length takes three shapes; a box is the only control that can say all
+    // three.
+    assert widget::editor_for("width") == widget::ED_TEXT;
+    assert widget::editor_for("padding") == widget::ED_TEXT;
+    assert widget::editor_for("text") == widget::ED_TEXT;
+    assert widget::editor_for("background_color") == widget::ED_TEXT;
+    // A name the table does not carry falls back to a box rather than crashing
+    // a panel that is drawing a row for it.
+    assert widget::editor_for("no_such_property") == widget::ED_TEXT;
+}
+
+#[test]
+fn a_dropdown_offers_exactly_the_spellings_the_vocabulary_lists() {
+    // The index the popup reports has to map back to the same word, or the
+    // panel writes a different value from the one that was picked.
+    assert widget::enum_index_of("align_items", "auto") == (0 as i64);
+    assert widget::enum_index_of("align_items", "center") == (2 as i64);
+    assert widget::enum_spelling_at("align_items", 2 as i64).view() == "center";
+    assert widget::enum_spelling_at("align_items", 0 as i64).view() == "auto";
+    assert widget::enum_spelling_at("font_weight", 7 as i64).view() == "bold";
+    assert widget::enum_index_of("font_weight", "bold") == (7 as i64);
+
+    // Round-trip every spelling of every enum: index → word → index.
+    let t: vec::Vec[voc::Descriptor] = voc::table();
+    var i: usize = 0;
+    var checked: usize = 0;
+    while i < t.count() {
+        match t.at_ptr(i) {
+            option::Option[*voc::Descriptor]::Some(d) => {
+                if { (*d).ty } == "enum" {
+                    let words: vec::Vec[str] = { (*d).values }.split(" ");
+                    var w: usize = 0;
+                    while w < words.count() {
+                        match words.at(w) {
+                            option::Option[str]::Some(word) => {
+                                let at: i64 = widget::enum_index_of({ (*d).name }, word);
+                                assert at >= (0 as i64);
+                                assert widget::enum_spelling_at({ (*d).name }, at).view() == word;
+                                checked = checked +% 1;
+                            }
+                            option::Option[str]::None => { }
+                        }
+                        w = w +% 1;
+                    }
+                }
+            }
+            option::Option[*voc::Descriptor]::None => { }
+        }
+        i = i +% 1;
+    }
+    assert checked > 50;
+
+    // A word that is not in the set answers -1, so the painter leaves the
+    // popup where it is rather than snapping it to the first item — which
+    // would show a value the node does not hold.
+    assert widget::enum_index_of("align_items", "centre") == (- 1 as i64);
+}
+
+// ---- the name the ledger keeps ------------------------------------------------
+
+#[test]
+fn a_caller_supplied_property_name_is_exchanged_for_ours() {
+    // `Override.prop` is a borrowed {ptr,len}, sound only while it points at a
+    // literal that outlives the program. The socket adapter exchanged its names
+    // and the PANEL did not — it reads one out of a widget key into a
+    // request-scoped `Text` — so the ledger held freed bytes and `reset`
+    // compared a dangling name, matched nothing, and answered `Ok`.
+    //
+    // Silent until the diff started printing those names, at which point the
+    // property came out as seven bytes of whatever had reused the allocation.
+    // The exchange happens in `set` now, so it holds for callers that have not
+    // read the comment.
+    fresh();
+    var root: core::Node = ui::column(core::Builder::new(), key: "root");
+    app::open_window(#addr_of(root));
+    let h: insp::Handle = handle_for(#addr_of(root), "root");
+
+    // A name built at RUNTIME, in a Text that dies at the end of this block —
+    // exactly the shape the panel hands in.
+    {
+        var built: text::Text = text::from_str("pad");
+        let _a: status::Status = built.append("ding");
+        assert tree::set(h, built.view(), insp::Value::Num(24.0)) == insp::Outcome::Ok;
+    }
+
+    // The diff names the property, not the bytes that were there.
+    let t: text::Text = tree::changes_text();
+    assert t.contains("\"padding\": 24");
+
+    // ...and a reset through another temporary still finds the row.
+    {
+        var again: text::Text = text::from_str("padd");
+        let _b: status::Status = again.append("ing");
+        assert tree::reset(h, again.view()) == insp::Outcome::Ok;
+    }
+    assert tree::changes_text().view() == "{}\n";
+
+    // A name in no table is refused rather than stored.
+    assert tree::set(h, "not_a_property", insp::Value::Num(1.0))
+        == insp::Outcome::UnknownProperty;
+}

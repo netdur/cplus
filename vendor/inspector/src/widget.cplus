@@ -34,6 +34,10 @@ import "facet/text_button" as tbutton;
 import "facet/tree" as ftree;
 import "./inspector" as insp;
 import "./tree" as tree;
+import "./vocabulary" as voc;
+import "facet/checkbox" as cbox;
+import "facet/popup" as popup;
+import "facet/slider" as slider;
 
 // The tree pane is `facet/tree` — a recycling NSOutlineView on macOS.
 //
@@ -444,6 +448,21 @@ fn node_id(n: *core::Node) -> text::Text {
 // The snapshot is flat and in document order, so a node's children are the
 // later rows whose parent index is this one. `data` carries the facet node
 // straight through, so selection does not have to look anything up again.
+// THE PANEL IS AN APP TOO, and a tree row is the one node an application
+// cannot key: the backend mounts it in a cell it owns, so the row shape's
+// `key:` lands on the label rather than on the thing a click has to reach.
+// `row_id` is the hook, and without one the panel is a tool an agent can see
+// and cannot drive — every row answering to the one template key.
+//
+// Prefixed so a row id cannot collide with the panel's own keys, which share
+// one namespace with it on the surface.
+fn tree_row_id(n: *ftree::TreeNode, _ctx: *u8) -> text::Text {
+    if n.is_null() { return text::new(); }
+    var out: text::Text = text::from_str("insp:row:");
+    let _a: status::Status = out.append({ (*n).id_of() });
+    return out;
+}
+
 fn build_subtree(st: *Inspector, i: usize) -> ftree::TreeNode {
     let n: *core::Node = { (*st).node_at(i) };
     let line: text::Text = { (*st).line_for(i) };
@@ -622,7 +641,7 @@ fn paint_props(st: *Inspector) {
                         }
                         show_node(joined("insp:r:", nm), found);
                         if found {
-                            set_field(joined("insp:f:", nm), shown_value.view());
+                            paint_editor(nm, shown_value.view());
                             // Overridden is marked by the NAME, not by colour
                             // alone: a mark nobody can see is not a mark.
                             var nm_text: text::Text = text::from_str(nm);
@@ -868,6 +887,210 @@ fn on_reset_all(_sender: *u8, ctx: *u8) {
 
 // ---- the tree ----------------------------------------------------------------
 
+// ---- which editor a property gets --------------------------------------------
+//
+// THE EDITOR IS DECIDED BY THE PROPERTY, NOT BY THE NODE, so it is decided once
+// at build time: `padding` is a length on everything that has it, `align_items`
+// is always one of eleven words. Only WHETHER a row shows varies per selection.
+//
+// A free-form text box for all of them was the honest thing to build when the
+// surface had twenty-two mostly-numeric properties and no table saying what
+// they took. `vocabulary` says now — type, unit, and the closed set — so the
+// panel can offer the control that fits and stop asking a person to remember
+// that `align_items` wants `flex_start` and not `start` or `left`.
+const ED_TEXT: u32 = 0u32;
+const ED_BOOL: u32 = 1u32;
+const ED_ENUM: u32 = 2u32;
+const ED_RANGE: u32 = 3u32;
+
+fn editor_for(prop: str) -> u32 {
+    return match voc::describe(prop) {
+        option::Option[voc::Descriptor]::Some(d) => {
+            if d.ty == "bool" { ED_BOOL }
+            else if d.ty == "enum" { ED_ENUM }
+            // A RANGE is a number with both ends known. `opacity` and
+            // `shadow_opacity` are the two, and a slider is the only control
+            // that shows you where in the range you are. Everything else
+            // numeric is unbounded — a slider over `translation_x` would have
+            // to invent limits, and inventing them is worse than a box.
+            else if (d.ty == "number") && (d.unit == "0..1") { ED_RANGE }
+            else { ED_TEXT }
+        }
+        option::Option::None => ED_TEXT,
+    };
+}
+
+fn enum_items(prop: str) -> vocab::TextList {
+    var out: vocab::TextList = vocab::TextList::new();
+    match voc::describe(prop) {
+        option::Option[voc::Descriptor]::Some(d) => {
+            let parts: vec::Vec[str] = d.values.split(" ");
+            var i: usize = 0;
+            while i < parts.count() {
+                match parts.at(i) {
+                    option::Option[str]::Some(w) => {
+                        if w != "" { let _a: status::Status = out.add(w); }
+                    }
+                    option::Option::None => { }
+                }
+                i = i +% 1;
+            }
+        }
+        option::Option::None => { }
+    }
+    return out;
+}
+
+fn enum_index_of(prop: str, spelling: str) -> i64 {
+    match voc::describe(prop) {
+        option::Option[voc::Descriptor]::Some(d) => {
+            let parts: vec::Vec[str] = d.values.split(" ");
+            var i: usize = 0;
+            var seen: i64 = 0 as i64;
+            while i < parts.count() {
+                match parts.at(i) {
+                    option::Option[str]::Some(w) => {
+                        if w != "" {
+                            if w == spelling { return seen; }
+                            seen = seen + (1 as i64);
+                        }
+                    }
+                    option::Option::None => { }
+                }
+                i = i +% 1;
+            }
+        }
+        option::Option::None => { }
+    }
+    return - 1 as i64;
+}
+
+fn enum_spelling_at(prop: str, index: i64) -> text::Text {
+    match voc::describe(prop) {
+        option::Option[voc::Descriptor]::Some(d) => {
+            let parts: vec::Vec[str] = d.values.split(" ");
+            var i: usize = 0;
+            var seen: i64 = 0 as i64;
+            while i < parts.count() {
+                match parts.at(i) {
+                    option::Option[str]::Some(w) => {
+                        if w != "" {
+                            if seen == index { return text::from_str(w); }
+                            seen = seen + (1 as i64);
+                        }
+                    }
+                    option::Option::None => { }
+                }
+                i = i +% 1;
+            }
+        }
+        option::Option::None => { }
+    }
+    return text::new();
+}
+
+// ---- the three handlers a non-text editor needs -------------------------------
+//
+// Each finds its property the same way `on_commit` does — the sender's key is
+// `insp:f:<prop>` and the tail is the name — so a row's editor can be any kind
+// without the row knowing which.
+
+fn write_prop(st: *Inspector, prop: str, take v: insp::Value) {
+    let h: insp::Handle = { (*st).selected };
+    if h.is_none() { say("nothing selected"); return; }
+    let b: insp::Backend = { (*st).backend };
+    let r: insp::Outcome = b.set_now(h, prop, v);
+    say(r.describe());
+    paint_props(st);
+}
+
+fn on_toggle(sender: *u8, ctx: *u8) {
+    let st: *Inspector = ctx as *Inspector;
+    let prop: text::Text = key_tail(component::key_of(sender));
+    if prop.is_empty() { return; }
+    let key: text::Text = joined("insp:f:", prop.view());
+    match cbox::find(key.view()) {
+        option::Option[cbox::Checkbox]::Some(c) => {
+            write_prop(st, prop.view(), insp::Value::Bool(c.on()));
+        }
+        option::Option::None => { }
+    }
+}
+
+fn on_pick(sender: *u8, ctx: *u8) {
+    let st: *Inspector = ctx as *Inspector;
+    let prop: text::Text = key_tail(component::key_of(sender));
+    if prop.is_empty() { return; }
+    let key: text::Text = joined("insp:f:", prop.view());
+    match popup::find(key.view()) {
+        option::Option[popup::Popup]::Some(p) => {
+            let word: text::Text = enum_spelling_at(prop.view(), p.selected_index());
+            if word.is_empty() { return; }
+            write_prop(st, prop.view(), insp::Value::Enum(word));
+        }
+        option::Option::None => { }
+    }
+}
+
+fn on_slide(sender: *u8, ctx: *u8) {
+    let st: *Inspector = ctx as *Inspector;
+    let prop: text::Text = key_tail(component::key_of(sender));
+    if prop.is_empty() { return; }
+    let key: text::Text = joined("insp:f:", prop.view());
+    match slider::find(key.view()) {
+        option::Option[slider::Slider]::Some(sl) => {
+            write_prop(st, prop.view(), insp::Value::Num(sl.value()));
+        }
+        option::Option::None => { }
+    }
+}
+
+// Put the current value into whichever control this property has. The text
+// form is what a text box shows and what the other three parse back out of —
+// one rendering, three readers, so a slider and a box can never disagree about
+// what the value is.
+fn paint_editor(prop: str, shown: str) {
+    let key: text::Text = joined("insp:f:", prop);
+    let kind: u32 = editor_for(prop);
+    if kind == ED_BOOL {
+        match cbox::find(key.view()) {
+            option::Option[cbox::Checkbox]::Some(c) => {
+                let _x: cbox::Checkbox = c.set_on(shown == "true");
+            }
+            option::Option::None => { }
+        }
+        return;
+    }
+    if kind == ED_ENUM {
+        match popup::find(key.view()) {
+            option::Option[popup::Popup]::Some(p) => {
+                let at: i64 = enum_index_of(prop, shown);
+                // A spelling the set does not contain leaves the popup where it
+                // is rather than snapping to the first item — which would show
+                // a value the node does not hold.
+                if at >= (0 as i64) { let _x: popup::Popup = p.set_selected_index(at); }
+            }
+            option::Option::None => { }
+        }
+        return;
+    }
+    if kind == ED_RANGE {
+        match slider::find(key.view()) {
+            option::Option[slider::Slider]::Some(sl) => {
+                match shown.to_f64() {
+                    option::Option[f64]::Some(x) => {
+                        let _x: slider::Slider = sl.set_value(x);
+                    }
+                    option::Option::None => { }
+                }
+            }
+            option::Option::None => { }
+        }
+        return;
+    }
+    set_field(key, shown);
+}
+
 fn prop_row(prop: str, me: *u8) -> core::Node {
     let nk: text::Text = joined("insp:n:", prop);
     let fk: text::Text = joined("insp:f:", prop);
@@ -878,10 +1101,24 @@ fn prop_row(prop: str, me: *u8) -> core::Node {
     b.add(ui::label(prop, key: nk.view(),
                     text_align: vocab::TextAlign::Start,
                     text_color: vocab::Color::text_secondary()).width(100.0));
-    var field: core::Node = ui::text_field("", key: fk.view(),
-                                           text_align: vocab::TextAlign::Start,
-                                           on_submit: on_commit, on_submit_ctx: me)
-        .grow(1.0);
+    let kind: u32 = editor_for(prop);
+    var field: core::Node = if kind == ED_BOOL {
+        ui::checkbox(false, key: fk.view(),
+                     on_checked_changed: on_toggle, on_checked_changed_ctx: me)
+    } else if kind == ED_ENUM {
+        ui::popup("", key: fk.view(),
+                  on_selected_index_changed: on_pick,
+                  on_selected_index_changed_ctx: me,
+                  items: enum_items(prop))
+    } else if kind == ED_RANGE {
+        ui::slider(0.0, key: fk.view(), minimum: 0.0, maximum: 1.0,
+                   on_value_changed: on_slide, on_value_changed_ctx: me)
+    } else {
+        ui::text_field("", key: fk.view(),
+                       text_align: vocab::TextAlign::Start,
+                       on_submit: on_commit, on_submit_ctx: me)
+    };
+    core::set_grow(#addr_of(field), 1.0);
     // Basis 0, or the field starts from the width its TEXT wants and grows
     // from there — which runs it, and the reset button after it, off the
     // right edge of the pane. Flex's default shrink is 0, so nothing gives
@@ -921,6 +1158,7 @@ impl Inspector: component::Component {
             ftree::TreeNode::new("", "@root", is_branch: true),
             key: "insp:tree",
             row: tree_row_view,
+            row_id: tree_row_id,
             on_select: on_tree_select, on_select_ctx: me,
             row_height: ROW_H,
         ).width(260.0);
