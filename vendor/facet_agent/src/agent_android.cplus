@@ -184,7 +184,7 @@ fn serve_once(id: str) {
         AgentServe { fd: fd },
         serve_main,
     );
-    let ok: text::Text = "agent: serving on http://127.0.0.1:${port}/";
+    let ok: text::Text = "agent: serving on http://127.0.0.1:${port}/ — ${mcp::verb_summary()}";
     alog::info(#str_ptr(ok.view()));
 }
 

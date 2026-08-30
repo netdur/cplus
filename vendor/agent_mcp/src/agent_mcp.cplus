@@ -54,7 +54,7 @@
 // Every app that links this package now gets the framing for free.
 //
 // AN EXTENSION DESCRIBES ITS OWN VERBS. The `inspector.` namespace adds twelve
-// methods through `arm_extension`, and a tools/list that knew only the nine core
+// methods through `arm_extension`, and a tools/list that knew only the core
 // ones would make the extension invisible to exactly the clients that need to be
 // told what exists — the same "the agent sees less than the user" bug in a new
 // place. But this module must not know what an inspector IS (the dependency runs
@@ -74,6 +74,8 @@ import "stdlib/netsys" as netsys;
 // knows them.
 import "stdlib/fs_sys" as fsys;
 import "stdlib/fs" as fs;
+import "stdlib/io" as io;
+import "stdlib/time" as time;
 import "json/json" as json;
 import "agent_core/backend" as backend;
 import "agent_core/identity" as identity;
@@ -703,6 +705,10 @@ fn core_tools() -> vec::Vec[json::Value] {
         "The next queued semantic event, or null when there is none. This is the asynchronous half: it is how an agent notices that the USER did something while it was working.",
         no_props(), no_required()));
 
+    out.append(tool("activity",
+        "What has been DONE to this application through this surface — every click, text write, caret move, menu invocation and scroll, in order, with who asked, what it targeted and whether it worked. For a person supervising an agent, and for an agent reviewing its own work. Content is never recorded: a text write is logged as its length.",
+        no_props(), no_required()));
+
     return out;
 }
 
@@ -854,7 +860,7 @@ fn arm_extension(names: vec::Vec[str], h: fn(str, json::Value, f64, auth::Grant)
     return;
 }
 
-// Every tool this server offers: the nine core verbs, plus whatever each armed
+// Every tool this server offers: the core verbs, plus whatever each armed
 // namespace says it has. Built per request rather than cached, because arming
 // can happen after the first client connects and a cached list would then be
 // wrong in the direction that hides things.
@@ -902,6 +908,38 @@ fn disarm_all_extensions() {
 fn extension_armed() -> bool { return EXTENSIONS.count() > 0; }
 
 fn extension_count() -> usize { return EXTENSIONS.count(); }
+
+// HOW MANY VERBS ARE ACTUALLY ARMED, as a line to print at startup.
+//
+// Splitting `serve_if_asked` took away the canary: arming used to be one call
+// that either happened or did not, and now it is three lines in `app.cplus`
+// that a developer can comment out one at a time. Commenting out
+// `inspect::arm()` left an app that still served, still answered, and had
+// quietly lost fourteen verbs with nothing saying so — which is exactly how
+// this was found, by someone asking why the inspector stopped working.
+//
+// Counted at SERVE time, which is after arming, so the number is what a client
+// will actually be offered rather than what the program intended.
+fn armed_verb_count() -> usize {
+    var n: usize = core_tools().count();
+    var i: usize = 0;
+    while i < EXTENSIONS.count() {
+        match EXTENSIONS.at_ptr(i) {
+            option::Option[*Extension]::Some(e) => { n = n +% { (*e).names.count() }; }
+            option::Option::None => { }
+        }
+        i = i +% 1;
+    }
+    return n;
+}
+
+fn verb_summary() -> text::Text {
+    let core: usize = core_tools().count();
+    let total: usize = armed_verb_count();
+    if total == core { return "${core} verbs (core only)"; }
+    let ext: usize = total -% core;
+    return "${total} verbs (${core} core, ${ext} armed)";
+}
 
 // The row that should answer `method`, or -1. FIRST MATCH WINS in registration
 // order, which only decides anything if two prefixes overlap (`insp.` and
@@ -1000,6 +1038,120 @@ fn note_client(req: json::Value) {
     let name: text::Text = val_as_text(obj_get(info, "name"));
     if name.count() == 0 { return; }
     CLIENT_NAME = name;
+}
+
+// ---- what the agent did ------------------------------------------------------
+//
+// THE SUPERVISED CASE NEEDS A RECORD, and there was none.
+//
+// The inspector journals its own mutations as C+ source — that is a different
+// artifact for a different reader, the code you paste back into the app. This
+// answers the other question: an operator watching an agent drive their
+// workstation asks "what has it touched", and until now a click and a
+// `set_text` left nothing at all behind. A supervisor who has to intervene
+// cannot intervene in something they cannot see.
+//
+// Six verbs, and only six: the ones that reach a `Backend` action. Reads are
+// not here — knowing an agent read the tree is noise beside knowing it pressed
+// Send — and an extension namespace keeps its own record, which is what
+// `inspector.journal` is.
+//
+// WHAT IT DOES NOT RECORD: the text a `set_text` wrote. The length, not the
+// value. An agent may only write a field it was granted, and content behind a
+// privacy tier is readable only through `read_text` under that tier's rules —
+// a log that quoted the value would be a way around them that no
+// authorization check in this file would see. "wrote 8 characters to
+// pin_field" is what a supervisor needs and is not a second door to the value.
+struct Action {
+    seq: u64,
+    at_millis: i64,
+    client: text::Text,
+    verb: text::Text,
+    target: text::Text,
+    outcome: text::Text,
+    detail: text::Text,
+}
+
+static ACTIONS: vec::Vec[Action] = #zero::[vec::Vec[Action]]();
+static ACTION_SEQ: u64 = 0u64;
+
+// Bounded, because a long-running workstation session would otherwise grow one
+// entry per click forever. The oldest go first; the sequence number keeps
+// counting, so a reader can tell that entries were dropped rather than that
+// nothing happened.
+const ACTION_LOG_MAX: usize = 256usize;
+
+fn is_acting_verb(m: str) -> bool {
+    if m == "click" { return true; }
+    if m == "set_text" { return true; }
+    if m == "set_caret" { return true; }
+    if m == "invoke_menu" { return true; }
+    if m == "scroll_to" { return true; }
+    if m == "navigate" { return true; }
+    return false;
+}
+
+fn record_action(verb: str, target: str, outcome: str, take detail: text::Text) {
+    ACTION_SEQ = ACTION_SEQ +% (1 as u64);
+    while ACTIONS.count() >= ACTION_LOG_MAX {
+        let _dropped: option::Option[Action] = ACTIONS.remove(0 as usize);
+    }
+    let _a: status::Status = ACTIONS.append(Action {
+        seq: ACTION_SEQ,
+        at_millis: time::now_millis(),
+        // The name a client gave at `initialize`, and the CONNECTION is the
+        // session — so a caller that opens a socket, acts once and hangs up has
+        // never said who it is. Written as a token rather than left empty:
+        // "unidentified" is a fact about the caller, and `""` in an audit reads
+        // as a field that failed to fill.
+        client: if current_client() == "" { text::from_str("unidentified") }
+                else { text::from_str(current_client()) },
+        verb: text::from_str(verb),
+        target: text::from_str(target),
+        outcome: text::from_str(outcome),
+        detail: detail,
+    });
+}
+
+fn action_count() -> usize { return ACTIONS.count(); }
+
+fn forget_actions() {
+    ACTIONS.remove_all();
+    ACTION_SEQ = 0 as u64;
+}
+
+// The outcome a response reported, or "" for one that reported none.
+//
+// Read off the ANSWER rather than passed down from each branch: every acting
+// verb already renders `surface::Outcome` into the same `outcome` member, and
+// six copies of a logging call are six places to forget one.
+fn outcome_in(resp: json::Value) -> text::Text {
+    let r: json::Value = obj_get(resp, "result");
+    return val_as_text(obj_get(r, "outcome"));
+}
+
+fn actions_json() -> json::Value {
+    var rows: vec::Vec[json::Value] = vec::new::[json::Value]();
+    var i: usize = 0;
+    while i < ACTIONS.count() {
+        match ACTIONS.at_ptr(i) {
+            option::Option[*Action]::Some(a) => {
+                var m: vec::Vec[json::Member] = vec::new::[json::Member]();
+                m.append(member("seq", jnum({ (*a).seq } as f64)));
+                m.append(member("at_millis", jnum({ (*a).at_millis } as f64)));
+                m.append(member("client", json::Value::Text({ (*a).client }.clone())));
+                m.append(member("verb", json::Value::Text({ (*a).verb }.clone())));
+                m.append(member("target", json::Value::Text({ (*a).target }.clone())));
+                m.append(member("outcome", json::Value::Text({ (*a).outcome }.clone())));
+                let d: text::Text = { (*a).detail }.clone();
+                if d.count() > 0 { m.append(member("detail", json::Value::Text(d))); }
+                rows.append(json::Value::Object(m));
+            }
+            option::Option::None => { }
+        }
+        i = i +% 1;
+    }
+    return json::Value::Array(rows);
 }
 
 // ---- the dispatch -----------------------------------------------------------
@@ -1120,7 +1272,52 @@ fn to_content(id: f64, take inner: json::Value) -> json::Value {
 
 // The verb table, reached by a flat method name or through `tools/call`. The
 // grant is already minted and already checked; this only routes.
+// The verb table, and the one place an action is written down.
+//
+// A wrapper rather than a line in each acting branch: six copies of a logging
+// call are six places to forget one, and the seventh verb added later would
+// forget it by default. Here, forgetting takes an edit.
 fn dispatch_verb(
+    surf: *u8,
+    vt: backend::Backend,
+    ref sub: events::Subscriber,
+    grant: auth::Grant,
+    method: str,
+    params: json::Value,
+    id: f64,
+) -> json::Value {
+    if !is_acting_verb(method) {
+        return route_verb(surf, vt, sub, grant, method, params, id);
+    }
+    let target: text::Text = val_as_text(obj_get(params, "id"));
+    let resp: json::Value = route_verb(surf, vt, sub, grant, method, params, id);
+    // A REFUSAL IS STILL SOMETHING THE AGENT DID. A malformed or denied call
+    // never reaches the surface and so reports no `outcome` at all, and an
+    // empty string in the log reads as "nothing happened" — the opposite of
+    // what a supervisor watching an agent get turned away needs to see.
+    var o: text::Text = outcome_in(resp);
+    if o.count() == 0 {
+        o = if resp.has("error") { text::from_str("rejected") }
+            else { text::from_str("unknown") };
+    }
+    // `set_text` is the one verb whose argument is worth recording, and only
+    // when it ran: "wrote 0 characters" beside a refusal describes a write that
+    // never happened.
+    var detail: text::Text = text::new();
+    if method == "set_text" && { o.view() } != "rejected" {
+        // `value` — the same name the verb reads. Reading a different one here
+        // would log zero for every real write and the right number only for a
+        // caller who guessed wrong.
+        //
+        // The LENGTH, never the value — see the note on `Action`.
+        let wrote: text::Text = val_as_text(obj_get(params, "value"));
+        detail = "wrote ${wrote.count()} characters";
+    }
+    record_action(method, { target.view() }, { o.view() }, detail);
+    return resp;
+}
+
+fn route_verb(
     surf: *u8,
     vt: backend::Backend,
     ref sub: events::Subscriber,
@@ -1270,6 +1467,24 @@ fn dispatch_verb(
             option::Option::None => json::Value::Null,
         };
         return ok_response(id, result);
+    }
+    if method == "activity" {
+        // A READ, and one that says what OTHER clients did — so it costs the
+        // read capability rather than being free. Nothing here is a node, so
+        // there is no tier to check: the record holds verbs, targets and
+        // outcomes, and no content.
+        if !grant.has(auth::cap_read()) {
+            return err_response(id, - 32001 as f64,
+                "activity: this grant carries no read capability");
+        }
+        var m: vec::Vec[json::Member] = vec::new::[json::Member]();
+        m.append(member("actions", actions_json()));
+        // The highest sequence number ever issued, against how many rows are
+        // still held: a reader seeing 900 and 256 knows the log wrapped rather
+        // than that the session was quiet.
+        m.append(member("issued", jnum(ACTION_SEQ as f64)));
+        m.append(member("held", jnum(ACTIONS.count() as f64)));
+        return ok_response(id, json::Value::Object(m));
     }
     // Naming the method it received. An extension method arriving at a process
     // that never armed the namespace lands here, and "method not found" alone
@@ -4161,4 +4376,173 @@ fn not_found_carries_a_hint_pointing_somewhere() {
         "{\"method\":\"invoke_menu\",\"params\":{\"path\":\"File/Save\"},\"id\":2}");
     assert hit.contains("allowed");
     assert hit.contains("hint") == false;
+}
+
+// The startup line is a CANARY, so it has to move when arming does.
+#[test]
+fn the_verb_summary_counts_what_is_actually_armed() {
+    disarm_all_extensions();
+    let core: usize = core_tools().count();
+    assert armed_verb_count() == core;
+    assert verb_summary().contains("core only");
+
+    arm_extension(verbs2("probe.one", "probe.two"), ext_probe, ext_describes_two);
+    assert armed_verb_count() == core +% (2 as usize);
+    let two: text::Text = verb_summary();
+    assert two.contains("2 armed");
+    assert !two.contains("core only");
+
+    // And back down when a namespace goes away — the case that made this
+    // exist: an app that quietly lost a namespace still served and still
+    // answered, with nothing saying it had.
+    disarm_extension("probe.one");
+    assert armed_verb_count() == core;
+    assert verb_summary().contains("core only");
+}
+
+// ---- the record of what was done ---------------------------------------------
+
+// A click and a text write left NOTHING behind. The supervised case — a person
+// watching an agent drive their workstation, ready to step in — cannot step in
+// to something it cannot see.
+#[test]
+fn every_acting_verb_is_written_down() {
+    forget_actions();
+    var sub: events::Subscriber = events::subscriber(events::everything(), 4);
+    let surf: *u8 = #addr_of(FAKE_SURF) as *u8;
+
+    let _hi: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(allow_all),
+        "{\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2024-11-05\",\"clientInfo\":{\"name\":\"probe-client\"}},\"id\":0}");
+    let _c: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(allow_all),
+        "{\"method\":\"click\",\"params\":{\"id\":\"save\"},\"id\":1}");
+    assert action_count() == 1;
+
+    // A READ is not an action. Knowing an agent looked at the tree is noise
+    // beside knowing it pressed Send.
+    let _d: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(allow_all),
+        "{\"method\":\"describe_ui\",\"id\":2}");
+    let _r: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(allow_all),
+        "{\"method\":\"read_text\",\"params\":{\"id\":\"save\"},\"id\":3}");
+    assert action_count() == 1;
+
+    let _s: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(allow_all),
+        "{\"method\":\"set_text\",\"params\":{\"id\":\"pin\",\"value\":\"12345678\"},\"id\":4}");
+    assert action_count() == 2;
+
+    let log: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(allow_all),
+        "{\"method\":\"activity\",\"id\":5}");
+    assert log.contains("\"verb\":\"click\"");
+    assert log.contains("\"target\":\"save\"");
+    assert log.contains("\"verb\":\"set_text\"");
+    assert log.contains("\"target\":\"pin\"");
+    // Who asked, and whether it worked.
+    assert log.contains("\"outcome\"");
+    assert log.contains("\"client\"");
+    assert log.contains("\"seq\"");
+    assert log.contains("\"at_millis\"");
+
+    // THE VALUE IS NOT IN THE LOG. An agent may only write a field it was
+    // granted, and the content behind a privacy tier is readable only through
+    // `read_text` under that tier's rules. A log that quoted the value would be
+    // a way around them that no authorization check in this file would see.
+    assert log.contains("wrote 8 characters");
+    assert !log.contains("12345678");
+
+    // WHO asked, by name, not merely that the field is present. The name comes
+    // from the handshake, and a log that cannot say which of two agents did
+    // something is not an audit.
+    assert log.contains("\"client\":\"probe-client\"");
+
+    // A call that never reached the surface is still something the agent did.
+    // It reports no outcome of its own, and "" would read as "nothing
+    // happened".
+    let _bad: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(allow_all),
+        "{\"method\":\"set_text\",\"params\":{\"id\":\"pin\"},\"id\":6}");
+    assert action_count() == 3;
+    let after: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(allow_all),
+        "{\"method\":\"activity\",\"id\":7}");
+    assert after.contains("\"outcome\":\"rejected\"");
+    // ...and it does NOT carry a length. "wrote 0 characters" beside a refusal
+    // describes a write that never happened.
+    assert !after.contains("wrote 0 characters");
+
+    // ...and a caller that never introduced itself is named as such. The
+    // connection is the session, so this is the ordinary shape of a one-shot
+    // caller, not a failure.
+    forget_client();
+    let _anon: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(allow_all),
+        "{\"method\":\"click\",\"params\":{\"id\":\"save\"},\"id\":8}");
+    let anon_log: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(allow_all),
+        "{\"method\":\"activity\",\"id\":9}");
+    assert anon_log.contains("\"client\":\"unidentified\"");
+}
+
+// A workstation session is long. The log is bounded, and says so rather than
+// looking quiet.
+#[test]
+fn the_action_log_is_bounded_and_admits_it() {
+    forget_actions();
+    var i: usize = 0;
+    while i < (ACTION_LOG_MAX +% (10 as usize)) {
+        record_action("click", "btn", "ok", text::new());
+        i = i +% 1;
+    }
+    assert action_count() == ACTION_LOG_MAX;
+    // The sequence keeps counting past what is held, which is how a reader
+    // tells a log that wrapped from a session that was quiet.
+    assert ACTION_SEQ == ((ACTION_LOG_MAX +% (10 as usize)) as u64);
+
+    var sub: events::Subscriber = events::subscriber(events::everything(), 4);
+    let surf: *u8 = #addr_of(FAKE_SURF) as *u8;
+    let log: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(allow_all),
+        "{\"method\":\"activity\",\"id\":1}");
+    assert log.contains("\"held\":256");
+    assert log.contains("\"issued\":266");
+}
+
+// It says what other clients did, so it is not free.
+#[test]
+fn reading_the_record_costs_the_read_capability() {
+    forget_actions();
+    var sub: events::Subscriber = events::subscriber(events::everything(), 4);
+    let surf: *u8 = #addr_of(FAKE_SURF) as *u8;
+    let denied: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(allow_nothing),
+        "{\"method\":\"activity\",\"id\":1}");
+    assert !denied.contains("\"actions\"");
+}
+
+// THE CORE HAS THE SAME TWO LISTS the inspector namespace does — `core_tools`
+// is what a model is shown, the if-chain in `route_verb` is what answers — and
+// nothing made them agree. A tool declared and not routed is a verb a model
+// will call and be told does not exist.
+#[test]
+fn every_core_tool_is_dispatched() {
+    var sub: events::Subscriber = events::subscriber(events::everything(), 4);
+    let surf: *u8 = #addr_of(FAKE_SURF) as *u8;
+    let tools: vec::Vec[json::Value] = core_tools();
+    assert tools.count() > 8;
+    var i: usize = 0;
+    while i < tools.count() {
+        match tools.at_ptr(i) {
+            option::Option[*json::Value]::Some(t) => {
+                let nm: text::Text = { (*t) }.field_str("name", "");
+                assert nm.count() > 0;
+                // Params deliberately absent: a routed verb answers "missing
+                // parameter", and only an unrouted one answers "method not
+                // found".
+                var line: text::Text = text::from_str("{\"method\":\"");
+                let _a: status::Status = line.append(nm.view());
+                let _b: status::Status = line.append("\",\"id\":1}");
+                let r: text::Text = handle_request(surf, fake_backend(), sub,
+                                                   auth::serve(allow_all), line.view());
+                if r.contains("method not found") {
+                    io::println(nm.view());
+                    io::println("  ^ declared in core_tools, not answered by route_verb");
+                }
+                assert !r.contains("method not found");
+            }
+            option::Option::None => { }
+        }
+        i = i +% 1;
+    }
 }

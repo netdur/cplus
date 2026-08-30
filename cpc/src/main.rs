@@ -7409,10 +7409,16 @@ fn run_init(args: &[OsString]) -> ExitCode {
          curl -s -X POST http://127.0.0.1:<port>/ \\\n\
          \x20    -d '{{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"describe_ui\"}}'\n\
          ```\n\n\
-         `tools/list` names every verb. The core ones are `describe_ui`,\n\
-         `click`, `set_text`, `hit_test`, `scroll_to` and `poll_event`; if the\n\
-         app called `inspect::arm()` there are twelve more under `inspector.`\n\
-         that see the whole tree, not just what is exposed.\n\n\
+         `tools/list` names every verb, and the startup line says how many are\n\
+         armed. The core ones are `describe_ui`, `click`, `set_text`,\n\
+         `hit_test`, `set_caret`, `read_text`, `read_runs`, `invoke_menu`,\n\
+         `scroll_to`, `poll_event` and `activity`; if the app called\n\
+         `inspect::arm()` there are fourteen more in the same namespace that see\n\
+         the whole tree, not just what is exposed, and can write any property on\n\
+         it. Ask `vocabulary` what a property takes before you `set` one.\n\n\
+         `activity` is the record of what has been DONE through the surface —\n\
+         useful when a person is supervising you, and when you want to check\n\
+         what you already tried.\n\n\
          **This is how you test a UI change.** `describe_ui` answers a flat node\n\
          list and each `id` is the `key:` written in the code. Click, describe\n\
          again, and read the change — that is evidence, in a way \"it should work\n\

@@ -221,7 +221,7 @@ fn serve_once(id: str) {
         AgentServe { fd: fd },
         serve_main,
     );
-    let ok: text::Text = "facet: agent surface on ${path}";
+    let ok: text::Text = "facet: agent surface on ${path} — ${mcp::verb_summary()}";
     io::eprintln(ok.view());
 }
 

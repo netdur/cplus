@@ -179,7 +179,7 @@ fn serve_once(id: str) {
         AgentServe { fd: fd },
         serve_main,
     );
-    let ok: text::Text = "facet: agent surface on http://127.0.0.1:${port}/";
+    let ok: text::Text = "facet: agent surface on http://127.0.0.1:${port}/ — ${mcp::verb_summary()}";
     io::eprintln(ok.view());
 }
 

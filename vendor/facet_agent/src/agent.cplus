@@ -243,7 +243,7 @@ fn serve_once(id: str) {
         AgentServe { fd: fd, http: false, unlink_on_exit: true },
         serve_main,
     );
-    let ok: text::Text = "facet: agent surface on ${path}";
+    let ok: text::Text = "facet: agent surface on ${path} — ${mcp::verb_summary()}";
     io::eprintln(ok.view());
 
     // ...AND THE MCP-NATIVE DOOR, on loopback, beside it.

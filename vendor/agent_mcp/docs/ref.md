@@ -28,7 +28,8 @@ fn dispatch(
 ```
 
 One already-parsed request. External consent first. Methods:
-`describe_ui`, `click`, `scroll_to`, `set_text`, `poll_event`.
+`describe_ui`, `click`, `hit_test`, `set_caret`, `read_text`, `read_runs`,
+`invoke_menu`, `scroll_to`, `set_text`, `poll_event`, `activity`.
 
 ### `handle_request`
 
@@ -237,11 +238,29 @@ fn accept_loop(surf, vt, ref sub, policy, fd: i32,
 
 | method | params keys | Backend / events |
 |---|---|---|
-| `describe_ui` | — | `describe` |
+| `describe_ui` | `mode`, `prefix` | `describe_exposed`, or `describe` for `mode: "full"` |
 | `click` | `id` | `click` |
+| `hit_test` | `id` | `hit_test` |
+| `set_caret` | `id`, `start`, `end` | `set_caret` |
+| `read_text` | `id` | `describe` (the node's own text, under its tier) |
+| `read_runs` | `id` | `read_runs` |
+| `invoke_menu` | `id` | `invoke_menu` |
 | `scroll_to` | `id` | `navigate` |
 | `set_text` | `id`, `value`, `base_version` | `set_text` |
 | `poll_event` | — | `sub.poll()` |
+| `activity` | — | none — this module's own record |
+
+`activity` answers what the surface has been asked to DO: every `click`,
+`set_text`, `set_caret`, `invoke_menu`, `scroll_to` and `navigate`, in order,
+with the client that asked, the node it targeted and the outcome. Reads are not
+recorded. Neither is content: a text write is logged as its LENGTH, because an
+agent may only write a field it was granted and the value behind a privacy tier
+is readable only through `read_text` under that tier's rules — a log that quoted
+it would be a way around them.
+
+Bounded at 256 entries, oldest first. `issued` counts every entry ever made and
+`held` how many remain, so a reader can tell a log that wrapped from a session
+that was quiet. Reading it costs `cap_read`: it says what OTHER clients did.
 
 ---
 

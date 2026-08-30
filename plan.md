@@ -53,12 +53,9 @@ supervised call-centre workstation and voice-only operation.
    line-delimited framing that only the desktop socket still serves; and
    `agents_md.cplus:224` writes that stale advice into every project it opens,
    with a test at `:518` asserting the string is present.
-3. **No audit of agent actions.** `inspector.journal` logs inspector
-   mutations; clicks and `set_text` leave no trace. The supervised-operator
-   case needs one.
-4. **Startup could report what is armed** — `— 21 verbs (core, inspector)`
-   vs `9 verbs (core)`. Discussed, not built; it replaces the canary that
-   splitting `serve_if_asked` took away.
+3. ~~No audit of agent actions.~~ **DONE** — `activity`. See the Status table.
+4. ~~Startup could report what is armed.~~ **DONE** — a scaffolded app now says
+   `25 verbs (11 core, 14 armed)`. See the Status table.
 5. **Trailing `return;` is done**; the concise-literal pass is done except for
    the three packages blocked on (1).
 6. **Grid is not editable.** `grid_template_columns` and its neighbours are
@@ -93,6 +90,9 @@ supervised call-centre workstation and voice-only operation.
 | 11 — doc defects | **DONE.** All five, plus a stale `serve.cplus` reference in `agent_mcp`'s header and the deny-all sentence in item 6 |
 | 12 — element editing | **DONE.** The surface advertised 22 properties against facet's 92 setters and could not change a font, a colour, an alignment or a percent. It now writes **65**: position and insets, min/max, per-axis scale and rotation, per-edge padding and margin, `flex_basis`, the nine flex enums, the five shadow scalars, and the control tier — `font_size`, `font_weight`, `text_color`, `border_color`, `border_width`. A length is points, `"50%"` or `"auto"` on BOTH sides, and `null` unsets. Two new verbs: `nudge` (move by a delta, in whatever unit the property holds; answers where it landed) and `set_many` (place an element in one round trip; applies what it can and names each outcome). Verified live on `playground/attachprobe` over the socket, including `reset` restoring `auto` and `default` |
 | 13 — `vocabulary` | **DONE.** It promised "which properties exist and what types they take" and answered two arrays of bare names. There is now ONE table — `inspector/vocabulary::table()` — carrying name, type, unit, the kinds that carry it, the closed set of spellings, and a line of prose; `declared_names()` READS FROM IT, so the two lists cannot drift. `vocabulary(element: "button")` narrows to the 65 a button takes. Four checks make it honest: every advertised name reaches the dispatch, every advertised SPELLING round-trips on a live node, `verb_names`/`describe_tools`/`handle` agree, and a label lists no `border_width` |
+| 14 — `activity` | **DONE.** A click and a `set_text` left nothing behind, and the supervised case — a person watching an agent drive their workstation, ready to step in — cannot step in to something it cannot see. Every verb that reaches a `Backend` action is written down with the client that asked, the node it targeted and the outcome; reads are not, and neither is content (a text write is logged as its LENGTH, because the value behind a privacy tier is readable only through `read_text` under that tier's rules and a log that quoted it would be a way around them). Bounded at 256 with `issued`/`held` so a wrapped log cannot pass for a quiet session. Recorded in a WRAPPER around the dispatch, not in each branch — six copies is six places to forget one. Reading it costs `cap_read`: it says what other clients did |
+| 15 — startup canary | **DONE.** Splitting `serve_if_asked` took away the signal that arming happened, and commenting out `inspect::arm()` left an app that still served and had quietly lost fourteen verbs — which is how it was found, by someone asking why the inspector stopped working. `mcp::verb_summary()` counts at SERVE time, so the number is what a client will be offered: a scaffolded app says `25 verbs (11 core, 14 armed)`, and `10 verbs (core only)` when nothing armed |
+| 16 — two more drift checks | **DONE.** `every_core_tool_is_dispatched` — `core_tools` is what a model is shown and the if-chain in `route_verb` is what answers, and nothing made them agree; a tool declared and not routed is a verb a model will call and be told does not exist. And the same check for the inspector's three lists. The `agent_mcp` docs' verb tables were five verbs behind; they list all eleven now |
 
 Also done, out of the numbered list: **the bound socket is `0600`**. `bind_uds`
 chmodded nothing, so `bind` created it `0777 & ~umask` — measured `srwxr-xr-x`
