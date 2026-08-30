@@ -38,6 +38,7 @@ import "./vocabulary" as voc;
 import "facet/checkbox" as cbox;
 import "facet/popup" as popup;
 import "facet/slider" as slider;
+import "facet/services" as services;
 
 // The tree pane is `facet/tree` — a recycling NSOutlineView on macOS.
 //
@@ -173,6 +174,11 @@ struct Inspector {
     shown: usize,
     // Whether the panel hides its own subtree from the tree it shows.
     hide_self: bool,
+    // Keeps the overlay on the selected element while it changes size — a
+    // relayout, a divider drag, a window resize. Cancelled and replaced when
+    // the selection moves, and BEFORE the observed element can leave the tree,
+    // which is the contract `services::observe_size` states.
+    size_watch: services::Cancellable,
 }
 
 fn new(take backend: insp::Backend, hide_self: bool = true) -> Inspector {
@@ -182,6 +188,7 @@ fn new(take backend: insp::Backend, hide_self: bool = true) -> Inspector {
         selected: insp::Handle::none(),
         shown: 0,
         hide_self: hide_self,
+        size_watch: services::Cancellable::none(),
     };
 }
 
@@ -387,6 +394,15 @@ fn show_node(key: text::Text, on: bool) {
     if on { core::set_display(n, flex::Display::Flex); }
     else { core::set_display(n, flex::Display::None); }
 }
+
+// THE ROW BEING TYPED INTO IS NOT REPAINTED.
+//
+// A commit repaints every row from the tree, and writing the canonical text
+// back into the field under the caret moves the caret — the classic editor bug
+// where typing `120` gives you `021`. Naming the row that is mid-edit is
+// cheaper than teaching the painter about focus, and it is exact: it is the row
+// whose keystroke caused this paint.
+static EDITING: text::Text = #zero::[text::Text]();
 
 fn say(msg: str) {
     set_label(text::from_str("insp:status"), msg);
@@ -767,6 +783,7 @@ fn on_tree_select(n: *ftree::TreeNode, ctx: *u8) {
     { (*st).selected = found };
     let b: insp::Backend = { (*st).backend };
     b.highlight_now(found);
+    watch_selection_size(st);
     paint_props(st);
 }
 
@@ -811,12 +828,70 @@ fn on_commit(sender: *u8, ctx: *u8) {
             let r: insp::Outcome = b.set_now(h, prop.view(), v);
             say(r.describe());
             paint_props(st);
+            rehighlight_after_layout(st);
         }
         option::Option::None => {
             // The refusal is visible and the field goes back to the truth,
             // rather than sitting there showing something that was never set.
             say("could not read that value");
             paint_props(st);
+        }
+    }
+}
+
+// ---- COMMITTED AS YOU TYPE ------------------------------------------------------
+//
+// Only Return committed. Type a number, click the next field, and the edit was
+// gone — and the old value was painted back over it, so the panel looked like
+// it had ignored you.
+//
+// A facet text field reports `on_submit` and `on_text_changed` and nothing
+// else: there is no blur, so "commit when you leave" is not a thing this can
+// listen for. Committing on every keystroke that PARSES is the shape that
+// removes the question — there is no uncommitted state to lose — and it is
+// what a browser's inspector does, where a value applies as you type it and
+// Reset is the way back.
+//
+// A keystroke that does not parse is refused and says so, and the text is left
+// exactly as typed: a half-written `1.` or `-` is on the way to a number, and
+// snapping the field back mid-word is how an editor becomes unusable.
+fn on_typed(sender: *u8, ctx: *u8) {
+    let st: *Inspector = ctx as *Inspector;
+    let h: insp::Handle = { (*st).selected };
+    if h.is_none() { return; }
+
+    let prop: text::Text = key_tail(component::key_of(sender));
+    if prop.is_empty() { return; }
+    let typed: text::Text = field_text(joined("insp:f:", prop.view()));
+
+    let b: insp::Backend = { (*st).backend };
+    let current: insp::Value = current_declared(b, h, prop.view());
+    match tree::parse_as(current, typed.view()) {
+        option::Option[insp::Value]::Some(v) => {
+            let r: insp::Outcome = b.set_now(h, prop.view(), v);
+            if r.is_ok() {
+                // Say what landed. Without this the status line keeps whatever
+                // it last said — and a stale "not a value" sitting beside a
+                // value that just committed reads as a refusal.
+                var m: text::Text = prop.clone();
+                let _s: status::Status = m.append(" = ");
+                let _t: status::Status = m.append(typed.view());
+                say(m.view());
+                // The row being typed into is left alone — see `EDITING`.
+                EDITING = prop.clone();
+                paint_props(st);
+                EDITING = text::new();
+                rehighlight_after_layout(st);
+            } else {
+                say(r.describe());
+            }
+        }
+        option::Option::None => {
+            // Named, not silent, and not undone. `12x` is a mistake worth
+            // seeing the moment it is made rather than at Return.
+            var m: text::Text = prop.clone();
+            let _a: status::Status = m.append(": not a value for this property");
+            say(m.view());
         }
     }
 }
@@ -995,6 +1070,54 @@ fn enum_spelling_at(prop: str, index: i64) -> text::Text {
 // `insp:f:<prop>` and the tail is the name — so a row's editor can be any kind
 // without the row knowing which.
 
+// THE OVERLAY IS PLACED, NOT ATTACHED, so it does not follow.
+//
+// `highlight` computes the node's frame and puts the layer there. Move the node
+// or resize it and the layer stays where it was — which is fine until the
+// inspector is used for the thing it is for, since every edit that matters
+// changes a frame. Reported as "works well till I change the button place or
+// size", which is exactly the set of edits worth making.
+//
+// Re-placed on the NEXT main-loop turn rather than immediately: a property
+// write marks the node dirty and the backend lays out on its own tick, so
+// reading the frame now would read the one before the change. `after(0)` is the
+// smallest wait that is still after it.
+//
+// Not attached as a sublayer of the target instead — which would track the
+// frame for free — because that needs the target layer-backed, and an
+// inspector that changes how the app it is inspecting draws is not an
+// inspector.
+fn replace_highlight(ctx: *u8) {
+    let st: *Inspector = ctx as *Inspector;
+    let h: insp::Handle = { (*st).selected };
+    if h.is_none() { return; }
+    if !h.is_live() { return; }
+    let b: insp::Backend = { (*st).backend };
+    b.highlight_now(h);
+}
+
+fn rehighlight_after_layout(st: *Inspector) {
+    // A MOVE, which `observe_size` cannot see: the element is the same size at
+    // a different place — `top` on an absolute node, or a sibling's padding
+    // pushing it along. Deferred by one turn because the write only marks the
+    // node dirty; the backend lays out on its own tick, and reading the frame
+    // now would read the one before the change.
+    let _c: services::Cancellable = services::after(0.0, replace_highlight, st as *u8);
+}
+
+// ...and a RESIZE, from wherever it came. `observe_size` fires after the
+// element actually changed size, so this needs no guess about when layout ran
+// and covers the causes a panel write knows nothing about: the window resizing,
+// a splitter dragging, the app relaying itself out.
+fn watch_selection_size(st: *Inspector) {
+    let w: *services::Cancellable = { #addr_of((*st).size_watch) };
+    { (*w).cancel() };
+    let h: insp::Handle = { (*st).selected };
+    if h.is_none() { return; }
+    if !h.is_live() { return; }
+    { (*st).size_watch = services::observe_size(h.node, replace_highlight, st as *u8) };
+}
+
 fn write_prop(st: *Inspector, prop: str, take v: insp::Value) {
     let h: insp::Handle = { (*st).selected };
     if h.is_none() { say("nothing selected"); return; }
@@ -1002,6 +1125,7 @@ fn write_prop(st: *Inspector, prop: str, take v: insp::Value) {
     let r: insp::Outcome = b.set_now(h, prop, v);
     say(r.describe());
     paint_props(st);
+    rehighlight_after_layout(st);
 }
 
 fn on_toggle(sender: *u8, ctx: *u8) {
@@ -1050,6 +1174,9 @@ fn on_slide(sender: *u8, ctx: *u8) {
 // one rendering, three readers, so a slider and a box can never disagree about
 // what the value is.
 fn paint_editor(prop: str, shown: str) {
+    if !EDITING.is_empty() {
+        if EDITING.view() == prop { return; }
+    }
     let key: text::Text = joined("insp:f:", prop);
     let kind: u32 = editor_for(prop);
     if kind == ED_BOOL {
@@ -1116,7 +1243,8 @@ fn prop_row(prop: str, me: *u8) -> core::Node {
     } else {
         ui::text_field("", key: fk.view(),
                        text_align: vocab::TextAlign::Start,
-                       on_submit: on_commit, on_submit_ctx: me)
+                       on_submit: on_commit, on_submit_ctx: me,
+                       on_text_changed: on_typed, on_text_changed_ctx: me)
     };
     core::set_grow(#addr_of(field), 1.0);
     // Basis 0, or the field starts from the width its TEXT wants and grows

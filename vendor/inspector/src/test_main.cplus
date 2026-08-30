@@ -3711,3 +3711,61 @@ fn a_caller_supplied_property_name_is_exchanged_for_ours() {
     assert tree::set(h, "not_a_property", insp::Value::Num(1.0))
         == insp::Outcome::UnknownProperty;
 }
+
+// ---- committing, and refusing ---------------------------------------------------
+
+#[test]
+fn a_value_that_does_not_parse_is_refused_and_changes_nothing() {
+    // Typing letters into a numeric field left them sitting there until Return
+    // rejected them. The refusal is immediate now, and it does not write:
+    // `corner_radius` is a number and "xyz" is not one, so the ledger stays
+    // empty and the diff has nothing to say.
+    fresh();
+    var root: core::Node = ui::column(core::Builder::new(), key: "root");
+    app::open_window(#addr_of(root));
+    let h: insp::Handle = handle_for(#addr_of(root), "root");
+
+    let cur: insp::Value = match tree::get(h, "corner_radius") {
+        option::Option[insp::Value]::Some(v) => v,
+        option::Option::None => insp::Value::Nothing,
+    };
+    // The parse is the gate the panel checks on every keystroke.
+    assert match tree::parse_as(cur, "xyz") {
+        option::Option[insp::Value]::Some(_v) => false,
+        option::Option::None => true,
+    };
+    assert tree::changes_text().view() == "{}\n";
+
+    // ...and a value that DOES parse writes.
+    let cur2: insp::Value = match tree::get(h, "corner_radius") {
+        option::Option[insp::Value]::Some(v) => v,
+        option::Option::None => insp::Value::Nothing,
+    };
+    match tree::parse_as(cur2, "12") {
+        option::Option[insp::Value]::Some(v) => {
+            assert tree::set(h, "corner_radius", v) == insp::Outcome::Ok;
+        }
+        option::Option::None => { assert false; }
+    }
+    assert tree::changes_text().contains("\"corner_radius\": 12");
+}
+
+#[test]
+fn a_half_written_number_is_refused_without_touching_the_text() {
+    // `1.` and `-` are on the way to a number. The panel must not snap the
+    // field back mid-word — the refusal is a status line, not an edit.
+    fresh();
+    var root: core::Node = ui::column(core::Builder::new(), key: "root");
+    app::open_window(#addr_of(root));
+    let h: insp::Handle = handle_for(#addr_of(root), "root");
+    let cur: insp::Value = match tree::get(h, "opacity") {
+        option::Option[insp::Value]::Some(v) => v,
+        option::Option::None => insp::Value::Nothing,
+    };
+    assert match tree::parse_as(cur, "-") {
+        option::Option[insp::Value]::Some(_v) => false,
+        option::Option::None => true,
+    };
+    // Nothing was written, so nothing has to be undone.
+    assert tree::changes_text().view() == "{}\n";
+}
