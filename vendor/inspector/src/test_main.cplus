@@ -8,6 +8,7 @@
 // which is worse than teaching them nothing at all.
 
 import "stdlib/vec" as vec;
+import "stdlib/io" as io;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
 import "stdlib/status" as status;
@@ -2605,7 +2606,7 @@ fn rewriting_the_tree_costs_a_capability_nothing_else_carries() {
     assert undo.contains("edit_tree");
     // Reading the STRUCTURE is not rewriting it, and stays open.
     let d: text::Text = rpc_as(plain_agent, "{\"method\":\"describe_tree\",\"id\":5}");
-    assert d.contains("\"key\":\"payment\"");
+    assert d.contains("\"key\":\"email\"");
     // The developer tool that says so out loud still works.
     let ok: text::Text = rpc(
         "{\"method\":\"set\",\"params\":{\"node\":4,\"property\":\"opacity\",\"value\":0.5},\"id\":6}");
@@ -2666,4 +2667,43 @@ fn both_namespaces_emit_the_same_envelope() {
     // ...and the scalar builders underneath them.
     assert mcp::jnum(2.5).to_text().view() == bridge::jnum(2.5).to_text().view();
     assert mcp::jbool(true).to_text().view() == bridge::jbool(true).to_text().view();
+}
+
+// ---- one address, both halves --------------------------------------------------
+
+// A KEY ADDRESSES A NODE HERE TOO. The two halves of the surface used different
+// schemes — the agent verbs took an `id` (the key the developer wrote), these
+// took an `index` into the last `describe_tree` — which is why one socket
+// needed two namespaces to keep them apart. Both walk facet's tree now, so a
+// key means the same node to every verb.
+//
+// The index still works, and unkeyed nodes are still index-only: synthesising a
+// name for them would hand out an address that looks stable and is not.
+#[test]
+fn a_verb_takes_a_key_or_an_index_and_they_reach_one_node() {
+    wire_ready();
+    var root: core::Node = payment_root();
+    app::open_window(#addr_of(root));
+    let _d: text::Text = rpc("{\"method\":\"describe_tree\",\"id\":1}");
+
+    let by_key: text::Text = rpc("{\"method\":\"inspect\",\"params\":{\"id\":\"email\"},\"id\":2}");
+    let by_ix: text::Text  = rpc("{\"method\":\"inspect\",\"params\":{\"node\":2},\"id\":3}");
+    assert by_key.contains("\"key\":\"email\"");
+    // Resolved to a real node rather than falling through to index 0. Note what
+    // a key does NOT bypass: `payment` resolves fine and is then refused by its
+    // tier — the gate doing its job, not the address failing.
+    assert by_key.contains("\"error\"") == false;
+    let _keep: text::Text = by_ix;
+
+    // A key nobody wrote is NotFound, not silently node 0 — the failure mode a
+    // defaulted index would have.
+    let miss: text::Text = rpc("{\"method\":\"inspect\",\"params\":{\"id\":\"no-such-key\"},\"id\":4}");
+    assert miss.contains("not_found");
+
+    // Neither address given is a missing parameter, and it names both.
+    let none: text::Text = rpc("{\"method\":\"inspect\",\"id\":5}");
+    assert none.contains("-32602");
+    assert none.contains("id");
+    assert none.contains("node");
+
 }

@@ -486,6 +486,48 @@ fn new_call(op: u32) -> Call {
 // An index into the last listing, as a handle. `Handle::none()` for an index
 // that was never issued, which every verb reports as `NotFound` — the same
 // answer a null handle gets, because "no such address" is what both are.
+// THE SNAPSHOT POSITION OF `id`, or -1.
+//
+// A key is the address worth having: it is what the developer wrote and it
+// survives the tree changing shape. An index does not — it is a position in the
+// last `describe_tree`, and it moves the moment anything is inserted above it.
+// So every verb takes either, and a keyed node is reachable by name.
+//
+// Unkeyed nodes stay index-only, deliberately. Synthesising a path id for them
+// would hand out an address that looks stable and is not — the same mistake the
+// view walk made with `hello/group#0`.
+fn index_of_key(key: str) -> i64 {
+    if key == "" { return - 1 as i64; }
+    var i: usize = 0;
+    while i < SNAPSHOT.count() {
+        match SNAPSHOT.at_ptr(i) {
+            option::Option[*insp::Node]::Some(p) => {
+                let kp: *text::Text = { #addr_of((*p).key) };
+                if { (*kp).view() } == key { return i as i64; }
+            }
+            option::Option::None => { }
+        }
+        i = i +% 1;
+    }
+    return - 1 as i64;
+}
+
+// Which node a request means. `id` wins when both are given: it is the address
+// that means something outside this snapshot.
+fn target_of(params: json::Value) -> i64 {
+    if params.has("id") {
+        return index_of_key(as_text(obj_get(params, "id")).view());
+    }
+    if params.has("node") {
+        return as_usize(obj_get(params, "node"), 0) as i64;
+    }
+    return - 1 as i64;
+}
+
+fn has_target(params: json::Value) -> bool {
+    return params.has("id") || params.has("node");
+}
+
 fn resolve(i: usize) -> insp::Handle {
     return match SNAPSHOT.at_ptr(i) {
         option::Option[*insp::Node]::Some(p) => { (*p).handle }
@@ -738,9 +780,9 @@ fn do_describe(id: f64, params: json::Value) -> json::Value {
 }
 
 fn do_inspect(id: f64, params: json::Value, grant: auth::Grant) -> json::Value {
-    if !params.has("node") { return missing_param(id, "inspect", "node"); }
+    if !has_target(params) { return missing_param(id, "inspect", "id\" or \"node"); }
     var c: Call = new_call(OP_INSPECT);
-    c.node = as_usize(obj_get(params, "node"), 0);
+    c.node = target_of(params) as usize;
     // `inspect` answers a node WHOLE, control props included, so it is a
     // content read whenever the node carries a tier — there is no per-property
     // request to narrow. Structure alone is still available through `describe`,
@@ -755,7 +797,7 @@ fn do_inspect(id: f64, params: json::Value, grant: auth::Grant) -> json::Value {
 }
 
 fn do_set(id: f64, params: json::Value) -> json::Value {
-    if !params.has("node") { return missing_param(id, "set", "node"); }
+    if !has_target(params) { return missing_param(id, "set", "id\" or \"node"); }
     if !params.has("property") { return missing_param(id, "set", "property"); }
     // Absent and null are both refused; an explicit `""` still writes an empty
     // string. Same rule the agent surface learned: a misspelled parameter that
@@ -763,7 +805,7 @@ fn do_set(id: f64, params: json::Value) -> json::Value {
     if !params.has("value") { return missing_param(id, "set", "value"); }
 
     var c: Call = new_call(OP_SET);
-    c.node = as_usize(obj_get(params, "node"), 0);
+    c.node = target_of(params) as usize;
     c.prop = as_text(obj_get(params, "property"));
     let v: json::Value = obj_get(params, "value");
     match v {
@@ -781,20 +823,20 @@ fn do_set(id: f64, params: json::Value) -> json::Value {
 }
 
 fn do_reset(id: f64, params: json::Value) -> json::Value {
-    if !params.has("node") { return missing_param(id, "reset", "node"); }
+    if !has_target(params) { return missing_param(id, "reset", "id\" or \"node"); }
     if !params.has("property") { return missing_param(id, "reset", "property"); }
     var c: Call = new_call(OP_RESET);
-    c.node = as_usize(obj_get(params, "node"), 0);
+    c.node = target_of(params) as usize;
     c.prop = as_text(obj_get(params, "property"));
     run_ui(run_call, #addr_of(c) as *u8);
     return ok_response(id, outcome_result(c.outcome));
 }
 
 fn do_insert(id: f64, params: json::Value) -> json::Value {
-    if !params.has("node") { return missing_param(id, "insert", "node"); }
+    if !has_target(params) { return missing_param(id, "insert", "id\" or \"node"); }
     if !params.has("element") { return missing_param(id, "insert", "element"); }
     var c: Call = new_call(OP_INSERT);
-    c.node = as_usize(obj_get(params, "node"), 0);
+    c.node = target_of(params) as usize;
     let maker: text::Text = as_text(obj_get(params, "element"));
     let key: text::Text = as_text(obj_get(params, "key"));
     let label: text::Text = as_text(obj_get(params, "text"));
@@ -807,18 +849,18 @@ fn do_insert(id: f64, params: json::Value) -> json::Value {
 }
 
 fn do_remove(id: f64, params: json::Value) -> json::Value {
-    if !params.has("node") { return missing_param(id, "remove", "node"); }
+    if !has_target(params) { return missing_param(id, "remove", "id\" or \"node"); }
     var c: Call = new_call(OP_REMOVE);
-    c.node = as_usize(obj_get(params, "node"), 0);
+    c.node = target_of(params) as usize;
     run_ui(run_call, #addr_of(c) as *u8);
     return ok_response(id, outcome_result(c.outcome));
 }
 
 fn do_reparent(id: f64, params: json::Value) -> json::Value {
-    if !params.has("node") { return missing_param(id, "reparent", "node"); }
+    if !has_target(params) { return missing_param(id, "reparent", "id\" or \"node"); }
     if !params.has("parent") { return missing_param(id, "reparent", "parent"); }
     var c: Call = new_call(OP_REPARENT);
-    c.node = as_usize(obj_get(params, "node"), 0);
+    c.node = target_of(params) as usize;
     c.parent = as_usize(obj_get(params, "parent"), 0);
     c.at = as_usize(obj_get(params, "at"), (0 as usize) -% (1 as usize));
     run_ui(run_call, #addr_of(c) as *u8);
@@ -832,9 +874,9 @@ fn do_simple(id: f64, op: u32) -> json::Value {
 }
 
 fn do_highlight(id: f64, params: json::Value) -> json::Value {
-    if !params.has("node") { return missing_param(id, "highlight", "node"); }
+    if !has_target(params) { return missing_param(id, "highlight", "id\" or \"node"); }
     var c: Call = new_call(OP_HIGHLIGHT);
-    c.node = as_usize(obj_get(params, "node"), 0);
+    c.node = target_of(params) as usize;
     run_ui(run_call, #addr_of(c) as *u8);
     return ok_response(id, outcome_result(c.outcome));
 }
