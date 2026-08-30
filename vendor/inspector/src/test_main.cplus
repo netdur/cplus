@@ -2707,3 +2707,108 @@ fn a_verb_takes_a_key_or_an_index_and_they_reach_one_node() {
     assert none.contains("node");
 
 }
+
+// ---- the advertised list and the dispatch must agree ----------------------------
+
+// THREE HAND-WRITTEN LISTS HAVE TO MATCH: `declared_names` is what
+// `vocabulary` advertises, `apply_uniform` is what `set` accepts, and
+// `get_uniform` is what `inspect` reports. Nothing made them agree, and they
+// did not — the surface advertised 22 properties against facet's 92 setters,
+// and `vocabulary`'s own tool description promised types it never returned.
+//
+// This is the check that makes the next omission a failing test rather than a
+// property nobody can reach. It runs BOTH ways on purpose: a name advertised
+// and not settable is a lie, and a name settable and not advertised is a
+// feature nobody can find.
+#[test]
+fn every_advertised_property_is_settable_and_readable() {
+    // SEVERAL KINDS, because a property can be legitimately unknown on the
+    // wrong one — a column has no `title`. The invariant is that every
+    // advertised name is implemented SOMEWHERE, not everywhere.
+    var col: core::Node = ui::column(core::Builder::new(), key: "p:col");
+    var lbl: core::Node = ui::label("x", key: "p:lbl");
+    var btn: core::Node = ui::button("x", key: "p:btn");
+    var fld: core::Node = ui::text_field("x", key: "p:fld");
+    var hs: vec::Vec[insp::Handle] = vec::new::[insp::Handle]();
+    let _h1: status::Status = hs.append(insp::Handle::of(#addr_of(col), 0));
+    let _h2: status::Status = hs.append(insp::Handle::of(#addr_of(lbl), 0));
+    let _h3: status::Status = hs.append(insp::Handle::of(#addr_of(btn), 0));
+    let _h4: status::Status = hs.append(insp::Handle::of(#addr_of(fld), 0));
+
+    let names: vec::Vec[str] = tree::declared_names();
+    assert names.count() > 30;
+    var i: usize = 0;
+    while i < names.count() {
+        match names.at(i) {
+            option::Option[str]::Some(nm) => {
+                // Offer all three value shapes on each kind. `TypeMismatch` and
+                // `Unsupported` are honest answers about a node; only
+                // `UnknownProperty` from every shape on every kind means the
+                // property is advertised and nothing implements it.
+                //
+                // An earlier version checked READABILITY and passed while
+                // advertising a name that did not exist — an unimplemented
+                // property is not readable either, so the check skipped itself.
+                var known_somewhere: bool = false;
+                var k: usize = 0;
+                while k < hs.count() {
+                    match hs.at(k) {
+                        option::Option[insp::Handle]::Some(h) => {
+                            let a: insp::Outcome = tree::set(h, nm, insp::Value::Num(1.0));
+                            let b: insp::Outcome = tree::set(h, nm, insp::Value::Bool(true));
+                            let c: insp::Outcome = tree::set(h, nm, insp::Value::Str(text::from_str("1")));
+                            if (a != insp::Outcome::UnknownProperty)
+                                || (b != insp::Outcome::UnknownProperty)
+                                || (c != insp::Outcome::UnknownProperty) { known_somewhere = true; }
+                        }
+                        option::Option[insp::Handle]::None => { }
+                    }
+                    k = k +% 1;
+                }
+                if !known_somewhere {
+                    io::println(nm);
+                    io::println("  ^ advertised by declared_names, unknown to the dispatch");
+                }
+                assert known_somewhere;
+            }
+            option::Option[str]::None => { }
+        }
+        i = i +% 1;
+    }
+}
+
+// The properties the DOM-style nudge loop needs, end to end on a live node:
+// take it out of flow, place it, read the numbers back.
+#[test]
+fn a_node_can_be_taken_out_of_flow_and_placed() {
+    var n: core::Node = ui::column(core::Builder::new(), key: "probe:box");
+    let h: insp::Handle = insp::Handle::of(#addr_of(n), 0);
+    assert h.is_live();
+
+    assert tree::set(h, "absolute", insp::Value::Bool(true)) == insp::Outcome::Ok;
+    assert tree::set(h, "top", insp::Value::Num(34.0)) == insp::Outcome::Ok;
+    assert tree::set(h, "left", insp::Value::Num(12.5)) == insp::Outcome::Ok;
+    assert tree::set(h, "z_index", insp::Value::Num(3.0)) == insp::Outcome::Ok;
+
+    // Read back the numbers you would write into the source — the whole point
+    // of the loop.
+    match tree::get(h, "top") {
+        option::Option[insp::Value]::Some(insp::Value::Num(x)) => { assert x == 34.0; }
+        _ => { assert false; }
+    }
+    match tree::get(h, "left") {
+        option::Option[insp::Value]::Some(insp::Value::Num(x)) => { assert x == 12.5; }
+        _ => { assert false; }
+    }
+    match tree::get(h, "absolute") {
+        option::Option[insp::Value]::Some(insp::Value::Bool(b)) => { assert b; }
+        _ => { assert false; }
+    }
+
+    // And back out of flow: `reset` returns it to what the app built.
+    assert tree::reset(h, "absolute") == insp::Outcome::Ok;
+    match tree::get(h, "absolute") {
+        option::Option[insp::Value]::Some(insp::Value::Bool(b)) => { assert b == false; }
+        _ => { assert false; }
+    }
+}

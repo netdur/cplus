@@ -317,6 +317,10 @@ fn get_uniform(n: *core::Node, prop: str) -> option::Option[insp::Value] {
     if prop == "tooltip" { return owned(core::tooltip(n)); }
     if prop == "accessibility_label" { return owned(core::accessibility_label(n)); }
     if prop == "rotation" { return num(core::rotation(n)); }
+    if prop == "rotation_x" { return num(core::rotation_x(n)); }
+    if prop == "rotation_y" { return num(core::rotation_y(n)); }
+    if prop == "scale_x" { return num(core::scale_x(n)); }
+    if prop == "scale_y" { return num(core::scale_y(n)); }
     if prop == "scale" { return num(core::scale(n)); }
     if prop == "translation_x" { return num(core::translation_x(n)); }
     if prop == "translation_y" { return num(core::translation_y(n)); }
@@ -326,6 +330,34 @@ fn get_uniform(n: *core::Node, prop: str) -> option::Option[insp::Value] {
     }
 
     // ---- tier 2: flex style ----
+    // ---- position, sizing, transform ----
+    //
+    // Read straight off the style, the way every row below does. `len_value`
+    // renders a StyleLength as the number a developer typed, so an unset inset
+    // reads as nothing rather than as 0 — "not positioned" and "positioned at
+    // zero" are different answers and a nudge loop needs to tell them apart.
+    if prop == "absolute" {
+        return option::Option[insp::Value]::Some(insp::Value::Bool(
+            match { (*n).style.position_type } { flex::PositionType::Absolute => true, _ => false }));
+    }
+    if prop == "z_index" { return num({ (*n).style.z_index } as f64); }
+    if prop == "top" { return option::Option[insp::Value]::Some(len_value({ (*n).style.position_top })); }
+    if prop == "left" { return option::Option[insp::Value]::Some(len_value({ (*n).style.position_left })); }
+    if prop == "right" { return option::Option[insp::Value]::Some(len_value({ (*n).style.position_right })); }
+    if prop == "bottom" { return option::Option[insp::Value]::Some(len_value({ (*n).style.position_bottom })); }
+    if prop == "min_width" { return option::Option[insp::Value]::Some(len_value({ (*n).style.min_width })); }
+    if prop == "max_width" { return option::Option[insp::Value]::Some(len_value({ (*n).style.max_width })); }
+    if prop == "min_height" { return option::Option[insp::Value]::Some(len_value({ (*n).style.min_height })); }
+    if prop == "max_height" { return option::Option[insp::Value]::Some(len_value({ (*n).style.max_height })); }
+    // UNSET IS NOTHING, NOT A NUMBER. flex spells an unset ratio `undefined()`,
+    // which is NaN — and a NaN reaching the wire is `null` at best (json
+    // encodes it so rather than emitting invalid JSON) and a nonsense value in
+    // a panel at worst. `Nothing` is what every other unset length answers.
+    if prop == "aspect_ratio" {
+        let ar: f64 = { (*n).style.aspect_ratio };
+        if ar != ar { return option::Option[insp::Value]::Some(insp::Value::Nothing); }
+        return num(ar);
+    }
     if prop == "width" { return option::Option[insp::Value]::Some(len_value({ (*n).style.width })); }
     if prop == "height" { return option::Option[insp::Value]::Some(len_value({ (*n).style.height })); }
     if prop == "grow" { return num({ (*n).style.flex_grow }); }
@@ -683,6 +715,102 @@ fn canonical_prop(name: str) -> option::Option[str] {
 }
 
 fn apply_uniform(n: *core::Node, prop: str, v: insp::Value) -> insp::Outcome {
+    // ---- position: the DOM move ----
+    //
+    // `absolute` takes the node out of flow; `top`/`left`/`right`/`bottom` then
+    // place it. That pairing is the whole "nudge it until it sits right" loop,
+    // and none of it was reachable before — `flex_layout` has had
+    // `PositionType::Absolute` and computed insets all along.
+    if prop == "absolute" {
+        return match bool_of(v) {
+            option::Option[bool]::Some(b) => { core::set_absolute(n, b); insp::Outcome::Ok }
+            option::Option::None => insp::Outcome::TypeMismatch,
+        };
+    }
+    if prop == "z_index" {
+        return match num_of(v) {
+            option::Option[f64]::Some(x) => { core::set_z_index(n, x as i64); insp::Outcome::Ok }
+            option::Option::None => insp::Outcome::TypeMismatch,
+        };
+    }
+    if prop == "top" {
+        return match num_of(v) {
+            option::Option[f64]::Some(x) => { core::set_top(n, x); insp::Outcome::Ok }
+            option::Option::None => insp::Outcome::TypeMismatch,
+        };
+    }
+    if prop == "left" {
+        return match num_of(v) {
+            option::Option[f64]::Some(x) => { core::set_left(n, x); insp::Outcome::Ok }
+            option::Option::None => insp::Outcome::TypeMismatch,
+        };
+    }
+    if prop == "right" {
+        return match num_of(v) {
+            option::Option[f64]::Some(x) => { core::set_right(n, x); insp::Outcome::Ok }
+            option::Option::None => insp::Outcome::TypeMismatch,
+        };
+    }
+    if prop == "bottom" {
+        return match num_of(v) {
+            option::Option[f64]::Some(x) => { core::set_bottom(n, x); insp::Outcome::Ok }
+            option::Option::None => insp::Outcome::TypeMismatch,
+        };
+    }
+    if prop == "min_width" {
+        return match num_of(v) {
+            option::Option[f64]::Some(x) => { core::set_min_width(n, x); insp::Outcome::Ok }
+            option::Option::None => insp::Outcome::TypeMismatch,
+        };
+    }
+    if prop == "max_width" {
+        return match num_of(v) {
+            option::Option[f64]::Some(x) => { core::set_max_width(n, x); insp::Outcome::Ok }
+            option::Option::None => insp::Outcome::TypeMismatch,
+        };
+    }
+    if prop == "min_height" {
+        return match num_of(v) {
+            option::Option[f64]::Some(x) => { core::set_min_height(n, x); insp::Outcome::Ok }
+            option::Option::None => insp::Outcome::TypeMismatch,
+        };
+    }
+    if prop == "max_height" {
+        return match num_of(v) {
+            option::Option[f64]::Some(x) => { core::set_max_height(n, x); insp::Outcome::Ok }
+            option::Option::None => insp::Outcome::TypeMismatch,
+        };
+    }
+    if prop == "scale_x" {
+        return match num_of(v) {
+            option::Option[f64]::Some(x) => { core::set_scale_x(n, x); insp::Outcome::Ok }
+            option::Option::None => insp::Outcome::TypeMismatch,
+        };
+    }
+    if prop == "scale_y" {
+        return match num_of(v) {
+            option::Option[f64]::Some(x) => { core::set_scale_y(n, x); insp::Outcome::Ok }
+            option::Option::None => insp::Outcome::TypeMismatch,
+        };
+    }
+    if prop == "rotation_x" {
+        return match num_of(v) {
+            option::Option[f64]::Some(x) => { core::set_rotation_x(n, x); insp::Outcome::Ok }
+            option::Option::None => insp::Outcome::TypeMismatch,
+        };
+    }
+    if prop == "rotation_y" {
+        return match num_of(v) {
+            option::Option[f64]::Some(x) => { core::set_rotation_y(n, x); insp::Outcome::Ok }
+            option::Option::None => insp::Outcome::TypeMismatch,
+        };
+    }
+    if prop == "aspect_ratio" {
+        return match num_of(v) {
+            option::Option[f64]::Some(x) => { core::set_aspect_ratio(n, x); insp::Outcome::Ok }
+            option::Option::None => insp::Outcome::TypeMismatch,
+        };
+    }
     // ---- tier 1: the common band ----
     if prop == "opacity" {
         return match num_of(v) {
@@ -934,6 +1062,21 @@ fn set_native_fn(f: fn(*core::Node) -> vec::Vec[insp::Prop]) { NATIVE_FN = f; re
 // reads: what it is, then how big, then how it looks.
 fn declared_names() -> vec::Vec[str] {
     var v: vec::Vec[str] = vec::new::[str]();
+    let _n0: status::Status = v.append("absolute");
+    let _n1: status::Status = v.append("z_index");
+    let _n2: status::Status = v.append("top");
+    let _n3: status::Status = v.append("left");
+    let _n4: status::Status = v.append("right");
+    let _n5: status::Status = v.append("bottom");
+    let _n6: status::Status = v.append("min_width");
+    let _n7: status::Status = v.append("max_width");
+    let _n8: status::Status = v.append("min_height");
+    let _n9: status::Status = v.append("max_height");
+    let _n10: status::Status = v.append("aspect_ratio");
+    let _n11: status::Status = v.append("scale_x");
+    let _n12: status::Status = v.append("scale_y");
+    let _n13: status::Status = v.append("rotation_x");
+    let _n14: status::Status = v.append("rotation_y");
     let _a: status::Status = v.append("text");
     let _b: status::Status = v.append("title");
     let _c: status::Status = v.append("on");

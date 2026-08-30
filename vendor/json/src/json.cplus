@@ -808,6 +808,18 @@ fn escape(s: str) -> text::Text {
 
 fn encode_number(b: Buf, n: f64) -> Buf {
     var b: Buf = b;
+    // NaN AND INFINITY ARE NOT JSON, and emitting them poisons the whole
+    // document rather than the one value: a parser that reaches `nan` rejects
+    // the message, so one unset field takes an entire response with it.
+    // Measured — an unset `aspect_ratio` (undefined() is NaN) made a 1.1 KB
+    // `inspect` answer unparseable at character 1133.
+    //
+    // `null` is the honest encoding: JSON has no way to say "not a number", and
+    // that is exactly what the value is. `n != n` is the NaN test that needs no
+    // library; the two comparisons after it catch the infinities.
+    if n != n { return buf_push_str(b, "null"); }
+    if n > 1.7976931348623157e308 { return buf_push_str(b, "null"); }
+    if n < -1.7976931348623157e308 { return buf_push_str(b, "null"); }
     // Shortest round-trip: prefer fixed-point form (`%.*f` with the
     // smallest decimal-place count that round-trips), falling back to
     // `%.*g` for very large / very small magnitudes where fixed-point
@@ -1280,4 +1292,36 @@ fn field_getters_decode_or_default() {
     // has() distinguishes present from absent.
     assert v.has("name");
     assert !v.has("missing");
+}
+
+// NaN AND INFINITY ENCODE AS `null`, because JSON has neither and a parser that
+// meets one rejects the WHOLE document. One unset field would otherwise take an
+// entire response with it — measured on a 1.1 KB `inspect` answer that an unset
+// `aspect_ratio` made unparseable at character 1133.
+#[test]
+fn a_non_finite_number_does_not_poison_the_document() {
+    let zero: f64 = 0.0;
+    let nan: f64 = zero / zero;
+    let inf: f64 = 1.0 / zero;
+
+    var m: vec::Vec[Member] = vec::new::[Member]();
+    m.append(Member { key: text::from_str("a"), value: Value::Number(nan) });
+    m.append(Member { key: text::from_str("b"), value: Value::Number(inf) });
+    m.append(Member { key: text::from_str("c"), value: Value::Number(-1.0 / zero) });
+    m.append(Member { key: text::from_str("d"), value: Value::Number(1.5) });
+    let out: text::Text = Value::Object(m).to_text();
+
+    assert out.contains("nan") == false;
+    assert out.contains("inf") == false;
+    assert out.contains("\"a\":null");
+    assert out.contains("\"b\":null");
+    assert out.contains("\"c\":null");
+    // The finite neighbour is untouched — this is a guard, not a blanket.
+    assert out.contains("\"d\":1.5");
+
+    // And the result still PARSES, which is the property that actually matters.
+    match Value::parse(out.view()) {
+        result::Result[Value, ParseError]::Ok(_v) => { }
+        result::Result[Value, ParseError]::Err(_e) => { assert false; }
+    }
 }
