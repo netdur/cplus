@@ -28,6 +28,8 @@ import "stdlib/text" as text;
 import "objc/runtime" as rt;
 import "objc/bridge" as bridge;
 import "facet/facet" as core;
+import "facet/props" as props;
+import "facet/tree" as ftree;
 import "facet/application" as app;
 import "agent_core/identity" as identity;
 import "agent_core/surface" as surface;
@@ -1166,6 +1168,43 @@ fn walk_facet(ref reg: identity::Registry, ref views: vec::Vec[ViewRef],
             if row_is_expandable(view) {
                 add_part(reg, views, view, me, key, PART_DISCLOSURE, ":disclosure", "Disclosure");
             }
+
+            // A ROW IS NOT A FACET NODE, and it is the one thing an
+            // application cannot key.
+            //
+            // The row IS content: the backend mounts it inside a cell it makes
+            // and owns, so a `key:` on what the row builder returns lands on
+            // the label, not on the thing a click has to reach. `row_id` is the
+            // hook for that, and the cell builder stamps the answer on the cell
+            // as its accessibilityIdentifier — the same token a key is
+            // everywhere else here.
+            //
+            // Facet's tree has no node to walk for those cells, so this is a
+            // VIEW walk, for the same reason the titlebar accessory below is
+            // one: the subtree is AppKit's, not the app's. Without it a list is
+            // something an agent can see and cannot enter — `describe_ui`
+            // answers `g:catalog` and nothing beneath it, which is exactly what
+            // examples/facet_gallery_ios/src/catalog.cplus warns about in the
+            // comment above its own `row_key`.
+            //
+            // Guarded on having no facet children, so a list whose rows ARE
+            // facet nodes is walked once, by the recursion below, and not
+            // twice.
+            let kind: u32 = core::kind_of(n);
+            let hosts_cells: bool = (kind == props::K_LIST)
+                || (kind == props::K_TABLE)
+                || (kind == props::K_COLLECTION)
+                // `facet/tree` is a facet-origin control and numbers its own
+                // kind from 1000 up, so it is not in `props`.
+                || (kind == ftree::K_TREE);
+            if hosts_cells && (core::child_count_of(n) == (0 as usize)) {
+                let sub: usize = subview_count(view);
+                var si: usize = 0;
+                while si < sub {
+                    walk(reg, views, subview_at(view, si), me);
+                    si = si +% 1;
+                }
+            }
         }
     }
     var i: usize = 0;
@@ -1474,7 +1513,19 @@ impl Surface {
                 // So this refuses without sending. If the two ever disagree the
                 // failure is inert — a control unreachable over the wire —
                 // rather than an action nobody was told about.
-                if !view_wired(v, part) { return surface::Outcome::NoHandler; }
+                if !view_wired(v, part) {
+                    // ...UNLESS IT IS A ROW. A row cell's label answers
+                    // `performClick:` (every facet clickable view does) and is
+                    // wired to nothing, because a row's action is the TABLE's
+                    // selection delegate and not the label's own handler. The
+                    // agent's click on a row is the user's row selection, so
+                    // try that before reporting no handler — `select_row_of`
+                    // answers false for anything that is not inside a table,
+                    // which leaves every other unwired view refused exactly as
+                    // before.
+                    if select_row_of(v) { return surface::Outcome::Allowed; }
+                    return surface::Outcome::NoHandler;
+                }
                 perform_on_main(v, rt::sel(#str_ptr("performClick:\0")), null());
                 return surface::Outcome::Allowed;
             }

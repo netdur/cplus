@@ -38,6 +38,8 @@ import "objc/runtime" as rt;
 import "objc/bridge" as bridge;
 import "objc/synthesis" as synth;
 import "facet/facet" as core;
+import "facet/props" as props;
+import "facet/tree" as ftree;
 import "facet/application" as app;
 import "agent_core/identity" as identity;
 import "agent_core/surface" as surface;
@@ -512,6 +514,34 @@ fn walk_facet(ref reg: identity::Registry, ref views: vec::Vec[ViewRef],
             if { ds.is_empty() } == false { reg.set_description(me, { ds.view() }); }
             let _r: *u8 = rt::retain(view);
             let _a: status_of_append = append_ref(views, view);
+
+            // A ROW IS NOT A FACET NODE — the same exception the AppKit walk
+            // makes, for the same reason. The row IS content and the backend
+            // mounts it in a cell it owns, so a `key:` on what the row builder
+            // returns lands on the label rather than on the thing a tap has to
+            // reach; `row_id` is the hook, and the cell builder stamps the
+            // answer on the cell. Facet's tree has no node for those cells, so
+            // this is a VIEW walk of one control's interior.
+            //
+            // Without it a list is something an agent can see and cannot
+            // enter — `describe_ui` answers `g:catalog` and nothing beneath.
+            // Guarded on having no facet children so a list whose rows ARE
+            // facet nodes is walked once, by the recursion below.
+            let kind: u32 = core::kind_of(n);
+            let hosts_cells: bool = (kind == props::K_LIST)
+                || (kind == props::K_TABLE)
+                || (kind == props::K_COLLECTION)
+                // `facet/tree` is a facet-origin control and numbers its own
+                // kind from 1000 up, so it is not in `props`.
+                || (kind == ftree::K_TREE);
+            if hosts_cells && (core::child_count_of(n) == (0 as usize)) {
+                let sub: usize = subview_count(view);
+                var si: usize = 0 as usize;
+                while si < sub {
+                    walk(reg, views, subview_at(view, si), me);
+                    si = si +% (1 as usize);
+                }
+            }
         }
     }
     var i: usize = 0 as usize;

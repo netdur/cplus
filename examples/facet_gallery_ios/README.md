@@ -110,17 +110,23 @@ The gallery serves its agent surface, and it is two lines in
 [src/main.cplus](src/main.cplus):
 
 ```
-agent::enable();                        // import "facet_agent/agent" as agent;
-application::agent_serve_once("8787");  // import "facet/application" as application;
+agent::enable();                            // import "facet_agent/agent" as agent;
+runtime::agent_mcp("facet_gallery_ios");    // import "facet_runtime/runtime" as runtime;
 ```
 
-**The argument is a PORT, not a path**, and that is the whole iOS story. A Unix
-socket lives inside the app's sandbox where nothing on the development machine
-can reach it, and to a real device there is no shared filesystem at all — so
-`facet_agent`'s iOS facade reads the string as a port number and
-`agent_mcp::serve_tcp` binds it on **loopback**, never on every interface. This
-surface can read a UI and press its buttons; it is not something to put on a
-network.
+**The argument is an ID — the app's NAME — and the platform derives the
+address**, which is the whole iOS story. A Unix socket lives inside the app's
+sandbox where nothing on the development machine can reach it, and to a real
+device there is no shared filesystem at all, so the iOS facade binds TCP on
+**loopback**, never on every interface: port `9000 + pid % 1000`, which a
+launcher holding the pid can work out and `/tmp/mcp-<id>-<pid>.json` records.
+This surface can read a UI and press its buttons; it is not something to put on
+a network.
+
+(It said `application::agent_serve_once("8787")` until 2026-08-30, from when
+that string WAS the port. After the address became derived, the same call kept
+building and kept serving — with "8787" as the app's id, on a port nobody was
+looking at.)
 
 Ordering matters and is why both lines are before `run_component`: the window
 walk happens inside `facet_uikit`'s `attach_root`, so the hooks have to be
@@ -128,21 +134,21 @@ installed before the tree is built.
 
 ### Talking to it
 
-The wire is newline-delimited JSON-RPC — one request object per line, one
-response per line. There is a client and a check in [tools/](tools/):
+The wire is **Streamable HTTP** — one JSON-RPC object POSTed, one JSON object
+back, which is what an MCP client reaches with no bridge. There is a client and
+a check in [tools/](tools/):
 
 ```
-xcrun simctl launch <sim-udid> dev.cplus.facetgalleryios
-tools/mcp_check.py                       # 25 checks, exits non-zero on any
+xcrun simctl launch <sim-udid> dev.cplus.facetgalleryios   # prints the pid
+tools/mcp_check.py $(( 9000 + PID % 1000 ))                # 28 checks, exits non-zero on any
 ```
 
 or by hand:
 
 ```
-$ nc 127.0.0.1 8787
-{"method":"describe_ui","params":{},"id":1}
+$ curl -s -X POST http://127.0.0.1:<port>/ -d '{"jsonrpc":"2.0","id":1,"method":"describe_ui"}'
 {"jsonrpc":"2.0","id":1,"result":[{"id":"g:title","role":"text","text":"facet_uikit",…}]}
-{"method":"click","params":{"id":"row:button"},"id":2}
+$ curl -s -X POST http://127.0.0.1:<port>/ -d '{"jsonrpc":"2.0","id":2,"method":"click","params":{"id":"row:button"}}'
 {"jsonrpc":"2.0","id":2,"result":{"outcome":"allowed"}}
 ```
 
@@ -173,8 +179,8 @@ tools/mcp_check_device.sh          # launch + forward + the same check, in one
 which is:
 
 ```
-iproxy 8787 8787 <25-char-UDID>                      # brew install libimobiledevice
-pymobiledevice3 usbmux forward 8787 8787             # or: pip install pymobiledevice3
+iproxy <port> <port> <25-char-UDID>                  # brew install libimobiledevice
+pymobiledevice3 usbmux forward <port> <port>         # or: pip install pymobiledevice3
 tools/mcp_check.py                                   # unchanged — that is the point
 ```
 

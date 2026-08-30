@@ -20,6 +20,7 @@ import "stdlib/option" as option;
 import "stdlib/io" as io;
 import "objc/synthesis" as synth;
 import "facet/facet" as core;
+import "facet/tree" as ftree;
 import "facet/application" as app;
 import "stdlib/thread" as thread;   // the off-main invoke_menu regression below needs a real second thread
 import "./agent_appkit" as agent;
@@ -2107,4 +2108,105 @@ fn an_excluded_subtree_is_gone_while_a_gated_one_is_present() {
                                surface::Outcome::NotExposed);
     assert surface::outcome_eq(s.scroll_to(auth::protected_operator(), "assistant"),
                                surface::Outcome::NotExposed);
+}
+
+// ---- a list's rows are the one thing facet's tree cannot describe ------------
+//
+// A ROW IS NOT A FACET NODE. The row is content; the backend mounts it inside a
+// cell it makes and owns, so a `key:` on what the row builder returns lands on
+// the label rather than on the thing a click has to reach. `row_id` is the hook
+// and the cell builder stamps the answer on the cell as its
+// accessibilityIdentifier — which is what a key already is everywhere here.
+//
+// When this walk moved from the NSView hierarchy to facet's tree, that stopped
+// being read: the cells are under the table's view and under no facet node, so
+// `describe_ui` answered the list and NOTHING beneath it. A list an agent can
+// see and cannot enter. These two pin the exception and its gate.
+
+fn cell_host_with_two_rows(win: ak::Window, kind: u32, key: str) -> core::Node {
+    let content = content_of(win);
+    let table = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 200.0, h: 100.0 });
+    content.add_subview(ak::View::from_raw(table.raw()));
+    agent::set_agent_id(table.raw(), key);
+
+    let r1 = ak::View::new(rt::Rect { x: 0.0, y: 0.0, w: 200.0, h: 20.0 });
+    ak::View::from_raw(table.raw()).add_subview(ak::View::from_raw(r1.raw()));
+    agent::set_agent_id(r1.raw(), "row:one");
+    let r2 = ak::View::new(rt::Rect { x: 0.0, y: 20.0, w: 200.0, h: 20.0 });
+    ak::View::from_raw(table.raw()).add_subview(ak::View::from_raw(r2.raw()));
+    agent::set_agent_id(r2.raw(), "row:two");
+
+    // The facet node has the control's kind and NO children — which is exactly
+    // what a cell-built list is.
+    var n: core::Node = core::node_with(key, kind, 0 as *u8, noop_release);
+    core::set_view(#addr_of(n), table.raw(), noop_release);
+    return n;
+}
+
+fn ids_of(nodes: vec::Vec[agent::AppKitNode]) -> vec::Vec[text::Text] {
+    var out: vec::Vec[text::Text] = vec::new::[text::Text]();
+    var i: usize = 0;
+    while i < nodes.count() {
+        match nodes.at_ptr(i) {
+            option::Option[*agent::AppKitNode]::Some(n) => {
+                let _a: status::Status = out.append({ (*n).id }.clone());
+            }
+            option::Option::None => { }
+        }
+        i = i +% 1;
+    }
+    return out;
+}
+
+fn has_id(nodes: vec::Vec[agent::AppKitNode], want: str) -> bool {
+    let ids: vec::Vec[text::Text] = ids_of(nodes);
+    var i: usize = 0;
+    while i < ids.count() {
+        match ids.at_ptr(i) {
+            option::Option[*text::Text]::Some(t) => {
+                if { (*t).view() } == want { return true; }
+            }
+            option::Option::None => { }
+        }
+        i = i +% 1;
+    }
+    return false;
+}
+
+#[test]
+fn a_cell_built_list_exposes_the_rows_the_backend_owns() {
+    let win = fixture_window(300.0, 200.0);
+    var root: core::Node = core::column(core::Builder::new(), key: "root");
+    core::set_view(#addr_of(root), content_of(win).raw(), noop_release);
+    let _a: status::Status = root.add_child(
+        cell_host_with_two_rows(win, ftree::K_TREE, "catalog"));
+    mount_tree(#addr_of(root), win.raw());
+
+    var s: agent::Surface = agent::open(win.raw());
+    let nodes: vec::Vec[agent::AppKitNode] = s.describe(auth::operator());
+    assert has_id(nodes, "catalog");
+    // The rows: addressable, or the list is a dead end.
+    assert has_id(nodes, "row:one");
+    assert has_id(nodes, "row:two");
+}
+
+#[test]
+fn a_node_that_is_not_a_cell_host_keeps_its_interior_private() {
+    // THE GATE. Sweeping every keyed node's subviews would put the backend's
+    // whole realisation back on the surface — the wrapper views facet's tree
+    // was moved to in order to stop describing. Only a control that BUILDS its
+    // rows gets the exception; a plain box's interior stays facet's business.
+    let win = fixture_window(300.0, 200.0);
+    var root: core::Node = core::column(core::Builder::new(), key: "root");
+    core::set_view(#addr_of(root), content_of(win).raw(), noop_release);
+    // Kind 0 is every container facet did not generate — a column, a box.
+    let _a: status::Status = root.add_child(
+        cell_host_with_two_rows(win, 0 as u32, "plainbox"));
+    mount_tree(#addr_of(root), win.raw());
+
+    var s: agent::Surface = agent::open(win.raw());
+    let nodes: vec::Vec[agent::AppKitNode] = s.describe(auth::operator());
+    assert has_id(nodes, "plainbox");
+    assert has_id(nodes, "row:one") == false;
+    assert has_id(nodes, "row:two") == false;
 }
