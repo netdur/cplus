@@ -77,6 +77,22 @@ supervised call-centre workstation and voice-only operation.
    an existing verb under another name (`set_caret`, `describe_ui` with
    `prefix`, `inspect`'s computed frame, `set enabled=false`).
 
+8. **The serve loop is still one connection at a time**, so a BLOCKING consent
+   policy is still not possible — a policy that waited for the user would hold
+   the whole surface, including every other client. Left alone deliberately:
+   `facet_agent/consent` is the non-blocking shape and works, and going
+   concurrent means auditing every static under `handle_request` (the client
+   name, the action log, the inspector's snapshot) plus the UI-thread hop. It
+   is a design change, not a fix.
+9. **Mobile is verified by COMPILATION this session, not by running.** Both
+   facades were edited (the startup line) and both were proven to be in the
+   build the hard way — a deliberate syntax error in `agent_ios.cplus` and
+   `agent_android.cplus` fails the build for its target, and neither does
+   without it. The gallery's Xcode project links against the DEVICE library
+   paths, so `xcodebuild -sdk iphonesimulator` fails on architecture and a
+   simulator run needs a project change; the device recipe in `DEPLOYING.md` is
+   untouched and `tools/mcp_check.py` still drives both.
+
 ## Status
 
 | Item | State |
