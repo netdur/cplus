@@ -813,6 +813,40 @@ fn on_reset_one(sender: *u8, ctx: *u8) {
     paint_props(st);
 }
 
+// COPY THE DIFF — what this session changed, as the text you paste.
+//
+// The whole editing loop ends here: nudge a button until it sits right, then
+// get the numbers into the source. Before this the panel could show you every
+// value and had no way to hand you any of them, so the last step was reading
+// them off the screen by eye.
+//
+// The button is a no-op with an honest status line on a build with no
+// clipboard (`tree::can_copy`), rather than one that always says "copied".
+fn on_copy_changes(_sender: *u8, _ctx: *u8) {
+    if !tree::can_copy() {
+        say("no clipboard on this platform");
+        return;
+    }
+    // The DIFF's own count, not the ledger's: the ledger keeps a row for a node
+    // that has since died or lost its key, and the diff drops those. Saying
+    // "copied 7 changes" over six lines is a small lie that costs trust in the
+    // one number the button reports.
+    let n: usize = tree::changes().count();
+    if n == 0 {
+        say("nothing changed yet");
+        return;
+    }
+    let body: text::Text = tree::changes_text();
+    if !tree::copy_text(body.view()) {
+        say("copy failed");
+        return;
+    }
+    var msg: text::Text = text::from_str("copied ");
+    let _a: status::Status = msg.append((n as i64).to_text().view());
+    let _b: status::Status = msg.append(if n == 1 { " change" } else { " changes" });
+    say(msg.view());
+}
+
 fn on_reset_all(_sender: *u8, ctx: *u8) {
     let st: *Inspector = ctx as *Inspector;
     let h: insp::Handle = { (*st).selected };
@@ -871,6 +905,8 @@ impl Inspector: component::Component {
                                 on_click: on_refresh, on_click_ctx: me));
         bar.add(ui::text_button("Reset all", key: "insp:reset_all",
                                 on_click: on_reset_all, on_click_ctx: me));
+        bar.add(ui::text_button("Copy changes", key: "insp:copy",
+                                on_click: on_copy_changes, on_click_ctx: me));
         bar.add(ui::label("", key: "insp:status",
                           text_align: vocab::TextAlign::Start,
                           text_color: vocab::Color::text_secondary()).grow(1.0));

@@ -1814,6 +1814,114 @@ fn changes() -> vec::Vec[insp::Change] {
     return out;
 }
 
+// The diff as the text a person pastes. The same two levels the `journal` verb
+// answers, laid out to be read:
+//
+//     {
+//       "label#title": { "font_size": 30, "text_color": "#cc2200" },
+//       "node#card":   { "padding": 24 }
+//     }
+//
+// Written here rather than in the widget so both consumers — the panel's Copy
+// button and anything that wants the text form over the wire — say the same
+// thing, and so the widget stays free of a JSON dependency it has no other use
+// for.
+fn quoted_value(v: insp::Value) -> text::Text {
+    // Numbers and booleans are bare; everything else is a string, which is what
+    // the wire form does too — a colour is `"#cc2200"`, an enum is its
+    // spelling, a percent length is `"50%"`.
+    let bare: bool = match v {
+        insp::Value::Num(_x) => true,
+        insp::Value::Int(_i) => true,
+        insp::Value::Bool(_b) => true,
+        _ => false,
+    };
+    let body: text::Text = value_text(v);
+    if bare { return body; }
+    var out: text::Text = text::from_str("\"");
+    let _a: status::Status = out.append(body.view());
+    let _b: status::Status = out.append("\"");
+    return out;
+}
+
+fn changes_text() -> text::Text {
+    let cs: vec::Vec[insp::Change] = changes();
+    if cs.count() == 0 { return text::from_str("{}\n"); }
+    var out: text::Text = text::from_str("{\n");
+    var i: usize = 0;
+    while i < cs.count() {
+        var label: text::Text = text::new();
+        match cs.at_ptr(i) {
+            option::Option[*insp::Change]::Some(c) => { label = { (*c).node }.clone(); }
+            option::Option::None => { }
+        }
+        // One entry per node, gathering its rows: the ledger is in write order,
+        // so a node's properties are not necessarily adjacent.
+        if !node_written_before(cs, i, { label.view() }) {
+            if out.count() > (2 as usize) { let _s: status::Status = out.append(",\n"); }
+            let _a: status::Status = out.append("  \"");
+            let _b: status::Status = out.append(label.view());
+            let _c2: status::Status = out.append("\": { ");
+            var first: bool = true;
+            var j: usize = i;
+            while j < cs.count() {
+                match cs.at_ptr(j) {
+                    option::Option[*insp::Change]::Some(c) => {
+                        if { (*c).node.view() } == { label.view() } {
+                            if !first { let _d: status::Status = out.append(", "); }
+                            first = false;
+                            let _e: status::Status = out.append("\"");
+                            let _f: status::Status = out.append({ (*c).prop });
+                            let _g: status::Status = out.append("\": ");
+                            let _h2: status::Status =
+                                out.append(quoted_value({ (*c).now }.clone()).view());
+                        }
+                    }
+                    option::Option::None => { }
+                }
+                j = j +% 1;
+            }
+            let _i2: status::Status = out.append(" }");
+        }
+        i = i +% 1;
+    }
+    let _z: status::Status = out.append("\n}\n");
+    return out;
+}
+
+fn node_written_before(cs: vec::Vec[insp::Change], i: usize, label: str) -> bool {
+    var k: usize = 0;
+    while k < i {
+        match cs.at_ptr(k) {
+            option::Option[*insp::Change]::Some(c) => {
+                if { (*c).node.view() } == label { return true; }
+            }
+            option::Option::None => { }
+        }
+        k = k +% 1;
+    }
+    return false;
+}
+
+// ---- the clipboard -------------------------------------------------------------
+//
+// Installed by a platform module, like the highlight overlay and the native
+// rows. Zero keeps the portable answer, which is that this build cannot reach a
+// clipboard and says so rather than reporting a copy that did not happen — the
+// panel's status line is the only feedback a Copy button has, and one that
+// always says "copied" is worse than no button.
+static CLIPBOARD_FN: fn(str) -> bool = #zero::[fn(str) -> bool]();
+
+fn set_clipboard_fn(f: fn(str) -> bool) { CLIPBOARD_FN = f; return; }
+
+fn can_copy() -> bool { return CLIPBOARD_FN.is_not_null(); }
+
+fn copy_text(s: str) -> bool {
+    if CLIPBOARD_FN.is_null() { return false; }
+    let f: fn(str) -> bool = CLIPBOARD_FN;
+    return f(s);
+}
+
 // ---- structure ---------------------------------------------------------------
 //
 // Adding and removing nodes, which is the same live-tree machinery property

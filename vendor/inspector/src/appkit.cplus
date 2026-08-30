@@ -290,9 +290,28 @@ fn native_props(n: *core::Node) -> vec::Vec[insp::Prop] {
 // Hand the portable side its platform. Until this is called the inspector
 // still works — it just cannot highlight, and says so through the no-ops
 // rather than by crashing.
+// The general pasteboard, for the panel's Copy button.
+//
+// `NSPasteboardTypeString` is a global NSString the linker would have to
+// resolve; its value is the UTI and writing it out is one string instead of an
+// extern and a load. `clearContents` first is not optional — `setString:forType:`
+// on a board that was not cleared is documented to fail.
+fn pasteboard_write(s: str) -> bool {
+    let cls: *u8 = rt::get_class(#str_ptr("NSPasteboard\0"));
+    if cls == (0 as *u8) { return false; }
+    let pb: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("generalPasteboard\0")));
+    if pb == (0 as *u8) { return false; }
+    let _n: i64 = rt::msg_i64(pb, rt::sel(#str_ptr("clearContents\0")));
+    let body: *u8 = bridge::nsstring(s);
+    let ty: *u8 = bridge::nsstring("public.utf8-plain-text");
+    let ok: i8 = rt::msg_i8_id_id(pb, rt::sel(#str_ptr("setString:forType:\0")), body, ty);
+    return ok != (0 as i8);
+}
+
 fn install() {
     tree::install_platform(highlight, clear_highlight);
     tree::set_native_fn(native_props);
+    tree::set_clipboard_fn(pasteboard_write);
     // Installed here and not in `mcp` so that module stays portable: the hop is
     // libdispatch, and a build with no platform shim keeps `mcp`'s direct call,
     // which is right for headless and for an in-process caller.

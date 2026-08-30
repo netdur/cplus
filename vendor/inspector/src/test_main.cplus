@@ -3511,3 +3511,80 @@ fn an_untouched_tree_has_an_empty_diff() {
     assert j.contains("\"changes\":{}");
     assert j.contains("\"structural\":[]");
 }
+
+// ---- the Copy button ----------------------------------------------------------
+//
+// The editing loop ends at the clipboard: nudge until it sits right, then get
+// the numbers into the source. The panel could show every value and hand you
+// none of them, so the last step was reading them off the screen by eye.
+
+static COPIED: text::Text = #zero::[text::Text]();
+static COPY_CALLS: i32 = 0;
+
+fn fake_clipboard(s: str) -> bool {
+    COPIED = text::from_str(s);
+    COPY_CALLS = COPY_CALLS + 1;
+    return true;
+}
+
+fn refusing_clipboard(_s: str) -> bool { return false; }
+
+#[test]
+fn the_diff_text_is_the_two_levels_a_person_pastes() {
+    fresh();
+    var body: core::Builder = core::Builder::new();
+    body.add(ui::button("Save", key: "save"));
+    var root: core::Node = ui::column(body, key: "root");
+    app::open_window(#addr_of(root));
+
+    let rh: insp::Handle = handle_for(#addr_of(root), "root");
+    let bh: insp::Handle = handle_for(#addr_of(root), "save");
+    assert tree::set(rh, "padding", insp::Value::Num(24.0)) == insp::Outcome::Ok;
+    assert tree::set(rh, "corner_radius", insp::Value::Num(12.0)) == insp::Outcome::Ok;
+    assert tree::set(bh, "font_weight", insp::Value::Enum(text::from_str("bold")))
+        == insp::Outcome::Ok;
+
+    let t: text::Text = tree::changes_text();
+    // Grouped by `kind#key`, one entry per node however the writes interleaved.
+    assert t.contains("\"node#root\": {");
+    assert t.contains("\"button#save\": {");
+    assert t.count_of("node#root") == 1;
+    // Numbers bare, spellings quoted.
+    assert t.contains("\"padding\": 24");
+    assert t.contains("\"corner_radius\": 12");
+    assert t.contains("\"font_weight\": \"bold\"");
+}
+
+#[test]
+fn an_untouched_tree_copies_an_empty_object() {
+    fresh();
+    var root: core::Node = ui::column(core::Builder::new(), key: "root");
+    app::open_window(#addr_of(root));
+    assert tree::changes_text().view() == "{}\n";
+}
+
+#[test]
+fn the_clipboard_is_a_platform_seam_and_says_so_when_absent() {
+    // A build with no platform shim must report that it cannot copy rather
+    // than reporting a copy that did not happen — the status line is the only
+    // feedback the button has, and one that always says "copied" is worse than
+    // no button.
+    tree::set_clipboard_fn(#zero::[fn(str) -> bool]());
+    assert tree::can_copy() == false;
+    assert tree::copy_text("anything") == false;
+
+    tree::set_clipboard_fn(fake_clipboard);
+    assert tree::can_copy();
+    COPY_CALLS = 0;
+    assert tree::copy_text("hello");
+    assert COPY_CALLS == 1;
+    assert COPIED.view() == "hello";
+
+    // A platform that HAS a clipboard and fails the write is not a success
+    // either.
+    tree::set_clipboard_fn(refusing_clipboard);
+    assert tree::can_copy();
+    assert tree::copy_text("hello") == false;
+
+    tree::set_clipboard_fn(#zero::[fn(str) -> bool]());
+}
