@@ -192,6 +192,26 @@ impl Spec {
 // from a literal in the tables below — there is no path by which a caller
 // supplies one. A computed name would need an owned string for the reason
 // `facet::Data.key` documents at length; none is computed, so none is owned.
+// ONE PROPERTY THE INSPECTOR CHANGED.
+//
+// The journal is the DIFF between the tree the application built and the tree
+// as it stands, and this is a row of it: which node, which property, and the
+// value it holds now. Just the edited values — the number you would put in the
+// source, not the history of how it got there.
+//
+// The override ledger records only the FIRST write to a pair, so twenty nudges
+// on one property are one row, carrying the value it landed on. A `reset`
+// removes the row: the difference is gone.
+struct Change {
+    // `kind#key` — `button#tap`. The kind is there because a key alone does not
+    // say what you are looking at when you come back to a list of them.
+    node: text::Text,
+    // A literal from `declared_names`, so a borrowed view is sound here for the
+    // same reason it is in `Prop`.
+    prop: str,
+    now: Value,
+}
+
 struct Prop {
     name: str,
     value: Value,

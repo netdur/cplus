@@ -3400,3 +3400,114 @@ fn set_many_places_an_element_in_one_call() {
     assert c.contains("\"top\":\"type_mismatch\"");
     assert c.contains("\"applied\":0");
 }
+
+// ---- the journal is the diff -------------------------------------------------
+//
+// THE ONE QUESTION THE EDITING LOOP EXISTS TO ANSWER — "what did I change" —
+// and until 2026-08-30 the verb answered nothing at all for property writes: it
+// logged only the structural ones, so a session that nudged a button into place
+// and then asked was told `{"lines": []}`. Verified on a live probe before it
+// was believed.
+
+#[test]
+fn the_journal_answers_the_diff_grouped_by_node() {
+    wire_ready();
+    var body: core::Builder = core::Builder::new();
+    body.add(ui::label("hello", key: "greeting"));
+    body.add(ui::button("Save", key: "save"));
+    var root: core::Node = ui::column(body, key: "root");
+    app::open_window(#addr_of(root));
+    let _d: text::Text = rpc("{\"method\":\"describe_tree\",\"id\":1}");
+
+    let _a: text::Text = rpc(
+        "{\"method\":\"set\",\"params\":{\"id\":\"root\",\"property\":\"padding\",\"value\":24},\"id\":2}");
+    let _b: text::Text = rpc(
+        "{\"method\":\"set\",\"params\":{\"id\":\"root\",\"property\":\"corner_radius\",\"value\":12},\"id\":3}");
+    let _c: text::Text = rpc(
+        "{\"method\":\"set\",\"params\":{\"id\":\"save\",\"property\":\"font_weight\",\"value\":\"bold\"},\"id\":4}");
+
+    let j: text::Text = rpc("{\"method\":\"journal\",\"id\":5}");
+    // Keyed by `kind#key`: a key alone does not say what you are looking at
+    // when you come back to a list of them.
+    assert j.contains("\"node#root\":{");
+    assert j.contains("\"button#save\":{");
+    // Values only — no operation names, no was/now pair.
+    assert j.contains("\"padding\":24");
+    assert j.contains("\"corner_radius\":12");
+    assert j.contains("\"font_weight\":\"bold\"");
+    assert !j.contains("\"was\"");
+    // Both of root's properties are under ONE node entry, not two.
+    assert j.count_of("\"node#root\"") == 1;
+}
+
+#[test]
+fn twenty_nudges_are_one_row_carrying_the_number_it_landed_on() {
+    // The whole reason this is a diff and not a log. Nobody transcribes the
+    // intermediate values a nudge passed through.
+    wire_ready();
+    var root: core::Node = ui::column(core::Builder::new(), key: "root");
+    app::open_window(#addr_of(root));
+    let _d: text::Text = rpc("{\"method\":\"describe_tree\",\"id\":1}");
+    let _s: text::Text = rpc(
+        "{\"method\":\"set\",\"params\":{\"id\":\"root\",\"property\":\"top\",\"value\":10},\"id\":2}");
+    var i: i32 = 0;
+    while i < 5 {
+        let _n: text::Text = rpc(
+            "{\"method\":\"nudge\",\"params\":{\"id\":\"root\",\"property\":\"top\",\"by\":2},\"id\":3}");
+        i = i + 1;
+    }
+    let j: text::Text = rpc("{\"method\":\"journal\",\"id\":4}");
+    assert j.contains("\"top\":20");
+    assert j.count_of("\"top\"") == 1;
+}
+
+#[test]
+fn a_reset_takes_its_row_out_of_the_diff() {
+    // The difference is gone, so the row is gone. This is what makes the diff
+    // answer "what is still different" rather than "what did you touch".
+    wire_ready();
+    var root: core::Node = ui::column(core::Builder::new(), key: "root");
+    app::open_window(#addr_of(root));
+    let _d: text::Text = rpc("{\"method\":\"describe_tree\",\"id\":1}");
+    let _a: text::Text = rpc(
+        "{\"method\":\"set\",\"params\":{\"id\":\"root\",\"property\":\"padding\",\"value\":24},\"id\":2}");
+    let _b: text::Text = rpc(
+        "{\"method\":\"set\",\"params\":{\"id\":\"root\",\"property\":\"opacity\",\"value\":0.5},\"id\":3}");
+    assert rpc("{\"method\":\"journal\",\"id\":4}").contains("\"padding\":24");
+
+    let _r: text::Text = rpc(
+        "{\"method\":\"reset\",\"params\":{\"id\":\"root\",\"property\":\"padding\"},\"id\":5}");
+    let j: text::Text = rpc("{\"method\":\"journal\",\"id\":6}");
+    assert !j.contains("\"padding\"");
+    // ...and the one that is still different stays.
+    assert j.contains("\"opacity\"");
+}
+
+#[test]
+fn a_colour_in_the_diff_is_the_hex_you_would_type_back() {
+    // `inspect` keeps the structured form — a slider over four channels needs
+    // the channels — but nobody transcribes {"token":255,"rgba":[...]} into
+    // source.
+    wire_ready();
+    var root: core::Node = ui::column(core::Builder::new(), key: "root");
+    app::open_window(#addr_of(root));
+    let _d: text::Text = rpc("{\"method\":\"describe_tree\",\"id\":1}");
+    let _a: text::Text = rpc(
+        "{\"method\":\"set\",\"params\":{\"id\":\"root\",\"property\":\"background_color\",\"value\":\"#cc2200\"},\"id\":2}");
+    let j: text::Text = rpc("{\"method\":\"journal\",\"id\":3}");
+    assert j.contains("\"background_color\":\"#cc2200\"");
+    assert !j.contains("rgba");
+    // And `inspect` is unchanged — the two answer different questions.
+    assert rpc("{\"method\":\"inspect\",\"params\":{\"id\":\"root\"},\"id\":4}").contains("rgba");
+}
+
+#[test]
+fn an_untouched_tree_has_an_empty_diff() {
+    wire_ready();
+    var root: core::Node = ui::column(core::Builder::new(), key: "root");
+    app::open_window(#addr_of(root));
+    let _d: text::Text = rpc("{\"method\":\"describe_tree\",\"id\":1}");
+    let j: text::Text = rpc("{\"method\":\"journal\",\"id\":2}");
+    assert j.contains("\"changes\":{}");
+    assert j.contains("\"structural\":[]");
+}

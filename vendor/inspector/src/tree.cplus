@@ -83,6 +83,11 @@ import "./vocabulary" as voc;
 // this process — the developer copies it into source.
 struct Override {
     opaque node: *core::Node,
+    // The window the write went through. Reading the CURRENT value back for the
+    // diff needs a `Handle`, and a handle needs a window — tier 3 resolves a
+    // control by key from that window's root. Recorded here rather than
+    // searched for later: the write had it.
+    window: usize,
     // A borrowed {ptr,len}, and sound only because every name that reaches here
     // is a literal from `declared_names`. A caller-supplied name — a property
     // parsed off a socket into a request-scoped `Text` — must be exchanged for
@@ -131,13 +136,13 @@ fn is_overridden(n: *core::Node, prop: str) -> bool {
 
 // Record only the FIRST write. A second edit to the same property must not
 // overwrite the application's value with the inspector's own earlier one.
-fn ledger_record(n: *core::Node, prop: str, take original: insp::Value) {
+fn ledger_record(n: *core::Node, window: usize, prop: str, take original: insp::Value) {
     match ledger_index(n, prop) {
         option::Option[usize]::Some(_i) => { return; }
         option::Option::None => { }
     }
     let _s: status::Status = OVERRIDES.append(Override {
-        node: n, prop: prop, original: original,
+        node: n, window: window, prop: prop, original: original,
     });
 }
 
@@ -1505,7 +1510,7 @@ fn set(h: insp::Handle, prop: str, take v: insp::Value) -> insp::Outcome {
     // Record what the application declared, before the first inspector write
     // to this pair replaces it.
     match get(h, prop) {
-        option::Option[insp::Value]::Some(orig) => { ledger_record(n, prop, orig); }
+        option::Option[insp::Value]::Some(orig) => { ledger_record(n, h.window, prop, orig); }
         option::Option::None => { }
     }
 
@@ -1701,6 +1706,110 @@ fn snippet_for(h: insp::Handle, prop: str) -> text::Text {
             let _m: status::Status = out.append(");");
         }
         option::Option::None => { }
+    }
+    return out;
+}
+
+// ---- the diff ------------------------------------------------------------------
+//
+// THE JOURNAL IS THE DIFF between the tree the application built and the tree
+// as it stands. Not a log of calls: nobody transcribing an editing session
+// wants the nineteen intermediate values a nudge passed through, they want the
+// one it landed on and the one it started from.
+//
+// The override ledger already IS that diff for properties — it records the
+// first write to each (node, property) pair and nothing after it — so this
+// reads it out rather than keeping a second record that could disagree. A
+// `reset` removes the row, which is exactly right: the difference is gone.
+//
+// Structural edits keep their append-only lines. An insert is not a value that
+// changed, it is a node that was not there, and the only honest way to state
+// that difference is the operation that made it.
+
+fn hex_digit_str(v: usize) -> str {
+    if v == 0 { return "0"; }   if v == 1 { return "1"; }
+    if v == 2 { return "2"; }   if v == 3 { return "3"; }
+    if v == 4 { return "4"; }   if v == 5 { return "5"; }
+    if v == 6 { return "6"; }   if v == 7 { return "7"; }
+    if v == 8 { return "8"; }   if v == 9 { return "9"; }
+    if v == 10 { return "a"; }  if v == 11 { return "b"; }
+    if v == 12 { return "c"; }  if v == 13 { return "d"; }
+    if v == 14 { return "e"; }
+    return "f";
+}
+
+fn hex2(out: *text::Text, v: f64) {
+    var x: f64 = v;
+    if x < 0.0 { x = 0.0; }
+    if x > 1.0 { x = 1.0; }
+    let n: i64 = ((x * 255.0) + 0.5) as i64;
+    let _a: status::Status = { (*out).append(hex_digit_str(((n / 16) as usize))) };
+    let _b: status::Status = { (*out).append(hex_digit_str(((n % 16) as usize))) };
+}
+
+// A colour as the thing a person types back: `#rrggbb`, or `#rrggbbaa` when it
+// is not fully opaque. A token-only colour (a theme role, no channels) says so
+// by name — writing `#000000` for it would be a lie the developer then pastes.
+fn color_text(c: vocab::Color) -> text::Text {
+    if c.token != 255u32 {
+        var t: text::Text = text::from_str("token ");
+        let _a: status::Status = t.append((c.token as i64).to_text().view());
+        return t;
+    }
+    var out: text::Text = text::from_str("#");
+    hex2(#addr_of(out), c.r);
+    hex2(#addr_of(out), c.g);
+    hex2(#addr_of(out), c.b);
+    if c.a < 1.0 { hex2(#addr_of(out), c.a); }
+    return out;
+}
+
+// One value, as it would be written. Every shape the surface can hold — which
+// is the part `snippet_for` never grew: a colour came out `/* colour */` and
+// every enum fell through to `/* unset */`.
+fn value_text(v: insp::Value) -> text::Text {
+    return match v {
+        insp::Value::Nothing => text::from_str("unset"),
+        insp::Value::Bool(b) => text::from_str(if b { "true" } else { "false" }),
+        insp::Value::Int(i) => i.to_text(),
+        insp::Value::Num(x) => plain_num(x),
+        insp::Value::Str(t) => t.clone(),
+        insp::Value::Enum(e) => e.clone(),
+        insp::Value::Color(c) => color_text(c),
+    };
+}
+
+// Every property that differs from what the application declared.
+fn changes() -> vec::Vec[insp::Change] {
+    var out: vec::Vec[insp::Change] = vec::new::[insp::Change]();
+    var i: usize = 0;
+    while i < OVERRIDES.count() {
+        match OVERRIDES.at_ptr(i) {
+            option::Option[*Override]::Some(p) => {
+                let n: *core::Node = { (*p).node };
+                let h: insp::Handle = insp::Handle::of(n, { (*p).window });
+                // A node the tree no longer holds is not a difference anyone
+                // can act on — the row would name a key that is gone.
+                if h.is_live() {
+                    let k: str = { (*n).key() };
+                    if k != "" {
+                        let nowv: insp::Value = match get(h, { (*p).prop }) {
+                            option::Option[insp::Value]::Some(v) => v,
+                            option::Option::None => insp::Value::Nothing,
+                        };
+                        var label: text::Text =
+                            text::from_str(insp::kind_name(core::kind_of(n)));
+                        let _h2: status::Status = label.append("#");
+                        let _h3: status::Status = label.append(k);
+                        let _s: status::Status = out.append(insp::Change {
+                            node: label, prop: { (*p).prop }, now: nowv,
+                        });
+                    }
+                }
+            }
+            option::Option::None => { }
+        }
+        i = i +% 1;
     }
     return out;
 }

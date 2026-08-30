@@ -190,6 +190,39 @@ fn nudged_spelling(spelled: str, by: f64) -> option::Option[insp::Value] {
     };
 }
 
+// A value in the DIFF, where a colour is the thing you would type back rather
+// than the thing a panel wants to draw. `inspect` keeps the structured form —
+// a slider over four channels needs the channels — but nobody transcribes
+// `{"token":255,"rgba":[0.8,0.133,0,1]}` into source.
+fn change_value_json(v: insp::Value) -> json::Value {
+    return match v {
+        insp::Value::Color(c) => json::Value::Text(tree::color_text(c)),
+        other => value_json(other),
+    };
+}
+
+fn change_node_at(cs: vec::Vec[insp::Change], i: usize) -> text::Text {
+    match cs.at_ptr(i) {
+        option::Option[*insp::Change]::Some(c) => { return { (*c).node }.clone(); }
+        option::Option::None => { }
+    }
+    return text::new();
+}
+
+fn node_seen_before(cs: vec::Vec[insp::Change], i: usize, label: str) -> bool {
+    var k: usize = 0;
+    while k < i {
+        match cs.at_ptr(k) {
+            option::Option[*insp::Change]::Some(c) => {
+                if { (*c).node.view() } == label { return true; }
+            }
+            option::Option::None => { }
+        }
+        k = k +% 1;
+    }
+    return false;
+}
+
 fn value_json(v: insp::Value) -> json::Value {
     return match v {
         // Not zero. An unset length has no number an inspector could hand back
@@ -422,7 +455,7 @@ fn describe_tools() -> vec::Vec[json::Value] {
         p_vocab, bridge::no_required()));
 
     out.append(bridge::tool("journal",
-        "The log of inspector mutations made this session.",
+        "THE DIFF between the tree the application built and the tree as it stands: every property that differs, with what it was and what it is now, plus a line per structural edit. This is what you read off at the end of a session to put back in the source. A property that has been nudged twenty times appears ONCE, with the value it landed on. Resetting a property removes it from the diff.",
         bridge::no_props(), bridge::no_required()));
 
     return out;
@@ -661,6 +694,11 @@ fn run_call(ctx: *u8) {
         return;
     }
     if op == OP_JOURNAL {
+        // THE DIFF, both ways round: `lines` for a reader, `changes` for a
+        // parser. Property edits answered NOTHING here until 2026-08-30 — the
+        // verb logged only the structural ones, so a session that nudged a
+        // button into place and then asked what it had changed was told
+        // nothing at all, which is the one question the loop exists to answer.
         var arr: vec::Vec[json::Value] = vec::new::[json::Value]();
         var i: usize = 0;
         let n: usize = tree::journal_count();
@@ -673,8 +711,47 @@ fn run_call(ctx: *u8) {
             }
             i = i +% 1;
         }
+        // Grouped BY NODE, values only:
+        //
+        //     "changes": { "button#tap": { "width": 12, "top": 34 } }
+        //
+        // which is the shape you transcribe from. Not a list of operations and
+        // not a was/now pair — the question at the end of a session is "what
+        // are the numbers", and everything else is noise around them.
+        let cs: vec::Vec[insp::Change] = tree::changes();
+        var groups: vec::Vec[json::Member] = vec::new::[json::Member]();
+        var ci: usize = 0;
+        while ci < cs.count() {
+            let label: text::Text = change_node_at(cs, ci);
+            // The ledger is in write order, so one node's properties are not
+            // adjacent. Emit a node the first time it appears and gather all of
+            // its rows then; skip it afterwards.
+            if !node_seen_before(cs, ci, { label.view() }) {
+                var one: vec::Vec[json::Member] = vec::new::[json::Member]();
+                var cj: usize = ci;
+                while cj < cs.count() {
+                    match cs.at_ptr(cj) {
+                        option::Option[*insp::Change]::Some(ch) => {
+                            if { (*ch).node.view() } == { label.view() } {
+                                one.append(member({ (*ch).prop },
+                                                  change_value_json({ (*ch).now }.clone())));
+                            }
+                        }
+                        option::Option::None => { }
+                    }
+                    cj = cj +% 1;
+                }
+                groups.append(member({ label.view() }, json::Value::Object(one)));
+            }
+            ci = ci +% 1;
+        }
+
         var m: vec::Vec[json::Member] = vec::new::[json::Member]();
-        m.append(member("lines", json::Value::Array(arr)));
+        m.append(member("changes", json::Value::Object(groups)));
+        // Structural edits are not values that changed, they are nodes that
+        // were not there. The only honest way to state that difference is the
+        // operation that made it, so those keep their lines.
+        m.append(member("structural", json::Value::Array(arr)));
         put_out(json::Value::Object(m));
         { (*c).outcome = insp::Outcome::Ok };
         return;
