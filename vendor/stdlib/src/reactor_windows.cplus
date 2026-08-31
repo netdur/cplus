@@ -190,6 +190,20 @@ export extern fn stdlib_reactor_waiter_count_v1() -> i32 {
     return waiter_count();
 }
 
+// The two spellings, one body. Blocking waits up to `_max_wait_ms`; the
+// non-blocking one probes with a zero timeout and is what an external pump
+// driving spawned tasks from a UI run loop needs — `facet/services::pump_async`
+// is that pump, and without this export no facet application linked on Windows
+// at all.
+fn poll_one_event() -> bool { return poll_one_event_within(_max_wait_ms()); }
+
+fn poll_one_event_nb() -> bool { return poll_one_event_within(0 as i32); }
+
+export extern fn stdlib_reactor_poll_one_event_nb_v1() -> i32 {
+    if poll_one_event_nb() { return 1 as i32; }
+    return 0 as i32;
+}
+
 export extern fn stdlib_reactor_poll_one_event_v1() -> i32 {
     if poll_one_event() {
         return 1 as i32;
@@ -325,7 +339,24 @@ fn fire_earliest_timer(state: *u8) -> bool {
 // `poll_one_event` for why an unbounded wait is not available here.
 fn _max_wait_ms() -> i32 { return 50 as i32; }
 
-fn poll_one_event() -> bool {
+// Is the earliest timer actually DUE? Asked only by the non-blocking path:
+// `fire_earliest_timer` SLEEPS to the deadline when it has not arrived, which
+// is right for a blocking poll and is exactly what a non-blocking one must
+// never do.
+fn timer_due(state: *u8) -> bool {
+    let nt: i32 = { *((state + off_n_timers()) as *i32) };
+    if nt == (0 as i32) { return false; }
+    let td_slot: **u8 = { (state + off_timer_deadlines()) as **u8 };
+    let deadlines: *u64 = { *td_slot as *u64 };
+    let best: i32 = earliest_timer(state);
+    let best_dl: u64 = { *(deadlines + (best as usize)) };
+    return best_dl <= { GetTickCount64() };
+}
+
+// The body of both polls. `max_wait_ms` is the LONGEST this call may sit in
+// WSAPoll; zero makes it a probe, which is what the non-blocking spelling
+// passes.
+fn poll_one_event_within(max_wait_ms: i32) -> bool {
     let state: *u8 = ensure();
     let nw_slot: *i32 = { (state + off_n_waiters()) as *i32 };
     let nt_slot: *i32 = { (state + off_n_timers()) as *i32 };
@@ -333,6 +364,10 @@ fn poll_one_event() -> bool {
     let nt: i32 = { *nt_slot };
     if nw == (0 as i32) {
         if nt == (0 as i32) { return false; }
+        // A timer that has not come due is not an event — and firing it here
+        // would SLEEP to its deadline, which is the one thing a non-blocking
+        // poll may not do.
+        if max_wait_ms == (0 as i32) && !timer_due(state) { return false; }
         return fire_earliest_timer(state);
     }
     // Bound the wait by the earliest timer (so timers + I/O share one wait).
@@ -357,7 +392,7 @@ fn poll_one_event() -> bool {
     // This is a floor, not the answer. Real Windows async is IOCP, or
     // `WaitForMultipleObjects` over handles rather than sockets; either would
     // let a pipe be waited on properly instead of polled around.
-    var timeout: i32 = _max_wait_ms();
+    var timeout: i32 = max_wait_ms;
     if nt > (0 as i32) {
         let best: i32 = earliest_timer(state);
         let td_slot: **u8 = { (state + off_timer_deadlines()) as **u8 };
@@ -368,7 +403,7 @@ fn poll_one_event() -> bool {
             timeout = 0 as i32;
         } else {
             let until: u64 = best_dl -% now;
-            if until < (_max_wait_ms() as u64) { timeout = until as i32; }
+            if until < (max_wait_ms as u64) { timeout = until as i32; }
         }
     }
     // Build the WSAPOLLFD array (16 bytes/entry: fd@0, events@8, revents@10).
@@ -421,8 +456,11 @@ fn poll_one_event() -> bool {
     }
     { free(arr); }
     if nready == (0 as i32) {
-        // Timed out — the earliest timer is due.
+        // Timed out. On the BLOCKING path the wait was bounded by the earliest
+        // deadline, so a timeout means the timer is due; on the non-blocking
+        // one nothing waited at all and it has to be asked.
         if nt > (0 as i32) {
+            if max_wait_ms == (0 as i32) && !timer_due(state) { return false; }
             return fire_earliest_timer(state);
         }
         return false;
