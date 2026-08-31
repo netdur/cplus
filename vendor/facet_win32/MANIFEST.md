@@ -44,7 +44,7 @@ Two probes under `playground/`, and the division is deliberate:
 `win32_runtime_probe` goes through `runtime::App` and proves the FACADE.
 
 ```
-362 declared prop bits     249 answered    68%   (gtk 358, appkit 336, uikit 323, android 321)
+362 declared prop bits     264 answered    72%   (gtk 358, appkit 336, uikit 323, android 321)
  68 declared handlers       53 fired       77%   (gtk  68, appkit  68, uikit  65, android  67)
  21 shared-band bits        16 named       76%   (appkit 20, gtk 19, android 19, uikit 18)
 ```
@@ -683,6 +683,30 @@ negotiate. The move is REPORTED and the data is not touched — facet's sequence
 is a count plus a builder, so the order belongs to the application; a backend
 that shuffled rows itself would be shuffling a view of data it does not own,
 and the next rebuild would put them back.
+
+### `collection.columns`
+
+More than one item per row. facet_gtk answers it by handing the model to a
+`GtkGridView`, which lays the items out itself; there is no such control here,
+so `recycler.cplus` would have to do it — and the layout is the easy half.
+
+Two things stop it being a small change, and the second is the real one.
+
+`bind` TAKES ONE NODE. `set_row_bind` is `fn(index, *Node, ctx)` — a row and
+the item that goes in it — so a row holding three items has nothing to rebind
+through and every scroll would REBUILD instead of recycling. That is a
+performance loss rather than a correctness one, and it would be acceptable.
+
+SELECTION WOULD BE WRONG. A cell carries one item slot (`set_item_index`), and
+`on_row_click` turns the clicked window back into a row index through it. With
+three items in a cell, clicking the second reports the row — so a click selects
+the wrong item, and reports it confidently. Fixing that means per-item hit
+resolution inside a cell, which is a second addressing scheme beside the one
+`item_of` already defines.
+
+So this is §2 with a shape attached rather than a line of debt: the work is a
+cell that holds N items and an item slot that survives it, not a loop over
+columns.
 
 ### The drag half of drag-and-drop, and the two travelling edges
 

@@ -1112,13 +1112,98 @@ fn model_bits() -> u64 {
          | flist::P_IS_GROUPED | flist::P_GROUP_COUNT | flist::P_GROUP;
 }
 
+// ---- THE BITS ARE PER KIND, and this file read one kind's for both ---------------
+//
+// A generated module numbers its `P_` constants from 1 in DECLARATION order, so
+// two kinds that declare the same verbs number them differently:
+//
+//     list::P_COUNT           32768        collection::P_COUNT          2048
+//     list::P_SELECTED_INDEX  524288       collection::P_SELECTED_INDEX 32768
+//
+// `list::P_COUNT` IS `collection::P_SELECTED_INDEX`. `apply_sequence` tested
+// the list's numbers against every sequence, so a collection's `set_count`
+// raised a bit nothing here was looking for — a collection has never rebuilt
+// its map — and its `set_selected_index` looked like a list's count change and
+// rebuilt the whole thing.
+//
+// Found by putting a grouped collection in the probe and watching `[map]` never
+// mention it. The same trap as `fonts::font_bits`, which was per-kind for
+// exactly this reason; a comment there says so and this file did not read it.
+fn collection_model_bits() -> u64 {
+    // A collection declares no `row_height` and no `has_uneven_rows` — it sizes
+    // items through `item_sizing` instead, which is why the two bit lists are
+    // not merely renumbered but a different shape.
+    return fcollection::P_COUNT | fcollection::P_ROW
+         | fcollection::P_INVALIDATE_ROW | fcollection::P_SPLICE_ROWS
+         | fcollection::P_IS_GROUPED | fcollection::P_GROUP_COUNT
+         | fcollection::P_GROUP | fcollection::P_ITEM_SIZING;
+}
+
+// One row of the table per verb this file acts on, so the two numbering schemes
+// are resolved in ONE place instead of at every test site.
+struct SeqBits {
+    model: u64,
+    selected_index: u64,
+    selection_mode: u64,
+    scroll_bars: u64,
+    scroll_to: u64,
+    threshold: u64,
+    mix_groups: u64,
+    separator: u64,
+    refreshing: u64,
+    begin_refresh: u64,
+    end_refresh: u64,
+    refreshable: u64,
+}
+
+fn bits_for(n: *core::Node) -> SeqBits {
+    if core::kind_of(n) == props::K_COLLECTION {
+        return SeqBits {
+            model: collection_model_bits(),
+            selected_index: fcollection::P_SELECTED_INDEX,
+            selection_mode: fcollection::P_SELECTION_MODE,
+            scroll_bars: fcollection::P_VERTICAL_SCROLL_BARS
+                       | fcollection::P_HORIZONTAL_SCROLL_BARS,
+            scroll_to: fcollection::P_SCROLL_TO,
+            threshold: fcollection::P_REMAINING_THRESHOLD,
+            mix_groups: fcollection::P_CAN_MIX_GROUPS,
+            // A COLLECTION HAS NEITHER, and zero is the honest answer: a bit
+            // that is never set can never match, so the branch is simply never
+            // taken rather than taken on some other verb's bit.
+            separator: 0 as u64,
+            refreshing: 0 as u64,
+            begin_refresh: 0 as u64,
+            end_refresh: 0 as u64,
+            refreshable: 0 as u64,
+        };
+    }
+    return SeqBits {
+        model: model_bits(),
+        selected_index: flist::P_SELECTED_INDEX,
+        selection_mode: flist::P_SELECTION_MODE,
+        scroll_bars: flist::P_VERTICAL_SCROLL_BARS | flist::P_HORIZONTAL_SCROLL_BARS,
+        scroll_to: flist::P_SCROLL_TO,
+        // A `list` declares neither — the threshold is an ItemsView verb and
+        // the mix rule a Reorderable one, and a list embeds neither struct.
+        threshold: 0 as u64,
+        mix_groups: 0 as u64,
+        separator: flist::P_SEPARATOR | flist::P_SEPARATOR_COLOR,
+        refreshing: flist::P_IS_REFRESHING,
+        begin_refresh: flist::P_BEGIN_REFRESH,
+        end_refresh: flist::P_END_REFRESH,
+        refreshable: flist::P_IS_REFRESHABLE | flist::P_CAN_REFRESH
+                   | flist::P_REFRESH_COLOR,
+    };
+}
+
 fn apply_sequence(v: *u8, n: *core::Node, dirty: u64) {
     let s: *ListState = state_of(v);
     if s == (0 as *ListState) { return; }
     var src: SeqSource = source_of(n);
     if !src.live { return; }
     let p: *SeqSource = #addr_of(src);
-    if (dirty & model_bits()) != (0 as u64) {
+    let b: SeqBits = bits_for(n);
+    if (dirty & b.model) != (0 as u64) {
         rebuild_map(s, p);
         // EVERY LIVE CELL IS RELEASED when the model changes. A cell still
         // pointing at row 40 of a list that now has 12 rows is showing data
@@ -1128,13 +1213,13 @@ fn apply_sequence(v: *u8, n: *core::Node, dirty: u64) {
         layout_rows(v, n);
         return;
     }
-    if (dirty & flist::P_SELECTED_INDEX) != (0 as u64) {
+    if (dirty & b.selected_index) != (0 as u64) {
         { (*s).selected = { (*p).selected_index } };
     }
     // SWITCHING TO `None` CLEARS THE SELECTION. A list that stops being
     // selectable while a row is highlighted would keep drawing the highlight,
     // and nothing the application can do would clear it.
-    if (dirty & flist::P_SELECTION_MODE) != (0 as u64) {
+    if (dirty & b.selection_mode) != (0 as u64) {
         let selectable: bool = match { (*p).selection_mode } {
             vocab::SelectionMode::None => false,
             vocab::SelectionMode::Single => true,
@@ -1146,26 +1231,40 @@ fn apply_sequence(v: *u8, n: *core::Node, dirty: u64) {
             let _i: i32 = { u::InvalidateRect(v, 0 as *u::tagRECT, 1 as i32) };
         }
     }
-    if (dirty & (flist::P_VERTICAL_SCROLL_BARS | flist::P_HORIZONTAL_SCROLL_BARS))
-       != (0 as u64) {
+    if (dirty & b.scroll_bars) != (0 as u64) {
         apply_bars(v, { (*p).vertical_scroll_bars }, { (*p).horizontal_scroll_bars });
     }
-    if (dirty & flist::P_SCROLL_TO) != (0 as u64) {
+    // A CHANGED THRESHOLD IS RE-EVALUATED AGAINST THE CURRENT WINDOW. An
+    // application that raises it while already near the end means the list is
+    // now inside the band, and waiting for the next scroll to notice would be
+    // one screenful late. Same reasoning as `controls::apply_carousel`'s.
+    if b.threshold != (0 as u64) && (dirty & b.threshold) != (0 as u64) {
+        { (*s).in_threshold = false };
+        layout_rows(v, n);
+    }
+    // THE RULE CHANGED MID-GESTURE. `can_mix_groups` decides whether a drag may
+    // cross a section boundary, and it is read at the DROP — so an application
+    // that tightens it while a row is in flight would have the drop judged by
+    // the new rule after the user began under the old one. The drag is
+    // cancelled instead, which is the answer that cannot surprise anyone.
+    if b.mix_groups != (0 as u64) && (dirty & b.mix_groups) != (0 as u64) {
+        if reorder_host() == v { cancel_reorder(); }
+    }
+    if (dirty & b.scroll_to) != (0 as u64) {
         scroll_to_row(v, n, { (*p).scroll_to_index });
     }
-    if (dirty & (flist::P_SEPARATOR | flist::P_SEPARATOR_COLOR)) != (0 as u64) {
+    if b.separator != (0 as u64) && (dirty & b.separator) != (0 as u64) {
         let _i: i32 = { u::InvalidateRect(v, 0 as *u::tagRECT, 1 as i32) };
     }
     // The imperative pair wins over the state bit, which is why they are read
     // after it: `begin_refresh` says start regardless of what `is_refreshing`
     // held a moment ago.
-    if (dirty & flist::P_IS_REFRESHING) != (0 as u64) {
+    if b.refreshing != (0 as u64) && (dirty & b.refreshing) != (0 as u64) {
         set_refreshing(v, n, refreshing_of(n));
     }
-    if (dirty & flist::P_BEGIN_REFRESH) != (0 as u64) { set_refreshing(v, n, true); }
-    if (dirty & flist::P_END_REFRESH) != (0 as u64) { set_refreshing(v, n, false); }
-    if (dirty & (flist::P_IS_REFRESHABLE | flist::P_CAN_REFRESH | flist::P_REFRESH_COLOR))
-       != (0 as u64) {
+    if b.begin_refresh != (0 as u64) && (dirty & b.begin_refresh) != (0 as u64) { set_refreshing(v, n, true); }
+    if b.end_refresh != (0 as u64) && (dirty & b.end_refresh) != (0 as u64) { set_refreshing(v, n, false); }
+    if b.refreshable != (0 as u64) && (dirty & b.refreshable) != (0 as u64) {
         // Permission and colour are both read at the moment they are used —
         // see `refresh_requested` and `draw_refresh_bar` — so all an apply
         // owes them is the repaint.
@@ -2050,6 +2149,15 @@ fn report_reorder(v: *u8, n: *core::Node, from: i64, to: i64) -> bool {
     return true;
 }
 
+// Drop the drag without reporting anything. Used when the rule the drop would
+// be judged by changes underneath it.
+fn cancel_reorder() {
+    REORDER_LIST = 0 as usize;
+    REORDER_FROM = (0 as i64) -% (1 as i64);
+    REORDER_MOVED = false;
+    return;
+}
+
 fn reorder_active() -> bool { return REORDER_LIST != (0 as usize); }
 fn reorder_host() -> *u8 { return REORDER_LIST as *u8; }
 
@@ -2208,4 +2316,39 @@ static HEADERS_BUILT: i64 = 0;
 fn a_header(g: usize, ctx: *u8) -> flex::Node {
     HEADERS_BUILT = HEADERS_BUILT + (1 as i64);
     return flex::Node::new();
+}
+
+#[test]
+fn the_two_kinds_number_their_bits_differently() {
+    // THE BUG THIS FILE SHIPPED WITH. A generated module numbers its `P_`
+    // constants from 1 in declaration order, so the same verb is a different
+    // bit on each kind — and `list::P_COUNT` is exactly
+    // `collection::P_SELECTED_INDEX`. `apply_sequence` tested the list's
+    // numbers against every sequence, so a collection never rebuilt its map
+    // and its selection change rebuilt everything.
+    //
+    // Asserted rather than described, so a renumber on either side fails here
+    // instead of in a probe.
+    assert flist::P_COUNT == fcollection::P_SELECTED_INDEX;
+    assert flist::P_COUNT != fcollection::P_COUNT;
+    assert flist::P_SELECTED_INDEX != fcollection::P_SELECTED_INDEX;
+    return;
+}
+
+#[test]
+fn each_kind_gets_its_own_bits() {
+    var l: core::Node = flist::list(key: "l");
+    var c: core::Node = fcollection::collection(key: "c");
+    let lb: SeqBits = bits_for(#addr_of(l));
+    let cb: SeqBits = bits_for(#addr_of(c));
+    // A collection's model bits must contain ITS count, not the list's.
+    assert (cb.model & fcollection::P_COUNT) != (0 as u64);
+    assert (lb.model & flist::P_COUNT) != (0 as u64);
+    // A COLLECTION HAS NO SEPARATOR AND NO REFRESH, and zero is the honest
+    // answer: a bit that is never set can never match, so the branch is not
+    // taken rather than taken on some other verb's bit.
+    assert cb.separator == (0 as u64);
+    assert cb.refreshing == (0 as u64);
+    assert lb.separator != (0 as u64);
+    return;
 }
