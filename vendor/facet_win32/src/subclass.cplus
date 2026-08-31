@@ -46,6 +46,8 @@ import "facet/text_area" as text_area;
 import "win32/winuser" as u;
 import "./sys" as sys;
 import "./input" as input;
+import "./paint" as paint;
+import "win32/wingdi" as gdi;
 
 fn vk_return() -> u64 { return 0x0D as u64; }
 
@@ -116,6 +118,19 @@ fn sub_proc(hwnd: *u8, msg: u32, w: u64, l: i64) -> i64 {
 
     let r: i64 = { u::CallWindowProcA(old, hwnd, msg, w, l) };
 
+    // THE PLACEHOLDER, DRAWN OVER THE CONTROL'S OWN PAINT.
+    //
+    // `EM_SETCUEBANNER` puts a prompt in an EDIT and gives no way to colour it
+    // — §1 recorded `placeholder_color` absent for that reason, and the reason
+    // was complete at the time. Subclassing changed it: the control paints
+    // first, and then this does, which is the only place a colour can be
+    // applied to text the control drew.
+    //
+    // AFTER the original, never instead of it. The EDIT has to lay out its own
+    // text, its caret and its selection; painting first would be painting
+    // under all three.
+    if msg == sys::wm_paint() { draw_placeholder(hwnd); }
+
     // AFTER the control has run, because the selection is only what it is once
     // the control has moved the caret. Reading it first would report the
     // previous selection on every keystroke — one event behind, forever.
@@ -177,6 +192,75 @@ fn note_selection(v: *u8) {
     // field the moment it is touched.
     if seen == (0 as *u8) { return; }
     fire_selection_changed(v, n);
+}
+
+// Only when the field is EMPTY and UNFOCUSED, which is what a placeholder is.
+// A field with a caret in it showing grey prompt text behind the caret is the
+// bug every hand-rolled placeholder has.
+fn draw_placeholder(v: *u8) {
+    let n: *core::Node = input::node_of_window(v);
+    if n == (0 as *core::Node) { return; }
+    let iv: *props::InputViewProps = input_view_of(n);
+    if iv == (0 as *props::InputViewProps) { return; }
+    // THE COLOUR IS THE GATE, exactly as it is for a bordered button: a field
+    // that stated no placeholder colour keeps `EM_SETCUEBANNER`, which is the
+    // platform's own prompt and looks like every other application's.
+    var has: bool = false;
+    let colour: u32 = paint::resolve({ (*iv).placeholder_color }, #addr_of(has));
+    if !has { return; }
+    if { (*iv).placeholder }.view() == "" { return; }
+    if { u::GetWindowTextLengthW(v) } != (0 as i32) { return; }
+    if { u::GetFocus() } == v { return; }
+
+    let hdc: *u8 = { u::GetDC(v) };
+    if hdc == (0 as *u8) { return; }
+    let font: *u8 = { u::SendMessageA(v, 0x0031 as u32, 0 as u64, 0 as i64) } as *u8;
+    var oldf: *u8 = 0 as *u8;
+    if font != (0 as *u8) { oldf = { gdi::SelectObject(hdc, font) }; }
+    let _t: u32 = { gdi::SetTextColor(hdc, colour) };
+    let _m: i32 = { gdi::SetBkMode(hdc, sys::bkmode_transparent()) };
+    var r: u::tagRECT = u::tagRECT { left: 0 as i32, top: 0 as i32,
+                                     right: 0 as i32, bottom: 0 as i32 };
+    if { u::GetClientRect(v, #addr_of(r)) } != (0 as i32) {
+        // THE EDIT'S OWN INSET. An EDIT indents its text by a small margin and
+        // a placeholder drawn flush against the frame sits a pixel or two left
+        // of where the real text will appear — which reads as the text moving
+        // when you start typing.
+        r.left = r.left +% (2 as i32);
+        r.right = r.right -% (2 as i32);
+        let w16: *u16 = sys::to_wide({ (*iv).placeholder }.view());
+        if w16 != (0 as *u16) {
+            let flags: u32 = sys::dt_noprefix() | sys::dt_singleline()
+                           | sys::dt_vcenter() | sys::dt_end_ellipsis();
+            let _d: i32 = { u::DrawTextW(hdc, w16, (0 as i32) -% (1 as i32),
+                                         #addr_of(r), flags) };
+            sys::free_wide(w16);
+        }
+    }
+    if oldf != (0 as *u8) { let _s: *u8 = { gdi::SelectObject(hdc, oldf) }; }
+    let _r: i32 = { u::ReleaseDC(v, hdc) };
+    return;
+}
+
+// The embedded `InputViewProps` of whichever input kind this is. The three
+// carry it rather than restating its rows, which is why one reader answers for
+// all of them.
+fn input_view_of(n: *core::Node) -> *props::InputViewProps {
+    let d: *core::Data = core::node_data(n);
+    if d == (0 as *core::Data) { return 0 as *props::InputViewProps; }
+    let raw: *u8 = { (*d).props };
+    if raw == (0 as *u8) { return 0 as *props::InputViewProps; }
+    let k: u32 = { (*d).kind };
+    if k == props::K_TEXT_FIELD {
+        return #addr_of((*(raw as *props::TextFieldProps)).input_view);
+    }
+    if k == props::K_TEXT_AREA {
+        return #addr_of((*(raw as *props::TextAreaProps)).input_view);
+    }
+    if k == props::K_SEARCH_FIELD {
+        return #addr_of((*(raw as *props::SearchFieldProps)).input_view);
+    }
+    return 0 as *props::InputViewProps;
 }
 
 fn fire_submit(v: *u8, n: *core::Node, kind: u32) -> bool {
@@ -261,5 +345,35 @@ fn enter_submits_a_field_and_ctrl_enter_submits_an_area() {
     // Paint and timer traffic must not make this package re-read a selection.
     assert !selection_may_have_moved(sys::wm_paint());
     assert !selection_may_have_moved(sys::wm_timer());
+    return;
+}
+
+#[test]
+fn every_input_kind_answers_one_reader() {
+    // The three carry `InputViewProps` embedded rather than restating its rows,
+    // which is what lets one reader serve all of them — and what made the
+    // placeholder reaching only `text_field` a bug rather than a design.
+    var f: core::Node = text_field::text_field("", key: "f");
+    var a: core::Node = text_area::text_area("", key: "a");
+    var q: core::Node = search_field::search_field("", key: "q");
+    assert input_view_of(#addr_of(f)) != (0 as *props::InputViewProps);
+    assert input_view_of(#addr_of(a)) != (0 as *props::InputViewProps);
+    assert input_view_of(#addr_of(q)) != (0 as *props::InputViewProps);
+    // ...and nothing else does, so a kind without one falls out rather than
+    // reading another kind's block at the same offset.
+    var b: core::Node = props_free_node();
+    assert input_view_of(#addr_of(b)) == (0 as *props::InputViewProps);
+    return;
+}
+
+fn props_free_node() -> core::Node {
+    return core::node_with("x", props::K_BOX, 0 as *u8, props::release_box_props);
+}
+
+#[test]
+fn drawing_a_placeholder_on_a_dead_window_is_quiet() {
+    // `WM_PAINT` arrives during teardown too, and every reader here has to
+    // survive a window whose node has already gone.
+    draw_placeholder(0 as *u8);
     return;
 }

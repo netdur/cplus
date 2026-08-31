@@ -44,7 +44,7 @@ Two probes under `playground/`, and the division is deliberate:
 `win32_runtime_probe` goes through `runtime::App` and proves the FACADE.
 
 ```
-362 declared prop bits     287 answered    79%   (gtk 358, appkit 336, uikit 323, android 321)
+362 declared prop bits     290 answered    80%   (gtk 358, appkit 336, uikit 323, android 321)
  68 declared handlers       53 fired       77%   (gtk  68, appkit  68, uikit  65, android  67)
  21 shared-band bits        16 named       76%   (appkit 20, gtk 19, android 19, uikit 18)
 ```
@@ -717,10 +717,22 @@ box records its owner inside `CreateWindowEx`, this renderer parks controls on
 `HWND_MESSAGE` until `insert`, and across a whole run there were zero
 `ODT_COMBOBOX` draws. The entry below has the numbers.
 
-### `placeholder_color`
+### The search field's own furniture — `search_icon_color`, `cancel_button_color`
 
-`EM_SETCUEBANNER` sets the cue banner's TEXT and nothing else. The colour is the
-theme's grey; there is no message for it.
+Windows has no search-field class. The magnifier and the clear button in
+Explorer's box are Explorer's own drawing over an ordinary `EDIT`, not a
+control anyone can create — there is no `WC_SEARCHBOX`. So there is no icon and
+no cancel button here, and a colour for either is a colour for something that
+does not exist. `text_field.clear_button` is the same absence from the other
+side.
+
+(The placeholder's colour was recorded here and is answered now.
+`EM_SETCUEBANNER` still has none — what changed is that the input kinds are
+SUBCLASSED, so the prompt can be drawn after the control's own paint. It is
+conditional like every other take-the-pixels row in this file: a field that
+stated no colour keeps the platform's banner, and one that stated a colour has
+its banner cleared so the two do not stack. The verb is not named in backticks
+here because the tool reads that as a claim of absence.)
 
 ### `vertical_align` on an EDIT
 

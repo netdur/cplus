@@ -393,23 +393,7 @@ fn apply_text_field(v: *u8, n: *core::Node, dirty: u64) {
     if (dirty & (text_field::P_TEXT_ALIGN | text_field::P_IS_SECURE)) != (0 as u64) {
         apply_field_style(v, { (*p).text_align }, { (*p).is_secure });
     }
-    if (dirty & text_field::P_PLACEHOLDER) != (0 as u64) {
-        // EM_SETCUEBANNER TAKES UTF-16 AND HAS NO ANSI FORM. There is no
-        // `EM_SETCUEBANNERA` — the message is wide whatever the control's own
-        // character set is, so the string has to be converted here.
-        //
-        // This used to pass the UTF-8 bytes and claim in a comment that an
-        // ASCII placeholder would survive. It does not: the control reads the
-        // bytes as wide characters, so two ASCII bytes become one CJK glyph and
-        // `type here` renders as 裁数集牭eN. Visible in a screenshot the moment
-        // anyone looked at it.
-        let w: *u16 = sys::to_wide({ (*p).input_view.placeholder }.view());
-        if w != (0 as *u16) {
-            let _r: i64 = { u::SendMessageW(v, sys::em_setcuebanner(),
-                                            1 as u64, { #addr(w as *u8) } as i64) };
-            sys::free_wide(w);
-        }
-    }
+
     return;
 }
 
@@ -594,6 +578,7 @@ fn edit_case_bits(t: vocab::TextTransform) -> u32 {
 struct InputBits {
     text: u64,
     placeholder: u64,
+    placeholder_color: u64,
     read_only: u64,
     max_length: u64,
     cursor: u64,
@@ -605,12 +590,51 @@ struct InputBits {
     keyboard: u64,
 }
 
+// `EM_SETCUEBANNER` shows a prompt and gives no way to colour it. When the node
+// stated a colour, `subclass::draw_placeholder` paints the prompt itself — so
+// the control's own banner is CLEARED, or both would show and the grey one
+// would sit under the coloured one.
+//
+// The same conditional rule as everywhere else in this package: a field that
+// said nothing about colour keeps the platform's own prompt, which looks like
+// every other application's.
+fn apply_placeholder(v: *u8, iv: *props::InputViewProps) {
+    var has: bool = false;
+    let _c: u32 = paint::resolve({ (*iv).placeholder_color }, #addr_of(has));
+    let shown: str = if has { "" } else { { (*iv).placeholder }.view() };
+    // EM_SETCUEBANNER TAKES UTF-16 AND HAS NO ANSI FORM. There is no
+    // `EM_SETCUEBANNERA` — the message is wide whatever the control's own
+    // character set is, so the string has to be converted here.
+    //
+    // This used to pass the UTF-8 bytes and claim in a comment that an ASCII
+    // placeholder would survive. It does not: the control reads the bytes as
+    // wide characters, so two ASCII bytes become one CJK glyph and `type here`
+    // rendered as 裁数集牭eN — visible in a screenshot the moment anyone looked.
+    let w: *u16 = sys::to_wide(shown);
+    if w != (0 as *u16) {
+        let _r: i64 = { u::SendMessageW(v, sys::em_setcuebanner(),
+                                        1 as u64, { #addr(w as *u8) } as i64) };
+        sys::free_wide(w);
+    }
+    let _i: i32 = { u::InvalidateRect(v, 0 as *u::tagRECT, 1 as i32) };
+    return;
+}
+
 fn apply_input_view(v: *u8, iv: *props::InputViewProps, dirty: u64, b: InputBits) {
     // THE SCOPE IS SET ON THE CONTROL and stays until it is set again, so this
     // runs on the create sweep too — every bit is raised then, which is what
     // gives a field its scope before a user ever reaches it.
     if b.keyboard != (0 as u64) && (dirty & b.keyboard) != (0 as u64) {
         apply_keyboard(v, { (*iv).keyboard });
+    }
+    // THE PLACEHOLDER, and which of the two ways it is shown.
+    //
+    // It lived in `apply_text_field` and so reached ONE of the three kinds —
+    // `text_area` and `search_field` declare the same verb on the same
+    // embedded struct and never got a prompt at all. Moved here, where the
+    // shared half belongs.
+    if (dirty & (b.placeholder | b.placeholder_color)) != (0 as u64) {
+        apply_placeholder(v, iv);
     }
     if (dirty & b.read_only) != (0 as u64) {
         let ro: u64 = if { (*iv).is_read_only } { 1 as u64 } else { 0 as u64 };
@@ -680,6 +704,7 @@ fn apply_field_style(v: *u8, align: vocab::TextAlign, secure: bool) {
 fn text_field_bits() -> InputBits {
     return InputBits {
         text: text_field::P_TEXT, placeholder: text_field::P_PLACEHOLDER,
+        placeholder_color: text_field::P_PLACEHOLDER_COLOR,
         read_only: text_field::P_IS_READ_ONLY, max_length: text_field::P_MAX_LENGTH,
         cursor: text_field::P_CURSOR_POSITION,
         selection: text_field::P_SELECTION_LENGTH,
@@ -693,6 +718,7 @@ fn text_field_bits() -> InputBits {
 fn text_area_bits() -> InputBits {
     return InputBits {
         text: text_area::P_TEXT, placeholder: text_area::P_PLACEHOLDER,
+        placeholder_color: text_area::P_PLACEHOLDER_COLOR,
         read_only: text_area::P_IS_READ_ONLY, max_length: text_area::P_MAX_LENGTH,
         cursor: text_area::P_CURSOR_POSITION,
         selection: text_area::P_SELECTION_LENGTH,
@@ -709,6 +735,7 @@ fn text_area_bits() -> InputBits {
 fn search_field_bits() -> InputBits {
     return InputBits {
         text: search_field::P_TEXT, placeholder: search_field::P_PLACEHOLDER,
+        placeholder_color: search_field::P_PLACEHOLDER_COLOR,
         read_only: search_field::P_IS_READ_ONLY,
         max_length: search_field::P_MAX_LENGTH,
         cursor: search_field::P_CURSOR_POSITION,

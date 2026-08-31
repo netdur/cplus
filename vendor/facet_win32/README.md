@@ -59,7 +59,7 @@ $ python3 ../facet_gtk/tools/parity.py win32
 362 prop bits declared across facet's kind modules
   gtk       358 / 362    98%
   appkit    336 / 362    92%
-  win32     287 / 362    79%   <-- this package
+  win32     290 / 362    80%   <-- this package
 
  68 declared handlers
   gtk        68 / 68    100%
@@ -86,7 +86,7 @@ backend; when a kind is the exception, describe it without backticks.
 ## Three ways to check it
 
 ```bash
-cd vendor/facet_win32 && ../../target/release/cpc test      # 109 tests, no window needed
+cd vendor/facet_win32 && ../../target/release/cpc test      # 111 tests, no window needed
 
 cd playground/win32_probe         && ../../target/release/cpc build   # the SEAM
 cd playground/win32_runtime_probe && ../../target/release/cpc build   # the FACADE
