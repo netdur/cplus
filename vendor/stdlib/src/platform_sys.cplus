@@ -81,3 +81,21 @@ fn os_version_raw() -> text::Text {
 // `_linux` shadow says true, and a target that IS Linux gets the right answer
 // without anyone remembering to add it to a list.
 fn is_linux_abi() -> bool { return false; }
+
+// ---- is that process still running? ------------------------------------------
+//
+// `kill(pid, 0)` sends no signal: it performs the permission and existence
+// checks and stops. It is the POSIX idiom for "is this pid live", and there is
+// nothing else that answers the question without side effects.
+//
+// It is behind a shim because Windows has no `kill` at any spelling — see
+// `platform_sys_windows.cplus`. `agent_mcp::sweep_stale` is the caller that
+// matters: it removes the descriptors of dead agent processes, and an
+// undefined `kill` there took every consumer of that package down at link
+// time on Windows.
+extern fn kill(pid: i32, sig: i32) -> i32;
+
+fn pid_is_live(pid: i32) -> bool {
+    if pid <= (0 as i32) { return false; }
+    return { kill(pid, 0 as i32) } == (0 as i32);
+}

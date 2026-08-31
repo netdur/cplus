@@ -171,3 +171,39 @@ fn os_version_is_three_dotted_numbers() {
 fn cpu_count_is_at_least_one() {
     assert cpu_count_raw() >= (1 as usize);
 }
+
+// ---- is that process still running? ------------------------------------------
+//
+// Windows has no `kill(2)`, and the honest equivalent is not a signal at all:
+// ask for a handle to the process and see whether one comes back.
+//
+// `PROCESS_QUERY_LIMITED_INFORMATION` (0x1000) rather than
+// `PROCESS_QUERY_INFORMATION` — the limited right is granted across integrity
+// levels and to processes owned by other users, which is exactly the case
+// `sweep_stale` walks into: a descriptor left by a process this one may not
+// fully open. Asking for more than is needed would report a LIVE process as
+// dead and delete a running agent's descriptor.
+//
+// A HANDLE IS NOT ENOUGH ON ITS OWN. A process that has exited but whose
+// handle is still held by something keeps its pid resolvable — a zombie by
+// another name — so the exit code is checked too: `STILL_ACTIVE` (259) means
+// running. That constant is also a legal exit code, so a process that exited
+// with 259 reads as live; it is a documented Win32 wart, it costs one stale
+// descriptor, and the alternative (a wait with a zero timeout) costs a
+// syscall on every sweep to fix a case nobody has hit.
+extern fn OpenProcess(access: u32, inherit: i32, pid: u32) -> *u8;
+extern fn GetExitCodeProcess(h: *u8, code: *u32) -> i32;
+extern fn CloseHandle(h: *u8) -> i32;
+
+fn _still_active() -> u32 { return 259 as u32; }
+
+fn pid_is_live(pid: i32) -> bool {
+    if pid <= (0 as i32) { return false; }
+    let h: *u8 = { OpenProcess(0x1000 as u32, 0 as i32, pid as u32) };
+    if h.is_null() { return false; }
+    var code: u32 = 0 as u32;
+    let ok: i32 = { GetExitCodeProcess(h, #addr_of(code)) };
+    let _c: i32 = { CloseHandle(h) };
+    if ok == (0 as i32) { return true; }
+    return code == _still_active();
+}
