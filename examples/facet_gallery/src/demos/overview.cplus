@@ -22,9 +22,9 @@ impl Overview: component::Component {
         body.add(ui::label(
             "Facet Gallery is a living catalog of the facet widget vocabulary — browse from the tree, interact in the main pane. Each demo shows the control live and a short constructor snippet so you can copy the pattern into your app.",
             key: "ov:about",
-            font_size: 14.0f64,
-            text_color: vocab::Color::ink(0.8f64),
-            max_lines: 8 as i64,
+            font_size: 14.0,
+            text_color: vocab::Color::ink(0.8),
+            max_lines: 8,
             line_break: vocab::LineBreak::WordWrap,
         ));
 
@@ -32,9 +32,9 @@ impl Overview: component::Component {
         body.add(ui::label(
             "There is no re-render. Handlers find a keyed control and write it:\n  label::find(\"count\").set_text(\"…\")\n  slider::find(\"s\").set_value(0.5)",
             key: "ov:update",
-            font_size: 13.0f64,
-            text_color: vocab::Color::ink(0.75f64),
-            max_lines: 6 as i64,
+            font_size: 13.0,
+            text_color: vocab::Color::ink(0.75),
+            max_lines: 6,
             line_break: vocab::LineBreak::WordWrap,
         ));
 
@@ -42,9 +42,9 @@ impl Overview: component::Component {
         body.add(ui::label(
             "Views — Button, Label, Controls, Values, Inputs, Pickers, Icons, Image, Spans, Graphics, Web\nLayout — Basics, Scroll, Split, ZStack, Responsive\nCollections — List, Collection, Tree, Page dots, Table, Carousel\nInteraction — Refresh, Swipe",
             key: "ov:cov",
-            font_size: 13.0f64,
-            text_color: vocab::Color::ink(0.8f64),
-            max_lines: 12 as i64,
+            font_size: 13.0,
+            text_color: vocab::Color::ink(0.8),
+            max_lines: 12,
             line_break: vocab::LineBreak::WordWrap,
         ));
 
@@ -56,7 +56,7 @@ impl Overview: component::Component {
         return shell::panel(
             "Facet Gallery",
             "Implementation reference for facet widgets on AppKit.",
-            core::column(body).gap(12.0f64),
+            core::column(body).gap(12.0),
         );
     }
 }

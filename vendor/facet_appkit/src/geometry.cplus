@@ -62,7 +62,6 @@ type Node = flex::Node;
 // directly; every cold path uses the typed wrapper like normal code.
 fn set_view_frame(v: *u8, r: rt::Rect) {
     { rt::msg_void_rect(v, rt::sel(#str_ptr("setFrame:\0")), r) };
-    return;
 }
 
 // Lay `root` out at the host's size, then push the frames onto the views.
@@ -70,14 +69,13 @@ fn set_view_frame(v: *u8, r: rt::Rect) {
 // device pixel grid keeps text crisp AND keeps the numbers bit-stable pass to
 // pass, which is what lets the layout cache report a hit at an unchanged size.
 fn relayout_root(root: *core::Node, width: f64, height: f64, scale: f64) {
-    if root == (0 as *core::Node) { return; }
+    if root.is_null() { return; }
     // The app's band vocabulary rides along, so a node carrying `hide`/`show`
     // rules is resolved against the box it actually sits in — as part of THIS
     // pass, not by a size observer firing a second one afterwards.
     { (*root).calculate_layout(width: width, height: height, bands: bands::bands()) };
     if scale > 0.0f64 { { (*root).round_to_pixel(scale) }; }
     reposition(root);
-    return;
 }
 
 // Walk an already-mounted tree and set every EXISTING view's frame from the
@@ -108,7 +106,7 @@ fn relayout_root(root: *core::Node, width: f64, height: f64, scale: f64) {
 // their birth sizes. The row was the right height with its content unplaced
 // inside it, which is the report this closes.
 fn reposition(root: *core::Node, force: bool = false) {
-    if root == (0 as *core::Node) { return; }
+    if root.is_null() { return; }
     // The engine's verdict for the whole tree: false means every frame below
     // is bit-identical to the previous pass (a vertical-only resize of a
     // width-driven tree, say) — nothing to move, so nothing is walked.
@@ -116,7 +114,6 @@ fn reposition(root: *core::Node, force: bool = false) {
         if { (*root).layout_changed() } == false { return; }
     }
     reposition_children(root, { (*root).frame() });
-    return;
 }
 
 // `host_abs` is the absolute frame of the node whose VIEW the children of
@@ -167,7 +164,7 @@ fn apply_z_order(node: *core::Node) {
                 option::Option[*core::Node]::Some(c) => {
                     if core::z_index(c) == pass {
                         let cv: *u8 = core::view_of(c);
-                        if cv != (0 as *u8) {
+                        if cv.is_not_null() {
                             match ak::View::from_raw(cv).superview() {
                                 option::Option[ak::View]::Some(sup) => {
                                     sup.add_subview(ak::View::from_raw(cv));
@@ -183,7 +180,6 @@ fn apply_z_order(node: *core::Node) {
         }
         pass = pass + (1 as i64);
     }
-    return;
 }
 
 fn min_z_of(node: *core::Node, count: usize) -> i64 {
@@ -231,8 +227,8 @@ fn reposition_children(node: *core::Node, host_abs: flex::Frame) {
                 // a zero frame — but AppKit does not clip a view to its bounds,
                 // so its subviews went on drawing at the frames they last had.
                 // Collapsed space, visible content. The view carries it.
-                if v != (0 as *u8) { ak::View::from_raw(v).set_hidden(core::is_hidden(c)); }
-                if v != (0 as *u8) {
+                if v.is_not_null() { ak::View::from_raw(v).set_hidden(core::is_hidden(c)); }
+                if v.is_not_null() {
                     // Host-relative, top-left: the host view is flipped.
                     set_view_frame(v, rt::Rect {
                         x: cf.left - host_abs.left,
@@ -266,15 +262,14 @@ fn reposition_children(node: *core::Node, host_abs: flex::Frame) {
     // The content size is the union of what was placed, floored at the
     // viewport so a short document does not scroll at all.
     size_scroll_content(node, host_abs);
-    return;
 }
 
 fn size_scroll_content(node: *core::Node, host_abs: flex::Frame) {
     let v: *u8 = core::view_of(node);
-    if v == (0 as *u8) { return; }
+    if v.is_null() { return; }
     if !is_kind_of(v, #str_ptr("NSScrollView\0")) { return; }
     let doc: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("documentView\0"))) };
-    if doc == (0 as *u8) { return; }
+    if doc.is_null() { return; }
     // A recycling list's document view is its NSTableView, which sizes itself
     // from its row count — and a table told what size to be is a table fighting
     // its own data source.
@@ -313,7 +308,6 @@ fn size_scroll_content(node: *core::Node, host_abs: flex::Frame) {
     let was: rt::Rect = { rt::msg_rect(doc, rt::sel(#str_ptr("frame\0"))) };
     if was.w == w && was.h == h { return; }
     set_view_frame(doc, rt::Rect { x: 0.0f64, y: 0.0f64, w: w, h: h });
-    return;
 }
 
 // The text area's document view: as wide as the viewport, and as tall as the
@@ -343,7 +337,6 @@ fn size_text_document(scroll: *u8, doc: *u8) {
     let was: rt::Rect = { rt::msg_rect(doc, rt::sel(#str_ptr("frame\0"))) };
     if was.w == port.w && was.h == h { return; }
     set_view_frame(doc, rt::Rect { x: 0.0f64, y: 0.0f64, w: port.w, h: h });
-    return;
 }
 
 // How tall the laid-out text is. Zero when the view has no layout manager yet,
@@ -351,7 +344,7 @@ fn size_text_document(scroll: *u8, doc: *u8) {
 fn text_height_of(doc: *u8) -> f64 {
     let lm: *u8 = { rt::msg_id(doc, rt::sel(#str_ptr("layoutManager\0"))) };
     let tc: *u8 = { rt::msg_id(doc, rt::sel(#str_ptr("textContainer\0"))) };
-    if lm == (0 as *u8) || tc == (0 as *u8) { return 0.0f64; }
+    if lm.is_null() || tc.is_null() { return 0.0f64; }
     let used: rt::Rect = { msg_rect_id(lm, rt::sel(#str_ptr("usedRectForTextContainer:\0")), tc) };
     return used.y + used.h;
 }
@@ -366,7 +359,7 @@ extern fn msg_rect_id(recv: *u8, sel: *u8, arg: *u8) -> rt::Rect;
 // Local rather than views::, which imports this file's callers — the whole
 // question is three lines and a dependency edge is not worth saving them.
 fn is_kind_of(obj: *u8, class_name: *u8) -> bool {
-    if obj == (0 as *u8) { return false; }
+    if obj.is_null() { return false; }
     return { rt::msg_i8_id(obj, rt::sel(#str_ptr("isKindOfClass:\0")), rt::get_class(class_name)) } != (0 as i8);
 }
 
@@ -374,7 +367,7 @@ fn is_kind_of(obj: *u8, class_name: *u8) -> bool {
 // 1.0 when the view is not on a window yet — rounding to whole points is
 // always safe, it is only less crisp.
 fn backing_scale_of(view: *u8) -> f64 {
-    if view == (0 as *u8) { return 1.0f64; }
+    if view.is_null() { return 1.0f64; }
     return match ak::View::from_raw(view).window() {
         option::Option[ak::Window]::Some(w) => w.backing_scale_factor(),
         option::Option[ak::Window]::None => 1.0f64,

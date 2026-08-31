@@ -253,7 +253,7 @@ impl TextVersions {
     fn version_of(this, node: usize) -> u64 {
         return match this.v.get(node) {
             option::Option[u64]::Some(x) => x,
-            option::Option[u64]::None => 0 as u64,
+            option::Option::None => 0,
         };
     }
 
@@ -261,8 +261,7 @@ impl TextVersions {
     // actually applied the edit.
     fn bump(ref this, node: usize) {
         let cur: u64 = this.version_of(node);
-        this.v.insert(node, cur +% (1 as u64));
-        return;
+        this.v.insert(node, cur +% 1);
     }
 }
 
@@ -300,20 +299,20 @@ fn ops() -> auth::Grant { return auth::operator(); }
 #[test]
 fn test_action_allowed_on_exposed_actionable() {
     let r: identity::Registry = fixture();
-    assert outcome_eq(authorize_action(r, ops(), 1 as usize), Outcome::Allowed);
+    assert outcome_eq(authorize_action(r, ops(), 1), Outcome::Allowed);
 }
 
 #[test]
 fn test_action_not_found_for_bad_handle() {
     let r: identity::Registry = fixture();
-    assert outcome_eq(authorize_action(r, ops(), 999 as usize), Outcome::NotFound);
+    assert outcome_eq(authorize_action(r, ops(), 999), Outcome::NotFound);
 }
 
 #[test]
 fn test_action_blocked_when_unexposed() {
     var r: identity::Registry = fixture();
-    r.set_exposed(1 as usize, false);
-    assert outcome_eq(authorize_action(r, ops(), 1 as usize), Outcome::NotExposed);
+    r.set_exposed(1, false);
+    assert outcome_eq(authorize_action(r, ops(), 1), Outcome::NotExposed);
 }
 
 #[test]
@@ -324,63 +323,63 @@ fn test_action_blocked_inside_an_excluded_subtree() {
     // anything. Read and act are one answer: `authorize_action` gates on
     // `is_exposed`, and exclusion folds in there.
     var r: identity::Registry = fixture();
-    let inner: usize = r.add_child(1 as usize, option::Option[str]::Some("assistant:send"),
+    let inner: usize = r.add_child(1, option::Option[str]::Some("assistant:send"),
                                    identity::Role::Button);
     assert outcome_eq(authorize_action(r, ops(), inner), Outcome::Allowed);
-    r.set_excluded(1 as usize, true);
+    r.set_excluded(1, true);
     assert outcome_eq(authorize_action(r, ops(), inner), Outcome::NotExposed);
 }
 
 #[test]
 fn test_action_blocked_by_observe_only_ceiling() {
     var r: identity::Registry = fixture();
-    r.set_observe_only(1 as usize);
-    assert outcome_eq(authorize_action(r, ops(), 1 as usize), Outcome::NotActionable);
+    r.set_observe_only(1);
+    assert outcome_eq(authorize_action(r, ops(), 1), Outcome::NotActionable);
 }
 
 #[test]
 fn test_action_blocked_when_disabled() {
     var r: identity::Registry = fixture();
-    r.set_enabled(1 as usize, false);
-    assert outcome_eq(authorize_action(r, ops(), 1 as usize), Outcome::NotActionable);
+    r.set_enabled(1, false);
+    assert outcome_eq(authorize_action(r, ops(), 1), Outcome::NotActionable);
 }
 
 #[test]
 fn test_read_allows_observe_only_but_not_unexposed() {
     var r: identity::Registry = fixture();
-    r.set_observe_only(1 as usize);
+    r.set_observe_only(1);
     // observe-only is still readable / scroll-to-able.
-    assert outcome_eq(authorize_read(r, ops(), 1 as usize), Outcome::Allowed);
-    r.set_exposed(2 as usize, false);
-    assert outcome_eq(authorize_read(r, ops(), 2 as usize), Outcome::NotExposed);
+    assert outcome_eq(authorize_read(r, ops(), 1), Outcome::Allowed);
+    r.set_exposed(2, false);
+    assert outcome_eq(authorize_read(r, ops(), 2), Outcome::NotExposed);
 }
 
 #[test]
 fn test_text_version_starts_zero_and_bumps() {
     var tv: TextVersions = new_text_versions();
-    assert tv.version_of(2 as usize) == (0 as u64);
-    tv.bump(2 as usize);
-    assert tv.version_of(2 as usize) == (1 as u64);
-    tv.bump(2 as usize);
-    assert tv.version_of(2 as usize) == (2 as u64);
+    assert tv.version_of(2) == 0;
+    tv.bump(2);
+    assert tv.version_of(2) == 1;
+    tv.bump(2);
+    assert tv.version_of(2) == 2;
 }
 
 #[test]
 fn test_text_write_optimistic_concurrency() {
     let r: identity::Registry = fixture();
     var tv: TextVersions = new_text_versions();
-    assert outcome_eq(authorize_text_write(r, ops(), tv, 2 as usize, 0 as u64), Outcome::Allowed);
-    tv.bump(2 as usize);
-    assert outcome_eq(authorize_text_write(r, ops(), tv, 2 as usize, 0 as u64), Outcome::VersionConflict);
-    assert outcome_eq(authorize_text_write(r, ops(), tv, 2 as usize, 1 as u64), Outcome::Allowed);
+    assert outcome_eq(authorize_text_write(r, ops(), tv, 2, 0), Outcome::Allowed);
+    tv.bump(2);
+    assert outcome_eq(authorize_text_write(r, ops(), tv, 2, 0), Outcome::VersionConflict);
+    assert outcome_eq(authorize_text_write(r, ops(), tv, 2, 1), Outcome::Allowed);
 }
 
 #[test]
 fn test_text_write_gated_by_exposure_before_version() {
     var r: identity::Registry = fixture();
     let tv: TextVersions = new_text_versions();
-    r.set_exposed(2 as usize, false);
-    assert outcome_eq(authorize_text_write(r, ops(), tv, 2 as usize, 0 as u64), Outcome::NotExposed);
+    r.set_exposed(2, false);
+    assert outcome_eq(authorize_text_write(r, ops(), tv, 2, 0), Outcome::NotExposed);
 }
 
 // ---- the tiers ---------------------------------------------------------------
@@ -390,12 +389,12 @@ fn a_protected_node_is_visible_navigable_and_shut() {
     // The shape of the whole feature. An ordinary operator grant sees the card
     // field, can scroll to it, and gets nothing out of it.
     var r: identity::Registry = fixture();
-    r.set_tier(2 as usize, identity::tier_protected());
-    assert outcome_eq(authorize_read(r, ops(), 2 as usize), Outcome::Allowed);
-    assert outcome_eq(authorize_value_read(r, ops(), 2 as usize), Outcome::NeedsGrant);
-    assert outcome_eq(authorize_action(r, ops(), 2 as usize), Outcome::NeedsGrant);
-    assert !r.can_read_value(ops(), 2 as usize);
-    assert !r.can_act(ops(), 2 as usize);
+    r.set_tier(2, identity::tier_protected());
+    assert outcome_eq(authorize_read(r, ops(), 2), Outcome::Allowed);
+    assert outcome_eq(authorize_value_read(r, ops(), 2), Outcome::NeedsGrant);
+    assert outcome_eq(authorize_action(r, ops(), 2), Outcome::NeedsGrant);
+    assert !r.can_read_value(ops(), 2);
+    assert !r.can_act(ops(), 2);
 }
 
 #[test]
@@ -404,15 +403,15 @@ fn the_grant_the_app_mints_after_the_user_approves_opens_it() {
     // with `NeedsGrant`, the app asks the user, mints the wider grant, and the
     // same call now passes.
     var r: identity::Registry = fixture();
-    r.set_tier(2 as usize, identity::tier_protected());
+    r.set_tier(2, identity::tier_protected());
     let approved: auth::Grant = auth::protected_operator();
-    assert outcome_eq(authorize_value_read(r, approved, 2 as usize), Outcome::Allowed);
-    assert outcome_eq(authorize_action(r, approved, 2 as usize), Outcome::Allowed);
+    assert outcome_eq(authorize_value_read(r, approved, 2), Outcome::Allowed);
+    assert outcome_eq(authorize_action(r, approved, 2), Outcome::Allowed);
     // Read-only approval opens the read and not the write: the app said the
     // agent may SEE the card number, not change one.
     let look_only: auth::Grant = auth::protected_reader();
-    assert outcome_eq(authorize_value_read(r, look_only, 2 as usize), Outcome::Allowed);
-    assert outcome_eq(authorize_action(r, look_only, 2 as usize), Outcome::NeedsGrant);
+    assert outcome_eq(authorize_value_read(r, look_only, 2), Outcome::Allowed);
+    assert outcome_eq(authorize_action(r, look_only, 2), Outcome::NeedsGrant);
 }
 
 #[test]
@@ -421,18 +420,18 @@ fn a_private_node_refuses_every_grant_an_app_would_ever_mint() {
     // so every grant this file hands out as a bundle bounces off it, and the
     // refusal says `Forbidden`: stop, do not ask.
     var r: identity::Registry = fixture();
-    r.set_tier(2 as usize, identity::tier_private());
-    assert outcome_eq(authorize_value_read(r, auth::reader(), 2 as usize), Outcome::Forbidden);
-    assert outcome_eq(authorize_value_read(r, auth::operator(), 2 as usize), Outcome::Forbidden);
-    assert outcome_eq(authorize_value_read(r, auth::protected_reader(), 2 as usize), Outcome::Forbidden);
-    assert outcome_eq(authorize_value_read(r, auth::protected_operator(), 2 as usize), Outcome::Forbidden);
-    assert outcome_eq(authorize_action(r, auth::protected_operator(), 2 as usize), Outcome::Forbidden);
+    r.set_tier(2, identity::tier_private());
+    assert outcome_eq(authorize_value_read(r, auth::reader(), 2), Outcome::Forbidden);
+    assert outcome_eq(authorize_value_read(r, auth::operator(), 2), Outcome::Forbidden);
+    assert outcome_eq(authorize_value_read(r, auth::protected_reader(), 2), Outcome::Forbidden);
+    assert outcome_eq(authorize_value_read(r, auth::protected_operator(), 2), Outcome::Forbidden);
+    assert outcome_eq(authorize_action(r, auth::protected_operator(), 2), Outcome::Forbidden);
     // Still visible, still navigable — the assistant can tell the user the CVC
     // is the field it cannot fill.
-    assert outcome_eq(authorize_read(r, auth::operator(), 2 as usize), Outcome::Allowed);
+    assert outcome_eq(authorize_read(r, auth::operator(), 2), Outcome::Allowed);
     // And the bit does work, for the app that deliberately types it.
     let deliberate: auth::Grant = auth::protected_operator().with(auth::cap_read_private());
-    assert outcome_eq(authorize_value_read(r, deliberate, 2 as usize), Outcome::Allowed);
+    assert outcome_eq(authorize_value_read(r, deliberate, 2), Outcome::Allowed);
 }
 
 #[test]
@@ -442,11 +441,11 @@ fn protected_bits_do_not_reach_private_nodes() {
     // about private ones. A card-autofill approval must not quietly become CVC
     // access.
     var r: identity::Registry = fixture();
-    r.set_tier(1 as usize, identity::tier_protected());
-    r.set_tier(2 as usize, identity::tier_private());
+    r.set_tier(1, identity::tier_protected());
+    r.set_tier(2, identity::tier_private());
     let approved: auth::Grant = auth::protected_operator();
-    assert outcome_eq(authorize_action(r, approved, 1 as usize), Outcome::Allowed);
-    assert outcome_eq(authorize_action(r, approved, 2 as usize), Outcome::Forbidden);
+    assert outcome_eq(authorize_action(r, approved, 1), Outcome::Allowed);
+    assert outcome_eq(authorize_action(r, approved, 2), Outcome::Forbidden);
 }
 
 #[test]
@@ -455,10 +454,10 @@ fn every_read_needs_the_ordinary_read_bit_too() {
     // while being unable to open an ordinary one. A mis-built grant fails
     // closed rather than sideways.
     var r: identity::Registry = fixture();
-    r.set_tier(2 as usize, identity::tier_protected());
+    r.set_tier(2, identity::tier_protected());
     let lopsided: auth::Grant = auth::nothing().with(auth::cap_read_protected());
-    assert outcome_eq(authorize_value_read(r, lopsided, 2 as usize), Outcome::NeedsGrant);
-    assert outcome_eq(authorize_read(r, lopsided, 1 as usize), Outcome::NeedsGrant);
+    assert outcome_eq(authorize_value_read(r, lopsided, 2), Outcome::NeedsGrant);
+    assert outcome_eq(authorize_read(r, lopsided, 1), Outcome::NeedsGrant);
 }
 
 #[test]
@@ -484,8 +483,8 @@ fn the_tier_inherits_and_the_strictest_wins() {
 fn a_grant_with_no_read_bit_sees_nothing_at_all() {
     let r: identity::Registry = fixture();
     let blind: auth::Grant = auth::nothing();
-    assert outcome_eq(authorize_read(r, blind, 1 as usize), Outcome::NeedsGrant);
-    assert r.describe(blind).count() == (0 as usize);
+    assert outcome_eq(authorize_read(r, blind, 1), Outcome::NeedsGrant);
+    assert r.describe(blind).count() == 0;
 }
 
 #[test]

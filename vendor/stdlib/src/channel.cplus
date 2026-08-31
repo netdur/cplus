@@ -324,7 +324,6 @@ impl Channel[T] {
             { free(buf); }
             { free(this._ctrl); }
         }
-        return;
     }
 }
 
@@ -344,7 +343,6 @@ fn channel_send_then_recv() {
         }
         option::Option[Channel[i32]]::None => { assert false; }
     }
-    return;
 }
 
 #[test]
@@ -360,7 +358,6 @@ fn channel_close_then_recv_is_closed() {
         }
         option::Option[Channel[i32]]::None => { assert false; }
     }
-    return;
 }
 
 // ---- cancellation ----
@@ -403,7 +400,6 @@ fn channel_receive_reports_cancellation_instead_of_blocking() {
         }
         option::Option[Channel[i32]]::None => { assert false; }
     }
-    return;
 }
 
 #[test]
@@ -418,5 +414,4 @@ fn channel_data_wins_over_cancellation() {
         }
         option::Option[Channel[i32]]::None => { assert false; }
     }
-    return;
 }

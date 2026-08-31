@@ -1,0 +1,441 @@
+// app_events — the process's own callbacks, fanned out to more than one
+// listener. HAND-WRITTEN; the generator never touches this file.
+//
+// WHY THIS EXISTS, and it is one sentence: a backend owns exactly one
+// application delegate or Activity, and a third-party SDK needs a share of it.
+//
+// Firebase Messaging wants the push token. Google Sign-In wants the OAuth
+// callback URL on Apple and the activity result on Android. An analytics SDK
+// wants foreground and background. Today each of those is a method on the ONE
+// delegate the backend implements, so the second SDK to want it has nowhere to
+// put itself — and an application that wires it by hand has taken the delegate
+// away from facet, which is worse.
+//
+// So the delegate stays the backend's and the callbacks become a LIST. That is
+// the whole difference from `mount::install` and `services::install_scheduler`,
+// which are single-slot on purpose: there is one renderer and one scheduler,
+// and there are many SDKs.
+//
+//   the backend      fire(...) from the delegate method it already implements
+//   an SDK package   on_app_event(...) from its own `init`
+//   the application  the same door, when it wants a callback for itself
+//
+// A CLOSED KIND SET. A registry that lets a package invent event kinds is a
+// second vocabulary that can disagree with the first — the same reason the
+// control kinds are closed (see plans/third-party-sdks.md). A kind that a
+// platform cannot deliver is simply never fired there, and `MANIFEST.md` in
+// each backend is where that is recorded, exactly like an absent control.
+//
+// THE UI THREAD, always. A subscriber's usual next move is to write the tree,
+// and `core::touch` asserts the UI thread — so a fan-out that could arrive on
+// a worker would turn every subscriber into a latent data race. Some platform
+// callbacks genuinely arrive elsewhere (Android's `onNewToken` is called on a
+// background thread), and hopping them is the BACKEND's job through
+// `services::run_on_main`, not each subscriber's. The assert below is what
+// keeps that from being a promise nobody checks.
+
+import "stdlib/status" as status;
+import "./facet" as core;
+
+// ---- the kinds ---------------------------------------------------------------
+// Portable where the concept is portable, and named for what the application
+// means rather than what any one platform calls it. The right-hand column of
+// the table in plans/third-party-sdks.md maps each to its four delegate
+// methods; the comments here carry the payload contract, which is the part a
+// subscriber has to get right.
+
+// The process is up and the first window can be shown. No payload.
+const E_LAUNCHED: u32 = 1u32;
+// The app came to the front. No payload. (macOS: didBecomeActive; iOS:
+// didBecomeActive; Android: onResume.)
+const E_FOREGROUND: u32 = 2u32;
+// The app went behind. No payload. The last safe moment to persist — on
+// Android and iOS the process can be killed after this without another word.
+const E_BACKGROUND: u32 = 3u32;
+// The process is going down cleanly. No payload. NOT guaranteed on mobile.
+const E_TERMINATING: u32 = 4u32;
+// A URL was handed to the app: `text` is it. THE OAuth CALLBACK — a sign-in
+// SDK subscribes here and matches its own scheme, so two SDKs can both watch
+// without either one owning the door.
+const E_OPEN_URL: u32 = 5u32;
+// Memory is short. `code` is the platform's level where it has one (Android's
+// `onTrimMemory` argument), 0 where it does not (iOS has no level).
+const E_LOW_MEMORY: u32 = 6u32;
+// Remote notifications registered: `text` is the token, lowercase hex, no
+// separators — one spelling on every platform, because the alternative is
+// every subscriber re-deriving it from `native` differently.
+const E_PUSH_TOKEN: u32 = 7u32;
+// A push arrived. `native` is the platform payload (an NSDictionary userInfo,
+// an Android RemoteMessage) — opaque here by necessity; the SDK that
+// subscribes is the one with the binding to read it.
+const E_PUSH_MESSAGE: u32 = 8u32;
+// A foreign UI flow the platform took over has returned. `code` is the request
+// code, `result` the result code, `native` the platform's data object.
+//
+// ANDROID'S, and said so rather than dressed up as portable: this is
+// `onActivityResult`, which the Apple platforms have no equivalent of — they
+// return through E_OPEN_URL instead. It is here because Google Sign-In on
+// Android has no other door, and a kind that exists on one platform is honest
+// in a way an invented portable name would not be.
+const E_NATIVE_RESULT: u32 = 9u32;
+
+// The highest kind this build knows. A subscriber that switches on `kind`
+// should ignore what it does not recognise rather than assert — a newer facet
+// firing a newer kind must not break an older SDK package.
+const E_MAX: u32 = 9u32;
+
+// ---- the payload -------------------------------------------------------------
+
+struct AppEvent {
+    kind: u32,
+    // The event's text, BORROWED for the duration of the dispatch and not one
+    // instant longer: the URL for E_OPEN_URL, the hex token for E_PUSH_TOKEN,
+    // "" for the events that carry none. A subscriber that needs to keep it
+    // copies it (`text::from_str`) — storing the `str` is the use-after-free
+    // the borrow checker cannot see through a raw-pointer store, the same trap
+    // `Data.key` records.
+    text: str,
+    // The platform object, borrowed the same way. 0 when the event has none.
+    opaque native: *u8,
+    // E_NATIVE_RESULT's request code, E_LOW_MEMORY's level. 0 otherwise.
+    code: i64,
+    // E_NATIVE_RESULT's result code. 0 otherwise.
+    result: i64,
+}
+
+impl AppEvent {
+    fn new(kind: u32) -> AppEvent {
+        return AppEvent { kind: kind, text: "", native: 0 as *u8,
+                          code: 0 as i64, result: 0 as i64 };
+    }
+}
+
+// ---- the list ----------------------------------------------------------------
+// A fixed sixteen slots, and a null slot is a free one. Fixed because the
+// subscribers are package singletons that register at init and live for the
+// process — a growable vector in a static would buy nothing and cost an
+// allocation on a path that must work before main has done anything.
+//
+// NULLING rather than compacting on `off`, so a slot's index never moves.
+// `fire` walks indices, and a handler that unsubscribes itself mid-dispatch —
+// a one-shot sign-in listener does exactly that — would otherwise shift the
+// slot the loop is about to read and skip its neighbour.
+
+const MAX_SUBSCRIBERS: usize = 16 as usize;
+
+static HANDLERS: [fn(*AppEvent, *u8); 16] = #zero::[[fn(*AppEvent, *u8); 16]]();
+static CTXS: [*u8; 16] = #zero::[[*u8; 16]]();
+
+fn no_handler(e: *AppEvent, ctx: *u8) { return; }
+
+// Subscribe. `Ok`, or `OutOfBounds` when all sixteen slots are taken — which
+// is a wiring bug (an init running in a loop), not a condition to handle.
+//
+// Registering the SAME (f, ctx) twice is a no-op that answers `Ok`. A package
+// whose `init` is called once per screen would otherwise fan its handler out
+// as many times as it was initialised, and the symptom — one push handled
+// four times — reads as a platform problem rather than a registration one.
+fn on_app_event(f: fn(*AppEvent, *u8), ctx: *u8 = 0 as *u8) -> status::Status {
+    if f.is_null() { return status::Status::InvalidInput; }
+    var i: usize = 0 as usize;
+    while i < MAX_SUBSCRIBERS {
+        if HANDLERS[i] == f && CTXS[i] == ctx { return status::Status::Ok; }
+        i = i +% (1 as usize);
+    }
+    i = 0 as usize;
+    while i < MAX_SUBSCRIBERS {
+        if HANDLERS[i] == (0 as fn(*AppEvent, *u8)) {
+            HANDLERS[i] = f;
+            CTXS[i] = ctx;
+            return status::Status::Ok;
+        }
+        i = i +% (1 as usize);
+    }
+    return status::Status::OutOfBounds;
+}
+
+// Unsubscribe the exact pair. `InvalidInput` when it was never registered —
+// worth reporting rather than swallowing, because the usual cause is a ctx
+// that does not match the one registered, and a silent no-op there leaves a
+// handler pointing at memory the caller is about to free.
+fn off_app_event(f: fn(*AppEvent, *u8), ctx: *u8 = 0 as *u8) -> status::Status {
+    var i: usize = 0 as usize;
+    while i < MAX_SUBSCRIBERS {
+        if HANDLERS[i] == f && CTXS[i] == ctx {
+            HANDLERS[i] = 0 as fn(*AppEvent, *u8);
+            CTXS[i] = 0 as *u8;
+            return status::Status::Ok;
+        }
+        i = i +% (1 as usize);
+    }
+    return status::Status::InvalidInput;
+}
+
+fn subscriber_count() -> usize {
+    var n: usize = 0 as usize;
+    var i: usize = 0 as usize;
+    while i < MAX_SUBSCRIBERS {
+        if HANDLERS[i] != (0 as fn(*AppEvent, *u8)) { n = n +% (1 as usize); }
+        i = i +% (1 as usize);
+    }
+    return n;
+}
+
+// Drop every subscriber. For tests and for a backend tearing a process-level
+// fixture down — an application does not call this, because unsubscribing
+// somebody else's SDK is not its business.
+fn clear_app_events() {
+    var i: usize = 0 as usize;
+    while i < MAX_SUBSCRIBERS {
+        HANDLERS[i] = 0 as fn(*AppEvent, *u8);
+        CTXS[i] = 0 as *u8;
+        i = i +% (1 as usize);
+    }
+}
+
+// ---- the fan-out -------------------------------------------------------------
+
+// The backend's door. Every subscriber sees the event; none of them can stop
+// it reaching the others, and that is deliberate — "handled" is a concept that
+// only makes sense when one listener owns the callback, which is the situation
+// this module exists to end.
+fn fire(e: *AppEvent) {
+    if e.is_null() { return; }
+    assert core::on_ui_thread();
+    var i: usize = 0 as usize;
+    while i < MAX_SUBSCRIBERS {
+        let f: fn(*AppEvent, *u8) = HANDLERS[i];
+        if f.is_not_null() { f(e, CTXS[i]); }
+        i = i +% (1 as usize);
+    }
+}
+
+// The three shapes a backend actually has, so a delegate method is one line
+// and cannot get the payload fields wrong.
+fn fire_plain(kind: u32) {
+    var e: AppEvent = AppEvent::new(kind);
+    fire(#addr_of(e));
+}
+
+fn fire_text(kind: u32, text: str, native: *u8 = 0 as *u8) {
+    var e: AppEvent = AppEvent::new(kind);
+    e.text = text;
+    e.native = native;
+    fire(#addr_of(e));
+}
+
+fn fire_result(kind: u32, code: i64, result: i64, native: *u8 = 0 as *u8) {
+    var e: AppEvent = AppEvent::new(kind);
+    e.code = code;
+    e.result = result;
+    e.native = native;
+    fire(#addr_of(e));
+}
+
+// ---- tests -------------------------------------------------------------------
+
+static SEEN_KIND: u32 = 0u32;
+static SEEN_COUNT: i32 = 0;
+static SEEN_TEXT_OK: bool = false;
+static SEEN_CTX: *u8 = 0 as *u8;
+
+fn t_record(e: *AppEvent, ctx: *u8) {
+    SEEN_KIND = { (*e).kind };
+    SEEN_COUNT = SEEN_COUNT + 1;
+    SEEN_CTX = ctx;
+}
+
+fn t_count_only(e: *AppEvent, ctx: *u8) { SEEN_COUNT = SEEN_COUNT + 1; return; }
+
+fn t_read_text(e: *AppEvent, ctx: *u8) {
+    SEEN_TEXT_OK = { (*e).text } == "myapp://auth?code=42";
+}
+
+fn t_reset() {
+    clear_app_events();
+    SEEN_KIND = 0u32;
+    SEEN_COUNT = 0;
+    SEEN_TEXT_OK = false;
+    SEEN_CTX = 0 as *u8;
+}
+
+#[test]
+fn a_subscriber_receives_the_event() {
+    t_reset();
+    assert on_app_event(t_record).is_ok();
+    assert subscriber_count() == (1 as usize);
+    fire_plain(E_LAUNCHED);
+    assert SEEN_COUNT == 1;
+    assert SEEN_KIND == E_LAUNCHED;
+    t_reset();
+}
+
+// THE POINT OF THE MODULE: two SDKs want the same callback and both get it.
+// The single-slot `install` shape every other seam uses would have let the
+// second registration silently replace the first.
+#[test]
+fn every_subscriber_sees_every_event() {
+    t_reset();
+    assert on_app_event(t_record).is_ok();
+    assert on_app_event(t_count_only).is_ok();
+    assert subscriber_count() == (2 as usize);
+    fire_plain(E_FOREGROUND);
+    assert SEEN_COUNT == 2;         // one from each
+    assert SEEN_KIND == E_FOREGROUND;
+    t_reset();
+}
+
+#[test]
+fn the_ctx_comes_back_to_its_own_handler() {
+    t_reset();
+    var marker: i64 = 7 as i64;
+    assert on_app_event(t_record, #addr_of(marker) as *u8).is_ok();
+    fire_plain(E_BACKGROUND);
+    assert SEEN_CTX == (#addr_of(marker) as *u8);
+    t_reset();
+}
+
+#[test]
+fn text_rides_the_event() {
+    t_reset();
+    assert on_app_event(t_read_text).is_ok();
+    fire_text(E_OPEN_URL, "myapp://auth?code=42");
+    assert SEEN_TEXT_OK;
+    t_reset();
+}
+
+#[test]
+fn a_result_carries_both_codes() {
+    t_reset();
+    var e: AppEvent = AppEvent::new(E_NATIVE_RESULT);
+    e.code = 9001 as i64;
+    e.result = -1 as i64;
+    assert e.code == (9001 as i64);
+    assert e.result == (-1 as i64);
+    assert e.text == "";
+    assert e.native.is_null();
+    t_reset();
+}
+
+// Registering the same pair twice fans out ONCE. An SDK `init` called per
+// screen is the case, and four-times-handled push is the symptom.
+#[test]
+fn a_duplicate_registration_is_a_no_op() {
+    t_reset();
+    assert on_app_event(t_count_only).is_ok();
+    assert on_app_event(t_count_only).is_ok();
+    assert subscriber_count() == (1 as usize);
+    fire_plain(E_LAUNCHED);
+    assert SEEN_COUNT == 1;
+    t_reset();
+}
+
+// Same fn, different ctx, is a DIFFERENT subscriber — two instances of one SDK
+// type, which is what a ctx is for.
+#[test]
+fn the_same_fn_with_two_contexts_is_two_subscribers() {
+    t_reset();
+    var a: i64 = 1 as i64;
+    var b: i64 = 2 as i64;
+    assert on_app_event(t_count_only, #addr_of(a) as *u8).is_ok();
+    assert on_app_event(t_count_only, #addr_of(b) as *u8).is_ok();
+    assert subscriber_count() == (2 as usize);
+    fire_plain(E_LAUNCHED);
+    assert SEEN_COUNT == 2;
+    t_reset();
+}
+
+#[test]
+fn off_stops_delivery_and_frees_the_slot() {
+    t_reset();
+    assert on_app_event(t_count_only).is_ok();
+    assert off_app_event(t_count_only).is_ok();
+    assert subscriber_count() == (0 as usize);
+    fire_plain(E_LAUNCHED);
+    assert SEEN_COUNT == 0;
+    t_reset();
+}
+
+// ---- negative ----------------------------------------------------------------
+
+#[test]
+fn a_null_handler_is_refused() {
+    t_reset();
+    assert on_app_event(0 as fn(*AppEvent, *u8)) == status::Status::InvalidInput;
+    assert subscriber_count() == (0 as usize);
+    t_reset();
+}
+
+// A ctx that does not match the registration is NOT the same subscriber, and
+// saying so is what stops a caller freeing a ctx it believes it unhooked.
+#[test]
+fn off_with_the_wrong_ctx_reports_rather_than_swallows() {
+    t_reset();
+    var a: i64 = 1 as i64;
+    assert on_app_event(t_count_only, #addr_of(a) as *u8).is_ok();
+    assert off_app_event(t_count_only) == status::Status::InvalidInput;
+    assert off_app_event(t_count_only, 0 as *u8) == status::Status::InvalidInput;
+    assert subscriber_count() == (1 as usize);
+    assert off_app_event(t_count_only, #addr_of(a) as *u8).is_ok();
+    assert subscriber_count() == (0 as usize);
+    t_reset();
+}
+
+#[test]
+fn a_seventeenth_subscriber_is_refused_not_dropped_silently() {
+    t_reset();
+    var slots: [i64; 17] = #zero::[[i64; 17]]();
+    var i: usize = 0 as usize;
+    while i < MAX_SUBSCRIBERS {
+        assert on_app_event(t_count_only, #addr_of(slots[i]) as *u8).is_ok();
+        i = i +% (1 as usize);
+    }
+    assert subscriber_count() == MAX_SUBSCRIBERS;
+    assert on_app_event(t_count_only, #addr_of(slots[16 as usize]) as *u8)
+        == status::Status::OutOfBounds;
+    assert subscriber_count() == MAX_SUBSCRIBERS;
+    t_reset();
+}
+
+#[test]
+fn firing_with_no_subscribers_is_silent() {
+    t_reset();
+    fire_plain(E_LAUNCHED);
+    fire_text(E_OPEN_URL, "x://y");
+    fire_result(E_NATIVE_RESULT, 1 as i64, 0 as i64);
+    assert SEEN_COUNT == 0;
+}
+
+#[test]
+fn firing_a_null_event_is_inert() {
+    t_reset();
+    assert on_app_event(t_count_only).is_ok();
+    fire(0 as *AppEvent);
+    assert SEEN_COUNT == 0;
+    t_reset();
+}
+
+// A handler that unsubscribes itself mid-dispatch — a one-shot sign-in
+// listener — must not shift the slot the loop is about to read. This is why
+// `off` nulls rather than compacts.
+static ONESHOT_RAN: i32 = 0;
+fn t_oneshot(e: *AppEvent, ctx: *u8) {
+    ONESHOT_RAN = ONESHOT_RAN + 1;
+    let _s: status::Status = off_app_event(t_oneshot);
+}
+
+#[test]
+fn a_handler_that_unsubscribes_itself_does_not_skip_its_neighbour() {
+    t_reset();
+    ONESHOT_RAN = 0;
+    assert on_app_event(t_oneshot).is_ok();
+    assert on_app_event(t_count_only).is_ok();
+    fire_plain(E_OPEN_URL);
+    assert ONESHOT_RAN == 1;
+    assert SEEN_COUNT == 1;         // the neighbour still ran
+    assert subscriber_count() == (1 as usize);
+    fire_plain(E_OPEN_URL);
+    assert ONESHOT_RAN == 1;        // and stayed gone
+    assert SEEN_COUNT == 2;
+    t_reset();
+}

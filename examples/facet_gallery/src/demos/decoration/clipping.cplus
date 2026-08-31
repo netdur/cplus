@@ -47,24 +47,21 @@ impl Clipping {
     fn say(ref this, msg: str) {
         match label::find(STATUS) {
             option::Option[label::Label]::Some(l) => { let _l: label::Label = l.set_text(msg); }
-            option::Option[label::Label]::None => { }
+            option::Option::None => { }
         }
-        return;
     }
 
     fn on_clip(ref this, sender: *u8) {
         this.clipped = !this.clipped;
-        let s: vocab::Shape = if this.clipped { shape(2 as i64, 26.0f64) } else { vocab::Shape::none() };
+        let s: vocab::Shape = if this.clipped { shape(2, 26.0) } else { vocab::Shape::none() };
         core::set_clip(mount::node(CLIPPED), s);
         this.say(if this.clipped { "clip: rounded — the child is cut" } else { "clip: none — the child overhangs" });
-        return;
     }
 
     fn on_ellipse(ref this, sender: *u8) {
         this.clipped = true;
-        core::set_clip(mount::node(CLIPPED), shape(3 as i64, 0.0f64));
+        core::set_clip(mount::node(CLIPPED), shape(3, 0.0));
         this.say("clip: ellipse");
-        return;
     }
 
     // z-index reorders siblings without touching the tree.
@@ -73,7 +70,6 @@ impl Clipping {
         core::set_z_index(mount::node(OVER), if this.over_on_top { 1 as i64 } else { 0 as i64 });
         core::set_z_index(mount::node(UNDER), if this.over_on_top { 0 as i64 } else { 1 as i64 });
         this.say(if this.over_on_top { "z-index: blue above" } else { "z-index: orange above" });
-        return;
     }
 
     // Invisible is NOT gone: the node keeps its box, so the row does not close up.
@@ -81,24 +77,21 @@ impl Clipping {
         this.shown = !this.shown;
         core::set_visible(mount::node(HIDDEN), this.shown);
         this.say(if this.shown { "visible: true" } else { "visible: false — still occupying its slot" });
-        return;
     }
 
     // Display::None IS gone: the box leaves the layout and the row closes up.
     fn on_display(ref this, sender: *u8) {
         let n: *core::Node = mount::node(HIDDEN);
-        if n == (0 as *core::Node) { return; }
+        if n.is_null() { return; }
         this.shown = !this.shown;
         core::set_display(n, if this.shown { flex::Display::Flex } else { flex::Display::None });
         this.say(if this.shown { "display: Flex" } else { "display: None — the slot is gone too" });
-        return;
     }
 
     fn on_passthrough(ref this, sender: *u8) {
         this.passthrough = !this.passthrough;
         core::set_input_transparent(mount::node(OVER), this.passthrough);
         this.say(if this.passthrough { "input_transparent: clicks fall through the blue card" } else { "input_transparent: the blue card takes clicks" });
-        return;
     }
 }
 
@@ -106,7 +99,7 @@ fn swatch(key: str, c: vocab::Color, w: f64, h: f64) -> core::Node {
     var b: core::Builder = core::Builder::new();
     var n: core::Node = core::column(b, key: key).width(w).height(h);
     n.set_background_color(c);
-    n.set_corner_radius(vocab::Corners::all(8.0f64));
+    n.set_corner_radius(vocab::Corners::all(8.0));
     return n;
 }
 
@@ -118,54 +111,54 @@ impl Clipping: component::Component {
         var c1: core::Builder = core::Builder::new();
         c1.add(ui::button("Toggle clip", key: "cl:tog", on_click: this.on_clip));
         c1.add(ui::button("Ellipse", key: "cl:ell", on_click: this.on_ellipse));
-        body.add(core::row(c1).gap(8.0f64));
+        body.add(core::row(c1).gap(8.0));
 
         // A child deliberately larger than its parent, so the clip is visible.
         var over_b: core::Builder = core::Builder::new();
-        over_b.add(swatch("cl:child", vocab::Color::rgba(0.95f64, 0.55f64, 0.20f64, 1.0f64), 160.0f64, 160.0f64));
-        var clipped: core::Node = core::column(over_b, key: CLIPPED).width(110.0f64).height(110.0f64);
+        over_b.add(swatch("cl:child", vocab::Color::rgba(0.95, 0.55, 0.20, 1.0), 160.0, 160.0));
+        var clipped: core::Node = core::column(over_b, key: CLIPPED).width(110.0).height(110.0);
         clipped.set_background_color(vocab::Color::raised());
-        clipped.set_corner_radius(vocab::Corners::all(26.0f64));
-        clipped.set_clip(shape(2 as i64, 26.0f64));
+        clipped.set_corner_radius(vocab::Corners::all(26.0));
+        clipped.set_clip(shape(2, 26.0));
         body.add(clipped);
 
         body.add(shell::caption("z-index  ·  paint order without moving the node"));
         body.add(ui::button("Swap order", key: "cl:z", on_click: this.on_z));
         var layers: core::Builder = core::Builder::new();
-        var under: core::Node = swatch(UNDER, vocab::Color::rgba(0.95f64, 0.55f64, 0.20f64, 1.0f64), 120.0f64, 80.0f64);
-        var over: core::Node = swatch(OVER, vocab::Color::primary(), 120.0f64, 80.0f64)
-            .margin_edge(flex::Edge::Left, 60.0f64)
-            .margin_edge(flex::Edge::Top, 24.0f64);
-        core::set_z_index(#addr_of(over), 1 as i64);
+        var under: core::Node = swatch(UNDER, vocab::Color::rgba(0.95, 0.55, 0.20, 1.0), 120.0, 80.0);
+        var over: core::Node = swatch(OVER, vocab::Color::primary(), 120.0, 80.0)
+            .margin_edge(flex::Edge::Left, 60.0)
+            .margin_edge(flex::Edge::Top, 24.0);
+        core::set_z_index(#addr_of(over), 1);
         layers.add(under);
         layers.add(over);
-        body.add(core::zstack(layers).width(200.0f64).height(110.0f64));
+        body.add(core::zstack(layers).width(200.0).height(110.0));
 
         body.add(shell::caption("visible vs display  ·  drawn, versus in the layout at all"));
         var c2: core::Builder = core::Builder::new();
         c2.add(ui::button("Toggle visible", key: "cl:vis", on_click: this.on_visible));
         c2.add(ui::button("Toggle display", key: "cl:disp", on_click: this.on_display));
         c2.add(ui::button("Toggle click-through", key: "cl:pass", on_click: this.on_passthrough));
-        body.add(core::row(c2).gap(8.0f64));
+        body.add(core::row(c2).gap(8.0));
 
         var trio: core::Builder = core::Builder::new();
-        trio.add(swatch("cl:a", vocab::Color::ink(0.35f64), 60.0f64, 44.0f64));
-        trio.add(swatch(HIDDEN, vocab::Color::primary(), 60.0f64, 44.0f64));
-        trio.add(swatch("cl:c", vocab::Color::ink(0.35f64), 60.0f64, 44.0f64));
-        body.add(core::row(trio).gap(8.0f64));
+        trio.add(swatch("cl:a", vocab::Color::ink(0.35), 60.0, 44.0));
+        trio.add(swatch(HIDDEN, vocab::Color::primary(), 60.0, 44.0));
+        trio.add(swatch("cl:c", vocab::Color::ink(0.35), 60.0, 44.0));
+        body.add(core::row(trio).gap(8.0));
 
         body.add(ui::label(
             "clip: rounded — the child is cut",
             key: STATUS,
-            font_size: 12.0f64,
+            font_size: 12.0,
             font_family: "Menlo",
-            text_color: vocab::Color::ink(0.75f64),
+            text_color: vocab::Color::ink(0.75),
         ));
 
         return shell::panel(
             "Clip, order and hit-testing",
             "Corner radius rounds a node's own background; a clip cuts its children. z-index reorders siblings, visible hides one without freeing its slot, and Display::None frees the slot too.",
-            core::column(body).gap(12.0f64),
+            core::column(body).gap(12.0),
             howto: "core::set_clip(n, vocab::Shape::rounded(26.0));\ncore::set_z_index(n, 1);\ncore::set_visible(n, false);     // still in layout\ncore::set_display(n, flex::Display::None);   // not in layout\ncore::set_input_transparent(n, true);",
         );
     }

@@ -105,19 +105,17 @@ impl Gallery {
     // which the tree does itself — so only a leaf whose id names something gets
     // this far.
     fn on_pick(ref this, node: *tree::TreeNode) {
-        if node == (0 as *tree::TreeNode) { return; }
+        if node.is_null() { return; }
         if { (*node).is_branch } { return; }
         let id: i64 = catalog::demo_for({ (*node).id_of() });
         if id == catalog::DEMO_NONE { return; }
         this.shown = id;
         this.show();
-        return;
     }
 
     fn on_back(ref this, sender: *u8) {
         this.shown = catalog::DEMO_NONE;
         this.show();
-        return;
     }
 
     // The one swap. Written as a chain rather than a table because a component
@@ -160,9 +158,8 @@ impl Gallery {
                 else if d == catalog::DEMO_REFRESH { let _o: bool = mount::set_content(out, this.refresh); }
                 else if d == catalog::DEMO_RESPONSIVE { let _o: bool = mount::set_content(out, this.responsive); }
             }
-            option::Option[*core::Node]::None => { }
+            option::Option::None => { }
         }
-        return;
     }
 
     // The bar: a Back button that is only there when there is somewhere to go
@@ -184,9 +181,8 @@ impl Gallery {
                     let _t: label::Label = l.set_text("Gallery");
                 }
             }
-            option::Option[label::Label]::None => { }
+            option::Option::None => { }
         }
-        return;
     }
 }
 
@@ -206,7 +202,7 @@ static GALLERY: *Gallery = 0 as *Gallery;
 // screen should leave the app.
 fn gallery_pop() -> bool {
     let g: *Gallery = GALLERY;
-    if g == (0 as *Gallery) { return false; }
+    if g.is_null() { return false; }
     if { (*g).shown } == catalog::DEMO_NONE { return false; }
     { (*g).shown = catalog::DEMO_NONE };
     { (*g).show() };
@@ -224,9 +220,8 @@ fn show_node(key: str, on: bool) {
             if on { core::set_display(n, flex::Display::Flex); }
             else { core::set_display(n, flex::Display::None); }
         }
-        option::Option[*core::Node]::None => { }
+        option::Option::None => { }
     }
-    return;
 }
 
 impl Gallery: component::Component {
@@ -236,12 +231,12 @@ impl Gallery: component::Component {
         // ---- the bar ---------------------------------------------------------
         var bar: flex::Builder = flex::Builder::new();
         bar.add(ui::text_button("‹ Back", key: "g:back", on_click: this.on_back)
-                .width(80.0f64).height(44.0f64));
-        bar.add(ui::label(backend_name(), key: "g:title", font_size: 17.0f64,
+                .width(80.0).height(44.0));
+        bar.add(ui::label(backend_name(), key: "g:title", font_size: 17.0,
                           font_weight: vocab::FontWeight::Semibold));
-        bar.add(ui::column(flex::Builder::new()).grow(1.0f64));
-        root.add(ui::row(bar).gap(8.0f64).padding(8.0f64)
-                 .align(flex::Align::Center).height(52.0f64));
+        bar.add(ui::column(flex::Builder::new()).grow(1.0));
+        root.add(ui::row(bar).gap(8.0).padding(8.0)
+                 .align(flex::Align::Center).height(52.0));
 
         // ---- the catalog -----------------------------------------------------
         // A real `ui::tree`, so browsing the gallery exercises the recycling
@@ -252,9 +247,9 @@ impl Gallery: component::Component {
                           // catalog::row_key — without it the catalog is the
                           // one screen MCP can read and cannot drive.
                           row_id: catalog::row_key,
-                          row_height: 44.0f64)
-                 .grow(1.0f64)
-                 .shrink(1.0f64));
+                          row_height: 44.0)
+                 .grow(1.0)
+                 .shrink(1.0));
 
         // ---- the demo --------------------------------------------------------
         // The outlet: an empty keyed column `set_content` fills. Keyed, because
@@ -265,10 +260,10 @@ impl Gallery: component::Component {
         // and pins everything below it — the scroll included, which is then as
         // tall as its own content and has nothing to scroll.
         root.add(ui::column(flex::Builder::new(), key: "g:outlet")
-                 .grow(1.0f64)
-                 .shrink(1.0f64));
+                 .grow(1.0)
+                 .shrink(1.0));
 
-        var page: core::Node = ui::column(root).grow(1.0f64);
+        var page: core::Node = ui::column(root).grow(1.0);
         page.set_background_color(vocab::Color::window_background());
         return page;
     }
@@ -281,7 +276,7 @@ impl Gallery: component::Lifecycle {
     fn on_attach(ref this) {
         match tree::find("g:catalog") {
             option::Option[tree::Tree]::Some(t) => { catalog::expand_all(t); }
-            option::Option[tree::Tree]::None => { }
+            option::Option::None => { }
         }
         // WHAT BACK MEANS HERE. This gallery does not use facet's App tier — it
         // swaps one outlet — but `nav::pop` is the door a platform's own back
@@ -292,7 +287,6 @@ impl Gallery: component::Lifecycle {
         GALLERY = #addr_of(this);
         nav::set_pop_fn(gallery_pop);
         this.show();
-        return;
     }
     fn on_detach(ref this) { return; }
 }

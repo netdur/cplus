@@ -433,7 +433,6 @@ fn read_all(ref sess: pty::Session, ref s: terminal::Screen, tries: i32) {
         }
         n = n +% (1 as i32);
     }
-    return;
 }
 
 // Wait for the shell's first prompt mark. A fixed iteration count is NOT good
@@ -457,7 +456,6 @@ fn read_until_prompt(ref sess: pty::Session, ref s: terminal::Screen) {
         if s.has_integration() { break; }
         n = n +% (1 as i32);
     }
-    return;
 }
 
 fn read_until_finished(ref sess: pty::Session, ref s: terminal::Screen, count: u64) {
@@ -475,7 +473,6 @@ fn read_until_finished(ref sess: pty::Session, ref s: terminal::Screen, count: u
         if s.finished_count() >= count { break; }
         n = n +% (1 as i32);
     }
-    return;
 }
 
 #[test]
@@ -507,7 +504,6 @@ fn pty_starts_the_child_in_the_requested_cwd() {
         }
         option::Option[pty::Session]::None => { assert false; }
     }
-    return;
 }
 
 #[test]
@@ -532,7 +528,6 @@ fn a_live_zsh_reports_command_marks_and_exit_codes() {
     // `$1` rather than zsh's normalised `$2`, so this is what was typed.
     assert screen.command_line() == "(exit 3)";
     sess.close();
-    return;
 }
 
 #[test]
@@ -545,7 +540,6 @@ fn a_live_zsh_reports_its_working_directory() {
     read_until_prompt(sess, screen);
     assert screen.cwd() == "/usr";
     sess.close();
-    return;
 }
 
 #[test]
@@ -564,7 +558,6 @@ fn a_live_command_captures_exactly_its_own_output() {
     assert out.equals("one\ntwo\n");
     assert screen.exit_code() == (0 as i32);
     sess.close();
-    return;
 }
 
 // Poll until `probe` shows up on the screen, or the budget runs out. Returns
@@ -619,7 +612,6 @@ fn a_live_clear_actually_empties_the_pane() {
     // rather than merely blanking the visible rows.
     assert screen.scrollback() == "";
     sess.close();
-    return;
 }
 
 #[test]
@@ -670,7 +662,6 @@ fn a_live_top_takes_the_alternate_screen_and_gives_it_back() {
     // Quitting hands the screen back with what was underneath intact.
     assert screen.view().contains("BEFORE_TOP");
     sess.close();
-    return;
 }
 
 #[test]
@@ -693,7 +684,6 @@ fn pty_does_not_persist_shell_history_by_default() {
     let out: text::Text = screen.output();
     assert out.equals("HF=[] SH=[0]\n");
     sess.close();
-    return;
 }
 
 #[test]
@@ -715,7 +705,6 @@ fn pty_save_history_true_leaves_the_shell_alone() {
     assert out.contains("cplus-terminal-rc") == false;
     assert out.contains("HF=[]") == false;
     sess.close();
-    return;
 }
 
 #[test]
@@ -737,7 +726,6 @@ fn pty_history_opt_out_keeps_the_users_shell_intact() {
     assert out.contains("ZD=[/");                // shim knows the real root
     assert out.contains("RC=[]") == false;
     sess.close();
-    return;
 }
 
 #[test]
@@ -774,7 +762,6 @@ fn opening_a_second_pane_does_not_recurse_the_shim() {
     assert o2.contains("TWO=[]");
     assert o2.contains("HOME=[/");
     second.close();
-    return;
 }
 
 #[test]
@@ -805,7 +792,6 @@ fn the_shell_exit_status_comes_back() {
         option::Option[i32]::Some(c) => c == (7 as i32),
         option::Option[i32]::None => false,
     };
-    return;
 }
 
 // ---- the widget -------------------------------------------------------------
@@ -821,7 +807,6 @@ fn pump(times: i32) {
         let _r: i32 = { CFRunLoopRunInMode(mode, 0.05f64, 0 as i8) };
         i = i +% (1 as i32);
     }
-    return;
 }
 
 #[test]
@@ -842,7 +827,6 @@ fn widget_focus_reports_failure_off_screen() {
         }
         option::Option[terminal_ui::Widget]::None => { assert false; }
     };
-    return;
 }
 
 #[test]
@@ -863,7 +847,6 @@ fn focus_probe_is_false_without_a_key_window() {
         }
         option::Option[terminal_ui::Widget]::None => { assert false; }
     };
-    return;
 }
 
 // Counter for the completion callback. A `static` because the handler is a
@@ -872,7 +855,6 @@ fn focus_probe_is_false_without_a_key_window() {
 static COMMAND_ENDED: i32 = 0;
 fn note_command_ended(_ctx: *u8) {
     COMMAND_ENDED = COMMAND_ENDED + 1;
-    return;
 }
 
 #[test]
@@ -924,7 +906,6 @@ fn the_widget_runs_a_command_and_reports_how_it_ended() {
         }
         option::Option[terminal_ui::Widget]::None => { assert false; }
     };
-    return;
 }
 
 #[test]
@@ -975,7 +956,6 @@ fn clear_empties_the_widget_without_disturbing_the_shell() {
         }
         option::Option[terminal_ui::Widget]::None => { assert false; }
     };
-    return;
 }
 
 // Counter for the test below. Separate from COMMAND_ENDED so the two tests
@@ -983,7 +963,6 @@ fn clear_empties_the_widget_without_disturbing_the_shell() {
 static EARLY_ENDED: i32 = 0;
 fn note_early_ended(_ctx: *u8) {
     EARLY_ENDED = EARLY_ENDED + 1;
-    return;
 }
 
 #[test]
@@ -1034,7 +1013,6 @@ fn a_command_sent_before_the_first_prompt_still_reports_its_own_end() {
         }
         option::Option[terminal_ui::Widget]::None => { assert false; }
     };
-    return;
 }
 
 #[test]
@@ -1072,7 +1050,6 @@ fn the_widget_refuses_to_run_over_a_busy_shell() {
         }
         option::Option[terminal_ui::Widget]::None => { assert false; }
     };
-    return;
 }
 
 #[test]
@@ -1089,7 +1066,6 @@ fn a_stopped_widget_answers_rather_than_traps() {
         }
         option::Option[terminal_ui::Widget]::None => { assert false; }
     };
-    return;
 }
 
 #[link_name = "objc_msgSend"]
@@ -1130,7 +1106,7 @@ fn the_cursor_stays_one_cell_across_repeated_renders() {
                 15 as u64, ak::BackingStoreType::NSBackingStoreBuffered, false);
             win.set_content_view(ak::View::from_raw(scroll));
             let tv_raw: *u8 = rt::msg_id(scroll, rt::sel(#str_ptr("documentView\0")));
-            assert tv_raw != (0 as *u8);
+            assert tv_raw.is_not_null();
             // The insertion point — and therefore the typing attributes that
             // carried the bug — is only maintained for a first responder in an
             // ordered-in window. Without these two calls the widget renders but
@@ -1150,8 +1126,8 @@ fn the_cursor_stays_one_cell_across_repeated_renders() {
 
             let bg: *u8 = terminal_ui::appkit_string_global(#str_ptr("NSBackgroundColorAttributeName\0"));
             let ul: *u8 = terminal_ui::appkit_string_global(#str_ptr("NSUnderlineStyleAttributeName\0"));
-            assert bg != (0 as *u8);
-            assert ul != (0 as *u8);
+            assert bg.is_not_null();
+            assert ul.is_not_null();
 
             match ak::TextView::from_raw(tv_raw).text_storage() {
                 option::Option[ak::TextStorage]::Some(st) => {
@@ -1168,7 +1144,6 @@ fn the_cursor_stays_one_cell_across_repeated_renders() {
         }
         option::Option[terminal_ui::Widget]::None => { assert false; }
     }
-    return;
 }
 
 // ---- the window-key observer must not outlive the context ------------------
@@ -1180,7 +1155,6 @@ fn post_note(name: str) {
                              rt::sel(#str_ptr("defaultCenter\0")));
     rt::msg_void_id_id(nc, rt::sel(#str_ptr("postNotificationName:object:\0")),
                        bridge::nsstring(name), 0 as *u8);
-    return;
 }
 
 #[test]
@@ -1199,7 +1173,7 @@ fn a_key_notification_after_teardown_touches_nothing() {
             var wv: terminal_ui::Widget = w;
             assert wv.is_running();
             let tv: *u8 = terminal_ui::text_view_of(wv);
-            assert tv != (0 as *u8);
+            assert tv.is_not_null();
             // Alive: the context is reachable through the view.
             assert terminal_ui::context_of(tv) != (0 as *u8);
 
@@ -1225,5 +1199,4 @@ fn a_key_notification_after_teardown_touches_nothing() {
         }
         option::Option[terminal_ui::Widget]::None => { assert false; }
     };
-    return;
 }

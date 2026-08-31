@@ -84,6 +84,24 @@ Optimistic concurrency: mismatch → `version_conflict` from the backend.
 Non-blocking: next `events::Event` as `{ "source", "verb" }` or JSON `null`.
 Verbs are snake_case wire strings (`clicked`, `ui_changed`, …).
 
+### `activity`
+
+What has been DONE through this surface, in order: `{ seq, at_millis, client,
+verb, target, outcome, detail? }` per entry, plus `issued` and `held`.
+
+For the supervised case — a person watching an agent drive their workstation,
+ready to step in. They cannot step in to something they cannot see, and before
+this a click and a text write left nothing behind.
+
+Only the verbs that reach a `Backend` action are recorded; reads are not.
+`client` is the name from `initialize`, and the CONNECTION is the session — a
+caller that opens a socket, acts once and hangs up is recorded as
+`unidentified`, which is a fact about it rather than a gap. Content is never
+recorded: `detail` on a `set_text` is `wrote N characters`.
+
+An extension namespace keeps its own record; the inspector's `journal` is that, and it
+answers a different question — the C+ source that would make the change.
+
 ## Transport (UDS)
 
 - Stream Unix socket, **one JSON object per line** (request and response).

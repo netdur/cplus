@@ -15,33 +15,29 @@ import "../shell" as shell;
 fn note(s: str) {
     match label::find("text:echo") {
         option::Option[label::Label]::Some(l) => { let _l: label::Label = l.set_text(s); }
-        option::Option[label::Label]::None => { }
+        option::Option::None => { }
     }
-    return;
 }
 
 fn on_field(sender: *u8, ctx: *u8) {
     match text_field::find("text:field") {
         option::Option[text_field::TextField]::Some(f) => { note("field: ${f.text()}"); }
-        option::Option[text_field::TextField]::None => { }
+        option::Option::None => { }
     }
-    return;
 }
 
 fn on_area(sender: *u8, ctx: *u8) {
     match text_area::find("text:area") {
         option::Option[text_area::TextArea]::Some(a) => { note("area: ${a.text()}"); }
-        option::Option[text_area::TextArea]::None => { }
+        option::Option::None => { }
     }
-    return;
 }
 
 fn on_search(sender: *u8, ctx: *u8) {
     match search_field::find("text:search") {
         option::Option[search_field::SearchField]::Some(f) => { note("search: ${f.text()}"); }
-        option::Option[search_field::SearchField]::None => { }
+        option::Option::None => { }
     }
-    return;
 }
 
 fn build() -> core::Node {
@@ -49,12 +45,12 @@ fn build() -> core::Node {
     b.add(shell::title("Text"));
 
     b.add(shell::heading("label"));
-    b.add(ui::label("Twelve point", key: "", font_size: 12.0f64));
-    b.add(ui::label("Seventeen point", key: "", font_size: 17.0f64));
-    b.add(ui::label("Twenty-four, semibold", key: "", font_size: 24.0f64,
+    b.add(ui::label("Twelve point", key: "", font_size: 12.0));
+    b.add(ui::label("Seventeen point", key: "", font_size: 17.0));
+    b.add(ui::label("Twenty-four, semibold", key: "", font_size: 24.0,
                     font_weight: vocab::FontWeight::Semibold));
-    b.add(ui::label("Coloured", key: "", font_size: 17.0f64,
-                    text_color: vocab::Color::rgba(0.0f64, 0.45f64, 0.42f64)));
+    b.add(ui::label("Coloured", key: "", font_size: 17.0,
+                    text_color: vocab::Color::rgba(0.0, 0.45, 0.42)));
 
     b.add(shell::heading("text_field"));
     b.add(ui::text_field("", key: "text:field", placeholder: "one line",
@@ -70,7 +66,7 @@ fn build() -> core::Node {
     b.add(ui::search_field("", key: "text:search", placeholder: "search",
                            on_text_changed: on_search));
 
-    b.add(ui::label("(nothing typed yet)", key: "text:echo", font_size: 15.0f64,
-                    text_color: vocab::Color::rgba(0.35f64, 0.35f64, 0.40f64)));
+    b.add(ui::label("(nothing typed yet)", key: "text:echo", font_size: 15.0,
+                    text_color: vocab::Color::rgba(0.35, 0.35, 0.40)));
     return shell::page(b, "demo:text");
 }

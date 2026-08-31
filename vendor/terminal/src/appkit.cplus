@@ -83,7 +83,7 @@ fn main_dispatch_queue() -> *u8 {
 fn appkit_string_global(symbol: *u8) -> *u8 {
     let rtld_default: *u8 = { ((0 as usize) -% (2 as usize)) as *u8 };
     let slot: *u8 = { dlsym(rtld_default, symbol) };
-    if slot == (0 as *u8) { return 0 as *u8; }
+    if slot.is_null() { return 0 as *u8; }
     let cell: *u64 = { slot as *u64 };
     let value: u64 = { *cell };
     return { value as *u8 };
@@ -111,9 +111,9 @@ fn utf16_units(p: *u8, from: usize, to: usize) -> u64 {
 // must be its window's first responder AND that window must be key. Typing goes
 // nowhere if either is false, so both must read as "not focused".
 fn view_has_focus(tv_raw: *u8) -> bool {
-    if tv_raw == (0 as *u8) { return false; }
+    if tv_raw.is_null() { return false; }
     let win: *u8 = rt::msg_id(tv_raw, rt::sel(#str_ptr("window\0")));
-    if win == (0 as *u8) { return false; }
+    if win.is_null() { return false; }
     if rt::msg_i8(win, rt::sel(#str_ptr("isKeyWindow\0"))) == (0 as i8) { return false; }
     return rt::msg_id(win, rt::sel(#str_ptr("firstResponder\0"))) == tv_raw;
 }
@@ -147,7 +147,7 @@ fn paint_cursor(tv: ak::TextView, at: rt::Range, focused: bool, full: rt::Range)
     let bg_name: *u8 = appkit_string_global(#str_ptr("NSBackgroundColorAttributeName\0"));
     let fg_name: *u8 = appkit_string_global(#str_ptr("NSForegroundColorAttributeName\0"));
     let ul_name: *u8 = appkit_string_global(#str_ptr("NSUnderlineStyleAttributeName\0"));
-    if bg_name == (0 as *u8) || fg_name == (0 as *u8) { return; }
+    if bg_name.is_null() || fg_name.is_null() { return; }
     match tv.text_storage() {
         option::Option[ak::TextStorage]::Some(storage) => {
             let s: *u8 = storage.as_mutable_attributed_string().raw();
@@ -159,13 +159,13 @@ fn paint_cursor(tv: ak::TextView, at: rt::Range, focused: bool, full: rt::Range)
             // shows through; foreground must be re-applied or the text falls
             // back to the default black on a dark view.
             rt::msg_void_id_range(s, remove, bg_name, full);
-            if ul_name != (0 as *u8) { rt::msg_void_id_range(s, remove, ul_name, full); }
+            if ul_name.is_not_null() { rt::msg_void_id_range(s, remove, ul_name, full); }
             rt::msg_void_id_id_range(s, add, fg_name, ak::Color::text_color().raw(), full);
             if focused {
                 rt::msg_void_id_id_range(s, add, bg_name, ak::Color::text_color().raw(), at);
                 rt::msg_void_id_id_range(s, add, fg_name, ak::Color::text_background_color().raw(), at);
             } else {
-                if ul_name == (0 as *u8) { return; }
+                if ul_name.is_null() { return; }
                 // NSUnderlineStyleThick = 2.
                 let thick: *u8 = rt::msg_id_i64(rt::get_class(#str_ptr("NSNumber\0")), rt::sel(#str_ptr("numberWithInt:\0")), 2 as i64);
                 rt::msg_void_id_id_range(s, add, ul_name, thick, at);
@@ -173,7 +173,6 @@ fn paint_cursor(tv: ak::TextView, at: rt::Range, focused: bool, full: rt::Range)
         }
         option::Option[ak::TextStorage]::None => {}
     }
-    return;
 }
 
 // The clean-slate half of `paint_cursor`, for when there is no cursor to draw.
@@ -184,23 +183,22 @@ fn paint_cursor_none(tv: ak::TextView, full: rt::Range) {
     let bg_name: *u8 = appkit_string_global(#str_ptr("NSBackgroundColorAttributeName\0"));
     let fg_name: *u8 = appkit_string_global(#str_ptr("NSForegroundColorAttributeName\0"));
     let ul_name: *u8 = appkit_string_global(#str_ptr("NSUnderlineStyleAttributeName\0"));
-    if bg_name == (0 as *u8) || fg_name == (0 as *u8) { return; }
+    if bg_name.is_null() || fg_name.is_null() { return; }
     match tv.text_storage() {
         option::Option[ak::TextStorage]::Some(storage) => {
             let s: *u8 = storage.as_mutable_attributed_string().raw();
             let add: *u8 = rt::sel(#str_ptr("addAttribute:value:range:\0"));
             let remove: *u8 = rt::sel(#str_ptr("removeAttribute:range:\0"));
             rt::msg_void_id_range(s, remove, bg_name, full);
-            if ul_name != (0 as *u8) { rt::msg_void_id_range(s, remove, ul_name, full); }
+            if ul_name.is_not_null() { rt::msg_void_id_range(s, remove, ul_name, full); }
             rt::msg_void_id_id_range(s, add, fg_name, ak::Color::text_color().raw(), full);
         }
         option::Option[ak::TextStorage]::None => {}
     }
-    return;
 }
 
 fn render(c: *TerminalContext) {
-    if c == (0 as *TerminalContext) || { (*c).text_view } == (0 as *u8) { return; }
+    if c.is_null() || { (*c).text_view } == (0 as *u8) { return; }
     let tv: ak::TextView = ak::TextView::from_raw({ (*c).text_view });
 
     // The cursor needs a cell to sit on. The screen drops the blanks a shell
@@ -248,7 +246,6 @@ fn render(c: *TerminalContext) {
     let caret: rt::Range = rt::Range { location: at, length: 0 as u64 };
     tv.as_text().set_selected_range(caret);
     tv.as_text().scroll_range_to_visible(cell);
-    return;
 }
 
 // Freeing the context also CLEARS the association that points at it. Every
@@ -262,13 +259,12 @@ fn render(c: *TerminalContext) {
 // freed memory.
 // bugs/terminal-key-observer-outlives-its-context.md
 fn destroy_context(c: *TerminalContext) {
-    if c == (0 as *TerminalContext) { return; }
+    if c.is_null() { return; }
     // Read the view BEFORE dropping — the field is gone after drop_in_place.
     let tv: *u8 = { (*c).text_view };
-    if tv != (0 as *u8) { synth::set_associated(tv, terminal_context_key(), 0 as *u8); }
+    if tv.is_not_null() { synth::set_associated(tv, terminal_context_key(), 0 as *u8); }
     { #drop_in_place::[TerminalContext](c); }
     { free(c as *u8); }
-    return;
 }
 
 fn cancel_finished(ctx: *u8) {
@@ -280,18 +276,16 @@ fn cancel_finished(ctx: *u8) {
     }
     { (*c).cancel_finished = true; }
     if { (*c).dispose_requested } { destroy_context(c); }
-    return;
 }
 
 fn request_cancel(c: *TerminalContext) {
-    if c == (0 as *TerminalContext) || { (*c).cancel_requested } { return; }
+    if c.is_null() || { (*c).cancel_requested } { return; }
     { (*c).cancel_requested = true; }
     { dispatch_source_cancel({ (*c).source }); }
     // Cancellation prevents further main-queue reads. Close/reap now as well
     // as in the cancel handler so dropping a widget during application
     // shutdown cannot leave its shell alive if the run loop never turns again.
     { (*c).session.close(); }
-    return;
 }
 
 // Answers the screen owes the program — a device-attributes or cursor-position
@@ -302,7 +296,6 @@ fn flush_replies(c: *TerminalContext) {
     let answer: text::Text = text::from_str({ (*c).screen.reply() });
     { (*c).screen.clear_reply(); }
     let _w: isize = { (*c).session.write(answer.view()) };
-    return;
 }
 
 // Fire the caller's callbacks for anything that happened during this drain.
@@ -327,12 +320,11 @@ fn deliver_events(c: *TerminalContext) {
             f(a);
         }
     }
-    return;
 }
 
 fn read_ready(ctx: *u8) {
     let c: *TerminalContext = { ctx as *TerminalContext };
-    if c == (0 as *TerminalContext) || { (*c).cancel_requested } { return; }
+    if c.is_null() || { (*c).cancel_requested } { return; }
     var buf: [u8; 8192] = [0 as u8; 8192];
     var changed: bool = false;
     loop {
@@ -358,13 +350,11 @@ fn read_ready(ctx: *u8) {
     if changed { flush_replies(c); }
     if changed { render(c); }
     deliver_events(c);
-    return;
 }
 
 fn send(c: *TerminalContext, bytes: str) {
-    if c == (0 as *TerminalContext) || { (*c).cancel_requested } { return; }
+    if c.is_null() || { (*c).cancel_requested } { return; }
     let _written: isize = { (*c).session.write(bytes) };
-    return;
 }
 
 // Keys, natively — and NOT through facet's `on_key`, which is the portable key
@@ -394,7 +384,7 @@ fn send(c: *TerminalContext, bytes: str) {
 // package's own API, not its key path.
 fn key_down_imp(self_obj: *u8, cmd: *u8, event_obj: *u8) {
     let c: *TerminalContext = { synth::get_associated(self_obj, terminal_context_key()) as *TerminalContext };
-    if c == (0 as *TerminalContext) || { (*c).cancel_requested } { return; }
+    if c.is_null() || { (*c).cancel_requested } { return; }
     let event: ak::Event = ak::Event::from_raw(event_obj);
     let key: u16 = event.key_code();
     let mods: u64 = event.modifier_flags();
@@ -412,7 +402,7 @@ fn key_down_imp(self_obj: *u8, cmd: *u8, event_obj: *u8) {
         } else if key == (9 as u16) {
             let pb: *u8 = rt::msg_id(rt::get_class(#str_ptr("NSPasteboard\0")), rt::sel(#str_ptr("generalPasteboard\0")));
             let ns: *u8 = rt::msg_id_id(pb, rt::sel(#str_ptr("stringForType:\0")), bridge::nsstring("public.utf8-plain-text"));
-            if ns != (0 as *u8) {
+            if ns.is_not_null() {
                 let pasted = bridge::to_text(ns);
                 // Bracketed paste, when the program asked for it. Without the
                 // brackets an editor cannot tell pasted text from typing, so it
@@ -454,7 +444,6 @@ fn key_down_imp(self_obj: *u8, cmd: *u8, event_obj: *u8) {
         option::Option[text::Text]::Some(chars) => { send(c, chars); }
         option::Option[text::Text]::None => {}
     }
-    return;
 }
 
 // Gaining or losing the keyboard produces no PTY output, so nothing would
@@ -494,7 +483,7 @@ fn call_super_i8(self_obj: *u8, sel: *u8) -> i8 {
 // deferring both keeps one path instead of two.)
 fn repaint_for_focus(self_obj: *u8) {
     let c: *TerminalContext = { synth::get_associated(self_obj, terminal_context_key()) as *TerminalContext };
-    if c == (0 as *TerminalContext) || { (*c).cancel_requested } { return; }
+    if c.is_null() || { (*c).cancel_requested } { return; }
     // The VIEW travels as the context, retained for the hop — never the
     // TerminalContext pointer. Widget::drop can free the context between this
     // responder change and the next turn (it frees synchronously when the source
@@ -503,15 +492,13 @@ fn repaint_for_focus(self_obj: *u8) {
     // so re-reading it below is precisely how the deferred pass learns it must
     // do nothing.
     { dispatch_async_f(main_dispatch_queue(), rt::retain(self_obj), repaint_deferred); }
-    return;
 }
 
 // The deferred half. Balances the retain above on every path.
 fn repaint_deferred(ctx: *u8) {
     let c: *TerminalContext = { synth::get_associated(ctx, terminal_context_key()) as *TerminalContext };
-    if c != (0 as *TerminalContext) && !{ (*c).cancel_requested } { render(c); }
+    if c.is_not_null() && !{ (*c).cancel_requested } { render(c); }
     rt::release(ctx);
-    return;
 }
 
 fn become_first_responder_imp(self_obj: *u8, cmd: *u8) -> i8 {
@@ -549,11 +536,10 @@ fn key_note_calls() -> i32 { return KEY_NOTE_CALLS; }
 
 fn window_key_changed(ctx: *u8) {
     KEY_NOTE_CALLS = KEY_NOTE_CALLS + 1;
-    if ctx == (0 as *u8) { return; }
+    if ctx.is_null() { return; }
     let c: *TerminalContext = { synth::get_associated(ctx, terminal_context_key()) as *TerminalContext };
-    if c == (0 as *TerminalContext) || { (*c).cancel_requested } { return; }
+    if c.is_null() || { (*c).cancel_requested } { return; }
     render(c);
-    return;
 }
 
 fn focus_obs_key_became() -> *u8 { return { 30102 as *u8 }; }
@@ -561,7 +547,7 @@ fn focus_obs_key_resigned() -> *u8 { return { 30103 as *u8 }; }
 
 fn terminal_text_view_class() -> *u8 {
     let existing: *u8 = rt::get_class(#str_ptr("CplusTerminalTextView\0"));
-    if existing != (0 as *u8) { return existing; }
+    if existing.is_not_null() { return existing; }
     let cls: *u8 = synth::allocate_class_pair(rt::get_class(#str_ptr("NSTextView\0")), #str_ptr("CplusTerminalTextView\0"), 0 as usize);
     let _m: i8 = synth::add_method_v_1id(cls, rt::sel(#str_ptr("keyDown:\0")), key_down_imp, #str_ptr("v@:@\0"));
     let _b: i8 = { add_method_i8_0(cls, rt::sel(#str_ptr("becomeFirstResponder\0")), become_first_responder_imp, #str_ptr("c@:\0")) };
@@ -581,9 +567,9 @@ fn new_terminal_text_view(frame: rt::Rect) -> ak::TextView {
 // SCROLL view — another lifetime that outlives the context. `ctx` is the text
 // view here too, so one lookup rule covers every observer.
 fn resize_pty(ctx: *u8) {
-    if ctx == (0 as *u8) { return; }
+    if ctx.is_null() { return; }
     let c: *TerminalContext = { synth::get_associated(ctx, terminal_context_key()) as *TerminalContext };
-    if c == (0 as *TerminalContext) || { (*c).cancel_requested } { return; }
+    if c.is_null() || { (*c).cancel_requested } { return; }
     let size: rt::Size = ak::ScrollView::from_raw({ (*c).scroll_view }).content_size();
     var cols: u16 = (size.w / { (*c).cell_width }) as u16;
     var rows: u16 = (size.h / { (*c).cell_height }) as u16;
@@ -596,7 +582,6 @@ fn resize_pty(ctx: *u8) {
     // as diagonal wreckage. This is the whole reason the screen has a size.
     { (*c).screen.resize(rows, cols); }
     render(c);
-    return;
 }
 
 fn start(
@@ -633,7 +618,7 @@ fn start(
     scroll.set_document_view(tv.as_view());
 
     let c: *TerminalContext = { malloc(#size_of::[TerminalContext]()) as *TerminalContext };
-    if c == (0 as *TerminalContext) {
+    if c.is_null() {
         session.close();
         return option::Option[Widget]::None;
     }
@@ -661,14 +646,14 @@ fn start(
 
     let rtld_default: *u8 = { ((0 as usize) -% (2 as usize)) as *u8 };
     let read_type: *u8 = { dlsym(rtld_default, #str_ptr("_dispatch_source_type_read\0")) };
-    if read_type == (0 as *u8) {
+    if read_type.is_null() {
         synth::set_associated(tv.raw(), terminal_context_key(), 0 as *u8);
         { (*c).session.close(); }
         destroy_context(c);
         return option::Option[Widget]::None;
     }
     let source: *u8 = { dispatch_source_create(read_type, { (*c).session.master_fd() } as u64, 0 as u64, main_dispatch_queue()) };
-    if source == (0 as *u8) {
+    if source.is_null() {
         synth::set_associated(tv.raw(), terminal_context_key(), 0 as *u8);
         { (*c).session.close(); }
         destroy_context(c);
@@ -703,7 +688,7 @@ fn release_view(p: *u8) { rt::release(p); return; }
 fn text_view_of(w: Widget) -> *u8 { return { (*w._ctx).text_view }; }
 
 fn context_of(tv: *u8) -> *u8 {
-    if tv == (0 as *u8) { return 0 as *u8; }
+    if tv.is_null() { return 0 as *u8; }
     return synth::get_associated(tv, terminal_context_key());
 }
 
@@ -715,11 +700,10 @@ fn context_of(tv: *u8) -> *u8 {
 // context a second time.
 fn force_destroy(ref w: Widget) {
     let c: *TerminalContext = w._ctx;
-    if c == (0 as *TerminalContext) { return; }
+    if c.is_null() { return; }
     w._ctx = 0 as *TerminalContext;
     { (*c).session.close(); }
     destroy_context(c);
-    return;
 }
 
 impl Widget {
@@ -747,11 +731,11 @@ impl Widget {
     // or a handler): false means it is not on screen yet, so there is no window
     // to hold a first responder.
     fn focus(this) -> bool {
-        if this._ctx == (0 as *TerminalContext) { return false; }
+        if this._ctx.is_null() { return false; }
         let tv: *u8 = { (*this._ctx).text_view };
-        if tv == (0 as *u8) { return false; }
+        if tv.is_null() { return false; }
         let win: *u8 = rt::msg_id(tv, rt::sel(#str_ptr("window\0")));
-        if win == (0 as *u8) { return false; }
+        if win.is_null() { return false; }
         return rt::msg_i8_id(win, rt::sel(#str_ptr("makeFirstResponder:\0")), tv) != (0 as i8);
     }
 
@@ -759,21 +743,21 @@ impl Widget {
     // an app that re-focuses after its own controls can ask first instead of
     // reasserting blindly.
     fn has_focus(this) -> bool {
-        if this._ctx == (0 as *TerminalContext) { return false; }
+        if this._ctx.is_null() { return false; }
         let tv: *u8 = { (*this._ctx).text_view };
-        if tv == (0 as *u8) { return false; }
+        if tv.is_null() { return false; }
         let win: *u8 = rt::msg_id(tv, rt::sel(#str_ptr("window\0")));
-        if win == (0 as *u8) { return false; }
+        if win.is_null() { return false; }
         return rt::msg_id(win, rt::sel(#str_ptr("firstResponder\0"))) == tv;
     }
 
     fn text(this) -> text::Text {
-        if this._ctx == (0 as *TerminalContext) { return text::new(); }
+        if this._ctx.is_null() { return text::new(); }
         return text::from_str({ (*this._ctx).screen.view() });
     }
 
     fn is_running(this) -> bool {
-        return this._ctx != (0 as *TerminalContext) && !{ (*this._ctx).cancel_requested };
+        return this._ctx.is_not_null() && !{ (*this._ctx).cancel_requested };
     }
 
     // ---- driving commands ---------------------------------------------------
@@ -788,7 +772,7 @@ impl Widget {
     // if nothing else can claim it first.
     fn run(this, command: str) -> u64 {
         let c: *TerminalContext = this._ctx;
-        if c == (0 as *TerminalContext) || { (*c).cancel_requested } { return 0 as u64; }
+        if c.is_null() || { (*c).cancel_requested } { return 0 as u64; }
         if { (*c).screen.command_state() } == terminal::CommandState::Running { return 0 as u64; }
         let next: u64 = { (*c).screen.command_id() } +% (1 as u64);
         // ASKED OF THE SESSION AS WELL, and this is the whole of why: the
@@ -822,7 +806,6 @@ impl Widget {
     // Interrupt whatever is running, as ^C does.
     fn interrupt(this) {
         send(this._ctx, "\x03");
-        return;
     }
 
     // Empty the pane — the visible screen AND the scrollback, the way a
@@ -836,32 +819,31 @@ impl Widget {
     // the screen it is drawing on, and this does not ask.
     fn clear(this) {
         let c: *TerminalContext = this._ctx;
-        if c == (0 as *TerminalContext) { return; }
+        if c.is_null() { return; }
         { (*c).screen.clear(); }
         render(c);
-        return;
     }
 
     // Whether the shell reports prompt and command marks at all. False means
     // `command_state` never leaves Idle on its own and `run` falls back to
     // bracketing commands itself.
     fn has_integration(this) -> bool {
-        if this._ctx == (0 as *TerminalContext) { return false; }
+        if this._ctx.is_null() { return false; }
         return { (*this._ctx).screen.has_integration() };
     }
 
     fn command_state(this) -> terminal::CommandState {
-        if this._ctx == (0 as *TerminalContext) { return terminal::CommandState::Idle; }
+        if this._ctx.is_null() { return terminal::CommandState::Idle; }
         return { (*this._ctx).screen.command_state() };
     }
 
     fn command_id(this) -> u64 {
-        if this._ctx == (0 as *TerminalContext) { return 0 as u64; }
+        if this._ctx.is_null() { return 0 as u64; }
         return { (*this._ctx).screen.command_id() };
     }
 
     fn command_line(this) -> text::Text {
-        if this._ctx == (0 as *TerminalContext) { return text::new(); }
+        if this._ctx.is_null() { return text::new(); }
         return text::from_str({ (*this._ctx).screen.command_line() });
     }
 
@@ -871,7 +853,7 @@ impl Widget {
     // of the command-finished one, so gating this on the Done state made the
     // answer evaporate before any caller could read it.
     fn exit_code(this) -> option::Option[i32] {
-        if this._ctx == (0 as *TerminalContext) { return option::Option[i32]::None; }
+        if this._ctx.is_null() { return option::Option[i32]::None; }
         if { (*this._ctx).screen.command_state() } == terminal::CommandState::Running {
             return option::Option[i32]::None;
         }
@@ -883,32 +865,32 @@ impl Widget {
     // Commands that have run to completion. Poll this to notice one finishing
     // without having to catch `command_state` mid-transition.
     fn finished_count(this) -> u64 {
-        if this._ctx == (0 as *TerminalContext) { return 0 as u64; }
+        if this._ctx.is_null() { return 0 as u64; }
         return { (*this._ctx).screen.finished_count() };
     }
 
     // What the running or last-finished command put on the screen — the text a
     // build's errors are in.
     fn output(this) -> text::Text {
-        if this._ctx == (0 as *TerminalContext) { return text::new(); }
+        if this._ctx.is_null() { return text::new(); }
         return { (*this._ctx).screen.output() };
     }
 
     // The shell's working directory, as it reports it after every command.
     fn cwd(this) -> text::Text {
-        if this._ctx == (0 as *TerminalContext) { return text::new(); }
+        if this._ctx.is_null() { return text::new(); }
         return text::from_str({ (*this._ctx).screen.cwd() });
     }
 
     fn title(this) -> text::Text {
-        if this._ctx == (0 as *TerminalContext) { return text::new(); }
+        if this._ctx.is_null() { return text::new(); }
         return text::from_str({ (*this._ctx).screen.title() });
     }
 
     // Is a full-screen program up? A caller that wants to disable its own
     // "run a build" button while `vim` has the pane needs to know.
     fn alternate_screen(this) -> bool {
-        if this._ctx == (0 as *TerminalContext) { return false; }
+        if this._ctx.is_null() { return false; }
         return { (*this._ctx).screen.alternate_screen() };
     }
 
@@ -917,26 +899,24 @@ impl Widget {
     // pointer, which must outlive the widget.
     fn on_command_end(this, handler: fn(*u8), ctx: *u8) {
         let c: *TerminalContext = this._ctx;
-        if c == (0 as *TerminalContext) { return; }
+        if c.is_null() { return; }
         { (*c).on_command_end = handler; }
         { (*c).on_command_end_ctx = ctx; }
         { (*c).has_command_handler = true; }
-        return;
     }
 
     // Called once when the shell itself goes away.
     fn on_exit(this, handler: fn(*u8), ctx: *u8) {
         let c: *TerminalContext = this._ctx;
-        if c == (0 as *TerminalContext) { return; }
+        if c.is_null() { return; }
         { (*c).on_exit = handler; }
         { (*c).on_exit_ctx = ctx; }
         { (*c).has_exit_handler = true; }
-        return;
     }
 
     // The shell's own exit status, once it has exited.
     fn shell_exit_code(this) -> option::Option[i32] {
-        if this._ctx == (0 as *TerminalContext) { return option::Option[i32]::None; }
+        if this._ctx.is_null() { return option::Option[i32]::None; }
         return { (*this._ctx).session.poll_exit() };
     }
 
@@ -944,7 +924,7 @@ impl Widget {
 
     fn drop(ref this) {
         let c: *TerminalContext = this._ctx;
-        if c == (0 as *TerminalContext) { return; }
+        if c.is_null() { return; }
         // Cleared here too, not only in `destroy_context`: teardown may be
         // DEFERRED to the cancel handler, and a dropped widget must stop
         // responding at once rather than when the source finishes.
@@ -956,6 +936,5 @@ impl Widget {
             request_cancel(c);
         }
         this._ctx = 0 as *TerminalContext;
-        return;
     }
 }

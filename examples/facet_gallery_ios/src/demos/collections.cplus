@@ -24,21 +24,21 @@ import "../shell" as shell;
 // no others, which is the whole point of the tier.
 fn gap_row(i: usize, ctx: *u8) -> core::Node {
     var b: flex::Builder = flex::Builder::new();
-    b.add(ui::label("Row ${i}", font_size: 16.0f64));
-    b.add(ui::column(flex::Builder::new()).grow(1.0f64));
-    b.add(ui::label("recycled", font_size: 13.0f64,
-                    text_color: vocab::Color::ink(0.45f64)));
-    return ui::row(b).padding(12.0f64).gap(8.0f64).align(flex::Align::Center);
+    b.add(ui::label("Row ${i}", font_size: 16.0));
+    b.add(ui::column(flex::Builder::new()).grow(1.0));
+    b.add(ui::label("recycled", font_size: 13.0,
+                    text_color: vocab::Color::ink(0.45)));
+    return ui::row(b).padding(12.0).gap(8.0).align(flex::Align::Center);
 }
 
 // A GRID cell. Same shape of callback as a row — the collection differs in the
 // LAYOUT, not in how the content is asked for.
 fn tile(i: usize, ctx: *u8) -> core::Node {
     var b: flex::Builder = flex::Builder::new();
-    b.add(ui::label("${i}", font_size: 22.0f64));
-    b.add(ui::label("cell", font_size: 11.0f64,
-                    text_color: vocab::Color::ink(0.5f64)));
-    return ui::column(b).padding(14.0f64).gap(2.0f64)
+    b.add(ui::label("${i}", font_size: 22.0));
+    b.add(ui::label("cell", font_size: 11.0,
+                    text_color: vocab::Color::ink(0.5)));
+    return ui::column(b).padding(14.0).gap(2.0)
         .align(flex::Align::Center).justify(flex::Justify::Center);
 }
 
@@ -53,12 +53,11 @@ fn page_changed(v: *u8, ctx: *u8) {
                 option::Option[label::Label]::Some(l) => {
                     let _t: label::Label = l.set_text("page ${i} of 4");
                 }
-                option::Option[label::Label]::None => { }
+                option::Option::None => { }
             }
         }
-        option::Option[carousel::Carousel]::None => { }
+        option::Option::None => { }
     }
-    return;
 }
 
 // THE WRITE PATH. `position` is a prop like any other: setting it moves the
@@ -67,46 +66,44 @@ fn page_changed(v: *u8, ctx: *u8) {
 fn next_page(v: *u8, ctx: *u8) {
     match carousel::find("g:pages") {
         option::Option[carousel::Carousel]::Some(c) => {
-            var i: i64 = c.position() + (1 as i64);
-            if i > (3 as i64) { i = 0 as i64; }
+            var i: i64 = c.position() + 1;
+            if i > 3 { i = 0; }
             let _s: carousel::Carousel = c.set_position(i);
             match label::find("g:page") {
                 option::Option[label::Label]::Some(l) => {
                     let _t: label::Label = l.set_text("page ${i} of 4");
                 }
-                option::Option[label::Label]::None => { }
+                option::Option::None => { }
             }
         }
-        option::Option[carousel::Carousel]::None => { }
+        option::Option::None => { }
     }
-    return;
 }
 
 fn page(title: str, tint: vocab::Color) -> core::Node {
     var b: flex::Builder = flex::Builder::new();
-    b.add(ui::label(title, font_size: 20.0f64));
-    b.add(ui::label("swipe sideways", font_size: 12.0f64,
-                    text_color: vocab::Color::ink(0.55f64)));
+    b.add(ui::label(title, font_size: 20.0));
+    b.add(ui::label("swipe sideways", font_size: 12.0,
+                    text_color: vocab::Color::ink(0.55)));
     return shell::painted(
-        ui::column(b).padding(20.0f64).gap(6.0f64)
+        ui::column(b).padding(20.0).gap(6.0)
             .align(flex::Align::Center).justify(flex::Justify::Center),
-        tint, 10.0f64);
+        tint, 10.0);
 }
 
-static RESOURCES: i64 = 0 as i64;
+static RESOURCES: i64 = 0;
 
 // Every request the page makes for something — the page itself, then whatever
 // it references. A REPORT: this backend does not answer resources on the
 // application's behalf, it says what was asked for.
 fn page_asked(url: *u8, ctx: *u8) {
-    RESOURCES = RESOURCES + (1 as i64);
+    RESOURCES = RESOURCES + 1;
     match label::find("g:res") {
         option::Option[label::Label]::Some(l) => {
             let _t: label::Label = l.set_text("${RESOURCES} resource(s) requested");
         }
-        option::Option[label::Label]::None => { }
+        option::Option::None => { }
     }
-    return;
 }
 
 // The two edges of construction: before the page can see the view, and once
@@ -118,9 +115,8 @@ fn web_ready(v: *u8, ctx: *u8) {
         option::Option[label::Label]::Some(l) => {
             let _t: label::Label = l.set_text("web view initialized");
         }
-        option::Option[label::Label]::None => { }
+        option::Option::None => { }
     }
-    return;
 }
 
 fn from_page(body: *u8, ctx: *u8) {
@@ -129,14 +125,13 @@ fn from_page(body: *u8, ctx: *u8) {
         option::Option[label::Label]::Some(l) => {
             let _t: label::Label = l.set_text("page said: ${#str_from_raw_parts(body, n)}");
         }
-        option::Option[label::Label]::None => { }
+        option::Option::None => { }
     }
-    return;
 }
 
 fn cstr_len(p: *u8) -> usize {
-    var i: usize = 0 as usize;
-    while { *{ p + i } } != (0 as u8) { i = i +% (1 as usize); }
+    var i: usize = 0;
+    while { *{ p + i } } != 0 { i = i +% 1; }
     return i;
 }
 
@@ -145,9 +140,8 @@ fn to_page(v: *u8, ctx: *u8) {
         option::Option[hybrid_web::HybridWeb]::Some(h) => {
             let _s: hybrid_web::HybridWeb = h.send_message("hello from C+");
         }
-        option::Option[hybrid_web::HybridWeb]::None => { }
+        option::Option::None => { }
     }
-    return;
 }
 
 // A cell was chosen. The collection reports it as `on_selection_changed` — the
@@ -161,12 +155,11 @@ fn cell_picked(v: *u8, ctx: *u8) {
                 option::Option[label::Label]::Some(l) => {
                     let _t: label::Label = l.set_text("cell ${i} is selected");
                 }
-                option::Option[label::Label]::None => { }
+                option::Option::None => { }
             }
         }
-        option::Option[collection::Collection]::None => { }
+        option::Option::None => { }
     }
-    return;
 }
 
 // ---- pull to refresh ---------------------------------------------------------
@@ -176,16 +169,16 @@ fn cell_picked(v: *u8, ctx: *u8) {
 // the app is told, the app loads, the app says it is done.
 
 static REFRESH_TIMER: services::Cancellable = #zero::[services::Cancellable]();
-static LOADED: usize = 8 as usize;
-static ROUNDS: i64 = 0 as i64;
+static LOADED: usize = 8;
+static ROUNDS: i64 = 0;
 
 fn refresh_row(i: usize, ctx: *u8) -> core::Node {
     var b: flex::Builder = flex::Builder::new();
-    b.add(ui::label("Item ${i}", font_size: 16.0f64));
-    b.add(ui::column(flex::Builder::new()).grow(1.0f64));
-    b.add(ui::label("loaded", font_size: 13.0f64,
-                    text_color: vocab::Color::ink(0.45f64)));
-    return ui::row(b).padding(12.0f64).gap(8.0f64).align(flex::Align::Center);
+    b.add(ui::label("Item ${i}", font_size: 16.0));
+    b.add(ui::column(flex::Builder::new()).grow(1.0));
+    b.add(ui::label("loaded", font_size: 13.0,
+                    text_color: vocab::Color::ink(0.45)));
+    return ui::row(b).padding(12.0).gap(8.0).align(flex::Align::Center);
 }
 
 // The app was told to load. A real one would go to the network; this one waits
@@ -193,23 +186,22 @@ fn refresh_row(i: usize, ctx: *u8) -> core::Node {
 // matters — says it has FINISHED. A refresh that never ends is a spinner that
 // never stops.
 fn finish_refresh(ctx: *u8) {
-    LOADED = LOADED +% (4 as usize);
-    ROUNDS = ROUNDS + (1 as i64);
+    LOADED = LOADED +% 4;
+    ROUNDS = ROUNDS + 1;
     match list::find("r:list") {
         option::Option[list::List]::Some(l) => {
             let _c: list::List = l.set_count(LOADED);
             let _e: list::List = l.end_refresh();
         }
-        option::Option[list::List]::None => { }
+        option::Option::None => { }
     }
     match label::find("r:status") {
         option::Option[label::Label]::Some(lb) => {
             let _t: label::Label =
                 lb.set_text("${ROUNDS} refresh(es) · ${LOADED} rows");
         }
-        option::Option[label::Label]::None => { }
+        option::Option::None => { }
     }
-    return;
 }
 
 struct Refresh { _unused: i32 }
@@ -223,10 +215,9 @@ impl Refresh {
             option::Option[label::Label]::Some(lb) => {
                 let _t: label::Label = lb.set_text("loading…");
             }
-            option::Option[label::Label]::None => { }
+            option::Option::None => { }
         }
-        REFRESH_TIMER = services::after(1.2f64, finish_refresh, 0 as *u8);
-        return;
+        REFRESH_TIMER = services::after(1.2, finish_refresh, 0 as *u8);
     }
 }
 
@@ -235,20 +226,20 @@ impl Refresh: component::Component {
         var body: flex::Builder = flex::Builder::new();
 
         var r: flex::Builder = flex::Builder::new();
-        var host: core::Node = ui::list(key: "r:list", row_height: 48 as i64,
+        var host: core::Node = ui::list(key: "r:list", row_height: 48,
                                         refreshable: true,
                                         on_refreshing: this.on_pull)
-            .height(320.0f64);
+            .height(320.0);
         match list::find("r:list", within: #addr_of(host)) {
             option::Option[list::List]::Some(l) => {
                 let _c: list::List = l.set_count(LOADED);
                 let _rw: list::List = l.set_row(refresh_row);
             }
-            option::Option[list::List]::None => { }
+            option::Option::None => { }
         }
-        r.add(shell::painted(host, vocab::Color::fill(), 10.0f64));
-        r.add(ui::label("pull the list down", key: "r:status", font_size: 13.0f64,
-                        text_color: vocab::Color::ink(0.7f64)));
+        r.add(shell::painted(host, vocab::Color::fill(), 10.0));
+        r.add(ui::label("pull the list down", key: "r:status", font_size: 13.0,
+                        text_color: vocab::Color::ink(0.7)));
         r.add(shell::caption("Pull down and let go. The spinner is UIKit's; being TOLD is facet's, and `end_refresh` is what stops it. Each pull adds four rows."));
         body.add(shell::card("PULL DOWN", r));
 
@@ -277,52 +268,52 @@ impl ListDemo: component::Component {
         var body: flex::Builder = flex::Builder::new();
 
         var rec: flex::Builder = flex::Builder::new();
-        var host: core::Node = ui::list(key: "g:list", row_height: 48 as i64)
-            .height(320.0f64);
+        var host: core::Node = ui::list(key: "g:list", row_height: 48)
+            .height(320.0);
         match list::find("g:list", within: #addr_of(host)) {
             option::Option[list::List]::Some(l) => {
-                let _c: list::List = l.set_count(200 as usize);
+                let _c: list::List = l.set_count(200);
                 let _r: list::List = l.set_row(gap_row);
             }
-            option::Option[list::List]::None => { }
+            option::Option::None => { }
         }
-        rec.add(shell::painted(host, vocab::Color::fill(), 10.0f64));
+        rec.add(shell::painted(host, vocab::Color::fill(), 10.0));
         rec.add(shell::caption("Two hundred rows over a real UITableView with a real data source. Two hundred nodes were never built — the callback runs for the dozen on screen, and the cells come back as you scroll."));
         body.add(shell::card("200 ROWS, ~12 CELLS", rec));
 
         var grid: flex::Builder = flex::Builder::new();
-        var g: core::Node = ui::collection(key: "g:grid", columns: 3 as usize,
+        var g: core::Node = ui::collection(key: "g:grid", columns: 3,
                                            selection_mode: vocab::SelectionMode::Single,
                                            on_selection_changed: cell_picked)
-            .height(220.0f64);
+            .height(220.0);
         match collection::find("g:grid", within: #addr_of(g)) {
             option::Option[collection::Collection]::Some(c) => {
-                let _c: collection::Collection = c.set_count(9 as usize);
+                let _c: collection::Collection = c.set_count(9);
                 let _r: collection::Collection = c.set_row(tile);
             }
-            option::Option[collection::Collection]::None => { }
+            option::Option::None => { }
         }
-        grid.add(shell::painted(g, vocab::Color::fill(), 10.0f64));
-        grid.add(ui::label("tap a cell", key: "g:pick", font_size: 13.0f64,
-                            text_color: vocab::Color::ink(0.7f64)));
+        grid.add(shell::painted(g, vocab::Color::fill(), 10.0));
+        grid.add(ui::label("tap a cell", key: "g:pick", font_size: 13.0,
+                            text_color: vocab::Color::ink(0.7)));
         grid.add(shell::caption("The same count-and-callback the list takes, laid out in three columns instead of one. The cells recycle the same way."));
         body.add(shell::card("A GRID", grid));
 
         var car: flex::Builder = flex::Builder::new();
         var deck: core::Node = ui::carousel(key: "g:pages",
                                             on_position_changed: page_changed)
-            .height(160.0f64);
-        let _p1: status::Status = deck.add_child(page("One", vocab::Color::rgba(0.20f64, 0.28f64, 0.42f64)));
-        let _p2: status::Status = deck.add_child(page("Two", vocab::Color::rgba(0.32f64, 0.22f64, 0.40f64)));
-        let _p3: status::Status = deck.add_child(page("Three", vocab::Color::rgba(0.20f64, 0.38f64, 0.34f64)));
-        let _p4: status::Status = deck.add_child(page("Four", vocab::Color::rgba(0.42f64, 0.28f64, 0.20f64)));
+            .height(160.0);
+        let _p1: status::Status = deck.add_child(page("One", vocab::Color::rgba(0.20, 0.28, 0.42)));
+        let _p2: status::Status = deck.add_child(page("Two", vocab::Color::rgba(0.32, 0.22, 0.40)));
+        let _p3: status::Status = deck.add_child(page("Three", vocab::Color::rgba(0.20, 0.38, 0.34)));
+        let _p4: status::Status = deck.add_child(page("Four", vocab::Color::rgba(0.42, 0.28, 0.20)));
         car.add(deck);
         var line: flex::Builder = flex::Builder::new();
-        line.add(ui::label("page 0 of 4", key: "g:page", font_size: 13.0f64,
-                           text_color: vocab::Color::ink(0.7f64)));
-        line.add(ui::column(flex::Builder::new()).grow(1.0f64));
+        line.add(ui::label("page 0 of 4", key: "g:page", font_size: 13.0,
+                           text_color: vocab::Color::ink(0.7)));
+        line.add(ui::column(flex::Builder::new()).grow(1.0));
         line.add(ui::button("next ›", key: "g:next", on_click: next_page));
-        car.add(ui::row(line).align(flex::Align::Center).gap(8.0f64));
+        car.add(ui::row(line).align(flex::Align::Center).gap(8.0));
         car.add(shell::caption("Four pages, one per screen. The pages are the node's CHILDREN — built once, not asked for — which is what separates a carousel from the list above it."));
         body.add(shell::card("A CAROUSEL", car));
 
@@ -338,15 +329,15 @@ impl ListDemo: component::Component {
                                on_raw_message_received: from_page,
                                on_web_resource_requested: page_asked,
                                on_web_view_initializing: web_starting,
-                               on_web_view_initialized: web_ready).height(200.0f64),
-                vocab::Color::fill(), 10.0f64));
+                               on_web_view_initialized: web_ready).height(200.0),
+                vocab::Color::fill(), 10.0));
             hy.add(ui::button("send down", key: "g:send", on_click: to_page));
             hy.add(ui::label("page said: (nothing yet)", key: "g:said",
-                             font_size: 13.0f64, text_color: vocab::Color::ink(0.7f64)));
-            hy.add(ui::label("(not initialized)", key: "g:ready", font_size: 13.0f64,
-                             text_color: vocab::Color::ink(0.55f64)));
-            hy.add(ui::label("0 resource(s) requested", key: "g:res", font_size: 13.0f64,
-                             text_color: vocab::Color::ink(0.55f64)));
+                             font_size: 13.0, text_color: vocab::Color::ink(0.7)));
+            hy.add(ui::label("(not initialized)", key: "g:ready", font_size: 13.0,
+                             text_color: vocab::Color::ink(0.55)));
+            hy.add(ui::label("0 resource(s) requested", key: "g:res", font_size: 13.0,
+                             text_color: vocab::Color::ink(0.55)));
             hy.add(shell::caption("A local page from the APK's own assets — three files, so the relative `<link>` and `<script>` have to resolve — and a channel in both directions: the page calls `window.facet.postMessage`, the app calls `send_message` and the page's `window.facet.receive` runs."));
             hy.add(shell::caption("The request count stays at zero on purpose. `on_web_resource_requested` is wired and fires for the network — verified against one — but Android does not route `file://` through that callback, so a page served entirely from assets reports none of itself."));
             body.add(shell::card("HYBRID WEB", hy));

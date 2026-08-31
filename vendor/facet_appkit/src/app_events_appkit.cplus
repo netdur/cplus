@@ -1,0 +1,78 @@
+// app_events_appkit — the macOS half of facet's delegate fan-out.
+//
+// `facet/app_events` declares WHAT an application-level event is; this says
+// which AppKit moment each one is, and fires it. One file, because that is the
+// whole of the backend's share: the fan-out itself, the subscriber list and the
+// UI-thread rule all live in the portable module.
+//
+// NOTIFICATIONS, NOT THE DELEGATE, and that is the design decision worth
+// recording. `NSApplicationDelegate` is a single object and this backend
+// already owns it — routing through it would mean the delegate grew a method
+// per event and the fan-out gained a second registration path. The notification
+// centre is Apple's own broadcast mechanism for exactly these moments, it needs
+// no delegate surgery, and it composes with an application that has its own
+// delegate reasons. `observe_named` is the same helper the window tier's
+// observers use.
+//
+// WHAT IS NOT HERE, and it is recorded rather than missing:
+//
+//   E_OPEN_URL         `application:openURLs:` is delegate-only on macOS —
+//                      there is no notification for it. It needs the delegate
+//                      seam, and it arrives with the sign-in rung (rung 5 of
+//                      plans/third-party-sdks.md), which is the first thing
+//                      that needs it.
+//   E_PUSH_TOKEN       ditto: `application:didRegisterForRemoteNotifications…`.
+//   E_PUSH_MESSAGE     ditto.
+//   E_LOW_MEMORY       macOS has no equivalent. Not deferred — ABSENT, the way
+//                      MANIFEST.md records a control AppKit cannot do.
+//   E_NATIVE_RESULT    Android's `onActivityResult`. Apple returns through
+//                      E_OPEN_URL instead, so this is absent by design.
+
+import "stdlib/option" as option;
+import "facet/app_events" as ev;
+import "facet/services" as services;
+import "appkit/appkit_ext" as akx;
+
+// The four live observations, held for the process. `Cancellable` cancels on
+// DROP, so these must be statics and not locals — a local would unregister the
+// observer at the end of `install`, which is the bug the window tier's own
+// comment warns about ("hold it in a field or the observation dies
+// immediately").
+static OBS_LAUNCHED: services::Cancellable = #zero::[services::Cancellable]();
+static OBS_FOREGROUND: services::Cancellable = #zero::[services::Cancellable]();
+static OBS_BACKGROUND: services::Cancellable = #zero::[services::Cancellable]();
+static OBS_TERMINATING: services::Cancellable = #zero::[services::Cancellable]();
+static ARMED: bool = false;
+
+fn on_launched(ctx: *u8) { ev::fire_plain(ev::E_LAUNCHED); return; }
+fn on_foreground(ctx: *u8) { ev::fire_plain(ev::E_FOREGROUND); return; }
+fn on_background(ctx: *u8) { ev::fire_plain(ev::E_BACKGROUND); return; }
+fn on_terminating(ctx: *u8) { ev::fire_plain(ev::E_TERMINATING); return; }
+
+// Armed once per process. Idempotent for the same reason `install` is: a
+// second arming would double every event, and "the push was handled twice" is
+// the symptom furthest from its cause.
+//
+// NOT paired with an uninstall. These four fire on the UI thread from the
+// notification centre and cost nothing with no subscribers, and taking them
+// back out mid-process would leave a re-installed backend silent — the same
+// judgement `install`'s comment records for the run-loop observer.
+fn arm() {
+    if ARMED { return; }
+    ARMED = true;
+    OBS_LAUNCHED = observe("NSApplicationDidFinishLaunchingNotification", on_launched);
+    OBS_FOREGROUND = observe("NSApplicationDidBecomeActiveNotification", on_foreground);
+    OBS_BACKGROUND = observe("NSApplicationDidResignActiveNotification", on_background);
+    OBS_TERMINATING = observe("NSApplicationWillTerminateNotification", on_terminating);
+}
+
+fn armed() -> bool { return ARMED; }
+
+// One notification, paired with the canceller that matches it. A named step
+// rather than four inline expressions: `observe_named` answers a bare id, and
+// pairing it with the wrong canceller is exactly the kind of mistake that
+// four near-identical inline lines hide.
+fn observe(name: str, handler: fn(*u8)) -> services::Cancellable {
+    let id: u64 = akx::observe_named(name, 0 as *u8, handler, 0 as *u8);
+    return services::Cancellable::of(id, akx::cancel_observe);
+}

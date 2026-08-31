@@ -87,4 +87,5 @@ Suites, all expected green:
   arithmetically (const expressions fold now).
 - `take` is a reserved keyword, including as a local name.
 - No array→slice coercion; go through `Vec::as_slice`.
-- Explicit `return` everywhere except a unit fn ending in `if`/`match`/block.
+- Explicit `return` for a VALUE — there are no implicit tail returns (E0333).
+  A unit fn needs no trailing `return;` and should not have one.

@@ -80,13 +80,13 @@ enum Channel {
 // Functions rather than consts so they are usable in every position C+ allows a
 // call, and so the numeric values stay in exactly one place.
 
-fn cap_read() -> u32 { return 1 as u32; }
-fn cap_act() -> u32 { return 2 as u32; }
-fn cap_read_protected() -> u32 { return 4 as u32; }
-fn cap_act_protected() -> u32 { return 8 as u32; }
-fn cap_read_private() -> u32 { return 16 as u32; }
-fn cap_act_private() -> u32 { return 32 as u32; }
-fn cap_edit_tree() -> u32 { return 64 as u32; }
+fn cap_read() -> u32 { return 1; }
+fn cap_act() -> u32 { return 2; }
+fn cap_read_protected() -> u32 { return 4; }
+fn cap_act_protected() -> u32 { return 8; }
+fn cap_read_private() -> u32 { return 16; }
+fn cap_act_private() -> u32 { return 32; }
+fn cap_edit_tree() -> u32 { return 64; }
 
 // The capability set an agent is operating under. Copy — it is a bitset, and it
 // is passed by value through every authorization call rather than stored
@@ -99,7 +99,7 @@ struct Grant {
 // The closed grant: nothing at all. What an un-served surface answers, and what
 // a policy returns to refuse.
 fn nothing() -> Grant {
-    return Grant { bits: 0 as u32 };
+    return Grant { bits: 0 };
 }
 
 fn with_capability(g: Grant, cap: u32) -> Grant {
@@ -151,7 +151,7 @@ impl Grant {
     // Nothing is possible under this grant. The transports use it to refuse a
     // connection outright rather than answering every verb with a denial.
     fn is_empty(this) -> bool {
-        return this.bits == (0 as u32);
+        return this.bits == 0;
     }
 
     fn with(this, cap: u32) -> Grant {
@@ -170,17 +170,37 @@ fn grant_eq(a: Grant, b: Grant) -> bool {
 // What the policy decides over. `token` is whatever credential the transport
 // received, uninterpreted — "" when there was none. The core never reads it;
 // it exists so a developer's policy can.
+//
+// `client` and `method` are here because a policy could not otherwise ANSWER
+// THE QUESTION IT IS ASKED. A consent prompt says "X wants to do Y"; with only
+// a channel and a token it could say neither, so an application wanting an
+// interactive gate had to reach for `agent_mcp::current_client()` behind the
+// core's back and could not do per-verb consent at all — "allow reading but ask
+// before pressing anything" was not expressible.
+//
+// `client` IS NOT A CREDENTIAL. It is what the caller said its name was in
+// MCP's `initialize` handshake, so it is identity in the sense a From: header
+// is: it makes a prompt legible and a remembered answer specific. Anything that
+// must be unforgeable goes in `token` and is checked by the policy.
+//
+// Both are BORROWED for the duration of the call, like `token`. A policy that
+// wants to remember one copies it.
 struct Request {
     channel: Channel,
     token: str,
+    client: str,
+    method: str,
 }
 
 fn request(channel: Channel) -> Request {
-    return Request { channel: channel, token: "" };
+    return Request { channel: channel, token: "", client: "", method: "" };
 }
 
-fn request_with_token(channel: Channel, token: str) -> Request {
-    return Request { channel: channel, token: token };
+// Defaulted rather than a second constructor: every existing caller passes two
+// arguments and still means the same thing.
+fn request_with_token(channel: Channel, token: str,
+                      client: str = "", method: str = "") -> Request {
+    return Request { channel: channel, token: token, client: client, method: method };
 }
 
 // The gate holds the developer's policy. A function pointer, not a closure
@@ -251,6 +271,50 @@ fn representative_policy(req: Request) -> Grant {
     };
 }
 
+// The same policy on a struct, because that is how a lot of applications write
+// one — iris's `Consent::admit` is exactly this shape. A `Type::fn` handed to
+// `serve` is a plain `fn(Request) -> Grant`, and it must read the SAME
+// `Request` a free function does.
+//
+// It did not. `Request` is 56 bytes (a channel plus three `str`s), and an
+// aggregate over 16 bytes is passed by pointer on AArch64 — but an associated
+// fn used to be emitted with the internal method convention, which passes it
+// raw. Every field came back shifted: `req.token` read a pointer where its
+// length belonged, so the first real HTTP request iris ever served died in
+// `memmove` at address 0. Nothing here had ever pointed a policy at a method.
+// See gaps/an-associated-fn-as-a-callback-mangles-a-large-struct-argument.
+struct PolicyOnAStruct {}
+impl PolicyOnAStruct {
+    fn admit(req: Request) -> Grant {
+        return representative_policy(req);
+    }
+}
+
+#[test]
+fn a_policy_may_live_on_a_struct_and_reads_the_same_request() {
+    let free_gate: AuthGate = serve(representative_policy);
+    let assoc_gate: AuthGate = serve(PolicyOnAStruct::admit);
+    // Every row of `a_policy_reads_the_token_the_transport_carried`, asserted
+    // through an associated fn and against the free function's own answer.
+    assert grant_eq(
+        assoc_gate.check(request(Channel::InApp)),
+        free_gate.check(request(Channel::InApp)),
+    );
+    assert assoc_gate.check(request(Channel::External)).is_empty();
+    let looker: Grant = assoc_gate.check(request_with_token(Channel::External, "whoever"));
+    assert looker.has(cap_read());
+    assert !looker.has(cap_act());
+    let filler: Grant =
+        assoc_gate.check(request_with_token(Channel::External, "autofill-approved"));
+    assert filler.has(cap_read() | cap_act() | cap_read_protected() | cap_act_protected());
+    // The fields BEHIND the one the policy branches on: a shifted aggregate
+    // reads a plausible answer out of the wrong slot, so the last field is
+    // what pins the offsets.
+    let named: Request =
+        request_with_token(Channel::External, "autofill-approved", "claude-code", "click");
+    assert assoc_gate.check(named).has(cap_act_protected());
+}
+
 #[test]
 fn test_default_deny_grants_nothing_on_every_channel() {
     let gate: AuthGate = deny_all();
@@ -286,7 +350,7 @@ fn no_bundled_grant_reaches_private() {
     assert !protected_reader().has(cap_read_private());
     assert !protected_operator().has(cap_read_private());
     assert !protected_operator().has(cap_act_private());
-    assert (protected_operator().bits & priv_caps) == (0 as u32);
+    assert (protected_operator().bits & priv_caps) == 0;
     // Nor does any of them carry the power to rewrite the UI.
     assert !protected_operator().has(cap_edit_tree());
     // Reaching it takes naming the bit, which is exactly one grep away from
@@ -311,7 +375,7 @@ fn capability_bits_are_distinct_and_removable() {
     // capability grant another.
     let all: u32 = cap_read() | cap_act() | cap_read_protected() | cap_act_protected()
                  | cap_read_private() | cap_act_private() | cap_edit_tree();
-    assert all == (127 as u32);
+    assert all == 127;
     let g: Grant = Grant { bits: all };
     assert g.without(cap_edit_tree()).has(cap_act_private());
     assert !g.without(cap_edit_tree()).has(cap_edit_tree());

@@ -71,6 +71,8 @@ import "./theme" as theme;
 import "./mount" as mount;
 import "./application" as app;
 import "./bands" as bands;
+// The delegate fan-out: a third-party SDK's share of the app's own callbacks.
+import "./app_events" as app_events;
 
 fn approx(a: f64, b: f64) -> bool {
     let d: f64 = a - b;
@@ -92,7 +94,6 @@ fn constructor_stores_named_params() {
         }
         option::Option[button::Button]::None => { assert false; }
     }
-    return;
 }
 
 #[test]
@@ -105,7 +106,6 @@ fn defaults_apply_when_omitted() {
         }
         option::Option[button::Button]::None => { assert false; }
     }
-    return;
 }
 
 // ---- find -------------------------------------------------------------------
@@ -121,7 +121,6 @@ fn find_locates_a_nested_key() {
         option::Option[button::Button]::Some(hit) => { assert hit.title() == "B"; }
         option::Option[button::Button]::None => { assert false; }
     }
-    return;
 }
 
 #[test]
@@ -131,7 +130,6 @@ fn find_misses_an_unknown_key() {
         option::Option[button::Button]::Some(_) => { assert false; }
         option::Option[button::Button]::None => { assert true; }
     }
-    return;
 }
 
 // ---- mutate -----------------------------------------------------------------
@@ -200,7 +198,6 @@ fn cursor_is_live_until_a_removal() {
         }
         option::Option[button::Button]::None => { assert false; }
     }
-    return;
 }
 
 // ---- the shared band --------------------------------------------------------
@@ -219,7 +216,6 @@ fn shared_verbs_are_on_the_typed_cursor() {
         }
         option::Option[button::Button]::None => { assert false; }
     }
-    return;
 }
 
 #[test]
@@ -233,7 +229,6 @@ fn shared_defaults_are_sane() {
         }
         option::Option[button::Button]::None => { assert false; }
     }
-    return;
 }
 
 #[test]
@@ -247,7 +242,6 @@ fn common_and_control_bits_do_not_collide() {
     }
     let d: *facet::Data = root.data();
     assert ({ (*d).dirty } & props::C_OPACITY) == props::C_OPACITY;
-    return;
 }
 
 // ---- the other 37 -----------------------------------------------------------
@@ -265,7 +259,6 @@ fn label_carries_its_own_rows() {
         }
         option::Option[label::Label]::None => { assert false; }
     }
-    return;
 }
 
 #[test]
@@ -281,7 +274,6 @@ fn slider_has_value_minimum_maximum() {
         }
         option::Option[slider::Slider]::None => { assert false; }
     }
-    return;
 }
 
 #[test]
@@ -304,7 +296,6 @@ fn toggle_and_text_field_and_image() {
         option::Option[image::Image]::Some(x) => { assert x.source() == "logo.png"; }
         option::Option[image::Image]::None => { assert false; }
     }
-    return;
 }
 
 // The property the one-Handle model could never give: a wrong-kind lookup is
@@ -316,7 +307,6 @@ fn wrong_kind_lookup_is_none() {
         option::Option[slider::Slider]::Some(_) => { assert false; }
         option::Option[slider::Slider]::None => { assert true; }
     }
-    return;
 }
 
 #[test]
@@ -340,7 +330,6 @@ fn mixed_tree_keeps_each_kind_addressable() {
         option::Option[slider::Slider]::Some(x) => { assert approx(x.value(), 1.0f64); }
         option::Option[slider::Slider]::None => { assert false; }
     }
-    return;
 }
 
 // ---- containers come from flex, not from a facet reimplementation ----------
@@ -359,7 +348,6 @@ fn hstack_lays_out_horizontally() {
         }
         option::Option[button::Button]::None => { assert false; }
     }
-    return;
 }
 
 #[test]
@@ -374,7 +362,6 @@ fn spacer_eats_the_leftover_space() {
         option::Option[button::Button]::Some(x) => { assert approx(x.x(), 160.0f64); }
         option::Option[button::Button]::None => { assert false; }
     }
-    return;
 }
 
 // ---- every control the generator emits --------------------------------------
@@ -434,7 +421,6 @@ fn every_control_module_builds() {
         option::Option[label::Label]::Some(_) => { assert false; }
         option::Option[label::Label]::None => { assert true; }
     }
-    return;
 }
 
 // ---- the names -------------------------------------------------------------
@@ -455,7 +441,6 @@ fn renamed_verbs_are_the_ones_that_exist() {
         }
         option::Option[label::Label]::None => { assert false; }
     }
-    return;
 }
 
 #[test]
@@ -470,7 +455,6 @@ fn boolean_readers_assert_and_setters_do_not() {
         }
         option::Option[list::List]::None => { assert false; }
     }
-    return;
 }
 
 // ---- styling text that is already there -------------------------------------
@@ -501,7 +485,6 @@ fn a_caret_rect_is_none_without_a_backend_rather_than_a_guessed_zero() {
         }
         option::Option[text_area::TextArea]::None => { assert false; }
     }
-    return;
 }
 
 #[test]
@@ -512,7 +495,6 @@ fn a_node_that_is_not_a_text_surface_has_no_caret_probe() {
     assert !facet::has_caret_probe(#addr_of(root));
     var ta: facet::Node = text_area::text_area("hi", key: "t");
     assert !facet::has_caret_probe(#addr_of(ta));
-    return;
 }
 
 // A stand-in text system: the answer is arithmetic, so the test can state
@@ -520,7 +502,7 @@ fn a_node_that_is_not_a_text_surface_has_no_caret_probe() {
 // checks is that core carries the offset through and hands the rect back
 // untouched.
 fn fake_caret(view: *u8, offset: i64, out: *vocab::Rect) -> bool {
-    if view == (0 as *u8) { return false; }
+    if view.is_null() { return false; }
     if offset < (0 as i64) { return false; }
     { (*out) = vocab::Rect::of((offset as f64) * 7.0f64, 0.0f64, 7.0f64, 16.0f64) };
     return true;
@@ -566,7 +548,6 @@ fn an_installed_probe_is_asked_at_the_offset_and_its_rect_is_carried_through() {
         }
         option::Option[text_area::TextArea]::None => { assert false; }
     }
-    return;
 }
 
 #[test]
@@ -583,7 +564,6 @@ fn a_surface_that_cannot_answer_right_now_says_so() {
         option::Option[vocab::Rect]::Some(_r) => { assert false; }
         option::Option[vocab::Rect]::None => { }
     }
-    return;
 }
 
 #[test]
@@ -617,7 +597,6 @@ fn style_runs_name_ranges_and_carry_no_text_of_their_own() {
         }
         option::Option[text_area::TextArea]::None => { assert false; }
     }
-    return;
 }
 
 // ---- the sequence grew: insert_rows / remove_rows ---------------------------
@@ -656,7 +635,6 @@ fn a_splice_moves_the_count_itself_and_records_one_span() {
         }
         option::Option[list::List]::None => { assert false; }
     }
-    return;
 }
 
 #[test]
@@ -684,7 +662,6 @@ fn appends_coalesce_and_an_unmergeable_splice_falls_back_to_the_count() {
         }
         option::Option[list::List]::None => { assert false; }
     }
-    return;
 }
 
 // NEGATIVE: a splice naming rows the list does not have states the length it
@@ -714,7 +691,6 @@ fn a_splice_outside_the_sequence_resequences_instead() {
         }
         option::Option[list::List]::None => { assert false; }
     }
-    return;
 }
 
 // ---- slots: a subtree is a child, not a property ---------------------------
@@ -737,7 +713,6 @@ fn a_slot_is_a_child_under_its_own_name() {
         }
         option::Option[list::List]::None => { assert false; }
     }
-    return;
 }
 
 #[test]
@@ -760,7 +735,6 @@ fn setting_a_slot_twice_replaces_in_place() {
         }
         option::Option[list::List]::None => { assert false; }
     }
-    return;
 }
 
 #[test]
@@ -775,7 +749,6 @@ fn an_empty_slot_reads_none() {
         }
         option::Option[scroll::Scroll]::None => { assert false; }
     }
-    return;
 }
 
 #[test]
@@ -791,7 +764,6 @@ fn a_slot_child_is_still_reachable_by_its_own_key() {
         option::Option[button::Button]::Some(b) => { assert b.title() == "Go"; }
         option::Option[button::Button]::None => { assert false; }
     }
-    return;
 }
 
 // ---- commands: a write plus a dirty bit ------------------------------------
@@ -809,7 +781,6 @@ fn begin_and_end_refresh_move_is_refreshing() {
         }
         option::Option[list::List]::None => { assert false; }
     }
-    return;
 }
 
 #[test]
@@ -823,7 +794,6 @@ fn scroll_to_records_the_index_and_its_bit() {
     }
     let d: *facet::Data = root.data();
     assert ({ (*d).dirty } & list::P_SCROLL_TO) == list::P_SCROLL_TO;
-    return;
 }
 
 #[test]
@@ -843,7 +813,6 @@ fn a_labels_horizontal_alignment_defaults_to_start_and_vertical_to_center() {
         }
         option::Option[label::Label]::None => { assert false; }
     }
-    return;
 }
 
 #[test]
@@ -862,7 +831,6 @@ fn a_typed_find_on_another_controls_key_answers_none_quietly() {
         option::Option[list::List]::Some(_x) => { }
         option::Option[list::List]::None => { assert false; }
     }
-    return;
 }
 
 #[test]
@@ -883,7 +851,6 @@ fn invalidate_row_coalesces_to_one_span_and_its_bit() {
     let p: *props::ListProps = { (*d).props } as *props::ListProps;
     assert { (*p).invalidate_lo } == (2 as i64);
     assert { (*p).invalidate_hi } == (7 as i64);
-    return;
 }
 
 // iris gap "a scroll stretches its content to the viewport": a
@@ -907,7 +874,6 @@ fn horizontal_scroll_content_is_not_stretched_to_the_viewport() {
         }
         option::Option[*facet::Node]::None => { assert false; }
     }
-    return;
 }
 
 // The mirror: a VERTICAL scroll wants the cross-axis stretch (content fills
@@ -928,7 +894,6 @@ fn vertical_scroll_content_keeps_its_cross_axis_stretch() {
         }
         option::Option[*facet::Node]::None => { assert false; }
     }
-    return;
 }
 
 // An application that HAS spoken keeps its answer: the default fills a
@@ -950,7 +915,6 @@ fn an_explicit_align_self_survives_set_content() {
         }
         option::Option[*facet::Node]::None => { assert false; }
     }
-    return;
 }
 
 fn matches_flex_start(a: flex::Align) -> bool {
@@ -990,7 +954,6 @@ fn animate_progress_writes_both_halves() {
         vocab::Easing::CubicOut => true,
         _ => false,
     };
-    return;
 }
 
 #[test]
@@ -1005,7 +968,6 @@ fn animate_opacity_writes_end_state_and_command_bit() {
     assert (facet::dirty_of(n) & props::C_OPACITY) == (0 as u64);
     assert (facet::animate_channels_of(n) & props::ANIM_OPACITY) == props::ANIM_OPACITY;
     assert approx(facet::animate_duration_of(n).seconds, 0.25f64);
-    return;
 }
 
 #[test]
@@ -1026,7 +988,6 @@ fn animate_scale_and_translation_arm_transform_channels() {
     assert (ch & props::ANIM_OPACITY) == (0u32);
     assert (facet::dirty_of(n) & props::C_ANIMATE) == props::C_ANIMATE;
     assert (facet::dirty_of(n) & props::C_TRANSFORM) == (0 as u64);
-    return;
 }
 
 #[test]
@@ -1055,7 +1016,6 @@ fn every_transform_verb_arms_the_one_transform_channel() {
     assert facet::animate_channels_of(n) == props::ANIM_TRANSFORM;
     // Opacity is the other channel and is NOT swept up by a transform verb.
     assert (facet::animate_channels_of(n) & props::ANIM_OPACITY) == (0u32);
-    return;
 }
 
 #[test]
@@ -1072,7 +1032,6 @@ fn a_snap_to_any_transform_number_cancels_the_pending_transform_animation() {
     // ...and the rotation's end value stays in the model, because a cancelled
     // animation is still a write. Reads and the agent see 90.
     assert approx(facet::rotation(n), 90.0f64);
-    return;
 }
 
 // A stand-in for "this node is mounted": the SNAP record is only kept for a
@@ -1092,7 +1051,6 @@ fn a_build_time_set_is_not_a_dead_snap() {
     facet::set_view(n, 99 as *u8, no_release);
     facet::animate_opacity(n, 1.0f64, vocab::Duration::animation(), vocab::Easing::SinOut);
     assert (facet::animate_channels_of(n) & props::ANIM_OPACITY) == props::ANIM_OPACITY;
-    return;
 }
 
 #[test]
@@ -1115,7 +1073,6 @@ fn a_set_in_the_same_tick_as_an_animate_is_dead() {
     facet::set_opacity(n, 0.0f64);
     facet::animate_opacity(n, 1.0f64, vocab::Duration::animation(), vocab::Easing::SinInOut);
     assert approx(facet::opacity(n), 1.0f64);
-    return;
 }
 
 #[test]
@@ -1135,7 +1092,6 @@ fn a_blanket_touch_is_not_a_dead_snap() {
     assert (facet::animate_channels_of(n) & props::SNAP_OPACITY) == (0u32);
     facet::animate_opacity(n, 0.5f64, vocab::Duration::animation(), vocab::Easing::SinInOut);
     assert (facet::animate_channels_of(n) & props::ANIM_OPACITY) == props::ANIM_OPACITY;
-    return;
 }
 
 #[test]
@@ -1149,7 +1105,6 @@ fn applying_a_node_retires_its_pending_snap() {
     assert (facet::animate_channels_of(n) & props::SNAP_OPACITY) == props::SNAP_OPACITY;
     facet::clear_dirty(n);
     assert (facet::animate_channels_of(n) & props::SNAP_OPACITY) == (0u32);
-    return;
 }
 
 #[test]
@@ -1161,7 +1116,6 @@ fn set_opacity_clears_pending_animate_channel() {
     assert approx(facet::opacity(n), 0.5f64);
     assert (facet::animate_channels_of(n) & props::ANIM_OPACITY) == (0u32);
     assert (facet::dirty_of(n) & props::C_OPACITY) == props::C_OPACITY;
-    return;
 }
 
 #[test]
@@ -1173,7 +1127,6 @@ fn cancel_animations_is_a_command() {
     facet::cancel_animations(n);
     assert facet::animate_channels_of(n) == (0u32);
     assert (facet::dirty_of(n) & props::C_CANCEL_ANIMATIONS) == props::C_CANCEL_ANIMATIONS;
-    return;
 }
 
 // ---- an owned prop: written whole, read one element at a time --------------
@@ -1194,7 +1147,6 @@ fn popup_items_are_written_whole() {
         }
         option::Option[popup::Popup]::None => { assert false; }
     }
-    return;
 }
 
 // ---- facet's own word: a count plus a row builder ---------------------------
@@ -1231,7 +1183,6 @@ fn a_row_builder_can_be_a_bound_method() {
         }
         option::Option[list::List]::None => { assert false; }
     }
-    return;
 }
 
 #[test]
@@ -1247,7 +1198,6 @@ fn a_list_is_filled_by_a_count_and_a_builder() {
         }
         option::Option[list::List]::None => { assert false; }
     }
-    return;
 }
 
 // ---- the shared band, whole -------------------------------------------------
@@ -1276,7 +1226,6 @@ fn the_transform_band_round_trips() {
     }
     let d: *facet::Data = root.data();
     assert ({ (*d).dirty } & props::C_TRANSFORM) == props::C_TRANSFORM;
-    return;
 }
 
 #[test]
@@ -1302,7 +1251,6 @@ fn paint_and_state_verbs_round_trip() {
         }
         option::Option[button::Button]::None => { assert false; }
     }
-    return;
 }
 
 // The item slot is a borrowed `*u8` and an unset one reads null, so an index
@@ -1324,7 +1272,6 @@ fn a_popup_takes_its_items_at_construction() {
         }
         option::Option[popup::Popup]::None => { assert false; }
     }
-    return;
 }
 
 // ...and the default is empty, so every call site written before this behaves
@@ -1336,7 +1283,6 @@ fn a_popup_without_items_is_still_empty() {
         option::Option[popup::Popup]::Some(x) => { assert x.item_count() == (0 as usize); }
         option::Option[popup::Popup]::None => { assert false; }
     }
-    return;
 }
 
 #[test]
@@ -1362,7 +1308,6 @@ fn an_index_in_the_item_slot_tells_row_zero_from_nothing() {
     };
     // ...and it is the same slot, so the raw reader still sees the bias.
     assert (facet::item_of(p) as usize) == (8 as usize);
-    return;
 }
 
 // ---- the payload, named where the handler is ---------------------------------
@@ -1416,7 +1361,6 @@ fn set_display_asks_for_the_layout_pass_that_flexs_own_setter_does_not() {
     facet::clear_dirty(p);
     facet::set_display(p, flex::Display::Flex);
     assert (facet::dirty_of(p) & props::C_LAYOUT) != (0 as u64);
-    return;
 }
 
 #[test]
@@ -1430,7 +1374,6 @@ fn hidden_is_the_or_of_invisible_and_display_none() {
     assert !facet::is_hidden(p);
     facet::set_display(p, flex::Display::None);
     assert facet::is_hidden(p);
-    return;
 }
 
 #[test]
@@ -1445,7 +1388,6 @@ fn set_shown_restores_the_display_it_hid() {
     assert !facet::is_hidden(p);
     assert facet::is_visible(p);
     assert match facet::display_of(p) { flex::Display::Grid => true, _ => false };
-    return;
 }
 
 // A flat button — no bezel, no background, no border. The posture the ledger writes
@@ -1476,7 +1418,6 @@ fn a_text_button_is_a_button_without_the_box() {
         }
         option::Option[text_button::TextButton]::None => { assert false; }
     }
-    return;
 }
 
 // The same two verbs on the other two buttons. `bordered` means the platform
@@ -1509,7 +1450,6 @@ fn every_button_toggles_and_switches_its_border() {
         }
         option::Option[icon_button::IconButton]::None => { assert false; }
     }
-    return;
 }
 
 // A chip: describe the border once, switch it on and off with the toggle.
@@ -1541,7 +1481,6 @@ fn a_text_button_toggles_and_switches_its_border() {
         }
         option::Option[text_button::TextButton]::None => { assert false; }
     }
-    return;
 }
 
 // The kind check is what makes a cursor honest: a `button` is not a
@@ -1559,7 +1498,6 @@ fn a_text_button_cursor_refuses_a_plain_button() {
         option::Option[button::Button]::Some(_x) => { assert false; }
         option::Option[button::Button]::None => { assert true; }
     }
-    return;
 }
 
 // A node with NO facet Data — a raw flex node, or the wrapper the `@ui` DSL
@@ -1588,7 +1526,6 @@ fn a_raw_view_can_be_adopted_as_a_node() {
     }
     // the node owned the retain, and gave it back on drop
     assert AN_RELEASED == 1;
-    return;
 }
 
 #[test]
@@ -1614,7 +1551,253 @@ fn an_adopted_view_is_marked_so_the_mount_walk_leaves_it_alone() {
         facet::set_view(#addr_of(plain), 99 as *u8, an_release);
         assert facet::view_is_adopted(#addr_of(plain)) == false;
     }
-    return;
+}
+
+// ---- the factory form of adoption --------------------------------------------
+// The seam a third-party SDK's view rides on. `adopt_native` takes the view;
+// `adopt_native_with` takes a RECIPE, and the mount walk runs it — which is
+// what Android's activity recreation needs, because every jobject on the node
+// is dead by the time the walk runs again and reusing one is a use of a dead
+// object rather than a leak.
+
+static AN_MADE: i32 = 0;
+static AN_LAST_CTX: *u8 = 0 as *u8;
+static AN_VIEWS: i64 = 100 as i64;
+
+fn an_make(ctx: *u8) -> *u8 {
+    AN_MADE = AN_MADE + 1;
+    AN_LAST_CTX = ctx;
+    AN_VIEWS = AN_VIEWS + (1 as i64);
+    return AN_VIEWS as *u8;
+}
+
+#[test]
+fn a_factory_adopted_node_has_no_view_until_it_is_mounted() {
+    AN_MADE = 0;
+    AN_RELEASED = 0;
+    {
+        var n: facet::Node = facet::adopt_native_with(an_make, 0 as *u8, an_release, key: "map");
+        let p: *facet::Node = #addr_of(n);
+        // The recipe has NOT been run: a factory that touched the platform at
+        // build time would run off the UI thread, in whatever code composed
+        // the tree.
+        assert AN_MADE == 0;
+        assert facet::native(p) == (0 as *u8);
+        // It is adopted all the same — the backend must not create for it.
+        assert facet::view_is_adopted(p);
+        assert facet::has_native_factory(p);
+        assert { (*p).key() } == "map";
+    }
+    // Nothing was ever made, so nothing is released.
+    assert AN_MADE == 0;
+    assert AN_RELEASED == 0;
+}
+
+#[test]
+fn the_eager_form_has_no_factory() {
+    var n: facet::Node = facet::adopt_native(42 as *u8, an_release, key: "term");
+    assert facet::has_native_factory(#addr_of(n)) == false;
+    assert facet::view_is_adopted(#addr_of(n));
+}
+
+#[test]
+fn make_native_runs_the_recipe_and_passes_the_ctx() {
+    AN_MADE = 0;
+    AN_RELEASED = 0;
+    AN_VIEWS = 100 as i64;
+    {
+        var marker: i64 = 5 as i64;
+        var n: facet::Node = facet::adopt_native_with(an_make, #addr_of(marker) as *u8,
+                                                      an_release, key: "map");
+        let p: *facet::Node = #addr_of(n);
+        let v: *u8 = facet::make_native(p);
+        assert AN_MADE == 1;
+        assert v == (101 as *u8);
+        assert facet::native(p) == (101 as *u8);
+        assert AN_LAST_CTX == (#addr_of(marker) as *u8);
+        // Nothing was replaced, so nothing was released.
+        assert AN_RELEASED == 0;
+    }
+    // The node owned the retain the recipe returned, and gave it back.
+    assert AN_RELEASED == 1;
+}
+
+// THE ANDROID CASE. Re-making releases the outgoing view BEFORE building the
+// replacement: one live view per node, and the dead one is handed back rather
+// than dropped on the floor.
+#[test]
+fn re_making_releases_the_outgoing_view_first() {
+    AN_MADE = 0;
+    AN_RELEASED = 0;
+    AN_VIEWS = 100 as i64;
+    {
+        var n: facet::Node = facet::adopt_native_with(an_make, 0 as *u8, an_release, key: "map");
+        let p: *facet::Node = #addr_of(n);
+        let first: *u8 = facet::make_native(p);
+        assert first == (101 as *u8);
+        assert AN_RELEASED == 0;
+
+        let second: *u8 = facet::make_native(p);
+        assert AN_MADE == 2;
+        assert second == (102 as *u8);          // a FRESH view, not the stale one
+        assert first != second;
+        assert AN_RELEASED == 1;                // and the first went back
+        assert facet::native(p) == second;
+    }
+    assert AN_RELEASED == 2;                    // the second went with the node
+}
+
+// The mount walk is the caller that matters, and it must reach the recipe.
+// Without this the walk reuses `Data.view` — which on Android is a global ref
+// into a destroyed Activity, and on any platform is a view the app expected to
+// be rebuilt.
+#[test]
+fn the_mount_walk_runs_the_factory_and_re_runs_it_on_re_mount() {
+    AN_MADE = 0;
+    AN_RELEASED = 0;
+    AN_VIEWS = 100 as i64;
+    mount::uninstall();
+    mount::install(mount::fr_renderer());
+    {
+        var n: facet::Node = facet::adopt_native_with(an_make, 0 as *u8, an_release, key: "map");
+        let p: *facet::Node = #addr_of(n);
+
+        let _v: *u8 = mount::realise(p);
+        assert AN_MADE == 1;
+        assert facet::native(p) == (101 as *u8);
+
+        // Unrealise then realise again — the recycling path, and the same
+        // shape an Activity recreation takes.
+        mount::unrealise(p);
+        let _v2: *u8 = mount::realise(p);
+        assert AN_MADE == 2;
+        assert facet::native(p) == (102 as *u8);
+        assert AN_RELEASED == 1;
+    }
+    mount::uninstall();
+    assert AN_RELEASED == 2;
+}
+
+// The eager form keeps its ORIGINAL behaviour through the same walk: the view
+// the caller brought survives being mounted, which is the bug the flag fixed
+// and must not regress now that the branch has two arms.
+#[test]
+fn the_mount_walk_still_leaves_an_eagerly_adopted_view_alone() {
+    AN_RELEASED = 0;
+    mount::uninstall();
+    mount::install(mount::fr_renderer());
+    {
+        var n: facet::Node = facet::adopt_native(42 as *u8, an_release, key: "term");
+        let p: *facet::Node = #addr_of(n);
+        let _v: *u8 = mount::realise(p);
+        assert facet::native(p) == (42 as *u8);
+        assert AN_RELEASED == 0;
+        mount::unrealise(p);
+        let _v2: *u8 = mount::realise(p);
+        assert facet::native(p) == (42 as *u8);   // still the caller's
+        assert AN_RELEASED == 0;
+    }
+    mount::uninstall();
+    assert AN_RELEASED == 1;
+}
+
+// ---- intrinsic size on an adopted leaf ---------------------------------------
+// A map fills its box and wants no measure; an ad banner or a platform sign-in
+// button has a size of its own. flex's hook is what answers the second, and the
+// ctx it hands the callback is THE VIEW — the convention every backend already
+// uses for its own controls.
+
+fn an_measure(ctx: *u8, w: f64, wm: flex::MeasureMode, h: f64, hm: flex::MeasureMode) -> flex::Size {
+    // Proves the ctx is the view: size derived from it, so a wrong ctx is a
+    // wrong number rather than a passing test.
+    let n: i64 = ctx as i64;
+    return flex::Size { width: (n as f64), height: 24.0f64 };
+}
+
+#[test]
+fn an_adopted_leaf_can_measure_itself_through_its_view() {
+    var n: facet::Node = facet::adopt_native(320 as *u8, an_release, key: "banner",
+                                             measure: an_measure);
+    let p: *facet::Node = #addr_of(n);
+    assert { (*p).has_measure() };
+    var root: facet::Node = flex::Node::new();
+    root.set_align_items(flex::Align::FlexStart);
+    root.add_child(n);
+    root.calculate_layout(500.0f64, 500.0f64, flex::Direction::LTR);
+    match root.child_frame(0 as usize) {
+        option::Option[flex::Frame]::Some(f) => {
+            assert approx(f.width, 320.0f64);     // the view IS the ctx
+            assert approx(f.height, 24.0f64);
+        }
+        option::Option[flex::Frame]::None => { assert false; }
+    }
+}
+
+#[test]
+fn a_factory_leaf_gets_its_measure_when_the_view_arrives() {
+    AN_MADE = 0;
+    AN_VIEWS = 100 as i64;
+    var n: facet::Node = facet::adopt_native_with(an_make, 0 as *u8, an_release, key: "banner",
+                                                  measure: an_measure);
+    let p: *facet::Node = #addr_of(n);
+    // No view yet, so no hook yet — installing one whose ctx is 0 would make
+    // the leaf measure as garbage on the layout pass before the first mount.
+    assert { (*p).has_measure() } == false;
+    let _v: *u8 = facet::make_native(p);
+    assert { (*p).has_measure() };
+    var root: facet::Node = flex::Node::new();
+    root.set_align_items(flex::Align::FlexStart);
+    root.add_child(n);
+    root.calculate_layout(500.0f64, 500.0f64, flex::Direction::LTR);
+    match root.child_frame(0 as usize) {
+        option::Option[flex::Frame]::Some(f) => { assert approx(f.width, 101.0f64); }
+        option::Option[flex::Frame]::None => { assert false; }
+    }
+}
+
+// ---- negative ----------------------------------------------------------------
+
+#[test]
+fn an_adopted_leaf_without_a_measure_is_sized_by_its_box() {
+    var n: facet::Node = facet::adopt_native(320 as *u8, an_release, key: "map");
+    let p: *facet::Node = #addr_of(n);
+    assert { (*p).has_measure() } == false;      // a map fills what it is given
+    facet::set_width(p, 200.0f64);
+    facet::set_height(p, 150.0f64);
+    var root: facet::Node = flex::Node::new();
+    root.add_child(n);
+    root.calculate_layout(500.0f64, 500.0f64, flex::Direction::LTR);
+    match root.child_frame(0 as usize) {
+        option::Option[flex::Frame]::Some(f) => {
+            assert approx(f.width, 200.0f64);
+            assert approx(f.height, 150.0f64);
+        }
+        option::Option[flex::Frame]::None => { assert false; }
+    }
+}
+
+#[test]
+fn make_native_on_a_node_with_no_factory_is_inert() {
+    AN_RELEASED = 0;
+    {
+        // The eager form: `make_native` must hand back what is there rather
+        // than zero it, or a caller that asks twice destroys the view.
+        var e: facet::Node = facet::adopt_native(42 as *u8, an_release);
+        assert facet::make_native(#addr_of(e)) == (42 as *u8);
+        assert facet::native(#addr_of(e)) == (42 as *u8);
+        assert AN_RELEASED == 0;
+        // A plain node has neither factory nor view.
+        var plain: facet::Node = facet::column(facet::Builder::new());
+        assert facet::make_native(#addr_of(plain)) == (0 as *u8);
+        assert facet::has_native_factory(#addr_of(plain)) == false;
+    }
+    assert AN_RELEASED == 1;
+}
+
+#[test]
+fn the_factory_verbs_are_inert_on_a_null_node() {
+    assert facet::has_native_factory(0 as *facet::Node) == false;
+    assert facet::make_native(0 as *facet::Node) == (0 as *u8);
 }
 
 #[test]
@@ -1629,7 +1812,6 @@ fn a_band_write_creates_the_data_it_needs() {
     assert approx(facet::background_color(p).b, 1.0f64);
     // and the write reached the dirty word, so a backend hears about it
     assert (facet::dirty_of(p) & props::C_BACKGROUND_COLOR) != (0 as u64);
-    return;
 }
 
 // A READ on a Data-less node still answers the default and allocates nothing —
@@ -1641,7 +1823,6 @@ fn a_band_read_on_a_bare_node_does_not_allocate_data() {
     assert approx(facet::opacity(p), 1.0f64);
     assert facet::is_visible(p);
     assert facet::node_data(p) == (0 as *facet::Data);
-    return;
 }
 
 // The band on a node you BUILT, with no cursor in sight. `column` hands back
@@ -1665,7 +1846,6 @@ fn the_band_is_reachable_on_a_bare_node() {
 
     // and the free fn still answers the same node — one state, two spellings
     assert approx(facet::opacity(#addr_of(n)), 0.25f64);
-    return;
 }
 
 // A method write is a real write: it raises the same dirty bit the free fn
@@ -1676,7 +1856,6 @@ fn a_band_method_marks_the_node_dirty() {
     n.set_background_color(vocab::Color::rgba(1.0f64, 0.0f64, 0.0f64));
     let d: *facet::Data = n.data();
     assert ({ (*d).dirty } & props::C_BACKGROUND_COLOR) == props::C_BACKGROUND_COLOR;
-    return;
 }
 
 #[test]
@@ -1690,7 +1869,6 @@ fn z_index_is_flexs_and_is_not_copied() {
         option::Option[button::Button]::None => { assert false; }
     }
     assert root.z_index() == 4;          // the same field, read through flex
-    return;
 }
 
 #[test]
@@ -1709,7 +1887,6 @@ fn bounds_agree_with_the_frame() {
         }
         option::Option[button::Button]::None => { assert false; }
     }
-    return;
 }
 
 #[test]
@@ -1735,7 +1912,6 @@ fn children_are_reachable_by_index() {
         }
         option::Option[scroll::Scroll]::None => { assert false; }
     }
-    return;
 }
 
 #[test]
@@ -1750,7 +1926,6 @@ fn native_is_zero_until_a_backend_mounts_one() {
         }
         option::Option[button::Button]::None => { assert false; }
     }
-    return;
 }
 
 // The write path back in: what the platform learns first.
@@ -1769,7 +1944,6 @@ fn a_backend_writes_focus_attach_and_window() {
         }
         option::Option[button::Button]::None => { assert false; }
     }
-    return;
 }
 
 #[test]
@@ -1784,7 +1958,6 @@ fn focus_and_blur_are_command_bits() {
     let d: *facet::Data = root.data();
     assert ({ (*d).dirty } & props::C_FOCUS) == props::C_FOCUS;
     assert ({ (*d).dirty } & props::C_BLUR) == 0u64;
-    return;
 }
 
 #[test]
@@ -1809,7 +1982,6 @@ fn updates_flush_when_the_depth_returns_to_zero() {
         }
         option::Option[button::Button]::None => { assert false; }
     }
-    return;
 }
 
 #[test]
@@ -1828,7 +2000,6 @@ fn measure_reports_the_size_the_subtree_wants() {
         }
         option::Option[scroll::Scroll]::None => { assert false; }
     }
-    return;
 }
 
 // ---- discrete events are build-time handlers -------------------------------
@@ -1846,7 +2017,6 @@ fn discrete_events_are_constructor_parameters() {
     b.add(swipe_item::swipe_item(key: "si", on_invoked: clicked));
     var root: facet::Node = facet::column(b);
     assert root.child_count() == (4 as usize);
-    return;
 }
 
 // ---- symbol: facet's own word ------------------------------------------------
@@ -1863,7 +2033,6 @@ fn a_symbol_carries_a_codepoint_from_the_generated_table() {
         }
         option::Option[symbol::Symbol]::None => { assert false; }
     }
-    return;
 }
 
 // The point of the generated table: `delete` is U+E92E, its position in
@@ -1875,7 +2044,6 @@ fn the_table_is_material_symbols_not_the_legacy_set() {
     assert icons::delete == 0xE92Eu32;
     assert icons::favorite == 0xE87Eu32;
     assert icons::home == 0xE9B2u32;
-    return;
 }
 
 // 67 names begin with a digit and one is a C+ keyword. Both are spellable.
@@ -1884,7 +2052,6 @@ fn unspellable_icon_names_are_mapped_predictably() {
     assert icons::n10k == 0xE951u32;      // "10k"
     assert icons::loop_ == 0xE863u32;      // "loop", which C+ has taken
     assert icons::move_ == 0xE740u32;     // "move", likewise
-    return;
 }
 
 #[test]
@@ -1901,7 +2068,6 @@ fn fill_is_an_axis_not_a_flag() {
         }
         option::Option[symbol::Symbol]::None => { assert false; }
     }
-    return;
 }
 
 // The platform opt-in is a separate verb, so every platform-specific icon in
@@ -1924,7 +2090,6 @@ fn a_system_symbol_says_so() {
         }
         option::Option[symbol::Symbol]::None => { assert false; }
     }
-    return;
 }
 
 #[test]
@@ -1937,7 +2102,6 @@ fn an_application_may_bring_its_own_icon_font() {
         }
         option::Option[symbol::Symbol]::None => { assert false; }
     }
-    return;
 }
 
 // facet-origin controls take kind tags from 1000 up, so regenerating the 38
@@ -1949,7 +2113,6 @@ fn a_symbol_is_not_mistaken_for_a_generated_control() {
         option::Option[label::Label]::Some(_) => { assert false; }
         option::Option[label::Label]::None => { assert true; }
     }
-    return;
 }
 
 // ---- gestures: a modifier on any node, not a control ------------------------
@@ -1969,7 +2132,6 @@ fn gestures_attach_to_any_node_and_chain() {
         option::Option[label::Label]::Some(x) => { assert x.text() == "Open"; }
         option::Option[label::Label]::None => { assert false; }
     }
-    return;
 }
 
 // The reason gestures are a modifier and not 21 parameters on 38 constructors.
@@ -1980,7 +2142,6 @@ fn a_node_without_gestures_carries_none() {
     assert gestures::has_gestures(p) == false;
     assert gestures::on_click_of(p) == gestures::no_gesture;
     assert gestures::fire_click(p) == false;   // nobody took it
-    return;
 }
 
 #[test]
@@ -1988,7 +2149,6 @@ fn a_gesture_set_marks_the_node_dirty() {
     var root: facet::Node = label::label("x", key: "l").gesture(on_click: on_open);
     let d: *facet::Data = root.data();
     assert ({ (*d).dirty } & facet::C_GESTURES) == facet::C_GESTURES;
-    return;
 }
 
 // The modifier is for the description. After mount you hold a pointer, and a
@@ -2008,7 +2168,6 @@ fn gestures_can_be_replaced_and_dropped_live() {
     gestures::detach(p);
     assert gestures::has_gestures(p) == false;
     assert gestures::on_click_of(p) == gestures::no_gesture;
-    return;
 }
 
 // One ctx for the whole set: every handler on a node has the same receiver.
@@ -2021,7 +2180,6 @@ fn one_ctx_serves_the_whole_set() {
     assert gestures::ctx_of(p) == (#addr_of(owner) as *u8);
     assert gestures::fire_click(p);
     assert gestures::fire_hover(p, true);
-    return;
 }
 
 // The container's own empty space: defer to a child, or claim the lot.
@@ -2037,7 +2195,6 @@ fn hit_test_defers_to_the_child_by_default() {
     var claimed: facet::Node = facet::column(b2)
         .gesture(on_click: on_open, hit: gestures::HitTest::Opaque);
     assert gestures::is_opaque_to_input(#addr_of(claimed));
-    return;
 }
 
 // The nesting rule, stated as a test: a button keeps its own action, and the
@@ -2064,7 +2221,6 @@ fn a_button_inside_a_gesture_node_keeps_its_own_action() {
     }
     // the surrounding node carries both of its own
     assert gestures::on_click_of(p) == on_open;
-    return;
 }
 
 #[test]
@@ -2075,15 +2231,14 @@ fn gesture_parameters_carry_their_own_settings() {
                  on_pan: on_open, touch_points: 2 as i64,
                  can_drag: true, allow_drop: true);
     let g: *gestures::Gestures = gestures::gestures_of(#addr_of(root));
-    assert g != (0 as *gestures::Gestures);
-    if g == (0 as *gestures::Gestures) { return; }
+    assert g.is_not_null();
+    if g.is_null() { return; }
     assert approx({ (*g).long_press_seconds }, 1.5f64);
     assert approx({ (*g).swipe_threshold }, 40.0f64);
     assert { (*g).touch_points } == (2 as i64);
     assert { (*g).can_drag };
     assert { (*g).allow_drop };
     assert { (*g).is_empty() } == false;
-    return;
 }
 
 // A container is a node like any other. It was NOT, until `.gesture()` on a
@@ -2111,7 +2266,6 @@ fn containers_carry_facet_data_like_any_other_node() {
     g.on_click = on_open;
     gestures::attach(p, g);
     assert gestures::on_click_of(p) == on_open;
-    return;
 }
 
 #[test]
@@ -2131,7 +2285,6 @@ fn every_container_re_export_owns_its_node() {
     assert facet::card(b6, key: "d").key() == "d";
     assert facet::zstack(b7, key: "z").key() == "z";
     assert facet::spacer(key: "sp").key() == "sp";
-    return;
 }
 
 // A key on a container is reachable, which it was not before either.
@@ -2147,7 +2300,6 @@ fn a_container_is_findable_by_key() {
         option::Option[*facet::Node]::Some(n) => { assert { (*n).child_count() } == (1 as usize); }
         option::Option[*facet::Node]::None => { assert false; }
     }
-    return;
 }
 
 // ---- tree: hierarchical, and NOT about files --------------------------------
@@ -2179,7 +2331,6 @@ fn tr_row(node: *tree::TreeNode, ctx: *u8) -> facet::Node {
 }
 fn tr_bind(node: *tree::TreeNode, ctx: *u8, into: *facet::Node) {
     TR_BIND_CTX = ctx;
-    return;
 }
 
 #[test]
@@ -2198,7 +2349,6 @@ fn each_tree_handler_keeps_its_own_context() {
         }
         option::Option[tree::Tree]::None => { assert false; }
     }
-    return;
 }
 
 // The set-wide `ctx:` still answers for a handler that brought none, so every
@@ -2216,7 +2366,6 @@ fn the_tree_set_wide_ctx_still_reaches_the_row_builder() {
         }
         option::Option[tree::Tree]::None => { assert false; }
     }
-    return;
 }
 
 // ...and a handler's OWN context wins over the set-wide one.
@@ -2235,7 +2384,6 @@ fn a_tree_handlers_own_ctx_wins_over_the_set_wide_one() {
         }
         option::Option[tree::Tree]::None => { assert false; }
     }
-    return;
 }
 
 #[test]
@@ -2258,7 +2406,6 @@ fn a_tree_owns_its_model_and_walks_by_id() {
         }
         option::Option[tree::Tree]::None => { assert false; }
     }
-    return;
 }
 
 // The words are generic. A file browser passes a path as the id and reads the
@@ -2277,7 +2424,6 @@ fn the_model_is_not_named_for_files() {
         }
         option::Option[tree::Tree]::None => { assert false; }
     }
-    return;
 }
 
 // A branch may say "there may be more here" before anything is under it.
@@ -2289,7 +2435,6 @@ fn an_unloaded_branch_is_distinguishable_from_a_leaf() {
     assert lazy.is_unloaded();
     assert leaf.is_unloaded() == false;
     assert leaf.is_branch == false;
-    return;
 }
 
 #[test]
@@ -2314,7 +2459,6 @@ fn selection_and_expansion_are_keyed_on_the_id() {
         }
         option::Option[tree::Tree]::None => { assert false; }
     }
-    return;
 }
 
 // The rule that cost someone a bug: EXPANSION FIRST, THEN SELECTION. A row
@@ -2335,7 +2479,6 @@ fn restore_expands_before_it_selects() {
         }
         option::Option[tree::Tree]::None => { assert false; }
     }
-    return;
 }
 
 #[test]
@@ -2350,7 +2493,6 @@ fn replacing_the_model_drops_the_old_one() {
         }
         option::Option[tree::Tree]::None => { assert false; }
     }
-    return;
 }
 
 #[test]
@@ -2368,7 +2510,6 @@ fn a_row_builder_produces_real_nodes() {
         }
         option::Option[tree::Tree]::None => { assert false; }
     }
-    return;
 }
 
 // A subtree detaches by value and owns everything under it.
@@ -2383,7 +2524,6 @@ fn a_subtree_detaches_whole() {
         option::Option[tree::TreeNode]::None => { assert false; }
     }
     assert root.child_count() == (1 as usize);
-    return;
 }
 
 // ---- split: a divider the user drags -----------------------------------------
@@ -2416,7 +2556,6 @@ fn a_split_holds_two_panes_and_a_position() {
         }
         option::Option[split::Split]::None => { assert false; }
     }
-    return;
 }
 
 // The position is clamped where it is STORED, so an application that saves and
@@ -2433,7 +2572,178 @@ fn a_split_clamps_the_position_it_stores() {
         }
         option::Option[split::Split]::None => { assert false; }
     }
-    return;
+}
+
+// ---- the maximum ---------------------------------------------------------------
+//
+// `SplitProps` carried `min_leading`/`min_trailing` and no maximum, so "this
+// pane may not exceed 640 points" could not be said. It was EXPRESSIBLE — a
+// maximum on the trailing pane is a minimum on the leading one — but only by
+// an application that mirrors the split's live extent through window-resize
+// observers, and a mirror of a live value is derived state that goes stale.
+// gaps/a-split-pane-has-a-minimum-and-no-maximum.
+
+// The RULE, on its own, because six clamp sites across four backends ask it and
+// none of them needs a window to be wrong.
+#[test]
+fn a_trailing_maximum_is_a_floor_under_the_divider() {
+    // 1000-wide split, trailing pane capped at 640 -> the divider may not go
+    // left of 360. This is the arithmetic iris was doing by hand, and the
+    // reason it had to: `1000` is not visible from where an application stands.
+    assert approx(split::floor_with_max(150.0f64, 640.0f64, 1000.0f64), 360.0f64);
+    // Inert when the leading minimum already demands more.
+    assert approx(split::floor_with_max(400.0f64, 640.0f64, 1000.0f64), 400.0f64);
+    // NO MAXIMUM is zero, and changes nothing.
+    assert approx(split::floor_with_max(150.0f64, 0.0f64, 1000.0f64), 150.0f64);
+    // NO EXTENT YET. Before the first layout a split reports zero, and
+    // subtracting from it would pin the divider to a negative floor — the same
+    // guard every backend's trailing MINIMUM already carries.
+    assert approx(split::floor_with_max(150.0f64, 640.0f64, 0.0f64), 150.0f64);
+}
+
+#[test]
+fn a_leading_maximum_is_a_ceiling_and_needs_no_extent() {
+    // The asymmetry that makes this framework's business: the divider's
+    // position IS the leading pane's size, so this half needs nothing measured.
+    assert approx(split::ceiling_with_max(760.0f64, 400.0f64), 400.0f64);
+    // Inert when the trailing minimum already binds tighter.
+    assert approx(split::ceiling_with_max(300.0f64, 400.0f64), 300.0f64);
+    // NO MAXIMUM leaves the caller's own ceiling alone, including the
+    // "none" one.
+    assert approx(split::ceiling_with_max(760.0f64, 0.0f64), 760.0f64);
+    assert approx(split::ceiling_with_max(0.0f64, 0.0f64), 0.0f64);
+    // A caller with NO ceiling of its own takes the maximum as the ceiling —
+    // the case a split with no trailing minimum and a capped leading pane is
+    // in, and the one that used to have no bound at all.
+    assert approx(split::ceiling_with_max(0.0f64, 400.0f64), 400.0f64);
+}
+
+// The verb, and the round trip. `0.0` is the default and means unbounded.
+#[test]
+fn a_split_carries_a_maximum_per_pane() {
+    var root: facet::Node = split::split(two_panes(), key: "s");
+    match split::find("s", within: #addr_of(root)) {
+        option::Option[split::Split]::Some(x) => {
+            assert approx(x.max(split::Pane::Leading), 0.0f64);
+            assert approx(x.max(split::Pane::Trailing), 0.0f64);
+            let _a: split::Split = x.set_max(split::Pane::Trailing, 640.0f64);
+            assert approx(x.max(split::Pane::Trailing), 640.0f64);
+            assert approx(x.max(split::Pane::Leading), 0.0f64);   // untouched
+            // ...and taking it away again.
+            let _b: split::Split = x.set_max(split::Pane::Trailing, 0.0f64);
+            assert approx(x.max(split::Pane::Trailing), 0.0f64);
+        }
+        option::Option[split::Split]::None => { assert false; }
+    }
+}
+
+// The CONSTRUCTOR clamps too, by the same rule `set_position` does. Two doors
+// into one number that disagreed would mean `position()` answering something
+// the first layout pass overwrites — a control that contradicts itself between
+// being built and being shown. `min_leading` had the same hole; both are shut.
+#[test]
+fn a_split_clamps_the_position_it_is_built_with() {
+    var a: facet::Node = split::split(two_panes(), key: "a",
+                                      position: 900.0f64, max_leading: 400.0f64);
+    match split::find("a", within: #addr_of(a)) {
+        option::Option[split::Split]::Some(x) => { assert approx(x.position(), 400.0f64); }
+        option::Option[split::Split]::None => { assert false; }
+    }
+    var b: facet::Node = split::split(two_panes(), key: "b",
+                                      position: 20.0f64, min_leading: 180.0f64);
+    match split::find("b", within: #addr_of(b)) {
+        option::Option[split::Split]::Some(x) => { assert approx(x.position(), 180.0f64); }
+        option::Option[split::Split]::None => { assert false; }
+    }
+    // A contradictory pair at build time resolves the same way it does at
+    // write time: the minimum wins.
+    var c: facet::Node = split::split(two_panes(), key: "c", position: 500.0f64,
+                                      min_leading: 300.0f64, max_leading: 100.0f64);
+    match split::find("c", within: #addr_of(c)) {
+        option::Option[split::Split]::Some(x) => { assert approx(x.position(), 300.0f64); }
+        option::Option[split::Split]::None => { assert false; }
+    }
+}
+
+// The builder argument, so a cap can be stated where the split is built rather
+// than found and written afterwards — which is the whole of what replaces
+// iris's resize observer.
+#[test]
+fn a_split_takes_its_maximums_at_build_time() {
+    var root: facet::Node = split::split(two_panes(), key: "s",
+                                         max_leading: 400.0f64, max_trailing: 640.0f64);
+    match split::find("s", within: #addr_of(root)) {
+        option::Option[split::Split]::Some(x) => {
+            assert approx(x.max(split::Pane::Leading), 400.0f64);
+            assert approx(x.max(split::Pane::Trailing), 640.0f64);
+        }
+        option::Option[split::Split]::None => { assert false; }
+    }
+}
+
+// A LEADING maximum is in the divider's own coordinate, so `set_position`
+// enforces it where the position is stored — the same place `min_leading` is
+// enforced, and for the same reason: an application that saves and restores
+// must read back what was applied.
+#[test]
+fn set_position_honours_a_leading_maximum() {
+    var root: facet::Node = split::split(two_panes(), key: "s", max_leading: 400.0f64);
+    match split::find("s", within: #addr_of(root)) {
+        option::Option[split::Split]::Some(x) => {
+            let _a: split::Split = x.set_position(900.0f64);
+            assert approx(x.position(), 400.0f64);
+            let _b: split::Split = x.set_position(250.0f64);
+            assert approx(x.position(), 250.0f64);
+        }
+        option::Option[split::Split]::None => { assert false; }
+    }
+}
+
+// Setting a maximum re-applies the position, so a cap arriving AFTER the
+// divider is placed moves it. Without this the number and the pane would
+// disagree until the next drag, which is the shape of the bug that made the
+// application-side workaround break a drag in the first place.
+#[test]
+fn a_leading_maximum_moves_a_divider_that_is_already_past_it() {
+    var root: facet::Node = split::split(two_panes(), key: "s", position: 900.0f64);
+    match split::find("s", within: #addr_of(root)) {
+        option::Option[split::Split]::Some(x) => {
+            assert approx(x.position(), 900.0f64);
+            let _a: split::Split = x.set_max(split::Pane::Leading, 400.0f64);
+            assert approx(x.position(), 400.0f64);
+        }
+        option::Option[split::Split]::None => { assert false; }
+    }
+}
+
+// NEGATIVE: a maximum that contradicts a minimum. The MINIMUM wins, the same
+// precedence the backends give the floor and for the reason gtk's clamp writes
+// down — a divider past the far bound drags back, one pinned at zero does not.
+#[test]
+fn a_maximum_below_the_minimum_leaves_the_minimum_standing() {
+    var root: facet::Node = split::split(two_panes(), key: "s",
+                                         min_leading: 300.0f64, max_leading: 100.0f64);
+    match split::find("s", within: #addr_of(root)) {
+        option::Option[split::Split]::Some(x) => {
+            let _a: split::Split = x.set_position(500.0f64);
+            assert approx(x.position(), 300.0f64);
+        }
+        option::Option[split::Split]::None => { assert false; }
+    }
+    // And in the shared rule, where the backends meet it.
+    assert approx(split::floor_with_max(300.0f64, 900.0f64, 1000.0f64), 300.0f64);
+}
+
+// NEGATIVE: a maximum on a node that is not a split answers the neutral value
+// rather than reading whatever the props happen to be — the same posture every
+// other cursor read has.
+#[test]
+fn a_maximum_read_through_a_dead_cursor_is_zero() {
+    var root: facet::Node = split::split(two_panes(), key: "s", max_leading: 400.0f64);
+    match split::find("nosuch", within: #addr_of(root)) {
+        option::Option[split::Split]::Some(_x) => { assert false; }
+        option::Option[split::Split]::None => { assert true; }
+    }
 }
 
 // Collapsing remembers where the divider was, so restoring is not a default.
@@ -2452,7 +2762,6 @@ fn collapsing_a_pane_keeps_the_position() {
         }
         option::Option[split::Split]::None => { assert false; }
     }
-    return;
 }
 
 #[test]
@@ -2465,7 +2774,6 @@ fn a_split_reports_a_finished_drag_once() {
         }
         option::Option[split::Split]::None => { assert false; }
     }
-    return;
 }
 
 #[test]
@@ -2480,7 +2788,6 @@ fn a_rows_split_stacks_its_panes() {
         }
         option::Option[split::Split]::None => { assert false; }
     }
-    return;
 }
 
 // ---- window chrome: one control, one modifier -------------------------------
@@ -2496,7 +2803,6 @@ fn window_buttons_is_a_control() {
         }
         option::Option[chrome::WindowButtons]::None => { assert false; }
     }
-    return;
 }
 
 // It draws nothing, so it is a modifier — and it composes with `.gesture()`
@@ -2512,8 +2818,8 @@ fn window_drag_is_a_modifier_that_composes() {
     assert chrome::drags_window(p);
     // the gesture set survived
     let g: *gestures::Gestures = gestures::gestures_of(p);
-    assert g != (0 as *gestures::Gestures);
-    if g == (0 as *gestures::Gestures) { return; }
+    assert g.is_not_null();
+    if g.is_null() { return; }
     assert { (*g).on_double_click } == on_open;
 
     // and the other order works too
@@ -2521,14 +2827,12 @@ fn window_drag_is_a_modifier_that_composes() {
         .window_drag()
         .gesture(on_click: on_open);
     assert chrome::drags_window(#addr_of(bar2)) == false;  // gesture() replaces the set
-    return;
 }
 
 #[test]
 fn a_node_does_not_drag_the_window_by_default() {
     var n: facet::Node = facet::spacer(key: "s");
     assert chrome::drags_window(#addr_of(n)) == false;
-    return;
 }
 
 // ---- styled text: the builder the ledger's `Spans` never had ----------------
@@ -2545,7 +2849,6 @@ fn spans_carry_styled_runs() {
     assert { (*runs.at(0 as usize)).view() } == "plain ";
     assert { (*runs.at(1 as usize)).is_link() } == false;
     assert { (*runs.at(2 as usize)).is_link() };
-    return;
 }
 
 #[test]
@@ -2562,7 +2865,6 @@ fn a_label_takes_styled_text_and_reads_it_back() {
         }
         option::Option[label::Label]::None => { assert false; }
     }
-    return;
 }
 
 // wrap_label and composer are NOT controls: `label` already carries the wrap
@@ -2580,7 +2882,6 @@ fn wrapping_is_a_label_parameter_not_a_second_control() {
         }
         option::Option[label::Label]::None => { assert false; }
     }
-    return;
 }
 
 // ---- the DOM division: control verbs + shared band + all of flex -----------
@@ -2628,7 +2929,6 @@ fn a_cursor_reaches_its_control_the_band_and_flex() {
         }
         option::Option[button::Button]::None => { assert false; }
     }
-    return;
 }
 
 // `set_width` writes the STYLE; `width()` reads the LAID-OUT frame. They agree
@@ -2655,7 +2955,6 @@ fn style_and_frame_agree_only_after_layout() {
         }
         option::Option[button::Button]::None => { assert false; }
     }
-    return;
 }
 
 // Everything flex has that the live band does not — per-edge padding, grid,
@@ -2672,7 +2971,6 @@ fn the_style_field_is_reachable_through_the_node() {
         }
         option::Option[label::Label]::None => { assert false; }
     }
-    return;
 }
 
 // Every cursor has it, generated and hand-written alike.
@@ -2702,7 +3000,6 @@ fn every_cursor_kind_reaches_its_node() {
         option::Option[chrome::WindowButtons]::Some(x) => { assert x.node() != (0 as *facet::Node); }
         option::Option[chrome::WindowButtons]::None => { assert false; }
     }
-    return;
 }
 
 // ---- node, then a checked cast: the DOM step ---------------------------------
@@ -2733,7 +3030,6 @@ fn a_node_narrows_to_its_own_control_and_no_other() {
         }
         option::Option[*facet::Node]::None => { assert false; }
     }
-    return;
 }
 
 // A container carries facet Data but no control props, so it narrows to
@@ -2747,7 +3043,6 @@ fn a_container_narrows_to_no_control() {
         option::Option[button::Button]::Some(_) => { assert false; }
         option::Option[button::Button]::None => { assert true; }
     }
-    return;
 }
 
 #[test]
@@ -2756,7 +3051,6 @@ fn narrowing_a_null_node_is_none() {
         option::Option[button::Button]::Some(_) => { assert false; }
         option::Option[button::Button]::None => { assert true; }
     }
-    return;
 }
 
 // The hand-written cursors narrow the same way.
@@ -2772,7 +3066,6 @@ fn facet_origin_controls_narrow_too() {
         option::Option[tree::Tree]::Some(_) => { assert false; }
         option::Option[tree::Tree]::None => { assert true; }
     }
-    return;
 }
 
 // ---- remove_child hands ownership back; detach FREES ------------------------
@@ -2800,7 +3093,6 @@ fn remove_child_hands_the_subtree_back_and_invalidates_cursors() {
         }
         option::Option[button::Button]::None => { assert false; }
     }
-    return;
 }
 
 // THE TRAP: `detach()` frees facet's Data immediately and the node survives.
@@ -2830,7 +3122,6 @@ fn detach_guts_a_node_without_telling_its_cursor() {
         }
         option::Option[button::Button]::None => { assert false; }
     }
-    return;
 }
 
 // ---- taking a node out of flow, and putting it back -------------------------
@@ -2897,7 +3188,6 @@ fn a_node_can_be_freed_from_flow_and_restored() {
         option::Option[label::Label]::Some(x) => { assert approx(x.y(), 40.0f64); }
         option::Option[label::Label]::None => { assert false; }
     }
-    return;
 }
 
 // ---- inserting a child at a position ----------------------------------------
@@ -2946,7 +3236,6 @@ fn a_child_can_be_inserted_at_a_position() {
         option::Option[label::Label]::Some(x) => { assert approx(x.y(), 20.0f64); }
         option::Option[label::Label]::None => { assert false; }
     }
-    return;
 }
 
 #[test]
@@ -2964,7 +3253,6 @@ fn inserting_past_the_end_is_out_of_bounds_and_appending_is_not() {
     let bad: status::Status = root.insert_child(label::label("x", key: "x"), at: 9 as usize);
     assert bad.is_err();
     assert root.child_count() == (2 as usize);
-    return;
 }
 
 #[test]
@@ -2983,7 +3271,6 @@ fn children_reorder_without_rebuilding() {
         option::Option[label::Label]::Some(x) => { assert approx(x.y(), 20.0f64); }
         option::Option[label::Label]::None => { assert false; }
     }
-    return;
 }
 
 // ---- Display::None is the outlet router -------------------------------------
@@ -3008,7 +3295,6 @@ fn park_step1_initial_positions() {
         option::Option[label::Label]::Some(x) => { assert approx(x.y(), 30.0f64); }
         option::Option[label::Label]::None => { assert false; }
     }
-    return;
 }
 
 // The claim that makes this the right mechanism: parking invalidates nothing.
@@ -3048,7 +3334,6 @@ fn parking_keeps_cursors_live_and_state_intact() {
         }
         option::Option[text_field::TextField]::None => { assert false; }
     }
-    return;
 }
 
 #[test]
@@ -3067,7 +3352,6 @@ fn park_step2_after_display_none() {
         option::Option[label::Label]::Some(x) => { assert approx(x.y(), 0.0f64); }
         option::Option[label::Label]::None => { assert false; }
     }
-    return;
 }
 
 // ---- a computed key outlives the Text it was built from ---------------------
@@ -3094,7 +3378,6 @@ fn a_computed_key_survives_the_text_it_came_from() {
         }
         option::Option[*facet::Node]::None => { assert false; }
     }
-    return;
 }
 
 // The two kinds of key are different things with different lifetimes, and
@@ -3119,7 +3402,6 @@ fn address_and_identity_are_separate() {
         }
         option::Option[tree::Tree]::None => { assert false; }
     }
-    return;
 }
 
 // ---- why a row identity must be stable, not positional ----------------------
@@ -3168,7 +3450,6 @@ fn a_positional_identity_follows_the_slot_not_the_item() {
         }
         option::Option[tree::Tree]::None => { assert false; }
     }
-    return;
 }
 
 #[test]
@@ -3194,7 +3475,6 @@ fn a_content_identity_survives_the_same_edit() {
         }
         option::Option[tree::Tree]::None => { assert false; }
     }
-    return;
 }
 
 // ---- a node COPIES the key it is given --------------------------------------
@@ -3221,7 +3501,6 @@ fn a_node_copies_the_key_so_the_callers_text_may_die() {
         option::Option[button::Button]::Some(x) => { assert x.title() == "Save"; }
         option::Option[button::Button]::None => { assert false; }
     }
-    return;
 }
 
 // The sharper case: a TEMPORARY, gone at the end of the statement rather than
@@ -3232,7 +3511,6 @@ fn a_temporary_key_is_copied_too() {
     var root: facet::Node = label::label("row",
         key: text::from_str("board:card:${id}:aaaaaaaaaaaaaaaaaaaaaaaa").view());
     assert root.key() == "board:card:7:aaaaaaaaaaaaaaaaaaaaaaaa";
-    return;
 }
 
 // ---- the value types the new rows named -------------------------------------
@@ -3253,7 +3531,6 @@ fn dashes_is_a_copy_value_with_a_bounded_pattern() {
         }
         option::Option[bordered::Bordered]::None => { assert false; }
     }
-    return;
 }
 
 // The ledger derives MenuFlyoutItem, SwipeItem and ToolbarItem from MenuItem, and
@@ -3311,7 +3588,6 @@ fn the_menu_item_band_reaches_every_control_the_ledger_derives_from_it() {
         option::Option[menu_item::MenuItem]::Some(x) => { assert x.text() == "Open"; }
         option::Option[menu_item::MenuItem]::None => { assert false; }
     }
-    return;
 }
 
 #[test]
@@ -3327,7 +3603,6 @@ fn a_menu_item_carries_one_key_equivalent() {
         }
         option::Option[context_menu_item::ContextMenuItem]::None => { assert false; }
     }
-    return;
 }
 
 #[test]
@@ -3340,7 +3615,6 @@ fn a_canvas_carries_its_drawable() {
         }
         option::Option[canvas::Canvas]::None => { assert false; }
     }
-    return;
 }
 
 // ---- the drawing vocabulary --------------------------------------------------
@@ -3354,7 +3628,6 @@ fn draw_two_shapes(into: *vocab::Canvas, dirty: vocab::Rect, ctx: *u8) {
     { (*into).set_stroke_width(2.0f64) };
     { (*into).draw_line(from: vocab::Point::of(0.0f64, 0.0f64),
                         to: vocab::Point::of(10.0f64, 20.0f64)) };
-    return;
 }
 
 #[test]
@@ -3379,7 +3652,6 @@ fn a_drawable_records_its_commands_in_order() {
     // Reading past the end answers a command that does nothing, so a backend
     // walking the list needs no bounds check of its own.
     assert c.at(99 as usize).op == vocab::DrawOp::None;
-    return;
 }
 
 #[test]
@@ -3396,7 +3668,6 @@ fn a_canvas_knows_the_surface_it_was_given() {
     // is unchanged, which is what a redraw wants.
     assert c.is_empty();
     assert c.size().width == 320.0f64;
-    return;
 }
 
 #[test]
@@ -3430,7 +3701,6 @@ fn a_path_records_every_segment_kind() {
     assert p.at(6 as usize).bounds.x == 45.0f64;
     assert p.at(6 as usize).bounds.width == 10.0f64;
     assert p.at(7 as usize).op == vocab::PathOp::Close;
-    return;
 }
 
 #[test]
@@ -3448,9 +3718,8 @@ fn a_recorded_path_is_a_copy_the_caller_keeps_building_on() {
     assert cmd.winding == vocab::Winding::EvenOdd;
     assert cmd.has_aux();
     let recorded: *vocab::Path = c.path(cmd.aux as usize);
-    assert recorded != (0 as *vocab::Path);
+    assert recorded.is_not_null();
     assert { (*recorded).count() } == (1 as usize);
-    return;
 }
 
 #[test]
@@ -3460,7 +3729,6 @@ fn a_null_path_is_refused_rather_than_recorded() {
     assert c.draw_spans(0 as *vocab::Spans, box: vocab::Rect::zero())
            == status::Status::InvalidInput;
     assert c.is_empty();
-    return;
 }
 
 #[test]
@@ -3493,7 +3761,6 @@ fn the_side_tables_carry_what_a_command_cannot() {
     // The image and the font both index the text table, and each gets its own
     // row — a shared table is not a shared slot.
     assert c.text(c.at(3 as usize).aux as usize) == "logo";
-    return;
 }
 
 #[test]
@@ -3508,12 +3775,11 @@ fn recorded_spans_are_copied_run_for_run() {
     let cmd: vocab::DrawCommand = c.at(0 as usize);
     assert cmd.op == vocab::DrawOp::DrawSpans;
     let sp: *vocab::Spans = c.spans(cmd.aux as usize);
-    assert sp != (0 as *vocab::Spans);
+    assert sp.is_not_null();
     assert { (*sp).count() } == (2 as usize);
     let first: *vocab::TextSpan = { (*sp).at(0 as usize) };
     assert { (*first).view() } == "bold ";
     assert { (*first).font_weight } == vocab::FontWeight::Bold;
-    return;
 }
 
 #[test]
@@ -3535,7 +3801,6 @@ fn the_state_stack_and_the_transform_record_their_numbers() {
     assert t.tx == 7.0f64;
     assert t.ty == 9.0f64;
     assert c.at(3 as usize).op == vocab::DrawOp::Restore;
-    return;
 }
 
 #[test]
@@ -3552,7 +3817,6 @@ fn a_canvas_carries_its_drawable_and_asks_to_be_redrawn() {
         }
         option::Option[canvas::Canvas]::None => { assert false; }
     }
-    return;
 }
 
 #[test]
@@ -3574,7 +3838,6 @@ fn zstack_overlaps_its_children() {
         }
         option::Option[button::Button]::None => { assert false; }
     }
-    return;
 }
 
 // ---- the @ui DSL ------------------------------------------------------------
@@ -3599,7 +3862,6 @@ fn dsl_block_builds_a_keyed_tree_and_find_reaches_it() {
         option::Option[label::Label]::Some(hit) => { assert hit.text() == "Hello"; }
         option::Option[label::Label]::None => { assert false; }
     }
-    return;
 }
 
 #[test]
@@ -3613,7 +3875,6 @@ fn dsl_container_args_write_the_container_key() {
         option::Option[*facet::Node]::Some(p) => { assert { (*p).key() } == "body"; }
         option::Option[*facet::Node]::None => { assert false; }
     }
-    return;
 }
 
 #[test]
@@ -3639,7 +3900,6 @@ fn dsl_if_and_for_compose_items() {
         option::Option[button::Button]::Some(_x) => { assert false; }
         option::Option[button::Button]::None => { }
     }
-    return;
 }
 
 #[test]
@@ -3654,7 +3914,6 @@ fn dsl_split_takes_panes_as_children() {
         option::Option[label::Label]::Some(hit) => { assert hit.text() == "R"; }
         option::Option[label::Label]::None => { assert false; }
     }
-    return;
 }
 
 // ---- the global find (stages/3) ---------------------------------------------
@@ -3710,7 +3969,6 @@ fn find_is_dom_order_across_the_apps_windows() {
     mount::unmount(#addr_of(w2));
     mount::unmount(#addr_of(w1));
     mount::uninstall();
-    return;
 }
 
 // ---- the shared bits are pairwise disjoint ----------------------------------
@@ -3755,7 +4013,6 @@ fn shared_bits_are_pairwise_disjoint() {
     assert (props::C_COMMANDS | props::C_ALL_STATE) == 18446744073709551615u64;
     assert props::C_COMMANDS == (props::C_FOCUS | props::C_BLUR | props::C_FLUSH
         | props::C_ANIMATE | props::C_CANCEL_ANIMATIONS);
-    return;
 }
 
 fn count_bits(v: u64) -> u64 {
@@ -3783,7 +4040,6 @@ fn no_shared_bit_reaches_into_the_per_control_space() {
         | props::C_AGENT | props::C_ANIMATE | props::C_CANCEL_ANIMATIONS;
     let per_control_space: u64 = 8388607u64;   // bits 0..22
     assert (shared & per_control_space) == (0 as u64);
-    return;
 }
 
 #[test]
@@ -3831,7 +4087,6 @@ fn the_band_reaches_flexs_constraints_and_absolute_placement() {
         }
         option::Option[*facet::Node]::None => { assert false; }
     }
-    return;
 }
 
 #[test]
@@ -3855,7 +4110,6 @@ fn flow_direction_reaches_the_layout_engine_not_only_the_view() {
         }
         option::Option[*facet::Node]::None => { assert false; }
     }
-    return;
 }
 
 #[test]
@@ -3884,7 +4138,6 @@ fn a_percent_minimum_adapts_where_a_points_one_cannot() {
         option::Option[*facet::Node]::Some(c) => { assert approx(facet::width_of(c), 100.0f64); }
         option::Option[*facet::Node]::None => { assert false; }
     }
-    return;
 }
 
 #[test]
@@ -3909,7 +4162,6 @@ fn a_key_resolves_to_a_node_a_band_verb_can_take_directly() {
     assert mount::node("nobody") == (0 as *facet::Node);
     facet::set_opacity(mount::node("nobody"), 0.25f64);
     mount::unmount(#addr_of(root));
-    return;
 }
 
 #[test]
@@ -3942,5 +4194,29 @@ fn replace_child_swaps_in_place_rather_than_appending() {
         option::Option[*facet::Node]::None => { assert false; }
     }
     mount::unmount(#addr_of(root));
+}
+
+static SETTLED_HITS: i32 = 0;
+fn count_settled() { SETTLED_HITS = SETTLED_HITS + 1; return; }
+
+#[test]
+fn the_frames_settled_seam_calls_its_one_consumer() {
+    // The seam the inspector's outline rides: filled by whoever needs a frame
+    // that is TRUE, called by the backend after its layout pass. One slot, so
+    // a second install replaces rather than appends — which is the whole
+    // contract, and the reason it is worth a test rather than a comment.
+    SETTLED_HITS = 0;
+    // Bound first: a bare name is a call, not an address.
+    let f: fn() = count_settled;
+    facet::set_frames_settled_fn(f);
+    facet::frames_settled();
+    facet::frames_settled();
+    assert SETTLED_HITS == (2 as i32);
+
+    // Unset is inert, because the backend calls this on every tick whether or
+    // not anything wanted it.
+    facet::set_frames_settled_fn(#zero::[fn()]());
+    facet::frames_settled();
+    assert SETTLED_HITS == (2 as i32);
     return;
 }

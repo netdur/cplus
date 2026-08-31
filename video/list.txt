@@ -12,8 +12,10 @@ episode 1 and is a multi-module, tested, C-linked, threaded tool by episode 20.
  1. What C+ is, and your first build
     Values with C's runtime shape, ownership checked at compile time, LLVM
     backend, one-way C ABI. No GC, no runtime, no hidden allocation.
-    `cpc init inv && cd inv`, the four files it writes, `Cplus.toml`,
-    `cpc build`, `./target/debug/inv`. Debug traps vs `--release`.
+    `cpc init inv && cd inv`, the six files it writes (`Cplus.toml`,
+    `src/main.cplus`, `.gitignore`, `.mcp.json`, `SKILL.md`, `AGENTS.md`),
+    then `cpc pm install` to clone stdlib into the store, `cpc build`,
+    `./target/debug/inv`. Debug traps vs `--release`.
     Where deps come from: `vendor/<name>/` first, then `~/.cplus`.
     Demo: an empty project that compiles in under a second.
 
@@ -27,15 +29,17 @@ episode 1 and is a multi-module, tested, C-linked, threaded tool by episode 20.
  3. Bindings and numbers
     The 2x2 with no `mut`: `let`/`var` for locals, `const`/`static` at module
     scope. `let` freezes the whole value — a struct behind `let` rejects
-    field writes (E0328). Numbers never convert silently: every width change
+    field writes (E0305; the method-call sibling is E0328). Numbers never
+    convert silently: every width change
     is spelled `as`. `+` traps on overflow in debug; `+% -% *%` wrap on
     purpose. The trap that costs an hour: integer literals wrap through i32
     before `as`, so big masks get built arithmetically.
     Demo: a price/quantity calculator that refuses to lie about overflow.
 
  4. Control flow, and blocks that are expressions
-    `if`/`else`, `while`, `loop`, `for x in`, labelled `break`. A block is an
-    expression; a `match` is an expression. The one place `return` is
+    `if`/`else`, `while`, `loop`, `for x in`, and bare `break`/`continue` —
+    there are no loop labels, so a nested exit is a flag or a helper fn. A
+    block is an expression; a `match` is an expression. The one place `return` is
     optional: a unit fn ending in `if`/`match`/block. `defer` for the
     end-of-scope job. No ternary, no `?`, no exceptions to reach for.
     Demo: the argv loop that will grow into the command dispatcher.
@@ -175,6 +179,7 @@ episode 1 and is a multi-module, tested, C-linked, threaded tool by episode 20.
         var t: text::Text = text::from_str("widget");
         let r: Row = Row { title: t.view(), qty: 3 };
         let _s: status::Status = t.append("!");   // <-- error
+        io::println(r.title);                     // the use that keeps r LIVE
 
         error[E0381]: cannot call `t.append(...)` while `t` is
         shared-borrowed by `r`
@@ -187,6 +192,7 @@ episode 1 and is a multi-module, tested, C-linked, threaded tool by episode 20.
         struct Row { title: text::Text, qty: i64 }
         let r: Row = Row { title: t.to_text(), qty: 3 };   // fine
         let _s: status::Status = t.append("!");            // fine
+        io::println(r.title.view());
 
     (e) Returning a view of a local — E0513, the other shape
 

@@ -42,7 +42,6 @@ fn not_implemented(what: *u8) {
     let nl: *u8 = #str_ptr("\n  (see crypto_sys_linux.cplus)\n\0");
     let _c: i64 = { write(2 as i32, nl, strlen(nl)) };
     { abort(); }
-    return;
 }
 
 // ---- shared helpers ----------------------------------------------------------
@@ -63,7 +62,6 @@ fn _load_byte(p: *u8, i: usize) -> u8 {
 
 fn _store_byte(p: *u8, i: usize, v: u8) {
     { *(((p as usize) +% i) as *u8) = v };
-    return;
 }
 
 // ---- SHA-256 -----------------------------------------------------------------
@@ -170,7 +168,6 @@ impl _Sha256 {
         this._h[5] = this._h[5] +% vf;
         this._h[6] = this._h[6] +% vg;
         this._h[7] = this._h[7] +% vh;
-        return;
     }
 
     fn update(ref this, p: *u8, n: usize) {
@@ -185,7 +182,6 @@ impl _Sha256 {
             i = i +% (1 as usize);
         }
         this._total = this._total +% (n as u64);
-        return;
     }
 
     // FIPS 180-4 §5.1.1 padding, then the 32-byte digest big-endian into `out`.
@@ -233,7 +229,6 @@ impl _Sha256 {
             _store_byte(out, at +% (3 as usize), v as u8);
             i = i +% (1 as usize);
         }
-        return;
     }
 }
 
@@ -241,7 +236,6 @@ fn sha256_into(p: *u8, n: usize, out: *u8) {
     var ctx: _Sha256 = _sha256_new();
     ctx.update(p, n);
     ctx.finish(out);
-    return;
 }
 
 // ---- SHA-512 -----------------------------------------------------------------
@@ -374,7 +368,6 @@ impl _Sha512 {
         this._h[5] = this._h[5] +% vf;
         this._h[6] = this._h[6] +% vg;
         this._h[7] = this._h[7] +% vh;
-        return;
     }
 
     fn update(ref this, p: *u8, n: usize) {
@@ -389,7 +382,6 @@ impl _Sha512 {
             i = i +% (1 as usize);
         }
         this._total = this._total +% (n as u64);
-        return;
     }
 
     // SHA-512's length field is 128 bits. `_total` is a byte count in a u64, so
@@ -437,7 +429,6 @@ impl _Sha512 {
             }
             i = i +% (1 as usize);
         }
-        return;
     }
 }
 
@@ -445,7 +436,6 @@ fn sha512_into(p: *u8, n: usize, out: *u8) {
     var ctx: _Sha512 = _sha512_new();
     ctx.update(p, n);
     ctx.finish(out);
-    return;
 }
 
 // ---- HMAC --------------------------------------------------------------------
@@ -491,7 +481,6 @@ fn _hmac_sha256(key: *u8, key_len: usize, msg: *u8, msg_len: usize, out: *u8) {
     outer.update(#addr_of(pad) as *u8, 64 as usize);
     outer.update(#addr_of(idig) as *u8, 32 as usize);
     outer.finish(out);
-    return;
 }
 
 fn _hmac_sha512(key: *u8, key_len: usize, msg: *u8, msg_len: usize, out: *u8) {
@@ -529,7 +518,6 @@ fn _hmac_sha512(key: *u8, key_len: usize, msg: *u8, msg_len: usize, out: *u8) {
     outer.update(#addr_of(pad) as *u8, 128 as usize);
     outer.update(#addr_of(idig) as *u8, 64 as usize);
     outer.finish(out);
-    return;
 }
 
 // `alg` is a `CCHmacAlgorithm` value, because that is the vocabulary
@@ -547,7 +535,6 @@ fn hmac_into(alg: u32, key: *u8, key_len: usize, msg: *u8, msg_len: usize, out: 
         return;
     }
     not_implemented(#str_ptr("hmac: only SHA-256 (2) and SHA-512 (4)\0"));
-    return;
 }
 
 // ---- randomness --------------------------------------------------------------

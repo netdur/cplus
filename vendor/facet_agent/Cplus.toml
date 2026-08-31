@@ -67,3 +67,8 @@ jni           = "*"
 
 [windows.dependencies]
 agent_win32 = "*"
+# The toolkit itself, for `inspect_platform_windows`'s overlay — the same
+# reason `[macos.dependencies]` names `appkit` and `[linux.dependencies]` names
+# `gtk4`. The highlight is a layered popup and there is no way to place one
+# without user32.
+win32       = "*"

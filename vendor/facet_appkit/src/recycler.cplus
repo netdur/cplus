@@ -122,26 +122,23 @@ extern fn msg_point_point_id(recv: *u8, sel: *u8, a: rt::Point, b: *u8) -> rt::P
 #[link_name = "objc_msgSend"]
 extern fn msg_id_i64_i64_i8(recv: *u8, sel: *u8, a: i64, b: i64, c: i8) -> *u8;
 
-#[link_name = "class_getSuperclass"]
-extern fn row_class_getSuperclass(cls: *u8) -> *u8;
-
 // The deepest menu under a view, itself first. The row's node may or may not be
 // the one whose view AppKit hands back — `viewAtColumn:row:` answers the cell,
 // and `attach_context_menu` hung the menu on whichever view the menu-bearing
 // NODE got. Searching the subtree is what makes those two facts agree without
 // either side knowing the other's shape.
 fn menu_in_subtree(v: *u8) -> *u8 {
-    if v == (0 as *u8) { return 0 as *u8; }
+    if v.is_null() { return 0 as *u8; }
     let own: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("menu\0"))) };
-    if own != (0 as *u8) { return own; }
+    if own.is_not_null() { return own; }
     let subs: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("subviews\0"))) };
-    if subs == (0 as *u8) { return 0 as *u8; }
+    if subs.is_null() { return 0 as *u8; }
     let count: u64 = { rt::msg_u64(subs, rt::sel(#str_ptr("count\0"))) };
     var i: u64 = 0 as u64;
     while i < count {
         let child: *u8 = { rt::msg_id_u64(subs, rt::sel(#str_ptr("objectAtIndex:\0")), i) };
         let found: *u8 = menu_in_subtree(child);
-        if found != (0 as *u8) { return found; }
+        if found.is_not_null() { return found; }
         i = i +% (1 as u64);
     }
     return 0 as *u8;
@@ -149,8 +146,8 @@ fn menu_in_subtree(v: *u8) -> *u8 {
 
 // The menu belonging to the row an event landed on, or 0 for a click on no row.
 fn menu_for_row_event(table: *u8, event: *u8) -> *u8 {
-    if table == (0 as *u8) { return 0 as *u8; }
-    if event == (0 as *u8) { return 0 as *u8; }
+    if table.is_null() { return 0 as *u8; }
+    if event.is_null() { return 0 as *u8; }
     let in_window: rt::Point = { rt::msg_point(event, rt::sel(#str_ptr("locationInWindow\0"))) };
     // `nil` as the from-view means "window coordinates", which is what an
     // event's location is in.
@@ -168,13 +165,18 @@ fn menu_for_row_event(table: *u8, event: *u8) -> *u8 {
 }
 
 fn imp_row_menu_for_event(self_obj: *u8, cmd: *u8, event: *u8) -> *u8 {
-    let sup: RowSuper = RowSuper {
-        receiver: self_obj,
-        super_class: { row_class_getSuperclass(synth::object_class(self_obj)) },
-    };
-    let inherited: *u8 = { msg_super_id_id(#addr_of(sup), cmd, event) };
+    // Past our OWN implementation, not one hop up: a table that is also armed
+    // for input wears another subclass on top of this one, and one hop would
+    // land back here. See the super-dispatch note in input.cplus.
+    let f_self: fn(*u8, *u8, *u8) -> *u8 = imp_row_menu_for_event;
+    let target: *u8 = synth::super_class_below(self_obj, cmd, { f_self as *u8 });
+    var inherited: *u8 = 0 as *u8;
+    if target.is_not_null() {
+        let sup: RowSuper = RowSuper { receiver: self_obj, super_class: target };
+        inherited = { msg_super_id_id(#addr_of(sup), cmd, event) };
+    }
     let mine: *u8 = menu_for_row_event(self_obj, event);
-    if mine != (0 as *u8) { return mine; }
+    if mine.is_not_null() { return mine; }
     return inherited;
 }
 
@@ -183,9 +185,9 @@ fn imp_row_menu_for_event(self_obj: *u8, cmd: *u8, event: *u8) -> *u8 {
 // which the outline view inherits.
 fn row_menu_class(base: *u8, name: *u8) -> *u8 {
     let existing: *u8 = { rt::get_class(name) };
-    if existing != (0 as *u8) { return existing; }
+    if existing.is_not_null() { return existing; }
     let cls: *u8 = synth::allocate_class_pair(base, name, 0 as usize);
-    if cls == (0 as *u8) { return base; }
+    if cls.is_null() { return base; }
     let ok: i8 = synth::add_method_id_1id(cls, rt::sel(#str_ptr("menuForEvent:\0")),
                                           imp_row_menu_for_event, #str_ptr("@@:@\0"));
     let _ = ok;
@@ -355,7 +357,7 @@ fn table_row_count(s: *RowSource) -> i64 {
 }
 
 fn source_of(tv: *u8) -> *RowSource {
-    if tv == (0 as *u8) { return 0 as *RowSource; }
+    if tv.is_null() { return 0 as *RowSource; }
     return { synth::get_associated(tv, source_key()) as *RowSource };
 }
 
@@ -370,11 +372,10 @@ fn source_of(tv: *u8) -> *RowSource {
 // Headless — where nothing defers — this is a no-op, which is why the suite's
 // simulated widths stay authoritative.
 fn layout_enclosing_scroll(tv: *u8) {
-    if tv == (0 as *u8) { return; }
+    if tv.is_null() { return; }
     var host: *u8 = { rt::msg_id(tv, rt::sel(#str_ptr("enclosingScrollView\0"))) };
-    if host == (0 as *u8) { host = tv; }
+    if host.is_null() { host = tv; }
     { rt::msg_void(host, rt::sel(#str_ptr("layoutSubtreeIfNeeded\0"))) };
-    return;
 }
 
 // The width a CELL gets — the COLUMN's, not the table's frame.
@@ -386,11 +387,11 @@ fn layout_enclosing_scroll(tv: *u8) {
 // message", which is nothing like the mistake that caused it.
 fn column_width(tv: *u8) -> f64 {
     let cols: *u8 = { rt::msg_id(tv, rt::sel(#str_ptr("tableColumns\0"))) };
-    if cols != (0 as *u8) {
+    if cols.is_not_null() {
         let n: u64 = { rt::msg_u64(cols, rt::sel(#str_ptr("count\0"))) };
         if n > (0 as u64) {
             let c0: *u8 = { rt::msg_id_u64(cols, rt::sel(#str_ptr("objectAtIndex:\0")), 0 as u64) };
-            if c0 != (0 as *u8) {
+            if c0.is_not_null() {
                 let w: f64 = { rt::msg_f64(c0, rt::sel(#str_ptr("width\0"))) };
                 if w >= 1.0f64 { return w; }
             }
@@ -405,7 +406,7 @@ fn column_width(tv: *u8) -> f64 {
 
 fn num_rows_imp(self_obj: *u8, cmd: *u8, tv: *u8) -> i64 {
     let s: *RowSource = source_of(tv);
-    if s == (0 as *RowSource) { return 0 as i64; }
+    if s.is_null() { return 0 as i64; }
     return table_row_count(s);
 }
 
@@ -413,7 +414,7 @@ fn num_rows_imp(self_obj: *u8, cmd: *u8, tv: *u8) -> i64 {
 // rather than a decoration: the table already knows how to draw one.
 fn is_group_row_imp(self_obj: *u8, cmd: *u8, tv: *u8, row: i64) -> i8 {
     let s: *RowSource = source_of(tv);
-    if s == (0 as *RowSource) { return 0 as i8; }
+    if s.is_null() { return 0 as i8; }
     return is_header_row(s, row) as i8;
 }
 
@@ -433,7 +434,7 @@ fn build_row(s: *RowSource, i: i64) -> core::Node {
 
 fn height_imp(self_obj: *u8, cmd: *u8, tv: *u8, row: i64) -> f64 {
     let s: *RowSource = source_of(tv);
-    if s == (0 as *RowSource) { return 1.0f64; }
+    if s.is_null() { return 1.0f64; }
     // Uniform rows: answer without building anything. The cheapest a list can
     // be, and the whole reason `row_height` is in the contract.
     let fh: f64 = { (*s).fixed_height };
@@ -510,12 +511,10 @@ fn height_imp(self_obj: *u8, cmd: *u8, tv: *u8, row: i64) -> f64 {
 
 fn append_zero(hp: *vec::Vec[f64]) {
     let _e: status::Status = { (*hp).append(0.0f64) };
-    return;
 }
 
 fn set_height(hp: *vec::Vec[f64], at: usize, v: f64) {
     let _e: status::Status = { (*hp).set(v, at: at) };
-    return;
 }
 
 // ONE REUSE POOL PER ROW SHAPE.
@@ -545,16 +544,16 @@ fn row_identity(s: *RowSource, data: i64) -> text::Text {
 // torn down and rebuilt inside it.
 fn view_for_row_imp(self_obj: *u8, cmd: *u8, tv: *u8, col: *u8, row: i64) -> *u8 {
     let s: *RowSource = source_of(tv);
-    if s == (0 as *RowSource) { return 0 as *u8; }
+    if s.is_null() { return 0 as *u8; }
     let w: f64 = column_width(tv);
 
     let ident: text::Text = row_identity(s, resolve_row(s, row));
     let id: str = ident;
     var cell: *u8 = { msg_id_id_i64(tv, rt::sel(#str_ptr("makeViewWithIdentifier:owner:\0")),
                                     bridge::nsstring(id), 0 as i64) };
-    if cell == (0 as *u8) {
+    if cell.is_null() {
         cell = new_cell(id, w);
-        if cell == (0 as *u8) { return 0 as *u8; }
+        if cell.is_null() { return 0 as *u8; }
     }
     fill_cell(s, cell, row, w);
     return cell;
@@ -563,7 +562,7 @@ fn view_for_row_imp(self_obj: *u8, cmd: *u8, tv: *u8, col: *u8, row: i64) -> *u8
 // A cell of our own, tagged so the table will offer it back.
 fn new_cell(identity: str, w: f64) -> *u8 {
     let cell: *u8 = rt::retain(new_row_cell(rt::Rect { x: 0.0f64, y: 0.0f64, w: w, h: 1.0f64 }));
-    if cell == (0 as *u8) { return 0 as *u8; }
+    if cell.is_null() { return 0 as *u8; }
     { rt::msg_void_id(cell, rt::sel(#str_ptr("setIdentifier:\0")), bridge::nsstring(identity)) };
     return rt::autorelease(cell);
 }
@@ -594,7 +593,7 @@ fn new_cell(identity: str, w: f64) -> *u8 {
 // called: the masks it would apply are the arithmetic being replaced.
 fn row_cell_class() -> *u8 {
     let existing: *u8 = rt::get_class(#str_ptr("FacetRowCell\0"));
-    if existing != (0 as *u8) { return existing; }
+    if existing.is_not_null() { return existing; }
     let cls: *u8 = synth::allocate_class_pair(akx::flipped_view_class(),
                                               #str_ptr("FacetRowCell\0"), 0 as usize);
     add_method_v_1size(cls, rt::sel(#str_ptr("resizeSubviewsWithOldSize:\0")),
@@ -617,7 +616,7 @@ fn row_cell_class() -> *u8 {
 // NSTableRowView inside the table, and both hops are AppKit's, not ours.
 fn enclosing_table_of(v: *u8) -> *u8 {
     var cur: *u8 = v;
-    while cur != (0 as *u8) {
+    while cur.is_not_null() {
         if geometry::is_kind_of(cur, #str_ptr("NSTableView\0")) { return cur; }
         cur = { rt::msg_id(cur, rt::sel(#str_ptr("superview\0"))) };
     }
@@ -631,7 +630,7 @@ fn cell_perform_click_imp(self_obj: *u8, cmd: *u8, sender: *u8) {
     // suite, where nothing displays at all — would answer -1 and do nothing.
     let item: *u8 = { synth::get_associated(self_obj, cell_item_key()) };
     let ov: *u8 = { synth::get_associated(self_obj, cell_owner_key()) };
-    if item != (0 as *u8) && ov != (0 as *u8) {
+    if item.is_not_null() && ov.is_not_null() {
         // EVERY ROW SELECTS, branch and leaf alike, because that is what a
         // click on a row DOES to a person — and this selector is the agent's
         // only door, so the two must not answer differently.
@@ -657,9 +656,8 @@ fn cell_perform_click_imp(self_obj: *u8, cmd: *u8, sender: *u8) {
     // A LIST row has no item; the table it is in is the one that can say which
     // row it is.
     let tv: *u8 = enclosing_table_of(self_obj);
-    if tv == (0 as *u8) { return; }
+    if tv.is_null() { return; }
     select_table_row(tv, { rt::msg_i64_id(tv, rt::sel(#str_ptr("rowForView:\0")), self_obj) });
-    return;
 }
 
 // Select `row`, which is what a click on a table row IS: the selection delegate
@@ -668,10 +666,9 @@ fn select_table_row(tv: *u8, row: i64) {
     if row < (0 as i64) { return; }
     let idx: *u8 = { rt::msg_id_u64(rt::get_class(#str_ptr("NSIndexSet\0")),
                                     rt::sel(#str_ptr("indexSetWithIndex:\0")), row as u64) };
-    if idx == (0 as *u8) { return; }
+    if idx.is_null() { return; }
     { rt::msg_void_id_i8(tv, rt::sel(#str_ptr("selectRowIndexes:byExtendingSelection:\0")),
                          idx, false as i8) };
-    return;
 }
 
 #[link_name = "class_addMethod"]
@@ -680,7 +677,7 @@ extern fn add_method_v_1size(cls: *u8, sel: *u8, imp: fn(*u8, *u8, rt::Size),
 
 fn new_row_cell(frame: rt::Rect) -> *u8 {
     let alloced: *u8 = { rt::msg_id(row_cell_class(), rt::sel(#str_ptr("alloc\0"))) };
-    if alloced == (0 as *u8) { return 0 as *u8; }
+    if alloced.is_null() { return 0 as *u8; }
     return rt::autorelease({ rt::msg_id_rect(alloced, rt::sel(#str_ptr("initWithFrame:\0")), frame) });
 }
 
@@ -691,14 +688,13 @@ static PLACING_ROW: bool = false;
 fn cell_resize_imp(self_obj: *u8, cmd: *u8, old: rt::Size) {
     if PLACING_ROW { return; }
     let np: *core::Node = { synth::get_associated(self_obj, cell_node_key()) as *core::Node };
-    if np == (0 as *core::Node) { return; }
+    if np.is_null() { return; }
     let f: rt::Rect = { rt::msg_rect(self_obj, rt::sel(#str_ptr("frame\0"))) };
     if f.w < 1.0f64 || f.h < 1.0f64 { return; }
     // Width only. A height change moves the row, it does not re-wrap it — and
     // the height the table gives a cell is the height it asked us for.
     if f.w == old.w { return; }
     place_row_content(self_obj, np, f.w, f.h);
-    return;
 }
 
 // Put row `row` into `cell`, whether or not the cell already holds one.
@@ -714,7 +710,7 @@ fn cell_resize_imp(self_obj: *u8, cmd: *u8, old: rt::Size) {
 // always answers nil and the reuse branch would never run under test.
 fn fill_cell(s: *RowSource, cell: *u8, row: i64, w: f64) {
     let existing: *core::Node = { synth::get_associated(cell, cell_node_key()) as *core::Node };
-    if has_bind(s) && existing != (0 as *core::Node) {
+    if has_bind(s) && existing.is_not_null() {
         bind_into(s, row, existing);
         // A bind WRITES PROPS, which marks nodes dirty and touches nothing
         // native. A realised row is outside the window walk, so nothing would
@@ -727,7 +723,7 @@ fn fill_cell(s: *RowSource, cell: *u8, row: i64, w: f64) {
         let _h: f64 = place_row(cell, existing, w, row_h: { (*s).fixed_height });
         return;
     }
-    if existing != (0 as *core::Node) { release_cell_row(cell); }
+    if existing.is_not_null() { release_cell_row(cell); }
 
     var node: core::Node = build_row(s, row);
     match box::new::[core::Node](node) {
@@ -749,7 +745,6 @@ fn fill_cell(s: *RowSource, cell: *u8, row: i64, w: f64) {
         }
         option::Option[box::Box[core::Node]]::None => { }
     }
-    return;
 }
 
 // NO IMPLICIT ANIMATION WHILE A ROW IS PLACED.
@@ -774,13 +769,11 @@ fn without_implicit_animation_begin() {
     let cls: *u8 = rt::get_class(#str_ptr("CATransaction\0"));
     { rt::msg_void_id(cls, rt::sel(#str_ptr("begin\0")), 0 as *u8) };
     { rt::msg_void_i8(cls, rt::sel(#str_ptr("setDisableActions:\0")), 1 as i8) };
-    return;
 }
 
 fn without_implicit_animation_end() {
     let cls: *u8 = rt::get_class(#str_ptr("CATransaction\0"));
     { rt::msg_void_id(cls, rt::sel(#str_ptr("commit\0")), 0 as *u8) };
-    return;
 }
 
 // Lay the row out at the cell's width, push the frames onto the views inside
@@ -853,7 +846,7 @@ fn place_row(cell: *u8, np: *core::Node, w: f64, floor_h: f64 = 1.0f64,
     { msg_void_rect(cell, rt::sel(#str_ptr("setFrame:\0")),
                     rt::Rect { x: 0.0f64, y: 0.0f64, w: w, h: h }) };
     let rv: *u8 = core::view_of(np);
-    if rv != (0 as *u8) {
+    if rv.is_not_null() {
         // Always centre the content view in the cell when the row is taller
         // than the content. Cell is flipped (top-left origin). This is what
         // lines the label up with AppKit's disclosure triangle.
@@ -886,7 +879,7 @@ fn place_row_content(cell: *u8, np: *core::Node, w: f64, h: f64) {
     { (*np).calculate_layout(width: w) };
     geometry::reposition(np, force: true);
     let rv: *u8 = core::view_of(np);
-    if rv != (0 as *u8) {
+    if rv.is_not_null() {
         var content_h: f64 = { (*np).frame().height };
         if content_h < 1.0f64 { content_h = h; }
         var y: f64 = 0.0f64;
@@ -903,7 +896,6 @@ fn place_row_content(cell: *u8, np: *core::Node, w: f64, h: f64) {
     }
     without_implicit_animation_end();
     PLACING_ROW = false;
-    return;
 }
 
 fn has_bind(s: *RowSource) -> bool {
@@ -933,7 +925,6 @@ fn bind_into(s: *RowSource, row: i64, into: *core::Node) {
     let at: i64 = resolve_row(s, row);
     if at < (0 as i64) { return; }
     f(at as usize, into, { (*s).row_ctx });
-    return;
 }
 
 // THE CELL FOLLOWS THE COLUMN'S WIDTH — and nothing else does.
@@ -964,10 +955,9 @@ fn bind_into(s: *RowSource, row: i64, into: *core::Node) {
 // flex pass, and letting AppKit stretch them would fight the frames `reposition`
 // just set.
 fn cell_follows_width(v: *u8) {
-    if v == (0 as *u8) { return; }
+    if v.is_null() { return; }
     { rt::msg_void_u64(v, rt::sel(#str_ptr("setAutoresizingMask:\0")),
                        ak::autoresizing_mask_options_n_s_view_width_sizable) };
-    return;
 }
 
 // The realised root fills the cell. Its own children were placed by the
@@ -980,7 +970,6 @@ fn cell_follows_width(v: *u8) {
 fn geometry_place(v: *u8, w: f64, h: f64) {
     { msg_void_rect(v, rt::sel(#str_ptr("setFrame:\0")),
                     rt::Rect { x: 0.0f64, y: 0.0f64, w: w, h: h }) };
-    return;
 }
 
 // Tear down whatever row this cell is currently showing.
@@ -998,37 +987,35 @@ fn geometry_place(v: *u8, w: f64, h: f64) {
 // over with content nobody recorded. A cell about to receive a row has no
 // business holding anything, and on an empty one this costs one message.
 fn empty_cell(cell: *u8) {
-    if cell == (0 as *u8) { return; }
+    if cell.is_null() { return; }
     let subs: *u8 = { rt::msg_id(cell, rt::sel(#str_ptr("subviews\0"))) };
-    if subs == (0 as *u8) { return; }
+    if subs.is_null() { return; }
     // Count first, then take index 0 each time: `removeFromSuperview` mutates
     // the array being read, so an index walk skips every other view.
     var n: u64 = { rt::msg_u64(subs, rt::sel(#str_ptr("count\0"))) };
     while n > (0 as u64) {
         let live: *u8 = { rt::msg_id(cell, rt::sel(#str_ptr("subviews\0"))) };
-        if live == (0 as *u8) { return; }
+        if live.is_null() { return; }
         if { rt::msg_u64(live, rt::sel(#str_ptr("count\0"))) } == (0 as u64) { return; }
         let sv: *u8 = { rt::msg_id_u64(live, rt::sel(#str_ptr("objectAtIndex:\0")), 0 as u64) };
-        if sv == (0 as *u8) { return; }
+        if sv.is_null() { return; }
         { rt::msg_void(sv, rt::sel(#str_ptr("removeFromSuperview\0"))) };
         n = n -% (1 as u64);
     }
-    return;
 }
 
 fn release_cell_row(cell: *u8) {
     let np: *core::Node = { synth::get_associated(cell, cell_node_key()) as *core::Node };
-    if np == (0 as *core::Node) { return; }
+    if np.is_null() { return; }
     mount::unrealise(np);
     synth::set_associated(cell, cell_node_key(), 0 as *u8);
     // Dropping the box drops the node, which releases every view it owns.
     let _gone: box::Box[core::Node] = box::from_raw::[core::Node](np as *u8);
-    return;
 }
 
 fn recycler_class() -> *u8 {
     let existing: *u8 = rt::get_class(#str_ptr("FacetRowSource\0"));
-    if existing != (0 as *u8) { return existing; }
+    if existing.is_not_null() { return existing; }
     let cls: *u8 = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")),
                                               #str_ptr("FacetRowSource\0"), 0 as usize);
     add_method_i64_1id(cls, rt::sel(#str_ptr("numberOfRowsInTableView:\0")),
@@ -1063,15 +1050,14 @@ extern fn add_method_i8_1id_i64(cls: *u8, sel: *u8, imp: fn(*u8, *u8, *u8, i64) 
 
 fn list_node_of(tv: *u8) -> *core::Node {
     let s: *RowSource = source_of(tv);
-    if s == (0 as *RowSource) { return 0 as *core::Node; }
+    if s.is_null() { return 0 as *core::Node; }
     return { (*s).node };
 }
 
 fn fire_list(n: *core::Node, h: fn(*u8, *u8), ctx: *u8, sender: *u8) {
-    if n == (0 as *core::Node) { return; }
+    if n.is_null() { return; }
     if h == props::no_handler { return; }
     h(sender, ctx);
-    return;
 }
 
 // A selection change is BOTH `on_item_selected` and `on_item_tapped` on this
@@ -1080,23 +1066,22 @@ fn fire_list(n: *core::Node, h: fn(*u8, *u8), ctx: *u8, sender: *u8) {
 // would leave the keyboard path silent.
 fn selection_changed_imp(self_obj: *u8, cmd: *u8, note: *u8) {
     let tv: *u8 = { rt::msg_id(note, rt::sel(#str_ptr("object\0"))) };
-    if tv == (0 as *u8) { return; }
+    if tv.is_null() { return; }
     let n: *core::Node = list_node_of(tv);
-    if n == (0 as *core::Node) { return; }
+    if n.is_null() { return; }
     let p: *props::ListProps = props_of_list(n);
-    if p == (0 as *props::ListProps) { return; }
+    if p.is_null() { return; }
     // The write-back, BEFORE the handlers: a handler asking which row is
     // selected gets the one that caused it. And the answer is the DATA index —
     // a grouped table's fifth row may be its third item.
     let s: *RowSource = source_of(tv);
-    if s != (0 as *RowSource) {
+    if s.is_not_null() {
         let picked: i64 = { rt::msg_i64(tv, rt::sel(#str_ptr("selectedRow\0"))) };
         if picked < (0 as i64) { { (*p).selected_index = -1 as i64 }; }
         else { { (*p).selected_index = resolve_row(s, picked) }; }
     }
     fire_list(n, { (*p).on_item_selected }, { (*p).on_item_selected_ctx }, tv);
     fire_list(n, { (*p).on_item_tapped }, { (*p).on_item_tapped_ctx }, tv);
-    return;
 }
 
 // A FACET ROW DRAWS ITSELF, so the platform must not draw a selection behind
@@ -1115,29 +1100,26 @@ fn selection_changed_imp(self_obj: *u8, cmd: *u8, note: *u8) {
 // same test). `NSTableRowView` carries the same property for its own drawing
 // only, which is exactly the half we want gone.
 fn suppress_row_highlight(rowview: *u8) {
-    if rowview == (0 as *u8) { return; }
+    if rowview.is_null() { return; }
     { rt::msg_void_i64(rowview, rt::sel(#str_ptr("setSelectionHighlightStyle:\0")),
                        0 as i64 - (1 as i64)) };
-    return;
 }
 
 fn row_added_imp(self_obj: *u8, cmd: *u8, tv: *u8, rowview: *u8, row: i64) {
     suppress_row_highlight(rowview);
     let n: *core::Node = list_node_of(tv);
-    if n == (0 as *core::Node) { return; }
+    if n.is_null() { return; }
     let p: *props::ListProps = props_of_list(n);
-    if p == (0 as *props::ListProps) { return; }
+    if p.is_null() { return; }
     fire_list(n, { (*p).on_item_appearing }, { (*p).on_item_appearing_ctx }, rowview);
-    return;
 }
 
 fn row_removed_imp(self_obj: *u8, cmd: *u8, tv: *u8, rowview: *u8, row: i64) {
     let n: *core::Node = list_node_of(tv);
-    if n == (0 as *core::Node) { return; }
+    if n.is_null() { return; }
     let p: *props::ListProps = props_of_list(n);
-    if p == (0 as *props::ListProps) { return; }
+    if p.is_null() { return; }
     fire_list(n, { (*p).on_item_disappearing }, { (*p).on_item_disappearing_ctx }, rowview);
-    return;
 }
 
 // ---- building the control ----------------------------------------------------
@@ -1146,7 +1128,7 @@ fn create_recycling_list(n: *core::Node) -> *u8 {
     let scroll: ak::ScrollView = akx::new_scroll_view(
         rt::Rect { x: 0.0f64, y: 0.0f64, w: 0.0f64, h: 0.0f64 }, false);
     let tv: *u8 = synth::alloc_init_class(facet_table_class());
-    if tv == (0 as *u8) { return rt::retain(scroll.as_view().raw()); }
+    if tv.is_null() { return rt::retain(scroll.as_view().raw()); }
 
     // One column, full width. facet's rows are whole nodes; a column is
     // AppKit's unit and not a concept the contract has.
@@ -1154,7 +1136,7 @@ fn create_recycling_list(n: *core::Node) -> *u8 {
                                 rt::sel(#str_ptr("alloc\0"))) };
     let col2: *u8 = { rt::msg_id_id(col, rt::sel(#str_ptr("initWithIdentifier:\0")),
                                     bridge::nsstring("facet.col")) };
-    if col2 != (0 as *u8) {
+    if col2.is_not_null() {
         { rt::msg_void_id(tv, rt::sel(#str_ptr("addTableColumn:\0")), col2) };
         rt::release(col2);
     }
@@ -1192,7 +1174,7 @@ fn create_recycling_list(n: *core::Node) -> *u8 {
     // One object answers both protocols — they are the same question asked in
     // three ways — pinned to the table so it lives exactly as long.
     let agent: *u8 = synth::alloc_init_class(recycler_class());
-    if agent != (0 as *u8) {
+    if agent.is_not_null() {
         { rt::msg_void_id(tv, rt::sel(#str_ptr("setDataSource:\0")), agent) };
         { rt::msg_void_id(tv, rt::sel(#str_ptr("setDelegate:\0")), agent) };
         synth::retain_associated(tv, agent_pin_key(), agent);
@@ -1206,7 +1188,7 @@ fn create_recycling_list(n: *core::Node) -> *u8 {
 
 // The NSTableView inside a list's scroll view.
 fn table_of(v: *u8) -> *u8 {
-    if v == (0 as *u8) { return 0 as *u8; }
+    if v.is_null() { return 0 as *u8; }
     return { rt::msg_id(v, rt::sel(#str_ptr("documentView\0"))) };
 }
 
@@ -1222,27 +1204,25 @@ fn start_list_refresh(v: *u8, n: *core::Node, p: *props::ListProps) {
                            { (*p).refresh_color }, list_refresh_clicked, n as *u8);
     let h: fn(*u8, *u8) = { (*p).on_refreshing };
     if h != props::no_handler { h(v, { (*p).on_refreshing_ctx }); }
-    return;
 }
 
 fn list_refresh_clicked(sender: *u8, ctx: *u8) {
     let n: *core::Node = ctx as *core::Node;
     let p: *props::ListProps = props_of_list(n);
-    if p == (0 as *props::ListProps) { return; }
+    if p.is_null() { return; }
     let v: *u8 = core::view_of(n);
-    if v == (0 as *u8) { return; }
+    if v.is_null() { return; }
     start_list_refresh(v, n, p);
-    return;
 }
 
 fn apply_recycling_list(v: *u8, n: *core::Node, dirty: u64) {
     let tv: *u8 = table_of(v);
-    if tv == (0 as *u8) { return; }
+    if tv.is_null() { return; }
     let p: *props::ListProps = props_of_list(n);
-    if p == (0 as *props::ListProps) { return; }
+    if p.is_null() { return; }
 
     var s: *RowSource = source_of(tv);
-    if s == (0 as *RowSource) {
+    if s.is_null() {
         match box::new::[RowSource](RowSource {
             row: { (*p).row },
             bind: { (*p).bind },
@@ -1415,7 +1395,6 @@ fn apply_recycling_list(v: *u8, n: *core::Node, dirty: u64) {
             { rt::msg_void_i64(tv, rt::sel(#str_ptr("scrollRowToVisible:\0")), want) };
         }
     }
-    return;
 }
 
 // THE SEQUENCE GREW OR SHRANK, and the rows either side of the splice are the
@@ -1454,7 +1433,7 @@ fn apply_splice(tv: *u8, s: *RowSource, p: *props::ListProps) {
                                        rt::sel(#str_ptr("indexSetWithIndexesInRange:\0")),
                                        rt::Range { location: at as u64,
                                                    length: delta as u64 }) };
-        if span == (0 as *u8) { return; }
+        if span.is_null() { return; }
         // A new row has no measurement yet, and 0 is exactly how a row that
         // was never measured reads — so the rows below keep theirs.
         var k: i64 = 0 as i64;
@@ -1473,7 +1452,7 @@ fn apply_splice(tv: *u8, s: *RowSource, p: *props::ListProps) {
                                    rt::sel(#str_ptr("indexSetWithIndexesInRange:\0")),
                                    rt::Range { location: at as u64,
                                                length: gone as u64 }) };
-    if span == (0 as *u8) { return; }
+    if span.is_null() { return; }
     var k: i64 = 0 as i64;
     while k < gone {
         if (at as usize) < { (*hp).count() } {
@@ -1483,7 +1462,6 @@ fn apply_splice(tv: *u8, s: *RowSource, p: *props::ListProps) {
     }
     { msg_void_id_u64(tv, rt::sel(#str_ptr("removeRowsAtIndexes:withAnimation:\0")),
                       span, none) };
-    return;
 }
 
 #[link_name = "objc_msgSend"]
@@ -1525,16 +1503,15 @@ fn apply_invalidation(tv: *u8, s: *RowSource, p: *props::ListProps) {
                                    rt::sel(#str_ptr("indexSetWithIndexesInRange:\0")),
                                    rt::Range { location: lo as u64,
                                                length: (hi -% lo +% (1 as i64)) as u64 }) };
-    if span == (0 as *u8) { return; }
+    if span.is_null() { return; }
     // Heights first, so the cells the reload re-fills are placed into frames
     // the new content actually fits.
     { rt::msg_void_id(tv, rt::sel(#str_ptr("noteHeightOfRowsWithIndexesChanged:\0")), span) };
     let col0: *u8 = { rt::msg_id_u64(rt::get_class(#str_ptr("NSIndexSet\0")),
                                      rt::sel(#str_ptr("indexSetWithIndex:\0")), 0 as u64) };
-    if col0 == (0 as *u8) { return; }
+    if col0.is_null() { return; }
     { rt::msg_void_id_id(tv, rt::sel(#str_ptr("reloadDataForRowIndexes:columnIndexes:\0")),
                          span, col0) };
-    return;
 }
 
 fn select_data_row(tv: *u8, s: *RowSource, data: i64) {
@@ -1545,10 +1522,9 @@ fn select_data_row(tv: *u8, s: *RowSource, data: i64) {
     }
     let set: *u8 = { rt::msg_id_u64(rt::get_class(#str_ptr("NSIndexSet\0")),
                                     rt::sel(#str_ptr("indexSetWithIndex:\0")), row as u64) };
-    if set == (0 as *u8) { return; }
+    if set.is_null() { return; }
     { msg_void_id_i8(tv, rt::sel(#str_ptr("selectRowIndexes:byExtendingSelection:\0")),
                          set, 0 as i8) };
-    return;
 }
 
 #[link_name = "objc_msgSend"]
@@ -1579,7 +1555,6 @@ fn apply_selection_mode(tv: *u8, m: vocab::SelectionMode) {
     if selectable { hl = 1 as i64; }
     { rt::msg_void_i64(tv, rt::sel(#str_ptr("setSelectionHighlightStyle:\0")), hl) };
     if selectable == false { { rt::msg_void(tv, rt::sel(#str_ptr("deselectAll:\0"))) }; }
-    return;
 }
 
 fn apply_separator(tv: *u8, sep: vocab::Separator, c: vocab::Color) {
@@ -1592,7 +1567,6 @@ fn apply_separator(tv: *u8, sep: vocab::Separator, c: vocab::Color) {
     if c.is_set() {
         { rt::msg_void_id(tv, rt::sel(#str_ptr("setGridColor:\0")), paint::ns_color(c).raw()) };
     }
-    return;
 }
 
 // ---- drag debug (FACET_DEBUG_DRAG=1) -----------------------------------------
@@ -1615,18 +1589,17 @@ fn debug_track(tv: *u8) {
     let _s: status::Status = { (*reg).append(tv) };
     { printf(#str_ptr("[dragdbg] tracking list table %p (%llu tracked)\n\0"),
              tv, { (*reg).count() } as u64) };
-    return;
 }
 
 fn dbg_w(v: *u8) -> f64 {
-    if v == (0 as *u8) { return 0.0f64 - 1.0f64; }
+    if v.is_null() { return 0.0f64 - 1.0f64; }
     return { rt::msg_rect(v, rt::sel(#str_ptr("frame\0"))) }.w;
 }
 
 fn dbg_first_subview(v: *u8) -> *u8 {
-    if v == (0 as *u8) { return 0 as *u8; }
+    if v.is_null() { return 0 as *u8; }
     let subs: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("subviews\0"))) };
-    if subs == (0 as *u8) { return 0 as *u8; }
+    if subs.is_null() { return 0 as *u8; }
     if { rt::msg_u64(subs, rt::sel(#str_ptr("count\0"))) } == (0 as u64) { return 0 as *u8; }
     return { rt::msg_id_u64(subs, rt::sel(#str_ptr("objectAtIndex:\0")), 0 as u64) };
 }
@@ -1640,7 +1613,7 @@ fn debug_dump(tag: str) {
                 let scr: *u8 = { rt::msg_id(tv, rt::sel(#str_ptr("enclosingScrollView\0"))) };
                 var pane: *u8 = 0 as *u8;
                 var clip: *u8 = 0 as *u8;
-                if scr != (0 as *u8) {
+                if scr.is_not_null() {
                     pane = { rt::msg_id(scr, rt::sel(#str_ptr("superview\0"))) };
                     clip = { rt::msg_id(scr, rt::sel(#str_ptr("contentView\0"))) };
                 }
@@ -1658,7 +1631,6 @@ fn debug_dump(tag: str) {
         }
         i = i +% (1 as usize);
     }
-    return;
 }
 
 // ---- the resize pass ---------------------------------------------------------
@@ -1668,9 +1640,9 @@ fn debug_dump(tag: str) {
 // there is nowhere else it could be.
 fn is_near_bottom(tv: *u8) -> bool {
     let esv: *u8 = { rt::msg_id(tv, rt::sel(#str_ptr("enclosingScrollView\0"))) };
-    if esv == (0 as *u8) { return true; }
+    if esv.is_null() { return true; }
     let clip: *u8 = { rt::msg_id(esv, rt::sel(#str_ptr("contentView\0"))) };
-    if clip == (0 as *u8) { return true; }
+    if clip.is_null() { return true; }
     let b: rt::Rect = { rt::msg_rect(clip, rt::sel(#str_ptr("bounds\0"))) };
     let doc_h: f64 = { rt::msg_rect(tv, rt::sel(#str_ptr("frame\0"))) }.h;
     return (b.y + b.h) >= (doc_h - 60.0f64);
@@ -1680,14 +1652,13 @@ fn scroll_to_bottom(tv: *u8) {
     let rows: i64 = { rt::msg_i64(tv, rt::sel(#str_ptr("numberOfRows\0"))) };
     if rows <= (0 as i64) { return; }
     { rt::msg_void_i64(tv, rt::sel(#str_ptr("scrollRowToVisible:\0")), rows - (1 as i64)) };
-    return;
 }
 
 // The table's frame changed. A width change is the only one that matters — a
 // height change moves the viewport, not the rows.
 fn on_table_resized(ctx: *u8) {
     let s: *RowSource = { ctx as *RowSource };
-    if s == (0 as *RowSource) { return; }
+    if s.is_null() { return; }
     if { (*s).table } == (0 as *u8) { return; }
     if scheduler::debug_on() {
         scheduler::debug_mark_active();
@@ -1709,7 +1680,6 @@ fn on_table_resized(ctx: *u8) {
     // after AppKit has finished laying itself out, so the column width read
     // there is the one the table actually has.
     scheduler::defer_reload(reload_job, ctx);
-    return;
 }
 
 // LIVE, ON THE TICK. This used to coalesce onto a 0.1s `performSelector:` —
@@ -1729,9 +1699,9 @@ fn on_table_resized(ctx: *u8) {
 // (`set_row_height_of`), which answers without building anything.
 fn reload_job(ctx: *u8) {
     let s: *RowSource = { ctx as *RowSource };
-    if s == (0 as *RowSource) { return; }
+    if s.is_null() { return; }
     let tv: *u8 = { (*s).table };
-    if tv == (0 as *u8) { return; }
+    if tv.is_null() { return; }
     // FINISH APPKIT'S LAYOUT BEFORE MEASURING. The column is what rows are
     // measured against, and a layer-backed table tiles its columns in ITS
     // layout pass — deferred to the Core Animation commit, which runs after
@@ -1763,14 +1733,13 @@ fn reload_job(ctx: *u8) {
     { (*s).heights_width = 0.0f64 };
     { rt::msg_void(tv, rt::sel(#str_ptr("reloadData\0"))) };
     if { (*s).follow_tail } { scroll_to_bottom(tv); }
-    return;
 }
 
 
 
 fn props_of_list(n: *core::Node) -> *props::ListProps {
     let d: *core::Data = core::node_data(n);
-    if d == (0 as *core::Data) { return 0 as *props::ListProps; }
+    if d.is_null() { return 0 as *props::ListProps; }
     if { (*d).kind } != props::K_LIST { return 0 as *props::ListProps; }
     return { (*d).props } as *props::ListProps;
 }
@@ -1782,46 +1751,43 @@ fn props_of_list(n: *core::Node) -> *props::ListProps {
 // re-tiled its columns.
 fn notify_resized(v: *u8) {
     let tv: *u8 = table_of(v);
-    if tv == (0 as *u8) { return; }
+    if tv.is_null() { return; }
     let s: *RowSource = source_of(tv);
-    if s == (0 as *RowSource) { return; }
+    if s.is_null() { return; }
     on_table_resized(s as *u8);
-    return;
 }
 
 // Set the column width WITHOUT notifying — the other half of that ordering.
 fn set_column_width(v: *u8, w: f64) {
     let tv: *u8 = table_of(v);
-    if tv == (0 as *u8) { return; }
+    if tv.is_null() { return; }
     let cols: *u8 = { rt::msg_id(tv, rt::sel(#str_ptr("tableColumns\0"))) };
-    if cols == (0 as *u8) { return; }
+    if cols.is_null() { return; }
     let n: u64 = { rt::msg_u64(cols, rt::sel(#str_ptr("count\0"))) };
     if n == (0 as u64) { return; }
     let c0: *u8 = { rt::msg_id_u64(cols, rt::sel(#str_ptr("objectAtIndex:\0")), 0 as u64) };
-    if c0 != (0 as *u8) { { rt::msg_void_f64(c0, rt::sel(#str_ptr("setWidth:\0")), w) }; }
-    return;
+    if c0.is_not_null() { { rt::msg_void_f64(c0, rt::sel(#str_ptr("setWidth:\0")), w) }; }
 }
 
 fn heights_width_of(v: *u8) -> f64 {
     let s: *RowSource = source_of(table_of(v));
-    if s == (0 as *RowSource) { return 0.0f64; }
+    if s.is_null() { return 0.0f64; }
     return { (*s).heights_width };
 }
 
 // Drive the delegate's row-added hook, the way AppKit does.
 fn row_added(v: *u8, rowview: *u8, row: i64) {
     let tv: *u8 = table_of(v);
-    if tv == (0 as *u8) { return; }
+    if tv.is_null() { return; }
     row_added_imp(0 as *u8, 0 as *u8, tv, rowview, row);
-    return;
 }
 
 // Drive the tree's frame-change path, the way the observer does.
 fn tree_height_of_row(v: *u8, row: i64) -> f64 {
     let ov: *u8 = table_of(v);
-    if ov == (0 as *u8) { return 0.0f64; }
+    if ov.is_null() { return 0.0f64; }
     let item: *u8 = { rt::msg_id_i64(ov, rt::sel(#str_ptr("itemAtRow:\0")), row) };
-    if item == (0 as *u8) { return 0.0f64; }
+    if item.is_null() { return 0.0f64; }
     return tree_height_imp(0 as *u8, 0 as *u8, ov, item);
 }
 
@@ -1831,45 +1797,43 @@ fn tree_height_of_row(v: *u8, row: i64) -> f64 {
 // display cycle), so the real sequence has to be posed directly.
 fn tree_clear_selection_as_a_reload_would(v: *u8, syncing: bool) {
     let ov: *u8 = table_of(v);
-    if ov == (0 as *u8) { return; }
+    if ov.is_null() { return; }
     let s: *TreeSource = tree_source_of(ov);
-    if s == (0 as *TreeSource) { return; }
+    if s.is_null() { return; }
     { (*s).syncing = syncing };
     { rt::msg_void(ov, rt::sel(#str_ptr("deselectAll:\0"))) };
     tree_selection_changed_from(ov);
     { (*s).syncing = false };
-    return;
 }
 
 fn tree_selection_changed_from(ov: *u8) {
     let s: *TreeSource = tree_source_of(ov);
-    if s == (0 as *TreeSource) { return; }
+    if s.is_null() { return; }
     if { (*s).syncing } { return; }
     let p: *tree::TreeProps = tree_props_of({ (*s).node });
-    if p == (0 as *tree::TreeProps) { return; }
+    if p.is_null() { return; }
     let row: i64 = { rt::msg_i64(ov, rt::sel(#str_ptr("selectedRow\0"))) };
     if row < (0 as i64) { { (*p).selected = text::new() }; return; }
     let item: *u8 = { rt::msg_id_i64(ov, rt::sel(#str_ptr("itemAtRow:\0")), row) };
     let tn: *tree::TreeNode = unbox_item(item);
-    if tn != (0 as *tree::TreeNode) {
+    if tn.is_not_null() {
         { (*p).selected = text::from_str({ (*tn).id.view() }) };
     }
-    return;
 }
 
 fn tree_notify_expanded(v: *u8, row: i64) {
     let ov: *u8 = table_of(v);
-    if ov == (0 as *u8) { return; }
+    if ov.is_null() { return; }
     let s: *TreeSource = tree_source_of(ov);
-    if s == (0 as *TreeSource) { return; }
+    if s.is_null() { return; }
     let item: *u8 = { rt::msg_id_i64(ov, rt::sel(#str_ptr("itemAtRow:\0")), row) };
-    if item == (0 as *u8) { return; }
+    if item.is_null() { return; }
     // AppKit has already expanded it before it tells anyone.
     { (*s).syncing = true };
     { rt::msg_void_id(ov, rt::sel(#str_ptr("expandItem:\0")), item) };
     { (*s).syncing = false };
     let tn: *tree::TreeNode = unbox_item(item);
-    if tn == (0 as *tree::TreeNode) { return; }
+    if tn.is_null() { return; }
     { (*s).expanded_by_user = true };
     match tree::from({ (*s).node }) {
         option::Option[tree::Tree]::Some(t) => {
@@ -1877,64 +1841,61 @@ fn tree_notify_expanded(v: *u8, row: i64) {
         }
         option::Option[tree::Tree]::None => { }
     }
-    return;
 }
 
 // The same notification, posed as AppKit posts it from inside a delegate call.
 fn tree_notify_resized_in_delegate(v: *u8) {
     let ov: *u8 = table_of(v);
-    if ov == (0 as *u8) { return; }
+    if ov.is_null() { return; }
     let s: *TreeSource = tree_source_of(ov);
-    if s == (0 as *TreeSource) { return; }
+    if s.is_null() { return; }
     { (*s).in_delegate = true };
     on_tree_resized(s as *u8);
     { (*s).in_delegate = false };
-    return;
 }
 
 fn tree_notify_resized(v: *u8) {
     let ov: *u8 = table_of(v);
-    if ov == (0 as *u8) { return; }
+    if ov.is_null() { return; }
     let s: *TreeSource = tree_source_of(ov);
-    if s == (0 as *TreeSource) { return; }
+    if s.is_null() { return; }
     on_tree_resized(s as *u8);
-    return;
 }
 
 fn tree_last_width_of(v: *u8) -> f64 {
     let s: *TreeSource = tree_source_of(table_of(v));
-    if s == (0 as *TreeSource) { return 0.0f64; }
+    if s.is_null() { return 0.0f64; }
     return { (*s).last_width };
 }
 
 fn column_width_of(v: *u8) -> f64 {
     let tv: *u8 = table_of(v);
-    if tv == (0 as *u8) { return 0.0f64; }
+    if tv.is_null() { return 0.0f64; }
     return column_width(tv);
 }
 
 fn row_count_of(v: *u8) -> i64 {
     let s: *RowSource = source_of(table_of(v));
-    if s == (0 as *RowSource) { return 0 as i64; }
+    if s.is_null() { return 0 as i64; }
     return { (*s).count };
 }
 
 fn fixed_height_of(v: *u8) -> f64 {
     let s: *RowSource = source_of(table_of(v));
-    if s == (0 as *RowSource) { return 0.0f64; }
+    if s.is_null() { return 0.0f64; }
     return { (*s).fixed_height };
 }
 
 // Ask the delegate directly, the way NSTableView does.
 fn height_of_row(v: *u8, row: i64) -> f64 {
     let tv: *u8 = table_of(v);
-    if tv == (0 as *u8) { return 0.0f64; }
+    if tv.is_null() { return 0.0f64; }
     return height_imp(0 as *u8, 0 as *u8, tv, row);
 }
 
 fn view_for_row(v: *u8, row: i64) -> *u8 {
     let tv: *u8 = table_of(v);
-    if tv == (0 as *u8) { return 0 as *u8; }
+    if tv.is_null() { return 0 as *u8; }
     return view_for_row_imp(0 as *u8, 0 as *u8, tv, 0 as *u8, row);
 }
 
@@ -1944,9 +1905,9 @@ fn view_for_row(v: *u8, row: i64) -> *u8 {
 // invisible from the outside.
 fn identity_of_row(v: *u8, row: i64) -> text::Text {
     let tv: *u8 = table_of(v);
-    if tv == (0 as *u8) { return text::new(); }
+    if tv.is_null() { return text::new(); }
     let s: *RowSource = source_of(tv);
-    if s == (0 as *RowSource) { return text::new(); }
+    if s.is_null() { return text::new(); }
     return row_identity(s, resolve_row(s, row));
 }
 
@@ -1955,16 +1916,15 @@ fn identity_of_row(v: *u8, row: i64) -> text::Text {
 // recycled cell always answers nil and the branch that matters never runs.
 fn fill_into(v: *u8, cell: *u8, row: i64) {
     let tv: *u8 = table_of(v);
-    if tv == (0 as *u8) { return; }
+    if tv.is_null() { return; }
     let s: *RowSource = source_of(tv);
-    if s == (0 as *RowSource) { return; }
+    if s.is_null() { return; }
     fill_cell(s, cell, row, column_width(tv));
-    return;
 }
 
 fn make_cell(v: *u8) -> *u8 {
     let tv: *u8 = table_of(v);
-    if tv == (0 as *u8) { return 0 as *u8; }
+    if tv.is_null() { return 0 as *u8; }
     return new_cell("facet.row", column_width(tv));
 }
 
@@ -2029,20 +1989,20 @@ struct TreeSource {
 }
 
 fn tree_source_of(ov: *u8) -> *TreeSource {
-    if ov == (0 as *u8) { return 0 as *TreeSource; }
+    if ov.is_null() { return 0 as *TreeSource; }
     return { synth::get_associated(ov, tree_source_key()) as *TreeSource };
 }
 
 fn tree_props_of(n: *core::Node) -> *tree::TreeProps {
     let d: *core::Data = core::node_data(n);
-    if d == (0 as *core::Data) { return 0 as *tree::TreeProps; }
+    if d.is_null() { return 0 as *tree::TreeProps; }
     if { (*d).kind } != tree::K_TREE { return 0 as *tree::TreeProps; }
     return { (*d).props } as *tree::TreeProps;
 }
 
 fn props_for(ov: *u8) -> *tree::TreeProps {
     let s: *TreeSource = tree_source_of(ov);
-    if s == (0 as *TreeSource) { return 0 as *tree::TreeProps; }
+    if s.is_null() { return 0 as *tree::TreeProps; }
     return tree_props_of({ (*s).node });
 }
 
@@ -2077,11 +2037,11 @@ fn props_for(ov: *u8) -> *tree::TreeProps {
 fn item_map_key() -> *u8 { return { 29036 as *u8 }; }
 
 fn item_map(ov: *u8) -> *u8 {
-    if ov == (0 as *u8) { return 0 as *u8; }
+    if ov.is_null() { return 0 as *u8; }
     let existing: *u8 = { synth::get_associated(ov, item_map_key()) };
-    if existing != (0 as *u8) { return existing; }
+    if existing.is_not_null() { return existing; }
     let map: *u8 = { rt::alloc_init(#str_ptr("NSMutableDictionary\0")) };
-    if map == (0 as *u8) { return 0 as *u8; }
+    if map.is_null() { return 0 as *u8; }
     synth::retain_associated(ov, item_map_key(), map);
     { rt::release(map) };
     return { synth::get_associated(ov, item_map_key()) };
@@ -2089,26 +2049,25 @@ fn item_map(ov: *u8) -> *u8 {
 
 fn forget_items(ov: *u8) {
     let map: *u8 = { synth::get_associated(ov, item_map_key()) };
-    if map == (0 as *u8) { return; }
+    if map.is_null() { return; }
     { rt::msg_void(map, rt::sel(#str_ptr("removeAllObjects\0"))) };
-    return;
 }
 
 fn box_item(ov: *u8, node: *tree::TreeNode) -> *u8 {
-    if node == (0 as *tree::TreeNode) { return 0 as *u8; }
+    if node.is_null() { return 0 as *u8; }
     let map: *u8 = item_map(ov);
     // No map is no worse than this function has ever been: a fresh box still
     // names the right node, it is only AppKit's memory of it that suffers.
     let key: *u8 = { msg_id_ptr(rt::get_class(#str_ptr("NSValue\0")),
                                     rt::sel(#str_ptr("valueWithPointer:\0")), node as *u8) };
-    if map != (0 as *u8) && key != (0 as *u8) {
+    if map.is_not_null() && key.is_not_null() {
         let hit: *u8 = { rt::msg_id_id(map, rt::sel(#str_ptr("objectForKey:\0")), key) };
-        if hit != (0 as *u8) { return hit; }
+        if hit.is_not_null() { return hit; }
     }
     let obj: *u8 = { rt::alloc_init(#str_ptr("NSObject\0")) };
-    if obj == (0 as *u8) { return 0 as *u8; }
+    if obj.is_null() { return 0 as *u8; }
     synth::set_associated(obj, item_node_key(), node as *u8);
-    if map != (0 as *u8) && key != (0 as *u8) {
+    if map.is_not_null() && key.is_not_null() {
         // The map owns it, which is what makes the box outlive the call that
         // made it — an autoreleased one could not be handed back later.
         { rt::msg_void_id_id(map, rt::sel(#str_ptr("setObject:forKey:\0")), obj, key) };
@@ -2122,28 +2081,28 @@ fn box_item(ov: *u8, node: *tree::TreeNode) -> *u8 {
 extern fn msg_id_ptr(recv: *u8, sel: *u8, p: *u8) -> *u8;
 
 fn unbox_item(item: *u8) -> *tree::TreeNode {
-    if item == (0 as *u8) { return 0 as *tree::TreeNode; }
+    if item.is_null() { return 0 as *tree::TreeNode; }
     return { synth::get_associated(item, item_node_key()) as *tree::TreeNode };
 }
 
 // nil is the ROOT — AppKit's own convention, and it matches facet's: the root
 // is the container, not a row.
 fn item_or_root(ov: *u8, item: *u8) -> *tree::TreeNode {
-    if item != (0 as *u8) { return unbox_item(item); }
+    if item.is_not_null() { return unbox_item(item); }
     let p: *tree::TreeProps = props_for(ov);
-    if p == (0 as *tree::TreeProps) { return 0 as *tree::TreeNode; }
+    if p.is_null() { return 0 as *tree::TreeNode; }
     return { #addr_of((*p).root) };
 }
 
 fn tree_child_count_imp(self_obj: *u8, cmd: *u8, ov: *u8, item: *u8) -> i64 {
     let n: *tree::TreeNode = item_or_root(ov, item);
-    if n == (0 as *tree::TreeNode) { return 0 as i64; }
+    if n.is_null() { return 0 as i64; }
     return { (*n).child_count() } as i64;
 }
 
 fn tree_child_imp(self_obj: *u8, cmd: *u8, ov: *u8, index: i64, item: *u8) -> *u8 {
     let n: *tree::TreeNode = item_or_root(ov, item);
-    if n == (0 as *tree::TreeNode) { return 0 as *u8; }
+    if n.is_null() { return 0 as *u8; }
     return match { (*n).child_ptr(index as usize) } {
         option::Option[*tree::TreeNode]::Some(c) => box_item(ov, c),
         option::Option[*tree::TreeNode]::None => 0 as *u8,
@@ -2170,7 +2129,7 @@ fn tree_child_imp(self_obj: *u8, cmd: *u8, ov: *u8, index: i64, item: *u8) -> *u
 // the flag did — answers exactly as it did.
 fn tree_expandable_imp(self_obj: *u8, cmd: *u8, ov: *u8, item: *u8) -> i8 {
     let n: *tree::TreeNode = unbox_item(item);
-    if n == (0 as *tree::TreeNode) { return 0 as i8; }
+    if n.is_null() { return 0 as i8; }
     if { (*n).is_branch } { return 1 as i8; }
     if { (*n).child_count() } > (0 as usize) { return 1 as i8; }
     return 0 as i8;
@@ -2185,19 +2144,19 @@ fn outline_default_row_height(ov: *u8) -> f64 {
 
 fn tree_height_imp(self_obj: *u8, cmd: *u8, ov: *u8, item: *u8) -> f64 {
     let ds: *TreeSource = tree_source_of(ov);
-    if ds != (0 as *TreeSource) { { (*ds).in_delegate = true }; }
+    if ds.is_not_null() { { (*ds).in_delegate = true }; }
     let h: f64 = tree_height_body(ov, item);
-    if ds != (0 as *TreeSource) { { (*ds).in_delegate = false }; }
+    if ds.is_not_null() { { (*ds).in_delegate = false }; }
     return h;
 }
 
 fn tree_height_body(ov: *u8, item: *u8) -> f64 {
     let p: *tree::TreeProps = props_for(ov);
-    if p == (0 as *tree::TreeProps) { return outline_default_row_height(ov); }
+    if p.is_null() { return outline_default_row_height(ov); }
     let fh: f64 = { (*p).row_height };
     if fh >= 1.0f64 { return fh; }
     let n: *tree::TreeNode = unbox_item(item);
-    if n == (0 as *tree::TreeNode) { return outline_default_row_height(ov); }
+    if n.is_null() { return outline_default_row_height(ov); }
     var row: core::Node = tree_row_node(n, p);
     tree_bind_into(p, n, #addr_of(row));
     row.calculate_layout(width: column_width(ov));
@@ -2242,11 +2201,11 @@ fn tree_debug_on() -> bool {
 // the outline view and onto the window (which is what a C_BLUR does) or onto a
 // freshly vended control.
 fn tree_responder(ov: *u8) -> str {
-    if ov == (0 as *u8) { return "<no view>"; }
+    if ov.is_null() { return "<no view>"; }
     let win: *u8 = { rt::msg_id(ov, rt::sel(#str_ptr("window\0"))) };
-    if win == (0 as *u8) { return "<no window>"; }
+    if win.is_null() { return "<no window>"; }
     let fr: *u8 = { rt::msg_id(win, rt::sel(#str_ptr("firstResponder\0"))) };
-    if fr == (0 as *u8) { return "<none>"; }
+    if fr.is_null() { return "<none>"; }
     if fr == win { return "WINDOW"; }
     if fr == ov { return "outlineview"; }
     // Not naming the class: `class_name` answers a C string and the point here
@@ -2259,12 +2218,12 @@ fn tree_responder(ov: *u8) -> str {
 // screen and measures correctly in the suite, so the answer has to come from
 // the running app.
 fn tree_dump_cell(cell: *u8) {
-    if cell == (0 as *u8) { return; }
+    if cell.is_null() { return; }
     let cf: rt::Rect = { rt::msg_rect(cell, rt::sel(#str_ptr("frame\0"))) };
     let cx: i64 = cf.x as i64; let cw: i64 = cf.w as i64; let ch: i64 = cf.h as i64;
     io::eprintln("tree cell: x=${cx} w=${cw} h=${ch}");
     let arr: *u8 = { rt::msg_id(cell, rt::sel(#str_ptr("subviews\0"))) };
-    if arr == (0 as *u8) { return; }
+    if arr.is_null() { return; }
     let n: u64 = { rt::msg_u64(arr, rt::sel(#str_ptr("count\0"))) };
     var i: u64 = 0 as u64;
     while i < n {
@@ -2276,7 +2235,6 @@ fn tree_dump_cell(cell: *u8) {
         io::eprintln("tree   sub ${idx}: x=${x} y=${y} w=${w2} h=${h2}");
         i = i +% (1 as u64);
     }
-    return;
 }
 
 // What a reload did to the selection: what it meant to keep, how many rows it
@@ -2289,7 +2247,6 @@ fn tree_reload_trace(ov: *u8, keep: str) {
     let n: i64 = TREE_RELOADS;
     let who: i64 = ov as i64;
     io::eprintln("tree reload#${n}: ov=${who} keep=${keep} rows=${rows} sel=${sel}");
-    return;
 }
 
 fn tree_trace(ov: *u8, where_: str) {
@@ -2298,11 +2255,10 @@ fn tree_trace(ov: *u8, where_: str) {
     let rows: i64 = { rt::msg_i64(ov, rt::sel(#str_ptr("numberOfRows\0"))) };
     let sel: i64 = { rt::msg_i64(ov, rt::sel(#str_ptr("selectedRow\0"))) };
     io::eprintln("tree ${where_}: responder=${who} rows=${rows} sel=${sel}");
-    return;
 }
 
 fn stated_tree_row_height(p: *tree::TreeProps) -> f64 {
-    if p == (0 as *tree::TreeProps) { return 0.0f64; }
+    if p.is_null() { return 0.0f64; }
     let h: f64 = { (*p).row_height };
     if h >= 1.0f64 { return h; }
     return 0.0f64;
@@ -2316,7 +2272,7 @@ fn tree_row_node(n: *tree::TreeNode, p: *tree::TreeProps) -> core::Node {
 fn tree_view_for_item_imp(self_obj: *u8, cmd: *u8, ov: *u8, col: *u8, item: *u8) -> *u8 {
     tree_trace(ov, "vend:enter");
     let ds: *TreeSource = tree_source_of(ov);
-    if ds != (0 as *TreeSource) { { (*ds).in_delegate = true }; }
+    if ds.is_not_null() { { (*ds).in_delegate = true }; }
     let out: *u8 = tree_view_for_item_body(ov, item);
     // EVERY VEND, because the cell is RECYCLED: an id written once names the
     // item that happened to build the cell, and from the next reuse onwards it
@@ -2326,12 +2282,12 @@ fn tree_view_for_item_imp(self_obj: *u8, cmd: *u8, ov: *u8, col: *u8, item: *u8)
     // which cannot ask the view hierarchy: a cell has no superview until AppKit
     // places it, and `rowForView:` knows nothing about a view the table has not
     // displayed yet.
-    if out != (0 as *u8) {
+    if out.is_not_null() {
         synth::set_associated(out, cell_item_key(), item);
         synth::set_associated(out, cell_owner_key(), ov);
     }
     if tree_debug_on() { tree_dump_cell(out); }
-    if ds != (0 as *TreeSource) { { (*ds).in_delegate = false }; }
+    if ds.is_not_null() { { (*ds).in_delegate = false }; }
     return out;
 }
 
@@ -2348,35 +2304,34 @@ fn tree_view_for_item_imp(self_obj: *u8, cmd: *u8, ov: *u8, col: *u8, item: *u8)
 // address, the agent surface's id and the platform's a11y id. No dependency on
 // the agent package falls out of that, which is the point.
 fn tag_tree_row(ov: *u8, item: *u8, cell: *u8) {
-    if cell == (0 as *u8) { return; }
+    if cell.is_null() { return; }
     let p: *tree::TreeProps = props_for(ov);
-    if p == (0 as *tree::TreeProps) { return; }
+    if p.is_null() { return; }
     let f: fn(*tree::TreeNode, *u8) -> text::Text = { (*p).row_id };
     // Against `no_row_id` by NAME, like every other absent handler here.
     if f == tree::no_row_id { return; }
     let n: *tree::TreeNode = unbox_item(item);
-    if n == (0 as *tree::TreeNode) { return; }
+    if n.is_null() { return; }
     let id: text::Text = f(n, { (*p).row_id_ctx });
     ak::Accessibility::from_raw(cell).set_accessibility_identifier(id.view());
-    return;
 }
 
 fn tree_view_for_item_body(ov: *u8, item: *u8) -> *u8 {
     let p: *tree::TreeProps = props_for(ov);
-    if p == (0 as *tree::TreeProps) { return 0 as *u8; }
+    if p.is_null() { return 0 as *u8; }
     let n: *tree::TreeNode = unbox_item(item);
-    if n == (0 as *tree::TreeNode) { return 0 as *u8; }
+    if n.is_null() { return 0 as *u8; }
     let w: f64 = column_width(ov);
 
     var cell: *u8 = { msg_id_id_i64(ov, rt::sel(#str_ptr("makeViewWithIdentifier:owner:\0")),
                                     bridge::nsstring("facet.item"), 0 as i64) };
     var fresh: bool = false;
-    if cell == (0 as *u8) {
+    if cell.is_null() {
         // A `FacetRowCell`, like the list's — an outline cell is the one that
         // MUST re-place itself, because indentation is why its width differs
         // from the column's in the first place.
         cell = rt::retain(new_row_cell(rt::Rect { x: 0.0f64, y: 0.0f64, w: w, h: 1.0f64 }));
-        if cell == (0 as *u8) { return 0 as *u8; }
+        if cell.is_null() { return 0 as *u8; }
         { rt::msg_void_id(cell, rt::sel(#str_ptr("setIdentifier:\0")),
                           bridge::nsstring("facet.item")) };
         rt::autorelease(cell);
@@ -2387,7 +2342,7 @@ fn tree_view_for_item_body(ov: *u8, item: *u8) -> *u8 {
     // index — see `view_for_row_imp`.
     if tree_has_bind(p) && !fresh {
         let existing: *core::Node = { synth::get_associated(cell, cell_node_key()) as *core::Node };
-        if existing != (0 as *core::Node) {
+        if existing.is_not_null() {
             tree_bind_into(p, n, existing);
             mount::sync_from(existing);
             let _bh: f64 = place_row(cell, existing, w, outline_default_row_height(ov),
@@ -2427,12 +2382,11 @@ fn tree_bind_into(p: *tree::TreeProps, n: *tree::TreeNode, into: *core::Node) {
     let f: fn(*tree::TreeNode, *u8, *core::Node) = { (*p).bind };
     if f == tree::no_bind { return; }
     f(n, { (*p).bind_ctx }, into);
-    return;
 }
 
 fn tree_agent_class() -> *u8 {
     let existing: *u8 = rt::get_class(#str_ptr("FacetTreeSource\0"));
-    if existing != (0 as *u8) { return existing; }
+    if existing.is_not_null() { return existing; }
     let cls: *u8 = synth::allocate_class_pair(rt::get_class(#str_ptr("NSObject\0")),
                                               #str_ptr("FacetTreeSource\0"), 0 as usize);
     add_method_i64_2id(cls, rt::sel(#str_ptr("outlineView:numberOfChildrenOfItem:\0")),
@@ -2508,21 +2462,21 @@ extern fn add_method_id_3id_x(cls: *u8, sel: *u8,
 // caused it.
 fn tree_notified_item(note: *u8) -> *u8 {
     let info: *u8 = { rt::msg_id(note, rt::sel(#str_ptr("userInfo\0"))) };
-    if info == (0 as *u8) { return 0 as *u8; }
+    if info.is_null() { return 0 as *u8; }
     return { rt::msg_id_id(info, rt::sel(#str_ptr("objectForKey:\0")),
                            bridge::nsstring("NSObject")) };
 }
 
 fn tree_expansion_changed(note: *u8, now_expanded: bool) {
     let ov: *u8 = { rt::msg_id(note, rt::sel(#str_ptr("object\0"))) };
-    if ov == (0 as *u8) { return; }
+    if ov.is_null() { return; }
     let s: *TreeSource = tree_source_of(ov);
-    if s == (0 as *TreeSource) { return; }
+    if s.is_null() { return; }
     if { (*s).syncing } { return; }
     let item: *u8 = tree_notified_item(note);
-    if item == (0 as *u8) { return; }
+    if item.is_null() { return; }
     let tn: *tree::TreeNode = unbox_item(item);
-    if tn == (0 as *tree::TreeNode) { return; }
+    if tn.is_null() { return; }
     let n: *core::Node = { (*s).node };
     match tree::from(n) {
         option::Option[tree::Tree]::Some(t) => {
@@ -2540,7 +2494,6 @@ fn tree_expansion_changed(note: *u8, now_expanded: bool) {
         }
         option::Option[tree::Tree]::None => { }
     }
-    return;
 }
 
 // ---- a row is PLACED, not moved ----------------------------------------------
@@ -2573,23 +2526,21 @@ static ANIM_HELD: i64 = 0 as i64;
 
 fn hold_row_animation() {
     let cls: *u8 = rt::get_class(#str_ptr("NSAnimationContext\0"));
-    if cls == (0 as *u8) { return; }
+    if cls.is_null() { return; }
     { rt::msg_void(cls, rt::sel(#str_ptr("beginGrouping\0"))) };
     let ctx: *u8 = { rt::msg_id(cls, rt::sel(#str_ptr("currentContext\0"))) };
-    if ctx != (0 as *u8) {
+    if ctx.is_not_null() {
         { rt::msg_void_f64(ctx, rt::sel(#str_ptr("setDuration:\0")), 0.0f64) };
     }
     ANIM_HELD = ANIM_HELD + (1 as i64);
-    return;
 }
 
 fn release_row_animation() {
     if ANIM_HELD <= (0 as i64) { return; }
     let cls: *u8 = rt::get_class(#str_ptr("NSAnimationContext\0"));
-    if cls == (0 as *u8) { return; }
+    if cls.is_null() { return; }
     ANIM_HELD = ANIM_HELD - (1 as i64);
     { rt::msg_void(cls, rt::sel(#str_ptr("endGrouping\0"))) };
-    return;
 }
 
 // For the suite: a grouping opened here must always be closed, whichever
@@ -2598,12 +2549,10 @@ fn held_row_animations() -> i64 { return ANIM_HELD; }
 
 fn tree_will_expand_imp(self_obj: *u8, cmd: *u8, note: *u8) {
     hold_row_animation();
-    return;
 }
 
 fn tree_will_collapse_imp(self_obj: *u8, cmd: *u8, note: *u8) {
     hold_row_animation();
-    return;
 }
 
 fn tree_did_expand_imp(self_obj: *u8, cmd: *u8, note: *u8) {
@@ -2612,20 +2561,18 @@ fn tree_did_expand_imp(self_obj: *u8, cmd: *u8, note: *u8) {
     // scroller appearing narrows the column) cannot animate either.
     tree_expansion_changed(note, true);
     release_row_animation();
-    return;
 }
 
 fn tree_did_collapse_imp(self_obj: *u8, cmd: *u8, note: *u8) {
     tree_expansion_changed(note, false);
     release_row_animation();
-    return;
 }
 
 fn tree_selection_changed_imp(self_obj: *u8, cmd: *u8, note: *u8) {
     let ov: *u8 = { rt::msg_id(note, rt::sel(#str_ptr("object\0"))) };
-    if ov == (0 as *u8) { return; }
+    if ov.is_null() { return; }
     let s: *TreeSource = tree_source_of(ov);
-    if s == (0 as *TreeSource) { return; }
+    if s.is_null() { return; }
     if tree_debug_on() {
         let row: i64 = { rt::msg_i64(ov, rt::sel(#str_ptr("selectedRow\0"))) };
         var sync: i64 = 0 as i64;
@@ -2642,12 +2589,12 @@ fn tree_selection_changed_imp(self_obj: *u8, cmd: *u8, note: *u8) {
     if { (*s).syncing } { return; }
     let n: *core::Node = { (*s).node };
     let p: *tree::TreeProps = tree_props_of(n);
-    if p == (0 as *tree::TreeProps) { return; }
+    if p.is_null() { return; }
     let row: i64 = { rt::msg_i64(ov, rt::sel(#str_ptr("selectedRow\0"))) };
     if row >= (0 as i64) {
         let item: *u8 = { rt::msg_id_i64(ov, rt::sel(#str_ptr("itemAtRow:\0")), row) };
         let tn: *tree::TreeNode = unbox_item(item);
-        if tn != (0 as *tree::TreeNode) {
+        if tn.is_not_null() {
             { (*p).selected = text::from_str({ (*tn).id.view() }) };
         }
     } else {
@@ -2660,9 +2607,8 @@ fn tree_selection_changed_imp(self_obj: *u8, cmd: *u8, note: *u8) {
     if row < (0 as i64) { return; }
     let item: *u8 = { rt::msg_id_i64(ov, rt::sel(#str_ptr("itemAtRow:\0")), row) };
     let tn: *tree::TreeNode = unbox_item(item);
-    if tn == (0 as *tree::TreeNode) { return; }
+    if tn.is_null() { return; }
     h(tn, { (*p).on_select_ctx });
-    return;
 }
 
 // A write to `selected` moves the outline's selection to the row with that
@@ -2678,7 +2624,7 @@ fn select_by_id(ov: *u8, want: str) {
     while i < rows {
         let item: *u8 = { rt::msg_id_i64(ov, rt::sel(#str_ptr("itemAtRow:\0")), i) };
         let tn: *tree::TreeNode = unbox_item(item);
-        if tn != (0 as *tree::TreeNode) {
+        if tn.is_not_null() {
             if { (*tn).id.view() } == want {
                 let idx: *u8 = { rt::msg_id_u64(rt::get_class(#str_ptr("NSIndexSet\0")),
                                                 rt::sel(#str_ptr("indexSetWithIndex:\0")), i as u64) };
@@ -2689,20 +2635,19 @@ fn select_by_id(ov: *u8, want: str) {
         }
         i = i + (1 as i64);
     }
-    return;
 }
 
 fn create_recycling_tree(n: *core::Node) -> *u8 {
     let scroll: ak::ScrollView = akx::new_scroll_view(
         rt::Rect { x: 0.0f64, y: 0.0f64, w: 0.0f64, h: 0.0f64 }, false);
     let ov: *u8 = synth::alloc_init_class(facet_outline_class());
-    if ov == (0 as *u8) { return rt::retain(scroll.as_view().raw()); }
+    if ov.is_null() { return rt::retain(scroll.as_view().raw()); }
 
     let col: *u8 = { rt::msg_id(rt::get_class(#str_ptr("NSTableColumn\0")),
                                 rt::sel(#str_ptr("alloc\0"))) };
     let col2: *u8 = { rt::msg_id_id(col, rt::sel(#str_ptr("initWithIdentifier:\0")),
                                     bridge::nsstring("facet.col")) };
-    if col2 != (0 as *u8) {
+    if col2.is_not_null() {
         { rt::msg_void_id(ov, rt::sel(#str_ptr("addTableColumn:\0")), col2) };
         // The outline column is the one that carries the disclosure triangles.
         { rt::msg_void_id(ov, rt::sel(#str_ptr("setOutlineTableColumn:\0")), col2) };
@@ -2729,7 +2674,7 @@ fn create_recycling_tree(n: *core::Node) -> *u8 {
                        controls::DEFAULT_TREE_ROW_H) };
 
     let agent: *u8 = synth::alloc_init_class(tree_agent_class());
-    if agent != (0 as *u8) {
+    if agent.is_not_null() {
         { rt::msg_void_id(ov, rt::sel(#str_ptr("setDataSource:\0")), agent) };
         { rt::msg_void_id(ov, rt::sel(#str_ptr("setDelegate:\0")), agent) };
         synth::retain_associated(ov, tree_agent_pin_key(), agent);
@@ -2742,9 +2687,9 @@ fn create_recycling_tree(n: *core::Node) -> *u8 {
 
 fn apply_recycling_tree(v: *u8, n: *core::Node, dirty: u64) {
     let ov: *u8 = table_of(v);
-    if ov == (0 as *u8) { return; }
+    if ov.is_null() { return; }
     var s: *TreeSource = tree_source_of(ov);
-    if s == (0 as *TreeSource) {
+    if s.is_null() {
         match box::new::[TreeSource](TreeSource { node: n, outline: ov,
                                                  last_width: 0.0f64,
                                                  in_delegate: false,
@@ -2794,9 +2739,8 @@ fn apply_recycling_tree(v: *u8, n: *core::Node, dirty: u64) {
     // After the rows exist, or there is nothing to find the identity among.
     if (dirty & (tree::P_SELECTED | tree::P_ROOT)) != (0 as u64) {
         let p: *tree::TreeProps = tree_props_of(n);
-        if p != (0 as *tree::TreeProps) { select_by_id(ov, { (*p).selected.view() }); }
+        if p.is_not_null() { select_by_id(ov, { (*p).selected.view() }); }
     }
-    return;
 }
 
 // A TREE RE-PLACES ITS ROWS WHEN ITS WIDTH CHANGES, exactly as a list does.
@@ -2856,7 +2800,7 @@ fn reload_tree_keeping_selection(s: *TreeSource, ov: *u8) {
     { (*s).expanded_by_user = false };
     let pn: *tree::TreeProps = tree_props_of({ (*s).node });
     var keep: text::Text = text::new();
-    if pn != (0 as *tree::TreeProps) { keep = text::from_str({ (*pn).selected.view() }); }
+    if pn.is_not_null() { keep = text::from_str({ (*pn).selected.view() }); }
     // WITHOUT IMPLICIT ANIMATION. A reload re-vends every visible row, and the
     // views it makes are layer-backed — so each one's first frame animates in
     // from wherever Core Animation thinks it was. Expanding a folder changes
@@ -2875,14 +2819,13 @@ fn reload_tree_keeping_selection(s: *TreeSource, ov: *u8) {
     without_implicit_animation_end();
     tree_reload_trace(ov, keep.view());
     tree_trace(ov, "reload:done");
-    return;
 }
 
 fn on_tree_resized(ctx: *u8) {
     let s: *TreeSource = { ctx as *TreeSource };
-    if s == (0 as *TreeSource) { return; }
+    if s.is_null() { return; }
     let ov: *u8 = { (*s).outline };
-    if ov == (0 as *u8) { return; }
+    if ov.is_null() { return; }
     // NOT FROM INSIDE THE TABLE'S OWN DELEGATE. AppKit resizes its columns
     // while vending and measuring rows, so this notification arrives DURING a
     // callback we are already in — and `layoutSubtreeIfNeeded` + `reloadData`
@@ -2931,11 +2874,10 @@ fn on_tree_resized(ctx: *u8) {
     let all: *u8 = { msg_id_range(rt::get_class(#str_ptr("NSIndexSet\0")),
                                   rt::sel(#str_ptr("indexSetWithIndexesInRange:\0")),
                                   rt::Range { location: 0 as u64, length: rows as u64 }) };
-    if all == (0 as *u8) { return; }
+    if all.is_null() { return; }
     { (*s).syncing = true };
     { rt::msg_void_id(ov, rt::sel(#str_ptr("noteHeightOfRowsWithIndexesChanged:\0")), all) };
     { (*s).syncing = false };
-    return;
 }
 
 #[link_name = "objc_msgSend"]
@@ -2946,17 +2888,16 @@ extern fn msg_id_range(recv: *u8, sel: *u8, r: rt::Range) -> *u8;
 // is expanded — an outline view has no rows for a closed branch to expand.
 fn sync_expansion(ov: *u8) {
     let p: *tree::TreeProps = props_for(ov);
-    if p == (0 as *tree::TreeProps) { return; }
+    if p.is_null() { return; }
     // Applying the model, so the write-back stands down for the duration.
     let s: *TreeSource = tree_source_of(ov);
-    if s != (0 as *TreeSource) { { (*s).syncing = true }; }
+    if s.is_not_null() { { (*s).syncing = true }; }
     expand_walk(ov, p, { #addr_of((*p).root) }, true);
-    if s != (0 as *TreeSource) { { (*s).syncing = false }; }
-    return;
+    if s.is_not_null() { { (*s).syncing = false }; }
 }
 
 fn expand_walk(ov: *u8, p: *tree::TreeProps, n: *tree::TreeNode, is_root: bool) {
-    if n == (0 as *tree::TreeNode) { return; }
+    if n.is_null() { return; }
     if !is_root {
         if controls::is_expanded(p, n) {
             { rt::msg_void_id(ov, rt::sel(#str_ptr("expandItem:\0")), find_item(ov, n)) };
@@ -2973,7 +2914,6 @@ fn expand_walk(ov: *u8, p: *tree::TreeProps, n: *tree::TreeNode, is_root: bool) 
         }
         i = i +% (1 as usize);
     }
-    return;
 }
 
 // The outline view's OWN box for a node. Boxing afresh would hand it an item it
@@ -2996,7 +2936,7 @@ fn find_item(ov: *u8, n: *tree::TreeNode) -> *u8 {
 // window.
 fn tree_child_of_root(v: *u8, i: i64) -> *u8 {
     let ov: *u8 = table_of(v);
-    if ov == (0 as *u8) { return 0 as *u8; }
+    if ov.is_null() { return 0 as *u8; }
     return tree_child_imp(0 as *u8, 0 as *u8, ov, i, 0 as *u8);
 }
 
@@ -3004,15 +2944,15 @@ fn tree_child_of_root(v: *u8, i: i64) -> *u8 {
 // suite needs because a headless outline view never offers a cell back.
 fn tree_fill_into(v: *u8, cell: *u8, row: i64) {
     let ov: *u8 = table_of(v);
-    if ov == (0 as *u8) { return; }
+    if ov.is_null() { return; }
     let item: *u8 = { rt::msg_id_i64(ov, rt::sel(#str_ptr("itemAtRow:\0")), row) };
-    if item == (0 as *u8) { return; }
+    if item.is_null() { return; }
     let p: *tree::TreeProps = props_for(ov);
-    if p == (0 as *tree::TreeProps) { return; }
+    if p.is_null() { return; }
     let n: *tree::TreeNode = unbox_item(item);
-    if n == (0 as *tree::TreeNode) { return; }
+    if n.is_null() { return; }
     let existing: *core::Node = { synth::get_associated(cell, cell_node_key()) as *core::Node };
-    if existing != (0 as *core::Node) && tree_has_bind(p) {
+    if existing.is_not_null() && tree_has_bind(p) {
         tree_bind_into(p, n, existing);
         mount::sync_from(existing);
         let _h: f64 = place_row(cell, existing, column_width(ov),
@@ -3020,25 +2960,23 @@ fn tree_fill_into(v: *u8, cell: *u8, row: i64) {
                                 row_h: stated_tree_row_height(p));
     }
     tag_tree_row(ov, item, cell);
-    return;
 }
 
 // The agent's press, sent the way agent_appkit sends it.
 fn perform_click_on(cell: *u8) {
-    if cell == (0 as *u8) { return; }
+    if cell.is_null() { return; }
     { rt::msg_void_id(cell, rt::sel(#str_ptr("performClick:\0")), 0 as *u8) };
-    return;
 }
 
 fn tree_selected_row_of(v: *u8) -> i64 {
     let ov: *u8 = table_of(v);
-    if ov == (0 as *u8) { return -1 as i64; }
+    if ov.is_null() { return -1 as i64; }
     return { rt::msg_i64(ov, rt::sel(#str_ptr("selectedRow\0"))) };
 }
 
 fn tree_rows_of(v: *u8) -> i64 {
     let ov: *u8 = table_of(v);
-    if ov == (0 as *u8) { return 0 as i64; }
+    if ov.is_null() { return 0 as i64; }
     return { rt::msg_i64(ov, rt::sel(#str_ptr("numberOfRows\0"))) };
 }
 
@@ -3048,15 +2986,15 @@ fn tree_rows_of(v: *u8) -> i64 {
 // tests that need the number rather than the rendered result.
 fn tree_row_height_of(v: *u8, row: i64) -> f64 {
     let ov: *u8 = table_of(v);
-    if ov == (0 as *u8) { return 0.0f64; }
+    if ov.is_null() { return 0.0f64; }
     let item: *u8 = { rt::msg_id_i64(ov, rt::sel(#str_ptr("itemAtRow:\0")), row) };
-    if item == (0 as *u8) { return 0.0f64; }
+    if item.is_null() { return 0.0f64; }
     return tree_height_imp(0 as *u8, 0 as *u8, ov, item);
 }
 
 fn tree_row_count_of(v: *u8) -> i64 {
     let ov: *u8 = table_of(v);
-    if ov == (0 as *u8) { return 0 as i64; }
+    if ov.is_null() { return 0 as i64; }
     return { rt::msg_i64(ov, rt::sel(#str_ptr("numberOfRows\0"))) };
 }
 
@@ -3069,9 +3007,9 @@ fn tree_row_count_of(v: *u8) -> i64 {
 // so it has to be drivable from here.
 fn tree_toggle_row(v: *u8, row: i64) -> bool {
     let ov: *u8 = table_of(v);
-    if ov == (0 as *u8) { return false; }
+    if ov.is_null() { return false; }
     let item: *u8 = { rt::msg_id_i64(ov, rt::sel(#str_ptr("itemAtRow:\0")), row) };
-    if item == (0 as *u8) { return false; }
+    if item.is_null() { return false; }
     if { rt::msg_i8_id(ov, rt::sel(#str_ptr("isExpandable:\0")), item) } == (0 as i8) {
         return false;
     }
@@ -3088,17 +3026,17 @@ fn tree_toggle_row(v: *u8, row: i64) -> bool {
 // that means to pin that choice has to be able to ask the same question.
 fn tree_item_is_expandable(v: *u8, row: i64) -> bool {
     let ov: *u8 = table_of(v);
-    if ov == (0 as *u8) { return false; }
+    if ov.is_null() { return false; }
     let item: *u8 = { rt::msg_id_i64(ov, rt::sel(#str_ptr("itemAtRow:\0")), row) };
-    if item == (0 as *u8) { return false; }
+    if item.is_null() { return false; }
     return { rt::msg_i8_id(ov, rt::sel(#str_ptr("isExpandable:\0")), item) } != (0 as i8);
 }
 
 fn tree_view_for_row(v: *u8, row: i64) -> *u8 {
     let ov: *u8 = table_of(v);
-    if ov == (0 as *u8) { return 0 as *u8; }
+    if ov.is_null() { return 0 as *u8; }
     let item: *u8 = { rt::msg_id_i64(ov, rt::sel(#str_ptr("itemAtRow:\0")), row) };
-    if item == (0 as *u8) { return 0 as *u8; }
+    if item.is_null() { return 0 as *u8; }
     return tree_view_for_item_imp(0 as *u8, 0 as *u8, ov, 0 as *u8, item);
 }
 
@@ -3106,19 +3044,18 @@ fn tree_view_for_row(v: *u8, row: i64) -> *u8 {
 // window to drag, and the pass is about what happens BETWEEN frames.
 fn resize_to(v: *u8, w: f64) {
     let tv: *u8 = table_of(v);
-    if tv == (0 as *u8) { return; }
+    if tv.is_null() { return; }
     let s: *RowSource = source_of(tv);
-    if s == (0 as *RowSource) { return; }
+    if s.is_null() { return; }
     let cols: *u8 = { rt::msg_id(tv, rt::sel(#str_ptr("tableColumns\0"))) };
-    if cols != (0 as *u8) {
+    if cols.is_not_null() {
         let n: u64 = { rt::msg_u64(cols, rt::sel(#str_ptr("count\0"))) };
         if n > (0 as u64) {
             let c0: *u8 = { rt::msg_id_u64(cols, rt::sel(#str_ptr("objectAtIndex:\0")), 0 as u64) };
-            if c0 != (0 as *u8) {
+            if c0.is_not_null() {
                 { rt::msg_void_f64(c0, rt::sel(#str_ptr("setWidth:\0")), w) };
             }
         }
     }
     on_table_resized(s as *u8);
-    return;
 }

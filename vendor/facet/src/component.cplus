@@ -111,22 +111,21 @@ fn uninstall_sender_readers() { SENDER_READERS = sender_readers_none(); return; 
 // not reactive, so you address the element rather than rebuild.
 fn raise(sender: *u8, key: str) {
     let f: fn(*u8, str) = SENDER_READERS.raise;
-    if f == (0 as fn(*u8, str)) { return; }
+    if f.is_null() { return; }
     f(sender, key);
-    return;
 }
 
 // The sender's key (its agent id) as an owned Text — empty when untagged.
 fn key_of(sender: *u8) -> text::Text {
     let f: fn(*u8) -> text::Text = SENDER_READERS.key_of;
-    if f == (0 as fn(*u8) -> text::Text) { return text::new(); }
+    if f.is_null() { return text::new(); }
     return f(sender);
 }
 
 // The per-node app pointer set by `.item(p)`, recovered from the sender.
 fn item_of(sender: *u8) -> *u8 {
     let f: fn(*u8) -> *u8 = SENDER_READERS.item_of;
-    if f == (0 as fn(*u8) -> *u8) { return 0 as *u8; }
+    if f.is_null() { return 0 as *u8; }
     return f(sender);
 }
 
@@ -142,7 +141,7 @@ fn item_index_of(sender: *u8) -> option::Option[usize] {
 // The text a drop delivered — empty when nothing has been dropped.
 fn dropped_text(sender: *u8) -> text::Text {
     let f: fn(*u8) -> text::Text = SENDER_READERS.dropped_text;
-    if f == (0 as fn(*u8) -> text::Text) { return text::new(); }
+    if f.is_null() { return text::new(); }
     return f(sender);
 }
 
@@ -157,7 +156,7 @@ fn dropped_text(sender: *u8) -> text::Text {
 // of it however carefully it was aimed.
 fn drop_position(sender: *u8) -> option::Option[vocab::Point] {
     let f: fn(*u8) -> option::Option[vocab::Point] = SENDER_READERS.drop_position;
-    if f == (0 as fn(*u8) -> option::Option[vocab::Point]) {
+    if f.is_null() {
         return option::Option[vocab::Point]::None;
     }
     return f(sender);
@@ -166,7 +165,7 @@ fn drop_position(sender: *u8) -> option::Option[vocab::Point] {
 // Is a drag over this drop zone right now?
 fn drag_targeted(sender: *u8) -> bool {
     let f: fn(*u8) -> bool = SENDER_READERS.drag_targeted;
-    if f == (0 as fn(*u8) -> bool) { return false; }
+    if f.is_null() { return false; }
     return f(sender);
 }
 
@@ -189,11 +188,11 @@ fn component_at[C](key: str) -> option::Option[*C] {
     let count: usize = app::window_count();
     while i < count {
         let r: *core::Node = app::window_root(i);
-        if r != (0 as *core::Node) {
+        if r.is_not_null() {
             match core::find_in(r, key) {
                 option::Option[*core::Node]::Some(outlet) => {
                     let p: *u8 = core::presented_of(outlet);
-                    if p != (0 as *u8) { return option::Option[*C]::Some(p as *C); }
+                    if p.is_not_null() { return option::Option[*C]::Some(p as *C); }
                 }
                 option::Option[*core::Node]::None => { }
             }
@@ -210,7 +209,6 @@ fn component_at[C](key: str) -> option::Option[*C] {
 fn lc_detach_tramp[C: Lifecycle](p: *u8) {
     let q: *C = p as *C;
     { (*q).on_detach() };
-    return;
 }
 
 // ---- tests ------------------------------------------------------------------
@@ -249,7 +247,6 @@ fn component_at_resolves_through_the_running_apps_windows() {
     let _e: bool = core::evict_presented(#addr_of(root));
     assert c.hits == 100;
     app::reset_default_for_tests();
-    return;
 }
 
 #[test]
@@ -258,7 +255,6 @@ fn lc_detach_tramp_fires_the_typed_on_detach() {
     let t: fn(*u8) = lc_detach_tramp::[CaTestComp];
     t(#addr_of(c) as *u8);
     assert c.hits == 100;
-    return;
 }
 
 #[test]
@@ -272,5 +268,4 @@ fn sender_verbs_default_to_the_no_backend_posture() {
     let d: text::Text = dropped_text(0 as *u8);
     assert d.view() == "";
     assert drag_targeted(0 as *u8) == false;
-    return;
 }

@@ -397,18 +397,16 @@ impl Gallery {
                     let _ok: bool = mount::set_content(out, this.a11y);
                 }
             }
-            option::Option[*core::Node]::None => { }
+            option::Option::None => { }
         }
-        return;
     }
 
     fn on_nav_select(ref this, node: *tree::TreeNode) {
-        if node == (0 as *tree::TreeNode) { return; }
+        if node.is_null() { return; }
         if { (*node).is_branch } { return; }
         let id: i32 = demo_id_for({ (*node).id_of() });
         if id < 0 { return; }
         this.show_demo(id);
-        return;
     }
 }
 
@@ -418,31 +416,31 @@ impl Gallery: component::Component {
         head.add(ui::label(
             "Facet Gallery",
             key: "nav:title",
-            font_size: 16.0f64,
+            font_size: 16.0,
             font_weight: vocab::FontWeight::Bold,
             text_color: vocab::Color::ink(),
         ));
         head.add(ui::label(
             "Widget reference",
             key: "nav:sub",
-            font_size: 11.0f64,
-            text_color: vocab::Color::ink(0.5f64),
+            font_size: 11.0,
+            text_color: vocab::Color::ink(0.5),
         ));
 
         var side: core::Builder = core::Builder::new();
-        side.add(core::column(head).padding(14.0f64).gap(2.0f64));
+        side.add(core::column(head).padding(14.0).gap(2.0));
         side.add(ui::tree(
             catalog_model(),
             key: "gallery:nav",
             on_select: this.on_nav_select,
-            row_height: 28.0f64,
-        ).grow(1.0f64));
+            row_height: 28.0,
+        ).grow(1.0));
 
-        var sidebar: core::Node = core::column(side).grow(1.0f64);
+        var sidebar: core::Node = core::column(side).grow(1.0);
         sidebar.set_background_color(vocab::Color::raised());
 
         var main: core::Node = core::column(core::Builder::new(), key: "gallery:main")
-            .grow(1.0f64);
+            .grow(1.0);
         main.set_background_color(vocab::Color::surface());
 
         var panes: core::Builder = core::Builder::new();
@@ -452,10 +450,10 @@ impl Gallery: component::Component {
             panes,
             key: "gallery:split",
             axis: split::SplitAxis::Columns,
-            position: 240.0f64,
-            min_leading: 180.0f64,
-            min_trailing: 360.0f64,
-        ).grow(1.0f64);
+            position: 240.0,
+            min_leading: 180.0,
+            min_trailing: 360.0,
+        ).grow(1.0);
     }
 }
 
@@ -471,7 +469,7 @@ impl Gallery: component::Lifecycle {
                 let _e: tree::Tree = t.expand(SEC_INTERACTION);
                 let _f: tree::Tree = t.select(NAV_OVERVIEW);
             }
-            option::Option[tree::Tree]::None => { }
+            option::Option::None => { }
         }
         this.show_demo(ID_OVERVIEW);
         // FACET_GALLERY_WALK=1 — visit every demo, one a tick, then quit.
@@ -488,7 +486,6 @@ impl Gallery: component::Lifecycle {
             WALK_SELF = #addr_of(this);
             start_walk();
         }
-        return;
     }
     fn on_detach(ref this) { return; }
 }
@@ -497,17 +494,17 @@ impl Gallery: screen::Screen {
     fn chrome(this) -> screen::Chrome {
         return screen::Chrome::new(
             title: "Facet Gallery",
-            width: 1000.0f64,
-            height: 680.0f64,
-            min_width: 720.0f64,
-            min_height: 480.0f64,
+            width: 1000.0,
+            height: 680.0,
+            min_width: 720.0,
+            min_height: 480.0,
             // Pinch to magnify — the same flag the iOS gallery sets. Zoom is a
             // SCALE on the content view, never a relayout: the tree keeps its
             // sizes and the magnification rides on top, so a zoomed gallery is
             // the same tree bigger, not a reflowed one.
             zoomable: true,
-            min_zoom: 1.0f64,
-            max_zoom: 3.0f64,
+            min_zoom: 1.0,
+            max_zoom: 3.0,
         );
     }
     fn menu_items(this) -> vec::Vec[screen::MenuItem] {
@@ -529,7 +526,7 @@ static WALK_AT: i32 = 0;
 // point: building a demo is half the test, and MOUNTING it is the other half.
 static WALK_SELF: *Gallery = #zero::[*Gallery]();
 
-const WALK_INTERVAL: f64 = 0.22f64;
+const WALK_INTERVAL: f64 = 0.22;
 
 // `services::after`, not `g_timeout_add`. The walk was written against GLib
 // directly, which links on Linux and leaves the gallery UNLINKABLE on macOS
@@ -542,7 +539,6 @@ static WALK_TIMER: services::Cancellable = #zero::[services::Cancellable]();
 
 fn start_walk() {
     WALK_TIMER = services::after(WALK_INTERVAL, walk_step, 0 as *u8);
-    return;
 }
 
 fn walk_step(user: *u8) {
@@ -554,13 +550,12 @@ fn walk_step(user: *u8) {
         return;
     }
     let at: i32 = WALK_AT;
-    WALK_AT = WALK_AT +% (1 as i32);
-    if WALK_SELF == (0 as *Gallery) { return; }
+    WALK_AT = WALK_AT +% 1;
+    if WALK_SELF.is_null() { return; }
     io::println("gallery walk: demo ${at}");
     { (*WALK_SELF).show_demo(at) };
     // `after` is ONE-SHOT, so each step arms the next. The backends allow it:
     // a fired slot is dead before the callback runs, precisely so the callback
     // can schedule another.
     WALK_TIMER = services::after(WALK_INTERVAL, walk_step, 0 as *u8);
-    return;
 }

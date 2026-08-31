@@ -15,7 +15,6 @@ gen fn range(from: i32, to: i32) -> i32 {
         yield i;
         i = i +% (1 as i32);
     }
-    return;
 }
 
 // Inclusive end (Swift's `...` / `stride(from:through:)`):
@@ -26,7 +25,6 @@ gen fn range_inclusive(from: i32, through: i32) -> i32 {
         yield i;
         i = i +% (1 as i32);
     }
-    return;
 }
 
 // ───────────────────────────── tests ─────────────────────────────

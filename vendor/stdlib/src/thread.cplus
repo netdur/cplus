@@ -235,7 +235,6 @@ impl JoinHandle[O] {
         if prev == (1 as u64) {
             { free(this._ctx); }
         }
-        return;
     }
 }
 
@@ -296,7 +295,6 @@ fn _verb_lock(rec: *u8) {
 fn _verb_unlock(rec: *u8) {
     let lp: *u64 = { (rec + _c_off_verb_lock()) as *u64 };
     atomic::store_u64(lp, 0 as u64, atomic::Ordering::Release);
-    return;
 }
 
 // True when this thread's work has been asked to stop. A bare atomic load:
@@ -372,7 +370,6 @@ fn park_end() {
         *mp = 0 as *u8;
     }
     _verb_unlock(rec);
-    return;
 }
 
 // ═══════════════════════════ scoped threads ═══════════════════════════
@@ -522,7 +519,6 @@ impl Scope {
             }
             j = j + (1 as usize);
         }
-        return;
     }
 }
 
@@ -548,7 +544,6 @@ fn _add_one_million(ref c: _Cell) {
         c.v = c.v +% (1 as i64);
         i = i +% (1 as i64);
     }
-    return;
 }
 
 #[test]
@@ -599,13 +594,11 @@ struct _DropProbe {
 impl _DropProbe {
     fn drop(ref this) {
         atomic::fetch_add_u64(#addr_of(_CANCEL_TEST_DROPS), 1 as u64, atomic::Ordering::AcqRel);
-        return;
     }
 }
 
 fn _mark_defer() {
     atomic::fetch_add_u64(#addr_of(_CANCEL_TEST_DEFERS), 1 as u64, atomic::Ordering::AcqRel);
-    return;
 }
 
 // A worker that parks in read(2) on a pipe nobody writes; only cancellation

@@ -20,16 +20,16 @@ fn cell(index: usize, ctx: *u8) -> core::Node {
     b.add(ui::label(
         "Cell ${n}",
         key: "cell:t",
-        font_size: 13.0f64,
+        font_size: 13.0,
         font_weight: vocab::FontWeight::Medium,
         text_color: vocab::Color::ink(),
     ));
     var card: core::Node = core::column(b)
-        .padding(12.0f64)
-        .height(72.0f64)
-        .grow(1.0f64);
+        .padding(12.0)
+        .height(72.0)
+        .grow(1.0);
     card.set_background_color(vocab::Color::raised());
-    card.set_corner_radius(vocab::Corners::all(8.0f64));
+    card.set_corner_radius(vocab::Corners::all(8.0));
     return card;
 }
 
@@ -44,28 +44,28 @@ impl Collections: component::Component {
         body.add(ui::label(
             "Same count + row factory as list, plus columns. Good for tile grids and media pickers.",
             key: "col:note",
-            font_size: 13.0f64,
-            text_color: vocab::Color::ink(0.65f64),
-            max_lines: 3 as i64,
+            font_size: 13.0,
+            text_color: vocab::Color::ink(0.65),
+            max_lines: 3,
             line_break: vocab::LineBreak::WordWrap,
         ));
 
-        var host: core::Node = ui::collection(key: "col:grid", columns: 3 as usize)
-            .height(260.0f64)
-            .grow(1.0f64);
+        var host: core::Node = ui::collection(key: "col:grid", columns: 3)
+            .height(260.0)
+            .grow(1.0);
         match collection::find("col:grid", within: #addr_of(host)) {
             option::Option[collection::Collection]::Some(c) => {
-                let _n: collection::Collection = c.set_count(12 as usize);
+                let _n: collection::Collection = c.set_count(12);
                 let _r: collection::Collection = c.set_row(cell);
             }
-            option::Option[collection::Collection]::None => { }
+            option::Option::None => { }
         }
         body.add(host);
 
         return shell::panel(
             "Collection",
             "Grid of recycled items: set_count + set_row, optionally set_columns.",
-            core::column(body).gap(12.0f64),
+            core::column(body).gap(12.0),
             howto: "var h = ui::collection(key: \"c\", columns: 3).height(260.0);\nmatch collection::find(\"c\", within: #addr_of(h)) {\n  Some(c) => { c.set_count(12); c.set_row(cell); }\n  None => {}\n}",
         );
     }

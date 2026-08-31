@@ -56,7 +56,6 @@ fn result_io_ok() {
         Result[i32, IoError]::Ok(x) => { assert x == 7; }
         Result[i32, IoError]::Err(e) => { assert false; }
     }
-    return;
 }
 
 #[test]
@@ -66,7 +65,6 @@ fn result_io_err() {
         Result[i32, IoError]::Ok(x) => { assert false; }
         Result[i32, IoError]::Err(e) => { assert e == IoError::NotFound; }
     }
-    return;
 }
 
 #[test]
@@ -81,5 +79,4 @@ fn result_generic_ok_err() {
         Result[i32, bool]::Ok(x) => { assert false; }
         Result[i32, bool]::Err(e) => { assert e; }
     }
-    return;
 }

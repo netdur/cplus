@@ -21,16 +21,15 @@ impl Trees {
     fn new() -> Trees { return Trees { n: 0 }; }
 
     fn on_select(ref this, node: *tree::TreeNode) {
-        if node == (0 as *tree::TreeNode) { return; }
+        if node.is_null() { return; }
         let id: str = { (*node).id_of() };
         let name: str = { (*node).label_of() };
         match label::find("tr:status") {
             option::Option[label::Label]::Some(l) => {
                 let _l: label::Label = l.set_text("selected: ${name}  (id=${id})");
             }
-            option::Option[label::Label]::None => { }
+            option::Option::None => { }
         }
-        return;
     }
 }
 
@@ -59,24 +58,24 @@ impl Trees: component::Component {
         body.add(ui::label(
             "Ids must be stable content keys (never row indices). Branches may be empty for lazy load. The gallery sidebar is this control.",
             key: "tr:note",
-            font_size: 13.0f64,
-            text_color: vocab::Color::ink(0.65f64),
-            max_lines: 4 as i64,
+            font_size: 13.0,
+            text_color: vocab::Color::ink(0.65),
+            max_lines: 4,
             line_break: vocab::LineBreak::WordWrap,
         ));
         body.add(ui::tree(
             sample_tree(),
             key: "tr:demo",
             on_select: this.on_select,
-            row_height: 26.0f64,
-        ).height(220.0f64).grow(1.0f64));
+            row_height: 26.0,
+        ).height(220.0).grow(1.0));
         body.add(ui::label("selected: (none)", key: "tr:status",
-            font_size: 13.0f64, text_color: vocab::Color::ink(0.7f64)));
+            font_size: 13.0, text_color: vocab::Color::ink(0.7)));
 
         return shell::panel(
             "Tree",
             "Outline with expand/collapse, selection, and stable identities. Default row draws TreeNode.label.",
-            core::column(body).gap(12.0f64),
+            core::column(body).gap(12.0),
             howto: "var root = TreeNode::new(\"\", \"root\", is_branch: true);\nroot.add_child(TreeNode::new(\"Leaf\", id: \"a\"));\nui::tree(root, key: \"t\", on_select: this.on_select)\n// later: tree::find(\"t\").expand(\"branch\").select(\"a\")",
         );
     }
@@ -89,9 +88,8 @@ impl Trees: component::Lifecycle {
                 let _a: tree::Tree = t.expand("animals");
                 let _b: tree::Tree = t.expand("colors");
             }
-            option::Option[tree::Tree]::None => { }
+            option::Option::None => { }
         }
-        return;
     }
     fn on_detach(ref this) { return; }
 }

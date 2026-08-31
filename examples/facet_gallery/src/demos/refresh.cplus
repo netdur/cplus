@@ -21,10 +21,10 @@ fn refresh_row(index: usize, ctx: *u8) -> core::Node {
     b.add(ui::label(
         "Item ${n}",
         key: "rf:t",
-        font_size: 14.0f64,
+        font_size: 14.0,
         text_color: vocab::Color::ink(),
     ));
-    return core::column(b).padding(10.0f64);
+    return core::column(b).padding(10.0);
 }
 
 impl Refresh {
@@ -36,16 +36,15 @@ impl Refresh {
             option::Option[label::Label]::Some(l) => {
                 let _l: label::Label = l.set_text("refreshed ${this.times} time(s)");
             }
-            option::Option[label::Label]::None => { }
+            option::Option::None => { }
         }
         // End the spinner — a real app would do this after the load finishes.
         match list::find("rf:list") {
             option::Option[list::List]::Some(l) => {
                 let _e: list::List = l.end_refresh();
             }
-            option::Option[list::List]::None => { }
+            option::Option::None => { }
         }
-        return;
     }
 
     fn force_refresh(ref this, sender: *u8) {
@@ -53,10 +52,9 @@ impl Refresh {
             option::Option[list::List]::Some(l) => {
                 let _b: list::List = l.begin_refresh();
             }
-            option::Option[list::List]::None => { }
+            option::Option::None => { }
         }
         this.on_refresh(sender);
-        return;
     }
 }
 
@@ -67,9 +65,9 @@ impl Refresh: component::Component {
         body.add(ui::label(
             "On touch: pull to refresh. On AppKit the control is present; use begin_refresh / end_refresh from a button to simulate the cycle.",
             key: "rf:note",
-            font_size: 13.0f64,
-            text_color: vocab::Color::ink(0.65f64),
-            max_lines: 4 as i64,
+            font_size: 13.0,
+            text_color: vocab::Color::ink(0.65),
+            max_lines: 4,
             line_break: vocab::LineBreak::WordWrap,
         ));
         body.add(ui::button("Simulate refresh", key: "rf:btn", on_click: this.force_refresh));
@@ -77,28 +75,28 @@ impl Refresh: component::Component {
         var host: core::Node = ui::list(
             key: "rf:list",
             refreshable: true,
-            row_height: 40 as i64,
+            row_height: 40,
             on_refreshing: this.on_refresh,
-        ).height(220.0f64).grow(1.0f64);
+        ).height(220.0).grow(1.0);
         match list::find("rf:list", within: #addr_of(host)) {
             option::Option[list::List]::Some(l) => {
-                let _c: list::List = l.set_count(12 as usize);
+                let _c: list::List = l.set_count(12);
                 let _r: list::List = l.set_row(refresh_row);
             }
-            option::Option[list::List]::None => { }
+            option::Option::None => { }
         }
         body.add(host);
         body.add(ui::label(
             "refreshed 0 time(s)",
             key: "rf:status",
-            font_size: 13.0f64,
-            text_color: vocab::Color::ink(0.7f64),
+            font_size: 13.0,
+            text_color: vocab::Color::ink(0.7),
         ));
 
         return shell::panel(
             "Refresh",
             "Pull-to-refresh on a list. Handlers call begin_refresh / end_refresh around the load.",
-            core::column(body).gap(12.0f64),
+            core::column(body).gap(12.0),
             howto: "ui::list(key: \"l\", refreshable: true,\n    on_refreshing: this.on_refresh)\n// in handler after load:\nlist::find(\"l\").end_refresh()",
         );
     }

@@ -414,16 +414,43 @@ for the two lines that turn it on and the protocol it speaks.
 
 `facet_uikit` serves it over **TCP on loopback**, not a Unix socket, because an
 app's socket lives inside its sandbox where nothing on the development machine
-can reach it — and to a device there is no shared filesystem at all. The port is
-what the app passes to `agent_mcp(...)`, default **8787**.
+can reach it — and to a device there is no shared filesystem at all.
+
+**THE PORT IS DERIVED FROM THE PID: `9000 + pid % 1000`.** It is not a number
+the app chooses and not one you configure. `agent_mcp("<name>")` takes an ID —
+the app's name, which is what `serverInfo.name` reports and what the descriptor
+is filed under — and the platform decides the address from it. A launcher that
+started the app has the pid, so it can work the port out; anything else reads
+`/tmp/mcp-<id>-<pid>.json`, which records what was actually bound.
+
+The wire is **Streamable HTTP**: one JSON-RPC object POSTed, one JSON object
+back, which is what an MCP client reaches with no bridge written for it. (The
+desktop backend serves that door too, alongside a Unix socket that still speaks
+the older line-delimited framing.)
 
 **On the simulator there is nothing to forward.** A simulator shares the Mac's
-network stack, so `127.0.0.1:8787` on the Mac IS the app's loopback:
+network stack, so `127.0.0.1:<port>` on the Mac IS the app's loopback:
 
 ```
-xcrun simctl launch $DEV dev.cplus.facetgalleryios
-tools/mcp_check.py                    # 25 checks; verified 2026-08-19
+xcrun simctl launch $DEV dev.cplus.facetgalleryios      # prints the pid
+tools/mcp_check.py $(( 9000 + PID % 1000 ))             # 28 checks
 ```
+
+and to build the app for the simulator at all, the library the Xcode project
+links has to be the simulator one:
+
+```
+cpc build --target ios-arm64-simulator
+xcodebuild -project ios/Gallery.xcodeproj -scheme Gallery \
+           -sdk iphonesimulator -configuration Debug \
+           -destination "id=$DEV" build
+```
+
+The project picks the right archives per SDK — `CPLUS_TRIPLE` and
+`CPLUS_TARGETDIR` are conditioned on `[sdk=iphonesimulator*]`, so the device
+build is untouched. Before 2026-08-30 it named the device paths unconditionally
+and a simulator build failed at the link with *"building for iOS-simulator, but
+linking in object file built for iOS"*.
 
 **On a device the port is reached over usbmuxd**, the same mechanism Flutter's
 Dart VM Service and Chrome's remote debugging use:
@@ -436,9 +463,9 @@ which is the three steps below, and says which of them your setup is missing
 rather than leaving you with a socket that times out:
 
 ```
-iproxy 8787 8787 <25-char-UDID>              # brew install libimobiledevice
-pymobiledevice3 usbmux forward 8787 8787     # or: pip install pymobiledevice3
-tools/mcp_check.py                           # the same script, unchanged
+iproxy <port> <port> <25-char-UDID>          # brew install libimobiledevice
+pymobiledevice3 usbmux forward <port> <port> # or: pip install pymobiledevice3
+tools/mcp_check.py <port>                    # the same script, unchanged
 ```
 
 Three things have to be true, none of them announce themselves, and all three
@@ -452,9 +479,13 @@ A fourth belongs only here, and it is the one that will actually mislead you.
 ### The trap that gives you a green run against the wrong app
 
 A simulator shares the Mac's network stack, so a gallery left running in one is
-**also** listening on `127.0.0.1:8787`. Start the forwarder against that and it
-cannot bind, exits, and the check connects to the SIMULATOR — twenty-five
-assertions, all green, and not one byte of it went near the device.
+**also** listening on loopback. Start the forwarder against that port and it
+cannot bind, exits, and the check connects to the SIMULATOR — every assertion
+green, and not one byte of it went near the device.
+
+Deriving the port from the pid narrows this a great deal — two instances collide
+only when their pids agree mod 1000 — but it does not close it, and the failure
+still looks exactly like success.
 
 That happened here on the first device run (2026-08-19). The only tell was a
 402pt-wide window on an 834pt iPad, and it was nearly missed.
@@ -472,6 +503,13 @@ device's.
 xcrun devicectl device process terminate --device <identifier> --pid <pid>
 ```
 
+> **Status: verified on the SIMULATOR, 2026-08-30.** iPhone 16 Pro, iOS 18.5,
+> straight to loopback. All 28 checks pass. This run is what caught three things
+> a cross-build cannot: the app was serving on the pid-derived port while every
+> doc said 8787, the harness still spoke the retired line framing, and list rows
+> had stopped appearing in `describe_ui` when both backends moved to walking
+> facet's tree. A device run has not been repeated since.
+>
 > **Status: verified on device, 2026-08-19.** iPad Pro 11-inch (3rd gen), iOS
 > 26.6, over `pymobiledevice3 usbmux forward 8787 8787`. All 25 checks pass, and
 > the run was confirmed to be the device's by the terminate test above.

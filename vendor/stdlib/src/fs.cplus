@@ -79,7 +79,7 @@ fn open_read(path: str) -> result::Result[File, result::IoError] {
 // factor of eight between Darwin and Linux.
 fn create(path: str) -> result::Result[File, result::IoError] {
     let flags: i32 = fsys::create_flags();
-    let mode: i32 = 420 as i32;
+    let mode: i32 = 420;
     match c_path(path) {
         option::Option[text::CString]::Some(cp) => {
             let fd: i32 = { open(cp.as_ptr(), flags, mode) };
@@ -97,7 +97,7 @@ fn create(path: str) -> result::Result[File, result::IoError] {
 // Open `path` for appending, creating it if missing. Mode 0o644.
 fn open_append(path: str) -> result::Result[File, result::IoError] {
     let flags: i32 = fsys::append_flags();
-    let mode: i32 = 420 as i32;
+    let mode: i32 = 420;
     match c_path(path) {
         option::Option[text::CString]::Some(cp) => {
             let fd: i32 = { open(cp.as_ptr(), flags, mode) };
@@ -130,7 +130,7 @@ fn metadata(path: str) -> result::Result[Metadata, result::IoError] {
     match c_path(path) {
         option::Option[text::CString]::Some(cp) => {
             let buf: *u8 = { malloc(fsys::stat_buf_bytes()) };
-            if buf == (0 as *u8) { return result::io_err::[Metadata](result::IoError::Other); }
+            if buf.is_null() { return result::io_err::[Metadata](result::IoError::Other); }
             let rc: i32 = fsys::stat_path(cp.as_ptr(), buf);
             if rc != (0 as i32) {
                 let err: i32 = errno();
@@ -184,7 +184,7 @@ impl File {
         if this._fd < (0 as i32) {
             return result::io_err::[vec::Vec[u8]](result::IoError::InvalidInput);
         }
-        let chunk_size: usize = 4096 as usize;
+        let chunk_size: usize = 4096;
         let chunk: *u8 = { malloc(chunk_size) };
         if chunk.is_null() {
             return result::io_err::[vec::Vec[u8]](result::IoError::Other);
@@ -255,7 +255,6 @@ impl File {
             { close(this._fd); }
             this._fd = 0 -% 1 as i32;
         }
-        return;
     }
 
     // v0.0.5 Phase 4 Slice 4C: flip O_NONBLOCK on the underlying fd so
@@ -282,7 +281,7 @@ impl File {
     // is yielded as the last line.
     gen fn lines(this) -> text::Text {
         var carry: vec::Vec[u8] = vec::new::[u8]();
-        let chunk_size: usize = 4096 as usize;
+        let chunk_size: usize = 4096;
         let chunk: *u8 = { malloc(chunk_size) };
         if chunk.is_null() {
             return;   // cannot allocate the scan buffer; yield no lines
@@ -337,7 +336,6 @@ impl File {
                 carry.extend_from_raw(rest_p, count -% start);
             }
         }
-        return;
     }
 
     // Destructor: close the fd if not already closed.
@@ -345,7 +343,6 @@ impl File {
         if this._fd >= (0 as i32) {
             { close(this._fd); }
         }
-        return;
     }
 }
 
@@ -746,7 +743,6 @@ fn fs_write_then_read_roundtrip() {
         }
         result::Result[File, result::IoError]::Err(e) => { assert false; }
     }
-    return;
 }
 
 #[test]
@@ -768,7 +764,6 @@ fn fs_path_reads_only_the_view_not_the_buffer_tail() {
         result::Result[File, result::IoError]::Err(e) => { assert false; }
     }
     let _c: result::Result[bool, result::IoError] = remove_file(real);
-    return;
 }
 
 #[test]
@@ -830,7 +825,6 @@ fn dir_create_exists_read_remove() {
             match e { result::IoError::NotFound => { } _ => { assert false; } }
         }
     }
-    return;
 }
 
 #[test]
@@ -852,7 +846,6 @@ fn read_to_string_reads_a_utf8_file() {
         result::Result[text::Text, result::IoError]::Err(e) => { assert false; }
     }
     let _rm: result::Result[bool, result::IoError] = remove_file(path);
-    return;
 }
 
 #[test]
@@ -875,7 +868,6 @@ fn read_to_string_rejects_non_utf8() {
         }
     }
     let _rm: result::Result[bool, result::IoError] = remove_file(path);
-    return;
 }
 
 #[test]
@@ -886,5 +878,4 @@ fn read_to_string_missing_file_is_not_found() {
             match e { result::IoError::NotFound => { } _ => { assert false; } }
         }
     }
-    return;
 }

@@ -7,10 +7,26 @@
 //   - poll_event   -> the next queued semantic event
 //
 // Every request is first gated by the agent_core consent `AuthGate` on the
-// `External` channel: an un-served (deny-all) gate rejects everything, so the
-// surface is closed until the developer arms a policy. This module is the
-// protocol + serialization core (pure, no sockets); `serve.cplus` layers the
-// UDS-by-PID transport on top.
+// `External` channel, and an un-served (deny-all) gate rejects everything.
+//
+// THAT IS THIS MODULE'S CONTRACT AND NOT WHAT A FACET APP GETS, which is worth
+// saying plainly because the sentence that used to be here — "the surface is
+// closed until the developer arms a policy" — described `agent_core::deny_all`
+// and read as a promise about applications. It is not one.
+// `facet_agent::effective_policy` substitutes `admit` when the app installed no
+// policy of its own, and `admit` returns `auth::operator()`: read the UI and
+// drive it, everything except what sits behind a tier. So a facet app that
+// serves is OPEN by default to whatever reaches its socket, and narrowing it is
+// `facet_agent::set_policy` — called before `enable()`, since the serve thread
+// reads the policy once when it starts.
+//
+// The transport below is what bounds that in practice: the socket is bound 0600
+// (see `bind_uds`), so "whatever reaches it" means a process running as the
+// same user.
+//
+// This module is the protocol + serialization core; the UDS and TCP transports
+// are at the bottom of this same file — there is no `serve.cplus`, and the
+// reference to one here was stale.
 //
 // ---- MCP, and why the flat names stayed -------------------------------------
 //
@@ -38,7 +54,7 @@
 // Every app that links this package now gets the framing for free.
 //
 // AN EXTENSION DESCRIBES ITS OWN VERBS. The `inspector.` namespace adds twelve
-// methods through `arm_extension`, and a tools/list that knew only the nine core
+// methods through `arm_extension`, and a tools/list that knew only the core
 // ones would make the extension invisible to exactly the clients that need to be
 // told what exists — the same "the agent sees less than the user" bug in a new
 // place. But this module must not know what an inspector IS (the dependency runs
@@ -53,6 +69,13 @@ import "stdlib/result" as result;
 import "stdlib/status" as status;
 import "stdlib/thread" as thread;
 import "stdlib/netsys" as netsys;
+// The `struct stat` reader, for the socket-mode test alone: its buffer size and
+// every field offset differ per platform, and this is the module that already
+// knows them.
+import "stdlib/fs_sys" as fsys;
+import "stdlib/fs" as fs;
+import "stdlib/io" as io;
+import "stdlib/time" as time;
 import "json/json" as json;
 import "agent_core/backend" as backend;
 import "agent_core/identity" as identity;
@@ -70,7 +93,7 @@ fn jstr(s: str) -> json::Value {
 fn val_as_text(v: json::Value) -> text::Text {
     return match v.as_text() {
         option::Option[text::Text]::Some(t) => t,
-        option::Option[text::Text]::None => text::from_str(""),
+        option::Option::None => text::from_str(""),
     };
 }
 
@@ -78,7 +101,7 @@ fn val_as_text(v: json::Value) -> text::Text {
 fn val_as_number(v: json::Value) -> f64 {
     return match v.as_number() {
         option::Option[f64]::Some(n) => n,
-        option::Option[f64]::None => 0.0,
+        option::Option::None => 0.0,
     };
 }
 
@@ -86,7 +109,7 @@ fn val_as_number(v: json::Value) -> f64 {
 fn obj_get(v: json::Value, key: str) -> json::Value {
     return match v.value(key) {
         option::Option[json::Value]::Some(val) => val,
-        option::Option[json::Value]::None => json::Value::Null,
+        option::Option::None => json::Value::Null,
     };
 }
 
@@ -191,8 +214,38 @@ fn verb_to_str(v: events::Verb) -> str {
 // `prefix` filter the answer is a subset, and `parent` has to be renumbered
 // into it (see `describe_to_json`) or it would point at whatever node happens
 // to sit at that offset in a shorter array.
+// ---- how much text a listing carries -------------------------------------------
+//
+// A LISTING IS READ ON EVERY LOOP and a value is not. One populated text area
+// or a paragraph of body copy dominates the response, and the same argument
+// that makes `mode:"full"` opt-in applies one level down: the default protects
+// the context window, and the whole value is one verb away.
+//
+// The marker matters as much as the cut. A clipped string that does not say it
+// was clipped is a lie an agent acts on — it will happily conclude the field
+// ends mid-sentence.
+const DESCRIBE_TEXT_BUDGET: usize = 200;
+
+// Clip at a UTF-8 boundary, never mid-codepoint. `str::prefix` counts BYTES, so
+// cutting a multi-byte character in half is one call away — and the result is
+// invalid UTF-8 that a client's JSON parser is entitled to reject, taking the
+// whole response with it rather than the one string.
+fn clip_utf8(s: str, budget: usize) -> str {
+    if #str_len(s) <= budget { return s; }
+    let b: *u8 = #str_ptr(s);
+    var n: usize = budget;
+    // Byte `n` is the first EXCLUDED one. While it is a continuation byte
+    // (0b10xxxxxx) the character starting before it would be split, so back up.
+    while n > 0 {
+        let c: u8 = { *(b + n) };
+        if (c & 192) != 128 { break; }
+        n = n -% 1;
+    }
+    return s.prefix(n);
+}
+
 fn node_to_json(p: *backend::UiNode, with_geometry: bool, parent_index: i64) -> json::Value {
-    let parent_val: json::Value = if parent_index < (0 as i64) {
+    let parent_val: json::Value = if parent_index < 0 {
         json::Value::Null
     } else {
         jnum(parent_index as f64)
@@ -211,7 +264,16 @@ fn node_to_json(p: *backend::UiNode, with_geometry: bool, parent_index: i64) -> 
         m.append(member("frame", json::Value::Object(frame)));
     }
     m.append(member("hidden", jbool({ (*p).is_hidden })));
-    m.append(member("text", jstr({ (*p).text })));
+    // Clipped, with the full length beside it so a reader knows there is more
+    // and `read_text` knows it is worth asking. Absent `text_len` means what
+    // you see is all of it.
+    let full: str = { (*p).text };
+    let shown: str = clip_utf8(full, DESCRIBE_TEXT_BUDGET);
+    m.append(member("text", jstr(shown)));
+    if #str_len(shown) < #str_len(full) {
+        m.append(member("text_len", jnum(#str_len(full) as f64)));
+        m.append(member("text_truncated", jbool(true)));
+    }
     // ON THE WIRE ONLY WHEN GATED, and then both fields — the ones here that
     // exist to be READ BY A MODEL rather than by a test. `text: ""` on its own
     // says "this field is empty, go and fill it in". With `tier` and
@@ -261,7 +323,7 @@ fn node_to_json(p: *backend::UiNode, with_geometry: bool, parent_index: i64) -> 
     // reason.
     match { (*p).wired } {
         option::Option[bool]::Some(w) => { m.append(member("wired", jbool(w))); }
-        option::Option[bool]::None => { }
+        option::Option::None => { }
     }
     m.append(member("parent", parent_val));
     return json::Value::Object(m);
@@ -271,7 +333,7 @@ fn node_to_json(p: *backend::UiNode, with_geometry: bool, parent_index: i64) -> 
 fn parent_of(nodes: vec::Vec[backend::UiNode], i: usize) -> option::Option[usize] {
     return match nodes.at_ptr(i) {
         option::Option[*backend::UiNode]::Some(p) => { (*p).parent }
-        option::Option[*backend::UiNode]::None => option::Option[usize]::None,
+        option::Option::None => option::Option[usize]::None,
     };
 }
 
@@ -284,7 +346,7 @@ fn node_matches(nodes: vec::Vec[backend::UiNode], i: usize, prefix: str) -> bool
             let idp: *text::Text = { #addr_of((*p).id) };
             { (*idp).view() }.has_prefix(prefix)
         }
-        option::Option[*backend::UiNode]::None => false,
+        option::Option::None => false,
     };
 }
 
@@ -292,16 +354,16 @@ fn node_matches(nodes: vec::Vec[backend::UiNode], i: usize, prefix: str) -> bool
 // when the filter drops it.
 fn filtered_positions(nodes: vec::Vec[backend::UiNode], prefix: str) -> vec::Vec[i64] {
     var out: vec::Vec[i64] = vec::new::[i64]();
-    var next: i64 = 0 as i64;
-    var i: usize = 0 as usize;
+    var next: i64 = 0;
+    var i: usize = 0;
     while i < nodes.count() {
         if node_matches(nodes, i, prefix) {
             let _s: status::Status = out.append(next);
-            next = next +% (1 as i64);
+            next = next +% 1;
         } else {
             let _s: status::Status = out.append((0 as i64) -% (1 as i64));
         }
-        i = i +% (1 as usize);
+        i = i +% 1;
     }
     return out;
 }
@@ -311,18 +373,34 @@ fn filtered_positions(nodes: vec::Vec[backend::UiNode], prefix: str) -> vec::Vec
 // the immediate parent keeps the subset a tree: a match whose parent was
 // dropped re-attaches to the nearest match above it, and only a node with no
 // surviving ancestor at all comes back parentless.
+//
+// THE CLIMB IS BOUNDED, because this walks a `parent` chain it does not own.
+// A walk up a tree visits each node at most once, so more steps than there
+// are nodes proves the chain is not a tree — and an unbounded loop over a
+// malformed one does not fail, it never returns: a backend that numbered
+// `parent` in a different index space than the array carrying it wedged this
+// function for 120s+ per call and left a core spinning afterwards, taking the
+// whole agent surface down with it (demo_11/bugs/001). That backend bug is
+// fixed in `identity::Registry.describe`; this bound is why the next one
+// costs a wrong answer instead of the process.
+//
+// It stays invisible on the honest path: the chain is short, and an unfiltered
+// call returns on its first step because every ancestor was kept.
 fn kept_parent_index(
     nodes: vec::Vec[backend::UiNode],
     pos: vec::Vec[i64],
     start: usize,
 ) -> i64 {
     var cur: option::Option[usize] = parent_of(nodes, start);
+    var steps: usize = 0;
     loop {
+        if steps >= nodes.count() { return (0 as i64) -% (1 as i64); }
+        steps = steps +% 1;
         match cur {
             option::Option[usize]::Some(pi) => {
                 match pos.at(pi) {
                     option::Option[i64]::Some(np) => {
-                        if np >= (0 as i64) { return np; }
+                        if np >= 0 { return np; }
                     }
                     option::Option[i64]::None => { return (0 as i64) -% (1 as i64); }
                 }
@@ -356,12 +434,12 @@ fn describe_to_json(
 ) -> json::Value {
     let pos: vec::Vec[i64] = filtered_positions(nodes, prefix);
     var arr: vec::Vec[json::Value] = vec::new::[json::Value]();
-    var i: usize = 0 as usize;
+    var i: usize = 0;
     while i < nodes.count() {
         var keep: bool = false;
         match pos.at(i) {
-            option::Option[i64]::Some(np) => { if np >= (0 as i64) { keep = true; } }
-            option::Option[i64]::None => {}
+            option::Option[i64]::Some(np) => { if np >= 0 { keep = true; } }
+            option::Option::None => {}
         }
         if keep {
             match nodes.at_ptr(i) {
@@ -369,10 +447,10 @@ fn describe_to_json(
                     let pidx: i64 = kept_parent_index(nodes, pos, i);
                     let _s: status::Status = arr.append(node_to_json(p, with_geometry, pidx));
                 }
-                option::Option[*backend::UiNode]::None => {}
+                option::Option::None => {}
             }
         }
-        i = i +% (1 as usize);
+        i = i +% 1;
     }
     return json::Value::Array(arr);
 }
@@ -400,6 +478,17 @@ fn outcome_result_for(o: surface::Outcome, target: str) -> json::Value {
     if surface::outcome_eq(o, surface::Outcome::NotFound) {
         let hint: text::Text =
             "no node \"${target}\" in the UI of the application serving this endpoint. Re-read describe_ui — ids change as the UI does — and note that an app launched BY this one has its own agent endpoint: this one only ever answers for its own UI.";
+        m.append(member("hint", jstr({ hint.view() })));
+    }
+    // A DEAD END OTHERWISE. `not_exposed` reaches a caller that has usually
+    // just READ this node — `describe_ui mode:"full"` shows the whole tree and
+    // hands back an id like `root/button#2` — so the bare outcome reads as a
+    // bug in the surface rather than a decision by the app. It is a decision:
+    // either nobody named the node, or it was declared out. Saying which two
+    // things it can be turns a refusal into something a developer can act on.
+    if surface::outcome_eq(o, surface::Outcome::NotExposed) {
+        let hint: text::Text =
+            "\"${target}\" is in the tree but not on the agent surface. Either the app never named it (only a node with a key is addressable — `mode:\"full\"` shows unnamed ones so you can SEE the structure, not drive it), or it is declared out with `agent: Hidden`. Neither is a fault you can retry: to drive it, the app has to give it a key.";
         m.append(member("hint", jstr({ hint.view() })));
     }
     return json::Value::Object(m);
@@ -431,7 +520,7 @@ fn runs_result(take r: surface::Runs) -> json::Value {
     m.append(member("outcome", jstr(outcome_to_str(r.outcome))));
     m.append(member("supported", jbool(r.supported)));
     var arr: vec::Vec[json::Value] = vec::new::[json::Value]();
-    var i: usize = 0 as usize;
+    var i: usize = 0;
     while i < r.runs.count() {
         match r.runs.at_ptr(i) {
             option::Option[*surface::TextRun]::Some(run) => {
@@ -446,9 +535,9 @@ fn runs_result(take r: surface::Runs) -> json::Value {
                 if { (*run).is_underlined } { e.append(member("underlined", jbool(true))); }
                 arr.append(json::Value::Object(e));
             }
-            option::Option[*surface::TextRun]::None => { }
+            option::Option::None => { }
         }
-        i = i +% (1 as usize);
+        i = i +% 1;
     }
     m.append(member("runs", json::Value::Array(arr)));
     return json::Value::Object(m);
@@ -558,7 +647,7 @@ fn core_tools() -> vec::Vec[json::Value] {
     p_describe.append(prop("prefix", "string",
         "Answer only with nodes whose id starts with this, e.g. \"board:detail:\". Absent means the whole view. Use it: a whole-tree answer runs to tens of thousands of characters, and the id path is a path, so the question you are asking almost always has a prefix."));
     out.append(tool("describe_ui",
-        "The live UI of THE APPLICATION SERVING THIS ENDPOINT, as a flat list of nodes: id, role, text, hidden, actionable, clickable, wired, parent. The three flags are different questions and you need all three: `actionable` is whether you are ALLOWED to act, `clickable` is whether a click would LAND, and `wired` is whether it would reach a handler — a control can pass the first two and still do nothing. `wired` absent means this backend cannot answer it, which is not the same as false. If that application launched another one, the launched app has its own endpoint and does NOT appear here. Read this FIRST — a node's id is its address for every other verb, and the id path is the schema. Pass \"prefix\" to ask about one part of it.",
+        "The live UI of THE APPLICATION SERVING THIS ENDPOINT, as a flat list of nodes: id, role, text, hidden, actionable, clickable, wired, parent. The three flags are different questions and you need all three: `actionable` is whether you are ALLOWED to act, `clickable` is whether a click would LAND, and `wired` is whether it would reach a handler — a control can pass the first two and still do nothing. `wired` absent means this backend cannot answer it, which is not the same as false. If that application launched another one, the launched app has its own endpoint and does NOT appear here. Read this FIRST — a node's id is its address for every other verb, and the id path is the schema. Pass \"prefix\" to ask about one part of it. Long text is CLIPPED here and marked `text_truncated` with the full `text_len`; `read_text` answers the whole value.",
         p_describe, no_required()));
 
     var p_click: vec::Vec[json::Member] = no_props();
@@ -588,6 +677,12 @@ fn core_tools() -> vec::Vec[json::Value] {
         "Place the caret, or select a range, inside a text control.",
         p_caret, required2("id", "at")));
 
+    var p_readtext: vec::Vec[json::Member] = no_props();
+    p_readtext.append(prop("id", "string", "Node id, from describe_ui."));
+    out.append(tool("read_text",
+        "The WHOLE text of one node. `describe_ui` clips a long value and marks it `text_truncated` with a `text_len` — this is how you get the rest. A node behind a tier you cannot read answers the same empty string it does there: asking twice is not a way past the gate.",
+        p_readtext, required1("id")));
+
     var p_runs: vec::Vec[json::Member] = no_props();
     p_runs.append(prop("id", "string", "The node id of a text control."));
     out.append(tool("read_runs",
@@ -608,6 +703,10 @@ fn core_tools() -> vec::Vec[json::Value] {
 
     out.append(tool("poll_event",
         "The next queued semantic event, or null when there is none. This is the asynchronous half: it is how an agent notices that the USER did something while it was working.",
+        no_props(), no_required()));
+
+    out.append(tool("activity",
+        "What has been DONE to this application through this surface — every click, text write, caret move, menu invocation and scroll, in order, with who asked, what it targeted and whether it worked. For a person supervising an agent, and for an agent reviewing its own work. Content is never recorded: a text write is logged as its length.",
         no_props(), no_required()));
 
     return out;
@@ -635,75 +734,232 @@ fn core_tools() -> vec::Vec[json::Value] {
 // a process that never calls `arm_extension` answers "method not found" to
 // every extension method. The consent gate still runs FIRST and covers both:
 // arming grants no path around it.
-static EXT_HANDLER: fn(str, json::Value, f64, auth::Grant) -> json::Value =
-    #zero::[fn(str, json::Value, f64, auth::Grant) -> json::Value]();
-// Owned, not a `str`. A borrowed {ptr,len} in a static is sound for a literal
-// and a use-after-free for anything computed, and a caller composing a prefix
-// is not a mistake this module should be able to punish.
-static EXT_PREFIX: text::Text = #zero::[text::Text]();
-static EXT_ARMED: bool = false;
-// How the namespace lists its own verbs for `tools/list`. Separate from the
-// handler because answering a call and describing what can be called are
-// different questions, and an extension may reasonably do the first without the
-// second.
-static EXT_DESCRIBER: fn() -> vec::Vec[json::Value] =
-    #zero::[fn() -> vec::Vec[json::Value]]();
+// ONE ROW PER NAMESPACE, not one slot. The slot version silently replaced
+// whatever was already armed: a second caller took the namespace and the first
+// vanished with no diagnostic — the same "the agent sees less than it should,
+// and nothing says why" failure this module keeps running into. Only the
+// inspector arms one today, which made it latent rather than absent.
+struct Extension {
+    // THE VERB NAMES THIS PROVIDER ANSWERS, not a prefix.
+    //
+    // It was a prefix, and the prefix was a symptom: the inspector needed
+    // `inspector.` because it described a DIFFERENT TREE from the agent
+    // surface, so its verbs had to be told apart. Both walk facet's tree now,
+    // so there is one surface and the names sit in it directly — a client sees
+    // one list and does not have to know which half of the server it reached.
+    //
+    // Owned, not `str`. A borrowed {ptr,len} in process-lifetime storage is
+    // sound for a literal and a use-after-free for anything computed, and a
+    // caller composing a name is not a mistake this module should punish.
+    names: vec::Vec[text::Text],
+    handler: fn(str, json::Value, f64, auth::Grant) -> json::Value,
+    // How the namespace lists its own verbs for `tools/list`. Separate from the
+    // handler because answering a call and describing what can be called are
+    // different questions, and an extension may reasonably do the first without
+    // the second.
+    describer: fn() -> vec::Vec[json::Value],
+}
+
+static EXTENSIONS: vec::Vec[Extension] = #zero::[vec::Vec[Extension]]();
+
+// The row holding exactly this prefix, or -1. Exact, not prefix-of-prefix:
+// this answers "is this namespace already registered", which re-arming needs.
+// The row that answers `verb`, or -1.
+fn extension_index_for(verb: str) -> i64 {
+    var i: usize = 0;
+    while i < EXTENSIONS.count() {
+        match EXTENSIONS.at_ptr(i) {
+            option::Option[*Extension]::Some(e) => {
+                var j: usize = 0;
+                while j < { (*e).names.count() } {
+                    match { (*e).names.at_ptr(j) } {
+                        option::Option[*text::Text]::Some(nm) => {
+                            if { (*nm).view() } == verb { return i as i64; }
+                        }
+                        option::Option::None => { }
+                    }
+                    j = j +% 1;
+                }
+            }
+            option::Option::None => { }
+        }
+        i = i +% 1;
+    }
+    return - 1 as i64;
+}
+
+// The row whose FIRST verb is this — the identity a re-arm replaces.
+fn extension_index(tag: str) -> i64 {
+    var i: usize = 0;
+    while i < EXTENSIONS.count() {
+        match EXTENSIONS.at_ptr(i) {
+            option::Option[*Extension]::Some(e) => {
+                match { (*e).names.at_ptr(0 as usize) } {
+                    option::Option[*text::Text]::Some(nm) => {
+                        if { (*nm).view() } == tag { return i as i64; }
+                    }
+                    option::Option::None => { }
+                }
+            }
+            option::Option::None => { }
+        }
+        i = i +% 1;
+    }
+    return - 1 as i64;
+}
 
 // `describe` is optional and defaults to none — an extension armed without one
 // still WORKS, it is simply not listed by `tools/list`. That is the honest
 // degradation: the verbs answer, and a client that was told about them out of
 // band can still call them. Supplying one is what makes the namespace
 // discoverable, and every namespace should.
-fn arm_extension(prefix: str, h: fn(str, json::Value, f64, auth::Grant) -> json::Value,
+//
+// Re-arming the SAME prefix replaces that row rather than adding a second one,
+// so a disarm/arm cycle is idempotent. It moves to the end of the table, which
+// only matters if two prefixes overlap — see `extension_for`.
+// Build a name list. There is no vec literal, and a provider registering one or
+// two verbs should not have to write the loop.
+fn verbs1(a: str) -> vec::Vec[str] {
+    var v: vec::Vec[str] = vec::new::[str]();
+    let _a: status::Status = v.append(a);
+    return v;
+}
+
+fn verbs2(a: str, b: str) -> vec::Vec[str] {
+    var v: vec::Vec[str] = verbs1(a);
+    let _b: status::Status = v.append(b);
+    return v;
+}
+
+fn arm_extension(names: vec::Vec[str], h: fn(str, json::Value, f64, auth::Grant) -> json::Value,
                  describe: fn() -> vec::Vec[json::Value] = 0 as fn() -> vec::Vec[json::Value]) {
-    EXT_PREFIX = text::from_str(prefix);
-    EXT_HANDLER = h;
-    EXT_DESCRIBER = describe;
-    EXT_ARMED = true;
+    if names.count() == (0 as usize) { return; }
+    var owned: vec::Vec[text::Text] = vec::new::[text::Text]();
+    var i: usize = 0;
+    while i < names.count() {
+        match names.at(i) {
+            option::Option[str]::Some(nm) => { let _a: status::Status = owned.append(text::from_str(nm)); }
+            option::Option[str]::None => { }
+        }
+        i = i +% 1;
+    }
+    // Re-arming the same provider — identified by its first verb — replaces its
+    // row rather than adding a second, so a disarm/arm cycle is idempotent.
+    var tag: text::Text = text::new();
+    match owned.at_ptr(0 as usize) {
+        option::Option[*text::Text]::Some(t) => { tag = text::from_str({ (*t).view() }); }
+        option::Option[*text::Text]::None => { }
+    }
+    let existing: i64 = extension_index(tag.view());
+    if existing >= (0 as i64) {
+        let _old: option::Option[Extension] = EXTENSIONS.remove(existing as usize);
+    }
+    let _s: status::Status = EXTENSIONS.append(Extension {
+        names: owned, handler: h, describer: describe,
+    });
     return;
 }
 
-// Every tool this server offers: the nine core verbs, plus whatever an armed
-// extension says it has. Built per request rather than cached, because arming
+// Every tool this server offers: the core verbs, plus whatever each armed
+// namespace says it has. Built per request rather than cached, because arming
 // can happen after the first client connects and a cached list would then be
 // wrong in the direction that hides things.
 fn all_tools() -> vec::Vec[json::Value] {
     var out: vec::Vec[json::Value] = core_tools();
-    if !EXT_ARMED { return out; }
-    let d: fn() -> vec::Vec[json::Value] = EXT_DESCRIBER;
-    if d == (0 as fn() -> vec::Vec[json::Value]) { return out; }
-    // DRAINED, not copied: `json::Value` owns its payloads and has no clone —
-    // a descriptor tree is Vecs of Vecs, and duplicating one would mean a deep
-    // copy this has no reason to make. The extension handed us its list; we
-    // move it across, front first so the order it wrote survives.
-    var extra: vec::Vec[json::Value] = d();
-    while extra.count() > (0 as usize) {
-        match extra.remove(0 as usize) {
-            option::Option[json::Value]::Some(v) => { out.append(v); }
-            option::Option[json::Value]::None => { return out; }
+    var i: usize = 0;
+    while i < EXTENSIONS.count() {
+        var d: fn() -> vec::Vec[json::Value] = #zero::[fn() -> vec::Vec[json::Value]]();
+        match EXTENSIONS.at_ptr(i) {
+            option::Option[*Extension]::Some(e) => { d = { (*e).describer }; }
+            option::Option::None => { }
+        }
+        i = i +% 1;
+        if d.is_null() { continue; }
+        // DRAINED, not copied: `json::Value` owns its payloads and has no clone
+        // — a descriptor tree is Vecs of Vecs, and duplicating one would mean a
+        // deep copy this has no reason to make. The extension handed us its
+        // list; we move it across, front first so the order it wrote survives.
+        var extra: vec::Vec[json::Value] = d();
+        while extra.count() > 0 {
+            match extra.remove(0) {
+                option::Option[json::Value]::Some(v) => { out.append(v); }
+                option::Option::None => { return out; }
+            }
         }
     }
     return out;
 }
 
-// Close the namespace again. The handler is cleared too, so a disarm cannot be
-// undone by a stray re-arm of the flag alone.
-fn disarm_extension() {
-    EXT_ARMED = false;
-    EXT_HANDLER = #zero::[fn(str, json::Value, f64, auth::Grant) -> json::Value]();
-    EXT_DESCRIBER = #zero::[fn() -> vec::Vec[json::Value]]();
-    EXT_PREFIX = text::new();
-    return;
+// Close ONE namespace. Named, because the slot version's `disarm_extension()`
+// meant "close whatever is armed" — which with a table would let the inspector
+// tearing itself down take every other namespace with it.
+fn disarm_extension(tag: str) {
+    let ix: i64 = extension_index(tag);
+    if ix < 0 { return; }
+    let _gone: option::Option[Extension] = EXTENSIONS.remove(ix as usize);
 }
 
-fn extension_armed() -> bool { return EXT_ARMED; }
+// Close all of them. For a test that wants a known-empty table, and for a
+// process tearing the whole surface down.
+fn disarm_all_extensions() {
+    EXTENSIONS.remove_all();
+}
+
+fn extension_armed() -> bool { return EXTENSIONS.count() > 0; }
+
+fn extension_count() -> usize { return EXTENSIONS.count(); }
+
+// HOW MANY VERBS ARE ACTUALLY ARMED, as a line to print at startup.
+//
+// Splitting `serve_if_asked` took away the canary: arming used to be one call
+// that either happened or did not, and now it is three lines in `app.cplus`
+// that a developer can comment out one at a time. Commenting out
+// `inspect::arm()` left an app that still served, still answered, and had
+// quietly lost fourteen verbs with nothing saying so — which is exactly how
+// this was found, by someone asking why the inspector stopped working.
+//
+// Counted at SERVE time, which is after arming, so the number is what a client
+// will actually be offered rather than what the program intended.
+fn armed_verb_count() -> usize {
+    var n: usize = core_tools().count();
+    var i: usize = 0;
+    while i < EXTENSIONS.count() {
+        match EXTENSIONS.at_ptr(i) {
+            option::Option[*Extension]::Some(e) => { n = n +% { (*e).names.count() }; }
+            option::Option::None => { }
+        }
+        i = i +% 1;
+    }
+    return n;
+}
+
+fn verb_summary() -> text::Text {
+    let core: usize = core_tools().count();
+    let total: usize = armed_verb_count();
+    if total == core { return "${core} verbs (core only)"; }
+    let ext: usize = total -% core;
+    return "${total} verbs (${core} core, ${ext} armed)";
+}
+
+// The row that should answer `method`, or -1. FIRST MATCH WINS in registration
+// order, which only decides anything if two prefixes overlap (`insp.` and
+// `inspector.`). Namespaces should not overlap; this says what happens if they
+// do rather than leaving it to the reader.
+fn extension_for(method: str) -> i64 {
+    let ix: i64 = extension_index_for(method);
+    if ix < 0 { return ix; }
+    match EXTENSIONS.at_ptr(ix as usize) {
+        option::Option[*Extension]::Some(e) => {
+            let h: fn(str, json::Value, f64, auth::Grant) -> json::Value = { (*e).handler };
+            if h.is_null() { return - 1 as i64; }
+        }
+        option::Option::None => { return - 1 as i64; }
+    }
+    return ix;
+}
 
 fn is_extension_method(method: str) -> bool {
-    if !EXT_ARMED { return false; }
-    if EXT_HANDLER == (0 as fn(str, json::Value, f64, auth::Grant) -> json::Value) { return false; }
-    let p: str = { EXT_PREFIX.view() };
-    if p == "" { return false; }
-    return text::from_str(method).has_prefix(p);
+    return extension_for(method) >= 0;
 }
 
 // The credential this request carried, or "" when it carried none. A `token`
@@ -743,6 +999,28 @@ fn token_of(params: json::Value) -> text::Text {
 // agent would inherit the first's name and, with it, the first's consent.
 static CLIENT_NAME: text::Text = #zero::[text::Text]();
 
+// What `initialize` answers as `serverInfo.name`. It was the constant
+// "facet-agent-surface", which told a client it had reached A facet app but not
+// WHICH — so a connection to a recycled port or a stale address drove the wrong
+// process and looked like it had worked. The app's own id, set by the facade
+// that serves, and still falling back to the constant for a caller that never
+// named one.
+static SERVER_NAME: text::Text = #zero::[text::Text]();
+
+// What a consent refusal SAYS. See `dispatch`: an interactive policy refuses
+// "not yet" far more often than "no", and a client cannot tell those apart from
+// a bitset. Supplied by the policy, because only the policy knows.
+static DENY_HINT: fn() -> str = #zero::[fn() -> str]();
+
+fn set_deny_hint(f: fn() -> str) { DENY_HINT = f; return; }
+
+fn set_server_name(id: str) { SERVER_NAME = text::from_str(id); return; }
+
+fn server_name() -> str {
+    if SERVER_NAME.count() == 0 { return "facet-agent-surface"; }
+    return SERVER_NAME.view();
+}
+
 fn forget_client() { CLIENT_NAME = text::new(); return; }
 
 // The connected client's self-reported name, or "" before `initialize`.
@@ -758,9 +1036,122 @@ fn note_client(req: json::Value) {
     let params: json::Value = obj_get(req, "params");
     let info: json::Value = obj_get(params, "clientInfo");
     let name: text::Text = val_as_text(obj_get(info, "name"));
-    if name.count() == (0 as usize) { return; }
+    if name.count() == 0 { return; }
     CLIENT_NAME = name;
-    return;
+}
+
+// ---- what the agent did ------------------------------------------------------
+//
+// THE SUPERVISED CASE NEEDS A RECORD, and there was none.
+//
+// The inspector journals its own mutations as C+ source — that is a different
+// artifact for a different reader, the code you paste back into the app. This
+// answers the other question: an operator watching an agent drive their
+// workstation asks "what has it touched", and until now a click and a
+// `set_text` left nothing at all behind. A supervisor who has to intervene
+// cannot intervene in something they cannot see.
+//
+// Six verbs, and only six: the ones that reach a `Backend` action. Reads are
+// not here — knowing an agent read the tree is noise beside knowing it pressed
+// Send — and an extension namespace keeps its own record, which is what
+// `inspector.journal` is.
+//
+// WHAT IT DOES NOT RECORD: the text a `set_text` wrote. The length, not the
+// value. An agent may only write a field it was granted, and content behind a
+// privacy tier is readable only through `read_text` under that tier's rules —
+// a log that quoted the value would be a way around them that no
+// authorization check in this file would see. "wrote 8 characters to
+// pin_field" is what a supervisor needs and is not a second door to the value.
+struct Action {
+    seq: u64,
+    at_millis: i64,
+    client: text::Text,
+    verb: text::Text,
+    target: text::Text,
+    outcome: text::Text,
+    detail: text::Text,
+}
+
+static ACTIONS: vec::Vec[Action] = #zero::[vec::Vec[Action]]();
+static ACTION_SEQ: u64 = 0u64;
+
+// Bounded, because a long-running workstation session would otherwise grow one
+// entry per click forever. The oldest go first; the sequence number keeps
+// counting, so a reader can tell that entries were dropped rather than that
+// nothing happened.
+const ACTION_LOG_MAX: usize = 256usize;
+
+fn is_acting_verb(m: str) -> bool {
+    if m == "click" { return true; }
+    if m == "set_text" { return true; }
+    if m == "set_caret" { return true; }
+    if m == "invoke_menu" { return true; }
+    if m == "scroll_to" { return true; }
+    if m == "navigate" { return true; }
+    return false;
+}
+
+fn record_action(verb: str, target: str, outcome: str, take detail: text::Text) {
+    ACTION_SEQ = ACTION_SEQ +% (1 as u64);
+    while ACTIONS.count() >= ACTION_LOG_MAX {
+        let _dropped: option::Option[Action] = ACTIONS.remove(0 as usize);
+    }
+    let _a: status::Status = ACTIONS.append(Action {
+        seq: ACTION_SEQ,
+        at_millis: time::now_millis(),
+        // The name a client gave at `initialize`, and the CONNECTION is the
+        // session — so a caller that opens a socket, acts once and hangs up has
+        // never said who it is. Written as a token rather than left empty:
+        // "unidentified" is a fact about the caller, and `""` in an audit reads
+        // as a field that failed to fill.
+        client: if current_client() == "" { text::from_str("unidentified") }
+                else { text::from_str(current_client()) },
+        verb: text::from_str(verb),
+        target: text::from_str(target),
+        outcome: text::from_str(outcome),
+        detail: detail,
+    });
+}
+
+fn action_count() -> usize { return ACTIONS.count(); }
+
+fn forget_actions() {
+    ACTIONS.remove_all();
+    ACTION_SEQ = 0 as u64;
+}
+
+// The outcome a response reported, or "" for one that reported none.
+//
+// Read off the ANSWER rather than passed down from each branch: every acting
+// verb already renders `surface::Outcome` into the same `outcome` member, and
+// six copies of a logging call are six places to forget one.
+fn outcome_in(resp: json::Value) -> text::Text {
+    let r: json::Value = obj_get(resp, "result");
+    return val_as_text(obj_get(r, "outcome"));
+}
+
+fn actions_json() -> json::Value {
+    var rows: vec::Vec[json::Value] = vec::new::[json::Value]();
+    var i: usize = 0;
+    while i < ACTIONS.count() {
+        match ACTIONS.at_ptr(i) {
+            option::Option[*Action]::Some(a) => {
+                var m: vec::Vec[json::Member] = vec::new::[json::Member]();
+                m.append(member("seq", jnum({ (*a).seq } as f64)));
+                m.append(member("at_millis", jnum({ (*a).at_millis } as f64)));
+                m.append(member("client", json::Value::Text({ (*a).client }.clone())));
+                m.append(member("verb", json::Value::Text({ (*a).verb }.clone())));
+                m.append(member("target", json::Value::Text({ (*a).target }.clone())));
+                m.append(member("outcome", json::Value::Text({ (*a).outcome }.clone())));
+                let d: text::Text = { (*a).detail }.clone();
+                if d.count() > 0 { m.append(member("detail", json::Value::Text(d))); }
+                rows.append(json::Value::Object(m));
+            }
+            option::Option::None => { }
+        }
+        i = i +% 1;
+    }
+    return json::Value::Array(rows);
 }
 
 // ---- the dispatch -----------------------------------------------------------
@@ -787,12 +1178,27 @@ fn dispatch(
     // means anything. The grant is then threaded down as a parameter — see
     // `backend::Backend` for why it is never stored on the surface.
     let token: text::Text = token_of(params);
+    // WHO AND WHAT, not just whether. A policy asked to prompt has to be able to
+    // say "X wants to do Y"; `current_client()` is what the caller named itself
+    // in `initialize` and `method` is the verb about to run, so an app can gate
+    // per verb — read freely, ask before a write — instead of once per session.
     let grant: auth::Grant = gate.check(
-        auth::request_with_token(auth::Channel::External, { token.view() }));
+        auth::request_with_token(auth::Channel::External, { token.view() },
+                                 client: current_client(), method: method));
     // An empty grant can do nothing at all, so it is refused here rather than
     // one verb at a time. Every other refusal is per node and per tier, and
     // says which.
+    //
+    // WHY it was refused is the policy's to say. "consent denied" reads as
+    // final, and for an interactive gate it usually is not: the commonest
+    // refusal is "a prompt is on screen and nobody has answered yet", which a
+    // client should retry and would otherwise give up on. A policy that knows
+    // the difference installs a hint; one that does not keeps the flat message.
     if grant.is_empty() {
+        let hint: fn() -> str = DENY_HINT;
+        if hint.is_not_null() {
+            return err_response(id, - 32001 as f64, hint());
+        }
         return err_response(id, - 32001 as f64, "consent denied");
     }
 
@@ -810,7 +1216,7 @@ fn dispatch(
         var caps: vec::Vec[json::Member] = vec::new::[json::Member]();
         caps.append(member("tools", json::Value::Object(caps_tools)));
         var info: vec::Vec[json::Member] = vec::new::[json::Member]();
-        info.append(member("name", jstr("facet-agent-surface")));
+        info.append(member("name", jstr(server_name())));
         info.append(member("version", jstr("0.0.27")));
         var r: vec::Vec[json::Member] = vec::new::[json::Member]();
         // The version this server was written against. Echoing the CLIENT's
@@ -866,7 +1272,52 @@ fn to_content(id: f64, take inner: json::Value) -> json::Value {
 
 // The verb table, reached by a flat method name or through `tools/call`. The
 // grant is already minted and already checked; this only routes.
+// The verb table, and the one place an action is written down.
+//
+// A wrapper rather than a line in each acting branch: six copies of a logging
+// call are six places to forget one, and the seventh verb added later would
+// forget it by default. Here, forgetting takes an edit.
 fn dispatch_verb(
+    surf: *u8,
+    vt: backend::Backend,
+    ref sub: events::Subscriber,
+    grant: auth::Grant,
+    method: str,
+    params: json::Value,
+    id: f64,
+) -> json::Value {
+    if !is_acting_verb(method) {
+        return route_verb(surf, vt, sub, grant, method, params, id);
+    }
+    let target: text::Text = val_as_text(obj_get(params, "id"));
+    let resp: json::Value = route_verb(surf, vt, sub, grant, method, params, id);
+    // A REFUSAL IS STILL SOMETHING THE AGENT DID. A malformed or denied call
+    // never reaches the surface and so reports no `outcome` at all, and an
+    // empty string in the log reads as "nothing happened" — the opposite of
+    // what a supervisor watching an agent get turned away needs to see.
+    var o: text::Text = outcome_in(resp);
+    if o.count() == 0 {
+        o = if resp.has("error") { text::from_str("rejected") }
+            else { text::from_str("unknown") };
+    }
+    // `set_text` is the one verb whose argument is worth recording, and only
+    // when it ran: "wrote 0 characters" beside a refusal describes a write that
+    // never happened.
+    var detail: text::Text = text::new();
+    if method == "set_text" && { o.view() } != "rejected" {
+        // `value` — the same name the verb reads. Reading a different one here
+        // would log zero for every real write and the right number only for a
+        // caller who guessed wrong.
+        //
+        // The LENGTH, never the value — see the note on `Action`.
+        let wrote: text::Text = val_as_text(obj_get(params, "value"));
+        detail = "wrote ${wrote.count()} characters";
+    }
+    record_action(method, { target.view() }, { o.view() }, detail);
+    return resp;
+}
+
+fn route_verb(
     surf: *u8,
     vt: backend::Backend,
     ref sub: events::Subscriber,
@@ -885,9 +1336,17 @@ fn dispatch_verb(
     // the tree and read a card field through `inspect`, straight past the
     // tiers. A namespace is a place to put verbs, not a place to escape the
     // capability they cost.
-    if is_extension_method(method) {
-        let h: fn(str, json::Value, f64, auth::Grant) -> json::Value = EXT_HANDLER;
-        return h(method, params, id, grant);
+    let ext: i64 = extension_for(method);
+    if ext >= 0 {
+        var h: fn(str, json::Value, f64, auth::Grant) -> json::Value =
+            #zero::[fn(str, json::Value, f64, auth::Grant) -> json::Value]();
+        match EXTENSIONS.at_ptr(ext as usize) {
+            option::Option[*Extension]::Some(e) => { h = { (*e).handler }; }
+            option::Option::None => { }
+        }
+        if h.is_not_null() {
+            return h(method, params, id, grant);
+        }
     }
 
     if method == "describe_ui" {
@@ -932,6 +1391,42 @@ fn dispatch_verb(
         return ok_response(id, outcome_result_for(o, { target.view() }));
     }
     // READ BACK WHAT IS DRAWN — one run per stretch of uniform attributes.
+    // THE WHOLE VALUE, when a listing clipped it.
+    //
+    // `describe_ui` carries a text budget, so a long value comes back cut with
+    // `text_truncated` set. This is the other half: one node, one string, no
+    // budget. It walks the tree the same way describe does — one extra walk on
+    // a verb you only reach when you already know there is more to read.
+    //
+    // Not `read_runs`, which answers styled RUNS: a caller that wants the words
+    // should not have to reassemble them, and a plain label has no runs to
+    // speak of.
+    if method == "read_text" {
+        if !params.has("id") { return missing_param(id, "read_text", "id"); }
+        let want: text::Text = val_as_text(obj_get(params, "id"));
+        let nodes: vec::Vec[backend::UiNode] = (vt.describe)(surf, grant);
+        var i: usize = 0;
+        while i < nodes.count() {
+            match nodes.at_ptr(i) {
+                option::Option[*backend::UiNode]::Some(n) => {
+                    let idp: *text::Text = { #addr_of((*n).id) };
+                    if { (*idp).view() } == { want.view() } {
+                        // The same gate the listing answers to: a node behind a
+                        // tier this grant cannot read reports "" there, and
+                        // must not become readable by asking a second time.
+                        var m: vec::Vec[json::Member] = vec::new::[json::Member]();
+                        m.append(member("id", jstr({ want.view() })));
+                        m.append(member("text", jstr({ (*n).text })));
+                        m.append(member("readable", jbool({ (*n).readable })));
+                        return ok_response(id, json::Value::Object(m));
+                    }
+                }
+                option::Option::None => { }
+            }
+            i = i +% 1;
+        }
+        return ok_response(id, outcome_result_for(surface::Outcome::NotFound, { want.view() }));
+    }
     if method == "read_runs" {
         if !params.has("id") { return missing_param(id, "read_runs", "id"); }
         let target: text::Text = val_as_text(obj_get(params, "id"));
@@ -969,9 +1464,27 @@ fn dispatch_verb(
                 m.append(member("verb", jstr(verb_to_str(e.verb))));
                 json::Value::Object(m)
             }
-            option::Option[events::Event]::None => json::Value::Null,
+            option::Option::None => json::Value::Null,
         };
         return ok_response(id, result);
+    }
+    if method == "activity" {
+        // A READ, and one that says what OTHER clients did — so it costs the
+        // read capability rather than being free. Nothing here is a node, so
+        // there is no tier to check: the record holds verbs, targets and
+        // outcomes, and no content.
+        if !grant.has(auth::cap_read()) {
+            return err_response(id, - 32001 as f64,
+                "activity: this grant carries no read capability");
+        }
+        var m: vec::Vec[json::Member] = vec::new::[json::Member]();
+        m.append(member("actions", actions_json()));
+        // The highest sequence number ever issued, against how many rows are
+        // still held: a reader seeing 900 and 256 knows the log wrapped rather
+        // than that the session was quiet.
+        m.append(member("issued", jnum(ACTION_SEQ as f64)));
+        m.append(member("held", jnum(ACTIONS.count() as f64)));
+        return ok_response(id, json::Value::Object(m));
     }
     // Naming the method it received. An extension method arriving at a process
     // that never armed the namespace lands here, and "method not found" alone
@@ -1042,12 +1555,27 @@ extern fn close(fd: i32) -> i32;
 extern fn unlink(path: *u8) -> i32;
 extern fn getpid() -> i32;
 extern fn atexit(f: fn()) -> i32;
+extern fn malloc(n: usize) -> *u8;
+extern fn free(p: *u8);
+// `mode_t` is 16 bits on Darwin and 32 on Linux. Declared u32 either way: an
+// argument narrower than a word is read from the low bits of the register, and
+// the one RETURN we keep (the old umask) is masked to 0777 before it goes back,
+// so the bits Darwin leaves undefined above bit 15 cannot escape.
+extern fn umask(mask: u32) -> u32;
+extern fn chmod(path: *u8, mode: u32) -> i32;
+
+// The socket's mode, and the umask that produces it. Octal 0600 and 0177 — C+
+// has no octal literal, so they are written in decimal and named here rather
+// than left as two magic numbers at the call site.
+const SOCK_MODE: u32 = 384u32;      // 0600 rw- --- ---
+const SOCK_UMASK: u32 = 127u32;     // 0177: mask off group and other
+const MODE_BITS: u32 = 511u32;      // 0777
 
 // The bound socket path, kept so the exit hook can remove it: `serve_uds` builds
 // its sockaddr in a stack buffer that is gone by the time anything could clean
 // up, and the accept loop it then blocks in never returns.
 // bugs/agent-socket-never-unlinked.md
-static SOCK_PATH: [u8; 110] = [0 as u8; 110];
+static SOCK_PATH: [u8; 110] = [0; 110];
 static SOCK_HOOK_ARMED: bool = false;
 
 // Remove the bound socket file, once. Registered with `atexit`, so it runs on a
@@ -1059,10 +1587,13 @@ static SOCK_HOOK_ARMED: bool = false;
 // so a client that finds a socket refusing `connect()` should still treat it as
 // dead and may remove it.
 fn unlink_bound_socket() {
-    if SOCK_PATH[0] == (0 as u8) { return; }
+    // The descriptor goes with it: both are this process's litter in /tmp, and
+    // a descriptor outliving its socket is worse than neither — it names an
+    // address that refuses.
+    unlink_descriptor();
+    if SOCK_PATH[0] == 0 { return; }
     { unlink(#addr_of(SOCK_PATH[0])); }
-    SOCK_PATH[0] = 0 as u8;   // idempotent: the explicit teardown may also call it
-    return;
+    SOCK_PATH[0] = 0;   // idempotent: the explicit teardown may also call it
 }
 
 // Build the `sockaddr_un` and bind. Returns the bound fd, or the same negative
@@ -1075,10 +1606,10 @@ fn unlink_bound_socket() {
 // fail or block, so every path from here on removes the file.
 fn bind_uds(path: str) -> i32 {
     let plen: usize = #str_len(path);
-    if plen > (100 as usize) {
-        return - 4 as i32;
+    if plen > 100 {
+        return - 4;
     }
-    var addr: [u8; 110] = [0 as u8; 110];
+    var addr: [u8; 110] = [0; 110];
     // `sockaddr_un` IS NOT THE SAME STRUCT ON BOTH PLATFORMS, and writing the
     // BSD one on Linux is how this never worked here.
     //
@@ -1099,22 +1630,22 @@ fn bind_uds(path: str) -> i32 {
     // `addrlen` argument and every libc that fills it in is doing so for the
     // benefit of callers that pass the wrong one.
     if platform_sys::is_linux_abi() {
-        addr[0] = 1 as u8;              // sun_family = AF_UNIX, low byte
+        addr[0] = 1;              // sun_family = AF_UNIX, low byte
     } else {
-        addr[1] = 1 as u8;              // sun_len at [0], sun_family at [1]
+        addr[1] = 1;              // sun_len at [0], sun_family at [1]
     }
     let pbytes: *u8 = #str_ptr(path);
-    var i: usize = 0 as usize;
+    var i: usize = 0;
     while i < plen {
         addr[(2 as usize) +% i] = { *(pbytes + i) };
-        i = i +% (1 as usize);
+        i = i +% 1;
     }
     let path_c: *u8 = { #addr_of(addr[2]) }; // NUL-terminated path inside the struct
     let addrlen: u32 = ((2 as usize) +% plen +% (1 as usize)) as u32;
 
-    let fd: i32 = { socket(1 as i32, 1 as i32, 0 as i32) };
-    if fd < (0 as i32) {
-        return - 1 as i32;
+    let fd: i32 = { socket(1, 1, 0) };
+    if fd < 0 {
+        return - 1;
     }
     // A file may already be sitting at `path`, and `bind` refuses to overwrite
     // one — so it has to go before we can bind. Removing it blind is the wrong
@@ -1129,32 +1660,401 @@ fn bind_uds(path: str) -> i32 {
     // This is also the only cleanup that covers `SIGKILL` — the `atexit` hook
     // below cannot run for a process that was killed outright, so its socket is
     // removed here, by whoever binds the path next.
-    let probe: i32 = { socket(1 as i32, 1 as i32, 0 as i32) };
-    if probe >= (0 as i32) {
+    let probe: i32 = { socket(1, 1, 0) };
+    if probe >= 0 {
         let live: i32 = { connect(probe, #addr_of(addr[0]), addrlen) };
         { close(probe); }
-        if live == (0 as i32) {
+        if live == 0 {
             { close(fd); }
-            return - 5 as i32;   // someone is serving here; do not steal it
+            return - 5;   // someone is serving here; do not steal it
         }
     }
     { unlink(path_c); }
-    if { bind(fd, #addr_of(addr[0]), addrlen) } != (0 as i32) {
+    // WHO MAY CONNECT. `bind` is what creates the socket file, and it creates it
+    // 0777 & ~umask — typically 0755, which on a path as guessable as
+    // `/tmp/mcp-<app>-<pid>.socket` is every local process. Measured on this
+    // machine: our sockets were `srwxr-xr-x` where VS Code's is `srw-------`.
+    //
+    // The umask is what makes it atomic: a chmod after the bind leaves a window,
+    // however short, in which the socket exists and is world-connectable, and a
+    // predictable path is exactly what lets someone sit in a connect() loop
+    // waiting for it. Narrowed to the two adjacent calls and restored
+    // immediately, because umask is process-global and another thread creating
+    // a file inside that window would get 0600 too.
+    //
+    // The chmod after it is not redundant: umask is advisory in the sense that
+    // nothing guarantees a platform applies it to a socket inode, and this is
+    // the call that makes the mode a fact rather than an expectation.
+    let prev_mask: u32 = { umask(SOCK_UMASK) };
+    let rc: i32 = { bind(fd, #addr_of(addr[0]), addrlen) };
+    let _restored: u32 = { umask(prev_mask & MODE_BITS) };
+    if rc != 0 {
         { close(fd); }
-        return - 2 as i32;      // bind is what creates the file; none exists yet
+        return - 2;      // bind is what creates the file; none exists yet
     }
+    let _chmod: i32 = { chmod(path_c, SOCK_MODE) };
     // Bound: the file exists now. Remember it and arm the exit hook.
-    var pi: usize = 0 as usize;
+    var pi: usize = 0;
     while pi < plen {
         SOCK_PATH[pi] = { *(pbytes + pi) };
-        pi = pi +% (1 as usize);
+        pi = pi +% 1;
     }
-    SOCK_PATH[plen] = 0 as u8;
+    SOCK_PATH[plen] = 0;
     if !SOCK_HOOK_ARMED {
         SOCK_HOOK_ARMED = true;
         let _hooked: i32 = { atexit(unlink_bound_socket) };
     }
     return fd;
+}
+
+// ---- the address convention ---------------------------------------------------
+//
+// THE APP NAMES ITSELF; THE PLATFORM DERIVES THE ADDRESS. An application does
+// not know whether it is on a phone, whether a path is free, or what a launcher
+// would like it to use. It knows who it is. So `agent_mcp` takes an ID and
+// these two functions turn it into somewhere to listen.
+//
+// THE PID IS THE JOIN KEY, and that is why it is a pid and not a uuid. It is
+// what connects the socket namespace to the process table, in both directions:
+// forward, a socket resolves to `kill(pid, 0)` for liveness and `ps` for which
+// binary is really behind it; backward — the direction a coding agent needs —
+// "the app I just built" resolves to a pid and then to its socket, with no
+// registry to consult and no trust in the self-reported name. A uuid is unique
+// for the same reason and supports neither.
+//
+// A LAUNCHER THEREFORE NEEDS NO CHANNEL. It spawned the process, so it has the
+// pid, so it can compute the address — which is why there is no environment
+// variable here and why `FACET_INSPECT` is not read. See plan.md.
+
+// Is this a name rather than an address? An id goes INTO a path, so a `/` in
+// one would silently produce a path in a directory nobody meant. Rejected
+// rather than sanitised: the caller passing `/tmp/x.sock` means to name an
+// address, and the honest answer is that this parameter stopped being one.
+fn valid_id(id: str) -> bool {
+    let n: usize = #str_len(id);
+    if n == 0 { return false; }
+    // Room for `/tmp/mcp-` + id + `-` + up to 10 digits + `.socket`, inside the
+    // 100-byte `sun_path` budget `bind_uds` enforces.
+    if n > 60 { return false; }
+    let b: *u8 = #str_ptr(id);
+    var i: usize = 0;
+    while i < n {
+        let c: u8 = { *(b + i) };
+        if c == ('/' as u8) { return false; }
+        if c == 0 { return false; }
+        i = i +% 1;
+    }
+    return true;
+}
+
+// Where an app called `id` listens on a platform with a filesystem both sides
+// can see. `/tmp` and not a store directory: the OS sweeps `/tmp`, and a
+// long-lived directory would accumulate dead sockets forever. What makes that
+// safe is the mode — `bind_uds` binds 0600 — not the directory.
+fn uds_path(id: str, pid: i32) -> text::Text {
+    return "/tmp/mcp-${id}-${pid}.socket";
+}
+
+// ...and where it listens on a platform where a path is unreachable: a phone's
+// filesystem is inside its sandbox, so the address has to be a port, and the
+// port is derived from the same pid for the same reason.
+//
+// 9000-9999: high enough to be clear of anything registered, low enough to stay
+// out of the ephemeral range a simulator's own sockets come from. Two apps
+// whose pids agree mod 1000 collide; on a device running one debug build that
+// is not a case worth a channel to avoid.
+//
+// A FIXED PORT IS WHAT THIS REPLACES, and it is ruled out by experience: a
+// simulator holding 8787 once made a device run look green when nothing on the
+// device was listening. A port that differs per process cannot do that.
+fn loopback_port(pid: i32) -> u16 {
+    let n: i32 = 9000 + { pid % 1000 };
+    return n as u16;
+}
+
+// ---- the descriptor -------------------------------------------------------------
+//
+// Beside the socket, `/tmp/mcp-<id>-<pid>.json`, saying what this process
+// ACTUALLY bound.
+//
+// The address is derivable, so this is not what makes an app findable — a
+// client that globbed `/tmp` and joined on the process table already has
+// everything it needs to connect. What it does not have is confirmation. A
+// derived address is a PREDICTION; this is the app saying what it got. That is
+// the difference between "not running yet" and "running, bound somewhere else,
+// or not bound at all" — three states that looked identical for as long as
+// nothing was written down.
+//
+// It also carries what a path cannot: which transport, and the protocol version
+// a client would otherwise have to open a connection to discover.
+//
+// NO TOKEN IN IT, and that is a reversal worth recording. The plan had one, as
+// the thing that would make a shipped app safe to serve. It would not: the
+// socket is 0600 and this file would be 0600, both owned by the same user, so
+// anything that can read the token to present it can equally just connect to
+// the socket. A second lock on the same door. A credential earns its keep only
+// on a transport with no filesystem permissions behind it — loopback TCP, and
+// HTTP when that lands — and on a real device, where that transport is the only
+// option, there is no shared filesystem for a launcher to read the token from
+// either. So it is deferred to the transport that needs it, with a way to carry
+// it, rather than added here where it would look like protection and be none.
+
+extern fn kill(pid: i32, sig: i32) -> i32;
+
+fn descriptor_path(id: str, pid: i32) -> text::Text {
+    return "/tmp/mcp-${id}-${pid}.json";
+}
+
+// Is a process with this pid alive? `kill(pid, 0)` performs no signal delivery
+// and only asks the permission/existence question, which is exactly what
+// separates a live endpoint from a leftover. It is the reason the address
+// carries a PID rather than a random id: liveness is one syscall, with no
+// registry and no handshake.
+fn pid_is_live(pid: i32) -> bool {
+    if pid <= 0 { return false; }
+    return { kill(pid, 0) } == 0;
+}
+
+// The descriptor this process wrote, kept so the exit hook can remove it.
+static DESC_PATH: [u8; 110] = [0; 110];
+
+fn unlink_descriptor() {
+    if DESC_PATH[0] == 0 { return; }
+    { unlink(#addr_of(DESC_PATH[0])); }
+    DESC_PATH[0] = 0;
+}
+
+// Record what was bound. Called after a successful bind, by the facade that
+// knows which transport it used.
+fn write_descriptor(id: str, pid: i32, transport: str, address: str) -> bool {
+    let path: text::Text = descriptor_path(id, pid);
+    let body: text::Text =
+        "{\"id\":\"${id}\",\"pid\":${pid},\"transport\":\"${transport}\",\"address\":\"${address}\",\"protocol\":\"2024-11-05\"}\n";
+    let wrote: bool = match fs::write_string(path.view(), body.view()) {
+        result::Result[usize, result::IoError]::Ok(_n) => true,
+        result::Result[usize, result::IoError]::Err(_e) => false,
+    };
+    if !wrote { return false; }
+    // 0600 for consistency with the socket rather than for secrecy: everything
+    // in here is derivable. It is the mode a token would need if one is ever
+    // added, and getting it right now costs nothing.
+    let plen: usize = #str_len(path.view());
+    if plen < 109 {
+        let pb: *u8 = #str_ptr(path.view());
+        var i: usize = 0;
+        while i < plen { DESC_PATH[i] = { *(pb + i) }; i = i +% 1; }
+        DESC_PATH[plen] = 0;
+        let _c: i32 = { chmod(#addr_of(DESC_PATH[0]), SOCK_MODE) };
+    }
+    return true;
+}
+
+// Remove sockets and descriptors left by processes that are gone.
+//
+// A path carries the pid, so a name is never reused and `bind_uds`'s
+// prove-it-is-dead-then-unlink only cleans the ONE path a new process is about
+// to take. Everything else accumulates: four dead sockets from one afternoon's
+// runs were sitting in /tmp when this was written, and macOS does not sweep for
+// days. Returns how many it removed.
+// ---- finding a live endpoint ---------------------------------------------------
+//
+// THE ADDRESS CONVENTION IS THIS PACKAGE'S, so answering "where is app X
+// listening" is too. Every consumer that wanted to attach to a running app
+// wrote the same thing instead: glob `/tmp`, match `mcp-<id>-<pid>`, parse the
+// pid out of a name whose id may itself contain dashes and digits, ask whether
+// that pid is alive, and pick the newest when several answered. Four rules,
+// none of them the consumer's, all of them re-derived — and a consumer that
+// gets `pid_in_name` wrong attaches to a dead socket and shows an empty tree.
+//
+// NEWEST FIRST, by the address's own mtime. Several live processes of one app
+// is ordinary — a developer with two builds open — and the most recently
+// started is the one they just launched.
+
+// The id out of `mcp-<id>-<pid>.socket`. `pid_in_name` reads the tail; this
+// reads the middle, by the same rule and for the same reason: the id may
+// contain dashes, so the boundary is the LAST one before the extension.
+fn id_in_name(name: str) -> text::Text {
+    if !text::from_str(name).has_prefix("mcp-") { return text::new(); }
+    let n: usize = #str_len(name);
+    let b: *u8 = #str_ptr(name);
+    var dot: i64 = - 1;
+    var i: usize = 0;
+    while i < n {
+        if { *(b + i) } == ('.' as u8) { dot = i as i64; }
+        i = i +% 1;
+    }
+    if dot < 0 { return text::new(); }
+    var dash: i64 = - 1;
+    var j: usize = 0;
+    while j < (dot as usize) {
+        if { *(b + j) } == ('-' as u8) { dash = j as i64; }
+        j = j +% 1;
+    }
+    if dash < (4 as i64) { return text::new(); }
+    return text::from_str({ #str_from_raw_parts(b + (4 as usize), (dash as usize) -% (4 as usize)) });
+}
+
+// A descriptor's `address`, for a target whose address is not its path — a
+// phone, where the app listens on a loopback port because a socket inside the
+// sandbox is unreachable from here.
+fn address_in_descriptor(path: str) -> text::Text {
+    let body: text::Text = match fs::read_to_string(path) {
+        result::Result[text::Text, result::IoError]::Ok(t) => t,
+        result::Result[text::Text, result::IoError]::Err(_e) => { return text::new(); }
+    };
+    let v: str = body;
+    let at: usize = match v.find("\"address\":\"") {
+        option::Option[usize]::Some(i) => i +% (11 as usize),
+        option::Option[usize]::None => { return text::new(); }
+    };
+    let rest: str = match v.slice(at, #str_len(v)) {
+        option::Option[str]::Some(r) => r,
+        option::Option[str]::None => { return text::new(); }
+    };
+    let end: usize = match rest.find("\"") {
+        option::Option[usize]::Some(i) => i,
+        option::Option[usize]::None => { return text::new(); }
+    };
+    return match rest.slice(0 as usize, end) {
+        option::Option[str]::Some(a) => text::from_str(a),
+        option::Option[str]::None => text::new(),
+    };
+}
+
+// Every address `app_id` is currently listening on, newest first.
+//
+// A live `.socket` answers with its own path. A live `.json` descriptor
+// answers with the address it states, which is how a phone's loopback port
+// gets here — the socket path a desktop reports IS its address, and a
+// descriptor exists for the case where it is not.
+fn discover(app_id: str) -> vec::Vec[text::Text] {
+    var out: vec::Vec[text::Text] = vec::new::[text::Text]();
+    var stamps: vec::Vec[i64] = vec::new::[i64]();
+    let names: vec::Vec[text::Text] = match fs::read_dir("/tmp") {
+        option::Option[vec::Vec[text::Text]]::Some(v) => v,
+        option::Option[vec::Vec[text::Text]]::None => { return out; }
+    };
+    var i: usize = 0;
+    while i < names.count() {
+        match names.at_ptr(i) {
+            option::Option[*text::Text]::Some(n) => {
+                let name: str = { (*n).view() };
+                let pid: i32 = pid_in_name(name);
+                // A DEAD pid is a leftover, not a target. `sweep_stale` removes
+                // these on the way up; nothing guarantees it has run here.
+                if pid > 0 && pid_is_live(pid) {
+                    let who: text::Text = id_in_name(name);
+                    if who.view() == app_id {
+                        let full: text::Text = "/tmp/${name}";
+                        var addr: text::Text = full.clone();
+                        if text::from_str(name).has_suffix(".json") {
+                            addr = address_in_descriptor(full.view());
+                        }
+                        if !addr.is_empty() {
+                            let when: i64 = match fs::mtime(full.view()) {
+                                result::Result[i64, result::IoError]::Ok(t) => t,
+                                result::Result[i64, result::IoError]::Err(_e) => 0 as i64,
+                            };
+                            // Insertion sort, newest first. The list is one
+                            // app's live endpoints — a handful at most.
+                            var at: usize = 0 as usize;
+                            var placing: bool = true;
+                            while placing && at < stamps.count() {
+                                match stamps.at(at) {
+                                    option::Option[i64]::Some(s) => {
+                                        if when > s { placing = false; }
+                                        else { at = at +% (1 as usize); }
+                                    }
+                                    option::Option[i64]::None => { at = at +% (1 as usize); }
+                                }
+                            }
+                            let _a: status::Status = out.insert(addr, at);
+                            let _b: status::Status = stamps.insert(when, at);
+                        }
+                    }
+                }
+            }
+            option::Option::None => { }
+        }
+        i = i +% 1;
+    }
+    return out;
+}
+
+fn sweep_stale() -> usize {
+    var removed: usize = 0;
+    let names: vec::Vec[text::Text] = match fs::read_dir("/tmp") {
+        option::Option[vec::Vec[text::Text]]::Some(v) => v,
+        option::Option[vec::Vec[text::Text]]::None => { return 0; }
+    };
+    var i: usize = 0;
+    while i < names.count() {
+        match names.at_ptr(i) {
+            option::Option[*text::Text]::Some(n) => {
+                let name: str = { (*n).view() };
+                let pid: i32 = pid_in_name(name);
+                // -1 is "not one of ours"; a LIVE pid is someone still serving.
+                if pid > 0 {
+                    if !pid_is_live(pid) {
+                        let full: text::Text = "/tmp/${name}";
+                        match fs::remove_file(full.view()) {
+                            result::Result[bool, result::IoError]::Ok(_b) => {
+                                removed = removed +% 1;
+                            }
+                            result::Result[bool, result::IoError]::Err(_e) => { }
+                        }
+                    }
+                }
+            }
+            option::Option::None => { }
+        }
+        i = i +% 1;
+    }
+    return removed;
+}
+
+// The pid out of `mcp-<id>-<pid>.socket` or `mcp-<id>-<pid>.json`, or -1 when
+// the name is not one of ours. The id may itself contain digits and dashes, so
+// the pid is read from the LAST dash before the extension rather than by
+// scanning forward.
+fn pid_in_name(name: str) -> i32 {
+    if !text::from_str(name).has_prefix("mcp-") { return - 1; }
+    let n: usize = #str_len(name);
+    let b: *u8 = #str_ptr(name);
+    // Where the extension starts.
+    var dot: i64 = - 1;
+    var i: usize = 0;
+    while i < n {
+        if { *(b + i) } == ('.' as u8) { dot = i as i64; }
+        i = i +% 1;
+    }
+    if dot < 0 { return - 1; }
+    let ext: str = { #str_from_raw_parts(b + (dot as usize), n -% (dot as usize)) };
+    if ext != ".socket" {
+        if ext != ".json" { return - 1; }
+    }
+    // ...and the dash in front of the digits.
+    var dash: i64 = - 1;
+    var j: usize = 0;
+    while j < (dot as usize) {
+        if { *(b + j) } == ('-' as u8) { dash = j as i64; }
+        j = j +% 1;
+    }
+    if dash < 0 { return - 1; }
+    var v: i64 = 0;
+    var any: bool = false;
+    var k: usize = (dash as usize) +% 1;
+    while k < (dot as usize) {
+        let c: u8 = { *(b + k) };
+        if c < ('0' as u8) { return - 1; }
+        if c > ('9' as u8) { return - 1; }
+        v = v * 10 + { (c -% ('0' as u8)) as i64 };
+        if v > 2147483647 { return - 1; }
+        any = true;
+        k = k +% 1;
+    }
+    if !any { return - 1; }
+    return v as i32;
 }
 
 // The PID of this process — for an agent socket path like
@@ -1171,26 +2071,26 @@ fn current_pid() -> i32 {
 // line at the moment of cancellation is discarded: the server is shutting
 // down, not answering.
 fn read_line(fd: i32, buf_ptr: *u8, cap: usize) -> i64 {
-    var n: usize = 0 as usize;
+    var n: usize = 0;
     loop {
         if n >= cap {
             break;
         }
-        var byte: u8 = 0 as u8;
+        var byte: u8 = 0;
         if thread::park_begin() {
             thread::park_end();
-            return - 2 as i64;
+            return - 2;
         }
-        let r: i64 = { read(fd, #addr_of(byte), 1 as usize) };
+        let r: i64 = { read(fd, #addr_of(byte), 1) };
         thread::park_end();
-        if r <= (0 as i64) {
-            if r < (0 as i64) {
+        if r <= 0 {
+            if r < 0 {
                 if netsys::errno() == netsys::eintr() {
                     continue;               // the loop's park_begin re-checks
                 }
             }
-            if n == (0 as usize) {
-                return - 1 as i64;
+            if n == 0 {
+                return - 1;
             }
             break;
         }
@@ -1198,7 +2098,7 @@ fn read_line(fd: i32, buf_ptr: *u8, cap: usize) -> i64 {
             break;
         }
         { *(buf_ptr + n) = byte; }
-        n = n +% (1 as usize);
+        n = n +% 1;
     }
     return n as i64;
 }
@@ -1210,18 +2110,17 @@ fn read_line(fd: i32, buf_ptr: *u8, cap: usize) -> i64 {
 // vanishes mid-response ends this write with an error rather than ending the
 // process.
 fn write_all(fd: i32, ptr: *u8, len: usize) {
-    var off: usize = 0 as usize;
+    var off: usize = 0;
     while off < len {
         let w: isize = { netsys::send_fd(fd, ptr + off, len -% off) };
-        if w <= (0 as isize) {
-            if w < (0 as isize) {
+        if w <= 0 {
+            if w < 0 {
                 if netsys::errno() == netsys::eintr() { continue; }
             }
             return;
         }
         off = off +% (w as usize);
     }
-    return;
 }
 
 // Serve one connected stream socket: read requests line by line, dispatch each
@@ -1243,24 +2142,24 @@ fn serve_fd(
     // the first's self-reported name — and therefore whatever the user decided
     // about the first.
     forget_client();
-    var buf: [u8; 8192] = [0 as u8; 8192];
+    var buf: [u8; 8192] = [0; 8192];
     loop {
-        let len: i64 = read_line(fd, { #addr_of(buf[0]) }, 8192 as usize);
-        if len == (- 2 as i64) {
+        let len: i64 = read_line(fd, { #addr_of(buf[0]) }, 8192);
+        if len == (- 2) {
             return 1;                       // cancelled — the caller stops accepting
         }
-        if len < (0 as i64) {
+        if len < 0 {
             break;
         }
         let line: str = { #str_from_raw_parts(#addr_of(buf[0]), len as usize) };
         let resp: text::Text = handle_request(surf, vt, sub, auth::serve(policy), line);
         // Empty is a NOTIFICATION, which is entitled to no reply — not even a
         // blank line, which a line-delimited client would read as a message.
-        if resp.count() > (0 as usize) {
+        if resp.count() > 0 {
             let rs: str = { resp };
             write_all(fd, #str_ptr(rs), #str_len(rs));
             let nl: u8 = '\n' as u8;
-            write_all(fd, { #addr_of(nl) }, 1 as usize);
+            write_all(fd, { #addr_of(nl) }, 1);
         }
     }
     return 0;
@@ -1287,14 +2186,61 @@ fn serve_uds(
     path: str,
 ) -> i32 {
     let fd: i32 = bind_uds(path);
-    if fd < (0 as i32) {
+    if fd < 0 {
         return fd;
     }
-    if { listen(fd, 4 as i32) } != (0 as i32) {
+    let l: i32 = listen_on(fd);
+    if l < 0 {
         { close(fd); }
         unlink_bound_socket();  // the bound file would otherwise be orphaned here
-        return - 3 as i32;
+        return l;
     }
+    return accept_loop(surf, vt, sub, policy, fd, true);
+}
+
+// ---- bind, listen and accept, as three things a caller can sequence -----------
+//
+// THE CALLER NEEDS TO KNOW WHETHER IT WORKED, and could not: `serve_uds` does
+// bind, listen and then blocks in accept forever, so the only way to run it is
+// on a worker thread whose return value nobody is alive to read. Every setup
+// failure was therefore silent — a path too long, a port in use, a live server
+// already on the path, Android's missing INTERNET permission — and each looked
+// exactly like an app nobody had connected to yet.
+//
+// Split so an application can bind on its OWN thread, find out, say so, and
+// only then hand the bound fd to a worker. `serve_uds` and `serve_tcp` still
+// exist and still do all three, because a caller that genuinely wants to block
+// should not have to write the sequence out.
+
+fn listen_on(fd: i32) -> i32 {
+    if { listen(fd, 4) } != 0 { return - 3; }
+    return 0;
+}
+
+// What a negative setup code MEANS, as a sentence a developer can act on. The
+// codes are shared by both transports; -4 and -5 can only come from the UDS
+// side, which is why they name a path.
+fn bind_reason(code: i32) -> str {
+    if code == (- 1) { return "socket() failed"; }
+    if code == (- 2) { return "bind() failed"; }
+    if code == (- 3) { return "listen() failed"; }
+    if code == (- 4) { return "the socket path is too long (over 100 bytes)"; }
+    if code == (- 5) { return "another process is already serving on that path"; }
+    return "unknown error";
+}
+
+// Serve connections on an already-bound, already-listening fd until accept
+// fails or the thread is cancelled. `unlink_on_exit` is for the UDS side, whose
+// bound file has to go when the loop ends.
+fn accept_loop(
+    surf: *u8,
+    vt: backend::Backend,
+    ref sub: events::Subscriber,
+    policy: fn(auth::Request) -> auth::Grant,
+    fd: i32,
+    unlink_on_exit: bool,
+    http: bool = false,
+) -> i32 {
     loop {
         if thread::park_begin() {
             thread::park_end();
@@ -1302,7 +2248,7 @@ fn serve_uds(
         }
         let conn: i32 = { accept(fd, 0 as *u8, 0 as *u32) };
         thread::park_end();
-        if conn < (0 as i32) {
+        if conn < 0 {
             if netsys::errno() == netsys::eintr() { continue; }
             break;
         }
@@ -1313,14 +2259,261 @@ fn serve_uds(
         // See netsys::set_nosigpipe and
         // demo/bugs/02-iris-terminated-without-crash-report.md.
         let _np: i32 = netsys::set_nosigpipe(conn);
-        let served: i32 = serve_fd(surf, vt, sub, policy, conn);
+        // ONE ACCEPT LOOP, two framings. Which door a request came through is
+        // the only difference; everything under `handle_request` is shared.
+        var served: i32 = 0;
+        if http { served = serve_http_fd(surf, vt, sub, policy, conn); }
+        else { served = serve_fd(surf, vt, sub, policy, conn); }
         { close(conn); }
-        if served == (1 as i32) {
+        if served == 1 {
             break;                          // cancelled mid-connection
         }
     }
     { close(fd); }
-    unlink_bound_socket();
+    if unlink_on_exit { unlink_bound_socket(); }
+    return 0;
+}
+
+// ---- HTTP transport -------------------------------------------------------------
+//
+// THE SAME DISPATCH, THROUGH A DOOR ANY MCP CLIENT CAN OPEN.
+//
+// The line-delimited framing below is a private one: JSON-RPC is the envelope,
+// but MCP defines exactly two TRANSPORTS — stdio, and Streamable HTTP — and one
+// object per line over a socket is neither. That is why a client config here has
+// to shell out to `nc -U`: netcat is doing the stdio-to-socket translation that
+// makes a client believe it reached a stdio server. Every tool needs its own
+// bridge, and a phone has no socket to bridge to at all.
+//
+// This is the other half of Streamable HTTP: POST a JSON-RPC message to the
+// endpoint, get one back as `application/json`. The spec also allows a server to
+// answer with `text/event-stream` when it has messages the client did not ask
+// for; nothing here pushes — `poll_event` is what stands in for that — so plain
+// JSON responses are conformant and SSE can wait until something needs it.
+//
+// KEEP-ALIVE, NOT `Connection: close`, and it is not a performance choice. The
+// connection IS the session: `CLIENT_NAME` is set by `initialize` and cleared
+// when a connection opens, so a client's self-reported identity lives exactly as
+// long as its connection does. Closing after every request would throw that
+// away after the handshake and hand every later request to the policy with an
+// empty `client` — which is precisely what `facet_agent/consent` keys its
+// decisions on. Keep-alive keeps the existing model intact and costs no session
+// machinery.
+//
+// Everything below the framing is shared: the body goes to the same
+// `handle_request` the socket transports use, so there is one dispatch, one
+// consent gate and one verb table however a request arrived.
+
+// The largest request body accepted. A request bigger than this is refused with
+// 413 rather than read, because the alternative is letting a peer choose how
+// much memory this process commits.
+// The largest request body accepted, and the size of the buffer allocated per
+// connection to hold it. One number, so the cap and the allocation cannot
+// disagree — they did, and the disagreement was a stack overflow.
+const HTTP_MAX_BODY: usize = 65536;     // 64 KiB
+const HTTP_MAX_HEAD: usize = 8192;
+
+struct HttpHead {
+    // A head was read. False means the peer went away or sent something
+    // unparseable — either way this connection is over.
+    ok: bool,
+    is_post: bool,
+    has_length: bool,
+    content_length: usize,
+}
+
+fn no_head() -> HttpHead {
+    return HttpHead { ok: false, is_post: false, has_length: false, content_length: 0 };
+}
+
+// ASCII-lowercase compare, for a header NAME. HTTP field names are
+// case-insensitive and a client is entitled to send `content-length`,
+// `Content-Length` or `CONTENT-LENGTH`; treating them as distinct is how a
+// server ends up reading a body of zero from a request that had one.
+fn header_is(line: str, name_lower: str) -> bool {
+    let ln: usize = #str_len(line);
+    let nn: usize = #str_len(name_lower);
+    if ln < nn { return false; }
+    let lb: *u8 = #str_ptr(line);
+    let nb: *u8 = #str_ptr(name_lower);
+    var i: usize = 0;
+    while i < nn {
+        var c: u8 = { *(lb + i) };
+        if c >= ('A' as u8) {
+            if c <= ('Z' as u8) { c = c +% 32; }
+        }
+        if c != { *(nb + i) } { return false; }
+        i = i +% 1;
+    }
+    // The name must be followed by its colon, or `content-length-extra` matches.
+    return { *(lb + nn) } == (':' as u8);
+}
+
+// The decimal value after `name:`, skipping spaces. Absent digits give 0, which
+// the caller treats as an empty body rather than an error — a POST with
+// `Content-Length: 0` is legal.
+fn header_number(line: str) -> usize {
+    let n: usize = #str_len(line);
+    let b: *u8 = #str_ptr(line);
+    var i: usize = 0;
+    while i < n {
+        if { *(b + i) } == (':' as u8) { i = i +% 1; break; }
+        i = i +% 1;
+    }
+    var v: usize = 0;
+    var seen: bool = false;
+    while i < n {
+        let c: u8 = { *(b + i) };
+        if c == (' ' as u8) {
+            if seen { break; }
+            i = i +% 1;
+            continue;
+        }
+        if c < ('0' as u8) { break; }
+        if c > ('9' as u8) { break; }
+        // Saturate rather than wrap: a length past the cap is refused by the
+        // caller, and a wrapped one would be refused as something small.
+        if v > (HTTP_MAX_BODY) { return HTTP_MAX_BODY +% 1; }
+        v = v * 10 +% { (c -% ('0' as u8)) as usize };
+        seen = true;
+        i = i +% 1;
+    }
+    return v;
+}
+
+// Read the request line and headers, stopping at the blank line that ends them.
+// `read_line` strips the LF and leaves the CR, so a blank line arrives as "\r"
+// or as nothing at all.
+fn read_http_head(fd: i32, buf: *u8, cap: usize) -> HttpHead {
+    var head: HttpHead = no_head();
+    var lines: usize = 0;
+    loop {
+        let n: i64 = read_line(fd, buf, cap);
+        if n < 0 { return no_head(); }        // EOF or cancelled
+        var len: usize = n as usize;
+        if len > 0 {
+            if { *(buf + (len -% 1)) } == ('\r' as u8) { len = len -% 1; }
+        }
+        if len == 0 {
+            // Blank line: the head is over. A blank FIRST line is a client
+            // warming up the connection, not a request.
+            if lines == 0 { continue; }
+            head.ok = true;
+            return head;
+        }
+        let line: str = { #str_from_raw_parts(buf, len) };
+        if lines == 0 {
+            head.is_post = text::from_str(line).has_prefix("POST ");
+        } else {
+            if header_is(line, "content-length") {
+                head.has_length = true;
+                head.content_length = header_number(line);
+            }
+        }
+        lines = lines +% 1;
+        if lines > 64 { return no_head(); }   // a head this long is not one
+    }
+}
+
+// Exactly `len` bytes, or false. A body shorter than its declared length is a
+// truncated request, not a short one: parsing what arrived would act on half a
+// message.
+fn read_exact(fd: i32, buf: *u8, len: usize) -> bool {
+    var got: usize = 0;
+    while got < len {
+        if thread::park_begin() {
+            thread::park_end();
+            return false;
+        }
+        let r: i64 = { read(fd, buf + got, len -% got) };
+        thread::park_end();
+        if r <= 0 {
+            if r < 0 {
+                if netsys::errno() == netsys::eintr() { continue; }
+            }
+            return false;
+        }
+        got = got +% (r as usize);
+    }
+    return true;
+}
+
+fn write_str(fd: i32, s: str) {
+    write_all(fd, #str_ptr(s), #str_len(s));
+}
+
+// One response. `body` may be empty, in which case Content-Length: 0 is still
+// sent — a client reading a keep-alive connection needs the length to know where
+// this response ends and the next begins.
+fn write_http_response(fd: i32, status_line: str, content_type: str, body: str) {
+    let head: text::Text =
+        "HTTP/1.1 ${status_line}\r\nContent-Type: ${content_type}\r\nContent-Length: ${#str_len(body)}\r\n\r\n";
+    write_str(fd, head.view());
+    if #str_len(body) > 0 { write_str(fd, body); }
+}
+
+// Serve HTTP on one accepted connection until the peer closes it.
+//
+// One request, one response, in order, on a connection that stays open — the
+// same shape `serve_fd` has, which is why the identity and consent model needs
+// no changes to work here.
+fn serve_http_fd(
+    surf: *u8,
+    vt: backend::Backend,
+    ref sub: events::Subscriber,
+    policy: fn(auth::Request) -> auth::Grant,
+    fd: i32,
+) -> i32 {
+    let _np: i32 = netsys::set_nosigpipe(fd);
+    // A NEW CONNECTION IS A NEW CALLER, exactly as on the socket transports.
+    forget_client();
+    // ON THE HEAP, AND NOT BECAUSE IT IS TIDIER. A serve worker's stack is 64K;
+    // a 64K body buffer plus an 8K head buffer is 72K of locals, and zeroing
+    // them walked straight off the end into the next thread's guard page —
+    // SIGBUS, `__bzero`, eight bytes past the top of the stack. Measured on a
+    // real app; the unit tests could not see it because they call
+    // `serve_http_fd` on the main thread, whose stack is orders of magnitude
+    // bigger. A buffer sized by the protocol does not belong on a stack sized
+    // by the threading runtime.
+    let body_buf: *u8 = { malloc(HTTP_MAX_BODY) };
+    if body_buf.is_null() { return 0; }
+    var head_buf: [u8; 8192] = [0; 8192];
+    loop {
+        let head: HttpHead = read_http_head(fd, { #addr_of(head_buf[0]) }, HTTP_MAX_HEAD);
+        if !head.ok { break; }
+
+        if !head.is_post {
+            // The endpoint takes JSON-RPC by POST and nothing else. Said as a
+            // 405 rather than ignored, so a browser pointed at it learns what
+            // this is instead of hanging.
+            write_http_response(fd, "405 Method Not Allowed", "text/plain",
+                                "this endpoint takes JSON-RPC over POST\n");
+            continue;
+        }
+        if head.content_length > HTTP_MAX_BODY {
+            write_http_response(fd, "413 Payload Too Large", "text/plain",
+                                "request body too large\n");
+            break;      // the unread body would desynchronise the next request
+        }
+        if head.content_length == 0 {
+            write_http_response(fd, "400 Bad Request", "text/plain",
+                                "empty body\n");
+            continue;
+        }
+        if !read_exact(fd, body_buf, head.content_length) { break; }
+
+        let body: str = { #str_from_raw_parts(body_buf, head.content_length) };
+        let resp: text::Text = handle_request(surf, vt, sub, auth::serve(policy), body);
+        // A NOTIFICATION IS ENTITLED TO NO REPLY, and over HTTP that is 202 with
+        // no body rather than silence — the client is waiting on a response
+        // whatever happens, so silence would hang it.
+        if resp.count() == 0 {
+            write_http_response(fd, "202 Accepted", "application/json", "");
+        } else {
+            write_http_response(fd, "200 OK", "application/json", { resp.view() });
+        }
+    }
+    { free(body_buf); }
     return 0;
 }
 
@@ -1347,16 +2540,15 @@ fn serve_uds(
 // reason the `sockaddr_un` above is.
 
 fn put_be16(ref buf: [u8; 16], at: usize, v: u16) {
-    buf[at] = { (v / (256 as u16)) as u8 };
-    buf[at +% (1 as usize)] = { (v % (256 as u16)) as u8 };
-    return;
+    buf[at] = { (v / 256) as u8 };
+    buf[at +% 1] = { (v % 256) as u8 };
 }
 
 // Bind a loopback listener on `port`. Returns the fd, or a negative setup code
 // matching `bind_uds`: -1 socket, -2 bind, -3 listen.
 fn bind_tcp(port: u16) -> i32 {
-    let fd: i32 = { socket(2 as i32, 1 as i32, 0 as i32) };
-    if fd < (0 as i32) { return - 1 as i32; }
+    let fd: i32 = { socket(2, 1, 0) };
+    if fd < 0 { return - 1; }
     // SO_REUSEADDR, so a restart does not wait out TIME_WAIT on the same port.
     //
     // NOT `#platform() == "linux"`, which answers FALSE ON ANDROID — whose
@@ -1370,12 +2562,12 @@ fn bind_tcp(port: u16) -> i32 {
     // Darwin and 1 on Linux; SO_REUSEADDR is 4 there and 2 here. Passing the
     // Darwin pair on Linux sets nothing — `setsockopt` fails and the option
     // simply never applied.
-    var one: i32 = 1 as i32;
-    let sol: i32 = if platform_sys::is_linux_abi() { 1 as i32 } else { 65535 as i32 };
-    let reuse: i32 = if platform_sys::is_linux_abi() { 2 as i32 } else { 4 as i32 };
+    var one: i32 = 1;
+    let sol: i32 = if platform_sys::is_linux_abi() { 1 } else { 65535 };
+    let reuse: i32 = if platform_sys::is_linux_abi() { 2 } else { 4 };
     let _o: i32 = { setsockopt(fd, sol, reuse,
-                               { #addr_of(one) as *u8 }, 4 as u32) };
-    var addr: [u8; 16] = [0 as u8; 16];
+                               { #addr_of(one) as *u8 }, 4) };
+    var addr: [u8; 16] = [0; 16];
     // `sockaddr_in` SPLITS THE SAME WAY `sockaddr_un` DOES, and for the same
     // reason — see `bind_uds`:
     //
@@ -1386,24 +2578,24 @@ fn bind_tcp(port: u16) -> i32 {
     // refuses it. The PORT is at offset 2 either way, which is why only these
     // two bytes move.
     if platform_sys::is_linux_abi() {
-        addr[0] = 2 as u8;       // sin_family = AF_INET, low byte
+        addr[0] = 2;       // sin_family = AF_INET, low byte
     } else {
-        addr[0] = 16 as u8;      // sin_len
-        addr[1] = 2 as u8;       // sin_family = AF_INET
+        addr[0] = 16;      // sin_len
+        addr[1] = 2;       // sin_family = AF_INET
     }
-    put_be16(addr, 2 as usize, port);
+    put_be16(addr, 2, port);
     // 127.0.0.1, in network order — which is the same byte order written out.
-    addr[4] = 127 as u8;
-    addr[5] = 0 as u8;
-    addr[6] = 0 as u8;
-    addr[7] = 1 as u8;
-    if { bind(fd, { #addr_of(addr[0]) }, 16 as u32) } != (0 as i32) {
+    addr[4] = 127;
+    addr[5] = 0;
+    addr[6] = 0;
+    addr[7] = 1;
+    if { bind(fd, { #addr_of(addr[0]) }, 16) } != 0 {
         { close(fd); }
-        return - 2 as i32;
+        return - 2;
     }
-    if { listen(fd, 4 as i32) } != (0 as i32) {
+    if { listen(fd, 4) } != 0 {
         { close(fd); }
-        return - 3 as i32;
+        return - 3;
     }
     return fd;
 }
@@ -1411,6 +2603,20 @@ fn bind_tcp(port: u16) -> i32 {
 // Accept and serve, one connection at a time, forever — the same loop
 // `serve_uds` runs, over the same `serve_fd`. Nothing about the protocol knows
 // which transport carried it.
+// Bind a loopback port and serve Streamable HTTP on it. The MCP-native door:
+// a client points at `http://127.0.0.1:<port>/` and needs no bridge.
+fn serve_http(
+    surf: *u8,
+    vt: backend::Backend,
+    ref sub: events::Subscriber,
+    policy: fn(auth::Request) -> auth::Grant,
+    port: u16,
+) -> i32 {
+    let fd: i32 = bind_tcp(port);
+    if fd < 0 { return fd; }
+    return accept_loop(surf, vt, sub, policy, fd, false, http: true);
+}
+
 fn serve_tcp(
     surf: *u8,
     vt: backend::Backend,
@@ -1419,36 +2625,419 @@ fn serve_tcp(
     port: u16,
 ) -> i32 {
     let fd: i32 = bind_tcp(port);
-    if fd < (0 as i32) { return fd; }
-    loop {
-        if thread::park_begin() {
-            thread::park_end();
-            break;                          // cancelled while about to accept
-        }
-        let conn: i32 = { accept(fd, 0 as *u8, 0 as *u32) };
-        thread::park_end();
-        if conn < (0 as i32) {
-            if netsys::errno() == netsys::eintr() { continue; }
-            break;
-        }
-        // A CLIENT GOING AWAY MUST NOT KILL THE SERVER. Without this, a
-        // write to a disconnected client raises SIGPIPE, whose default
-        // disposition terminates the process — no crash report, no log, the
-        // whole application gone because an agent pressed ^C on a `nc`.
-        // See netsys::set_nosigpipe and
-        // demo/bugs/02-iris-terminated-without-crash-report.md.
-        let _np: i32 = netsys::set_nosigpipe(conn);
-        let served: i32 = serve_fd(surf, vt, sub, policy, conn);
-        { close(conn); }
-        if served == (1 as i32) {
-            break;                          // cancelled mid-connection
-        }
-    }
-    { close(fd); }
-    return 0;
+    if fd < 0 { return fd; }
+    return accept_loop(surf, vt, sub, policy, fd, false);
 }
 
 extern fn setsockopt(fd: i32, level: i32, name: i32, val: *u8, len: u32) -> i32;
+
+// ---- the address convention ----------------------------------------------------
+
+// An id is a NAME. A caller passing the old-style path means to name an
+// address, and the parameter stopped being one — so it is refused rather than
+// sanitised into a path in a directory nobody meant.
+#[test]
+fn an_address_is_not_a_valid_id() {
+    assert valid_id("demo_1");
+    assert valid_id("my-app.v2");
+    assert valid_id("/tmp/mcp-demo_1-8161.socket") == false;
+    assert valid_id("") == false;
+    // Long enough to push the derived path past `sun_path`, which `bind_uds`
+    // would refuse with -4 long after the mistake was made.
+    var long_id: text::Text = text::new();
+    var i: i32 = 0;
+    while i < 80 { let _a: status::Status = long_id.append("x"); i = i +% 1; }
+    assert valid_id(long_id.view()) == false;
+}
+
+// The two halves of the convention, and the property that matters about both:
+// a launcher holding only the pid can compute them.
+#[test]
+fn the_address_is_a_function_of_the_id_and_the_pid() {
+    let p: text::Text = uds_path("demo_1", 8161);
+    assert p.view() == "/tmp/mcp-demo_1-8161.socket";
+    // Same inputs, same answer — this is what lets both sides derive it.
+    let again: text::Text = uds_path("demo_1", 8161);
+    assert again.view() == p.view();
+    // Different pid, different address: two instances do not collide, which is
+    // the reason the pid is in there.
+    let other: text::Text = uds_path("demo_1", 8162);
+    assert (other.view() == p.view()) == false;
+
+    // And the port half. A FIXED port is what this replaces — a simulator
+    // holding 8787 once made a device run look green — so the only property
+    // asserted is that it varies with the pid and stays in the band.
+    assert loopback_port(8161) == 9161;
+    assert loopback_port(1) == 9001;
+    assert (loopback_port(8161) == loopback_port(8162)) == false;
+    assert loopback_port(999999) >= 9000;
+    assert loopback_port(999999) <= 9999;
+}
+
+// A derived path fits the socket budget, which is the constraint `valid_id`'s
+// length cap exists to keep. Asserted end to end rather than by arithmetic, so
+// a change to either the prefix or the cap is caught here.
+#[test]
+fn a_derived_path_binds() {
+    var id: text::Text = text::new();
+    var i: i32 = 0;
+    while i < 60 { let _a: status::Status = id.append("x"); i = i +% 1; }
+    assert valid_id(id.view());
+    let path: text::Text = uds_path(id.view(), 2147483647);
+    let fd: i32 = bind_uds(path.view());
+    assert fd >= 0;
+    unlink_bound_socket();
+    { close(fd); }
+}
+
+// Every setup code says something a developer can act on. Two of these are
+// failures this project has actually shipped and not noticed: -5 is iris
+// running a second app while the first still holds the path, and -1 is Android
+// refusing socket() without INTERNET. Both looked like "nobody has connected
+// yet" because nothing read the code.
+#[test]
+fn every_setup_failure_has_a_reason() {
+    assert bind_reason(- 1) == "socket() failed";
+    assert bind_reason(- 2) == "bind() failed";
+    assert bind_reason(- 3) == "listen() failed";
+    assert bind_reason(- 4) != bind_reason(- 5);
+    // Anything unmapped still says something rather than an empty string, which
+    // would interpolate into a sentence that trails off.
+    assert bind_reason(- 99) != "";
+    assert #str_len(bind_reason(- 99)) > 0;
+}
+
+// Bind and listen are separable, and both report. This is what lets a caller
+// bind on ITS OWN thread — the whole point of the split — instead of on a
+// worker whose return value nobody is alive to read.
+#[test]
+fn bind_and_listen_are_separable_and_report() {
+    let path: str = "/tmp/cplus-agent-mcp-split-test.sock";
+    let fd: i32 = bind_uds(path);
+    assert fd >= 0;
+    assert listen_on(fd) == 0;
+
+    // A LIVE server on the path is refused rather than stolen, and it is the
+    // code iris's "two apps at once, the second one's serve loses" produces.
+    let second: i32 = bind_uds(path);
+    assert second == (- 5);
+    assert bind_reason(second) == "another process is already serving on that path";
+
+    unlink_bound_socket();
+    { close(fd); }
+}
+
+// ---- the descriptor and the sweep ------------------------------------------------
+
+// A name yields its pid, and only for names that are ours. The id may itself
+// carry digits and dashes, which is why the pid is read from the LAST dash.
+#[test]
+fn a_name_yields_the_pid_it_carries() {
+    assert pid_in_name("mcp-demo_1-8161.socket") == 8161;
+    assert pid_in_name("mcp-demo_1-8161.json") == 8161;
+    // An id with its own dashes and digits does not confuse it.
+    assert pid_in_name("mcp-my-app-v2-42.socket") == 42;
+    // Not ours, or not a pid.
+    assert pid_in_name("iris-inspect-94542.sock") == (- 1);
+    assert pid_in_name("mcp-demo_1-.socket") == (- 1);
+    assert pid_in_name("mcp-demo_1-abc.socket") == (- 1);
+    assert pid_in_name("mcp-demo_1-8161.txt") == (- 1);
+    assert pid_in_name("something-else") == (- 1);
+}
+
+// Liveness is one syscall, which is the whole reason the address carries a pid
+// rather than a random id.
+#[test]
+fn liveness_is_one_syscall() {
+    assert pid_is_live(current_pid());
+    assert pid_is_live(0) == false;
+    assert pid_is_live(- 1) == false;
+    // A pid past the system maximum cannot be running.
+    assert pid_is_live(2147483647) == false;
+}
+
+// The descriptor says what was BOUND, which a derived address cannot: derived
+// is a prediction, this is the fact. It is also 0600 — not for secrecy, since
+// everything in it is derivable, but because it is the mode a credential would
+// need if one is ever added to it.
+#[test]
+fn the_descriptor_records_what_was_bound() {
+    let pid: i32 = current_pid();
+    assert write_descriptor("desc-test", pid, "uds", "/tmp/mcp-desc-test-1.socket");
+    let path: text::Text = descriptor_path("desc-test", pid);
+
+    assert fsys::stat_buf_bytes() <= 256;
+    var buf: [u8; 256] = [0; 256];
+    var cpath: [u8; 96] = [0; 96];
+    let src: *u8 = #str_ptr(path.view());
+    var i: usize = 0;
+    while i < #str_len(path.view()) { cpath[i] = { *(src + i) }; i = i +% 1; }
+    assert fsys::stat_path({ #addr_of(cpath[0]) }, { #addr_of(buf[0]) }) == 0;
+    assert (fsys::stat_mode({ #addr_of(buf[0]) }) & MODE_BITS) == SOCK_MODE;
+
+    // ...and it parses, with the fields a client reads.
+    match fs::read_to_string(path.view()) {
+        result::Result[text::Text, result::IoError]::Ok(body) => {
+            match json::Value::parse(body.view()) {
+                result::Result[json::Value, json::ParseError]::Ok(v) => {
+                    assert val_as_text(obj_get(v, "id")).view() == "desc-test";
+                    assert val_as_text(obj_get(v, "transport")).view() == "uds";
+                    assert val_as_number(obj_get(v, "pid")) == (pid as f64);
+                }
+                result::Result[json::Value, json::ParseError]::Err(_e) => { assert false; }
+            }
+        }
+        result::Result[text::Text, result::IoError]::Err(_e) => { assert false; }
+    }
+    unlink_descriptor();
+}
+
+// The sweep removes what dead processes left and leaves live ones alone. This
+// is not housekeeping: a path carries the pid, so a name is NEVER reused and
+// `bind_uds`'s prove-it-is-dead-then-unlink only ever cleans the one path a new
+// process is about to take. Four orphans from one afternoon were in /tmp when
+// this was written.
+#[test]
+fn the_sweep_takes_the_dead_and_spares_the_living() {
+    // A leftover from a pid that cannot be running.
+    let dead: str = "/tmp/mcp-sweeptest-2147483646.socket";
+    let _w: result::Result[usize, result::IoError] = fs::write_string(dead, "");
+    // ...and one belonging to this very much alive process.
+    let mine: text::Text = "/tmp/mcp-sweeptest-${current_pid()}.socket";
+    let _w2: result::Result[usize, result::IoError] = fs::write_string(mine.view(), "");
+
+    let _n: usize = sweep_stale();
+
+    assert fs::exists(dead) == false;
+    assert fs::exists(mine.view());
+
+    let _rm: result::Result[bool, result::IoError] = fs::remove_file(mine.view());
+}
+
+// ---- clipping a value --------------------------------------------------------------
+
+// NEVER MID-CODEPOINT. `str::prefix` counts bytes, so the obvious spelling
+// splits a multi-byte character in half and emits invalid UTF-8 — which a
+// client's JSON parser is entitled to reject, losing the WHOLE response over one
+// string. Only reachable with non-ASCII text, which is exactly the input a
+// developer testing in English never types.
+#[test]
+fn a_clipped_value_is_still_valid_utf8() {
+    // Four 3-byte characters: every budget from 1..12 must land on a boundary.
+    let s: str = "日本語で";
+    assert #str_len(s) == 12;
+    var budget: usize = 1;
+    while budget <= 12 {
+        let cut: str = clip_utf8(s, budget);
+        // A boundary is a byte that is not a continuation byte, and the clip
+        // never exceeds what was asked for.
+        assert #str_len(cut) <= budget;
+        assert #str_len(cut) % 3 == 0;
+        budget = budget +% 1;
+    }
+    // ASCII is untouched below the budget and cut exactly at it.
+    assert clip_utf8("hello", 200) == "hello";
+    assert #str_len(clip_utf8("hello", 3)) == 3;
+    // A budget past the end is the whole string, not a read past it.
+    assert clip_utf8("hi", 500) == "hi";
+    assert clip_utf8("", 10) == "";
+    return;
+}
+
+// The listing says WHEN it clipped. A cut string that does not announce itself
+// is a lie an agent acts on — it concludes the field ends mid-sentence.
+#[test]
+fn a_listing_marks_what_it_clipped_and_leaves_short_text_alone() {
+    var long_t: text::Text = text::new();
+    var i: i32 = 0;
+    while i < 60 {
+        let _a: status::Status = long_t.append("0123456789");
+        i = i +% 1;
+    }
+    var n: backend::UiNode = fake_node("big");
+    n.text = long_t;
+    let j: text::Text = node_to_json(#addr_of(n), false, - 1 as i64).to_text();
+    assert j.contains("\"text_truncated\":true");
+    assert j.contains("\"text_len\":600");
+
+    // Short text carries neither marker — their absence is the signal that what
+    // you see is all of it.
+    var m: backend::UiNode = fake_node("small");
+    m.text = text::from_str("hi");
+    let k: text::Text = node_to_json(#addr_of(m), false, - 1 as i64).to_text();
+    assert k.contains("text_truncated") == false;
+    assert k.contains("text_len") == false;
+    return;
+}
+
+// ---- the HTTP door ---------------------------------------------------------------
+
+extern fn socketpair(domain: i32, ty: i32, protocol: i32, sv: *i32) -> i32;
+extern fn shutdown(fd: i32, how: i32) -> i32;
+
+// Field names are case-insensitive in HTTP, and a client is entitled to any
+// spelling. Treating them as distinct is how a server reads a body of zero from
+// a request that had one.
+#[test]
+fn a_header_name_is_matched_without_case() {
+    assert header_is("Content-Length: 12", "content-length");
+    assert header_is("content-length: 12", "content-length");
+    assert header_is("CONTENT-LENGTH: 12", "content-length");
+    // The colon has to be there, or a longer name matches a shorter one.
+    assert header_is("Content-Length-Extra: 12", "content-length") == false;
+    assert header_is("Content-Type: application/json", "content-length") == false;
+}
+
+#[test]
+fn a_header_number_reads_its_value() {
+    assert header_number("Content-Length: 12") == 12;
+    assert header_number("Content-Length:12") == 12;
+    assert header_number("Content-Length:    480") == 480;
+    // Legal and meaningful: a POST that carries nothing.
+    assert header_number("Content-Length: 0") == 0;
+    // A length past the cap SATURATES rather than wrapping — a wrapped one
+    // would come back as something small and be accepted.
+    assert header_number("Content-Length: 99999999999999999999") > HTTP_MAX_BODY;
+}
+
+// One request in, one response out, over a real socket pair — the whole framing
+// end to end, without a thread. Shutting the write end makes `serve_http_fd`'s
+// read hit EOF after the request, so its keep-alive loop ends and it returns.
+fn http_round_trip(request: str, out: *u8, cap: usize) -> usize {
+    var sv: [i32; 2] = [0; 2];
+    if { socketpair(1, 1, 0, #addr_of(sv[0])) } != 0 {
+        return 0;
+    }
+    write_all(sv[1], #str_ptr(request), #str_len(request));
+    { shutdown(sv[1], 1) };          // SHUT_WR
+
+    var sub: events::Subscriber = events::subscriber(events::everything(), 8);
+    let _r: i32 = serve_http_fd(#addr_of(FAKE_SURF) as *u8, fake_backend(), sub, allow_all, sv[0]);
+    { close(sv[0]); }
+
+    var got: usize = 0;
+    loop {
+        if got >= cap { break; }
+        let n: i64 = { read(sv[1], out + got, cap -% got) };
+        if n <= 0 { break; }
+        got = got +% (n as usize);
+    }
+    { close(sv[1]); }
+    return got;
+}
+
+fn response_contains(buf: *u8, len: usize, needle: str) -> bool {
+    return text::from_str({ #str_from_raw_parts(buf, len) }).contains(needle);
+}
+
+// THE POINT OF THE WHOLE TRANSPORT: a plain HTTP POST reaches the same verb
+// table the socket does, and comes back as `application/json`. A client that
+// speaks MCP needs no bridge to get here.
+#[test]
+fn a_post_reaches_the_same_verbs_the_socket_does() {
+    var out: [u8; 4096] = [0; 4096];
+    let body: str = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"describe_ui\"}";
+    let req: text::Text =
+        "POST / HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/json\r\nContent-Length: ${#str_len(body)}\r\n\r\n${body}";
+    let n: usize = http_round_trip(req.view(), { #addr_of(out[0]) }, 4096);
+    assert n > 0;
+    assert response_contains({ #addr_of(out[0]) }, n, "HTTP/1.1 200 OK");
+    assert response_contains({ #addr_of(out[0]) }, n, "Content-Type: application/json");
+    assert response_contains({ #addr_of(out[0]) }, n, "\"jsonrpc\":\"2.0\"");
+    assert response_contains({ #addr_of(out[0]) }, n, "result");
+}
+
+// KEEP-ALIVE, which is what lets the connection be the session: two requests on
+// one connection, and the second still knows who the first said it was. Closing
+// after each would hand every request after `initialize` an empty `client`,
+// which is exactly what the consent policy keys its decisions on.
+#[test]
+fn two_requests_on_one_connection_share_an_identity() {
+    var out: [u8; 8192] = [0; 8192];
+    let b1: str = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"clientInfo\":{\"name\":\"claude-code\"}}}";
+    let b2: str = "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"describe_ui\"}";
+    let req: text::Text =
+        "POST / HTTP/1.1\r\nContent-Length: ${#str_len(b1)}\r\n\r\n${b1}POST / HTTP/1.1\r\nContent-Length: ${#str_len(b2)}\r\n\r\n${b2}";
+
+    forget_client();
+    let n: usize = http_round_trip(req.view(), { #addr_of(out[0]) }, 8192);
+    assert n > 0;
+    // Both answered on the one connection...
+    assert response_contains({ #addr_of(out[0]) }, n, "\"id\":1");
+    assert response_contains({ #addr_of(out[0]) }, n, "\"id\":2");
+    // ...and the handshake's name is still what the surface knows it as, which
+    // is the property the whole keep-alive choice exists for.
+    assert current_client() == "claude-code";
+    // The server names ITSELF too, so a client that reached a stale address
+    // finds out here rather than by driving the wrong app.
+    assert response_contains({ #addr_of(out[0]) }, n, "serverInfo");
+}
+
+// A body at the CAP is accepted and one past it is refused, and the two
+// numbers are the same number.
+//
+// They were not. The cap said 1 MiB and the buffer was 64 KiB on a serve
+// thread's 64 KiB stack, so zeroing it overflowed into the next thread's guard
+// page — SIGBUS in `__bzero`, eight bytes past the top of the stack, on the
+// first real connection. NOT CAUGHT HERE, and that is the lesson worth keeping:
+// these tests call `serve_http_fd` on the main thread, whose stack is orders of
+// magnitude larger, so the overflow was invisible until a live app ran it on a
+// worker. The buffer is heap-allocated now and sized by the same constant the
+// cap uses.
+#[test]
+fn the_body_cap_and_the_buffer_are_one_number() {
+    // A declared length past the cap is refused, whatever the buffer happens
+    // to be.
+    var out: [u8; 2048] = [0; 2048];
+    let over: text::Text = "POST / HTTP/1.1\r\nContent-Length: ${HTTP_MAX_BODY +% 1}\r\n\r\n{}";
+    let n: usize = http_round_trip(over.view(), { #addr_of(out[0]) }, 2048);
+    assert n > 0;
+    assert response_contains({ #addr_of(out[0]) }, n, "413");
+
+    // ...and a body AT the cap is within the allocation rather than one byte
+    // over it, which is the off-by-one this pairing exists to pin.
+    assert HTTP_MAX_BODY == 65536;
+}
+
+// A GET is not a request this endpoint can answer, and saying so beats hanging:
+// a browser pointed at the port learns what it found.
+#[test]
+fn a_get_is_refused_in_words() {
+    var out: [u8; 2048] = [0; 2048];
+    let n: usize = http_round_trip("GET / HTTP/1.1\r\nHost: x\r\n\r\n",
+                                   { #addr_of(out[0]) }, 2048);
+    assert n > 0;
+    assert response_contains({ #addr_of(out[0]) }, n, "405 Method Not Allowed");
+    assert response_contains({ #addr_of(out[0]) }, n, "POST");
+}
+
+// A body larger than the buffer is REFUSED, not truncated. Truncating would
+// hand `handle_request` half a JSON document, and leaving the rest unread would
+// desynchronise every request after it on a keep-alive connection — which is
+// why this one also ends the connection.
+#[test]
+fn an_oversized_body_is_refused_rather_than_truncated() {
+    var out: [u8; 2048] = [0; 2048];
+    let req: str = "POST / HTTP/1.1\r\nContent-Length: 999999\r\n\r\n{}";
+    let n: usize = http_round_trip(req, { #addr_of(out[0]) }, 2048);
+    assert n > 0;
+    assert response_contains({ #addr_of(out[0]) }, n, "413");
+}
+
+// A notification carries no id and is entitled to no reply — but over HTTP the
+// client is waiting on a response whatever happens, so silence would hang it.
+// 202 with an empty body is the answer.
+#[test]
+fn a_notification_gets_an_empty_202_rather_than_silence() {
+    var out: [u8; 2048] = [0; 2048];
+    let body: str = "{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\"}";
+    let req: text::Text =
+        "POST / HTTP/1.1\r\nContent-Length: ${#str_len(body)}\r\n\r\n${body}";
+    let n: usize = http_round_trip(req.view(), { #addr_of(out[0]) }, 2048);
+    assert n > 0;
+    assert response_contains({ #addr_of(out[0]) }, n, "202 Accepted");
+    assert response_contains({ #addr_of(out[0]) }, n, "Content-Length: 0");
+}
 
 // ---- tests for the TCP transport ---------------------------------------------
 
@@ -1456,33 +3045,30 @@ extern fn setsockopt(fd: i32, level: i32, name: i32, val: *u8, len: u32) -> i32;
 fn a_loopback_listener_binds_and_closes() {
     // Port 0 asks the kernel for a free one, which is the only port a test may
     // take: a fixed number is a test that fails when something else is running.
-    let fd: i32 = bind_tcp(0 as u16);
-    assert fd >= (0 as i32);
+    let fd: i32 = bind_tcp(0);
+    assert fd >= 0;
     { close(fd); }
-    return;
 }
 
 #[test]
 fn the_port_is_written_big_endian() {
-    var buf: [u8; 16] = [0 as u8; 16];
-    put_be16(buf, 2 as usize, 8123 as u16);
+    var buf: [u8; 16] = [0; 16];
+    put_be16(buf, 2, 8123);
     // 8123 = 0x1FBB, so the high byte comes first on the wire.
     assert buf[2] == (0x1F as u8);
     assert buf[3] == (0xBB as u8);
-    return;
 }
 
 #[test]
 fn two_listeners_on_one_port_is_a_bind_error() {
-    let a: i32 = bind_tcp(0 as u16);
-    assert a >= (0 as i32);
+    let a: i32 = bind_tcp(0);
+    assert a >= 0;
     // A second bind on a port the kernel chose cannot be attempted without
     // reading it back, so this asserts the shape that IS reachable: a
     // privileged port refuses, and the code says which step failed.
-    let b: i32 = bind_tcp(1 as u16);
-    assert b == (0 as i32 - (2 as i32));
+    let b: i32 = bind_tcp(1);
+    assert b == (0 - 2);
     { close(a); }
-    return;
 }
 
 // ---- tests -------------------------------------------------------------------
@@ -1495,7 +3081,7 @@ fn fake_node(id: str) -> backend::UiNode {
         id: text::from_str(id),
         role: identity::Role::Button,
         class_name: text::new(),
-        frame: backend::Rect { x: 11.0f64, y: 22.0f64, w: 33.0f64, h: 44.0f64 },
+        frame: backend::Rect { x: 11.0, y: 22.0, w: 33.0, h: 44.0 },
         is_hidden: false,
         text: text::new(),
         name: text::from_str("Do the thing"),
@@ -1517,7 +3103,7 @@ fn fake_secret_node(id: str, grant: auth::Grant) -> backend::UiNode {
         id: text::from_str(id),
         role: identity::Role::Input,
         class_name: text::new(),
-        frame: backend::Rect { x: 0.0f64, y: 0.0f64, w: 200.0f64, h: 24.0f64 },
+        frame: backend::Rect { x: 0.0, y: 0.0, w: 200.0, h: 24.0 },
         is_hidden: false,
         text: if may_read { text::from_str("4242424242424242") } else { text::new() },
         name: text::from_str("Card number"),
@@ -1539,7 +3125,7 @@ fn fake_blank_node(id: str, readable: bool) -> backend::UiNode {
         id: text::from_str(id),
         role: identity::Role::Text,
         class_name: text::new(),
-        frame: backend::Rect { x: 0.0f64, y: 0.0f64, w: 120.0f64, h: 18.0f64 },
+        frame: backend::Rect { x: 0.0, y: 0.0, w: 120.0, h: 18.0 },
         is_hidden: false,
         text: text::new(),
         name: text::new(),
@@ -1622,11 +3208,11 @@ fn fake_read_runs(p: *u8, grant: auth::Grant, id: str) -> surface::Runs {
     }
     var runs: vec::Vec[surface::TextRun] = vec::new::[surface::TextRun]();
     runs.append(surface::TextRun {
-        start: 0 as u64, length: 3 as u64, color: text::from_str("#ff0000"),
+        start: 0, length: 3, color: text::from_str("#ff0000"),
         is_bold: true, is_italic: false, is_underlined: false,
     });
     runs.append(surface::TextRun {
-        start: 3 as u64, length: 4 as u64, color: text::new(),
+        start: 3, length: 4, color: text::new(),
         is_bold: false, is_italic: false, is_underlined: false,
     });
     return surface::Runs {
@@ -1680,7 +3266,7 @@ fn an_mcp_client_can_complete_a_handshake() {
     // THE BUG THIS PINS. The package was called agent_mcp and did not speak
     // MCP: `initialize` is the first message every client sends, it took -32601,
     // and the client gave up — so no MCP client could reach a facet app at all.
-    var sub: events::Subscriber = events::subscriber(events::everything(), 4 as usize);
+    var sub: events::Subscriber = events::subscriber(events::everything(), 4);
     let surf: *u8 = #addr_of(FAKE_SURF) as *u8;
     let r: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(allow_all),
         "{\"jsonrpc\":\"2.0\",\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2024-11-05\"},\"id\":1}");
@@ -1694,9 +3280,9 @@ fn an_mcp_client_can_complete_a_handshake() {
 fn tools_list_describes_every_verb_including_an_extensions() {
     // The half that earns MCP its keep: a client learns the verb exists AND how
     // to call it from the wire, instead of the caller having to already know.
-    var sub: events::Subscriber = events::subscriber(events::everything(), 4 as usize);
+    var sub: events::Subscriber = events::subscriber(events::everything(), 4);
     let surf: *u8 = #addr_of(FAKE_SURF) as *u8;
-    disarm_extension();
+    disarm_all_extensions();
     let bare: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(allow_all),
         "{\"method\":\"tools/list\",\"id\":1}");
     assert bare.contains("describe_ui");
@@ -1707,36 +3293,36 @@ fn tools_list_describes_every_verb_including_an_extensions() {
     // A NAMESPACE ANSWERS FOR ITSELF. This module must not know what an
     // extension is; without a describer the twelve inspector verbs would be
     // invisible to exactly the clients that need telling.
-    arm_extension("probe.", ext_probe, ext_describes_two);
+    arm_extension(verbs2("probe.one", "probe.two"), ext_probe, ext_describes_two);
     let armed: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(allow_all),
         "{\"method\":\"tools/list\",\"id\":2}");
     assert armed.contains("describe_ui");
     assert armed.contains("probe.one");
     assert armed.contains("probe.two");
-    disarm_extension();
+    disarm_all_extensions();
 }
 
 #[test]
 fn an_extension_armed_without_a_describer_still_works() {
     // Honest degradation: the verbs answer, they are simply not listed. A
     // describer is what makes a namespace discoverable, not what makes it run.
-    var sub: events::Subscriber = events::subscriber(events::everything(), 4 as usize);
+    var sub: events::Subscriber = events::subscriber(events::everything(), 4);
     let surf: *u8 = #addr_of(FAKE_SURF) as *u8;
-    arm_extension("probe.", ext_probe);
+    arm_extension(verbs1("probe.anything"), ext_probe);
     let listed: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(allow_all),
         "{\"method\":\"tools/list\",\"id\":1}");
     assert listed.contains("probe.one") == false;
     let called: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(allow_all),
         "{\"method\":\"probe.anything\",\"id\":2}");
     assert called.contains("ext");
-    disarm_extension();
+    disarm_all_extensions();
 }
 
 #[test]
 fn tools_call_reaches_the_same_verb_the_flat_name_does() {
     // One verb table, two spellings. This is what let the whole existing client
     // base — iris's 42-flow board sweep among them — keep working unchanged.
-    var sub: events::Subscriber = events::subscriber(events::everything(), 4 as usize);
+    var sub: events::Subscriber = events::subscriber(events::everything(), 4);
     let surf: *u8 = #addr_of(FAKE_SURF) as *u8;
     let flat: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(allow_all),
         "{\"method\":\"describe_ui\",\"params\":{\"mode\":\"full\"},\"id\":1}");
@@ -1753,7 +3339,7 @@ fn tools_call_reaches_the_same_verb_the_flat_name_does() {
 fn a_tools_call_error_stays_an_error() {
     // Flattening a refusal into a successful content block would hide exactly
     // the diagnosable ones — a missing parameter, a denied consent.
-    var sub: events::Subscriber = events::subscriber(events::everything(), 4 as usize);
+    var sub: events::Subscriber = events::subscriber(events::everything(), 4);
     let surf: *u8 = #addr_of(FAKE_SURF) as *u8;
     let missing: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(allow_all),
         "{\"method\":\"tools/call\",\"params\":{\"name\":\"click\",\"arguments\":{}},\"id\":1}");
@@ -1774,15 +3360,15 @@ fn a_notification_is_answered_with_silence() {
     // and then MCP's handshake ends with `notifications/initialized`, so the
     // first well-behaved client would have been handed a response it never
     // asked for, carrying "id": 0, which it may treat as a protocol violation.
-    var sub: events::Subscriber = events::subscriber(events::everything(), 4 as usize);
+    var sub: events::Subscriber = events::subscriber(events::everything(), 4);
     let surf: *u8 = #addr_of(FAKE_SURF) as *u8;
     let quiet: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(allow_all),
         "{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\"}");
-    assert quiet.count() == (0 as usize);
+    assert quiet.count() == 0;
     // An id present, even on the same method name, is a request and is answered.
     let loud: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(allow_all),
         "{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\",\"id\":7}");
-    assert loud.count() > (0 as usize);
+    assert loud.count() > 0;
 }
 
 #[test]
@@ -1790,7 +3376,7 @@ fn the_framing_is_behind_consent_like_everything_else() {
     // A closed surface should LOOK closed: an app that never armed a policy
     // refuses the handshake rather than advertising a verb list it will not
     // honour.
-    var sub: events::Subscriber = events::subscriber(events::everything(), 4 as usize);
+    var sub: events::Subscriber = events::subscriber(events::everything(), 4);
     let surf: *u8 = #addr_of(FAKE_SURF) as *u8;
     let init: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(allow_nothing),
         "{\"method\":\"initialize\",\"id\":1}");
@@ -1802,7 +3388,7 @@ fn the_framing_is_behind_consent_like_everything_else() {
 
 #[test]
 fn describe_ui_mode_selects_the_view() {
-    var sub: events::Subscriber = events::subscriber(events::everything(), 4 as usize);
+    var sub: events::Subscriber = events::subscriber(events::everything(), 4);
     let surf: *u8 = #addr_of(FAKE_SURF) as *u8;
     // Default (no mode): the curated exposed view.
     let r1: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(allow_all), "{\"method\":\"describe_ui\",\"id\":1}");
@@ -1827,7 +3413,7 @@ fn the_three_verbs_that_turn_i_believe_into_i_checked() {
     // RUNS, so "did the syntax colour land" needed a probe compiled into the
     // app four separate times; and none invoked a MENU ITEM, so every key
     // equivalent rested on a link nothing here could drive.
-    var sub: events::Subscriber = events::subscriber(events::everything(), 4 as usize);
+    var sub: events::Subscriber = events::subscriber(events::everything(), 4);
     let surf: *u8 = #addr_of(FAKE_SURF) as *u8;
 
     let caret: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(allow_all),
@@ -1864,7 +3450,7 @@ fn the_three_verbs_that_turn_i_believe_into_i_checked() {
 fn a_backend_that_cannot_answer_says_so_rather_than_guessing() {
     // `supported: false` is the honest answer, and it is a different answer
     // from "no runs" — the distinction the `clickable` field was added to make.
-    var sub: events::Subscriber = events::subscriber(events::everything(), 4 as usize);
+    var sub: events::Subscriber = events::subscriber(events::everything(), 4);
     let surf: *u8 = #addr_of(FAKE_SURF) as *u8;
     let r: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(allow_all),
         "{\"method\":\"read_runs\",\"params\":{\"id\":\"not-text\"},\"id\":1}");
@@ -1879,7 +3465,7 @@ fn a_backend_that_cannot_answer_says_so_rather_than_guessing() {
 // not responding to anything.
 #[test]
 fn the_new_verbs_name_the_parameter_they_are_missing() {
-    var sub: events::Subscriber = events::subscriber(events::everything(), 4 as usize);
+    var sub: events::Subscriber = events::subscriber(events::everything(), 4);
     let surf: *u8 = #addr_of(FAKE_SURF) as *u8;
     let a: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(allow_all),
         "{\"method\":\"set_caret\",\"params\":{\"id\":\"editor\"},\"id\":1}");
@@ -1900,7 +3486,7 @@ fn only_the_measured_view_carries_geometry() {
     // wrong, and sent one investigation looking for a placement bug that was
     // not there. The fixture carries a distinctive frame so "dropped" and
     // "carried" are told apart by the numbers, not by their absence upstream.
-    var sub: events::Subscriber = events::subscriber(events::everything(), 4 as usize);
+    var sub: events::Subscriber = events::subscriber(events::everything(), 4);
     let surf: *u8 = #addr_of(FAKE_SURF) as *u8;
 
     let lean: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(allow_all), "{\"method\":\"describe_ui\",\"params\":{\"mode\":\"exposed\"},\"id\":1}");
@@ -1921,7 +3507,7 @@ fn only_the_measured_view_carries_geometry() {
 
 #[test]
 fn hit_test_carries_reachability_and_names_only_exposed_obstructions() {
-    var sub: events::Subscriber = events::subscriber(events::everything(), 4 as usize);
+    var sub: events::Subscriber = events::subscriber(events::everything(), 4);
     let surf: *u8 = #addr_of(FAKE_SURF) as *u8;
 
     let ok: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(allow_all),
@@ -1953,19 +3539,47 @@ fn hit_test_carries_reachability_and_names_only_exposed_obstructions() {
         "{\"method\":\"hit_test\",\"params\":{},\"id\":4}");
     assert bad.contains("-32602");
     assert bad.contains("hit_test");
-    return;
 }
 
 // The consent gate covers it like every other verb: an un-served (deny-all)
 // policy must refuse hit_test too, or it would be a read that bypasses consent.
 #[test]
 fn hit_test_is_behind_the_consent_gate() {
-    var sub: events::Subscriber = events::subscriber(events::everything(), 4 as usize);
+    var sub: events::Subscriber = events::subscriber(events::everything(), 4);
     let surf: *u8 = #addr_of(FAKE_SURF) as *u8;
     let denied: text::Text = handle_request(surf, fake_backend(), sub, auth::deny_all(),
         "{\"method\":\"hit_test\",\"params\":{\"id\":\"btn\"},\"id\":1}");
     assert denied.contains("-32001");
     assert denied.contains("reachable") == false;
+}
+
+// A REFUSAL A CALLER CAN ACT ON. `not_exposed` arrives at someone who has
+// usually just seen the node — `mode:"full"` lists the whole tree and hands
+// back ids like `root/button#2` — so a bare outcome reads as the surface being
+// broken rather than the app having decided. It has exactly two causes and the
+// hint names both, because the remedy differs: one is "give it a key", the
+// other is "the app said no".
+#[test]
+fn a_refusal_for_an_unexposed_node_says_which_of_the_two_it_is() {
+    let r: json::Value = outcome_result_for(surface::Outcome::NotExposed, "root/button#2");
+    let t: text::Text = r.to_text();
+    assert t.contains("not_exposed");
+    assert t.contains("root/button#2");
+    // The two causes, and the fact that retrying is not the answer.
+    assert t.contains("key");
+    assert t.contains("agent: Hidden");
+    assert t.contains("retry");
+
+    // `not_found` keeps its own, different hint — the two must not collapse
+    // into one message, because "there is no such node" and "there is, and you
+    // may not touch it" send a caller to different places.
+    let nf: text::Text = outcome_result_for(surface::Outcome::NotFound, "ghost").to_text();
+    assert nf.contains("no node");
+    assert (nf.contains("agent: Hidden")) == false;
+
+    // An allowed outcome carries no hint at all.
+    let ok: text::Text = outcome_result_for(surface::Outcome::Allowed, "tap").to_text();
+    assert (ok.contains("hint")) == false;
     return;
 }
 
@@ -1979,7 +3593,7 @@ fn hit_test_is_behind_the_consent_gate() {
 // fine. Absent is now refused; an explicit empty string still clears.
 #[test]
 fn a_misspelled_set_text_parameter_is_refused_not_silently_emptied() {
-    var sub: events::Subscriber = events::subscriber(events::everything(), 4 as usize);
+    var sub: events::Subscriber = events::subscriber(events::everything(), 4);
     let surf: *u8 = #addr_of(FAKE_SURF) as *u8;
 
     // THE TRAP: `text` instead of `value`. Must not report success.
@@ -2001,7 +3615,6 @@ fn a_misspelled_set_text_parameter_is_refused_not_silently_emptied() {
     let good: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(allow_all),
         "{\"method\":\"set_text\",\"params\":{\"id\":\"n\",\"value\":\"hello\"},\"id\":3}");
     assert good.contains("allowed");
-    return;
 }
 
 // The same fallback hid a missing target on every verb that takes one. A
@@ -2009,7 +3622,7 @@ fn a_misspelled_set_text_parameter_is_refused_not_silently_emptied() {
 // than "you sent no id" — the same wrong-diagnosis cost, one step smaller.
 #[test]
 fn every_verb_that_takes_a_target_requires_one() {
-    var sub: events::Subscriber = events::subscriber(events::everything(), 4 as usize);
+    var sub: events::Subscriber = events::subscriber(events::everything(), 4);
     let surf: *u8 = #addr_of(FAKE_SURF) as *u8;
 
     let c: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(allow_all),
@@ -2037,7 +3650,82 @@ fn every_verb_that_takes_a_target_requires_one() {
     let p: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(allow_all),
         "{\"method\":\"poll_event\",\"id\":5}");
     assert p.contains("-32602") == false;
-    return;
+}
+
+// ---- what the policy is told -----------------------------------------------------
+
+static SEEN_CLIENT: text::Text = #zero::[text::Text]();
+static SEEN_METHOD: text::Text = #zero::[text::Text]();
+static POLICY_CALLS: i32 = 0;
+
+fn recording_policy(req: auth::Request) -> auth::Grant {
+    SEEN_CLIENT = text::from_str(req.client);
+    SEEN_METHOD = text::from_str(req.method);
+    POLICY_CALLS = POLICY_CALLS +% 1;
+    return auth::operator();
+}
+
+// A policy that only ever refuses writes. This is the shape that was NOT
+// EXPRESSIBLE before `method` was on the Request: consent per verb rather than
+// once per session.
+fn reads_only(req: auth::Request) -> auth::Grant {
+    if req.method == "click" { return auth::nothing(); }
+    if req.method == "set_text" { return auth::nothing(); }
+    return auth::operator();
+}
+
+// THE POLICY IS TOLD WHO AND WHAT. Without both, an application asked to show
+// "X wants to press this button" could say neither: it had a channel and a
+// token and nothing else, so an interactive gate had to reach past the core for
+// the name and could not do per-verb consent at all.
+#[test]
+fn the_policy_is_told_who_is_calling_and_what_they_want() {
+    forget_client();
+    POLICY_CALLS = 0;
+    var sub: events::Subscriber = events::subscriber(events::everything(), 8);
+    let surf: *u8 = #addr_of(FAKE_SURF) as *u8;
+
+    // `initialize` is what carries the name, and it is read BEFORE the gate so
+    // the policy admitting the handshake already knows who is introducing
+    // themselves.
+    let _i: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(recording_policy),
+        "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"clientInfo\":{\"name\":\"claude-code\"}}}");
+    assert SEEN_CLIENT.view() == "claude-code";
+    assert SEEN_METHOD.view() == "initialize";
+
+    // ...and it persists across the connection, so every later verb is
+    // attributable to the same caller.
+    let _d: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(recording_policy),
+        "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"click\",\"params\":{\"id\":\"btn\"}}");
+    assert SEEN_CLIENT.view() == "claude-code";
+    assert SEEN_METHOD.view() == "click";
+    assert POLICY_CALLS == 2;
+
+    // A NEW CONNECTION IS A NEW CALLER: without the reset a second agent
+    // inherits the first's name and, with it, whatever the user decided about
+    // the first.
+    forget_client();
+    let _c: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(recording_policy),
+        "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"describe_ui\"}");
+    assert SEEN_CLIENT.view() == "";
+}
+
+// Per-verb consent, end to end on the wire: reads answer, writes are refused,
+// on one connection under one policy.
+#[test]
+fn a_policy_can_admit_a_read_and_refuse_a_write() {
+    forget_client();
+    var sub: events::Subscriber = events::subscriber(events::everything(), 8);
+    let surf: *u8 = #addr_of(FAKE_SURF) as *u8;
+
+    let read: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(reads_only),
+        "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"describe_ui\"}");
+    assert read.contains("result");
+    assert read.contains("-32001") == false;
+
+    let write: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(reads_only),
+        "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"click\",\"params\":{\"id\":\"btn\"}}");
+    assert write.contains("-32001");
 }
 
 // ---- the extension namespace ---------------------------------------------------
@@ -2058,10 +3746,95 @@ fn fake_extension(method: str, params: json::Value, id: f64, grant: auth::Grant)
     return ok_response(id, json::Value::Object(m));
 }
 
+static SECOND_CALLS: i32 = 0;
+
+fn second_extension(method: str, params: json::Value, id: f64, grant: auth::Grant) -> json::Value {
+    SECOND_CALLS = SECOND_CALLS +% 1;
+    return ok_response(id, jstr("second"));
+}
+
+fn second_describes_one() -> vec::Vec[json::Value] {
+    var out: vec::Vec[json::Value] = vec::new::[json::Value]();
+    out.append(tool("second.only", "the second namespace's one verb", no_props(), no_required()));
+    return out;
+}
+
+// TWO NAMESPACES AT ONCE. The single slot replaced whatever was armed, so a
+// second `arm_extension` took the namespace and the first disappeared with no
+// diagnostic — a client would simply stop being told those verbs existed, and
+// calling one would answer "method not found" as if it had never been built.
+//
+// Only the inspector arms one today, which is why this was latent. It stops
+// being latent the moment anything else registers.
+#[test]
+fn two_namespaces_coexist_and_each_answers_its_own() {
+    disarm_all_extensions();
+    EXT_CALLS = 0;
+    SECOND_CALLS = 0;
+
+    arm_extension(verbs1("inspector.describe"), fake_extension, ext_describes_two);
+    arm_extension(verbs1("second.only"), second_extension, second_describes_one);
+    assert extension_count() == 2;
+
+    var sub: events::Subscriber = events::subscriber(events::everything(), 8);
+
+    // Each method reaches ITS OWN handler, not the most recently armed one.
+    let a: json::Value = dispatch_verb(#addr_of(FAKE_SURF) as *u8, fake_backend(),
+        sub, auth::operator(), "inspector.describe", json::Value::Null, 1.0);
+    assert EXT_CALLS == 1;
+    assert SECOND_CALLS == 0;
+    let _keep_a: json::Value = a;
+
+    let b: json::Value = dispatch_verb(#addr_of(FAKE_SURF) as *u8, fake_backend(),
+        sub, auth::operator(), "second.only", json::Value::Null, 2.0);
+    assert SECOND_CALLS == 1;
+    assert EXT_CALLS == 1;
+    let _keep_b: json::Value = b;
+
+    // And `tools/list` names BOTH, so neither is invisible to a client that has
+    // to be told what exists.
+    let tools: vec::Vec[json::Value] = all_tools();
+    assert tools.count() == (core_tools().count() +% 3);
+
+    // Disarming one leaves the other alone — the reason `disarm_extension`
+    // takes a name. The slot version's no-arg disarm would have closed both.
+    disarm_extension("inspector.describe");
+    assert extension_count() == 1;
+    assert is_extension_method("second.only");
+    assert is_extension_method("inspector.describe") == false;
+
+    disarm_all_extensions();
+}
+
+// Re-arming the same prefix REPLACES its row. A disarm/arm cycle — which is
+// what an app toggling the inspector does — must not grow the table, and the
+// live handler must be the one just armed.
+#[test]
+fn re_arming_a_namespace_replaces_it_rather_than_stacking() {
+    disarm_all_extensions();
+    EXT_CALLS = 0;
+    SECOND_CALLS = 0;
+
+    arm_extension(verbs1("inspector.describe"), fake_extension);
+    arm_extension(verbs1("inspector.describe"), second_extension);
+    assert extension_count() == 1;
+
+    var sub: events::Subscriber = events::subscriber(events::everything(), 8);
+
+    let r: json::Value = dispatch_verb(#addr_of(FAKE_SURF) as *u8, fake_backend(),
+        sub, auth::operator(), "inspector.describe", json::Value::Null, 1.0);
+    let _keep: json::Value = r;
+    // The SECOND one answers; the first is gone rather than shadowed.
+    assert SECOND_CALLS == 1;
+    assert EXT_CALLS == 0;
+
+    disarm_all_extensions();
+}
+
 #[test]
 fn an_unarmed_extension_namespace_is_simply_not_there() {
-    disarm_extension();
-    var sub: events::Subscriber = events::subscriber(events::everything(), 4 as usize);
+    disarm_all_extensions();
+    var sub: events::Subscriber = events::subscriber(events::everything(), 4);
     let surf: *u8 = #addr_of(FAKE_SURF) as *u8;
     assert extension_armed() == false;
 
@@ -2074,17 +3847,16 @@ fn an_unarmed_extension_namespace_is_simply_not_there() {
     // a protocol mismatch.
     assert r.contains("inspector.describe");
     assert r.contains("extension") == false;
-    return;
 }
 
 #[test]
 fn an_armed_namespace_routes_its_own_methods_and_leaves_the_surface_alone() {
-    disarm_extension();
+    disarm_all_extensions();
     EXT_CALLS = 0;
-    var sub: events::Subscriber = events::subscriber(events::everything(), 4 as usize);
+    var sub: events::Subscriber = events::subscriber(events::everything(), 4);
     let surf: *u8 = #addr_of(FAKE_SURF) as *u8;
 
-    arm_extension("inspector.", fake_extension);
+    arm_extension(verbs1("inspector.describe"), fake_extension);
     assert extension_armed();
 
     let r: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(allow_all),
@@ -2106,13 +3878,12 @@ fn an_armed_namespace_routes_its_own_methods_and_leaves_the_surface_alone() {
     assert n.contains("-32601");
     assert EXT_CALLS == 1;
 
-    disarm_extension();
+    disarm_all_extensions();
     assert extension_armed() == false;
     let after: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(allow_all),
         "{\"method\":\"inspector.describe\",\"id\":4}");
     assert after.contains("-32601");
     assert EXT_CALLS == 1;
-    return;
 }
 
 // Arming opens a namespace, not a way around consent. An extension is strictly
@@ -2120,11 +3891,11 @@ fn an_armed_namespace_routes_its_own_methods_and_leaves_the_surface_alone() {
 // would be the one place the whole permission model leaks.
 #[test]
 fn the_consent_gate_covers_the_extension_namespace_too() {
-    disarm_extension();
+    disarm_all_extensions();
     EXT_CALLS = 0;
-    var sub: events::Subscriber = events::subscriber(events::everything(), 4 as usize);
+    var sub: events::Subscriber = events::subscriber(events::everything(), 4);
     let surf: *u8 = #addr_of(FAKE_SURF) as *u8;
-    arm_extension("inspector.", fake_extension);
+    arm_extension(verbs1("inspector.describe"), fake_extension);
 
     let denied: text::Text = handle_request(surf, fake_backend(), sub, auth::deny_all(),
         "{\"method\":\"inspector.describe\",\"id\":1}");
@@ -2133,24 +3904,23 @@ fn the_consent_gate_covers_the_extension_namespace_too() {
     // Refused BEFORE the handler ran, not after it answered.
     assert EXT_CALLS == 0;
 
-    disarm_extension();
-    return;
+    disarm_all_extensions();
 }
 
 // The prefix is owned, so a caller that composes one is not punished for it.
 // A `str` static here would be a borrowed {ptr,len} into a Text that is gone by
 // the first request — sound for a literal, a use-after-free for anything else.
 #[test]
-fn a_composed_prefix_survives_the_call_that_armed_it() {
-    disarm_extension();
+fn a_composed_verb_name_survives_the_call_that_armed_it() {
+    disarm_all_extensions();
     EXT_CALLS = 0;
-    var sub: events::Subscriber = events::subscriber(events::everything(), 4 as usize);
+    var sub: events::Subscriber = events::subscriber(events::everything(), 4);
     let surf: *u8 = #addr_of(FAKE_SURF) as *u8;
 
     var built: text::Text = text::from_str("insp");
-    let _a: status::Status = built.append("ector.");
-    arm_extension(built.view(), fake_extension);
-    // The Text that supplied it is finished with here; the prefix must not be.
+    let _a: status::Status = built.append("ector.set");
+    arm_extension(verbs1(built.view()), fake_extension);
+    // The Text that supplied it is finished with here; the NAME must not be.
     built = text::from_str("clobbered");
 
     let r: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(allow_all),
@@ -2158,8 +3928,7 @@ fn a_composed_prefix_survives_the_call_that_armed_it() {
     assert r.contains("\"from\":\"extension\"");
     assert EXT_CALLS == 1;
 
-    disarm_extension();
-    return;
+    disarm_all_extensions();
 }
 
 // ---- socket teardown ---------------------------------------------------------
@@ -2170,16 +3939,16 @@ extern fn file_access(path: *u8, mode: i32) -> i32;
 
 // F_OK = 0 — does the path exist?
 fn path_exists(path: str) -> bool {
-    var buf: [u8; 110] = [0 as u8; 110];
+    var buf: [u8; 110] = [0; 110];
     let n: usize = #str_len(path);
     let p: *u8 = #str_ptr(path);
-    var i: usize = 0 as usize;
+    var i: usize = 0;
     while i < n {
         buf[i] = { *(p + i) };
-        i = i +% (1 as usize);
+        i = i +% 1;
     }
-    buf[n] = 0 as u8;
-    return { file_access(#addr_of(buf[0]), 0 as i32) } == (0 as i32);
+    buf[n] = 0;
+    return { file_access(#addr_of(buf[0]), 0) } == 0;
 }
 
 // Binding creates a file on disk, and it must be removed on the way out. The
@@ -2196,7 +3965,7 @@ fn path_exists(path: str) -> bool {
 fn binding_arms_the_socket_cleanup() {
     let path: str = "/tmp/cplus-agent-mcp-teardown-test.sock";
     let fd: i32 = bind_uds(path);
-    assert fd >= (0 as i32);
+    assert fd >= 0;
     assert path_exists(path);
 
     unlink_bound_socket();
@@ -2208,7 +3977,43 @@ fn binding_arms_the_socket_cleanup() {
     assert path_exists(path) == false;
 
     { close(fd); }
-    return;
+}
+
+// The bound socket is 0600, so a path anyone can guess is still a door only its
+// owner can open.
+//
+// This is asserted on the MODE and not on a failed connect, because the test
+// runs as the same user that owns the socket — the one identity that is allowed
+// through either way. The mode is what a second user would be refused by, and
+// it is the thing that was wrong: `bind` creates the file 0777 & ~umask, and
+// with a default umask that is `srwxr-xr-x`.
+#[test]
+fn a_bound_socket_is_not_world_connectable() {
+    let path: str = "/tmp/cplus-agent-mcp-mode-test.sock";
+    let fd: i32 = bind_uds(path);
+    assert fd >= 0;
+
+    // On the stack, with room to spare: `stat_buf_bytes()` is 144 on both
+    // platforms today, and the assert is what catches a third one rather than
+    // letting `stat` write past the end of this.
+    assert fsys::stat_buf_bytes() <= 256;
+    var buf: [u8; 256] = [0; 256];
+    var cpath: [u8; 64] = [0; 64];
+    let src: *u8 = #str_ptr(path);
+    var i: usize = 0;
+    while i < #str_len(path) {
+        cpath[i] = { *(src + i) };
+        i = i +% 1;
+    }
+    assert fsys::stat_path({ #addr_of(cpath[0]) }, { #addr_of(buf[0]) }) == 0;
+    let mode: u32 = fsys::stat_mode({ #addr_of(buf[0]) });
+
+    // Owner only. The type bits (S_IFSOCK) ride in the high half and are not
+    // this assertion's business, so only the permission bits are compared.
+    assert (mode & MODE_BITS) == SOCK_MODE;
+
+    unlink_bound_socket();
+    { close(fd); }
 }
 
 // A path longer than `sun_path` is rejected before any syscall, and rejecting
@@ -2217,22 +4022,21 @@ fn binding_arms_the_socket_cleanup() {
 fn an_over_long_path_is_rejected_without_disarming() {
     let good: str = "/tmp/cplus-agent-mcp-armed.sock";
     let fd: i32 = bind_uds(good);
-    assert fd >= (0 as i32);
+    assert fd >= 0;
     assert path_exists(good);
 
     var long_path: text::Text = text::from_str("/tmp/");
-    var i: i32 = 0 as i32;
-    while i < (110 as i32) {
+    var i: i32 = 0;
+    while i < 110 {
         let _a: status::Status = long_path.append("x");
-        i = i +% (1 as i32);
+        i = i +% 1;
     }
-    assert bind_uds(long_path.view()) == (- 4 as i32);
+    assert bind_uds(long_path.view()) == (- 4);
 
     // Still armed for `good`, and teardown still removes it.
     unlink_bound_socket();
     assert path_exists(good) == false;
     { close(fd); }
-    return;
 }
 
 // A socket file left by a process that died without running its exit hook —
@@ -2243,7 +4047,7 @@ fn an_over_long_path_is_rejected_without_disarming() {
 fn a_stale_socket_file_is_reclaimed_by_the_next_bind() {
     let path: str = "/tmp/cplus-agent-mcp-stale.sock";
     let dead: i32 = bind_uds(path);
-    assert dead >= (0 as i32);
+    assert dead >= 0;
     assert path_exists(path);
 
     // Drop the fd WITHOUT unlinking: exactly the state a killed process leaves,
@@ -2253,13 +4057,12 @@ fn a_stale_socket_file_is_reclaimed_by_the_next_bind() {
     assert path_exists(path);
 
     let fresh: i32 = bind_uds(path);
-    assert fresh >= (0 as i32);
+    assert fresh >= 0;
     assert path_exists(path);
 
     unlink_bound_socket();
     assert path_exists(path) == false;
     { close(fresh); }
-    return;
 }
 
 // The other half: a path a LIVE server is answering on must be refused, not
@@ -2273,12 +4076,12 @@ fn a_stale_socket_file_is_reclaimed_by_the_next_bind() {
 fn a_live_server_keeps_its_socket_against_a_second_bind() {
     let path: str = "/tmp/cplus-agent-mcp-live.sock";
     let live: i32 = bind_uds(path);
-    assert live >= (0 as i32);
-    assert { listen(live, 4 as i32) } == (0 as i32);   // now it ANSWERS connect
+    assert live >= 0;
+    assert { listen(live, 4) } == 0;   // now it ANSWERS connect
     assert path_exists(path);
 
     // Second bind sees a peer on the path and stands down.
-    assert bind_uds(path) == (- 5 as i32);
+    assert bind_uds(path) == (- 5);
     // The live socket's file is untouched — the loser removed nothing.
     assert path_exists(path);
 
@@ -2287,14 +4090,13 @@ fn a_live_server_keeps_its_socket_against_a_second_bind() {
     unlink_bound_socket();
     assert path_exists(path) == false;
     { close(live); }
-    return;
 }
 
 #[test]
 fn a_gated_node_is_on_the_wire_with_its_name_and_no_value() {
     // The two halves of the ask, both asserted here: the model LEARNS the card
     // field exists (id, role, name, position in the tree) and CANNOT read it.
-    var sub: events::Subscriber = events::subscriber(events::everything(), 4 as usize);
+    var sub: events::Subscriber = events::subscriber(events::everything(), 4);
     let surf: *u8 = #addr_of(FAKE_SURF) as *u8;
     let r: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(allow_all),
         "{\"method\":\"describe_ui\",\"id\":1}");
@@ -2303,7 +4105,6 @@ fn a_gated_node_is_on_the_wire_with_its_name_and_no_value() {
     assert r.contains("\"tier\":\"protected\""); // and which gate it is behind
     assert r.contains("\"readable\":false");     // and that this agent is outside it
     assert r.contains("4242") == false;
-    return;
 }
 
 #[test]
@@ -2312,7 +4113,7 @@ fn the_grant_the_policy_returns_is_what_reaches_the_backend() {
     // the verb, so the SAME request against the SAME surface answers differently
     // for two credentials. If this ever stops holding, every tier above it is
     // decoration.
-    var sub: events::Subscriber = events::subscriber(events::everything(), 4 as usize);
+    var sub: events::Subscriber = events::subscriber(events::everything(), 4);
     let surf: *u8 = #addr_of(FAKE_SURF) as *u8;
     let plain: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(allow_all),
         "{\"method\":\"describe_ui\",\"id\":1}");
@@ -2326,7 +4127,6 @@ fn the_grant_the_policy_returns_is_what_reaches_the_backend() {
     // The DECLARATION does not change with the grant — the field is still a
     // protected one, it is just one this agent may now read.
     assert approved.contains("\"tier\":\"protected\"");
-    return;
 }
 
 #[test]
@@ -2335,7 +4135,7 @@ fn ask_and_stop_are_different_words_on_the_wire() {
     // `version_conflict` means "re-read and try again", which is worse. A
     // refusal on a card field has to be legible as either "ask the user" or
     // "this is never coming", or the model spends its turn arguing with a form.
-    var sub: events::Subscriber = events::subscriber(events::everything(), 4 as usize);
+    var sub: events::Subscriber = events::subscriber(events::everything(), 4);
     let surf: *u8 = #addr_of(FAKE_SURF) as *u8;
     let card: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(allow_all),
         "{\"method\":\"set_text\",\"params\":{\"id\":\"payment:card\",\"value\":\"4242424242424242\"},\"id\":1}");
@@ -2351,7 +4151,6 @@ fn ask_and_stop_are_different_words_on_the_wire() {
     let runs: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(allow_all),
         "{\"method\":\"read_runs\",\"params\":{\"id\":\"payment:card\"},\"id\":3}");
     assert runs.contains("needs_grant");
-    return;
 }
 #[test]
 fn every_outcome_has_its_own_word_on_the_wire() {
@@ -2369,7 +4168,6 @@ fn every_outcome_has_its_own_word_on_the_wire() {
     assert outcome_to_str(surface::Outcome::Forbidden) == "forbidden";
     assert outcome_to_str(surface::Outcome::NoHandler) == "no_handler";
     assert outcome_to_str(surface::Outcome::VersionConflict) == "version_conflict";
-    return;
 }
 
 
@@ -2377,14 +4175,13 @@ fn every_outcome_has_its_own_word_on_the_wire() {
 fn the_full_view_is_not_a_way_around_a_tier() {
     // `mode: full` is a parameter the agent chooses. A gate that only held in
     // the curated view would hold exactly until a model tried the other one.
-    var sub: events::Subscriber = events::subscriber(events::everything(), 4 as usize);
+    var sub: events::Subscriber = events::subscriber(events::everything(), 4);
     let surf: *u8 = #addr_of(FAKE_SURF) as *u8;
     let r: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(allow_all),
         "{\"method\":\"describe_ui\",\"params\":{\"mode\":\"full\"},\"id\":1}");
     assert r.contains("payment:card");
     assert r.contains("\"tier\":\"protected\"");
     assert r.contains("4242") == false;
-    return;
 }
 
 #[test]
@@ -2395,7 +4192,7 @@ fn a_blank_text_says_whether_it_was_withheld() {
     // inside an excluded subtree — went out character-for-character like a
     // label that is genuinely empty, and a model reading it fills in the form
     // field that is not there.
-    var sub: events::Subscriber = events::subscriber(events::everything(), 4 as usize);
+    var sub: events::Subscriber = events::subscriber(events::everything(), 4);
     let surf: *u8 = #addr_of(FAKE_SURF) as *u8;
     let r: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(allow_all),
         "{\"method\":\"describe_ui\",\"params\":{\"mode\":\"full\"},\"id\":1}");
@@ -2406,7 +4203,6 @@ fn a_blank_text_says_whether_it_was_withheld() {
     // keeps it meaningful where it does appear.
     assert r.contains("\"id\":\"empty-label\"");
     assert r.contains("\"text\":\"\",\"actionable\":false");
-    return;
 }
 
 #[test]
@@ -2414,13 +4210,12 @@ fn an_empty_grant_is_refused_once_rather_than_per_verb() {
     // A policy that returns nothing has said the caller is not an agent of
     // this application at all. That is a connection-level answer, not
     // seventeen per-node ones.
-    var sub: events::Subscriber = events::subscriber(events::everything(), 4 as usize);
+    var sub: events::Subscriber = events::subscriber(events::everything(), 4);
     let surf: *u8 = #addr_of(FAKE_SURF) as *u8;
     let r: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(allow_nothing),
         "{\"method\":\"describe_ui\",\"id\":1}");
     assert r.contains("consent denied");
     assert r.contains("exposed-node") == false;
-    return;
 }
 
 // A policy shaped like real middleware: verify the credential in your own code
@@ -2437,7 +4232,7 @@ fn the_request_carries_a_credential_the_policy_can_read() {
     // agent_core deliberately never parses a token — no crypto, no clock, no
     // identity provider. It carries the bytes to the developer's policy and
     // takes back a Grant. This is the seam a JWT middleware plugs into.
-    var sub: events::Subscriber = events::subscriber(events::everything(), 4 as usize);
+    var sub: events::Subscriber = events::subscriber(events::everything(), 4);
     let surf: *u8 = #addr_of(FAKE_SURF) as *u8;
     let none: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(token_policy),
         "{\"method\":\"describe_ui\",\"id\":1}");
@@ -2451,7 +4246,6 @@ fn the_request_carries_a_credential_the_policy_can_read() {
     let approved: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(token_policy),
         "{\"method\":\"describe_ui\",\"params\":{\"token\":\"autofill-approved\"},\"id\":3}");
     assert approved.contains("4242424242424242");
-    return;
 }
 
 fn allow_builder(req: auth::Request) -> auth::Grant {
@@ -2464,10 +4258,10 @@ fn an_extension_namespace_is_told_which_capabilities_the_caller_has() {
     // remove, reparent, set any property. A namespace that only learned
     // "consent was not empty" would make every credential equal inside it, so
     // an agent granted a look at the app could rebuild it.
-    disarm_extension();
-    var sub: events::Subscriber = events::subscriber(events::everything(), 4 as usize);
+    disarm_all_extensions();
+    var sub: events::Subscriber = events::subscriber(events::everything(), 4);
     let surf: *u8 = #addr_of(FAKE_SURF) as *u8;
-    arm_extension("inspector.", fake_extension);
+    arm_extension(verbs1("inspector.describe"), fake_extension);
 
     let plain: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(allow_all),
         "{\"method\":\"inspector.describe\",\"id\":1}");
@@ -2476,8 +4270,7 @@ fn an_extension_namespace_is_told_which_capabilities_the_caller_has() {
     let builder: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(allow_builder),
         "{\"method\":\"inspector.describe\",\"id\":2}");
     assert builder.contains("\"may_edit_tree\":true");
-    disarm_extension();
-    return;
+    disarm_all_extensions();
 }
 
 // ---- cancellation of the transport parks -------------------------------------
@@ -2490,9 +4283,9 @@ extern fn usleep(us: u32) -> i32;
 // read_line on a socket nobody will write to again is parked for the life
 // of the process"). Only `JoinHandle::cancel` ends it; 11 is the cancel path.
 fn _read_line_until_cancelled(take rfd: i64) -> i64 {
-    var buf: [u8; 64] = [0 as u8; 64];
-    let len: i64 = read_line(rfd as i32, { #addr_of(buf[0]) }, 64 as usize);
-    if len == (- 2 as i64) { return 11 as i64; }
+    var buf: [u8; 64] = [0; 64];
+    let len: i64 = read_line(rfd as i32, { #addr_of(buf[0]) }, 64);
+    if len == (- 2) { return 11; }
     return len;
 }
 
@@ -2502,12 +4295,11 @@ fn read_line_reports_cancellation_instead_of_parking_forever() {
     assert { pipe(#addr_of(fds[0])) } == 0;
     let h: thread::JoinHandle[i64] =
         thread::spawn_with::[i64, i64](fds[0] as i64, _read_line_until_cancelled);
-    usleep(3000 as u32);
+    usleep(3000);
     h.cancel();
-    assert h.join() == (11 as i64);
+    assert h.join() == 11;
     { close(fds[0]); }
     { close(fds[1]); }
-    return;
 }
 
 extern fn socketpair(domain: i32, ty: i32, proto: i32, fds: *i32) -> i32;
@@ -2525,18 +4317,17 @@ extern fn socketpair(domain: i32, ty: i32, proto: i32, fds: *i32) -> i32;
 #[test]
 fn write_all_to_a_departed_client_does_not_kill_the_server() {
     var fds: [i32; 2] = [0, 0];
-    assert { socketpair(1 as i32, 1 as i32, 0 as i32, #addr_of(fds[0])) } == 0;
+    assert { socketpair(1, 1, 0, #addr_of(fds[0])) } == 0;
     let _np: i32 = netsys::set_nosigpipe(fds[0]);
     { close(fds[1]); }                          // the client disconnects
-    var buf: [u8; 16] = [65 as u8; 16];
+    var buf: [u8; 16] = [65; 16];
     var i: i32 = 0;
     while i < 4 {
-        write_all(fds[0], { #addr_of(buf[0]) }, 16 as usize);
+        write_all(fds[0], { #addr_of(buf[0]) }, 16);
         i = i +% 1;
     }
     { close(fds[0]); }
     assert true;                                // reached = we survived
-    return;
 }
 
 // ---- describe_ui `prefix` (demo/bugs/04-describe-verbs-cannot-be-scoped) -----
@@ -2552,11 +4343,11 @@ fn fake_child_node(id: str, parent: usize) -> backend::UiNode {
 fn nested_describe(p: *u8, grant: auth::Grant) -> vec::Vec[backend::UiNode] {
     var out: vec::Vec[backend::UiNode] = vec::new::[backend::UiNode]();
     out.append(fake_node("window"));                          // 0
-    out.append(fake_child_node("board", 0 as usize));         // 1
-    out.append(fake_child_node("board:col:1", 1 as usize));   // 2
-    out.append(fake_child_node("board:card:1", 2 as usize));  // 3
-    out.append(fake_child_node("board:detail:3", 1 as usize));        // 4
-    out.append(fake_child_node("board:detail:title", 4 as usize));    // 5
+    out.append(fake_child_node("board", 0));         // 1
+    out.append(fake_child_node("board:col:1", 1));   // 2
+    out.append(fake_child_node("board:card:1", 2));  // 3
+    out.append(fake_child_node("board:detail:3", 1));        // 4
+    out.append(fake_child_node("board:detail:title", 4));    // 5
     return out;
 }
 
@@ -2571,7 +4362,7 @@ fn nested_backend() -> backend::Backend {
 fn describe_ui_prefix_narrows_the_answer() {
     // The question that started the incident: "is there a board:detail:* node,
     // and what is its id?" — asked without paying for the whole tree.
-    var sub: events::Subscriber = events::subscriber(events::everything(), 4 as usize);
+    var sub: events::Subscriber = events::subscriber(events::everything(), 4);
     let surf: *u8 = #addr_of(FAKE_SURF) as *u8;
     let scoped: text::Text = handle_request(surf, nested_backend(), sub, auth::serve(allow_all),
         "{\"method\":\"describe_ui\",\"params\":{\"prefix\":\"board:detail:\"},\"id\":1}");
@@ -2587,7 +4378,7 @@ fn describe_ui_prefix_narrows_the_answer() {
 #[test]
 fn describe_ui_without_a_prefix_is_unchanged() {
     // The parameter is optional and the default answer must not move.
-    var sub: events::Subscriber = events::subscriber(events::everything(), 4 as usize);
+    var sub: events::Subscriber = events::subscriber(events::everything(), 4);
     let surf: *u8 = #addr_of(FAKE_SURF) as *u8;
     let all: text::Text = handle_request(surf, nested_backend(), sub, auth::serve(allow_all),
         "{\"method\":\"describe_ui\",\"id\":1}");
@@ -2608,11 +4399,11 @@ fn a_filtered_answer_renumbers_parent_into_itself() {
     // whatever now sits at that offset — a wrong parent, silently, which is
     // worse than no parent at all.
     //
-    // Here `board:detail:3` (walked index 4) and `board:detail:title` (5) come
+    // Here `board:detail:3` (walked index 4) and `board:detail:title` 5 come
     // back as 0 and 1. The title's parent must be 0 — the detail node's new
     // position — and the detail node, whose own parent `board` was filtered
     // out, must come back parentless rather than pointing at index 1.
-    var sub: events::Subscriber = events::subscriber(events::everything(), 4 as usize);
+    var sub: events::Subscriber = events::subscriber(events::everything(), 4);
     let surf: *u8 = #addr_of(FAKE_SURF) as *u8;
     let scoped: text::Text = handle_request(surf, nested_backend(), sub, auth::serve(allow_all),
         "{\"method\":\"describe_ui\",\"params\":{\"prefix\":\"board:detail:\"},\"id\":1}");
@@ -2628,7 +4419,7 @@ fn a_deeper_match_reattaches_to_the_nearest_surviving_ancestor() {
     // `board:` keeps the board and everything under it but drops `window`.
     // The board's parent is gone, so it comes back parentless; its children
     // keep pointing at it through its NEW index.
-    var sub: events::Subscriber = events::subscriber(events::everything(), 4 as usize);
+    var sub: events::Subscriber = events::subscriber(events::everything(), 4);
     let surf: *u8 = #addr_of(FAKE_SURF) as *u8;
     let scoped: text::Text = handle_request(surf, nested_backend(), sub, auth::serve(allow_all),
         "{\"method\":\"describe_ui\",\"params\":{\"prefix\":\"board\"},\"id\":1}");
@@ -2640,11 +4431,50 @@ fn a_deeper_match_reattaches_to_the_nearest_surviving_ancestor() {
     assert scoped.contains("\"parent\":3");      // title under detail
 }
 
+// A `parent` chain that is not a tree — two nodes naming each other. No walk
+// of a real UI produces this; a backend numbering `parent` in one index space
+// while its array is numbered in another does, and one did.
+fn cyclic_describe(p: *u8, grant: auth::Grant) -> vec::Vec[backend::UiNode] {
+    var out: vec::Vec[backend::UiNode] = vec::new::[backend::UiNode]();
+    out.append(fake_node("window"));                                  // 0
+    out.append(fake_child_node("a", 2));                     // 1 -> 2
+    out.append(fake_child_node("b", 1));                     // 2 -> 1
+    out.append(fake_child_node("board:detail:3", 1));        // 3 -> the loop
+    return out;
+}
+
+fn cyclic_backend() -> backend::Backend {
+    var b: backend::Backend = fake_backend();
+    b.describe = cyclic_describe;
+    b.describe_exposed = cyclic_describe;
+    return b;
+}
+
+#[test]
+fn a_malformed_parent_chain_answers_instead_of_hanging() {
+    // THIS TEST HANGS RATHER THAN FAILS IF THE BOUND GOES. That is the shape of
+    // the defect: unbounded, the climb never returns, so there is no wrong
+    // answer to assert against — the client times out at 120s and the server
+    // keeps a core busy until it is killed (demo_11/bugs/001).
+    //
+    // The prefix is what makes it reachable. Every ancestor here is filtered
+    // out, so no step can end the climb early; without a prefix the first step
+    // finds a kept parent and the same malformed chain costs nothing.
+    var sub: events::Subscriber = events::subscriber(events::everything(), 4);
+    let surf: *u8 = #addr_of(FAKE_SURF) as *u8;
+    let scoped: text::Text = handle_request(surf, cyclic_backend(), sub, auth::serve(allow_all),
+        "{\"method\":\"describe_ui\",\"params\":{\"prefix\":\"board:detail:\"},\"id\":1}");
+    // It answers, and the node whose ancestry is unwalkable comes back
+    // parentless — the honest report of "no kept parent I can name".
+    assert scoped.contains("board:detail:3");
+    assert scoped.contains("\"parent\":null");
+}
+
 #[test]
 fn the_prefix_parameter_is_advertised() {
     // A parameter no client is told about is a parameter no client uses, and
     // this one exists precisely because agents were reaching for workarounds.
-    var sub: events::Subscriber = events::subscriber(events::everything(), 4 as usize);
+    var sub: events::Subscriber = events::subscriber(events::everything(), 4);
     let surf: *u8 = #addr_of(FAKE_SURF) as *u8;
     let tools: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(allow_all),
         "{\"method\":\"tools/list\",\"id\":1}");
@@ -2658,7 +4488,7 @@ fn the_prefix_parameter_is_advertised() {
 fn not_found_carries_a_hint_pointing_somewhere() {
     // `{"outcome":"not_found"}` alone is a dead end; the two causes it conflates
     // (a stale id, and driving the wrong application) need different next moves.
-    var sub: events::Subscriber = events::subscriber(events::everything(), 4 as usize);
+    var sub: events::Subscriber = events::subscriber(events::everything(), 4);
     let surf: *u8 = #addr_of(FAKE_SURF) as *u8;
     let miss: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(allow_all),
         "{\"method\":\"invoke_menu\",\"params\":{\"path\":\"File/Nope\"},\"id\":1}");
@@ -2671,4 +4501,234 @@ fn not_found_carries_a_hint_pointing_somewhere() {
         "{\"method\":\"invoke_menu\",\"params\":{\"path\":\"File/Save\"},\"id\":2}");
     assert hit.contains("allowed");
     assert hit.contains("hint") == false;
+}
+
+// The startup line is a CANARY, so it has to move when arming does.
+#[test]
+fn the_verb_summary_counts_what_is_actually_armed() {
+    disarm_all_extensions();
+    let core: usize = core_tools().count();
+    assert armed_verb_count() == core;
+    assert verb_summary().contains("core only");
+
+    arm_extension(verbs2("probe.one", "probe.two"), ext_probe, ext_describes_two);
+    assert armed_verb_count() == core +% (2 as usize);
+    let two: text::Text = verb_summary();
+    assert two.contains("2 armed");
+    assert !two.contains("core only");
+
+    // And back down when a namespace goes away — the case that made this
+    // exist: an app that quietly lost a namespace still served and still
+    // answered, with nothing saying it had.
+    disarm_extension("probe.one");
+    assert armed_verb_count() == core;
+    assert verb_summary().contains("core only");
+}
+
+// ---- the record of what was done ---------------------------------------------
+
+// A click and a text write left NOTHING behind. The supervised case — a person
+// watching an agent drive their workstation, ready to step in — cannot step in
+// to something it cannot see.
+#[test]
+fn every_acting_verb_is_written_down() {
+    forget_actions();
+    var sub: events::Subscriber = events::subscriber(events::everything(), 4);
+    let surf: *u8 = #addr_of(FAKE_SURF) as *u8;
+
+    let _hi: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(allow_all),
+        "{\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2024-11-05\",\"clientInfo\":{\"name\":\"probe-client\"}},\"id\":0}");
+    let _c: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(allow_all),
+        "{\"method\":\"click\",\"params\":{\"id\":\"save\"},\"id\":1}");
+    assert action_count() == 1;
+
+    // A READ is not an action. Knowing an agent looked at the tree is noise
+    // beside knowing it pressed Send.
+    let _d: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(allow_all),
+        "{\"method\":\"describe_ui\",\"id\":2}");
+    let _r: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(allow_all),
+        "{\"method\":\"read_text\",\"params\":{\"id\":\"save\"},\"id\":3}");
+    assert action_count() == 1;
+
+    let _s: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(allow_all),
+        "{\"method\":\"set_text\",\"params\":{\"id\":\"pin\",\"value\":\"12345678\"},\"id\":4}");
+    assert action_count() == 2;
+
+    let log: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(allow_all),
+        "{\"method\":\"activity\",\"id\":5}");
+    assert log.contains("\"verb\":\"click\"");
+    assert log.contains("\"target\":\"save\"");
+    assert log.contains("\"verb\":\"set_text\"");
+    assert log.contains("\"target\":\"pin\"");
+    // Who asked, and whether it worked.
+    assert log.contains("\"outcome\"");
+    assert log.contains("\"client\"");
+    assert log.contains("\"seq\"");
+    assert log.contains("\"at_millis\"");
+
+    // THE VALUE IS NOT IN THE LOG. An agent may only write a field it was
+    // granted, and the content behind a privacy tier is readable only through
+    // `read_text` under that tier's rules. A log that quoted the value would be
+    // a way around them that no authorization check in this file would see.
+    assert log.contains("wrote 8 characters");
+    assert !log.contains("12345678");
+
+    // WHO asked, by name, not merely that the field is present. The name comes
+    // from the handshake, and a log that cannot say which of two agents did
+    // something is not an audit.
+    assert log.contains("\"client\":\"probe-client\"");
+
+    // A call that never reached the surface is still something the agent did.
+    // It reports no outcome of its own, and "" would read as "nothing
+    // happened".
+    let _bad: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(allow_all),
+        "{\"method\":\"set_text\",\"params\":{\"id\":\"pin\"},\"id\":6}");
+    assert action_count() == 3;
+    let after: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(allow_all),
+        "{\"method\":\"activity\",\"id\":7}");
+    assert after.contains("\"outcome\":\"rejected\"");
+    // ...and it does NOT carry a length. "wrote 0 characters" beside a refusal
+    // describes a write that never happened.
+    assert !after.contains("wrote 0 characters");
+
+    // ...and a caller that never introduced itself is named as such. The
+    // connection is the session, so this is the ordinary shape of a one-shot
+    // caller, not a failure.
+    forget_client();
+    let _anon: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(allow_all),
+        "{\"method\":\"click\",\"params\":{\"id\":\"save\"},\"id\":8}");
+    let anon_log: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(allow_all),
+        "{\"method\":\"activity\",\"id\":9}");
+    assert anon_log.contains("\"client\":\"unidentified\"");
+}
+
+// A workstation session is long. The log is bounded, and says so rather than
+// looking quiet.
+#[test]
+fn the_action_log_is_bounded_and_admits_it() {
+    forget_actions();
+    var i: usize = 0;
+    while i < (ACTION_LOG_MAX +% (10 as usize)) {
+        record_action("click", "btn", "ok", text::new());
+        i = i +% 1;
+    }
+    assert action_count() == ACTION_LOG_MAX;
+    // The sequence keeps counting past what is held, which is how a reader
+    // tells a log that wrapped from a session that was quiet.
+    assert ACTION_SEQ == ((ACTION_LOG_MAX +% (10 as usize)) as u64);
+
+    var sub: events::Subscriber = events::subscriber(events::everything(), 4);
+    let surf: *u8 = #addr_of(FAKE_SURF) as *u8;
+    let log: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(allow_all),
+        "{\"method\":\"activity\",\"id\":1}");
+    assert log.contains("\"held\":256");
+    assert log.contains("\"issued\":266");
+}
+
+// It says what other clients did, so it is not free.
+#[test]
+fn reading_the_record_costs_the_read_capability() {
+    forget_actions();
+    var sub: events::Subscriber = events::subscriber(events::everything(), 4);
+    let surf: *u8 = #addr_of(FAKE_SURF) as *u8;
+    let denied: text::Text = handle_request(surf, fake_backend(), sub, auth::serve(allow_nothing),
+        "{\"method\":\"activity\",\"id\":1}");
+    assert !denied.contains("\"actions\"");
+}
+
+// THE CORE HAS THE SAME TWO LISTS the inspector namespace does — `core_tools`
+// is what a model is shown, the if-chain in `route_verb` is what answers — and
+// nothing made them agree. A tool declared and not routed is a verb a model
+// will call and be told does not exist.
+#[test]
+fn every_core_tool_is_dispatched() {
+    var sub: events::Subscriber = events::subscriber(events::everything(), 4);
+    let surf: *u8 = #addr_of(FAKE_SURF) as *u8;
+    let tools: vec::Vec[json::Value] = core_tools();
+    assert tools.count() > 8;
+    var i: usize = 0;
+    while i < tools.count() {
+        match tools.at_ptr(i) {
+            option::Option[*json::Value]::Some(t) => {
+                let nm: text::Text = { (*t) }.field_str("name", "");
+                assert nm.count() > 0;
+                // Params deliberately absent: a routed verb answers "missing
+                // parameter", and only an unrouted one answers "method not
+                // found".
+                var line: text::Text = text::from_str("{\"method\":\"");
+                let _a: status::Status = line.append(nm.view());
+                let _b: status::Status = line.append("\",\"id\":1}");
+                let r: text::Text = handle_request(surf, fake_backend(), sub,
+                                                   auth::serve(allow_all), line.view());
+                if r.contains("method not found") {
+                    io::println(nm.view());
+                    io::println("  ^ declared in core_tools, not answered by route_verb");
+                }
+                assert !r.contains("method not found");
+            }
+            option::Option::None => { }
+        }
+        i = i +% 1;
+    }
+}
+
+// ---- discover ------------------------------------------------------------------
+
+// A name whose id contains dashes and digits, which is the case `pid_in_name`
+// exists for and the one a consumer's own parser gets wrong.
+#[test]
+fn an_id_with_dashes_is_read_back_whole() {
+    assert id_in_name("mcp-iris-4321.socket").view() == "iris";
+    assert id_in_name("mcp-my-app-2-4321.socket").view() == "my-app-2";
+    assert pid_in_name("mcp-my-app-2-4321.socket") == 4321;
+    // ...and the descriptor beside it reads the same way.
+    assert id_in_name("mcp-my-app-2-4321.json").view() == "my-app-2";
+    assert pid_in_name("mcp-my-app-2-4321.json") == 4321;
+    // Not ours.
+    assert id_in_name("something-else.socket").view() == "";
+    assert id_in_name("mcp-nodash.socket").view() == "";
+}
+
+// The address a descriptor states, which is how a target whose address is not
+// its path — a phone's loopback port — is reachable at all.
+#[test]
+fn a_descriptors_address_is_read_out_of_it() {
+    let dir: text::Text = "/tmp/mcp-desc-probe-${current_pid()}.json";
+    let body: str =
+        "{\"id\":\"probe\",\"pid\":7,\"transport\":\"http\",\"address\":\"http://127.0.0.1:9123/\",\"protocol\":\"2024-11-05\"}\n";
+    let _w: result::Result[usize, result::IoError] = fs::write_string(dir.view(), body);
+    assert address_in_descriptor(dir.view()).view() == "http://127.0.0.1:9123/";
+    let _r: result::Result[bool, result::IoError] = fs::remove_file(dir.view());
+
+    // A file that is not one, and a missing one, answer empty rather than
+    // half a string.
+    assert address_in_descriptor("/tmp/does-not-exist-at-all.json").view() == "";
+}
+
+// THIS PROCESS is a live endpoint while it is serving, so `discover` finding it
+// is the round trip: the name this package writes is the name it reads back.
+#[test]
+fn discover_finds_this_processes_own_socket_and_not_a_dead_one() {
+    let pid: i32 = current_pid();
+    let id: text::Text = "discoprobe-${pid}";
+    let live: text::Text = uds_path(id.view(), pid);
+    let _w: result::Result[usize, result::IoError] = fs::write_string(live.view(), "x");
+
+    // ...and a name with a pid nothing is running under. 999999 is above the
+    // default pid_max on macOS and Linux both.
+    let dead: text::Text = uds_path(id.view(), 999999);
+    let _w2: result::Result[usize, result::IoError] = fs::write_string(dead.view(), "x");
+
+    let found: vec::Vec[text::Text] = discover(id.view());
+    assert found.count() == (1 as usize);
+    match found.at_ptr(0 as usize) {
+        option::Option[*text::Text]::Some(a) => { assert { (*a).view() } == live.view(); }
+        option::Option[*text::Text]::None => { assert false; }
+    }
+
+    // An id nobody is serving is an empty list, not a fault.
+    assert discover("no-such-app-anywhere").count() == (0 as usize);
+
+    let _r1: result::Result[bool, result::IoError] = fs::remove_file(live.view());
+    let _r2: result::Result[bool, result::IoError] = fs::remove_file(dead.view());
 }

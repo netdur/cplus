@@ -134,6 +134,43 @@ thing: a text_button is a real button, so it activates from the keyboard when
 focused and from VoiceOver, and it reports `role=button` to an agent. The label
 is reachable by a pointer and nothing else.
 
+### A split's bounds
+
+`split` holds two panes and a divider. Each pane takes a minimum and a maximum,
+in points, and `0.0` means no maximum:
+
+```cplus
+split(panes, key: "main",
+      position: 300.0f64,
+      min_leading: 220.0f64,       // the editor never narrower than this
+      max_trailing: 640.0f64)      // the panel never wider than this
+```
+
+Both ends are also writable on the cursor:
+
+```cplus
+match split::find("main") {
+    option::Option[split::Split]::Some(s) => {
+        let _a: split::Split = s.set_max(split::Pane::Trailing, 640.0f64);
+        let _b: split::Split = s.set_max(split::Pane::Trailing, 0.0f64);  // no cap
+    }
+    _ => { }
+}
+```
+
+A maximum on one pane is arithmetically a minimum on the other — `leading +
+divider + trailing == extent` — but only the framework can write it that way,
+because `extent` is the split's live size and changes with the window. Say the
+bound you mean and let the divider's delegate do the subtraction.
+
+**Do not enforce a bound from `on_move`.** That handler fires on every tick of a
+live drag, so writing `set_position` back from it puts two writers on one
+number: the panes stop at your bound while the divider keeps following the
+cursor, and the drag ends wherever the last write landed.
+
+When a minimum and a maximum contradict each other, the minimum wins. A divider
+pushed past a far bound can be dragged back; one pinned at zero width cannot.
+
 ## Cursors — reaching a built control
 
 Each control module offers the same two entry points:
@@ -267,6 +304,18 @@ primary, 1 for the secondary. `prompt(title, message, placeholder:, primary:,
 secondary:, initial:, on_typed:, on_answer:)` adds a text field and reports
 what was typed through `on_typed`. `choose(title, message, options,
 on_answer:)` reports which option by index.
+
+The callbacks are function POINTERS with an explicit context argument — C+ has
+no closures, so anything the callback needs is passed alongside it rather than
+captured:
+
+```cplus
+on_answer: fn(i32, *u8)     paired with  on_answer_ctx: *u8   // all three dialogs
+on_typed:  fn(str, *u8)     paired with  on_typed_ctx:  *u8   // prompt only
+```
+
+Both context parameters default to `0 as *u8`, so a callback that reads only
+statics can ignore them.
 
 `initial` is what the field STARTS with and `placeholder` is the hint shown
 while it is empty — a rename passes the old name as `initial`, and the caret
@@ -469,13 +518,42 @@ the import path moved.)
 
 `enable()` registers the serving hooks; `disable()` returns to the no-op. An
 application also declares `agent_core`, `agent_inapp`, `agent_mcp` and the
-platform's agent package in its `Cplus.toml`, then names a socket with
-`App::agent_mcp`.
+platform's agent package in its `Cplus.toml`, then names ITSELF with
+`runtime::agent_mcp(id)`.
+
+`agent_mcp` takes an **id, not an address** — a name like `"myapp"`, from which
+the platform derives where to listen: `/tmp/mcp-<id>-<pid>.socket` at mode 0600
+plus `http://127.0.0.1:<9000+pid%1000>/` on a desktop, the HTTP port alone on a
+phone. Both are keyed on this process's pid, so a launcher that spawned the app
+can compute the address without being told; the app also reports it on stderr
+and writes it to `/tmp/mcp-<id>-<pid>.json`. An id containing `/` is refused.
+
+It is a free function on every host tier — `run`, `run_component`, `run_screen`
+and `App::run` alike — and `App::agent_mcp(id)` forwards to it, defaulting to
+the app's own name when called with no argument. There is ONE address per
+process. **No `agent_mcp` call, no server**: nothing outside the program can
+turn one on.
+
+`facet_agent` is documented in its own `docs/` — tutorial, guide and reference.
 
 The surface answers `describe_ui` (the live tree, addressed by key) and drives
 controls through the same path a mouse takes.
 
-`in_app(policy)` opens the attached surface directly for an embedded assistant.
-It returns an `agent_inapp::Session`; no Unix socket or MCP transport is used.
-Each `describe_ui`, `click`, `set_text`, `scroll_to`, and `hit_test` call checks
-the policy with `auth::Channel::InApp` before touching the backend.
+`in_app()` opens the attached surface directly for an embedded assistant. It
+takes nothing and returns an `agent_inapp::Session`; no Unix socket or MCP
+transport is used. Each `describe_ui`, `click`, `set_text`, `scroll_to`, and
+`hit_test` call checks the policy with `auth::Channel::InApp` before touching
+the backend. `in_app_with_grant(grant)` is the same door opened with a wider
+authority the user has already approved — a new session rather than a widened
+one, so a permission granted for one task does not outlive it.
+
+`set_policy(f)` installs the application's own authorization policy,
+`fn(auth::Request) -> auth::Grant`. It is the ONLY way an app can be narrower
+(or wider) than the default: without it every connection is served the same
+built-in grant, which is `auth::operator()` — read the UI and drive it, nothing
+from behind a tier. An app that wants to ask its user first, check a token, or
+refuse outright puts that here.
+
+**Call it before `enable()`.** The serve thread reads the policy once, when it
+starts; a policy installed afterwards leaves a window in which the default
+served, and nothing reports that it happened.

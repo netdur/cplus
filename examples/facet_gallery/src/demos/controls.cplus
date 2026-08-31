@@ -20,7 +20,7 @@ impl Controls {
         var on: bool = false;
         match toggle::find("ctl:toggle") {
             option::Option[toggle::Toggle]::Some(t) => { on = t.on(); }
-            option::Option[toggle::Toggle]::None => { }
+            option::Option::None => { }
         }
         match label::find("ctl:toggle_status") {
             option::Option[label::Label]::Some(l) => {
@@ -30,16 +30,15 @@ impl Controls {
                     let _l: label::Label = l.set_text("Toggle is OFF");
                 }
             }
-            option::Option[label::Label]::None => { }
+            option::Option::None => { }
         }
-        return;
     }
 
     fn on_checked(ref this, sender: *u8) {
         var on: bool = false;
         match checkbox::find("ctl:check") {
             option::Option[checkbox::Checkbox]::Some(c) => { on = c.on(); }
-            option::Option[checkbox::Checkbox]::None => { }
+            option::Option::None => { }
         }
         match label::find("ctl:check_status") {
             option::Option[label::Label]::Some(l) => {
@@ -49,32 +48,30 @@ impl Controls {
                     let _l: label::Label = l.set_text("Checkbox is unchecked");
                 }
             }
-            option::Option[label::Label]::None => { }
+            option::Option::None => { }
         }
-        return;
     }
 
     fn on_radio(ref this, sender: *u8) {
         var choice: str = "none";
         match radio::find("ctl:radio_a") {
             option::Option[radio::Radio]::Some(r) => { if r.on() { choice = "Alpha"; } }
-            option::Option[radio::Radio]::None => { }
+            option::Option::None => { }
         }
         match radio::find("ctl:radio_b") {
             option::Option[radio::Radio]::Some(r) => { if r.on() { choice = "Beta"; } }
-            option::Option[radio::Radio]::None => { }
+            option::Option::None => { }
         }
         match radio::find("ctl:radio_c") {
             option::Option[radio::Radio]::Some(r) => { if r.on() { choice = "Gamma"; } }
-            option::Option[radio::Radio]::None => { }
+            option::Option::None => { }
         }
         match label::find("ctl:radio_status") {
             option::Option[label::Label]::Some(l) => {
                 let _l: label::Label = l.set_text("Selected: ${choice}");
             }
-            option::Option[label::Label]::None => { }
+            option::Option::None => { }
         }
-        return;
     }
 }
 
@@ -86,15 +83,15 @@ impl Controls: component::Component {
         var trow: core::Builder = core::Builder::new();
         trow.add(ui::toggle(false, key: "ctl:toggle", on_toggled: this.on_toggled));
         trow.add(ui::label("Toggle is OFF", key: "ctl:toggle_status",
-            font_size: 14.0f64, text_color: vocab::Color::ink()));
-        body.add(core::row(trow).gap(12.0f64));
+            font_size: 14.0, text_color: vocab::Color::ink()));
+        body.add(core::row(trow).gap(12.0));
 
         body.add(shell::caption("Checkbox"));
         var crow: core::Builder = core::Builder::new();
         crow.add(ui::checkbox(false, key: "ctl:check", on_checked_changed: this.on_checked));
         crow.add(ui::label("Checkbox is unchecked", key: "ctl:check_status",
-            font_size: 14.0f64, text_color: vocab::Color::ink()));
-        body.add(core::row(crow).gap(12.0f64));
+            font_size: 14.0, text_color: vocab::Color::ink()));
+        body.add(core::row(crow).gap(12.0));
 
         body.add(shell::caption("Radio group  ·  group \"plan\""));
         body.add(ui::radio(true, key: "ctl:radio_a", text: "Alpha", group: "plan",
@@ -104,12 +101,12 @@ impl Controls: component::Component {
         body.add(ui::radio(false, key: "ctl:radio_c", text: "Gamma", group: "plan",
             on_checked_changed: this.on_radio));
         body.add(ui::label("Selected: Alpha", key: "ctl:radio_status",
-            font_size: 14.0f64, text_color: vocab::Color::ink()));
+            font_size: 14.0, text_color: vocab::Color::ink()));
 
         return shell::panel(
             "Controls",
             "Boolean inputs: switch, checkbox, and mutually exclusive radios.",
-            core::column(body).gap(10.0f64),
+            core::column(body).gap(10.0),
             howto: "ui::toggle(false, key: \"t\", on_toggled: this.on_toggled)\nui::checkbox(false, key: \"c\", on_checked_changed: this.on_checked)\nui::radio(true, text: \"A\", group: \"g\", on_checked_changed: this.on_radio)",
         );
     }

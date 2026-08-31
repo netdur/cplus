@@ -153,12 +153,18 @@ struct ObjcSuper { opaque receiver: *u8, opaque class_: *u8 }
 
 #[link_name = "objc_msgSendSuper"]
 extern fn msg_super_void(sup: *ObjcSuper, sel: *u8);
-#[link_name = "class_getSuperclass"]
-extern fn class_get_superclass(cls: *u8) -> *u8;
 
+// ONE HOP UP IS NOT OUR SUPERCLASS. `scheduler` and `zoom` BOTH override
+// `layoutSubviews`, with different IMPs, on views that can be the same view: a
+// zoom canvas that is also size-watched wears two layers, and whichever
+// `object_setClass` ran second is the object's runtime class. One hop up from
+// that lands the first layer's IMP on itself — it calls itself until the stack
+// guard. `super_class_below` walks to the class that DEFINES the running IMP,
+// which is correct for any number of layers in any order and keeps our two
+// layers over this one selector chained through each other.
 fn imp_layout_subviews(self_obj: *u8, cmd: *u8) {
-    let cls: *u8 = { rt::msg_id(self_obj, rt::sel(#str_ptr("class\0"))) };
-    let base: *u8 = { class_get_superclass(cls) };
+    let f_self: fn(*u8, *u8) = imp_layout_subviews;
+    let base: *u8 = synth::super_class_below(self_obj, cmd, { f_self as *u8 });
     if base != (0 as *u8) {
         var sup: ObjcSuper = ObjcSuper { receiver: self_obj, class_: base };
         { msg_super_void(#addr_of(sup), rt::sel(#str_ptr("layoutSubviews\0"))) };

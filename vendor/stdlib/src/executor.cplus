@@ -106,7 +106,6 @@ fn run[T: Send](take f: future::Future[T]) -> RunResult[T] {
 // bridge helpers below; a dedicated wake channel is the later refinement.
 async fn _tick() {
     { #reactor_wait_timer(1 as u64); }
-    return;
 }
 
 // Await a spawned WORKER THREAD's result from async code without blocking
@@ -153,7 +152,6 @@ async fn receive_or_cancel[T: Send](take ch: channel::Channel[T]) -> channel::Re
 // primitive for "give other tasks a turn."
 async fn yield_now() {
     { #reactor_yield_now(); }
-    return;
 }
 
 // v0.0.4 Phase 3 Slice 3A.2: enqueue a future for the executor to
@@ -165,7 +163,6 @@ async fn yield_now() {
 // Send is permissive (every type satisfies it).
 fn spawn_local[T: Send](take f: future::Future[T]) {
     { #reactor_spawn_local(f); }
-    return;
 }
 
 // Touch reactor module so the `import` isn't treated as unused. The
@@ -233,7 +230,6 @@ struct _AsyncProbe {
 impl _AsyncProbe {
     fn drop(ref this) {
         atomic::fetch_add_u64(#addr_of(_P2_DROPS), 1 as u64, atomic::Ordering::AcqRel);
-        return;
     }
 }
 
@@ -245,7 +241,6 @@ impl _AsyncProbe {
 // live inside awaited stdlib wrappers like `time::sleep`.)
 async fn _long_nap() {
     { #reactor_wait_timer(3600000 as u64); }
-    return;
 }
 
 // A frame with an owned local LIVE ACROSS its await — cancelling this must
@@ -285,7 +280,6 @@ fn run_drives_to_done_when_uncancelled() {
         RunResult::Done(v) => { assert v == 9; }
         RunResult::Cancelled => { assert false; }
     }
-    return;
 }
 
 async fn _nap_then_value() -> i32 {
@@ -299,7 +293,6 @@ fn run_drives_through_a_real_suspend() {
         RunResult::Done(v) => { assert v == 11; }
         RunResult::Cancelled => { assert false; }
     }
-    return;
 }
 
 #[test]
@@ -312,7 +305,6 @@ fn future_cancel_destroys_a_suspended_frame_and_runs_drops() {
     // The hour-long timer the frame registered is stale in this thread's
     // kqueue now — reset the reactor so later tests start fresh.
     reactor::teardown();
-    return;
 }
 
 // ---- the bridge ----
@@ -358,7 +350,6 @@ fn receive_or_cancel_gets_a_value_sent_from_a_thread() {
         }
         option::Option[channel::Channel[i32]]::None => { assert false; }
     }
-    return;
 }
 
 fn _recv_bridge_worker(take ch: channel::Channel[i32]) -> i64 {
@@ -380,7 +371,6 @@ fn receive_or_cancel_surfaces_cancellation() {
         }
         option::Option[channel::Channel[i32]]::None => { assert false; }
     }
-    return;
 }
 
 // ---- the awaiter table's idempotence -----------------------------------------
@@ -433,5 +423,4 @@ fn the_awaiter_table_is_left_empty_by_a_completed_block_on() {
     // use-after-free — if round one leaks, round two is where it bites.
     assert block_on::[i32](_await_five_ticks()) == 5;
     assert reactor::awaiter_count() == before;
-    return;
 }

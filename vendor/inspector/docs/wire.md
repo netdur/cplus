@@ -1,47 +1,53 @@
-# The `inspector.` namespace
+# The inspector's verbs on the wire
 
 The inspector over a socket, as a second namespace inside the **agent's**
 JSON-RPC server. There is no separate inspector server and no second port.
+
+**The verbs carry no prefix.** They used to — `inspector.describe` (retired) and
+the rest — and the prefix went when both halves walked the same tree: one flat
+`tools/list`, one namespace. `describe_tree` is the one name that is not a plain
+de-prefixing, deliberately, so it does not collide with the agent surface's
+`describe_ui`.
 
 The design notes for why it is shaped this way are
 [design.md](design.md#one-server-two-capability-models); this file is the
 protocol.
 
-## Arming it
+## Getting them
 
-Linking `inspector/mcp` into a binary does not expose it. A process that never
-arms the namespace answers `-32601 method not found` to every `inspector.*`
-method, and that is the gate: this namespace is strictly more powerful than the
-agent surface beside it.
+Nothing. **Serving is the whole opt-in.**
 
 ```cplus
-import "inspector/tree" as itree;
-import "inspector/mcp" as imcp;
-import "inspector/appkit" as iplatform;
+import "facet_runtime/runtime" as runtime;
 import "facet_agent/agent" as agent;
 
 fn main() -> i32 {
-    iplatform::install();               // overlay, native rows, and the UI-thread hop
-    imcp::arm(itree::local_backend());  // publish `inspector.` — explicit, always
     agent::enable();
-    var app: runtime::App = runtime::App::new("Iris");
-    app.agent_mcp("/tmp/iris.sock");    // the transport both namespaces share
+    runtime::agent_mcp("iris");     // 25 verbs: 11 core, and the 14 below
     ...
 }
 ```
 
-`iplatform::install()` is not optional for a served app. `mount::install`
-records the UI thread and `core::touch` asserts on it, so a write arriving on the
-server's thread aborts the process; the platform module installs the synchronous
-hop that prevents it. Without it the panel still works in-process, because that
-caller is already on the UI thread.
+There used to be a second call — `inspect::arm()` (retired) — and forgetting it
+answered `-32601 method not found`, which is the wrong sentence: `-32601` means
+THE VERB DOES NOT EXIST, and what was meant was that this endpoint had no tree
+installed. A client cannot tell those apart, and three packages grew machinery
+to cope with it.
 
-`imcp::disarm()` closes the namespace again.
+The serving facade installs the walker and the platform half (the overlay, the
+native rows, and the synchronous UI-thread hop `core::touch` requires — without
+it a write arriving on the server's thread aborts the process). An endpoint with
+no walker still SERVES these verbs and refuses them with a policy answer naming
+what is missing.
+
+**What gates them is the grant**, which is where it belongs. The eight that
+rewrite the tree cost `cap_edit_tree`; an app that wants a reader hands out
+`auth::operator()` from its own `set_policy`.
 
 ## Addressing
 
 A `Handle` is a node pointer and a pointer does not survive a socket, so
-**`inspector.describe` issues the addresses** and every other method takes an
+**`describe_tree` issues the addresses** and every other method takes an
 index into that listing.
 
 Every answer carries `revision` — flex's global removal counter, the same number
@@ -53,18 +59,27 @@ invalidates every index.** A client that sees `revision` move, or gets
 
 | Method | Params | Answers |
 |---|---|---|
-| `inspector.describe` | — | `{ revision, nodes: [...] }` |
-| `inspector.inspect` | `node` | `{ revision, node, declared, computed, native }` |
-| `inspector.set` | `node`, `property`, `value` | outcome |
-| `inspector.reset` | `node`, `property` | outcome |
-| `inspector.insert` | `node`, `element`, `key?`, `text?`, `at?` | outcome |
-| `inspector.remove` | `node` | outcome |
-| `inspector.reparent` | `node`, `parent`, `at?` | outcome |
-| `inspector.undo` | — | outcome |
-| `inspector.highlight` | `node` | outcome |
-| `inspector.clear_highlight` | — | outcome |
-| `inspector.vocabulary` | — | `{ elements: [...], properties: [...] }` |
-| `inspector.journal` | — | `{ lines: [...] }` |
+| `describe_tree` | `prefix?` | `{ revision, nodes: [...] }` |
+| `inspect` | `node` | `{ revision, node, declared, computed, native }` |
+| `set` | `node`, `property`, `value` | outcome |
+| `set_many` | `node`, `properties` | outcome per property |
+| `reset` | `node`, `property` | outcome |
+| `nudge` | `node`, `property`, `by` | outcome, and the value it landed on |
+| `insert` | `node`, `element`, `key?`, `text?`, `at?` | outcome |
+| `remove` | `node` | outcome |
+| `reparent` | `node`, `parent`, `at?` | outcome |
+| `undo` | — | outcome |
+| `highlight` | `node` | outcome |
+| `clear_highlight` | — | outcome |
+| `vocabulary` | `element?` | `{ elements: [...], properties: [...] }` |
+| `journal` | — | `{ lines: [...] }` |
+
+Fourteen. `set_many` and `nudge` are the two a client dragging an element wants:
+placing one usually takes three properties, and each on its own is a round trip.
+
+`describe_tree` takes an optional `prefix` and you should pass it. Without one it
+answers the WHOLE developer tree — measured at 80,477 characters against a real
+app, which an agent harness refuses outright.
 
 A required parameter that is absent is `-32602`, naming the method and the
 parameter. It is not defaulted: every reader here falls back, so an absent
@@ -129,7 +144,7 @@ back unchanged, and `0` is a value a client would write back as a real zero.
 
 ### `insert`
 
-`element` is one of `inspector.vocabulary`'s names, spelled as `facet/elements`
+`element` is one of `vocabulary`'s names, spelled as `facet/elements`
 spells the function. `text` is the one string the makers that take one take — a
 label's text, a button's title, a field's initial text. `at` defaults to append.
 

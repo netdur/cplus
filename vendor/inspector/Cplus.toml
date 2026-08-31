@@ -8,12 +8,12 @@ edition = "2026"
 # - inspector/inspector: the neutral surface (Handle, Value, Prop, Backend vtable)
 # - inspector/tree:      the facet-tree walker and the typed get/set dispatch
 # - inspector/appkit:    highlight overlay and native rows (macOS)
-# - inspector/uikit:     the same two, on iOS — and `serve_if_asked` there takes
-#                        a PORT, because a Unix socket inside the app sandbox is
+# - inspector/uikit:     the same two, on iOS — where the address is a PORT,
+#                        because a Unix socket inside the app sandbox is
 #                        unreachable from the machine running the IDE
-# - inspector/serve_android: the same two again, on Android — where the port
-#                        arrives as the system property `debug.facet.inspect`,
-#                        because an Activity has no environment to set
+# - inspector/serve_android: the same two again, on Android — where the port is
+#                        derived from the pid, because an Activity has no
+#                        environment a launcher could set
 # - inspector/widget:    the facet-facing inspector UI applications embed
 #
 # This is NOT the agent surface. The agent surface is curated and permissioned;

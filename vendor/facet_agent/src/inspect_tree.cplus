@@ -63,7 +63,8 @@ import "facet/text_field" as text_field;
 import "facet/text_area" as text_area;
 import "facet/checkbox" as checkbox;
 import "facet/toggle" as toggle;
-import "./inspector" as insp;
+import "agent_core/inspect" as insp;
+import "./inspect_vocabulary" as voc;
 
 // ---- the override ledger -----------------------------------------------------
 
@@ -82,6 +83,11 @@ import "./inspector" as insp;
 // this process — the developer copies it into source.
 struct Override {
     opaque node: *core::Node,
+    // The window the write went through. Reading the CURRENT value back for the
+    // diff needs a `Handle`, and a handle needs a window — tier 3 resolves a
+    // control by key from that window's root. Recorded here rather than
+    // searched for later: the write had it.
+    window: usize,
     // A borrowed {ptr,len}, and sound only because every name that reaches here
     // is a literal from `declared_names`. A caller-supplied name — a property
     // parsed off a socket into a request-scoped `Text` — must be exchanged for
@@ -105,7 +111,7 @@ fn self_root() -> *core::Node { return SELF_ROOT; }
 fn clear_self() { SELF_ROOT = 0 as *core::Node; return; }
 
 fn ledger_index(n: *core::Node, prop: str) -> option::Option[usize] {
-    var i: usize = 0 as usize;
+    var i: usize = 0;
     let c: usize = OVERRIDES.count();
     while i < c {
         match OVERRIDES.at_ptr(i) {
@@ -114,9 +120,9 @@ fn ledger_index(n: *core::Node, prop: str) -> option::Option[usize] {
                     if { (*p).prop } == prop { return option::Option[usize]::Some(i); }
                 }
             }
-            option::Option[*Override]::None => { }
+            option::Option::None => { }
         }
-        i = i +% (1 as usize);
+        i = i +% 1;
     }
     return option::Option[usize]::None;
 }
@@ -124,21 +130,20 @@ fn ledger_index(n: *core::Node, prop: str) -> option::Option[usize] {
 fn is_overridden(n: *core::Node, prop: str) -> bool {
     return match ledger_index(n, prop) {
         option::Option[usize]::Some(_i) => true,
-        option::Option[usize]::None => false,
+        option::Option::None => false,
     };
 }
 
 // Record only the FIRST write. A second edit to the same property must not
 // overwrite the application's value with the inspector's own earlier one.
-fn ledger_record(n: *core::Node, prop: str, take original: insp::Value) {
+fn ledger_record(n: *core::Node, window: usize, prop: str, take original: insp::Value) {
     match ledger_index(n, prop) {
         option::Option[usize]::Some(_i) => { return; }
-        option::Option[usize]::None => { }
+        option::Option::None => { }
     }
     let _s: status::Status = OVERRIDES.append(Override {
-        node: n, prop: prop, original: original,
+        node: n, window: window, prop: prop, original: original,
     });
-    return;
 }
 
 // Duplicate the record, THEN drop it. `Override` owns a `Value` which owns a
@@ -151,12 +156,12 @@ fn ledger_take(n: *core::Node, prop: str) -> option::Option[insp::Value] {
             var copied: insp::Value = insp::Value::Nothing;
             match OVERRIDES.at_ptr(i) {
                 option::Option[*Override]::Some(p) => { copied = { (*p).original }.clone(); }
-                option::Option[*Override]::None => { }
+                option::Option::None => { }
             }
             let _gone: option::Option[Override] = OVERRIDES.remove(i);
             option::Option[insp::Value]::Some(copied)
         }
-        option::Option[usize]::None => option::Option[insp::Value]::None,
+        option::Option::None => option::Option[insp::Value]::None,
     };
 }
 
@@ -166,7 +171,6 @@ fn override_count() -> usize { return OVERRIDES.count(); }
 // that is starting over; NOT what `reset` does.
 fn forget_all_overrides() {
     OVERRIDES.remove_all();
-    return;
 }
 
 // ---- the walk ----------------------------------------------------------------
@@ -179,13 +183,13 @@ fn row_of(
     mine: bool,
 ) -> insp::Node {
     return insp::Node {
-        handle: insp::Handle::of(n, window),
+        handle: handle_of(n, window),
         parent: parent,
         depth: depth,
         key: text::from_str({ (*n).key() }),
         slot: text::from_str(core::slot_of(n)),
         kind: core::kind_of(n),
-        frame: core::frame_of(n),
+        frame: to_frame(core::frame_of(n)),
         has_view: core::view_of(n) != (0 as *u8),
         is_attached: core::is_attached(n),
         is_focused: core::is_focused(n),
@@ -193,10 +197,10 @@ fn row_of(
         dirty: core::dirty_of(n),
         child_count: core::child_count_of(n),
         agent_tier: match core::agent(n) {
-            vocab::Agent::Open => 0 as u32,
-            vocab::Agent::Protected => 1 as u32,
-            vocab::Agent::Private => 2 as u32,
-            vocab::Agent::Hidden => 3 as u32,
+            vocab::Agent::Open => 0,
+            vocab::Agent::Protected => 1,
+            vocab::Agent::Private => 2,
+            vocab::Agent::Hidden => 3,
         },
         is_inspector: mine,
     };
@@ -210,24 +214,24 @@ fn walk(
     in_self: bool,
     out: *vec::Vec[insp::Node],
 ) {
-    if n == (0 as *core::Node) { return; }
+    if n.is_null() { return; }
     var mine: bool = in_self;
-    if SELF_ROOT != (0 as *core::Node) {
+    if SELF_ROOT.is_not_null() {
         if n == SELF_ROOT { mine = true; }
     }
     let idx: usize = { (*out).count() };
     let _s: status::Status = { (*out).append(row_of(n, parent, depth, window, mine)) };
-    var i: usize = 0 as usize;
+    var i: usize = 0;
     let c: usize = core::child_count_of(n);
     while i < c {
         match core::child_of(n, i) {
             option::Option[*core::Node]::Some(ch) => {
-                walk(ch, option::Option[usize]::Some(idx), depth +% (1 as usize),
+                walk(ch, option::Option[usize]::Some(idx), depth +% 1,
                      window, mine, out);
             }
-            option::Option[*core::Node]::None => { }
+            option::Option::None => { }
         }
-        i = i +% (1 as usize);
+        i = i +% 1;
     }
     return;
 }
@@ -237,14 +241,14 @@ fn walk(
 // number and a key lookup never disagree about which node is "first".
 fn describe() -> vec::Vec[insp::Node] {
     var out: vec::Vec[insp::Node] = vec::new::[insp::Node]();
-    var w: usize = 0 as usize;
+    var w: usize = 0;
     let n: usize = app::window_count();
     while w < n {
         let r: *core::Node = app::window_root(w);
-        if r != (0 as *core::Node) {
-            walk(r, option::Option[usize]::None, 0 as usize, w, false, #addr_of(out));
+        if r.is_not_null() {
+            walk(r, option::Option[usize]::None, 0, w, false, #addr_of(out));
         }
-        w = w +% (1 as usize);
+        w = w +% 1;
     }
     return out;
 }
@@ -261,7 +265,7 @@ fn owned(v: str) -> option::Option[insp::Value] {
     return option::Option[insp::Value]::Some(insp::Value::Str(text::from_str(v)));
 }
 fn colour(v: vocab::Color) -> option::Option[insp::Value] {
-    return option::Option[insp::Value]::Some(insp::Value::Color(v));
+    return option::Option[insp::Value]::Some(insp::Value::Color(to_color(v)));
 }
 
 // A style length as a value. Only points survive the round trip: an `auto` or
@@ -278,14 +282,60 @@ fn as_points(l: flex::StyleLength) -> option::Option[f64] {
 fn same_points(l: flex::StyleLength, x: f64) -> bool {
     return match as_points(l) {
         option::Option[f64]::Some(y) => y == x,
-        option::Option[f64]::None => false,
+        option::Option::None => false,
     };
 }
 
+// A length answers as the thing a developer would write.
+//
+// Points are a number. A percent and `auto` are STRINGS, because they are not
+// numbers and answering the bare scalar of a percent would be read back as
+// points — the nudge loop's worst failure, where reading a value and writing it
+// straight back moves the element. Unset is `Nothing`, which draws as an empty
+// field and means "the app never said".
 fn len_value(l: flex::StyleLength) -> insp::Value {
-    return match as_points(l) {
-        option::Option[f64]::Some(x) => insp::Value::Num(x),
-        option::Option[f64]::None => insp::Value::Nothing,
+    return match l.unit {
+        flex::Unit::Point => insp::Value::Num(l.value),
+        flex::Unit::Percent => {
+            var t: text::Text = insp::plain_num(l.value);
+            let _a: status::Status = t.append("%");
+            insp::Value::Str(t)
+        }
+        flex::Unit::Auto => insp::Value::Str(text::from_str("auto")),
+        _ => insp::Value::Nothing,
+    };
+}
+
+// And the same three shapes on the way in. `Nothing` CLEARS — it is what a
+// reset of a property the app never set puts back, and without it the round
+// trip has a hole exactly where an unset length is.
+fn length_of(v: insp::Value) -> option::Option[flex::StyleLength] {
+    return match v {
+        insp::Value::Num(x) => option::Option[flex::StyleLength]::Some(flex::StyleLength::points(x)),
+        insp::Value::Int(i) => option::Option[flex::StyleLength]::Some(flex::StyleLength::points(i as f64)),
+        insp::Value::Nothing => option::Option[flex::StyleLength]::Some(flex::StyleLength::undefined()),
+        insp::Value::Str(t) => parse_length(t.view()),
+        _ => option::Option[flex::StyleLength]::None,
+    };
+}
+
+fn parse_length(spelled: str) -> option::Option[flex::StyleLength] {
+    let t: str = spelled.trim();
+    if t == "auto" { return option::Option[flex::StyleLength]::Some(flex::StyleLength::auto()); }
+    if t == "" { return option::Option[flex::StyleLength]::Some(flex::StyleLength::undefined()); }
+    if t.has_suffix("%") {
+        return match t.drop_last(1).trim().to_f64() {
+            option::Option[f64]::Some(x) =>
+                option::Option[flex::StyleLength]::Some(flex::StyleLength::percent(x)),
+            option::Option::None => option::Option[flex::StyleLength]::None,
+        };
+    }
+    // A bare number in a string is points — a client that sends "12" for a
+    // length means 12, and refusing it teaches nothing.
+    return match t.to_f64() {
+        option::Option[f64]::Some(x) =>
+            option::Option[flex::StyleLength]::Some(flex::StyleLength::points(x)),
+        option::Option::None => option::Option[flex::StyleLength]::None,
     };
 }
 
@@ -304,7 +354,7 @@ fn uniform(a: flex::StyleLength, b: flex::StyleLength,
             if !same_points(d, x) { return insp::Value::Nothing; }
             insp::Value::Num(x)
         }
-        option::Option[f64]::None => insp::Value::Nothing,
+        option::Option::None => insp::Value::Nothing,
     };
 }
 
@@ -319,6 +369,10 @@ fn get_uniform(n: *core::Node, prop: str) -> option::Option[insp::Value] {
     if prop == "tooltip" { return owned(core::tooltip(n)); }
     if prop == "accessibility_label" { return owned(core::accessibility_label(n)); }
     if prop == "rotation" { return num(core::rotation(n)); }
+    if prop == "rotation_x" { return num(core::rotation_x(n)); }
+    if prop == "rotation_y" { return num(core::rotation_y(n)); }
+    if prop == "scale_x" { return num(core::scale_x(n)); }
+    if prop == "scale_y" { return num(core::scale_y(n)); }
     if prop == "scale" { return num(core::scale(n)); }
     if prop == "translation_x" { return num(core::translation_x(n)); }
     if prop == "translation_y" { return num(core::translation_y(n)); }
@@ -328,6 +382,66 @@ fn get_uniform(n: *core::Node, prop: str) -> option::Option[insp::Value] {
     }
 
     // ---- tier 2: flex style ----
+    // ---- position, sizing, transform ----
+    //
+    // Read straight off the style, the way every row below does. `len_value`
+    // renders a StyleLength as the number a developer typed, so an unset inset
+    // reads as nothing rather than as 0 — "not positioned" and "positioned at
+    // zero" are different answers and a nudge loop needs to tell them apart.
+    // THREE VALUES, NOT TWO. This was a bool, and a bool cannot say `static`:
+    // `relative` offsets the flowed frame by its insets, `static` ignores them
+    // entirely, and the engine has always distinguished them. The checkbox
+    // reached `absolute` and `relative` and left the third unreachable.
+    if prop == "position" {
+        return named(voc::position_name({ (*n).style.position_type }));
+    }
+    if prop == "direction" { return named(voc::direction_name({ (*n).style.direction })); }
+    if prop == "z_index" { return num({ (*n).style.z_index } as f64); }
+    if prop == "top" { return option::Option[insp::Value]::Some(len_value({ (*n).style.position_top })); }
+    if prop == "left" { return option::Option[insp::Value]::Some(len_value({ (*n).style.position_left })); }
+    if prop == "right" { return option::Option[insp::Value]::Some(len_value({ (*n).style.position_right })); }
+    if prop == "bottom" { return option::Option[insp::Value]::Some(len_value({ (*n).style.position_bottom })); }
+    if prop == "min_width" { return option::Option[insp::Value]::Some(len_value({ (*n).style.min_width })); }
+    if prop == "max_width" { return option::Option[insp::Value]::Some(len_value({ (*n).style.max_width })); }
+    if prop == "min_height" { return option::Option[insp::Value]::Some(len_value({ (*n).style.min_height })); }
+    if prop == "max_height" { return option::Option[insp::Value]::Some(len_value({ (*n).style.max_height })); }
+    // UNSET IS NOTHING, NOT A NUMBER. flex spells an unset ratio `undefined()`,
+    // which is NaN — and a NaN reaching the wire is `null` at best (json
+    // encodes it so rather than emitting invalid JSON) and a nonsense value in
+    // a panel at worst. `Nothing` is what every other unset length answers.
+    if prop == "aspect_ratio" {
+        let ar: f64 = { (*n).style.aspect_ratio };
+        if ar != ar { return option::Option[insp::Value]::Some(insp::Value::Nothing); }
+        return num(ar);
+    }
+    // ---- how the children sit ----
+    //
+    // Carried as SPELLINGS. These are the properties a person actually reaches
+    // for when a row is not centred, and they were unreachable — the surface
+    // could move a node to an absolute position but could not say `center`.
+    if prop == "flex_direction" { return named(voc::flex_direction_name({ (*n).style.flex_direction })); }
+    if prop == "justify_content" { return named(voc::justify_name({ (*n).style.justify_content })); }
+    if prop == "align_items" { return named(voc::align_name({ (*n).style.align_items })); }
+    if prop == "align_self" { return named(voc::align_name({ (*n).style.align_self })); }
+    if prop == "align_content" { return named(voc::align_name({ (*n).style.align_content })); }
+    if prop == "flex_wrap" { return named(voc::wrap_name({ (*n).style.flex_wrap })); }
+    if prop == "overflow" { return named(voc::overflow_name({ (*n).style.overflow })); }
+    if prop == "display" { return named(voc::display_name({ (*n).style.display })); }
+    if prop == "box_sizing" { return named(voc::box_sizing_name({ (*n).style.box_sizing })); }
+
+    // ---- the drop shadow, one scalar at a time ----
+    //
+    // `Value` has no tag for a struct, and inventing one for the single
+    // property that needs it would be a second encoding for every client to
+    // learn. A shadow is five numbers and a colour; five names cost nothing and
+    // each one is editable on its own, which is what a nudge loop wants anyway.
+    if prop == "shadow_color" { let sh: vocab::Shadow = core::shadow(n); return colour(sh.color); }
+    if prop == "shadow_opacity" { let sh: vocab::Shadow = core::shadow(n); return num(sh.opacity); }
+    if prop == "shadow_radius" { let sh: vocab::Shadow = core::shadow(n); return num(sh.radius); }
+    if prop == "shadow_offset_x" { let sh: vocab::Shadow = core::shadow(n); return num(sh.offset.x); }
+    if prop == "shadow_offset_y" { let sh: vocab::Shadow = core::shadow(n); return num(sh.offset.y); }
+
+    if prop == "flex_basis" { return option::Option[insp::Value]::Some(len_value({ (*n).style.flex_basis })); }
     if prop == "width" { return option::Option[insp::Value]::Some(len_value({ (*n).style.width })); }
     if prop == "height" { return option::Option[insp::Value]::Some(len_value({ (*n).style.height })); }
     if prop == "grow" { return num({ (*n).style.flex_grow }); }
@@ -350,6 +464,35 @@ fn get_uniform(n: *core::Node, prop: str) -> option::Option[insp::Value] {
             { (*n).style.margin_left }, { (*n).style.margin_top },
             { (*n).style.margin_right }, { (*n).style.margin_bottom }));
     }
+    if prop == "border_left" { return option::Option[insp::Value]::Some(len_value({ (*n).style.border_left })); }
+    if prop == "border_top" { return option::Option[insp::Value]::Some(len_value({ (*n).style.border_top })); }
+    if prop == "border_right" { return option::Option[insp::Value]::Some(len_value({ (*n).style.border_right })); }
+    if prop == "border_bottom" { return option::Option[insp::Value]::Some(len_value({ (*n).style.border_bottom })); }
+    if prop == "margin_start" { return option::Option[insp::Value]::Some(len_value({ (*n).style.margin_start })); }
+    if prop == "margin_end" { return option::Option[insp::Value]::Some(len_value({ (*n).style.margin_end })); }
+    if prop == "padding_start" { return option::Option[insp::Value]::Some(len_value({ (*n).style.padding_start })); }
+    if prop == "padding_end" { return option::Option[insp::Value]::Some(len_value({ (*n).style.padding_end })); }
+    if prop == "border_start" { return option::Option[insp::Value]::Some(len_value({ (*n).style.border_start })); }
+    if prop == "border_end" { return option::Option[insp::Value]::Some(len_value({ (*n).style.border_end })); }
+    if prop == "start" { return option::Option[insp::Value]::Some(len_value({ (*n).style.position_start })); }
+    if prop == "end" { return option::Option[insp::Value]::Some(len_value({ (*n).style.position_end })); }
+    // Grid, the item side. A span defaults to 1; a start is optional, and an
+    // auto-placed item answers `Nothing` rather than a line number it does not
+    // have.
+    if prop == "grid_column_span" { return num({ (*n).grid_column_span() } as f64); }
+    if prop == "grid_row_span" { return num({ (*n).grid_row_span() } as f64); }
+    if prop == "grid_column_start" {
+        return match { (*n).grid_column_start() } {
+            option::Option[i32]::Some(x) => num(x as f64),
+            option::Option::None => option::Option[insp::Value]::Some(insp::Value::Nothing),
+        };
+    }
+    if prop == "grid_row_start" {
+        return match { (*n).grid_row_start() } {
+            option::Option[i32]::Some(x) => num(x as f64),
+            option::Option::None => option::Option[insp::Value]::Some(insp::Value::Nothing),
+        };
+    }
     if prop == "gap_row" { return option::Option[insp::Value]::Some(len_value({ (*n).style.gap_row })); }
     if prop == "gap_column" { return option::Option[insp::Value]::Some(len_value({ (*n).style.gap_column })); }
     if prop == "gap" {
@@ -360,7 +503,7 @@ fn get_uniform(n: *core::Node, prop: str) -> option::Option[insp::Value] {
                 if same_points(gc, x) { num(x) }
                 else { option::Option[insp::Value]::Some(insp::Value::Nothing) }
             }
-            option::Option[f64]::None =>
+            option::Option::None =>
                 option::Option[insp::Value]::Some(insp::Value::Nothing),
         };
     }
@@ -379,10 +522,10 @@ fn keyed_resolves_here(n: *core::Node, window: usize) -> bool {
     let k: str = { (*n).key() };
     if k == "" { return false; }
     let r: *core::Node = app::window_root(window);
-    if r == (0 as *core::Node) { return false; }
+    if r.is_null() { return false; }
     return match core::find_in(r, k) {
         option::Option[*core::Node]::Some(p) => p == n,
-        option::Option[*core::Node]::None => false,
+        option::Option::None => false,
     };
 }
 
@@ -394,23 +537,78 @@ fn get_control(n: *core::Node, prop: str, window: usize) -> option::Option[insp:
     let root: *core::Node = app::window_root(window);
     let kind: u32 = core::kind_of(n);
 
+    if is_type_face(prop) {
+        if kind == props::K_LABEL {
+            return match label::find(k, within: root) {
+                option::Option[label::Label]::Some(l) => {
+                    if prop == "font_size" { return num(l.font_size()); }
+                    if prop == "font_weight" { return named(voc::font_weight_name(l.font_weight())); }
+                    return colour(l.text_color());
+                }
+                option::Option::None => option::Option[insp::Value]::None,
+            };
+        }
+        if kind == props::K_BUTTON {
+            return match button::find(k, within: root) {
+                option::Option[button::Button]::Some(b) => {
+                    if prop == "font_size" { return num(b.font_size()); }
+                    if prop == "font_weight" { return named(voc::font_weight_name(b.font_weight())); }
+                    return colour(b.text_color());
+                }
+                option::Option::None => option::Option[insp::Value]::None,
+            };
+        }
+        if kind == props::K_TEXT_FIELD {
+            return match text_field::find(k, within: root) {
+                option::Option[text_field::TextField]::Some(t) => {
+                    if prop == "font_size" { return num(t.font_size()); }
+                    if prop == "font_weight" { return named(voc::font_weight_name(t.font_weight())); }
+                    return colour(t.text_color());
+                }
+                option::Option::None => option::Option[insp::Value]::None,
+            };
+        }
+        if kind == props::K_TEXT_AREA {
+            return match text_area::find(k, within: root) {
+                option::Option[text_area::TextArea]::Some(t) => {
+                    if prop == "font_size" { return num(t.font_size()); }
+                    if prop == "font_weight" { return named(voc::font_weight_name(t.font_weight())); }
+                    return colour(t.text_color());
+                }
+                option::Option::None => option::Option[insp::Value]::None,
+            };
+        }
+        return option::Option[insp::Value]::None;
+    }
+
+    if is_button_border(prop) {
+        if kind != props::K_BUTTON { return option::Option[insp::Value]::None; }
+        return match button::find(k, within: root) {
+            option::Option[button::Button]::Some(b) => {
+                if prop == "border_width" { return num(b.border_width()); }
+                return colour(b.border_color());
+            }
+            option::Option::None => option::Option[insp::Value]::None,
+        };
+    }
+
     if prop == "text" {
         if kind == props::K_LABEL {
             return match label::find(k, within: root) {
                 option::Option[label::Label]::Some(l) => owned(l.text()),
-                option::Option[label::Label]::None => option::Option[insp::Value]::None,
+                option::Option::None => option::Option[insp::Value]::None,
             };
         }
         if kind == props::K_TEXT_FIELD {
             return match text_field::find(k, within: root) {
                 option::Option[text_field::TextField]::Some(t) => owned(t.text()),
-                option::Option[text_field::TextField]::None => option::Option[insp::Value]::None,
+                option::Option::None => option::Option[insp::Value]::None,
             };
         }
         if kind == props::K_TEXT_AREA {
             return match text_area::find(k, within: root) {
                 option::Option[text_area::TextArea]::Some(t) => owned(t.text()),
-                option::Option[text_area::TextArea]::None => option::Option[insp::Value]::None,
+                option::Option::None => option::Option[insp::Value]::None,
             };
         }
         return option::Option[insp::Value]::None;
@@ -420,7 +618,7 @@ fn get_control(n: *core::Node, prop: str, window: usize) -> option::Option[insp:
         if kind == props::K_BUTTON {
             return match button::find(k, within: root) {
                 option::Option[button::Button]::Some(b) => owned(b.title()),
-                option::Option[button::Button]::None => option::Option[insp::Value]::None,
+                option::Option::None => option::Option[insp::Value]::None,
             };
         }
         return option::Option[insp::Value]::None;
@@ -430,13 +628,13 @@ fn get_control(n: *core::Node, prop: str, window: usize) -> option::Option[insp:
         if kind == props::K_CHECKBOX {
             return match checkbox::find(k, within: root) {
                 option::Option[checkbox::Checkbox]::Some(c) => boolean(c.on()),
-                option::Option[checkbox::Checkbox]::None => option::Option[insp::Value]::None,
+                option::Option::None => option::Option[insp::Value]::None,
             };
         }
         if kind == props::K_TOGGLE {
             return match toggle::find(k, within: root) {
                 option::Option[toggle::Toggle]::Some(t) => boolean(t.on()),
-                option::Option[toggle::Toggle]::None => option::Option[insp::Value]::None,
+                option::Option::None => option::Option[insp::Value]::None,
             };
         }
         return option::Option[insp::Value]::None;
@@ -447,10 +645,10 @@ fn get_control(n: *core::Node, prop: str, window: usize) -> option::Option[insp:
 
 fn get(h: insp::Handle, prop: str) -> option::Option[insp::Value] {
     if !h.is_live() { return option::Option[insp::Value]::None; }
-    let n: *core::Node = h.node;
+    let n: *core::Node = node_of(h);
     match get_uniform(n, prop) {
         option::Option[insp::Value]::Some(v) => { return option::Option[insp::Value]::Some(v); }
-        option::Option[insp::Value]::None => { }
+        option::Option::None => { }
     }
     return get_control(n, prop, h.window);
 }
@@ -473,11 +671,11 @@ fn hex_digit(b: u8) -> i32 {
 fn hex_pair(t: text::Text, at: usize) -> i32 {
     let hi: i32 = match t.byte_at(at) {
         option::Option[u8]::Some(b) => hex_digit(b),
-        option::Option[u8]::None => -1,
+        option::Option::None => -1,
     };
-    let lo: i32 = match t.byte_at(at +% (1 as usize)) {
+    let lo: i32 = match t.byte_at(at +% 1) {
         option::Option[u8]::Some(b) => hex_digit(b),
-        option::Option[u8]::None => -1,
+        option::Option::None => -1,
     };
     if hi < 0 { return -1; }
     if lo < 0 { return -1; }
@@ -487,16 +685,16 @@ fn hex_pair(t: text::Text, at: usize) -> i32 {
 // `#2277ff`, the spelling every developer already has in their fingers.
 fn parse_hex_color(s: str) -> option::Option[vocab::Color] {
     let t: text::Text = text::from_str(s);
-    if t.count() != (7 as usize) { return option::Option[vocab::Color]::None; }
+    if t.count() != 7 { return option::Option[vocab::Color]::None; }
     if !t.has_prefix("#") { return option::Option[vocab::Color]::None; }
-    let r: i32 = hex_pair(t, 1 as usize);
-    let g: i32 = hex_pair(t, 3 as usize);
-    let b: i32 = hex_pair(t, 5 as usize);
+    let r: i32 = hex_pair(t, 1);
+    let g: i32 = hex_pair(t, 3);
+    let b: i32 = hex_pair(t, 5);
     if r < 0 { return option::Option[vocab::Color]::None; }
     if g < 0 { return option::Option[vocab::Color]::None; }
     if b < 0 { return option::Option[vocab::Color]::None; }
     return option::Option[vocab::Color]::Some(vocab::Color::rgba(
-        (r as f64) / 255.0f64, (g as f64) / 255.0f64, (b as f64) / 255.0f64, 1.0f64));
+        (r as f64) / 255.0, (g as f64) / 255.0, (b as f64) / 255.0, 1.0));
 }
 
 // What arrived, read as the tag the property already holds. The current value
@@ -513,24 +711,24 @@ fn parse_as(current: insp::Value, typed: str) -> option::Option[insp::Value] {
         }
         insp::Value::Num(_x) => match typed.to_f64() {
             option::Option[f64]::Some(f) => option::Option[insp::Value]::Some(insp::Value::Num(f)),
-            option::Option[f64]::None => option::Option[insp::Value]::None,
+            option::Option::None => option::Option[insp::Value]::None,
         },
         insp::Value::Int(_i) => match typed.to_i64() {
             option::Option[i64]::Some(n) => option::Option[insp::Value]::Some(insp::Value::Int(n)),
-            option::Option[i64]::None => option::Option[insp::Value]::None,
+            option::Option::None => option::Option[insp::Value]::None,
         },
         insp::Value::Str(_s) =>
             option::Option[insp::Value]::Some(insp::Value::Str(text::from_str(typed))),
         insp::Value::Color(_c) => match parse_hex_color(typed) {
             option::Option[vocab::Color]::Some(c) =>
-                option::Option[insp::Value]::Some(insp::Value::Color(c)),
-            option::Option[vocab::Color]::None => option::Option[insp::Value]::None,
+                option::Option[insp::Value]::Some(insp::Value::Color(to_color(c))),
+            option::Option::None => option::Option[insp::Value]::None,
         },
         // An unset length. Empty clears nothing (there is no "unset" write in
         // v1), a number sets points.
         insp::Value::Nothing => match typed.to_f64() {
             option::Option[f64]::Some(f) => option::Option[insp::Value]::Some(insp::Value::Num(f)),
-            option::Option[f64]::None => option::Option[insp::Value]::None,
+            option::Option::None => option::Option[insp::Value]::None,
         },
         insp::Value::Enum(_e) =>
             option::Option[insp::Value]::Some(insp::Value::Enum(text::from_str(typed))),
@@ -541,9 +739,24 @@ fn parse_as(current: insp::Value, typed: str) -> option::Option[insp::Value] {
 // what it holds. `None` when the node does not answer that property at all,
 // which the caller reports as `UnknownProperty` rather than guessing a tag.
 fn parse_for(h: insp::Handle, prop: str, typed: str) -> option::Option[insp::Value] {
+    // A LENGTH IS NOT ITS CURRENT TAG.
+    //
+    // Everything else parses against what the property holds, which is the rule
+    // that makes `#2277ff` a colour on a colour property. A length breaks it:
+    // one holding 120 points reads as a Num, and parsing `50%` against a Num
+    // fails — so a percent was writable only onto a property that already held
+    // a percent, which is nearly none of them. A length knows its own three
+    // shapes, so it parses as a length wherever it stands.
+    if is_length_prop(prop) {
+        return match parse_length(typed) {
+            option::Option[flex::StyleLength]::Some(l) =>
+                option::Option[insp::Value]::Some(len_value(l)),
+            option::Option::None => option::Option[insp::Value]::None,
+        };
+    }
     return match get(h, prop) {
         option::Option[insp::Value]::Some(cur) => parse_as(cur, typed),
-        option::Option[insp::Value]::None => option::Option[insp::Value]::None,
+        option::Option::None => option::Option[insp::Value]::None,
     };
 }
 
@@ -570,8 +783,12 @@ fn bool_of(v: insp::Value) -> option::Option[bool] {
     };
 }
 
-fn set_len(n: *core::Node, which: str, x: f64) {
-    let l: flex::StyleLength = flex::StyleLength::points(x);
+// EVERY length goes through here. Before this there were three write paths —
+// `core::set_top` and friends took an f64, `set_len` took an f64, and the
+// min/max pair took a third — and all three could only say points. A property
+// whose read can answer `50%` and whose write cannot accept it is a round trip
+// that silently converts, so they are one path that speaks the whole unit.
+fn set_len(n: *core::Node, which: str, l: flex::StyleLength) {
     if which == "width" { { (*n).set_width(l) }; }
     if which == "height" { { (*n).set_height(l) }; }
     if which == "padding" { { (*n).set_padding(flex::Edge::All, l) }; }
@@ -587,9 +804,33 @@ fn set_len(n: *core::Node, which: str, x: f64) {
     if which == "gap" { { (*n).set_gap(flex::Gutter::All, l) }; }
     if which == "gap_row" { { (*n).set_gap(flex::Gutter::Row, l) }; }
     if which == "gap_column" { { (*n).set_gap(flex::Gutter::Column, l) }; }
+    if which == "top" { { (*n).set_position(flex::Edge::Top, l) }; }
+    if which == "left" { { (*n).set_position(flex::Edge::Left, l) }; }
+    if which == "right" { { (*n).set_position(flex::Edge::Right, l) }; }
+    if which == "bottom" { { (*n).set_position(flex::Edge::Bottom, l) }; }
+    if which == "min_width" { { (*n).set_min_width(l) }; }
+    if which == "max_width" { { (*n).set_max_width(l) }; }
+    if which == "min_height" { { (*n).set_min_height(l) }; }
+    if which == "max_height" { { (*n).set_max_height(l) }; }
+    if which == "flex_basis" { { (*n).set_flex_basis(l) }; }
+    // Flex's border is a layout inset — it reserves space the way padding does
+    // and draws nothing. The visible stroke is a control property
+    // (`border_width`), and they are deliberately not the same name.
+    if which == "border_left" { { (*n).set_border(flex::Edge::Left, l) }; }
+    if which == "border_top" { { (*n).set_border(flex::Edge::Top, l) }; }
+    if which == "border_right" { { (*n).set_border(flex::Edge::Right, l) }; }
+    if which == "border_bottom" { { (*n).set_border(flex::Edge::Bottom, l) }; }
+    // The logical edges follow the writing direction.
+    if which == "margin_start" { { (*n).set_margin(flex::Edge::Start, l) }; }
+    if which == "margin_end" { { (*n).set_margin(flex::Edge::End, l) }; }
+    if which == "padding_start" { { (*n).set_padding(flex::Edge::Start, l) }; }
+    if which == "padding_end" { { (*n).set_padding(flex::Edge::End, l) }; }
+    if which == "border_start" { { (*n).set_border(flex::Edge::Start, l) }; }
+    if which == "border_end" { { (*n).set_border(flex::Edge::End, l) }; }
+    if which == "start" { { (*n).set_position(flex::Edge::Start, l) }; }
+    if which == "end" { { (*n).set_position(flex::Edge::End, l) }; }
     // One bit for every one of them: layout is re-run, props are not re-read.
     core::touch(n, props::C_LAYOUT);
-    return;
 }
 
 fn is_length_prop(prop: str) -> bool {
@@ -608,6 +849,27 @@ fn is_length_prop(prop: str) -> bool {
     if prop == "gap" { return true; }
     if prop == "gap_row" { return true; }
     if prop == "gap_column" { return true; }
+    if prop == "top" { return true; }
+    if prop == "left" { return true; }
+    if prop == "right" { return true; }
+    if prop == "bottom" { return true; }
+    if prop == "min_width" { return true; }
+    if prop == "max_width" { return true; }
+    if prop == "min_height" { return true; }
+    if prop == "max_height" { return true; }
+    if prop == "flex_basis" { return true; }
+    if prop == "border_left" { return true; }
+    if prop == "border_top" { return true; }
+    if prop == "border_right" { return true; }
+    if prop == "border_bottom" { return true; }
+    if prop == "margin_start" { return true; }
+    if prop == "margin_end" { return true; }
+    if prop == "padding_start" { return true; }
+    if prop == "padding_end" { return true; }
+    if prop == "border_start" { return true; }
+    if prop == "border_end" { return true; }
+    if prop == "start" { return true; }
+    if prop == "end" { return true; }
     return false;
 }
 
@@ -630,13 +892,13 @@ fn computed_names() -> vec::Vec[str] {
 }
 
 fn in_list(names: vec::Vec[str], prop: str) -> bool {
-    var i: usize = 0 as usize;
+    var i: usize = 0;
     while i < names.count() {
         match names.at(i) {
             option::Option[str]::Some(nm) => { if nm == prop { return true; } }
-            option::Option[str]::None => { }
+            option::Option::None => { }
         }
-        i = i +% (1 as usize);
+        i = i +% 1;
     }
     return false;
 }
@@ -659,80 +921,353 @@ fn is_computed_prop(prop: str) -> bool { return in_list(computed_names(), prop);
 // stored.
 fn canonical_prop(name: str) -> option::Option[str] {
     let declared: vec::Vec[str] = declared_names();
-    var i: usize = 0 as usize;
+    var i: usize = 0;
     while i < declared.count() {
         match declared.at(i) {
             option::Option[str]::Some(nm) => {
                 if nm == name { return option::Option[str]::Some(nm); }
             }
-            option::Option[str]::None => { }
+            option::Option::None => { }
         }
-        i = i +% (1 as usize);
+        i = i +% 1;
     }
     // The read-only ones too, so a caller naming a computed property is told it
     // is read-only rather than that it does not exist.
     let computed: vec::Vec[str] = computed_names();
-    var j: usize = 0 as usize;
+    var j: usize = 0;
     while j < computed.count() {
         match computed.at(j) {
             option::Option[str]::Some(nm) => {
                 if nm == name { return option::Option[str]::Some(nm); }
             }
-            option::Option[str]::None => { }
+            option::Option::None => { }
         }
-        j = j +% (1 as usize);
+        j = j +% 1;
     }
     return option::Option[str]::None;
 }
 
+// An enum write is two steps kept apart on purpose: the SPELLING is pulled out
+// of the value where it lives (a `str` lifted out of a `Text` and returned
+// would be a view into bytes the caller still owns), and the already-decoded
+// variant is handed to the applier. So each of these takes an Option that has
+// already failed or not, and `None` is one answer in one place.
+fn set_align_to(n: *core::Node, prop: str, o: option::Option[flex::Align]) -> insp::Outcome {
+    return match o {
+        option::Option[flex::Align]::Some(a) => {
+            if prop == "align_items" { { (*n).set_align_items(a) }; }
+            if prop == "align_self" { { (*n).set_align_self(a) }; }
+            if prop == "align_content" { { (*n).set_align_content(a) }; }
+            core::touch(n, props::C_LAYOUT);
+            insp::Outcome::Ok
+        }
+        option::Option::None => insp::Outcome::TypeMismatch,
+    };
+}
+
+fn set_justify_to(n: *core::Node, o: option::Option[flex::Justify]) -> insp::Outcome {
+    return match o {
+        option::Option[flex::Justify]::Some(j) => {
+            { (*n).set_justify_content(j) };
+            core::touch(n, props::C_LAYOUT);
+            insp::Outcome::Ok
+        }
+        option::Option::None => insp::Outcome::TypeMismatch,
+    };
+}
+
+fn set_flex_direction_to(n: *core::Node, o: option::Option[flex::FlexDirection]) -> insp::Outcome {
+    return match o {
+        option::Option[flex::FlexDirection]::Some(d) => {
+            { (*n).set_flex_direction(d) };
+            core::touch(n, props::C_LAYOUT);
+            insp::Outcome::Ok
+        }
+        option::Option::None => insp::Outcome::TypeMismatch,
+    };
+}
+
+fn set_wrap_to(n: *core::Node, o: option::Option[flex::Wrap]) -> insp::Outcome {
+    return match o {
+        option::Option[flex::Wrap]::Some(w) => {
+            { (*n).set_flex_wrap(w) };
+            core::touch(n, props::C_LAYOUT);
+            insp::Outcome::Ok
+        }
+        option::Option::None => insp::Outcome::TypeMismatch,
+    };
+}
+
+fn set_overflow_to(n: *core::Node, o: option::Option[flex::Overflow]) -> insp::Outcome {
+    return match o {
+        option::Option[flex::Overflow]::Some(x) => {
+            { (*n).set_overflow(x) };
+            core::touch(n, props::C_LAYOUT);
+            insp::Outcome::Ok
+        }
+        option::Option::None => insp::Outcome::TypeMismatch,
+    };
+}
+
+fn set_display_to(n: *core::Node, o: option::Option[flex::Display]) -> insp::Outcome {
+    return match o {
+        option::Option[flex::Display]::Some(x) => {
+            { (*n).set_display(x) };
+            core::touch(n, props::C_LAYOUT);
+            insp::Outcome::Ok
+        }
+        option::Option::None => insp::Outcome::TypeMismatch,
+    };
+}
+
+fn set_position_to(n: *core::Node, o: option::Option[flex::PositionType]) -> insp::Outcome {
+    return match o {
+        option::Option[flex::PositionType]::Some(x) => {
+            { (*n).set_position_type(x) };
+            core::touch(n, props::C_LAYOUT);
+            insp::Outcome::Ok
+        }
+        option::Option::None => insp::Outcome::TypeMismatch,
+    };
+}
+
+fn set_direction_to(n: *core::Node, o: option::Option[flex::Direction]) -> insp::Outcome {
+    return match o {
+        option::Option[flex::Direction]::Some(x) => {
+            { (*n).set_direction(x) };
+            core::touch(n, props::C_LAYOUT);
+            insp::Outcome::Ok
+        }
+        option::Option::None => insp::Outcome::TypeMismatch,
+    };
+}
+
+fn set_box_sizing_to(n: *core::Node, o: option::Option[flex::BoxSizing]) -> insp::Outcome {
+    return match o {
+        option::Option[flex::BoxSizing]::Some(x) => {
+            { (*n).set_box_sizing(x) };
+            core::touch(n, props::C_LAYOUT);
+            insp::Outcome::Ok
+        }
+        option::Option::None => insp::Outcome::TypeMismatch,
+    };
+}
+
+fn apply_style_enum(n: *core::Node, prop: str, v: insp::Value) -> insp::Outcome {
+    if prop == "align_items" || prop == "align_self" || prop == "align_content" {
+        return match v {
+            insp::Value::Enum(e) => set_align_to(n, prop, voc::align_from(e.view())),
+            insp::Value::Str(t) => set_align_to(n, prop, voc::align_from(t.view())),
+            _ => insp::Outcome::TypeMismatch,
+        };
+    }
+    if prop == "justify_content" {
+        return match v {
+            insp::Value::Enum(e) => set_justify_to(n, voc::justify_from(e.view())),
+            insp::Value::Str(t) => set_justify_to(n, voc::justify_from(t.view())),
+            _ => insp::Outcome::TypeMismatch,
+        };
+    }
+    if prop == "flex_direction" {
+        return match v {
+            insp::Value::Enum(e) => set_flex_direction_to(n, voc::flex_direction_from(e.view())),
+            insp::Value::Str(t) => set_flex_direction_to(n, voc::flex_direction_from(t.view())),
+            _ => insp::Outcome::TypeMismatch,
+        };
+    }
+    if prop == "flex_wrap" {
+        return match v {
+            insp::Value::Enum(e) => set_wrap_to(n, voc::wrap_from(e.view())),
+            insp::Value::Str(t) => set_wrap_to(n, voc::wrap_from(t.view())),
+            _ => insp::Outcome::TypeMismatch,
+        };
+    }
+    if prop == "overflow" {
+        return match v {
+            insp::Value::Enum(e) => set_overflow_to(n, voc::overflow_from(e.view())),
+            insp::Value::Str(t) => set_overflow_to(n, voc::overflow_from(t.view())),
+            _ => insp::Outcome::TypeMismatch,
+        };
+    }
+    if prop == "display" {
+        return match v {
+            insp::Value::Enum(e) => set_display_to(n, voc::display_from(e.view())),
+            insp::Value::Str(t) => set_display_to(n, voc::display_from(t.view())),
+            _ => insp::Outcome::TypeMismatch,
+        };
+    }
+    if prop == "box_sizing" {
+        return match v {
+            insp::Value::Enum(e) => set_box_sizing_to(n, voc::box_sizing_from(e.view())),
+            insp::Value::Str(t) => set_box_sizing_to(n, voc::box_sizing_from(t.view())),
+            _ => insp::Outcome::TypeMismatch,
+        };
+    }
+    if prop == "position" {
+        return match v {
+            insp::Value::Enum(e) => set_position_to(n, voc::position_from(e.view())),
+            insp::Value::Str(t) => set_position_to(n, voc::position_from(t.view())),
+            _ => insp::Outcome::TypeMismatch,
+        };
+    }
+    if prop == "direction" {
+        return match v {
+            insp::Value::Enum(e) => set_direction_to(n, voc::direction_from(e.view())),
+            insp::Value::Str(t) => set_direction_to(n, voc::direction_from(t.view())),
+            _ => insp::Outcome::TypeMismatch,
+        };
+    }
+    return insp::Outcome::UnknownProperty;
+}
+
+fn is_style_enum(prop: str) -> bool {
+    if prop == "flex_direction" { return true; }
+    if prop == "justify_content" { return true; }
+    if prop == "align_items" { return true; }
+    if prop == "align_self" { return true; }
+    if prop == "align_content" { return true; }
+    if prop == "flex_wrap" { return true; }
+    if prop == "overflow" { return true; }
+    if prop == "display" { return true; }
+    if prop == "box_sizing" { return true; }
+    if prop == "position" { return true; }
+    if prop == "direction" { return true; }
+    return false;
+}
+
+// A shadow is read whole, one field replaced, and written back — there is one
+// setter and it takes the struct.
+fn apply_shadow(n: *core::Node, prop: str, v: insp::Value) -> insp::Outcome {
+    var sh: vocab::Shadow = core::shadow(n);
+    if prop == "shadow_color" {
+        match color_of(v) {
+            option::Option[vocab::Color]::Some(c) => { sh.color = c; }
+            option::Option::None => { return insp::Outcome::TypeMismatch; }
+        }
+        core::set_shadow(n, sh);
+        return insp::Outcome::Ok;
+    }
+    return match num_of(v) {
+        option::Option[f64]::Some(x) => {
+            if prop == "shadow_opacity" { sh.opacity = x; }
+            if prop == "shadow_radius" { sh.radius = x; }
+            if prop == "shadow_offset_x" { sh.offset.x = x; }
+            if prop == "shadow_offset_y" { sh.offset.y = x; }
+            core::set_shadow(n, sh);
+            insp::Outcome::Ok
+        }
+        option::Option::None => insp::Outcome::TypeMismatch,
+    };
+}
+
+fn is_shadow_prop(prop: str) -> bool {
+    if prop == "shadow_color" { return true; }
+    if prop == "shadow_opacity" { return true; }
+    if prop == "shadow_radius" { return true; }
+    if prop == "shadow_offset_x" { return true; }
+    if prop == "shadow_offset_y" { return true; }
+    return false;
+}
+
 fn apply_uniform(n: *core::Node, prop: str, v: insp::Value) -> insp::Outcome {
+    // ---- position: the DOM move ----
+    //
+    // `absolute` takes the node out of flow; `top`/`left`/`right`/`bottom` then
+    // place it. That pairing is the whole "nudge it until it sits right" loop,
+    // and none of it was reachable before — `flex_layout` has had
+    // `PositionType::Absolute` and computed insets all along.
+    if prop == "z_index" {
+        return match num_of(v) {
+            option::Option[f64]::Some(x) => { core::set_z_index(n, x as i64); insp::Outcome::Ok }
+            option::Option::None => insp::Outcome::TypeMismatch,
+        };
+    }
+    if prop == "scale_x" {
+        return match num_of(v) {
+            option::Option[f64]::Some(x) => { core::set_scale_x(n, x); insp::Outcome::Ok }
+            option::Option::None => insp::Outcome::TypeMismatch,
+        };
+    }
+    if prop == "scale_y" {
+        return match num_of(v) {
+            option::Option[f64]::Some(x) => { core::set_scale_y(n, x); insp::Outcome::Ok }
+            option::Option::None => insp::Outcome::TypeMismatch,
+        };
+    }
+    if prop == "rotation_x" {
+        return match num_of(v) {
+            option::Option[f64]::Some(x) => { core::set_rotation_x(n, x); insp::Outcome::Ok }
+            option::Option::None => insp::Outcome::TypeMismatch,
+        };
+    }
+    if prop == "rotation_y" {
+        return match num_of(v) {
+            option::Option[f64]::Some(x) => { core::set_rotation_y(n, x); insp::Outcome::Ok }
+            option::Option::None => insp::Outcome::TypeMismatch,
+        };
+    }
+    if prop == "aspect_ratio" {
+        // Unset is a value here too — `Nothing` puts back flex's undefined,
+        // which is what a reset of a ratio the app never set has to write.
+        match v {
+            insp::Value::Nothing => {
+                core::set_aspect_ratio(n, flex::undefined());
+                return insp::Outcome::Ok;
+            }
+            _ => { }
+        }
+        return match num_of(v) {
+            option::Option[f64]::Some(x) => { core::set_aspect_ratio(n, x); insp::Outcome::Ok }
+            option::Option::None => insp::Outcome::TypeMismatch,
+        };
+    }
     // ---- tier 1: the common band ----
     if prop == "opacity" {
         return match num_of(v) {
             option::Option[f64]::Some(x) => { core::set_opacity(n, x); insp::Outcome::Ok }
-            option::Option[f64]::None => insp::Outcome::TypeMismatch,
+            option::Option::None => insp::Outcome::TypeMismatch,
         };
     }
     if prop == "visible" {
         return match bool_of(v) {
             option::Option[bool]::Some(b) => { core::set_visible(n, b); insp::Outcome::Ok }
-            option::Option[bool]::None => insp::Outcome::TypeMismatch,
+            option::Option::None => insp::Outcome::TypeMismatch,
         };
     }
     if prop == "enabled" {
         return match bool_of(v) {
             option::Option[bool]::Some(b) => { core::set_enabled(n, b); insp::Outcome::Ok }
-            option::Option[bool]::None => insp::Outcome::TypeMismatch,
+            option::Option::None => insp::Outcome::TypeMismatch,
         };
     }
     if prop == "input_transparent" {
         return match bool_of(v) {
             option::Option[bool]::Some(b) => { core::set_input_transparent(n, b); insp::Outcome::Ok }
-            option::Option[bool]::None => insp::Outcome::TypeMismatch,
+            option::Option::None => insp::Outcome::TypeMismatch,
         };
     }
     if prop == "rotation" {
         return match num_of(v) {
             option::Option[f64]::Some(x) => { core::set_rotation(n, x); insp::Outcome::Ok }
-            option::Option[f64]::None => insp::Outcome::TypeMismatch,
+            option::Option::None => insp::Outcome::TypeMismatch,
         };
     }
     if prop == "scale" {
         return match num_of(v) {
             option::Option[f64]::Some(x) => { core::set_scale(n, x); insp::Outcome::Ok }
-            option::Option[f64]::None => insp::Outcome::TypeMismatch,
+            option::Option::None => insp::Outcome::TypeMismatch,
         };
     }
     if prop == "translation_x" {
         return match num_of(v) {
             option::Option[f64]::Some(x) => { core::set_translation_x(n, x); insp::Outcome::Ok }
-            option::Option[f64]::None => insp::Outcome::TypeMismatch,
+            option::Option::None => insp::Outcome::TypeMismatch,
         };
     }
     if prop == "translation_y" {
         return match num_of(v) {
             option::Option[f64]::Some(x) => { core::set_translation_y(n, x); insp::Outcome::Ok }
-            option::Option[f64]::None => insp::Outcome::TypeMismatch,
+            option::Option::None => insp::Outcome::TypeMismatch,
         };
     }
     if prop == "corner_radius" {
@@ -741,12 +1276,12 @@ fn apply_uniform(n: *core::Node, prop: str, v: insp::Value) -> insp::Outcome {
                 core::set_corner_radius(n, vocab::Corners::all(x));
                 insp::Outcome::Ok
             }
-            option::Option[f64]::None => insp::Outcome::TypeMismatch,
+            option::Option::None => insp::Outcome::TypeMismatch,
         };
     }
     if prop == "background_color" {
         return match v {
-            insp::Value::Color(c) => { core::set_background_color(n, c); insp::Outcome::Ok }
+            insp::Value::Color(c) => { core::set_background_color(n, from_color(c)); insp::Outcome::Ok }
             _ => insp::Outcome::TypeMismatch,
         };
     }
@@ -767,19 +1302,63 @@ fn apply_uniform(n: *core::Node, prop: str, v: insp::Value) -> insp::Outcome {
     if prop == "grow" {
         return match num_of(v) {
             option::Option[f64]::Some(x) => { core::set_grow(n, x); insp::Outcome::Ok }
-            option::Option[f64]::None => insp::Outcome::TypeMismatch,
+            option::Option::None => insp::Outcome::TypeMismatch,
         };
     }
     if prop == "shrink" {
         return match num_of(v) {
             option::Option[f64]::Some(x) => { core::set_shrink(n, x); insp::Outcome::Ok }
-            option::Option[f64]::None => insp::Outcome::TypeMismatch,
+            option::Option::None => insp::Outcome::TypeMismatch,
         };
     }
-    if is_length_prop(prop) {
+    // Grid, the item side. A span is at least 1 — the engine clamps, and so
+    // does this, so the value that reads back is the value that was stored.
+    if prop == "grid_column_span" {
         return match num_of(v) {
-            option::Option[f64]::Some(x) => { set_len(n, prop, x); insp::Outcome::Ok }
-            option::Option[f64]::None => insp::Outcome::TypeMismatch,
+            option::Option[f64]::Some(x) => {
+                { (*n).set_grid_column_span(x as i32) };
+                core::touch(n, props::C_LAYOUT);
+                insp::Outcome::Ok
+            }
+            option::Option::None => insp::Outcome::TypeMismatch,
+        };
+    }
+    if prop == "grid_row_span" {
+        return match num_of(v) {
+            option::Option[f64]::Some(x) => {
+                { (*n).set_grid_row_span(x as i32) };
+                core::touch(n, props::C_LAYOUT);
+                insp::Outcome::Ok
+            }
+            option::Option::None => insp::Outcome::TypeMismatch,
+        };
+    }
+    if prop == "grid_column_start" {
+        return match num_of(v) {
+            option::Option[f64]::Some(x) => {
+                { (*n).set_grid_column_start(x as i32) };
+                core::touch(n, props::C_LAYOUT);
+                insp::Outcome::Ok
+            }
+            option::Option::None => insp::Outcome::TypeMismatch,
+        };
+    }
+    if prop == "grid_row_start" {
+        return match num_of(v) {
+            option::Option[f64]::Some(x) => {
+                { (*n).set_grid_row_start(x as i32) };
+                core::touch(n, props::C_LAYOUT);
+                insp::Outcome::Ok
+            }
+            option::Option::None => insp::Outcome::TypeMismatch,
+        };
+    }
+    if is_style_enum(prop) { return apply_style_enum(n, prop, v); }
+    if is_shadow_prop(prop) { return apply_shadow(n, prop, v); }
+    if is_length_prop(prop) {
+        return match length_of(v) {
+            option::Option[flex::StyleLength]::Some(l) => { set_len(n, prop, l); insp::Outcome::Ok }
+            option::Option::None => insp::Outcome::TypeMismatch,
         };
     }
 
@@ -788,13 +1367,184 @@ fn apply_uniform(n: *core::Node, prop: str, v: insp::Value) -> insp::Outcome {
 
 // Tier 3. `Unsupported` and not `UnknownProperty` when the node has no usable
 // key: the name was right, this build cannot reach it here.
+// ---- the type face -------------------------------------------------------------
+//
+// The spellings live in `vocabulary`, with every other closed set and with the
+// descriptor that advertises them. Here is only the decoding.
+
+fn named(v: str) -> option::Option[insp::Value] {
+    return option::Option[insp::Value]::Some(insp::Value::Enum(text::from_str(v)));
+}
+
+// A weight arrives as its spelling. `Str` is accepted alongside `Enum` because
+// a client that has not read `vocabulary` sends JSON, and JSON has one string.
+fn weight_of(v: insp::Value) -> option::Option[vocab::FontWeight] {
+    return match v {
+        insp::Value::Enum(e) => voc::font_weight_from(e.view()),
+        insp::Value::Str(s) => voc::font_weight_from(s.view()),
+        _ => option::Option[vocab::FontWeight]::None,
+    };
+}
+
+// Colour is scalars all the way down, so unlike text it survives being pulled
+// out of a `Value` and returned.
+fn color_of(v: insp::Value) -> option::Option[vocab::Color] {
+    return match v {
+        insp::Value::Color(c) => option::Option[vocab::Color]::Some(from_color(c)),
+        _ => option::Option[vocab::Color]::None,
+    };
+}
+
+// The three every text-bearing control carries, and the two only a button does.
+fn is_type_face(prop: str) -> bool {
+    return (prop == "font_size") || (prop == "font_weight") || (prop == "text_color");
+}
+
+fn is_button_border(prop: str) -> bool {
+    return (prop == "border_color") || (prop == "border_width");
+}
+
 fn apply_control(n: *core::Node, prop: str, v: insp::Value, window: usize) -> insp::Outcome {
     let kind: u32 = core::kind_of(n);
-    let known: bool = (prop == "text") || (prop == "title") || (prop == "on");
+    let known: bool = (prop == "text") || (prop == "title") || (prop == "on")
+        || is_type_face(prop) || is_button_border(prop);
     if !known { return insp::Outcome::UnknownProperty; }
     if !keyed_resolves_here(n, window) { return insp::Outcome::Unsupported; }
     let k: str = { (*n).key() };
     let root: *core::Node = app::window_root(window);
+
+    // ---- the type face ----
+    //
+    // Decoded BEFORE the kind switch. A wrong type is wrong on a label and on a
+    // button alike, and checking it once is the difference between one answer
+    // and four copies of it that drift.
+    if is_type_face(prop) {
+        var size: f64 = 0.0f64;
+        var weight: vocab::FontWeight = vocab::FontWeight::Default;
+        var color: vocab::Color = vocab::Color::clear();
+        if prop == "font_size" {
+            match num_of(v) {
+                option::Option[f64]::Some(x) => { size = x; }
+                option::Option::None => { return insp::Outcome::TypeMismatch; }
+            }
+        }
+        if prop == "font_weight" {
+            match weight_of(v) {
+                option::Option[vocab::FontWeight]::Some(w) => { weight = w; }
+                option::Option::None => { return insp::Outcome::TypeMismatch; }
+            }
+        }
+        if prop == "text_color" {
+            match color_of(v) {
+                option::Option[vocab::Color]::Some(c) => { color = c; }
+                option::Option::None => { return insp::Outcome::TypeMismatch; }
+            }
+        }
+        if kind == props::K_LABEL {
+            match label::find(k, within: root) {
+                option::Option[label::Label]::Some(l) => {
+                    if prop == "font_size" {
+                        let _h: label::Label = l.set_font_size(size);
+                        return insp::Outcome::Ok;
+                    }
+                    if prop == "font_weight" {
+                        let _h: label::Label = l.set_font_weight(weight);
+                        return insp::Outcome::Ok;
+                    }
+                    let _h: label::Label = l.set_text_color(color);
+                    return insp::Outcome::Ok;
+                }
+                option::Option::None => { return insp::Outcome::NotFound; }
+            }
+        }
+        if kind == props::K_BUTTON {
+            match button::find(k, within: root) {
+                option::Option[button::Button]::Some(b) => {
+                    if prop == "font_size" {
+                        let _h: button::Button = b.set_font_size(size);
+                        return insp::Outcome::Ok;
+                    }
+                    if prop == "font_weight" {
+                        let _h: button::Button = b.set_font_weight(weight);
+                        return insp::Outcome::Ok;
+                    }
+                    let _h: button::Button = b.set_text_color(color);
+                    return insp::Outcome::Ok;
+                }
+                option::Option::None => { return insp::Outcome::NotFound; }
+            }
+        }
+        if kind == props::K_TEXT_FIELD {
+            match text_field::find(k, within: root) {
+                option::Option[text_field::TextField]::Some(t) => {
+                    if prop == "font_size" {
+                        let _h: text_field::TextField = t.set_font_size(size);
+                        return insp::Outcome::Ok;
+                    }
+                    if prop == "font_weight" {
+                        let _h: text_field::TextField = t.set_font_weight(weight);
+                        return insp::Outcome::Ok;
+                    }
+                    let _h: text_field::TextField = t.set_text_color(color);
+                    return insp::Outcome::Ok;
+                }
+                option::Option::None => { return insp::Outcome::NotFound; }
+            }
+        }
+        if kind == props::K_TEXT_AREA {
+            match text_area::find(k, within: root) {
+                option::Option[text_area::TextArea]::Some(t) => {
+                    if prop == "font_size" {
+                        let _h: text_area::TextArea = t.set_font_size(size);
+                        return insp::Outcome::Ok;
+                    }
+                    if prop == "font_weight" {
+                        let _h: text_area::TextArea = t.set_font_weight(weight);
+                        return insp::Outcome::Ok;
+                    }
+                    let _h: text_area::TextArea = t.set_text_color(color);
+                    return insp::Outcome::Ok;
+                }
+                option::Option::None => { return insp::Outcome::NotFound; }
+            }
+        }
+        return insp::Outcome::UnknownProperty;
+    }
+
+    // ---- the button's border ----
+    //
+    // Only a button carries one. A box draws its edge with `background_color`
+    // and `corner_radius` on the shared band, which is a different property and
+    // reached by a different door.
+    if is_button_border(prop) {
+        if kind != props::K_BUTTON { return insp::Outcome::UnknownProperty; }
+        if prop == "border_width" {
+            return match num_of(v) {
+                option::Option[f64]::Some(x) => {
+                    match button::find(k, within: root) {
+                        option::Option[button::Button]::Some(b) => {
+                            let _h: button::Button = b.set_border_width(x);
+                            return insp::Outcome::Ok;
+                        }
+                        option::Option::None => { return insp::Outcome::NotFound; }
+                    }
+                }
+                option::Option::None => insp::Outcome::TypeMismatch,
+            };
+        }
+        return match color_of(v) {
+            option::Option[vocab::Color]::Some(c) => {
+                match button::find(k, within: root) {
+                    option::Option[button::Button]::Some(b) => {
+                        let _h: button::Button = b.set_border_color(c);
+                        return insp::Outcome::Ok;
+                    }
+                    option::Option::None => { return insp::Outcome::NotFound; }
+                }
+            }
+            option::Option::None => insp::Outcome::TypeMismatch,
+        };
+    }
 
     if prop == "text" {
         return match v {
@@ -805,7 +1555,7 @@ fn apply_control(n: *core::Node, prop: str, v: insp::Value, window: usize) -> in
                             let _h: label::Label = l.set_text(s.view());
                             return insp::Outcome::Ok;
                         }
-                        option::Option[label::Label]::None => { return insp::Outcome::NotFound; }
+                        option::Option::None => { return insp::Outcome::NotFound; }
                     }
                 }
                 if kind == props::K_TEXT_FIELD {
@@ -814,7 +1564,7 @@ fn apply_control(n: *core::Node, prop: str, v: insp::Value, window: usize) -> in
                             let _h: text_field::TextField = t.set_text(s.view());
                             return insp::Outcome::Ok;
                         }
-                        option::Option[text_field::TextField]::None => { return insp::Outcome::NotFound; }
+                        option::Option::None => { return insp::Outcome::NotFound; }
                     }
                 }
                 if kind == props::K_TEXT_AREA {
@@ -823,7 +1573,7 @@ fn apply_control(n: *core::Node, prop: str, v: insp::Value, window: usize) -> in
                             let _h: text_area::TextArea = t.set_text(s.view());
                             return insp::Outcome::Ok;
                         }
-                        option::Option[text_area::TextArea]::None => { return insp::Outcome::NotFound; }
+                        option::Option::None => { return insp::Outcome::NotFound; }
                     }
                 }
                 return insp::Outcome::UnknownProperty;
@@ -841,7 +1591,7 @@ fn apply_control(n: *core::Node, prop: str, v: insp::Value, window: usize) -> in
                         let _h: button::Button = b.set_title(s.view());
                         return insp::Outcome::Ok;
                     }
-                    option::Option[button::Button]::None => { return insp::Outcome::NotFound; }
+                    option::Option::None => { return insp::Outcome::NotFound; }
                 }
             }
             _ => insp::Outcome::TypeMismatch,
@@ -857,7 +1607,7 @@ fn apply_control(n: *core::Node, prop: str, v: insp::Value, window: usize) -> in
                         let _h: checkbox::Checkbox = c.set_on(b);
                         return insp::Outcome::Ok;
                     }
-                    option::Option[checkbox::Checkbox]::None => { return insp::Outcome::NotFound; }
+                    option::Option::None => { return insp::Outcome::NotFound; }
                 }
             }
             if kind == props::K_TOGGLE {
@@ -866,46 +1616,94 @@ fn apply_control(n: *core::Node, prop: str, v: insp::Value, window: usize) -> in
                         let _h: toggle::Toggle = t.set_on(b);
                         return insp::Outcome::Ok;
                     }
-                    option::Option[toggle::Toggle]::None => { return insp::Outcome::NotFound; }
+                    option::Option::None => { return insp::Outcome::NotFound; }
                 }
             }
             return insp::Outcome::UnknownProperty;
         }
-        option::Option[bool]::None => insp::Outcome::TypeMismatch,
+        option::Option::None => insp::Outcome::TypeMismatch,
     };
 }
+// Set, and then PUT THE OUTLINE BACK.
+//
+// A wrapper rather than a line before each `return`: this body has several exits
+// and the one that matters is a multi-line tail, so "every return" is a rule
+// that holds until someone adds a return. Asking once, here, cannot be missed.
+// The platform coalesces, so a caller writing several properties re-places once.
+fn set(h: insp::Handle, prop: str, take v: insp::Value) -> insp::Outcome {
+    let r: insp::Outcome = set_inner(h, prop, v);
+    return r;
+}
+
 
 // The one write door. Order matters: liveness before existence before
 // writability before type, so the answer names the FIRST thing that was wrong
 // rather than the last thing checked.
-fn set(h: insp::Handle, prop: str, take v: insp::Value) -> insp::Outcome {
+fn set_inner(h: insp::Handle, prop: str, take v: insp::Value) -> insp::Outcome {
     if h.is_none() { return insp::Outcome::NotFound; }
     if !h.is_live() { return insp::Outcome::Stale; }
     if is_computed_prop(prop) { return insp::Outcome::ReadOnly; }
-    let n: *core::Node = h.node;
+    let n: *core::Node = node_of(h);
+
+    // THE NAME IS EXCHANGED FOR OURS HERE, not in the caller.
+    //
+    // `Override.prop` is a `str` — a borrowed {ptr,len} — and is sound only
+    // because every name reaching the ledger is a literal that lives as long as
+    // the program. A caller-supplied name does not: the panel reads one out of
+    // a widget key into a request-scoped `Text`, and recording a view of THAT
+    // leaves the ledger holding freed bytes.
+    //
+    // The socket adapter already exchanged its names and the panel did not, so
+    // the hazard was real and silent — `reset` compared a dangling name,
+    // matched nothing and answered `Ok`. It became visible the moment the diff
+    // started printing those names: the property came out as seven bytes of
+    // whatever had reused the allocation. Doing it in the one function every
+    // writer goes through is what makes the invariant hold for callers that
+    // have not read the comment.
+    let mine: str = match canonical_prop(prop) {
+        option::Option[str]::Some(name) => name,
+        option::Option::None => { return insp::Outcome::UnknownProperty; }
+    };
 
     // Record what the application declared, before the first inspector write
     // to this pair replaces it.
-    match get(h, prop) {
-        option::Option[insp::Value]::Some(orig) => { ledger_record(n, prop, orig); }
-        option::Option[insp::Value]::None => { }
+    match get(h, mine) {
+        option::Option[insp::Value]::Some(orig) => { ledger_record(n, h.window, mine, orig); }
+        option::Option::None => { }
     }
 
-    let r: insp::Outcome = apply_uniform(n, prop, v);
+    let r: insp::Outcome = apply_uniform(n, mine, v);
     return match r {
-        insp::Outcome::UnknownProperty => apply_control(n, prop, v, h.window),
+        insp::Outcome::UnknownProperty => apply_control(n, mine, v, h.window),
         _ => r,
     };
 }
+// Reset, and then PUT THE OUTLINE BACK.
+//
+// A wrapper rather than a line before each `return`: this body has several exits
+// and the one that matters is a multi-line tail, so "every return" is a rule
+// that holds until someone adds a return. Asking once, here, cannot be missed.
+// The platform coalesces, so a caller writing several properties re-places once.
+fn reset(h: insp::Handle, prop: str) -> insp::Outcome {
+    let r: insp::Outcome = reset_inner(h, prop);
+    return r;
+}
+
 
 // Put back what the application declared and forget the record. Resetting a
 // property that was never overridden is `Ok` and changes nothing: it is
 // already at the declared value, which is what was asked for.
-fn reset(h: insp::Handle, prop: str) -> insp::Outcome {
+fn reset_inner(h: insp::Handle, prop: str) -> insp::Outcome {
     if h.is_none() { return insp::Outcome::NotFound; }
     if !h.is_live() { return insp::Outcome::Stale; }
     if is_computed_prop(prop) { return insp::Outcome::ReadOnly; }
-    let n: *core::Node = h.node;
+    let n: *core::Node = node_of(h);
+    // Ours, for the same reason `set` takes ours: the ledger is keyed by the
+    // name and a comparison against a caller's temporary matches nothing.
+    let prop: str = match canonical_prop(prop) {
+        option::Option[str]::Some(name) => name,
+        option::Option::None => { return insp::Outcome::UnknownProperty; }
+    };
     return match ledger_take(n, prop) {
         option::Option[insp::Value]::Some(orig) => {
             let r: insp::Outcome = apply_uniform(n, prop, orig);
@@ -914,7 +1712,7 @@ fn reset(h: insp::Handle, prop: str) -> insp::Outcome {
                 _ => r,
             }
         }
-        option::Option[insp::Value]::None => insp::Outcome::Ok,
+        option::Option::None => insp::Outcome::Ok,
     };
 }
 
@@ -933,32 +1731,30 @@ static NATIVE_FN: fn(*core::Node) -> vec::Vec[insp::Prop] =
 
 fn set_native_fn(f: fn(*core::Node) -> vec::Vec[insp::Prop]) { NATIVE_FN = f; return; }
 
-// The order is the order the UI draws, so it is grouped the way a developer
-// reads: what it is, then how big, then how it looks.
+// ONE LIST, and it is not this one.
+//
+// `vocabulary::table` is the list — name, type, unit, the kinds that carry it,
+// and a line saying what it does — and this reads the names off it. Before,
+// the names were written here and the types were written in a tool description
+// that promised them and never returned any, and the two disagreed about five
+// properties. A second hand-written list cannot drift from the first if there
+// is no second list.
+//
+// The order is the table's order, which is the order the UI draws: what it is,
+// then how big, then how it looks.
 fn declared_names() -> vec::Vec[str] {
     var v: vec::Vec[str] = vec::new::[str]();
-    let _a: status::Status = v.append("text");
-    let _b: status::Status = v.append("title");
-    let _c: status::Status = v.append("on");
-    let _d: status::Status = v.append("visible");
-    let _e: status::Status = v.append("enabled");
-    let _f: status::Status = v.append("input_transparent");
-    let _g: status::Status = v.append("width");
-    let _h: status::Status = v.append("height");
-    let _i: status::Status = v.append("grow");
-    let _j: status::Status = v.append("shrink");
-    let _k: status::Status = v.append("padding");
-    let _l: status::Status = v.append("margin");
-    let _m: status::Status = v.append("gap");
-    let _n: status::Status = v.append("opacity");
-    let _o: status::Status = v.append("background_color");
-    let _p: status::Status = v.append("corner_radius");
-    let _q: status::Status = v.append("rotation");
-    let _r: status::Status = v.append("scale");
-    let _s: status::Status = v.append("translation_x");
-    let _t: status::Status = v.append("translation_y");
-    let _u: status::Status = v.append("tooltip");
-    let _w: status::Status = v.append("accessibility_label");
+    let t: vec::Vec[insp::Descriptor] = insp::table();
+    var i: usize = 0;
+    while i < t.count() {
+        match t.at_ptr(i) {
+            option::Option[*insp::Descriptor]::Some(p) => {
+                let _s: status::Status = v.append({ (*p).name });
+            }
+            option::Option::None => { }
+        }
+        i = i +% 1;
+    }
     return v;
 }
 
@@ -969,7 +1765,7 @@ fn declared_names() -> vec::Vec[str] {
 fn declared_props(h: insp::Handle, n: *core::Node) -> vec::Vec[insp::Prop] {
     var out: vec::Vec[insp::Prop] = vec::new::[insp::Prop]();
     let names: vec::Vec[str] = declared_names();
-    var i: usize = 0 as usize;
+    var i: usize = 0;
     let c: usize = names.count();
     while i < c {
         match names.at(i) {
@@ -979,12 +1775,12 @@ fn declared_props(h: insp::Handle, n: *core::Node) -> vec::Vec[insp::Prop] {
                         let _s: status::Status =
                             out.append(insp::Prop::editable(nm, v, is_overridden(n, nm)));
                     }
-                    option::Option[insp::Value]::None => { }
+                    option::Option::None => { }
                 }
             }
-            option::Option[str]::None => { }
+            option::Option::None => { }
         }
-        i = i +% (1 as usize);
+        i = i +% 1;
     }
     return out;
 }
@@ -995,7 +1791,7 @@ fn declared_props(h: insp::Handle, n: *core::Node) -> vec::Vec[insp::Prop] {
 // panels and not one list.
 fn computed_props(n: *core::Node) -> vec::Vec[insp::Prop] {
     var out: vec::Vec[insp::Prop] = vec::new::[insp::Prop]();
-    let f: insp::Frame = core::frame_of(n);
+    let f: insp::Frame = to_frame(core::frame_of(n));
     let _a: status::Status = out.append(insp::Prop::read_only("frame_x", insp::Value::Num(f.left)));
     let _b: status::Status = out.append(insp::Prop::read_only("frame_y", insp::Value::Num(f.top)));
     let _c: status::Status = out.append(insp::Prop::read_only("frame_width", insp::Value::Num(f.width)));
@@ -1003,7 +1799,7 @@ fn computed_props(n: *core::Node) -> vec::Vec[insp::Prop] {
     let _e: status::Status = out.append(insp::Prop::read_only("attached", insp::Value::Bool(core::is_attached(n))));
     let _f: status::Status = out.append(insp::Prop::read_only("focused", insp::Value::Bool(core::is_focused(n))));
     let _g: status::Status = out.append(insp::Prop::read_only("kind",
-        insp::Value::Str(text::from_str(insp::kind_name(core::kind_of(n))))));
+        insp::Value::Str(text::from_str(kind_name(core::kind_of(n))))));
     let _h: status::Status = out.append(insp::Prop::read_only("has_view",
         insp::Value::Bool(core::view_of(n) != (0 as *u8))));
     return out;
@@ -1011,7 +1807,7 @@ fn computed_props(n: *core::Node) -> vec::Vec[insp::Prop] {
 
 fn native_props(n: *core::Node) -> vec::Vec[insp::Prop] {
     let nf: fn(*core::Node) -> vec::Vec[insp::Prop] = NATIVE_FN;
-    if nf == (0 as fn(*core::Node) -> vec::Vec[insp::Prop]) {
+    if nf.is_null() {
         return vec::new::[insp::Prop]();
     }
     return nf(n);
@@ -1019,9 +1815,9 @@ fn native_props(n: *core::Node) -> vec::Vec[insp::Prop] {
 
 fn inspect(h: insp::Handle) -> option::Option[insp::Detail] {
     if !h.is_live() { return option::Option[insp::Detail]::None; }
-    let n: *core::Node = h.node;
+    let n: *core::Node = node_of(h);
     return option::Option[insp::Detail]::Some(insp::Detail {
-        node: row_of(n, option::Option[usize]::None, 0 as usize, h.window, false),
+        node: row_of(n, option::Option[usize]::None, 0, h.window, false),
         declared: declared_props(h, n),
         computed: computed_props(n),
         native: native_props(n),
@@ -1034,14 +1830,13 @@ fn append_num(t: *text::Text, x: f64) {
     // Whole numbers read as whole numbers: `12` and not `12.000000`, because
     // the snippet is meant to be pasted into source a human will read.
     let r: f64 = x - (((x as i64) as f64));
-    if r == 0.0f64 {
+    if r == 0.0 {
         let _a: status::Status = { (*t).append({ (x as i64) }.to_text().view()) };
         let _b: status::Status = { (*t).append(".0f64") };
         return;
     }
     let _c: status::Status = { (*t).append(x.to_text().view()) };
     let _d: status::Status = { (*t).append("f64") };
-    return;
 }
 
 // The experiment, as source. This is v1's whole persistence story and it is
@@ -1054,7 +1849,7 @@ fn append_num(t: *text::Text, x: f64) {
 fn snippet_for(h: insp::Handle, prop: str) -> text::Text {
     var out: text::Text = text::new();
     if !h.is_live() { return out; }
-    let n: *core::Node = h.node;
+    let n: *core::Node = node_of(h);
     let k: str = { (*n).key() };
     if k == "" { return out; }
 
@@ -1085,9 +1880,63 @@ fn snippet_for(h: insp::Handle, prop: str) -> text::Text {
             }
             let _m: status::Status = out.append(");");
         }
-        option::Option[insp::Value]::None => { }
+        option::Option::None => { }
     }
     return out;
+}
+
+// Every property that differs from what the application declared.
+fn changes() -> vec::Vec[insp::Change] {
+    var out: vec::Vec[insp::Change] = vec::new::[insp::Change]();
+    var i: usize = 0;
+    while i < OVERRIDES.count() {
+        match OVERRIDES.at_ptr(i) {
+            option::Option[*Override]::Some(p) => {
+                let n: *core::Node = { (*p).node };
+                let h: insp::Handle = handle_of(n, { (*p).window });
+                // A node the tree no longer holds is not a difference anyone
+                // can act on — the row would name a key that is gone.
+                if h.is_live() {
+                    let k: str = { (*n).key() };
+                    if k != "" {
+                        let nowv: insp::Value = match get(h, { (*p).prop }) {
+                            option::Option[insp::Value]::Some(v) => v,
+                            option::Option::None => insp::Value::Nothing,
+                        };
+                        var label: text::Text =
+                            text::from_str(kind_name(core::kind_of(n)));
+                        let _h2: status::Status = label.append("#");
+                        let _h3: status::Status = label.append(k);
+                        let _s: status::Status = out.append(insp::Change {
+                            node: label, prop: { (*p).prop }, now: nowv,
+                        });
+                    }
+                }
+            }
+            option::Option::None => { }
+        }
+        i = i +% 1;
+    }
+    return out;
+}
+
+// ---- the clipboard -------------------------------------------------------------
+//
+// Installed by a platform module, like the highlight overlay and the native
+// rows. Zero keeps the portable answer, which is that this build cannot reach a
+// clipboard and says so rather than reporting a copy that did not happen — the
+// panel's status line is the only feedback a Copy button has, and one that
+// always says "copied" is worse than no button.
+static CLIPBOARD_FN: fn(str) -> bool = #zero::[fn(str) -> bool]();
+
+fn set_clipboard_fn(f: fn(str) -> bool) { CLIPBOARD_FN = f; return; }
+
+fn can_copy() -> bool { return CLIPBOARD_FN.is_not_null(); }
+
+fn copy_text(s: str) -> bool {
+    if CLIPBOARD_FN.is_null() { return false; }
+    let f: fn(str) -> bool = CLIPBOARD_FN;
+    return f(s);
 }
 
 // ---- structure ---------------------------------------------------------------
@@ -1160,7 +2009,7 @@ fn make(sp: insp::Spec) -> option::Option[core::Node] {
         return option::Option[core::Node]::Some(ui::column(b, key: k));
     }
     if m == "spacer" {
-        return option::Option[core::Node]::Some(ui::spacer(key: k).grow(1.0f64));
+        return option::Option[core::Node]::Some(ui::spacer(key: k).grow(1.0));
     }
     if m == "box" {
         return option::Option[core::Node]::Some(
@@ -1198,9 +2047,9 @@ fn maker_names() -> vec::Vec[str] {
 // its children through recycling or a pane registry, which a raw insert fights
 // rather than joins.
 fn can_host_children(n: *core::Node) -> bool {
-    if n == (0 as *core::Node) { return false; }
+    if n.is_null() { return false; }
     let kind: u32 = core::kind_of(n);
-    if kind == (0 as u32) { return true; }
+    if kind == 0 { return true; }
     if kind == props::K_BOX { return true; }
     if kind == props::K_SCROLL { return true; }
     return false;
@@ -1212,19 +2061,19 @@ fn can_host_children(n: *core::Node) -> bool {
 // panel's own subtree from being edited by the panel, and refusing a move that
 // would put a node inside itself.
 fn within(root: *core::Node, target: *core::Node) -> bool {
-    if root == (0 as *core::Node) { return false; }
-    if target == (0 as *core::Node) { return false; }
+    if root.is_null() { return false; }
+    if target.is_null() { return false; }
     if root == target { return true; }
-    var i: usize = 0 as usize;
+    var i: usize = 0;
     let c: usize = core::child_count_of(root);
     while i < c {
         match core::child_of(root, i) {
             option::Option[*core::Node]::Some(ch) => {
                 if within(ch, target) { return true; }
             }
-            option::Option[*core::Node]::None => { }
+            option::Option::None => { }
         }
-        i = i +% (1 as usize);
+        i = i +% 1;
     }
     return false;
 }
@@ -1276,7 +2125,6 @@ fn empty_trash() {
     TRASH_PATH.remove_all();
     TRASH_PATH_LEN.remove_all();
     TRASH_AT.remove_all();
-    return;
 }
 
 // The child-index chain from `root` down to `target`, deepest step last,
@@ -1284,10 +2132,10 @@ fn empty_trash() {
 // not in `root`'s subtree. A `root == target` answer is an empty chain, which
 // is the right one: the window root's own path is no steps.
 fn path_to(root: *core::Node, target: *core::Node, ref out: vec::Vec[usize]) -> bool {
-    if root == (0 as *core::Node) { return false; }
-    if target == (0 as *core::Node) { return false; }
+    if root.is_null() { return false; }
+    if target.is_null() { return false; }
     if root == target { return true; }
-    var i: usize = 0 as usize;
+    var i: usize = 0;
     let c: usize = core::child_count_of(root);
     while i < c {
         match core::child_of(root, i) {
@@ -1296,9 +2144,9 @@ fn path_to(root: *core::Node, target: *core::Node, ref out: vec::Vec[usize]) -> 
                 if path_to(ch, target, out) { return true; }
                 let _r: option::Option[usize] = out.remove_last();
             }
-            option::Option[*core::Node]::None => { }
+            option::Option::None => { }
         }
-        i = i +% (1 as usize);
+        i = i +% 1;
     }
     return false;
 }
@@ -1307,7 +2155,7 @@ fn path_to(root: *core::Node, target: *core::Node, ref out: vec::Vec[usize]) -> 
 // is a removal whose parent is already gone — the caller keeps the subtree out
 // of the trash rather than storing a path that can never resolve.
 fn trash_push_parent(p: *core::Node) -> bool {
-    var w: usize = 0 as usize;
+    var w: usize = 0;
     let n: usize = app::window_count();
     while w < n {
         let before: usize = TRASH_PATH.count();
@@ -1316,7 +2164,7 @@ fn trash_push_parent(p: *core::Node) -> bool {
             let _l: status::Status = TRASH_PATH_LEN.append(TRASH_PATH.count() -% before);
             return true;
         }
-        w = w +% (1 as usize);
+        w = w +% 1;
     }
     return false;
 }
@@ -1326,7 +2174,7 @@ fn trash_push_parent(p: *core::Node) -> bool {
 fn or_zero(o: option::Option[usize]) -> usize {
     return match o {
         option::Option[usize]::Some(x) => x,
-        option::Option[usize]::None => 0 as usize,
+        option::Option::None => 0,
     };
 }
 
@@ -1335,22 +2183,22 @@ fn or_zero(o: option::Option[usize]) -> usize {
 // not there any more, and `undo_remove` refuses rather than guessing.
 fn trash_top_parent() -> *core::Node {
     let c: usize = TRASH_PATH_LEN.count();
-    if c == (0 as usize) { return 0 as *core::Node; }
-    let last: usize = c -% (1 as usize);
+    if c == 0 { return 0 as *core::Node; }
+    let last: usize = c -% 1;
     let len: usize = or_zero(TRASH_PATH_LEN.at(last));
     let w: usize = or_zero(TRASH_WINDOW.at(last));
     if w >= app::window_count() { return 0 as *core::Node; }
     if len > TRASH_PATH.count() { return 0 as *core::Node; }
     var n: *core::Node = app::window_root(w);
     let base: usize = TRASH_PATH.count() -% len;
-    var i: usize = 0 as usize;
+    var i: usize = 0;
     while i < len {
-        if n == (0 as *core::Node) { return 0 as *core::Node; }
+        if n.is_null() { return 0 as *core::Node; }
         match core::child_of(n, or_zero(TRASH_PATH.at(base +% i))) {
             option::Option[*core::Node]::Some(ch) => { n = ch; }
-            option::Option[*core::Node]::None => { return 0 as *core::Node; }
+            option::Option::None => { return 0 as *core::Node; }
         }
-        i = i +% (1 as usize);
+        i = i +% 1;
     }
     return n;
 }
@@ -1358,18 +2206,17 @@ fn trash_top_parent() -> *core::Node {
 // Drop the top entry's path. Paired with every `TRASH.remove_last()`.
 fn trash_pop_parent() {
     let c: usize = TRASH_PATH_LEN.count();
-    if c == (0 as usize) { return; }
+    if c == 0 { return; }
     let len: usize = match TRASH_PATH_LEN.remove_last() {
         option::Option[usize]::Some(x) => x,
-        option::Option[usize]::None => 0 as usize,
+        option::Option::None => 0,
     };
     let _w: option::Option[usize] = TRASH_WINDOW.remove_last();
-    var i: usize = 0 as usize;
+    var i: usize = 0;
     while i < len {
         let _s: option::Option[usize] = TRASH_PATH.remove_last();
-        i = i +% (1 as usize);
+        i = i +% 1;
     }
-    return;
 }
 
 // ---- the journal -------------------------------------------------------------
@@ -1390,25 +2237,23 @@ fn journal_count() -> usize { return JOURNAL.count(); }
 fn journal_at(i: usize) -> option::Option[text::Text] {
     return match JOURNAL.at_ptr(i) {
         option::Option[*text::Text]::Some(p) => option::Option[text::Text]::Some({ (*p) }.clone()),
-        option::Option[*text::Text]::None => option::Option[text::Text]::None,
+        option::Option::None => option::Option[text::Text]::None,
     };
 }
 
 fn forget_journal() {
     JOURNAL.remove_all();
-    return;
 }
 
 fn journal(take line: text::Text) {
     let _s: status::Status = JOURNAL.append(line);
-    return;
 }
 
 // How a node is named in a snippet. A key, or nothing at all — an unkeyed node
 // has no expression that addresses it, and inventing one would produce a line
 // that compiles and edits the wrong node.
 fn addressable(n: *core::Node) -> bool {
-    if n == (0 as *core::Node) { return false; }
+    if n.is_null() { return false; }
     return { (*n).key() } != "";
 }
 
@@ -1416,7 +2261,6 @@ fn append_target(t: *text::Text, n: *core::Node) {
     let _a: status::Status = { (*t).append("mount::node(\"") };
     let _b: status::Status = { (*t).append({ (*n).key() }) };
     let _c: status::Status = { (*t).append("\")") };
-    return;
 }
 
 // `ui::label("hi", key: "greeting")` — the maker call, as source.
@@ -1445,7 +2289,6 @@ fn append_maker(t: *text::Text, sp: insp::Spec) {
         let _l: status::Status = { (*t).append("\"") };
     }
     let _m: status::Status = { (*t).append(")") };
-    return;
 }
 
 fn journal_insert(parent: *core::Node, at: usize, count: usize, sp: insp::Spec) {
@@ -1480,14 +2323,13 @@ fn journal_insert(parent: *core::Node, at: usize, count: usize, sp: insp::Spec) 
     let _j: status::Status = line.append({ (at as i64) }.to_text().view());
     let _k: status::Status = line.append(");");
     journal(line);
-    return;
 }
 
 fn journal_remove(n: *core::Node) {
     var line: text::Text = text::new();
     if !addressable(n) {
         let _a: status::Status = line.append("// removed an unkeyed ");
-        let _b: status::Status = line.append(insp::kind_name(core::kind_of(n)));
+        let _b: status::Status = line.append(kind_name(core::kind_of(n)));
         let _c: status::Status = line.append(" - no key, so no line that addresses it");
         journal(line);
         return;
@@ -1496,7 +2338,6 @@ fn journal_remove(n: *core::Node) {
     let _e: status::Status = line.append({ (*n).key() });
     let _f: status::Status = line.append("\");");
     journal(line);
-    return;
 }
 
 // ---- the verbs ---------------------------------------------------------------
@@ -1506,15 +2347,26 @@ fn journal_remove(n: *core::Node) {
 fn structural_guard(h: insp::Handle) -> insp::Outcome {
     if h.is_none() { return insp::Outcome::NotFound; }
     if !h.is_live() { return insp::Outcome::Stale; }
-    if is_panels_own(h.node) { return insp::Outcome::Protected; }
+    if is_panels_own(node_of(h)) { return insp::Outcome::Protected; }
     return insp::Outcome::Ok;
 }
+// Insert, and then PUT THE OUTLINE BACK.
+//
+// A wrapper rather than a line before each `return`: this body has several exits
+// and the one that matters is a multi-line tail, so "every return" is a rule
+// that holds until someone adds a return. Asking once, here, cannot be missed.
+// The platform coalesces, so a caller writing several properties re-places once.
+fn insert(parent: insp::Handle, at: usize, take sp: insp::Spec) -> insp::Outcome {
+    let r: insp::Outcome = insert_inner(parent, at, sp);
+    return r;
+}
+
 
 // Build `sp` and put it in `parent` at `at`, clamped to the end.
-fn insert(parent: insp::Handle, at: usize, take sp: insp::Spec) -> insp::Outcome {
+fn insert_inner(parent: insp::Handle, at: usize, take sp: insp::Spec) -> insp::Outcome {
     let g: insp::Outcome = structural_guard(parent);
     if !g.is_ok() { return g; }
-    let p: *core::Node = parent.node;
+    let p: *core::Node = node_of(parent);
     if !can_host_children(p) { return insp::Outcome::NotAContainer; }
 
     // Made BEFORE the journal line, so a maker name nobody implements is
@@ -1530,24 +2382,35 @@ fn insert(parent: insp::Handle, at: usize, take sp: insp::Spec) -> insp::Outcome
                 insp::Outcome::NotAContainer
             }
         }
-        option::Option[core::Node]::None => insp::Outcome::UnknownKind,
+        option::Option::None => insp::Outcome::UnknownKind,
     };
 }
+// Remove, and then PUT THE OUTLINE BACK.
+//
+// A wrapper rather than a line before each `return`: this body has several exits
+// and the one that matters is a multi-line tail, so "every return" is a rule
+// that holds until someone adds a return. Asking once, here, cannot be missed.
+// The platform coalesces, so a caller writing several properties re-places once.
+fn remove(h: insp::Handle) -> insp::Outcome {
+    let r: insp::Outcome = remove_inner(h);
+    return r;
+}
+
 
 // Take the node out and KEEP it, so `undo` can put it back.
 //
 // `mount::remove_node` is the other spelling and it drops the subtree; this one
 // wants the subtree, which is what `remove_child` hands back.
-fn remove(h: insp::Handle) -> insp::Outcome {
+fn remove_inner(h: insp::Handle) -> insp::Outcome {
     let g: insp::Outcome = structural_guard(h);
     if !g.is_ok() { return g; }
-    let n: *core::Node = h.node;
+    let n: *core::Node = node_of(h);
     return match mount::parent_of(n) {
         // No parent means a window root — closed with `app::close_window`, not
         // deleted out from under itself.
-        option::Option[*core::Node]::None => insp::Outcome::Protected,
+        option::Option::None => insp::Outcome::Protected,
         option::Option[*core::Node]::Some(p) => match { (*p).child_index(n) } {
-            option::Option[usize]::None => insp::Outcome::NotFound,
+            option::Option::None => insp::Outcome::NotFound,
             option::Option[usize]::Some(at) => {
                 // Journalled while the node is still whole: after the removal
                 // its key is not readable from a pointer this scope still has.
@@ -1565,7 +2428,7 @@ fn remove(h: insp::Handle) -> insp::Outcome {
                             let _c: status::Status = TRASH_AT.append(at);
                             insp::Outcome::Ok
                         }
-                        option::Option[core::Node]::None => {
+                        option::Option::None => {
                             trash_pop_parent();
                             insp::Outcome::NotFound
                         }
@@ -1575,6 +2438,17 @@ fn remove(h: insp::Handle) -> insp::Outcome {
         },
     };
 }
+// Reparent, and then PUT THE OUTLINE BACK.
+//
+// A wrapper rather than a line before each `return`: this body has several exits
+// and the one that matters is a multi-line tail, so "every return" is a rule
+// that holds until someone adds a return. Asking once, here, cannot be missed.
+// The platform coalesces, so a caller writing several properties re-places once.
+fn reparent(h: insp::Handle, parent: insp::Handle, at: usize) -> insp::Outcome {
+    let r: insp::Outcome = reparent_inner(h, parent, at);
+    return r;
+}
+
 
 // Move a live node under a new parent.
 //
@@ -1582,22 +2456,22 @@ fn remove(h: insp::Handle) -> insp::Outcome {
 // subtree is owned by nobody a caller could name — `remove_child` hands back a
 // value, and a value that is not immediately moved somewhere is a value that is
 // dropped.
-fn reparent(h: insp::Handle, parent: insp::Handle, at: usize) -> insp::Outcome {
+fn reparent_inner(h: insp::Handle, parent: insp::Handle, at: usize) -> insp::Outcome {
     let g: insp::Outcome = structural_guard(h);
     if !g.is_ok() { return g; }
     let g2: insp::Outcome = structural_guard(parent);
     if !g2.is_ok() { return g2; }
-    let n: *core::Node = h.node;
-    let p: *core::Node = parent.node;
+    let n: *core::Node = node_of(h);
+    let p: *core::Node = node_of(parent);
     if !can_host_children(p) { return insp::Outcome::NotAContainer; }
     // Into itself, or into anything under itself. Checked before the removal:
     // afterwards the answer would be no and the tree would already be cut.
     if within(n, p) { return insp::Outcome::Cycle; }
 
     return match mount::parent_of(n) {
-        option::Option[*core::Node]::None => insp::Outcome::Protected,
+        option::Option::None => insp::Outcome::Protected,
         option::Option[*core::Node]::Some(old) => match { (*old).child_index(n) } {
-            option::Option[usize]::None => insp::Outcome::NotFound,
+            option::Option::None => insp::Outcome::NotFound,
             option::Option[usize]::Some(from) => {
                 var line: text::Text = text::new();
                 if addressable(n) {
@@ -1619,20 +2493,31 @@ fn reparent(h: insp::Handle, parent: insp::Handle, at: usize) -> insp::Outcome {
                         // nothing that still points at it.
                         else { insp::Outcome::NotAContainer }
                     }
-                    option::Option[core::Node]::None => insp::Outcome::NotFound,
+                    option::Option::None => insp::Outcome::NotFound,
                 }
             }
         },
     };
 }
+// Undo remove, and then PUT THE OUTLINE BACK.
+//
+// A wrapper rather than a line before each `return`: this body has several exits
+// and the one that matters is a multi-line tail, so "every return" is a rule
+// that holds until someone adds a return. Asking once, here, cannot be missed.
+// The platform coalesces, so a caller writing several properties re-places once.
+fn undo_remove() -> insp::Outcome {
+    let r: insp::Outcome = undo_remove_inner();
+    return r;
+}
+
 
 // Put the most recent removal back where it came from.
-fn undo_remove() -> insp::Outcome {
+fn undo_remove_inner() -> insp::Outcome {
     let c: usize = TRASH.count();
-    if c == (0 as usize) { return insp::Outcome::NothingToUndo; }
-    let at: usize = match TRASH_AT.at(c -% (1 as usize)) {
+    if c == 0 { return insp::Outcome::NothingToUndo; }
+    let at: usize = match TRASH_AT.at(c -% 1) {
         option::Option[usize]::Some(x) => x,
-        option::Option[usize]::None => 0 as usize,
+        option::Option::None => 0,
     };
     // Resolved now, not stored then: the parent may have been removed and put
     // back by an earlier undo, at a different address. Null means the path no
@@ -1644,7 +2529,7 @@ fn undo_remove() -> insp::Outcome {
     // version needed a `still_mounted` sweep here precisely because its parent
     // came from nowhere the tree could vouch for.
     let parent: *core::Node = trash_top_parent();
-    if parent == (0 as *core::Node) { return insp::Outcome::NothingToUndo; }
+    if parent.is_null() { return insp::Outcome::NothingToUndo; }
 
     trash_pop_parent();
     let _a: option::Option[usize] = TRASH_AT.remove_last();
@@ -1653,7 +2538,7 @@ fn undo_remove() -> insp::Outcome {
             if mount::insert_child(parent, n, at) { insp::Outcome::Ok }
             else { insp::Outcome::NotAContainer }
         }
-        option::Option[core::Node]::None => insp::Outcome::NothingToUndo,
+        option::Option::None => insp::Outcome::NothingToUndo,
     };
 }
 
@@ -1683,18 +2568,30 @@ static CLEAR_FN: fn(*u8) = #zero::[fn(*u8)]();
 fn install_platform(highlight: fn(*u8, insp::Handle), clear_highlight: fn(*u8)) {
     HIGHLIGHT_FN = highlight;
     CLEAR_FN = clear_highlight;
-    return;
 }
+
+// ---- putting the outline back --------------------------------------------------
+//
+// The overlay is PLACED, not attached, so a write that moves or resizes the
+// selected node leaves it behind. The panel re-places after its own writes and
+// that is enough in-process — but not over a socket, where the panel schedules
+// on ITS loop, the RPC returns, and THIS process lays out afterwards. The
+// re-place then reads the frame from before the change and the outline trails
+// by one edit.
+//
+// So every write that can move a frame asks here, and the platform half
+// coalesces it onto this process's own next turn. Zero is the headless answer:
+// no overlay to move.
+
+
 
 fn bk_highlight(s: *u8, h: insp::Handle) {
     let f: fn(*u8, insp::Handle) = HIGHLIGHT_FN;
-    if f != (0 as fn(*u8, insp::Handle)) { f(s, h); }
-    return;
+    if f.is_not_null() { f(s, h); }
 }
 fn bk_clear_highlight(s: *u8) {
     let f: fn(*u8) = CLEAR_FN;
-    if f != (0 as fn(*u8)) { f(s); }
-    return;
+    if f.is_not_null() { f(s); }
 }
 
 // The in-process backend: no transport, no marshaling, and none needed.
@@ -1702,7 +2599,25 @@ fn bk_clear_highlight(s: *u8) {
 // already there. A socket adapter is the thing that will have to marshal, and
 // that is exactly where the cost belongs — not on the local case that does not
 // need it.
+// The eight slots the VERBS need, adapted to the vtable's surface-first shape.
+// Each is a one-line forward: the walker's own signatures were already in
+// neutral types, which is why the verbs could move without changing them.
+fn bk_get(_s: *u8, h: insp::Handle, p: str) -> option::Option[insp::Value] { return get(h, p); }
+fn bk_parse_for(_s: *u8, h: insp::Handle, p: str, raw: str) -> option::Option[insp::Value] {
+    return parse_for(h, p, raw);
+}
+fn bk_canonical_prop(_s: *u8, n: str) -> option::Option[str] { return canonical_prop(n); }
+fn bk_changes(_s: *u8) -> vec::Vec[insp::Change] { return changes(); }
+fn bk_journal_count(_s: *u8) -> usize { return journal_count(); }
+fn bk_journal_at(_s: *u8, i: usize) -> option::Option[text::Text] { return journal_at(i); }
+fn bk_maker_names(_s: *u8) -> vec::Vec[str] { return maker_names(); }
+fn bk_kind_name(_s: *u8, k: u32) -> str { return kind_name(k); }
+
 fn local_backend() -> insp::Backend {
+    // The one place every handle-issuing path passes through, so it is where
+    // the neutral surface learns how to ask flex whether a handle is still
+    // live. Idempotent — it writes one fn-pointer.
+    install_revision();
     return insp::Backend {
         surface: 0 as *u8,
         describe: bk_describe,
@@ -1715,5 +2630,115 @@ fn local_backend() -> insp::Backend {
         remove: bk_remove,
         reparent: bk_reparent,
         undo: bk_undo,
+        get: bk_get,
+        parse_for: bk_parse_for,
+        canonical_prop: bk_canonical_prop,
+        changes: bk_changes,
+        journal_count: bk_journal_count,
+        journal_at: bk_journal_at,
+        maker_names: bk_maker_names,
+        kind_name: bk_kind_name,
     };
+}
+
+// ---- the toolkit boundary ------------------------------------------------------
+//
+// `agent_core::inspect` names no toolkit, so the four types that used to BE
+// facet's — a node address, a colour, a frame — cross here and nowhere else.
+// Each is a field-for-field copy, so these are renames rather than conversions;
+// they exist so that exactly one file knows both spellings.
+
+// flex's global removal counter, handed to the neutral surface so a `Handle`
+// can answer `is_live` without `agent_core` naming a layout engine. Installed
+// from `local_backend` — every path that produces a handle goes through it.
+fn install_revision() {
+    insp::set_revision_fn(flex::removal_count);
+}
+
+fn handle_of(n: *core::Node, window: usize) -> insp::Handle {
+    return insp::Handle::of(n as *u8, window);
+}
+
+// The address back. Only this package may do it — the pointer is `opaque` on
+// the other side precisely so that nothing else tries.
+fn node_of(h: insp::Handle) -> *core::Node {
+    return { h.node } as *core::Node;
+}
+
+fn to_color(c: vocab::Color) -> insp::Color {
+    return insp::Color {
+        token: { c.token },
+        r: { c.r }, g: { c.g }, b: { c.b }, a: { c.a },
+        r2: { c.r2 }, g2: { c.g2 }, b2: { c.b2 }, a2: { c.a2 },
+    };
+}
+
+fn from_color(c: insp::Color) -> vocab::Color {
+    return vocab::Color {
+        token: { c.token },
+        r: { c.r }, g: { c.g }, b: { c.b }, a: { c.a },
+        r2: { c.r2 }, g2: { c.g2 }, b2: { c.b2 }, a2: { c.a2 },
+    };
+}
+
+fn to_frame(f: flex::Frame) -> insp::Frame {
+    return insp::Frame {
+        left: { f.left }, top: { f.top },
+        width: { f.width }, height: { f.height },
+    };
+}
+
+// ---- kind names --------------------------------------------------------------
+
+// What a control kind is called, for a tree row that has no key to show.
+//
+// Hand-written and therefore capable of drifting from `props.cplus`, which the
+// generator owns. The test suite pins every constant against this table, so
+// drift fails the build rather than showing "node" where a date picker is.
+// When `gen_contract.py` grows an inspector dispatch layer this table is the
+// first thing it should emit.
+fn kind_name(kind: u32) -> str {
+    if kind == props::K_SPINNER { return "spinner"; }
+    if kind == props::K_BORDERED { return "bordered"; }
+    if kind == props::K_BOX { return "box"; }
+    if kind == props::K_BUTTON { return "button"; }
+    if kind == props::K_CAROUSEL { return "carousel"; }
+    if kind == props::K_CHECKBOX { return "checkbox"; }
+    if kind == props::K_COLLECTION { return "collection"; }
+    if kind == props::K_DATE_PICKER { return "date_picker"; }
+    if kind == props::K_TEXT_AREA { return "text_area"; }
+    if kind == props::K_TEXT_FIELD { return "text_field"; }
+    if kind == props::K_CANVAS { return "canvas"; }
+    if kind == props::K_HYBRID_WEB { return "hybrid_web"; }
+    if kind == props::K_IMAGE { return "image"; }
+    if kind == props::K_ICON_BUTTON { return "icon_button"; }
+    if kind == props::K_PAGE_DOTS { return "page_dots"; }
+    if kind == props::K_LABEL { return "label"; }
+    if kind == props::K_LIST { return "list"; }
+    if kind == props::K_MENU { return "menu"; }
+    if kind == props::K_CONTEXT_MENU { return "context_menu"; }
+    if kind == props::K_CONTEXT_MENU_ITEM { return "context_menu_item"; }
+    if kind == props::K_MENU_ITEM { return "menu_item"; }
+    if kind == props::K_POPUP { return "popup"; }
+    if kind == props::K_PROGRESS { return "progress"; }
+    if kind == props::K_RADIO { return "radio"; }
+    if kind == props::K_REFRESHABLE { return "refreshable"; }
+    if kind == props::K_SCROLL { return "scroll"; }
+    if kind == props::K_SEARCH_FIELD { return "search_field"; }
+    if kind == props::K_SLIDER { return "slider"; }
+    if kind == props::K_SPAN { return "span"; }
+    if kind == props::K_STEPPER { return "stepper"; }
+    if kind == props::K_SWIPE_ITEM { return "swipe_item"; }
+    if kind == props::K_SWIPEABLE { return "swipeable"; }
+    if kind == props::K_TOGGLE { return "toggle"; }
+    if kind == props::K_TABS { return "tabs"; }
+    if kind == props::K_TABLE { return "table"; }
+    if kind == props::K_TIME_PICKER { return "time_picker"; }
+    if kind == props::K_TOOLBAR_ITEM { return "toolbar_item"; }
+    if kind == props::K_WEB { return "web"; }
+    // Kind 0 is every container facet did not generate — column, row, stack,
+    // card, spacer, and the hand-written words built on them. They carry no
+    // control props, only the common band and flex style, which is exactly
+    // what tiers 1 and 2 edit.
+    return "node";
 }

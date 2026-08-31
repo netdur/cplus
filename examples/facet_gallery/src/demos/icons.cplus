@@ -26,9 +26,8 @@ impl Icons {
             option::Option[label::Label]::Some(l) => {
                 let _l: label::Label = l.set_text("icon_button clicks: ${this.clicks}");
             }
-            option::Option[label::Label]::None => { }
+            option::Option::None => { }
         }
-        return;
     }
 }
 
@@ -39,35 +38,35 @@ impl Icons: component::Component {
         body.add(shell::caption("icon_button  ·  SF Symbol name as source"));
         var row: core::Builder = core::Builder::new();
         row.add(ui::icon_button("gearshape", key: "ico:gear",
-            bordered: false, on_clicked: this.on_icon).width(36.0f64).height(28.0f64));
+            bordered: false, on_clicked: this.on_icon).width(36.0).height(28.0));
         row.add(ui::icon_button("star", key: "ico:star",
-            bordered: false, on_clicked: this.on_icon).width(36.0f64).height(28.0f64));
+            bordered: false, on_clicked: this.on_icon).width(36.0).height(28.0));
         row.add(ui::icon_button("trash", key: "ico:trash",
-            bordered: false, on_clicked: this.on_icon).width(36.0f64).height(28.0f64));
+            bordered: false, on_clicked: this.on_icon).width(36.0).height(28.0));
         row.add(ui::icon_button("plus", key: "ico:plus",
-            bordered: true, on_clicked: this.on_icon).width(36.0f64).height(28.0f64));
-        body.add(core::row(row).gap(8.0f64));
+            bordered: true, on_clicked: this.on_icon).width(36.0).height(28.0));
+        body.add(core::row(row).gap(8.0));
         body.add(ui::label("icon_button clicks: 0", key: "ico:status",
-            font_size: 13.0f64, text_color: vocab::Color::ink(0.7f64)));
+            font_size: 13.0, text_color: vocab::Color::ink(0.7)));
 
         body.add(shell::caption("symbol  ·  Material Symbols codepoints (facet/icons)"));
         var syms: core::Builder = core::Builder::new();
-        syms.add(ui::symbol(icons::home, key: "ico:s_home", size: 24.0f64,
+        syms.add(ui::symbol(icons::home, key: "ico:s_home", size: 24.0,
             color: vocab::Color::ink()));
-        syms.add(ui::symbol(icons::search, key: "ico:s_search", size: 24.0f64,
-            color: vocab::Color::ink(0.7f64)));
-        syms.add(ui::symbol(icons::settings, key: "ico:s_set", size: 24.0f64,
+        syms.add(ui::symbol(icons::search, key: "ico:s_search", size: 24.0,
+            color: vocab::Color::ink(0.7)));
+        syms.add(ui::symbol(icons::settings, key: "ico:s_set", size: 24.0,
             color: vocab::Color::primary()));
-        syms.add(ui::symbol(icons::favorite, key: "ico:s_fav", size: 24.0f64, fill: 1.0f64,
-            color: vocab::Color::rgba(0.9f64, 0.25f64, 0.3f64, 1.0f64)));
-        syms.add(ui::symbol(icons::add, key: "ico:s_add", size: 24.0f64,
+        syms.add(ui::symbol(icons::favorite, key: "ico:s_fav", size: 24.0, fill: 1.0,
+            color: vocab::Color::rgba(0.9, 0.25, 0.3, 1.0)));
+        syms.add(ui::symbol(icons::add, key: "ico:s_add", size: 24.0,
             color: vocab::Color::ink()));
-        body.add(core::row(syms).gap(16.0f64));
+        body.add(core::row(syms).gap(16.0));
 
         return shell::panel(
             "Icons",
             "Two icon systems: AppKit SF Symbols via icon_button(source), and Material codepoints via symbol(icons::…).",
-            core::column(body).gap(12.0f64),
+            core::column(body).gap(12.0),
             howto: "ui::icon_button(\"gearshape\", key: \"k\", on_clicked: this.on_icon)\nui::symbol(icons::home, size: 24.0, color: Color::ink())",
         );
     }

@@ -94,7 +94,7 @@ fn decode_status(status_word: i32) -> i32 {
 // `struct winsize { unsigned short ws_row, ws_col, ws_xpixel, ws_ypixel; }`
 fn winsize_new(cols: u16, rows: u16) -> *u8 {
     let w: *u8 = { malloc(8 as usize) };
-    if w == (0 as *u8) { return 0 as *u8; }
+    if w.is_null() { return 0 as *u8; }
     { *((w + (0 as usize)) as *u16) = rows; }
     { *((w + (2 as usize)) as *u16) = cols; }
     { *((w + (4 as usize)) as *u16) = 0 as u16; }
@@ -152,15 +152,15 @@ fn spawn(argv: vec::Vec[text::Text], cwd: str, cols: u16, rows: u16) -> option::
     // Allocate the pty. `name` receives the slave's path, which the child
     // reopens after setsid to acquire it as its controlling terminal.
     let fds: *u8 = { malloc(8 as usize) };
-    if fds == (0 as *u8) { return option::Option[PtyChild]::None; }
+    if fds.is_null() { return option::Option[PtyChild]::None; }
     let name: *u8 = { malloc(128 as usize) };
-    if name == (0 as *u8) { free(fds); return option::Option[PtyChild]::None; }
+    if name.is_null() { free(fds); return option::Option[PtyChild]::None; }
     let ws: *u8 = winsize_new(cols, rows);
     let rc_pty: i32 = { openpty(fds as *i32, (fds + (4 as usize)) as *i32, name, 0 as *u8, ws) };
     let master: i32 = { *(fds as *i32) };
     let slave: i32 = { *((fds + (4 as usize)) as *i32) };
     free(fds);
-    if ws != (0 as *u8) { free(ws); }
+    if ws.is_not_null() { free(ws); }
     if rc_pty != (0 as i32) { free(name); return option::Option[PtyChild]::None; }
 
     // File actions: open the slave by PATH as fd 0 (post-setsid, so it becomes
@@ -168,16 +168,16 @@ fn spawn(argv: vec::Vec[text::Text], cwd: str, cols: u16, rows: u16) -> option::
     // point 1 and 2 at it. Both inherited pty fds are closed in the child.
     let fa: *u8 = { malloc(8 as usize) };
     let attr: *u8 = { malloc(8 as usize) };
-    if fa == (0 as *u8) || attr == (0 as *u8) {
+    if fa.is_null() || attr.is_null() {
         { close(master) }; { close(slave) }; free(name);
-        if fa != (0 as *u8) { free(fa); }
-        if attr != (0 as *u8) { free(attr); }
+        if fa.is_not_null() { free(fa); }
+        if attr.is_not_null() { free(attr); }
         return option::Option[PtyChild]::None;
     }
     let _fi: i32 = { posix_spawn_file_actions_init(fa) };
     let _ai: i32 = { posix_spawnattr_init(attr) };
     let _af: i32 = { posix_spawnattr_setflags(attr, spawn_setsid()) };
-    if cwd_ptr != (0 as *u8) { let _cd: i32 = { posix_spawn_file_actions_addchdir_np(fa, cwd_ptr) }; }
+    if cwd_ptr.is_not_null() { let _cd: i32 = { posix_spawn_file_actions_addchdir_np(fa, cwd_ptr) }; }
     let _c0: i32 = { posix_spawn_file_actions_addclose(fa, master) };
     let _c1: i32 = { posix_spawn_file_actions_addclose(fa, slave) };
     let _o0: i32 = { posix_spawn_file_actions_addopen(fa, 0 as i32, name, o_rdwr(), 0 as u16) };
@@ -185,7 +185,7 @@ fn spawn(argv: vec::Vec[text::Text], cwd: str, cols: u16, rows: u16) -> option::
     let _d2: i32 = { posix_spawn_file_actions_adddup2(fa, 0 as i32, 2 as i32) };
 
     let pid_buf: *u8 = { malloc(4 as usize) };
-    if pid_buf == (0 as *u8) {
+    if pid_buf.is_null() {
         { close(master) }; { close(slave) }; free(name); free(fa); free(attr);
         return option::Option[PtyChild]::None;
     }
@@ -252,7 +252,7 @@ impl PtyChild {
     fn resize(ref this, cols: u16, rows: u16) -> bool {
         if this._master < (0 as i32) { return false; }
         let w: *u8 = winsize_new(cols, rows);
-        if w == (0 as *u8) { return false; }
+        if w.is_null() { return false; }
         let rc: i32 = { ioctl(this._master, tiocswinsz(), w) };
         free(w);
         return rc == (0 as i32);
@@ -273,7 +273,7 @@ impl PtyChild {
     fn wait(ref this) -> i32 {
         if this._pid <= (0 as i32) { return -1 as i32; }
         let st: *u8 = { malloc(4 as usize) };
-        if st == (0 as *u8) { return -1 as i32; }
+        if st.is_null() { return -1 as i32; }
         { *(st as *i32) = 0 as i32; }
         var rc: i32 = 0 as i32;
         loop {
@@ -292,7 +292,6 @@ impl PtyChild {
     // destructor would hang an arbitrary caller. Call wait().
     fn drop(ref this) {
         if this._master >= (0 as i32) { let _c: i32 = { close(this._master) }; this._master = -1 as i32; }
-        return;
     }
 }
 
@@ -309,7 +308,7 @@ fn winsize_is_packed_rows_then_cols() {
     // rows FIRST. Getting the order wrong silently gives the child a terminal
     // of the wrong shape, which only shows up as mis-wrapped output.
     let w: *u8 = winsize_new(80 as u16, 24 as u16);
-    assert w != (0 as *u8);
+    assert w.is_not_null();
     assert { *((w + (0 as usize)) as *u16) } == (24 as u16);   // rows
     assert { *((w + (2 as usize)) as *u16) } == (80 as u16);   // cols
     assert { *((w + (4 as usize)) as *u16) } == (0 as u16);
@@ -340,5 +339,4 @@ fn empty_argv_is_none() {
         option::Option[PtyChild]::Some(c) => { assert false; }
         option::Option[PtyChild]::None => { assert true; }
     }
-    return;
 }

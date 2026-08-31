@@ -90,7 +90,7 @@ import "./scheduler" as scheduler;
 
 fn props_of(n: *core::Node, kind: u32) -> *u8 {
     let d: *core::Data = core::node_data(n);
-    if d == (0 as *core::Data) { return 0 as *u8; }
+    if d.is_null() { return 0 as *u8; }
     if { (*d).kind } != kind { return 0 as *u8; }
     return { (*d).props };
 }
@@ -107,7 +107,7 @@ fn create_label(n: *core::Node) -> *u8 {
 
 fn apply_label(v: *u8, n: *core::Node, dirty: u64) {
     let p: *props::LabelProps = props_of(n, props::K_LABEL) as *props::LabelProps;
-    if p == (0 as *props::LabelProps) { return; }
+    if p.is_null() { return; }
     let f: ak::TextField = ak::TextField::from_raw(v);
     // The text and the transform that displays it are one write: a transform
     // change with unchanged text still has to re-render the string.
@@ -124,7 +124,7 @@ fn apply_label(v: *u8, n: *core::Node, dirty: u64) {
     if (dirty & rich) != (0 as u64) {
         if has_spans(n) {
             let runs: *u8 = build_runs(n);
-            if runs != (0 as *u8) {
+            if runs.is_not_null() {
                 { rt::msg_void_id(v, rt::sel(#str_ptr("setAttributedStringValue:\0")), runs) };
                 { rt::release(runs) };
             }
@@ -133,7 +133,7 @@ fn apply_label(v: *u8, n: *core::Node, dirty: u64) {
             // parses it, which is the whole feature — a backend that stripped
             // the tags would be answering a different question.
             let a: *u8 = html_string({ (*p).text.view() });
-            if a != (0 as *u8) {
+            if a.is_not_null() {
                 { rt::msg_void_id(v, rt::sel(#str_ptr("setAttributedStringValue:\0")), a) };
                 { rt::release(a) };
             }
@@ -142,7 +142,7 @@ fn apply_label(v: *u8, n: *core::Node, dirty: u64) {
             // label can describe runs. Child spans win when both are present:
             // a tree is more specific than a value on the node.
             let runs: *u8 = build_value_runs(p);
-            if runs != (0 as *u8) {
+            if runs.is_not_null() {
                 { rt::msg_void_id(v, rt::sel(#str_ptr("setAttributedStringValue:\0")), runs) };
                 { rt::release(runs) };
             }
@@ -152,7 +152,7 @@ fn apply_label(v: *u8, n: *core::Node, dirty: u64) {
             // keeps the plain path — see paint::wants_rich.
             let shown: text::Text = paint::transformed({ (*p).text.view() }, { (*p).text_transform });
             let a: *u8 = paint::attributed(shown.view(), label_attributes(p));
-            if a != (0 as *u8) {
+            if a.is_not_null() {
                 { rt::msg_void_id(v, rt::sel(#str_ptr("setAttributedStringValue:\0")), a) };
                 { rt::release(a) };
             }
@@ -193,7 +193,6 @@ fn apply_label(v: *u8, n: *core::Node, dirty: u64) {
             option::Option[ak::Cell]::None => { }
         }
     }
-    return;
 }
 
 // ---- button ------------------------------------------------------------------
@@ -207,7 +206,7 @@ fn create_button(n: *core::Node) -> *u8 {
 
 fn apply_button(v: *u8, n: *core::Node, dirty: u64) {
     let p: *props::ButtonProps = props_of(n, props::K_BUTTON) as *props::ButtonProps;
-    if p == (0 as *props::ButtonProps) { return; }
+    if p.is_null() { return; }
     let b: ak::Button = ak::Button::from_raw(v);
     // The title band. `character_spacing` and `is_italic` have no plain-title
     // form, so a button that asks for either — or for a text colour, which
@@ -220,7 +219,7 @@ fn apply_button(v: *u8, n: *core::Node, dirty: u64) {
         let shown: text::Text = paint::transformed({ (*p).title.view() }, { (*p).text_transform });
         if button_wants_rich(p) {
             let a: *u8 = paint::attributed(shown.view(), button_attributes(p));
-            if a != (0 as *u8) {
+            if a.is_not_null() {
                 { rt::msg_void_id(v, rt::sel(#str_ptr("setAttributedTitle:\0")), a) };
                 { rt::release(a) };
             }
@@ -286,7 +285,6 @@ fn apply_button(v: *u8, n: *core::Node, dirty: u64) {
     if (dirty & props::C_IS_ENABLED) != (0 as u64) || dirty == paint::all_bits() {
         b.as_control().set_enabled(core::is_enabled(n));
     }
-    return;
 }
 
 fn button_wants_rich(p: *props::ButtonProps) -> bool {
@@ -325,7 +323,6 @@ fn apply_control_image(b: ak::Button, src: str) {
         option::Option[ak::Image]::Some(img) => { b.set_image(img); }
         option::Option[ak::Image]::None => { b.set_image(ak::Image::from_raw(0 as *u8)); }
     }
-    return;
 }
 
 // ---- text_field --------------------------------------------------------------
@@ -344,7 +341,7 @@ fn apply_control_image(b: ak::Button, src: str) {
 // this against what the field currently IS.
 fn text_field_wants_secure(n: *core::Node) -> bool {
     let p: *props::TextFieldProps = props_of(n, props::K_TEXT_FIELD) as *props::TextFieldProps;
-    if p == (0 as *props::TextFieldProps) { return false; }
+    if p.is_null() { return false; }
     return { (*p).is_secure };
 }
 
@@ -363,7 +360,7 @@ fn create_text_field(n: *core::Node) -> *u8 {
 
 fn apply_text_field(v: *u8, n: *core::Node, dirty: u64) {
     let p: *props::TextFieldProps = props_of(n, props::K_TEXT_FIELD) as *props::TextFieldProps;
-    if p == (0 as *props::TextFieldProps) { return; }
+    if p.is_null() { return; }
     let f: ak::TextField = ak::TextField::from_raw(v);
     let iv: *props::InputViewProps = { #addr_of((*p).input_view) };
     // The whole InputView band is one body in text_input, shared with the
@@ -391,7 +388,6 @@ fn apply_text_field(v: *u8, n: *core::Node, dirty: u64) {
     if (dirty & props::C_IS_ENABLED) != (0 as u64) || dirty == paint::all_bits() {
         f.as_control().set_enabled(core::is_enabled(n));
     }
-    return;
 }
 
 // ---- image -------------------------------------------------------------------
@@ -403,7 +399,7 @@ fn create_image(n: *core::Node) -> *u8 {
 
 fn apply_image(v: *u8, n: *core::Node, dirty: u64) {
     let p: *props::ImageProps = props_of(n, props::K_IMAGE) as *props::ImageProps;
-    if p == (0 as *props::ImageProps) { return; }
+    if p.is_null() { return; }
     let iv: ak::ImageView = ak::ImageView::from_raw(v);
     if (dirty & image::P_SOURCE) != (0 as u64) {
         let src: str = { (*p).source.view() };
@@ -439,7 +435,6 @@ fn apply_image(v: *u8, n: *core::Node, dirty: u64) {
         iv.set_animates({ (*p).is_animation_playing });
     }
     if (dirty & image::P_IS_OPAQUE) != (0 as u64) { apply_is_opaque(v, { (*p).is_opaque }); }
-    return;
 }
 
 // facet's ImageFit is the ledger's Aspect. AppKit's scaling enum is the nearest
@@ -508,13 +503,13 @@ fn create_scroll(n: *core::Node) -> *u8 {
 // `apply_scroll`, so it cannot wait for the prop pass to hand it over.
 fn axis_of_node(n: *core::Node) -> vocab::ScrollAxis {
     let p: *props::ScrollProps = props_of(n, props::K_SCROLL) as *props::ScrollProps;
-    if p == (0 as *props::ScrollProps) { return vocab::ScrollAxis::Both; }
+    if p.is_null() { return vocab::ScrollAxis::Both; }
     return { (*p).axis };
 }
 
 fn apply_scroll(v: *u8, n: *core::Node, dirty: u64) {
     let p: *props::ScrollProps = props_of(n, props::K_SCROLL) as *props::ScrollProps;
-    if p == (0 as *props::ScrollProps) { return; }
+    if p.is_null() { return; }
     let s: ak::ScrollView = ak::ScrollView::from_raw(v);
     if (dirty & (scroll::P_AXIS | scroll::P_VERTICAL_SCROLL_BARS | scroll::P_HORIZONTAL_SCROLL_BARS)) != (0 as u64) {
         let axis: vocab::ScrollAxis = { (*p).axis };
@@ -587,7 +582,6 @@ fn apply_scroll(v: *u8, n: *core::Node, dirty: u64) {
     if (dirty & (scroll::P_SCROLL_X | scroll::P_SCROLL_Y)) != (0 as u64) {
         scroll_to_offset(v, { (*p).scroll_x }, { (*p).scroll_y });
     }
-    return;
 }
 
 // Put the scroll where it was asked to be.
@@ -596,13 +590,12 @@ fn apply_scroll(v: *u8, n: *core::Node, dirty: u64) {
 // makes the scrollers agree with it — without that the content moves and the
 // bars keep pointing at the old place.
 fn scroll_to_offset(v: *u8, x: f64, y: f64) {
-    if v == (0 as *u8) { return; }
+    if v.is_null() { return; }
     let clip: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("contentView\0"))) };
-    if clip == (0 as *u8) { return; }
+    if clip.is_null() { return; }
     { rt::msg_void_point(clip, rt::sel(#str_ptr("scrollToPoint:\0")),
                          rt::Point { x: x, y: y }) };
     { rt::msg_void_id(v, rt::sel(#str_ptr("reflectScrolledClipView:\0")), clip) };
-    return;
 }
 
 // `Default` is the platform's own answer, which on macOS is the overlay
@@ -649,17 +642,15 @@ fn document_host(v: *u8) -> *u8 {
 // asks the runtime rather than a wrapper — a toggle is not a button.
 fn sync_bool_state(sender: *u8, p: *bool) {
     { (*p) = { rt::msg_i64(sender, rt::sel(#str_ptr("state\0"))) } == state_on() };
-    return;
 }
 
 fn checkbox_action(sender: *u8, ctx: *u8) {
     let n: *core::Node = ctx as *core::Node;
     let p: *props::CheckboxProps = props_of(n, props::K_CHECKBOX) as *props::CheckboxProps;
-    if p == (0 as *props::CheckboxProps) { return; }
+    if p.is_null() { return; }
     sync_bool_state(sender, #addr_of((*p).on));
     let h: fn(*u8, *u8) = { (*p).on_checked_changed };
     if h != props::no_handler { h(sender, { (*p).on_checked_changed_ctx }); }
-    return;
 }
 
 // A toggling text button syncs its state into the props BEFORE the handler
@@ -696,58 +687,52 @@ fn arm_control(c: ak::Control, armed: bool, f: fn(*u8, *u8), ctx: *u8) {
         return;
     }
     akx::clear_control_action(c);
-    return;
 }
 
 fn button_action(sender: *u8, ctx: *u8) {
     let n: *core::Node = ctx as *core::Node;
     let p: *props::ButtonProps = props_of(n, props::K_BUTTON) as *props::ButtonProps;
-    if p == (0 as *props::ButtonProps) { return; }
+    if p.is_null() { return; }
     if { (*p).toggles } { sync_bool_state(sender, #addr_of((*p).on)); }
     let h: fn(*u8, *u8) = { (*p).on_click };
     if h != props::no_handler { h(sender, { (*p).on_click_ctx }); }
-    return;
 }
 
 fn icon_button_action(sender: *u8, ctx: *u8) {
     let n: *core::Node = ctx as *core::Node;
     let p: *props::IconButtonProps = props_of(n, props::K_ICON_BUTTON) as *props::IconButtonProps;
-    if p == (0 as *props::IconButtonProps) { return; }
+    if p.is_null() { return; }
     if { (*p).toggles } { sync_bool_state(sender, #addr_of((*p).on)); }
     let h: fn(*u8, *u8) = { (*p).on_clicked };
     if h != props::no_handler { h(sender, { (*p).on_clicked_ctx }); }
-    return;
 }
 
 fn text_button_action(sender: *u8, ctx: *u8) {
     let n: *core::Node = ctx as *core::Node;
     let p: *text_button::TextButtonProps =
         props_of(n, text_button::K_TEXT_BUTTON) as *text_button::TextButtonProps;
-    if p == (0 as *text_button::TextButtonProps) { return; }
+    if p.is_null() { return; }
     if { (*p).toggles } { sync_bool_state(sender, #addr_of((*p).on)); }
     let h: fn(*u8, *u8) = { (*p).on_click };
     if h != props::no_handler { h(sender, { (*p).on_click_ctx }); }
-    return;
 }
 
 fn toggle_action(sender: *u8, ctx: *u8) {
     let n: *core::Node = ctx as *core::Node;
     let p: *props::ToggleProps = props_of(n, props::K_TOGGLE) as *props::ToggleProps;
-    if p == (0 as *props::ToggleProps) { return; }
+    if p.is_null() { return; }
     sync_bool_state(sender, #addr_of((*p).on));
     let h: fn(*u8, *u8) = { (*p).on_toggled };
     if h != props::no_handler { h(sender, { (*p).on_toggled_ctx }); }
-    return;
 }
 
 fn stepper_action(sender: *u8, ctx: *u8) {
     let n: *core::Node = ctx as *core::Node;
     let p: *props::StepperProps = props_of(n, props::K_STEPPER) as *props::StepperProps;
-    if p == (0 as *props::StepperProps) { return; }
+    if p.is_null() { return; }
     { (*p).value = ak::Control::from_raw(sender).double_value() };
     let h: fn(*u8, *u8) = { (*p).on_value_changed };
     if h != props::no_handler { h(sender, { (*p).on_value_changed_ctx }); }
-    return;
 }
 
 // The prompt took row 0, so the native index is one ahead of the
@@ -756,7 +741,7 @@ fn stepper_action(sender: *u8, ctx: *u8) {
 fn popup_action(sender: *u8, ctx: *u8) {
     let n: *core::Node = ctx as *core::Node;
     let p: *props::PopupProps = props_of(n, props::K_POPUP) as *props::PopupProps;
-    if p == (0 as *props::PopupProps) { return; }
+    if p.is_null() { return; }
     let offset: i64 = compose::title_offset({ (*p).title.view() });
     let raw: i64 = ak::PopUpButton::from_raw(sender).index_of_selected_item();
     var idx: i64 = raw -% offset;
@@ -764,7 +749,6 @@ fn popup_action(sender: *u8, ctx: *u8) {
     { (*p).selected_index = idx };
     let h: fn(*u8, *u8) = { (*p).on_selected_index_changed };
     if h != props::no_handler { h(sender, { (*p).on_selected_index_changed_ctx }); }
-    return;
 }
 
 fn state_on() -> i64 { return 1 as i64; }
@@ -784,9 +768,9 @@ fn is_html(p: *props::LabelProps) -> bool {
 fn html_string(markup: str) -> *u8 {
     let data: *u8 = { rt::msg_id_u64(bridge::nsstring(markup),
                                      rt::sel(#str_ptr("dataUsingEncoding:\0")), 4 as u64) };
-    if data == (0 as *u8) { return 0 as *u8; }
+    if data.is_null() { return 0 as *u8; }
     let opts: *u8 = { rt::alloc_init(#str_ptr("NSMutableDictionary\0")) };
-    if opts == (0 as *u8) { return 0 as *u8; }
+    if opts.is_null() { return 0 as *u8; }
     { rt::msg_void_id_id(opts, rt::sel(#str_ptr("setObject:forKey:\0")),
                          bridge::nsstring("NSHTML"), bridge::nsstring("DocumentType")) };
     let alloced: *u8 = { rt::msg_id(rt::get_class(#str_ptr("NSAttributedString\0")),
@@ -810,13 +794,13 @@ fn formatted_count(p: *props::LabelProps) -> usize {
 // to say runs must not become two renderings of them.
 fn build_value_runs(p: *props::LabelProps) -> *u8 {
     let ms: *u8 = { rt::alloc_init(#str_ptr("NSMutableAttributedString\0")) };
-    if ms == (0 as *u8) { return 0 as *u8; }
+    if ms.is_null() { return 0 as *u8; }
     let spans: *vocab::Spans = { #addr_of((*p).formatted_text) };
     var i: usize = 0 as usize;
     let count: usize = { (*spans).count() };
     while i < count {
         let r: *vocab::TextSpan = { (*spans).at(i) };
-        if r != (0 as *vocab::TextSpan) { append_value_run(ms, r, p); }
+        if r.is_not_null() { append_value_run(ms, r, p); }
         i = i +% (1 as usize);
     }
     return ms;
@@ -828,7 +812,7 @@ fn append_value_run(ms: *u8, r: *vocab::TextSpan, p: *props::LabelProps) {
                               { (*r).font_family.view() }, { (*r).is_italic }),
         { (*r).color }, { (*p).character_spacing }, { (*p).line_height },
         option::Option[vocab::TextAlign]::None, { (*r).decoration });
-    if attrs != (0 as *u8) {
+    if attrs.is_not_null() {
         let bg: vocab::Color = { (*r).background_color };
         if bg.is_set() { paint::dict_set(attrs, "NSBackgroundColor", paint::ns_color(bg).raw()); }
         // A run with a destination is a LINK, which is what `link` means and
@@ -837,11 +821,10 @@ fn append_value_run(ms: *u8, r: *vocab::TextSpan, p: *props::LabelProps) {
         if dest != "" { paint::dict_set(attrs, "NSLink", bridge::nsstring(dest)); }
     }
     let run: *u8 = paint::attributed({ (*r).text.view() }, attrs);
-    if run != (0 as *u8) {
+    if run.is_not_null() {
         { rt::msg_void_id(ms, rt::sel(#str_ptr("appendAttributedString:\0")), run) };
         { rt::release(run) };
     }
-    return;
 }
 
 fn label_wants_rich(p: *props::LabelProps) -> bool {
@@ -917,7 +900,7 @@ fn create_box(n: *core::Node) -> *u8 {
 
 fn apply_box(v: *u8, n: *core::Node, dirty: u64) {
     let p: *props::BoxProps = props_of(n, props::K_BOX) as *props::BoxProps;
-    if p == (0 as *props::BoxProps) { return; }
+    if p.is_null() { return; }
     let view: ak::View = ak::View::from_raw(v);
     if (dirty & box_view::P_COLOR) != (0 as u64) {
         view.set_wants_layer(true);
@@ -929,7 +912,6 @@ fn apply_box(v: *u8, n: *core::Node, dirty: u64) {
         // corners, so the largest wins and MANIFEST.md records the deviation.
         view.layer().set_corner_radius(largest_corner({ (*p).corner_radius }));
     }
-    return;
 }
 
 fn largest_corner(c: vocab::Corners) -> f64 {
@@ -951,7 +933,7 @@ fn create_checkbox(n: *core::Node) -> *u8 {
 
 fn apply_checkbox(v: *u8, n: *core::Node, dirty: u64) {
     let p: *props::CheckboxProps = props_of(n, props::K_CHECKBOX) as *props::CheckboxProps;
-    if p == (0 as *props::CheckboxProps) { return; }
+    if p.is_null() { return; }
     let b: ak::Button = ak::Button::from_raw(v);
     if (dirty & checkbox::P_ON) != (0 as u64) { b.set_state(state_of({ (*p).on })); }
     // The checked box is the one saturated part of a checkbox — the mark on it
@@ -972,7 +954,6 @@ fn apply_checkbox(v: *u8, n: *core::Node, dirty: u64) {
     if (dirty & props::C_IS_ENABLED) != (0 as u64) || dirty == paint::all_bits() {
         b.as_control().set_enabled(core::is_enabled(n));
     }
-    return;
 }
 
 // ---- radio -------------------------------------------------------------------
@@ -1002,7 +983,7 @@ fn create_radio(n: *core::Node) -> *u8 {
 
 fn radio_props(n: *core::Node) -> *props::RadioProps {
     let d: *core::Data = core::node_data(n);
-    if d == (0 as *core::Data) { return 0 as *props::RadioProps; }
+    if d.is_null() { return 0 as *props::RadioProps; }
     if { (*d).kind } != props::K_RADIO { return 0 as *props::RadioProps; }
     return { (*d).props } as *props::RadioProps;
 }
@@ -1012,13 +993,13 @@ fn radio_props(n: *core::Node) -> *props::RadioProps {
 // the user sees, and updating one without the other is two answers to one
 // question.
 fn clear_group(n: *core::Node, group: str, keep: *core::Node) {
-    if n == (0 as *core::Node) { return; }
+    if n.is_null() { return; }
     let p: *props::RadioProps = radio_props(n);
-    if p != (0 as *props::RadioProps) && n != keep {
+    if p.is_not_null() && n != keep {
         if { (*p).group.view() } == group && { (*p).on } {
             { (*p).on = false };
             let v: *u8 = core::view_of(n);
-            if v != (0 as *u8) { ak::Button::from_raw(v).set_state(state_off()); }
+            if v.is_not_null() { ak::Button::from_raw(v).set_state(state_off()); }
         }
     }
     var i: usize = 0 as usize;
@@ -1030,7 +1011,6 @@ fn clear_group(n: *core::Node, group: str, keep: *core::Node) {
         }
         i = i +% (1 as usize);
     }
-    return;
 }
 
 // The action, wrapped: the group settles first, then the application's own
@@ -1038,9 +1018,9 @@ fn clear_group(n: *core::Node, group: str, keep: *core::Node) {
 // after the group settled rather than during.
 fn radio_action(sender: *u8, ctx: *u8) {
     let n: *core::Node = ctx as *core::Node;
-    if n == (0 as *core::Node) { return; }
+    if n.is_null() { return; }
     let p: *props::RadioProps = radio_props(n);
-    if p == (0 as *props::RadioProps) { return; }
+    if p.is_null() { return; }
     let on: bool = ak::Button::from_raw(sender).state() == state_on();
     { (*p).on = on };
     let group: str = { (*p).group.view() };
@@ -1054,12 +1034,11 @@ fn radio_action(sender: *u8, ctx: *u8) {
     }
     let h: fn(*u8, *u8) = { (*p).on_checked_changed };
     if h != props::no_handler { h(sender, { (*p).on_checked_changed_ctx }); }
-    return;
 }
 
 fn apply_radio(v: *u8, n: *core::Node, dirty: u64) {
     let p: *props::RadioProps = props_of(n, props::K_RADIO) as *props::RadioProps;
-    if p == (0 as *props::RadioProps) { return; }
+    if p.is_null() { return; }
     let b: ak::Button = ak::Button::from_raw(v);
     if (dirty & radio::P_ON) != (0 as u64) { b.set_state(state_of({ (*p).on })); }
     // `RadioButton.Content` — ledger row types it `object` and every platform
@@ -1080,7 +1059,7 @@ fn apply_radio(v: *u8, n: *core::Node, dirty: u64) {
         let shown: text::Text = paint::transformed({ (*p).text.view() }, { (*p).text_transform });
         if radio_wants_rich(p) {
             let a: *u8 = paint::attributed(shown.view(), radio_attributes(p));
-            if a != (0 as *u8) {
+            if a.is_not_null() {
                 { rt::msg_void_id(v, rt::sel(#str_ptr("setAttributedTitle:\0")), a) };
                 rt::release(a);
             }
@@ -1111,7 +1090,6 @@ fn apply_radio(v: *u8, n: *core::Node, dirty: u64) {
     if (dirty & props::C_IS_ENABLED) != (0 as u64) || dirty == paint::all_bits() {
         b.as_control().set_enabled(core::is_enabled(n));
     }
-    return;
 }
 
 // ---- toggle ------------------------------------------------------------------
@@ -1146,10 +1124,10 @@ static TOGGLE_COLORS: compose::SwitchColors = #zero::[compose::SwitchColors]();
 
 fn create_toggle(n: *core::Node) -> *u8 {
     let p: *props::ToggleProps = props_of(n, props::K_TOGGLE) as *props::ToggleProps;
-    if p != (0 as *props::ToggleProps) {
+    if p.is_not_null() {
         if compose::wants_drawn_switch({ (*p).off_color }, { (*p).thumb_color }) {
             let drawn: *u8 = compose::new_drawn_switch();
-            if drawn != (0 as *u8) { return rt::retain(drawn); }
+            if drawn.is_not_null() { return rt::retain(drawn); }
         }
     }
     let s: ak::Switch = ak::Switch::from_raw(rt::alloc_init(#str_ptr("NSSwitch\0")));
@@ -1158,7 +1136,7 @@ fn create_toggle(n: *core::Node) -> *u8 {
 
 fn apply_toggle(v: *u8, n: *core::Node, dirty: u64) {
     let p: *props::ToggleProps = props_of(n, props::K_TOGGLE) as *props::ToggleProps;
-    if p == (0 as *props::ToggleProps) { return; }
+    if p.is_null() { return; }
     let s: ak::Switch = ak::Switch::from_raw(v);
     // The DRAWN posture: a toggle that named an achromatic colour. Its state,
     // its three colours and its action all go on in one call, because the
@@ -1206,7 +1184,6 @@ fn apply_toggle(v: *u8, n: *core::Node, dirty: u64) {
     if (dirty & props::C_IS_ENABLED) != (0 as u64) || dirty == paint::all_bits() {
         s.as_control().set_enabled(core::is_enabled(n));
     }
-    return;
 }
 
 // ---- slider ------------------------------------------------------------------
@@ -1218,7 +1195,7 @@ fn create_slider(n: *core::Node) -> *u8 {
 
 fn apply_slider(v: *u8, n: *core::Node, dirty: u64) {
     let p: *props::SliderProps = props_of(n, props::K_SLIDER) as *props::SliderProps;
-    if p == (0 as *props::SliderProps) { return; }
+    if p.is_null() { return; }
     let s: ak::Slider = ak::Slider::from_raw(v);
     // The range goes on before the value, or a value outside the OLD range is
     // clamped away and the write is silently lost.
@@ -1262,7 +1239,6 @@ fn apply_slider(v: *u8, n: *core::Node, dirty: u64) {
     if (dirty & props::C_IS_ENABLED) != (0 as u64) || dirty == paint::all_bits() {
         s.as_control().set_enabled(core::is_enabled(n));
     }
-    return;
 }
 
 // ---- is_opaque ---------------------------------------------------------------
@@ -1280,7 +1256,6 @@ fn apply_is_opaque(v: *u8, opaque_: bool) {
     if opaque_ { view.set_wants_layer(true); }
     if view.wants_layer() == false { return; }
     view.layer().set_opaque(opaque_);
-    return;
 }
 
 // ---- progress ----------------------------------------------------------------
@@ -1298,7 +1273,7 @@ fn create_progress(n: *core::Node) -> *u8 {
 
 fn apply_progress(v: *u8, n: *core::Node, dirty: u64) {
     let p: *props::ProgressProps = props_of(n, props::K_PROGRESS) as *props::ProgressProps;
-    if p == (0 as *props::ProgressProps) { return; }
+    if p.is_null() { return; }
     let pi: ak::ProgressIndicator = ak::ProgressIndicator::from_raw(v);
     if (dirty & progress::P_PROGRESS) != (0 as u64) { pi.set_double_value({ (*p).progress }); }
     // A hue rotation over the bar's OWN drawing: the fill is saturated and moves
@@ -1321,21 +1296,20 @@ fn apply_progress(v: *u8, n: *core::Node, dirty: u64) {
             let cls: *u8 = rt::get_class(#str_ptr("NSAnimationContext\0"));
             { rt::msg_void(cls, rt::sel(#str_ptr("beginGrouping\0"))) };
             let ctx: *u8 = { rt::msg_id(cls, rt::sel(#str_ptr("currentContext\0"))) };
-            if ctx != (0 as *u8) {
+            if ctx.is_not_null() {
                 { msg_void_f64(ctx, rt::sel(#str_ptr("setDuration:\0")), secs) };
                 let tf: *u8 = paint::timing_function_of({ (*p).animate_easing });
-                if tf != (0 as *u8) {
+                if tf.is_not_null() {
                     { rt::msg_void_id(ctx, rt::sel(#str_ptr("setTimingFunction:\0")), tf) };
                 }
             }
             let anim: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("animator\0"))) };
-            if anim != (0 as *u8) {
+            if anim.is_not_null() {
                 { msg_void_f64(anim, rt::sel(#str_ptr("setDoubleValue:\0")), { (*p).progress }) };
             }
             { rt::msg_void(cls, rt::sel(#str_ptr("endGrouping\0"))) };
         }
     }
-    return;
 }
 
 #[link_name = "objc_msgSend"]
@@ -1354,7 +1328,7 @@ fn create_spinner(n: *core::Node) -> *u8 {
 
 fn apply_spinner(v: *u8, n: *core::Node, dirty: u64) {
     let p: *props::SpinnerProps = props_of(n, props::K_SPINNER) as *props::SpinnerProps;
-    if p == (0 as *props::SpinnerProps) { return; }
+    if p.is_null() { return; }
     let pi: ak::ProgressIndicator = ak::ProgressIndicator::from_raw(v);
     if (dirty & spinner::P_IS_RUNNING) != (0 as u64) {
         if { (*p).is_running } { pi.start_animation(0 as *u8); } else { pi.stop_animation(0 as *u8); }
@@ -1364,7 +1338,6 @@ fn apply_spinner(v: *u8, n: *core::Node, dirty: u64) {
     if (dirty & spinner::P_COLOR) != (0 as u64) {
         compose::tint_spinner(v, { (*p).color });
     }
-    return;
 }
 
 // ---- stepper -----------------------------------------------------------------
@@ -1376,7 +1349,7 @@ fn create_stepper(n: *core::Node) -> *u8 {
 
 fn apply_stepper(v: *u8, n: *core::Node, dirty: u64) {
     let p: *props::StepperProps = props_of(n, props::K_STEPPER) as *props::StepperProps;
-    if p == (0 as *props::StepperProps) { return; }
+    if p.is_null() { return; }
     let s: ak::Stepper = ak::Stepper::from_raw(v);
     if (dirty & stepper::P_MINIMUM) != (0 as u64) { s.set_min_value({ (*p).minimum }); }
     if (dirty & stepper::P_MAXIMUM) != (0 as u64) { s.set_max_value({ (*p).maximum }); }
@@ -1392,7 +1365,6 @@ fn apply_stepper(v: *u8, n: *core::Node, dirty: u64) {
     if (dirty & props::C_IS_ENABLED) != (0 as u64) || dirty == paint::all_bits() {
         s.as_control().set_enabled(core::is_enabled(n));
     }
-    return;
 }
 
 // ---- text_button -------------------------------------------------------------
@@ -1447,7 +1419,7 @@ fn text_button_attributes(p: *text_button::TextButtonProps) -> *u8 {
 fn apply_text_button(v: *u8, n: *core::Node, dirty: u64) {
     let p: *text_button::TextButtonProps =
         props_of(n, text_button::K_TEXT_BUTTON) as *text_button::TextButtonProps;
-    if p == (0 as *text_button::TextButtonProps) { return; }
+    if p.is_null() { return; }
     let b: ak::Button = ak::Button::from_raw(v);
     let title_bits: u64 = text_button::P_TITLE | text_button::P_TEXT_TRANSFORM
         | text_button::P_CHARACTER_SPACING | text_button::P_TEXT_COLOR
@@ -1463,7 +1435,7 @@ fn apply_text_button(v: *u8, n: *core::Node, dirty: u64) {
         // of a flat button is usually its tint.
         if text_button_wants_rich(p) {
             let a: *u8 = paint::attributed(shown.view(), text_button_attributes(p));
-            if a != (0 as *u8) {
+            if a.is_not_null() {
                 { rt::msg_void_id(v, rt::sel(#str_ptr("setAttributedTitle:\0")), a) };
                 { rt::release(a) };
             }
@@ -1517,7 +1489,6 @@ fn apply_text_button(v: *u8, n: *core::Node, dirty: u64) {
     if (dirty & props::C_IS_ENABLED) != (0 as u64) || dirty == paint::all_bits() {
         b.as_control().set_enabled(core::is_enabled(n));
     }
-    return;
 }
 
 // ---- icon_button -------------------------------------------------------------
@@ -1534,7 +1505,7 @@ fn create_icon_button(n: *core::Node) -> *u8 {
 
 fn apply_icon_button(v: *u8, n: *core::Node, dirty: u64) {
     let p: *props::IconButtonProps = props_of(n, props::K_ICON_BUTTON) as *props::IconButtonProps;
-    if p == (0 as *props::IconButtonProps) { return; }
+    if p.is_null() { return; }
     let b: ak::Button = ak::Button::from_raw(v);
     if (dirty & icon_button::P_SOURCE) != (0 as u64) {
         match resolve_image({ (*p).source.view() }) {
@@ -1571,7 +1542,6 @@ fn apply_icon_button(v: *u8, n: *core::Node, dirty: u64) {
     if (dirty & props::C_IS_ENABLED) != (0 as u64) || dirty == paint::all_bits() {
         b.as_control().set_enabled(core::is_enabled(n));
     }
-    return;
 }
 
 // ---- symbol ------------------------------------------------------------------
@@ -1628,11 +1598,11 @@ fn register_bundled_font() -> bool {
 fn bundle_font_url() -> *u8 {
     let b: *u8 = { rt::msg_id(rt::get_class(#str_ptr("NSBundle\0")),
                               rt::sel(#str_ptr("mainBundle\0"))) };
-    if b == (0 as *u8) { return 0 as *u8; }
+    if b.is_null() { return 0 as *u8; }
     let p: *u8 = { rt::msg_id_id_id(b, rt::sel(#str_ptr("pathForResource:ofType:\0")),
                                     bridge::nsstring("MaterialSymbolsOutlined"),
                                     bridge::nsstring("ttf")) };
-    if p == (0 as *u8) { return 0 as *u8; }
+    if p.is_null() { return 0 as *u8; }
     return { rt::msg_id_id(rt::get_class(#str_ptr("NSURL\0")),
                            rt::sel(#str_ptr("fileURLWithPath:\0")), p) };
 }
@@ -1645,7 +1615,7 @@ fn register_font_at(path: str) -> bool {
 }
 
 fn register_font_url(url: *u8) -> bool {
-    if url == (0 as *u8) { return false; }
+    if url.is_null() { return false; }
     if { ct_register_fonts_for_url(url, ct_scope_process(), 0 as *u8) } == (0 as i8) { return false; }
     match ak::Font::font_with_name(bundled_family(), 12.0f64) {
         option::Option[ak::Font]::Some(_f) => { return true; }
@@ -1705,12 +1675,11 @@ fn apply_bundled_glyph(f: ak::TextField, p: *symbol::SymbolProps, pt: f64) {
     }
     { rt::msg_void_id(f.as_control().raw(), rt::sel(#str_ptr("setStringValue:\0")),
                       nsstring_of_codepoint(cp)) };
-    return;
 }
 
 fn apply_symbol(v: *u8, n: *core::Node, dirty: u64) {
     let p: *symbol::SymbolProps = props_of(n, symbol::K_SYMBOL) as *symbol::SymbolProps;
-    if p == (0 as *symbol::SymbolProps) { return; }
+    if p.is_null() { return; }
     let f: ak::TextField = ak::TextField::from_raw(v);
     if (dirty & (symbol::P_NAME | symbol::P_ICON | symbol::P_SIZE | symbol::P_FONT
                  | symbol::P_FILL)) != (0 as u64) {
@@ -1756,7 +1725,6 @@ fn apply_symbol(v: *u8, n: *core::Node, dirty: u64) {
         let c: vocab::Color = { (*p).color };
         if c.is_set() { f.set_text_color(paint::ns_color(c)); }
     }
-    return;
 }
 
 // One place that turns a facet image name into an NSImage: a system symbol
@@ -1864,7 +1832,6 @@ fn apply_symbol_at(f: ak::TextField, img: ak::Image, pt: f64) {
         option::Option[ak::Image]::None => { }
     }
     attach_symbol_image(f, img.raw());
-    return;
 }
 
 // A length the node STATED in points. A percent cannot be resolved without a
@@ -1882,14 +1849,13 @@ extern fn msg_size_of_field(recv: *u8, sel: *u8) -> rt::Size;
 
 fn attach_symbol_image(f: ak::TextField, img: *u8) {
     let att: *u8 = { rt::alloc_init(#str_ptr("NSTextAttachment\0")) };
-    if att == (0 as *u8) { return; }
+    if att.is_null() { return; }
     { rt::msg_void_id(att, rt::sel(#str_ptr("setImage:\0")), img) };
     let s: *u8 = { rt::msg_id_id(rt::get_class(#str_ptr("NSAttributedString\0")),
                                  rt::sel(#str_ptr("attributedStringWithAttachment:\0")), att) };
     { rt::release(att) };
-    if s == (0 as *u8) { return; }
+    if s.is_null() { return; }
     { rt::msg_void_id(f.raw(), rt::sel(#str_ptr("setAttributedStringValue:\0")), s) };
-    return;
 }
 
 // ---- text_area ---------------------------------------------------------------
@@ -1922,7 +1888,7 @@ fn text_area_editor(v: *u8) -> option::Option[ak::TextView] {
 
 fn apply_text_area(v: *u8, n: *core::Node, dirty: u64) {
     let p: *props::TextAreaProps = props_of(n, props::K_TEXT_AREA) as *props::TextAreaProps;
-    if p == (0 as *props::TextAreaProps) { return; }
+    if p.is_null() { return; }
     match text_area_editor(v) {
         option::Option[ak::TextView]::Some(tv) => {
             let iv: *props::InputViewProps = { #addr_of((*p).input_view) };
@@ -1986,7 +1952,6 @@ fn apply_text_area(v: *u8, n: *core::Node, dirty: u64) {
         }
         option::Option[ak::TextView]::None => { }
     }
-    return;
 }
 
 // ---- search_field ------------------------------------------------------------
@@ -2002,7 +1967,7 @@ fn create_search_field(n: *core::Node) -> *u8 {
 
 fn apply_search_field(v: *u8, n: *core::Node, dirty: u64) {
     let p: *props::SearchFieldProps = props_of(n, props::K_SEARCH_FIELD) as *props::SearchFieldProps;
-    if p == (0 as *props::SearchFieldProps) { return; }
+    if p.is_null() { return; }
     let f: ak::TextField = ak::TextField::from_raw(v);
     let iv: *props::InputViewProps = { #addr_of((*p).input_view) };
     text_input::apply_field_band(f, n, iv, { (*p).text_align }, dirty,
@@ -2022,7 +1987,6 @@ fn apply_search_field(v: *u8, n: *core::Node, dirty: u64) {
     if (dirty & props::C_IS_ENABLED) != (0 as u64) || dirty == paint::all_bits() {
         f.as_control().set_enabled(core::is_enabled(n));
     }
-    return;
 }
 
 // ---- popup -------------------------------------------------------------------
@@ -2038,7 +2002,7 @@ fn create_popup(n: *core::Node) -> *u8 {
 
 fn apply_popup(v: *u8, n: *core::Node, dirty: u64) {
     let p: *props::PopupProps = props_of(n, props::K_POPUP) as *props::PopupProps;
-    if p == (0 as *props::PopupProps) { return; }
+    if p.is_null() { return; }
     let b: ak::PopUpButton = ak::PopUpButton::from_raw(v);
     // The menu is rebuilt with the items, so the delegate that carries
     // `on_opened` / `on_closed` is re-installed with it.
@@ -2138,7 +2102,6 @@ fn apply_popup(v: *u8, n: *core::Node, dirty: u64) {
     if (dirty & props::C_IS_ENABLED) != (0 as u64) || dirty == paint::all_bits() {
         b.as_control().set_enabled(core::is_enabled(n));
     }
-    return;
 }
 
 // One item onto the end of the button's own menu. `addItemWithTitle:` is the
@@ -2149,7 +2112,6 @@ fn append_popup_item(b: ak::PopUpButton, item: ak::MenuItem) {
         option::Option[ak::Menu]::Some(m) => { m.add_item(item); }
         option::Option[ak::Menu]::None => { }
     }
-    return;
 }
 
 // The item just appended, greyed. AUTOENABLING IS THE TRAP: NSPopUpButton
@@ -2164,7 +2126,6 @@ fn disable_last_popup_item(b: ak::PopUpButton) {
         option::Option[ak::MenuItem]::Some(it) => { it.set_enabled(false); }
         option::Option[ak::MenuItem]::None => { }
     }
-    return;
 }
 
 // WHAT THE BUTTON READS, whatever is selected.
@@ -2178,7 +2139,7 @@ fn disable_last_popup_item(b: ak::PopUpButton) {
 // Empty restores the ledger's behaviour, item and all.
 fn apply_popup_label(b: ak::PopUpButton, label: str) {
     let cell: *u8 = { rt::msg_id(b.raw(), rt::sel(#str_ptr("cell\0"))) };
-    if cell == (0 as *u8) { return; }
+    if cell.is_null() { return; }
     let pc: ak::PopUpButtonCell = ak::PopUpButtonCell::from_raw(cell);
     if label == "" {
         pc.set_uses_item_from_menu(true);
@@ -2189,7 +2150,6 @@ fn apply_popup_label(b: ak::PopUpButton, label: str) {
     pc.set_uses_item_from_menu(false);
     pc.as_menu_item_cell().set_menu_item(item);
     { rt::msg_void(b.raw(), rt::sel(#str_ptr("setNeedsDisplay\0"))) };
-    return;
 }
 
 // Every item's title, attributed with the popup's own text band. Rebuilt with
@@ -2211,7 +2171,7 @@ fn style_popup_items(b: ak::PopUpButton, p: *props::PopupProps) {
                     c, kern, 0.0f64, option::Option[vocab::TextAlign]::None,
                     vocab::TextDecoration::None);
                 let a: *u8 = paint::attributed(item.title().view(), attrs);
-                if a != (0 as *u8) {
+                if a.is_not_null() {
                     { rt::msg_void_id(item.raw(), rt::sel(#str_ptr("setAttributedTitle:\0")), a) };
                     { rt::release(a) };
                 }
@@ -2220,7 +2180,6 @@ fn style_popup_items(b: ak::PopUpButton, p: *props::PopupProps) {
         }
         i = i + (1 as i64);
     }
-    return;
 }
 
 // ---- bordered ----------------------------------------------------------------
@@ -2237,7 +2196,7 @@ fn create_bordered(n: *core::Node) -> *u8 {
 
 fn apply_bordered(v: *u8, n: *core::Node, dirty: u64) {
     let p: *props::BorderedProps = props_of(n, props::K_BORDERED) as *props::BorderedProps;
-    if p == (0 as *props::BorderedProps) { return; }
+    if p.is_null() { return; }
     let view: ak::View = ak::View::from_raw(v);
     let stroke: u64 = bordered::P_STROKE | bordered::P_STROKE_WIDTH
         | bordered::P_STROKE_DASH | bordered::P_STROKE_DASH_OFFSET
@@ -2254,7 +2213,6 @@ fn apply_bordered(v: *u8, n: *core::Node, dirty: u64) {
             apply_stroke_shape(view, p);
         } else { apply_plain_border(view, p); }
     }
-    return;
 }
 
 fn wants_shape(p: *props::BorderedProps) -> bool {
@@ -2289,7 +2247,6 @@ fn apply_plain_border(view: ak::View, p: *props::BorderedProps) {
     // the stroke. A gradient border needs a CAGradientLayer mask — MANIFEST.
     let brush: vocab::Brush = { (*p).stroke };
     l.set_border_color(paint::ns_color(brush.start).c_g_color());
-    return;
 }
 
 // ---- the stroke layer --------------------------------------------------------
@@ -2301,10 +2258,9 @@ fn stroke_layer_key() -> *u8 { return { 29070 as *u8 }; }
 
 fn remove_stroke_layer(view: ak::View) {
     let l: *u8 = { synth::get_associated(view.raw(), stroke_layer_key()) };
-    if l == (0 as *u8) { return; }
+    if l.is_null() { return; }
     { rt::msg_void(l, rt::sel(#str_ptr("removeFromSuperlayer\0"))) };
     synth::set_associated(view.raw(), stroke_layer_key(), 0 as *u8);
-    return;
 }
 
 // Readers the suite asks with, so a test asserts the LAYER rather than the
@@ -2319,9 +2275,9 @@ fn stroke_layer_of(view: ak::View) -> *u8 {
 
 fn stroke_layer(view: ak::View) -> quartz::ShapeLayer {
     let existing: *u8 = { synth::get_associated(view.raw(), stroke_layer_key()) };
-    if existing != (0 as *u8) { return quartz::ShapeLayer::from_raw(existing); }
+    if existing.is_not_null() { return quartz::ShapeLayer::from_raw(existing); }
     let l: *u8 = { rt::alloc_init(#str_ptr("CAShapeLayer\0")) };
-    if l == (0 as *u8) { return quartz::ShapeLayer::from_raw(0 as *u8); }
+    if l.is_null() { return quartz::ShapeLayer::from_raw(0 as *u8); }
     { rt::msg_void_id(view.layer().raw(), rt::sel(#str_ptr("addSublayer:\0")), l) };
     synth::retain_associated(view.raw(), stroke_layer_key(), l);
     rt::release(l);
@@ -2336,14 +2292,13 @@ fn observed_key() -> *u8 { return { 29071 as *u8 }; }
 
 fn stroke_resized(ctx: *u8) {
     let n: *core::Node = ctx as *core::Node;
-    if n == (0 as *core::Node) { return; }
+    if n.is_null() { return; }
     let v: *u8 = core::view_of(n);
-    if v == (0 as *u8) { return; }
+    if v.is_null() { return; }
     let p: *props::BorderedProps = props_of(n, props::K_BORDERED) as *props::BorderedProps;
-    if p == (0 as *props::BorderedProps) { return; }
+    if p.is_null() { return; }
     if wants_shape(p) == false { return; }
     apply_stroke_shape(ak::View::from_raw(v), p);
-    return;
 }
 
 fn observe_stroke_frame(view: ak::View, n: *core::Node) {
@@ -2351,7 +2306,6 @@ fn observe_stroke_frame(view: ak::View, n: *core::Node) {
     let f: fn(*u8) = stroke_resized;
     akx::observe_frame_change(view, f, n as *u8);
     synth::set_associated(view.raw(), observed_key(), 1 as *u8);
-    return;
 }
 
 fn apply_stroke_shape(view: ak::View, p: *props::BorderedProps) {
@@ -2362,7 +2316,7 @@ fn apply_stroke_shape(view: ak::View, p: *props::BorderedProps) {
     let b: rt::Rect = view.bounds();
     { msg_void_rect(sl.raw(), rt::sel(#str_ptr("setFrame:\0")), b) };
     let path: *u8 = stroke_path(b, { (*p).stroke_shape }, { (*p).stroke_width });
-    if path != (0 as *u8) {
+    if path.is_not_null() {
         sl.set_path(path);
         { CGPathRelease(path) };
     }
@@ -2382,7 +2336,6 @@ fn apply_stroke_shape(view: ak::View, p: *props::BorderedProps) {
         i = i +% (1 as usize);
     }
     sl.set_line_dash_pattern(runs);
-    return;
 }
 
 // The outline a `Shape` describes, INSET by half the stroke width — a stroked
@@ -2449,15 +2402,15 @@ extern fn msg_void_rect(recv: *u8, sel: *u8, r: rt::Rect);
 fn split_view_node_key() -> *u8 { return { 29065 as *u8 }; }
 
 fn split_view_props(self_obj: *u8) -> *split::SplitProps {
-    if self_obj == (0 as *u8) { return 0 as *split::SplitProps; }
+    if self_obj.is_null() { return 0 as *split::SplitProps; }
     let n: *core::Node = { synth::get_associated(self_obj, split_view_node_key()) as *core::Node };
-    if n == (0 as *core::Node) { return 0 as *split::SplitProps; }
+    if n.is_null() { return 0 as *split::SplitProps; }
     return props_of(n, split::K_SPLIT) as *split::SplitProps;
 }
 
 fn divider_color_imp(self_obj: *u8, cmd: *u8) -> *u8 {
     let p: *split::SplitProps = split_view_props(self_obj);
-    if p == (0 as *split::SplitProps) {
+    if p.is_null() {
         return { rt::msg_id(rt::get_class(#str_ptr("NSColor\0")),
                             rt::sel(#str_ptr("separatorColor\0"))) };
     }
@@ -2466,13 +2419,13 @@ fn divider_color_imp(self_obj: *u8, cmd: *u8) -> *u8 {
 
 fn divider_thickness_imp(self_obj: *u8, cmd: *u8) -> f64 {
     let p: *split::SplitProps = split_view_props(self_obj);
-    if p == (0 as *split::SplitProps) { return 1.0f64; }
+    if p.is_null() { return 1.0f64; }
     return { (*p).divider_thickness };
 }
 
 fn split_view_class() -> *u8 {
     let existing: *u8 = rt::get_class(#str_ptr("FacetSplitView\0"));
-    if existing != (0 as *u8) { return existing; }
+    if existing.is_not_null() { return existing; }
     let cls: *u8 = synth::allocate_class_pair(rt::get_class(#str_ptr("NSSplitView\0")),
                                               #str_ptr("FacetSplitView\0"), 0 as usize);
     synth::add_method_id_0id(cls, rt::sel(#str_ptr("dividerColor\0")),
@@ -2495,7 +2448,7 @@ fn create_split(n: *core::Node) -> *u8 {
 
 fn apply_split(v: *u8, n: *core::Node, dirty: u64) {
     let p: *split::SplitProps = props_of(n, split::K_SPLIT) as *split::SplitProps;
-    if p == (0 as *split::SplitProps) { return; }
+    if p.is_null() { return; }
     let s: ak::SplitView = ak::SplitView::from_raw(v);
     if (dirty & split::P_AXIS) != (0 as u64) {
         s.set_vertical(is_vertical_divider({ (*p).axis }));
@@ -2504,7 +2457,9 @@ fn apply_split(v: *u8, n: *core::Node, dirty: u64) {
     // delegate where a divider may go, and tells it after one moved. Installed
     // on the first apply rather than at create, because a split with neither a
     // minimum nor a handler should not pay for a delegate at all.
-    if (dirty & (split::P_MIN_LEADING | split::P_MIN_TRAILING | props::C_HANDLERS)) != (0 as u64)
+    if (dirty & (split::P_MIN_LEADING | split::P_MIN_TRAILING
+                 | split::P_MAX_LEADING | split::P_MAX_TRAILING
+                 | props::C_HANDLERS)) != (0 as u64)
         || dirty == paint::all_bits() {
         text_input::install_split(v, n);
     }
@@ -2522,7 +2477,12 @@ fn apply_split(v: *u8, n: *core::Node, dirty: u64) {
     // FIRST — the panes are ordinary facet children, so the frame walk sizes
     // them from flex, and a divider flex knew nothing about was erased on
     // every pass.
-    if (dirty & (split::P_POSITION | split::P_COLLAPSED)) != (0 as u64)
+    // The MAXIMUMS are in this arm and not only the one above, because unlike a
+    // minimum they can invalidate a position that is already applied: capping
+    // the trailing pane at 640 in a 1200-point split must move a divider
+    // sitting at 300, and the delegate is only consulted on a drag.
+    if (dirty & (split::P_POSITION | split::P_COLLAPSED
+                 | split::P_MAX_LEADING | split::P_MAX_TRAILING)) != (0 as u64)
        || dirty == paint::all_bits() {
         scheduler::register_split(n);
         settle_split(n);
@@ -2538,7 +2498,6 @@ fn apply_split(v: *u8, n: *core::Node, dirty: u64) {
         { rt::msg_void(v, rt::sel(#str_ptr("adjustSubviews\0"))) };
         { rt::msg_void_i8(v, rt::sel(#str_ptr("setNeedsDisplay:\0")), true as i8) };
     }
-    return;
 }
 
 // Settle one split against its CURRENT props position.
@@ -2565,18 +2524,17 @@ fn is_points(l: flex::StyleLength, v: f64) -> bool {
 }
 
 fn settle_split(n: *core::Node) {
-    if n == (0 as *core::Node) { return; }
+    if n.is_null() { return; }
     paint::begin_assert();
     settle_split_inner(n);
     paint::end_assert();
-    return;
 }
 
 fn settle_split_inner(n: *core::Node) {
     let v: *u8 = core::view_of(n);
-    if v == (0 as *u8) { return; }
+    if v.is_null() { return; }
     let p: *split::SplitProps = props_of(n, split::K_SPLIT) as *split::SplitProps;
-    if p == (0 as *split::SplitProps) { return; }
+    if p.is_null() { return; }
     let s: ak::SplitView = ak::SplitView::from_raw(v);
     let f: rt::Rect = s.as_view().frame();
     let extent: f64 = if s.is_vertical() { { f.w } } else { { f.h } };
@@ -2618,9 +2576,14 @@ fn settle_split_inner(n: *core::Node) {
     // was not final yet". Clamping first makes any remaining disagreement mean
     // exactly one thing.
     if !{ (*p).collapsed_leading } && !{ (*p).collapsed_trailing } {
-        let ceiling: f64 = extent - { (*p).min_trailing };
+        // Each bound narrowed by the OTHER pane's maximum before it is applied
+        // — the shared rule in `split`, so the four backends and the delegate
+        // cannot disagree about what a maximum means.
+        var ceiling: f64 = extent - { (*p).min_trailing };
+        ceiling = split::ceiling_with_max(ceiling, { (*p).max_leading });
         if ceiling > 0.0f64 && want > ceiling { want = ceiling; }
-        let floor: f64 = { (*p).min_leading };
+        let floor: f64 = split::floor_with_max({ (*p).min_leading },
+                                               { (*p).max_trailing }, extent);
         if floor < extent && want < floor { want = floor; }
     }
 
@@ -2691,7 +2654,7 @@ fn settle_split_inner(n: *core::Node) {
         // 195.5 forever. Ask the geometry instead of assuming.
         let first: *u8 = { rt::msg_id_u64({ rt::msg_id(v, rt::sel(#str_ptr("subviews\0"))) },
                                           rt::sel(#str_ptr("objectAtIndex:\0")), 0 as u64) };
-        if first != (0 as *u8) {
+        if first.is_not_null() {
             let lf: rt::Rect = ak::View::from_raw(first).frame();
             let landed: f64 = if s.is_vertical() { { lf.w } } else { { lf.h } };
             var off: f64 = landed - want;
@@ -2701,7 +2664,6 @@ fn settle_split_inner(n: *core::Node) {
             }
         }
     }
-    return;
 }
 
 fn split_extent(s: ak::SplitView) -> f64 {
@@ -2752,7 +2714,7 @@ fn visible_dot_count(p: *props::PageDotsProps) -> i64 {
 
 fn apply_page_dots(v: *u8, n: *core::Node, dirty: u64) {
     let p: *props::PageDotsProps = props_of(n, props::K_PAGE_DOTS) as *props::PageDotsProps;
-    if p == (0 as *props::PageDotsProps) { return; }
+    if p.is_null() { return; }
     let view: ak::View = ak::View::from_raw(v);
     view.set_wants_layer(true);
     let host: quartz::Layer = view.layer();
@@ -2769,7 +2731,6 @@ fn apply_page_dots(v: *u8, n: *core::Node, dirty: u64) {
                  | page_dots::P_SELECTED_DOT_COLOR | page_dots::P_COUNT)) != (0 as u64) {
         tint_dots(host, want, { (*p).position }, { (*p).dot_color }, { (*p).selected_dot_color });
     }
-    return;
 }
 
 fn dot_size_of(p: *props::PageDotsProps) -> f64 {
@@ -2799,7 +2760,6 @@ fn rebuild_dots(host: quartz::Layer, count: i64, size: f64, shape: vocab::DotSha
         host.add_sublayer(dot);
         i = i +% (1 as i64);
     }
-    return;
 }
 
 fn tint_dots(host: quartz::Layer, count: i64, position: i64,
@@ -2894,18 +2854,17 @@ fn floor_div_day(secs: f64) -> f64 {
 
 fn picker_seconds(sender: *u8) -> f64 {
     let d: *u8 = { rt::msg_id(sender, rt::sel(#str_ptr("dateValue\0"))) };
-    if d == (0 as *u8) { return 0.0f64; }
+    if d.is_null() { return 0.0f64; }
     return { rt::msg_f64(d, rt::sel(#str_ptr("timeIntervalSince1970\0"))) };
 }
 
 fn date_picker_action(sender: *u8, ctx: *u8) {
     let n: *core::Node = ctx as *core::Node;
     let p: *props::DatePickerProps = props_of(n, props::K_DATE_PICKER) as *props::DatePickerProps;
-    if p == (0 as *props::DatePickerProps) { return; }
+    if p.is_null() { return; }
     { (*p).date = civil_from_days(floor_div_day(picker_seconds(sender)) as i64) };
     let h: fn(*u8, *u8) = { (*p).on_date_selected };
     if h != props::no_handler { h(sender, { (*p).on_date_selected_ctx }); }
-    return;
 }
 
 // A time of day is an OFFSET into a day, which is the reading that needs no
@@ -2913,12 +2872,11 @@ fn date_picker_action(sender: *u8, ctx: *u8) {
 fn time_picker_action(sender: *u8, ctx: *u8) {
     let n: *core::Node = ctx as *core::Node;
     let p: *props::TimePickerProps = props_of(n, props::K_TIME_PICKER) as *props::TimePickerProps;
-    if p == (0 as *props::TimePickerProps) { return; }
+    if p.is_null() { return; }
     let secs: f64 = picker_seconds(sender);
     { (*p).time = vocab::Duration { seconds: secs - floor_div_day(secs) * seconds_per_day() } };
     let h: fn(*u8, *u8) = { (*p).on_time_selected };
     if h != props::no_handler { h(sender, { (*p).on_time_selected_ctx }); }
-    return;
 }
 
 // An NSDate at UTC midnight on that civil date. A zeroed Date (year 0) means
@@ -2942,7 +2900,7 @@ fn utc_time_zone() -> option::Option[ak::TimeZone] {
     let tz: *u8 = { rt::msg_id_id(rt::get_class(#str_ptr("NSTimeZone\0")),
                                   rt::sel(#str_ptr("timeZoneWithAbbreviation:\0")),
                                   bridge::nsstring("UTC")) };
-    if tz == (0 as *u8) { return option::Option[ak::TimeZone]::None; }
+    if tz.is_null() { return option::Option[ak::TimeZone]::None; }
     return option::some(ak::TimeZone::from_raw(tz));
 }
 
@@ -2951,7 +2909,6 @@ fn pin_picker_to_utc(dp: ak::DatePicker) {
         option::Option[ak::TimeZone]::Some(tz) => { dp.set_time_zone(tz); }
         option::Option[ak::TimeZone]::None => { }
     }
-    return;
 }
 
 // ---- date_picker -------------------------------------------------------------
@@ -2972,10 +2929,10 @@ fn time_opened(sender: *u8, ctx: *u8) { fire_picker(picker_owner(sender), props:
 fn time_closed(sender: *u8, ctx: *u8) { fire_picker(picker_owner(sender), props::K_TIME_PICKER, false); return; }
 
 fn fire_picker(n: *core::Node, kind: u32, opened: bool) {
-    if n == (0 as *core::Node) { return; }
+    if n.is_null() { return; }
     if kind == props::K_DATE_PICKER {
         let p: *props::DatePickerProps = props_of(n, kind) as *props::DatePickerProps;
-        if p == (0 as *props::DatePickerProps) { return; }
+        if p.is_null() { return; }
         if opened {
             let h: fn(*u8, *u8) = { (*p).on_opened };
             if h != props::no_handler { h(core::view_of(n), { (*p).on_opened_ctx }); }
@@ -2986,7 +2943,7 @@ fn fire_picker(n: *core::Node, kind: u32, opened: bool) {
         return;
     }
     let p: *props::TimePickerProps = props_of(n, kind) as *props::TimePickerProps;
-    if p == (0 as *props::TimePickerProps) { return; }
+    if p.is_null() { return; }
     if opened {
         let h: fn(*u8, *u8) = { (*p).on_opened };
         if h != props::no_handler { h(core::view_of(n), { (*p).on_opened_ctx }); }
@@ -2994,7 +2951,6 @@ fn fire_picker(n: *core::Node, kind: u32, opened: bool) {
         let h: fn(*u8, *u8) = { (*p).on_closed };
         if h != props::no_handler { h(core::view_of(n), { (*p).on_closed_ctx }); }
     }
-    return;
 }
 
 fn create_date_picker(n: *core::Node) -> *u8 {
@@ -3007,21 +2963,21 @@ fn create_date_picker(n: *core::Node) -> *u8 {
 
 fn apply_date_picker(v: *u8, n: *core::Node, dirty: u64) {
     let p: *props::DatePickerProps = props_of(n, props::K_DATE_PICKER) as *props::DatePickerProps;
-    if p == (0 as *props::DatePickerProps) { return; }
+    if p.is_null() { return; }
     let dp: ak::DatePicker = ak::DatePicker::from_raw(v);
     // The bounds go on before the value, the same trap the slider has: a date
     // outside the OLD range is clamped away and the write is lost.
     if (dirty & date_picker::P_MINIMUM_DATE) != (0 as u64) {
         let lo: *u8 = ns_date({ (*p).minimum_date });
-        if lo != (0 as *u8) { dp.set_min_date(ak::Date::from_raw(lo)); }
+        if lo.is_not_null() { dp.set_min_date(ak::Date::from_raw(lo)); }
     }
     if (dirty & date_picker::P_MAXIMUM_DATE) != (0 as u64) {
         let hi: *u8 = ns_date({ (*p).maximum_date });
-        if hi != (0 as *u8) { dp.set_max_date(ak::Date::from_raw(hi)); }
+        if hi.is_not_null() { dp.set_max_date(ak::Date::from_raw(hi)); }
     }
     if (dirty & (date_picker::P_DATE | date_picker::P_MINIMUM_DATE | date_picker::P_MAXIMUM_DATE)) != (0 as u64) {
         let d: *u8 = ns_date({ (*p).date });
-        if d != (0 as *u8) { dp.set_date_value(ak::Date::from_raw(d)); }
+        if d.is_not_null() { dp.set_date_value(ak::Date::from_raw(d)); }
     }
     if (dirty & (date_picker::P_FONT_SCALES | date_picker::P_FONT_SIZE | date_picker::P_FONT_WEIGHT
                  | date_picker::P_FONT_FAMILY | date_picker::P_IS_ITALIC)) != (0 as u64) {
@@ -3076,7 +3032,6 @@ fn apply_date_picker(v: *u8, n: *core::Node, dirty: u64) {
     if (dirty & props::C_IS_ENABLED) != (0 as u64) || dirty == paint::all_bits() {
         dp.as_control().set_enabled(core::is_enabled(n));
     }
-    return;
 }
 
 // NSDatePickerElementFlags: YearMonth 0xc0, YearMonthDay 0xe0.
@@ -3087,9 +3042,9 @@ fn apply_date_picker(v: *u8, n: *core::Node, dirty: u64) {
 // disagree about the text.
 fn shown_date(dp: ak::DatePicker) -> text::Text {
     let cell: *u8 = { rt::msg_id(dp.as_view().raw(), rt::sel(#str_ptr("cell\0"))) };
-    if cell == (0 as *u8) { return text::new(); }
+    if cell.is_null() { return text::new(); }
     let s: *u8 = { rt::msg_id(cell, rt::sel(#str_ptr("stringValue\0"))) };
-    if s == (0 as *u8) { return text::new(); }
+    if s.is_null() { return text::new(); }
     return bridge::to_text(s);
 }
 
@@ -3119,7 +3074,7 @@ fn create_time_picker(n: *core::Node) -> *u8 {
 
 fn apply_time_picker(v: *u8, n: *core::Node, dirty: u64) {
     let p: *props::TimePickerProps = props_of(n, props::K_TIME_PICKER) as *props::TimePickerProps;
-    if p == (0 as *props::TimePickerProps) { return; }
+    if p.is_null() { return; }
     let dp: ak::DatePicker = ak::DatePicker::from_raw(v);
     if (dirty & time_picker::P_TIME) != (0 as u64) {
         dp.set_date_value(ak::Date::from_raw(ns_time({ (*p).time })));
@@ -3164,7 +3119,6 @@ fn apply_time_picker(v: *u8, n: *core::Node, dirty: u64) {
     if (dirty & props::C_IS_ENABLED) != (0 as u64) || dirty == paint::all_bits() {
         dp.as_control().set_enabled(core::is_enabled(n));
     }
-    return;
 }
 
 // ---- tabs --------------------------------------------------------------------
@@ -3223,8 +3177,7 @@ fn tab_strip_of(v: *u8) -> *u8 { return { synth::get_associated(v, tab_strip_key
 fn tabs_add_pane(host: *u8, pane: *u8, label: str) {
     ak::View::from_raw(host).add_subview(ak::View::from_raw(pane));
     let n: *core::Node = { synth::get_associated(host, tab_node_key()) as *core::Node };
-    if n != (0 as *core::Node) { rebuild_tabs(host, n); }
-    return;
+    if n.is_not_null() { rebuild_tabs(host, n); }
 }
 
 // The user picked a tab. `selected_index` is written BEFORE the handler, the
@@ -3232,18 +3185,17 @@ fn tabs_add_pane(host: *u8, pane: *u8, label: str) {
 fn tab_clicked(sender: *u8, ctx: *u8) {
     let n: *core::Node = ctx as *core::Node;
     let p: *props::TabsProps = props_of(n, props::K_TABS) as *props::TabsProps;
-    if p == (0 as *props::TabsProps) { return; }
+    if p.is_null() { return; }
     let at: i64 = { synth::get_associated(sender, tab_index_key()) as i64 } - (1 as i64);
     if at < (0 as i64) { return; }
     { (*p).selected_index = at };
     let v: *u8 = core::view_of(n);
-    if v != (0 as *u8) {
+    if v.is_not_null() {
         show_selected_pane(n, at);
         style_tabs(v, p, at);
     }
     let h: fn(*u8, *u8) = { (*p).on_tab_changed };
     if h != props::no_handler { h(sender, { (*p).on_tab_changed_ctx }); }
-    return;
 }
 
 // One button per pane, rebuilt when the panes change. A tab strip is short and
@@ -3251,7 +3203,7 @@ fn tab_clicked(sender: *u8, ctx: *u8) {
 // `style_popup_items` makes about a popup's menu.
 fn rebuild_tabs(v: *u8, n: *core::Node) {
     let strip: *u8 = tab_strip_of(v);
-    if strip == (0 as *u8) { return; }
+    if strip.is_null() { return; }
     let subs: vec::Vec[ak::View] = ak::View::from_raw(strip).subviews();
     var i: usize = 0 as usize;
     while i < subs.count() {
@@ -3289,11 +3241,10 @@ fn rebuild_tabs(v: *u8, n: *core::Node) {
         k = k +% (1 as usize);
     }
     let p: *props::TabsProps = props_of(n, props::K_TABS) as *props::TabsProps;
-    if p != (0 as *props::TabsProps) {
+    if p.is_not_null() {
         show_selected_pane(n, { (*p).selected_index });
         style_tabs(v, p, { (*p).selected_index });
     }
-    return;
 }
 
 fn tab_width(v: *u8, count: usize) -> f64 {
@@ -3319,13 +3270,12 @@ fn show_selected_pane(n: *core::Node, at: i64) {
         }
         i = i +% (1 as usize);
     }
-    return;
 }
 
 // The five bar colours, which are ordinary drawing now that the strip is ours.
 fn style_tabs(v: *u8, p: *props::TabsProps, at: i64) {
     let strip: *u8 = tab_strip_of(v);
-    if strip == (0 as *u8) { return; }
+    if strip.is_null() { return; }
     let back: vocab::Color = bar_color(p);
     if back.is_set() {
         let sv: ak::View = ak::View::from_raw(strip);
@@ -3351,7 +3301,7 @@ fn style_tabs(v: *u8, p: *props::TabsProps, at: i64) {
                         paint::rich_attributes(option::Option[ak::Font]::None, ink, 0.0f64, 0.0f64,
                                                option::Option[vocab::TextAlign]::None,
                                                vocab::TextDecoration::None));
-                    if a != (0 as *u8) {
+                    if a.is_not_null() {
                         { rt::msg_void_id(raw, rt::sel(#str_ptr("setAttributedTitle:\0")), a) };
                         rt::release(a);
                     }
@@ -3361,7 +3311,6 @@ fn style_tabs(v: *u8, p: *props::TabsProps, at: i64) {
         }
         i = i +% (1 as usize);
     }
-    return;
 }
 
 // `BarBackground` is a Brush and `BarBackgroundColor` a Color — ledger row carries
@@ -3382,7 +3331,7 @@ fn tab_fill(p: *props::TabsProps, selected: bool) -> vocab::Color {
 
 fn apply_tabs(v: *u8, n: *core::Node, dirty: u64) {
     let p: *props::TabsProps = props_of(n, props::K_TABS) as *props::TabsProps;
-    if p == (0 as *props::TabsProps) { return; }
+    if p.is_null() { return; }
     // The node pointer is re-associated every time: a node detached and
     // re-attached under the same view has a new address.
     synth::set_associated(v, tab_node_key(), n as *u8);
@@ -3399,7 +3348,6 @@ fn apply_tabs(v: *u8, n: *core::Node, dirty: u64) {
         | tabs::P_BAR_TEXT_COLOR | tabs::P_SELECTED_TAB_COLOR
         | tabs::P_UNSELECTED_TAB_COLOR | tabs::P_SELECTED_INDEX;
     if (dirty & colours) != (0 as u64) { style_tabs(v, p, { (*p).selected_index }); }
-    return;
 }
 
 // ---- context_menu ------------------------------------------------------------
@@ -3470,16 +3418,15 @@ fn mark_destructive(item: ak::MenuItem, title: str, destructive: bool) {
         0.0f64, 0.0f64, option::Option[vocab::TextAlign]::None,
         vocab::TextDecoration::None);
     let a: *u8 = paint::attributed(title, attrs);
-    if a == (0 as *u8) { return; }
+    if a.is_null() { return; }
     { rt::msg_void_id(item.raw(), rt::sel(#str_ptr("setAttributedTitle:\0")), a) };
     { rt::release(a) };
-    return;
 }
 
 fn add_menu_item(menu: ak::Menu, c: *core::Node) {
     let p: *props::ContextMenuItemProps =
         props_of(c, props::K_CONTEXT_MENU_ITEM) as *props::ContextMenuItemProps;
-    if p == (0 as *props::ContextMenuItemProps) { return; }
+    if p.is_null() { return; }
     let mi: *props::MenuItemProps = { #addr_of((*p).menu_item) };
     let title: str = { (*mi).text.view() };
     // An item with no title is a separator: the ledger has no separator type, and a
@@ -3515,7 +3462,6 @@ fn add_menu_item(menu: ak::Menu, c: *core::Node) {
     item.set_enabled(core::is_enabled(c));
     bind_menu_identity(item, c);
     menu.add_item(item);
-    return;
 }
 
 // Give a menu item the two things every other sender carries: its key and its
@@ -3550,20 +3496,19 @@ fn bind_menu_identity(item: ak::MenuItem, c: *core::Node) {
     // ASSIGN, never retain — same contract as `input::bind_item`: the
     // application owns the item and outlives the node.
     synth::set_associated(item.raw(), input::item_key(), core::item_of(c));
-    return;
 }
 
 // Hang the context menu a node's children describe on that node's view. Called
 // from `views::create` once the view exists.
 fn attach_context_menu(view: *u8, n: *core::Node) {
-    if view == (0 as *u8) { return; }
+    if view.is_null() { return; }
     var i: usize = 0 as usize;
     let count: usize = core::child_count_of(n);
     while i < count {
         match core::child_of(n, i) {
             option::Option[*core::Node]::Some(c) => {
                 let menu: *u8 = build_context_menu(c);
-                if menu != (0 as *u8) {
+                if menu.is_not_null() {
                     { rt::msg_void_id(view, rt::sel(#str_ptr("setMenu:\0")), menu) };
                     return;                     // one context menu per node
                 }
@@ -3572,7 +3517,6 @@ fn attach_context_menu(view: *u8, n: *core::Node) {
         }
         i = i +% (1 as usize);
     }
-    return;
 }
 
 // ---- span --------------------------------------------------------------------
@@ -3605,7 +3549,7 @@ fn has_spans(n: *core::Node) -> bool {
 // The attributed string a label's span children describe, at +1.
 fn build_runs(n: *core::Node) -> *u8 {
     let ms: *u8 = { rt::alloc_init(#str_ptr("NSMutableAttributedString\0")) };
-    if ms == (0 as *u8) { return 0 as *u8; }
+    if ms.is_null() { return 0 as *u8; }
     var i: usize = 0 as usize;
     let count: usize = core::child_count_of(n);
     while i < count {
@@ -3620,7 +3564,7 @@ fn build_runs(n: *core::Node) -> *u8 {
 
 fn append_run(ms: *u8, c: *core::Node) {
     let p: *props::SpanProps = props_of(c, props::K_SPAN) as *props::SpanProps;
-    if p == (0 as *props::SpanProps) { return; }
+    if p.is_null() { return; }
     let shown: text::Text = paint::transformed({ (*p).text.view() }, { (*p).text_transform });
     // Attributes for THIS run only: a span that names nothing inherits the
     // label's own font and colour, which is what an unstyled run should do.
@@ -3633,11 +3577,10 @@ fn append_run(ms: *u8, c: *core::Node) {
         { (*p).text_color }, { (*p).character_spacing }, { (*p).line_height },
         option::Option[vocab::TextAlign]::None, { (*p).text_decoration });
     let run: *u8 = paint::attributed(shown.view(), attrs);
-    if run != (0 as *u8) {
+    if run.is_not_null() {
         { rt::msg_void_id(ms, rt::sel(#str_ptr("appendAttributedString:\0")), run) };
         { rt::release(run) };
     }
-    return;
 }
 
 // ---- the recorded "AppKit cannot" kinds --------------------------------------
@@ -3702,7 +3645,6 @@ fn apply_swipeable(v: *u8, n: *core::Node, dirty: u64) {
         attach_swipe_menu(v, n);
         build_swipe_reveal(v, n);
     }
-    return;
 }
 
 // The DRAG path. The menu is the click path an agent has and is untouched; this
@@ -3710,7 +3652,7 @@ fn apply_swipeable(v: *u8, n: *core::Node, dirty: u64) {
 // no second place to add an action.
 fn build_swipe_reveal(v: *u8, n: *core::Node) {
     let p: *props::SwipeableProps = props_of(n, props::K_SWIPEABLE) as *props::SwipeableProps;
-    if p == (0 as *props::SwipeableProps) { return; }
+    if p.is_null() { return; }
     var count: usize = 0 as usize;
     var i: usize = 0 as usize;
     let children: usize = core::child_count_of(n);
@@ -3733,7 +3675,7 @@ fn build_swipe_reveal(v: *u8, n: *core::Node) {
         closed: { (*p).on_close_requested }, closed_ctx: { (*p).on_close_requested_ctx },
     };
     let strip: *u8 = compose::install_swipe_strip(v, count, #addr_of(SWIPE_HOOKS));
-    if strip == (0 as *u8) { return; }
+    if strip.is_null() { return; }
     compose::clear_swipe_strip(strip);
     var at: usize = 0 as usize;
     var k: usize = 0 as usize;
@@ -3742,7 +3684,7 @@ fn build_swipe_reveal(v: *u8, n: *core::Node) {
             option::Option[*core::Node]::Some(c) => {
                 if core::kind_of(c) == props::K_SWIPE_ITEM {
                     let sp: *props::SwipeItemProps = props_of(c, props::K_SWIPE_ITEM) as *props::SwipeItemProps;
-                    if sp != (0 as *props::SwipeItemProps) {
+                    if sp.is_not_null() {
                         let mi: *props::MenuItemProps = { #addr_of((*sp).menu_item) };
                         let f: fn(*u8, *u8) = swipe_item_clicked;
                         compose::add_swipe_action(strip, at, { (*mi).text.view() },
@@ -3755,14 +3697,13 @@ fn build_swipe_reveal(v: *u8, n: *core::Node) {
         }
         k = k +% (1 as usize);
     }
-    return;
 }
 
 // The menu a swipeable's `swipe_item` children describe, hung on its view. A
 // swipeable with no swipe items gets none — an empty menu on a view is a
 // right-click that opens nothing, which reads as broken.
 fn attach_swipe_menu(view: *u8, n: *core::Node) {
-    if view == (0 as *u8) { return; }
+    if view.is_null() { return; }
     let menu: ak::Menu = ak::Menu::new("");
     var found: bool = false;
     var i: usize = 0 as usize;
@@ -3782,7 +3723,6 @@ fn attach_swipe_menu(view: *u8, n: *core::Node) {
     if !found { return; }
     { rt::msg_void_id(view, rt::sel(#str_ptr("setMenu:\0")), menu.raw()) };
     text_input::install_swipe(view, menu.raw(), n);
-    return;
 }
 
 // A swipe item IS a menu item. `on_invoked` is the ledger's second name for the same
@@ -3790,7 +3730,7 @@ fn attach_swipe_menu(view: *u8, n: *core::Node) {
 // order, and an application that wired either gets it.
 fn add_swipe_item(menu: ak::Menu, c: *core::Node) {
     let p: *props::SwipeItemProps = props_of(c, props::K_SWIPE_ITEM) as *props::SwipeItemProps;
-    if p == (0 as *props::SwipeItemProps) { return; }
+    if p.is_null() { return; }
     let mi: *props::MenuItemProps = { #addr_of((*p).menu_item) };
     let title: str = { (*mi).text.view() };
     if title == "" { menu.add_item(ak::MenuItem::separator_item()); return; }
@@ -3809,19 +3749,17 @@ fn add_swipe_item(menu: ak::Menu, c: *core::Node) {
     item.set_enabled(core::is_enabled(c));
     bind_menu_identity(item, c);
     menu.add_item(item);
-    return;
 }
 
 fn swipe_item_clicked(sender: *u8, ctx: *u8) {
     let c: *core::Node = ctx as *core::Node;
     let p: *props::SwipeItemProps = props_of(c, props::K_SWIPE_ITEM) as *props::SwipeItemProps;
-    if p == (0 as *props::SwipeItemProps) { return; }
+    if p.is_null() { return; }
     let mi: *props::MenuItemProps = { #addr_of((*p).menu_item) };
     let h: fn(*u8, *u8) = { (*mi).on_clicked };
     if h != props::no_handler { h(sender, { (*mi).on_clicked_ctx }); }
     let g: fn(*u8, *u8) = { (*p).on_invoked };
     if g != props::no_handler { g(sender, { (*p).on_invoked_ctx }); }
-    return;
 }
 
 // ---- refreshable -------------------------------------------------------------
@@ -3842,21 +3780,20 @@ fn create_refreshable(n: *core::Node) -> *u8 {
 fn refreshable_clicked(sender: *u8, ctx: *u8) {
     let n: *core::Node = ctx as *core::Node;
     let p: *props::RefreshableProps = props_of(n, props::K_REFRESHABLE) as *props::RefreshableProps;
-    if p == (0 as *props::RefreshableProps) { return; }
+    if p.is_null() { return; }
     { (*p).is_refreshing = true };
     let v: *u8 = core::view_of(n);
-    if v != (0 as *u8) {
+    if v.is_not_null() {
         compose::apply_refresh(v, { (*p).is_refreshable }, true, false, { (*p).refresh_color },
                                refreshable_clicked, n as *u8);
     }
     let h: fn(*u8, *u8) = { (*p).on_refreshing };
     if h != props::no_handler { h(sender, { (*p).on_refreshing_ctx }); }
-    return;
 }
 
 fn apply_refreshable(v: *u8, n: *core::Node, dirty: u64) {
     let p: *props::RefreshableProps = props_of(n, props::K_REFRESHABLE) as *props::RefreshableProps;
-    if p == (0 as *props::RefreshableProps) { return; }
+    if p.is_null() { return; }
     let band: u64 = refreshable::P_IS_REFRESHABLE | refreshable::P_IS_REFRESHING
         | refreshable::P_REFRESH_COLOR | props::C_HANDLERS;
     if (dirty & band) != (0 as u64) || dirty == paint::all_bits() {
@@ -3864,7 +3801,6 @@ fn apply_refreshable(v: *u8, n: *core::Node, dirty: u64) {
         compose::apply_refresh(v, { (*p).is_refreshable }, { (*p).is_refreshing }, true,
                                { (*p).refresh_color }, f, n as *u8);
     }
-    return;
 }
 
 // ---- the collection group ----------------------------------------------------
@@ -3904,7 +3840,6 @@ fn clear_rows(n: *core::Node) {
     while core::child_count_of(n) > (0 as usize) {
         let _gone: option::Option[core::Node] = mount::remove_child(n, 0 as usize);
     }
-    return;
 }
 
 // Add one row. During `create` the node is not attached yet and the walk will
@@ -3912,18 +3847,16 @@ fn clear_rows(n: *core::Node) {
 // Both go through the same verb, so there is one code path either way.
 fn add_row(n: *core::Node, take row: core::Node) {
     let _ok: bool = mount::add_child(n, row);
-    return;
 }
 
 fn fill_rows(n: *core::Node, count: i64, builder: fn(usize, *u8) -> flex::Node, ctx: *u8) {
     clear_rows(n);
-    if builder == (0 as fn(usize, *u8) -> flex::Node) { return; }
+    if builder.is_null() { return; }
     var i: i64 = 0 as i64;
     while i < count {
         add_row(n, builder(i as usize, ctx));
         i = i +% (1 as i64);
     }
-    return;
 }
 
 // A scroll host for a sequence: the same flipped document view a `scroll` uses,
@@ -3967,7 +3900,7 @@ fn create_collection(n: *core::Node) -> *u8 { return create_sequence_host(false)
 
 fn materialise_collection(n: *core::Node) {
     let p: *props::CollectionProps = props_of(n, props::K_COLLECTION) as *props::CollectionProps;
-    if p == (0 as *props::CollectionProps) { return; }
+    if p.is_null() { return; }
     // A collection that named a BIND writes into the rows it already has, when
     // it still has the right number of them.
     //
@@ -3992,7 +3925,6 @@ fn materialise_collection(n: *core::Node) {
         return;
     }
     fill_rows(n, { (*p).count }, { (*p).row }, { (*p).row_ctx });
-    return;
 }
 
 // Write the current data into the rows that are already there. False when it
@@ -4054,7 +3986,7 @@ fn fill_groups(n: *core::Node, groups: i64,
                header: fn(usize, *u8) -> flex::Node, header_ctx: *u8,
                builder: fn(usize, *u8) -> flex::Node, builder_ctx: *u8) {
     clear_rows(n);
-    if builder == (0 as fn(usize, *u8) -> flex::Node) { return; }
+    if builder.is_null() { return; }
     var flat: usize = 0 as usize;
     var g: i64 = 0 as i64;
     while g < groups {
@@ -4076,7 +4008,7 @@ fn fill_groups(n: *core::Node, groups: i64,
 // -1 for a header, which is not selectable.
 fn data_index_of(n: *core::Node, child: i64) -> i64 {
     let p: *props::CollectionProps = props_of(n, props::K_COLLECTION) as *props::CollectionProps;
-    if p == (0 as *props::CollectionProps) { return child; }
+    if p.is_null() { return child; }
     if !{ (*p).groupable_items_view.is_grouped } || { (*p).group_count } <= (0 as i64) {
         return child;
     }
@@ -4142,7 +4074,6 @@ fn apply_item_sizing(n: *core::Node, mode: vocab::ItemSizing) {
         }
         i = i +% (1 as usize);
     }
-    return;
 }
 
 // A collection that reorders but does not select still needs the class the
@@ -4158,9 +4089,9 @@ fn no_move(doc: *u8, from: i64, to: i64) { return; }
 // and the next write of `count` or `row` is the application's answer.
 fn collection_row_moved(doc: *u8, from: i64, to: i64) {
     let n: *core::Node = { synth::get_associated(doc, compose::select_node_key()) as *core::Node };
-    if n == (0 as *core::Node) { return; }
+    if n.is_null() { return; }
     let p: *props::CollectionProps = props_of(n, props::K_COLLECTION) as *props::CollectionProps;
-    if p == (0 as *props::CollectionProps) { return; }
+    if p.is_null() { return; }
     if from < (0 as i64) || to < (0 as i64) || from == to { return; }
     let a: i64 = data_index_of(n, from);
     let b: i64 = data_index_of(n, to);
@@ -4182,14 +4113,13 @@ fn collection_row_moved(doc: *u8, from: i64, to: i64) {
     { (*p).reorder_to = b };
     let h: fn(*u8, *u8) = { (*p).reorderable_items_view.on_reorder_completed };
     if h != props::no_handler { h(doc, { (*p).reorderable_items_view.on_reorder_completed_ctx }); }
-    return;
 }
 
 // Which group a CHILD sits in, or -1 when the sequence is not grouped — which
 // makes the mix-groups check pass for every row, as it should.
 fn group_of(n: *core::Node, child: i64) -> i64 {
     let p: *props::CollectionProps = props_of(n, props::K_COLLECTION) as *props::CollectionProps;
-    if p == (0 as *props::CollectionProps) { return -1 as i64; }
+    if p.is_null() { return -1 as i64; }
     if !{ (*p).groupable_items_view.is_grouped } || { (*p).group_count } <= (0 as i64) {
         return -1 as i64;
     }
@@ -4218,9 +4148,9 @@ fn selects_rows(m: vocab::SelectionMode) -> bool {
 // that caused it.
 fn collection_row_picked(doc: *u8, child: i64) {
     let n: *core::Node = { synth::get_associated(doc, compose::select_node_key()) as *core::Node };
-    if n == (0 as *core::Node) { return; }
+    if n.is_null() { return; }
     let p: *props::CollectionProps = props_of(n, props::K_COLLECTION) as *props::CollectionProps;
-    if p == (0 as *props::CollectionProps) { return; }
+    if p.is_null() { return; }
     let data: i64 = data_index_of(n, child);
     if data < (0 as i64) { return; }
     { (*p).selected_index = data };
@@ -4228,7 +4158,6 @@ fn collection_row_picked(doc: *u8, child: i64) {
     let sel: *props::SelectableItemsViewProps = { #addr_of((*p).selectable_items_view) };
     let h: fn(*u8, *u8) = { (*sel).on_selection_changed };
     if h != props::no_handler { h(doc, { (*sel).on_selection_changed_ctx }); }
-    return;
 }
 
 // Arrange a materialised sequence into COLUMNS.
@@ -4244,7 +4173,7 @@ fn collection_row_picked(doc: *u8, child: i64) {
 // this verb existed. So an application that never mentions columns sees no
 // change at all.
 fn arrange_columns(n: *core::Node, columns: usize) {
-    if n == (0 as *core::Node) { return; }
+    if n.is_null() { return; }
     let count: usize = core::child_count_of(n);
     if count == (0 as usize) { return; }
     if columns <= (1 as usize) {
@@ -4283,7 +4212,7 @@ fn arrange_columns(n: *core::Node, columns: usize) {
 
 fn apply_collection(v: *u8, n: *core::Node, dirty: u64) {
     let p: *props::CollectionProps = props_of(n, props::K_COLLECTION) as *props::CollectionProps;
-    if p == (0 as *props::CollectionProps) { return; }
+    if p.is_null() { return; }
     let iv: *props::ItemsViewProps = { #addr_of((*p).items_view) };
     if (dirty & (collection::P_COUNT | collection::P_ROW | collection::P_GROUP_COUNT
                  | collection::P_GROUP | collection::P_IS_GROUPED)) != (0 as u64) {
@@ -4349,7 +4278,6 @@ fn apply_collection(v: *u8, n: *core::Node, dirty: u64) {
     if (dirty & collection::P_SCROLL_TO) != (0 as u64) {
         scroll_child_into_view(v, n, { (*iv).scroll_to_index });
     }
-    return;
 }
 
 // ---- what an update does to the scroll ---------------------------------------
@@ -4365,7 +4293,7 @@ fn apply_collection(v: *u8, n: *core::Node, dirty: u64) {
 //   KeepLastItemInView follow the tail, which is the one an appending log or a
 //                      chat transcript wants.
 fn kept_offset(v: *u8, a: vocab::ScrollAnchor) -> f64 {
-    if v == (0 as *u8) { return 0.0f64; }
+    if v.is_null() { return 0.0f64; }
     let keeps: bool = match a {
         vocab::ScrollAnchor::KeepScrollOffset => true,
         vocab::ScrollAnchor::KeepItemsInView => false,
@@ -4373,7 +4301,7 @@ fn kept_offset(v: *u8, a: vocab::ScrollAnchor) -> f64 {
     };
     if !keeps { return 0.0f64; }
     let clip: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("contentView\0"))) };
-    if clip == (0 as *u8) { return 0.0f64; }
+    if clip.is_null() { return 0.0f64; }
     let b: rt::Rect = { rt::msg_rect(clip, rt::sel(#str_ptr("bounds\0"))) };
     return b.y;
 }
@@ -4399,7 +4327,6 @@ fn restore_anchor(v: *u8, n: *core::Node, a: vocab::ScrollAnchor, before: f64) {
             }
         }
     }
-    return;
 }
 
 // The scrollers on a materialising sequence. A `list` answers this on its
@@ -4409,7 +4336,6 @@ fn apply_sequence_scrollers(v: *u8, vert: vocab::ScrollBars, horiz: vocab::Scrol
     let sv: ak::ScrollView = ak::ScrollView::from_raw(v);
     sv.set_has_vertical_scroller(shows_bars(vert));
     sv.set_has_horizontal_scroller(shows_bars(horiz));
-    return;
 }
 
 // `scroll_to(index)` on a materialised sequence: the child's frame is flex's
@@ -4418,7 +4344,6 @@ fn apply_sequence_scrollers(v: *u8, vert: vocab::ScrollBars, horiz: vocab::Scrol
 // and pretending it meant the last one would hide it.
 fn scroll_child_into_view(v: *u8, n: *core::Node, index: i64) {
     scroll_child(v, n, index, false);
-    return;
 }
 
 fn scroll_child(v: *u8, n: *core::Node, index: i64, animated: bool) {
@@ -4430,7 +4355,6 @@ fn scroll_child(v: *u8, n: *core::Node, index: i64, animated: bool) {
         }
         option::Option[*core::Node]::None => { }
     }
-    return;
 }
 
 // A jump, or a slide. `IsScrollAnimated` IS a per-scroll switch on AppKit —
@@ -4448,16 +4372,15 @@ fn scroll_document_to(v: *u8, p: rt::Point, animated: bool) {
         return;
     }
     let clip: *u8 = { rt::msg_id(v, rt::sel(#str_ptr("contentView\0"))) };
-    if clip == (0 as *u8) { return; }
+    if clip.is_null() { return; }
     let cls: *u8 = rt::get_class(#str_ptr("NSAnimationContext\0"));
     { rt::msg_void(cls, rt::sel(#str_ptr("beginGrouping\0"))) };
     let anim: *u8 = { rt::msg_id(clip, rt::sel(#str_ptr("animator\0"))) };
-    if anim != (0 as *u8) {
+    if anim.is_not_null() {
         { rt::msg_void_point(anim, rt::sel(#str_ptr("setBoundsOrigin:\0")), p) };
     }
     { rt::msg_void_id(v, rt::sel(#str_ptr("reflectScrolledClipView:\0")), clip) };
     { rt::msg_void(cls, rt::sel(#str_ptr("endGrouping\0"))) };
-    return;
 }
 
 // ---- table -------------------------------------------------------------------
@@ -4474,7 +4397,7 @@ fn create_table(n: *core::Node) -> *u8 { return create_sequence_host(false); }
 // measures them" as a reason it could not be done, when it is the mechanism.
 fn apply_table(v: *u8, n: *core::Node, dirty: u64) {
     let p: *props::TableProps = props_of(n, props::K_TABLE) as *props::TableProps;
-    if p == (0 as *props::TableProps) { return; }
+    if p.is_null() { return; }
     if (dirty & (table::P_ROW_HEIGHT | table::P_HAS_UNEVEN_ROWS)) != (0 as u64)
         || dirty == paint::all_bits() {
         apply_row_heights(n, { (*p).row_height }, { (*p).has_uneven_rows });
@@ -4482,7 +4405,6 @@ fn apply_table(v: *u8, n: *core::Node, dirty: u64) {
     if (dirty & table::P_STYLE) != (0 as u64) || dirty == paint::all_bits() {
         apply_table_style(n, { (*p).style });
     }
-    return;
 }
 
 // `has_uneven_rows` is what DECIDES whether `row_height` applies: a table of
@@ -4505,7 +4427,6 @@ fn apply_row_heights(n: *core::Node, height: i64, uneven: bool) {
         }
         i = i +% (1 as usize);
     }
-    return;
 }
 
 // `TableView.Intent` names how the form READS, and on macOS the difference
@@ -4526,7 +4447,6 @@ fn apply_table_style(n: *core::Node, style: vocab::TableStyle) {
         vocab::TableStyle::Menu => 0.0f64,
     };
     { (*n).set_gap(flex::Gutter::Row, flex::StyleLength::points(gap)) };
-    return;
 }
 
 // ---- carousel ----------------------------------------------------------------
@@ -4538,7 +4458,7 @@ fn create_carousel(n: *core::Node) -> *u8 { return create_sequence_host(true); }
 
 fn apply_carousel(v: *u8, n: *core::Node, dirty: u64) {
     let p: *props::CarouselProps = props_of(n, props::K_CAROUSEL) as *props::CarouselProps;
-    if p == (0 as *props::CarouselProps) { return; }
+    if p.is_null() { return; }
     let anchor: vocab::ScrollAnchor = { (*p).items_view.scroll_anchor };
     if (dirty & props::C_LAYOUT) != (0 as u64) {
         restore_anchor(v, n, anchor, kept_offset(v, anchor));
@@ -4600,7 +4520,6 @@ fn apply_carousel(v: *u8, n: *core::Node, dirty: u64) {
         scroll_child(v, n, wrapped(n, { (*iv).scroll_to_index }, { (*p).wraps }),
                      { (*p).animates_scroll });
     }
-    return;
 }
 
 // An index into a carousel that loops. Without `wraps` an out-of-range index is
@@ -4632,12 +4551,11 @@ fn indent_step() -> f64 { return 16.0f64; }
 
 fn materialise_tree(n: *core::Node) {
     let p: *tree::TreeProps = props_of(n, tree::K_TREE) as *tree::TreeProps;
-    if p == (0 as *tree::TreeProps) { return; }
+    if p.is_null() { return; }
     clear_rows(n);
     let root: *tree::TreeNode = { #addr_of((*p).root) };
     // The root itself is the container, not a row: a tree shows its CHILDREN.
     emit_branch(n, root, p, 0 as i64, true);
-    return;
 }
 
 // `parent_open` is what stops a closed branch costing anything: the walk does
@@ -4692,7 +4610,7 @@ fn build_tree_row(node: *tree::TreeNode, p: *tree::TreeProps) -> core::Node {
     let h: f64 = stated_or_default_tree_row_h(p);
     // Whether `h` came from the APPLICATION or from this file's default — the
     // wrap treats the two differently, see `center_in_tree_row`.
-    let stated: bool = p != (0 as *tree::TreeProps) && { (*p).row_height } >= 1.0f64;
+    let stated: bool = p.is_not_null() && { (*p).row_height } >= 1.0f64;
     if f != tree::no_row {
         // A custom row that does not fill the stated height sits at the TOP of
         // the cell while AppKit centres the disclosure triangle in the full
@@ -4734,7 +4652,7 @@ const DEFAULT_TREE_ROW_H: f64 = 28.0f64;
 const TREE_PLAIN_LABEL_H: f64 = 18.0f64;
 
 fn stated_or_default_tree_row_h(p: *tree::TreeProps) -> f64 {
-    if p == (0 as *tree::TreeProps) { return DEFAULT_TREE_ROW_H; }
+    if p.is_null() { return DEFAULT_TREE_ROW_H; }
     let h: f64 = { (*p).row_height };
     if h >= 1.0f64 { return h; }
     return DEFAULT_TREE_ROW_H;
@@ -4787,7 +4705,6 @@ fn apply_tree(v: *u8, n: *core::Node, dirty: u64) {
     if (dirty & (tree::P_ROOT | tree::P_ROW | tree::P_EXPANDED)) != (0 as u64) {
         materialise_tree(n);
     }
-    return;
 }
 
 // ---- window_buttons ----------------------------------------------------------
@@ -4829,7 +4746,7 @@ fn apply_window_buttons(v: *u8, n: *core::Node, dirty: u64) {
     // AppKit's callbacks.
     let p: *chrome::WindowButtonsProps =
         props_of(n, chrome::K_WINDOW_BUTTONS) as *chrome::WindowButtonsProps;
-    if p == (0 as *chrome::WindowButtonsProps) { return; }
+    if p.is_null() { return; }
     if (dirty & chrome::P_STYLE) != (0 as u64) || dirty == paint::all_bits() {
         let on_hover: bool = match { (*p).style } {
             chrome::ButtonStyle::OnHover => true,
@@ -4837,7 +4754,6 @@ fn apply_window_buttons(v: *u8, n: *core::Node, dirty: u64) {
         };
         compose::apply_hover_reveal(v, on_hover);
     }
-    return;
 }
 
 // ---- canvas ------------------------------------------------------------------
@@ -4864,14 +4780,13 @@ fn create_canvas(n: *core::Node) -> *u8 {
 
 fn apply_canvas(v: *u8, n: *core::Node, dirty: u64) {
     let p: *props::CanvasProps = props_of(n, props::K_CANVAS) as *props::CanvasProps;
-    if p == (0 as *props::CanvasProps) { return; }
+    if p.is_null() { return; }
     // A new Drawable, an explicit `redraw()`, or a new size: the drawing is
     // a function of the laid-out box, so a resize is a repaint.
     let watched: u64 = canvas::P_DRAWABLE | canvas::P_REDRAW | props::C_LAYOUT;
     if (dirty & watched) != (0 as u64) || dirty == paint::all_bits() {
         drawing::invalidate(v);
     }
-    return;
 }
 
 // ---- menu, menu_item, toolbar_item -------------------------------------------
@@ -4905,7 +4820,7 @@ fn build_menu(n: *core::Node) -> *u8 {
     if core::kind_of(n) != props::K_MENU { return 0 as *u8; }
     let p: *props::MenuProps = props_of(n, props::K_MENU) as *props::MenuProps;
     var title: str = "";
-    if p != (0 as *props::MenuProps) { title = { (*p).text.view() }; }
+    if p.is_not_null() { title = { (*p).text.view() }; }
     let menu: ak::Menu = ak::Menu::new(title);
     var i: usize = 0 as usize;
     let count: usize = core::child_count_of(n);
@@ -4913,7 +4828,7 @@ fn build_menu(n: *core::Node) -> *u8 {
         match core::child_of(n, i) {
             option::Option[*core::Node]::Some(c) => {
                 let item: *u8 = build_menu_item(c);
-                if item != (0 as *u8) { menu.add_item(ak::MenuItem::from_raw(item)); }
+                if item.is_not_null() { menu.add_item(ak::MenuItem::from_raw(item)); }
             }
             option::Option[*core::Node]::None => { }
         }
@@ -4929,7 +4844,7 @@ fn build_menu(n: *core::Node) -> *u8 {
 // question.
 fn build_menu_item(c: *core::Node) -> *u8 {
     let mi: *props::MenuItemProps = props_of(c, props::K_MENU_ITEM) as *props::MenuItemProps;
-    if mi == (0 as *props::MenuItemProps) { return 0 as *u8; }
+    if mi.is_null() { return 0 as *u8; }
     let title: str = { (*mi).text.view() };
     if title == "" { return rt::retain(ak::MenuItem::separator_item().raw()); }
     let item: ak::MenuItem = ak::MenuItem::new(title, 0 as *u8, "");
@@ -4955,14 +4870,14 @@ fn build_menu_item(c: *core::Node) -> *u8 {
 // key, and they are the same need answered once.
 fn build_toolbar_item(c: *core::Node) -> *u8 {
     let p: *props::ToolbarItemProps = props_of(c, props::K_TOOLBAR_ITEM) as *props::ToolbarItemProps;
-    if p == (0 as *props::ToolbarItemProps) { return 0 as *u8; }
+    if p.is_null() { return 0 as *u8; }
     let mi: *props::MenuItemProps = { #addr_of((*p).menu_item) };
     var ident: str = { (*c).key() };
     if ident == "" { ident = { (*mi).text.view() }; }
     let alloced: *u8 = { rt::msg_id(rt::get_class(#str_ptr("NSToolbarItem\0")), rt::sel(#str_ptr("alloc\0"))) };
     let item: *u8 = { rt::msg_id_id(alloced, rt::sel(#str_ptr("initWithItemIdentifier:\0")),
                                     bridge::nsstring(ident)) };
-    if item == (0 as *u8) { return 0 as *u8; }
+    if item.is_null() { return 0 as *u8; }
     { rt::msg_void_id(item, rt::sel(#str_ptr("setLabel:\0")), bridge::nsstring({ (*mi).text.view() })) };
     let icon: str = { (*mi).icon.view() };
     if icon != "" {
@@ -4993,7 +4908,7 @@ fn build_toolbar_item(c: *core::Node) -> *u8 {
                                    vocab::Color::rgba(0.8f64, 0.1f64, 0.1f64), 0.0f64, 0.0f64,
                                    option::Option[vocab::TextAlign]::None,
                                    vocab::TextDecoration::None));
-        if a != (0 as *u8) {
+        if a.is_not_null() {
             { rt::msg_void_id(b.raw(), rt::sel(#str_ptr("setAttributedTitle:\0")), a) };
             rt::release(a);
         }
@@ -5042,12 +4957,12 @@ fn placement_rank(pl: vocab::ToolbarPlacement) -> i64 {
 // own Priority within it. Returns a rank a caller can compare directly.
 fn toolbar_order_of(c: *core::Node) -> i64 {
     let p: *props::ToolbarItemProps = props_of(c, props::K_TOOLBAR_ITEM) as *props::ToolbarItemProps;
-    if p == (0 as *props::ToolbarItemProps) { return 1 as i64; }
+    if p.is_null() { return 1 as i64; }
     return placement_rank({ (*p).placement });
 }
 
 fn toolbar_priority_of(c: *core::Node) -> i64 {
     let p: *props::ToolbarItemProps = props_of(c, props::K_TOOLBAR_ITEM) as *props::ToolbarItemProps;
-    if p == (0 as *props::ToolbarItemProps) { return 0 as i64; }
+    if p.is_null() { return 0 as i64; }
     return { (*p).priority };
 }

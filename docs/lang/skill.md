@@ -131,7 +131,7 @@ All thirteen are **compiler-enforced**, not convention. The error code you hit w
 | 8 | No `class` / `function` | `struct` + `impl`, `fn`. Locals are `let`/`var`. | E0100 |
 | 9 | Mutability is explicit, no `mut` | `var` (local), `static` (global), `ref` (write-back). | E0305 / E0328 |
 | 10 | Generics use `[T]`, not `<T>` | Avoids `a<b>(c)` ambiguity. | E0100 |
-| 11 | Explicit `return` | No implicit tail returns at function level. | E0333 |
+| 11 | Explicit `return` for a VALUE | No implicit tail returns at function level. A unit fn needs no trailing `return;`. | E0333 |
 | 12 | `::` for types, `.` for instances | Strict separation. | E0303 / E0327 |
 | 13 | Module-private via `_`, public by default | Leading `_` = private (items, fields, methods); `export` marks the C-ABI surface. | E0403 |
 
@@ -159,7 +159,7 @@ return match parse(s) {
 };
 
 // 10 — generics with [T], turbofish with ::[T]
-let v = vec::with_capacity::[i32](16 as usize);
+let v = vec::with_capacity::[i32](16);
 let h = thread::spawn::[i32](worker);
 ```
 
@@ -220,7 +220,7 @@ while x < 10 { x = x +% 1; }
 for i in 0..10 { ... }                       // 0..n exclusive; 0..=n inclusive
 for (var i: i32 = 0; i < 10; i = i +% 1) { ... }       // C-style
 loop { if done { break; } continue; }
-while let Option[i32]::Some(v) = next() { ... }
+while let Option::Some(v) = next() { ... }
 assert x > 0;                                 // traps on false
 ```
 
@@ -314,7 +314,7 @@ enum Mode { Off = 0, Slow = 10, Fast = 200 }     // crosses the C ABI as uint8_t
 enum Status { Ok, NotFound = 404, Gone }         // Gone = 405 (C rules: prev + 1)
 
 let s = Shape::Circle(3.14);
-let m: Maybe[i32] = Maybe[i32]::Some(7);         // ALWAYS spell type args at source
+let m: Maybe[i32] = Maybe[i32]::Some(7);         // CONSTRUCTING needs the args; matching does not
 ```
 
 ### Pattern matching
@@ -324,19 +324,19 @@ return match s {                                  // exhaustive — missing arm 
     Shape::Rect(w, h)   => (w as i32) *% (h as i32),
 };
 
-if let Maybe[i32]::Some(v) = m { #println(v); }
+if let Maybe::Some(v) = m { #println(v); }
 
 // Payload patterns NEST, to any depth, and nesting counts toward
 // exhaustiveness — these three arms need no catch-all.
 return match r {
-    Read::Ok(Maybe[i32]::Some(v)) => v,
-    Read::Ok(Maybe[i32]::None)    => 0,
+    Read::Ok(Maybe::Some(v)) => v,
+    Read::Ok(Maybe::None)    => 0,
     Read::Err(e)                  => 0 -% e,
 };
 
 // guard let — pattern-or-diverge; else must return/break/continue/loop
 fn process(m: Maybe[i32]) -> i32 {
-    guard let Maybe[i32]::Some(v) = m else { return 0 -% 1; };
+    guard let Maybe::Some(v) = m else { return 0 -% 1; };
     return v +% 1;
 }
 
@@ -344,7 +344,7 @@ fn process(m: Maybe[i32]) -> i32 {
 // mutable (`guard var` = mutable in the enclosing scope; `if var` /
 // `while var` = mutable inside the body). `let` bindings are frozen.
 fn bump(m: Maybe[i32]) -> i32 {
-    guard var Maybe[i32]::Some(v) = m else { return 0 -% 1; };
+    guard var Maybe::Some(v) = m else { return 0 -% 1; };
     v = v +% 1;
     return v;
 }
@@ -389,7 +389,7 @@ fn identity[T](x: T) -> T { return x; }
 fn max[T: Ord](a: T, b: T) -> T { ... }            // bounds: Ord, Eq, Hash
 struct Pair[A, B] { first: A, second: B }
 
-let v = vec::with_capacity::[i32](16 as usize);
+let v = vec::with_capacity::[i32](16);
 let s = #size_of::[Point]();
 ```
 
@@ -430,7 +430,7 @@ let s: str = t.clone();          // E0513 — clone's Text is an anonymous temp
 let s: str = "x = ${n}";         // E0513 — so is the interpolation's
 let s: str = mk().view();        // E0513 — same, one accessor deeper
 let owner: Text = t.clone();     // name it, then view it
-let s: str = { owner.view() };   // fine — `owner` outlives the statement
+let s: str = owner.view();       // fine — `owner` outlives the statement
 
 f("x = ${n}");                   // fine — an ARGUMENT's temp outlives the call
 ```
@@ -562,12 +562,12 @@ Consequences to know:
 
 ```cplus
 match maybe_thing {                  // presence check — binds nothing, consumes nothing
-    Option[Text]::Some(_) => {}
-    Option[Text]::None    => { return 0; }
+    Option::Some(_) => {}
+    Option::None    => { return 0; }
 }
 match maybe_thing {                  // still yours to match for real
-    Option[Text]::Some(t) => { return t.count() as i32; }
-    Option[Text]::None    => { return 0; }
+    Option::Some(t) => { return t.count() as i32; }
+    Option::None    => { return 0; }
 }
 ```
 
@@ -656,8 +656,8 @@ extern fn malloc(n: usize) -> *u8;
 extern fn free(p: *u8);
 extern fn printf(fmt: *u8, ...) -> i32;          // varargs OK on extern
 
-let p: *u8 = malloc(64 as usize);
-p[0] = 65 as u8;
+let p: *u8 = malloc(64);
+p[0] = 65;
 let b: u8 = p[1];
 let q: *u8 = p + 1;                          // arithmetic strides by sizeof(T)
 free(p);
@@ -690,8 +690,8 @@ u.bits;                                        // reading another reinterprets t
     #[bits(5)] level: u32,      // bits 3..8, same 4-byte unit
     #[bits(4)] delta: i32,      // signed: reads back negative
 }
-var f: Flags = Flags { kind: 5 as u32, level: 21 as u32, delta: -3 as i32 };
-f.kind = 2 as u32;              // read-modify-write; neighbours preserved
+var f: Flags = Flags { kind: 5, level: 21, delta: -3 };
+f.kind = 2;              // read-modify-write; neighbours preserved
 
 // Neither a bitfield nor an under-aligned packed field has an ADDRESS: no
 // `ref` parameter, no `#addr_of` (E0927 / E0926). Read and write them
@@ -724,9 +724,8 @@ entry takes `*u8` + `usize` and rebuilds the view inside:
 
 ```cplus
 export fn probe_emit(name_ptr: *u8, name_len: usize) {
-    let name: str = { #str_from_raw_parts(name_ptr, name_len) };
+    let name: str = #str_from_raw_parts(name_ptr, name_len);
     events::emit(name);
-    return;
 }
 ```
 
@@ -848,7 +847,7 @@ Coming from C++: `unique_ptr` → `Box`, `shared_ptr` → `Arc` (or `Rc` when si
 |---|---|---|
 | `accelerate` | BLAS + vDSP via Apple Accelerate.framework | `cblas::sdot(n, x_ptr, 1, y_ptr, 1)` |
 | `appkit` | Cocoa/AppKit bindings, 15+ sub-modules | `application::Application::shared().run()` |
-| `arena` | Growable bump-pointer arena | `var a = arena::Arena::new(4096 as usize);` |
+| `arena` | Growable bump-pointer arena | `var a = arena::Arena::new(4096);` |
 | `json` | Typed-enum JSON parser + serializer | `json::parse(s) -> Result[Value, ParseError]` |
 | `log` | Leveled stderr logger, zero malloc per call | `log::info("started")` |
 | `metal` + `metal/mps` | Metal compute + MPS gemm/conv/FFT | `mps::MatrixMultiplication::new(dev, ...)` |
@@ -1105,7 +1104,7 @@ Shape diagnostics: unknown name **E0354**, bad argument shape **E0355**, wrong t
 ```cplus
 // 1. Don't malloc small fixed buffers in hot loops.
 var tmp: [u8; 10] = [0u8; 10];               // ✅ stack
-// let p = malloc(10 as usize);                  // ❌ heap, 2-3× slowdown
+// let p = malloc(10);                  // ❌ heap, 2-3× slowdown
 
 // 2. Variadic C: declare with ... (AArch64-darwin ABI requires it).
 extern fn fcntl(fd: i32, cmd: i32, ...) -> i32;

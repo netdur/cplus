@@ -50,74 +50,69 @@ import "stdlib/vec" as vec;
 import "stdlib/text" as text;
 import "stdlib/option" as option;
 import "stdlib/status" as status;
-import "flex_layout/flex_layout" as flex;
 import "json/json" as json;
-import "agent_mcp/agent_mcp" as bridge;
+import "./agent_mcp" as bridge;
 import "agent_core/auth" as auth;
-import "facet/vocabulary" as vocab;
-import "./inspector" as insp;
-import "./tree" as tree;
+import "agent_core/inspect" as insp;
+import "./inspect_verbs" as verbs;
 
 // ---- JSON helpers --------------------------------------------------------------
+//
+// FORWARDS, NOT COPIES. These eight were byte-identical reimplementations of
+// `agent_mcp`'s, in a file that already imports it and already calls
+// `bridge::prop`, `bridge::tool` and `bridge::required1` across the same
+// import — so the duplication was an oversight rather than a boundary, and it
+// was in the half where a drift would emit a malformed JSON-RPC frame on ONE
+// namespace of a shared socket.
+//
+// Kept as local names rather than rewritten to `bridge::` at 140 call sites:
+// the point is one definition of the frame, which a forward gives, and every
+// descriptor below stays readable. Do not "simplify" these back into bodies.
 
-fn jstr(s: str) -> json::Value { return json::Value::Text(text::from_str(s)); }
-fn jnum(n: f64) -> json::Value { return json::Value::Number(n); }
-fn jbool(b: bool) -> json::Value { return json::Value::Bool(b); }
+fn jstr(s: str) -> json::Value { return bridge::jstr(s); }
+fn jnum(n: f64) -> json::Value { return bridge::jnum(n); }
+fn jbool(b: bool) -> json::Value { return bridge::jbool(b); }
 
-fn member(k: str, take v: json::Value) -> json::Member {
-    return json::Member { key: text::from_str(k), value: v };
-}
+fn member(k: str, take v: json::Value) -> json::Member { return bridge::member(k, v); }
 
-fn obj_get(v: json::Value, key: str) -> json::Value {
-    return match v.value(key) {
-        option::Option[json::Value]::Some(val) => val,
-        option::Option[json::Value]::None => json::Value::Null,
-    };
-}
+fn obj_get(v: json::Value, key: str) -> json::Value { return bridge::obj_get(v, key); }
 
 fn as_usize(v: json::Value, fallback: usize) -> usize {
     return match v.as_number() {
         option::Option[f64]::Some(n) => {
-            if n < 0.0f64 { fallback } else { n as usize }
+            if n < 0.0 { fallback } else { n as usize }
         }
-        option::Option[f64]::None => fallback,
+        option::Option::None => fallback,
     };
 }
 
 fn as_text(v: json::Value) -> text::Text {
     return match v.as_text() {
         option::Option[text::Text]::Some(t) => t,
-        option::Option[text::Text]::None => text::new(),
+        option::Option::None => text::new(),
     };
 }
 
 // ---- envelopes -----------------------------------------------------------------
+//
+// Forwards, for the reason above. THE FRAME IS ONE THING: both namespaces ride
+// one socket and one client parses both, so `{"jsonrpc","id","result"}` must
+// come from a single place or the two can disagree about what a response looks
+// like without either being obviously wrong.
 
 fn ok_response(id: f64, take result: json::Value) -> json::Value {
-    var m: vec::Vec[json::Member] = vec::new::[json::Member]();
-    m.append(member("jsonrpc", jstr("2.0")));
-    m.append(member("id", jnum(id)));
-    m.append(member("result", result));
-    return json::Value::Object(m);
+    return bridge::ok_response(id, result);
 }
 
 fn err_response(id: f64, code: f64, msg: str) -> json::Value {
-    var e: vec::Vec[json::Member] = vec::new::[json::Member]();
-    e.append(member("code", jnum(code)));
-    e.append(member("message", jstr(msg)));
-    var m: vec::Vec[json::Member] = vec::new::[json::Member]();
-    m.append(member("jsonrpc", jstr("2.0")));
-    m.append(member("id", jnum(id)));
-    m.append(member("error", json::Value::Object(e)));
-    return json::Value::Object(m);
+    return bridge::err_response(id, code, msg);
 }
 
 // A required parameter is absent. The same -32602 the agent surface uses, and
 // for the same reason it exists there: every reader below falls back, so a
 // misspelled parameter name would otherwise answer success and act on index 0.
 fn missing_param(id: f64, method: str, param: str) -> json::Value {
-    let msg: text::Text = "${method}: missing required parameter \"${param}\"";
-    return err_response(id, - 32602 as f64, msg.view());
+    return bridge::missing_param(id, method, param);
 }
 
 // ---- values on the wire --------------------------------------------------------
@@ -143,7 +138,7 @@ fn rgba_array(r: f64, g: f64, b: f64, a: f64) -> json::Value {
     return json::Value::Array(arr);
 }
 
-fn color_json(c: vocab::Color) -> json::Value {
+fn color_json(c: insp::Color) -> json::Value {
     var m: vec::Vec[json::Member] = vec::new::[json::Member]();
     m.append(member("token", jnum(c.token as f64)));
     if c.token == TOK_LITERAL {
@@ -157,6 +152,72 @@ fn color_json(c: vocab::Color) -> json::Value {
     }
     // A role, or `clear`. No channels, because there are none to report.
     return json::Value::Object(m);
+}
+
+// One value, moved by a delta, in whatever unit it is already in.
+//
+// A percent nudges in percent and points nudge in points — the alternative is a
+// client that has to know the unit before it can move something by two, which
+// is the knowledge `nudge` exists to remove. An UNSET length starts from zero:
+// nudging a `top` that was never set is exactly the drag that positions it for
+// the first time, and refusing it would mean the first move of every element
+// had to be a `set`.
+fn nudged(cur: insp::Value, by: f64) -> option::Option[insp::Value] {
+    return match cur {
+        insp::Value::Num(x) => option::Option[insp::Value]::Some(insp::Value::Num(x + by)),
+        insp::Value::Int(i) =>
+            option::Option[insp::Value]::Some(insp::Value::Int(i + (by as i64))),
+        insp::Value::Nothing => option::Option[insp::Value]::Some(insp::Value::Num(by)),
+        insp::Value::Str(s) => nudged_spelling(s.view(), by),
+        _ => option::Option[insp::Value]::None,
+    };
+}
+
+fn nudged_spelling(spelled: str, by: f64) -> option::Option[insp::Value] {
+    // `auto` has no number to move, and inventing one would silently pin a box
+    // that was sizing itself.
+    if !spelled.has_suffix("%") { return option::Option[insp::Value]::None; }
+    return match spelled.drop_last(1).trim().to_f64() {
+        option::Option[f64]::Some(x) => {
+            var t: text::Text = insp::plain_num(x + by);
+            let _a: status::Status = t.append("%");
+            option::Option[insp::Value]::Some(insp::Value::Str(t))
+        }
+        option::Option::None => option::Option[insp::Value]::None,
+    };
+}
+
+// A value in the DIFF, where a colour is the thing you would type back rather
+// than the thing a panel wants to draw. `inspect` keeps the structured form —
+// a slider over four channels needs the channels — but nobody transcribes
+// `{"token":255,"rgba":[0.8,0.133,0,1]}` into source.
+fn change_value_json(v: insp::Value) -> json::Value {
+    return match v {
+        insp::Value::Color(c) => json::Value::Text(insp::color_text(c)),
+        other => value_json(other),
+    };
+}
+
+fn change_node_at(cs: vec::Vec[insp::Change], i: usize) -> text::Text {
+    match cs.at_ptr(i) {
+        option::Option[*insp::Change]::Some(c) => { return { (*c).node }.clone(); }
+        option::Option::None => { }
+    }
+    return text::new();
+}
+
+fn node_seen_before(cs: vec::Vec[insp::Change], i: usize, label: str) -> bool {
+    var k: usize = 0;
+    while k < i {
+        match cs.at_ptr(k) {
+            option::Option[*insp::Change]::Some(c) => {
+                if { (*c).node.view() } == label { return true; }
+            }
+            option::Option::None => { }
+        }
+        k = k +% 1;
+    }
+    return false;
 }
 
 fn value_json(v: insp::Value) -> json::Value {
@@ -188,13 +249,13 @@ fn prop_json(p: *insp::Prop) -> json::Value {
 
 fn props_json(ps: vec::Vec[insp::Prop]) -> json::Value {
     var arr: vec::Vec[json::Value] = vec::new::[json::Value]();
-    var i: usize = 0 as usize;
+    var i: usize = 0;
     while i < ps.count() {
         match ps.at_ptr(i) {
             option::Option[*insp::Prop]::Some(p) => { arr.append(prop_json(p)); }
-            option::Option[*insp::Prop]::None => { }
+            option::Option::None => { }
         }
-        i = i +% (1 as usize);
+        i = i +% 1;
     }
     return json::Value::Array(arr);
 }
@@ -207,10 +268,10 @@ fn node_json(p: *insp::Node, index: usize) -> json::Value {
     m.append(member("index", jnum(index as f64)));
     m.append(member("parent", match { (*p).parent } {
         option::Option[usize]::Some(pi) => jnum(pi as f64),
-        option::Option[usize]::None => json::Value::Null,
+        option::Option::None => json::Value::Null,
     }));
     m.append(member("depth", jnum({ (*p).depth } as f64)));
-    m.append(member("kind", jstr(insp::kind_name({ (*p).kind }))));
+    m.append(member("kind", jstr((BACKEND.kind_name)(BACKEND.surface, { (*p).kind }))));
     m.append(member("key", jstr({ (*p).key })));
     m.append(member("children", jnum({ (*p).child_count } as f64)));
     // What a walk of the platform's view hierarchy could never tell you, and
@@ -256,31 +317,67 @@ fn set_marshal(f: fn(*u8, fn(*u8))) { MARSHAL = f; return; }
 
 fn run_ui(work: fn(*u8), ctx: *u8) {
     let f: fn(*u8, fn(*u8)) = MARSHAL;
-    if f == (0 as fn(*u8, fn(*u8))) { work(ctx); return; }
+    if f.is_null() { work(ctx); return; }
     f(ctx, work);
-    return;
 }
 
 // ---- the session ---------------------------------------------------------------
 
 static BACKEND: insp::Backend = #zero::[insp::Backend]();
 static SNAPSHOT: vec::Vec[insp::Node] = #zero::[vec::Vec[insp::Node]]();
-static ARMED: bool = false;
+// Has a toolkit filled `BACKEND`? Set by `set_backend`, which the serving
+// facade calls — see `facet_agent::serve_once`. There is no application-facing
+// flag any more: `inspect::arm()` is gone and this is not its replacement.
+static HAS_BACKEND: bool = false;
 
-fn armed() -> bool { return ARMED; }
+// Is a walker installed?
+//
+// NOT A GATE, and it never was one — it answers whether `BACKEND` has been
+// filled, because running the verbs against a zeroed vtable is a null call.
+// It used to be spelled `ARMED` and read like a permission; whoever serves
+// installs the walker now, so on a served surface this is true by
+// construction and false only in a headless test that cleared it.
+fn armed() -> bool { return HAS_BACKEND; }
 
 fn snapshot_count() -> usize { return SNAPSHOT.count(); }
 
 // Publish `inspector.*` into the agent's server.
 //
-// The backend is a parameter and not `tree::local_backend()` by construction:
+// The backend is a parameter and not the toolkit's own by construction:
 // `widget` is written against the vtable for the same reason, and a test wants
 // to arm a degraded one and prove every verb refuses.
-fn arm(take b: insp::Backend) {
+// PUBLISH THE VERBS. Called by the SERVING FACADE — `facet_agent::serve_once`
+// and its three platform siblings — not by an application and not by
+// `agent_mcp`, which cannot call it: the import runs inspect -> agent_mcp and
+// a cycle is an E0404. The facade is the one place that knows both that a
+// server is starting and that this build has a tree, so the fourteen exist on
+// every surface a toolkit offers. There is no flag for an application to
+// forget, and no arrangement in which a client is told a verb does not exist
+// when what is meant is that it may not use it.
+//
+// This used to be `arm(backend)` in the inspector package, and it was both
+// halves at once: it published the verbs AND supplied the walker. That is what
+// made a missing call answer `-32601 method not found`, three packages from
+// the line that caused it. The two halves are separate now — this one is not
+// optional, and `set_backend` below is the one an application makes.
+fn publish() {
+    bridge::arm_extension(verb_names(), handle, describe_tools);
+}
+
+// Install the walker these verbs read the tree through. A toolkit calls this;
+// `agent_mcp` cannot, because it does not know what a tree is.
+//
+// WITHOUT ONE the verbs still exist and still refuse — with a POLICY answer
+// naming what is missing, which is the difference this whole move is for.
+fn set_backend(take b: insp::Backend) {
     BACKEND = b;
-    ARMED = true;
-    bridge::arm_extension("inspector.", handle, describe_tools);
-    return;
+    HAS_BACKEND = true;
+}
+
+// Take it away again — a screen tearing down a target, and the suite.
+fn clear_backend() {
+    HAS_BACKEND = false;
+    BACKEND = insp::Backend::none();
 }
 
 // ---- what this namespace tells `tools/list` ---------------------------------
@@ -308,82 +405,99 @@ fn describe_tools() -> vec::Vec[json::Value] {
     var p_desc: vec::Vec[json::Member] = bridge::no_props();
     p_desc.append(tools_prop("prefix", "string",
         "Answer only with nodes whose key starts with this, e.g. \"board:detail:\". Absent means the whole tree — which against a real application runs to tens of thousands of characters, large enough that a client may refuse it. Indices are unaffected by filtering: they stay addressable by the other verbs."));
-    out.append(bridge::tool("inspector.describe",
+    out.append(bridge::tool(verbs::V_DESCRIBE_TREE,
         "The live view tree of THE APPLICATION SERVING THIS ENDPOINT, as the DEVELOPER sees it: every node, keyed or not, with its index. An app launched by this one has its own endpoint and does not appear here. Unlike describe_ui this is not curated — it is the whole tree — so pass \"prefix\" unless you really want all of it. Node indices from here are what every other inspector verb addresses.",
         p_desc, bridge::no_required()));
 
     var p_node: vec::Vec[json::Member] = bridge::no_props();
-    p_node.append(tools_prop("node", "number", "Node index, from inspector.describe."));
-    out.append(bridge::tool("inspector.inspect",
+    p_node.append(tools_prop("node", "number", "Node index, from describe_tree."));
+    out.append(bridge::tool(verbs::V_INSPECT,
         "One node WHOLE — every property, control properties included. This is a content read, so a node behind a privacy tier is refused unless the grant carries it.",
         p_node, bridge::required1("node")));
 
     var p_set: vec::Vec[json::Member] = bridge::no_props();
     p_set.append(tools_prop("node", "number", "Node index."));
-    p_set.append(tools_prop("property", "string", "Property name, as inspector.vocabulary lists it."));
-    p_set.append(tools_prop("value", "string", "New value: a number, a boolean or a string."));
-    out.append(bridge::tool("inspector.set",
-        "Write one property on one node, live. Undoable with inspector.undo.",
+    p_set.append(tools_prop("property", "string", "Property name, exactly as vocabulary lists it."));
+    p_set.append(tools_prop("value", "string", "New value: a number, a boolean, a string, or null to unset. A length takes a number of points, \"50%\", or \"auto\"; a colour takes \"#rrggbb\" or \"#rrggbbaa\"; an enum takes one of the spellings vocabulary lists for it."));
+    out.append(bridge::tool(verbs::V_SET,
+        "Write one property on one node, live. Send null to unset a length — that is how a width goes back to sizing itself. Undoable with undo.",
         p_set, bridge::required2("node", "property")));
+
+    var p_nudge: vec::Vec[json::Member] = bridge::no_props();
+    p_nudge.append(tools_prop("node", "number", "Node index."));
+    p_nudge.append(tools_prop("property", "string", "A numeric property — a position, a size, a spacing, an opacity."));
+    p_nudge.append(tools_prop("by", "number", "How far to move it, in the unit the property already holds. Negative moves the other way."));
+    out.append(bridge::tool(verbs::V_NUDGE,
+        "Move one numeric property BY an amount instead of TO a value — the arrow-key nudge you would use to slide an element into place. Answers the value it landed on. A percent nudges in percent; an unset length starts from zero.",
+        p_nudge, bridge::required2("node", "property")));
+
+    var p_many: vec::Vec[json::Member] = bridge::no_props();
+    p_many.append(tools_prop("node", "number", "Node index."));
+    p_many.append(tools_prop("properties", "object", "An object of property name to value, e.g. {\"absolute\": true, \"top\": 34, \"left\": 12.5}. Same values set takes."));
+    out.append(bridge::tool(verbs::V_SET_MANY,
+        "Write several properties on one node in one call. Placing an element usually takes three of them, and each one on its own is a round trip. Applies every property it can and names the outcome of each; it does not stop at the first failure.",
+        p_many, bridge::required2("node", "properties")));
 
     var p_reset: vec::Vec[json::Member] = bridge::no_props();
     p_reset.append(tools_prop("node", "number", "Node index."));
     p_reset.append(tools_prop("property", "string", "Property to return to its built value."));
-    out.append(bridge::tool("inspector.reset",
+    out.append(bridge::tool(verbs::V_RESET,
         "Undo one property back to what the app built it with.",
         p_reset, bridge::required2("node", "property")));
 
     var p_insert: vec::Vec[json::Member] = bridge::no_props();
     p_insert.append(tools_prop("node", "number", "Node index to insert relative to."));
     p_insert.append(tools_prop("element", "string", "Element kind to create."));
-    out.append(bridge::tool("inspector.insert",
+    out.append(bridge::tool(verbs::V_INSERT,
         "Add a new element to the live tree. A developer edit, not something a user could do.",
         p_insert, bridge::required2("node", "element")));
 
     var p_remove: vec::Vec[json::Member] = bridge::no_props();
     p_remove.append(tools_prop("node", "number", "Node index to remove."));
-    out.append(bridge::tool("inspector.remove",
+    out.append(bridge::tool(verbs::V_REMOVE,
         "Remove a node from the live tree.",
         p_remove, bridge::required1("node")));
 
     var p_rep: vec::Vec[json::Member] = bridge::no_props();
     p_rep.append(tools_prop("node", "number", "Node index to move."));
     p_rep.append(tools_prop("parent", "number", "Node index of its new parent."));
-    out.append(bridge::tool("inspector.reparent",
+    out.append(bridge::tool(verbs::V_REPARENT,
         "Move a node under a different parent.",
         p_rep, bridge::required2("node", "parent")));
 
-    out.append(bridge::tool("inspector.undo",
+    out.append(bridge::tool(verbs::V_UNDO,
         "Undo the last inspector mutation.",
         bridge::no_props(), bridge::no_required()));
 
     var p_hi: vec::Vec[json::Member] = bridge::no_props();
     p_hi.append(tools_prop("node", "number", "Node index to outline on screen."));
-    out.append(bridge::tool("inspector.highlight",
+    out.append(bridge::tool(verbs::V_HIGHLIGHT,
         "Draw an overlay around a node on the screen of the application serving this endpoint — how you show a person which node you mean.",
         p_hi, bridge::required1("node")));
 
-    out.append(bridge::tool("inspector.clear_highlight",
+    out.append(bridge::tool(verbs::V_CLEAR_HIGHLIGHT,
         "Remove the highlight overlay.",
         bridge::no_props(), bridge::no_required()));
 
-    out.append(bridge::tool("inspector.vocabulary",
-        "Which properties exist and what types they take. Read this before inspector.set rather than guessing a property name.",
-        bridge::no_props(), bridge::no_required()));
+    var p_vocab: vec::Vec[json::Member] = bridge::no_props();
+    p_vocab.append(tools_prop("element", "string",
+        "Answer only with the properties this kind of element carries — \"button\", \"label\", \"text_field\", or any kind describe_tree reports. Absent means every property."));
+    out.append(bridge::tool(verbs::V_VOCABULARY,
+        "Every writable property: its name, its type, its unit, the element kinds that carry it, the closed set of spellings it accepts if it has one, and a line saying what it does. Read this before set rather than guessing a name or a value.",
+        p_vocab, bridge::no_required()));
 
-    out.append(bridge::tool("inspector.journal",
-        "The log of inspector mutations made this session.",
+    out.append(bridge::tool(verbs::V_JOURNAL,
+        "THE DIFF between the tree the application built and the tree as it stands: every property that differs, with what it was and what it is now, plus a line per structural edit. This is what you read off at the end of a session to put back in the source. A property that has been nudged twenty times appears ONCE, with the value it landed on. Resetting a property removes it from the diff.",
         bridge::no_props(), bridge::no_required()));
 
     return out;
 }
 
 fn disarm() {
-    ARMED = false;
+    HAS_BACKEND = false;
     BACKEND = insp::Backend::none();
     SNAPSHOT.remove_all();
-    bridge::disarm_extension();
-    return;
+    bridge::disarm_extension(verbs::V_DESCRIBE_TREE);
 }
 
 // ---- the marshalled call -------------------------------------------------------
@@ -399,6 +513,7 @@ const OP_UNDO: u32 = 8u32;
 const OP_HIGHLIGHT: u32 = 9u32;
 const OP_CLEAR: u32 = 10u32;
 const OP_JOURNAL: u32 = 11u32;
+const OP_NUDGE: u32 = 12u32;
 
 // What the client sent for `value`, kept in the shape JSON gave it.
 //
@@ -409,6 +524,10 @@ const TAG_NONE: u32 = 0u32;
 const TAG_NUM: u32 = 1u32;
 const TAG_BOOL: u32 = 2u32;
 const TAG_STR: u32 = 3u32;
+// JSON null. Not "absent" — absent is refused before a tag is chosen — but an
+// explicit request to UNSET, which is the only way to put a length back to the
+// `auto` or the nothing the application built it with.
+const TAG_NOTHING: u32 = 4u32;
 
 // One request, across the thread hop and back.
 //
@@ -453,7 +572,6 @@ static OUT: vec::Vec[json::Value] = #zero::[vec::Vec[json::Value]]();
 fn put_out(take v: json::Value) {
     OUT.remove_all();
     let _s: status::Status = OUT.append(v);
-    return;
 }
 
 fn take_out() -> option::Option[json::Value] { return OUT.remove_last(); }
@@ -473,12 +591,12 @@ fn key_matches(key: str, prefix: str) -> bool {
 fn new_call(op: u32) -> Call {
     return Call {
         op: op,
-        node: 0 as usize,
-        parent: 0 as usize,
-        at: 0 as usize,
+        node: 0,
+        parent: 0,
+        at: 0,
         prop: text::new(),
         raw: text::new(),
-        num: 0.0f64,
+        num: 0.0,
         flag: false,
         tag: TAG_NONE,
         prefix: text::new(),
@@ -490,10 +608,52 @@ fn new_call(op: u32) -> Call {
 // An index into the last listing, as a handle. `Handle::none()` for an index
 // that was never issued, which every verb reports as `NotFound` — the same
 // answer a null handle gets, because "no such address" is what both are.
+// THE SNAPSHOT POSITION OF `id`, or -1.
+//
+// A key is the address worth having: it is what the developer wrote and it
+// survives the tree changing shape. An index does not — it is a position in the
+// last `describe_tree`, and it moves the moment anything is inserted above it.
+// So every verb takes either, and a keyed node is reachable by name.
+//
+// Unkeyed nodes stay index-only, deliberately. Synthesising a path id for them
+// would hand out an address that looks stable and is not — the same mistake the
+// view walk made with `hello/group#0`.
+fn index_of_key(key: str) -> i64 {
+    if key == "" { return - 1 as i64; }
+    var i: usize = 0;
+    while i < SNAPSHOT.count() {
+        match SNAPSHOT.at_ptr(i) {
+            option::Option[*insp::Node]::Some(p) => {
+                let kp: *text::Text = { #addr_of((*p).key) };
+                if { (*kp).view() } == key { return i as i64; }
+            }
+            option::Option::None => { }
+        }
+        i = i +% 1;
+    }
+    return - 1 as i64;
+}
+
+// Which node a request means. `id` wins when both are given: it is the address
+// that means something outside this snapshot.
+fn target_of(params: json::Value) -> i64 {
+    if params.has("id") {
+        return index_of_key(as_text(obj_get(params, "id")).view());
+    }
+    if params.has("node") {
+        return as_usize(obj_get(params, "node"), 0) as i64;
+    }
+    return - 1 as i64;
+}
+
+fn has_target(params: json::Value) -> bool {
+    return params.has("id") || params.has("node");
+}
+
 fn resolve(i: usize) -> insp::Handle {
     return match SNAPSHOT.at_ptr(i) {
         option::Option[*insp::Node]::Some(p) => { (*p).handle }
-        option::Option[*insp::Node]::None => insp::Handle::none(),
+        option::Option::None => insp::Handle::none(),
     };
 }
 
@@ -503,24 +663,27 @@ fn resolve(i: usize) -> insp::Handle {
 fn value_for(h: insp::Handle, prop: str, tag: u32, num: f64, flag: bool, raw: str)
     -> option::Option[insp::Value] {
     if tag == TAG_BOOL { return option::Option[insp::Value]::Some(insp::Value::Bool(flag)); }
+    if tag == TAG_NOTHING {
+        return option::Option[insp::Value]::Some(insp::Value::Nothing);
+    }
     if tag == TAG_NUM {
         // Against the current tag, so a client sending `12` for an integer
         // property gets an integer rather than a number that reads back
         // differently from what it wrote.
-        return match tree::get(h, prop) {
+        return match (BACKEND.get)(BACKEND.surface, h, prop) {
             option::Option[insp::Value]::Some(cur) => match cur {
                 insp::Value::Int(_i) =>
                     option::Option[insp::Value]::Some(insp::Value::Int(num as i64)),
                 _ => option::Option[insp::Value]::Some(insp::Value::Num(num)),
             },
-            option::Option[insp::Value]::None => option::Option[insp::Value]::None,
+            option::Option::None => option::Option[insp::Value]::None,
         };
     }
     if tag == TAG_STR {
         // The panel's rule, unchanged: a string is read as the tag the property
         // already holds, which is what makes `"#2277ff"` a colour on a colour
         // property and a literal seven characters on a text one.
-        return tree::parse_for(h, prop, raw);
+        return (BACKEND.parse_for)(BACKEND.surface, h, prop, raw);
     }
     return option::Option[insp::Value]::None;
 }
@@ -536,7 +699,7 @@ fn run_call(ctx: *u8) {
         SNAPSHOT = b.describe_now();
         let pfx: str = { (*c).prefix };
         var arr: vec::Vec[json::Value] = vec::new::[json::Value]();
-        var i: usize = 0 as usize;
+        var i: usize = 0;
         while i < SNAPSHOT.count() {
             match SNAPSHOT.at_ptr(i) {
                 option::Option[*insp::Node]::Some(p) => {
@@ -551,32 +714,76 @@ fn run_call(ctx: *u8) {
                     let kp: *text::Text = { #addr_of((*p).key) };
                     if key_matches({ (*kp).view() }, pfx) { arr.append(node_json(p, i)); }
                 }
-                option::Option[*insp::Node]::None => { }
+                option::Option::None => { }
             }
-            i = i +% (1 as usize);
+            i = i +% 1;
         }
         var m: vec::Vec[json::Member] = vec::new::[json::Member]();
-        m.append(member("revision", jnum(flex::removal_count() as f64)));
+        m.append(member("revision", jnum(insp::revision() as f64)));
         m.append(member("nodes", json::Value::Array(arr)));
         put_out(json::Value::Object(m));
         { (*c).outcome = insp::Outcome::Ok };
         return;
     }
     if op == OP_JOURNAL {
+        // THE DIFF, both ways round: `lines` for a reader, `changes` for a
+        // parser. Property edits answered NOTHING here until 2026-08-30 — the
+        // verb logged only the structural ones, so a session that nudged a
+        // button into place and then asked what it had changed was told
+        // nothing at all, which is the one question the loop exists to answer.
         var arr: vec::Vec[json::Value] = vec::new::[json::Value]();
-        var i: usize = 0 as usize;
-        let n: usize = tree::journal_count();
+        var i: usize = 0;
+        let n: usize = (BACKEND.journal_count)(BACKEND.surface);
         while i < n {
-            match tree::journal_at(i) {
+            match (BACKEND.journal_at)(BACKEND.surface, i) {
                 option::Option[text::Text]::Some(line) => {
                     arr.append(json::Value::Text(line.clone()));
                 }
-                option::Option[text::Text]::None => { }
+                option::Option::None => { }
             }
-            i = i +% (1 as usize);
+            i = i +% 1;
         }
+        // Grouped BY NODE, values only:
+        //
+        //     "changes": { "button#tap": { "width": 12, "top": 34 } }
+        //
+        // which is the shape you transcribe from. Not a list of operations and
+        // not a was/now pair — the question at the end of a session is "what
+        // are the numbers", and everything else is noise around them.
+        let cs: vec::Vec[insp::Change] = (BACKEND.changes)(BACKEND.surface);
+        var groups: vec::Vec[json::Member] = vec::new::[json::Member]();
+        var ci: usize = 0;
+        while ci < cs.count() {
+            let label: text::Text = change_node_at(cs, ci);
+            // The ledger is in write order, so one node's properties are not
+            // adjacent. Emit a node the first time it appears and gather all of
+            // its rows then; skip it afterwards.
+            if !node_seen_before(cs, ci, { label.view() }) {
+                var one: vec::Vec[json::Member] = vec::new::[json::Member]();
+                var cj: usize = ci;
+                while cj < cs.count() {
+                    match cs.at_ptr(cj) {
+                        option::Option[*insp::Change]::Some(ch) => {
+                            if { (*ch).node.view() } == { label.view() } {
+                                one.append(member({ (*ch).prop },
+                                                  change_value_json({ (*ch).now }.clone())));
+                            }
+                        }
+                        option::Option::None => { }
+                    }
+                    cj = cj +% 1;
+                }
+                groups.append(member({ label.view() }, json::Value::Object(one)));
+            }
+            ci = ci +% 1;
+        }
+
         var m: vec::Vec[json::Member] = vec::new::[json::Member]();
-        m.append(member("lines", json::Value::Array(arr)));
+        m.append(member("changes", json::Value::Object(groups)));
+        // Structural edits are not values that changed, they are nodes that
+        // were not there. The only honest way to state that difference is the
+        // operation that made it, so those keep their lines.
+        m.append(member("structural", json::Value::Array(arr)));
         put_out(json::Value::Object(m));
         { (*c).outcome = insp::Outcome::Ok };
         return;
@@ -598,7 +805,7 @@ fn run_call(ctx: *u8) {
         match b.inspect_now(h) {
             option::Option[insp::Detail]::Some(d) => {
                 var m: vec::Vec[json::Member] = vec::new::[json::Member]();
-                m.append(member("revision", jnum(flex::removal_count() as f64)));
+                m.append(member("revision", jnum(insp::revision() as f64)));
                 m.append(member("node", node_json(#addr_of(d.node), { (*c).node })));
                 // Three lists, never one. Setting `width` writes a style and
                 // reading the frame reads what layout decided; a single `width`
@@ -612,7 +819,7 @@ fn run_call(ctx: *u8) {
             }
             // A live handle that inspects to nothing went stale between the
             // listing and the read, which is a re-describe and not a mistake.
-            option::Option[insp::Detail]::None => {
+            option::Option::None => {
                 { (*c).outcome = insp::Outcome::Stale };
             }
         }
@@ -629,13 +836,55 @@ fn run_call(ctx: *u8) {
     // is not a crash but a `reset` that answers `Ok` and restores nothing. So
     // the name is exchanged for this package's own literal first, and a name in
     // neither table never reaches a setter at all.
+    // MOVE IT BY A LITTLE, which is the gesture the whole loop is named for.
+    //
+    // `set` needs the number the property should end at; a person nudging a
+    // button two points left does not know that number and should not have to
+    // read, add and write to find it. The add happens on THIS side of the hop,
+    // against the value as it is right now, so two clients nudging the same
+    // property cannot each add to a value they read before the other wrote.
+    if op == OP_NUDGE {
+        let pp: *text::Text = { #addr_of((*c).prop) };
+        let prop: str = match (BACKEND.canonical_prop)(BACKEND.surface, { (*pp).view() }) {
+            option::Option[str]::Some(name) => name,
+            option::Option::None => {
+                { (*c).outcome = insp::Outcome::UnknownProperty };
+                return;
+            }
+        };
+        let by: f64 = { (*c).num };
+        let moved: option::Option[insp::Value] = match (BACKEND.get)(BACKEND.surface, h, prop) {
+            option::Option[insp::Value]::Some(cur) => nudged(cur, by),
+            option::Option::None => option::Option[insp::Value]::None,
+        };
+        match moved {
+            option::Option[insp::Value]::Some(v) => {
+                let after: insp::Value = v.clone();
+                { (*c).outcome = b.set_now(h, prop, v) };
+                if { (*c).outcome }.is_ok() {
+                    var m: vec::Vec[json::Member] = vec::new::[json::Member]();
+                    m.append(member("outcome", jstr("ok")));
+                    // The number it landed on, so the client does not have to
+                    // read it back to know where it is.
+                    m.append(member("value", value_json(after)));
+                    m.append(member("revision", jnum(insp::revision() as f64)));
+                    put_out(json::Value::Object(m));
+                }
+            }
+            option::Option::None => {
+                { (*c).outcome = insp::Outcome::TypeMismatch };
+            }
+        }
+        return;
+    }
+
     if op == OP_RESET {
         let pp: *text::Text = { #addr_of((*c).prop) };
-        match tree::canonical_prop({ (*pp).view() }) {
+        match (BACKEND.canonical_prop)(BACKEND.surface, { (*pp).view() }) {
             option::Option[str]::Some(name) => {
                 { (*c).outcome = b.reset_now(h, name) };
             }
-            option::Option[str]::None => {
+            option::Option::None => {
                 { (*c).outcome = insp::Outcome::UnknownProperty };
             }
         }
@@ -644,9 +893,9 @@ fn run_call(ctx: *u8) {
     if op == OP_SET {
         let pp: *text::Text = { #addr_of((*c).prop) };
         let rp: *text::Text = { #addr_of((*c).raw) };
-        let prop: str = match tree::canonical_prop({ (*pp).view() }) {
+        let prop: str = match (BACKEND.canonical_prop)(BACKEND.surface, { (*pp).view() }) {
             option::Option[str]::Some(name) => name,
-            option::Option[str]::None => {
+            option::Option::None => {
                 { (*c).outcome = insp::Outcome::UnknownProperty };
                 return;
             }
@@ -655,12 +904,29 @@ fn run_call(ctx: *u8) {
             option::Option[insp::Value]::Some(v) => {
                 { (*c).outcome = b.set_now(h, prop, v) };
             }
-            // No value could be built. A read-only property is the interesting
-            // case: it is real, it has a name in the table, and it answers no
-            // readable value — so `set` is left to say `ReadOnly` rather than
-            // this guessing `UnknownProperty` for something that plainly exists.
-            option::Option[insp::Value]::None => {
-                { (*c).outcome = b.set_now(h, prop, insp::Value::Nothing) };
+            // No value could be built, and TWO different failures wear that one
+            // shape.
+            //
+            // A property that answers no readable value at all is the read-only
+            // case: it is real, it has a name in the table, and letting `set`
+            // run says `ReadOnly` rather than this guessing `UnknownProperty`
+            // for something that plainly exists.
+            //
+            // A property that DOES read and whose string simply did not parse
+            // is a type mismatch, and must not reach that fallback. `Nothing`
+            // means UNSET on a length, so falling through would turn a typo
+            // into a silent clear and answer `ok` — a width the client asked to
+            // be "soonish" would come back sizing itself, reported as success.
+            option::Option::None => {
+                let reads: bool = match (BACKEND.get)(BACKEND.surface, h, prop) {
+                    option::Option[insp::Value]::Some(_v) => true,
+                    option::Option::None => false,
+                };
+                if reads {
+                    { (*c).outcome = insp::Outcome::TypeMismatch };
+                } else {
+                    { (*c).outcome = b.set_now(h, prop, insp::Value::Nothing) };
+                }
             }
         }
         return;
@@ -678,7 +944,6 @@ fn run_call(ctx: *u8) {
     let p: insp::Handle = resolve({ (*c).parent });
     if p.is_none() { { (*c).outcome = insp::Outcome::NotFound }; return; }
     { (*c).outcome = b.reparent_now(h, p, { (*c).at }) };
-    return;
 }
 
 // ---- outcomes on the wire ------------------------------------------------------
@@ -710,7 +975,7 @@ fn outcome_members(o: insp::Outcome) -> vec::Vec[json::Member] {
     // The client's staleness token, on every answer. It is flex's removal
     // counter — the number `Handle` liveness is one comparison against — so a
     // client that sees it move knows its indices may have moved with it.
-    m.append(member("revision", jnum(flex::removal_count() as f64)));
+    m.append(member("revision", jnum(insp::revision() as f64)));
     return m;
 }
 
@@ -728,7 +993,7 @@ fn do_answering(id: f64, take c: Call) -> json::Value {
     let o: insp::Outcome = c.outcome;
     return match take_out() {
         option::Option[json::Value]::Some(v) => ok_response(id, v),
-        option::Option[json::Value]::None => ok_response(id, outcome_result(o)),
+        option::Option::None => ok_response(id, outcome_result(o)),
     };
 }
 
@@ -743,15 +1008,15 @@ fn do_describe(id: f64, params: json::Value) -> json::Value {
 }
 
 fn do_inspect(id: f64, params: json::Value, grant: auth::Grant) -> json::Value {
-    if !params.has("node") { return missing_param(id, "inspector.inspect", "node"); }
+    if !has_target(params) { return missing_param(id, "inspect", "id\" or \"node"); }
     var c: Call = new_call(OP_INSPECT);
-    c.node = as_usize(obj_get(params, "node"), 0 as usize);
+    c.node = target_of(params) as usize;
     // `inspect` answers a node WHOLE, control props included, so it is a
     // content read whenever the node carries a tier — there is no per-property
     // request to narrow. Structure alone is still available through `describe`,
     // which is why refusing here does not blind a developer's tooling.
     let tier: u32 = effective_tier(c.node);
-    if tier != (0 as u32) {
+    if tier != 0 {
         if !grant.has(content_caps(tier)) {
             return refused(id, "inspector: this node's contents are behind a tier this grant does not carry");
         }
@@ -760,46 +1025,127 @@ fn do_inspect(id: f64, params: json::Value, grant: auth::Grant) -> json::Value {
 }
 
 fn do_set(id: f64, params: json::Value) -> json::Value {
-    if !params.has("node") { return missing_param(id, "inspector.set", "node"); }
-    if !params.has("property") { return missing_param(id, "inspector.set", "property"); }
-    // Absent and null are both refused; an explicit `""` still writes an empty
-    // string. Same rule the agent surface learned: a misspelled parameter that
+    if !has_target(params) { return missing_param(id, "set", "id\" or \"node"); }
+    if !params.has("property") { return missing_param(id, "set", "property"); }
+    // Absent is refused; an explicit `""` still writes an empty string, and an
+    // explicit `null` means UNSET, which is how a length goes back to sizing
+    // itself. Same rule the agent surface learned: a misspelled parameter that
     // answers success is an app that looks broken and an RPC that looks fine.
-    if !params.has("value") { return missing_param(id, "inspector.set", "value"); }
+    if !params.has("value") { return missing_param(id, "set", "value"); }
 
     var c: Call = new_call(OP_SET);
-    c.node = as_usize(obj_get(params, "node"), 0 as usize);
+    c.node = target_of(params) as usize;
     c.prop = as_text(obj_get(params, "property"));
     let v: json::Value = obj_get(params, "value");
     match v {
         json::Value::Number(n) => { c.tag = TAG_NUM; c.num = n; }
         json::Value::Bool(b) => { c.tag = TAG_BOOL; c.flag = b; }
         json::Value::Text(t) => { c.tag = TAG_STR; c.raw = t.clone(); }
+        json::Value::Null => { c.tag = TAG_NOTHING; }
         _ => { c.tag = TAG_NONE; }
     }
     if c.tag == TAG_NONE {
         return err_response(id, - 32602 as f64,
-            "inspector.set: \"value\" must be a number, a boolean or a string");
+            "set: \"value\" must be a number, a boolean, a string, or null to unset");
     }
     run_ui(run_call, #addr_of(c) as *u8);
     return ok_response(id, outcome_result(c.outcome));
 }
 
+fn do_nudge(id: f64, params: json::Value) -> json::Value {
+    if !has_target(params) { return missing_param(id, "nudge", "id\" or \"node"); }
+    if !params.has("property") { return missing_param(id, "nudge", "property"); }
+    if !params.has("by") { return missing_param(id, "nudge", "by"); }
+    var c: Call = new_call(OP_NUDGE);
+    c.node = target_of(params) as usize;
+    c.prop = as_text(obj_get(params, "property"));
+    c.num = match obj_get(params, "by").as_number() {
+        option::Option[f64]::Some(n) => n,
+        option::Option::None => 0.0,
+    };
+    return do_answering(id, c);
+}
+
+// SEVERAL PROPERTIES, ONE ROUND TRIP.
+//
+// Getting a button to sit right is rarely one property — it is `absolute`, then
+// `top`, then `left`, and each one over a socket is a round trip whose latency
+// a person feels while dragging. Each still crosses the thread hop on its own,
+// because that hop is cheap and sharing one would mean marshalling a list; what
+// this saves is the wire.
+//
+// It does NOT stop at the first failure. A client that sent five properties and
+// misspelled one wants the four that were right applied and the one that was
+// wrong named, not four silent no-ops behind one error.
+fn do_set_many(id: f64, params: json::Value) -> json::Value {
+    if !has_target(params) { return missing_param(id, "set_many", "id\" or \"node"); }
+    if !params.has("properties") { return missing_param(id, "set_many", "properties"); }
+    let obj: json::Value = obj_get(params, "properties");
+    if !obj.is_object() {
+        return err_response(id, - 32602 as f64,
+            "set_many: \"properties\" must be an object of property name to value");
+    }
+    let node: usize = target_of(params) as usize;
+
+    var results: vec::Vec[json::Member] = vec::new::[json::Member]();
+    var applied: usize = 0;
+    var first_bad: insp::Outcome = insp::Outcome::Ok;
+    var i: usize = 0;
+    let n: usize = obj.item_count();
+    while i < n {
+        let name: text::Text = match obj.key(i) {
+            option::Option[text::Text]::Some(k) => k,
+            option::Option::None => text::new(),
+        };
+        let v: json::Value = match obj.object_value(i) {
+            option::Option[json::Value]::Some(x) => x,
+            option::Option::None => json::Value::Null,
+        };
+        var c: Call = new_call(OP_SET);
+        c.node = node;
+        c.prop = name.clone();
+        match v {
+            json::Value::Number(x) => { c.tag = TAG_NUM; c.num = x; }
+            json::Value::Bool(b) => { c.tag = TAG_BOOL; c.flag = b; }
+            json::Value::Text(t) => { c.tag = TAG_STR; c.raw = t.clone(); }
+            json::Value::Null => { c.tag = TAG_NOTHING; }
+            _ => { c.tag = TAG_NONE; }
+        }
+        if c.tag == TAG_NONE {
+            // An array or an object as a property value: nothing here takes one.
+            c.outcome = insp::Outcome::TypeMismatch;
+        } else {
+            run_ui(run_call, #addr_of(c) as *u8);
+        }
+        if c.outcome.is_ok() { applied = applied +% 1; }
+        else if first_bad.is_ok() { first_bad = c.outcome; }
+        results.append(member(name.view(), jstr(outcome_name(c.outcome))));
+        i = i +% 1;
+    }
+
+    var m: vec::Vec[json::Member] = vec::new::[json::Member]();
+    m.append(member("outcome", jstr(outcome_name(first_bad))));
+    m.append(member("applied", jnum(applied as f64)));
+    m.append(member("results", json::Value::Object(results)));
+    m.append(member("revision", jnum(insp::revision() as f64)));
+    return ok_response(id, json::Value::Object(m));
+}
+
 fn do_reset(id: f64, params: json::Value) -> json::Value {
-    if !params.has("node") { return missing_param(id, "inspector.reset", "node"); }
-    if !params.has("property") { return missing_param(id, "inspector.reset", "property"); }
+    if !has_target(params) { return missing_param(id, "reset", "id\" or \"node"); }
+    if !params.has("property") { return missing_param(id, "reset", "property"); }
     var c: Call = new_call(OP_RESET);
-    c.node = as_usize(obj_get(params, "node"), 0 as usize);
+    c.node = target_of(params) as usize;
     c.prop = as_text(obj_get(params, "property"));
     run_ui(run_call, #addr_of(c) as *u8);
     return ok_response(id, outcome_result(c.outcome));
 }
 
 fn do_insert(id: f64, params: json::Value) -> json::Value {
-    if !params.has("node") { return missing_param(id, "inspector.insert", "node"); }
-    if !params.has("element") { return missing_param(id, "inspector.insert", "element"); }
+    if !has_target(params) { return missing_param(id, "insert", "id\" or \"node"); }
+    if !params.has("element") { return missing_param(id, "insert", "element"); }
     var c: Call = new_call(OP_INSERT);
-    c.node = as_usize(obj_get(params, "node"), 0 as usize);
+    c.node = target_of(params) as usize;
     let maker: text::Text = as_text(obj_get(params, "element"));
     let key: text::Text = as_text(obj_get(params, "key"));
     let label: text::Text = as_text(obj_get(params, "text"));
@@ -812,19 +1158,19 @@ fn do_insert(id: f64, params: json::Value) -> json::Value {
 }
 
 fn do_remove(id: f64, params: json::Value) -> json::Value {
-    if !params.has("node") { return missing_param(id, "inspector.remove", "node"); }
+    if !has_target(params) { return missing_param(id, "remove", "id\" or \"node"); }
     var c: Call = new_call(OP_REMOVE);
-    c.node = as_usize(obj_get(params, "node"), 0 as usize);
+    c.node = target_of(params) as usize;
     run_ui(run_call, #addr_of(c) as *u8);
     return ok_response(id, outcome_result(c.outcome));
 }
 
 fn do_reparent(id: f64, params: json::Value) -> json::Value {
-    if !params.has("node") { return missing_param(id, "inspector.reparent", "node"); }
-    if !params.has("parent") { return missing_param(id, "inspector.reparent", "parent"); }
+    if !has_target(params) { return missing_param(id, "reparent", "id\" or \"node"); }
+    if !params.has("parent") { return missing_param(id, "reparent", "parent"); }
     var c: Call = new_call(OP_REPARENT);
-    c.node = as_usize(obj_get(params, "node"), 0 as usize);
-    c.parent = as_usize(obj_get(params, "parent"), 0 as usize);
+    c.node = target_of(params) as usize;
+    c.parent = as_usize(obj_get(params, "parent"), 0);
     c.at = as_usize(obj_get(params, "at"), (0 as usize) -% (1 as usize));
     run_ui(run_call, #addr_of(c) as *u8);
     return ok_response(id, outcome_result(c.outcome));
@@ -837,36 +1183,82 @@ fn do_simple(id: f64, op: u32) -> json::Value {
 }
 
 fn do_highlight(id: f64, params: json::Value) -> json::Value {
-    if !params.has("node") { return missing_param(id, "inspector.highlight", "node"); }
+    if !has_target(params) { return missing_param(id, "highlight", "id\" or \"node"); }
     var c: Call = new_call(OP_HIGHLIGHT);
-    c.node = as_usize(obj_get(params, "node"), 0 as usize);
+    c.node = target_of(params) as usize;
     run_ui(run_call, #addr_of(c) as *u8);
     return ok_response(id, outcome_result(c.outcome));
 }
 
-// What this build can make and what it can write. Discovery, so a client does
-// not have to carry a copy of two lists that live in `tree` and would drift.
-fn do_vocabulary(id: f64) -> json::Value {
+// What this build can make, and what every writable property IS.
+//
+// Discovery, so a client never carries a copy of a list that lives in `tree`
+// and drifts. It used to answer two arrays of bare names under a tool
+// description promising "which properties exist and what types they take",
+// which is a promise the shape could not keep: a name alone does not tell a
+// client that `align_items` takes one of eleven words, that a length also
+// accepts "50%" and "auto", or that `title` exists on a button and nowhere
+// else. Each of those was a round trip that failed only when someone tried it.
+//
+// `element` narrows the answer to the kinds one element carries — the way a
+// client with a button in hand should ask, rather than reading fifty
+// descriptors to find the eight that apply.
+fn spellings_of(values: str) -> json::Value {
+    var out: vec::Vec[json::Value] = vec::new::[json::Value]();
+    let parts: vec::Vec[str] = values.split(" ");
+    var i: usize = 0;
+    while i < parts.count() {
+        match parts.at(i) {
+            option::Option[str]::Some(w) => { if w != "" { out.append(jstr(w)); } }
+            option::Option::None => { }
+        }
+        i = i +% 1;
+    }
+    return json::Value::Array(out);
+}
+
+fn descriptor_json(d: *insp::Descriptor) -> json::Value {
+    var m: vec::Vec[json::Member] = vec::new::[json::Member]();
+    m.append(member("name", jstr({ (*d).name })));
+    m.append(member("type", jstr({ (*d).ty })));
+    if { (*d).unit } != "" { m.append(member("unit", jstr({ (*d).unit }))); }
+    // `["*"]` is every kind. Always an array, so a client has one shape to read.
+    m.append(member("applies_to", spellings_of({ (*d).applies })));
+    if { (*d).values } != "" { m.append(member("values", spellings_of({ (*d).values }))); }
+    m.append(member("doc", jstr({ (*d).doc })));
+    return json::Value::Object(m);
+}
+
+fn do_vocabulary(id: f64, params: json::Value) -> json::Value {
+    var kind: text::Text = text::from_str("");
+    if params.has("element") { kind = as_text(obj_get(params, "element")); }
+
     var elements: vec::Vec[json::Value] = vec::new::[json::Value]();
-    let mk: vec::Vec[str] = tree::maker_names();
-    var i: usize = 0 as usize;
+    let mk: vec::Vec[str] = (BACKEND.maker_names)(BACKEND.surface);
+    var i: usize = 0;
     while i < mk.count() {
         match mk.at(i) {
             option::Option[str]::Some(nm) => { elements.append(jstr(nm)); }
-            option::Option[str]::None => { }
+            option::Option::None => { }
         }
-        i = i +% (1 as usize);
+        i = i +% 1;
     }
+
     var props: vec::Vec[json::Value] = vec::new::[json::Value]();
-    let pn: vec::Vec[str] = tree::declared_names();
-    var j: usize = 0 as usize;
-    while j < pn.count() {
-        match pn.at(j) {
-            option::Option[str]::Some(nm) => { props.append(jstr(nm)); }
-            option::Option[str]::None => { }
+    let t: vec::Vec[insp::Descriptor] = insp::table();
+    var j: usize = 0;
+    while j < t.count() {
+        match t.at_ptr(j) {
+            option::Option[*insp::Descriptor]::Some(d) => {
+                if insp::covers({ (*d).applies }, kind.view()) {
+                    props.append(descriptor_json(d));
+                }
+            }
+            option::Option::None => { }
         }
-        j = j +% (1 as usize);
+        j = j +% 1;
     }
+
     var m: vec::Vec[json::Member] = vec::new::[json::Member]();
     m.append(member("elements", json::Value::Array(elements)));
     m.append(member("properties", json::Value::Array(props)));
@@ -921,12 +1313,12 @@ fn is_content_property(prop: str) -> bool {
 // Same rule agent_core applies, over the only parent chain this module has.
 // Bounded by the snapshot length so a malformed listing cannot loop.
 fn effective_tier(index: usize) -> u32 {
-    var worst: u32 = 0 as u32;
+    var worst: u32 = 0;
     var cur: option::Option[usize] = option::Option[usize]::Some(index);
-    var steps: usize = 0 as usize;
+    var steps: usize = 0;
     loop {
         if steps > SNAPSHOT.count() { return worst; }
-        steps = steps +% (1 as usize);
+        steps = steps +% 1;
         match cur {
             option::Option[usize]::Some(i) => {
                 match SNAPSHOT.at_ptr(i) {
@@ -935,21 +1327,21 @@ fn effective_tier(index: usize) -> u32 {
                         if t > worst { worst = t; }
                         cur = { (*p).parent };
                     }
-                    option::Option[*insp::Node]::None => { return worst; }
+                    option::Option::None => { return worst; }
                 }
             }
-            option::Option[usize]::None => { return worst; }
+            option::Option::None => { return worst; }
         }
     }
 }
 
-// The capabilities a content read costs at a tier. `Hidden` (3) is not a tier
+// The capabilities a content read costs at a tier. `Hidden` 3 is not a tier
 // but an exclusion, and there is no grant for it — a node the application took
 // out of the agent's world does not answer its contents to one.
 fn content_caps(tier: u32) -> u32 {
-    if tier == (1 as u32) { return auth::cap_read() | auth::cap_read_protected(); }
-    if tier == (2 as u32) { return auth::cap_read() | auth::cap_read_private(); }
-    if tier == (3 as u32) { return auth::cap_read() | auth::cap_read_private() | auth::cap_edit_tree(); }
+    if tier == 1 { return auth::cap_read() | auth::cap_read_protected(); }
+    if tier == 2 { return auth::cap_read() | auth::cap_read_private(); }
+    if tier == 3 { return auth::cap_read() | auth::cap_read_private() | auth::cap_edit_tree(); }
     return auth::cap_read();
 }
 
@@ -962,12 +1354,29 @@ fn refused(id: f64, what: str) -> json::Value {
 
 // Registered into `agent_mcp` by `arm`. The bridge has already run the consent
 // gate and matched the prefix; this only has to say which verb.
+// THE VERBS THIS PROVIDER ANSWERS — `verbs::all`, which is also what the
+// client half spells its requests with. It must still agree with `handle`
+// below and with `describe_tools` above; the three lists are two now, and
+// `every_verb_is_listed_declared_and_dispatched` checks what is left.
+fn verb_names() -> vec::Vec[str] {
+    return verbs::all();
+}
+
 fn handle(method: str, params: json::Value, id: f64, grant: auth::Grant) -> json::Value {
     // Disarmed mid-session, or armed by something that then dropped its
     // backend. Refused rather than run against a zeroed vtable, whose fn
     // pointers are null.
-    if !ARMED {
-        return err_response(id, - 32601 as f64, "inspector namespace is not armed");
+    // NO WALKER INSTALLED. A POLICY answer, not `-32601`: the verb exists, the
+    // caller asked for something real, and what is missing is on this side.
+    // `-32601` here meant "no such method", which is a different sentence and
+    // sent three packages downstream inventing ways to cope with it.
+    //
+    // Refused rather than run against a zeroed vtable, whose fn pointers are
+    // null — which is what this check was always for, and why it is a
+    // readiness question rather than a permission one.
+    if !HAS_BACKEND {
+        return refused(id,
+            "inspector: no tree is installed on this endpoint — the serving facade did not supply one, which on a facet app means this build has no inspector backend for its platform");
     }
     // Reading the tree at all.
     if !grant.has(auth::cap_read()) {
@@ -976,27 +1385,30 @@ fn handle(method: str, params: json::Value, id: f64, grant: auth::Grant) -> json
     // Rewriting it. Checked once, here, rather than in each `do_` body: a verb
     // added later gets the rule by being in this list, and a verb that forgot
     // to ask would be a hole with no symptom.
-    let mutates: bool = method == "inspector.set" || method == "inspector.reset"
-        || method == "inspector.insert" || method == "inspector.remove"
-        || method == "inspector.reparent" || method == "inspector.undo";
+    let mutates: bool = method == verbs::V_SET || method == verbs::V_RESET
+        || method == verbs::V_SET_MANY || method == verbs::V_NUDGE
+        || method == verbs::V_INSERT || method == verbs::V_REMOVE
+        || method == verbs::V_REPARENT || method == verbs::V_UNDO;
     if mutates {
         if !grant.has(auth::cap_edit_tree()) {
             return refused(id, "inspector: rewriting the tree needs the edit_tree capability");
         }
     }
 
-    if method == "inspector.describe" { return do_describe(id, params); }
-    if method == "inspector.inspect" { return do_inspect(id, params, grant); }
-    if method == "inspector.set" { return do_set(id, params); }
-    if method == "inspector.reset" { return do_reset(id, params); }
-    if method == "inspector.insert" { return do_insert(id, params); }
-    if method == "inspector.remove" { return do_remove(id, params); }
-    if method == "inspector.reparent" { return do_reparent(id, params); }
-    if method == "inspector.undo" { return do_simple(id, OP_UNDO); }
-    if method == "inspector.highlight" { return do_highlight(id, params); }
-    if method == "inspector.clear_highlight" { return do_simple(id, OP_CLEAR); }
-    if method == "inspector.vocabulary" { return do_vocabulary(id); }
-    if method == "inspector.journal" { return do_journal(id); }
+    if method == verbs::V_DESCRIBE_TREE { return do_describe(id, params); }
+    if method == verbs::V_INSPECT { return do_inspect(id, params, grant); }
+    if method == verbs::V_SET { return do_set(id, params); }
+    if method == verbs::V_RESET { return do_reset(id, params); }
+    if method == verbs::V_INSERT { return do_insert(id, params); }
+    if method == verbs::V_REMOVE { return do_remove(id, params); }
+    if method == verbs::V_REPARENT { return do_reparent(id, params); }
+    if method == verbs::V_UNDO { return do_simple(id, OP_UNDO); }
+    if method == verbs::V_HIGHLIGHT { return do_highlight(id, params); }
+    if method == verbs::V_CLEAR_HIGHLIGHT { return do_simple(id, OP_CLEAR); }
+    if method == verbs::V_NUDGE { return do_nudge(id, params); }
+    if method == verbs::V_SET_MANY { return do_set_many(id, params); }
+    if method == verbs::V_VOCABULARY { return do_vocabulary(id, params); }
+    if method == verbs::V_JOURNAL { return do_journal(id); }
     let unknown: text::Text = "method not found: ${method}";
     return err_response(id, - 32601 as f64, unknown.view());
 }

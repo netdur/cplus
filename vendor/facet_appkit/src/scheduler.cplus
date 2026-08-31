@@ -69,6 +69,7 @@ extern fn CFRunLoopObserverCreate(
     context: *u8,
 ) -> *u8;
 extern fn CFStringCreateWithCString(alloc: *u8, cstr: *u8, encoding: u32) -> *u8;
+extern fn CFRunLoopRunInMode(mode: *u8, seconds: f64, return_after_source: i8) -> i32;
 
 // The loop is about to sleep: everything queued has been handled.
 fn cf_before_waiting() -> u64 { return 32 as u64; }
@@ -90,7 +91,7 @@ fn cf_utf8() -> u32 { return 134217984 as u32; }   // kCFStringEncodingUTF8
 fn common_modes() -> *u8 {
     let rtld_default: *u8 = { ((0 as usize) -% (2 as usize)) as *u8 };
     let slot: *u8 = { dlsym(rtld_default, #str_ptr("kCFRunLoopCommonModes\0")) };
-    if slot == (0 as *u8) { return 0 as *u8; }
+    if slot.is_null() { return 0 as *u8; }
     return { *(slot as **u8) };
 }
 
@@ -124,14 +125,12 @@ fn schedule(ctx: *u8) {
     SYNC_PENDING = true;
     if OBSERVER_INSTALLED {
         let rl: *u8 = { CFRunLoopGetMain() };
-        if rl != (0 as *u8) { { CFRunLoopWakeUp(rl) }; }
+        if rl.is_not_null() { { CFRunLoopWakeUp(rl) }; }
     }
-    return;
 }
 
 fn before_waiting(observer: *u8, activity: u64, info: *u8) {
     tick();
-    return;
 }
 
 // The tick itself, factored out so the suite can drive it without a run loop.
@@ -160,8 +159,10 @@ fn tick() {
     // A reload lays its own rows out (`place_row` measures and positions the
     // subtree it fills), so nothing needs a second window pass behind it.
     drain_reload_jobs();
+    // ...and LAST, work that only wants to read a frame that is now true. A
+    // reload lays its own rows out, so a consumer reading here sees those too.
+    core::frames_settled();
     if dbg { debug_dump("tick.drain"); { printf(#str_ptr("[dragdbg c%llu] tick end\n\0"), DBG_CYCLE) }; }
-    return;
 }
 
 // A live divider drag is serviced HERE, synchronously — not by the observer.
@@ -184,7 +185,6 @@ fn service_split_drag() {
     resettle_splits();
     SYNC_PENDING = true;
     tick();
-    return;
 }
 
 // How many ticks have run. For tests, and for anyone measuring whether writes
@@ -196,7 +196,7 @@ fn observer_installed() -> bool { return OBSERVER_INSTALLED; }
 fn install_sync_tick() {
     if OBSERVER_INSTALLED { return; }
     let rl: *u8 = { CFRunLoopGetMain() };
-    if rl == (0 as *u8) { return; }
+    if rl.is_null() { return; }
     var cx: ObserverContext = ObserverContext {
         version: 0 as i64,
         info: 0 as *u8,
@@ -214,12 +214,11 @@ fn install_sync_tick() {
         before_waiting,
         #addr_of(cx) as *u8,
     ) };
-    if obs == (0 as *u8) { return; }
+    if obs.is_null() { return; }
     { CFRunLoopAddObserver(rl, obs, common_modes()) };
     OBSERVER_HANDLE = obs;
     OBSERVER_INSTALLED = true;
     install_debug_fence(rl);
-    return;
 }
 
 // The installed tick observer's order, read back off the REAL observer — for
@@ -227,7 +226,7 @@ fn install_sync_tick() {
 extern fn CFRunLoopObserverGetOrder(observer: *u8) -> i64;
 
 fn observer_order() -> i64 {
-    if OBSERVER_HANDLE == (0 as *u8) { return 0 as i64 - (1 as i64); }
+    if OBSERVER_HANDLE.is_null() { return 0 as i64 - (1 as i64); }
     return { CFRunLoopObserverGetOrder(OBSERVER_HANDLE) };
 }
 
@@ -263,8 +262,7 @@ fn set_debug_dump_fn(f: fn(str)) { DBG_DUMP_FN = f; return; }
 
 fn debug_dump(tag: str) {
     let f: fn(str) = DBG_DUMP_FN;
-    if f != (0 as fn(str)) { f(tag); }
-    return;
+    if f.is_not_null() { f(tag); }
 }
 
 // Order 2,000,001: what the dump prints from here is what this frame SHOWS.
@@ -275,7 +273,6 @@ fn commit_fence(observer: *u8, activity: u64, info: *u8) {
     { printf(#str_ptr("[dragdbg c%llu] ---- post-commit: the frame just drawn ----\n\0"),
              DBG_CYCLE) };
     debug_dump("commit+");
-    return;
 }
 
 fn install_debug_fence(rl: *u8) {
@@ -297,9 +294,8 @@ fn install_debug_fence(rl: *u8) {
         commit_fence,
         #addr_of(cx) as *u8,
     ) };
-    if fence == (0 as *u8) { return; }
+    if fence.is_null() { return; }
     { CFRunLoopAddObserver(rl, fence, common_modes()) };
-    return;
 }
 
 // ---- the layout pass ---------------------------------------------------------
@@ -312,10 +308,9 @@ fn layout_all_windows() {
     let n: usize = app::window_count();
     while i < n {
         let root: *core::Node = app::window_root(i);
-        if root != (0 as *core::Node) { layout_window(root); }
+        if root.is_not_null() { layout_window(root); }
         i = i +% (1 as usize);
     }
-    return;
 }
 
 // One window. The host is the window's content view — the flipped view the
@@ -341,7 +336,7 @@ static SPLIT_SETTLE_FN: fn(*core::Node) = #zero::[fn(*core::Node)]();
 fn set_split_settle_fn(f: fn(*core::Node)) { SPLIT_SETTLE_FN = f; return; }
 
 fn register_split(n: *core::Node) {
-    if n == (0 as *core::Node) { return; }
+    if n.is_null() { return; }
     let reg: *vec::Vec[*core::Node] = { #addr_of(SPLIT_NODES) };
     var i: usize = 0 as usize;
     let count: usize = { (*reg).count() };
@@ -353,7 +348,6 @@ fn register_split(n: *core::Node) {
         i = i +% (1 as usize);
     }
     let _s: status::Status = { (*reg).append(n) };
-    return;
 }
 
 // Drop a split that is no longer mounted, so a registry entry cannot outlive
@@ -373,12 +367,11 @@ fn forget_split(n: *core::Node) {
         }
         i = i +% (1 as usize);
     }
-    return;
 }
 
 fn resettle_splits() {
     let f: fn(*core::Node) = SPLIT_SETTLE_FN;
-    if f == (0 as fn(*core::Node)) { return; }
+    if f.is_null() { return; }
     let reg: *vec::Vec[*core::Node] = { #addr_of(SPLIT_NODES) };
     var i: usize = 0 as usize;
     let count: usize = { (*reg).count() };
@@ -389,7 +382,6 @@ fn resettle_splits() {
         }
         i = i +% (1 as usize);
     }
-    return;
 }
 
 // The same two-phase problem, one step more general: anything that must be
@@ -410,13 +402,12 @@ struct PlaceJob {
 static PLACE_JOBS: vec::Vec[PlaceJob] = #zero::[vec::Vec[PlaceJob]]();
 
 fn defer_place(f: fn(*core::Node), n: *core::Node) {
-    if n == (0 as *core::Node) { return; }
+    if n.is_null() { return; }
     let jobs: *vec::Vec[PlaceJob] = { #addr_of(PLACE_JOBS) };
     let _s: status::Status = { (*jobs).append(PlaceJob { f: f, n: n }) };
     // Same reason as `defer_split`: `mount` runs `apply` directly, outside a
     // tick, so a job queued there would wait for a layout nobody asked for.
     schedule(0 as *u8);
-    return;
 }
 
 fn drain_place_jobs() {
@@ -426,12 +417,11 @@ fn drain_place_jobs() {
         match { (*jobs).swap_remove(last) } {
             option::Option[PlaceJob]::Some(job) => {
                 let f: fn(*core::Node) = { job.f };
-                if f != (0 as fn(*core::Node)) { f({ job.n }); }
+                if f.is_not_null() { f({ job.n }); }
             }
             option::Option[PlaceJob]::None => { }
         }
     }
-    return;
 }
 
 // ---- deferred RELOADS --------------------------------------------------------
@@ -457,7 +447,7 @@ struct ReloadJob {
 static RELOAD_JOBS: vec::Vec[ReloadJob] = #zero::[vec::Vec[ReloadJob]]();
 
 fn defer_reload(f: fn(*u8), p: *u8) {
-    if p == (0 as *u8) { return; }
+    if p.is_null() { return; }
     let jobs: *vec::Vec[ReloadJob] = { #addr_of(RELOAD_JOBS) };
     var i: usize = 0 as usize;
     while i < { (*jobs).count() } {
@@ -472,7 +462,6 @@ fn defer_reload(f: fn(*u8), p: *u8) {
     }
     let _s: status::Status = { (*jobs).append(ReloadJob { f: f, p: p }) };
     schedule(0 as *u8);
-    return;
 }
 
 fn drain_reload_jobs() {
@@ -486,19 +475,18 @@ fn drain_reload_jobs() {
         match { (*jobs).swap_remove(last) } {
             option::Option[ReloadJob]::Some(job) => {
                 let f: fn(*u8) = { job.f };
-                if f != (0 as fn(*u8)) { f({ job.p }); }
+                if f.is_not_null() { f({ job.p }); }
             }
             option::Option[ReloadJob]::None => { }
         }
     }
-    return;
 }
 
 fn pending_reload_count() -> usize { return { RELOAD_JOBS.count() }; }
 
 fn layout_window(root: *core::Node) {
     let win: *u8 = app::window_native(root);
-    if win == (0 as *u8) { return; }
+    if win.is_null() { return; }
     match ak::Window::from_raw(win).content_view() {
         option::Option[ak::View]::Some(content) => {
             let f: rt::Rect = content.frame();
@@ -522,7 +510,7 @@ fn layout_window(root: *core::Node) {
             // The root's own view fills the safe box: mount inserted it
             // nowhere (the facade did), so the frame walk never sizes it.
             let rv: *u8 = core::view_of(root);
-            if rv != (0 as *u8) {
+            if rv.is_not_null() {
                 geometry::set_view_frame(rv, rt::Rect { x: ins.left, y: ins.top, w: w, h: h });
                 resettle_splits();
                 drain_place_jobs();
@@ -540,7 +528,6 @@ fn layout_window(root: *core::Node) {
         }
         option::Option[ak::View]::None => { }
     }
-    return;
 }
 
 // The insets this root wants kept clear, or zero when it opts out.
@@ -564,9 +551,9 @@ extern fn msg_insets(recv: *u8, sel: *u8) -> ak::EdgeInsets;
 // because a Mac window's safe-area insets are zero unless it is on a notched
 // display; facet_uikit hit it on every launch, where the inset is the notch.
 fn offset_root_views(n: *core::Node, dx: f64, dy: f64) {
-    if n == (0 as *core::Node) { return; }
+    if n.is_null() { return; }
     let v: *u8 = core::view_of(n);
-    if v != (0 as *u8) {
+    if v.is_not_null() {
         let cf: flex::Frame = { (*n).frame() };
         geometry::set_view_frame(v, rt::Rect { x: cf.left + dx, y: cf.top + dy,
                                                w: cf.width, h: cf.height });
@@ -581,7 +568,6 @@ fn offset_root_views(n: *core::Node, dx: f64, dy: f64) {
         }
         i = i +% (1 as usize);
     }
-    return;
 }
 
 // ---- run_on_main -------------------------------------------------------------
@@ -600,7 +586,37 @@ fn main_dispatch_queue() -> *u8 {
 
 fn run_on_main(work: fn(*u8), ctx: *u8) {
     { dispatch_async_f(main_dispatch_queue(), ctx, work) };
-    return;
+}
+
+// Turn the main run loop once, for a caller that is NOT inside it.
+//
+// `run_on_main` is `dispatch_async_f` onto the main dispatch queue, and that
+// queue is drained by the MAIN RUN LOOP — libdispatch installs its drain source
+// there. Nothing else moves it. So a teardown that has already left
+// `host::run_loop()` and is waiting for a queued apply to land has to turn the
+// loop itself, or the apply is never delivered and the wait is a spin against
+// a queue nobody is reading.
+//
+// That is not a hypothesis. `facet_runtime`'s `settle_and_teardown` drained
+// with `services::pump_async` alone, which drives the stdlib REACTOR and not
+// this queue, so every teardown with an apply outstanding spun its 100,000
+// turns and took the "freeing anyway" bailout — the one its own comment said
+// had never been observed to fire. It fires on the first screen change with a
+// service still in flight. See
+// `a_teardown_with_a_queued_apply_lands_it_rather_than_bailing`.
+//
+// Zero seconds and `return_after_source = true`: one pass, no sleeping. Safe
+// only because the caller has left the loop — re-entering it from inside an
+// event callback is a different thing entirely and is why the close paths
+// defer their free instead of draining here.
+fn drain_main_once() {
+    let rl: *u8 = { CFRunLoopGetMain() };
+    if rl.is_null() { return; }
+    let mode: *u8 = { CFStringCreateWithCString(0 as *u8,
+                                                #str_ptr("kCFRunLoopDefaultMode\0"),
+                                                cf_utf8()) };
+    if mode.is_null() { return; }
+    let _r: i32 = { CFRunLoopRunInMode(mode, 0.0f64, 1 as i8) };
 }
 
 // ---- the async pump — `spawn_ui`'s wake source -------------------------------
@@ -630,30 +646,29 @@ extern fn stdlib_reactor_kqfd_v1() -> i32;
 static ASYNC_PUMP_SOURCE: *u8 = #zero::[*u8]();
 
 fn install_async_pump() {
-    if ASYNC_PUMP_SOURCE != (0 as *u8) { return; }
+    if ASYNC_PUMP_SOURCE.is_not_null() { return; }
     // `_dispatch_source_type_read` is a libdispatch global, not a function —
     // the same dlsym shape `main_dispatch_queue` needs and for the same reason.
     let rtld_default: *u8 = { ((0 as usize) -% (2 as usize)) as *u8 };
     let read_type: *u8 = { dlsym(rtld_default, #str_ptr("_dispatch_source_type_read\0")) };
-    if read_type == (0 as *u8) { return; }
+    if read_type.is_null() { return; }
     let kq: i32 = { stdlib_reactor_kqfd_v1() };
     if kq < (0 as i32) { return; }
     let src: *u8 = { dispatch_source_create(read_type, kq as u64, 0 as u64, main_dispatch_queue()) };
-    if src == (0 as *u8) { return; }
+    if src.is_null() { return; }
     { dispatch_source_set_event_handler_f(src, services::pump_async) };
     { dispatch_resume(src) };
     ASYNC_PUMP_SOURCE = src;
-    return;
 }
 
-fn async_pump_installed() -> bool { return ASYNC_PUMP_SOURCE != (0 as *u8); }
+fn async_pump_installed() -> bool { return ASYNC_PUMP_SOURCE.is_not_null(); }
 
 // ---- observe_size ------------------------------------------------------------
 // The event half of element geometry: fire on the UI thread after every resize
 // of this element — divider drag, window resize, relayout.
 
 fn observe_size(n: *core::Node, cb: fn(*u8), ctx: *u8) -> u64 {
-    if n == (0 as *core::Node) { return 0 as u64; }
+    if n.is_null() { return 0 as u64; }
     var v: *u8 = core::view_of(n);
     // A node with no view of its own is not a node with no SIZE. A keyless
     // pure-layout container passes through to the nearest backed ancestor and
@@ -663,8 +678,8 @@ fn observe_size(n: *core::Node, cb: fn(*u8), ctx: *u8) -> u64 {
     //
     // The nearest backed ancestor is the view whose frame this node's size
     // follows, so that is what gets observed.
-    if v == (0 as *u8) { v = nearest_backed_view(n); }
-    if v == (0 as *u8) { return 0 as u64; }
+    if v.is_null() { v = nearest_backed_view(n); }
+    if v.is_null() { return 0 as u64; }
     return akx::observe_frame(ak::View::from_raw(v), cb, ctx);
 }
 
@@ -676,9 +691,9 @@ fn nearest_backed_view(target: *core::Node) -> *u8 {
     let n: usize = app::window_count();
     while i < n {
         let root: *core::Node = app::window_root(i);
-        if root != (0 as *core::Node) {
+        if root.is_not_null() {
             let hit: *u8 = backed_ancestor_walk(root, target, 0 as *u8);
-            if hit != (0 as *u8) { return hit; }
+            if hit.is_not_null() { return hit; }
         }
         i = i +% (1 as usize);
     }
@@ -688,7 +703,7 @@ fn nearest_backed_view(target: *core::Node) -> *u8 {
 fn backed_ancestor_walk(node: *core::Node, target: *core::Node, carried: *u8) -> *u8 {
     var here: *u8 = carried;
     let v: *u8 = core::view_of(node);
-    if v != (0 as *u8) { here = v; }
+    if v.is_not_null() { here = v; }
     if node == target { return here; }
     var i: usize = 0 as usize;
     let count: usize = core::child_count_of(node);
@@ -696,7 +711,7 @@ fn backed_ancestor_walk(node: *core::Node, target: *core::Node, carried: *u8) ->
         match core::child_of(node, i) {
             option::Option[*core::Node]::Some(c) => {
                 let hit: *u8 = backed_ancestor_walk(c, target, here);
-                if hit != (0 as *u8) { return hit; }
+                if hit.is_not_null() { return hit; }
             }
             option::Option[*core::Node]::None => { }
         }

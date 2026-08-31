@@ -101,7 +101,7 @@ fn get_protocol(name: *u8) -> *u8 {
 // Declare that `cls` conforms. BEFORE `register_class_pair` — a registered class
 // cannot gain a protocol, and the call quietly answers false if it is too late.
 fn add_protocol(cls: *u8, protocol: *u8) -> i8 {
-    if protocol == (0 as *u8) { return 0 as i8; }
+    if protocol.is_null() { return 0 as i8; }
     return { class_addProtocol(cls, protocol) };
 }
 
@@ -217,4 +217,90 @@ fn class_responds(cls: *u8, sel: *u8) -> i8 {
 fn alloc_init_class(cls: *u8) -> *u8 {
     let alloced: *u8 = rt::msg_id(cls, rt::sel(#str_ptr("alloc\0")));
     return rt::msg_id(alloced, rt::sel(#str_ptr("init\0")));
+}
+
+// ---- declining to super when subclasses are STACKED --------------------------
+//
+// `class_getSuperclass(object_class(self))` is the wrong super for a method IMP
+// as soon as ANOTHER subclass is layered on top of the class that carries the
+// IMP — and layering is the normal case here, because arming a view is done by
+// several independent passes that each subclass whatever class they find:
+//
+//     FacetKey00   <- the object's class (installed last)
+//     FacetInput00 <- carries the IMP that is running
+//     NSTextView   <- what "super" actually means
+//
+// One hop up from the OBJECT's class lands on the class holding our own
+// override, so the IMP calls itself until the stack guard is hit. That is a
+// segfault, not a hang, and the backtrace is tens of thousands of frames of one
+// function.
+//
+// The fix needs no bookkeeping about who subclassed first: walk up from the
+// object's class until the implementation is no longer the one that is running.
+// `mine` is that implementation — each IMP passes its own address — so two of
+// our own layers overriding the SAME selector still chain through each other,
+// which "skip everything we synthesized" would break.
+extern fn class_getSuperclass(cls: *u8) -> *u8;
+extern fn class_getMethodImplementation(cls: *u8, sel: *u8) -> *u8;
+
+// The class to hand `objc_msgSendSuper` as `super_class`: lookup starts AT it,
+// so it is the superclass of the class that DEFINES `mine`.
+//
+// Finding that class is the whole job, and "the first class up that does not
+// answer with `mine`" is NOT it: when two of our own layers override the same
+// selector — the key class and the input class both implement
+// `resignFirstResponder` — that rule hands the lower one back the UPPER one's
+// implementation and the two call each other forever. A class DEFINES a method
+// when its superclass answers with something else; every class below that one
+// merely inherits it.
+// The class in `self_obj`'s chain that DEFINES `mine` — the one whose
+// superclass answers with something else — or 0 when `mine` is not in the
+// chain at all. Every class below the definer merely inherits it.
+fn defining_class_of(self_obj: *u8, cmd: *u8, mine: *u8) -> *u8 {
+    if self_obj.is_null() { return 0 as *u8; }
+    var cls: *u8 = { object_getClass(self_obj) };
+    while cls.is_not_null() {
+        let sup: *u8 = { class_getSuperclass(cls) };
+        if { class_getMethodImplementation(cls, cmd) } == mine {
+            if sup.is_null() { return 0 as *u8; }
+            if { class_getMethodImplementation(sup, cmd) } != mine { return cls; }
+        }
+        cls = sup;
+    }
+    return 0 as *u8;
+}
+
+// The class to hand `objc_msgSendSuper` as `super_class`: lookup starts AT it,
+// so it is the superclass of the class that DEFINES `mine`.
+//
+// Finding that class is the whole job, and "the first class up that does not
+// answer with `mine`" is NOT it: when two of our own layers override the same
+// selector — the key class and the input class both implement
+// `resignFirstResponder` — that rule hands the lower one the UPPER one's
+// implementation and the two call each other forever.
+//
+// NEVER 0 for a real object. Every caller reads 0 as "there is no super" and
+// drops the message: a `hitTest:` that answers nil makes its whole window
+// click-through, which looks like a window that will not take focus and traffic
+// lights that never light. When `mine` cannot be found, the answer is the one
+// hop the code took before this walk existed — no worse than the old code, and
+// safe, because an implementation that is not in the chain cannot recurse into
+// itself.
+fn super_class_below(self_obj: *u8, cmd: *u8, mine: *u8) -> *u8 {
+    if self_obj.is_null() { return 0 as *u8; }
+    let one_hop: *u8 = { class_getSuperclass(object_getClass(self_obj)) };
+    let definer: *u8 = defining_class_of(self_obj, cmd, mine);
+    if definer.is_null() { return one_hop; }
+    let sup: *u8 = { class_getSuperclass(definer) };
+    if sup.is_null() { return one_hop; }
+    return sup;
+}
+
+// The same answer as an IMP, for a caller that would rather call it as an
+// ordinary function than spell `objc_msgSendSuper` (which needs the `_stret`
+// variant on x86_64 for a struct return, and does not on arm64).
+fn super_imp_below(self_obj: *u8, cmd: *u8, mine: *u8) -> *u8 {
+    let cls: *u8 = super_class_below(self_obj, cmd, mine);
+    if cls.is_null() { return 0 as *u8; }
+    return { class_getMethodImplementation(cls, cmd) };
 }

@@ -1857,9 +1857,9 @@ fn a_row_with_no_frame_yet_takes_the_allocation() {
 #[test]
 fn a_split_clamps_to_both_minimums() {
     // Room for both: the trailing minimum caps it.
-    assert input::clamp_split_to(150.0f64, 240.0f64, 1000.0f64, 500.0f64) == 500.0f64;
-    assert input::clamp_split_to(150.0f64, 240.0f64, 1000.0f64, 900.0f64) == 760.0f64;
-    assert input::clamp_split_to(150.0f64, 240.0f64, 1000.0f64, 10.0f64) == 150.0f64;
+    assert input::clamp_split_to(150.0f64, 240.0f64, 0.0f64, 0.0f64, 1000.0f64, 500.0f64) == 500.0f64;
+    assert input::clamp_split_to(150.0f64, 240.0f64, 0.0f64, 0.0f64, 1000.0f64, 900.0f64) == 760.0f64;
+    assert input::clamp_split_to(150.0f64, 240.0f64, 0.0f64, 0.0f64, 1000.0f64, 10.0f64) == 150.0f64;
 }
 
 // A host with NO ALLOCATION YET cannot measure a trailing minimum against
@@ -1868,8 +1868,8 @@ fn a_split_clamps_to_both_minimums() {
 // allocation this is every split there is.
 #[test]
 fn a_split_with_no_allocation_yet_still_honours_the_leading_minimum() {
-    assert input::clamp_split_to(150.0f64, 240.0f64, 0.0f64, 10.0f64) == 150.0f64;
-    assert input::clamp_split_to(150.0f64, 240.0f64, 0.0f64, 900.0f64) == 900.0f64;
+    assert input::clamp_split_to(150.0f64, 240.0f64, 0.0f64, 0.0f64, 0.0f64, 10.0f64) == 150.0f64;
+    assert input::clamp_split_to(150.0f64, 240.0f64, 0.0f64, 0.0f64, 0.0f64, 900.0f64) == 900.0f64;
 }
 
 // NEGATIVE: a host too small to honour BOTH minimums cannot be clamped to
@@ -1880,9 +1880,45 @@ fn a_split_with_no_allocation_yet_still_honours_the_leading_minimum() {
 #[test]
 fn a_split_too_small_for_both_minimums_keeps_the_leading_one() {
     // 300 wide, but the two minimums want 390.
-    let got: f64 = input::clamp_split_to(150.0f64, 240.0f64, 300.0f64, 200.0f64);
+    let got: f64 = input::clamp_split_to(150.0f64, 240.0f64, 0.0f64, 0.0f64, 300.0f64, 200.0f64);
     assert got >= (150.0f64);
-    assert input::clamp_split_to(150.0f64, 240.0f64, 300.0f64, 10.0f64) == 150.0f64;
+    assert input::clamp_split_to(150.0f64, 240.0f64, 0.0f64, 0.0f64, 300.0f64, 10.0f64) == 150.0f64;
+}
+
+// A MAXIMUM is the other end of each of those two clamps, and the trailing one
+// is the half an application could not write for itself: it needs the host's
+// live extent, which is exactly what this function is handed and an application
+// is not.
+#[test]
+fn a_split_clamps_to_both_maximums() {
+    // Trailing pane capped at 640 in a 1000-wide host: the divider may not go
+    // left of 360, which is a FLOOR and is what iris was deriving by hand.
+    assert input::clamp_split_to(150.0f64, 240.0f64, 0.0f64, 640.0f64,
+                                 1000.0f64, 200.0f64) == 360.0f64;
+    // ...and is inert once the divider is right of it.
+    assert input::clamp_split_to(150.0f64, 240.0f64, 0.0f64, 640.0f64,
+                                 1000.0f64, 500.0f64) == 500.0f64;
+    // Leading pane capped at 400: a CEILING, and it needs no host size at all.
+    assert input::clamp_split_to(150.0f64, 240.0f64, 400.0f64, 0.0f64,
+                                 1000.0f64, 900.0f64) == 400.0f64;
+    assert input::clamp_split_to(150.0f64, 240.0f64, 400.0f64, 0.0f64,
+                                 0.0f64, 900.0f64) == 400.0f64;
+    // Zero is NO MAXIMUM, which is the default and must change nothing.
+    assert input::clamp_split_to(150.0f64, 240.0f64, 0.0f64, 0.0f64,
+                                 1000.0f64, 500.0f64) == 500.0f64;
+}
+
+// NEGATIVE: a maximum that contradicts a minimum. The FLOOR wins, the same
+// precedence the two minimums already give each other and for the same reason.
+#[test]
+fn a_split_maximum_below_its_minimum_keeps_the_minimum() {
+    // Leading may be at most 100, but at least 150. 150.
+    assert input::clamp_split_to(150.0f64, 240.0f64, 100.0f64, 0.0f64,
+                                 1000.0f64, 500.0f64) == 150.0f64;
+    // Trailing capped at 900 in a 1000-wide host puts the floor at 100, which
+    // is below the leading minimum — so the leading minimum still wins.
+    assert input::clamp_split_to(150.0f64, 240.0f64, 0.0f64, 900.0f64,
+                                 1000.0f64, 120.0f64) == 150.0f64;
 }
 
 // ---- image ---------------------------------------------------------------------

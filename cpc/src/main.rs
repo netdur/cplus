@@ -6939,7 +6939,7 @@ fn run_init(args: &[OsString]) -> ExitCode {
                       objc        = \"*\"\n\
                       quartzcore  = \"*\"\n\
                       webkit      = \"*\"\n\n\
-                      # What `serve_if_asked` in src/main_ios.cplus links, named here for\n\
+                      # What the agent surface in src/app.cplus links, named here for\n\
                       # the same flat-set reason as the backend's own closure.\n\
                       inspector   = \"*\"\n\
                       facet_agent = \"*\"\n\
@@ -6956,7 +6956,7 @@ fn run_init(args: &[OsString]) -> ExitCode {
                         objc         = \"*\"\n\
                         quartzcore   = \"*\"\n\
                         webkit       = \"*\"\n\n\
-                        # What `serve_if_asked` in the desktop entry links. Named here for\n\
+                        # What the agent surface in src/app.cplus links. Named here for\n\
                         # the same reason the backend's closure is: the resolver checks every\n\
                         # import against this one flat set. Delete these with that line if\n\
                         # you would rather the binary could not be inspected.\n\
@@ -6968,11 +6968,7 @@ fn run_init(args: &[OsString]) -> ExitCode {
                         agent_mcp    = \"*\"\n\
                         json         = \"*\"\n"
                 .to_string(),
-            // The third full closure. It used to be three lines, and the note
-            // here said why: `inspector` had no Android half, so the entry did
-            // not call `serve_if_asked` and none of the agent packages were
-            // named. It has one now (`inspector/serve_android`), so this is the
-            // same shape as its two neighbours.
+            // The third full closure, the same shape as its two neighbours.
             //
             // `agent_android` is the Android sibling of agent_appkit and
             // agent_uikit and walks facet's OWN node tree rather than a native
@@ -6986,10 +6982,13 @@ fn run_init(args: &[OsString]) -> ExitCode {
                           facet_android = \"*\"\n\
                           android_view  = \"*\"\n\
                           jni           = \"*\"\n\n\
-                          # What `serve_if_asked` in src/main_android.cplus links, named here\n\
-                          # for the same flat-set reason as the backend's own closure. The\n\
-                          # port arrives as the system property `debug.facet.inspect`, since\n\
-                          # an Activity has no environment for the launcher to set.\n\
+                          # What the agent surface in src/app.cplus links, named here\n\
+                          # for the same flat-set reason as the backend's own closure. It\n\
+                          # listens on a loopback PORT here rather than a socket: an app's\n\
+                          # files live under /data/data/<pkg>, which your machine cannot\n\
+                          # reach. The port is derived from the pid, so a launcher that\n\
+                          # spawned the app can work it out; `adb forward tcp:P tcp:P` is\n\
+                          # the hop.\n\
                           inspector     = \"*\"\n\
                           facet_agent   = \"*\"\n\
                           agent_android = \"*\"\n\
@@ -7060,17 +7059,19 @@ fn run_init(args: &[OsString]) -> ExitCode {
          import \"facet/screen\" as screen;\n\
          import \"facet/vocabulary\" as vocab;\n\
          import \"facet_runtime/runtime\" as runtime;\n\
+         import \"facet_agent/agent\" as agent;\n\
+
+         import \"./agent_consent\" as agent_consent;\n\
          import \"stdlib/option\" as option;\n\
          import \"stdlib/vec\" as vec;\n\n\
          struct Home {{\n    taps: i64,\n}}\n\n\
          impl Home {{\n\
-         \x20   fn new() -> Home {{ return Home {{ taps: 0 as i64 }}; }}\n\n\
+         \x20   fn new() -> Home {{ return Home {{ taps: 0 }}; }}\n\n\
          \x20   // A handler is a bound METHOD — `on_click: this.on_tap` wires it, and\n\
          \x20   // the compiler fills the context slot. Never hand-roll `#addr_of(this)`.\n\
          \x20   fn on_tap(ref this, sender: *u8) {{\n\
-         \x20       this.taps = this.taps + (1 as i64);\n\
+         \x20       this.taps = this.taps + 1;\n\
          \x20       this.show_taps();\n\
-         \x20       return;\n\
          \x20   }}\n\n\
          \x20   // The live tree, reached through a TYPED cursor. A label is not a\n\
          \x20   // button: the wrong kind of `find` answers None and does nothing.\n\
@@ -7079,7 +7080,6 @@ fn run_init(args: &[OsString]) -> ExitCode {
          \x20       if let option::Option::Some(l) = label::find(\"taps\") {{\n\
          \x20           let _l: label::Label = l.set_text(\"tapped ${{n}}\");\n\
          \x20       }}\n\
-         \x20       return;\n\
          \x20   }}\n\
          }}\n\n\
          impl Home: component::Component {{\n\
@@ -7087,22 +7087,22 @@ fn run_init(args: &[OsString]) -> ExitCode {
          \x20       return @ui {{\n\
          \x20           column {{\n\
          \x20               label(\"Hello from C+\", key: \"hello\",\n\
-         \x20                     font_size: 28.0f64,\n\
+         \x20                     font_size: 28.0,\n\
          \x20                     font_weight: vocab::FontWeight::Bold)\n\
          \x20               label(\"tapped 0\", key: \"taps\")\n\
          \x20               button(\"Tap me\", key: \"tap\", on_click: this.on_tap)\n\
          \x20           }}\n\
-         \x20               .grow(1.0f64)\n\
-         \x20               .gap(12.0f64)\n\
-         \x20               .padding(24.0f64)\n\
+         \x20               .grow(1.0)\n\
+         \x20               .gap(12.0)\n\
+         \x20               .padding(24.0)\n\
          \x20               .align(flex::Align::Center)\n\
          \x20               .justify(flex::Justify::Center)\n\
          \x20       }};\n\
          \x20   }}\n\
          }}\n\n\
          impl Home: component::Lifecycle {{\n\
-         \x20   fn on_attach(ref this) {{ return; }}\n\
-         \x20   fn on_detach(ref this) {{ return; }}\n\
+         \x20   fn on_attach(ref this) {{ }}\n\
+         \x20   fn on_detach(ref this) {{ }}\n\
          }}\n\n\
          impl Home: screen::Screen {{\n\
          \x20   fn chrome(this) -> screen::Chrome {{\n\
@@ -7110,7 +7110,7 @@ fn run_init(args: &[OsString]) -> ExitCode {
          \x20       // window — but they are the same facade on both platforms and the\n\
          \x20       // iOS backend drops them.\n\
          \x20       return screen::Chrome::new(title: \"{proj_name}\",\n\
-         \x20                                  width: 390.0f64, height: 844.0f64);\n\
+         \x20                                  width: 390.0, height: 844.0);\n\
          \x20   }}\n\
          \x20   fn menu_items(this) -> vec::Vec[screen::MenuItem] {{\n\
          \x20       return vec::new::[screen::MenuItem]();\n\
@@ -7127,8 +7127,32 @@ fn run_init(args: &[OsString]) -> ExitCode {
          // warns on `adb logcat -s facet` and returns InvalidInput, so an app\n\
          // built on it launches to a blank Activity.\n\
          fn run() -> i32 {{\n\
+         \x20   // DRIVEABLE BY AN AGENT, and by the IDE that launched it. Two\n\
+         \x20   // lines, each saying what it does:\n\
+         \x20   //\n\
+         \x20   //   enable()      fills the serving seam (without it, nothing serves)\n\
+         \x20   //   agent_mcp(id) names THIS APP; the platform derives where it\n\
+         \x20   //                 listens — `/tmp/mcp-{proj_name}-<pid>.socket` on a\n\
+         \x20   //                 desktop, a loopback port on a phone. A launcher\n\
+         \x20   //                 knows the pid it spawned, so it can work the\n\
+         \x20   //                 address out without being told.\n\
+         \x20   //\n\
+         \x20   // That is the whole opt-in. All 25 verbs come with it — the eleven\n\
+         \x20   // that drive the app as a person would, and the fourteen that\n\
+         \x20   // inspect it as a developer would, seeing unexposed nodes and\n\
+         \x20   // writing properties that are not user affordances. There is no\n\
+         \x20   // third line: the serving facade installs the tree walker, so\n\
+         \x20   // being served and being inspectable are one decision.\n\
+         \x20   //\n\
+         \x20   // Delete both (and the agent packages from Cplus.toml) if you\n\
+         \x20   // would rather this binary could not be driven.\n\
+         \x20   //\n\
+         \x20   // ANYTHING THAT CONNECTS IS ADMITTED. To ask the user first, add\n\
+         \x20   // `agent_consent::install();` above — see src/agent_consent.cplus.\n\
+         \x20   agent::enable();\n\
+         \x20   runtime::agent_mcp(\"{proj_name}\");\n\
          \x20   runtime::run_screen(Home::new());\n\
-         \x20   return 0 as i32;\n\
+         \x20   return 0;\n\
          }}\n"
     );
 
@@ -7140,14 +7164,14 @@ fn run_init(args: &[OsString]) -> ExitCode {
          // produces a STATICLIB, and a library has no entry the system knows to\n\
          // call. It does not return — `UIApplicationMain` owns the process from\n\
          // here — so the value below is unreachable in a running app.\n\n\
-         import \"./app\" as app;\n\
-         import \"inspector/serve\" as inspect;\n\n\
+         import \"./app\" as app;\n\n\
          export extern fn {sym}_main() -> i32 {{\n\
-         \x20   // Inspectable ON REQUEST, the same line the desktop entry has.\n\
-         \x20   // `FACET_INSPECT` carries a PORT here — a Unix socket would sit\n\
-         \x20   // inside the app sandbox where the launcher cannot reach it — and\n\
-         \x20   // `simctl launch` passes it in as `SIMCTL_CHILD_FACET_INSPECT`.\n\
-         \x20   inspect::serve_if_asked();\n\
+         \x20   // The agent surface is armed in src/app.cplus, the one file every\n\
+         \x20   // platform builds — there is nothing platform-shaped about it. On\n\
+         \x20   // this platform it listens on a loopback PORT rather than a socket\n\
+         \x20   // path, because a Unix socket sits inside the app sandbox where the\n\
+         \x20   // launcher cannot reach it; the port is derived from the pid, which\n\
+         \x20   // `simctl launch` and `devicectl` both report.\n\
          \x20   return app::run();\n}}\n"
     );
 
@@ -7162,12 +7186,11 @@ fn run_init(args: &[OsString]) -> ExitCode {
     // `cplus.facet.main` meta-data in android/AndroidManifest.xml, and dlsym's
     // it out of the .so. The app writes no Java and no JNI.
     //
-    // It DOES call `serve_if_asked`, like both its neighbours. That line used
-    // to be absent and the reason given here was that `inspector` was AppKit
-    // and UIKit only; `inspector/serve_android` closed that, and the channel it
-    // reads is the one difference worth knowing about — an Activity has no
-    // environment for a launcher to set, so the port is the system property
-    // `debug.facet.inspect` rather than a variable.
+    // It arms NOTHING of its own, like both its neighbours: the agent surface
+    // is set up in src/app.cplus, which every platform builds. That used to be
+    // three per-platform `serve_if_asked` calls reading three differently-spelled
+    // channels; the address is derived from the pid now, so there is no channel
+    // and no per-platform line.
     //
     // It DOES return, unlike iOS. `onCreate` called in, takes a View back and
     // returns to the looper that was already running — so the Android facade's
@@ -7184,45 +7207,39 @@ fn run_init(args: &[OsString]) -> ExitCode {
          // android/AndroidManifest.xml — and dlsym's it, so nothing above this\n\
          // line is Android-shaped and src/app.cplus is the same file every\n\
          // platform builds. Rename the function and you must rename it there too.\n\n\
-         import \"./app\" as app;\n\
-         import \"inspector/serve\" as inspect;\n\n\
+         import \"./app\" as app;\n\n\
          export extern fn {sym}_main() -> i32 {{\n\
-         \x20   // Inspectable ON REQUEST, the same line the other two entries have.\n\
-         \x20   // The port arrives as a SYSTEM PROPERTY here — an Activity has no\n\
-         \x20   // environment for a launcher to set, and `am start` takes an Intent:\n\
+         \x20   // The agent surface is armed in src/app.cplus, the one file every\n\
+         \x20   // platform builds. It listens on a loopback port derived from this\n\
+         \x20   // process\'s pid, so nothing has to be passed in — an Activity has no\n\
+         \x20   // environment for a launcher to set, which is what the old system\n\
+         \x20   // property was working around:\n\
          \x20   //\n\
-         \x20   //     adb shell setprop debug.facet.inspect 8787\n\
          \x20   //     adb shell am start -n <pkg>/cplus.facet.FacetActivity\n\
-         \x20   //     adb forward tcp:8787 tcp:8787\n\
-         \x20   //\n\
-         \x20   // Launched without that property this costs one property read.\n\
-         \x20   inspect::serve_if_asked();\n\
+         \x20   //     pid=$(adb shell pidof <pkg>); adb forward tcp:$((9000+pid%1000)) tcp:$((9000+pid%1000))\n\
+         \x20   //\
          \x20   // This RETURNS, unlike the iOS entry: onCreate is calling in and\n\
          \x20   // needs its View back, so `App::run` builds the tree and stores it\n\
          \x20   // rather than entering a loop it would never leave.\n\
          \x20   return app::run();\n}}\n"
     );
 
-    // macOS gets one line the other desktops do not: the inspector is an
-    // AppKit package, and `serve_if_asked` is what makes a launched binary
-    // inspectable BY THE LAUNCHER. An IDE (iris's Run) sets FACET_INSPECT to a
-    // socket path and connects a remote backend to it; without this call the
-    // variable arrives at a process that serves nothing, and the IDE's inspect
-    // pane sits empty against an app that is running perfectly. Scaffolded in
-    // because a fresh project's first Run is exactly when that reads as broken.
+    // Every desktop entry is now the same three lines: the agent surface is
+    // armed in src/app.cplus, not here. It used to be macOS-only and in the
+    // entry, because the inspector was an AppKit package reached through
+    // `serve_if_asked` reading FACET_INSPECT — a second way to start the same
+    // server, which silently decided whether eleven of the socket's twenty-one
+    // verbs existed. See plan.md.
     let facet_desktop_entry = |p: &str| -> String {
         if p == "macos" {
             format!(
                 "// {proj_name} — the desktop entry. The same `app::run` the iOS shell\n\
                  // calls; `facet_runtime` selects its own per-platform backend, so there\n\
                  // is nothing to install here.\n\n\
-                 import \"./app\" as app;\n\
-                 import \"inspector/serve\" as inspect;\n\n\
+                 import \"./app\" as app;\n\n\
                  fn main() -> i32 {{\n\
-                 \x20   // Inspectable ON REQUEST. `FACET_INSPECT` names a socket the\n\
-                 \x20   // launcher is listening on; started any other way there is no\n\
-                 \x20   // variable and this costs one getenv.\n\
-                 \x20   inspect::serve_if_asked();\n\
+                 \x20   // The agent surface is armed in src/app.cplus, the one file\n\
+                 \x20   // every platform builds.\n\
                  \x20   return app::run();\n}}\n"
             )
         } else {
@@ -7408,15 +7425,15 @@ fn run_init(args: &[OsString]) -> ExitCode {
          <manifest xmlns:android=\"http://schemas.android.com/apk/res/android\"\n\
          \x20   package=\"{android_pkg}\">\n\
          \x20   <!-- FOR THE INSPECTOR, and for nothing else this project does.\n\
-         \x20        `serve_if_asked` in src/main_android.cplus binds a listening\n\
+         \x20        the agent surface in src/app.cplus binds a listening\n\
          \x20        socket on LOOPBACK, and Android gates socket() on the app's\n\
          \x20        membership of the inet group — which this permission is what\n\
          \x20        grants. Without it the bind fails with EACCES, the accept loop\n\
-         \x20        ends the instant it starts, and an IDE that set\n\
-         \x20        debug.facet.inspect connects to nothing while the app runs\n\
-         \x20        perfectly. Measured, on an emulator, before this line existed.\n\n\
-         \x20        Delete it with `serve_if_asked` if you would rather the app\n\
-         \x20        could not be inspected: the two belong together. -->\n\
+         \x20        ends the instant it starts, and an IDE that forwarded the\n\
+         \x20        port connects to nothing while the app runs perfectly.\n\
+         \x20        Measured, on an emulator, before this line existed.\n\n\
+         \x20        Delete it with the three lines in src/app.cplus if you would\n\
+         \x20        rather the app could not be inspected: they belong together. -->\n\
          \x20   <uses-permission android:name=\"android.permission.INTERNET\" />\n\
          \x20   <application android:label=\"{display}\"\n\
          \x20                android:theme=\"@android:style/Theme.DeviceDefault.DayNight\">\n\
@@ -7528,6 +7545,49 @@ fn run_init(args: &[OsString]) -> ExitCode {
          cpc test           run the tests\n\
          cpc fmt            canonical formatting\n\
          ```\n\n\
+         ## Driving the running app\n\n\
+         This app is an ACI: while it runs it serves MCP, and you can read its\n\
+         UI and act on it. `src/app.cplus` is where that is turned on.\n\n\
+         **Find it.** The address is derived from the app id and its pid, so a\n\
+         running instance writes `/tmp/mcp-{proj_name}-<pid>.json` saying where\n\
+         it landed:\n\n\
+         ```\n\
+         cat /tmp/mcp-{proj_name}-*.json\n\
+         ```\n\n\
+         A pid whose process is gone is a leftover — check with `kill -0 <pid>`.\n\
+         If you launched the app yourself you already know the pid, so you can\n\
+         skip the file: the port is `9000 + pid % 1000`.\n\n\
+         **Talk to it.** Plain JSON-RPC over POST, no bridge:\n\n\
+         ```\n\
+         curl -s -X POST http://127.0.0.1:<port>/ \\\n\
+         \x20    -d '{{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"describe_ui\"}}'\n\
+         ```\n\n\
+         `tools/list` names every verb, and the startup line says how many\n\
+         there are. The core eleven are `describe_ui`, `click`, `set_text`,\n\
+         `hit_test`, `set_caret`, `read_text`, `read_runs`, `invoke_menu`,\n\
+         `scroll_to`, `poll_event` and `activity`. Fourteen more see the whole\n\
+         tree rather than just what is exposed, and can write any property on\n\
+         it: `describe_tree`, `inspect`, `set`, `set_many`, `reset`, `nudge`,\n\
+         `insert`, `remove`, `reparent`, `undo`, `highlight`,\n\
+         `clear_highlight`, `vocabulary` and `journal`. They come with the\n\
+         surface — there is nothing extra for the app to call. Ask\n\
+         `vocabulary` what a property takes before you `set` one.\n\n\
+         `activity` is the record of what has been DONE through the surface —\n\
+         useful when a person is supervising you, and when you want to check\n\
+         what you already tried.\n\n\
+         **This is how you test a UI change.** `describe_ui` answers a flat node\n\
+         list and each `id` is the `key:` written in the code. Click, describe\n\
+         again, and read the change — that is evidence, in a way \"it should work\n\
+         now\" is not.\n\n\
+         Two things worth knowing before you are confused by them:\n\n\
+         - **You have no hands.** There is no drag, pinch or swipe verb and\n\
+         \x20 there will not be one. An affordance only a gesture can reach is a\n\
+         \x20 bug in the app — it is unreachable for anyone driving by voice too.\n\
+         \x20 Fix the click path; do not look for a gesture verb.\n\
+         - **You may be refused once.** If the app wired `agent_consent`, your\n\
+         \x20 first request is refused while a dialog asks the user. The error\n\
+         \x20 says whether to retry — `consent pending` means come back,\n\
+         \x20 `consent denied` means the user said no.\n\n\
          <!-- Sections below this line are written by your IDE and are rewritten\n\
               when it opens the project. Edit above the line, not below it. -->\n"
     );
@@ -7548,10 +7608,50 @@ fn run_init(args: &[OsString]) -> ExitCode {
         "{{\n  \"mcpServers\": {{\n    \"cplus\": {{\n      \"command\": \"{cpc_path}\",\n      \"args\": [\"mcp\"]\n    }}\n  }}\n}}\n"
     );
 
+
+    // Consent, as a file the developer OWNS rather than a paragraph in a
+    // comment. Generated unwired: the surface admits by default so an agent can
+    // drive a fresh project immediately, and turning this on is one call. The
+    // file itself carries no explanation — `facet_agent/consent` is where the
+    // reasoning lives, and a generated file that lectures is a generated file
+    // people delete.
+    let facet_consent = format!(
+        "// Ask before an agent may drive this app.\n\
+         //\n\
+         // Wire it in src/app.cplus, before `agent::enable()`:\n\
+         //\n\
+         //     agent_consent::install();\n\n\
+         import \"facet_runtime/runtime\" as runtime;\n\
+         import \"facet_agent/agent\" as agent;\n\
+         import \"facet_agent/consent\" as consent;\n\
+         import \"facet/services\" as services;\n\
+         import \"stdlib/text\" as text;\n\n\
+         fn answered(index: i32, ctx: *u8) {{\n\
+         \x20   if index == 0 {{ consent::allow_pending(); return; }}\n\
+         \x20   consent::deny_pending();\n\
+         }}\n\n\
+         fn show(ctx: *u8) {{\n\
+         \x20   let message: text::Text = \"${{consent::pending()}} wants to read this app and press its buttons.\";\n\
+         \x20   runtime::alert(\"Allow agent access?\", message.view(), \"Allow\",\n\
+         \x20                  secondary: \"Deny\", on_answer: answered);\n\
+         }}\n\n\
+         fn ask(client: str, ctx: *u8) {{\n\
+         \x20   // `ask` runs on the serve thread. A dialog built there is an\n\
+         \x20   // NSWindow off the main thread, which aborts the process.\n\
+         \x20   if !services::has_main_hop() {{ consent::cancel_pending(); return; }}\n\
+         \x20   services::run_on_main(show, 0 as *u8);\n\
+         }}\n\n\
+         fn install() {{\n\
+         \x20   consent::on_ask(ask);\n\
+         \x20   agent::set_policy(consent::gate);\n\
+         }}\n"
+    );
+
     let mut files: Vec<(PathBuf, String)> = vec![(manifest, manifest_toml)];
     if gui {
         // The shared app, then one door per platform.
         files.push((src.join("app.cplus"), facet_app));
+        files.push((src.join("agent_consent.cplus"), facet_consent.clone()));
         for p in platforms.iter() {
             // EVERY EXTERNAL-BUILDER PLATFORM, not just iOS. Testing `p ==
             // "ios"` here is what handed android the desktop `fn main`, which

@@ -50,14 +50,12 @@ const STATUS: str = "probe:status";
 fn say(msg: str) {
     match label::find(STATUS) {
         option::Option[label::Label]::Some(l) => { let _l: label::Label = l.set_text(msg); }
-        option::Option[label::Label]::None => { }
+        option::Option::None => { }
     }
-    return;
 }
 
 fn on_click(sender: *u8, ctx: *u8) {
     say("button: clicked");
-    return;
 }
 
 fn on_toggle_click(sender: *u8, ctx: *u8) {
@@ -65,9 +63,8 @@ fn on_toggle_click(sender: *u8, ctx: *u8) {
         option::Option[button::Button]::Some(b) => {
             if b.is_on() { say("toggling button: ON"); } else { say("toggling button: off"); }
         }
-        option::Option[button::Button]::None => { say("toggling button: no cursor"); }
+        option::Option::None => { say("toggling button: no cursor"); }
     }
-    return;
 }
 
 fn on_switch(sender: *u8, ctx: *u8) {
@@ -75,9 +72,8 @@ fn on_switch(sender: *u8, ctx: *u8) {
         option::Option[toggle::Toggle]::Some(t) => {
             if t.on() { say("toggle: on"); } else { say("toggle: off"); }
         }
-        option::Option[toggle::Toggle]::None => { say("toggle: no cursor"); }
+        option::Option::None => { say("toggle: no cursor"); }
     }
-    return;
 }
 
 fn on_check(sender: *u8, ctx: *u8) {
@@ -85,20 +81,18 @@ fn on_check(sender: *u8, ctx: *u8) {
         option::Option[checkbox::Checkbox]::Some(c) => {
             if c.on() { say("checkbox: checked"); } else { say("checkbox: unchecked"); }
         }
-        option::Option[checkbox::Checkbox]::None => { say("checkbox: no cursor"); }
+        option::Option::None => { say("checkbox: no cursor"); }
     }
-    return;
 }
 
 fn on_slide(sender: *u8, ctx: *u8) {
     match slider::find("probe:slider") {
         option::Option[slider::Slider]::Some(s) => {
-            let pct: i32 = (s.value() * (100.0 as f64)) as i32;
+            let pct: i32 = (s.value() * 100.0) as i32;
             say_owned("slider: ${pct}%");
         }
-        option::Option[slider::Slider]::None => { say("slider: no cursor"); }
+        option::Option::None => { say("slider: no cursor"); }
     }
-    return;
 }
 
 fn on_step(sender: *u8, ctx: *u8) {
@@ -107,9 +101,8 @@ fn on_step(sender: *u8, ctx: *u8) {
             let v: i32 = s.value() as i32;
             say_owned("stepper: ${v}");
         }
-        option::Option[stepper::Stepper]::None => { say("stepper: no cursor"); }
+        option::Option::None => { say("stepper: no cursor"); }
     }
-    return;
 }
 
 fn on_typed(sender: *u8, ctx: *u8) {
@@ -118,14 +111,12 @@ fn on_typed(sender: *u8, ctx: *u8) {
             let t: str = f.text();
             say_owned("text_field: \"${t}\"");
         }
-        option::Option[text_field::TextField]::None => { say("text_field: no cursor"); }
+        option::Option::None => { say("text_field: no cursor"); }
     }
-    return;
 }
 
 fn on_submit(sender: *u8, ctx: *u8) {
     say("text_field: submitted (Return)");
-    return;
 }
 
 fn on_radio(sender: *u8, ctx: *u8) {
@@ -133,7 +124,6 @@ fn on_radio(sender: *u8, ctx: *u8) {
     // `component::key_of` through the backend's sender readers.
     let k: text::Text = component::key_of(sender);
     say_owned("radio: ${k}");
-    return;
 }
 
 // ---- drag and drop -------------------------------------------------------
@@ -167,7 +157,7 @@ fn on_drop(sender: *u8, ctx: *u8) -> bool {
             let y: i32 = p.y as i32;
             say_owned("drop: \"${what}\" at ${x},${y}");
         }
-        option::Option[vocab::Point]::None => {
+        option::Option::None => {
             // A position-less drop is the reader saying it was not told, which
             // is a different thing from a drop at the origin.
             say_owned("drop: \"${what}\" — NO POSITION (reader is not wired)");
@@ -184,18 +174,17 @@ fn on_drop_completed(sender: *u8, ctx: *u8) -> bool {
 // A coloured box with a label on it, dragged by its key.
 fn card(key: str, title: str, hue: f64) -> core::Node {
     var b: core::Builder = core::Builder::new();
-    b.add(ui::label(title, font_size: 13.0f64));
+    b.add(ui::label(title, font_size: 13.0));
     var n: core::Node = core::column(b, key: key);
-    n.set_background_color(vocab::Color::rgba(hue, 0.75f64, 0.95f64, 1.0f64));
-    n.set_corner_radius(vocab::Corners::all(6.0f64));
-    n.set_padding(flex::Edge::All, flex::StyleLength::points(8.0f64));
+    n.set_background_color(vocab::Color::rgba(hue, 0.75, 0.95, 1.0));
+    n.set_corner_radius(vocab::Corners::all(6.0));
+    n.set_padding(flex::Edge::All, flex::StyleLength::points(8.0));
     return n.gesture(can_drag: true, on_drag_start: on_drag_start,
                      on_drop_completed: on_drop_completed);
 }
 
 fn say_owned(t: text::Text) {
     say(t.view());
-    return;
 }
 
 fn on_scrolled(sender: *u8, ctx: *u8) {
@@ -204,9 +193,8 @@ fn on_scrolled(sender: *u8, ctx: *u8) {
             let y: i32 = s.scroll_y() as i32;
             say_owned("scroll: y = ${y}");
         }
-        option::Option[scroll::Scroll]::None => { say("scroll: no cursor"); }
+        option::Option::None => { say("scroll: no cursor"); }
     }
-    return;
 }
 
 // ---- the canvas ----------------------------------------------------------
@@ -226,65 +214,65 @@ fn draw_probe(into: *vocab::Canvas, dirty: vocab::Rect, ctx: *u8) {
     let c: *vocab::Canvas = into;
 
     // A stroked rectangle and a filled one.
-    let _s1: status::Status = { (*c).set_stroke(vocab::Color::rgba(0.2f64, 0.2f64, 0.2f64, 1.0f64)) };
-    let _s2: status::Status = { (*c).set_stroke_width(2.0f64) };
-    let _s3: status::Status = { (*c).draw_rect(vocab::Rect::of(8.0f64, 8.0f64, 60.0f64, 40.0f64)) };
-    let _s4: status::Status = { (*c).set_fill(vocab::Color::rgba(0.9f64, 0.3f64, 0.3f64, 1.0f64)) };
-    let _s5: status::Status = { (*c).fill_rect(vocab::Rect::of(78.0f64, 8.0f64, 60.0f64, 40.0f64)) };
+    let _s1: status::Status = { (*c).set_stroke(vocab::Color::rgba(0.2, 0.2, 0.2, 1.0)) };
+    let _s2: status::Status = { (*c).set_stroke_width(2.0) };
+    let _s3: status::Status = { (*c).draw_rect(vocab::Rect::of(8.0, 8.0, 60.0, 40.0)) };
+    let _s4: status::Status = { (*c).set_fill(vocab::Color::rgba(0.9, 0.3, 0.3, 1.0)) };
+    let _s5: status::Status = { (*c).fill_rect(vocab::Rect::of(78.0, 8.0, 60.0, 40.0)) };
 
     // Rounded, and an ellipse — the two shapes cairo has no call for.
-    let _s6: status::Status = { (*c).set_fill(vocab::Color::rgba(0.3f64, 0.6f64, 0.9f64, 1.0f64)) };
-    let _s7: status::Status = { (*c).fill_rounded_rect(vocab::Rect::of(148.0f64, 8.0f64, 60.0f64, 40.0f64), 12.0f64) };
-    let _s8: status::Status = { (*c).set_fill(vocab::Color::rgba(0.4f64, 0.8f64, 0.4f64, 1.0f64)) };
-    let _s9: status::Status = { (*c).fill_ellipse(vocab::Rect::of(218.0f64, 8.0f64, 60.0f64, 40.0f64)) };
+    let _s6: status::Status = { (*c).set_fill(vocab::Color::rgba(0.3, 0.6, 0.9, 1.0)) };
+    let _s7: status::Status = { (*c).fill_rounded_rect(vocab::Rect::of(148.0, 8.0, 60.0, 40.0), 12.0) };
+    let _s8: status::Status = { (*c).set_fill(vocab::Color::rgba(0.4, 0.8, 0.4, 1.0)) };
+    let _s9: status::Status = { (*c).fill_ellipse(vocab::Rect::of(218.0, 8.0, 60.0, 40.0)) };
 
     // A QUARTER ARC from 0 to 90 degrees, clockwise. On screen that runs from
     // the RIGHT of the box downward — if it runs upward the sweep is mirrored.
-    let _sa: status::Status = { (*c).set_stroke(vocab::Color::rgba(0.6f64, 0.2f64, 0.7f64, 1.0f64)) };
-    let _sb: status::Status = { (*c).set_stroke_width(3.0f64) };
-    let _sc: status::Status = { (*c).draw_arc(vocab::Rect::of(8.0f64, 58.0f64, 60.0f64, 60.0f64),
-                                              0.0f64, 90.0f64, true, false) };
+    let _sa: status::Status = { (*c).set_stroke(vocab::Color::rgba(0.6, 0.2, 0.7, 1.0)) };
+    let _sb: status::Status = { (*c).set_stroke_width(3.0) };
+    let _sc: status::Status = { (*c).draw_arc(vocab::Rect::of(8.0, 58.0, 60.0, 60.0),
+                                              0.0, 90.0, true, false) };
 
     // A dashed line, which is the dash array and the cap together.
-    let _sd: status::Status = { (*c).set_stroke_dash(vocab::Dashes::of(6.0f64, 4.0f64), 0.0f64) };
+    let _sd: status::Status = { (*c).set_stroke_dash(vocab::Dashes::of(6.0, 4.0), 0.0) };
     let _se: status::Status = { (*c).set_stroke_cap(vocab::LineCap::Round) };
-    let _sf: status::Status = { (*c).draw_line(vocab::Point::of(78.0f64, 88.0f64),
-                                               vocab::Point::of(278.0f64, 88.0f64)) };
-    let _sg: status::Status = { (*c).set_stroke_dash(vocab::Dashes::none(), 0.0f64) };
+    let _sf: status::Status = { (*c).draw_line(vocab::Point::of(78.0, 88.0),
+                                               vocab::Point::of(278.0, 88.0)) };
+    let _sg: status::Status = { (*c).set_stroke_dash(vocab::Dashes::none(), 0.0) };
 
     // A path: a triangle, closed and filled — `move_to`, two lines, `close`.
     var tri: vocab::Path = vocab::Path::new();
-    let _m: status::Status = tri.move_to(vocab::Point::of(88.0f64, 158.0f64));
-    let _l1: status::Status = tri.line_to(vocab::Point::of(138.0f64, 158.0f64));
-    let _l2: status::Status = tri.line_to(vocab::Point::of(113.0f64, 118.0f64));
+    let _m: status::Status = tri.move_to(vocab::Point::of(88.0, 158.0));
+    let _l1: status::Status = tri.line_to(vocab::Point::of(138.0, 158.0));
+    let _l2: status::Status = tri.line_to(vocab::Point::of(113.0, 118.0));
     let _cl: status::Status = tri.close();
-    let _sh: status::Status = { (*c).set_fill(vocab::Color::rgba(0.95f64, 0.7f64, 0.2f64, 1.0f64)) };
+    let _sh: status::Status = { (*c).set_fill(vocab::Color::rgba(0.95, 0.7, 0.2, 1.0)) };
     let _si: status::Status = { (*c).fill_path(#addr_of(tri), vocab::Winding::NonZero) };
 
     // A GRADIENT fill — the one thing that is a cairo pattern rather than a
     // colour, and the axis runs at the brush's angle.
-    let band: vocab::Rect = vocab::Rect::of(158.0f64, 108.0f64, 120.0f64, 50.0f64);
+    let band: vocab::Rect = vocab::Rect::of(158.0, 108.0, 120.0, 50.0);
     let _sj: status::Status = { (*c).set_fill_brush(vocab::Brush {
-        start: vocab::Color::rgba(0.1f64, 0.4f64, 0.9f64, 1.0f64),
-        end: vocab::Color::rgba(0.9f64, 0.2f64, 0.5f64, 1.0f64),
-        angle: 0.0f64, is_gradient: true }, band) };
+        start: vocab::Color::rgba(0.1, 0.4, 0.9, 1.0),
+        end: vocab::Color::rgba(0.9, 0.2, 0.5, 1.0),
+        angle: 0.0, is_gradient: true }, band) };
     let _sk: status::Status = { (*c).fill_rect(band) };
-    let _sl: status::Status = { (*c).set_fill(vocab::Color::rgba(0.0f64, 0.0f64, 0.0f64, 1.0f64)) };
+    let _sl: status::Status = { (*c).set_fill(vocab::Color::rgba(0.0, 0.0, 0.0, 1.0)) };
 
     // Text at a BASELINE. Pango draws a layout from its top-left, so the
     // baseline is subtracted on the way in — if this line sits a line lower
     // than the shapes beside it, that subtraction is missing.
-    let _sm: status::Status = { (*c).set_text_color(vocab::Color::rgba(0.15f64, 0.15f64, 0.15f64, 1.0f64)) };
-    let _sn: status::Status = { (*c).set_font("", 13.0f64, vocab::FontWeight::Bold, false) };
-    let _so: status::Status = { (*c).draw_text("canvas", vocab::Point::of(8.0f64, 178.0f64)) };
+    let _sm: status::Status = { (*c).set_text_color(vocab::Color::rgba(0.15, 0.15, 0.15, 1.0)) };
+    let _sn: status::Status = { (*c).set_font("", 13.0, vocab::FontWeight::Bold, false) };
+    let _so: status::Status = { (*c).draw_text("canvas", vocab::Point::of(8.0, 178.0)) };
 
     // A TEXT BLOCK: wrapped and centred inside a box it must not leave. If it
     // draws as one line running off the right edge, the width never reached
     // Pango.
-    let _sp: status::Status = { (*c).set_font("", 11.0f64, vocab::FontWeight::Regular, false) };
+    let _sp: status::Status = { (*c).set_font("", 11.0, vocab::FontWeight::Regular, false) };
     let _sq: status::Status = { (*c).draw_text_block(
         "this paragraph is wrapped and centred inside a box, and it is clipped with an ellipsis if it will not fit",
-        vocab::Rect::of(78.0f64, 190.0f64, 200.0f64, 46.0f64),
+        vocab::Rect::of(78.0, 190.0, 200.0, 46.0),
         vocab::TextAlign::Center, vocab::VerticalAlign::Top,
         vocab::TextFlow::Clip) };
 
@@ -292,17 +280,16 @@ fn draw_probe(into: *vocab::Canvas, dirty: vocab::Rect, ctx: *u8) {
     // purpose — Pango's markup is XML, and an unescaped one ends the layout.
     var runs: vocab::Spans = vocab::Spans::new();
     let _r1: status::Status = runs.add(vocab::TextSpan::of("bold & ",
-        font_size: 12.0f64, font_weight: vocab::FontWeight::Bold,
-        color: vocab::Color::rgba(0.1f64, 0.1f64, 0.1f64, 1.0f64)));
+        font_size: 12.0, font_weight: vocab::FontWeight::Bold,
+        color: vocab::Color::rgba(0.1, 0.1, 0.1, 1.0)));
     let _r2: status::Status = runs.add(vocab::TextSpan::of("italic ",
-        font_size: 12.0f64, italic: true,
-        color: vocab::Color::rgba(0.7f64, 0.2f64, 0.2f64, 1.0f64)));
+        font_size: 12.0, italic: true,
+        color: vocab::Color::rgba(0.7, 0.2, 0.2, 1.0)));
     let _r3: status::Status = runs.add(vocab::TextSpan::of("underlined",
-        font_size: 12.0f64, color: vocab::Color::rgba(0.1f64, 0.4f64, 0.8f64, 1.0f64),
+        font_size: 12.0, color: vocab::Color::rgba(0.1, 0.4, 0.8, 1.0),
         decoration: vocab::TextDecoration::Underline));
     let _sr: status::Status = { (*c).draw_spans(#addr_of(runs),
-        vocab::Rect::of(8.0f64, 196.0f64, 60.0f64, 40.0f64)) };
-    return;
+        vocab::Rect::of(8.0, 196.0, 60.0, 40.0)) };
 }
 
 // ---- the three things that move, and the editor -------------------------------
@@ -317,15 +304,14 @@ fn on_animate(sender: *u8, ctx: *u8) {
     match progress::find("probe:progress") {
         option::Option[progress::Progress]::Some(bar) => {
             // Toggle between the two ends so the button can be pressed twice.
-            let to: f64 = if bar.progress() > (0.5f64) { 0.1f64 } else { 0.95f64 };
+            let to: f64 = if bar.progress() > 0.5 { 0.1 } else { 0.95 };
             let _b: progress::Progress = bar.animate_progress(
-                to, duration: vocab::Duration::of_seconds(0.9f64),
+                to, duration: vocab::Duration::of_seconds(0.9),
                 easing: vocab::Easing::BounceOut);
             say("progress: animating to ${to} with a bounce");
         }
-        option::Option[progress::Progress]::None => { say("progress: not found"); }
+        option::Option::None => { say("progress: not found"); }
     }
-    return;
 }
 
 // A GIF, played by GdkPixbufAnimation because GtkPicture cannot. If the dot
@@ -338,9 +324,8 @@ fn on_play_pause(sender: *u8, ctx: *u8) {
             let _i: image::Image = img.set_animation_playing(now);
             say(if now { "image: playing" } else { "image: paused" });
         }
-        option::Option[image::Image]::None => { say("image: not found"); }
+        option::Option::None => { say("image: not found"); }
     }
-    return;
 }
 
 // STYLE RUNS on an editor: ranges of text that is already there, coloured and
@@ -352,27 +337,25 @@ fn on_style_runs(sender: *u8, ctx: *u8) {
         option::Option[text_area::TextArea]::Some(ed) => {
             var runs: vocab::StyleRuns = vocab::StyleRuns::new();
             let _a: status::Status = runs.add(vocab::StyleRun::of(
-                0 as usize, 5 as usize,
-                color: vocab::Color::rgba(0.8f64, 0.1f64, 0.1f64, 1.0f64),
+                0, 5,
+                color: vocab::Color::rgba(0.8, 0.1, 0.1, 1.0),
                 font_weight: vocab::FontWeight::Bold));
             let _b: status::Status = runs.add(vocab::StyleRun::of(
-                6 as usize, 4 as usize,
+                6, 4,
                 decoration: vocab::TextDecoration::Strikethrough));
             let _c: status::Status = runs.add(vocab::StyleRun::of(
-                11 as usize, 4 as usize,
-                background_color: vocab::Color::rgba(1.0f64, 0.95f64, 0.4f64, 1.0f64),
+                11, 4,
+                background_color: vocab::Color::rgba(1.0, 0.95, 0.4, 1.0),
                 italic: true));
             let _e: text_area::TextArea = ed.set_style_runs(runs);
             say("editor: three style runs applied");
         }
-        option::Option[text_area::TextArea]::None => { say("editor: not found"); }
+        option::Option::None => { say("editor: not found"); }
     }
-    return;
 }
 
 fn on_editor_typed(sender: *u8, ctx: *u8) {
     say("editor: text changed — the box should grow with it");
-    return;
 }
 
 // ---- the recycler ---------------------------------------------------------------
@@ -389,9 +372,9 @@ fn on_editor_typed(sender: *u8, ctx: *u8) {
 static ROWS_BUILT: i64 = 0;
 
 fn big_row(index: usize, ctx: *u8) -> flex::Node {
-    ROWS_BUILT = ROWS_BUILT +% (1 as i64);
-    var r: core::Node = ui::label("row ${index}", font_size: 13.0f64);
-    r.set_height(flex::StyleLength::points(24.0f64));
+    ROWS_BUILT = ROWS_BUILT +% 1;
+    var r: core::Node = ui::label("row ${index}", font_size: 13.0);
+    r.set_height(flex::StyleLength::points(24.0));
     return r;
 }
 
@@ -403,28 +386,26 @@ fn on_append(sender: *u8, ctx: *u8) {
     match flist::find("probe:big") {
         option::Option[flist::List]::Some(l) => {
             let before: i64 = ROWS_BUILT;
-            let _i: flist::List = l.insert_rows(l.count(), 3 as usize);
+            let _i: flist::List = l.insert_rows(l.count(), 3);
             say("appended 3 rows — built ${before} before, count is now ${l.count()}");
         }
-        option::Option[flist::List]::None => { say("append: list not found"); }
+        option::Option::None => { say("append: list not found"); }
     }
-    return;
 }
 
 fn on_count_rows(sender: *u8, ctx: *u8) {
     say("rows BUILT so far: ${ROWS_BUILT} of 5000");
-    return;
 }
 
 fn big_list() -> core::Node {
     var l: core::Node = ui::list(key: "probe:big", separator: vocab::Separator::Default);
-    l.set_height(flex::StyleLength::points(160.0f64));
+    l.set_height(flex::StyleLength::points(160.0));
     match flist::from(#addr_of(l)) {
         option::Option[flist::List]::Some(h) => {
-            let a: flist::List = h.set_count(5000 as usize);
+            let a: flist::List = h.set_count(5000);
             let _b: flist::List = a.set_row(big_row);
         }
-        option::Option[flist::List]::None => { }
+        option::Option::None => { }
     }
     return l;
 }
@@ -438,17 +419,14 @@ fn big_list() -> core::Node {
 
 fn on_toolbar_new(sender: *u8, ctx: *u8) {
     say("toolbar: New (primary, leading)");
-    return;
 }
 
 fn on_toolbar_share(sender: *u8, ctx: *u8) {
     say("toolbar: Share (default, trailing)");
-    return;
 }
 
 fn on_toolbar_delete(sender: *u8, ctx: *u8) {
     say("toolbar: Delete (secondary, and it should be RED)");
-    return;
 }
 
 // ---- swipe to reveal ----------------------------------------------------------
@@ -460,49 +438,43 @@ fn on_toolbar_delete(sender: *u8, ctx: *u8) {
 
 fn on_swipe_started(sender: *u8, ctx: *u8) {
     say("swipe: started");
-    return;
 }
 
 fn on_swipe_changing(sender: *u8, ctx: *u8) {
     say("swipe: moving");
-    return;
 }
 
 fn on_swipe_opened(sender: *u8, ctx: *u8) {
     say("swipe: open (past the threshold)");
-    return;
 }
 
 fn on_swipe_closed(sender: *u8, ctx: *u8) {
     say("swipe: closed (short of the threshold)");
-    return;
 }
 
 fn on_archive(sender: *u8, ctx: *u8) {
     say("swipe action: Archive invoked");
-    return;
 }
 
 fn on_delete_row(sender: *u8, ctx: *u8) {
     say("swipe action: Delete invoked");
-    return;
 }
 
 fn swipe_row() -> core::Node {
     var row: core::Node = ui::swipeable(key: "probe:swipe",
-                                        reveal_threshold: 60.0f64,
+                                        reveal_threshold: 60.0,
                                         on_swipe_started: on_swipe_started,
                                         observe_swipe_changing: on_swipe_changing,
                                         on_open_requested: on_swipe_opened,
                                         on_close_requested: on_swipe_closed);
-    row.set_height(flex::StyleLength::points(44.0f64));
+    row.set_height(flex::StyleLength::points(44.0));
     var content: core::Builder = core::Builder::new();
-    content.add(ui::label("swipe me left", font_size: 13.0f64));
+    content.add(ui::label("swipe me left", font_size: 13.0));
     var face: core::Node = core::column(content, key: "probe:swipe-face");
-    face.set_background_color(vocab::Color::rgba(0.92f64, 0.92f64, 0.94f64, 1.0f64));
-    face.set_padding(flex::Edge::All, flex::StyleLength::points(12.0f64));
-    face.set_width(flex::StyleLength::percent(100.0f64));
-    face.set_height(flex::StyleLength::percent(100.0f64));
+    face.set_background_color(vocab::Color::rgba(0.92, 0.92, 0.94, 1.0));
+    face.set_padding(flex::Edge::All, flex::StyleLength::points(12.0));
+    face.set_width(flex::StyleLength::percent(100.0));
+    face.set_height(flex::StyleLength::percent(100.0));
     let _c: status::Status = row.add_child(face);
     let _a: status::Status = row.add_child(
         ui::swipe_item(key: "probe:swipe-archive", text: "Archive",
@@ -517,10 +489,10 @@ fn tree() -> core::Node {
     var b: core::Builder = core::Builder::new();
 
     b.add(ui::label("facet_gtk probe — every line below is a handler firing",
-                    key: "probe:title", font_size: 15.0f64,
+                    key: "probe:title", font_size: 15.0,
                     font_weight: vocab::FontWeight::Bold));
-    b.add(ui::label("(nothing yet)", key: STATUS, font_size: 13.0f64,
-                    text_color: vocab::Color::rgba(0.2f64, 0.5f64, 0.9f64, 1.0f64)));
+    b.add(ui::label("(nothing yet)", key: STATUS, font_size: 13.0,
+                    text_color: vocab::Color::rgba(0.2, 0.5, 0.9, 1.0)));
 
     b.add(ui::button("Click me", key: "probe:button", on_click: on_click));
     b.add(ui::button("Toggling button", key: "probe:toggling",
@@ -531,20 +503,20 @@ fn tree() -> core::Node {
                     on_checked_changed: on_radio));
     b.add(ui::radio(false, key: "probe:radio-b", text: "Second", group: "probe",
                     on_checked_changed: on_radio));
-    b.add(ui::slider(0.5f64, key: "probe:slider", minimum: 0.0f64, maximum: 1.0f64,
+    b.add(ui::slider(0.5, key: "probe:slider", minimum: 0.0, maximum: 1.0,
                      on_value_changed: on_slide));
-    b.add(ui::stepper(3.0f64, key: "probe:stepper", increment: 1.0f64,
-                      minimum: 0.0f64, maximum: 10.0f64, on_value_changed: on_step));
+    b.add(ui::stepper(3.0, key: "probe:stepper", increment: 1.0,
+                      minimum: 0.0, maximum: 10.0, on_value_changed: on_step));
     b.add(ui::text_field("", key: "probe:field", placeholder: "type here",
                          on_text_changed: on_typed, on_submit: on_submit));
-    b.add(ui::progress(0.35f64, key: "probe:progress"));
+    b.add(ui::progress(0.35, key: "probe:progress"));
     b.add(ui::button("Animate the bar", key: "probe:animate", on_click: on_animate));
 
     // AUTO SIZE: the editor measures ITSELF from its text, so typing a second
     // line makes the box taller. Empty, it shows its placeholder — which a
     // GtkTextView does not have and this package supplies.
     b.add(ui::label("editor — auto-sizing, with a placeholder and style runs",
-                    font_size: 12.0f64));
+                    font_size: 12.0));
     b.add(ui::text_area("Alpha bravo charlie delta", key: "probe:editor",
                         auto_size: vocab::AutoSize::TextChanges,
                         placeholder: "clear me to see the placeholder",
@@ -556,24 +528,24 @@ fn tree() -> core::Node {
     // two glyphs. Left is the outline, right is filled; identical glyphs mean
     // the variable font's axis was not reached.
     b.add(ui::label("symbol — the same glyph at fill 0 and fill 1",
-                    font_size: 12.0f64));
+                    font_size: 12.0));
     var glyphs: core::Builder = core::Builder::new();
     glyphs.add(ui::symbol(icons::favorite, key: "probe:sym-outline",
-                          size: 28.0f64, fill: 0.0f64));
+                          size: 28.0, fill: 0.0));
     glyphs.add(ui::symbol(icons::favorite, key: "probe:sym-filled",
-                          size: 28.0f64, fill: 1.0f64));
+                          size: 28.0, fill: 1.0));
     var glyph_row: core::Node = core::row(glyphs, key: "probe:symbols");
-    glyph_row.set_gap(flex::Gutter::All, flex::StyleLength::points(12.0f64));
+    glyph_row.set_gap(flex::Gutter::All, flex::StyleLength::points(12.0));
     b.add(glyph_row);
 
     // An ANIMATED image. GdkPixbufAnimation decodes the frames and this package
     // drives them; GtkPicture would show frame one forever on its own.
     b.add(ui::label("image — an animated GIF, played frame by frame",
-                    font_size: 12.0f64));
+                    font_size: 12.0));
     var gif: core::Node = ui::image("spinner.gif", key: "probe:gif",
                                     animation_playing: true);
-    gif.set_width(flex::StyleLength::points(48.0f64));
-    gif.set_height(flex::StyleLength::points(48.0f64));
+    gif.set_width(flex::StyleLength::points(48.0));
+    gif.set_height(flex::StyleLength::points(48.0));
     b.add(gif);
     b.add(ui::button("Play / pause the GIF", key: "probe:gif-btn",
                      on_click: on_play_pause));
@@ -596,7 +568,7 @@ fn tree() -> core::Node {
                            on_clicked: on_toolbar_delete));
 
     b.add(ui::label("list — 5000 rows, and the button says how many were BUILT",
-                    font_size: 12.0f64));
+                    font_size: 12.0));
     b.add(big_list());
     b.add(ui::button("How many rows were built?", key: "probe:rowcount",
                      on_click: on_count_rows));
@@ -604,7 +576,7 @@ fn tree() -> core::Node {
                      on_click: on_append));
 
     b.add(ui::label("swipe — drag the row left to reveal its actions",
-                    font_size: 12.0f64));
+                    font_size: 12.0));
     b.add(swipe_row());
 
     // The close / minimise / maximise group, which an application draws itself
@@ -612,26 +584,26 @@ fn tree() -> core::Node {
     // beside the real ones — deliberately, because the point is that they act
     // on the real window: minimise here and the window minimises.
     b.add(ui::label("window controls — the group an app draws itself",
-                    font_size: 12.0f64));
+                    font_size: 12.0));
     b.add(ui::window_buttons(key: "probe:wbuttons"));
 
     // Drag either card onto the zone. The zone reports WHICH key arrived and
     // WHERE — both of which come back through the sender readers, not through
     // anything the handler was passed.
-    b.add(ui::label("drag a card into the zone below", font_size: 12.0f64));
+    b.add(ui::label("drag a card into the zone below", font_size: 12.0));
     var cards: core::Builder = core::Builder::new();
-    cards.add(card("probe:card-a", "Card A", 0.85f64));
-    cards.add(card("probe:card-b", "Card B", 0.45f64));
+    cards.add(card("probe:card-a", "Card A", 0.85));
+    cards.add(card("probe:card-b", "Card B", 0.45));
     var row: core::Node = core::row(cards, key: "probe:cards");
-    row.set_gap(flex::Gutter::All, flex::StyleLength::points(8.0f64));
+    row.set_gap(flex::Gutter::All, flex::StyleLength::points(8.0));
     b.add(row);
 
     var zb: core::Builder = core::Builder::new();
-    zb.add(ui::label("drop zone", font_size: 12.0f64));
+    zb.add(ui::label("drop zone", font_size: 12.0));
     var zone: core::Node = core::column(zb, key: "probe:zone");
-    zone.set_background_color(vocab::Color::rgba(0.9f64, 0.9f64, 0.9f64, 1.0f64));
-    zone.set_corner_radius(vocab::Corners::all(6.0f64));
-    zone.set_padding(flex::Edge::All, flex::StyleLength::points(16.0f64));
+    zone.set_background_color(vocab::Color::rgba(0.9, 0.9, 0.9, 1.0));
+    zone.set_corner_radius(vocab::Corners::all(6.0));
+    zone.set_padding(flex::Edge::All, flex::StyleLength::points(16.0));
     b.add(zone.gesture(allow_drop: true, on_drag_over: on_drag_over,
                        on_drag_leave: on_drag_leave, on_drop: on_drop));
     b.add(ui::spinner(vocab::Color::clear(), key: "probe:spinner", running: true));
@@ -643,31 +615,31 @@ fn tree() -> core::Node {
     // text. If the word "IGNORED" appears, the runs were not read; if the
     // ampersand ends the line, the markup was not escaped.
     var formatted: core::Node = ui::label("IGNORED", key: "probe:runs",
-                                          font_size: 13.0f64);
+                                          font_size: 13.0);
     let _q1: bool = mount::add_child(#addr_of(formatted),
         ui::span("bold", font_weight: vocab::FontWeight::Bold));
     let _q2: bool = mount::add_child(#addr_of(formatted),
         ui::span(" · red & italic ", italic: true,
-                 text_color: vocab::Color::rgba(0.8f64, 0.2f64, 0.2f64, 1.0f64)));
+                 text_color: vocab::Color::rgba(0.8, 0.2, 0.2, 1.0)));
     let _q3: bool = mount::add_child(#addr_of(formatted),
         ui::span("underlined", text_decoration: vocab::TextDecoration::Underline));
     b.add(formatted);
 
-    b.add(ui::label("canvas — shapes, a path, a gradient, and three kinds of text", font_size: 12.0f64));
+    b.add(ui::label("canvas — shapes, a path, a gradient, and three kinds of text", font_size: 12.0));
     var art: core::Node = ui::canvas(key: "probe:canvas",
                                      drawable: vocab::Drawable::of(draw_probe));
-    art.set_height(flex::StyleLength::points(250.0f64));
+    art.set_height(flex::StyleLength::points(250.0));
     b.add(art);
 
     // A WEB VIEW, whose engine is opened at RUNTIME rather than linked. On a
     // machine with WebKitGTK this renders the page; on one without, it is an
     // empty box and the process printed one line saying which library it
     // looked for — which is the designed behaviour and not a failure.
-    b.add(ui::label("web — a runtime-loaded WebKitGTK view", font_size: 12.0f64));
+    b.add(ui::label("web — a runtime-loaded WebKitGTK view", font_size: 12.0));
     var page: core::Node = ui::web(
         "data:text/html,<body style='font:13px sans-serif;margin:8px'><b>web</b> — this page came from a data: URL</body>",
         key: "probe:web");
-    page.set_height(flex::StyleLength::points(80.0f64));
+    page.set_height(flex::StyleLength::points(80.0));
     b.add(page);
 
     // THE ROOT IS A SCROLL, which is the awkward case on purpose: a scroll's
@@ -690,7 +662,7 @@ static ROOT: core::Node = #zero::[core::Node]();
 
 fn main() -> i32 {
     ROOT = tree();
-    if !backend::open_window(#addr_of(ROOT), "facet_gtk probe", 520.0f64, 640.0f64) {
+    if !backend::open_window(#addr_of(ROOT), "facet_gtk probe", 520.0, 640.0) {
         return 1;
     }
     // facet's scheduler runs on the GLib main loop (see facet_gtk/scheduler),

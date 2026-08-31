@@ -3423,7 +3423,8 @@ fn apply_split(v: *u8, n: *core::Node, dirty: u64) {
     let p: *split::SplitProps = split_props(n);
     if p == (0 as *split::SplitProps) { return; }
     if (dirty & (split::P_POSITION | split::P_AXIS | split::P_MIN_LEADING
-                 | split::P_MIN_TRAILING | split::P_COLLAPSED)) != (0 as u64) {
+                 | split::P_MIN_TRAILING | split::P_MAX_LEADING
+                 | split::P_MAX_TRAILING | split::P_COLLAPSED)) != (0 as u64) {
         size_panes(n, p);
     }
     if (dirty & split::P_DIVIDER) != (0 as u64) {
@@ -3468,9 +3469,18 @@ fn size_panes(n: *core::Node, p: *split::SplitProps) {
     // handler clamps too, and immediately: `input::split_drag_update` has the
     // live widget and is the path a person actually moves a divider by.
     let avail: f64 = if columns { { (*n).frame().width } } else { { (*n).frame().height } };
+    // The MAXIMUMS ride the same two bounds, through `split`'s shared rule —
+    // the trailing one raising the floor, the leading one lowering the cap.
+    // The leading maximum needs no extent, so it is applied outside the guard.
+    let floor: f64 = split::floor_with_max(lead_min, { (*p).max_trailing }, avail);
+    if extent < floor { extent = floor; }
     if avail > (0.0 as f64) {
-        let cap: f64 = avail - trail_min;
+        var cap: f64 = avail - trail_min;
+        cap = split::ceiling_with_max(cap, { (*p).max_leading });
         if cap > lead_min && extent > cap { extent = cap; }
+    } else {
+        let hi: f64 = { (*p).max_leading };
+        if hi > 0.0f64 && extent > hi { extent = hi; }
     }
     if columns {
         { (*lead).set_width(flex::StyleLength::points(extent)) };

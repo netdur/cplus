@@ -122,7 +122,7 @@ fn is_ancestor_or_self(reg: *identity::Registry, n: usize, source: usize) -> boo
                 }
                 cur = (*reg).parent_of(c);
             }
-            option::Option[usize]::None => {
+            option::Option::None => {
                 return false;
             }
         }
@@ -141,20 +141,20 @@ fn is_ancestor_or_self(reg: *identity::Registry, n: usize, source: usize) -> boo
 fn matches(reg: *identity::Registry, node_f: option::Option[usize], verb_f: option::Option[Verb], role_f: option::Option[identity::Role], source: usize, verb: Verb) -> bool {
     let verb_ok: bool = match verb_f {
         option::Option[Verb]::Some(v) => verb_eq(v, verb),
-        option::Option[Verb]::None => true,
+        option::Option::None => true,
     };
     if !verb_ok {
         return false;
     }
     let role_ok: bool = match role_f {
         option::Option[identity::Role]::Some(r) => identity::role_eq(r, (*reg).role_of(source)),
-        option::Option[identity::Role]::None => true,
+        option::Option::None => true,
     };
     if !role_ok {
         return false;
     }
     return match node_f {
-        option::Option[usize]::None => true,
+        option::Option::None => true,
         option::Option[usize]::Some(n) => is_ancestor_or_self(reg, n, source),
     };
 }
@@ -180,8 +180,8 @@ fn subscriber(filter: Subscription, cap: usize) -> Subscriber {
         role: filter.role,
         cap: cap,
         queue: vec::new::[Event](),
-        head: 0 as usize,
-        dropped: 0 as usize,
+        head: 0,
+        dropped: 0,
     };
 }
 
@@ -201,12 +201,12 @@ impl Subscriber {
         while i < this.queue.count() {
             let uc: bool = match this.queue.at_ptr(i) {
                 option::Option[*Event]::Some(p) => is_ui_changed({ (*p).verb }),
-                option::Option[*Event]::None => false,
+                option::Option::None => false,
             };
             if uc {
                 return true;
             }
-            i = i +% (1 as usize);
+            i = i +% 1;
         }
         return false;
     }
@@ -220,13 +220,12 @@ impl Subscriber {
         while i < this.queue.count() {
             match this.queue.at_ptr(i) {
                 option::Option[*Event]::Some(p) => { nq.append({ *p }); }
-                option::Option[*Event]::None => {}
+                option::Option::None => {}
             }
-            i = i +% (1 as usize);
+            i = i +% 1;
         }
         this.queue = nq;
-        this.head = 0 as usize;
-        return;
+        this.head = 0;
     }
 
     // Offer an event. Enqueues iff it matches the filter, applying backpressure:
@@ -242,12 +241,11 @@ impl Subscriber {
             return;
         }
         if this.pending() >= this.cap {
-            this.head = this.head +% (1 as usize);
-            this.dropped = this.dropped +% (1 as usize);
+            this.head = this.head +% 1;
+            this.dropped = this.dropped +% 1;
         }
         this.queue.append(ev);
         this.compact();
-        return;
     }
 
     // Dequeue the oldest pending event, or None.
@@ -257,9 +255,9 @@ impl Subscriber {
         }
         let out: option::Option[Event] = match this.queue.at_ptr(this.head) {
             option::Option[*Event]::Some(p) => option::Option[Event]::Some({ *p }),
-            option::Option[*Event]::None => option::Option[Event]::None,
+            option::Option::None => option::Option[Event]::None,
         };
-        this.head = this.head +% (1 as usize);
+        this.head = this.head +% 1;
         return out;
     }
 }
@@ -279,11 +277,11 @@ fn fixture() -> identity::Registry {
 }
 
 fn poll_count(ref s: Subscriber) -> usize {
-    var n: usize = 0 as usize;
+    var n: usize = 0;
     loop {
         match s.poll() {
-            option::Option[Event]::Some(_) => { n = n +% (1 as usize); }
-            option::Option[Event]::None => { return n; }
+            option::Option[Event]::Some(_) => { n = n +% 1; }
+            option::Option::None => { return n; }
         }
     }
     return n;
@@ -293,112 +291,110 @@ fn poll_count(ref s: Subscriber) -> usize {
 fn test_bubbling_ancestor_receives_descendant_event() {
     var r: identity::Registry = fixture();
     // Subscribe at the window; a click on the button (a descendant) bubbles up.
-    var s: Subscriber = subscriber(everything().on_node(1 as usize), 8 as usize);
-    s.offer({ #addr_of(r) }, event(2 as usize, Verb::Clicked));
-    assert s.pending() == (1 as usize);
+    var s: Subscriber = subscriber(everything().on_node(1), 8);
+    s.offer({ #addr_of(r) }, event(2, Verb::Clicked));
+    assert s.pending() == 1;
 }
 
 #[test]
 fn test_node_filter_excludes_other_subtree() {
     var r: identity::Registry = fixture();
     // Subscribe at the button; an event on the field (a sibling) must NOT match.
-    var s: Subscriber = subscriber(everything().on_node(2 as usize), 8 as usize);
-    s.offer({ #addr_of(r) }, event(3 as usize, Verb::Changed));
-    assert s.pending() == (0 as usize);
+    var s: Subscriber = subscriber(everything().on_node(2), 8);
+    s.offer({ #addr_of(r) }, event(3, Verb::Changed));
+    assert s.pending() == 0;
 }
 
 #[test]
 fn test_root_subscription_matches_anything() {
     var r: identity::Registry = fixture();
-    var s: Subscriber = subscriber(everything(), 8 as usize);
-    s.offer({ #addr_of(r) }, event(2 as usize, Verb::Clicked));
-    s.offer({ #addr_of(r) }, event(3 as usize, Verb::Changed));
-    assert s.pending() == (2 as usize);
+    var s: Subscriber = subscriber(everything(), 8);
+    s.offer({ #addr_of(r) }, event(2, Verb::Clicked));
+    s.offer({ #addr_of(r) }, event(3, Verb::Changed));
+    assert s.pending() == 2;
 }
 
 #[test]
 fn test_verb_filter() {
     var r: identity::Registry = fixture();
-    var s: Subscriber = subscriber(everything().on_verb(Verb::Clicked), 8 as usize);
-    s.offer({ #addr_of(r) }, event(2 as usize, Verb::Clicked));
-    s.offer({ #addr_of(r) }, event(2 as usize, Verb::Changed));
-    assert s.pending() == (1 as usize);
+    var s: Subscriber = subscriber(everything().on_verb(Verb::Clicked), 8);
+    s.offer({ #addr_of(r) }, event(2, Verb::Clicked));
+    s.offer({ #addr_of(r) }, event(2, Verb::Changed));
+    assert s.pending() == 1;
     match s.poll() {
         option::Option[Event]::Some(e) => { assert verb_eq(e.verb, Verb::Clicked); }
-        option::Option[Event]::None => { assert false; }
+        option::Option::None => { assert false; }
     }
-    return;
 }
 
 #[test]
 fn test_role_filter_cross_cutting() {
     var r: identity::Registry = fixture();
     // "every button click anywhere" — role+verb, no node.
-    var s: Subscriber = subscriber(everything().on_role(identity::Role::Button).on_verb(Verb::Clicked), 8 as usize);
-    s.offer({ #addr_of(r) }, event(2 as usize, Verb::Clicked)); // btn -> match
-    s.offer({ #addr_of(r) }, event(3 as usize, Verb::Clicked)); // field (Input) -> no match
-    assert s.pending() == (1 as usize);
+    var s: Subscriber = subscriber(everything().on_role(identity::Role::Button).on_verb(Verb::Clicked), 8);
+    s.offer({ #addr_of(r) }, event(2, Verb::Clicked)); // btn -> match
+    s.offer({ #addr_of(r) }, event(3, Verb::Clicked)); // field (Input) -> no match
+    assert s.pending() == 1;
 }
 
 #[test]
 fn test_poll_is_fifo_and_drains() {
     var r: identity::Registry = fixture();
-    var s: Subscriber = subscriber(everything(), 8 as usize);
-    s.offer({ #addr_of(r) }, event(2 as usize, Verb::Clicked));
-    s.offer({ #addr_of(r) }, event(3 as usize, Verb::Changed));
+    var s: Subscriber = subscriber(everything(), 8);
+    s.offer({ #addr_of(r) }, event(2, Verb::Clicked));
+    s.offer({ #addr_of(r) }, event(3, Verb::Changed));
     match s.poll() {
         option::Option[Event]::Some(e) => { assert verb_eq(e.verb, Verb::Clicked); }
-        option::Option[Event]::None => { assert false; }
+        option::Option::None => { assert false; }
     }
     match s.poll() {
         option::Option[Event]::Some(e) => { assert verb_eq(e.verb, Verb::Changed); }
-        option::Option[Event]::None => { assert false; }
+        option::Option::None => { assert false; }
     }
-    assert s.pending() == (0 as usize);
+    assert s.pending() == 0;
 }
 
 #[test]
 fn test_ui_changed_coalesces() {
     var r: identity::Registry = fixture();
-    var s: Subscriber = subscriber(everything(), 8 as usize);
-    s.offer({ #addr_of(r) }, event(0 as usize, Verb::UiChanged));
-    s.offer({ #addr_of(r) }, event(0 as usize, Verb::UiChanged));
-    s.offer({ #addr_of(r) }, event(0 as usize, Verb::UiChanged));
+    var s: Subscriber = subscriber(everything(), 8);
+    s.offer({ #addr_of(r) }, event(0, Verb::UiChanged));
+    s.offer({ #addr_of(r) }, event(0, Verb::UiChanged));
+    s.offer({ #addr_of(r) }, event(0, Verb::UiChanged));
     // Three ui_changed collapse to one pending.
-    assert s.pending() == (1 as usize);
+    assert s.pending() == 1;
     // A non-ui_changed event still enqueues alongside.
-    s.offer({ #addr_of(r) }, event(2 as usize, Verb::Clicked));
-    assert s.pending() == (2 as usize);
+    s.offer({ #addr_of(r) }, event(2, Verb::Clicked));
+    assert s.pending() == 2;
 }
 
 #[test]
 fn test_overflow_drops_oldest_and_counts() {
     var r: identity::Registry = fixture();
-    var s: Subscriber = subscriber(everything(), 2 as usize);
-    s.offer({ #addr_of(r) }, event(2 as usize, Verb::Clicked));   // [click]
-    s.offer({ #addr_of(r) }, event(3 as usize, Verb::Changed));   // [click, changed]
-    s.offer({ #addr_of(r) }, event(2 as usize, Verb::Submitted)); // overflow -> drop click -> [changed, submitted]
-    assert s.pending() == (2 as usize);
-    assert s.dropped_count() == (1 as usize);
+    var s: Subscriber = subscriber(everything(), 2);
+    s.offer({ #addr_of(r) }, event(2, Verb::Clicked));   // [click]
+    s.offer({ #addr_of(r) }, event(3, Verb::Changed));   // [click, changed]
+    s.offer({ #addr_of(r) }, event(2, Verb::Submitted)); // overflow -> drop click -> [changed, submitted]
+    assert s.pending() == 2;
+    assert s.dropped_count() == 1;
     // Oldest (click) was dropped; next polled is `changed`.
     match s.poll() {
         option::Option[Event]::Some(e) => { assert verb_eq(e.verb, Verb::Changed); }
-        option::Option[Event]::None => { assert false; }
+        option::Option::None => { assert false; }
     }
-    return;
 }
 
 #[test]
 fn test_compaction_keeps_backing_bounded_no_double_free() {
     var r: identity::Registry = fixture();
-    var s: Subscriber = subscriber(everything(), 2 as usize);
-    var i: usize = 0 as usize;
+    var s: Subscriber = subscriber(everything(), 2);
+    var i: usize = 0;
     // Many offers + polls force overflow drops and compaction repeatedly.
-    while i < (64 as usize) {
-        s.offer({ #addr_of(r) }, event(2 as usize, Verb::Clicked));
+    while i < 64 {
+        s.offer({ #addr_of(r) }, event(2, Verb::Clicked));
         let _e: option::Option[Event] = s.poll();
-        i = i +% (1 as usize);
+        i = i +% 1;
     }
     // Still consistent; ASan would catch a double free from compaction.
-    assert s.pending() <= (2 as usize);
+    assert s.pending() <= 2;
 }

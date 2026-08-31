@@ -71,7 +71,7 @@ fn reclassify(ctx: *u8) {
     match mount::find("rp:root") {
         option::Option[*core::Node]::Some(n) => {
             let w: f64 = core::width_of(n);
-            if w <= 0.0f64 { return; }
+            if w <= 0.0 { return; }
             let h: f64 = core::height_of(n);
             let px: i64 = w as i64;
             let name: str = class_of(w, h);
@@ -80,7 +80,7 @@ fn reclassify(ctx: *u8) {
                 option::Option[label::Label]::Some(l) => {
                     let _l: label::Label = l.set_text("${name}  ·  ${px}pt wide");
                 }
-                option::Option[label::Label]::None => { }
+                option::Option::None => { }
             }
 
             // The style change bands have no verb for.
@@ -92,37 +92,36 @@ fn reclassify(ctx: *u8) {
                     }
                     core::set_flow(c, flow);
                 }
-                option::Option[*core::Node]::None => { }
+                option::Option::None => { }
             }
         }
-        option::Option[*core::Node]::None => { }
+        option::Option::None => { }
     }
-    return;
 }
 
 fn pane(title: str, body: str, fill: vocab::Color, key: str) -> core::Node {
     var b: flex::Builder = flex::Builder::new();
-    b.add(ui::label(title, font_size: 15.0f64,
+    b.add(ui::label(title, font_size: 15.0,
                     font_weight: vocab::FontWeight::Semibold));
-    b.add(ui::label(body, font_size: 13.0f64,
-                    text_color: vocab::Color::ink(0.6f64),
-                    max_lines: 0 as i64,
+    b.add(ui::label(body, font_size: 13.0,
+                    text_color: vocab::Color::ink(0.6),
+                    max_lines: 0,
                     line_break: vocab::LineBreak::WordWrap));
     var n: core::Node = ui::column(b, key: key)
-        .padding(12.0f64).gap(4.0f64).grow(1.0f64).shrink(1.0f64);
+        .padding(12.0).gap(4.0).grow(1.0).shrink(1.0);
     n.set_background_color(fill);
-    n.set_corner_radius(vocab::Corners::all(10.0f64));
+    n.set_corner_radius(vocab::Corners::all(10.0));
     return n;
 }
 
 fn tab_pane(title: str, body: str) -> core::Node {
     var b: flex::Builder = flex::Builder::new();
-    b.add(ui::label(title, font_size: 17.0f64,
+    b.add(ui::label(title, font_size: 17.0,
                     font_weight: vocab::FontWeight::Semibold));
-    b.add(ui::label(body, font_size: 14.0f64, max_lines: 3 as i64,
+    b.add(ui::label(body, font_size: 14.0, max_lines: 3,
                     line_break: vocab::LineBreak::WordWrap,
-                    text_color: vocab::Color::ink(0.7f64)));
-    return ui::column(b, key: title).padding(14.0f64).gap(6.0f64).grow(1.0f64);
+                    text_color: vocab::Color::ink(0.7)));
+    return ui::column(b, key: title).padding(14.0).gap(6.0).grow(1.0);
 }
 
 fn tab_picked(v: *u8, ctx: *u8) {
@@ -131,16 +130,15 @@ fn tab_picked(v: *u8, ctx: *u8) {
             let i: i64 = t.selected_index();
             match label::find("r:tab:read") {
                 option::Option[label::Label]::Some(l) => {
-                    let _s: label::Label = l.set_text(if i == (0 as i64) { "showing Overview" }
-                                                      else if i == (1 as i64) { "showing Detail" }
+                    let _s: label::Label = l.set_text(if i == 0 { "showing Overview" }
+                                                      else if i == 1 { "showing Detail" }
                                                       else { "showing About" });
                 }
-                option::Option[label::Label]::None => { }
+                option::Option::None => { }
             }
         }
-        option::Option[tabs::Tabs]::None => { }
+        option::Option::None => { }
     }
-    return;
 }
 
 impl Responsive: component::Component {
@@ -148,7 +146,7 @@ impl Responsive: component::Component {
         var body: flex::Builder = flex::Builder::new();
 
         var live: flex::Builder = flex::Builder::new();
-        live.add(ui::label("measuring…", key: "rp:mode", font_size: 17.0f64,
+        live.add(ui::label("measuring…", key: "rp:mode", font_size: 17.0,
                            font_weight: vocab::FontWeight::Semibold));
         live.add(shell::caption("Rotate the simulator with ⌘← / ⌘→. This is the band the layout below was actually given, and the width it was measured from — not a guess, and not a button pretending to be one."));
         body.add(shell::card("WIDTH CLASS", live));
@@ -163,7 +161,7 @@ impl Responsive: component::Component {
                     .hide("tiny").hide("compact").hide("medium"));
 
         var group: flex::Builder = flex::Builder::new();
-        group.add(ui::row(cards, key: "rp:cards").gap(10.0f64).height(150.0f64));
+        group.add(ui::row(cards, key: "rp:cards").gap(10.0).height(150.0));
         group.add(pane("Side rail", "Tablet-width and up — an iPad has room for it and a phone does not.",
                        vocab::Color::fill(), "rp:rail")
                     .hide("tiny").hide("compact").hide("medium"));
@@ -176,16 +174,16 @@ impl Responsive: component::Component {
         // needs a title, and every addressable node already has one.
         var tb: flex::Builder = flex::Builder::new();
         var deck: core::Node = ui::tabs(key: "r:tabs",
-                                        bar_text_color: vocab::Color::ink(0.55f64),
+                                        bar_text_color: vocab::Color::ink(0.55),
                                         selected_tab_color: vocab::Color::system_teal(),
                                         on_tab_changed: tab_picked)
-            .height(150.0f64);
+            .height(150.0);
         let _t1: status::Status = deck.add_child(tab_pane("Overview", "The first pane."));
         let _t2: status::Status = deck.add_child(tab_pane("Detail", "The second, which the first tab hides."));
         let _t3: status::Status = deck.add_child(tab_pane("About", "And a third."));
-        tb.add(shell::painted(deck, vocab::Color::fill(), 10.0f64));
-        tb.add(ui::label("showing Overview", key: "r:tab:read", font_size: 13.0f64,
-                         text_color: vocab::Color::ink(0.7f64)));
+        tb.add(shell::painted(deck, vocab::Color::fill(), 10.0));
+        tb.add(ui::label("showing Overview", key: "r:tab:read", font_size: 13.0,
+                         text_color: vocab::Color::ink(0.7)));
         tb.add(shell::caption("One strip of buttons and one pane visible at a time. `selected_index` decides which; the others are `Display::None`, which takes their space out of the layout rather than merely hiding them."));
         body.add(shell::card("TABS", tb));
 
@@ -214,14 +212,13 @@ impl Responsive: component::Lifecycle {
             option::Option[*core::Node]::Some(n) => {
                 this.watch = services::observe_size(n, reclassify, 0 as *u8);
             }
-            option::Option[*core::Node]::None => { }
+            option::Option::None => { }
         }
         // The readout does not wait for a resize: the view has a size the
         // moment it is laid out, and nothing will resize it if the reader
         // never rotates. The card visibility needs no such priming — the
         // layout pass that placed the tree already applied it.
         reclassify(0 as *u8);
-        return;
     }
     fn on_detach(ref this) { return; }
 }

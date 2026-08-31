@@ -22,10 +22,10 @@ export extern fn facet_gallery_ios_main() -> i32 {
     // same palette on both platforms — which is the point of a theme being
     // facet's rather than a backend's.
     theme::set_theme(theme::Theme::new(
-        primary: vocab::Color::rgba(0.35f64, 0.42f64, 0.95f64, 1.0f64),
+        primary: vocab::Color::rgba(0.35, 0.42, 0.95, 1.0),
         surface: vocab::Color::adaptive(
-            light: vocab::Color::rgba(1.0f64, 1.0f64, 1.0f64, 1.0f64),
-            dark: vocab::Color::rgba(0.11f64, 0.11f64, 0.13f64, 1.0f64),
+            light: vocab::Color::rgba(1.0, 1.0, 1.0, 1.0),
+            dark: vocab::Color::rgba(0.11, 0.11, 0.13, 1.0),
         ),
     ));
 
@@ -35,12 +35,20 @@ export extern fn facet_gallery_ios_main() -> i32 {
     // — so the hooks have to be in place BEFORE the tree is built, or the
     // first screen would never be walked into the surface.
     //
-    // The argument is a PORT, not a path. A Unix socket lives inside the app
-    // sandbox, where nothing on the development machine can reach it, and to a
-    // real device there is no shared filesystem at all — so this backend binds
-    // TCP on loopback and the Mac reaches it over usbmux. See DEPLOYING.md.
+    // The argument is an ID — the app's NAME — and the platform derives the
+    // address from it. A Unix socket lives inside the app sandbox, where
+    // nothing on the development machine can reach it, and to a real device
+    // there is no shared filesystem at all, so this backend binds TCP on
+    // loopback: port `9000 + pid % 1000`, which a launcher holding the pid can
+    // work out and `/tmp/mcp-<id>-<pid>.json` records for anything that
+    // cannot. The Mac reaches it over usbmux. See DEPLOYING.md.
+    //
+    // This used to pass "8787" and that used to BE the port. It became the id
+    // when the address stopped being configured and started being derived, and
+    // nothing caught the drift: the app still built, still served, and answered
+    // on a port nobody was looking at, with `serverInfo.name` reading "8787".
     agent::enable();
-    application::agent_serve_once("8787");
+    runtime::agent_mcp("facet_gallery_ios");
 
     // Width and height describe nothing on a phone — the screen is the window
     // — but the parameters are the facade's shape on both platforms and the
@@ -48,13 +56,13 @@ export extern fn facet_gallery_ios_main() -> i32 {
     runtime::run_component(
         app::Gallery::new(),
         title: "facet gallery",
-        width: 390.0f64,
-        height: 844.0f64,
+        width: 390.0,
+        height: 844.0,
         // Pinch to magnify, which this backend recorded as absent until it was
         // pointed out that a pinch belongs to a touch screen more than to a
         // trackpad. The desktop gallery can turn the same flag on.
         zoomable: true,
-        max_zoom: 3.0f64,
+        max_zoom: 3.0,
     );
     return 0;
 }

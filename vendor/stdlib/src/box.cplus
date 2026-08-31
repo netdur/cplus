@@ -86,7 +86,6 @@ impl Box[T] {
     fn set(ref this, take v: T) {
         { #drop_in_place::[T](this._p); }
         { *this._p = v; }
-        return;
     }
 
     // Consume the box, return the inner T. The function-exit drop
@@ -135,7 +134,6 @@ impl Box[T] {
         // following `free` only releases the box's outer slot.
         { #drop_in_place::[T](this._p); }
         { free(this._p as *u8); }
-        return;
     }
 }
 
@@ -147,7 +145,6 @@ fn box_new_and_get() {
         option::Option[Box[i32]]::Some(b) => { assert b.value() == 42; }
         option::Option[Box[i32]]::None => { assert false; }
     }
-    return;
 }
 
 #[test]
@@ -165,7 +162,6 @@ fn box_ptr_borrows_and_survives_set() {
         }
         option::Option[Box[i32]]::None => { assert false; }
     }
-    return;
 }
 
 #[test]
@@ -178,7 +174,6 @@ fn box_set_overwrites() {
         }
         option::Option[Box[i32]]::None => { assert false; }
     }
-    return;
 }
 
 #[test]
@@ -187,7 +182,6 @@ fn box_unwrap_recovers_value() {
         option::Option[Box[i32]]::Some(b) => { assert b.unwrap() == 7; }
         option::Option[Box[i32]]::None => { assert false; }
     }
-    return;
 }
 
 #[test]
@@ -204,5 +198,4 @@ fn box_into_raw_from_raw_roundtrips() {
         }
         option::Option[Box[i32]]::None => { assert false; }
     }
-    return;
 }

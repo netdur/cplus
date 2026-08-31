@@ -1,0 +1,278 @@
+// facet_agent/inspect_platform — the Windows half.
+//
+// `inspect_platform.cplus` is the macOS base: it imports `objc`, `appkit` and
+// `quartzcore` unconditionally, and those are declared for `macos, ios` only.
+// So every non-Apple platform needs a sibling, which is what this is —
+// `inspect_platform_android.cplus` is the same shape from the Android side.
+//
+// Three hooks, and `install` at the bottom is the whole of what `agent.cplus`
+// asks for:
+//
+//   `run_on_main_sync`  the inspector's RPC arrives on a SOCKET THREAD and the
+//                       facet tree is main-thread-owned. Every verb hops.
+//   `highlight`         put a frame around the node the inspector selected.
+//   `native_props`      what the PLATFORM says about this node, as against what
+//                       facet's own vocabulary already said.
+
+import "stdlib/vec" as vec;
+import "stdlib/status" as status;
+import "stdlib/text" as text;
+import "stdlib/atomic" as atomic;
+import "facet/facet" as core;
+import "facet/services" as services;
+import "facet/platform_sys" as platform_sys;
+import "agent_core/inspect" as insp;
+import "./inspect_tree" as tree;
+import "agent_mcp/inspect" as mcp;
+import "win32/winuser" as u;
+import "win32/wingdi" as gdi;
+
+// ---- the main-thread hop ---------------------------------------------------------
+//
+// `services::run_on_main` is FIRE AND FORGET — it hands work to the scheduler
+// and returns — and this hook has to be SYNCHRONOUS, because the caller is an
+// RPC that must have an answer before it replies. So the async hop is used and
+// then waited on.
+//
+// The wait is a spin with a yield, and that is a deliberate choice over a
+// condition variable. The UI thread is running a message loop and will pick the
+// work up on its next turn; the waiter is a socket thread with nothing else to
+// do; and an inspector verb happens when a human clicks, not in a loop. A
+// condvar here would be a mutex, a cond and a state machine to save
+// microseconds nobody is counting.
+//
+// ON THE UI THREAD ALREADY, it just runs. That is not an optimisation — hopping
+// would deadlock, because the thread that must drain the queue is the one
+// blocking on it.
+// `ctx` is OPAQUE: it belongs to the caller of `run_on_main_sync`, which
+// outlives the hop by construction — the whole point is that the caller waits.
+struct Hop { work: fn(*u8), opaque ctx: *u8, done: u64 }
+
+static HOP: Hop = #zero::[Hop]();
+
+fn hop_trampoline(_ctx: *u8) {
+    let f: fn(*u8) = HOP.work;
+    if f.is_not_null() { f(HOP.ctx); }
+    // RELEASE, so the waiter that sees `done` also sees everything the work
+    // wrote. A plain store here is the classic way this kind of handoff races
+    // on a weakly ordered machine — and Windows runs on ARM64 too.
+    atomic::store_u64(#addr_of(HOP.done), 1 as u64, atomic::Ordering::Release);
+    return;
+}
+
+fn run_on_main_sync(ctx: *u8, work: fn(*u8)) {
+    if core::on_ui_thread() { work(ctx); return; }
+    // NO SCHEDULER MEANS NO HOP. Running the work here is wrong on a worker and
+    // it is the only thing left that is not "answer nothing at all" — which for
+    // an RPC would be a reply that is silently a lie. The macOS base makes the
+    // same call for the same reason when there is no dispatch queue.
+    if !services::has_main_hop() { work(ctx); return; }
+    // ONE HOP AT A TIME. The inspector is one connection issuing one verb at a
+    // time; two socket threads would need a queue, and there is no second
+    // thread to want one.
+    HOP.work = work;
+    HOP.ctx = ctx;
+    atomic::store_u64(#addr_of(HOP.done), 0 as u64, atomic::Ordering::Release);
+    services::run_on_main(hop_trampoline, 0 as *u8);
+    while atomic::load_u64(#addr_of(HOP.done), atomic::Ordering::Acquire) == (0 as u64) {
+        platform_sys::yield_once();
+    }
+    return;
+}
+
+// ---- the highlight ---------------------------------------------------------------
+//
+// A LAYERED POPUP OVER THE NODE, which is the Win32 shape of what AppKit does
+// with a CALayer and Android with a View added to the host. It is a window
+// rather than painting into the app's own DC, and the reason is that painting
+// there is erased by the next WM_PAINT the application does — the highlight
+// would blink out the moment anything under it redrew.
+//
+//   WS_EX_LAYERED      so it can be tinted and made partly transparent
+//   WS_EX_TRANSPARENT  so it never takes a click — the app underneath stays
+//                      usable while the inspector is pointing at it
+//   WS_EX_NOACTIVATE   so showing it does not steal focus, which would change
+//                      the very state the inspector is reporting
+//   WS_EX_TOOLWINDOW   so it never appears in the task bar or Alt-Tab
+//
+// `WS_POPUP` and not `WS_CHILD`: a child is clipped to its parent, and the
+// frame wants to sit ON the node's edge rather than inside it.
+fn ws_ex_layered() -> u32 { return 0x00080000 as u32; }
+fn ws_ex_transparent() -> u32 { return 0x00000020 as u32; }
+fn ws_ex_toolwindow() -> u32 { return 0x00000080 as u32; }
+fn ws_ex_noactivate() -> u32 { return 0x08000000 as u32; }
+fn ws_popup() -> u32 { return 0x80000000 as u32; }
+fn lwa_alpha() -> u32 { return 0x00000002 as u32; }
+fn swp_noactivate() -> u32 { return 0x0010 as u32; }
+fn swp_noz() -> u32 { return 0x0004 as u32; }
+fn hwnd_topmost() -> *u8 { return ((0 as i64) -% (1 as i64)) as *u8; }
+fn sw_hide() -> i32 { return 0 as i32; }
+fn sw_shownoactivate() -> i32 { return 4 as i32; }
+
+// The same blue every other backend's overlay uses, at the same weight.
+fn tint() -> u32 { return 0x00FF7822 as u32; }   // COLORREF is BGR
+fn alpha() -> u8 { return 72 as u8; }
+
+static OVERLAY: usize = 0;
+static CLASS_READY: bool = false;
+
+#[link_name = "SetLayeredWindowAttributes"]
+extern fn set_layered(h: *u8, key: u32, alpha: u8, flags: u32) -> i32;
+
+fn overlay_class() -> *u8 { return { #str_ptr("facet-inspect-overlay\0") }; }
+
+fn ensure_class() {
+    if CLASS_READY { return; }
+    CLASS_READY = true;
+    var wc: u::tagWNDCLASSEXA = #zero::[u::tagWNDCLASSEXA]();
+    wc.cbSize = 80 as u32;
+    // A function's address needs an `fn(...)`-typed binding first.
+    let proc: fn(*u8, u32, u64, i64) -> i64 = u::DefWindowProcA;
+    wc.lpfnWndProc = proc as *u8;
+    wc.lpszClassName = overlay_class() as *i8;
+    // A SOLID BACKGROUND BRUSH is the whole of the drawing: the window is one
+    // flat colour and the layering makes it translucent. No WM_PAINT of our
+    // own, so `DefWindowProcA` is the entire procedure.
+    wc.hbrBackground = { gdi::CreateSolidBrush(tint()) };
+    let _a: u16 = { u::RegisterClassExA(#addr_of(wc)) };
+    return;
+}
+
+fn overlay() -> *u8 {
+    if OVERLAY != (0 as usize) { return OVERLAY as *u8; }
+    ensure_class();
+    let h: *u8 = { u::CreateWindowExA(
+        ws_ex_layered() | ws_ex_transparent() | ws_ex_toolwindow() | ws_ex_noactivate(),
+        overlay_class() as *i8, { #str_ptr("\0") } as *i8, ws_popup(),
+        0 as i32, 0 as i32, 0 as i32, 0 as i32,
+        0 as *u8, 0 as *u8, 0 as *u8, 0 as *u8) };
+    if h == (0 as *u8) { return 0 as *u8; }
+    let _l: i32 = { set_layered(h, 0 as u32, alpha(), lwa_alpha()) };
+    OVERLAY = { #addr(h) };
+    return h;
+}
+
+fn clear_highlight(_s: *u8) {
+    if OVERLAY == (0 as usize) { return; }
+    let _h: i32 = { u::ShowWindow(OVERLAY as *u8, sw_hide()) };
+    return;
+}
+
+fn highlight(s: *u8, h: insp::Handle) {
+    // A REQUEST THAT CANNOT BE ANSWERED TAKES THE HIGHLIGHT DOWN rather than
+    // leaving it on the last node — a frame around something the inspector is
+    // no longer pointing at is worse than no frame.
+    if !h.is_live() { clear_highlight(s); return; }
+    let n: *core::Node = tree::node_of(h);
+    if n == (0 as *core::Node) { clear_highlight(s); return; }
+    // THE NODE'S OWN WINDOW, in SCREEN coordinates — which is what a popup
+    // wants, and it saves converting through the host. A node drawn by an
+    // ancestor has no window of its own and nothing to frame; that is a fact
+    // about the node rather than a failure, and `native_props` says so in
+    // words.
+    let v: *u8 = core::view_of(n);
+    if v == (0 as *u8) { clear_highlight(s); return; }
+    var r: u::tagRECT = #zero::[u::tagRECT]();
+    if { u::GetWindowRect(v, #addr_of(r)) } == (0 as i32) { clear_highlight(s); return; }
+    let ov: *u8 = overlay();
+    if ov == (0 as *u8) { return; }
+    let _p: i32 = { u::SetWindowPos(ov, hwnd_topmost(), r.left, r.top,
+                                    r.right -% r.left, r.bottom -% r.top,
+                                    swp_noactivate()) };
+    let _s2: i32 = { u::ShowWindow(ov, sw_shownoactivate()) };
+    return;
+}
+
+// ---- what the platform says about a node -----------------------------------------
+//
+// The facet vocabulary already told the inspector what the node IS. This says
+// what Windows made of it, which is the question you ask when the two disagree
+// — a `toggle` that reports `BUTTON` is owner-drawn on purpose, and a node with
+// no window at all was drawn by an ancestor.
+fn native_props(n: *core::Node) -> vec::Vec[insp::Prop] {
+    var out: vec::Vec[insp::Prop] = vec::new::[insp::Prop]();
+    let v: *u8 = core::view_of(n);
+    if v == (0 as *u8) {
+        // Not an absence of information — a fact about the node, and the one
+        // that explains why it has no frame of its own. The Android sibling
+        // says this in the same words, deliberately.
+        let _a: status::Status = out.append(insp::Prop::read_only(
+            "native_class", insp::Value::Str(text::from_str("(drawn by an ancestor)"))));
+        return out;
+    }
+    let _c: status::Status = out.append(insp::Prop::read_only(
+        "native_class", insp::Value::Str(class_name_of(v))));
+    // The style word, in hex. It is the one number that explains an owner-drawn
+    // control, a missing WS_VISIBLE or a scroll bar nobody asked for — every
+    // one of which has cost this port an afternoon.
+    let _s: status::Status = out.append(insp::Prop::read_only(
+        "native_style", insp::Value::Str(hex32(
+            { u::GetWindowLongPtrA(v, (0 as i32) -% (16 as i32)) } as u32))));
+    let _e: status::Status = out.append(insp::Prop::read_only(
+        "native_ex_style", insp::Value::Str(hex32(
+            { u::GetWindowLongPtrA(v, (0 as i32) -% (20 as i32)) } as u32))));
+    return out;
+}
+
+fn class_name_of(v: *u8) -> text::Text {
+    let cap: usize = 64 as usize;
+    let buf: *u8 = { np_malloc(cap) };
+    if buf.is_null() { return text::from_str("(out of memory)"); }
+    let got: i32 = { u::GetClassNameA(v, buf as *i8, cap as i32) };
+    var out: text::Text = text::from_str("(unnamed)");
+    // `#str_from_raw_parts` is stdlib's FFI door for exactly this: a C buffer
+    // and a length become a `str`, and `from_str` then COPIES it into the Text
+    // — so the borrowed view never outlives the malloc below.
+    if got > (0 as i32) {
+        out = text::from_str({ #str_from_raw_parts(buf, got as usize) });
+    }
+    { np_free(buf) };
+    return out;
+}
+
+fn hex32(v: u32) -> text::Text {
+    var out: text::Text = text::from_str("0x");
+    var shift: u32 = 28 as u32;
+    var leading: bool = true;
+    while true {
+        let nib: u32 = (v >> shift) & (0x0F as u32);
+        if !(leading && nib == (0 as u32) && shift != (0 as u32)) {
+            leading = false;
+            out = out.appending(nibble(nib));
+        }
+        if shift == (0 as u32) { break; }
+        shift = shift -% (4 as u32);
+    }
+    return out;
+}
+
+fn nibble(n: u32) -> str {
+    if n == (0 as u32) { return "0"; }
+    if n == (1 as u32) { return "1"; }
+    if n == (2 as u32) { return "2"; }
+    if n == (3 as u32) { return "3"; }
+    if n == (4 as u32) { return "4"; }
+    if n == (5 as u32) { return "5"; }
+    if n == (6 as u32) { return "6"; }
+    if n == (7 as u32) { return "7"; }
+    if n == (8 as u32) { return "8"; }
+    if n == (9 as u32) { return "9"; }
+    if n == (10 as u32) { return "A"; }
+    if n == (11 as u32) { return "B"; }
+    if n == (12 as u32) { return "C"; }
+    if n == (13 as u32) { return "D"; }
+    if n == (14 as u32) { return "E"; }
+    return "F";
+}
+
+#[link_name = "malloc"]
+extern fn np_malloc(n: usize) -> *u8;
+#[link_name = "free"]
+extern fn np_free(p: *u8);
+
+fn install() {
+    tree::install_platform(highlight, clear_highlight);
+    tree::set_native_fn(native_props);
+    mcp::set_marshal(run_on_main_sync);
+    return;
+}
