@@ -16,6 +16,7 @@
 // error for a notification posted without permission — it is accepted and never
 // shown — so `schedule` reads the gate first and answers `Denied` instead.
 
+import "stdlib/option" as option;
 import "stdlib/status" as status;
 import "stdlib/text" as text;
 import "stdlib/vec" as vec;
@@ -123,15 +124,78 @@ struct Notification {
     //
     // Ignored on Apple today.
     channel: str,
+    // THE ACTION SET, and the other half of what `channel` used to pretend to
+    // be. Names a set registered with `register_action`; `""` means a
+    // notification with no buttons.
+    //
+    // Apple requires the set to exist BEFORE the notification is posted —
+    // categories are registered with the centre up front and a notification
+    // names one — so registering late means a notification with no buttons and
+    // no error. Android has no such rule and this package remembers the set for
+    // it, so one call order works on both.
+    category: str,
+    // CANNOT BE SWIPED AWAY. **ANDROID ONLY**, and named that way rather than
+    // quietly ignored on Apple.
+    //
+    // iOS and macOS notifications are always dismissible, by design — there is
+    // no API for this and nothing to fall back to. The two things people reach
+    // for instead answer different questions: `UNNotificationInterruptionLevel`
+    // (`.timeSensitive`, `.critical`) decides whether a notification pierces
+    // Focus, and Live Activities are ActivityKit — a widget extension with its
+    // own lifecycle, not a notification at all.
+    //
+    // WHAT IT ACTUALLY BUYS, measured on an emulator rather than assumed:
+    //
+    //   the shade's Clear all   GONE while an ongoing notification is present
+    //   swipe right             resists
+    //   swipe left              dismisses it
+    //   the app's own `cancel`  removes it, as it should
+    //
+    // Android 14 made ongoing notifications user-dismissible for an app with no
+    // foreground service, and the shade implements that as a DIRECTIONAL
+    // gesture. So this is "hard to get rid of", not "impossible" — an
+    // application that needs one to truly persist needs a foreground service,
+    // which is a different feature in a different package.
+    //
+    // Implies auto-cancel off: a notification meant to stay should not vanish
+    // because somebody tapped it.
+    sticky: bool,
+    // RENDER THE ACTIONS AS AN ICON ROW rather than as text labels.
+    // **ANDROID ONLY**, and measured rather than assumed: Android's ordinary
+    // notification template shows action TITLES and ignores their icons, while
+    // `Notification.MediaStyle` shows the icons as a compact row. MediaStyle
+    // with no `MediaSession` token renders exactly that and nothing else — no
+    // media area, no seek bar, no hardware keys, all of which come from the
+    // session — so this buys the LOOK of a player's controls without pretending
+    // to be one.
+    //
+    // Ignored on Apple, which has one action presentation and no choice in it.
+    compact: bool,
+    // A FULL-WIDTH IMAGE INSIDE THE NOTIFICATION — the shape a photo app or a
+    // messaging app uses. An absolute path to a file this app can read.
+    //
+    // Both platforms have it and neither calls it the same thing: Android's
+    // `BigPictureStyle` decodes a bitmap, Apple's `UNNotificationAttachment`
+    // takes a file URL. Empty means an ordinary notification.
+    //
+    // MUTUALLY EXCLUSIVE WITH `compact`, and refused rather than silently
+    // resolved: a notification has exactly ONE style on Android, so an icon row
+    // and a photo cannot both be shown. Asking for both is a caller bug and
+    // gets `InvalidInput`.
+    picture: str,
 }
 
 impl Notification {
     // Content-taking constructor with the rest defaulted, per
     // `naming_guideline.md`: one signature instead of a family of overloads.
     fn new(id: str, title: str, body: str = "", when: When = When::Now,
-           payload: str = "", channel: str = "") -> Notification {
+           payload: str = "", channel: str = "",
+           category: str = "", sticky: bool = false,
+           compact: bool = false, picture: str = "") -> Notification {
         return Notification { id: id, title: title, body: body, when: when,
-                              payload: payload, channel: channel };
+                              payload: payload, channel: channel,
+                              category: category, sticky: sticky,
+                              compact: compact, picture: picture };
     }
 }
 
@@ -145,6 +209,10 @@ impl Notification {
 fn schedule(n: Notification) -> Outcome {
     if n.id == "" { return Outcome::InvalidInput; }
     if n.title == "" { return Outcome::InvalidInput; }
+    // ONE STYLE PER NOTIFICATION. Android cannot show an icon row and a photo
+    // at once, and quietly dropping one of them would make a caller debug the
+    // platform instead of their own call.
+    if n.compact && n.picture != "" { return Outcome::InvalidInput; }
     if !allowed() { return Outcome::NotPermitted; }
     let secs: f64 = delay_of(n.when);
     let rc: i32 = { cplus_notifications_schedule_v1(
@@ -153,6 +221,9 @@ fn schedule(n: Notification) -> Outcome {
         #str_ptr(n.body), #str_len(n.body),
         #str_ptr(n.payload), #str_len(n.payload),
         #str_ptr(n.channel), #str_len(n.channel),
+        #str_ptr(n.category), #str_len(n.category),
+        n.sticky, n.compact,
+        #str_ptr(n.picture), #str_len(n.picture),
         secs) };
     return Outcome::from_code(rc);
 }
@@ -232,6 +303,183 @@ fn pending(out: *vec::Vec[str]) -> Outcome {
     return Outcome::from_code({ cplus_notifications_pending_v1({ out as *u8 }) });
 }
 
+// ---- actions -------------------------------------------------------------------
+//
+// A notification can carry buttons. Both platforms have them and neither
+// declares them the same way, which is why this is a VERB rather than a field:
+//
+//   Apple    a `UNNotificationCategory` holding `UNNotificationAction`s, set on
+//            the centre UP FRONT. A notification names the category, and one
+//            registered after the notification was posted does nothing.
+//   Android  `addAction` per notification, built at post time, no registry.
+//
+// So actions are registered into a named set here, once, and the backend uses
+// that set however its platform wants. Register at startup and the same code
+// works on both; register late and Apple silently drops the buttons, which is
+// the one ordering rule this package cannot paper over.
+//
+// AT MOST FOUR PER CATEGORY. Apple shows two on a banner and up to four when
+// expanded; Android shows three. Beyond that the platform decides what to drop,
+// which is a worse answer than refusing.
+
+const MAX_ACTIONS: usize = 4 as usize;
+const MAX_CATEGORIES: usize = 8 as usize;
+
+struct Action { id: str, title: str, icon: str }
+struct Category { name: str, actions: [Action; 4], count: usize, live: bool }
+
+static CATEGORIES: [Category; 8] = #zero::[[Category; 8]]();
+
+// Add a button to a named set. `Ok`, or:
+//
+//   InvalidInput  an empty category, id or title, or an id containing the
+//                 separator this package uses to carry it — see `_ENCODE_SEP`
+//   OutOfBounds   more than four actions in one set, or more than eight sets
+//
+// Registering the same (category, id) twice UPDATES the title rather than
+// adding a second button.
+// `icon` names a PLATFORM drawable — `"ic_media_play"`, `"ic_media_next"`,
+// `"ic_menu_delete"` — resolved out of `android.R$drawable` at post time. A
+// package has no resources of its own and an application's `R` class is not
+// ours to read, so platform names are the one icon vocabulary that needs
+// nothing from the caller's build. Empty takes a default.
+//
+// Ignored on Apple: `UNNotificationAction` has no icon.
+fn register_action(category: str, id: str, title: str, icon: str = "") -> Outcome {
+    if category == "" { return Outcome::InvalidInput; }
+    if id == "" { return Outcome::InvalidInput; }
+    if title == "" { return Outcome::InvalidInput; }
+    // The id travels back inside one string alongside the payload, and the
+    // split is on the FIRST separator. An id carrying one would move the seam.
+    if id.count_of(SEP) > (0 as usize) { return Outcome::InvalidInput; }
+
+    var slot: usize = MAX_CATEGORIES;
+    var i: usize = 0 as usize;
+    while i < MAX_CATEGORIES {
+        if CATEGORIES[i].live && CATEGORIES[i].name == category { slot = i; break; }
+        i = i +% (1 as usize);
+    }
+    if slot == MAX_CATEGORIES {
+        i = 0 as usize;
+        while i < MAX_CATEGORIES {
+            if !CATEGORIES[i].live {
+                CATEGORIES[i].live = true;
+                CATEGORIES[i].name = text::intern(category);
+                CATEGORIES[i].count = 0 as usize;
+                slot = i;
+                break;
+            }
+            i = i +% (1 as usize);
+        }
+    }
+    if slot == MAX_CATEGORIES { return Outcome::Failed; }
+
+    // Same id twice updates rather than duplicating.
+    var a: usize = 0 as usize;
+    while a < CATEGORIES[slot].count {
+        if CATEGORIES[slot].actions[a].id == id {
+            CATEGORIES[slot].actions[a].title = text::intern(title);
+            CATEGORIES[slot].actions[a].icon = text::intern(icon);
+            { cplus_notifications_publish_categories_v1() };
+            return Outcome::Ok;
+        }
+        a = a +% (1 as usize);
+    }
+    if CATEGORIES[slot].count >= MAX_ACTIONS { return Outcome::Failed; }
+    let n: usize = CATEGORIES[slot].count;
+    CATEGORIES[slot].actions[n].id = text::intern(id);
+    CATEGORIES[slot].actions[n].title = text::intern(title);
+    CATEGORIES[slot].actions[n].icon = text::intern(icon);
+    CATEGORIES[slot].count = n +% (1 as usize);
+    // Apple needs the centre told; Android reads the table at post time. The
+    // backend decides which, and this is the one call that says "it changed".
+    { cplus_notifications_publish_categories_v1() };
+    return Outcome::Ok;
+}
+
+// Forget every registered set. For tests, and for an application rebuilding its
+// action sets from scratch.
+fn clear_actions() -> Outcome {
+    var i: usize = 0 as usize;
+    while i < MAX_CATEGORIES {
+        CATEGORIES[i].live = false;
+        CATEGORIES[i].count = 0 as usize;
+        i = i +% (1 as usize);
+    }
+    { cplus_notifications_publish_categories_v1() };
+    return Outcome::Ok;
+}
+
+// How many actions a set holds. `0` for one that was never registered.
+fn action_count(category: str) -> usize {
+    let slot: usize = _category_slot(category);
+    if slot >= MAX_CATEGORIES { return 0 as usize; }
+    return CATEGORIES[slot].count;
+}
+
+fn _category_slot(category: str) -> usize {
+    var i: usize = 0 as usize;
+    while i < MAX_CATEGORIES {
+        if CATEGORIES[i].live && CATEGORIES[i].name == category { return i; }
+        i = i +% (1 as usize);
+    }
+    return MAX_CATEGORIES;
+}
+
+// ---- the backend's window on the table ---------------------------------------
+//
+// NOT APPLICATION API, and public only because C+ privacy is module-scoped:
+// there is no package-private, and the per-platform half is a different module.
+// A `_` prefix would be honest about the intent and would not compile.
+//
+// They are absent from `docs/ref.md` for that reason — an application has
+// `register_action`, `clear_actions` and `action_count`, and nothing here.
+fn action_id(category: str, index: usize) -> str {
+    let slot: usize = _category_slot(category);
+    if slot >= MAX_CATEGORIES { return ""; }
+    if index >= CATEGORIES[slot].count { return ""; }
+    return CATEGORIES[slot].actions[index].id;
+}
+
+fn action_icon(category: str, index: usize) -> str {
+    let slot: usize = _category_slot(category);
+    if slot >= MAX_CATEGORIES { return ""; }
+    if index >= CATEGORIES[slot].count { return ""; }
+    return CATEGORIES[slot].actions[index].icon;
+}
+
+fn action_title(category: str, index: usize) -> str {
+    let slot: usize = _category_slot(category);
+    if slot >= MAX_CATEGORIES { return ""; }
+    if index >= CATEGORIES[slot].count { return ""; }
+    return CATEGORIES[slot].actions[index].title;
+}
+
+fn category_name(index: usize) -> str {
+    if index >= MAX_CATEGORIES { return ""; }
+    if !CATEGORIES[index].live { return ""; }
+    return CATEGORIES[index].name;
+}
+
+// THE SEPARATOR that carries an action id back alongside the payload.
+//
+// A tap has to say WHICH BUTTON, and the road home is a single opaque string:
+// `AppEvent.text` on both platforms, an Intent extra on Android. Rather than
+// widen facet's event for one package, the two are packed here and split on the
+// FIRST occurrence — so an action id may not contain it (checked at
+// registration) and a payload may contain anything at all.
+//
+// ASCII 0x1F, "unit separator", which exists for exactly this and cannot appear
+// in a sane identifier.
+const SEP: str = "";
+
+fn encode_tap(action: str, payload: str) -> text::Text {
+    var t: text::Text = text::from_str(action);
+    let _a: status::Status = t.append(SEP);
+    let _b: status::Status = t.append(payload);
+    return t;
+}
+
 // ---- taps ----------------------------------------------------------------------
 //
 // A tap hands back the notification's `payload` and nothing else. The tap is a
@@ -255,7 +503,7 @@ fn pending(out: *vec::Vec[str]) -> Outcome {
 // and two routers disagreeing about one payload is a bug, not a feature. An
 // application that wants to fan out does it on its own side, where it can say
 // which wins.
-static TAP: fn(str, *u8) = 0 as fn(str, *u8);
+static TAP: fn(str, str, *u8) = 0 as fn(str, str, *u8);
 static TAP_CTX: *u8 = 0 as *u8;
 static SUBSCRIBED: bool = false;
 
@@ -264,8 +512,8 @@ static SUBSCRIBED: bool = false;
 //
 // If a tap already happened — including the one that launched the app — the
 // handler is called before this returns.
-fn on_tap(f: fn(str, *u8), ctx: *u8 = 0 as *u8) -> Outcome {
-    if f == (0 as fn(str, *u8)) { return Outcome::InvalidInput; }
+fn on_tap(f: fn(str, str, *u8), ctx: *u8 = 0 as *u8) -> Outcome {
+    if f == (0 as fn(str, str, *u8)) { return Outcome::InvalidInput; }
     TAP = f;
     TAP_CTX = ctx;
     if !SUBSCRIBED {
@@ -278,7 +526,7 @@ fn on_tap(f: fn(str, *u8), ctx: *u8 = 0 as *u8) -> Outcome {
     // Already subscribed, so the replay has been and gone. Hand the last tap
     // over directly, so swapping handlers mid-run does not lose a payload that
     // arrived before the swap.
-    if LAST_TAP != "" { f(LAST_TAP, ctx); }
+    if LAST_TAP != "" { f(LAST_TAP, LAST_ACTION, ctx); }
     return Outcome::Ok;
 }
 
@@ -286,7 +534,7 @@ fn on_tap(f: fn(str, *u8), ctx: *u8 = 0 as *u8) -> Outcome {
 // list, costs nothing idle, and taking it out would drop the latch replay for a
 // handler installed later.
 fn off_tap() -> Outcome {
-    TAP = 0 as fn(str, *u8);
+    TAP = 0 as fn(str, str, *u8);
     TAP_CTX = 0 as *u8;
     return Outcome::Ok;
 }
@@ -294,14 +542,51 @@ fn off_tap() -> Outcome {
 // The last payload seen, interned. Held so a handler installed after a tap —
 // or swapped for another — is not the one call that misses it.
 static LAST_TAP: str = "";
+// Which button, or `""` for a tap on the notification body itself.
+static LAST_ACTION: str = "";
+
+// The index of the first separator byte, or the string's length when there is
+// none. Byte-wise on purpose: the separator is ASCII 0x1F and cannot be part of
+// a multi-byte sequence, so this cannot cut a character in half.
+// `str::slice` answers an Option; a range this code computed itself is always
+// in bounds, and the interned copy is what the latch and the handler share.
+fn _slice_or_empty(s: str, from: usize, to: usize) -> str {
+    match s.slice(from: from, to: to) {
+        option::Option[str]::Some(v) => { return text::intern(v); }
+        option::Option[str]::None => { return ""; }
+    }
+}
+
+fn _first_sep(s: str) -> usize {
+    let n: usize = #str_len(s);
+    let p: *u8 = #str_ptr(s);
+    var i: usize = 0 as usize;
+    while i < n {
+        if { *(p + i) } == (31 as u8) { return i; }
+        i = i +% (1 as usize);
+    }
+    return n;
+}
 
 fn _on_app_event(e: *ev::AppEvent, ctx: *u8) {
     if { (*e).kind } != ev::E_NOTIFICATION_TAP { return; }
-    // INTERNED before anything else: `AppEvent.text` is borrowed for this
-    // dispatch and not one instant longer.
-    LAST_TAP = text::intern({ (*e).text });
-    let f: fn(str, *u8) = TAP;
-    if f != (0 as fn(str, *u8)) { f(LAST_TAP, TAP_CTX); }
+    // SPLIT ON THE FIRST SEPARATOR, then intern both halves: `AppEvent.text` is
+    // borrowed for this dispatch and not one instant longer. An action id
+    // cannot contain the separator (checked at registration) and a payload can
+    // contain anything, which is why the split is first-occurrence and not last.
+    let raw: str = { (*e).text };
+    let cut: usize = _first_sep(raw);
+    if cut == #str_len(raw) {
+        // No separator: an older backend, or a tap this package did not encode.
+        // The whole string is the payload and no button was pressed.
+        LAST_ACTION = "";
+        LAST_TAP = text::intern(raw);
+    } else {
+        LAST_ACTION = _slice_or_empty(raw, 0 as usize, cut);
+        LAST_TAP = _slice_or_empty(raw, cut +% (1 as usize), #str_len(raw));
+    }
+    let f: fn(str, str, *u8) = TAP;
+    if f != (0 as fn(str, str, *u8)) { f(LAST_TAP, LAST_ACTION, TAP_CTX); }
     return;
 }
 
@@ -322,10 +607,18 @@ extern fn cplus_notifications_schedule_v1(
     body_ptr: *u8, body_len: usize,
     payload_ptr: *u8, payload_len: usize,
     channel_ptr: *u8, channel_len: usize,
+    category_ptr: *u8, category_len: usize,
+    sticky: bool,
+    compact: bool,
+    picture_ptr: *u8, picture_len: usize,
     delay_seconds: f64) -> i32;
 
 extern fn cplus_notifications_cancel_v1(id_ptr: *u8, id_len: usize) -> i32;
 extern fn cplus_notifications_cancel_all_v1() -> i32;
+
+// Tell the backend the action sets changed. Apple registers categories with the
+// centre up front; Android reads the table at post time and does nothing here.
+extern fn cplus_notifications_publish_categories_v1();
 extern fn cplus_notifications_clear_shown_v1() -> i32;
 
 // `out` is a `*vec::Vec[str]` the backend appends interned ids to. Opaque
@@ -407,4 +700,153 @@ fn every_outcome_round_trips_and_an_unknown_code_is_failed() {
     // NotPermitted and InvalidInput must never collapse: one is answered by
     // asking for the permission, the other by fixing the call.
     assert Outcome::NotPermitted.to_code() != Outcome::InvalidInput.to_code();
+}
+
+// ---- action tests --------------------------------------------------------------
+
+#[test]
+fn an_action_needs_a_category_an_id_and_a_title() {
+    let _c: Outcome = clear_actions();
+    assert register_action("", "id", "Title") == Outcome::InvalidInput;
+    assert register_action("cat", "", "Title") == Outcome::InvalidInput;
+    assert register_action("cat", "id", "") == Outcome::InvalidInput;
+    assert action_count("cat") == (0 as usize);
+}
+
+#[test]
+fn an_id_carrying_the_separator_is_refused() {
+    // The id travels home packed in front of the payload and the split is on
+    // the FIRST separator, so an id containing one would move the seam and
+    // hand the caller half its own payload as an action name.
+    let _c: Outcome = clear_actions();
+    assert register_action("cat", "a\x1fb", "Title") == Outcome::InvalidInput;
+    assert action_count("cat") == (0 as usize);
+}
+
+#[test]
+fn actions_accumulate_into_a_named_set() {
+    let _c: Outcome = clear_actions();
+    assert register_action("mail", "reply", "Reply") == Outcome::Ok;
+    assert register_action("mail", "archive", "Archive") == Outcome::Ok;
+    assert action_count("mail") == (2 as usize);
+    assert action_id("mail", 0 as usize) == "reply";
+    assert action_title("mail", 1 as usize) == "Archive";
+    // A set nobody registered is empty rather than an error: naming one is the
+    // same as naming none, on both platforms.
+    assert action_count("nobody") == (0 as usize);
+    assert action_id("mail", 9 as usize) == "";
+}
+
+#[test]
+fn registering_the_same_id_updates_rather_than_duplicating() {
+    let _c: Outcome = clear_actions();
+    let _a: Outcome = register_action("mail", "reply", "Reply");
+    let _b: Outcome = register_action("mail", "reply", "Reply now");
+    assert action_count("mail") == (1 as usize);
+    assert action_title("mail", 0 as usize) == "Reply now";
+}
+
+#[test]
+fn a_fifth_action_is_refused_rather_than_silently_dropped() {
+    // Apple shows two on a banner and four expanded; Android shows three.
+    // Past that the platform decides what to drop, which is a worse answer
+    // than refusing.
+    let _c: Outcome = clear_actions();
+    let _1: Outcome = register_action("many", "a", "A");
+    let _2: Outcome = register_action("many", "b", "B");
+    let _3: Outcome = register_action("many", "c", "C");
+    let _4: Outcome = register_action("many", "d", "D");
+    assert action_count("many") == (4 as usize);
+    assert register_action("many", "e", "E") == Outcome::Failed;
+    assert action_count("many") == (4 as usize);
+}
+
+#[test]
+fn clearing_forgets_every_set() {
+    let _c: Outcome = clear_actions();
+    let _a: Outcome = register_action("one", "x", "X");
+    let _b: Outcome = register_action("two", "y", "Y");
+    assert action_count("one") == (1 as usize);
+    let _d: Outcome = clear_actions();
+    assert action_count("one") == (0 as usize);
+    assert action_count("two") == (0 as usize);
+    assert category_name(0 as usize) == "";
+}
+
+#[test]
+fn an_action_and_a_payload_pack_and_split_on_the_first_separator() {
+    // The payload may contain anything, including the separator; the action
+    // may not. That asymmetry is why the split is first-occurrence.
+    var e: text::Text = encode_tap("reply", "order:1234");
+    assert { e.view() } == "reply\x1forder:1234";
+    assert _first_sep({ e.view() }) == (5 as usize);
+
+    var body: text::Text = encode_tap("", "order:1234");
+    assert _first_sep({ body.view() }) == (0 as usize);
+
+    // A payload with its own separator still splits in the right place.
+    var odd: text::Text = encode_tap("go", "a\x1fb");
+    assert _first_sep({ odd.view() }) == (2 as usize);
+}
+
+#[test]
+fn a_string_with_no_separator_is_all_payload() {
+    // An older backend, or a tap this package did not encode. The whole string
+    // is the payload and no button was pressed — never the other way round,
+    // which would invent an action out of a deep link.
+    let raw: str = "order:1234";
+    assert _first_sep(raw) == #str_len(raw);
+}
+
+#[test]
+fn a_notification_can_name_a_category() {
+    let n: Notification = Notification::new("id", "Title", category: "mail");
+    assert n.category == "mail";
+    // And defaults to none, which is a notification with no buttons.
+    let plain: Notification = Notification::new("id", "Title");
+    assert plain.category == "";
+}
+
+#[test]
+fn sticky_is_off_by_default_and_settable() {
+    let plain: Notification = Notification::new("id", "Title");
+    assert plain.sticky == false;
+    let stuck: Notification = Notification::new("id", "Title", sticky: true);
+    assert stuck.sticky;
+}
+
+#[test]
+fn sticky_is_independent_of_every_other_field() {
+    // It is a one-platform flag and must not be entangled with the portable
+    // ones — an Apple build reads the same struct and ignores this field.
+    let n: Notification = Notification::new("id", "Title", body: "b",
+                                            when: When::After(5.0f64),
+                                            payload: "p", channel: "c",
+                                            category: "cat", sticky: true);
+    assert n.sticky;
+    assert n.category == "cat";
+    assert n.channel == "c";
+    assert n.payload == "p";
+    assert delay_of(n.when) == 5.0f64;
+}
+
+#[test]
+fn a_picture_and_a_compact_row_cannot_both_be_asked_for() {
+    // Android has exactly ONE style per notification, so an icon row and a
+    // photo are mutually exclusive. Refused rather than silently resolved —
+    // picking a winner here would make a caller debug the platform instead of
+    // their own call.
+    assert schedule(Notification::new("id", "T", compact: true, picture: "/tmp/a.png"))
+        == Outcome::InvalidInput;
+    // Either alone is fine as far as this guard is concerned.
+    assert schedule(Notification::new("id", "T", compact: true))
+        != Outcome::InvalidInput;
+    assert schedule(Notification::new("id", "T", picture: "/tmp/a.png"))
+        != Outcome::InvalidInput;
+}
+
+#[test]
+fn a_picture_defaults_to_none() {
+    assert Notification::new("id", "T").picture == "";
+    assert Notification::new("id", "T", picture: "/x.png").picture == "/x.png";
 }

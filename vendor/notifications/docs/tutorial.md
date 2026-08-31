@@ -72,8 +72,9 @@ It appends to a Vec you own, so you can accumulate across calls.
 ## Route a tap
 
 ```cplus
-fn tapped(payload: str, ctx: *u8) {
+fn tapped(payload: str, action: str, ctx: *u8) {
     // `payload` is whatever you put in the notification.
+    // `action` is which button was pressed, or "" for the body.
     return;
 }
 
@@ -83,6 +84,33 @@ let _t: notifications::Outcome = notifications::on_tap(tapped);
 Safe to call at any point — startup, a screen's `on_attach`, after a route
 change. If a tap already happened, including the one that launched the app, your
 handler is called before `on_tap` returns.
+
+## Add buttons
+
+```cplus
+notifications::register_action("mail", "reply", "Reply", icon: "ic_menu_send");
+notifications::register_action("mail", "archive", "Archive");
+
+let _o: notifications::Outcome = notifications::schedule(
+    notifications::Notification::new("m:1", "New mail", category: "mail"));
+```
+
+Register **before** posting — Apple needs the set to exist first. On Android add
+`<receiver android:name="cplus.facet.FacetNotificationReceiver"
+android:exported="false" />` to your manifest or the buttons do nothing.
+
+## Show an image, or an icon row
+
+```cplus
+// A photo, full-width inside the notification.
+Notification::new("p:1", "A photo", picture: "/path/to/image.png")
+
+// Or transport-style icon buttons that stay put. Android only.
+Notification::new("play", "Now playing", category: "player",
+                  sticky: true, compact: true)
+```
+
+One style per notification: `compact` and `picture` together are `InvalidInput`.
 
 ## Read the outcome
 

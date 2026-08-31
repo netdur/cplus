@@ -52,6 +52,9 @@ if o == notifications::Outcome::NotPermitted {
   says to present it. This package installs one. Without it the code is correct
   and nothing happens, which is the most common "notifications don't work"
   report there is.
+- **Android needs one manifest line for action buttons:**
+  `<receiver android:name="cplus.facet.FacetNotificationReceiver"
+  android:exported="false" />`. Without it buttons quietly do nothing.
 - **Register `on_tap` whenever you like.** A tap that launched the app fired
   before anything subscribed; the latch replays it at registration.
 - **On Android a missing channel drops the notification silently.** This package

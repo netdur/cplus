@@ -147,6 +147,25 @@ fn _ensure_channel(env: rt::Env, mgr: jni::jobject, id: str) {
 // `build()`. `ic_dialog_info` exists on every level this backend targets.
 static _ICON: i32 = 0 as i32;
 
+// A PLATFORM DRAWABLE BY NAME, out of `android.R$drawable`. The numeric ids are
+// not contractual and a wrong one throws at `build()`, so nothing here is
+// hardcoded. Zero when the name does not exist on this level, which the caller
+// treats as "use the default".
+fn _drawable(env: rt::Env, name: str) -> i32 {
+    if name == "" { return 0 as i32; }
+    let cls: jni::jclass = env.class_cached(#str_ptr("android/R$drawable\0"));
+    if cls == (0 as jni::jclass) { return 0 as i32; }
+    let fid: jni::jfieldID = env.static_field_id(cls, #str_ptr(_nul(name)), #str_ptr("I\0"));
+    if fid == (0 as jni::jfieldID) {
+        // An unknown name leaves a pending NoSuchFieldError; clearing it is not
+        // optional, because the next JNI call would inherit the exception and
+        // fail for a reason that has nothing to do with it.
+        if env.pending_exception() != (0 as jni::jthrowable) { env.clear_exception(); }
+        return 0 as i32;
+    }
+    return { (*(*env.raw())).GetStaticIntField(env.raw(), cls, fid) };
+}
+
 fn _small_icon(env: rt::Env) -> i32 {
     if _ICON != (0 as i32) { return _ICON; }
     let cls: jni::jclass = env.class_cached(#str_ptr("android/R$drawable\0"));
@@ -179,7 +198,8 @@ fn _small_icon(env: rt::Env) -> i32 {
 //
 // FLAG_ACTIVITY_SINGLE_TOP so a running Activity gets `onNewIntent` rather than
 // a second instance stacked on itself.
-fn _pending_intent(env: rt::Env, ctx: jni::jobject, id: str, payload: str) -> jni::jobject {
+fn _pending_intent(env: rt::Env, ctx: jni::jobject, id: str, payload: str,
+                   action: str, code_salt: i32) -> jni::jobject {
     if payload == "" { return 0 as jni::jobject; }
     // The Activity's own class, asked of the object rather than named: this
     // package should not have to know that facet's Activity is called
@@ -199,8 +219,12 @@ fn _pending_intent(env: rt::Env, ctx: jni::jobject, id: str, payload: str) -> jn
         #str_ptr("setFlags\0"), #str_ptr("(I)Landroid/content/Intent;\0"),
         rt::arg_int(536870912 as i32));
 
+    // ACTION AND PAYLOAD IN ONE EXTRA, packed by the facade and split by it on
+    // the way back. FacetActivity forwards one string, and widening facet's
+    // event for one package would be the wrong trade.
+    var packed: text::Text = notify::encode_tap(action, payload);
     let key: jni::jstring = env.new_string_utf(#str_ptr(_nul(PAYLOAD_EXTRA)));
-    let val: jni::jstring = env.new_string_utf(#str_ptr(_nul(payload)));
+    let val: jni::jstring = env.new_string_utf(#str_ptr(_nul({ packed.view() })));
     let _e: jni::jobject = env.call_object_2(intent, #str_ptr("android/content/Intent\0"),
         #str_ptr("putExtra\0"),
         #str_ptr("(Ljava/lang/String;Ljava/lang/String;)Landroid/content/Intent;\0"),
@@ -215,7 +239,88 @@ fn _pending_intent(env: rt::Env, ctx: jni::jobject, id: str, payload: str) -> jn
     if mid == (0 as jni::jmethodID) { env.delete_local_ref(intent); return 0 as jni::jobject; }
     // FLAG_IMMUTABLE 0x04000000 | FLAG_UPDATE_CURRENT 0x08000000.
     let flags: i32 = (67108864 as i32) + (134217728 as i32);
-    var args: [jni::JValue; 4] = [rt::arg_object(ctx), rt::arg_int(_request_code(id)),
+    // EVERY BUTTON NEEDS ITS OWN REQUEST CODE. PendingIntents are matched
+    // ignoring extras, so the body and all its buttons sharing one code would
+    // share one intent and the last packed payload would win for all of them.
+    var args: [jni::JValue; 4] = [rt::arg_object(ctx),
+                                  rt::arg_int(_request_code(id) + code_salt),
+                                  rt::arg_object(intent), rt::arg_int(flags)];
+    let pi: jni::jobject = { (*(*env.raw())).CallStaticObjectMethodA(env.raw(), cls, mid,
+                                                                    #addr_of(args[0])) };
+    env.delete_local_ref(intent);
+    return pi;
+}
+
+// `BitmapFactory.decodeFile`. Null for a path that does not exist or does not
+// decode — an unreadable image is not an error worth failing a notification for.
+//
+// NO DOWNSAMPLING. A very large photo can exceed the notification's bitmap
+// budget and be rejected by the system with a log line, which is a real limit
+// worth knowing about; sizing it is the application's job because only it knows
+// what the image is for.
+fn _decode(env: rt::Env, path: str) -> jni::jobject {
+    let cls: jni::jclass = env.class_cached(#str_ptr("android/graphics/BitmapFactory\0"));
+    if cls == (0 as jni::jclass) { return 0 as jni::jobject; }
+    let mid: jni::jmethodID = env.method_id_static(cls, #str_ptr("decodeFile\0"),
+        #str_ptr("(Ljava/lang/String;)Landroid/graphics/Bitmap;\0"));
+    if mid == (0 as jni::jmethodID) { return 0 as jni::jobject; }
+    let p: jni::jstring = env.new_string_utf(#str_ptr(_nul(path)));
+    if p == (0 as jni::jstring) { return 0 as jni::jobject; }
+    var args: [jni::JValue; 1] = [rt::arg_object(p)];
+    let bmp: jni::jobject = { (*(*env.raw())).CallStaticObjectMethodA(env.raw(), cls, mid,
+                                                                     #addr_of(args[0])) };
+    env.delete_local_ref(p);
+    if env.pending_exception() != (0 as jni::jthrowable) { env.clear_exception(); }
+    return bmp;
+}
+
+// A button's PendingIntent: a BROADCAST at facet's receiver, so pressing it
+// does not open the app.
+//
+// THE APP MUST DECLARE THE RECEIVER, and this is the one thing an application
+// has to add to its manifest for buttons to work:
+//
+//     <receiver android:name="cplus.facet.FacetNotificationReceiver"
+//               android:exported="false" />
+//
+// Without it the PendingIntent resolves to nothing and the button does nothing,
+// which is a better failure than a crash — everything else about the
+// notification still works.
+fn _action_intent(env: rt::Env, ctx: jni::jobject, id: str, payload: str,
+                  action: str, code_salt: i32) -> jni::jobject {
+    if payload == "" { return 0 as jni::jobject; }
+    let intent: jni::jobject = env.new_object_0(#str_ptr("android/content/Intent\0"),
+                                                #str_ptr("()V\0"));
+    if intent == (0 as jni::jobject) { return 0 as jni::jobject; }
+    let pkg: jni::jobject = env.call_object_0(ctx, #str_ptr("android/content/Context\0"),
+        #str_ptr("getPackageName\0"), #str_ptr("()Ljava/lang/String;\0"));
+    if pkg == (0 as jni::jobject) { env.delete_local_ref(intent); return 0 as jni::jobject; }
+    let cls_name: jni::jstring = env.new_string_utf(
+        #str_ptr("cplus.facet.FacetNotificationReceiver\0"));
+    let _sc: jni::jobject = env.call_object_2(intent, #str_ptr("android/content/Intent\0"),
+        #str_ptr("setClassName\0"),
+        #str_ptr("(Ljava/lang/String;Ljava/lang/String;)Landroid/content/Intent;\0"),
+        rt::arg_object(pkg), rt::arg_object(cls_name));
+    env.delete_local_ref(cls_name);
+
+    var packed: text::Text = notify::encode_tap(action, payload);
+    let key: jni::jstring = env.new_string_utf(#str_ptr(_nul(PAYLOAD_EXTRA)));
+    let val: jni::jstring = env.new_string_utf(#str_ptr(_nul({ packed.view() })));
+    let _e: jni::jobject = env.call_object_2(intent, #str_ptr("android/content/Intent\0"),
+        #str_ptr("putExtra\0"),
+        #str_ptr("(Ljava/lang/String;Ljava/lang/String;)Landroid/content/Intent;\0"),
+        rt::arg_object(key), rt::arg_object(val));
+    env.delete_local_ref(key);
+    env.delete_local_ref(val);
+
+    let cls: jni::jclass = env.class_cached(#str_ptr("android/app/PendingIntent\0"));
+    if cls == (0 as jni::jclass) { env.delete_local_ref(intent); return 0 as jni::jobject; }
+    let mid: jni::jmethodID = env.method_id_static(cls, #str_ptr("getBroadcast\0"),
+        #str_ptr("(Landroid/content/Context;ILandroid/content/Intent;I)Landroid/app/PendingIntent;\0"));
+    if mid == (0 as jni::jmethodID) { env.delete_local_ref(intent); return 0 as jni::jobject; }
+    let flags: i32 = (67108864 as i32) + (134217728 as i32);
+    var args: [jni::JValue; 4] = [rt::arg_object(ctx),
+                                  rt::arg_int(_request_code(id) + code_salt),
                                   rt::arg_object(intent), rt::arg_int(flags)];
     let pi: jni::jobject = { (*(*env.raw())).CallStaticObjectMethodA(env.raw(), cls, mid,
                                                                     #addr_of(args[0])) };
@@ -246,7 +351,8 @@ fn _request_code(id: str) -> i32 {
     return { (h & (2147483647 as u32)) as i32 };
 }
 
-fn _post(id: str, title: str, body: str, channel: str, payload: str) -> i32 {
+fn _post(id: str, title: str, body: str, channel: str, payload: str,
+         category: str, sticky: bool, compact: bool, picture: str) -> i32 {
     if !_ready() { return notify::Outcome::Unsupported.to_code(); }
     let env: rt::Env = _env();
     if env.raw().is_null() { return notify::Outcome::Unsupported.to_code(); }
@@ -288,21 +394,128 @@ fn _post(id: str, title: str, body: str, channel: str, payload: str) -> i32 {
     let _b3: jni::jobject = env.call_object_1(b,
         #str_ptr("android/app/Notification$Builder\0"), #str_ptr("setSmallIcon\0"),
         #str_ptr("(I)Landroid/app/Notification$Builder;\0"), rt::arg_int(icon));
-    // AUTO-CANCEL: tapping removes it from the shade. The tap tier will want
-    // the notification gone once its payload has been routed, and an app that
-    // wants it to persist gets `sticky` when that lands.
+    // AUTO-CANCEL: tapping removes it from the shade — unless it is sticky, in
+    // which case it should not vanish because somebody tapped it. The two are
+    // one decision, which is why `sticky` sets both.
     let _b4: jni::jobject = env.call_object_1(b,
         #str_ptr("android/app/Notification$Builder\0"), #str_ptr("setAutoCancel\0"),
-        #str_ptr("(Z)Landroid/app/Notification$Builder;\0"), rt::arg_bool(true));
+        #str_ptr("(Z)Landroid/app/Notification$Builder;\0"), rt::arg_bool(!sticky));
+    if sticky {
+        // ONGOING: no swipe-away. Android 14 lets a person dismiss one from an
+        // app with no foreground service, so this is "hard to remove" rather
+        // than "impossible" — `cancel` is still the way an app takes it back.
+        let _b6: jni::jobject = env.call_object_1(b,
+            #str_ptr("android/app/Notification$Builder\0"), #str_ptr("setOngoing\0"),
+            #str_ptr("(Z)Landroid/app/Notification$Builder;\0"), rt::arg_bool(true));
+    }
 
     // The tap's road back, attached before the build.
-    let pi: jni::jobject = _pending_intent(env, ctx, id, payload);
+    let pi: jni::jobject = _pending_intent(env, ctx, id, payload, "", 0 as i32);
     if pi != (0 as jni::jobject) {
         let _b5: jni::jobject = env.call_object_1(b,
             #str_ptr("android/app/Notification$Builder\0"), #str_ptr("setContentIntent\0"),
             #str_ptr("(Landroid/app/PendingIntent;)Landroid/app/Notification$Builder;\0"),
             rt::arg_object(pi));
         env.delete_local_ref(pi);
+    }
+
+    // THE BUTTONS. Android builds them per notification — unlike Apple, where
+    // they are registered on the centre up front — so the facade's table is
+    // read here at post time. A category nobody registered yields none, which
+    // is the same outcome as naming none.
+    if category != "" {
+        let count: usize = notify::action_count(category);
+        var ai: usize = 0 as usize;
+        while ai < count {
+            // +1 so no button collides with the body's own request code.
+            // A BROADCAST, not an activity. Pressing a button must do the
+            // thing and leave the shade where it is; an Activity PendingIntent
+            // always brings the app forward and collapses the shade, which is
+            // right for the notification BODY and wrong for a button.
+            let api: jni::jobject = _action_intent(env, ctx, id, payload,
+                notify::action_id(category, ai), (ai as i32) + (1 as i32));
+            if api != (0 as jni::jobject) {
+                let t: jni::jstring = env.new_string_utf(
+                    #str_ptr(_nul(notify::action_title(category, ai))));
+                // The action's own icon if it named one, else the default.
+                // Android's ordinary template ignores it and MediaStyle shows
+                // it — see `compact`.
+                var ai_icon: i32 = _drawable(env, notify::action_icon(category, ai));
+                if ai_icon == (0 as i32) { ai_icon = icon; }
+                let ab: jni::jobject = env.new_object_3(
+                    #str_ptr("android/app/Notification$Action$Builder\0"),
+                    #str_ptr("(ILjava/lang/CharSequence;Landroid/app/PendingIntent;)V\0"),
+                    rt::arg_int(ai_icon), rt::arg_object(t), rt::arg_object(api));
+                env.delete_local_ref(t);
+                if ab != (0 as jni::jobject) {
+                    let act: jni::jobject = env.call_object_0(ab,
+                        #str_ptr("android/app/Notification$Action$Builder\0"),
+                        #str_ptr("build\0"),
+                        #str_ptr("()Landroid/app/Notification$Action;\0"));
+                    if act != (0 as jni::jobject) {
+                        let _ba: jni::jobject = env.call_object_1(b,
+                            #str_ptr("android/app/Notification$Builder\0"),
+                            #str_ptr("addAction\0"),
+                            #str_ptr("(Landroid/app/Notification$Action;)Landroid/app/Notification$Builder;\0"),
+                            rt::arg_object(act));
+                        env.delete_local_ref(act);
+                    }
+                    env.delete_local_ref(ab);
+                }
+                env.delete_local_ref(api);
+            }
+            ai = ai +% (1 as usize);
+        }
+    }
+
+    // ICON ROW INSTEAD OF TEXT LABELS. Android's ordinary template shows action
+    // TITLES and ignores their icons; `MediaStyle` shows the icons as a compact
+    // row — and MEASURED ON AN EMULATOR, MediaStyle with no `MediaSession`
+    // token renders exactly that, which is the thing the spike's §9 first got
+    // wrong. What it does NOT give is the media area of the shade, the seek bar
+    // or hardware keys, all of which come from the session rather than the
+    // notification.
+    // A FULL-WIDTH PHOTO. `BigPictureStyle` decodes the file into a Bitmap and
+    // shows it when the notification is expanded.
+    //
+    // ONE STYLE PER NOTIFICATION, which is why this and `compact` are exclusive
+    // — the facade refuses a caller that asks for both rather than letting one
+    // win silently here.
+    //
+    // A path that will not decode yields a null Bitmap, and the style is left
+    // off rather than the notification failing: a photo that cannot load is a
+    // reason to show the text, not to show nothing.
+    if picture != "" {
+        let bmp: jni::jobject = _decode(env, picture);
+        if bmp != (0 as jni::jobject) {
+            let st: jni::jobject = env.new_object_0(
+                #str_ptr("android/app/Notification$BigPictureStyle\0"), #str_ptr("()V\0"));
+            if st != (0 as jni::jobject) {
+                let _sb: jni::jobject = env.call_object_1(st,
+                    #str_ptr("android/app/Notification$BigPictureStyle\0"),
+                    #str_ptr("bigPicture\0"),
+                    #str_ptr("(Landroid/graphics/Bitmap;)Landroid/app/Notification$BigPictureStyle;\0"),
+                    rt::arg_object(bmp));
+                let _bs: jni::jobject = env.call_object_1(b,
+                    #str_ptr("android/app/Notification$Builder\0"), #str_ptr("setStyle\0"),
+                    #str_ptr("(Landroid/app/Notification$Style;)Landroid/app/Notification$Builder;\0"),
+                    rt::arg_object(st));
+                env.delete_local_ref(st);
+            }
+            env.delete_local_ref(bmp);
+        }
+    }
+
+    if compact && category != "" {
+        let st: jni::jobject = env.new_object_0(
+            #str_ptr("android/app/Notification$MediaStyle\0"), #str_ptr("()V\0"));
+        if st != (0 as jni::jobject) {
+            let _bs: jni::jobject = env.call_object_1(b,
+                #str_ptr("android/app/Notification$Builder\0"), #str_ptr("setStyle\0"),
+                #str_ptr("(Landroid/app/Notification$Style;)Landroid/app/Notification$Builder;\0"),
+                rt::arg_object(st));
+            env.delete_local_ref(st);
+        }
     }
 
     let n: jni::jobject = env.call_object_0(b,
@@ -337,6 +550,10 @@ struct _Timer {
     body: str,
     channel: str,
     payload: str,
+    category: str,
+    sticky: bool,
+    compact: bool,
+    picture: str,
     handle: services::Cancellable,
     live: bool,
 }
@@ -373,7 +590,9 @@ fn _fire(ctx: *u8) {
                 if { (*t).live } && { (*t).token } == { ctx as u64 } {
                     { (*t).live = false };
                     let _rc: i32 = _post({ (*t).id }, { (*t).title }, { (*t).body },
-                                         { (*t).channel }, { (*t).payload });
+                                         { (*t).channel }, { (*t).payload },
+                                         { (*t).category }, { (*t).sticky },
+                                         { (*t).compact }, { (*t).picture });
                     return;
                 }
             }
@@ -386,12 +605,23 @@ fn _fire(ctx: *u8) {
 
 // ---- the seam -----------------------------------------------------------------
 
+// ANDROID HAS NO CATEGORY REGISTRY. Its actions are built per notification at
+// post time, from the facade's table, so this is deliberately EMPTY rather than
+// absent: the facade calls it whenever a set changes, and one platform having
+// nothing to do about that is not the other platform's problem.
+export extern fn cplus_notifications_publish_categories_v1() { return; }
+
+
 export extern fn cplus_notifications_schedule_v1(
     id_ptr: *u8, id_len: usize,
     title_ptr: *u8, title_len: usize,
     body_ptr: *u8, body_len: usize,
     payload_ptr: *u8, payload_len: usize,
     channel_ptr: *u8, channel_len: usize,
+    category_ptr: *u8, category_len: usize,
+    sticky: bool,
+    compact: bool,
+    picture_ptr: *u8, picture_len: usize,
     delay_seconds: f64) -> i32 {
 
     let id: str = { #str_from_raw_parts(id_ptr, id_len) };
@@ -399,6 +629,8 @@ export extern fn cplus_notifications_schedule_v1(
     let body: str = { #str_from_raw_parts(body_ptr, body_len) };
     let channel: str = { #str_from_raw_parts(channel_ptr, channel_len) };
     let payload: str = { #str_from_raw_parts(payload_ptr, payload_len) };
+    let category: str = { #str_from_raw_parts(category_ptr, category_len) };
+    let picture: str = { #str_from_raw_parts(picture_ptr, picture_len) };
 
     if !_ready() { return notify::Outcome::Unsupported.to_code(); }
 
@@ -409,7 +641,8 @@ export extern fn cplus_notifications_schedule_v1(
     if existing >= (0 as i64) { _cancel_timer(existing); }
 
     if delay_seconds <= 0.0f64 {
-        return _post(id, title, body, channel, payload);
+        return _post(id, title, body, channel, payload, category, sticky, compact,
+                     picture);
     }
 
     // DEFERRED, and it does not survive the process — see the file header. The
@@ -423,7 +656,8 @@ export extern fn cplus_notifications_schedule_v1(
         token: token,
         id: text::intern(id), title: text::intern(title), body: text::intern(body),
         channel: text::intern(channel), payload: text::intern(payload),
-        handle: h, live: true,
+        category: text::intern(category), sticky: sticky, compact: compact,
+        picture: text::intern(picture), handle: h, live: true,
     });
     return notify::Outcome::Ok.to_code();
 }

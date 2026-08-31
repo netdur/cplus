@@ -160,13 +160,58 @@ not the platform's — Apple can be asked and Android cannot, so the record is t
 only answer available on both. It may outlive a notification the system already
 delivered; it will not under-report.
 
+### `register_action`
+
+```cplus
+fn register_action(category: str, id: str, title: str,
+                   icon: str = "") -> Outcome
+```
+
+Add a button to a named set. `InvalidInput` for an empty argument or an `id`
+containing the packing separator; `Failed` past four actions in a set or eight
+sets. Registering the same `(category, id)` twice **updates** the title.
+
+`icon` names a **platform** drawable — `"ic_media_play"`, `"ic_media_next"`,
+`"ic_menu_delete"` — resolved from `android.R$drawable`. A package has no
+resources of its own and an app's `R` class is not its to read, so platform
+names are the one icon vocabulary needing nothing from the caller's build.
+Android's ordinary template ignores action icons and shows titles; set
+`compact` on the notification to get the icon row. Ignored on Apple, which has
+no action icon.
+
+**Register before posting.** Apple attaches actions by naming a category
+registered with the centre **up front**; a set registered after the notification
+was posted shows no buttons and no error. Android builds them per notification
+and does not care, so registering early is the order that works on both.
+
+**Android needs one manifest line** or buttons do nothing:
+
+```xml
+<receiver android:name="cplus.facet.FacetNotificationReceiver"
+          android:exported="false" />
+```
+
+A button routes through a broadcast rather than an Activity, so pressing it does
+its thing and leaves the shade open. An Activity intent always brings the app
+forward — right for the notification body, wrong for a button.
+
+### `clear_actions` / `action_count`
+
+```cplus
+fn clear_actions() -> Outcome
+fn action_count(category: str) -> usize
+```
+
+Forget every set; how many actions a set holds (`0` for one never registered).
+
 ### `on_tap`
 
 ```cplus
-fn on_tap(f: fn(str, *u8), ctx: *u8 = 0 as *u8) -> Outcome
+fn on_tap(f: fn(str, str, *u8), ctx: *u8 = 0 as *u8) -> Outcome
 ```
 
-Route notification taps to `f`, which receives the notification's `payload`.
+Route notification taps to `f`, which receives the notification's `payload` and
+the **action id** of the button pressed — `""` for a tap on the body itself.
 `InvalidInput` for a null handler. A second call **replaces** the first — one
 slot, not a list, because a tap is a routing decision and two routers
 disagreeing about one payload is a bug.

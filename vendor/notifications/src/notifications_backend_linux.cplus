@@ -25,6 +25,10 @@ export extern fn cplus_notifications_schedule_v1(
     body_ptr: *u8, body_len: usize,
     payload_ptr: *u8, payload_len: usize,
     channel_ptr: *u8, channel_len: usize,
+    category_ptr: *u8, category_len: usize,
+    sticky: bool,
+    compact: bool,
+    picture_ptr: *u8, picture_len: usize,
     delay_seconds: f64) -> i32 {
     return notify::Outcome::Unsupported.to_code();
 }
@@ -32,6 +36,8 @@ export extern fn cplus_notifications_schedule_v1(
 export extern fn cplus_notifications_cancel_v1(id_ptr: *u8, id_len: usize) -> i32 {
     return notify::Outcome::Unsupported.to_code();
 }
+
+export extern fn cplus_notifications_publish_categories_v1() { return; }
 
 export extern fn cplus_notifications_cancel_all_v1() -> i32 {
     return notify::Outcome::Unsupported.to_code();

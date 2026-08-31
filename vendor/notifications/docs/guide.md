@@ -100,6 +100,100 @@ version, about twenty lines.
 Notifications is the one Apple domain gated on the prompt alone — there is no
 `NSNotificationsUsageDescription` to forget, unlike camera or contacts.
 
+## Buttons, and where they are declared
+
+Both platforms have action buttons and neither declares them the same way, which
+is why this is a verb rather than a field:
+
+| | Apple | Android |
+|---|---|---|
+| Where declared | a `UNNotificationCategory` set on the centre **up front** | `addAction` per notification |
+| A notification | names the category | carries the actions |
+| Registered late | shows **no buttons, no error** | works fine |
+
+So register at startup and one call order works on both. That is the single
+ordering rule this package cannot paper over.
+
+```cplus
+notifications::register_action("mail", "reply", "Reply");
+notifications::register_action("mail", "archive", "Archive");
+// ...then
+Notification::new(id, title, category: "mail")
+```
+
+The tap tells you which: `on_tap(f)` hands `f` the payload **and** the action id,
+with `""` for a tap on the body.
+
+### Gotcha: a button must not open the app
+
+Pressing Play on a player, or Archive on a mail notification, should do the
+thing and leave the shade where it is. An Activity `PendingIntent` cannot: it
+always brings the app forward and collapses the shade.
+
+So buttons route through a broadcast, and **Android apps need one manifest
+line**:
+
+```xml
+<receiver android:name="cplus.facet.FacetNotificationReceiver"
+          android:exported="false" />
+```
+
+Omit it and the buttons quietly do nothing while everything else works — a
+better failure than a crash. The receiver also survives a cold process: the
+`.so` is loaded by `FacetActivity.onCreate`, so a button pressed while the app
+was dead parks its payload and the Activity delivers it on next start.
+
+## Icon buttons and photos
+
+Two Android styles, and a notification has exactly **one** style — so `compact`
+and `picture` are mutually exclusive and asking for both is `InvalidInput`
+rather than a silent winner.
+
+**`compact`** renders the actions as an icon row instead of text labels.
+Android's ordinary template shows action *titles* and ignores their icons;
+`Notification.MediaStyle` shows the icons. **Measured: MediaStyle with no
+`MediaSession` token renders exactly that** — so icon buttons do not need a
+session, which an earlier version of this guide got wrong. What the session
+would add is the media area of the shade, the seek bar, album-art colouring and
+hardware media keys, none of which come from the notification.
+
+`sticky: true` plus `compact: true` plus three actions is a media player's
+notification, minus the system integration.
+
+**`picture`** takes an absolute path and shows the image full-width inside the
+notification — `BigPictureStyle` on Android, `UNNotificationAttachment` on
+Apple. A path that will not load is dropped and the notification still posts: a
+photo that cannot load is a reason to show the text, not to show nothing.
+
+Both are ignored on Apple, which has one action presentation and no choice in
+it — except `picture`, which Apple does support as an attachment.
+
+## What `sticky` buys, and what it does not
+
+**Android only.** iOS and macOS notifications are always dismissible by design;
+there is no API for this and nothing to fall back to. Interruption levels decide
+whether a notification pierces Focus, and Live Activities are ActivityKit — a
+widget extension, not a notification. `sticky` is read on Android and
+deliberately unread on Apple, rather than mapped onto something adjacent.
+
+On Android it sets `ONGOING_EVENT` and turns auto-cancel off, which are one
+decision: a notification meant to stay should not vanish because somebody tapped
+it. Measured on an emulator rather than assumed:
+
+| | |
+|---|---|
+| The shade's **Clear all** | gone entirely while an ongoing notification is present |
+| Swipe **right** | resists |
+| Swipe **left** | dismisses it |
+| The app's own `cancel` / `cancel_all` | removes it, as it should — the app owns its notifications |
+
+The last three are the platform's behaviour, not this package's. **Android 14
+made ongoing notifications user-dismissible** for an app that is not running a
+foreground service, and the shade implements that as a directional gesture. So
+`sticky` is "hard to get rid of", not "impossible". An application that needs a
+notification to truly persist needs a foreground service, which is a different
+feature and not this package's.
+
 ## Deferred delivery on Android
 
 **A scheduled notification does not survive the process being killed.** This is

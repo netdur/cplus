@@ -125,7 +125,13 @@ fn _imp_did_receive_response(self_obj: *u8, cmd: *u8, centre: *u8,
     // owner has to outlive the fire and no longer.
     var payload: text::Text = _payload_of(response);
     if { payload.is_empty() } == false {
-        ev::fire_text(ev::E_NOTIFICATION_TAP, { payload.view() });
+        // WHICH BUTTON, packed in front of the payload. Apple answers the
+        // default identifier for a tap on the body itself, which this maps to
+        // "no button" rather than passing a constant nobody outside UIKit
+        // should have to know.
+        var action: text::Text = _action_of(response);
+        var encoded: text::Text = notify::encode_tap({ action.view() }, { payload.view() });
+        ev::fire_text(ev::E_NOTIFICATION_TAP, { encoded.view() });
     }
     // THE COMPLETION HANDLER MUST BE CALLED, always and exactly once. UIKit
     // logs a warning and may hold the notification open otherwise; it takes no
@@ -137,6 +143,23 @@ fn _imp_did_receive_response(self_obj: *u8, cmd: *u8, centre: *u8,
     let f: fn(*u8) = { invoke as fn(*u8) };
     f(handler);
     return;
+}
+
+// The pressed button's identifier, or empty for a tap on the body.
+//
+// `UNNotificationDefaultActionIdentifier` is the constant Apple uses for the
+// body, and `UNNotificationDismissActionIdentifier` for a swipe-away. Both are
+// mapped to empty: an application asked which BUTTON was pressed, and "none of
+// them" is the honest answer for both.
+fn _action_of(response: *u8) -> text::Text {
+    if response.is_null() { return text::new(); }
+    let ns: *u8 = { rt::msg_id(response, rt::sel(#str_ptr("actionIdentifier\0"))) };
+    if ns.is_null() { return text::new(); }
+    let t: text::Text = bridge::to_text(ns);
+    let v: str = { t.view() };
+    if v == "com.apple.UNNotificationDefaultActionIdentifier" { return text::new(); }
+    if v == "com.apple.UNNotificationDismissActionIdentifier" { return text::new(); }
+    return t;
 }
 
 // `response.notification.request.content.userInfo[PAYLOAD_KEY]`, copied out of
@@ -222,6 +245,72 @@ fn _install_delegate(centre: *u8) {
     return;
 }
 
+// ---- categories ----------------------------------------------------------------
+//
+// Apple's actions live on the CENTRE, not on a notification: a set of
+// `UNNotificationCategory` objects registered up front, each holding its
+// `UNNotificationAction`s, and a notification names one. So this rebuilds the
+// whole set whenever the facade says it changed — `setNotificationCategories:`
+// replaces rather than merges, so incremental updates would drop everything
+// registered earlier.
+//
+// UNNotificationActionOptionForeground = 1 << 2. Without it a tapped button
+// leaves the app in the background, and a deep link that does not open the app
+// is not a deep link.
+fn _action_options() -> u64 { return 4 as u64; }
+
+export extern fn cplus_notifications_publish_categories_v1() {
+    let centre: *u8 = _centre();
+    if centre == (0 as *u8) { return; }
+    let set_cls: *u8 = { rt::get_class(#str_ptr("NSMutableSet\0")) };
+    if set_cls == (0 as *u8) { return; }
+    let set: *u8 = { rt::msg_id(set_cls, rt::sel(#str_ptr("set\0"))) };
+    if set == (0 as *u8) { return; }
+
+    var ci: usize = 0 as usize;
+    while ci < notify::MAX_CATEGORIES {
+        let name: str = notify::category_name(ci);
+        if name != "" {
+            let cat: *u8 = _build_category(name);
+            if cat != (0 as *u8) {
+                { rt::msg_void_id(set, rt::sel(#str_ptr("addObject:\0")), cat) };
+            }
+        }
+        ci = ci +% (1 as usize);
+    }
+    { rt::msg_void_id(centre, rt::sel(#str_ptr("setNotificationCategories:\0")), set) };
+    return;
+}
+
+fn _build_category(name: str) -> *u8 {
+    let act_cls: *u8 = { rt::get_class(#str_ptr("UNNotificationAction\0")) };
+    let cat_cls: *u8 = { rt::get_class(#str_ptr("UNNotificationCategory\0")) };
+    let arr_cls: *u8 = { rt::get_class(#str_ptr("NSMutableArray\0")) };
+    if act_cls == (0 as *u8) { return 0 as *u8; }
+    if cat_cls == (0 as *u8) { return 0 as *u8; }
+    if arr_cls == (0 as *u8) { return 0 as *u8; }
+    let actions: *u8 = { rt::msg_id(arr_cls, rt::sel(#str_ptr("array\0"))) };
+    if actions == (0 as *u8) { return 0 as *u8; }
+
+    let n: usize = notify::action_count(name);
+    var i: usize = 0 as usize;
+    while i < n {
+        let a: *u8 = { _msg_id_id_id_u64(act_cls,
+            rt::sel(#str_ptr("actionWithIdentifier:title:options:\0")),
+            bridge::nsstring(notify::action_id(name, i)),
+            bridge::nsstring(notify::action_title(name, i)),
+            _action_options()) };
+        if a != (0 as *u8) {
+            { rt::msg_void_id(actions, rt::sel(#str_ptr("addObject:\0")), a) };
+        }
+        i = i +% (1 as usize);
+    }
+    let empty: *u8 = { rt::msg_id(arr_cls, rt::sel(#str_ptr("array\0"))) };
+    return { _msg_id_id_id_id_u64(cat_cls,
+        rt::sel(#str_ptr("categoryWithIdentifier:actions:intentIdentifiers:options:\0")),
+        bridge::nsstring(name), actions, empty, 0 as u64) };
+}
+
 // ---- the record ---------------------------------------------------------------
 //
 // WHAT THIS PACKAGE BELIEVES IS PENDING, kept here rather than asked of the
@@ -269,18 +358,29 @@ export extern fn cplus_notifications_schedule_v1(
     body_ptr: *u8, body_len: usize,
     payload_ptr: *u8, payload_len: usize,
     channel_ptr: *u8, channel_len: usize,
+    category_ptr: *u8, category_len: usize,
+    sticky: bool,
+    compact: bool,
+    picture_ptr: *u8, picture_len: usize,
     delay_seconds: f64) -> i32 {
 
     let id: str = { #str_from_raw_parts(id_ptr, id_len) };
     let title: str = { #str_from_raw_parts(title_ptr, title_len) };
     let body: str = { #str_from_raw_parts(body_ptr, body_len) };
     let payload: str = { #str_from_raw_parts(payload_ptr, payload_len) };
+    let category: str = { #str_from_raw_parts(category_ptr, category_len) };
+    let picture: str = { #str_from_raw_parts(picture_ptr, picture_len) };
+    // `sticky` and `compact` ARE IGNORED HERE, and deliberately unread rather than mapped onto
+    // something adjacent. Apple has no ongoing notification: iOS and macOS
+    // notifications are always dismissible, and the nearest APIs — interruption
+    // levels, Live Activities — answer different questions. Pretending would be
+    // worse than the honest nothing.
 
     let centre: *u8 = _centre();
     if centre == (0 as *u8) { return notify::Outcome::Unsupported.to_code(); }
     _install_delegate(centre);
 
-    let content: *u8 = _content(title, body, payload);
+    let content: *u8 = _content(title, body, payload, category, picture);
     if content == (0 as *u8) { return notify::Outcome::Failed.to_code(); }
     let trigger: *u8 = _trigger(delay_seconds);
     // A null trigger is DELIVER NOW, which is what `UNNotificationRequest`
@@ -302,7 +402,8 @@ export extern fn cplus_notifications_schedule_v1(
 // UNMutableNotificationContent with the payload in `userInfo` under one key.
 // ONE KEY rather than spreading the payload across userInfo, so the tap tier
 // reads it back without guessing what an application put there.
-fn _content(title: str, body: str, payload: str) -> *u8 {
+fn _content(title: str, body: str, payload: str, category: str,
+            picture: str) -> *u8 {
     let cls: *u8 = { rt::get_class(#str_ptr("UNMutableNotificationContent\0")) };
     if cls == (0 as *u8) { return 0 as *u8; }
     let c: *u8 = { synth::alloc_init_class(cls) };
@@ -322,7 +423,51 @@ fn _content(title: str, body: str, payload: str) -> *u8 {
             }
         }
     }
+    // THE CATEGORY IS WHAT PUTS BUTTONS ON IT. Apple attaches actions by
+    // naming a category that was registered with the centre beforehand; a name
+    // with no registered category is not an error and simply shows no buttons,
+    // which is why `register_action` must run first.
+    if category != "" {
+        { rt::msg_void_id(c, rt::sel(#str_ptr("setCategoryIdentifier:\0")),
+                          bridge::nsstring(category)) };
+    }
+    // A FULL-WIDTH IMAGE. Apple's is an ATTACHMENT — a file URL handed to
+    // `UNNotificationAttachment`, which copies the file into its own store — so
+    // unlike Android there is no bitmap to decode and no memory budget to
+    // respect. An unreadable path yields a nil attachment, which is left off
+    // rather than failing the whole notification: a photo that will not load is
+    // a reason to show the text, not to show nothing.
+    if picture != "" {
+        let att: *u8 = _attachment(picture);
+        if att != (0 as *u8) {
+            let arr_cls: *u8 = { rt::get_class(#str_ptr("NSArray\0")) };
+            if arr_cls != (0 as *u8) {
+                let arr: *u8 = { rt::msg_id_id(arr_cls,
+                    rt::sel(#str_ptr("arrayWithObject:\0")), att) };
+                if arr != (0 as *u8) {
+                    { rt::msg_void_id(c, rt::sel(#str_ptr("setAttachments:\0")), arr) };
+                }
+            }
+        }
+    }
     return c;
+}
+
+// `+attachmentWithIdentifier:URL:options:error:`. The identifier is empty —
+// Apple generates one — and the error is discarded: a nil return says the same
+// thing and the caller's only move either way is to show the text.
+fn _attachment(path: str) -> *u8 {
+    let cls: *u8 = { rt::get_class(#str_ptr("UNNotificationAttachment\0")) };
+    if cls == (0 as *u8) { return 0 as *u8; }
+    let url_cls: *u8 = { rt::get_class(#str_ptr("NSURL\0")) };
+    if url_cls == (0 as *u8) { return 0 as *u8; }
+    let url: *u8 = { rt::msg_id_id(url_cls, rt::sel(#str_ptr("fileURLWithPath:\0")),
+                                   bridge::nsstring(path)) };
+    if url == (0 as *u8) { return 0 as *u8; }
+    var err: *u8 = 0 as *u8;
+    return { _msg_id_id_id_id_id(cls,
+        rt::sel(#str_ptr("attachmentWithIdentifier:URL:options:error:\0")),
+        bridge::nsstring(""), url, 0 as *u8, { #addr_of(err) as *u8 }) };
 }
 
 // The one `userInfo` key this package writes and the tap tier will read.
@@ -416,6 +561,12 @@ extern fn _msg_id_id_id(recv: *u8, sel: *u8, a: *u8, b: *u8) -> *u8;
 extern fn _msg_id_id_id_id(recv: *u8, sel: *u8, a: *u8, b: *u8, c: *u8) -> *u8;
 #[link_name = "objc_msgSend"]
 extern fn _msg_id_f64_i8(recv: *u8, sel: *u8, a: f64, b: i8) -> *u8;
+#[link_name = "objc_msgSend"]
+extern fn _msg_id_id_id_u64(recv: *u8, sel: *u8, a: *u8, b: *u8, c: u64) -> *u8;
+#[link_name = "objc_msgSend"]
+extern fn _msg_id_id_id_id_id(recv: *u8, sel: *u8, a: *u8, b: *u8, c: *u8, d: *u8) -> *u8;
+#[link_name = "objc_msgSend"]
+extern fn _msg_id_id_id_id_u64(recv: *u8, sel: *u8, a: *u8, b: *u8, c: *u8, d: u64) -> *u8;
 
 // ---- tests --------------------------------------------------------------------
 //
@@ -551,6 +702,9 @@ fn scheduling_without_a_centre_never_claims_success() {
         #str_ptr("Title"), #str_len("Title"),
         #str_ptr(""), #str_len(""),
         #str_ptr(""), #str_len(""),
+        #str_ptr(""), #str_len(""),
+        #str_ptr(""), #str_len(""),
+        false, false,
         #str_ptr(""), #str_len(""),
         0.0f64) };
     assert rc == notify::Outcome::Unsupported.to_code();
