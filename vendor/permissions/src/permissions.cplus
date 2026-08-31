@@ -1,0 +1,350 @@
+// permissions — the portable facade.
+//
+// A permission is a NAME. `state` never prompts and is cheap enough to call
+// while building a screen; `request` prompts and answers through a callback.
+// Everything platform-shaped is behind the seam at the bottom of this file.
+//
+// WHY A `str` AND NOT AN ENUM, because the first design was an enum and it was
+// wrong. Android's permission space is open by construction —
+// `checkSelfPermission` takes a String, there are ~180 platform permissions,
+// OEMs add their own and Google adds several per API level. A closed enum makes
+// an application wait for a release of THIS package to ask for something the
+// platform has supported for years. Apple's space is closed by construction:
+// each domain is a different class with a different selector pair in a
+// different framework, so adding one there is code — but it is a ROW of code,
+// and `permissions_backend::register_apple` takes one.
+//
+// WHY NOT A `struct Permission { name: str }` either, which was the second
+// design. A `str` is a view, and the pending-request table outlives the call
+// that fills it. This codebase has paid for that lesson twice already —
+// `facet.cplus` says of `Data.key` "OWNED, not a `str` view", and
+// `app_events` repeats it about `AppEvent.text`. So the verbs take `str`, and
+// anything this package keeps, it keeps as `Text`.
+
+import "stdlib/text" as text;
+import "stdlib/vec" as vec;
+import "stdlib/status" as status;
+
+// ---- the portable names ------------------------------------------------------
+//
+// Constants so a typo is a compile error in the common case. A bare literal is
+// the escape hatch and needs no constructor: `state("android.permission.NFC")`
+// is a legitimate call that this package will never have heard of.
+//
+// The spelling is what the APPLICATION means, not what any one platform calls
+// it — `"camera"`, not `NSCameraUsageDescription` and not
+// `android.permission.CAMERA`. Both of those are in the mapping, which is the
+// backend's business.
+
+const CAMERA: str = "camera";
+const MICROPHONE: str = "microphone";
+const PHOTOS_READ: str = "photos.read";
+const PHOTOS_ADD: str = "photos.add";
+const CONTACTS: str = "contacts";
+const CALENDAR: str = "calendar";
+// Declared here because the name is portable and an application should be able
+// to spell it before every platform can answer it. Both currently answer
+// `Unsupported` — notifications need a signed bundle on macOS and arrive with
+// the iOS half; location needs a delegate and has its own pass.
+const NOTIFICATIONS: str = "notifications";
+const LOCATION_WHEN_IN_USE: str = "location.when_in_use";
+const LOCATION_ALWAYS: str = "location.always";
+
+// ---- the answer --------------------------------------------------------------
+//
+// THIS one is closed, and it can be: it is this package's own vocabulary rather
+// than any platform's, and every platform answer maps into it.
+//
+// `Denied` vs `Blocked` is the split that earns its keep. It is the only thing
+// that tells an application whether to show a rationale and ask again or to
+// offer `open_settings`, and a build that collapses them produces a button that
+// does nothing.
+enum State {
+    // Never asked, or the platform will not say. `request` will prompt.
+    Unknown,
+    Granted,
+    // Partial: iOS photos "selected photos", Android's
+    // READ_MEDIA_VISUAL_USER_SELECTED, EventKit's write-only calendar access.
+    // The app has SOME access and asking again may widen it.
+    Limited,
+    // Refused, and asking again will show a dialog.
+    Denied,
+    // Refused, and asking again does NOTHING. Parental controls, an MDM
+    // profile, or a platform that only prompts once. `open_settings` is the
+    // only road left.
+    Blocked,
+    // This build cannot ask: an unregistered name, or a platform with no such
+    // concept. NEVER conflated with `Denied` — "the person said no" and "this
+    // binary has no code for that" call for opposite responses, and collapsing
+    // them is how a wiring bug gets shipped as a UX decision.
+    Unsupported,
+}
+
+impl State {
+    // The wire form the seam speaks, and its inverse. A method and an
+    // associated function rather than a method and a loose `state_of_code`:
+    // one round trip should read as one pair.
+    //
+    // An unrecognised code is `Unsupported` rather than a trap — the seam is a
+    // version boundary, and a newer backend answering a code this build has
+    // never heard of must degrade, not abort.
+    fn from_code(c: u32) -> State {
+        if c == (1 as u32) { return State::Granted; }
+        if c == (2 as u32) { return State::Limited; }
+        if c == (3 as u32) { return State::Denied; }
+        if c == (4 as u32) { return State::Blocked; }
+        if c == (0 as u32) { return State::Unknown; }
+        return State::Unsupported;
+    }
+
+    // The wire form the seam speaks. Kept next to the enum so the two cannot
+    // drift: a new arm that forgets a number here fails to compile.
+    fn to_code(this) -> u32 {
+        return match this {
+            State::Unknown => 0 as u32,
+            State::Granted => 1 as u32,
+            State::Limited => 2 as u32,
+            State::Denied => 3 as u32,
+            State::Blocked => 4 as u32,
+            State::Unsupported => 5 as u32,
+        };
+    }
+}
+
+// ---- the verbs ---------------------------------------------------------------
+
+// What the platform says right now. NEVER prompts, so it is safe to call while
+// building a screen and safe to call every frame if that is convenient.
+fn state(of: str) -> State {
+    if of == "" { return State::Unsupported; }
+    return State::from_code({ cplus_permissions_state_v1(#str_ptr(of), #str_len(of)) });
+}
+
+// Would `request` put a dialog on the screen? True for `Unknown` and `Denied`.
+//
+// FALSE FOR `Granted`, which is the part worth stating: there is nothing to ask
+// for, so an application that gates a "grant access" button on this hides it
+// once access is held, which is what it wants.
+// UNLABELLED, deliberately. `for:` is the word this wants and `for` is a
+// keyword; every alternative label read worse than none, and the verb already
+// implies what its one argument is.
+fn can_prompt(name: str) -> bool {
+    return _prompts(state(of: name));
+}
+
+// The gate `can_prompt` applies, split out from the platform read so the
+// mapping can be tested without one.
+fn _prompts(s: State) -> bool {
+    return match s {
+        State::Unknown => true,
+        State::Denied => true,
+        State::Granted => false,
+        State::Limited => false,
+        State::Blocked => false,
+        State::Unsupported => false,
+    };
+}
+
+// Ask. The callback receives the name it was asked about, the answer, and the
+// `ctx` it was given.
+//
+// `on_answer:` / `on_answer_ctx:` rather than `cb` / `ctx`, matching facet's
+// `on_click:` / `on_click_ctx:` — one spelling for a handler pair across the
+// tree beats a second one invented here.
+//
+// THE CALLBACK ALWAYS RUNS, exactly once, including for a name this build has
+// never heard of — a caller that got `Ok` and no callback has no way to finish
+// whatever it was doing.
+//
+// WHEN IT RUNS is the part to read carefully. If the platform needs no dialog —
+// already granted, already blocked, or a name with no row — the callback runs
+// BEFORE `request` returns, on the calling thread. Only a real prompt is
+// asynchronous, and that answer arrives on the main thread. The alternative,
+// always deferring, would mean a callback that never fires in any program
+// without a run loop.
+fn request(name: str, on_answer: fn(str, State, *u8),
+           on_answer_ctx: *u8 = 0 as *u8) -> status::Status {
+    if on_answer == (0 as fn(str, State, *u8)) { return status::Status::InvalidInput; }
+    let rc: i32 = { cplus_permissions_request_v1(#str_ptr(name), #str_len(name),
+                                                 { on_answer as *u8 }, on_answer_ctx) };
+    if rc == (0 as i32) { return status::Status::Ok; }
+    return status::Status::InvalidInput;
+}
+
+// Ask for several at once. The callback fires ONCE PER NAME, with the same
+// shape `request` uses — there is no second signature to learn and no
+// array-of-answers to unpack.
+//
+// IT IS NOT A CONVENIENCE, which is the part worth stating. Android's
+// `requestPermissions` takes an array and shows ONE dialog for it; asking twice
+// in a row shows two, and a person who sees two dialogs back to back reads the
+// second as the app not having listened. Apple has no batch API at all, so the
+// Apple half prompts in sequence and this verb buys nothing there but costs
+// nothing either — which is exactly the kind of difference a portable facade
+// exists to absorb.
+//
+// A name this build does not know still gets its callback, with `Unsupported`,
+// like every other road into this package.
+fn request_many(names: str[], on_answer: fn(str, State, *u8),
+                on_answer_ctx: *u8 = 0 as *u8) -> status::Status {
+    if on_answer == (0 as fn(str, State, *u8)) { return status::Status::InvalidInput; }
+    if #slice_len(names) == (0 as usize) { return status::Status::InvalidInput; }
+    let rc: i32 = { cplus_permissions_request_many_v1(#slice_ptr(names), #slice_len(names),
+                                                      { on_answer as *u8 }, on_answer_ctx) };
+    if rc == (0 as i32) { return status::Status::Ok; }
+    return status::Status::InvalidInput;
+}
+
+// Open the settings pane where a person can change their mind. `""` means the
+// application's own page and is right on every platform.
+//
+// `pane:` rather than a bare name, because macOS deep-links PER DOMAIN
+// (`x-apple.systempreferences:...?Privacy_Camera`) where iOS and Android have
+// one app-level page. A caller that passes the name it was refused gets the
+// most specific pane the platform offers, and the same call degrades to the
+// app's own page everywhere else.
+// TRUE when a pane was opened. A `bool` and not a `Status`, because the one
+// thing that can go wrong here is "this platform has no such page" and
+// `stdlib/status` has no arm that means it — `InvalidInput` would blame the
+// caller for a fact about the platform. An application uses the answer to
+// decide whether the button it just offered was worth offering.
+fn open_settings(pane: str = "") -> bool {
+    return { cplus_permissions_open_settings_v1(#str_ptr(pane), #str_len(pane)) } == (0 as i32);
+}
+
+// ---- the seam ----------------------------------------------------------------
+//
+// Implemented by whichever `permissions_backend*.cplus` this platform compiled.
+// Stable symbols rather than an import, because the backend imports THIS module
+// for `State` and a cycle back is rejected (E0404) — the same one-way
+// arrangement `http.cplus` documents at its own seam.
+//
+// `name` is BORROWED for the duration of the call. A backend that needs to keep
+// it copies it.
+
+// The current state as a `State` code. Never prompts, never blocks.
+// A `str` cannot cross an `export extern fn` — it is a fat pointer with no
+// C-ABI counterpart (E0410) — so the name crosses as its two halves and the
+// backend rebuilds the view with `#str_from_raw_parts`. That is the FFI door
+// `stdlib/str` documents, and it is the only place in this package that opens
+// it.
+extern fn cplus_permissions_state_v1(name_ptr: *u8, name_len: usize) -> u32;
+
+// 0 when a pane was opened, non-zero when there is none. An i32 rather than a
+// `bool` for the same C-ABI reason as above: the narrowest thing both halves
+// can agree on without a layout promise.
+extern fn cplus_permissions_open_settings_v1(name_ptr: *u8, name_len: usize) -> i32;
+
+// Prompt. 0 when the request was accepted — which is not the same as granted,
+// and says nothing about when the callback runs.
+// `cb` crosses as an OPAQUE POINTER. A `fn(str, ...)` is not C-ABI compatible
+// as an extern parameter — the `str` inside the function-pointer type is the
+// same fat pointer E0410 refuses at the top level — and both halves of this
+// package are C+ and know the real shape. The cast back is in the backend, next
+// to a note saying the same thing.
+extern fn cplus_permissions_request_v1(name_ptr: *u8, name_len: usize,
+                                       cb_raw: *u8, ctx: *u8) -> i32;
+
+// The batch. `names` is a pointer to `count` consecutive `str` views — a THIN
+// pointer, so it crosses where a `str` itself could not.
+extern fn cplus_permissions_request_many_v1(names: *str, count: usize,
+                                            cb_raw: *u8, ctx: *u8) -> i32;
+
+// ---- tests -------------------------------------------------------------------
+// The portable half only: the mapping, the gate, and the empty-name guard.
+// Anything that reads a real authorization status lives next to the backend
+// that reads it.
+
+#[test]
+fn every_state_has_a_distinct_code() {
+    assert State::Unknown.to_code() == (0 as u32);
+    assert State::Granted.to_code() == (1 as u32);
+    assert State::Limited.to_code() == (2 as u32);
+    assert State::Denied.to_code() == (3 as u32);
+    assert State::Blocked.to_code() == (4 as u32);
+    assert State::Unsupported.to_code() == (5 as u32);
+}
+
+#[test]
+fn a_code_round_trips_through_the_seam_form() {
+    assert State::from_code(State::Unknown.to_code()).to_code() == (0 as u32);
+    assert State::from_code(State::Granted.to_code()).to_code() == (1 as u32);
+    assert State::from_code(State::Limited.to_code()).to_code() == (2 as u32);
+    assert State::from_code(State::Denied.to_code()).to_code() == (3 as u32);
+    assert State::from_code(State::Blocked.to_code()).to_code() == (4 as u32);
+}
+
+#[test]
+fn an_unknown_code_is_unsupported_not_a_trap() {
+    // The seam is a version boundary: a newer backend answering a code this
+    // build has never heard of must degrade rather than abort.
+    assert State::from_code(6 as u32).to_code() == (5 as u32);
+    assert State::from_code(4000 as u32).to_code() == (5 as u32);
+}
+
+#[test]
+fn an_empty_name_is_unsupported_and_never_reaches_the_backend() {
+    assert state("").to_code() == State::Unsupported.to_code();
+    assert can_prompt("") == false;
+}
+
+#[test]
+fn only_unknown_and_denied_can_prompt() {
+    // Stated as a table rather than as calls, because `can_prompt` reads the
+    // real platform and this is the mapping, not the read.
+    assert _prompts(State::Unknown) == true;
+    assert _prompts(State::Denied) == true;
+    assert _prompts(State::Granted) == false;
+    assert _prompts(State::Limited) == false;
+    assert _prompts(State::Blocked) == false;
+    assert _prompts(State::Unsupported) == false;
+}
+
+#[test]
+fn the_portable_names_are_distinct() {
+    // A copy-paste in the constant block would give two domains one name, and
+    // the second would silently resolve to the first's platform row.
+    assert CAMERA != MICROPHONE;
+    assert PHOTOS_READ != PHOTOS_ADD;
+    assert CONTACTS != CALENDAR;
+    assert LOCATION_WHEN_IN_USE != LOCATION_ALWAYS;
+    assert CAMERA != "";
+}
+
+#[test]
+fn a_batch_with_no_names_is_refused() {
+    // An empty batch is a caller bug, not a request for nothing: it would send
+    // a zero-length array to the platform and get a dialog with no rows.
+    var v: vec::Vec[str] = vec::new::[str]();
+    assert request_many(v.as_slice(), t_noop) == status::Status::InvalidInput;
+}
+
+#[test]
+fn a_batch_with_no_callback_is_refused() {
+    var v: vec::Vec[str] = vec::new::[str]();
+    let _a: status::Status = v.append(CAMERA);
+    assert request_many(v.as_slice(), 0 as fn(str, State, *u8))
+        == status::Status::InvalidInput;
+}
+
+static T_SEEN: i32 = 0 as i32;
+static T_LAST: u32 = 99 as u32;
+fn t_noop(name: str, s: State, ctx: *u8) {
+    T_SEEN = T_SEEN + (1 as i32);
+    T_LAST = s.to_code();
+    return;
+}
+
+#[test]
+fn a_batch_answers_once_per_name_even_when_nothing_is_known() {
+    // Two names this build has never heard of. Neither can prompt, so both are
+    // answered on the spot — and BOTH must be, because a caller that got `Ok`
+    // and one callback has no way to finish.
+    T_SEEN = 0 as i32;
+    var v: vec::Vec[str] = vec::new::[str]();
+    let _a: status::Status = v.append("not.a.real.permission");
+    let _b: status::Status = v.append("also.not.real");
+    assert request_many(v.as_slice(), t_noop) == status::Status::Ok;
+    assert T_SEEN == (2 as i32);
+    assert T_LAST == State::Unsupported.to_code();
+}

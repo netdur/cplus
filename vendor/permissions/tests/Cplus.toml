@@ -1,0 +1,30 @@
+[package]
+name    = "permissions_tests"
+version = "0.0.1"
+edition = "2026"
+
+# The iOS test runner for permissions — the package's OWN tests, not an example.
+#
+# It lives here rather than under examples/ for the reason facet_uikit's does:
+# a reader looking for a sample program should not find a test harness.
+#
+# `cpc test` builds a HOST binary, and on macOS that already covers the table,
+# both status maps and the whole request state machine — those are the `#[test]`
+# fns next to the code. What a host cannot cover is UserNotifications behaving
+# like it does on a phone, `UIApplication` as the settings road, and the dyld
+# shared cache answering dlopen paths that are not files. `src/selftest.cplus`
+# is those checks and this is the binary that runs them.
+#
+# It is not an app: `main` runs the checks, prints them, and RETURNS a count, so
+# the process's exit status is the result and a shell can act on it.
+#
+#     vendor/permissions/tools/run_ios_tests.sh
+[ios]
+entry = "src/main.cplus"
+
+[dependencies]
+stdlib = "*"
+
+[ios.dependencies]
+permissions = "*"
+objc        = "*"

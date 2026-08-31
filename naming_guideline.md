@@ -93,7 +93,45 @@ not one. A control is a constructor plus a typed cursor, and every verb on that
 cursor is an imperative API in the sense this page means, so the guideline
 applies to it in full.
 
-## Current state (2026-08-22)
+## Current state (2026-08-31)
+
+- permissions (pass done 2026-08-31, retrofitted — the package was written to
+  work and then brought to this page, which is the more expensive order and
+  worth not repeating). Five findings:
+  - **The surface was the whole backend.** `permissions_backend::` exposed
+    about twenty identifiers — `Domain`, `find`, `class_of`, `add`, `domains`,
+    `map_status`, `intern_c`, `open_pane`, `settings_url` — of which exactly one
+    (`register_apple`) was meant to be public. All the rest are `_`-prefixed
+    now, http's rule applied verbatim. The `S_*` / `R_*` / `M_*` constants stay
+    public because `register_apple` takes them, which is the test for whether a
+    constant belongs to the surface.
+  - **`register_apple` took eleven positional arguments**, three of them
+    adjacent strings. Now `name` positional and every other argument labelled,
+    with the four that most rows do not need defaulted (`framework`,
+    `argument`, `value`, `settings_anchor`). Same finding http recorded about
+    two positional strings, four times over.
+  - **`for:` is not available** — `for` is a keyword. `state(of: name)` reads
+    and is used; `can_prompt(name)` stays unlabelled because every alternative
+    read worse than none and the verb already implies its one argument;
+    `open_settings(pane:)` names what the argument actually is rather than
+    reaching for a preposition.
+  - **The handler pair is spelled facet's way**: `request(name, on_answer:,
+    on_answer_ctx:)`, not `cb` / `ctx`. One spelling for a handler pair across
+    the tree beats a second one invented per package.
+  - **`state_of_code` became `State::from_code`**, paired with the existing
+    `to_code` — one round trip should read as one pair, not as a method and a
+    loose function.
+  - A **deliberate deviation, recorded rather than hidden**: `open_settings`
+    returns `bool`, not `Status`. The only thing that can go wrong is "this
+    platform has no such page", and `stdlib/status` has no arm that means it —
+    `InvalidInput` would blame the caller for a fact about the platform.
+  - The pass paid for itself immediately: making the backend private broke the
+    iOS runner, which had been reaching into `find` and `class_of`. Rewriting it
+    against the public surface worked unchanged, which is the evidence the
+    surface was sufficient all along — a test that can only be written against
+    internals is usually testing the wrong thing.
+
+## Earlier state (2026-08-22)
 
 - http (pass done 2026-08-22, written against this page rather than retrofitted):
   the two audit findings were a leaked surface and two bare positional pairs.
